@@ -1,80 +1,96 @@
 # WebGIS AI Agent
 
-基于大语言模型的智能 WebGIS 数据分析与制图系统。
+智能地图分析与处理服务 - 基于大语言模型的 WebGIS 数据分析与制图系统
 
 ## 技术栈
 
-- **前端框架**: Next.js 14 + React 18 + TypeScript
+### 前端
+- **框架**: Next.js 14 + React 18 + TypeScript
 - **样式**: Tailwind CSS + shadcn/ui
 - **地图引擎**: MapLibre GL JS + react-map-gl
-- **容器化**: Docker + Docker Compose
+
+### 后端
+- **框架**: FastAPI (Python)
+- **数据库**: PostgreSQL + SQLAlchemy
+- **GIS**: GeoPandas, Shapely, Rasterio
+- **任务队列**: Celery + Redis
+
+### 部署
+- Docker + Docker Compose
 
 ## 项目结构
 
 ```
 webgis-ai-agent/
-├── app/                    # Next.js App Router
-│   ├── layout.tsx         # 根布局
-│   ├── page.tsx           # 主页（三栏布局）
-│   └── globals.css        # 全局样式
-├── components/            # React 组件
-│   ├── chat/             # 对话面板组件
-│   ├── map/              # 地图面板组件
-│   └── panel/            # 结果面板组件
-├── lib/                   # 工具函数
-├── docs/                  # 项目文档
-└── ...
+├── frontend/                 # Next.js 前端
+│   ├── app/                  # App Router
+│   ├── components/           # React 组件
+│   ├── lib/                  # 工具函数
+│   └── ...
+├── backend/                  # FastAPI 后端
+│   ├── app/
+│   │   ├── api/              # API 路由
+│   │   ├── core/             # 核心配置
+│   │   ├── models/           # 数据模型
+│   │   └── services/         # 业务服务
+│   └── ...
+├── docs/                     # 项目文档
+├── Dockerfile                # 多阶段构建
+└── README.md
 ```
 
-## 开发环境
+## 快速开始
 
-### 本地开发
+### 前端开发
 
 ```bash
-# 安装依赖
+cd frontend
 npm install
-
-# 启动开发服务器
 npm run dev
-
 # 访问 http://localhost:3000
 ```
 
-### Docker 开发
+### 后端开发
 
 ```bash
-# 使用 Docker Compose 启动（支持热重载）
-docker-compose up --build
+cd backend
+pip install -r requirements.txt
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# 访问 http://localhost:8000/docs
 ```
 
-### Docker 生产构建
+### Docker 部署
 
 ```bash
-# 构建镜像
-docker build -t webgis-ai-agent:latest .
-
-# 运行容器
-docker run -p 3000:3000 webgis-ai-agent:latest
+docker build -t webgis-ai-agent .
+docker run -p 3000:3000 -p 8000:8000 --env-file .env webgis-ai-agent
 ```
 
 ## 功能模块
 
-### 1. AI 对话面板（左侧）
-- 自然语言指令输入
-- 文件上传支持
-- Markdown 渲染
-- 工具调用进度显示
+### 前端功能
+1. **AI 对话面板**（左侧）
+   - 自然语言指令输入
+   - 文件上传支持
+   - Markdown 渲染
+   - 工具调用进度显示
 
-### 2. 地图面板（中间）
-- MapLibre GL JS 交互式地图
-- 图层管理
-- 空间量测工具
-- 实时图层加载
+2. **地图面板**（中间）
+   - MapLibre GL JS 交互式地图
+   - 图层管理
+   - 空间量测工具
+   - 实时图层加载
 
-### 3. 结果面板（右侧）
-- 分析结果展示
-- 报告预览
-- 多格式导出（HTML/PDF/Word）
+3. **结果面板**（右侧）
+   - 分析结果展示
+   - 报告预览
+   - 多格式导出（HTML/PDF/Word）
+
+### 后端功能
+- API 网关与路由
+- Agent 编排层
+- 数据获取工具
+- 空间分析引擎
 
 ## 开发规范
 
@@ -83,19 +99,6 @@ docker run -p 3000:3000 webgis-ai-agent:latest
 1. 从 `develop` 分支创建功能分支
 2. 提交使用约定式提交（Conventional Commits）
 3. 创建 Pull Request 到 `develop` 分支
-
-```bash
-# 创建功能分支
-git checkout develop
-git pull
-git checkout -b feature/your-feature-name
-
-# 提交（使用 git -c 指定身份）
-git -c user.name="你的名字" -c user.email="your@email.com" commit -m "feat: 描述"
-
-# 推送
-git push origin feature/your-feature-name
-```
 
 ### 提交规范
 
