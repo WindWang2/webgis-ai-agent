@@ -26,6 +26,7 @@ webgis-ai-agent/
 │   ├── app/                  # App Router
 │   ├── components/           # React 组件
 │   ├── lib/                  # 工具函数
+│   ├── package.json
 │   └── ...
 ├── backend/                  # FastAPI 后端
 │   ├── app/
