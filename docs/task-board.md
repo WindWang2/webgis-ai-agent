@@ -14,7 +14,7 @@
 
 | 任务 ID | 任务名称 | 状态 | 负责人 | 备注 |
 |--------|---------|------|--------|------|
-| B001 | 搭建 FastAPI 基础框架 | ⏳ 待开始 | backend-dev | - |
+| B001 | 搭建 FastAPI 基础框架 | ✅ 已完成 | backend-dev | 2026-03-23 |
 | B002 | 实现 Agent 编排层 | ⏳ 待开始 | backend-dev | - |
 | B003 | 数据获取工具开发 | ⏳ 待开始 | backend-dev | - |
 | B004 | 空间分析引擎开发 | ⏳ 待开始 | backend-dev | - |
@@ -50,7 +50,7 @@
 - ✅ 集成 MapLibre GL JS
 - ✅ 实现三栏布局基础框架（对话面板 + 地图面板 + 结果面板）
 - ✅ 编写 Dockerfile（支持生产构建和开发热重载）
-- ✅ 创建 git 仓库并提交到 feature/frontend-scaffold 分支
+- ✅ 创建 git 仓库并推送到 feature/frontend-scaffold 分支
 
 **技术栈**:
 - Next.js 14 + React 18
@@ -61,19 +61,35 @@
 - Docker
 
 **Git 信息**:
-- 本地分支：`feature/frontend-scaffold`
-- 目标分支：`develop`
-- Commit: `674eddf`
-- 仓库：https://github.com/webgis-ai-team/webgis-ai-agent（待初始化）
-- PR: 待创建（需先初始化远程仓库）
-
-**待办事项**:
-- [ ] 初始化 GitHub 仓库（需管理员操作，参见 docs/SETUP_INSTRUCTIONS.md）
-- [ ] 推送分支到远程
-- [ ] 创建 PR 到 develop 分支
+- 分支：`feature/frontend-scaffold`
+- 仓库：https://github.com/WindWang2/webgis-ai-agent
+- PR: https://github.com/WindWang2/webgis-ai-agent/pull/new/feature/frontend-scaffold
 
 **验证方式**:
 ```bash
-cd ~/projects/webgis-ai-agent
+cd ~/projects/webgis-ai-agent/frontend
 npm run dev  # 访问 http://localhost:3000
 ```
+
+---
+
+### B001 - 搭建后端项目结构
+
+**状态**: ✅ 已完成
+
+**描述**: 创建 FastAPI 脚手架，包含基础路由、健康检查接口，Docker 配置
+
+**完成时间**: 2026-03-23
+
+**提交**: feature/backend-scaffold 分支
+
+---
+
+## 待办任务
+
+| 任务 ID | 描述 | 状态 | 负责人 |
+|--------|------|------|--------|
+| T003 | 实现自然语言对话界面 | ⏳ 待开始 | frontend-dev |
+| T004 | 集成 MapLibre 地图功能 | ⏳ 待开始 | frontend-dev |
+| B002 | 实现 Agent 编排层 | ⏳ 待开始 | backend-dev |
+| B003 | 数据获取工具开发 | ⏳ 待开始 | backend-dev |
