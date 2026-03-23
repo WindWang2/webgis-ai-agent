@@ -63,7 +63,7 @@
 **Git 信息**:
 - 分支：`feature/frontend-scaffold`
 - 仓库：https://github.com/WindWang2/webgis-ai-agent
-- PR: https://github.com/WindWang2/webgis-ai-agent/pull/new/feature/frontend-scaffold
+- PR: https://github.com/WindWang2/webgis-ai-agent/pull/2 ✅ 已创建
 
 **验证方式**:
 ```bash
