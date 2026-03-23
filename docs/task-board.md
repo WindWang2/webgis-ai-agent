@@ -14,7 +14,7 @@
 
 | 任务 ID | 任务名称 | 状态 | 负责人 | 备注 |
 |--------|---------|------|--------|------|
-| B001 | 搭建 FastAPI 基础框架 | ⏳ 待开始 | backend-dev | - |
+| B001 | 搭建 FastAPI 基础框架 | ✅ 已完成 | backend-dev | 2026-03-23 |
 | B002 | 实现 Agent 编排层 | ⏳ 待开始 | backend-dev | - |
 | B003 | 数据获取工具开发 | ⏳ 待开始 | backend-dev | - |
 | B004 | 空间分析引擎开发 | ⏳ 待开始 | backend-dev | - |
@@ -62,10 +62,28 @@
 
 **Git 信息**:
 - 分支：`feature/frontend-scaffold`
-- Commit: `210753b`
-- 仓库：https://github.com/webgis-ai-team/webgis-ai-agent
-- PR: 待创建（需先初始化远程仓库）
+- 仓库：https://github.com/WindWang2/webgis-ai-agent
+- PR: https://github.com/WindWang2/webgis-ai-agent/pull/new/feature/frontend-scaffold
 
-**待办事项**:
-- [ ] 初始化 GitHub 仓库（需管理员操作）
-- [ ] 创建 PR 到 develop 分支
+---
+
+### B001 - 搭建后端项目结构
+
+**状态**: ✅ 已完成
+
+**描述**: 创建 FastAPI 脚手架，包含基础路由、健康检查接口，Docker 配置
+
+**完成时间**: 2026-03-23
+
+**提交**: feature/backend-scaffold 分支
+
+---
+
+## 待办任务
+
+| 任务 ID | 描述 | 状态 | 负责人 |
+|--------|------|------|--------|
+| T003 | 实现自然语言对话界面 | ⏳ 待开始 | frontend-dev |
+| T004 | 集成 MapLibre 地图功能 | ⏳ 待开始 | frontend-dev |
+| B002 | 实现 Agent 编排层 | ⏳ 待开始 | backend-dev |
+| B003 | 数据获取工具开发 | ⏳ 待开始 | backend-dev |
