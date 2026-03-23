@@ -60,4 +60,12 @@
 - MapLibre GL JS + react-map-gl
 - Docker
 
-**PR**: 待提交到 develop 分支
+**Git 信息**:
+- 分支：`feature/frontend-scaffold`
+- Commit: `210753b`
+- 仓库：https://github.com/webgis-ai-team/webgis-ai-agent
+- PR: 待创建（需先初始化远程仓库）
+
+**待办事项**:
+- [ ] 初始化 GitHub 仓库（需管理员操作）
+- [ ] 创建 PR 到 develop 分支
