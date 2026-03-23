@@ -12,7 +12,7 @@
 
 **任务日志**: docs/task-logs/webgis-backend/T001.md
 
-**合并**: PR #1 已合并到 master
+**合并**: ✅ PR #1 已合并到 master (2026-03-23 12:37)
 ---
 
 ## 待办任务
