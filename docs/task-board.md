@@ -90,6 +90,6 @@ npm run dev  # 访问 http://localhost:3000
 | 任务 ID | 描述 | 状态 | 负责人 |
 |--------|------|------|--------|
 | T003 | 实现自然语言对话界面 | ⏳ 待开始 | frontend-dev |
-| T004 | 前端图层管理+AI 识别交互页面 | 🚧 进行中 | frontend-dev | 2026-03-25 截止 |
+| T004 | 前端图层管理+AI 识别交互页面 | 🚧 进行中 | frontend-dev | PR #3 |
 | B002 | 实现 Agent 编排层 | ⏳ 待开始 | backend-dev |
 | B003 | 数据获取工具开发 | ⏳ 待开始 | backend-dev |
