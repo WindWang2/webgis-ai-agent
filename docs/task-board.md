@@ -81,10 +81,13 @@ npm run dev  # 访问 http://localhost:3000
 
 **描述**: 创建 FastAPI 脚手架，包含基础路由、健康检查接口，Docker 配置
 
-**完成时间**: 2026-03-23
+**完成时间**: 2026-03-23 12:00
 
 **提交**: feature/backend-scaffold 分支
 
+**任务日志**: docs/task-logs/webgis-backend/T001.md
+
+**合并**: ✅ PR #1 已合并到 master (2026-03-23 12:37)
 ---
 
 ## 测试任务详情
