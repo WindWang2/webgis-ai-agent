@@ -1,41 +1,60 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files
+.env*.local
+.env
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# IDE
+.vscode
+.idea
+
+# Docker
+docker-compose.override.yml
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+env/
 venv/
-.env
-.venv/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# Build
+ENV/
+*.egg-info/
 dist/
 build/
-*.egg-info/
 
-# GIS Data
-data/*.shp
-data/*.dbf
-data/*.shx
-data/*.prj
-*.geojson
-*.gdb/
-
-# Logs
-*.log
-logs/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
+# IDE (Python)
+.pydevproject
+.settings/
