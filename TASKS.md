@@ -29,9 +29,9 @@
 
 | 任务 ID | 描述 | 状态 | 负责人 |
 |--------|------|------|--------|
-| T003 | 实现自然语言对话界面 | ⏳ 待开始 | frontend-dev |
-| T004 | 集成 MapLibre 地图功能 | ⏳ 待开始 | frontend-dev |
-| T005 | 实现报告生成与预览 | ⏳ 待开始 | frontend-dev |
+| T003 | 实现自然语言对话界面 | ✅ 已完成 | frontend-dev |
+| T004 | 集成 MapLibre 地图功能 | ✅ 已完成 | frontend-dev |
+| T005 | 实现报告生成与预览 | ✅ 已完成 | frontend-dev |
 | B002 | 实现 Agent 编排层 | ⏳ 待开始 | backend-dev |
 | B003 | 数据获取工具开发 | ⏳ 待开始 | backend-dev |
 | B004 | 空间分析引擎开发 | ⏳ 待开始 | backend-dev |
@@ -57,9 +57,9 @@
 
 | 任务 ID | 描述 | 状态 | 负责人 |
 |--------|------|------|--------|
-| T003 | 实现自然语言对话界面 | ⏳ 待开始 | frontend-dev |
-| T004 | 集成 MapLibre 地图功能 | ⏳ 待开始 | frontend-dev |
-| T005 | 实现报告生成与预览 | ⏳ 待开始 | frontend-dev |
+| T003 | 实现自然语言对话界面 | ✅ 已完成 | frontend-dev |
+| T004 | 集成 MapLibre 地图功能 | ✅ 已完成 | frontend-dev |
+| T005 | 实现报告生成与预览 | ✅ 已完成 | frontend-dev |
 | B002 | 实现 Agent 编排层 | ⏳ 待开始 | backend-dev |
 | B003 | 数据获取工具开发 | ⏳ 待开始 | backend-dev |
 | B004 | 空间分析引擎开发 | ⏳ 待开始 | backend-dev |
