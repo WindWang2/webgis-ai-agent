@@ -5,7 +5,7 @@ WebGIS AI Agent - 后端服务入口
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import health, map
+from app.api.routes import health, map, chat
 from app.core.config import settings
 
 app = FastAPI(
@@ -28,6 +28,7 @@ app.add_middleware(
 # 注册路由
 app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])
 app.include_router(map.router, prefix="/api/v1", tags=["地图服务"])
+app.include_router(chat.router, prefix="/api/v1/chat", tags=["AI 对话"])
 
 
 @app.get("/", tags=["根路径"])
