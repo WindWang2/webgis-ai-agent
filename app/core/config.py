@@ -20,9 +20,9 @@ class Settings(BaseSettings):
     # CORS 配置
     CORS_ORIGINS: List[str] = ["*"]
     
-    # 数据库配置
+    # 数据库配置（测试时使用 SQLite，生产环境使用 PostgreSQL）
     DATABASE_URL: str = Field(
-        default="postgresql://postgres:postgres@localhost:5432/webgis_ai",
+        default="sqlite:///./test.db",
         description="数据库连接 URL"
     )
     
