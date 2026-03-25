@@ -1,7 +1,7 @@
 # WebGIS AI Agent 任务看板
 
 ## 当前状态
-- **最后检查**: 2026-03-24 00:30
+- **最后检查**: 2026-03-25 22:39
 - **项目**: webgis-ai-agent
 - **待开始任务**: 9 个
 
@@ -18,7 +18,7 @@
 |--------|---------|------|------|-----|
 | B001 | 搭建 FastAPI 基础框架 | ✅ 已完成 | - | #1 |
 | T002 | 地图图层管理 API | ✅ 已完成 | feature/backend-layer-api | #4 |
-| T003 | 空间分析任务队列 | ✅ 已完成 | feature/backend-task-queue | #5 |
+| T003 | 空间分析任务队列 | ⌛ 待评审（已分配fullstack-expert评审，24小时内反馈结果） | feature/backend-task-queue | #5 |
 
 ### 测试
 | 任务 ID | 任务名称 | 状态 | 备注 |
