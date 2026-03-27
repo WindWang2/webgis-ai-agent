@@ -1,6 +1,6 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-# dependencies
+# Frontend dependencies
 /node_modules
 /.pnp
 .pnp.*
@@ -10,10 +10,10 @@
 !.yarn/releases
 !.yarn/versions
 
-# testing
+# Frontend testing
 /coverage
 
-# next.js
+# Next.js
 /.next/
 /out/
 
@@ -23,6 +23,7 @@
 # misc
 .DS_Store
 *.pem
+Thumbs.db
 
 # debug
 npm-debug.log*
@@ -39,3 +40,39 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build
+dist/
+*.egg-info/
+
+# GIS Data
+data/*.shp
+data/*.dbf
+data/*.shx
+data/*.prj
+*.geojson
+*.gdb/
+
+# Logs
+*.log
+logs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
