@@ -16,7 +16,7 @@ os.environ.setdefault("REDIS_URL", "redis://redis:6379/0")
 
 from app.core.config import Settings, get_settings
 from app.db.session import engine, SessionLocal, init_db
-from app.api.routes import health, layers, analysis, tasks
+from app.api.routes import health, layers, analysis, tasks, auth
 from app.services.celery_config import celery_app
 
 # 日志配置
@@ -72,7 +72,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-)
 # GZIP压缩
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -81,6 +80,7 @@ app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])
 app.include_router(layers.router, prefix="/api/v1", tags=["图层管理"])
 app.include_router(analysis.router, prefix="/api/v1", tags=["空间分析"])
 app.include_router(tasks.router, prefix="/api/v1", tags=["任务管理"])
+app.include_router(auth.router, prefix="/api/v1", tags=["认证"])
 
 # ============ 根路径 ============
 @app.get("/", tags=["根路径"])
