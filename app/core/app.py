@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import orchestration
+from app.api.routes import orchestration_v2
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -20,6 +21,7 @@ def create_app() -> FastAPI:
 
     # 注册路由
     app.include_router(orchestration.router, prefix="/api/v1/orchestration", tags=["orchestration"])
+    app.include_router(orchestration_v2.router, prefix="/api/v1/orchestration/tasks", tags=["orchestration-tasks"])
 
     @app.get("/health")
     async def health_check():
