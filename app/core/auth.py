@@ -109,8 +109,12 @@ def get_optional_user(
         user_id = payload.get("sub") or payload.get("user_id")
         if user_id:
             return db.query(User).filter(User.id == int(user_id)).first()
-    except:
-        pass
+    except JWTError:
+        # Token解码失败时返回None，保持静默行为
+        logger.debug(f"Optional auth failed: {e}")
+    except Exception as e:
+        # 其他异常记录但不阻断请求处理流程
+        logger.warning(f"Unexpected error in optional auth: {e}")
     
     return None
 
