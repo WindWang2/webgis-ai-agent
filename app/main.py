@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 os.environ.setdefault("DATABASE_URL", "postgresql://postgres:postgres@db:5432/webgis")
 os.environ.setdefault("REDIS_URL", "redis://redis:6379/0")
 
-from app.core.config import Settings, get_settings
+from app.core.config import Settings, settings
 from app.db.session import engine, SessionLocal, init_db
 from app.api.routes import health, layers, analysis, tasks, auth
 from app.services.celery_config import celery_app
@@ -26,7 +26,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 logger = logging.getLogger(__name__)
-settings = get_settings()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
