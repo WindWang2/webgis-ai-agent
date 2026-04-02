@@ -19,6 +19,48 @@ webgis-ai-agent/
 └── README.md             # 项目说明
 ```
 
+## 环境配置
+
+项目使用环境变量进行配置。支持两种数据库配置方式：
+
+### 方式1：完整 DATABASE_URL（推荐）
+```bash
+# .env 文件中
+DATABASE_URL=postgresql://username:password@hostname:5432/database_name
+```
+
+### 方式2：分解的环境变量
+```bash
+# .env 文件中，可分别设置
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=your_secure_password  # ⚠️ 必须设置强密码!
+DB_NAME=webgis
+```
+
+#### 数据库环境变量列表
+| 变量名 | 默认值 | 说明 |
+|---------|---------|------|
+| `DATABASE_URL` | - | 完整连接 URL（最优先） |
+| `DB_HOST` | localhost | 数据库主机 |
+| `DB_PORT` | 5432 | 数据库端口 |
+| `DB_USER` | postgres | 数据库用户名 |
+| `DB_PASSWORD` | postgres | ⚠️ 数据库密码，生产环境请设强密码 |
+| `DB_NAME` | webgis | 数据库名称 |
+
+### Redis 配置
+| 变量名 | 默认值 | 说明 |
+|---------|---------|------|
+| `REDIS_HOST` | localhost | Redis 主机 |
+| `REDIS_PORT` | 6379 | Redis 端口 |
+
+### 启用默认密码警告
+由于安全原因，当检测到默认密码时会输出警告。若需要禁用（如正式环境测试后），可在 `.env` 中设置：
+```bash
+DISABLE_DB_PASSWORD_WAR=true
+```
+
 ## 快速开始
 
 ### 本地开发

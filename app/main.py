@@ -10,9 +10,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-# 配置必须在导入前设置
-os.environ.setdefault("DATABASE_URL", "postgresql://postgres:postgres@db:5432/webgis")
+# 配置必须在导入前设置（保持向后兼容）
 os.environ.setdefault("REDIS_URL", "redis://redis:6379/0")
+
+# 数据库配置：通过 config 模块的环境变量读取
+# 若设置了独立的数据库组件环境变量，会自动组合，若设置了 DATABASE_URL 直接使用
 
 from app.core.config import Settings, settings
 from app.db.session import engine, SessionLocal, init_db
