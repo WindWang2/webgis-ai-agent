@@ -80,5 +80,5 @@ def get_db_session():
 
 def init_db():
     """初始化数据库表"""
-    from app.models.schemas import Base
+    from app.models.db_models import Base
     Base.metadata.create_all(bind=engine)

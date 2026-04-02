@@ -19,7 +19,7 @@ from app.core.auth import (
     get_optional_user,
     Role
 )
-from app.models.user_model import User, Organization
+from app.models.db_models import User, Organization
 from app.models.api_response import ApiResponse
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
