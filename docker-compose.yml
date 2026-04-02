@@ -4,36 +4,51 @@ services:
     image: postgis/postgis:15-3.4
     container_name: webgis-db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: webgis
-    ports: ["5432:5432"]
-    volumes: [pg_data:/var/lib/postgresql/data]
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-webgis}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retry: 5
+
   redis:
     image: redis:7-alpine
     container_name: webgis-redis
-    ports: ["6379:6379"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
     command: redis-server --appendonly --maxmemory 256mb
-    volumes: [redis_data:/data]
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
-      retries: 5
+      retry: 5
+
   api:
     build: .
     container_name: webgis-api
-    ports: ["8000:8000"]
+    ports:
+      - "${API_PORT:-8000}:8000"
     environment:
-      DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/webgis
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      # 方式1: 通过完整 DATABASE_URL（推荐）
+      - DATABASE_URL=${DATABASE_URL:-}
+      # 方式2: 通过单独组件环境变量
+      - DB_HOST=${DB_HOST:-db}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - DB_NAME=${DB_NAME:-webgis}
+      # Redis 配置
+      - REDIS_URL=redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0
+      - CELERY_BROKER_URL=redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0
+      - CELERY_RESULT_BACKEND=redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/1
     depends_on:
       db:
         condition: service_healthy
@@ -42,14 +57,25 @@ services:
     volumes:
       - ./app:/app/app
       - uploads:/app/uploads
+    env_file:
+      - .env
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
   celery-worker:
     build: .
     container_name: webgis-celery
     environment:
-      DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/webgis
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/0
+      # 方式1: 通过完整 DATABASE_URL
+      - DATABASE_URL=${DATABASE_URL:-}
+      # 方式2: 通过单独组件环境变量
+      - DB_HOST=${DB_HOST:-db}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - DB_NAME=${DB_NAME:-webgis}
+      # Redis 配置
+      - REDIS_URL=redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0
+      - CELERY_BROKER_URL=redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0
     depends_on:
       db:
         condition: service_healthy
@@ -57,7 +83,10 @@ services:
         condition: service_healthy
     volumes:
       - ./app:/app/app
+    env_file:
+      - .env
     command: celery -A app.services.celery_worker worker -l info
+
 volumes:
   pg_data:
   redis_data:
