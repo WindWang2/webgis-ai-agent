@@ -1,8 +1,9 @@
 """
 核心配置模块
 """
-import warnings
+import json
 import os
+import warnings
 from typing import List
 from pydantic_settings import BaseSettings
 from pydantic import Field, field_validator
@@ -19,78 +20,99 @@ class Settings(BaseSettings):
     DEBUG: bool = True
 
     # CORS 配置
-    CORS_ORIGINS: List[str] = ["*"]
+    # 开发环境的默认源（本地开发服务器）
+    DEFAULT_CORS_ORIGINS: List[str] = [
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000",
+    ]
+
+    CORS_ORIGINS: List[str] = Field(
+        default=[],
+        description="允许的 CORS 源列表，空则使用默认值"
+    )
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def _parse_cors_origins(cls, v):
+        """解析 CORS 源配置，支持环境变量"""
+        # 如果传入空字典，从环境变量读取
+        if not v:
+            env_value = os.environ.get("CORS_ORIGINS")
+            if env_value:
+                try:
+                    return json.loads(env_value)
+                except json.JSONDecodeError:
+                    return [origin.strip() for origin in env_value.split(",") if origin.strip()]
+        # 如果已经是列表直接返回
+        if isinstance(v, list):
+            return v
+        return []
+
+    def get_cors_origins(self) -> List[str]:
+        """获取有效的 CORS 源列表"""
+        if self.CORS_ORIGINS:
+            return self.CORS_ORIGINS
+        return self.DEFAULT_CORS_ORIGINS
+
+    @field_validator("CORS_ORIGINS", mode="after")
+    @classmethod
+    def _warn_wildcard_credentials(cls, v):
+        """警告通配符与 credentials 冲突"""
+        if "*" in v:
+            warnings.warn(
+                "⚠️ 安全警告：CORS 配置中使用通配符 '*' "
+                "与 allow_credentials=True 存在冲突！",
+                UserWarning,
+            )
+        return v
 
     # ======== 数据库配置 ========
-    # 分别配置数据库各组件，支持环境变量覆盖
     DB_HOST: str = Field(default="localhost", description="数据库主机")
     DB_PORT: int = Field(default=5432, description="数据库端口")
     DB_USER: str = Field(default="postgres", description="数据库用户名")
     DB_PASSWORD: str = Field(
         default="postgres",
-        description="数据库密码 ⚠️ 生产环境请设置强密码!"
+        description="数据库密码"
     )
     DB_NAME: str = Field(default="webgis", description="数据库名称")
 
-    # 由组件组合构建的数据库 URL（优先级最高）
     DATABASE_URL: str = Field(
         default="",
-        description="完整数据库连接 URL（优先使用）"
+        description="完整数据库连接 URL"
     )
 
     @field_validator("DB_PASSWORD", mode="before")
     @classmethod
     def _warn_default_password(cls, v):
-        """警告使用默认密码"""
-        # 允许通过环境变量 DISABLE_DB_PASSWORD_WARN=true 禁用警告
         if v == "postgres" and not os.environ.get("DISABLE_DB_PASSWORD_WARN"):
             warnings.warn(
-                "🔒 安全警告: 使用默认数据库密码 'postgres'！\n"
-                "请通过环境变量 DB_PASSWORD 设置强密码用于生产环境！",
+                "🔒 安全警告：使用默认数据库密码 'postgres'！",
                 UserWarning,
             )
         return v
 
     def build_database_url(self) -> str:
-        """构建数据库连接 URL"""
-        # 如果显式设置了 DATABASE_URL，直接使用
         if self.DATABASE_URL:
             return self.DATABASE_URL
-        # 否则由组件构建
         return (
             f"postgresql+psycopg2://{self.DB_USER}:{self.DB_PASSWORD}"
             f"@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
         )
 
-    # Redis 配置 (用于 Celery)
-    REDIS_URL: str = Field(
-        default="redis://localhost:6379/0",
-        description="Redis 连接 URL"
-    )
+    # Redis 配置
+    REDIS_URL: str = Field(default="redis://localhost:6379/0")
 
     # Celery 配置
-    CELERY_BROKER_URL: str = Field(
-        default="redis://localhost:6379/0",
-        description="Celery Broker URL"
-    )
-    CELERY_RESULT_BACKEND: str = Field(
-        default="redis://localhost:6379/0",
-        description="Celery Result Backend URL"
-    )
+    CELERY_BROKER_URL: str = Field(default="redis://localhost:6379/0")
+    CELERY_RESULT_BACKEND: str = Field(default="redis://localhost:6379/0")
 
     # GIS 配置
-    DATA_DIR: str = Field(
-        default="./data",
-        description="数据存储目录"
-    )
-    TMP_DIR: str = Field(
-        default="./tmp",
-        description="临时文件目录"
-    )
+    DATA_DIR: str = Field(default="./data")
+    TMP_DIR: str = Field(default="./tmp")
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    model_config = {"env_file": ".env", "case_sensitive": True}
 
 
 # 全局配置实例
