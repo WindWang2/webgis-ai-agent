@@ -1,10 +1,14 @@
 """PostgreSQL + PostGIS 数据库模型
-T008: PostGIS数据库设计与初始化 - 核心表结构设计、PostGIS扩展配置、索引优化"""
+T008: PostGIS数据库设计与初始化 - 核心表结构设计、PostGIS扩展配置、索引优化
+
+⚠️ 注意：此文件为 PostgreSQL/PostGIS 专用模型，包含完整字段定义
+对于基本表结构请使用 schemas.py 以获得更广泛的数据库兼容性
+"""
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, Boolean, Float,
-    BigInteger, ForeignKey, Index, CheckConstraint, UniqueConstraint
+    BigInteger, ForeignKey, Index, CheckConstraint, UniqueConstraint, JSON
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship, declarative_base
