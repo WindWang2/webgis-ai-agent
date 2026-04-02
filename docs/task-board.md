@@ -6,8 +6,8 @@
 |--------|---------|------|--------|------|
 | T001 | 技术方案阅读与确认 | ✅ 已完成 | frontend-dev | 2026-03-23 |
 | T002 | 搭建前端项目结构 | ✅ 已完成 | frontend-dev | 2026-03-23 |
-| T003 | 实现自然语言对话界面 | ⏳ 待开始 | frontend-dev | - |
-| T004 | 集成 MapLibre 地图功能 | ⏳ 待开始 | frontend-dev | - |
+| T003 | 实现自然语言对话界面 | ✅ 已完成 | frontend-dev | 2026-03-28 合并 |
+| T004 | 集成 MapLibre 地图功能 | ✅ 已完成 | frontend-dev | 2026-03-28 提交 |
 | T005 | 实现报告生成与预览 | ⏳ 待开始 | frontend-dev | - |
 
 ## 后端任务
@@ -15,8 +15,8 @@
 | 任务 ID | 任务名称 | 状态 | 负责人 | 备注 |
 |--------|---------|------|--------|------|
 | B001 | 搭建 FastAPI 基础框架 | ✅ 已完成 | backend-dev | 2026-03-23 |
-| B002 | 实现 Agent 编排层 | ⏳ 待开始 | backend-dev | - |
-| B003 | 数据获取工具开发 | ⏳ 待开始 | backend-dev | - |
+| B002 | 实现 Agent 编排层 | ✅ 已完成 | backend-dev | 2026-03-28 合并 |
+| B003 | 数据获取工具开发 | 🔄 进行中 | backend-dev | 核心实现完成，待测试 |
 | B004 | 空间分析引擎开发 | ⏳ 待开始 | backend-dev | - |
 
 ## 测试任务
@@ -85,11 +85,28 @@ npm run dev  # 访问 http://localhost:3000
 
 ---
 
+## Bug修复任务
+
+| 优先级 | Issue ID | 描述 | 严重级别 | 状态 | 负责人 |
+|--------|----------|------|----------|------|--------|
+| 1 | #14 | 项目无法启动：缺失关键文件 user_model.py 和 task_queue_service.py | Critical | ⏳ 待分配 | coder |
+| 2 | #15 | SECRET_KEY 未配置，JWT 认证完全失效 | Critical | ⏳ 待分配 | coder |
+| 3 | #16 | 硬编码数据库凭据 postgres:postgres | Critical | 🔄 进行中 | coder | PR #26已提交 |
+| 4 | #17 | 认证绕过：layer 路由使用硬编码假用户 | High | ⏳ 待分配 | coder |
+| 5 | #18 | CORS 配置 allow_origins=* 与 allow_credentials=True 冲突 | High | ⏳ 待分配 | coder |
+| 6 | #19 | 全局异常处理器泄露内部错误信息 | High | ⏳ 待分配 | coder |
+| 7 | #20 | 模型重复定义导致 SQLAlchemy Base 冲突 | High | ⏳ 待分配 | coder |
+| 8 | #21 | bare except 吞掉所有异常（含 KeyboardInterrupt） | High | ⏳ 待分配 | coder |
+| 9 | #22 | requirements.txt 缺少 python-jose 和 passlib 依赖 | Medium | ⏳ 待分配 | coder |
+| 10 | #23 | Celery 任务中数据库会话泄漏风险 | Medium | ⏳ 待分配 | coder |
+| 11 | #24 | SSE 进度轮询无超时保护 | Medium | ⏳ 待分配 | coder |
+| 12 | #25 | 密码策略过弱 + 测试覆盖极低 + health check 不做实际检查 | Low | ⏳ 待分配 | coder |
+
 ## 待办任务
 
-| 任务 ID | 描述 | 状态 | 负责人 |
-|--------|------|------|--------|
-| T003 | 实现自然语言对话界面 | ⏳ 待开始 | frontend-dev |
-| T004 | 集成 MapLibre 地图功能 | ⏳ 待开始 | frontend-dev |
-| B002 | 实现 Agent 编排层 | ⏳ 待开始 | backend-dev |
-| B003 | 数据获取工具开发 | ⏳ 待开始 | backend-dev |
+| 优先级 | 任务 ID | 描述 | 状态 | 负责人 |
+|--------|--------|------|------|--------|
+| 1 | M001 | PR审核流程 | 🔄 待处理 | coder | 待审核PR #26
+| 2 | M002 | Issue检查与修复流程 | ⏳ 待开始 | coder |
+| 3 | T005 | 实现报告生成与预览 | ⏳ 待开始 | frontend-dev |
+| 4 | B004 | 空间分析引擎开发 | ⏳ 待开始 | backend-dev |
