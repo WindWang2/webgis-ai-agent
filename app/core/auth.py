@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.core.config import get_settings
 from app.db.session import get_db
-from app.models.user_model import User
+from app.models.db_model import User
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
