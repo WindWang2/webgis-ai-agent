@@ -7,7 +7,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 
-from app.models.schemas import Layer, AnalysisTask
+from app.models.db_models import Layer, AnalysisTask
 from app.models.pydantic_models import LayerCreate, LayerUpdate
 
 
@@ -131,7 +131,7 @@ class LayerService:
             return True
         
         # 检查角色表
-        from app.models.schemas import UserRole
+        from app.models.db_models import UserRole
         user_role = self.db.query(UserRole).filter(
             UserRole.user_id == user_id,
             UserRole.resource_type == "layer",

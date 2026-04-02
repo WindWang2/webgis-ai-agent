@@ -15,9 +15,12 @@ class Settings(BaseSettings):
     # 项目名称
     PROJECT_NAME: str = "WebGIS AI Agent"
 
+    # 环境配置：development / production
+    ENV: str = Field(default="development", description="运行环境")
+
     # 服务器配置
     API_V1_STR: str = "/api/v1"
-    DEBUG: bool = True
+    DEBUG: bool = True  # 将在 __init__ 中根据 ENV 自动调整
 
     # CORS 配置
     # 开发环境的默认源（本地开发服务器）
@@ -112,8 +115,34 @@ class Settings(BaseSettings):
     DATA_DIR: str = Field(default="./data")
     TMP_DIR: str = Field(default="./tmp")
 
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def _set_debug_from_env(cls, v):
+        """根据环境自动设置 DEBUG 标志"""
+        # 完全忽略传入值，只基于环境决定
+        env = os.environ.get("ENV", "development").lower()
+        if env == "production":
+            return False
+        # 非生产环境默认启用DEBUG(True)
+        return True
+
+    @field_validator("ENV", mode="before")
+    @classmethod
+    def _normalize_env(cls, v):
+        """标准化环境名称"""
+        if v is None:
+            return "development"
+        v_lower = v.lower().strip()
+        if v_lower in ("prod", ):
+            return "production"
+        return v_lower
+
+    def is_production(self) -> bool:
+        """判断是否为生产环境"""
+        return self.ENV.lower() == "production"
+
     model_config = {"env_file": ".env", "case_sensitive": True}
 
 
 # 全局配置实例
-settings = Settings()
+settings = Settings(_env_file="")  # 先创建实例，避免循环依赖
