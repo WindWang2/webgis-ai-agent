@@ -19,7 +19,7 @@ os.environ.setdefault("REDIS_URL", "redis://redis:6379/0")
 from app.core.config import Settings, settings
 from app.core.exception import global_exception_handler
 from app.db.session import engine, SessionLocal, init_db
-from app.api.routes import health, layer, tasks, auth
+from app.api.routes import health, layer, tasks, auth, report
 # 增加 webhook 导入
 try:
     from app.api.routes import webhook
@@ -90,6 +90,7 @@ app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])
 app.include_router(layer.router, prefix="/api/v1", tags=["图层管理"])
 app.include_router(tasks.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(auth.router, prefix="/api/v1", tags=["认证"])
+app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
 app.include_router(webhook.router, prefix="/api/v1", tags=["Webhook"])
 
 # ============ 根路径 ============
