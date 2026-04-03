@@ -189,30 +189,79 @@ async def _trigger_pr_checks(
         logger.info("PR 检查已禁用")
         return {"skipped": "pr_check_disabled"}
     
-    # 这里会在后续步骤中实现实际的检查逻辑
-    # 现在返回一个等待实现的占位符
-    logger.info(f"触发 PR 检查: #{pr_data.get('number')} - {repo_data.get('full_name')}")
+    # 动态导入避免循环依赖
+    from app.services.pr_check_flow import trigger_full_pr_check
+    from app.services.pr_workflow.reviewer import assign_reviewer, parse_pr_file, detect_module
+    from app.services.feishu_notifier import send_pr_created
     
-    # 返回检查触发信息，实际检查将在后台任务中执行
-    return {
-        "action": "checks_triggered",
-        "pr_number": pr_data.get("number"),
-        "repo": repo_data.get("full_name"),
-        "sha": pr_data.get("head", {}).get("sha"),
-    }
+    pr_number = pr_data.get("number")
+    pr_title = pr_data.get("title", "")
+    pr_url = pr_data.get("html_url", "")
+    author = pr_data.get("user", {}).get("login", "")
+    repo_full_name = repo_data.get("full_name", "")
+    
+    logger.info(f"触发 PR 检查: #{pr_number} - {repo_full_name}")
+    
+    try:
+        # 1. 执行自动检查
+        check_result = trigger_full_pr_check(pr_data, repo_data)
+        
+        # 2. 分配审核人
+        if settings.PR_AUTO_ASSIGN_REVIEWER:
+            files = parse_pr_file(pr_number) if pr_number else []
+            module = detect_module(files) if files else "general"
+            assignee_result = assign_reviewer(pr_number, module)
+            reviewer = assignee_result.get("reviewer", "")
+            
+            # 发送飞书通知
+            if settings.ENABLE_FEISHU_NOTIFY:
+                send_pr_created(pr_number, pr_title, pr_url, author, reviewer)
+        else:
+            reviewer = ""
+        
+        return {
+            "action": "checks_completed",
+            "pr_number": pr_number,
+            "check_passed": check_result.passed,
+            "reviewer_assigned": bool(reviewer),
+            "comment_posted": bool(check_result.comment_body)
+        }
+    except Exception as e:
+        logger.exception(f"PR 检查流程异常: {e}")
+        return {"action": "checks_failed", "error": str(e)}
 
 
 async def _handle_pr_merged(pr_data: dict, repo_data: dict) -> dict:
     """
     处理 PR 合并事件
     """
-    logger.info(f"PR 已合并: #{pr_data.get('number')} - {repo_data.get('full_name')}")
-    
-    # 可以在此处触发合并后的通知和标签添加
+    from app.services.pr_workflow.merge import on_pr_merged
+    from app.services.feishu_notifier import send_pr_merged
+    from app.services.pr_check_flow import post_pr_comment
+
+    pr_number = pr_data.get("number")
+    pr_title = pr_data.get("title", "")
+    merged_by = pr_data.get("merged_by", {}).get("login", "未知")
+    repo_full_name = repo_data.get("full_name", "")
+
+    logger.info(f"PR 已合并: #{pr_number} - {repo_full_name}")
+
+    # 1. 执行合并后操作
+    merge_result = on_pr_merged(pr_number, repo_full_name, merged_by)
+
+    # 2. 发送飞书通知
+    if settings.PR_ENABLE_MERGE_NOTIFICATION and settings.ENABLE_FEISHU_NOTIFY:
+        send_pr_merged(pr_number, pr_title, merged_by)
+
+    # 3. 发布合并通知评论
+    comment = f"✅ 此 PR 已由 {merged_by} 合并"
+    post_pr_comment(pr_number, comment)
+
     return {
         "action": "merged",
-        "pr_number": pr_data.get("number"),
-        "repo": repo_data.get("full_name"),
+        "pr_number": pr_number,
+        "repo": repo_full_name,
+        "merge_result": merge_result
     }
 
 
