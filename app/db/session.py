@@ -47,7 +47,7 @@ print(f"[DB] Connecting to: {_display_url}")
 # SQLite 需要 check_same_thread=False
 connect_args = {}
 if "sqlite" in _DATABASE_URL:
-    connect_arg["check_same_thread"] = False
+    connect_args["check_same_thread"] = False
 
 engine = create_engine(
     _DATABASE_URL,

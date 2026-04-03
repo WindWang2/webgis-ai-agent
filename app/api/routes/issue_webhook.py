@@ -35,8 +35,8 @@ def _get_status_labels(action: str) -> tuple[str, str]:
 def verify_signature(payload_body: bytes, sig_header: Optional[str]) -> bool:
     """Verify GitHub webhook HMAC-SHA256 signature."""
     if not settings.GITHUB_WEBHOOK_SECRET:
-        logger.warning("No GITHUB_WEBHOOK_SECRET, skipping verification")
-        return True
+        logger.error("No GITHUB_WEBHOOK_SECRET configured, rejecting request")
+        return False
     if not sig_header:
         return False
     _, sig = sig_header.split("=", 1)
