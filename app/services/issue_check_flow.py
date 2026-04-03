@@ -42,7 +42,7 @@ class IssueCheckResult:
             "category": self.category,
             "priority": self.priority,
             "assignee_role": self.assignee_role,
-            "label_added": self.label_added,
+            "labels_added": self.labels_added,
         }
 
 
@@ -87,8 +87,8 @@ def generate_issue_comment(check_result: IssueCheckResult, issue_title: str) -> 
         "",
     ]
     
-    if check_result.label_added:
-        lines.append(f"🏷️ **已添加标签**: {', '.join(check_result.label_added)}")
+    if check_result.labels_added:
+        lines.append(f"🏷️ **已添加标签**: {', '.join(check_result.labels_added)}")
         lines.append("")
     
     return "\n".join(lines)
@@ -96,7 +96,7 @@ def generate_issue_comment(check_result: IssueCheckResult, issue_title: str) -> 
 
 def add_issue_labels(
     issue_number: int,
-    labels_names: list[str],
+    label_names: list[str],
 ) -> bool:
     """
     给 GitHub Issue 添加标签
@@ -286,7 +286,7 @@ def trigger_full_issue_check(
         result.assignee_role = ""
     
     # Step 4: 添加标签
-    labels_names = []
+    label_names = []
     
     # 分类标签
     if category:
@@ -301,8 +301,8 @@ def trigger_full_issue_check(
         label_names.append(f"role:{result.assignee_role}")
     
     if label_names:
-        add_issue_label(issue_number, label_names)
-        result.label_added = label_names
+        add_issue_labels(issue_number, label_names)
+        result.labels_added = label_names
     
     # 生成分评论
     comment_body = generate_issue_comment(result, issue_title)

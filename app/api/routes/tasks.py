@@ -11,8 +11,8 @@ from datetime import datetime
 from sqlalchemy.orm import Session as DbSession
 from app.db.session import get_db
 from app.models.api_response import ApiResponse
-from app.services.task_queue_service import TaskQueueService
-from app.tasks.spatial_analysis import run_spatial_analysis
+from app.services.task_queue import TaskQueueService
+from app.tasks.analysis import run_spatial_analysis
 router = APIRouter(prefix="/tasks", tags=["空间分析"])
 # ============ 任务提交 ============
 @router.post("/submit", response_model=ApiResponse)

@@ -190,7 +190,7 @@ class SpatialAnalyzer:
         
         返回:
             {type: FeatureCollection, features: [...], stats: {...}}
-        """"
+        """
         try:
             if callback: callback(10, "准备数据...")
             
