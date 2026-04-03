@@ -1,8 +1,8 @@
 # 任务看板
 
-**最后更新时间**: 2026-04-03 07:46 (Asia/Shanghai)
+**最后更新时间**: 2026-04-03 11:12 (Asia/Shanghai)
 
-**当前Coder状态**: 🟢 空闲，无运行中的子任务，可分配新任务
+**当前Coder状态**: 🟢 正在执行M002 Issue检查与修复流程，当前处理#22/#23/#24/#25
 
 ## 前端任务
 
@@ -101,6 +101,10 @@ npm run dev  # 访问 http://localhost:3000
 | 6 | #19 | 全局异常处理器泄露内部错误信息 | High | ⏳ 待分配 | coder |
 | 7 | #20 | 模型重复定义导致 SQLAlchemy Base 冲突 | High | ⏳ 待分配 | coder |
 | 8 | #21 | bare except 吞掉所有异常（含 KeyboardInterrupt） | High | ✅ 已完成 | WindWang2 | PR #29已合并：<https://github.com/WindWang2/webgis-ai-agent/pull/29> |
+9 | #22 | requirements.txt 缺少 python-jose 和 passlib 依赖 | Medium | 🔄 处理中 | coder | 已分配到M002任务 |
+10 | #23 | Celery 任务中数据库会话泄漏风险 | Medium | 🔄 处理中 | coder | 已分配到M002任务 |
+11 | #24 | SSE 进度轮询无超时保护 | Medium | 🔄 处理中 | coder | 已分配到M002任务 |
+12 | #25 | 密码策略过弱 + 测试覆盖极低 + health check 不做实际检查 | Low | 🔄 处理中 | coder | 已分配到M002任务 |
 | 9 | #22 | requirements.txt 缺少 python-jose 和 passlib 依赖 | Medium | ⏳ 待分配 | coder |
 | 10 | #23 | Celery 任务中数据库会话泄漏风险 | Medium | ⏳ 待分配 | coder |
 | 11 | #24 | SSE 进度轮询无超时保护 | Medium | ⏳ 待分配 | coder |
@@ -111,6 +115,6 @@ npm run dev  # 访问 http://localhost:3000
 | 优先级 | 任务 ID | 描述 | 状态 | 负责人 |
 |--------|--------|------|------|--------|
 | 1 | M001 | PR审核流程 | ✅ 已完成 | coder | PR #29已合并：<https://github.com/WindWang2/webgis-ai-agent/pull/29>
-| 2 | M002 | Issue检查与修复流程 | ⏳ 待开始 | coder |
+| 2 | M002 | Issue检查与修复流程 | 🔄 进行中 | coder | 处理Issue #19/#20/#22/#23/#24/#25
 | 3 | T005 | 实现报告生成与预览 | ⏳ 待开始 | frontend-dev |
 | 4 | B004 | 空间分析引擎开发 | ⏳ 待开始 | backend-dev |
