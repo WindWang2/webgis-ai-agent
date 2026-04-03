@@ -104,6 +104,33 @@ class Settings(BaseSettings):
             f"@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
         )
 
+    # JWT 配置
+    SECRET_KEY: str = Field(
+        default="",
+        description="JWT密钥，用于签名和验签"
+    )
+
+    @field_validator("SECRET_KEY", mode="before")
+    @classmethod
+    def _validate_secret_key(cls, v):
+        """"验证SECRET_KEY，如果为空则抛出错误或使用默认值"""
+        if not v:
+            # 从环境变量读取
+            env_key = os.environ.get("SECRET_KEY")
+            if env_key:
+                return env_key
+            # 生产环境必须有key，开发可以使用临时key
+            import warnings
+            warnings.warn(
+                "⚠️ 安全警告：SECRET_KEY 未配置！JWT认证可能无法正常工作。建议设置环境变量 SECRET_KEY",
+                UserWarning,
+            )
+            # 返回临时key（仅开发环境使用）
+            return "dev-temp-secret-key-change-in-production-"
+        return v
+
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=60 * 24, description="Access token过期时间(分钟)")
+
     # Redis 配置
     REDIS_URL: str = Field(default="redis://localhost:6379/0")
 
@@ -146,3 +173,9 @@ class Settings(BaseSettings):
 
 # 全局配置实例
 settings = Settings(_env_file="")  # 先创建实例，避免循环依赖
+
+def get_settings() -> Settings:
+    """获取全局配置实例（供其他模块使用）"""
+    return settings
+
+__all__ = ["Settings", "settings", "get_settings"]
