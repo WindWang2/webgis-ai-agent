@@ -1,8 +1,8 @@
 # 任务看板
 
-**最后更新时间**: 2026-04-03 16:13 (Asia/Shanghai)
+**最后更新时间**: 2026-04-03 17:13 (Asia/Shanghai)
 
-**当前Coder状态**: 🟡 处理中，正在修复Issue #25，完成后将开始T005报告生成预览任务
+**当前Coder状态**: 🟡 处理中，正在修复Issue #25（密码策略过弱/测试覆盖低/health check不完善），预计完成后将开始T005报告生成预览任务
 
 ## 前端任务
 
@@ -93,13 +93,13 @@ npm run dev  # 访问 http://localhost:3000
 
 | 优先级 | Issue ID | 描述 | 严重级别 | 状态 | 负责人 |
 |--------|----------|------|----------|------|--------|
-| 1 | #14 | 项目无法启动：缺失关键文件 user_model.py 和 task_queue_service.py | Critical | ⏳ 待分配 | coder |
-| 2 | #15 | SECRET_KEY 未配置，JWT 认证完全失效 | Critical | ⏳ 待分配 | coder |
+| 1 | #14 | 项目无法启动：缺失关键文件 user_model.py 和 task_queue_service.py | Critical | ✅ 已完成 | coder | 已修复
+| 2 | #15 | SECRET_KEY 未配置，JWT 认证完全失效 | Critical | ✅ 已完成 | coder | 已修复
 | 3 | #16 | 硬编码数据库凭据 postgres:postgres | Critical | ✅ 已完成 | coder | PR #26已合并 |
 | 4 | #17 | 认证绕过：layer 路由使用硬编码假用户 | High | ✅ 已完成 | coder | 已修复合并
 | 5 | #18 | CORS 配置 allow_origins=* 与 allow_credentials=True 冲突 | High | ✅ 已完成 | coder | 已修复合并
-| 6 | #19 | 全局异常处理器泄露内部错误信息 | High | ⏳ 待分配 | coder |
-| 7 | #20 | 模型重复定义导致 SQLAlchemy Base 冲突 | High | ⏳ 待分配 | coder |
+| 6 | #19 | 全局异常处理器泄露内部错误信息 | High | ✅ 已完成 | coder | 已修复
+| 7 | #20 | 模型重复定义导致 SQLAlchemy Base 冲突 | High | ✅ 已完成 | coder | 已修复
 | 8 | #21 | bare except 吞掉所有异常（含 KeyboardInterrupt） | High | ✅ 已完成 | WindWang2 | PR #29已合并：<https://github.com/WindWang2/webgis-ai-agent/pull/29> |
 9 | #22 | requirements.txt 缺少 python-jose 和 passlib 依赖 | Medium | ✅ 已完成 | coder | 2026-04-03 修复完成 |
 10 | #23 | Celery 任务中数据库会话泄漏风险 | Medium | ✅ 已完成 | coder | 2026-04-03 修复完成 |
