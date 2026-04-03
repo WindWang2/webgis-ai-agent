@@ -4,8 +4,21 @@
 
 from fastapi import APIRouter
 from datetime import datetime
+from sqlalchemy import text
+from sqlalchemy.orm import Session as DbSession
 
 router = APIRouter()
+
+
+def get_db_for_check():
+    """获取数据库连接（仅用于健康检查）"""
+    from app.db.database import engine, SessionLocal
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
 
 
 @router.get("/health")
@@ -24,13 +37,21 @@ def health_check():
 
 
 @router.get("/ready")
-def readiness_check():
+def readiness_check(db: DbSession = None):
     """
     就绪检查接口
     
-    检查服务是否准备好接收请求
+    检查服务是否准备好接收请求，包括数据库连接
     """
+    db_ready = False
+    try:
+        db.execute(text("SELECT 1"))
+        db_ready = True
+    except Exception:
+        pass
+    
     return {
-        "ready": True,
+        "ready": db_ready,
+        "database": "connected" if db_ready else "disconnected",
         "timestamp": datetime.utcnow().isoformat()
     }
