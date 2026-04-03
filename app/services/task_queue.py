@@ -2,41 +2,15 @@
 Celery 任务队列配置
 """
 
-from celery import Celery
 from celery.schedules import crontab
 from typing import Dict, Any, Optional
-import json
 import logging
 
-from app.core.config import settings
+from app.services.celery_config import celery_app
 
 logger = logging.getLogger(__name__)
 
-# 创建 Celery 实例
-celery_app = Celery(
-    "webgis_ai",
-    broker=settings.CELERY_BROKER_URL,
-    backend=settings.CELERY_RESULT_BACKEND,
-    include=["app.tasks.analysis"]
-)
-
-# Celery 配置
-celery_app.conf.update(
-    task_serializer="json",
-    accept_content=["json"],
-    result_serializer="json",
-    timezone="Asia/Shanghai",
-    enable_utc=True,
-    task_track_started=True,
-    task_time_limit=3600,  # 1 小时超时
-    task_soft_time_limit=3300,  # 55 分钟软超时
-    worker_prefetch_multiplier=1,
-    worker_max_tasks_per_child=1000,
-    result_expires=3600,  # 结果保存 1 小时
-    result_extended=True,
-)
-
-# 定时任务配置
+# 补充定时任务配置
 celery_app.conf.beat_schedule = {
     "cleanup-expired-tasks": {
         "task": "app.tasks.cleanup.cleanup_expired_tasks",
