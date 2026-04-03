@@ -20,6 +20,7 @@ from app.core.config import Settings, settings
 from app.core.exception import global_exception_handler
 from app.db.session import engine, SessionLocal, init_db
 from app.api.routes import health, layers, analysis, tasks, auth
+from app.api. routes import webhook, issue_webhook
 from app.services.celery_config import celery_app
 
 # 日志配置
@@ -84,6 +85,10 @@ app.include_router(layers.router, prefix="/api/v1", tags=["图层管理"])
 app.include_router(analysis.router, prefix="/api/v1", tags=["空间分析"])
 app.include_router(tasks.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(auth.router, prefix="/api/v1", tags=["认证"])
+
+# ============ Webhook 路由 ============
+app.include_router(webhook.router, prefix="/api/v1", tags=["Webhook"])
+app.include_router(issue_webhook.router, prefix="/api/v1", tags=["Issue Webhook"])
 
 # ============ 根路径 ============
 @app.get("/", tags=["根路径"])
