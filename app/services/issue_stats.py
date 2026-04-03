@@ -119,12 +119,12 @@ def compute_statistics(
             if start_ts and end_ts:
                 hrs = calculate_duration_hours(start_ts, end_ts)
                 if hrs > 0:
-                    durations_hour.append(hrs)
+                    durations_hours.append(hrs)
 
-    if duration_hours:
+    if durations_hours:
         avg_hrs = sum(durations_hours) / len(durations_hours)
         avg_dur_days = avg_hrs / 24
-        sorted_hrs = sorted(duration_hours)
+        sorted_hrs = sorted(durations_hours)
         mid_idx = len(sorted_hrs) // 2
         med_hrs = sorted_hrs[mid_idx]
         med_dur_days = med_hrs / 24
@@ -133,7 +133,7 @@ def compute_statistics(
         med_dur_days = 0.0
 
     # Category/Priority 分布
-    cats_counts = defaultdict(int)
+    cat_counts = defaultdict(int)
     prio_counts = defaultdict(int)
 
     for r in all_records:
@@ -149,7 +149,7 @@ def compute_statistics(
     open_records = [r for r in all_records if r.get("status") in open_statuses]
     open_ages_days = []
 
-    for r in open_record:
+    for r in open_records:
         created_str = r.get("created_at")
         if created_str:
             try:
@@ -159,8 +159,8 @@ def compute_statistics(
             except:
                 pass
 
-    oldest_age = max(open_age_days) if open_age_days else 0.0
-    newest_age = min(open_age_days) if open_age_days else 0.0
+    oldest_age = max(open_ages_days) if open_ages_days else 0.0
+    newest_age = min(open_ages_days) if open_ages_days else 0.0
 
     # 时间范围
     ps = period_start.isoformat() if period_start else ""
@@ -281,7 +281,7 @@ def generate_weekly_issue_stats(tracker: Optional[IssueTrackerDB] = None) -> tup
     Returns: (消息内容, 消息标题)
     """
     if tracker is None:
-        tracker = get_issue_tracker()  # 或者 get_tracker()
+        tracker = get_tracker()
 
     # 获取上周时间范围
     start_dt, end_dt = get_last_week_range()

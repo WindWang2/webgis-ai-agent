@@ -24,10 +24,10 @@ class Settings(BaseSettings):
     # CORS 配置
     # 开发环境的默认源（本地开发服务器）
     DEFAULT_CORS_ORIGINS: List[str] = [
-        "http://localhost:3one thousand",
-        "http://localhost:eight thousand",
-        "http://127.0.0.1:3one thousand",
-        "http://127.0.0.1:eight thousand",
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000",
     ]
 
     CORS_ORIGINS: List[str] = Field(

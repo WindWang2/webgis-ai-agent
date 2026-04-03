@@ -3,10 +3,11 @@ JWT Authentication API - Registration/Login/JWT/RBAC Permission
 T012 User Permission System Development (Fixed Version)
 """
 from fastapi import APIRouter, HTTPException, Depends, Body
+from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session as DbSession
 from typing import Optional
 from pydantic import BaseModel, EmailStr, validator
-from datetime import datetime
+from datetime import datetime, timezone
 import re
 
 from app.core.config import get_settings
@@ -141,7 +142,7 @@ def login(req: LoginRequest, db: DbSession = Depends(get_db)):
         return ApiResponse.fail(code="DISABLED", message="Account has been disabled")
     
     # Update login info
-    user.last_login = datetime.utcnow()
+    user.last_login = datetime.now(timezone.utc)
     user.login_count += 1
     db.commit()
     
@@ -173,10 +174,10 @@ def get_profile(current_user: User = Depends(get_current_user)):
         "id": current_user.id,
         "username": current_user.username,
         "email": current_user.email,
-        "full_name": current_user.full_name,
+        "full_name": current_user.full_name if hasattr(current_user, 'full_name') else None,
         "role": current_user.role,
         "org_id": current_user.org_id,
-        "avatar_url": current_user.avatar_url,
+        "avatar_url": current_user.avatar_url if hasattr(current_user, 'avatar_url') else None,
         "created_at": current_user.created_at.isoformat(),
         "last_login": current_user.last_login.isoformat() if current_user.last_login else None
     })
@@ -195,7 +196,7 @@ def update_profile(
     if avatar_url:
         current_user.avatar_url = avatar_url
     
-    current_user.updated_at = datetime.utcnow()
+    current_user.updated_at = datetime.now(timezone.utc)
     db.commit()
     
     return ApiResponse.ok(message="Updated successfully")
@@ -290,7 +291,7 @@ def update_user_role(
         return ApiResponse.fail(code="NOT_FOUND", message="User does not exist")
     
     user.role = new_role
-    user.updated_at = datetime.utcnow()
+    user.updated_at = datetime.now(timezone.utc)
     db.commit()
     
     return ApiResponse.ok(message=f"Role updated to {new_role}")
