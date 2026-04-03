@@ -8,7 +8,6 @@ from typing import List
 from pydantic_settings import BaseSettings
 from pydantic import Field, field_validator
 
-
 class Settings(BaseSettings):
     """应用配置"""
 
@@ -25,10 +24,10 @@ class Settings(BaseSettings):
     # CORS 配置
     # 开发环境的默认源（本地开发服务器）
     DEFAULT_CORS_ORIGINS: List[str] = [
-        "http://localhost:3000",
-        "http://localhost:8000",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:8000",
+        "http://localhost:3one thousand",
+        "http://localhost:eight thousand",
+        "http://127.0.0.1:3one thousand",
+        "http://127.0.0.1:eight thousand",
     ]
 
     CORS_ORIGINS: List[str] = Field(
@@ -107,13 +106,13 @@ class Settings(BaseSettings):
     # JWT 配置
     SECRET_KEY: str = Field(
         default="",
-        description="JWT密钥，用于签名和验签"
+        description="JWT密钥用于签名和验签"
     )
 
     @field_validator("SECRET_KEY", mode="before")
     @classmethod
     def _validate_secret_key(cls, v):
-        """"验证SECRET_KEY，如果为空则抛出错误或使用默认值"""
+        """验证SECRET_KEY，如果为空则抛出错误或使用默认值"""
         if not v:
             # 从环境变量读取
             env_key = os.environ.get("SECRET_KEY")
@@ -168,8 +167,103 @@ class Settings(BaseSettings):
         """判断是否为生产环境"""
         return self.ENV.lower() == "production"
 
-    model_config = {"env_file": ".env", "case_sensitive": True}
+    # ============ Issue 管理配置 ============
 
+    # 是否启用 Issue 自动分类和分配
+    ENABLE_ISSUE_CHECK: bool = Field(
+        default=True,
+        description="是否在 Issue 事件触发自动分类和分配"
+    )
+
+    # Issue 自动分配开关
+    ISSUE_AUTO_ASSIGN: bool = Field(
+        default=True,
+        description="是否自动分配 Issue 给负责人"
+    )
+
+    # Issue 是否按分类自动分配（True=按分类映射角色False=轮询）
+    ISSUE_USE_CATEGORY_ASSIGN: bool = Field(
+        default=True,
+        description="是否根据 Issue 分类自动分配给对应角色"
+    )
+
+    # Issue 角色到具体人员的映射（格式：{"coder": ["user1", "user2"], ...}）
+    ISSUE_ASSIGNEES: dict = Field(
+        default={},
+        description="Issue 角色到具体人员的映射，用于分配"
+    )
+
+    # Issue 角色到角色的中文映射（显示用）
+    ISSUE_ROLE_MAPPING: dict = Field(
+        default={
+            "coder": "👨‍💻 开发工程师",
+            "researcher": "🔬 技术研究员",
+            "academic": "🎓 学术顾问",
+        },
+        description="Issue 角色到中文名的映射"
+    )
+
+    # Issue 通知开关
+    ENABLE_ISSUE_NOTIFY: bool = Field(
+        default=True,
+        description="是否发送 Issue 相关飞书通知"
+    )
+
+    # Issue 超时配置（单位：小时）
+    ISSUE_TIMEOUT_HOURS: int = Field(
+        default=72,
+        description="Issue 处理超时时间，超过此时间未处理自动提醒"
+    )
+
+    ISSUE_ENABLE_TIMEOUT_REMINDER: bool = Field(
+        default=True,
+        description="是否启用 Issue 处理超时提醒"
+    )
+
+    # ============ GitHub PR 审核配置（保留原配置） ============
+    # GitHub Webhook Secret
+    GITHUB_WEBHOOK_SECRET: str = Field(
+        default="",
+        description="GitHub Webhook 签名密钥"
+    )
+
+    # GitHub Personal Access Token
+    GITHUB_TOKEN: str = Field(default="", description="GitHub API Token")
+
+    # 仓库信息
+    GITHUB_REPO_OWNER: str = Field(default="", description="GitHub 仓库所有者")
+    GITHUB_REPO_NAME: str = Field(default="", description="GitHub 仓库名称")
+
+    # PR 检查开关
+    ENABLE_PR_CHECK: bool = Field(default=True, description="是否启用 PR 自动检查")
+
+    # PR 检查规则
+    PR_CHECK_ROUFF: bool = Field(default=True, description="是否启用 ruff 代码检查")
+    PR_CHECK_COVERAGE: bool = Field(default=False, description="是否启用测试覆盖度检查")
+    PR_MIN_COVERAGE_PERCENT: int = Field(default=80, description="最小测试覆盖度要求")
+    PR_CHECK_BANDIT: bool = Field(default=False, description="是否启用安全扫描")
+
+    # 审核人配置
+    PR_REVIEWERS: List[str] = Field(default=[], description="PR 审核人列表")
+    PR_AUTO_ASSIGN_REVIEWER: bool = Field(default=True, description="是否自动分配审核人")
+
+    # 超时配置
+    PR_TIMEOUT_HOURS: int = Field(default=24, description="PR 审核超时时间")
+    PR_ENABLE_TIMEOUT_REMINDER: bool = Field(default=True, description="是否启用超时提醒")
+
+    # 合并后操作
+    PR_ENABLE_MERGE_NOTIFICATION: bool = Field(default=True, description="合并后是否发送通知")
+
+    # ============ 飞书通知配置 ============
+    FEISHU_WEBHOOK_URL: str = Field(default="", description="飞书 Webhook URL")
+    FEISHU_CHAT_ID: str = Field(default="", description="飞书群 ID")
+    FEISHU_APP_ID: str = Field(default="", description="飞书 App ID")
+    FEISHU_APP_SECRET: str = Field(default="", description="飞书 App Secret")
+
+    # 飞书通知总开关
+    ENABLE_FEISHU_NOTIFY: bool = Field(default=True, description="是否启用飞书通知")
+
+    model_config = {"env_file": ".env", "case_sensitive": True}
 
 # 全局配置实例
 settings = Settings(_env_file="")  # 先创建实例，避免循环依赖
