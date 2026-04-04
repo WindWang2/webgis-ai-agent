@@ -147,6 +147,14 @@ class Settings(BaseSettings):
     DATA_DIR: str = Field(default="./data")
     TMP_DIR: str = Field(default="./tmp")
 
+    # LLM 大模型配置
+    LLM_PROVIDER: str = Field(default="openai", description="LLM服务提供商")
+    LLM_BASE_URL: str = Field(default="", description="LLM API基础地址")
+    LLM_API_KEY: str = Field(default="", description="LLM API密钥")
+    LLM_MODEL: str = Field(default="MiniMax-M2.5", description="LLM模型名称")
+    LLM_CONTEXT_WINDOW: int = Field(default=196608, description="模型上下文窗口大小")
+    LLM_MAX_TOKENS: int = Field(default=16384, description="最大输出token数")
+
     # ============ GitHub PR 审核配置 ============
     # GitHub Webhook Secret（在 GitHub Webhook 设置中配置的签名密钥）
     GITHUB_WEBHOOK_SECRET: str = Field(
