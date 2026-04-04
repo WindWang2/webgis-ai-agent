@@ -199,7 +199,7 @@ def _generate_ai_response(user_message: str, history: list[dict]) -> str:
         
     except Exception as e:
         logger.error(f"LLM调用失败：{str(e)}")
-        return f"❌ 调用AI服务失败：{str(e)}"}
+        return f'❌ 调用AI服务失败：{str(e)}'
 
 
 __all__ = ["router"]
