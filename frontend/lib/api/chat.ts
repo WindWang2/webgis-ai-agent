@@ -97,7 +97,7 @@ export async function getSessionDetail(sessionId: string): Promise<SessionDetail
  * 删除会话
  */
 export async function deleteSession(sessionId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/chat/session/${sessionId}`, {
+  const res = await fetch(`${API_BASE}/chat/sessions/${sessionId}`, {
     method: 'DELETE',
   });
   
@@ -110,7 +110,7 @@ export async function deleteSession(sessionId: string): Promise<void> {
  * 清空会话消息（保留会话）
  */
 export async function clearSessionMessages(sessionId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/chat/session/${sessionId}/clear`, {
+  const res = await fetch(`${API_BASE}/chat/sessions/${sessionId}/clear`, {
     method: 'DELETE',
   });
   
