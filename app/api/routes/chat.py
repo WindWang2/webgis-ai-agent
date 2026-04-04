@@ -90,7 +90,7 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
     if len(session["messages"]) <= 2:
         session["title"] = user_message[:30] + ("..." if len(user_message) > 30 else "")
     
-    return ApiResponse.success(data={
+    return ApiResponse.ok(data={
         "session_id": session_id,
         "message": ai_response_text,
         "timestamp": ai_msg["timestamp"]
@@ -112,7 +112,7 @@ async def get_session_list():
     
     sessions.sort(key=lambda x: x["updated_at"], reverse=True)
     
-    return ApiResponse.success(data={"sessions": sessions})
+    return ApiResponse.ok(data={"sessions": sessions})
 
 
 @router.get("/sessions/{session_id}", response_model=ApiResponse)
@@ -122,7 +122,7 @@ async def get_session_detail(session_id: str):
         raise HTTPException(status_code=404, detail="会话不存在")
     
     session = _chat_sessions[session_id]
-    return ApiResponse.success(data={
+    return ApiResponse.ok(data={
         "id": session["id"],
         "title": session.get("title", "新对话"),
         "messages": session.get("messages", []),
@@ -136,7 +136,7 @@ async def delete_session(session_id: str):
     """删除会话"""
     if session_id in _chat_sessions:
         del _chat_sessions[session_id]
-    return ApiResponse.success(message="会话已删除")
+    return ApiResponse.ok(message="会话已删除")
 
 
 @router.delete("/session/{session_id}/clear", response_model=ApiResponse)
@@ -148,7 +148,7 @@ async def clear_session_messages(session_id: str):
     _chat_sessions[session_id]["messages"] = []
     _chat_sessions[session_id]["updated_at"] = int(datetime.now().timestamp() * 1000)
     
-    return ApiResponse.success(message="会话消息已清空")
+    return ApiResponse.ok(message="会话消息已清空")
 
 
 def _generate_ai_response(user_message: str, history: list[dict]) -> str:
