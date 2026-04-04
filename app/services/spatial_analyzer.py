@@ -5,10 +5,12 @@ T003 矢量数据智能识别模块 + T004 基础空间分析算子
 """
 import logging
 import math
+import os
 from typing import Dict, List, Any, Optional, Callable, Tuple
 from dataclasses import dataclass
 import geopandas as gpd
-from shapely.geometry import shape, mapping, Geometry
+from shapely.geometry import shape, mapping
+from shapely import Geometry
 from shapely.validation import explain_validity, make_valid
 
 logger = logging.getLogger(__name__)
@@ -190,7 +192,7 @@ class SpatialAnalyzer:
         
         返回:
             {type: FeatureCollection, features: [...], stats: {...}}
-        """"
+        """
         try:
             if callback: callback(10, "准备数据...")
             
