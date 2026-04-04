@@ -60,10 +60,11 @@ def submit_task(
     
     # 触发 Celery 任务
     celery_task = run_spatial_analysis.apply_async(
-        args=[task_type, parameter],
         kwargs={
+            "task_id": str(task.id),
+            "task_type": task_type,
             "layer_id": layer_id,
-            "task_id": str(task.id)
+            "parameters": parameters
         },
         task_id=str(task.celery_task_id)
     )
@@ -162,13 +163,12 @@ def retry_task(task_id: int, db: DbSession = Depends(get_db)):
     svc.increment_retry(task_id)
     svc.update_status(task_id, "pending")
     
-    celery_task = run_spatial_analysis.apply_async(
-        args=[task.task_type, task.parameters],
-        kwargs={
-            "layer_id": task.layer_id,
-            "task_id": str(task_id)
-        }
-    )
+    celery_task = run_spatial_analysis.delay(kwargs={
+        "task_id": str(task_id),
+        "task_type": task.task_type,
+        "layer_id": task.layer_id,
+        "parameters": task.parameters
+    })
     
     svc.update_celery_id(str(task_id), celery_task.id)
     

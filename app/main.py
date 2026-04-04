@@ -20,19 +20,12 @@ from app.core.config import Settings, settings
 from app.core.exception import global_exception_handler
 from app.db.session import engine, SessionLocal, init_db
 from app.api.routes import health, layer, tasks, auth
-# 增加 webhook 导入
-try:
-    from app.api.routes import webhook
-except ImportError:
-    webhook = None
-
+from app.api.routes import issue_webhook
 # 增加 chat 路由导入
 try:
     from app.api.routes import chat
 except ImportError:
     chat = None
-
-# 注册路由时排除空的 analysis 路由（功能已在 tasks 中实现）
 from app.services.celery_config import celery_app
 
 # 日志配置
@@ -96,8 +89,11 @@ app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])
 app.include_router(layer.router, prefix="/api/v1", tags=["图层管理"])
 app.include_router(tasks.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(auth.router, prefix="/api/v1", tags=["认证"])
-app.include_router(webhook.router, prefix="/api/v1", tags=["Webhook"])
-# 注入 chat 路由
+
+# ============ Webhook 路由 ============
+app.include_router(issue_webhook.router, prefix="/api/v1", tags=["Issue Webhook"])
+
+# ============ Chat 路由 ============
 if chat and hasattr(chat, 'router'):
     app.include_router(chat.router, prefix="/api/v1", tags=["AI聊天"])
 # ============ 根路径 ============

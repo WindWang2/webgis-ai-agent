@@ -7,21 +7,17 @@ from sqlalchemy.orm import Session
 from typing import Optional, List
 
 from app.core.config import settings
+from app.core.auth import get_current_user as auth_get_current_user
 from app.models.pydantic_models import (
     LayerCreate, LayerUpdate, LayerResponse, LayerListResponse,
     TaskCreate, TaskResponse, TaskListResponse,
     SuccessResponse, ErrorResponse
 )
+from app.models.db_models import User
 from app.services.layer_service import LayerService, TaskService
 from app.db.session import get_db
 
 router = APIRouter()
-
-
-def get_current_user():
-    """获取当前用户（模拟，实际应使用 JWT）"""
-    # TODO: 实现真实的用户认证
-    return {"id": 1, "username": "admin"}
 
 
 # ==================== 图层 CRUD ====================
@@ -30,7 +26,7 @@ def get_current_user():
 def create_layer(
     layer: LayerCreate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(auth_get_current_user)
 ):
     """
     创建新图层
@@ -42,7 +38,7 @@ def create_layer(
     - **is_public**: 是否公开（默认 true）
     """
     layer_service = LayerService(db)
-    created_layer = layer_service.create(layer, owner_id=current_user["id"])
+    created_layer = layer_service.create(layer, owner_id=current_user.id)
     return created_layer
 
 
@@ -81,7 +77,7 @@ def list_layers(
 def get_layer(
     layer_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(auth_get_current_user)
 ):
     """
     获取单个图层详情
@@ -95,8 +91,8 @@ def get_layer(
         raise HTTPException(status_code=404, detail="图层不存在")
     
     # 权限检查
-    if not layer.is_public and layer.owner_id != current_user["id"]:
-        if not layer_service.check_permission(layer_id, current_user["id"], "read"):
+    if not layer.is_public and layer.owner_id != current_user.id:
+        if not layer_service.check_permission(layer_id, current_user.id, "read"):
             raise HTTPException(status_code=403, detail="无权限访问")
     
     return layer
@@ -107,7 +103,7 @@ def update_layer(
     layer_id: int,
     layer_update: LayerUpdate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(auth_get_current_user)
 ):
     """
     更新图层信息
@@ -121,8 +117,8 @@ def update_layer(
     if not layer:
         raise HTTPException(status_code=404, detail="图层不存在")
     
-    if layer.owner_id != current_user["id"]:
-        if not layer_service.check_permission(layer_id, current_user["id"], "write"):
+    if layer.owner_id != current_user.id:
+        if not layer_service.check_permission(layer_id, current_user.id, "write"):
             raise HTTPException(status_code=403, detail="无权限修改")
     
     updated_layer = layer_service.update(layer_id, layer_update)
@@ -133,7 +129,7 @@ def update_layer(
 def delete_layer(
     layer_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(auth_get_current_user)
 ):
     """
     删除图层（软删除）
@@ -146,7 +142,7 @@ def delete_layer(
     if not layer:
         raise HTTPException(status_code=404, detail="图层不存在")
     
-    if layer.owner_id != current_user["id"]:
+    if layer.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="无权限删除")
     
     layer_service.delete(layer_id)
@@ -160,7 +156,7 @@ def create_analysis_task(
     layer_id: int,
     task: TaskCreate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(auth_get_current_user)
 ):
     """
     创建空间分析任务
@@ -175,7 +171,7 @@ def create_analysis_task(
     layer_service = LayerService(db)
     
     # 检查图层权限
-    if not layer_service.check_permission(layer_id, current_user["id"], "write"):
+    if not layer_service.check_permission(layer_id, current_user.id, "write"):
         raise HTTPException(status_code=403, detail="无权限执行分析")
     
     task_service = TaskService(db)

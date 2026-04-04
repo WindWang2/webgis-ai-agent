@@ -98,7 +98,7 @@ class TestSessionEndpoints:
         assert response.status_code == 404
 
     def test_delete_session(self, chat_client):
-        """Test DELETE /chat/session/{id}"""
+        """Test DELETE /chat/sessions/{id}"""
         # Create a session first
         create_resp = chat_client.post(
             "/api/v1/chat/",
@@ -107,7 +107,7 @@ class TestSessionEndpoints:
         session_id = create_resp.json()["data"]["session_id"]
         
         # Delete it
-        del_resp = chat_client.delete(f"/api/v1/chat/session/{session_id}")
+        del_resp = chat_client.delete(f"/api/v1/chat/sessions/{session_id}")
         assert del_resp.status_code == 200
         
         # Verify it's deleted
@@ -124,7 +124,7 @@ class TestSessionEndpoints:
         session_id = create_resp.json()["data"]["session_id"]
         
         # Clear messages
-        clear_resp = chat_client.delete(f"/api/v1/chat/session/{session_id}/clear")
+        clear_resp = chat_client.delete(f"/api/v1/chat/sessions/{session_id}/clear")
         assert clear_resp.status_code == 200
         
         # Get session detail - should have empty messages
