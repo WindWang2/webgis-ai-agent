@@ -131,7 +131,7 @@ async def get_session_detail(session_id: str):
     })
 
 
-@router.delete("/session/{session_id}", response_model=ApiResponse)
+@router.delete("/sessions/{session_id}", response_model=ApiResponse)
 async def delete_session(session_id: str):
     """删除会话"""
     if session_id in _chat_sessions:
@@ -139,7 +139,7 @@ async def delete_session(session_id: str):
     return ApiResponse.ok(message="会话已删除")
 
 
-@router.delete("/session/{session_id}/clear", response_model=ApiResponse)
+@router.delete("/sessions/{session_id}/clear", response_model=ApiResponse)
 async def clear_session_messages(session_id: str):
     """清空会话消息（保留会话）"""
     if session_id not in _chat_sessions:

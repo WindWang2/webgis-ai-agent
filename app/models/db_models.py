@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 """PostgreSQL + PostGIS 数据库模型
 T008: PostGIS数据库设计与初始化 - 核心表结构设计、PostGIS扩展配置、索引优化
 
