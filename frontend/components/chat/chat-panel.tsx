@@ -2,6 +2,8 @@
 import { useState, useRef, useEffect } from "react"
 import { Send, Paperclip, Bot, User, Loader2, Upload, X } from "lucide-react"
 import { streamChat } from "@/lib/api/chat"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 
 interface Message {
   id: string
@@ -127,7 +129,7 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
           setSessionId(data.session_id)
         } else if (eventType === "tool_call") {
           const toolName = typeof data === "object" ? data.name || data.tool : String(data)
-          assistantContent += `\n🔧 正在调用工具: ${toolName}\n`
+          assistantContent += `\n🔧 *正在调用 ${toolName}...*\n`
           setMessages(prev => prev.map(msg =>
             msg.id === thinkingMessage.id
               ? { ...msg, content: assistantContent, isThinking: false }
@@ -135,12 +137,29 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
           ))
           scrollToBottom()
         } else if (eventType === "tool_result") {
-          // Notify parent for GeoJSON rendering
-          if (onToolResult && typeof data === "object" && data?.name) {
-            onToolResult(data.name, data.result || data)
+          const toolName = typeof data === "object" ? data.name || "unknown" : "unknown"
+          const toolResult = typeof data === "object" ? (data.result || data) : data
+
+          // 通知父组件渲染 GeoJSON
+          if (onToolResult) {
+            onToolResult(toolName, toolResult)
           }
-          const result = typeof data === "object" ? JSON.stringify(data, null, 2) : String(data)
-          assistantContent += `📋 工具结果: ${result}\n`
+
+          // 简化显示
+          let summary = ""
+          if (toolResult?.count !== undefined) {
+            summary = `找到 ${toolResult.count} 个结果`
+          } else if (toolResult?.stats) {
+            summary = `统计完成`
+          } else if (toolResult?.error) {
+            summary = `错误: ${toolResult.error}`
+          } else if (toolResult?.status === "ok") {
+            summary = `数据获取成功`
+          } else {
+            summary = "完成"
+          }
+
+          assistantContent += `\n✅ **${toolName}**: ${summary}\n`
           setMessages(prev => prev.map(msg =>
             msg.id === thinkingMessage.id
               ? { ...msg, content: assistantContent, isThinking: false }
@@ -233,7 +252,11 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
                   <span className="text-xs">思考中...</span>
                 </div>
               ) : (
-                <div className="whitespace-pre-wrap">{message.content}</div>
+                <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2 prose-pre:my-1 prose-code:text-xs break-words">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {message.content}
+                  </ReactMarkdown>
+                </div>
               )}
             </div>
           </div>
