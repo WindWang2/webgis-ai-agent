@@ -64,6 +64,8 @@ async def generate_report(
     from app.services.layer_service import TaskService
     task_svc = TaskService(db)
     task = task_svc.get_task(request.task_id)
+    task = task_svc.get_task_by_id(request.task_id)
+
     
     if not task:
         return ApiResponse.fail(code="TASK_NOT_FOUND", message="任务不存在")

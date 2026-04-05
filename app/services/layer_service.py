@@ -181,6 +181,17 @@ class TaskService:
         return self.db.query(AnalysisTask).filter(
             AnalysisTask.task_id == task_id
         ).first()
+        """获取任务（通过UUID）"""
+        return self.db.query(AnalysisTask).filter(
+            AnalysisTask.task_id == task_id
+        ).first()
+
+    def get_task_by_id(self, task_id: int) -> Optional[AnalysisTask]:
+        """获取任务（通过自增ID）"""
+        return self.db.query(AnalysisTask).filter(
+            AnalysisTask.id == task_id
+        ).first()
+
     
     def update_task_status(
         self, 
