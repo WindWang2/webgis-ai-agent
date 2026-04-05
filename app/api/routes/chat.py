@@ -8,6 +8,7 @@ from typing import Optional
 
 from app.services.chat_engine import ChatEngine
 from app.tools.registry import ToolRegistry
+from app.tools.osm import register_osm_tools
 from app.tools.geocoding import register_geocoding_tools
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,7 @@ router = APIRouter(prefix="/chat", tags=["对话"])
 # 全局工具注册中心和对话引擎
 registry = ToolRegistry()
 register_geocoding_tools(registry)
+register_osm_tools(registry)
 engine = ChatEngine(registry)
 
 
