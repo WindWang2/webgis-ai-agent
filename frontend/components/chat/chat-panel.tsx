@@ -23,9 +23,10 @@ interface ChatPanelProps {
   onAnalysisRequest?: (message: string, attachments?: Attachment[]) => void
   incomingMessage?: string
   incomingResponse?: string
+  onToolResult?: (toolName: string, result: any) => void
 }
 
-export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse }: ChatPanelProps) {
+export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse, onToolResult }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "1",
@@ -134,6 +135,10 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
           ))
           scrollToBottom()
         } else if (eventType === "tool_result") {
+          // Notify parent for GeoJSON rendering
+          if (onToolResult && typeof data === "object" && data?.name) {
+            onToolResult(data.name, data.result || data)
+          }
           const result = typeof data === "object" ? JSON.stringify(data, null, 2) : String(data)
           assistantContent += `📋 工具结果: ${result}\n`
           setMessages(prev => prev.map(msg =>

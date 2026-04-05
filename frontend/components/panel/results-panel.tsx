@@ -47,9 +47,10 @@ interface ReportData {
 interface ResultsPanelProps {
   onGenerateReport?: () => void
   analysisResults?: ResultItem[]
+  layers?: any[]
 }
 
-export function ResultsPanel({ onGenerateReport, analysisResults }: ResultsPanelProps) {
+export function ResultsPanel({ onGenerateReport, analysisResults, layers }: ResultsPanelProps) {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<"results" | "report">("results")
   
