@@ -1,6 +1,7 @@
 "use client"
 import { useState, useRef, useEffect } from "react"
 import { Send, Paperclip, Bot, User, Loader2, Upload, X } from "lucide-react"
+import { streamChat } from "@/lib/api/chat"
 
 interface Message {
   id: string
@@ -35,6 +36,7 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
   ])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [sessionId, setSessionId] = useState<string>()
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [showAttachments, setShowAttachments] = useState(false)
   const messageEndRef = useRef<HTMLDivElement>(null)
@@ -115,23 +117,33 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
     scrollToBottom()
 
     try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: messageText }),
-      })
-
-      if (!response.ok) throw new Error("API request failed")
-
-      const reader = response.body?.getReader()
-      const decoder = new TextDecoder()
       let assistantContent = ""
 
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          const chunk = decoder.decode(value)
+      for await (const event of streamChat(messageText, sessionId)) {
+        const { event: eventType, data } = event
+
+        if (eventType === "session" && data?.session_id) {
+          setSessionId(data.session_id)
+        } else if (eventType === "tool_call") {
+          const toolName = typeof data === "object" ? data.name || data.tool : String(data)
+          assistantContent += `\n🔧 正在调用工具: ${toolName}\n`
+          setMessages(prev => prev.map(msg =>
+            msg.id === thinkingMessage.id
+              ? { ...msg, content: assistantContent, isThinking: false }
+              : msg
+          ))
+          scrollToBottom()
+        } else if (eventType === "tool_result") {
+          const result = typeof data === "object" ? JSON.stringify(data, null, 2) : String(data)
+          assistantContent += `📋 工具结果: ${result}\n`
+          setMessages(prev => prev.map(msg =>
+            msg.id === thinkingMessage.id
+              ? { ...msg, content: assistantContent, isThinking: false }
+              : msg
+          ))
+          scrollToBottom()
+        } else if (eventType === "message" || eventType === "content" || eventType === "token") {
+          const chunk = typeof data === "object" ? (data.content || data.text || data.message || "") : String(data)
           assistantContent += chunk
           setMessages(prev => prev.map(msg =>
             msg.id === thinkingMessage.id
@@ -139,8 +151,17 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
               : msg
           ))
           scrollToBottom()
+        } else if (eventType === "done" || eventType === "end") {
+          break
         }
       }
+
+      // Ensure we un-set thinking state
+      setMessages(prev => prev.map(msg =>
+        msg.id === thinkingMessage.id
+          ? { ...msg, isThinking: false }
+          : msg
+      ))
 
       // Notify parent component
       onAnalysisRequest?.(messageText, attachments)

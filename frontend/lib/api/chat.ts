@@ -1,95 +1,115 @@
 /**
- * T005 AI Chat API Client
- * 对接后端 /api/v1/chat 接口
+ * Chat API - 对接后端 SSE 流式接口
  */
 
-import type { ChatMessage, ChatSession } from '../types/chat';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://192.168.193.121:8000/api/v1';
-
-export interface ChatResponse {
-  code: string;
-  success: boolean;
-  message: string;
-  data: {
-    session_id: string;
-    message: string;
-    timestamp: number;
-  };
+export interface ChatMessage {
+  role: "user" | "assistant" | "tool";
+  content: string;
+  toolCalls?: Array<{
+    name: string;
+    arguments: string;
+  }>;
+  toolResults?: Array<{
+    name: string;
+    result: any;
+  }>;
 }
 
-export interface SessionListResponse {
-  code: string;
-  success: boolean;
-  data: {
-    sessions: Array<{
-      id: string;
-      title: string;
-      created_at: number;
-      updated_at: number;
-      message_count: number;
-    }>;
-  };
-}
-
-export interface SessionDetailResponse {
-  code: string;
-  success: boolean;
-  data: {
-    id: string;
-    title: string;
-    messages: ChatMessage[];
-    created_at: number;
-    updated_at: number;
-  };
+export interface SSEEvent {
+  event: string;
+  data: any;
 }
 
 /**
- * 发送聊天消息
+ * 发送流式对话请求，返回 AsyncGenerator
  */
-export async function sendChatMessage(
+export async function* streamChat(
   message: string,
   sessionId?: string
-): Promise<ChatResponse> {
-  const res = await fetch(`${API_BASE}/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      message,
-      session_id: sessionId || null,
-    }),
+): AsyncGenerator<SSEEvent> {
+  const response = await fetch(`${API_BASE}/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, session_id: sessionId }),
   });
-  
-  if (!res.ok) {
-    throw new Error(`API Error: ${res.status}`);
+
+  if (!response.ok) {
+    throw new Error(`Chat API error: ${response.status}`);
   }
-  
-  return res.json();
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("No response body");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    let currentEvent = "";
+    let currentData = "";
+
+    for (const line of lines) {
+      if (line.startsWith("event: ")) {
+        currentEvent = line.slice(7).trim();
+      } else if (line.startsWith("data: ")) {
+        currentData = line.slice(6);
+        if (currentEvent && currentData) {
+          try {
+            yield { event: currentEvent, data: JSON.parse(currentData) };
+          } catch {
+            yield { event: currentEvent, data: currentData };
+          }
+          currentEvent = "";
+          currentData = "";
+        }
+      }
+    }
+  }
+}
+
+/**
+ * 非流式对话
+ */
+export async function sendChat(
+  message: string,
+  sessionId?: string
+): Promise<{ content: string; session_id: string }> {
+  const response = await fetch(`${API_BASE}/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, session_id: sessionId }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Chat API error: ${response.status}`);
+  }
+
+  return response.json();
 }
 
 /**
  * 获取会话历史列表
  */
-export async function getSessionList(): Promise<SessionListResponse> {
+export async function getSessionList() {
   const res = await fetch(`${API_BASE}/chat/sessions`);
-  
-  if (!res.ok) {
-    throw new Error(`API Error: ${res.status}`);
-  }
-  
+  if (!res.ok) throw new Error(`API Error: ${res.status}`);
   return res.json();
 }
 
 /**
  * 获取会话详细内容
  */
-export async function getSessionDetail(sessionId: string): Promise<SessionDetailResponse> {
+export async function getSessionDetail(sessionId: string) {
   const res = await fetch(`${API_BASE}/chat/sessions/${sessionId}`);
-  
-  if (!res.ok) {
-    throw new Error(`API Error: ${res.status}`);
-  }
-  
+  if (!res.ok) throw new Error(`API Error: ${res.status}`);
   return res.json();
 }
 
@@ -98,12 +118,9 @@ export async function getSessionDetail(sessionId: string): Promise<SessionDetail
  */
 export async function deleteSession(sessionId: string): Promise<void> {
   const res = await fetch(`${API_BASE}/chat/sessions/${sessionId}`, {
-    method: 'DELETE',
+    method: "DELETE",
   });
-  
-  if (!res.ok) {
-    throw new Error(`API Error: ${res.status}`);
-  }
+  if (!res.ok) throw new Error(`API Error: ${res.status}`);
 }
 
 /**
@@ -111,10 +128,7 @@ export async function deleteSession(sessionId: string): Promise<void> {
  */
 export async function clearSessionMessages(sessionId: string): Promise<void> {
   const res = await fetch(`${API_BASE}/chat/sessions/${sessionId}/clear`, {
-    method: 'DELETE',
+    method: "DELETE",
   });
-  
-  if (!res.ok) {
-    throw new Error(`API Error: ${res.status}`);
-  }
+  if (!res.ok) throw new Error(`API Error: ${res.status}`);
 }
