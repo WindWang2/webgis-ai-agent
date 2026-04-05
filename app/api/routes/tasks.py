@@ -9,7 +9,7 @@ import asyncio
 import json
 from datetime import datetime
 from sqlalchemy.orm import Session as DbSession
-from app.db.session import get_db
+from app.core.database import get_db
 from app.models.api_response import ApiResponse
 from app.services.task_queue import TaskQueueService
 from app.tasks.analysis import run_analysis as run_spatial_analysis

@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional
 from celery import Task
 
 from app.services.task_queue import celery_app
-from app.db.session import get_db_session
+from app.core.database import get_db
 
 logger = logging.getLogger(__name__)
 
