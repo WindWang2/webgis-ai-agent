@@ -1,17 +1,102 @@
 "use client"
-
-import { useState, useRef, useEffect } from "react"
-import Map, { Layer, Source, NavigationControl } from "react-map-gl"
+import { useState, useRef, useCallback, useEffect } from "react"
+import Map, { Layer, Source, Marker, NavigationControl, MapRef, ViewStateChangeEvent } from "react-map-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
-import { Layers, ZoomIn, ZoomOut, Maximize } from "lucide-react"
+import { Layers, ZoomIn, ZoomOut, Maximize, MapPin, Eye, EyeOff, RotateCcw, Target } from "lucide-react"
 
-const MAPBOX_TOKEN = "" // Use with MapLibre free tiles or your own tile server
+interface MapPanelProps {
+  analysisResult?: {
+    geoJson?: any
+    center?: [number, number]
+    zoom?: number
+    markersPoints?: Array<{ lng: number; lat: number; label?: string }>
+  }
+}
 
-export function MapPanel() {
-  const [showLayers, setShowLayers] = useState(false)
-  const mapRef = useRef<any>(null)
+// Free tile servers for MapLibre
+const FREE_TILE_SERVERS = [
+  "https://demotiles.maplibre.org/style.json",
+  "https://tiles.openstreetmap.org/{z}/{x}/{y}.png",
+]
 
-  const mapStyle = "https://demotiles.maplibre.org/style.json"
+const DEFAULT_VIEW_STATE = {
+  longitude: 116.4074,
+  latitude: 39.9042,
+  zoom: 4,
+}
+
+export function MapPanel({ analysisResult }: MapPanelProps) {
+  const [showLayer, setShowLayer] = useState({
+    base: true,
+    analysis: true,
+    markers: true,
+  })
+  const [showLayerPanel, setShowLayerPanel] = useState(false)
+  const [coordinates, setCoordinates] = useState({ lng: 0, lat: 0 })
+  const [viewState, setViewState] = useState(DEFAULT_VIEW_STATE)
+  const mapRef = useRef<MapRef>(null)
+
+  // Apply analysis results to map
+  useEffect(() => {
+    if (analysisResult) {
+      if (analysisResult.center) {
+        setViewState(prev => ({
+          ...prev,
+          longitude: analysisResult.center![0],
+          latitude: analysisResult.center![1],
+          zoom: analysisResult.zoom || prev.zoom,
+        }))
+        mapRef.current?.flyTo({
+          center: analysisResult.center,
+          zoom: analysisResult.zoom || 10,
+          duration: 1500,
+        })
+      }
+    }
+  }, [analysisResult])
+
+  const handleMove = useCallback((evt: ViewStateChangeEvent) => {
+    setViewState(evt.viewState)
+  }, [])
+
+  const handleMouseMove = useCallback((e: React.MapMouseEvent) => {
+    setCoordinates({
+      lng: Number(e.lngLat.lng.toFixed(4)),
+      lat: Number(e.lngLat.lat.toFixed(4)),
+    })
+  }, [])
+
+  const handleZoomIn = () => {
+    mapRef.current?.zoomIn({ duration: 300 })
+  }
+
+  const handleZoomOut = () => {
+    mapRef.current?.zoomOut({ duration: 300 })
+  }
+
+  const handleReset = () => {
+    mapRef.current?.flyTo({
+      center: [DEFAULT_VIEW_STATE.longitude, DEFAULT_VIEW_STATE.latitude],
+      zoom: DEFAULT_VIEW_STATE.zoom,
+      duration: 1000,
+    })
+  }
+
+  const handleLocate = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          mapRef.current?.flyTo({
+            center: [pos.coords.longitude, pos.coords.latitude],
+            zoom: 14,
+            duration: 1000,
+          })
+        },
+        (err) => console.warn("Location denied:", err),
+        { enableHighAccuracy: true }
+      )
+    }
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -23,8 +108,10 @@ export function MapPanel() {
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => setShowLayers(!showLayers)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-border hover:bg-muted transition-colors"
+            onClick={() => setShowLayerPanel(!showLayerPanel)}
+            className={`flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${
+              showLayerPanel ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted"
+            }`}
             title="图层管理"
           >
             <Layers className="h-4 w-4" />
@@ -32,76 +119,150 @@ export function MapPanel() {
         </div>
       </div>
 
-      {/* Map */}
+      {/* Map Container */}
       <div className="flex-1 relative">
         <Map
           ref={mapRef}
-          initialViewState={{
-            longitude: 116.4074,
-            latitude: 39.9042,
-            zoom: 4,
-          }}
+          {...viewState}
+          onMove={handleMove}
+          onMouseMove={handleMouseMove}
           style={{ width: "100%", height: "100%" }}
-          mapStyle={mapStyle}
+          mapStyle={FREE_TILE_SERVERS[0]}
           attributionControl={false}
+          reuseMaps
         >
           <NavigationControl position="bottom-right" />
-          
-          {/* Example layer - can be replaced with dynamic layers */}
-          <Source id="data" type="geojson" data={{
-            type: "FeatureCollection",
-            features: []
-          }}>
-            <Layer
-              id="points"
-              type="circle"
-              paint={{
-                "circle-radius": 8,
-                "circle-color": "#3b82f6",
-                "circle-stroke-width": 2,
-                "circle-stroke-color": "#ffffff",
-              }}
-            />
-          </Source>
+
+          {/* Base map layer - always visible */}
+          {showLayer.base && (
+            <Source
+              id="base-tiles"
+              type="raster"
+              tiles={[
+                "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+              ]}
+              tileSize={256}
+            >
+              <Layer
+                id="base-layer"
+                type="raster"
+                paint={{ "raster-opacity": 1 }}
+              />
+            </Source>
+          )}
+
+          {/* Analysis results GeoJSON layer */}
+          {showLayer.analysis && analysisResult?.geoJson && (
+            <Source id="analysis-data" type="geojson" data={analysisResult.geoJson}>
+              <Layer
+                id="analysis-points"
+                type="circle"
+                paint={{
+                  "circle-radius": 8,
+                  "circle-color": "#3b82f6",
+                  "circle-stroke-width": 2,
+                  "circle-stroke-color": "#ffffff",
+                }}
+              />
+              <Layer
+                id="analysis-lines"
+                type="line"
+                paint={{
+                  "line-color": "#ef4444",
+                  "line-width": 3,
+                }}
+              />
+              <Layer
+                id="analysis-polygons"
+                type="fill"
+                paint={{
+                  "fill-color": "#22c55e",
+                  "fill-opacity": 0.3,
+                }}
+              />
+            </Source>
+          )}
+
+          {/* Custom markers from analysis */}
+          {showLayer.marker && analysisResult?.markerPoints?.map((point, idx) => (
+            <Marker
+              key={idx}
+              longitude={point.lng}
+              latitude={point.lat}
+              anchor="bottom"
+            >
+              <div className="flex items-center justify-center">
+                <MapPin className="h-6 w-6 text-red-500 drop-shadow-md" />
+              </div>
+            </Marker>
+          ))}
         </Map>
 
-        {/* Zoom controls */}
-        <div className="absolute bottom-4 left-4 flex flex-col gap-2">
+        {/* Floating Controls - Left Side */}
+        <div className="absolute top-4 left-4 flex flex-col gap-2">
           <button
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-background shadow border border-border hover:bg-muted transition-colors"
+            onClick={handleZoomIn}
+            className="flex h-9 w-9 items-center justify-center rounded-lg bg-background shadow-md border border-border hover:bg-muted transition-colors"
             title="放大"
           >
             <ZoomIn className="h-4 w-4" />
           </button>
           <button
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-background shadow border border-border hover:bg-muted transition-colors"
+            onClick={handleZoomOut}
+            className="flex h-9 w-9 items-center justify-center rounded-lg bg-background shadow-md border border-border hover:bg-muted transition-colors"
             title="缩小"
           >
             <ZoomOut className="h-4 w-4" />
           </button>
           <button
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-background shadow border border-border hover:bg-muted transition-colors"
-            title="全屏"
+            onClick={handleReset}
+            className="flex h-9 w-9 items-center justify-center rounded-lg bg-background shadow-md border border-border hover:bg-muted transition-colors"
+            title="复位"
           >
-            <Maximize className="h-4 w-4" />
+            <RotateCcw className="h-4 w-4" />
+          </button>
+          <button
+            onClick={handleLocate}
+            className="flex h-9 w-9 items-center justify-center rounded-lg bg-background shadow-md border border-border hover:bg-muted transition-colors"
+            title="定位"
+          >
+            <Target className="h-4 w-4" />
           </button>
         </div>
 
-        {/* Layer panel (conditional) */}
-        {showLayers && (
-          <div className="absolute top-16 left-4 bg-background rounded-lg shadow-lg border border-border p-3 w-48">
-            <h3 className="font-semibold mb-2 text-sm">图层列表</h3>
+        {/* Layer Control Panel */}
+        {showLayerPanel && (
+          <div className="absolute top-16 left-4 bg-background rounded-lg shadow-lg border border-border p-3 w-52 z-10">
+            <h3 className="font-semibold mb-3 text-sm">图层控制</h3>
             <div className="space-y-2">
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" defaultChecked className="rounded" />
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showLayer.base}
+                  onChange={(e) => setShowLayer(l => ({ ...l, base: e.target.checked }))}
+                  className="rounded accent-primary"
+                />
+                <Eye className="h-4 w-4" />
                 底图图层
               </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" className="rounded" />
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showLayer.analysis}
+                  onChange={(e) => setShowLayer(l => ({ ...l, analysis: e.target.checked }))}
+                  className="rounded accent-primary"
+                />
+                <Eye className="h-4 w-4" />
                 分析结果
               </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" className="rounded" />
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showLayer.marker}
+                  onChange={(e) => setShowLayer(l => ({ ...l, marker: e.target.checked }))}
+                  className="rounded accent-primary"
+                />
+                <MapPin className="h-4 w-4" />
                 标记点
               </label>
             </div>
@@ -109,11 +270,14 @@ export function MapPanel() {
         )}
       </div>
 
-      {/* Footer - Map info */}
-      <div className="border-t border-border p-2 text-xs text-muted-foreground">
-        <div className="flex justify-between">
-          <span>MapLibre GL JS</span>
-          <span id="coordinates">经度：0.00, 纬度：0.00</span>
+      {/* Footer - Coordinates Display */}
+      <div className="border-t border-border p-2 text-xs text-muted-foreground bg-muted/30">
+        <div className="flex justify-between items-center">
+          <span>MapLibre GL JS • OSM Tile</span>
+          <span className="font-mono">
+            经度: {coordinates.lng}°, 纬度: {coordinates.lat}°
+          </span>
+          <span>缩放: {viewState.zoom.toFixed(1)}</span>
         </div>
       </div>
     </div>
