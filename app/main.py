@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
+
 # 配置必须在导入前设置（保持向后兼容）
 os.environ.setdefault("REDIS_URL", "redis://redis:6379/0")
 
@@ -19,13 +20,15 @@ os.environ.setdefault("REDIS_URL", "redis://redis:6379/0")
 from app.core.config import Settings, settings
 from app.core.exception import global_exception_handler
 from app.db.session import engine, SessionLocal, init_db
-from app.api.routes import health, layer, tasks, auth
-from app.api.routes import issue_webhook
+from app.api.routes import health, layer, tasks, auth, report
+from app.api.routes import issue_webhook, webhook
+
 # 增加 chat 路由导入
 try:
     from app.api.routes import chat
 except ImportError:
     chat = None
+
 from app.services.celery_config import celery_app
 
 # 日志配置
@@ -62,6 +65,7 @@ async def lifespan(app: FastAPI):
     logger.info("🛑 应用关闭中...")
     logger.info("👋 应用已关闭")
 
+
 app = FastAPI(
     title="WebGIS AI Agent",
     description="智能地图分析与处理服务 - 后端API",
@@ -78,7 +82,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.get_cors_origins(),
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_method=["*"],
     allow_headers=["*"],
 )
 # GZIP压缩
@@ -89,6 +93,8 @@ app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])
 app.include_router(layer.router, prefix="/api/v1", tags=["图层管理"])
 app.include_router(tasks.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(auth.router, prefix="/api/v1", tags=["认证"])
+app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
+app.include_router(webhook.router, prefix="/api/v1", tags=["Webhook"])
 
 # ============ Webhook 路由 ============
 app.include_router(issue_webhook.router, prefix="/api/v1", tags=["Issue Webhook"])
@@ -96,6 +102,7 @@ app.include_router(issue_webhook.router, prefix="/api/v1", tags=["Issue Webhook"
 # ============ Chat 路由 ============
 if chat and hasattr(chat, 'router'):
     app.include_router(chat.router, prefix="/api/v1", tags=["AI聊天"])
+
 # ============ 根路径 ============
 @app.get("/", tags=["根路径"])
 async def root():
@@ -107,7 +114,7 @@ async def root():
     }
 
 # ============ 全局异常处理 ============
-# 使用统一的异常处理器，根据环境自动处理
+# 使用统一的异常处理器根据环境自动处理
 app.add_exception_handler(Exception, global_exception_handler)
 
 # ============ 开发环境测试路由 ============
@@ -123,6 +130,7 @@ async def trigger_error(error_type: str = "generic"):
         raise HTTPException(status_code=404, detail="这是测试用的404错误")
     else:
         raise Exception(f"未知错误类型: {error_type}")
+
 
 if __name__ == "__main__":
     import uvicorn

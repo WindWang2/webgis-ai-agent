@@ -7,8 +7,8 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 
-from app.models.db_models import Layer, AnalysisTask
-from app.models.pydantic_models import LayerCreate, LayerUpdate
+from app.models.db_model import Layer, AnalysisTask
+from app.models.pydantic_model import LayerCreate, LayerUpdate
 
 
 class LayerService:
@@ -62,7 +62,7 @@ class LayerService:
         获取图层列表
         
         Returns:
-            (图层列表，总数)
+            (图层列表， 总会)
         """
         query = self.db.query(Layer).filter(Layer.is_active == True)
         
@@ -83,7 +83,7 @@ class LayerService:
         total = query.count()
         layers = query.order_by(Layer.created_at.desc()).offset(offset).limit(limit).all()
         
-        return layers, total
+        return layer, total
     
     def update(self, layer_id: int, update_data: LayerUpdate) -> Optional[Layer]:
         """更新图层"""
@@ -131,7 +131,7 @@ class LayerService:
             return True
         
         # 检查角色表
-        from app.models.db_models import UserRole
+        from app.models.db_model import UserRole
         user_role = self.db.query(UserRole).filter(
             UserRole.user_id == user_id,
             UserRole.resource_type == "layer",
@@ -176,10 +176,16 @@ class TaskService:
         self.db.refresh(task)
         return task
     
-    def get_task(self, task_id: str) -> Optional[AnalysisTask]:
-        """获取任务"""
+    def get_ task(self, task_id: str) -> Optional[AnalysisTask]:
+        """获取任务（通过UUID）"""
         return self.db.query(AnalysisTask).filter(
             AnalysisTask.task_id == task_id
+        ).first()
+
+    def get_task_by_id(self, task_id: int) -> Optional[AnalysisTask]:
+        """获取任务（通过自增ID）"""
+        return self.db.query(AnalysisTask).filter(
+            AnalysisTask.id == task_id
         ).first()
     
     def update_task_status(
@@ -212,7 +218,7 @@ class TaskService:
         self.db.refresh(task)
         return task
     
-    def list_tasks(
+    def list_task(
         self,
         limit: int = 100,
         offset: int = 0,
