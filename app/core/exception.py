@@ -1,6 +1,6 @@
 """
 统一异常处理模块
-提供基于环境的全局异常处理器，开发环境返回详细错误，生产环境返回安全错误
+提供基于环境的全局异常处理器，开发环境返回详细错误生产环境返回安全错误
 """
 import logging
 import sys
@@ -14,14 +14,12 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 PRODUCTION_ERROR_MESSAGE = "服务器内部错误，请稍后重试"
-
 # 项目根目录用于清理敏感信息
 PROJECT_ROOT = str(Path(__file__).parent.parent.parent)
 
-
 def sanitize_traceback(tb_str: str) -> str:
     """
-    清理traceback中的敏感信息，包括项目路径、文件路径、行号
+    清理traceback中的敏感信息包括项目路径、文件路径、行号
     
     Args:
         tb_str: 原始traceback字符串
@@ -35,7 +33,7 @@ def sanitize_traceback(tb_str: str) -> str:
     # 第2步：清理标准Python traceback格式的文件路径和行号
     # 匹配模式：File "path/to/file.py", line N
     lines = sanitized.split('\n')
-    cleaned_lines = []
+    cleaned_line = []
     for line in lines:
         if ', line' in line:
             # 找到 ", line" 的位置并定位前面的文件路径
@@ -45,10 +43,9 @@ def sanitize_traceback(tb_str: str) -> str:
             file_keyword = line.rfind('File ', 0, max(0, quote_start))
             if file_keyword >= 0 and quote_start > file_keyword:
                 line = line[:file_keyword + 5] + '<REDACTED_PATH>' + line[idx:]
-        cleaned_lines.append(line)
+        cleaned_line.append(line)
     
-    return '\n'.join(cleaned_lines)
-
+    return '\n'.join(cleaned_line)
 
 def format_error_response(
     exc: Exception,
@@ -95,7 +92,6 @@ def format_error_response(
     
     return response_data
 
-
 async def global_exception_handler(
     request: Request,
     exc: Exception,
@@ -115,7 +111,7 @@ async def global_exception_handler(
         JSON格式的错误响应
     """
     # 判断是否显示详细信息：非生产环境都显示
-    include_detail = not settings.is_production()
+    include_details = not settings.is_production()
     
     # 无论哪种环境都记录完整日志便于服务端调试
     logger.error(
@@ -130,7 +126,7 @@ async def global_exception_handler(
     response_data = format_error_response(
         exc=exc,
         request=request,
-        include_detail=include_detail,
+        include_details=include_details,
     )
     
     # 确定HTTP状态码：HTTPException使用其自带的状态码
@@ -142,7 +138,6 @@ async def global_exception_handler(
         status_code=status_code,
         content=response_data,
     )
-
 
 __all__ = [
     "global_exception_handler",

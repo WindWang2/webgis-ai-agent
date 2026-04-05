@@ -35,3 +35,7 @@ openai>=1.0.0
 pytest>=7.4.4
 pytest-asyncio>=0.23.3
 httpx>=0.26.0
+
+# Report Generation
+Jinja2>=3.1.4
+weasyprint>=62.3
