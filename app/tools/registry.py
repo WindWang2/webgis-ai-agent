@@ -53,13 +53,16 @@ class ToolRegistry:
     def get_schemas(self) -> list[dict]:
         return self._schemas
 
-    def dispatch(self, name: str, arguments: dict | str) -> Any:
-        """执行工具"""
+    async def dispatch(self, name: str, arguments: dict | str) -> Any:
+        """执行工具（支持同步和异步函数）"""
         if name not in self._tools:
             raise KeyError(f"Unknown tool: {name}")
         if isinstance(arguments, str):
             arguments = json.loads(arguments)
-        return self._tools[name](**arguments)
+        result = self._tools[name](**arguments)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
 
     def list_tools(self) -> list[str]:
         return list(self._tools.keys())
