@@ -72,7 +72,7 @@ class ChatEngine:
                 # 执行每个 tool call
                 for tc in assistant_msg.tool_calls:
                     try:
-                        result = self.registry.dispatch(tc.function.name, tc.function.arguments)
+                        result = await self.registry.dispatch(tc.function.name, tc.function.arguments)
                         result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
                     except Exception as e:
                         result_str = json.dumps({"error": str(e)}, ensure_ascii=False)
@@ -131,7 +131,7 @@ class ChatEngine:
 
                 for tc in assistant_msg.tool_calls:
                     try:
-                        result = self.registry.dispatch(tc.function.name, tc.function.arguments)
+                        result = await self.registry.dispatch(tc.function.name, tc.function.arguments)
                         result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
                         yield f"event: tool_result\ndata: {json.dumps({'name': tc.function.name, 'result': result}, ensure_ascii=False)}\n\n"
                     except Exception as e:
