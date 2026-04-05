@@ -2,7 +2,7 @@
  * Chat API - 对接后端 SSE 流式接口
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://192.168.193.121:8002/api/v1";
 
 export interface ChatMessage {
   role: "user" | "assistant" | "tool";
