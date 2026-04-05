@@ -17,7 +17,7 @@ interface UseKeyboardShortcutsOptions {
 /**
  * 键盘快捷键Hook
  */
-export function useKeyboardShortcut(options: UseKeyboardShortcutOptions = {}) {
+export function useKeyboardShortcut(options: UseKeyboardShortcutsOptions = {}) {
   const { onSend, onClear, onSave, disabled = false } = options;
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
