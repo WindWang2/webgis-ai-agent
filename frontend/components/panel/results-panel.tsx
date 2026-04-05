@@ -112,7 +112,7 @@ export function ResultsPanel({ onGenerateReport, analysisResults, layers = [] }:
     setReportError(null)
 
     try {
-      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1"
+      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://192.168.193.121:8002/api/v1"
       const response = await fetch(`${API_BASE}/reports/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
