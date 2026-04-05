@@ -210,11 +210,11 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col glass border-r border-cyan-500/20">
       {/* Header */}
-      <div className="flex items-center gap-2 border-b border-border p-4">
-        <Bot className="h-5 w-5 text-primary" />
-        <h1 className="font-semibold">AI 对话</h1>
+      <div className="flex items-center gap-2 border-b border-cyan-500/20 p-4 bg-cyan-950/50">
+        <Bot className="h-5 w-5 text-cyan-400 animate-pulse" />
+        <h1 className="font-semibold text-white">AI 对话</h1>
       </div>
 
       {/* Messages */}
