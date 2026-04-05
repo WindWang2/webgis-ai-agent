@@ -3,6 +3,7 @@ import { useState, useRef, useCallback, useEffect } from "react"
 import Map, { Layer, Source, Marker, NavigationControl, MapRef, ViewStateChangeEvent } from "react-map-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
 import { Layers, ZoomIn, ZoomOut, Maximize, MapPin, Eye, EyeOff, RotateCcw, Target } from "lucide-react"
+import { getBasemapStyle, BASEMAP_OPTIONS, BasemapType } from "@/lib/map-styles"
 
 interface MapPanelProps {
   analysisResult?: {
@@ -13,11 +14,8 @@ interface MapPanelProps {
   }
 }
 
-// Free tile servers for MapLibre
-const FREE_TILE_SERVERS = [
-  "https://demotiles.maplibre.org/style.json",
-  "https://tiles.openstreetmap.org/{z}/{x}/{y}.png",
-]
+// Default basemap style
+const DEFAULT_BASEMAP_STYLE = getBasemapStyle("osm")
 
 const DEFAULT_VIEW_STATE = {
   longitude: 116.4074,
@@ -34,6 +32,7 @@ export function MapPanel({ analysisResult }: MapPanelProps) {
   const [showLayerPanel, setShowLayerPanel] = useState(false)
   const [coordinates, setCoordinates] = useState({ lng: 0, lat: 0 })
   const [viewState, setViewState] = useState(DEFAULT_VIEW_STATE)
+  const [basemap, setBasemap] = useState<BasemapType>("osm")
   const mapRef = useRef<MapRef>(null)
 
   // Apply analysis results to map
@@ -98,6 +97,16 @@ export function MapPanel({ analysisResult }: MapPanelProps) {
     }
   }
 
+  // 底图切换处理
+  const handleBasemapChange = (type: BasemapType) => {
+    setBasemap(type)
+    const map = mapRef.current?.getMap()
+    if (map) {
+      const style = getBasemapStyle(type, process.env.NEXT_PUBLIC_TIANDITU_TOKEN)
+      map.setStyle(style)
+    }
+  }
+
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
@@ -127,7 +136,7 @@ export function MapPanel({ analysisResult }: MapPanelProps) {
           onMove={handleMove}
           onMouseMove={handleMouseMove}
           style={{ width: "100%", height: "100%" }}
-          mapStyle={FREE_TILE_SERVERS[0]}
+          mapStyle={DEFAULT_BASEMAP_STYLE}
           attributionControl={false}
           reuseMaps
         >
@@ -197,6 +206,21 @@ export function MapPanel({ analysisResult }: MapPanelProps) {
             </Marker>
           ))}
         </Map>
+
+        {/* 底图切换 */}
+        <div className="absolute top-2 right-2 z-10 flex gap-1 bg-white/90 rounded shadow p-1">
+          {BASEMAP_OPTIONS.map(opt => (
+            <button
+              key={opt.id}
+              onClick={() => handleBasemapChange(opt.id)}
+              className={`px-2 py-1 text-xs rounded ${
+                basemap === opt.id ? "bg-blue-500 text-white" : "bg-gray-100 hover:bg-gray-200"
+              }`}
+            >
+              {opt.name}
+            </button>
+          ))}
+        </div>
 
         {/* Floating Controls - Left Side */}
         <div className="absolute top-4 left-4 flex flex-col gap-2">
