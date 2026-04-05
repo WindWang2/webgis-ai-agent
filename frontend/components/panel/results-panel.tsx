@@ -1,5 +1,5 @@
 "use client"
-import { useState, useRef } from "react"
+import { useState, useCallback } from "react"
 import { 
   FileText, 
   BarChart3, 
@@ -15,7 +15,12 @@ import {
   Share2,
   RefreshCw,
   AlertCircle,
-  PieChart
+  PieChart,
+  Layers,
+  Eye,
+  EyeOff,
+  MapPin,
+  Hash
 } from "lucide-react"
 
 interface ResultItem {
@@ -43,80 +48,122 @@ interface ReportData {
   generatedAt: Date
 }
 
+// GeoJsonLayer type (matches page.tsx)
+interface GeoJsonLayer {
+  id: string
+  name: string
+  geojson: any
+  color?: string
+  visible?: boolean
+}
+
 // Props for receiving analysis results from parent
 interface ResultsPanelProps {
   onGenerateReport?: () => void
   analysisResults?: ResultItem[]
-  layers?: any[]
+  layers?: GeoJsonLayer[]
 }
 
-export function ResultsPanel({ onGenerateReport, analysisResults, layers }: ResultsPanelProps) {
+export function ResultsPanel({ onGenerateReport, analysisResults, layers = [] }: ResultsPanelProps) {
   const [expanded, setExpanded] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<"results" | "report">("results")
+  const [activeTab, setActiveTab] = useState<"results" | "layers" | "report">("results")
+  const [layerVisibility, setLayerVisibility] = useState<Record<string, boolean>>({})
   
   // State for report generation
   const [isGenerating, setIsGenerating] = useState(false)
   const [reportData, setReportData] = useState<ReportData | null>(null)
   const [copied, setCopied] = useState(false)
   const [generatingStep, setGeneratingStep] = useState("")
+  const [reportError, setReportError] = useState<string | null>(null)
   
   // Demo results - would be passed from parent in production
-  const results: ResultItem[] = analysisResults || [
-    {
-      id: "1",
-      title: "北京市人口密度分析",
-      type: "chart",
-      content: "分析了北京市各区人口密度数据，最大密度出现在朝阳区，达 21000人/km²",
-      timestamp: new Date(),
-      chartData: { type: "bar", values: [15000, 18000, 21000, 16500, 12000] }
-    },
-    {
-      id: "2",
-      title: "周边设施检索结果",
-      type: "map",
-      content: "在选定区域内发现公园15个、学校8个、医院3个",
-      timestamp: new Date()
-    }
-  ]
+  const results: ResultItem[] = analysisResults || []
 
   const toggleExpand = (id: string) => {
     setExpanded(expanded === id ? null : id)
   }
 
-  // Simulated report generation
-  const handleGenerateReport = async () => {
-    setIsGenerating(true)
-    
-    // Simulate progress steps
-    const steps = [
-      { step: "正在收集分析结果...", delay: 800 },
-      { step: "正在生成统计图表...", delay: 1200 },
-      { step: "正在构建报告内容...", delay: 1600 },
-      { step: "正在格式化输出...", delay: 2000 },
-    ]
-    
-    for (const { step, delay } of steps) {
-      setGeneratingStep(step)
-      await new Promise(resolve => setTimeout(resolve, delay))
-    }
-    
-    // Mock report data
-    setReportData({
-      title: "空间分析报告",
-      summary: "本次分析涵盖研究区域内的各类设施分布情况，综合分析结果表明该区域配套设施完善程度较高其中公远和教育资源尤为丰富",
-      charts: [
-        { id: "c1", type: "pie", title: "设施类型分布", data: { labels: ["公园", "学校", "医院", "商场"], values: [15, 8, 3, 12] }},
-        { id: "c2", type: "bar", title: "各区人口对比", data: { label: ["朝阳", "海淀", "西城", "东城", "丰台"], value: [21000, 18000, 15000, 12000, 9500] }}
-      ],
-      tables: [
-        { headers: ["名称", "类型", "距离(km)", "评分"], rows: [["朝阳公园", "公园", "0.5", "4.5"], ["人大附中", "学校", "1.2", "4.8"], ["朝阳医院", "医院", "2.1", "4.2"]]}
-      ],
-      generatedAt: new Date()
+  // Toggle layer visibility (local state)
+  const toggleLayerVisibility = (layerId: string) => {
+    setLayerVisibility(prev => ({ ...prev, [layerId]: !prev[layerId] }))
+  }
+
+  // Get geometry types from a GeoJSON FeatureCollection
+  const getGeometryTypes = (geojson: any): string[] => {
+    if (!geojson?.features) return []
+    const types = new Set<string>()
+    geojson.features.forEach((f: any) => {
+      if (f.geometry?.type) types.add(f.geometry.type)
     })
-    
-    setIsGenerating(false)
-    setGeneratingStep("")
-    setActiveTab("report")
+    return Array.from(types)
+  }
+
+  // Compute stats
+  const totalFeatures = layers.reduce((sum, l) => sum + (l.geojson?.features?.length || 0), 0)
+
+  // Call backend report API
+  const handleGenerateReport = async () => {
+    if (onGenerateReport) {
+      onGenerateReport()
+      return
+    }
+
+    setIsGenerating(true)
+    setReportError(null)
+
+    try {
+      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1"
+      const response = await fetch(`${API_BASE}/reports/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "空间分析报告",
+          layers: layers.map(l => ({
+            name: l.name,
+            feature_count: l.geojson?.features?.length || 0,
+            geojson: l.geojson,
+          })),
+          format: "html",
+        }),
+      })
+
+      if (!response.ok) throw new Error(`报告生成失败: ${response.status}`)
+      const result = await response.json()
+
+      setReportData({
+        title: result.title || "空间分析报告",
+        summary: result.summary || `本次分析共包含 ${layers.length} 个图层，${totalFeatures} 个要素。`,
+        charts: result.charts || [],
+        tables: result.tables || [],
+        generatedAt: new Date(),
+      })
+      setActiveTab("report")
+    } catch (err: any) {
+      // Fallback: generate report from local data
+      setReportData({
+        title: "空间分析报告",
+        summary: `本次分析共包含 ${layers.length} 个图层，${totalFeatures} 个要素。`,
+        charts: layers.slice(0, 2).map((l, i) => ({
+          id: `c${i}`,
+          type: "bar" as const,
+          title: l.name,
+          data: { labels: getGeometryTypes(l.geojson), values: getGeometryTypes(l.geojson).map(() => l.geojson?.features?.length || 0) }
+        })),
+        tables: [{
+          headers: ["图层名称", "要素数量", "几何类型"],
+          rows: layers.map(l => [
+            l.name,
+            String(l.geojson?.features?.length || 0),
+            getGeometryTypes(l.geojson).join(", ") || "未知"
+          ])
+        }],
+        generatedAt: new Date(),
+      })
+      setActiveTab("report")
+    } finally {
+      setIsGenerating(false)
+      setGeneratingStep("")
+    }
   }
 
   const handleCopyReport = () => {
@@ -125,11 +172,14 @@ export function ResultsPanel({ onGenerateReport, analysisResults, layers }: Resu
     const reportText = `# ${reportData.title}
 生成时间: ${reportData.generatedAt.toLocaleString()}
 ${'-'.repeat(40)}
-${'## 分析摘要\n'}
+
+## 分析摘要
 ${reportData.summary}
-${'## 统计数据\n'}
+
+## 统计数据
 ${reportData.charts.map(c => `- ${c.title}`).join('\n')}
-${'## 详细数据\n'}
+
+## 详细数据
 ${reportData.tables.map(t => 
   `${t.headers.join(' | ')}\n${t.rows.map(r => r.join(' | ')).join('\n')}`
 ).join('\n\n')}
@@ -178,6 +228,20 @@ ${reportData.tables.map(t =>
             分析结果
           </button>
           <button
+            onClick={() => setActiveTab("layers")}
+            className={`text-sm font-medium transition-colors ${
+              activeTab === "layers"
+                ? "text-primary border-b-2 border-primary pb-1"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <span className="flex items-center gap-1">
+              <Layers className="h-3.5 w-3.5" />
+              图层
+            </span>
+            {layers.length > 0 && <span className="ml-1 text-xs text-muted-foreground">({layers.length})</span>}
+          </button>
+          <button
             onClick={() => setActiveTab("report")}
             className={`text-sm font-medium transition-colors ${
               activeTab === "report"
@@ -190,7 +254,6 @@ ${reportData.tables.map(t =>
           </button>
         </div>
         
-        {/* Export Button - Only show when report exists */}
         {reportData && (
           <button
             onClick={handleExportPDF}
@@ -205,7 +268,74 @@ ${reportData.tables.map(t =>
 
       {/* Content Area */}
       <div className="flex-1 overflow-y-auto p-4">
-        {activeTab === "results" ? (
+        {activeTab === "layers" ? (
+          /* Layers Tab */
+          <div className="space-y-3">
+            {/* Stats Summary */}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-lg border border-border p-3 bg-muted/30">
+                <div className="flex items-center gap-1.5 text-muted-foreground text-xs mb-1">
+                  <Layers className="h-3.5 w-3.5" /> 图层总数
+                </div>
+                <div className="text-xl font-semibold">{layers.length}</div>
+              </div>
+              <div className="rounded-lg border border-border p-3 bg-muted/30">
+                <div className="flex items-center gap-1.5 text-muted-foreground text-xs mb-1">
+                  <Hash className="h-3.5 w-3.5" /> 要素总数
+                </div>
+                <div className="text-xl font-semibold">{totalFeatures}</div>
+              </div>
+            </div>
+
+            {layers.length === 0 ? (
+              <div className="text-center text-muted-foreground text-sm py-8">
+                <Layers className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p>暂无图层</p>
+                <p className="text-xs mt-2">上传数据或执行空间分析后，图层将显示在此处</p>
+              </div>
+            ) : (
+              layers.map((layer) => {
+                const featureCount = layer.geojson?.features?.length || 0
+                const geomTypes = getGeometryTypes(layer.geojson)
+                const isVisible = layerVisibility[layer.id] !== false && layer.visible !== false
+                return (
+                  <div key={layer.id} className="rounded-lg border border-border overflow-hidden">
+                    <div className="flex items-center justify-between p-3 bg-muted/30">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div
+                          className="h-3 w-3 rounded-full flex-shrink-0"
+                          style={{ backgroundColor: layer.color || "#3b82f6" }}
+                        />
+                        <div className="min-w-0">
+                          <span className="font-medium text-sm block truncate">{layer.name}</span>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <span className="flex items-center gap-0.5">
+                              <MapPin className="h-3 w-3" /> {featureCount} 个要素
+                            </span>
+                            {geomTypes.length > 0 && (
+                              <span>{geomTypes.join(", ")}</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => toggleLayerVisibility(layer.id)}
+                        className="p-1 rounded hover:bg-muted transition-colors"
+                        title={isVisible ? "隐藏图层" : "显示图层"}
+                      >
+                        {isVisible ? (
+                          <Eye className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <EyeOff className="h-4 w-4 text-muted-foreground/50" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        ) : activeTab === "results" ? (
           /* Results Tab */
           <div className="space-y-3">
             {results.length === 0 ? (
@@ -240,7 +370,6 @@ ${reportData.tables.map(t =>
                   {expanded === result.id && (
                     <div className="p-3 text-sm border-t border-border">
                       <p className="mb-2">{result.content}</p>
-                      {/* Chart preview placeholder */}
                       {result.chartData && (
                         <div className="mt-2 p-2 bg-muted/50 rounded text-center text-xs text-muted-foreground">
                           [图表: {result.chartData.type}]
@@ -261,7 +390,6 @@ ${reportData.tables.map(t =>
             </div>
           ) : reportData ? (
             <div className="space-y-4 print:space-y-6">
-              {/* Report Title */}
               <div className="border-b border-border pb-3">
                 <h2 className="font-semibold text-lg">{reportData.title}</h2>
                 <p className="text-xs text-muted-foreground mt-1">
@@ -269,7 +397,6 @@ ${reportData.tables.map(t =>
                 </p>
               </div>
               
-              {/* Summary Section */}
               <section>
                 <h3 className="font-medium text-sm mb-2 flex items-center gap-2">
                   <FileText className="h-4 w-4" />
@@ -280,33 +407,33 @@ ${reportData.tables.map(t =>
                 </p>
               </section>
               
-              {/* Charts Section */}
-              <section>
-                <h3 className="font-medium text-sm mb-2 flex items-center gap-2">
-                  <PieChart className="h-4 w-4" />
-                  统计图表
-                </h3>
-                <div className="grid grid-cols-2 gap-3">
-                  {reportData.charts.map((chart) => (
-                    <div key={chart.id} className="p-3 bg-muted/30 rounded-lg">
-                      <p className="text-xs font-medium mb-2">{chart.title}</p>
-                      <div className="h-20 flex items-end justify-around gap-1">
-                        {Array.isArray(chart.data.values || chart.data.value) && 
-                          ((chart.data.values || chart.data.value) as number[]).slice(0, 5).map((val, i) => (
-                            <div
-                              key={i}
-                              className="flex-1 bg-primary/60 rounded-t"
-                              style={{ height: `${Math.min(val / 250, 1) * 100}%` }}
-                            />
-                          ))
-                        }
+              {reportData.charts.length > 0 && (
+                <section>
+                  <h3 className="font-medium text-sm mb-2 flex items-center gap-2">
+                    <PieChart className="h-4 w-4" />
+                    统计图表
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    {reportData.charts.map((chart) => (
+                      <div key={chart.id} className="p-3 bg-muted/30 rounded-lg">
+                        <p className="text-xs font-medium mb-2">{chart.title}</p>
+                        <div className="h-20 flex items-end justify-around gap-1">
+                          {Array.isArray(chart.data.values || chart.data.value) && 
+                            ((chart.data.values || chart.data.value) as number[]).slice(0, 5).map((val, i) => (
+                              <div
+                                key={i}
+                                className="flex-1 bg-primary/60 rounded-t"
+                                style={{ height: `${Math.min(val / 250, 1) * 100}%` }}
+                              />
+                            ))
+                          }
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
+                    ))}
+                  </div>
+                </section>
+              )}
               
-              {/* Tables Section */}
               {reportData.tables.map((table, ti) => (
                 <section key={ti}>
                   <h3 className="font-medium text-sm mb-2 flex items-center gap-2">
@@ -340,7 +467,6 @@ ${reportData.tables.map(t =>
                 </section>
               ))}
               
-              {/* Action Buttons Row */}
               <div className="flex gap-2 pt-2 print:hidden">
                 <button
                   onClick={handleCopyReport}
@@ -350,7 +476,7 @@ ${reportData.tables.map(t =>
                   {copied ? "已复制" : "复制文本"}
                 </button>
                 <button
-                  onClick={() => setReportData(null) || handleGenerateReport()}
+                  onClick={() => { setReportData(null); handleGenerateReport() }}
                   className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-border py-2 text-sm hover:bg-muted transition-colors"
                 >
                   <RefreshCw className="h-4 w-4" />
@@ -359,7 +485,6 @@ ${reportData.tables.map(t =>
               </div>
             </div>
           ) : (
-            /* Empty Report State */
             <div className="text-center text-muted-foreground text-sm py-8">
               <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
               <p>暂无报告</p>
@@ -371,42 +496,25 @@ ${reportData.tables.map(t =>
 
       {/* Footer - Generate Button */}
       <div className="border-t border-border p-3 print:hidden">
-        {activeTab === "report" && !reportData ? (
-          <button 
-            onClick={handleGenerateReport}
-            disabled={isGenerating}
-            className="w-full flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground py-2 text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
-          >
-            {isGenerating ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                生成中...
-              </>
-            ) : (
-              <>
-                <FileText className="h-4 w-4" />
-                生成报告
-              </>
-            )}
-          </button>
-        ) : (
-          <button 
-            onClick={handleGenerateReport}
-            disabled={isGenerating || results.length === 0}
-            className="w-full flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground py-2 text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
-          >
-            {isGenerating ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                处理中...
-              </>
-            ) : (
-              <>
-                <FileText className="h-4 w-4" />
-                生成完整报告
-              </>
-            )}
-          </button>
+        <button 
+          onClick={handleGenerateReport}
+          disabled={isGenerating || (layers.length === 0 && results.length === 0)}
+          className="w-full flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground py-2 text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+        >
+          {isGenerating ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {generatingStep || "生成中..."}
+            </>
+          ) : (
+            <>
+              <FileText className="h-4 w-4" />
+              生成报告
+            </>
+          )}
+        </button>
+        {reportError && (
+          <p className="text-xs text-destructive mt-1 text-center">{reportError}</p>
         )}
       </div>
     </div>
