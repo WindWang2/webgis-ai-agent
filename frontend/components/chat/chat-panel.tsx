@@ -1,113 +1,159 @@
 "use client"
-
 import { useState, useRef, useEffect } from "react"
-import { Send, Paperclip, Bot, User, Trash2, Mic } from "lucide-react"
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { Send, Paperclip, Bot, User, Loader2, Upload, X } from "lucide-react"
 
 interface Message {
   id: string
-  role: "user" | "assistant" | "system"
+  role: "user" | "assistant"
   content: string
   timestamp: Date
-  type?: "text" | "loading" | "error"
+  isThinking?: boolean
 }
 
-const quickTemplates = [
-  { name: "缓冲区分析", prompt: "请帮我做缓冲区分析" },
-  { name: "路径规划", prompt: "请帮我规划最优路径" },
-  { name: "热力图生成", prompt: "请帮我生成热力图" },
-  { name: "空间查询", prompt: "请帮我进行空间查询" },
-  { name: "数据统计", prompt: "请帮我做空间数据统计" },
-]
+interface Attachment {
+  id: string
+  name: string
+  size: number
+  type: string
+}
 
-export function ChatPanel() {
+// Callback types for parent component communication
+interface ChatPanelProps {
+  onAnalysisRequest?: (message: string, attachments?: Attachment[]) => void
+  incomingMessage?: string
+  incomingResponse?: string
+}
+
+export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "1",
       role: "assistant",
-      content: "你好！我是 WebGIS AI 助手，可以帮助你进行空间数据分析和制图。请告诉我你想分析什么？",
+      content: "你好！我是 WebGIS AI 助手，可以帮你进行空间数据分析和制图。请描述你想进行的分析，例如「分析北京市人口分布」或「找出周边5公里内的公园」",
       timestamp: new Date(),
     },
   ])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [showAttachments, setShowAttachments] = useState(false)
+  const messageEndRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
 
-  // Auto scroll to bottom when messages change
+  // Handle incoming messages from parent
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages])
+    if (incomingMessage) {
+      handleSend(incomingMessage, incomingResponse)
+    }
+  }, [incomingMessage, incomingResponse])
 
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return
+  const scrollToBottom = () => {
+    setTimeout(() => {
+      messageEndRef.current?.scrollIntoView({ behavior: "smooth" })
+    }, 100)
+  }
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    const newAttachments: Attachment[] = files.map(file => ({
+      id: Date.now().toString() + Math.random(),
+      name: file.name,
+      size: file.size,
+      type: file.type,
+    }))
+    setAttachments(prev => [...prev, ...newAttachments])
+    setShowAttachments(true)
+  }
+
+  const removeAttachment = (id: string) => {
+    setAttachments(prev => prev.filter(a => a.id !== id))
+  }
+
+  const handleSend = async (msg?: string, customResponse?: string) => {
+    const messageText = msg || input.trim()
+    if (!messageText || isLoading) return
 
     const userMessage: Message = {
       id: Date.now().toString(),
       role: "user",
-      content: input,
+      content: messageText,
       timestamp: new Date(),
+      ...(msg && { isThinking: !!customResponse }),
     }
 
-    setMessages((prev) => [...prev, userMessage])
-    setInput("")
+    setMessages(prev => [...prev, userMessage])
+    if (!msg) {
+      setInput("")
+      setAttachments([])
+    }
+    
+    if (customResponse) {
+      // Pre-set response (for demo/testing)
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: customResponse,
+        timestamp: new Date(),
+      }
+      setMessages(prev => [...prev, assistantMessage])
+      onAnalysisRequest?.(messageText, attachments)
+      scrollToBottom()
+      return
+    }
+
     setIsLoading(true)
 
-    // Add loading message
-    const loadingMessage: Message = {
+    // Add thinking indicator
+    const thinkingMessage: Message = {
       id: (Date.now() + 1).toString(),
       role: "assistant",
-      content: "正在思考中...",
+      content: "",
       timestamp: new Date(),
-      type: "loading",
+      isThinking: true,
     }
-    setMessages((prev) => [...prev, loadingMessage])
+    setMessages(prev => [...prev, thinkingMessage])
+    scrollToBottom()
 
     try {
-      const response = await fetch("/api/ai/query", {
+      const response = await fetch("/api/chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          query: input,
-          history: messages.map(m => ({ role: m.role, content: m.content })),
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: messageText }),
       })
 
       if (!response.ok) throw new Error("API request failed")
 
-      const data = await response.json()
+      const reader = response.body?.getReader()
+      const decoder = new TextDecoder()
+      let assistantContent = ""
 
-      // Replace loading message with actual response
-      setMessages((prev) => 
-        prev.map(m => 
-          m.id === loadingMessage.id 
-            ? {
-                ...m,
-                content: data.content,
-                type: "text",
-              }
-            : m
-        )
-      )
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          const chunk = decoder.decode(value)
+          assistantContent += chunk
+          setMessages(prev => prev.map(msg =>
+            msg.id === thinkingMessage.id
+              ? { ...msg, content: assistantContent, isThinking: false }
+              : msg
+          ))
+          scrollToBottom()
+        }
+      }
+
+      // Notify parent component
+      onAnalysisRequest?.(messageText, attachments)
+
     } catch (error) {
-      // Replace loading message with error
-      setMessages((prev) => 
-        prev.map(m => 
-          m.id === loadingMessage.id 
-            ? {
-                ...m,
-                content: "抱歉，请求失败，请稍后重试。",
-                type: "error",
-              }
-            : m
-        )
-      )
-      console.error("Query error:", error)
+      setMessages(prev => prev.map(msg =>
+        msg.id === thinkingMessage.id
+          ? { ...msg, content: "抱歉，请求失败了，请重试", isThinking: false }
+          : msg
+      ))
     } finally {
       setIsLoading(false)
+      inputRef.current?.focus()
     }
   }
 
@@ -118,88 +164,25 @@ export function ChatPanel() {
     }
   }
 
-  const handleClearChat = () => {
-    setMessages([
-      {
-        id: Date.now().toString(),
-        role: "assistant",
-        content: "你好！我是 WebGIS AI 助手，可以帮助你进行空间数据分析和制图。请告诉我你想分析什么？",
-        timestamp: new Date(),
-      },
-    ])
-  }
-
-  const handleTemplateClick = (prompt: string) => {
-    setInput(prompt)
-  }
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-    if (!files || files.length === 0) return
-
-    // TODO: Implement file upload logic
-    const file = files[0]
-    const allowedTypes = ['.shp', '.geojson', '.tiff', '.tif', '.json']
-    const fileExt = file.name.substring(file.name.lastIndexOf('.')).toLowerCase()
-    
-    if (allowedTypes.includes(fileExt)) {
-      const userMessage: Message = {
-        id: Date.now().toString(),
-        role: "user",
-        content: `已上传文件：${file.name}`,
-        timestamp: new Date(),
-      }
-      setMessages((prev) => [...prev, userMessage])
-    } else {
-      alert('不支持的文件格式，请上传shp/geojson/tiff格式的文件')
-    }
-    
-    // Reset file input
-    e.target.value = ''
-  }
-
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-border p-4">
-        <div className="flex items-center gap-2">
-          <Bot className="h-5 w-5 text-primary" />
-          <h1 className="font-semibold">AI 对话</h1>
-        </div>
-        <button
-          onClick={handleClearChat}
-          className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-muted transition-colors"
-          title="清空对话"
-        >
-          <Trash2 className="h-4 w-4 text-muted-foreground" />
-        </button>
-      </div>
-
-      {/* Quick Templates */}
-      <div className="flex gap-2 overflow-x-auto p-3 border-b border-border no-scrollbar">
-        {quickTemplates.map((template, index) => (
-          <button
-            key={index}
-            onClick={() => handleTemplateClick(template.prompt)}
-            className="flex-shrink-0 px-3 py-1.5 text-xs rounded-full bg-muted hover:bg-muted/80 transition-colors"
-          >
-            {template.name}
-          </button>
-        ))}
+      <div className="flex items-center gap-2 border-b border-border p-4">
+        <Bot className="h-5 w-5 text-primary" />
+        <h1 className="font-semibold">AI 对话</h1>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4" role="list">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map((message) => (
           <div
             key={message.id}
-            role="article"
             className={`flex gap-3 ${
               message.role === "user" ? "flex-row-reverse" : ""
             }`}
           >
             <div
-              className={`flex h-8 w-8 items-center justify-center rounded-full flex-shrink-0 ${
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
                 message.role === "user"
                   ? "bg-primary text-primary-foreground"
                   : "bg-muted"
@@ -215,82 +198,67 @@ export function ChatPanel() {
               className={`max-w-[85%] rounded-lg p-3 text-sm ${
                 message.role === "user"
                   ? "bg-primary text-primary-foreground"
-                  : message.type === "error"
-                  ? "bg-red-50 text-red-800 border border-red-200"
                   : "bg-muted"
               }`}
             >
-              {message.role === "assistant" && message.type !== "loading" ? (
-                <ReactMarkdown 
-                  remarkPlugins={[remarkGfm]}
-                  className="prose prose-sm max-w-none"
-                  components={{
-                    a: ({node, ...props}) => (
-                      <a {...props} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline" />
-                    ),
-                    code: ({node, inline, ...props}) => (
-                      inline ? 
-                        <code {...props} className="bg-gray-200 px-1 py-0.5 rounded text-xs" /> :
-                        <pre className="bg-gray-900 text-white p-2 rounded overflow-x-auto text-xs">
-                          <code {...props} />
-                        </pre>
-                    )
-                  }}
-                >
-                  {message.content}
-                </ReactMarkdown>
+              {message.isThinking ? (
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span className="text-xs">思考中...</span>
+                </div>
               ) : (
-                message.content
+                <div className="whitespace-pre-wrap">{message.content}</div>
               )}
             </div>
           </div>
         ))}
-        <div ref={messagesEndRef} />
+        <div ref={messageEndRef} />
       </div>
+
+      {/* Attachments Preview */}
+      {attachments.length > 0 && (
+        <div className="px-4 py-2 border-t border-border flex flex-wrap gap-2">
+          {attachments.map((att) => (
+            <div key={att.id} className="flex items-center gap-1 bg-muted rounded px-2 py-1 text-xs">
+              <Upload className="h-3 w-3" />
+              <span className="max-w-24 truncate">{att.name}</span>
+              <button onClick={() => removeAttachment(att.id)} className="hover:text-destructive">
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Input */}
       <div className="border-t border-border p-4">
-        <div className="flex gap-2 mb-2">
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileUpload}
-            accept=".shp,.geojson,.tiff,.tif,.json"
-            className="hidden"
-          />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="flex h-10 w-10 items-center justify-center rounded-lg border border-border hover:bg-muted transition-colors"
-            title="上传GIS文件"
-          >
+        <div className="flex gap-2">
+          <label className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg border border-border hover:bg-muted transition-colors">
+            <input type="file" multiple className="hidden" onChange={handleFileSelect} />
             <Paperclip className="h-4 w-4" />
-          </button>
-          <button
-            className="flex h-10 w-10 items-center justify-center rounded-lg border border-border hover:bg-muted transition-colors"
-            title="语音输入"
-          >
-            <Mic className="h-4 w-4" />
-          </button>
+          </label>
           <input
+            ref={inputRef}
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyPress={handleKeyPress}
             placeholder="输入分析指令..."
-            className="flex-1 rounded-lg border border-border px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+            disabled={isLoading}
+            className="flex-1 rounded-lg border border-border px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
           />
           <button
-            onClick={handleSend}
+            onClick={() => handleSend()}
             disabled={!input.trim() || isLoading}
-            className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            title="发送消息"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            <Send className="h-4 w-4" />
+            {isLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
           </button>
         </div>
-        <p className="text-xs text-muted-foreground text-center">
-          支持 shp/geojson/tiff 格式文件上传，语音输入即将上线
-        </p>
       </div>
     </div>
   )

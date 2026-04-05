@@ -30,6 +30,12 @@
 ### 部署
 - Docker + Docker Compose + Kubernetes 支持
 - 支持灰度发布与快速回滚
+- **数据库**: PostgreSQL + SQLAlchemy
+- **GIS**: GeoPandas, Shapely, Rasterio
+- **任务队列**: Celery + Redis
+
+### 部署
+- Docker + Docker Compose
 
 ## 项目结构
 
@@ -58,6 +64,20 @@ webgis-ai-agent/
 ├── main.py                   # 后端入口文件
 ├── requirements.txt          # Python 依赖
 ├── Dockerfile                # 多阶段构建镜像
+│   ├── app/                  # App Router
+│   ├── components/           # React 组件
+│   ├── lib/                  # 工具函数
+│   ├── package.json
+│   └── ...
+├── backend/                  # FastAPI 后端
+│   ├── app/
+│   │   ├── api/              # API 路由
+│   │   ├── core/             # 核心配置
+│   │   ├── models/           # 数据模型
+│   │   └── services/         # 业务服务
+│   └── ...
+├── docs/                     # 项目文档
+├── Dockerfile                # 多阶段构建
 └── README.md
 ```
 
@@ -80,6 +100,10 @@ pip install -r requirements.txt
 # 启动服务
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 # 访问 Swagger 文档: http://localhost:8000/docs
+cd backend
+pip install -r requirements.txt
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# 访问 http://localhost:8000/docs
 ```
 
 ### Docker 部署
@@ -131,6 +155,31 @@ docker run -p 3000:3000 -p 8000:8000 --env-file .env webgis-ai-agent
 - 历史分析任务管理
 - 自定义分析模型上传
 - 移动端适配
+## 功能模块
+
+### 前端功能
+1. **AI 对话面板**（左侧）
+   - 自然语言指令输入
+   - 文件上传支持
+   - Markdown 渲染
+   - 工具调用进度显示
+
+2. **地图面板**（中间）
+   - MapLibre GL JS 交互式地图
+   - 图层管理
+   - 空间量测工具
+   - 实时图层加载
+
+3. **结果面板**（右侧）
+   - 分析结果展示
+   - 报告预览
+   - 多格式导出（HTML/PDF/Word）
+
+### 后端功能
+- API 网关与路由
+- Agent 编排层
+- 数据获取工具
+- 空间分析引擎
 
 ## 开发规范
 
@@ -173,6 +222,12 @@ docker run -p 3000:3000 -p 8000:8000 --env-file .env webgis-ai-agent
 
 ### 贡献者
 - Kevin (全栈开发/架构设计)
+## 开发团队
+
+- **Frontend**: frontend-dev
+- **Backend**: backend-dev
+- **Testing**: tester
+- **Experiment**: experimenter
 
 ## License
 
