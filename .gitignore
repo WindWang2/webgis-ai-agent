@@ -50,10 +50,16 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 ENV/
 *.egg-info/
 dist/
 build/
+*.db
+*.pyc
+
+data/
+tmp/
 
 # IDE (Python)
 .pydevproject

@@ -32,32 +32,35 @@ def test_get_schemas():
     assert s["function"]["parameters"]["properties"]["query"]["description"] == "Location name"
 
 
-def test_dispatch():
+@pytest.mark.asyncio
+async def test_dispatch():
     registry = ToolRegistry()
 
     @tool(registry, name="add", description="Add numbers")
     def add(a: int, b: int) -> int:
         return a + b
 
-    result = registry.dispatch("add", {"a": 3, "b": 5})
+    result = await registry.dispatch("add", {"a": 3, "b": 5})
     assert result == 8
 
 
-def test_dispatch_with_json_string():
+@pytest.mark.asyncio
+async def test_dispatch_with_json_string():
     registry = ToolRegistry()
 
     @tool(registry, name="echo", description="Echo")
     def echo(msg: str) -> str:
         return msg
 
-    result = registry.dispatch("echo", '{"msg": "hello"}')
+    result = await registry.dispatch("echo", '{"msg": "hello"}')
     assert result == "hello"
 
 
-def test_dispatch_unknown_raises():
+@pytest.mark.asyncio
+async def test_dispatch_unknown_raises():
     registry = ToolRegistry()
     with pytest.raises(KeyError):
-        registry.dispatch("nonexistent", {})
+        await registry.dispatch("nonexistent", {})
 
 
 def test_optional_params_not_required():
