@@ -1,22 +1,34 @@
 "use client"
 import { useState, useRef, useCallback, useEffect } from "react"
-import Map, { NavigationControl, MapRef, ViewStateChangeEvent } from "react-map-gl/maplibre"
+import Map, { NavigationControl, MapRef, ViewStateChangeEvent } from "react-map-gl/leaflet"
 import maplibregl from "maplibre-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
-import { Layers, ZoomIn, ZoomOut, Maximize, MapPin, Eye, EyeOff, RotateCcw, Target, Trash2 } from "lucide-react"
+import { Layers, ZoomIn, ZoomOut, Maximize, MapPin, Eye, EyeOff, RotateCcw, Target, Trash2, ChevronDown } from "lucide-react"
 import type { GeoJsonLayer } from "@/app/page"
 
 interface MapPanelProps {
-  layers: GeoJsonLayer[]
+  layer: GeoJsonLayer[]
   onRemoveLayer: (id: string) => void
   onToggleLayer: (id: string) => void
   analysisResult?: any  // 保留旧接口兼容
 }
 
-// Map tile servers - ESRI World Topo Map (地形图)
-const FREE_TILE_SERVERS = [
-  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/Tile/{z}/{y}/{x}",
-  "https://tiles.openstreetmap.org/{z}/{x}/{y}.png",
+// Map layer types
+type LayerType = "raster" | "style"
+
+interface MapStyleOption {
+  name: string
+  url: string
+  type: LayerType
+}
+
+// Map base layer options
+const MAP_STYLES: MapStyleOption[] = [
+  { name: "ESRI Topo", url: "https://server.arcgisonline.com/ArcGIS/Rest/services/World_Topo_Map/MapServer/Tile/{z}/{y}/{x}", type: "raster" },
+  { name: "ESRI Imagery", url: "https://basemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", type: "raster" },
+  { name: "Carto Voyager", url: "https://basemaps.cartocdn.com/GL/VOYAGER-GL-STYLE/style.json", type: "style" },
+  { name: "Carto Dark", url: "https://basemaps.cartocdn.com/GL/DARK_MATTER-GL-STYLE/style.json", type: "style" },
+  { name: "OSM Bright", url: "https://basemaps.cartocdn.com/GL/OSM_BRIGHT-GL-STYLE/style.json", type: "style" },
 ]
 
 const DEFAULT_VIEW_STATE = {
@@ -25,8 +37,10 @@ const DEFAULT_VIEW_STATE = {
   zoom: 4,
 }
 
-export function MapPanel({ layers, onRemoveLayer, onToggleLayer, analysisResult }: MapPanelProps) {
+export function MapPanel({ layer, onRemoveLayer, onToggleLayer, analysisResult }: MapPanelProps) {
   const [showLayerPanel, setShowLayerPanel] = useState(false)
+  const [showLayerSelector, setShowLayerSelector] = useState(false)
+  const [selectedLayer, setSelectedLayer] = useState(0)
   const [coordinates, setCoordinates] = useState({ lng: 0, lat: 0 })
   const [viewState, setViewState] = useState(DEFAULT_VIEW_STATE)
   const mapRef = useRef<MapRef>(null)
@@ -53,10 +67,10 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, analysisResult 
     const map = mapRef.current?.getMap()
     if (!map || !map.isStyleLoaded()) return
 
-    // Remove old geojson layers and sources
+    // Remove old geojson layers and source
     const style = map.getStyle()
     if (style) {
-      for (const layer of style.layers || []) {
+      for (const layer of style.layer || []) {
         if (layer.id.startsWith("geojson-")) {
           map.removeLayer(layer.id)
         }
@@ -68,8 +82,8 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, analysisResult 
       }
     }
 
-    // Add new layers
-    for (const layer of layers) {
+    // Add new layer
+    for (const layer of layer) {
       if (!layer.visible) continue
 
       const sourceId = `geojson-${layer.id}`
@@ -80,10 +94,10 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, analysisResult 
         data: layer.geojson,
       })
 
-      const features = layer.geojson.features || []
+      const features = layer.geojson.feature || []
       const hasPolygons = features.some((f: any) => f.geometry?.type === "Polygon" || f.geometry?.type === "MultiPolygon")
-      const hasLines = features.some((f: any) => ["LineString", "MultiLineString"].includes(f.geometry?.type))
-      const hasPoints = features.some((f: any) => f.geometry?.type === "Point")
+      const hasLines = feature.some((f: any) => ["LineString", "MultiLineString"].includes(f.geometry?.type))
+      const hasPoints = feature.some((f: any) => f.geometry?.type === "Point")
 
       const color = layer.color || "#3b82f6"
 
@@ -158,7 +172,7 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, analysisResult 
         map.fitBounds(bounds, { padding: 50, maxZoom: 15 })
       }
     }
-  }, [layers])
+  }, [layer])
 
   const handleMove = useCallback((evt: ViewStateChangeEvent) => {
     setViewState(evt.viewState)
@@ -197,6 +211,11 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, analysisResult 
     }
   }
 
+  const handleLayerSelect = (index: number) => {
+    setSelectedLayer(index)
+    setShowLayerSelector(false)
+  }
+
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
@@ -204,8 +223,8 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, analysisResult 
         <div className="flex items-center gap-2">
           <Layers className="h-5 w-5 text-primary" />
           <h1 className="font-semibold">地图</h1>
-          {layers.length > 0 && (
-            <span className="text-xs text-muted-foreground">({layers.length} 图层)</span>
+          {layer.length > 0 && (
+            <span className="text-xs text-muted-foreground">({layer.length} 图层)</span>
           )}
         </div>
         <div className="flex gap-2">
@@ -229,7 +248,7 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, analysisResult 
           onMove={handleMove}
           onMouseMove={handleMouseMove}
           style={{ width: "100%", height: "100%" }}
-          mapStyle={FREE_TILE_SERVERS[0]}
+          mapStyle={MAP_STYLES[selectedLayer].url}
           attributionControl={false}
           reuseMaps
         >
@@ -252,15 +271,45 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, analysisResult 
           </button>
         </div>
 
+        {/* Floating Control - Right Side (Layer Selector) */}
+        <div className="absolute top-4 right-4 z-10">
+          <div className="relative">
+            <button
+              onClick={() => setShowLayerSelector(!showLayerSelector)}
+              className="flex h-9 items-center gap-1.5 rounded-lg bg-background shadow-md border border-border px-3 hover:bg-muted transition-colors"
+            >
+              <span className="text-sm">{MAP_STYLES[selectedLayer].name}</span>
+              <ChevronDown className={`h-4 w-4 transition-transform ${showLayerSelector ? "rotate-180" : ""}`} />
+            </button>
+
+            {/* Dropdown */}
+            {showLayerSelector && (
+              <div className="absolute top-10 right-0 bg-background rounded-lg shadow-lg border border-border py-1 min-w-36 z-20">
+                {MAP_STYLES.map((style, index) => (
+                  <button
+                    key={style.name}
+                    onClick={() => handleLayerSelect(index)}
+                    className={`w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors ${
+                      index === selectedLayer ? "text-primary font-medium" : ""
+                    }`}
+                  >
+                    {style.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Layer Control Panel */}
         {showLayerPanel && (
           <div className="absolute top-16 left-4 bg-background rounded-lg shadow-lg border border-border p-3 w-60 z-10">
             <h3 className="font-semibold mb-3 text-sm">图层控制</h3>
-            {layers.length === 0 ? (
+            {layer.length === 0 ? (
               <p className="text-xs text-muted-foreground">暂无图层，通过对话添加</p>
             ) : (
               <div className="space-y-2">
-                {layers.map(layer => (
+                {layer.map(layer => (
                   <div key={layer.id} className="flex items-center gap-2 text-sm">
                     <button onClick={() => onToggleLayer(layer.id)} className="hover:bg-muted rounded p-0.5">
                       {layer.visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4 text-muted-foreground" />}
@@ -281,7 +330,7 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, analysisResult 
       {/* Footer - Coordinates Display */}
       <div className="border-t border-border p-2 text-xs text-muted-foreground bg-muted/30">
         <div className="flex justify-between items-center">
-          <span>MapLibre GL JS • OSM Tile</span>
+          <span>MapLibre GL JS · {MAP_STYLES[selectedLayer].name}</span>
           <span className="font-mono">
             经度: {coordinates.lng}°, 纬度: {coordinates.lat}°
           </span>
