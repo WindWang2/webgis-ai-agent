@@ -13,9 +13,9 @@ interface MapPanelProps {
   analysisResult?: any  // 保留旧接口兼容
 }
 
-// Free tile servers for MapLibre
+// Map tile servers - ESRI World Topo Map (地形图)
 const FREE_TILE_SERVERS = [
-  "https://demotiles.maplibre.org/style.json",
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/Tile/{z}/{y}/{x}",
   "https://tiles.openstreetmap.org/{z}/{x}/{y}.png",
 ]
 
