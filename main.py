@@ -1,5 +1,16 @@
+import uvicorn
+from app.core.app import create_app
+
+app = create_app()
+
 def main():
-    print("Hello from webgis-ai-agent!")
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        workers=4
+    )
 
 
 if __name__ == "__main__":
