@@ -1,6 +1,6 @@
 "use client"
 import { useState, useRef, useCallback, useEffect } from "react"
-import Map, { NavigationControl, MapRef, ViewStateChangeEvent } from "react-map-gl/leaflet"
+import Map, { NavigationControl, MapRef, ViewStateChangeEvent } from "react-map-gl/maplibre"
 import maplibregl from "maplibre-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
 import { Layers, ZoomIn, ZoomOut, Maximize, MapPin, Eye, EyeOff, RotateCcw, Target, Trash2, ChevronDown } from "lucide-react"
