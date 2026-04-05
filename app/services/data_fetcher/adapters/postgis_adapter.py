@@ -1,6 +1,6 @@
 from typing import Any, Dict
 from sqlalchemy import text
-from app.db.session import SessionLocal
+from app.core.database import SessionLocal
 from .base import DataSourceAdapter
 
 class PostGISAdapter(DataSourceAdapter):

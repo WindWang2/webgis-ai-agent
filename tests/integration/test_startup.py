@@ -21,7 +21,7 @@ def test_app_can_import():
 def test_core_modules_exist():
     """Test core modules are available"""
     from app.core.config import settings
-    from app.db.session import SessionLocal
+    from app.core.database import SessionLocal
     from app.models.db_model import User
     
     assert settings is not None
@@ -54,7 +54,7 @@ def test_jwt_configured():
 
 def test_database_connection_possible():
     """Test database connection can be established"""
-    from app.db.session import engine
+    from app.core.database import Engine as engine
     
     try:
         conn = engine.connect()

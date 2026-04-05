@@ -11,7 +11,7 @@ import uuid
 import logging
 from openai import OpenAI
 
-from app.db.session import get_db
+from app.core.database import get_db
 from app.models.api_response import ApiResponse
 from app.core.config import settings
 

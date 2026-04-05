@@ -12,7 +12,7 @@ router = APIRouter()
 
 def get_db_for_check():
     """获取数据库连接（仅用于健康检查）"""
-    from app.db.database import engine, SessionLocal
+    from app.core.database import Engine as engine, SessionLocal
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
