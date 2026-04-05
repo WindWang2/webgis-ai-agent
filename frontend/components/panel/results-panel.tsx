@@ -2,6 +2,9 @@
 
 import { FileText, BarChart3, Download, ChevronDown, ChevronUp } from "lucide-react"
 import { useState } from "react"
+import { ReportGenerator } from "@/components/report/report-generator"
+import { ReportPreview } from "@/components/report/report-preview"
+import type { ReportInfo } from "@/lib/types/report"
 
 interface AnalysisResult {
   id: string
@@ -11,9 +14,14 @@ interface AnalysisResult {
   timestamp: Date
 }
 
-export function ResultsPanel() {
+interface ResultsPanelProps {
+  taskId?: number | null
+}
+
+export function ResultsPanel({ taskId = null }: ResultsPanelProps) {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<"results" | "report">("results")
+  const [currentReport, setCurrentReport] = useState<ReportInfo | null>(null)
 
   const results: AnalysisResult[] = [
     {
@@ -105,21 +113,23 @@ export function ResultsPanel() {
             )}
           </div>
         ) : (
-          <div className="text-center text-muted-foreground text-sm py-8">
-            <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
-            <p>报告预览</p>
-            <p className="text-xs mt-2">生成分析后将在此处显示报告</p>
+          <div className="h-full flex flex-col">
+            <div className="flex-1 overflow-hidden">
+              <ReportPreview report={currentReport} />
+            </div>
           </div>
         )}
       </div>
 
-      {/* Footer */}
-      <div className="border-t border-border p-3">
-        <button className="w-full flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground py-2 text-sm font-medium hover:bg-primary/90 transition-colors">
-          <FileText className="h-4 w-4" />
-          生成完整报告
-        </button>
-      </div>
+      {/* Footer - 仅在报告tab显示 */}
+      {activeTab === "report" && (
+        <div className="border-t border-border p-3">
+          <ReportGenerator 
+            taskId={taskId} 
+            onReportGenerated={(report) => setCurrentReport(report)}
+          />
+        </div>
+      )}
     </div>
   )
 }

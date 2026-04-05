@@ -116,6 +116,8 @@ async def global_exception_handler(
     """
     # 判断是否显示详细信息：非生产环境都显示
     include_detail = not settings.is_production()
+    include_details = not settings.is_production()
+
     
     # 无论哪种环境都记录完整日志便于服务端调试
     logger.error(
@@ -131,6 +133,8 @@ async def global_exception_handler(
         exc=exc,
         request=request,
         include_detail=include_detail,
+        include_details=include_details,
+
     )
     
     # 确定HTTP状态码：HTTPException使用其自带的状态码

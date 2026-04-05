@@ -22,6 +22,9 @@ from app.db.session import engine, SessionLocal, init_db
 from app.api.routes import health, layer, tasks, auth
 from app.api.routes import issue_webhook
 # 增加 chat 路由导入
+from app.api.routes import health, layer, tasks, auth, report
+# 增加 webhook 导入
+
 try:
     from app.api.routes import chat
 except ImportError:
@@ -89,6 +92,9 @@ app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])
 app.include_router(layer.router, prefix="/api/v1", tags=["图层管理"])
 app.include_router(tasks.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(auth.router, prefix="/api/v1", tags=["认证"])
+app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
+app.include_router(webhook.router, prefix="/api/v1", tags=["Webhook"])
+
 
 # ============ Webhook 路由 ============
 app.include_router(issue_webhook.router, prefix="/api/v1", tags=["Issue Webhook"])
