@@ -1,7 +1,7 @@
+"""WebGIS AI Agent - 服务启动入口"""
 import uvicorn
-from app.core.app import create_app
+from app.main import app
 
-app = create_app()
 
 def main():
     uvicorn.run(
@@ -9,7 +9,6 @@ def main():
         host="0.0.0.0",
         port=8000,
         reload=True,
-        workers=4
     )
 
 
