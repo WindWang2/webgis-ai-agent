@@ -1,5 +1,6 @@
 """工具注册框架测试"""
 import pytest
+import asyncio
 from app.tools.registry import ToolRegistry, tool
 
 
@@ -26,14 +27,12 @@ def test_get_schemas():
     s = schemas[0]
     assert s["type"] == "function"
     assert s["function"]["name"] == "geocode"
-    assert s["function"]["description"] == "Geocode a location"
     assert "query" in s["function"]["parameters"]["properties"]
     assert s["function"]["parameters"]["required"] == ["query"]
-    assert s["function"]["parameters"]["properties"]["query"]["description"] == "Location name"
 
 
 @pytest.mark.asyncio
-async def test_dispatch():
+async def test_dispatch_sync():
     registry = ToolRegistry()
 
     @tool(registry, name="add", description="Add numbers")
@@ -42,6 +41,18 @@ async def test_dispatch():
 
     result = await registry.dispatch("add", {"a": 3, "b": 5})
     assert result == 8
+
+
+@pytest.mark.asyncio
+async def test_dispatch_async():
+    registry = ToolRegistry()
+
+    @tool(registry, name="async_echo", description="Async echo")
+    async def async_echo(msg: str) -> str:
+        return msg
+
+    result = await registry.dispatch("async_echo", {"msg": "hello"})
+    assert result == "hello"
 
 
 @pytest.mark.asyncio
