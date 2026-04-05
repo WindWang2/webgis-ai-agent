@@ -37,18 +37,13 @@ def health_check():
 
 
 @router.get("/ready")
-def readiness_check(db: DbSession = None):
+def readiness_check():
     """
     就绪检查接口
     
     检查服务是否准备好接收请求，包括数据库连接
     """
-    db_ready = False
-    try:
-        db.execute(text("SELECT 1"))
-        db_ready = True
-    except Exception:
-        pass
+    db_ready = get_db_for_check()
     
     return {
         "ready": db_ready,

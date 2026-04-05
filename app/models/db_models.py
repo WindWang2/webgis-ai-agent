@@ -5,6 +5,23 @@ from sqlalchemy.orm import relationship
 from app.core.database import Base
 
 
+class UserRole(Base):
+    __tablename__ = "user_roles"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String, ForeignKey("users.id"))
+    role = Column(String(50))
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True)
+    name = Column(String(100))
+    email = Column(String(200))
+    role = Column(String(50), default="user")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 
@@ -43,3 +60,15 @@ class Layer(Base):
     visible = Column(Boolean, default=True)
     opacity = Column(Float, default=1.0)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AnalysisTask(Base):
+    __tablename__ = "analysis_tasks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(200))
+    type = Column(String(50))
+    status = Column(String(50), default="pending")
+    result = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
