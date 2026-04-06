@@ -95,6 +95,11 @@ class TaskService:
         return task
 
     def get_task(self, task_id: str) -> Optional[AnalysisTask]:
+        """获取任务"""
+        return self.db.query(AnalysisTask).filter(
+            AnalysisTask.task_id == task_id
+        ).first()
+>>>>>>> d91cac14354e0119e9e594df800d7ff6b23a5730
         """获取任务（通过UUID）"""
         return self.db.query(AnalysisTask).filter(
             AnalysisTask.task_id == task_id
@@ -106,18 +111,8 @@ class TaskService:
             AnalysisTask.id == task_id
         ).first()
 
-    def list_tasks(self, limit: int = 100, offset: int = 0, status: str = None, layer_id: int = None) -> Tuple[List[AnalysisTask], int]:
-        """列出任务"""
-        query = self.db.query(AnalysisTask)
-        if status:
-            query = query.filter(AnalysisTask.status == status)
-        if layer_id:
-            query = query.filter(AnalysisTask.layer_id == layer_id)
-        query = query.order_by(AnalysisTask.created_at.desc())
-        total = query.count()
-        tasks = query.limit(limit).offset(offset).all()
-        return tasks, total
-
+    
+>>>>>>> d91cac14354e0119e9e594df800d7ff6b23a5730
     def update_task_status(
         self,
         task_id: str,
