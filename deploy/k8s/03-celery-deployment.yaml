@@ -1,0 +1,72 @@
+# WebGIS Celery Worker Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webgis-celery
+  namespace: webgis-prod
+  labels:
+    app: webgis-ai-agent
+    component: celery
+    environment: production
+spec:
+  replicas: 1
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: webgis-ai-agent
+      component: celery
+  template:
+    metadata:
+      labels:
+        app: webgis-ai-agent
+        component: celery
+        environment: production
+    spec:
+      containers:
+      - name: webgis-celery
+        image: webgis-prod:latest
+        imagePullPolicy: IfNotPresent
+        command: ["celery"]
+        args: ["-A", "app.services.celery_worker", "worker", "--loglevel=info", "--concurrency=$(CELERY_CONCURRENCY)"]
+        envFrom:
+        - configMapRef:
+            name: webgis-config
+        - secretRef:
+            name: webgis-secret
+        livenessProbe:
+          exec:
+            command:
+              - celery
+              - -A
+              - app.services.celery_worker
+              - inspect
+              - ping
+          initialDelaySeconds: 30
+          periodSeconds: 60
+          timeoutSeconds: 10
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "512Mi"
+          limits:
+            cpu: "1"
+            memory: "2Gi"
+---
+# Persistent Volume Claim for Uploads
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: webgis-uploads-pvc
+  namespace: webgis-prod
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: standard

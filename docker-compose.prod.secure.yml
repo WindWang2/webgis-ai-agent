@@ -1,0 +1,153 @@
+# ============================================================
+# WebGIS AI Agent 生产环境 Docker Compose（安全远程部署版）
+# 
+# 特点：
+# - 数据库和 Redis 仅容器内部网络通信，不暴露端口
+# - 适合部署到拥有公网 IP 的服务器
+# - 可配合 Nginx 反向代理使用 HTTPS
+#
+# 使用: docker-compose -f docker-compose.secure.ym prod.yml up -d
+# ============================================================
+
+version: "3.8"
+
+services:
+  db:
+    image: postgis/postgis:15-3.4
+    container_name: webgis-prod-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-webgis_prod}
+      POSTGRES_PWD: ${DB_PWD:-ChangeMeStrong!}
+      POSTGRES_DB: ${DB_NAME:-webgis_prod}
+    volumes:
+      - pg_data_secure:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-webgis_prod}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - webgis-internal
+    # 生产环境：不暴露端口，仅通过内部网络
+
+  redis:
+    image: redis:7-alpine
+    container_name: webgis-prod-redis
+    restart: unless-stopped
+    command: >
+      redis-server 
+      --appendonly 
+      --maxmemory 256mb 
+      --maxmemory-policy allkeys-lru
+      --bind 0.0.0.0
+      --protected-mode no
+    volumes:
+      - redis_data_secure:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retry: 5
+    networks:
+      - webgis-internal
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.Prod
+    container_name: webgis-prod-api
+    restart: unless-stopped
+    environment:
+      - ENV=production
+      - DEBUG=false
+      - DATABASE_URL=postgresql://${DB_USER:-webgis_prod}:${DB_PWD}@db:5432/${DB_NAME:-webgis_prod}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?Please set JWT_SECRET_KEY}
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - LOG_LEVEL=INFO
+    env_file:
+      - .env.Priv
+    expose:
+      - "8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/api/v1/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - webgis-internal
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    container_name: webgis-prod-celery
+    restart: unless-stopped
+    environment:
+      - ENV=production
+      - DATABASE_URL=postgresql://${DB_USER:-webgis_prod}:${DB_PWD}@db:5432/${DB_NAME:-webgis_prod}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    env_file:
+      - .env.production
+    command: celery -A app.services.celery_worker worker --loglevel=info --concurrency=2
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - webgis-internal
+
+  # Nginx 反向代理（HTTPS 终止）
+  nginx:
+    image: nginx:latest-alpine
+    container_name: webgis-prod-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/ssl:/etc/nginx/ssl:ro
+      - ./deploy/nginx/conf.d:/etc/nginx/conf.d:ro
+      - nginx_logs_secure:/var/log/nginx
+    depends_on:
+      - api
+    networks:
+      - webgis-internal
+
+  # Prometheus 监控（如需要）
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: webgis-prod-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus.secure.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data_secure:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - webgis-internal
+
+volumes:
+  pg_data_secure:
+  redis_data_secure:
+  nginx_logs_secure:
+  prometheus_data_secure:
+
+networks:
+  webgis-internal:
+    driver: bridge

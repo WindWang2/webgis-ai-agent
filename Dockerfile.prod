@@ -1,0 +1,59 @@
+# ============================================================
+# WebGIS AI Agent 生产环境 Dockerfile
+# 优化版：多阶段构建，最终镜像小于 600MB
+# ============================================================
+
+# Stage 1: Frontend Dependencies
+FROM node:20-alpine AS frontend-deps
+WORKDIR /app/frontend
+
+# 安装依赖
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci --prefer-offline
+
+# Stage 2: Frontend Builder
+FROM node:20-alpine AS frontend-builder
+WORKDIR /app/frontend
+COPY --from=frontend-deps /app/frontend/node_modules ./node_modules
+COPY frontend/ ./
+
+# 构建 Next.js（仅生产模式）
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_RUNTIME=nodejs
+RUN npm run build
+
+# Stage 3: Backend Python Dependencies
+FROM python:3.11-slim-bookworm AS backend-deps
+WORKDIR /app/backend
+
+# 安装构建所需依赖
+COPY requirements.txt .
+RUN pip install --no-cache-dir --break-system-packages \
+    uv==0.5.11 \
+    && uv pip install --system --no-cache -r requirements.txt
+
+# Stage 4: Backend Builder (最终产物)
+FROM python:3.11-slim-bookworm AS backend-builder
+WORKDIR /app/backend
+
+# 复制预安装的包
+COPY --from=backend-deps /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=backend-deps /usr/local/bin /usr/local/bin
+COPY . .
+
+# 创建非 root 用户
+RUN groupadd --system --gid 1001 appgroup && \
+    useradd --system --uid 1001 --gid appgroup --shell /bin/false --home /app appuser && \
+    mkdir -p /app/uploads && chown -R appuser:appgroup /app
+
+USER appuser
+
+# 暴露端口
+EXPOSE 3000 8000
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8000/api/v1/health/live || exit 1
+
+# 启动命令：前端静态服务 + 后端 API
+CMD ["sh", "-c", "cd /app/frontend/out && npx serve@latest -s . -l 3000 & uvicorn app.main:app --host 0.0.0.0 --port 8000"]
