@@ -1,0 +1,360 @@
+# ============================================================
+# WebGIS AI Agent CI/CD Pipeline
+# 自动构建、测试、部署到生产环境
+# ============================================================
+
+name: CI/CD Pipeline
+
+on:
+  # 推送 main 分支时触发
+  push:
+    branches:
+      - main
+      - 'release/**'
+  # 定期检查（每日凌晨）
+  schedule:
+    - cron: '0 2 * * *'
+  # 手动触发
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # ============ Stage 1: 代码质量检查 ============
+  lint:
+    name: Code Quality Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Ruff Linter
+        run: pip install ruff
+
+      - name: Run Ruff Check
+        run: ruff check --output-format=github .
+
+      - name: Install Frontend Deps
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: ESLint Check
+        working-directory: ./frontend
+        run: npx eslint . --max-warnings 0
+
+  # ============ Stage 2: 单元测试 ============
+  test-backend:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:15-3.4
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_pass
+          POSTGRES_DB: test_db
+        ports: 5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        port: 6379
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt pytest pytest-asyncio httpx
+
+      - name: Set Environment Variables
+        run: |
+          echo "DB_HOST=localhost" >> $GITHUB_ENV
+          echo "DB_PORT=5432" >> $GITHUB_ENV
+          echo "DB_USER=test_user" >> $GITHUB_ENV
+          echo "DB_PASSWORD=test_pass" >> $GITHUB_ENV
+          echo "DB_NAME=test_db" >> $GITHUB_ENV
+          echo "DATABASE_URL=postgresql://test_user:test_pass@localhost:5432/test_db" >> $GITHUB_ENV
+          echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV
+
+      - name: Run Tests with Coverage
+        run: pytest --cov=app --cov-report=xml --cov-report=term-missing -v
+
+      - name: Upload Coverage Report
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+
+  test-frontend:
+    name: Frontend Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Run Vitest
+        working-directory: ./frontend
+        run: npm run test:ci
+
+      - name: Upload Coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./frontend/coverage/coverage-final.json
+          flags: frontend
+          fail_ci_if_error: false
+
+  # ============ Stage 3: 安全扫描 ============
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Bandit Security Scan
+        uses: axel-op/github-action-bandit@v1
+        with:
+          level: 1
+          options: '-r app/'
+
+      - name: Dependency Audit (Backend)
+        run: pip install pip-audit && pip-audit -r requirements.txt || true
+
+      - name: Dependency Audit (Frontend)
+        working-directory: ./frontend
+        run: npm audit --audit-level=moderate || true
+
+  # ============ Stage 4: 构建镜像 ============
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [lint, test-backend, test-frontend]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=ref,event=branch
+            type=semver,pattern={{major}}.{{minor}}.{{patch}}
+
+      - name: Build Production Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.prod
+          platforms: linux/amd64,linux/arm64
+          push: false
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          labels: ${{ meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save Image Artifact
+        run: |
+          docker save ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            > webgis-image.tar
+
+      - name: Upload Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: webgis-image
+          path: webgis-image.tar
+          retention-days: 7
+
+  # ============ Stage 5: 部署预览（Pull Request）==========
+  preview:
+    name: Deploy Preview
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Download Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: webgis-image
+          path: .
+
+      - name: Load Docker Image
+        run: docker load < webgis-image.tar
+
+      - name: Start Preview Stack
+        run: |
+          cp .env.prod.example .env.preview
+          sed -i 's|/webgis_prod|/webgis_preview|g' .env.preview
+          
+          # 修改端口避免冲突
+          export API_PORT=$((9000 + $RANDOM % 1000))
+          export FRONTEND_PORT=$((13000 + $RANDOM % 1000))
+          
+          docker-compose -f docker-compose.prod.yml \
+            -f docker-compose.preview.yml up -d
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+
+      - name: Comment Preview URL
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const commentBody = `
+            🚀 **Preview 部署成功**
+            
+            - API: http://localhost:${ process.env.API_PORT }
+            - Frontend: http://localhost:${ process.env.FRONEND_PORT }
+            
+            镜像: ${ process.env.IMAGE_TAG }
+            `;
+            
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              body: commentBody
+            });
+
+  # ============ Stage 6: 生产部署（仅 main 分支）==========
+  deploy-prod:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Download Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: webgis-image
+          path: .
+
+      - name: Load Docker Image
+        run: docker load < webgis-image.tar
+
+      - name: Configure SSH Access
+        if: vars.SSH_HOST != ''
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Deploy to Server via SSH
+        if: vars.SSH_HOST != ''
+        run: |
+          scp docker-compose.prod.prod-secure.yml ${{ vars.SSH_HOST }}:~/
+          scp .env.priv ${{ vars.SSH_HOST }}:~/
+          
+          ssh ${{ vars.SSH_HOST }} << 'EOF'
+            docker compose -f docker-compose.prod.secure.yml pull
+            docker compose -f docker-compose.prod.secure.yml up -d
+            docker system prune -f
+          EOF
+
+      - name: Deploy via Container Registry
+        if: vars.SSH_HOST == ''
+        run: |
+          # 登录私有仓库（如果需要）
+          echo "${{ secrets.REGISTRY_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+          
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          
+          # 在目标服务器上运行：
+          # docker-compose -f docker-compose.prod.yml pull
+          # docker-compose -f docker-compose.prod.yml up -d
+
+      - name: Health Check
+        run: |
+          sleep 30
+          curl -sf http://localhost:18000/api/v1/health/live || exit 1
+
+      - name: Notify Success
+        if: vars.FEISHU_WEBHOOK_URL != ''
+        run: |
+          curl -X POST '${{ vars.FEISHU_WEBHOOK_URL }}' \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "msg_type": "text",
+              "content": {
+                "text": "🚀 WebGIS 生产环境部署成功\n- SHA: ${{ github.sha }}\n- 作者: ${{ github.actor }}"
+              }
+            }'
+
+  # ============ Stage 7: 回滚（手动触发）==========
+  rollback:
+    name: Rollback Deployment
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    environment: production
+    steps:
+      - name: Get Previous Tag
+        id: previous-tag
+        run: |
+          TAG=$(git describe --abbrev=0 --tags HEAD^)
+          echo "TAG=$TAG" >> $GITHUB_ENV
+
+      - name: Checkout Previous Version
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+
+      - name: Build Previous Image
+        run: |
+          docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback -f Dockerfile.prod .
+
+      - name: Deploy Rollback
+        run: |
+          docker-compose -f docker-compose.prod.yml up -d
+
+      - name: Verify Rollback
+        run: |
+          sleep 30
+          curl -sf http://localhost:18000/api/v1/health/live

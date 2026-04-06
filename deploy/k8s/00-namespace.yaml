@@ -1,0 +1,8 @@
+# WebGIS AI Agent Kubernetes Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: webgis-prod
+  labels:
+    app: webgis-ai-agent
+    environment: production

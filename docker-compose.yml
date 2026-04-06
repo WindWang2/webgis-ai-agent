@@ -22,7 +22,7 @@ services:
     container_name: webgis-redis
     ports:
       - "${REDIS_PORT:-6379}:6379"
-    command: redis-server --appendonly --maxmemory 256mb
+    command: ["redis-server", "--appendonly", "--maxmemory", "256mb"]
     volumes:
       - redis_data:/data
     healthcheck:

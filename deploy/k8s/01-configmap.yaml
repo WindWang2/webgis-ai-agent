@@ -1,0 +1,32 @@
+# WebGIS AI Agent ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: webgis-config
+  namespace: webgis-prod
+data:
+  ENV: "production"
+  DEBUG: "false"
+  LOG_LEVEL: "INFO"
+  PYTHONUNBUFFERED: "1"
+  API_PORT: "8000"
+  FRONTEND_PORT: "3000"
+  CORS_ORIGINS: "*"
+  CELERY_CONCURRENCY: "2"
+---
+# WebGIS AI Agent Secrets (Base64 encoded - replace with your actual values)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: webgis-secret
+  namespace: webgis-prod
+type: Opaque
+stringData:
+  # 数据库连接 (postgresql://user:password@host:port/dbname)
+  DATABASE_URL: "postgresql://webgis_prod:ChangeMeStrongPwd123!@postgres:5432/webgis_prod"
+  # JWT 密钥 (至少32位随机字符串)
+  JWT_SECRET_KEY: "your-secure-jwt-secret-key-min-32-chars"
+  # Redis 连接
+  REDIS_URL: "redis://redis:6379/0"
+  CELERY_BROKER_URL: "redis://redis:6379/0"
+  CELERY_RESULT_BACKEND: "redis://redis:6379/1"

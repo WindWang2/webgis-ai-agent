@@ -1,0 +1,163 @@
+# Optional: Internal PostgreSQL with PostGIS (for demo/test only, production use external DB)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: webgis-prod
+  labels:
+    app: webgis-ai-agent
+    component: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webgis-ai-agent
+      component: postgres
+  template:
+    metadata:
+      labels:
+        app: webgis-ai-agent
+        component: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgis/postgis:15-3.4
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: webgis-secret
+              key: DB_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: webgis-secret
+              key: DB_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: webgis-secret
+              key: DB_NAME
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        livenessProbe:
+          exec:
+            command: ["pg_isready", "-U", "webgis_prod"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: postgres-data
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+---
+# PostgreSQL Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: webgis-prod
+  labels:
+    app: webgis-ai-agent
+    component: postgres
+spec:
+  ports:
+  - port: 5432
+  selector:
+    app: webgis-ai-agent
+    component: postgres
+---
+# PostgreSQL PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: webgis-prod
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: standard
+---
+# Optional: Internal Redis (for demo/test only, production use external Redis)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: webgis-prod
+  labels:
+    app: webgis-ai-agent
+    component: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webgis-ai-agent
+      component: redis
+  template:
+    metadata:
+      labels:
+        app: webgis-ai-agent
+        component: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        command:
+        - redis-server
+        - "--appendonly"
+        - "yes"
+        - "--maxmemory"
+        - "1gb"
+        - "--maxmemory-policy"
+        - "allkeys-lru"
+        livenessProbe:
+          exec:
+            command: ["redis-cli", "ping"]
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+      volumes:
+      - name: redis-data
+        persistentVolumeClaim:
+          claimName: redis-pvc
+---
+# Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: webgis-prod
+  labels:
+    app: webgis-ai-agent
+    component: redis
+spec:
+  ports:
+  - port: 6379
+  selector:
+    app: webgis-ai-agent
+    component: redis
+---
+# Redis PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: webgis-prod
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: standard
