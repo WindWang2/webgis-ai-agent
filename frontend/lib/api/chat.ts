@@ -17,8 +17,10 @@ export interface ChatMessage {
   }>;
 }
 
+export type SSEEventType = 'message' | 'thinking' | 'planning' | 'acting' | 'observing' | 'done' | 'tool_error';
+
 export interface SSEEvent {
-  event: string;
+  event: SSEEventType;
   data: any;
 }
 

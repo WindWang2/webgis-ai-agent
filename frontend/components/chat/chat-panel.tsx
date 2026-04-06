@@ -1,7 +1,7 @@
 "use client"
 import { useState, useRef, useEffect } from "react"
-import { Send, Paperclip, Bot, User, Loader2, Upload, X } from "lucide-react"
-import { streamChat } from "@/lib/api/chat"
+import { Send, Paperclip, Bot, User, Loader2, Upload, X, Check, AlertCircle } from "lucide-react"
+import { streamChat, SSEEventType } from "@/lib/api/chat"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
@@ -42,8 +42,22 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
   const [sessionId, setSessionId] = useState<string>()
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [showAttachments, setShowAttachments] = useState(false)
+  const [currentStep, setCurrentStep] = useState<SSEEventType | 'error' | null>(null)
   const messageEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Reasoning step order and labels
+  const stepOrder: SSEEventType[] = ['thinking', 'planning', 'acting', 'observing', 'done']
+  const stepLabels: Record<SSEEventType | 'error', { label: string; icon: React.ReactNode }> = {
+    thinking: { label: '思考中', icon: <Loader2 className="h-3 w-3 animate-spin" /> },
+    planning: { label: '规划方案', icon: <Loader2 className="h-3 w-3 animate-spin" /> },
+    acting: { label: '执行操作', icon: <Loader2 className="h-3 w-3 animate-spin" /> },
+    observing: { label: '分析结果', icon: <Loader2 className="h-3 w-3 animate-spin" /> },
+    done: { label: '完成', icon: <Check className="h-3 w-3 text-green-500" /> },
+    tool_error: { label: '执行出错', icon: <AlertCircle className="h-3 w-3 text-red-500" /> },
+    error: { label: '执行出错', icon: <AlertCircle className="h-3 w-3 text-red-500" /> },
+    message: { label: '回复消息', icon: <Check className="h-3 w-3 text-green-500" /> }
+  }
 
   // Handle incoming messages from parent
   useEffect(() => {
@@ -121,9 +135,15 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
 
     try {
       let assistantContent = ""
+      setCurrentStep('thinking')
 
       for await (const event of streamChat(messageText, sessionId)) {
         const { event: eventType, data } = event
+
+        // Update current step for reasoning events
+        if (stepOrder.includes(eventType as SSEEventType) || eventType === 'tool_error') {
+          setCurrentStep(eventType)
+        }
 
         if (eventType === "session" && data?.session_id) {
           setSessionId(data.session_id)
@@ -176,7 +196,17 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
           ))
           scrollToBottom()
         } else if (eventType === "done" || eventType === "end") {
+          setCurrentStep('done')
           break
+        } else if (eventType === "tool_error") {
+          const errorMsg = typeof data === "object" ? (data.message || data.error || "未知错误") : String(data)
+          assistantContent += `\n❌ **错误**: ${errorMsg}\n`
+          setMessages(prev => prev.map(msg =>
+            msg.id === thinkingMessage.id
+              ? { ...msg, content: assistantContent, isThinking: false }
+              : msg
+          ))
+          scrollToBottom()
         }
       }
 
@@ -191,12 +221,17 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
       onAnalysisRequest?.(messageText, attachments)
 
     } catch (error) {
+      setCurrentStep('error')
       setMessages(prev => prev.map(msg =>
         msg.id === thinkingMessage.id
           ? { ...msg, content: "抱歉，请求失败了，请重试", isThinking: false }
           : msg
       ))
     } finally {
+      // Keep done/error state visible for 1 second before clearing
+      setTimeout(() => {
+        setCurrentStep(null)
+      }, 1000)
       setIsLoading(false)
       inputRef.current?.focus()
     }
@@ -216,6 +251,24 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
         <Bot className="h-5 w-5 text-cyan-400 animate-pulse" />
         <h1 className="font-semibold text-white">AI 对话</h1>
       </div>
+
+      {/* Reasoning Progress Bar */}
+      {currentStep && (
+        <div className="border-b border-cyan-500/20 px-4 py-2 bg-cyan-950/30 transition-all duration-300 ease-in-out">
+          <div className="flex items-center gap-2 mb-1.5">
+            {currentStep && stepLabels[currentStep]?.icon}
+            <span className="text-xs text-cyan-300">{stepLabels[currentStep]?.label || '处理中'}</span>
+          </div>
+          <div className="w-full h-1 bg-gray-700 rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-gradient-to-r from-cyan-400 to-blue-500 transition-all duration-500 ease-out"
+              style={{ 
+                width: `${currentStep === 'done' || currentStep === 'tool_error' || currentStep === 'error' ? 100 : ((stepOrder.indexOf(currentStep as SSEEventType) + 1) / stepOrder.length) * 100}%` 
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
