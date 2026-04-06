@@ -1,0 +1,165 @@
+{
+  "groups": [
+    {
+      "name": "webgis-production-alerts",
+      "rules": [
+        {
+          "alert": "WebGIS_API_Down",
+          "expr": "up{job='webgis-api'} == 0",
+          "for": "2m",
+          "labels": {
+            "severity": "critical"
+          },
+          "annotations": {
+            "summary": "WebGIS API 服务宕机",
+            "description": "WebGIS API 已经停止响应请求超过 2 分钟"
+          }
+        },
+        {
+          "alert": "High_Error_Rate",
+          "expr": "sum(rate(http_requests_status_code{service='webgis-api',status=~'5..'}[5m])) / sum(rate(http_requests_total{service='webgis-api'}[5m])) > 0.05",
+          "for": "5m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "API 错误率过高",
+            "description": "过去 5 分钟内错误率超过 5%"
+          }
+        },
+        {
+          "alert": "Slow_Response_P95",
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service='webgis-api'}[5m])) by (le)) > 2",
+          "for": "5m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "API 响应慢",
+            "description": "P95 响应时间超过 2 秒"
+          }
+        },
+        {
+          "alert": "Slow_Response_P99",
+          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{service='webgis-api'}[5m])) by (le)) > 5",
+          "for": "5m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "API 响应极慢",
+            "description": "P99 响应时间超过 5 秒"
+          }
+        },
+        {
+          "alert": "High_CPU_Usage",
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace='webgis-prod',container='webgis-api'}[5m])) by (pod) / sum(kube_pod_container_resource_limits{namespace='webgis-prod',container='webgis-api',resource='cpu'}) by (pod) > 0.85",
+          "for": "5m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "API 服务CPU使用率过高",
+            "description": "Pod {{ $labels.pod }} CPU 使用率超过 85%，已持续 5 分钟"
+          }
+        },
+        {
+          "alert": "High_Memory_Usage",
+          "expr": "sum(container_memory_working_set_bytes{namespace='webgis-prod',container='webgis-api'}) by (pod) / sum(kube_pod_container_resource_limits{namespace='webgis-prod',container='webgis-api',resource='memory'}) by (pod) > 0.85",
+          "for": "5m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "API 服务内存使用率过高",
+            "description": "Pod {{ $labels.pod }} 内存使用率超过 85%，已持续 5 分钟"
+          }
+        },
+        {
+          "alert": "High_CPU_Usage_Celery",
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace='webgis-prod',container='webgis-celery'}[5m])) by (pod) / sum(kube_pod_container_resource_limits{namespace='webgis-prod',container='webgis-celery',resource='cpu'}) by (pod) > 0.8",
+          "for": "10m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "Celery 服务CPU使用率过高",
+            "description": "Pod {{ $labels.pod }} CPU 使用率超过 80%，已持续 10 分钟"
+          }
+        },
+        {
+          "alert": "High_Memory_Usage_Celery",
+          "expr": "sum(container_memory_working_set_bytes{namespace='webgis-prod',container='webgis-celery'}) by (pod) / sum(kube_pod_container_resource_limits{namespace='webgis-prod',container='webgis-celery',resource='memory'}) by (pod) > 0.8",
+          "for": "10m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "Celery 服务内存使用率过高",
+            "description": "Pod {{ $labels.pod }} 内存使用率超过 80%，已持续 10 分钟"
+          }
+        },
+        {
+          "alert": "Database_Connection_Failure",
+          "expr": "pg_up == 0",
+          "for": "1m",
+          "labels": {
+            "severity": "critical"
+          },
+          "annotations": {
+            "summary": "数据库连接失败",
+            "description": "PostgreSQL 数据库无响应"
+          }
+        },
+        {
+          "alert": "Redis_Memory_High",
+          "expr": "redis_memory_used_bytes / redis_memory_max_bytes > 0.9",
+          "for": "5m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "Redis 内存使用率高",
+            "description": "Redis 内存使用率超过 90%，可能影响性能"
+          }
+        },
+        {
+          "alert": "Disk_Space_Low",
+          "expr": "(node_filesystem_avail_bytes{mountpoint='/'} / node_filesystem_size_bytes{mountpoint='/'}) < 0.1",
+          "for": "10m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "磁盘空间不足",
+            "description": "磁盘可用空间低于 10%"
+          }
+        },
+        {
+          "alert": "Celery_Task_Backlog",
+          "expr": "rabbitmq_queue_messages_ready > 1000",
+          "for": "15m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "Celery 任务积压",
+            "description": "等待处理的任务超过 1000 个，可能导致延迟"
+          }
+        },
+        {
+          "alert": "Auth_JWT_Errors",
+          "expr": "increase(auth_jwt_validation_errors_total[5m]) > 10",
+          "for": "2m",
+          "labels": {
+            "severity": "warning"
+          },
+          "annotations": {
+            "summary": "JWT 验证错误频发",
+            "description": "过去 5 分钟内 JWT 验证错误超过 10 次，可能表明攻击或配置问题"
+          }
+        }
+      ]
+    }
+  ]
+}

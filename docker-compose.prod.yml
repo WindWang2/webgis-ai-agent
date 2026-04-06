@@ -1,0 +1,185 @@
+# ============================================================
+# WebGIS AI Agent 生产环境 Docker Compose
+# 使用: docker-compose -f docker-compose.prod.yml up -d
+# ============================================================
+version: "3.8"
+
+services:
+  # PostgreSQL 数据库（含 PostGIS）
+  db:
+    image: postgis/postgis:15-3.4
+    container_name: webgis-prod-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-webgis_prod}
+      POSTGRES_PASSWORD: ${DB_PWD:-ChangeMeStrongPwd123!}
+      POSTGRES_DB: ${DB_NAME:-webgis_prod}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${DB_PORT:-15432}:5432"
+    volumes:
+      - pg_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-webgis_prod}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - webgis-net
+
+  # Redis 缓存/消息队列
+  redis:
+    image: redis:7-alpine
+    container_name: webgis-prod-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-16379}:6379"
+    command: >
+      redis-server 
+      --appendonly 
+      --maxmemory 256mb 
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_prod_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retry: 5
+    networks:
+      - webgis-net
+
+  # 后端 API 服务
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      target: backend-builder
+    container_name: webgis-prod-api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-18000}:8000"
+      - "${FRONTEND_PORT:-13000}:3000"
+    environment:
+      - ENV=production
+      - DEBUG=false
+      - DATABASE_URL=${DATABASE_URL}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - LOG_LEVEL=INFO
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env.prod
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - uploads:/app/frontend/out/uploads
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/api/v1/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - webgis-net
+
+  # Celery Worker（异步任务处理）
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      target: backend-builder
+    container_name: webgis-prod-celery
+    restart: unless-stopped
+    environment:
+      - ENV=production
+      - DEBUG=false
+      - DATABASE_URL=${DATABASE_URL}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - LOG_LEVEL=INFO
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env.prod
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.services.celery_worker worker --loglevel=info --concurrency=2
+    networks:
+      - webgis-net
+
+  # Nginx 反向代理（可选，用于生产环境）
+  nginx:
+    image: nginx:alpine
+    container_name: webgis-prod-nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - api
+    networks:
+      - webgis-net
+
+  # Prometheus 指标收集（可选）
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: webgis-prod-prometheus
+    restart: unless-stopped
+    ports:
+      - "19090:9090"
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    networks:
+      - webgis-net
+
+  # Grafana 可视化面板（可选）
+  grafana:
+    image: grafana/grafana:10.3.3
+    container_name: webgis-prod-grafana
+    restart: unless-stopped
+    port:
+      - "13000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PWD:-admin123}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    networks:
+      - webgis-net
+
+volumes:
+  pg_prod_data:
+  redis_prod_data:
+  uploads:
+  nginx_log:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  webgis-net:
+    driver: bridge

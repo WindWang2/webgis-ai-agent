@@ -1,0 +1,39 @@
+# Kustomization Configuration for WebGIS AI Agent
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: webgis-prod
+
+# 基础资源列表
+resources:
+- 00-namespace.yaml
+- 01-configmap.yaml
+- 02-api-deployment.yaml
+- 03-celery-deployment.yaml
+- 04-ingress.yaml
+
+# 可选依赖（生产环境建议使用外部托管的数据库和Redis，注释掉以下行）
+# - 05-deps-optional.yaml
+
+# 配置转换器
+configMapGenerator:
+- name: webgis-config
+  behavior: merge
+  literals:
+  - ENV=production
+  - DEBUG=false
+
+# 替换镜像名称
+images:
+- name: webgis-prod:latest
+  newName: your-registry.com/webgis-prod
+  newTag: v1.0.0
+
+# 名称前缀
+namePrefix: webgis-
+nameSuffix: -prod
+
+# 标签生成器
+commonLabels:
+  app: webgis-ai-agent
+  environment: production
+  managed-by: kustomize
