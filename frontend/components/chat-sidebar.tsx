@@ -41,7 +41,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   `, [hidden]);
 
   return (
-    <aside className={sidebarClass} role="navigation" aria-label="会话历史">
+    <aside className={sidebarClasses} role="navigation" aria-label="会话历史">
       {/* New Chat Button */}
       <div className="p-3 border-b">
         <button
