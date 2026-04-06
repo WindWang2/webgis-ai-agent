@@ -15,7 +15,7 @@ from app.models.pydantic_models import (
 )
 from app.models.db_models import User
 from app.services.layer_service import LayerService, TaskService
-from app.db.session import get_db
+from app.core.database import get_db
 
 router = APIRouter()
 
