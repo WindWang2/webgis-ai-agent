@@ -1,17 +1,85 @@
 "use client"
-
 import { useState, useRef, useEffect } from "react"
-import Map, { Layer, Source, NavigationControl } from "react-map-gl"
+import Map, { Layer, Source, NavigationControl } from "react-map-gl/maplibre"
 import "maplibre-gl/dist/maplibre-gl.css"
-import { Layers, ZoomIn, ZoomOut, Maximize } from "lucide-react"
+import { Layers, ZoomIn, ZoomOut, Maximize, Flame } from "lucide-react"
 
-const MAPBOX_TOKEN = "" // Use with MapLibre free tiles or your own tile server
+const MAPBOX__TOKEN = "" // Use with MapLibre free tiles or your own tile server
 
-export function MapPanel() {
-  const [showLayers, setShowLayers] = useState(false)
+export interface HeatmapDataPoint {
+  lat: number
+  lng: number
+  weight?: number
+}
+
+export interface HeatmapConfig {
+  intensity: number // 0-1
+  radius: number // 像素
+  colorStops: [number, string][] // [weight, color] pairs
+}
+
+export function MapPanel({
+  heatmapData = [],
+  heatmapConfig,
+  showHeatmap = true,
+}: {
+  heatmapData?: HeatmapDataPoint[]
+  heatmapConfig?: HeatmapConfig
+  showHeatmap?: boolean
+}) {
+  const [showLayer, setShowLayer] = useState(false)
   const mapRef = useRef<any>(null)
 
   const mapStyle = "https://demotiles.maplibre.org/style.json"
+
+  // Default heatmap config
+  const defaultConfig: HeatmapConfig = heatmapConfig || {
+    intensity: 1,
+    radius: 30,
+    colorStops: [
+      [0, "rgba(0,0,255,0)"],
+      [0.2, "rgba(0,0,255,0.3)"],
+      [0.4, "rgba(0,255,255,0.5)"],
+      [0.6, "rgba(0,255,0,0.7)"],
+      [0.8, "rgba(255,255,0,0.8)"],
+      [1, "rgba(255,0,0,0.9)"],
+    ],
+  }
+
+  // Convert heatmap data to GeoJSON with aggregation
+  const heatmapGeoJSON = heatmapData.length > 0 ? {
+    type: "FeatureCollection" as const,
+    features: heatmapData.map((point) => ({
+      type: "Feature" as const,
+      properties: {
+        weight: point.weight || 1,
+      },
+      geometry: {
+        type: "Point" as const,
+        coordinates: [point.lng, point.lat],
+      },
+    })),
+  } : null
+
+  // Build heatmap paint properties dynamically
+  const buildHeatmapPaint = (config: HeatmapConfig) => {
+    const paint: any = {
+      "heatmap-weight": ["get", "weight"],
+      "heatmap-intensity": config.intensity,
+      "heatmap-radius": config.radius,
+      "heatmap-opacity": 0.7,
+    }
+
+    // Build color gradient
+    const stops = config.colorStops
+    const expressions: (string | number)[] = []
+    for (let i = 0; i < stops.length; i++) {
+      expressions.push(stops[i][0], stops[i][1])
+    }
+    paint["heatmap-color"] = ["interpolate", ["linear"], ["heatmap-density"], ...expressions]
+
+    return paint
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -23,7 +91,7 @@ export function MapPanel() {
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => setShowLayers(!showLayers)}
+            onClick={() => setShowLayer(!showLayer)}
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-border hover:bg-muted transition-colors"
             title="图层管理"
           >
@@ -47,13 +115,24 @@ export function MapPanel() {
         >
           <NavigationControl position="bottom-right" />
           
-          {/* Example layer - can be replaced with dynamic layers */}
+          {/* Heatmap Layer for data aggregation visualization */}
+          {showHeatmap && heatmapGeoJSON && (
+            <Source id="heatmap-source" type="geojson" data={heatmapGeoJSON}>
+              <Layer
+                id="heatmap-layer"
+                type="heatmap"
+                paint={buildHeatmapPaint(defaultConfig)}
+              />
+            </Source>
+          )}
+
+          {/* Default point layer */}
           <Source id="data" type="geojson" data={{
             type: "FeatureCollection",
             features: []
           }}>
             <Layer
-              id="points"
+              id="point"
               type="circle"
               paint={{
                 "circle-radius": 8,
@@ -88,13 +167,17 @@ export function MapPanel() {
         </div>
 
         {/* Layer panel (conditional) */}
-        {showLayers && (
+        {showLayer && (
           <div className="absolute top-16 left-4 bg-background rounded-lg shadow-lg border border-border p-3 w-48">
             <h3 className="font-semibold mb-2 text-sm">图层列表</h3>
             <div className="space-y-2">
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" defaultChecked className="rounded" />
                 底图图层
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" defaultChecked={showHeatmap} className="rounded" />
+                热力图
               </label>
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" className="rounded" />
