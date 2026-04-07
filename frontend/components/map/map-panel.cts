@@ -1,1 +1,0 @@
-/home/kevin/projects/webgis-ai-agent/frontend/components/map/map-panel.tsx

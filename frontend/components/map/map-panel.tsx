@@ -3,19 +3,20 @@ import { useState, useRef, useCallback, useEffect } from "react"
 import Map, { NavigationControl, MapRef, ViewStateChangeEvent } from "react-map-gl/maplibre"
 import maplibregl from "maplibre-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
-import { Layers, ZoomIn, ZoomOut, Maximize, MapPin, Eye, EyeOff, RotateCcw, Target, Trash2, ChevronDown } from "lucide-react"
-import type { GeoJsonLayer } from "@/app/page"
+import { Layers, ZoomIn, ZoomOut, Maximize, MapPin, Eye, EyeOff, RotateCcw, Target, Trash2, ChevronDown, Plus, Edit, Settings } from "lucide-react"
+import { LayerCard } from "@/components/layer-card"
+import type { Layer } from "@/lib/types/layer"
 
 interface MapPanelProps {
-  layer: GeoJsonLayer[]
+  layers: Layer[]
   onRemoveLayer: (id: string) => void
   onToggleLayer: (id: string) => void
-  analysisResult?: any  // 保留旧接口兼容
+  onEditLayer: (layer: Layer) => void
+  analysisResult?: any
 }
 
 // Map layer types
 type LayerType = "raster" | "style"
->>>>>>> d91cac14354e0119e9e594df800d7ff6b23a5730
 
 interface MapStyleOption {
   name: string
@@ -38,15 +39,15 @@ const DEFAULT_VIEW_STATE = {
   zoom: 4,
 }
 
-export function MapPanel({ layer, onRemoveLayer, onToggleLayer, analysisResult }: MapPanelProps) {
+export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, analysisResult }: MapPanelProps) {
   const [showLayerPanel, setShowLayerPanel] = useState(false)
   const [showLayerSelector, setShowLayerSelector] = useState(false)
-  const [selectedLayer, setSelectedLayer] = useState(0)
+  const [selectedBaseLayer, setSelectedBaseLayer] = useState(0)
   const [coordinates, setCoordinates] = useState({ lng: 0, lat: 0 })
   const [viewState, setViewState] = useState(DEFAULT_VIEW_STATE)
   const mapRef = useRef<MapRef>(null)
 
-  // Apply analysis results to map (legacy)
+  // Apply analysis results to map
   useEffect(() => {
     if (analysisResult?.center) {
       setViewState(prev => ({
@@ -63,123 +64,162 @@ export function MapPanel({ layer, onRemoveLayer, onToggleLayer, analysisResult }
     }
   }, [analysisResult])
 
-  // Dynamic GeoJSON layer rendering
+  // Dynamic layer rendering
   useEffect(() => {
     const map = mapRef.current?.getMap()
     if (!map || !map.isStyleLoaded()) return
 
-    // Remove old geojson layers and source
+    // Remove old layers and sources
     const style = map.getStyle()
     if (style) {
-      for (const layer of style.layer || []) {
-        if (layer.id.startsWith("geojson-")) {
+      for (const layer of style.layers || []) {
+        if (layer.id.startsWith("custom-")) {
           map.removeLayer(layer.id)
         }
       }
       for (const sourceId of Object.keys(style.sources || {})) {
-        if (sourceId.startsWith("geojson-")) {
+        if (sourceId.startsWith("custom-")) {
           map.removeSource(sourceId)
         }
       }
     }
 
-    // Add new layer
-    for (const layer of layer) {
-      if (!layer.visible) continue
+    // Add new layers
+    for (const layer of layers) {
+      if (!layer.visible || !layer.source) continue
 
-      const sourceId = `geojson-${layer.id}`
+      const sourceId = `custom-${layer.id}`
       if (map.getSource(sourceId)) continue
 
-      map.addSource(sourceId, {
-        type: "geojson",
-        data: layer.geojson,
-      })
-
-      const features = layer.geojson.feature || []
-      const hasPolygons = features.some((f: any) => f.geometry?.type === "Polygon" || f.geometry?.type === "MultiPolygon")
-      const hasLines = feature.some((f: any) => ["LineString", "MultiLineString"].includes(f.geometry?.type))
-      const hasPoints = feature.some((f: any) => f.geometry?.type === "Point")
-
-      const color = layer.color || "#3b82f6"
-
-      if (hasPolygons) {
-        map.addLayer({
-          id: `geojson-${layer.id}-fill`,
-          type: "fill",
-          source: sourceId,
-          paint: {
-            "fill-color": color,
-            "fill-opacity": 0.3,
-          },
-          filter: ["any", ["in", "$type", "Polygon"]],
+      if (layer.type === "raster") {
+        // Raster layer
+        map.addSource(sourceId, {
+          type: "raster",
+          tiles: [layer.source],
+          tileSize: 256,
         })
         map.addLayer({
-          id: `geojson-${layer.id}-outline`,
-          type: "line",
+          id: `custom-${layer.id}-raster`,
+          type: "raster",
           source: sourceId,
           paint: {
-            "line-color": color,
-            "line-width": 2,
+            "raster-opacity": layer.opacity || 1,
           },
-          filter: ["any", ["in", "$type", "Polygon"]],
         })
-      }
-      if (hasLines) {
-        map.addLayer({
-          id: `geojson-${layer.id}-line`,
-          type: "line",
-          source: sourceId,
-          paint: {
-            "line-color": color,
-            "line-width": 3,
-          },
-          filter: ["any", ["in", "$type", "LineString"]],
-        })
-      }
-      if (hasPoints) {
-        map.addLayer({
-          id: `geojson-${layer.id}-point`,
-          type: "circle",
-          source: sourceId,
-          paint: {
-            "circle-radius": 6,
-            "circle-color": color,
-            "circle-stroke-width": 2,
-            "circle-stroke-color": "#fff",
-          },
-          filter: ["any", ["in", "$type", "Point"]],
-        })
-      }
+      } else if (layer.type === "vector") {
+        // Vector layer (GeoJSON)
+        if (typeof layer.source === "object" && layer.source.type === "FeatureCollection") {
+          map.addSource(sourceId, {
+            type: "geojson",
+            data: layer.source,
+          })
 
-      // Auto-fit bounds
-      if (features.length > 0) {
-        const bounds = new maplibregl.LngLatBounds()
-        features.forEach((f: any) => {
-          if (!f.geometry) return
-          if (f.geometry.type === "Point") {
-            bounds.extend(f.geometry.coordinates as [number, number])
-          } else if (f.geometry.coordinates) {
-            const coords = f.geometry.type === "Polygon"
-              ? f.geometry.coordinates[0]
-              : Array.isArray(f.geometry.coordinates[0]?.[0])
-                ? f.geometry.coordinates.flat()
-                : f.geometry.coordinates
-            ;(Array.isArray(coords[0]) ? coords : [coords]).forEach((c: number[]) => {
-              bounds.extend(c as [number, number])
+          // Determine geometry types
+          const features = layer.source.features || []
+          const hasPolygons = features.some((f: any) => f.geometry?.type === "Polygon" || f.geometry?.type === "MultiPolygon")
+          const hasLines = features.some((f: any) => ["LineString", "MultiLineString"].includes(f.geometry?.type))
+          const hasPoints = features.some((f: any) => f.geometry?.type === "Point")
+
+          const color = (layer.style as any)?.color || "#3b82f6"
+
+          if (hasPolygons) {
+            map.addLayer({
+              id: `custom-${layer.id}-fill`,
+              type: "fill",
+              source: sourceId,
+              paint: {
+                "fill-color": color,
+                "fill-opacity": (layer.opacity || 1) * 0.3,
+              },
+              filter: ["any", ["in", "$type", "Polygon"]],
+            })
+            map.addLayer({
+              id: `custom-${layer.id}-outline`,
+              type: "line",
+              source: sourceId,
+              paint: {
+                "line-color": color,
+                "line-width": 2,
+                "line-opacity": layer.opacity || 1,
+              },
+              filter: ["any", ["in", "$type", "Polygon"]],
             })
           }
+          if (hasLines) {
+            map.addLayer({
+              id: `custom-${layer.id}-line`,
+              type: "line",
+              source: sourceId,
+              paint: {
+                "line-color": color,
+                "line-width": 3,
+                "line-opacity": layer.opacity || 1,
+              },
+              filter: ["any", ["in", "$type", "LineString"]],
+            })
+          }
+          if (hasPoints) {
+            map.addLayer({
+              id: `custom-${layer.id}-point`,
+              type: "circle",
+              source: sourceId,
+              paint: {
+                "circle-radius": 6,
+                "circle-color": color,
+                "circle-stroke-width": 2,
+                "circle-stroke-color": "#fff",
+                "circle-opacity": layer.opacity || 1,
+              },
+              filter: ["any", ["in", "$type", "Point"]],
+            })
+          }
+
+          // Auto-fit bounds
+          if (features.length > 0) {
+            const bounds = new maplibregl.LngLatBounds()
+            features.forEach((f: any) => {
+              if (!f.geometry) return
+              if (f.geometry.type === "Point") {
+                bounds.extend(f.geometry.coordinates as [number, number])
+              } else if (f.geometry.coordinates) {
+                const coords = f.geometry.type === "Polygon"
+                  ? f.geometry.coordinates[0]
+                  : Array.isArray(f.geometry.coordinates[0]?.[0])
+                    ? f.geometry.coordinates.flat()
+                    : f.geometry.coordinates
+                ;(Array.isArray(coords[0]) ? coords : [coords]).forEach((c: number[]) => {
+                  bounds.extend(c as [number, number])
+                })
+              }
+            })
+            if (!bounds.isEmpty()) {
+              map.fitBounds(bounds, { padding: 50, maxZoom: 15 })
+            }
+          }
+        }
+      } else if (layer.type === "tile") {
+        // Tile layer
+        map.addSource(sourceId, {
+          type: "raster",
+          tiles: [layer.source],
+          tileSize: 256,
         })
-        if (bounds.isEmpty()) return
-        map.fitBounds(bounds, { padding: 50, maxZoom: 15 })
+        map.addLayer({
+          id: `custom-${layer.id}-tile`,
+          type: "raster",
+          source: sourceId,
+          paint: {
+            "raster-opacity": layer.opacity || 1,
+          },
+        })
       }
     }
-  }, [layer])
+  }, [layers])
 
   const handleMove = useCallback((evt: ViewStateChangeEvent) => {
     setViewState(evt.viewState)
   }, [])
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleMouseMove = useCallback((e: any) => {
     setCoordinates({
       lng: Number(e.lngLat.lng.toFixed(4)),
@@ -212,58 +252,9 @@ export function MapPanel({ layer, onRemoveLayer, onToggleLayer, analysisResult }
     }
   }
 
-  const handleLayerSelect = (index: number) => {
-    setSelectedLayer(index)
+  const handleBaseLayerSelect = (index: number) => {
+    setSelectedBaseLayer(index)
     setShowLayerSelector(false)
-  }
-
-  // Default heatmap config
-  const defaultConfig: HeatmapConfig = heatmapConfig || {
-    intensity: 1,
-    radius: 30,
-    colorStops: [
-      [0, "rgba(0,0,255,0)"],
-      [0.2, "rgba(0,0,255,0.3)"],
-      [0.4, "rgba(0,255,255,0.5)"],
-      [0.6, "rgba(0,255,0,0.7)"],
-      [0.8, "rgba(255,255,0,0.8)"],
-      [1, "rgba(255,0,0,0.9)"],
-    ],
-  }
-
-  // Convert heatmap data to GeoJSON with aggregation
-  const heatmapGeoJSON = heatmapData.length > 0 ? {
-    type: "FeatureCollection" as const,
-    features: heatmapData.map((point) => ({
-      type: "Feature" as const,
-      properties: {
-        weight: point.weight || 1,
-      },
-      geometry: {
-        type: "Point" as const,
-        coordinates: [point.lng, point.lat],
-      },
-    })),
-  } : null
-
-  // Build heatmap paint properties dynamically
-  const buildHeatmapPaint = (config: HeatmapConfig) => {
-    const paint: any = {
-      "heatmap-weight": ["get", "weight"],
-      "heatmap-intensity": config.intensity,
-      "heatmap-radius": config.radius,
-      "heatmap-opacity": 0.7,
-    }
-
-    // Build color gradient
-    const stops = config.colorStops
-    const expressions: (string | number)[] = []
-    for (let i = 0; i < stops.length; i++) {
-      expressions.push(stops[i][0], stops[i][1])
-    }
-    paint["heatmap-color"] = ["interpolate", ["linear"], ["heatmap-density"], ...expressions]
-
-    return paint
   }
 
   return (
@@ -273,8 +264,8 @@ export function MapPanel({ layer, onRemoveLayer, onToggleLayer, analysisResult }
         <div className="flex items-center gap-2">
           <Layers className="h-5 w-5 text-primary" />
           <h1 className="font-semibold">地图</h1>
-          {layer.length > 0 && (
-            <span className="text-xs text-muted-foreground">({layer.length} 图层)</span>
+          {layers.length > 0 && (
+            <span className="text-xs text-muted-foreground">({layers.length} 图层)</span>
           )}
         </div>
         <div className="flex gap-2">
@@ -283,7 +274,6 @@ export function MapPanel({ layer, onRemoveLayer, onToggleLayer, analysisResult }
             className={`flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${
               showLayerPanel ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted"
             }`}
->>>>>>> d91cac14354e0119e9e594df800d7ff6b23a5730
             title="图层管理"
           >
             <Layers className="h-4 w-4" />
@@ -299,12 +289,11 @@ export function MapPanel({ layer, onRemoveLayer, onToggleLayer, analysisResult }
           onMove={handleMove}
           onMouseMove={handleMouseMove}
           style={{ width: "100%", height: "100%" }}
-          mapStyle={MAP_STYLES[selectedLayer].url}
+          mapStyle={MAP_STYLES[selectedBaseLayer].url}
           attributionControl={false}
           reuseMaps
         >
           <NavigationControl position="bottom-right" />
->>>>>>> d91cac14354e0119e9e594df800d7ff6b23a5730
         </Map>
 
         {/* Floating Controls - Left Side */}
@@ -323,14 +312,14 @@ export function MapPanel({ layer, onRemoveLayer, onToggleLayer, analysisResult }
           </button>
         </div>
 
-        {/* Floating Control - Right Side (Layer Selector) */}
+        {/* Floating Control - Right Side (Base Layer Selector) */}
         <div className="absolute top-4 right-4 z-10">
           <div className="relative">
             <button
               onClick={() => setShowLayerSelector(!showLayerSelector)}
               className="flex h-9 items-center gap-1.5 rounded-lg bg-background shadow-md border border-border px-3 hover:bg-muted transition-colors"
             >
-              <span className="text-sm">{MAP_STYLES[selectedLayer].name}</span>
+              <span className="text-sm">{MAP_STYLES[selectedBaseLayer].name}</span>
               <ChevronDown className={`h-4 w-4 transition-transform ${showLayerSelector ? "rotate-180" : ""}`} />
             </button>
 
@@ -340,9 +329,9 @@ export function MapPanel({ layer, onRemoveLayer, onToggleLayer, analysisResult }
                 {MAP_STYLES.map((style, index) => (
                   <button
                     key={style.name}
-                    onClick={() => handleLayerSelect(index)}
+                    onClick={() => handleBaseLayerSelect(index)}
                     className={`w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors ${
-                      index === selectedLayer ? "text-primary font-medium" : ""
+                      index === selectedBaseLayer ? "text-primary font-medium" : ""
                     }`}
                   >
                     {style.name}
@@ -353,29 +342,33 @@ export function MapPanel({ layer, onRemoveLayer, onToggleLayer, analysisResult }
           </div>
         </div>
 
-        {/* Layer Control Panel */}
+        {/* Layer Management Panel */}
         {showLayerPanel && (
-          <div className="absolute top-16 left-4 bg-background rounded-lg shadow-lg border border-border p-3 w-60 z-10">
-            <h3 className="font-semibold mb-3 text-sm">图层控制</h3>
-            {layer.length === 0 ? (
-              <p className="text-xs text-muted-foreground">暂无图层，通过对话添加</p>
+          <div className="absolute top-16 right-4 bg-background rounded-lg shadow-lg border border-border p-4 w-72 z-10 max-h-[70vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-sm">图层管理</h3>
+              <button className="flex h-6 w-6 items-center justify-center rounded hover:bg-muted text-muted-foreground">
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            
+            {layers.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-6">
+                暂无图层<br />通过AI对话添加或上传图层数据
+              </p>
             ) : (
-              <div className="space-y-2">
-                {layer.map(layer => (
-                  <div key={layer.id} className="flex items-center gap-2 text-sm">
-                    <button onClick={() => onToggleLayer(layer.id)} className="hover:bg-muted rounded p-0.5">
-                      {layer.visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4 text-muted-foreground" />}
-                    </button>
-                    <span className="w-3 h-3 rounded-full" style={{ backgroundColor: layer.color }} />
-                    <span className="flex-1 truncate">{layer.name}</span>
-                    <button onClick={() => onRemoveLayer(layer.id)} className="hover:text-destructive">
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
+              <div className="space-y-3">
+                {layers.map(layer => (
+                  <LayerCard
+                    key={layer.id}
+                    layer={layer}
+                    onToggle={onToggleLayer}
+                    onDelete={onRemoveLayer}
+                    onEdit={onEditLayer}
+                  />
                 ))}
               </div>
             )}
->>>>>>> d91cac14354e0119e9e594df800d7ff6b23a5730
           </div>
         )}
       </div>
@@ -383,7 +376,7 @@ export function MapPanel({ layer, onRemoveLayer, onToggleLayer, analysisResult }
       {/* Footer - Coordinates Display */}
       <div className="border-t border-border p-2 text-xs text-muted-foreground bg-muted/30">
         <div className="flex justify-between items-center">
-          <span>MapLibre GL JS · {MAP_STYLES[selectedLayer].name}</span>
+          <span>MapLibre GL JS · {MAP_STYLES[selectedBaseLayer].name}</span>
           <span className="font-mono">
             经度: {coordinates.lng}°, 纬度: {coordinates.lat}°
           </span>
