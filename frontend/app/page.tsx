@@ -56,14 +56,20 @@ export default function Home() {
         setAnalysisResult({ center, zoom })
       }
 
+      // 确定图层类型：heatmap_data 返回 type="heatmap"，其他默认为 vector
+      const layerType = result.type === "heatmap" ? "heatmap" : "vector"
+      const layerStyle = result.type === "heatmap"
+        ? { color, renderType: "heatmap" }
+        : { color }
+
       setLayers(prev => [...prev, {
         id: layerId,
         name: result.type === "poi_query" ? `${result.area} - ${result.category}` : (result.type || toolName),
-        type: "vector",
+        type: layerType,
         visible: true,
         opacity: 1,
         source: result.geojson,
-        style: { color },
+        style: layerStyle,
       }])
     }
   }, [])

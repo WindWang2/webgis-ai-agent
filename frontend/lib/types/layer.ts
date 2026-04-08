@@ -1,7 +1,7 @@
 export interface Layer {
   id: string;
   name: string;
-  type: 'vector' | 'raster' | 'tile';
+  type: 'vector' | 'raster' | 'tile' | 'heatmap';
   visible: boolean;
   opacity: number;
   source?: string | Record<string, any>;
