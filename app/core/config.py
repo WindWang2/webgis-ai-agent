@@ -11,10 +11,10 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api"
 
     # 数据库 (SQLite)
-    DATABASE_URL: str = "sqlite:///./webgis.db"
+    DATABASE_URL: str = "postgresql+psycopg2://postgres:postgres@db:5432/webgis"
 
     # LLM 配置 (OpenAI 兼容接口)
-    LLM_BASE_URL: str = "http://192.168.193.70:8000/v1"
+    LLM_BASE_URL: str = "http://localhost:8000/v1"
     LLM_API_KEY: str = "not-needed"
     LLM_MODEL: str = "MiniMax-M2.5"
 
