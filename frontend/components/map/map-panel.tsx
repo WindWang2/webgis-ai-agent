@@ -163,7 +163,7 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
               source: sourceId,
               paint: { "raster-opacity": layer.opacity || 1 },
             })
-          } else if (layer.type === "vector") {
+          } else if (layer.type === "vector" || layer.type === "heatmap") {
             const src = layer.source
             if (typeof src !== "object" || src.type !== "FeatureCollection") {
               console.warn("[MapPanel] skipping non-FeatureCollection source for:", layer.id, "sourceType:", typeof src, src?.type)
@@ -172,13 +172,16 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
 
             map.addSource(sourceId, { type: "geojson", data: src })
 
-            const features = src.features || []
+            const features = src.feature || src.features || []
             const color = layer.style?.color || "#3b82f6"
 
             const hasPolygons = features.some((f: any) => f.geometry?.type === "Polygon" || f.geometry?.type === "MultiPolygon")
             const hasLines = features.some((f: any) => ["LineString", "MultiLineString"].includes(f.geometry?.type))
             const hasPoints = features.some((f: any) => f.geometry?.type === "Point")
             const hasWeight = features.some((f: any) => f.properties?.weight !== undefined)
+
+            // 热力图模式：强制开启热力图渲染，不依赖点数阈值
+            const isHeatmapMode = layer.type === "heatmap" || layer.style?.renderType === "heatmap"
 
             if (hasPolygons) {
               map.addLayer({
@@ -199,17 +202,32 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
                 filter: ["any", ["in", "$type", "LineString"]],
               })
             }
-            if (hasPoints) {
+            if (hasPoints || isHeatmapMode) {
               // Add heatmap layer for points (when enough features for meaningful density)
+              // 热力图模式：强制渲染不管点数多少
               const pointCount = features.filter((f: any) => f.geometry?.type === "Point").length
-              if (pointCount >= 5) {
+              if (isHeatmapMode || pointCount >= 5) {
                 try {
+                  // 热力图模式：使用更大的半径和强度确保可见性
+                  const heatmapRadius = isHeatmapMode
+                    ? ["interpolate", ["linear"], ["zoom"],
+                        6, 15,
+                        9, 25,
+                        12, 40,
+                        15, 50,
+                      ]
+                    : ["interpolate", ["linear"], ["zoom"],
+                        6, 10,
+                        9, 20,
+                        12, 30,
+                        15, 40,
+                      ]
                   map.addLayer({
                     id: `custom-${layer.id}-heatmap`, type: "heatmap", source: sourceId,
                     filter: ["any", ["in", "$type", "Point"]],
                     paint: {
                       "heatmap-weight": hasWeight ? ["get", "weight"] : 1,
-                      "heatmap-intensity": hasWeight ? 1.5 : 1,
+                      "heatmap-intensity": isHeatmapMode ? 2 : (hasWeight ? 1.5 : 1),
                       "heatmap-color": [
                         "interpolate", ["linear"], ["heatmap-density"],
                         0, "rgba(0, 0, 255, 0)",
@@ -219,13 +237,8 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
                         0.8, "rgba(255, 128, 0, 0.9)",
                         1, "rgba(255, 0, 0, 1)",
                       ],
-                      "heatmap-radius": ["interpolate", ["linear"], ["zoom"],
-                        6, 10,
-                        9, 20,
-                        12, 30,
-                        15, 40,
-                      ],
-                      "heatmap-opacity": hasWeight ? 0.8 : 0.6,
+                      "heatmap-radius": heatmapRadius,
+                      "heatmap-opacity": isHeatmapMode ? 0.7 : (hasWeight ? 0.8 : 0.6),
                     },
                   })
                 } catch (e) {
@@ -233,30 +246,32 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
                 }
               }
 
-              // Circle layer (always)
-              const circleRadius = hasWeight
-                ? ["interpolate", ["linear"], ["get", "weight"], 0, 4, 0.5, 6, 1, 8]
-                : 7
-              map.addLayer({
-                id: `custom-${layer.id}-point`, type: "circle", source: sourceId,
-                filter: ["any", ["in", "$type", "Point"]],
-                paint: {
-                  "circle-radius": circleRadius,
-                  "circle-color": color, "circle-stroke-width": 2,
-                  "circle-stroke-color": "#fff", "circle-opacity": layer.opacity || 1,
-                },
-              })
+              // Circle layer - 在热力图模式时隐藏点，只显示热力图
+              if (!isHeatmapMode) {
+                const circleRadius = hasWeight
+                  ? ["interpolate", ["linear"], ["get", "weight"], 0, 4, 0.5, 6, 1, 8]
+                  : 7
+                map.addLayer({
+                  id: `custom-${layer.id}-point`, type: "circle", source: sourceId,
+                  filter: ["any", ["in", "$type", "Point"]],
+                  paint: {
+                    "circle-radius": circleRadius,
+                    "circle-color": color, "circle-stroke-width": 2,
+                    "circle-stroke-color": "#fff", "circle-opacity": layer.opacity || 1,
+                  },
+                })
 
-              // Label layer
-              map.addLayer({
-                id: `custom-${layer.id}-label`, type: "symbol", source: sourceId,
-                filter: ["any", ["in", "$type", "Point"]],
-                layout: {
-                  "text-field": ["get", "name"], "text-size": 11,
-                  "text-offset": [0, 1.2], "text-anchor": "top", "text-optional": true,
-                },
-                paint: { "text-color": "#fff", "text-halo-color": "#000", "text-halo-width": 1.5 },
-              })
+                // Label layer
+                map.addLayer({
+                  id: `custom-${layer.id}-label`, type: "symbol", source: sourceId,
+                  filter: ["any", ["in", "$type", "Point"]],
+                  layout: {
+                    "text-field": ["get", "name"], "text-size": 11,
+                    "text-offset": [0, 1.2], "text-anchor": "top", "text-optional": true,
+                  },
+                  paint: { "text-color": "#fff", "text-halo-color": "#000", "text-halo-width": 1.5 },
+                })
+              }
             }
 
             // Auto-fit bounds
