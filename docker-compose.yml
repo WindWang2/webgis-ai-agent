@@ -56,7 +56,7 @@ services:
         condition: service_healthy
     volumes:
       - ./app:/app/app
-      - uploads:/app/uploads
+      - uploads:/app/data
     env_file:
       - .env
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
