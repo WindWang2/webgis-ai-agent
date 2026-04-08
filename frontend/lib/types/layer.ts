@@ -4,8 +4,8 @@ export interface Layer {
   type: 'vector' | 'raster' | 'tile';
   visible: boolean;
   opacity: number;
-  source?: string;
-  style?: any;
+  source?: string | Record<string, any>;
+  style?: Record<string, any>;
   created_at?: string;
   updated_at?: string;
 }

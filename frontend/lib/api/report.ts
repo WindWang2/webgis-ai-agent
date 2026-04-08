@@ -11,7 +11,7 @@ import type {
   ReportInfo,
 } from '../types/report';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://192.168.193.121:8002/api/v1';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://192.168.193.121:8000/api/v1';
 
 /**
  * 生成报告

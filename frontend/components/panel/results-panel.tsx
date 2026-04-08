@@ -48,20 +48,22 @@ interface ReportData {
   generatedAt: Date
 }
 
-// GeoJsonLayer type (matches page.tsx)
-interface GeoJsonLayer {
+// Layer type (matches lib/types/layer.ts)
+interface LayerItem {
   id: string
   name: string
-  geojson: any
-  color?: string
-  visible?: boolean
+  type: string
+  visible: boolean
+  opacity: number
+  source?: any
+  style?: any
 }
 
 // Props for receiving analysis results from parent
 interface ResultsPanelProps {
   onGenerateReport?: () => void
   analysisResults?: ResultItem[]
-  layers?: GeoJsonLayer[]
+  layers?: LayerItem[]
 }
 
 export function ResultsPanel({ onGenerateReport, analysisResults, layers = [] }: ResultsPanelProps) {
@@ -99,7 +101,7 @@ export function ResultsPanel({ onGenerateReport, analysisResults, layers = [] }:
   }
 
   // Compute stats
-  const totalFeatures = layers.reduce((sum, l) => sum + (l.geojson?.features?.length || 0), 0)
+  const totalFeatures = layers.reduce((sum, l) => sum + (l.source?.features?.length || 0), 0)
 
   // Call backend report API
   const handleGenerateReport = async () => {
@@ -112,7 +114,7 @@ export function ResultsPanel({ onGenerateReport, analysisResults, layers = [] }:
     setReportError(null)
 
     try {
-      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://192.168.193.121:8002/api/v1"
+      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://192.168.193.121:8000/api/v1"
       const response = await fetch(`${API_BASE}/reports/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -120,8 +122,8 @@ export function ResultsPanel({ onGenerateReport, analysisResults, layers = [] }:
           title: "空间分析报告",
           layers: layers.map(l => ({
             name: l.name,
-            feature_count: l.geojson?.features?.length || 0,
-            geojson: l.geojson,
+            feature_count: l.source?.features?.length || 0,
+            geojson: l.source,
           })),
           format: "html",
         }),
@@ -147,14 +149,14 @@ export function ResultsPanel({ onGenerateReport, analysisResults, layers = [] }:
           id: `c${i}`,
           type: "bar" as const,
           title: l.name,
-          data: { labels: getGeometryTypes(l.geojson), values: getGeometryTypes(l.geojson).map(() => l.geojson?.features?.length || 0) }
+          data: { labels: getGeometryTypes(l.source), values: getGeometryTypes(l.source).map(() => l.source?.features?.length || 0) }
         })),
         tables: [{
           headers: ["图层名称", "要素数量", "几何类型"],
           rows: layers.map(l => [
             l.name,
-            String(l.geojson?.features?.length || 0),
-            getGeometryTypes(l.geojson).join(", ") || "未知"
+            String(l.source?.features?.length || 0),
+            getGeometryTypes(l.source).join(", ") || "未知"
           ])
         }],
         generatedAt: new Date(),
@@ -295,8 +297,8 @@ ${reportData.tables.map(t =>
               </div>
             ) : (
               layers.map((layer) => {
-                const featureCount = layer.geojson?.features?.length || 0
-                const geomTypes = getGeometryTypes(layer.geojson)
+                const featureCount = layer.source?.features?.length || 0
+                const geomTypes = getGeometryTypes(layer.source)
                 const isVisible = layerVisibility[layer.id] !== false && layer.visible !== false
                 return (
                   <div key={layer.id} className="rounded-lg border border-border overflow-hidden">
@@ -304,7 +306,7 @@ ${reportData.tables.map(t =>
                       <div className="flex items-center gap-2 min-w-0">
                         <div
                           className="h-3 w-3 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: layer.color || "#3b82f6" }}
+                          style={{ backgroundColor: layer.style?.color || "#3b82f6" }}
                         />
                         <div className="min-w-0">
                           <span className="font-medium text-sm block truncate">{layer.name}</span>

@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     API_V1_STR: str = "/api"
 
-    # 数据库 (SQLite)
-    DATABASE_URL: str = "postgresql+psycopg2://postgres:postgres@db:5432/webgis"
+    # 数据库
+    DATABASE_URL: str = "postgresql+psycopg2://postgres:postgres@localhost:15432/webgis"
 
     # LLM 配置 (OpenAI 兼容接口)
     LLM_BASE_URL: str = "http://localhost:8000/v1"
@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "MiniMax-M2.5"
 
     # OSM
-    OVERPASS_API_URL: str = "https://overpass-api.de/api/interpreter"
-    NOMINATIM_URL: str = "https://nominatym.openstreetmap.org"
+    OVERPASS_API_URL: str = "https://lz4.overpass-api.de/api/interpreter"
+    NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
 
     # 天地图
     TIANDITU_TOKEN: str = ""
@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     TMP_DIR: str = "./tmp"
 
     # CORS
-    CORS_ORIGINS: List[str] = ["http://localhost:3000"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://192.168.193.121:3000"]
 
     class Config:
         env_file = ".env"

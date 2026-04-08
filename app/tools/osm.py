@@ -1,12 +1,23 @@
 """OSM 数据查询工具 - Overpass API (修复版)"""
 import json
 import logging
+import ssl
 import aiohttp
 from typing import Optional
 from app.core.config import settings
 from app.tools.registry import ToolRegistry, tool
 
 logger = logging.getLogger(__name__)
+
+# SSL 证书修复：使用系统 CA 证书
+def _get_ssl_context() -> ssl.SSLContext:
+    ctx = ssl.create_default_context()
+    try:
+        ctx.load_verify_locations("/etc/ssl/certs/ca-certificates.crt")
+    except Exception:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    return ctx
 
 
 def _overpass_to_geojson(data: str) -> dict:
@@ -47,11 +58,12 @@ async def _query_overpass(query: str) -> dict:
     """执行 Overpass QL 查询，返回 GeoJSON"""
     full_query = f"[out:json][timeout:30];{query}out body geom;"
 
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(headers={"User-Agent": "WebGIS-AI-Agent/1.0"}) as session:
         async with session.post(
             settings.OVERPASS_API_URL,
             data={"data": full_query},
             timeout=aiohttp.ClientTimeout(total=60),
+            ssl=_get_ssl_context(),
         ) as resp:
             if resp.status != 200:
                 text = await resp.text()
@@ -61,90 +73,250 @@ async def _query_overpass(query: str) -> dict:
     return _overpass_to_geojson(data)
 
 
+async def _geocode_bbox(query: str, expand_km: float = 0) -> Optional[str]:
+    """通过 Nominatim 地理编码获取边界框，返回 'south,west,north,east' 格式"""
+    params = {
+        "q": query,
+        "format": "json",
+        "limit": 5,
+        "accept-language": "zh",
+    }
+    async with aiohttp.ClientSession(headers={"User-Agent": "WebGIS-AI-Agent/1.0"}) as session:
+        async with session.get(settings.NOMINATIM_URL, params=params, ssl=_get_ssl_context()) as resp:
+            if resp.status != 200:
+                logger.error(f"Nominatim error: {resp.status}")
+                return None
+            results = await resp.json()
+
+    if not results:
+        return None
+
+    # 按 importance 降序排序，选择最相关的结果
+    results.sort(key=lambda r: float(r.get("importance", 0)), reverse=True)
+    best = results[0]
+
+    bb = best.get("boundingbox")
+    lat = float(best.get("lat", 0))
+    lon = float(best.get("lon", 0))
+
+    if bb and len(bb) == 4:
+        south, north, west, east = float(bb[0]), float(bb[1]), float(bb[2]), float(bb[3])
+    else:
+        south, north = lat - 0.05, lat + 0.05
+        west, east = lon - 0.05, lon + 0.05
+
+    if expand_km > 0:
+        delta = expand_km / 111.0
+        south -= delta
+        north += delta
+        west -= delta
+        east += delta
+
+    return f"{south},{west},{north},{east}"
+
+
+async def _nominatim_search_poi(category: str, bbox: str, limit: int) -> dict:
+    """通过 Nominatim Search API 查询 POI（Overpass 备选方案）"""
+    parts = bbox.split(",")
+    if len(parts) != 4:
+        return {"type": "FeatureCollection", "features": []}
+
+    south, west, north, east = [float(p) for p in parts]
+    # Nominatim viewbox 参数
+    params = {
+        "q": category,
+        "format": "json",
+        "limit": limit,
+        "accept-language": "zh",
+        "viewbox": f"{west},{south},{east},{north}",
+        "bounded": "1",
+    }
+    features = []
+    async with aiohttp.ClientSession(headers={"User-Agent": "WebGIS-AI-Agent/1.0"}) as session:
+        async with session.get(settings.NOMINATIM_URL, params=params, ssl=_get_ssl_context()) as resp:
+            if resp.status != 200:
+                return {"type": "FeatureCollection", "features": []}
+            results = await resp.json()
+
+    for r in results:
+        lat = float(r.get("lat", 0))
+        lon = float(r.get("lon", 0))
+        props = {
+            "name": r.get("name", r.get("display_name", "").split(",")[0]),
+            "type": r.get("type", ""),
+            "class": r.get("class", ""),
+            "display_name": r.get("display_name", ""),
+        }
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            "properties": props,
+        })
+
+    return {"type": "FeatureCollection", "features": features}
+
+
 def register_osm_tools(registry: ToolRegistry):
     """注册 OSM 查询工具"""
 
     @tool(registry, name="query_osm_poi",
-           description="查询 OpenStreetMap 中的兴趣点（POI），如餐厅、学校、医院等。会先用地理编码获取区域边界框，再查询。",
+           description="查询 OpenStreetMap 中的兴趣点（POI），如餐厅、学校、医院、公园等。会先用地理编码获取区域边界框，再查询 POI。",
            param_descriptions={
-               "area": "区域名称，如'北京'、'成都'",
+               "area": "区域名称或地名，如'北京'、'成都天府广场5公里内'",
                "category": "POI 类别，如 restaurant/school/hospital/park/bank/cafe/bar",
                "limit": "返回数量上限，默认50"
            })
     async def query_osm_poi(area: str, category: str = "restaurant", limit: int = 50) -> dict:
-        # 暂时先不实现 geocode，直接返回测试数据
-        # TODO: 实现 geocode -> bbox
-        query = f'node["amenity"="{category}"]({bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]});out {limit};'
-        # 使用北京周边坐标测试
-        test_bbox = "116.2,39.7,116.5,40.1"
-        query = query.replace("{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}", test_bbox)
+        # 从 area 中提取距离信息（如 "5公里内"、"3km"）并扩大搜索范围
+        import re
+        dist_match = re.search(r'(\d+)\s*(公里|千米|km|公里内)', area, re.IGNORECASE)
+        expand_km = float(dist_match.group(1)) if dist_match else 5.0  # 默认扩大5km
+
+        # 提取纯地名
+        clean_area = re.sub(r'\d+\s*(公里|千米|km|公里内|内).*$', '', area, flags=re.IGNORECASE).strip()
+        if not clean_area:
+            clean_area = area
+
+        # 先地理编码获取 bbox，并扩大范围
+        bbox = await _geocode_bbox(clean_area, expand_km=expand_km)
+        if not bbox:
+            return {"type": "poi_query", "area": area, "category": category, "count": 0,
+                    "geojson": {"type": "FeatureCollection", "features": []},
+                    "error": f"无法地理编码: {clean_area}"}
+
+        # 构造 Overpass 查询 - 查询 bbox 内的 POI
+        # amenity 类型
+        amenity_types = {"restaurant", "school", "hospital", "bank", "cafe", "bar", "pharmacy",
+                         "police", "fire_station", "post_office", "library", "cinema", "theatre",
+                         "parking", "fuel", "bus_station"}
+        # leisure 类型
+        leisure_types = {"park", "garden", "playground", "sports_centre", "swimming_pool", "stadium"}
+        # tourism 类型
+        tourism_types = {"hotel", "museum", "attraction", "viewpoint", "hostel"}
+
+        if category in leisure_types:
+            tag_filter = f'"leisure"="{category}"'
+        elif category in tourism_types:
+            tag_filter = f'"tourism"="{category}"'
+        else:
+            tag_filter = f'"amenity"="{category}"'
+
+        query = f'node[{tag_filter}]({bbox});way[{tag_filter}]({bbox});relation[{tag_filter}]({bbox});'
         geojson = await _query_overpass(query)
+
+        # Overpass 失败时，fallback 到 Nominatim 搜索
+        if geojson.get("error") or len(geojson.get("features", [])) == 0:
+            # 用中英文关键词搜索
+            category_names = {
+                "park": "公园", "garden": "花园", "school": "学校", "hospital": "医院",
+                "restaurant": "餐厅", "bank": "银行", "hotel": "酒店", "museum": "博物馆",
+                "cafe": "咖啡", "pharmacy": "药店", "library": "图书馆",
+                "university": "大学", "college": "学院", "kindergarten": "幼儿园",
+                "police": "警察局", "fire_station": "消防站", "post_office": "邮局",
+                "bus_station": "公交站", "parking": "停车场", "fuel": "加油站",
+            }
+            search_term = category_names.get(category, category)
+            nom_geojson = await _nominatim_search_poi(search_term, bbox, limit)
+            if len(nom_geojson.get("features", [])) > 0:
+                geojson = nom_geojson
+
         return {
             "type": "poi_query",
             "area": area,
             "category": category,
             "count": len(geojson.get("features", [])),
             "geojson": geojson,
-            "test_bbox_used": test_bbox,
+            "bbox": bbox,
         }
 
     @tool(registry, name="query_osm_roads",
-           description="查询 OpenStreetMap 中的道路网络数据（使用测试边界框）",
+           description="查询 OpenStreetMap 中的道路网络数据",
            param_descriptions={
-               "bbox": "边界框 [south, west, north, east]，如 [39.8, 116.3, 39.95, 116.5]",
+               "area": "区域名称，如'成都'",
                "road_type": "道路类型，如 highway/residential/primary/secondary/tertiary",
                "limit": "返回数量上限，默认100"
            })
-    async def query_osm_roads(bbox: str, road_type: str = "primary", limit: int = 100) -> dict:
-        parts = [float(x.strip()) for x in bbox.strip("[]()").split(",")]
-        if len(parts) != 4:
-            return {"error": "bbox 格式错误，需要 [south, west, north, east]"}
+    async def query_osm_roads(area: str, road_type: str = "primary", limit: int = 100) -> dict:
+        bbox = await _geocode_bbox(area)
+        if not bbox:
+            return {"type": "road_query", "area": area, "road_type": road_type, "count": 0,
+                    "geojson": {"type": "FeatureCollection", "features": []},
+                    "error": f"无法地理编码: {area}"}
 
-        query = f'way["highway"="{road_type}"]({parts[0]},{parts[1]},{parts[2]},{parts[3]});out {limit};'
-        # 使用北京测试边界
-        test_bbox = "116.2,39.7,116.5,40.1"
-        query = query.replace("{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}", test_bbox)
+        query = f'way["highway"="{road_type}"]({bbox});'
         geojson = await _query_overpass(query)
         return {
             "type": "road_query",
-            "bbox": bbox,
+            "area": area,
             "road_type": road_type,
             "count": len(geojson.get("features", [])),
             "geojson": geojson,
-            "test_bbox_used": test_bbox,
+            "bbox": bbox,
         }
 
     @tool(registry, name="query_osm_buildings",
-           description="查询 OpenStreetMap 中的建筑物数据（使用测试边界框）",
+           description="查询 OpenStreetMap 中的建筑物数据",
            param_descriptions={
-               "bbox": "边界框 [south, west, north, east]",
+               "area": "区域名称，如'成都春熙路'",
                "limit": "返回数量上限，默认100"
            })
-    async def query_osm_buildings(bbox: str, limit: int = 100) -> dict:
-        parts = [float(x.strip()) for x in bbox.strip("[]()").split(",")]
-        if len(parts) != 4:
-            return {"error": "bbox 格式错误"}
+    async def query_osm_buildings(area: str, limit: int = 100) -> dict:
+        bbox = await _geocode_bbox(area)
+        if not bbox:
+            return {"type": "building_query", "area": area, "count": 0,
+                    "geojson": {"type": "FeatureCollection", "features": []},
+                    "error": f"无法地理编码: {area}"}
 
-        query = f'way["building"]({parts[0]},{parts[1]},{parts[2]},{parts[3]});out {limit};'
-        test_bbox = "116.2,39.7,116.5,40.1"
+        query = f'way["building"]({bbox});'
         geojson = await _query_overpass(query)
         return {
             "type": "building_query",
-            "bbox": bbox,
+            "area": area,
             "count": len(geojson.get("features", [])),
             "geojson": geojson,
-            "test_bbox_used": test_bbox,
+            "bbox": bbox,
         }
 
     @tool(registry, name="query_osm_boundary",
-           description="查询 OpenStreetMap 中的行政区划边界（使用测试名称）",
+           description="查询 OpenStreetMap 中的行政区划边界",
            param_descriptions={
-               "name": "行政区名称，如'海淀区'、'北京市'",
+               "name": "行政区名称，如'海淀区'、'成都市'",
                "admin_level": "行政级别，默认8（区级），4=省级，6=市级"
            })
     async def query_osm_boundary(name: str, admin_level: int = 8) -> dict:
-        query = f'relation["admin_level"="{admin_level}"][\"name\"="{name}"]->.searchArea;out body geom;'
+        # 先尝试 Overpass
+        query = f'relation["admin_level"="{admin_level}"]["name"="{name}"]->.searchArea;.searchArea out body geom;'
         geojson = await _query_overpass(query)
+
+        # Overpass 失败时，用 Nominatim 搜索行政边界
+        if len(geojson.get("features", [])) == 0:
+            params = {
+                "q": name,
+                "format": "json",
+                "limit": 1,
+                "accept-language": "zh",
+                "polygon_geojson": "1",
+            }
+            async with aiohttp.ClientSession(headers={"User-Agent": "WebGIS-AI-Agent/1.0"}) as session:
+                async with session.get(settings.NOMINATIM_URL, params=params, ssl=_get_ssl_context()) as resp:
+                    if resp.status == 200:
+                        results = await resp.json()
+                        if results:
+                            r = results[0]
+                            geojson_poly = r.get("geojson")
+                            if geojson_poly:
+                                geojson = {
+                                    "type": "FeatureCollection",
+                                    "features": [{
+                                        "type": "Feature",
+                                        "geometry": geojson_poly,
+                                        "properties": {
+                                            "name": r.get("name", name),
+                                            "display_name": r.get("display_name", ""),
+                                        },
+                                    }],
+                                }
+
         return {
             "type": "boundary_query",
             "name": name,

@@ -40,3 +40,4 @@ pytest>=7.4.4
 pytest-asyncio>=0.23.3
 
 python-jose[cryptography]>=3.3.0
+celery>=5.3.0
