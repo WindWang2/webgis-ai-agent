@@ -99,7 +99,7 @@ class TaskService:
         return self.db.query(AnalysisTask).filter(
             AnalysisTask.task_id == task_id
         ).first()
->>>>>>> d91cac14354e0119e9e594df800d7ff6b23a5730
+
         """获取任务（通过UUID）"""
         return self.db.query(AnalysisTask).filter(
             AnalysisTask.task_id == task_id
@@ -112,7 +112,7 @@ class TaskService:
         ).first()
 
     
->>>>>>> d91cac14354e0119e9e594df800d7ff6b23a5730
+
     def update_task_status(
         self,
         task_id: str,

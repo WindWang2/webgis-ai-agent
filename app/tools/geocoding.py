@@ -1,11 +1,22 @@
 """地理编码工具 - Nominatim"""
 import logging
+import ssl
 import aiohttp
 from typing import Optional
 from app.core.config import settings
 from app.tools.registry import ToolRegistry, tool
 
 logger = logging.getLogger(__name__)
+
+# SSL 证书修复
+def _get_ssl_context() -> ssl.SSLContext:
+    ctx = ssl.create_default_context()
+    try:
+        ctx.load_verify_locations("/etc/ssl/certs/ca-certificates.crt")
+    except Exception:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    return ctx
 
 
 def register_geocoding_tools(registry: ToolRegistry):
@@ -21,14 +32,17 @@ def register_geocoding_tools(registry: ToolRegistry):
             "limit": limit,
             "accept-language": "zh",
         }
-        async with aiohttp.ClientSession() as session:
-            async with session.get(settings.NOMINATIM_URL, params=params) as resp:
+        async with aiohttp.ClientSession(headers={"User-Agent": "WebGIS-AI-Agent/1.0"}) as session:
+            async with session.get(settings.NOMINATIM_URL, params=params, ssl=_get_ssl_context()) as resp:
                 if resp.status != 200:
                     return {"error": f"Nominatim API error: {resp.status}"}
                 results = await resp.json()
 
         if not results:
             return {"results": [], "count": 0}
+
+        # 按 importance 降序排序
+        results.sort(key=lambda r: float(r.get("importance", 0)), reverse=True)
 
         geocoded = []
         for r in results:
@@ -53,8 +67,8 @@ def register_geocoding_tools(registry: ToolRegistry):
             "format": "json",
             "accept-language": "zh",
         }
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params) as resp:
+        async with aiohttp.ClientSession(headers={"User-Agent": "WebGIS-AI-Agent/1.0"}) as session:
+            async with session.get(url, params=params, ssl=_get_ssl_context()) as resp:
                 if resp.status != 200:
                     return {"error": f"Nominatim API error: {resp.status}"}
                 data = await resp.json()

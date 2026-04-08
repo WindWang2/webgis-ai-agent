@@ -2,7 +2,7 @@
  * Chat API - 对接后端 SSE 流式接口
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://192.168.193.121:8002/api/v1";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://192.168.193.121:8000/api/v1";
 
 export interface ChatMessage {
   role: "user" | "assistant" | "tool";
@@ -46,6 +46,8 @@ export async function* streamChat(
 
   const decoder = new TextDecoder();
   let buffer = "";
+  let currentEvent = "";
+  let currentData = "";
 
   while (true) {
     const { done, value } = await reader.read();
@@ -55,23 +57,20 @@ export async function* streamChat(
     const lines = buffer.split("\n");
     buffer = lines.pop() || "";
 
-    let currentEvent = "";
-    let currentData = "";
-
     for (const line of lines) {
       if (line.startsWith("event: ")) {
         currentEvent = line.slice(7).trim();
       } else if (line.startsWith("data: ")) {
-        currentData = line.slice(6);
-        if (currentEvent && currentData) {
-          try {
-            yield { event: currentEvent, data: JSON.parse(currentData) };
-          } catch {
-            yield { event: currentEvent, data: currentData };
-          }
-          currentEvent = "";
-          currentData = "";
+        currentData += line.slice(6);
+      } else if (line === "" && currentEvent && currentData) {
+        // Empty line = end of event
+        try {
+          yield { event: currentEvent, data: JSON.parse(currentData) };
+        } catch {
+          yield { event: currentEvent, data: currentData };
         }
+        currentEvent = "";
+        currentData = "";
       }
     }
   }

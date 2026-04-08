@@ -8,6 +8,38 @@ from app.tools.registry import ToolRegistry, tool
 logger = logging.getLogger(__name__)
 
 
+def _safe_parse_geojson(geojson: str) -> dict | None:
+    """安全解析 GeoJSON 字符串，处理截断/格式错误"""
+    if isinstance(geojson, dict):
+        return geojson
+    if not isinstance(geojson, str):
+        return None
+    geojson = geojson.strip()
+    if not geojson:
+        return None
+    try:
+        return json.loads(geojson)
+    except json.JSONDecodeError:
+        # 尝试修复常见的截断问题
+        logger.warning(f"GeoJSON parse failed, attempting repair (length={len(geojson)})")
+        # 尝试找到最后一个完整的 feature
+        try:
+            # 找到最后一个 } 并尝试闭合
+            for end_pos in range(len(geojson) - 1, max(len(geojson) - 100, 0), -1):
+                if geojson[end_pos] == '}':
+                    candidate = geojson[:end_pos + 1] + ']}'
+                    try:
+                        result = json.loads(candidate)
+                        if isinstance(result, dict) and 'features' in result:
+                            logger.info(f"GeoJSON repair succeeded, recovered {len(result.get('features', []))} features")
+                            return result
+                    except json.JSONDecodeError:
+                        continue
+        except Exception:
+            pass
+        return None
+
+
 def register_spatial_tools(registry: ToolRegistry):
     """注册空间分析工具"""
 
@@ -20,7 +52,9 @@ def register_spatial_tools(registry: ToolRegistry):
            })
     def buffer_analysis(geojson: str, distance: float, unit: str = "m") -> dict:
         try:
-            data = json.loads(geojson) if isinstance(geojson, str) else geojson
+            data = _safe_parse_geojson(geojson)
+            if not data:
+                return {"error": "Invalid GeoJSON input"}
             features = data.get("features", data) if isinstance(data, dict) else data
             from app.services.spatial_analyzer import SpatialAnalyzer
             analyzer = SpatialAnalyzer()
@@ -42,7 +76,9 @@ def register_spatial_tools(registry: ToolRegistry):
             import geopandas as gpd
             from shapely.geometry import shape
 
-            data = json.loads(geojson) if isinstance(geojson, str) else geojson
+            data = _safe_parse_geojson(geojson)
+            if not data:
+                return {"error": "Invalid GeoJSON input"}
             features = data.get("features", [])
             if not features:
                 return {"error": "No features in GeoJSON"}
@@ -82,13 +118,15 @@ def register_spatial_tools(registry: ToolRegistry):
             import numpy as np
             from scipy.spatial import distance_matrix
 
-            data = json.loads(geojson) if isinstance(geojson, str) else geojson
+            data = _safe_parse_geojson(geojson)
+            if not data:
+                return {"error": "Invalid GeoJSON input"}
             features = data.get("features", [])
 
             points = []
             for f in features:
-                geom = f.get("geometry", {})
-                if geom.get("type") == "Point":
+                geom = f.get("geometry") or {}
+                if geom.get("type") == "Point" and geom.get("coordinates"):
                     coords = geom["coordinates"]
                     points.append((coords[0], coords[1]))
 
@@ -124,13 +162,15 @@ def register_spatial_tools(registry: ToolRegistry):
         try:
             import numpy as np
 
-            data = json.loads(geojson) if isinstance(geojson, str) else geojson
+            data = _safe_parse_geojson(geojson)
+            if not data:
+                return {"error": "Invalid GeoJSON input: 无法解析，请确保数据完整"}
             features = data.get("features", [])
 
             points = []
             for f in features:
-                geom = f.get("geometry", {})
-                if geom.get("type") == "Point":
+                geom = f.get("geometry") or {}
+                if geom.get("type") == "Point" and geom.get("coordinates"):
                     coords = geom["coordinates"]
                     points.append((coords[0], coords[1]))
 

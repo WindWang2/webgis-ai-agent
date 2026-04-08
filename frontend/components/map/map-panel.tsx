@@ -1,8 +1,7 @@
 "use client"
-import { useState, useRef, useCallback, useEffect } from "react"
+import { useState, useRef, useCallback, useEffect, useMemo } from "react"
 import Map, { NavigationControl, MapRef, ViewStateChangeEvent } from "react-map-gl/maplibre"
 import maplibregl from "maplibre-gl"
-import "maplibre-gl/dist/maplibre-gl.css"
 import { Layers, ZoomIn, ZoomOut, Maximize, MapPin, Eye, EyeOff, RotateCcw, Target, Trash2, ChevronDown, Plus, Edit, Settings } from "lucide-react"
 import { LayerCard } from "@/components/layer-card"
 import type { Layer } from "@/lib/types/layer"
@@ -26,12 +25,39 @@ interface MapStyleOption {
 
 // Map base layer options
 const MAP_STYLES: MapStyleOption[] = [
-  { name: "ESRI Topo", url: "https://server.arcgisonline.com/ArcGIS/Rest/services/World_Topo_Map/MapServer/Tile/{z}/{y}/{x}", type: "raster" },
-  { name: "ESRI Imagery", url: "https://basemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", type: "raster" },
-  { name: "Carto Voyager", url: "https://basemaps.cartocdn.com/GL/VOYAGER-GL-STYLE/style.json", type: "style" },
-  { name: "Carto Dark", url: "https://basemaps.cartocdn.com/GL/DARK_MATTER-GL-STYLE/style.json", type: "style" },
-  { name: "OSM Bright", url: "https://basemaps.cartocdn.com/GL/OSM_BRIGHT-GL-STYLE/style.json", type: "style" },
+  { name: "OSM 地图", url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", type: "raster" },
+  { name: "OSM 地形", url: "https://tile.opentopomap.org/{z}/{x}/{y}.png", type: "raster" },
+  { name: "ESRI 影像", url: "https://server.arcgisonline.com/ArcGIS/Rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", type: "raster" },
+  { name: "ESRI 地形", url: "https://server.arcgisonline.com/ArcGIS/Rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}", type: "raster" },
+  { name: "Carto 浅色", url: "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png", type: "raster" },
+  { name: "Carto 深色", url: "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png", type: "raster" },
 ]
+
+function getMapStyle(option: MapStyleOption): maplibregl.StyleSpecification {
+  if (option.type === "raster") {
+    return {
+      version: 8,
+      sources: {
+        "raster-tiles": {
+          type: "raster",
+          tiles: [option.url],
+          tileSize: 256,
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        },
+      },
+      layers: [
+        {
+          id: "raster-tiles-layer",
+          type: "raster",
+          source: "raster-tiles",
+          minzoom: 0,
+          maxzoom: 22,
+        },
+      ],
+    }
+  }
+  return option.url
+}
 
 const DEFAULT_VIEW_STATE = {
   longitude: 116.4074,
@@ -45,176 +71,235 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
   const [selectedBaseLayer, setSelectedBaseLayer] = useState(0)
   const [coordinates, setCoordinates] = useState({ lng: 0, lat: 0 })
   const [viewState, setViewState] = useState(DEFAULT_VIEW_STATE)
+  const [mapReady, setMapReady] = useState(false)
   const mapRef = useRef<MapRef>(null)
+  const lastAnalysisCenter = useRef<string>("")
+
+  const currentMapStyle = useMemo(
+    () => getMapStyle(MAP_STYLES[selectedBaseLayer]),
+    [selectedBaseLayer]
+  )
 
   // Apply analysis results to map
   useEffect(() => {
     if (analysisResult?.center) {
-      setViewState(prev => ({
-        ...prev,
-        longitude: analysisResult.center[0],
-        latitude: analysisResult.center[1],
-        zoom: analysisResult.zoom || prev.zoom,
-      }))
-      mapRef.current?.flyTo({
-        center: analysisResult.center,
-        zoom: analysisResult.zoom || 10,
-        duration: 1500,
-      })
+      const centerKey = `${analysisResult.center[0]},${analysisResult.center[1]},${analysisResult.zoom}`
+      if (centerKey !== lastAnalysisCenter.current) {
+        lastAnalysisCenter.current = centerKey
+        setViewState(prev => ({
+          ...prev,
+          longitude: analysisResult.center[0],
+          latitude: analysisResult.center[1],
+          zoom: analysisResult.zoom || prev.zoom,
+        }))
+        mapRef.current?.flyTo({
+          center: analysisResult.center,
+          zoom: analysisResult.zoom || 10,
+          duration: 1500,
+        })
+      }
     }
   }, [analysisResult])
 
-  // Dynamic layer rendering
+  // Dynamic layer rendering — 依赖 layers, mapReady, currentMapStyle
   useEffect(() => {
     const map = mapRef.current?.getMap()
-    if (!map || !map.isStyleLoaded()) return
+    if (!map || !mapReady) return
 
-    // Remove old layers and sources
-    const style = map.getStyle()
-    if (style) {
-      for (const layer of style.layers || []) {
-        if (layer.id.startsWith("custom-")) {
-          map.removeLayer(layer.id)
-        }
+    const renderLayers = () => {
+      if (!map.isStyleLoaded()) {
+        map.once('styledata', renderLayers)
+        return
       }
-      for (const sourceId of Object.keys(style.sources || {})) {
-        if (sourceId.startsWith("custom-")) {
-          map.removeSource(sourceId)
-        }
-      }
-    }
 
-    // Add new layers
-    for (const layer of layers) {
-      if (!layer.visible || !layer.source) continue
-
-      const sourceId = `custom-${layer.id}`
-      if (map.getSource(sourceId)) continue
-
-      if (layer.type === "raster") {
-        // Raster layer
-        map.addSource(sourceId, {
-          type: "raster",
-          tiles: [layer.source],
-          tileSize: 256,
-        })
-        map.addLayer({
-          id: `custom-${layer.id}-raster`,
-          type: "raster",
-          source: sourceId,
-          paint: {
-            "raster-opacity": layer.opacity || 1,
-          },
-        })
-      } else if (layer.type === "vector") {
-        // Vector layer (GeoJSON)
-        if (typeof layer.source === "object" && layer.source.type === "FeatureCollection") {
-          map.addSource(sourceId, {
-            type: "geojson",
-            data: layer.source,
-          })
-
-          // Determine geometry types
-          const features = layer.source.features || []
-          const hasPolygons = features.some((f: any) => f.geometry?.type === "Polygon" || f.geometry?.type === "MultiPolygon")
-          const hasLines = features.some((f: any) => ["LineString", "MultiLineString"].includes(f.geometry?.type))
-          const hasPoints = features.some((f: any) => f.geometry?.type === "Point")
-
-          const color = (layer.style as any)?.color || "#3b82f6"
-
-          if (hasPolygons) {
-            map.addLayer({
-              id: `custom-${layer.id}-fill`,
-              type: "fill",
-              source: sourceId,
-              paint: {
-                "fill-color": color,
-                "fill-opacity": (layer.opacity || 1) * 0.3,
-              },
-              filter: ["any", ["in", "$type", "Polygon"]],
-            })
-            map.addLayer({
-              id: `custom-${layer.id}-outline`,
-              type: "line",
-              source: sourceId,
-              paint: {
-                "line-color": color,
-                "line-width": 2,
-                "line-opacity": layer.opacity || 1,
-              },
-              filter: ["any", ["in", "$type", "Polygon"]],
-            })
+      // Step 1: Remove old custom layers and sources
+      try {
+        const style = map.getStyle()
+        if (style) {
+          for (const layer of style.layers || []) {
+            if (layer.id.startsWith("custom-")) {
+              try { map.removeLayer(layer.id) } catch (e) { console.warn("[MapPanel] removeLayer failed:", layer.id, e) }
+            }
           }
-          if (hasLines) {
-            map.addLayer({
-              id: `custom-${layer.id}-line`,
-              type: "line",
-              source: sourceId,
-              paint: {
-                "line-color": color,
-                "line-width": 3,
-                "line-opacity": layer.opacity || 1,
-              },
-              filter: ["any", ["in", "$type", "LineString"]],
-            })
-          }
-          if (hasPoints) {
-            map.addLayer({
-              id: `custom-${layer.id}-point`,
-              type: "circle",
-              source: sourceId,
-              paint: {
-                "circle-radius": 6,
-                "circle-color": color,
-                "circle-stroke-width": 2,
-                "circle-stroke-color": "#fff",
-                "circle-opacity": layer.opacity || 1,
-              },
-              filter: ["any", ["in", "$type", "Point"]],
-            })
-          }
-
-          // Auto-fit bounds
-          if (features.length > 0) {
-            const bounds = new maplibregl.LngLatBounds()
-            features.forEach((f: any) => {
-              if (!f.geometry) return
-              if (f.geometry.type === "Point") {
-                bounds.extend(f.geometry.coordinates as [number, number])
-              } else if (f.geometry.coordinates) {
-                const coords = f.geometry.type === "Polygon"
-                  ? f.geometry.coordinates[0]
-                  : Array.isArray(f.geometry.coordinates[0]?.[0])
-                    ? f.geometry.coordinates.flat()
-                    : f.geometry.coordinates
-                ;(Array.isArray(coords[0]) ? coords : [coords]).forEach((c: number[]) => {
-                  bounds.extend(c as [number, number])
-                })
-              }
-            })
-            if (!bounds.isEmpty()) {
-              map.fitBounds(bounds, { padding: 50, maxZoom: 15 })
+          for (const sourceId of Object.keys(style.sources || {})) {
+            if (sourceId.startsWith("custom-")) {
+              try { map.removeSource(sourceId) } catch (e) { console.warn("[MapPanel] removeSource failed:", sourceId, e) }
             }
           }
         }
-      } else if (layer.type === "tile") {
-        // Tile layer
-        map.addSource(sourceId, {
-          type: "raster",
-          tiles: [layer.source],
-          tileSize: 256,
-        })
-        map.addLayer({
-          id: `custom-${layer.id}-tile`,
-          type: "raster",
-          source: sourceId,
-          paint: {
-            "raster-opacity": layer.opacity || 1,
-          },
-        })
+      } catch (e) {
+        console.error("[MapPanel] cleanup error:", e)
+      }
+
+      // Step 2: Add new layers
+      for (const layer of layers) {
+        if (!layer.visible || !layer.source) continue
+
+        const sourceId = `custom-${layer.id}`
+
+        // Safety: force remove if somehow still exists
+        try {
+          if (map.getSource(sourceId)) {
+            console.warn("[MapPanel] source still exists after cleanup, force removing:", sourceId)
+            // Remove layers using this source first
+            const s = map.getStyle()
+            for (const l of s?.layers || []) {
+              if (l.source === sourceId) {
+                try { map.removeLayer(l.id) } catch {}
+              }
+            }
+            map.removeSource(sourceId)
+          }
+        } catch (e) {
+          console.warn("[MapPanel] force remove failed:", e)
+        }
+
+        try {
+          if (layer.type === "raster" || layer.type === "tile") {
+            map.addSource(sourceId, { type: "raster", tiles: [layer.source], tileSize: 256 })
+            map.addLayer({
+              id: `custom-${layer.id}-${layer.type}`,
+              type: "raster",
+              source: sourceId,
+              paint: { "raster-opacity": layer.opacity || 1 },
+            })
+          } else if (layer.type === "vector") {
+            const src = layer.source
+            if (typeof src !== "object" || src.type !== "FeatureCollection") {
+              console.warn("[MapPanel] skipping non-FeatureCollection source for:", layer.id, "sourceType:", typeof src, src?.type)
+              continue
+            }
+
+            map.addSource(sourceId, { type: "geojson", data: src })
+
+            const features = src.features || []
+            const color = layer.style?.color || "#3b82f6"
+
+            const hasPolygons = features.some((f: any) => f.geometry?.type === "Polygon" || f.geometry?.type === "MultiPolygon")
+            const hasLines = features.some((f: any) => ["LineString", "MultiLineString"].includes(f.geometry?.type))
+            const hasPoints = features.some((f: any) => f.geometry?.type === "Point")
+            const hasWeight = features.some((f: any) => f.properties?.weight !== undefined)
+
+            if (hasPolygons) {
+              map.addLayer({
+                id: `custom-${layer.id}-fill`, type: "fill", source: sourceId,
+                paint: { "fill-color": color, "fill-opacity": (layer.opacity || 1) * 0.3 },
+                filter: ["any", ["in", "$type", "Polygon"]],
+              })
+              map.addLayer({
+                id: `custom-${layer.id}-outline`, type: "line", source: sourceId,
+                paint: { "line-color": color, "line-width": 2, "line-opacity": layer.opacity || 1 },
+                filter: ["any", ["in", "$type", "Polygon"]],
+              })
+            }
+            if (hasLines) {
+              map.addLayer({
+                id: `custom-${layer.id}-line`, type: "line", source: sourceId,
+                paint: { "line-color": color, "line-width": 3, "line-opacity": layer.opacity || 1 },
+                filter: ["any", ["in", "$type", "LineString"]],
+              })
+            }
+            if (hasPoints) {
+              // Add heatmap layer for points (when enough features for meaningful density)
+              const pointCount = features.filter((f: any) => f.geometry?.type === "Point").length
+              if (pointCount >= 5) {
+                try {
+                  map.addLayer({
+                    id: `custom-${layer.id}-heatmap`, type: "heatmap", source: sourceId,
+                    filter: ["any", ["in", "$type", "Point"]],
+                    paint: {
+                      "heatmap-weight": hasWeight ? ["get", "weight"] : 1,
+                      "heatmap-intensity": hasWeight ? 1.5 : 1,
+                      "heatmap-color": [
+                        "interpolate", ["linear"], ["heatmap-density"],
+                        0, "rgba(0, 0, 255, 0)",
+                        0.2, "rgba(0, 200, 255, 0.6)",
+                        0.4, "rgba(0, 255, 100, 0.7)",
+                        0.6, "rgba(255, 255, 0, 0.8)",
+                        0.8, "rgba(255, 128, 0, 0.9)",
+                        1, "rgba(255, 0, 0, 1)",
+                      ],
+                      "heatmap-radius": ["interpolate", ["linear"], ["zoom"],
+                        6, 10,
+                        9, 20,
+                        12, 30,
+                        15, 40,
+                      ],
+                      "heatmap-opacity": hasWeight ? 0.8 : 0.6,
+                    },
+                  })
+                } catch (e) {
+                  console.warn("[MapPanel] heatmap not supported:", e)
+                }
+              }
+
+              // Circle layer (always)
+              const circleRadius = hasWeight
+                ? ["interpolate", ["linear"], ["get", "weight"], 0, 4, 0.5, 6, 1, 8]
+                : 7
+              map.addLayer({
+                id: `custom-${layer.id}-point`, type: "circle", source: sourceId,
+                filter: ["any", ["in", "$type", "Point"]],
+                paint: {
+                  "circle-radius": circleRadius,
+                  "circle-color": color, "circle-stroke-width": 2,
+                  "circle-stroke-color": "#fff", "circle-opacity": layer.opacity || 1,
+                },
+              })
+
+              // Label layer
+              map.addLayer({
+                id: `custom-${layer.id}-label`, type: "symbol", source: sourceId,
+                filter: ["any", ["in", "$type", "Point"]],
+                layout: {
+                  "text-field": ["get", "name"], "text-size": 11,
+                  "text-offset": [0, 1.2], "text-anchor": "top", "text-optional": true,
+                },
+                paint: { "text-color": "#fff", "text-halo-color": "#000", "text-halo-width": 1.5 },
+              })
+            }
+
+            // Auto-fit bounds
+            if (features.length > 0) {
+              const bounds = new maplibregl.LngLatBounds()
+              features.forEach((f: any) => {
+                if (!f.geometry) return
+                if (f.geometry.type === "Point") {
+                  bounds.extend(f.geometry.coordinates as [number, number])
+                } else if (f.geometry.coordinates) {
+                  const coords = f.geometry.type === "Polygon"
+                    ? f.geometry.coordinates[0]
+                    : Array.isArray(f.geometry.coordinates[0]?.[0])
+                      ? f.geometry.coordinates.flat()
+                      : f.geometry.coordinates
+                  ;(Array.isArray(coords[0]) ? coords : [coords]).forEach((c: number[]) => {
+                    bounds.extend(c as [number, number])
+                  })
+                }
+              })
+              if (!bounds.isEmpty()) {
+                map.fitBounds(bounds, { padding: 50, maxZoom: 15 })
+              }
+            }
+          }
+          console.log("[MapPanel] layer added successfully:", layer.id, "features:", layer.type === "vector" && typeof layer.source === "object" ? (layer.source as any).features?.length : "N/A")
+        } catch (e) {
+          console.error("[MapPanel] ERROR adding layer:", layer.id, e)
+          // Try to clean up partial state
+          try {
+            const s = map.getStyle()
+            for (const l of s?.layers || []) {
+              if (l.source === sourceId) { try { map.removeLayer(l.id) } catch {} }
+            }
+            if (map.getSource(sourceId)) { try { map.removeSource(sourceId) } catch {} }
+          } catch {}
+        }
       }
     }
-  }, [layers])
+
+    renderLayers()
+    return () => { map.off('styledata', renderLayers) }
+  }, [layers, mapReady, currentMapStyle])
 
   const handleMove = useCallback((evt: ViewStateChangeEvent) => {
     setViewState(evt.viewState)
@@ -282,16 +367,16 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
       </div>
 
       {/* Map Container */}
-      <div className="flex-1 relative">
+      <div className="flex-1 relative min-h-0">
         <Map
           ref={mapRef}
           {...viewState}
           onMove={handleMove}
           onMouseMove={handleMouseMove}
-          style={{ width: "100%", height: "100%" }}
-          mapStyle={MAP_STYLES[selectedBaseLayer].url}
+          onLoad={() => setMapReady(true)}
+          style={{ position: "absolute", inset: 0 }}
+          mapStyle={currentMapStyle}
           attributionControl={false}
-          reuseMaps
         >
           <NavigationControl position="bottom-right" />
         </Map>
