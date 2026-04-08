@@ -6,8 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.database import init_db
-from app.api.routes import health, map, chat, layer, report
->>>>>>> d91cac14354e0119e9e594df800d7ff6b23a5730
+from app.api. routes import health, map, chat, layer, report
 
 
 @asynccontextmanager
@@ -38,7 +37,6 @@ app.add_middleware(
 
 app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])
 app.include_router(layer.router, prefix="/api/v1", tags=["图层管理"])
-app.include_router(tasks.router, prefix="/api/v1", tags=["任务管理"])
-app.include_router(auth.router, prefix="/api/v1", tags=["认证"])
 app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
-app.include_router(webhook.router, prefix="/api/v1", tags=["Webhook"])
+app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
+app.include_router(map.router, prefix="/api/v1", tags=["地图管理"])
