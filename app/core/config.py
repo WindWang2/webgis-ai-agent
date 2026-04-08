@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     TMP_DIR: str = "./tmp"
 
     # CORS
-    CORS_ORIGINS: List[str] = ["*"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000"]
 
     class Config:
         env_file = ".env"

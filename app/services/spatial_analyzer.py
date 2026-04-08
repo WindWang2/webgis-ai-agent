@@ -443,20 +443,83 @@ class SpatialAnalyzer:
             if callback:
                 callback(60, f"执行{join_type}连接(predicate:{predicate})...")
 
-            results = []
+            # 建立空间索引优化性能
+            from shapely.strtree import STRtree
+            
+            # 创建几何对象
+            left_geoms = []
+            right_geoms = []
+            right_features = []
+            
             for l_feat in left:
-                matched = False
-                for r_feat in right:
-                    # 简化: 总是匹配
-                    results.append({
-                        "type": "Feature",
-                        "properties": {**l_feat.get("properties", {}), **r_feat.get("properties", {})},
-                        "geometry": l_feat.get("geometry", {})
-                    })
-                    matched = True
-
-                if not matched and join_type.lower() == "left":
-                    results.append({"type": "Feature", "properties": l_feat.get("properties", {}), "geometry": {}})
+                geom = l_feat.get("geometry", {})
+                if geom:
+                    try:
+                        left_geoms.append(shape(geom))
+                    except:
+                        left_geoms.append(None)
+                else:
+                    left_geoms.append(None)
+            
+            for r_feat in right:
+                geom = r_feat.get("geometry", {})
+                if geom:
+                    try:
+                        right_geoms.append(shape(geom))
+                        right_features.append(r_feat)
+                    except:
+                        right_geoms.append(None)
+                        right_features.append(None)
+                else:
+                    right_geoms.append(None)
+                    right_features.append(None)
+            
+            # 构建空间索引树
+            valid_right = [(i, g) for i, g in enumerate(right_geoms) if g is not None]
+            if valid_right:
+                strtree = STRtree([g for _, g in valid_right])
+                
+                predicate_map = {
+                    "intersects": lambda l, r: l.intersects(r),
+                    "within": lambda l, r: l.within(r),
+                    "contains": lambda l, r: l.contains(r),
+                    "touches": lambda l, r: l.touches(r),
+                    "crosses": lambda l, r: l.crosses(r),
+                }
+                spatial_pred = predicate_map.get(predicate.lower(), predicate_map["intersects"])
+                
+                for idx, l_geom in enumerate(left_geoms):
+                    if l_geom is None:
+                        continue
+                    
+                    matched = False
+                    candidates = strtree.query(l_geom)
+                    
+                    for c_idx in candidates:
+                        r_geom = valid_right[c_idx][1]
+                        if r_geom is not None and spatial_pred(l_geom, r_geom):
+                            r_feat = right_features[c_idx]
+                            results.append({
+                                "type": "Feature",
+                                "properties": {**left[idx].get("properties", {}), **r_feat.get("properties", {})},
+                                "geometry": left[idx].get("geometry", {})
+                            })
+                            matched = True
+                    
+                    if not matched and join_type.lower() == "left":
+                        results.append({
+                            "type": "Feature",
+                            "properties": left[idx].get("properties", {}),
+                            "geometry": left[idx].get("geometry", {})
+                        })
+            else:
+                if join_type.lower() == "right":
+                    for r_feat in right:
+                        results.append({
+                            "type": "Feature",
+                            "properties": {},
+                            "geometry": r_feat.get("geometry", {})
+                        })
 
             if callback:
                 callback(90, "完成空间连接...")
