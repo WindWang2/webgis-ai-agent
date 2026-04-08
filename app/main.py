@@ -37,6 +37,8 @@ app.add_middleware(
 )
 
 app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])
+app.include_router(chat.router, prefix="/api/v1", tags=["对话"])
+app.include_router(map.router, prefix="/api/v1", tags=["地图"])
 app.include_router(layer.router, prefix="/api/v1", tags=["图层管理"])
 app.include_router(tasks.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(auth.router, prefix="/api/v1", tags=["认证"])
