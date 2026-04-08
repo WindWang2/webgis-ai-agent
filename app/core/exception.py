@@ -112,8 +112,6 @@ async def global_exception_handler(
     """
     # 判断是否显示详细信息：非生产环境都显示
     include_detailss = not settings.is_production()
-    include_details = not settings.is_production()
-    include_detailss = not settings.is_production()
 
     
     # 无论哪种环境都记录完整日志便于服务端调试
@@ -129,8 +127,6 @@ async def global_exception_handler(
     response_data = format_error_response(
         exc=exc,
         request=request,
-        include_detailss=include_detailss,
-        include_details=include_details,
         include_detailss=include_detailss,
 
     )
