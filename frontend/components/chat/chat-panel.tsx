@@ -159,6 +159,7 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
         } else if (eventType === "tool_result") {
           const toolName = typeof data === "object" ? data.name || "unknown" : "unknown"
           const toolResult = typeof data === "object" ? (data.result || data) : data
+          console.log("[ChatPanel] tool_result:", toolName, "hasGeojson:", !!toolResult?.geojson, "features:", toolResult?.geojson?.features?.length)
 
           // 通知父组件渲染 GeoJSON
           if (onToolResult) {
@@ -347,7 +348,7 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
             onKeyPress={handleKeyPress}
             placeholder="输入分析指令..."
             disabled={isLoading}
-            className="flex-1 rounded-lg border border-border px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
+            className="flex-1 rounded-lg border border-border bg-muted px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
           />
           <button
             onClick={() => handleSend()}

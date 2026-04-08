@@ -85,7 +85,6 @@ const config: Config = {
       },
       backgroundImage: {
         "grid-pattern": "linear-gradient(rgba(0, 240, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 240, 255, 0.03) 1px, transparent 1px)",
->>>>>>> d91cac14354e0119e9e594df800d7ff6b23a5730
       },
     },
   },
