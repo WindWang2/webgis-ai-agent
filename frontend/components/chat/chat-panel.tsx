@@ -6,6 +6,7 @@ import { useTask } from "@/lib/contexts/task-context"
 import { TaskProgress } from "@/components/chat/task-progress"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import { ChartRenderer, ChartData } from "@/components/chat/chart-renderer"
 
 interface Message {
   id: string
@@ -13,6 +14,7 @@ interface Message {
   content: string
   timestamp: Date
   isThinking?: boolean
+  charts?: ChartData[]
 }
 
 interface Attachment {
@@ -171,6 +173,14 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
           if (data.has_geojson && onToolResult) {
             onToolResult(data.tool, data.result)
           }
+          // 检测图表数据
+          if (data.result?.chart) {
+            setMessages(prev => prev.map(msg =>
+              msg.id === thinkingMessage.id
+                ? { ...msg, charts: [...(msg.charts || []), data.result.chart as ChartData], isThinking: false }
+                : msg
+            ))
+          }
         } else if (eventType === "step_error" && data?.task_id) {
           handleStepError(data.task_id, data.step_id, data.error)
         } else if (eventType === "task_complete" && data?.task_id) {
@@ -191,16 +201,27 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
         } else if (eventType === "tool_result") {
           const toolName = typeof data === "object" ? data.name || "unknown" : "unknown"
           const toolResult = typeof data === "object" ? (data.result || data) : data
-          console.log("[ChatPanel] tool_result:", toolName, "hasGeojson:", !!toolResult?.geojson, "features:", toolResult?.geojson?.features?.length)
+          console.log("[ChatPanel] tool_result:", toolName, "hasGeojson:", !!toolResult?.geojson, "hasChart:", !!toolResult?.chart, "features:", toolResult?.geojson?.features?.length)
 
           // 通知父组件渲染 GeoJSON
           if (onToolResult) {
             onToolResult(toolName, toolResult)
           }
 
+          // 检测图表数据
+          if (toolResult?.chart) {
+            setMessages(prev => prev.map(msg =>
+              msg.id === thinkingMessage.id
+                ? { ...msg, charts: [...(msg.charts || []), toolResult.chart as ChartData], isThinking: false }
+                : msg
+            ))
+          }
+
           // 简化显示
           let summary = ""
-          if (toolResult?.count !== undefined) {
+          if (toolResult?.chart) {
+            summary = `图表已生成: ${toolResult.chart.title}`
+          } else if (toolResult?.count !== undefined) {
             summary = `找到 ${toolResult.count} 个结果`
           } else if (toolResult?.stats) {
             summary = `统计完成`
@@ -332,6 +353,9 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {message.content}
                   </ReactMarkdown>
+                  {message.charts?.map((chart, idx) => (
+                    <ChartRenderer key={`chart-${message.id}-${idx}`} chart={chart} />
+                  ))}
                 </div>
               )}
             </div>
