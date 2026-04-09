@@ -8,8 +8,14 @@ import httpx
 
 from app.core.config import settings
 from app.tools.registry import ToolRegistry
+from app.services.task_tracker import TaskTracker, detect_geojson
 
 logger = logging.getLogger(__name__)
+
+
+def _sse_event(event_type: str, data: dict) -> str:
+    """构造 SSE 格式事件字符串"""
+    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 class ChatEngine:
@@ -18,8 +24,11 @@ class ChatEngine:
         self.base_url = settings.LLM_BASE_URL.rstrip("/")
         self.model = settings.LLM_MODEL
         self.api_key = settings.LLM_API_KEY
+        self.max_rounds = 10
         # 内存对话存储: session_id -> messages list
         self._sessions: dict[str, list[dict]] = {}
+        # 任务跟踪器
+        self.tracker = TaskTracker()
 
     def _get_or_create_session(self, session_id: str) -> list[dict]:
         if session_id not in self._sessions:
@@ -101,26 +110,29 @@ class ChatEngine:
         return {"content": "达到最大工具调用轮数", "session_id": session_id}
 
     async def chat_stream(self, message: str, session_id: Optional[str] = None) -> AsyncGenerator[str, None]:
-        """流式对话，yield SSE 格式事件"""
+        """流式对话，yield SSE 格式事件含任务跟踪"""
         if not session_id:
             session_id = str(uuid.uuid4())
 
         messages = self._get_or_create_session(session_id)
         messages.append({"role": "user", "content": message})
 
-        # 先做 FC 循环（工具调用不支持流式），最终回复时流式输出
-        max_rounds = 10
-        for _ in range(max_rounds):
+        # 创建任务
+        task = self.tracker.create(session_id, message)
+        yield _sse_event("task_start", {"task_id": task.id})
+
+        for _ in range(self.max_rounds):
+            # 检查取消
+            if self.tracker.is_cancelled(task.id):
+                yield _sse_event("task_cancelled", {"task_id": task.id})
+                return
+
             tools = self.registry.get_schemas() if self.registry.get_schemas() else None
             response = await self._call_llm(messages, tools)
             choice = response.get("choices", [{}])[0]
             assistant_msg = choice.get("message", {})
 
             if assistant_msg.get("tool_calls"):
-                # 发送 tool_calling 事件
-                for tc in assistant_msg.get("tool_calls", []):
-                    yield f"event: tool_call\ndata: {json.dumps({'name': tc['function']['name'], 'arguments': tc['function']['arguments']}, ensure_ascii=False)}\n\n"
-
                 messages.append({
                     "role": "assistant",
                     "content": assistant_msg.get("content", ""),
@@ -128,26 +140,89 @@ class ChatEngine:
                 })
 
                 for tc in assistant_msg.get("tool_calls", []):
+                    tool_name = tc["function"]["name"]
+                    tool_args_raw = tc["function"]["arguments"]
+
+                    # 解析参数用于跟踪
                     try:
-                        result = await self.registry.dispatch(tc["function"]["name"], tc["function"]["arguments"])
+                        tool_args_dict = json.loads(tool_args_raw) if isinstance(tool_args_raw, str) else tool_args_raw
+                    except (json.JSONDecodeError, TypeError):
+                        tool_args_dict = {}
+
+                    # step_start
+                    step = self.tracker.start_step(task.id, tool_name, tool_args_dict)
+                    yield _sse_event("step_start", {
+                        "task_id": task.id,
+                        "step_id": step.id,
+                        "step_index": len(task.steps),
+                        "tool": tool_name,
+                    })
+
+                    # 现有 tool_call 事件（保持兼容）
+                    yield f"event: tool_call\ndata: {json.dumps({'name': tool_name, 'arguments': tool_args_raw}, ensure_ascii=False)}\n\n"
+
+                    # 执行工具
+                    try:
+                        result = await self.registry.dispatch(tool_name, tool_args_raw)
                         result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
-                        yield f"event: tool_result\ndata: {json.dumps({'name': tc['function']['name'], 'result': result}, ensure_ascii=False)}\n\n"
+                        self.tracker.complete_step(task.id, step.id, result)
+
+                        # step_result
+                        has_geojson = detect_geojson(result)
+                        yield _sse_event("step_result", {
+                            "task_id": task.id,
+                            "step_id": step.id,
+                            "tool": tool_name,
+                            "result": result,
+                            "has_geojson": has_geojson,
+                        })
+
+                        # 现有 tool_result 事件（保持兼容）
+                        yield f"event: tool_result\ndata: {json.dumps({'name': tool_name, 'result': result}, ensure_ascii=False)}\n\n"
                     except Exception as e:
                         result_str = json.dumps({"error": str(e)}, ensure_ascii=False)
-                        logger.error(f"Tool {tc['function']['name']} error: {e}")
+                        logger.error(f"Tool {tool_name} error: {e}")
+                        self.tracker.fail_step(task.id, step.id, str(e))
+
+                        # step_error
+                        yield _sse_event("step_error", {
+                            "task_id": task.id,
+                            "step_id": step.id,
+                            "tool": tool_name,
+                            "error": str(e),
+                        })
+
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],
                         "content": result_str,
                     })
+
+                    # 检查取消（每步执行后）
+                    if self.tracker.is_cancelled(task.id):
+                        yield _sse_event("task_cancelled", {"task_id": task.id})
+                        return
+
                 continue
             else:
                 # 最终回复
                 content = assistant_msg.get("content", "")
                 messages.append({"role": "assistant", "content": content})
+
+                # 现有 content 事件（保持兼容）
                 yield f"event: content\ndata: {json.dumps({'content': content, 'session_id': session_id}, ensure_ascii=False)}\n\n"
+
+                # task_complete
+                self.tracker.complete_task(task.id)
+                yield _sse_event("task_complete", {
+                    "task_id": task.id,
+                    "step_count": len(task.steps),
+                    "summary": content[:100],
+                })
                 return
 
+        self.tracker.fail_task(task.id, "达到最大工具调用轮数")
+        yield _sse_event("task_error", {"task_id": task.id, "error": "达到最大轮数"})
         yield f"event: content\ndata: {json.dumps({'content': '达到最大工具调用轮数', 'session_id': session_id}, ensure_ascii=False)}\n\n"
 
     def clear_session(self, session_id: str):
