@@ -12,6 +12,7 @@ from app.tools.osm import register_osm_tools
 from app.tools.geocoding import register_geocoding_tools
 from app.tools.spatial import register_spatial_tools
 from app.tools.remote_sensing import register_rs_tools
+from app.tools.chart import register_chart_tools
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["对话"])
@@ -22,6 +23,7 @@ register_geocoding_tools(registry)
 register_osm_tools(registry)
 register_spatial_tools(registry)
 register_rs_tools(registry)
+register_chart_tools(registry)
 engine = ChatEngine(registry)
 
 
