@@ -147,3 +147,16 @@ export async function clearSessionMessages(sessionId: string): Promise<void> {
   });
   if (!res.ok) throw new Error(`API Error: ${res.status}`);
 }
+
+/**
+ * 直接执行单个工具（REST API，不依赖SSE）
+ */
+export async function executeToolDirect(tool: string, argument: Record<string, any>): Promise<any> {
+  const res = await fetch(`${API_BASE}/chat/tools/execute`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tool, argument }),
+  });
+  if (!res.ok) throw new Error(`Tool execute error: ${res.status}`);
+  return res.json();
+}

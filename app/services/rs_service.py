@@ -10,6 +10,18 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _asset_href(assets: dict, key: str) -> str:
+    """兼容 pystac Asset 对象和旧版 dict 两种格式取 href"""
+    asset = assets.get(key)
+    if asset is None:
+        return ""
+    if hasattr(asset, "href"):
+        return asset.href or ""
+    if isinstance(asset, dict):
+        return asset.get("href", "")
+    return ""
+
+
 class RemoteSensingService:
     """遥感数据服务"""
 
@@ -61,12 +73,12 @@ class RemoteSensingService:
                     "bbox": item.bbox,
                     "cloud_cover": item.properties.get("eo:cloud_cover", "N/A"),
                     "assets": {
-                        "thumbnail": item.assets.get("thumbnail", {}).get("href", ""),
-                        "visual": item.assets.get("visual", {}).get("href", ""),
-                        "B04": item.assets.get("red", {}).get("href", ""),
-                        "B03": item.assets.get("green", {}).get("href", ""),
-                        "B02": item.assets.get("blue", {}).get("href", ""),
-                        "B08": item.assets.get("nir", {}).get("href", ""),
+                        "thumbnail": _asset_href(item.assets, "thumbnail"),
+                        "visual": _asset_href(item.assets, "visual"),
+                        "B04": _asset_href(item.assets, "red"),
+                        "B03": _asset_href(item.assets, "green"),
+                        "B02": _asset_href(item.assets, "blue"),
+                        "B08": _asset_href(item.assets, "nir"),
                     },
                 })
             
@@ -111,8 +123,8 @@ class RemoteSensingService:
                 return {"error": "No data found"}
             
             item = items[0]
-            red_url = item.assets.get("red", {}).get("href", "")
-            nir_url = item.assets.get("nir", {}).get("href", "")
+            red_url = _asset_href(item.assets, "red")
+            nir_url = _asset_href(item.assets, "nir")
             
             if not red_url or not nir_url:
                 return {"error": "Missing band assets", "available": list(item.assets.keys())}
@@ -178,7 +190,7 @@ class RemoteSensingService:
                     "id": item.id,
                     "bbox": item.bbox,
                     "assets": {
-                        "dem": item.assets.get("data", {}).get("href", ""),
+                        "dem": _asset_href(item.assets, "data"),
                     },
                 })
             

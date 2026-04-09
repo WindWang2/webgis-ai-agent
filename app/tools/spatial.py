@@ -87,11 +87,13 @@ def register_spatial_tools(registry: ToolRegistry):
             if not geometries:
                 return {"error": "No valid geometries"}
 
-            gdf = gpd.GeoSeries(geometries)
+            gdf = gpd.GeoSeries(geometries, crs="EPSG:4326")
+            # 投影到等面积坐标系（Mollweide）计算面积/长度，单位为米
+            gdf_proj = gdf.to_crs("ESRI:54009")
             stats = {
                 "feature_count": len(geometries),
-                "total_area_sqkm": round(float(gdf.area.sum()) / 1e6, 4),
-                "total_length_km": round(float(gdf.length.sum()) / 1000, 4),
+                "total_area_sqkm": round(float(gdf_proj.area.sum()) / 1e6, 4),
+                "total_length_km": round(float(gdf_proj.length.sum()) / 1000, 4),
                 "centroid": {
                     "lat": round(float(gdf.centroid.y.mean()), 6),
                     "lon": round(float(gdf.centroid.x.mean()), 6),
@@ -160,12 +162,20 @@ def register_spatial_tools(registry: ToolRegistry):
            })
     def heatmap_data(geojson: str, cell_size: int = 500, radius: int = 1000) -> dict:
         try:
+            import base64
+            import io
+
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
             import numpy as np
+            from matplotlib.colors import LinearSegmentedColormap
+            from scipy.ndimage import gaussian_filter
 
             data = _safe_parse_geojson(geojson)
             if not data:
                 return {"error": "Invalid GeoJSON input: 无法解析，请确保数据完整"}
-            features = data.get("features", [])
+            features = data.get("features") or data.get("feature_collection", [])
 
             points = []
             for f in features:
@@ -181,31 +191,59 @@ def register_spatial_tools(registry: ToolRegistry):
             ys = [p[1] for p in points]
 
             cell_deg = cell_size / 111000
-            x_bins = np.arange(min(xs) - cell_deg, max(xs) + cell_deg, cell_deg)
-            y_bins = np.arange(min(ys) - cell_deg, max(ys) + cell_deg, cell_deg)
+            margin = cell_deg * 3
+            x_min, x_max = min(xs) - margin, max(xs) + margin
+            y_min, y_max = min(ys) - margin, max(ys) + margin
+
+            x_bins = np.arange(x_min, x_max + cell_deg, cell_deg)
+            y_bins = np.arange(y_min, y_max + cell_deg, cell_deg)
             H, xedges, yedges = np.histogram2d(xs, ys, bins=[x_bins, y_bins])
 
-            heat_features = []
-            for i in range(len(xedges) - 1):
-                for j in range(len(yedges) - 1):
-                    count = int(H[i, j])
-                    if count > 0:
-                        cx = (xedges[i] + xedges[i + 1]) / 2
-                        cy = (yedges[j] + yedges[j + 1]) / 2
-                        heat_features.append({
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [float(cx), float(cy)]},
-                            "properties": {"count": count, "weight": round(count / len(points), 4)},
-                        })
+            # 高斯平滑（sigma 由 radius/cell_size 决定，最少 1）
+            sigma = max(1.0, radius / cell_size)
+            H_smooth = gaussian_filter(H.T, sigma=sigma)  # 转置对齐经纬度轴
+
+            # 色带：透明 → 深蓝 → 青 → 黄 → 橙 → 红
+            cmap = LinearSegmentedColormap.from_list("heat", [
+                (0.00, (0.00, 0.00, 0.50, 0.00)),
+                (0.10, (0.00, 0.10, 0.90, 0.65)),
+                (0.30, (0.00, 0.75, 1.00, 0.80)),
+                (0.55, (0.10, 1.00, 0.20, 0.88)),
+                (0.75, (1.00, 0.90, 0.00, 0.93)),
+                (0.88, (1.00, 0.40, 0.00, 0.97)),
+                (1.00, (0.90, 0.00, 0.00, 1.00)),
+            ], N=256)
+
+            # 渲染为 PNG（无边框，透明背景）
+            dpi = 150
+            w = H_smooth.shape[1] / dpi * 2
+            h = H_smooth.shape[0] / dpi * 2
+            fig, ax = plt.subplots(figsize=(max(w, 2), max(h, 2)), dpi=dpi)
+            ax.imshow(
+                H_smooth,
+                cmap=cmap,
+                origin="lower",
+                aspect="auto",
+                vmin=0,
+                vmax=H_smooth.max(),
+                interpolation="bilinear",
+            )
+            ax.axis("off")
+            plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", bbox_inches="tight",
+                        pad_inches=0, transparent=True)
+            plt.close(fig)
+            buf.seek(0)
+            img_b64 = "data:image/png;base64," + base64.b64encode(buf.read()).decode()
 
             return {
-                "type": "heatmap",
+                "type": "heatmap_raster",
+                "image": img_b64,
+                "bbox": [float(xedges[0]), float(yedges[0]),
+                         float(xedges[-1]), float(yedges[-1])],
                 "total_points": len(points),
-                "grid_cells": len(heat_features),
-                "geojson": {
-                    "type": "FeatureCollection",
-                    "features": heat_features,
-                },
             }
         except Exception as e:
             logger.error(f"Heatmap error: {e}")

@@ -12,6 +12,24 @@ export default function Home() {
 
   const handleToolResult = useCallback((toolName: string, result: any) => {
     console.log("[page] handleToolResult called:", toolName, "hasGeojson:", !!result?.geojson, "features:", result?.geojson?.features?.length, "resultType:", result?.type, "resultKeys:", result ? Object.keys(result) : "none")
+    // 栅格热力图（base64 PNG + bbox）
+    if (result?.type === "heatmap_raster" && result?.image && result?.bbox) {
+      const layerId = `heatmap_raster-${Date.now()}`
+      const [west, south, east, north] = result.bbox
+      const center: [number, number] = [(west + east) / 2, (south + north) / 2]
+      setAnalysisResult({ center, zoom: 10 })
+      setLayers(prev => [...prev, {
+        id: layerId,
+        name: "热力图（栅格）",
+        type: "heatmap",
+        visible: true,
+        opacity: 0.85,
+        source: { image: result.image, bbox: result.bbox },
+        style: {},
+      }])
+      return
+    }
+
     if (result?.geojson && result.geojson.features?.length > 0) {
       console.log("[page] CREATING LAYER from", toolName, "features:", result.geojson.features.length, "firstFeature:", JSON.stringify(result.geojson.features[0]).slice(0, 200))
       const layerId = `${toolName}-${Date.now()}`
@@ -89,8 +107,11 @@ export default function Home() {
 
   return (
     <TaskProvider>
-      <div className="h-screen w-screen overflow-hidden bg-background">
-        <div className="flex h-full w-full">
+      <div className="h-screen w-screen overflow-hidden bg-background relative">
+        {/* 装饰边框 - 内敛色调 */}
+        <div className="absolute inset-4 border border-border-light/30 rounded-lg pointer-events-none" />
+
+        <div className="flex h-full w-full relative z-10">
           <div className="w-80 flex-shrink-0 border-r border-border overflow-hidden">
             <ChatPanel onToolResult={handleToolResult} />
           </div>
@@ -103,7 +124,7 @@ export default function Home() {
             analysisResult={analysisResult}
           />
         </div>
-        <div className="w-80 flex-shrink-0 border-l border-border overflow-hidden">
+        <div className="w-80 flex-shrink-0 border-l border-border overflow-hidden bg-card">
           <ResultsPanel layers={layers} onGenerateReport={() => {}} />
         </div>
       </div>
