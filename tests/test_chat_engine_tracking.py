@@ -111,7 +111,7 @@ async def test_stream_emits_step_events_on_tool_call(registry):
             data = json.loads(e.split("data: ")[1])
             assert "task_id" in data
             assert "step_id" in data
-            assert data["tool_name"] == "geocode"
+            assert data["tool"] == "geocode"
 
         # 验证新事件：step_result
         step_result_events = [e for e in events if "step_result" in e]
