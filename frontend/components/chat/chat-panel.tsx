@@ -6,7 +6,7 @@ import { useTask } from "@/lib/contexts/task-context"
 import { TaskProgress } from "@/components/chat/task-progress"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { ChartRenderer, ChartData } from "@/components/chat/chart-renderer"
+import { ChartRenderer, ChartData, adaptChartData } from "@/components/chat/chart-renderer"
 
 interface Message {
   id: string
@@ -173,14 +173,6 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
           if (data.has_geojson && onToolResult) {
             onToolResult(data.tool, data.result)
           }
-          // 检测图表数据
-          if (data.result?.chart) {
-            setMessages(prev => prev.map(msg =>
-              msg.id === thinkingMessage.id
-                ? { ...msg, charts: [...(msg.charts || []), data.result.chart as ChartData], isThinking: false }
-                : msg
-            ))
-          }
         } else if (eventType === "step_error" && data?.task_id) {
           handleStepError(data.task_id, data.step_id, data.error)
         } else if (eventType === "task_complete" && data?.task_id) {
@@ -203,18 +195,18 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
           const toolResult = typeof data === "object" ? (data.result || data) : data
           console.log("[ChatPanel] tool_result:", toolName, "hasGeojson:", !!toolResult?.geojson, "hasChart:", !!toolResult?.chart, "features:", toolResult?.geojson?.features?.length)
 
-          // 通知父组件渲染 GeoJSON
-          if (onToolResult) {
-            onToolResult(toolName, toolResult)
-          }
-
-          // 检测图表数据
+          // 检测图表数据 - 使用安全的 validator 而非 unsafe 断言
           if (toolResult?.chart) {
-            setMessages(prev => prev.map(msg =>
-              msg.id === thinkingMessage.id
-                ? { ...msg, charts: [...(msg.charts || []), toolResult.chart as ChartData], isThinking: false }
-                : msg
-            ))
+            const validatedChart = adaptChartData(toolResult.chart)
+            if (validatedChart) {
+              setMessages(prev => prev.map(msg =>
+                msg.id === thinkingMessage.id
+                  ? { ...msg, charts: [...(msg.charts || []), validatedChart], isThinking: false }
+                  : msg
+              ))
+            } else {
+              console.error("Invalid chart data received from backend")
+            }
           }
 
           // 简化显示
@@ -241,6 +233,9 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
           ))
           scrollToBottom()
         } else if (eventType === "message" || eventType === "content" || eventType === "token") {
+          if (typeof data === "object" && data?.session_id) {
+            setSessionId(data.session_id)
+          }
           const chunk = typeof data === "object" ? (data.content || data.text || data.message || "") : String(data)
           assistantContent += chunk
           setMessages(prev => prev.map(msg =>
@@ -300,16 +295,22 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
   }
 
   return (
-    <div className="flex h-full flex-col glass border-r border-cyan-500/20">
-      {/* Header */}
-      <div className="flex items-center gap-2 border-b border-cyan-500/20 p-4 bg-cyan-950/50">
-        <Bot className="h-5 w-5 text-cyan-400 animate-pulse" />
-        <h1 className="font-semibold text-white">AI 对话</h1>
+    <div className="flex h-full flex-col bg-card border-r border-border">
+      {/* Header - 探险家徽章风格 */}
+      <div className="flex items-center gap-3 border-b border-border p-4 bg-background-secondary/50">
+        <div className="relative">
+          <Bot className="h-5 w-5 text-primary" />
+          <div className="absolute -inset-1 bg-primary/20 rounded-full blur-sm" />
+        </div>
+        <div>
+          <h1 className="font-semibold text-foreground text-lg tracking-wide">探索者日志</h1>
+          <p className="text-xs text-muted-foreground">AI 地理分析助手</p>
+        </div>
       </div>
 
-      {/* Task Progress Card (inline, replaces old reasoning bar) */}
+      {/* Task Progress Card (inline, replaces old reasoning bar) - 探索日志风格 */}
       {currentTask && (
-        <div className="border-b border-cyan-500/20 px-4 py-2 bg-cyan-950/30">
+        <div className="border-b border-border px-4 py-3 bg-background-secondary/30">
           <TaskProgress task={currentTask} />
         </div>
       )}
@@ -324,10 +325,10 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
             }`}
           >
             <div
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 ${
                 message.role === "user"
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted"
+                  ? "bg-primary border-primary text-primary-foreground"
+                  : "bg-card border-border"
               }`}
             >
               {message.role === "user" ? (
@@ -337,10 +338,10 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
               )}
             </div>
             <div
-              className={`max-w-[85%] rounded-lg p-3 text-sm ${
+              className={`max-w-[85%] rounded-lg p-3 text-sm border ${
                 message.role === "user"
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted"
+                  ? "bg-primary border-primary/50 text-primary-foreground"
+                  : "bg-card border-border"
               }`}
             >
               {message.isThinking ? (
@@ -350,7 +351,16 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
                 </div>
               ) : (
                 <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2 prose-pre:my-1 prose-code:text-xs break-words">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      img: ({ src, alt }) => {
+                        // 过滤 LLM 幻觉生成的地图预览 URL
+                        if (!src || src.includes('/api/map/view') || src.includes('localhost')) return null
+                        return <img src={src} alt={alt || ''} className="max-w-full rounded" />
+                      }
+                    }}
+                  >
                     {message.content}
                   </ReactMarkdown>
                   {message.charts?.map((chart, idx) => (
@@ -379,12 +389,12 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
         </div>
       )}
 
-      {/* Input */}
-      <div className="border-t border-border p-4">
-        <div className="flex gap-2">
-          <label className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg border border-border hover:bg-muted transition-colors">
+      {/* Input - 复古信笺风格 */}
+      <div className="border-t border-border p-4 bg-background-secondary/30">
+        <div className="flex gap-3">
+          <label className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-lg border border-border hover:bg-card hover:border-primary/50 transition-all group">
             <input type="file" multiple className="hidden" onChange={handleFileSelect} />
-            <Paperclip className="h-4 w-4" />
+            <Paperclip className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
           </label>
           <input
             ref={inputRef}
@@ -392,14 +402,14 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyPress={handleKeyPress}
-            placeholder="输入分析指令..."
+            placeholder="描述您想进行的地理分析..."
             disabled={isLoading}
-            className="flex-1 rounded-lg border border-border bg-muted px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
+            className="flex-1 rounded-lg border border-border bg-card px-4 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary/50 transition-all"
           />
           <button
             onClick={() => handleSend()}
             disabled={!input.trim() || isLoading}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed transition-all border border-primary/30 hover:border-primary"
           >
             {isLoading ? (
               <Loader2 className="h-4 w-4 animate-spin" />

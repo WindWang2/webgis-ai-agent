@@ -1,13 +1,25 @@
 import type { Metadata } from "next"
-import { Inter, JetBrains_Mono } from "next/font/google"
+import { JetBrains_Mono } from "next/font/google"
+import { Crimson_Pro } from "next/font/google"
 import "./globals.css"
 
-const inter = Inter({ subsets: ["latin"] })
-const jetbrainsMono = JetBrains_Mono({ subsets: ["latin"] })
+// 使用 Crimson Pro 作为主要衬线字体，JetBrains Mono 作为代码字体
+const crimsonPro = Crimson_Pro({
+  subsets: ["latin"],
+  weight: ["400", "600", "700"],
+  style: ["normal", "italic"],
+  variable: "--font-crimson",
+})
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  variable: "--font-jetbrains",
+})
 
 export const metadata: Metadata = {
-  title: "WebGIS AI Agent - 智能地理空间分析系统",
-  description: "基于大语言模型的 WebGIS 智能数据分析与制图系统",
+  title: "WebGIS AI Agent - 探索者日志",
+  description: "智能地理空间分析系统 - 基于大语言模型的空间数据分析与制图",
 }
 
 export default function RootLayout({
@@ -17,7 +29,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" className="dark">
-      <body className={`${inter.className} ${jetbrainsMono.className}`}>{children}</body>
+      <body className={`${crimsonPro.variable} ${jetbrainsMono.variable} font-serif`}>{children}</body>
     </html>
   )
 }
