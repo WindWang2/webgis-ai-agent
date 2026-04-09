@@ -3,6 +3,7 @@ import { useState, useCallback } from "react"
 import { ChatPanel } from "@/components/chat/chat-panel"
 import { MapPanel } from "@/components/map/map-panel"
 import { ResultsPanel } from "@/components/panel/results-panel"
+import { TaskProvider } from "@/lib/contexts/task-context"
 import type { Layer } from "@/lib/types/layer"
 
 export default function Home() {
@@ -87,11 +88,12 @@ export default function Home() {
   const handleEditLayer = useCallback((_layer: Layer) => {}, [])
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-background">
-      <div className="flex h-full w-full">
-        <div className="w-80 flex-shrink-0 border-r border-border overflow-hidden">
-          <ChatPanel onToolResult={handleToolResult} />
-        </div>
+    <TaskProvider>
+      <div className="h-screen w-screen overflow-hidden bg-background">
+        <div className="flex h-full w-full">
+          <div className="w-80 flex-shrink-0 border-r border-border overflow-hidden">
+            <ChatPanel onToolResult={handleToolResult} />
+          </div>
         <div className="flex-1 min-w-0 overflow-hidden">
           <MapPanel
             layers={layers}
@@ -106,5 +108,6 @@ export default function Home() {
         </div>
       </div>
     </div>
+    </TaskProvider>
   )
 }
