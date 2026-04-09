@@ -33,7 +33,8 @@ def register_geocoding_tools(registry: ToolRegistry):
             "accept-language": "zh",
         }
         async with aiohttp.ClientSession(headers={"User-Agent": "WebGIS-AI-Agent/1.0"}) as session:
-            async with session.get(settings.NOMINATIM_URL, params=params, ssl=_get_ssl_context()) as resp:
+            async with session.get(settings.NOMINATIM_URL, params=params, ssl=_get_ssl_context(),
+            ) as resp:
                 if resp.status != 200:
                     return {"error": f"Nominatim API error: {resp.status}"}
                 results = await resp.json()
@@ -68,7 +69,8 @@ def register_geocoding_tools(registry: ToolRegistry):
             "accept-language": "zh",
         }
         async with aiohttp.ClientSession(headers={"User-Agent": "WebGIS-AI-Agent/1.0"}) as session:
-            async with session.get(url, params=params, ssl=_get_ssl_context()) as resp:
+            async with session.get(url, params=params, ssl=_get_ssl_context(),
+            ) as resp:
                 if resp.status != 200:
                     return {"error": f"Nominatim API error: {resp.status}"}
                 data = await resp.json()

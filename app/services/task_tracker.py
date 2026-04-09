@@ -178,12 +178,13 @@ class TaskTracker:
 
 
 def detect_geojson(result: Any) -> bool:
-    """检测工具返回结果是否包含 GeoJSON FeatureCollection"""
+    """检测工具返回结果是否包含可渲染的地图数据（GeoJSON 或栅格热力图）"""
     if not isinstance(result, dict):
         return False
     if result.get("type") == "FeatureCollection":
         return True
-    # 嵌套检测：如 {"data": {"type": "FeatureCollection", ...}}
+    if result.get("type") == "heatmap_raster" and result.get("image"):
+        return True
     for v in result.values():
         if isinstance(v, dict) and v.get("type") == "FeatureCollection":
             return True

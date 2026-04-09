@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Loader2, Check, X, ChevronDown, ChevronUp, Ban } from 'lucide-react';
+import { Loader2, Check, X, ChevronDown, ChevronUp, Ban, Compass } from 'lucide-react';
 import { cancelTask } from '@/lib/api/task';
 import { TaskState } from '@/lib/contexts/task-context';
 
@@ -10,14 +10,15 @@ interface TaskProgressProps {
   originalRequest?: string;
 }
 
+// 探险步进图标
 function StepIcon({ status }: { status: 'running' | 'completed' | 'failed' }) {
   switch (status) {
     case 'running':
-      return <Loader2 className="h-3.5 w-3.5 animate-spin text-cyan-400" />;
+      return <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />;
     case 'completed':
-      return <Check className="h-3.5 w-3.5 text-green-500" />;
+      return <Check className="h-3.5 w-3.5 text-success" />;
     case 'failed':
-      return <X className="h-3.5 w-3.5 text-red-500" />;
+      return <X className="h-3.5 w-3.5 text-error" />;
     default:
       return null;
   }
@@ -55,7 +56,7 @@ export function TaskProgress({ task, originalRequest = '' }: TaskProgressProps) 
     ? originalRequest.substring(0, 30) + '...'
     : originalRequest;
 
-  const statusLabels: Record<string, string> = {
+  const statusLabel: Record<string, string> = {
     running: '进行中',
     completed: '已完成',
     failed: '失败',
@@ -63,68 +64,69 @@ export function TaskProgress({ task, originalRequest = '' }: TaskProgressProps) 
   };
 
   return (
-    <div className="my-3 rounded-lg border border-cyan-500/30 bg-cyan-950/30 overflow-hidden">
-      {/* 可折叠标题栏 */}
+    <div className="my-3 rounded-lg border border-border bg-card/50 overflow-hidden">
+      {/* 可折叠标题栏 - 探险日志风格 */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-cyan-950/50 transition-colors"
+        className="flex w-full items-center justify-between px-4 py-2.5 text-left hover:bg-card transition-colors"
       >
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-xs font-medium text-cyan-300 shrink-0">
-            {statusLabels[task.status] || '未知'}
+        <div className="flex items-center gap-3 min-w-0">
+          <Compass className="h-4 w-4 text-primary shrink-0" />
+          <span className="text-xs font-medium text-primary shrink-0">
+            {statusLabel[task.status] || '未知'}
           </span>
-          <span className="text-sm text-white truncate">{displayTitle}</span>
+          <span className="text-sm text-foreground truncate italic">{displayTitle}</span>
         </div>
         {expanded ? (
-          <ChevronUp className="h-4 w-4 text-cyan-400 shrink-0" />
+          <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0" />
         ) : (
-          <ChevronDown className="h-4 w-4 text-cyan-400 shrink-0" />
+          <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
         )}
       </button>
 
       {/* 可折叠内容区 */}
       {expanded && (
-        <div className="px-3 pb-3">
-          {/* 步骤列表 */}
-          <div className="space-y-1.5 mb-3">
+        <div className="px-4 pb-3">
+          {/* 步骤列表 - 探险路线风格 */}
+          <div className="space-y-2 mb-4 pl-1">
             {task.steps.map((step) => (
               <div
                 key={step.id}
-                className="flex items-center gap-2 text-xs"
+                className="flex items-center gap-2.5 text-xs"
               >
                 <StepIcon status={step.status} />
-                <span className="text-gray-300">{step.tool}</span>
+                <span className="text-muted-foreground">{step.tool}</span>
                 {step.error && (
-                  <span className="text-red-400 truncate max-w-48">
-                    : {step.error}
+                  <span className="text-error truncate max-w-48">
+                    ✕ {step.error}
                   </span>
                 )}
               </div>
             ))}
             {task.steps.length === 0 && (
-              <div className="text-xs text-gray-500">等待开始...</div>
+              <div className="text-xs text-muted-foreground italic">待命...</div>
             )}
           </div>
 
-          {/* 进度条和取消按钮 */}
+          {/* 进度条和取消按钮 - 指南针风格 */}
           <div className="flex items-center gap-3">
-            <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+            <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
               <div
-                className="h-full bg-gradient-to-r from-cyan-400 to-blue-500 transition-all duration-300"
+                className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-500"
                 style={{ width: `${progressPercent}%` }}
               />
             </div>
-            <span className="text-xs text-cyan-300 whitespace-nowrap">
-              {completedSteps}/{totalSteps}
+            <span className="text-xs text-primary font-mono whitespace-nowrap">
+              ◉ {completedSteps}/{totalSteps}
             </span>
             {task.status === 'running' && (
               <button
                 onClick={handleCancel}
                 disabled={cancelling}
-                className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-red-500/20 text-red-400 hover:bg-red-500/30 disabled:opacity-50 transition-colors"
+                className="flex items-center gap-1 px-2.5 py-1 rounded text-xs bg-error/10 text-error hover:bg-error/20 disabled:opacity-50 transition-colors border border-error/30"
               >
                 <Ban className="h-3 w-3" />
-                <span>{cancelling ? '取消中...' : '取消'}</span>
+                <span>{cancelling ? '终止中...' : '终止'}</span>
               </button>
             )}
           </div>
