@@ -52,6 +52,7 @@ export interface AnalysisResultItem {
   geoJson?: GeoJSONData;
   layerStyles?: LayerStyle[];
   timestamp: number;
+  draft?: boolean;  // true = intermediate result, renders at 0.5 opacity
 }
 
 /**
@@ -92,6 +93,7 @@ interface AnalysisContextValue {
   setReport: (report: AnalysisReport | null) => void;
   setCurrentLayer: (layerId: string | null) => void;
   setAnalyzing: (analyzing: boolean) => void;
+  promoteDraftLayers: () => void;
 }
 
 // 创建 Context
@@ -142,6 +144,13 @@ export function AnalysisProvider({ children }: { children: ReactNode }) {
     setState(prev => ({ ...prev, isAnalyzing: analyzing }));
   }, []);
 
+  const promoteDraftLayers = useCallback(() => {
+    setState(prev => ({
+      ...prev,
+      results: prev.results.map(r => r.draft ? { ...r, draft: false } : r),
+    }));
+  }, []);
+
   const value: AnalysisContextValue = {
     state,
     setState,
@@ -150,6 +159,7 @@ export function AnalysisProvider({ children }: { children: ReactNode }) {
     setReport,
     setCurrentLayer,
     setAnalyzing,
+    promoteDraftLayers,
   };
 
   return (

@@ -2,6 +2,8 @@
 import { useState, useRef, useEffect } from "react"
 import { Send, Paperclip, Bot, User, Loader2, Upload, X, Check, AlertCircle } from "lucide-react"
 import { streamChat, SSEEventType } from "@/lib/api/chat"
+import { useTask } from "@/lib/contexts/task-context"
+import { TaskProgress } from "@/components/chat/task-progress"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
@@ -45,6 +47,19 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
   const [currentStep, setCurrentStep] = useState<SSEEventType | 'error' | null>(null)
   const messageEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Task context
+  const {
+    currentTask,
+    handleTaskStart,
+    handleStepStart,
+    handleStepResult,
+    handleStepError,
+    handleTaskComplete,
+    handleTaskError,
+    handleTaskCancelled,
+    clearTask,
+  } = useTask()
 
   // Reasoning step order and labels
   const stepOrder: SSEEventType[] = ['thinking', 'planning', 'acting', 'observing', 'done']
@@ -147,6 +162,23 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
 
         if (eventType === "session" && data?.session_id) {
           setSessionId(data.session_id)
+        } else if (eventType === "task_start" && data?.task_id) {
+          handleTaskStart(data.task_id)
+        } else if (eventType === "step_start" && data?.task_id) {
+          handleStepStart(data.task_id, data.step_id, data.step_index, data.tool)
+        } else if (eventType === "step_result" && data?.task_id) {
+          handleStepResult(data.task_id, data.step_id, data.tool, data.result, data.has_geojson)
+          if (data.has_geojson && onToolResult) {
+            onToolResult(data.tool, data.result)
+          }
+        } else if (eventType === "step_error" && data?.task_id) {
+          handleStepError(data.task_id, data.step_id, data.error)
+        } else if (eventType === "task_complete" && data?.task_id) {
+          handleTaskComplete(data.task_id, data.step_count, data.summary)
+        } else if (eventType === "task_error" && data?.task_id) {
+          handleTaskError(data.task_id, data.error)
+        } else if (eventType === "task_cancelled" && data?.task_id) {
+          handleTaskCancelled(data.task_id)
         } else if (eventType === "tool_call") {
           const toolName = typeof data === "object" ? data.name || data.tool : String(data)
           assistantContent += `\n🔧 *正在调用 ${toolName}...*\n`
@@ -232,6 +264,7 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
       // Keep done/error state visible for 1 second before clearing
       setTimeout(() => {
         setCurrentStep(null)
+        clearTask()
       }, 1000)
       setIsLoading(false)
       inputRef.current?.focus()
@@ -253,21 +286,10 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
         <h1 className="font-semibold text-white">AI 对话</h1>
       </div>
 
-      {/* Reasoning Progress Bar */}
-      {currentStep && (
-        <div className="border-b border-cyan-500/20 px-4 py-2 bg-cyan-950/30 transition-all duration-300 ease-in-out">
-          <div className="flex items-center gap-2 mb-1.5">
-            {currentStep && stepLabels[currentStep]?.icon}
-            <span className="text-xs text-cyan-300">{stepLabels[currentStep]?.label || '处理中'}</span>
-          </div>
-          <div className="w-full h-1 bg-gray-700 rounded-full overflow-hidden">
-            <div 
-              className="h-full bg-gradient-to-r from-cyan-400 to-blue-500 transition-all duration-500 ease-out"
-              style={{ 
-                width: `${currentStep === 'done' || currentStep === 'tool_error' || currentStep === 'error' ? 100 : ((stepOrder.indexOf(currentStep as SSEEventType) + 1) / stepOrder.length) * 100}%` 
-              }}
-            />
-          </div>
+      {/* Task Progress Card (inline, replaces old reasoning bar) */}
+      {currentTask && (
+        <div className="border-b border-cyan-500/20 px-4 py-2 bg-cyan-950/30">
+          <TaskProgress task={currentTask} />
         </div>
       )}
 
