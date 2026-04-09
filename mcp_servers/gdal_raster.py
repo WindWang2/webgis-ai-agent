@@ -172,8 +172,12 @@ def raster_calc(
             ref_ds = ds
         arrays[var] = ds.GetRasterBand(1).ReadAsArray().astype(np.float32)
 
-    result: np.ndarray = eval(expression, {"__builtins__": {}}, {**arrays, "np": np})  # noqa: S307
-    result = np.where(np.isnan(result), no_data, result).astype(np.float32)
+    from asteval import Interpreter
+    aeval = Interpreter(usersyms={**arrays, "np": np}, minimal=True)
+    result = aeval(expression)
+    if aeval.error:
+        return {"error": f"Expression error: {'; '.join(str(e.get_error()) for e in aeval.error)}"}
+    result = np.where(np.isnan(np.asarray(result, dtype=np.float32)), no_data, np.asarray(result, dtype=np.float32))
 
     dtype_map = {"Float32": gdal.GDT_Float32, "Float64": gdal.GDT_Float64,
                  "Byte": gdal.GDT_Byte, "Int16": gdal.GDT_Int16}
