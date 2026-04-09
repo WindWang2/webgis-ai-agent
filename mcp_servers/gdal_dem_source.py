@@ -144,7 +144,7 @@ def fetch_dem_copernicus(
             "mean_m": round(bmean, 1),
             "std_m": round(bstd, 1),
         },
-        "tiles_used": len(vsi_paths),
+        "tiles_used": len(tile_paths),
     }
 
 
