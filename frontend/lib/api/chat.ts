@@ -17,7 +17,21 @@ export interface ChatMessage {
   }>;
 }
 
-export type SSEEventType = 'message' | 'thinking' | 'planning' | 'acting' | 'observing' | 'done' | 'tool_error';
+export type SSEEventType =
+  | 'message'
+  | 'thinking'
+  | 'planning'
+  | 'acting'
+  | 'observing'
+  | 'done'
+  | 'tool_error'
+  | 'task_start'
+  | 'step_start'
+  | 'step_result'
+  | 'step_error'
+  | 'task_complete'
+  | 'task_error'
+  | 'task_cancelled';
 
 export interface SSEEvent {
   event: SSEEventType;
