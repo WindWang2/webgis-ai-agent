@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.database import init_db
-from app.api. routes import health, map, chat, layer, report
+from app.api.routes import health, map, chat, layer, report, task
 
 
 @asynccontextmanager
@@ -40,3 +40,4 @@ app.include_router(layer.router, prefix="/api/v1", tags=["图层管理"])
 app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
 app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(map.router, prefix="/api/v1", tags=["地图管理"])
+app.include_router(task.router, prefix="/api/v1", tags=["任务管理"])
