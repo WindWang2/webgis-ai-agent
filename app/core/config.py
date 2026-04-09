@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "MiniMax-M2.5"
 
     # OSM
-    OVERPASS_API_URL: str = "https://lz4.overpass-api.de/api/interpreter"
+    OVERPASS_API_URL: str = "https://overpass.openstreetmap.fr/api/interpreter"
     NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
 
     # 天地图
@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     TMP_DIR: str = "./tmp"
 
     # CORS
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://192.168.193.121:3000"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://192.168.193.121:3000", "http://192.168.193.121:3003"]
 
     class Config:
         env_file = ".env"

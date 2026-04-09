@@ -133,6 +133,7 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
 
       // Step 2: Add new layers
       for (const layer of layers) {
+        console.log("[MapPanel] Processing layer:", layer.id, "type:", layer.type, "visible:", layer.visible, "style:", layer.style)
         if (!layer.visible || !layer.source) continue
 
         const sourceId = `custom-${layer.id}`
@@ -163,6 +164,33 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
               source: sourceId,
               paint: { "raster-opacity": layer.opacity || 1 },
             })
+          } else if (layer.type === "heatmap" && (layer.source as any)?.image) {
+            // 栅格热力图：image source
+            const src = layer.source as any
+            const [west, south, east, north] = src.bbox
+            map.addSource(sourceId, {
+              type: "image",
+              url: src.image,
+              coordinates: [
+                [west, north],  // top-left
+                [east, north],  // top-right
+                [east, south],  // bottom-right
+                [west, south],  // bottom-left
+              ],
+            } as any)
+            map.addLayer({
+              id: `custom-${layer.id}-raster`,
+              type: "raster",
+              source: sourceId,
+              paint: {
+                "raster-opacity": layer.opacity ?? 0.85,
+                "raster-resampling": "linear",
+              },
+            })
+
+            // Auto-fit
+            const bounds = new maplibregl.LngLatBounds([west, south], [east, north])
+            map.fitBounds(bounds, { padding: 50, maxZoom: 14 })
           } else if (layer.type === "vector" || layer.type === "heatmap") {
             const src = layer.source
             if (typeof src !== "object" || src.type !== "FeatureCollection") {
@@ -179,99 +207,71 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
             const hasLines = features.some((f: any) => ["LineString", "MultiLineString"].includes(f.geometry?.type))
             const hasPoints = features.some((f: any) => f.geometry?.type === "Point")
             const hasWeight = features.some((f: any) => f.properties?.weight !== undefined)
-
-            // 热力图模式：强制开启热力图渲染，不依赖点数阈值
             const isHeatmapMode = layer.type === "heatmap" || layer.style?.renderType === "heatmap"
 
             if (hasPolygons) {
-              map.addLayer({
-                id: `custom-${layer.id}-fill`, type: "fill", source: sourceId,
-                paint: { "fill-color": color, "fill-opacity": (layer.opacity || 1) * 0.3 },
-                filter: ["any", ["in", "$type", "Polygon"]],
-              })
-              map.addLayer({
-                id: `custom-${layer.id}-outline`, type: "line", source: sourceId,
-                paint: { "line-color": color, "line-width": 2, "line-opacity": layer.opacity || 1 },
-                filter: ["any", ["in", "$type", "Polygon"]],
-              })
+              if (isHeatmapMode && hasWeight) {
+                // 栅格热力图：用 choropleth fill 渲染网格单元，颜色按 weight 插值
+                map.addLayer({
+                  id: `custom-${layer.id}-heatgrid`, type: "fill", source: sourceId,
+                  filter: ["==", "$type", "Polygon"],
+                  paint: {
+                    "fill-color": [
+                      "interpolate", ["linear"], ["get", "weight"],
+                      0,    "rgba(0,0,0,0)",
+                      0.05, "rgba(0,32,160,0.75)",
+                      0.2,  "rgba(0,120,255,0.82)",
+                      0.4,  "rgba(0,220,180,0.87)",
+                      0.6,  "rgba(255,220,0,0.92)",
+                      0.8,  "rgba(255,90,0,0.96)",
+                      1.0,  "rgba(200,0,0,1.0)",
+                    ],
+                    "fill-opacity": layer.opacity || 1,
+                    "fill-antialias": false,
+                  },
+                })
+              } else {
+                map.addLayer({
+                  id: `custom-${layer.id}-fill`, type: "fill", source: sourceId,
+                  paint: { "fill-color": color, "fill-opacity": (layer.opacity || 1) * 0.3 },
+                  filter: ["==", "$type", "Polygon"],
+                })
+                map.addLayer({
+                  id: `custom-${layer.id}-outline`, type: "line", source: sourceId,
+                  paint: { "line-color": color, "line-width": 2, "line-opacity": layer.opacity || 1 },
+                  filter: ["==", "$type", "Polygon"],
+                })
+              }
             }
             if (hasLines) {
               map.addLayer({
                 id: `custom-${layer.id}-line`, type: "line", source: sourceId,
                 paint: { "line-color": color, "line-width": 3, "line-opacity": layer.opacity || 1 },
-                filter: ["any", ["in", "$type", "LineString"]],
+                filter: ["==", "$type", "LineString"],
               })
             }
-            if (hasPoints || isHeatmapMode) {
-              // Add heatmap layer for points (when enough features for meaningful density)
-              // 热力图模式：强制渲染不管点数多少
-              const pointCount = features.filter((f: any) => f.geometry?.type === "Point").length
-              if (isHeatmapMode || pointCount >= 5) {
-                try {
-                  // 热力图模式：使用更大的半径和强度确保可见性
-                  const heatmapRadius = isHeatmapMode
-                    ? ["interpolate", ["linear"], ["zoom"],
-                        6, 15,
-                        9, 25,
-                        12, 40,
-                        15, 50,
-                      ]
-                    : ["interpolate", ["linear"], ["zoom"],
-                        6, 10,
-                        9, 20,
-                        12, 30,
-                        15, 40,
-                      ]
-                  map.addLayer({
-                    id: `custom-${layer.id}-heatmap`, type: "heatmap", source: sourceId,
-                    filter: ["any", ["in", "$type", "Point"]],
-                    paint: {
-                      "heatmap-weight": hasWeight ? ["get", "weight"] : 1,
-                      "heatmap-intensity": isHeatmapMode ? 2 : (hasWeight ? 1.5 : 1),
-                      "heatmap-color": [
-                        "interpolate", ["linear"], ["heatmap-density"],
-                        0, "rgba(0, 0, 255, 0)",
-                        0.2, "rgba(0, 200, 255, 0.6)",
-                        0.4, "rgba(0, 255, 100, 0.7)",
-                        0.6, "rgba(255, 255, 0, 0.8)",
-                        0.8, "rgba(255, 128, 0, 0.9)",
-                        1, "rgba(255, 0, 0, 1)",
-                      ],
-                      "heatmap-radius": heatmapRadius,
-                      "heatmap-opacity": isHeatmapMode ? 0.7 : (hasWeight ? 0.8 : 0.6),
-                    },
-                  })
-                } catch (e) {
-                  console.warn("[MapPanel] heatmap not supported:", e)
-                }
-              }
-
-              // Circle layer - 在热力图模式时隐藏点，只显示热力图
-              if (!isHeatmapMode) {
-                const circleRadius = hasWeight
-                  ? ["interpolate", ["linear"], ["get", "weight"], 0, 4, 0.5, 6, 1, 8]
-                  : 7
-                map.addLayer({
-                  id: `custom-${layer.id}-point`, type: "circle", source: sourceId,
-                  filter: ["any", ["in", "$type", "Point"]],
-                  paint: {
-                    "circle-radius": circleRadius,
-                    "circle-color": color, "circle-stroke-width": 2,
-                    "circle-stroke-color": "#fff", "circle-opacity": layer.opacity || 1,
-                  },
-                })
-
-                // Label layer
-                map.addLayer({
-                  id: `custom-${layer.id}-label`, type: "symbol", source: sourceId,
-                  filter: ["any", ["in", "$type", "Point"]],
-                  layout: {
-                    "text-field": ["get", "name"], "text-size": 11,
-                    "text-offset": [0, 1.2], "text-anchor": "top", "text-optional": true,
-                  },
-                  paint: { "text-color": "#fff", "text-halo-color": "#000", "text-halo-width": 1.5 },
-                })
-              }
+            if (hasPoints && !isHeatmapMode) {
+              const circleRadius = hasWeight
+                ? ["interpolate", ["linear"], ["get", "weight"], 0, 4, 0.5, 6, 1, 8]
+                : 7
+              map.addLayer({
+                id: `custom-${layer.id}-point`, type: "circle", source: sourceId,
+                filter: ["==", "$type", "Point"],
+                paint: {
+                  "circle-radius": circleRadius,
+                  "circle-color": color, "circle-stroke-width": 2,
+                  "circle-stroke-color": "#fff", "circle-opacity": layer.opacity || 1,
+                },
+              })
+              map.addLayer({
+                id: `custom-${layer.id}-label`, type: "symbol", source: sourceId,
+                filter: ["==", "$type", "Point"],
+                layout: {
+                  "text-field": ["get", "name"], "text-size": 11,
+                  "text-offset": [0, 1.2], "text-anchor": "top", "text-optional": true,
+                },
+                paint: { "text-color": "#fff", "text-halo-color": "#000", "text-halo-width": 1.5 },
+              })
             }
 
             // Auto-fit bounds
@@ -359,20 +359,23 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
 
   return (
     <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-border p-4">
-        <div className="flex items-center gap-2">
-          <Layers className="h-5 w-5 text-primary" />
-          <h1 className="font-semibold">地图</h1>
+      {/* Header - 大地坐标风格 */}
+      <div className="flex items-center justify-between border-b border-border p-4 bg-card/50">
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <Layers className="h-5 w-5 text-accent" />
+            <div className="absolute -inset-0.5 bg-accent/20 rounded-full blur-sm" />
+          </div>
+          <h1 className="font-semibold tracking-wide">大地坐标</h1>
           {layers.length > 0 && (
-            <span className="text-xs text-muted-foreground">({layers.length} 图层)</span>
+            <span className="text-xs text-muted-foreground ml-2 px-2 py-0.5 bg-muted/50 rounded">📍 {layers.length} 层</span>
           )}
         </div>
         <div className="flex gap-2">
           <button
             onClick={() => setShowLayerPanel(!showLayerPanel)}
-            className={`flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${
-              showLayerPanel ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted"
+            className={`flex h-9 w-9 items-center justify-center rounded-lg border transition-all ${
+              showLayerPanel ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-card hover:border-primary/50"
             }`}
             title="图层管理"
           >
@@ -396,42 +399,42 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
           <NavigationControl position="bottom-right" />
         </Map>
 
-        {/* Floating Controls - Left Side */}
+        {/* Floating Controls - Left Side - 罗盘工具风格 */}
         <div className="absolute top-4 left-4 flex flex-col gap-2">
-          <button onClick={handleZoomIn} className="flex h-9 w-9 items-center justify-center rounded-lg bg-background shadow-md border border-border hover:bg-muted transition-colors" title="放大">
-            <ZoomIn className="h-4 w-4" />
+          <button onClick={handleZoomIn} className="flex h-10 w-10 items-center justify-center rounded-lg bg-card/90 backdrop-blur shadow-lg border border-border hover:bg-card hover:border-primary/50 hover:scale-105 transition-all" title="放大">
+            <ZoomIn className="h-4 w-4 text-foreground" />
           </button>
-          <button onClick={handleZoomOut} className="flex h-9 w-9 items-center justify-center rounded-lg bg-background shadow-md border border-border hover:bg-muted transition-colors" title="缩小">
-            <ZoomOut className="h-4 w-4" />
+          <button onClick={handleZoomOut} className="flex h-10 w-10 items-center justify-center rounded-lg bg-card/90 backdrop-blur shadow-lg border border-border hover:bg-card hover:border-primary/50 hover:scale-105 transition-all" title="缩小">
+            <ZoomOut className="h-4 w-4 text-foreground" />
           </button>
-          <button onClick={handleReset} className="flex h-9 w-9 items-center justify-center rounded-lg bg-background shadow-md border border-border hover:bg-muted transition-colors" title="复位">
-            <RotateCcw className="h-4 w-4" />
+          <button onClick={handleReset} className="flex h-10 w-10 items-center justify-center rounded-lg bg-card/90 backdrop-blur shadow-lg border border-border hover:bg-card hover:border-primary/50 hover:scale-105 transition-all" title="复位">
+            <RotateCcw className="h-4 w-4 text-foreground" />
           </button>
-          <button onClick={handleLocate} className="flex h-9 w-9 items-center justify-center rounded-lg bg-background shadow-md border border-border hover:bg-muted transition-colors" title="定位">
-            <Target className="h-4 w-4" />
+          <button onClick={handleLocate} className="flex h-10 w-10 items-center justify-center rounded-lg bg-card/90 backdrop-blur shadow-lg border border-border hover:bg-card hover:border-primary/50 hover:scale-105 transition-all" title="定位">
+            <Target className="h-4 w-4 text-foreground" />
           </button>
         </div>
 
-        {/* Floating Control - Right Side (Base Layer Selector) */}
+        {/* Floating Control - Right Side (Base Layer Selector) - 地图选择器风格 */}
         <div className="absolute top-4 right-4 z-10">
           <div className="relative">
             <button
               onClick={() => setShowLayerSelector(!showLayerSelector)}
-              className="flex h-9 items-center gap-1.5 rounded-lg bg-background shadow-md border border-border px-3 hover:bg-muted transition-colors"
+              className="flex h-10 items-center gap-2 rounded-lg bg-card/90 backdrop-blur shadow-lg border border-border px-4 hover:bg-card hover:border-primary/50 transition-all"
             >
-              <span className="text-sm">{MAP_STYLES[selectedBaseLayer].name}</span>
-              <ChevronDown className={`h-4 w-4 transition-transform ${showLayerSelector ? "rotate-180" : ""}`} />
+              <span className="text-sm font-medium">{MAP_STYLES[selectedBaseLayer].name}</span>
+              <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${showLayerSelector ? "rotate-180" : ""}`} />
             </button>
 
             {/* Dropdown */}
             {showLayerSelector && (
-              <div className="absolute top-10 right-0 bg-background rounded-lg shadow-lg border border-border py-1 min-w-36 z-20">
+              <div className="absolute top-12 right-0 bg-card rounded-lg shadow-xl border border-border py-1 min-w-44 z-20">
                 {MAP_STYLES.map((style, index) => (
                   <button
                     key={style.name}
                     onClick={() => handleBaseLayerSelect(index)}
-                    className={`w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors ${
-                      index === selectedBaseLayer ? "text-primary font-medium" : ""
+                    className={`w-full text-left px-4 py-2.5 text-sm hover:bg-card hover:text-primary transition-all ${
+                      index === selectedBaseLayer ? "text-primary bg-primary/10 font-medium border-l-2 border-primary" : "text-foreground"
                     }`}
                   >
                     {style.name}
@@ -442,19 +445,19 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
           </div>
         </div>
 
-        {/* Layer Management Panel */}
+        {/* Layer Management Panel - 航海日志风格 */}
         {showLayerPanel && (
-          <div className="absolute top-16 right-4 bg-background rounded-lg shadow-lg border border-border p-4 w-72 z-10 max-h-[70vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold text-sm">图层管理</h3>
-              <button className="flex h-6 w-6 items-center justify-center rounded hover:bg-muted text-muted-foreground">
+          <div className="absolute top-16 right-4 bg-card rounded-lg shadow-xl border border-border p-4 w-80 z-10 max-h-[70vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-border">
+              <h3 className="font-semibold text-sm tracking-wide">📍 图层概览</h3>
+              <button className="flex h-7 w-7 items-center justify-center rounded hover:bg-card hover:border-primary/50 border border-transparent transition-all text-muted-foreground hover:text-primary">
                 <Plus className="h-3.5 w-3.5" />
               </button>
             </div>
-            
+
             {layers.length === 0 ? (
-              <p className="text-xs text-muted-foreground text-center py-6">
-                暂无图层<br />通过AI对话添加或上传图层数据
+              <p className="text-xs text-muted-foreground text-center py-8 italic">
+                暂无记录<br /><span className="text-primary/60">通过AI对话开启探索之旅</span>
               </p>
             ) : (
               <div className="space-y-3">
@@ -473,14 +476,20 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
         )}
       </div>
 
-      {/* Footer - Coordinates Display */}
-      <div className="border-t border-border p-2 text-xs text-muted-foreground bg-muted/30">
-        <div className="flex justify-between items-center">
-          <span>MapLibre GL JS · {MAP_STYLES[selectedBaseLayer].name}</span>
-          <span className="font-mono">
-            经度: {coordinates.lng}°, 纬度: {coordinates.lat}°
+      {/* Footer - 坐标面板风格 */}
+      <div className="border-t border-border p-2.5 text-xs bg-card/80 backdrop-blur">
+        <div className="flex justify-between items-center text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <span className="text-primary/60">◈</span> MapLibre GL JS
+            <span className="text-border mx-1">|</span>
+            {MAP_STYLES[selectedBaseLayer].name}
           </span>
-          <span>缩放: {viewState.zoom.toFixed(1)}</span>
+          <span className="font-mono bg-muted/30 px-2 py-0.5 rounded text-foreground">
+            {coordinates.lng.toFixed(4)}°E, {coordinates.lat.toFixed(4)}°N
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="text-accent">⬡</span> Z {viewState.zoom.toFixed(1)}
+          </span>
         </div>
       </div>
     </div>

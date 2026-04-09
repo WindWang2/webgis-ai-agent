@@ -9,7 +9,7 @@ from app.tools.registry import ToolRegistry, tool
 
 logger = logging.getLogger(__name__)
 
-# SSL 证书修复：使用系统 CA 证书
+# # SSL 证书修复：使用系统 CA 证书
 def _get_ssl_context() -> ssl.SSLContext:
     ctx = ssl.create_default_context()
     try:
@@ -18,6 +18,8 @@ def _get_ssl_context() -> ssl.SSLContext:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
     return ctx
+
+
 
 
 def _overpass_to_geojson(data: str) -> dict:
@@ -64,7 +66,7 @@ async def _query_overpass(query: str) -> dict:
             data={"data": full_query},
             timeout=aiohttp.ClientTimeout(total=60),
             ssl=_get_ssl_context(),
-        ) as resp:
+                    ) as resp:
             if resp.status != 200:
                 text = await resp.text()
                 return {"type": "FeatureCollection", "features": [], "error": f"Overpass error {resp.status}: {text}"}
@@ -82,7 +84,8 @@ async def _geocode_bbox(query: str, expand_km: float = 0) -> Optional[str]:
         "accept-language": "zh",
     }
     async with aiohttp.ClientSession(headers={"User-Agent": "WebGIS-AI-Agent/1.0"}) as session:
-        async with session.get(settings.NOMINATIM_URL, params=params, ssl=_get_ssl_context()) as resp:
+        async with session.get(settings.NOMINATIM_URL, params=params, ssl=_get_ssl_context(),
+            ) as resp:
             if resp.status != 200:
                 logger.error(f"Nominatim error: {resp.status}")
                 return None
@@ -133,7 +136,8 @@ async def _nominatim_search_poi(category: str, bbox: str, limit: int) -> dict:
     }
     features = []
     async with aiohttp.ClientSession(headers={"User-Agent": "WebGIS-AI-Agent/1.0"}) as session:
-        async with session.get(settings.NOMINATIM_URL, params=params, ssl=_get_ssl_context()) as resp:
+        async with session.get(settings.NOMINATIM_URL, params=params, ssl=_get_ssl_context(),
+            ) as resp:
             if resp.status != 200:
                 return {"type": "FeatureCollection", "features": []}
             results = await resp.json()
@@ -184,39 +188,80 @@ def register_osm_tools(registry: ToolRegistry):
                     "geojson": {"type": "FeatureCollection", "features": []},
                     "error": f"无法地理编码: {clean_area}"}
 
+        # 中文 category 转英文
+        category_map = {
+            "大学": "university", "高校": "university", "高等学校": "university",
+            "学校": "school", "中小学": "school",
+            "医院": "hospital", "诊所": "clinic",
+            "餐厅": "restaurant", "餐馆": "restaurant", "饭店": "restaurant",
+            "银行": "bank",
+            "咖啡": "cafe", "咖啡厅": "cafe", "咖啡店": "cafe",
+            "酒吧": "bar",
+            "公园": "park", "花园": "garden",
+            "酒店": "hotel", "宾馆": "hotel", "旅馆": "hotel",
+            "博物馆": "museum",
+            "图书馆": "library",
+            "药店": "pharmacy", "药房": "pharmacy",
+            "加油站": "fuel",
+            "停车场": "parking",
+            "公交站": "bus_station", "汽车站": "bus_station",
+            "派出所": "police", "警察局": "police",
+            "消防站": "fire_station", "消防局": "fire_station",
+            "邮局": "post_office",
+            "剧院": "theatre", "剧场": "theatre",
+            "电影院": "cinema",
+            "体育馆": "sports_centre", "体育场": "stadium",
+            "游泳池": "swimming_pool",
+            "幼儿园": "kindergarten", "托儿所": "kindergarten",
+            "学院": "college",
+        }
+        mapped_category = category_map.get(category, category)
+
         # 构造 Overpass 查询 - 查询 bbox 内的 POI
         # amenity 类型
         amenity_types = {"restaurant", "school", "hospital", "bank", "cafe", "bar", "pharmacy",
                          "police", "fire_station", "post_office", "library", "cinema", "theatre",
-                         "parking", "fuel", "bus_station"}
+                         "parking", "fuel", "bus_station", "university", "college", "kindergarten"}
         # leisure 类型
         leisure_types = {"park", "garden", "playground", "sports_centre", "swimming_pool", "stadium"}
         # tourism 类型
         tourism_types = {"hotel", "museum", "attraction", "viewpoint", "hostel"}
 
-        if category in leisure_types:
-            tag_filter = f'"leisure"="{category}"'
-        elif category in tourism_types:
-            tag_filter = f'"tourism"="{category}"'
+        if mapped_category in leisure_types:
+            tag_filter = f'"leisure"="{mapped_category}"'
+        elif mapped_category in tourism_types:
+            tag_filter = f'"tourism"="{mapped_category}"'
         else:
-            tag_filter = f'"amenity"="{category}"'
+            tag_filter = f'"amenity"="{mapped_category}"'
 
         query = f'node[{tag_filter}]({bbox});way[{tag_filter}]({bbox});relation[{tag_filter}]({bbox});'
         geojson = await _query_overpass(query)
 
         # Overpass 失败时，fallback 到 Nominatim 搜索
         if geojson.get("error") or len(geojson.get("features", [])) == 0:
-            # 用中英文关键词搜索
+            # 用中英文关键词搜索（优先使用英文 tag，增加成功率）
             category_names = {
-                "park": "公园", "garden": "花园", "school": "学校", "hospital": "医院",
-                "restaurant": "餐厅", "bank": "银行", "hotel": "酒店", "museum": "博物馆",
-                "cafe": "咖啡", "pharmacy": "药店", "library": "图书馆",
-                "university": "大学", "college": "学院", "kindergarten": "幼儿园",
-                "police": "警察局", "fire_station": "消防站", "post_office": "邮局",
-                "bus_station": "公交站", "parking": "停车场", "fuel": "加油站",
+                "park": ["park", "公园"], "garden": ["garden", "花园"],
+                "school": ["school", "学校"], "hospital": ["hospital", "医院"],
+                "restaurant": ["restaurant", "餐厅"], "bank": ["bank", "银行"],
+                "hotel": ["hotel", "酒店"], "museum": ["museum", "博物馆"],
+                "cafe": ["cafe", "咖啡店"], "pharmacy": ["pharmacy", "药店"],
+                "library": ["library", "图书馆"],
+                "university": ["university", "大学"], "college": ["college", "学院"],
+                "kindergarten": ["kindergarten", "幼儿园"],
+                "police": ["police", "警察局"], "fire_station": ["fire station", "消防站"],
+                "post_office": ["post office", "邮局"],
+                "bus_station": ["bus station", "公交站"], "parking": ["parking", "停车场"],
+                "fuel": ["fuel", "加油站"],
             }
-            search_term = category_names.get(category, category)
-            nom_geojson = await _nominatim_search_poi(search_term, bbox, limit)
+            search_terms = category_names.get(mapped_category, [mapped_category])
+            nom_geojson = {"type": "FeatureCollection", "features": []}
+            for term in search_terms:
+                nom_geojson = await _nominatim_search_poi(term, bbox, limit // len(search_terms))
+                if len(nom_geojson.get("features", [])) > 0:
+                    break
+
+            # 使用 Nominatim 结果作为 fallback
             if len(nom_geojson.get("features", [])) > 0:
                 geojson = nom_geojson
 
@@ -298,7 +343,8 @@ def register_osm_tools(registry: ToolRegistry):
                 "polygon_geojson": "1",
             }
             async with aiohttp.ClientSession(headers={"User-Agent": "WebGIS-AI-Agent/1.0"}) as session:
-                async with session.get(settings.NOMINATIM_URL, params=params, ssl=_get_ssl_context()) as resp:
+                async with session.get(settings.NOMINATIM_URL, params=params, ssl=_get_ssl_context(),
+            ) as resp:
                     if resp.status == 200:
                         results = await resp.json()
                         if results:

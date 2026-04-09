@@ -1,33 +1,131 @@
+@import url('https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --background: 240 10% 3.9%;
-  --foreground: 0 0% 100%;
-  --card: 240 10% 6%;
-  --card-foreground: 0 0% 100%;
-  --primary: 187 100% 50%;
-  --primary-foreground: 240 10% 3.9%;
-  --secondary: 263 70% 60%;
-  --muted: 240 10% 15%;
-  --accent: 330 100% 67%;
-  --border: 240 10% 20%;
+  /* 🎨 探索者日志 - 复古地图美学 */
+  /* 基础色板：羊皮纸基调 */
+  --background: 32 22% 8%;        /* #1a1714 - 古老羊皮纸 */
+  --background-secondary: 32 18% 12%; /* #252019 - 加深层次 */
+  --foreground: 38 30% 88%;      /* #e8dfd0 - 温暖米白 */
+  --foreground-muted: 38 25% 65%; /* #a89f8a - 柔灰 */
+
+  /* 卡片 */
+  --card: 32 20% 10%;         /* #231d17 - 卡片底色 */
+  --card-foreground: 38 30% 88%;
+  --card-hover: 32 22% 14%;   /* #2d2520 - 悬停态 */
+
+  /* 主色：古铜金 */
+  --primary: 38 55% 58%;       /* #c9a962 - 古铜金 */
+  --primary-dark: 38 60% 45%;  /* #9a7d46 - 古铜深 */
+  --primary-light: 42 70% 75%; /* #dec997 - 古铜亮 */
+  --primary-foreground: 32 22% 8%;
+
+  /* 次要色：暖棕 */
+  --secondary: 28 25% 35%;     /* #6b5644 - 暖棕 */
+  --secondary-foreground: 38 30% 88%;
+
+  /*  muted */
+  --muted: 28 20% 18%;         /* #3d3027 - 暗淡区 */
+  --muted-foreground: 38 25% 65%;
+
+  /* 强调色 */
+  --accent: 18 45% 55%;        /* #b87333 - 玫瑰铜 */
+  --accent-foreground: 38 30% 88%;
+
+  /* 边框 */
+  --border: 28 22% 25%;        /* #4a3c32 - 古铜边框 */
+  --border-light: 28 18% 35%; /* #5c4d40 - 亮边框 */
+
+  /* 状态色 */
+  --success: 130 40% 45%;     /* #4a7c59 - 深绿 */
+  --warning: 38 70% 50%;      /* #c9a030 - 琥珀 */
+  --error: 0 50% 55%;         /* #a33c3c - 暗红 */
+
+  /* 圆角 */
+  --radius-sm: 0.25rem;
   --radius: 0.5rem;
+  --radius-lg: 0.75rem;
 }
 
 body {
-  background-color: hsl(240 10% 3.9%);
-  color: hsl(0 0% 100%);
+  background: linear-gradient(165deg, hsl(32 22% 8%) 0%, hsl(32 18% 10%) 50%, hsl(32 20% 6%) 100%);
+  color: hsl(38 30% 88%);
+  font-family: 'Crimson Pro', Georgia, serif;
+  min-height: 100vh;
+  position: relative;
+}
+
+/* 纸张纹理叠加 */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  opacity: 0.03;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* 滚动条美化 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(32 18% 12%);
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(28 22% 25%);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(38 55% 58%);
+}
+
+/* 选中文字高亮 */
+::selection {
+  background: hsl(38 55% 58% / 0.4);
+  color: hsl(38 30% 88%);
 }
 
 /* MapLibre popup styling */
 .mapboxgl-popup-content {
+  background: hsl(32 20% 10%) !important;
+  border: 1px solid hsl(28 22% 25%) !important;
   border-radius: var(--radius) !important;
+  box-shadow: 0 4px 20px hsl(0 0% 0% / 0.4) !important;
+}
+
+.mapboxgl-popup-tip {
+  border-top-color: hsl(32 20% 10%) !important;
+}
+
+.mapboxgl-popup-close-button {
+  color: hsl(38 25% 65%) !important;
 }
 
 .maplibregl-ctrl-group {
-  background: rgba(20, 20, 35, 0.9) !important;
-  border: 1px solid rgba(0, 240, 255, 0.2) !important;
-  border-radius: 8px !important;
+  background: hsl(32 20% 10% / 0.95) !important;
+  border: 1px solid hsl(28 22% 25%) !important;
+  border-radius: var(--radius-sm) !important;
+  box-shadow: 0 2px 8px hsl(0 0% 0% / 0.3) !important;
+}
+
+.maplibregl-ctrl-group button {
+  background: transparent !important;
+  border-bottom: 1px solid hsl(28 22% 25% / 0.5) !important;
+}
+
+.maplibregl-ctrl-group button:last-child {
+  border-bottom: none !important;
+}
+
+.maplibregl-ctrl-icon {
+  filter: invert(82%) sepia(30%) saturate(300%) hue-rotate(5deg);
 }
