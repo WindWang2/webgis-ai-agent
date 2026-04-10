@@ -36,9 +36,13 @@ def test_get_or_create_conversation_returns_existing():
 
 def test_save_message():
     svc, db = make_service()
+    mock_conv = MagicMock()
+    db.get.return_value = mock_conv
     svc.save_message("sess-1", "user", "hello")
     db.add.assert_called_once()
     db.commit.assert_called_once()
+    # Verify updated_at was set on the conversation
+    assert mock_conv.updated_at is not None
 
 
 def test_list_sessions():
