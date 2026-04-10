@@ -81,4 +81,4 @@ def test_enforce_cap_deletes_oldest():
     svc._enforce_cap()
 
     assert db.delete.call_count == 2
-    db.commit.assert_called_once()
+    db.commit.assert_not_called()  # commit is caller's responsibility
