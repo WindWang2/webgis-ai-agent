@@ -125,7 +125,7 @@ export default function Home() {
           />
         </div>
         <div className="w-80 flex-shrink-0 border-l border-border overflow-hidden bg-card">
-          <ResultsPanel layers={layers} onGenerateReport={() => {}} />
+          <ResultsPanel layers={layers} onGenerateReport={() => {}} onToggleLayer={handleToggleLayer} />
         </div>
       </div>
     </div>
