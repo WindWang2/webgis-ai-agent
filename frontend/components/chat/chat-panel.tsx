@@ -65,7 +65,7 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
 
   // Reasoning step order and labels
   const stepOrder: SSEEventType[] = ['thinking', 'planning', 'acting', 'observing', 'done']
-  const stepLabels: Record<SSEEventType | 'error', { label: string; icon: React.ReactNode }> = {
+  const stepLabels: Partial<Record<SSEEventType | 'error', { label: string; icon: React.ReactNode }>> = {
     thinking: { label: '思考中', icon: <Loader2 className="h-3 w-3 animate-spin" /> },
     planning: { label: '规划方案', icon: <Loader2 className="h-3 w-3 animate-spin" /> },
     acting: { label: '执行操作', icon: <Loader2 className="h-3 w-3 animate-spin" /> },

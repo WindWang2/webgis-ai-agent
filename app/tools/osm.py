@@ -22,6 +22,12 @@ def _get_ssl_context() -> ssl.SSLContext:
 
 
 
+def _sanitize_overpass_value(value: str) -> str:
+    """Escape characters that have special meaning in Overpass QL strings."""
+    # Remove characters that could break out of a quoted Overpass QL value
+    return str(value).replace("\\", "").replace('"', "").replace("]", "").replace(";", "").replace("\n", "").replace("\r", "")
+
+
 def _overpass_to_geojson(data: str) -> dict:
     """将 Overpass JSON 结果转为 GeoJSON"""
     try:
@@ -227,12 +233,13 @@ def register_osm_tools(registry: ToolRegistry):
         # tourism 类型
         tourism_types = {"hotel", "museum", "attraction", "viewpoint", "hostel"}
 
+        safe_category = _sanitize_overpass_value(mapped_category)
         if mapped_category in leisure_types:
-            tag_filter = f'"leisure"="{mapped_category}"'
+            tag_filter = f'"leisure"="{safe_category}"'
         elif mapped_category in tourism_types:
-            tag_filter = f'"tourism"="{mapped_category}"'
+            tag_filter = f'"tourism"="{safe_category}"'
         else:
-            tag_filter = f'"amenity"="{mapped_category}"'
+            tag_filter = f'"amenity"="{safe_category}"'
 
         query = f'node[{tag_filter}]({bbox});way[{tag_filter}]({bbox});relation[{tag_filter}]({bbox});'
         geojson = await _query_overpass(query)
@@ -288,7 +295,7 @@ def register_osm_tools(registry: ToolRegistry):
                     "geojson": {"type": "FeatureCollection", "features": []},
                     "error": f"无法地理编码: {area}"}
 
-        query = f'way["highway"="{road_type}"]({bbox});'
+        query = f'way["highway"="{_sanitize_overpass_value(road_type)}"]({bbox});'
         geojson = await _query_overpass(query)
         return {
             "type": "road_query",
@@ -330,7 +337,7 @@ def register_osm_tools(registry: ToolRegistry):
            })
     async def query_osm_boundary(name: str, admin_level: int = 8) -> dict:
         # 先尝试 Overpass
-        query = f'relation["admin_level"="{admin_level}"]["name"="{name}"]->.searchArea;.searchArea out body geom;'
+        query = f'relation["admin_level"="{int(admin_level)}"]["name"="{_sanitize_overpass_value(name)}"]->.searchArea;.searchArea out body geom;'
         geojson = await _query_overpass(query)
 
         # Overpass 失败时，用 Nominatim 搜索行政边界
