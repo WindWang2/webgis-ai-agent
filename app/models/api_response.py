@@ -32,6 +32,11 @@ class ApiResponse(BaseModel):
     def ok(cls, data=None, message: str = "操作成功"):
         return cls(code="SUCCESS", success=True, message=message, data=data)
     
+    # ok() 的别名，保持向后兼容
+    @classmethod
+    def success(cls, data=None, message: str = "操作成功"):
+        return cls.ok(data=data, message=message)
+    
     @classmethod
     def fail(cls, code: str = "SERVER_ERROR", message: str = "操作失败", data=None):
         return cls(code=code, success=False, message=message, data=data)
