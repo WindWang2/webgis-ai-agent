@@ -11,8 +11,26 @@ import httpx
 from app.core.config import settings
 from app.tools.registry import ToolRegistry
 from app.services.task_tracker import TaskTracker, detect_geojson
+from collections import OrderedDict
 from app.core.database import SessionLocal
 from app.services.history_service import HistoryService
+
+class LRUCache(OrderedDict):
+    """Simple LRU Cache to bound memory usage"""
+    def __init__(self, capacity=100):
+        super().__init__()
+        self.capacity = capacity
+
+    def __getitem__(self, key):
+        value = super().__getitem__(key)
+        self.move_to_end(key)
+        return value
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        if len(self) > self.capacity:
+            oldest = next(iter(self))
+            del self[oldest]
 
 logger = logging.getLogger(__name__)
 
@@ -94,24 +112,25 @@ class ChatEngine:
         self.model = settings.LLM_MODEL
         self.api_key = settings.LLM_API_KEY
         self.max_rounds = 10
-        # 内存对话存储: session_id -> messages list
-        self._sessions: dict[str, list[dict]] = {}
+        # 内存对话存储: session_id -> messages list (LRU Cache to bound memory)
+        self._sessions: LRUCache = LRUCache(capacity=50)
         # session 级别 GeoJSON 缓存: session_id -> {ref_key -> geojson_str}
-        self._geojson_cache: dict[str, dict[str, str]] = {}
+        self._geojson_cache: LRUCache = LRUCache(capacity=100)
         # 任务跟踪器
         self.tracker = TaskTracker()
-        # History persistence
-        self._history: HistoryService = HistoryService(SessionLocal())
 
     def _get_or_create_session(self, session_id: str) -> list[dict]:
         if session_id not in self._sessions:
             self._sessions[session_id] = [
                 {"role": "system", "content": SYSTEM_PROMPT}
             ]
+            db = SessionLocal()
             try:
-                self._history.get_or_create_conversation(session_id)
+                HistoryService(db).get_or_create_conversation(session_id)
             except Exception as e:
                 logger.warning(f"History: failed to create conversation {session_id}: {e}")
+            finally:
+                db.close()
         return self._sessions[session_id]
 
     def _save_msg_async(self, session_id: str, role: str, content: str, tool_calls=None, tool_result=None):
@@ -431,10 +450,13 @@ class ChatEngine:
         if session_id in self._sessions:
             del self._sessions[session_id]
         self._geojson_cache.pop(session_id, None)
+        db = SessionLocal()
         try:
-            self._history.delete_session(session_id)
+            HistoryService(db).delete_session(session_id)
         except Exception as e:
             logger.warning(f"History: failed to delete session {session_id}: {e}")
+        finally:
+            db.close()
 
 
 SYSTEM_PROMPT = """你是一个专业的 GIS 分析助手，擅长地理空间数据查询、分析和可视化。

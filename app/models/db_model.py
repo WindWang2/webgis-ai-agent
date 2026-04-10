@@ -10,9 +10,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
-from app.models.sqlalchemy_base import get_base
-
-Base = get_base()
+from app.core.database import Base
 
 class Organization(Base):
     """组织机构表"""
@@ -30,7 +28,7 @@ class User(Base):
     """用户表"""
     __tablename__ = "users"
     
-    id = Column(Integer, primary_key=True)
+    id = Column(String(255), primary_key=True)
     org_id = Column(Integer, ForeignKey("organizations.id"))
     username = Column(String(100), nullable=False, unique=True)
     email = Column(String(255), unique=True, nullable=False)
@@ -53,7 +51,7 @@ class Layer(Base):
     
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     org_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
-    creator_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    creator_id = Column(String(255), ForeignKey("users.id"), nullable=False)
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text)
     category = Column(String(50), index=True)
@@ -89,7 +87,7 @@ class AnalysisTask(Base):
     
     id = Column(BigInteger, primary_key=True)
     org_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
-    creator_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    creator_id = Column(String(255), ForeignKey("users.id"), nullable=False)
     layer_id = Column(BigInteger, ForeignKey("layers.id"))
     result_layer_id = Column(BigInteger, ForeignKey("layers.id"))
     task_type = Column(String(50), nullable=False)
@@ -119,9 +117,9 @@ class LayerPermission(Base):
     
     id = Column(Integer, primary_key=True)
     layer_id = Column(BigInteger, ForeignKey("layers.id"), nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(String(255), ForeignKey("users.id"), nullable=False)
     permission = Column(String(20), nullable=False)
-    granted_by = Column(Integer, ForeignKey("users.id"))
+    granted_by = Column(String(255), ForeignKey("users.id"))
     granted_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     expires_at = Column(DateTime)
     
@@ -139,4 +137,28 @@ def get_init_sql():
     CREATE EXTENSION IF NOT EXISTS postgis_topology;
     """
 
-__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "get_init_sql"]
+class Conversation(Base):
+    __tablename__ = "conversations"
+
+    id = Column(String(255), primary_key=True)
+    title = Column(String(200), default="新对话")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
+
+class Message(Base):
+    __tablename__ = "messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    conversation_id = Column(String(255), ForeignKey("conversations.id"))
+    role = Column(String(20), nullable=False)  # user / assistant / tool
+    content = Column(Text, default="")
+    tool_calls = Column(JSON, nullable=True)  # FC tool calls
+    tool_call_id = Column(String(255), nullable=True)
+    tool_result = Column(JSON, nullable=True)  # tool execution result
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    conversation = relationship("Conversation", back_populates="messages")
+
+__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "get_init_sql"]
