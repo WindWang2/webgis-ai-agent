@@ -33,3 +33,7 @@ build/
 *.swo
 *~
 .worktrees/
+
+# Tool artifacts
+.playwright-mcp/
+.superpowers/
