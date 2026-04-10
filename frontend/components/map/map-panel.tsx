@@ -2,7 +2,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react"
 import Map, { NavigationControl, MapRef, ViewStateChangeEvent } from "react-map-gl/maplibre"
 import maplibregl from "maplibre-gl"
-import { Layers, ZoomIn, ZoomOut, Maximize, MapPin, Eye, EyeOff, RotateCcw, Target, Trash2, ChevronDown, Plus, Edit, Settings } from "lucide-react"
+import { Layers, ZoomIn, ZoomOut, Maximize, MapPin, Eye, EyeOff, RotateCcw, Target, Trash2, ChevronDown, Plus, Edit, Settings, Download } from "lucide-react"
 import { LayerCard } from "@/components/layer-card"
 import type { Layer } from "@/lib/types/layer"
 
@@ -357,6 +357,19 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
     setShowLayerSelector(false)
   }
 
+  const handleExportPng = () => {
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    map.once('render', () => {
+      const dataUrl = map.getCanvas().toDataURL('image/png')
+      const link = document.createElement('a')
+      link.download = `map-${Date.now()}.png`
+      link.href = dataUrl
+      link.click()
+    })
+    map.triggerRepaint()
+  }
+
   return (
     <div className="flex h-full flex-col">
       {/* Header - 大地坐标风格 */}
@@ -395,6 +408,7 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
           style={{ position: "absolute", inset: 0 }}
           mapStyle={currentMapStyle}
           attributionControl={false}
+          preserveDrawingBuffer={true}
         >
           <NavigationControl position="bottom-right" />
         </Map>
@@ -412,6 +426,9 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
           </button>
           <button onClick={handleLocate} className="flex h-10 w-10 items-center justify-center rounded-lg bg-card/90 backdrop-blur shadow-lg border border-border hover:bg-card hover:border-primary/50 hover:scale-105 transition-all" title="定位">
             <Target className="h-4 w-4 text-foreground" />
+          </button>
+          <button onClick={handleExportPng} className="flex h-10 w-10 items-center justify-center rounded-lg bg-card/90 backdrop-blur shadow-lg border border-border hover:bg-card hover:border-primary/50 hover:scale-105 transition-all" title="导出PNG">
+            <Download className="h-4 w-4 text-foreground" />
           </button>
         </div>
 
