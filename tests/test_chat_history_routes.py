@@ -34,6 +34,7 @@ def test_list_sessions_returns_json(client):
     assert len(data["sessions"]) == 1
     assert data["sessions"][0]["id"] == "s1"
     assert data["sessions"][0]["title"] == "Test"
+    assert "updatedAt" in data["sessions"][0]
 
 
 def test_get_session_detail(client):
