@@ -82,8 +82,8 @@ async def list_sessions():
             {
                 "id": s.id,
                 "title": s.title,
-                "created_at": s.created_at.timestamp() * 1000,
-                "updated_at": s.updated_at.timestamp() * 1000,
+                "createdAt": s.created_at.timestamp() * 1000,
+                "updatedAt": s.updated_at.timestamp() * 1000,
             }
             for s in sessions
         ]
@@ -99,14 +99,14 @@ async def get_session_detail(session_id: str):
     return {
         "id": conv.id,
         "title": conv.title,
-        "created_at": conv.created_at.timestamp() * 1000,
-        "updated_at": conv.updated_at.timestamp() * 1000,
+        "createdAt": conv.created_at.timestamp() * 1000,
+        "updatedAt": conv.updated_at.timestamp() * 1000,
         "messages": [
             {
-                "id": m.id,
+                "id": str(m.id),
                 "role": m.role,
                 "content": m.content,
-                "created_at": m.created_at.timestamp() * 1000,
+                "timestamp": m.created_at.timestamp() * 1000,
             }
             for m in conv.messages
             if m.role in ("user", "assistant")
