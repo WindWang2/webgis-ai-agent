@@ -9,6 +9,11 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "WebGIS AI Agent"
     DEBUG: bool = True
     API_V1_STR: str = "/api"
+    ENV: str = "development"
+
+    def is_production(self) -> bool:
+        """判断是否为生产环境"""
+        return self.ENV.lower() == "production"
 
     # 数据库
     DATABASE_URL: str = "postgresql+psycopg2://postgres:postgres@localhost:15432/webgis"

@@ -50,7 +50,7 @@ def sanitize_traceback(tb_str: str) -> str:
 def format_error_response(
     exc: Exception,
     request: Request,
-    include_detailss: bool = False,
+    include_details: bool = False,
 ) -> Dict[str, Any]:
     """
     格式化错误响应根据include_details决定返回的信息详细程度
@@ -74,7 +74,7 @@ def format_error_response(
     }
     
     # 开发环境返回详细错误信息
-    if include_detailss:
+    if include_details:
         exc_info = sys.exc_info()
         tb_stack = traceback.format_exception(*exc_info)
         tb_str = "".join(tb_stack)
@@ -111,7 +111,7 @@ async def global_exception_handler(
         JSON格式的错误响应
     """
     # 判断是否显示详细信息：非生产环境都显示
-    include_detailss = not settings.is_production()
+    include_details = not settings.is_production()
 
     
     # 无论哪种环境都记录完整日志便于服务端调试
@@ -127,7 +127,7 @@ async def global_exception_handler(
     response_data = format_error_response(
         exc=exc,
         request=request,
-        include_detailss=include_detailss,
+        include_details=include_details,
 
     )
     
