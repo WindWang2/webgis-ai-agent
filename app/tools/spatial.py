@@ -56,12 +56,18 @@ def register_spatial_tools(registry: ToolRegistry):
             if not data:
                 return {"error": "Invalid GeoJSON input"}
             features = data.get("features", data) if isinstance(data, dict) else data
-            from app.services.spatial_analyzer import SpatialAnalyzer
-            analyzer = SpatialAnalyzer()
-            result = analyzer.buffer(features, distance, unit)
-            if result.success:
-                return {"geojson": result.data, "stats": result.stats}
-            return {"error": result.error_message}
+            
+            # 使用 Celery 异步执行
+            from app.services.task_queue import celery_app
+            task = celery_app.send_task(
+                "app.services.spatial_tasks.run_buffer_analysis",
+                args=[features, distance, unit]
+            )
+            result = task.get(timeout=120)  # 等待结果，设置超时
+            
+            if result.get("success"):
+                return {"geojson": result.get("data"), "stats": result.get("stats")}
+            return {"error": result.get("error")}
         except Exception as e:
             logger.error(f"Buffer analysis error: {e}")
             return {"error": str(e)}
@@ -83,29 +89,17 @@ def register_spatial_tools(registry: ToolRegistry):
             if not features:
                 return {"error": "No features in GeoJSON"}
 
-            geometries = [shape(f["geometry"]) for f in features if f.get("geometry")]
-            if not geometries:
-                return {"error": "No valid geometries"}
-
-            gdf = gpd.GeoSeries(geometries, crs="EPSG:4326")
-            # 投影到等面积坐标系（Mollweide）计算面积/长度，单位为米
-            gdf_proj = gdf.to_crs("ESRI:54009")
-            stats = {
-                "feature_count": len(geometries),
-                "total_area_sqkm": round(float(gdf_proj.area.sum()) / 1e6, 4),
-                "total_length_km": round(float(gdf_proj.length.sum()) / 1000, 4),
-                "centroid": {
-                    "lat": round(float(gdf.centroid.y.mean()), 6),
-                    "lon": round(float(gdf.centroid.x.mean()), 6),
-                },
-                "bounds": {
-                    "min_lon": round(float(gdf.bounds.minx.min()), 6),
-                    "min_lat": round(float(gdf.bounds.miny.min()), 6),
-                    "max_lon": round(float(gdf.bounds.maxx.max()), 6),
-                    "max_lat": round(float(gdf.bounds.maxy.max()), 6),
-                },
-            }
-            return {"stats": stats}
+            # 使用 Celery 异步执行
+            from app.services.task_queue import celery_app
+            task = celery_app.send_task(
+                "app.services.spatial_tasks.run_spatial_stats",
+                args=[features]
+            )
+            result = task.get(timeout=60)
+            
+            if result.get("success"):
+                return {"stats": result.get("stats")}
+            return {"error": result.get("error")}
         except Exception as e:
             logger.error(f"Spatial stats error: {e}")
             return {"error": str(e)}
@@ -115,40 +109,19 @@ def register_spatial_tools(registry: ToolRegistry):
            param_descriptions={
                "geojson": "输入点要素 GeoJSON FeatureCollection（JSON字符串）"
            })
-    def nearest_neighbor(geojson: str) -> dict:
-        try:
-            import numpy as np
-            from scipy.spatial import distance_matrix
-
-            data = _safe_parse_geojson(geojson)
-            if not data:
-                return {"error": "Invalid GeoJSON input"}
             features = data.get("features", [])
 
-            points = []
-            for f in features:
-                geom = f.get("geometry") or {}
-                if geom.get("type") == "Point" and geom.get("coordinates"):
-                    coords = geom["coordinates"]
-                    points.append((coords[0], coords[1]))
-
-            if len(points) < 2:
-                return {"error": "Need at least 2 points"}
-
-            coords_arr = np.array(points)
-            dist = distance_matrix(coords_arr, coords_arr)
-            np.fill_diagonal(dist, np.inf)
-            nn_distances = dist.min(axis=1)
-
-            return {
-                "point_count": len(points),
-                "mean_nearest_distance": round(float(nn_distances.mean()), 4),
-                "std_nearest_distance": round(float(nn_distances.std()), 4),
-                "min_distance": round(float(nn_distances.min()), 4),
-                "max_distance": round(float(nn_distances.max()), 4),
-            }
-        except ImportError:
-            return {"error": "scipy not installed"}
+            # 使用 Celery 异步执行
+            from app.services.task_queue import celery_app
+            task = celery_app.send_task(
+                "app.services.spatial_tasks.run_nearest_neighbor",
+                args=[features]
+            )
+            result = task.get(timeout=60)
+            
+            if result.get("success"):
+                return result.get("data")
+            return {"error": result.get("error")}
         except Exception as e:
             logger.error(f"NN analysis error: {e}")
             return {"error": str(e)}
@@ -177,74 +150,17 @@ def register_spatial_tools(registry: ToolRegistry):
                 return {"error": "Invalid GeoJSON input: 无法解析，请确保数据完整"}
             features = data.get("features") or data.get("feature_collection", [])
 
-            points = []
-            for f in features:
-                geom = f.get("geometry") or {}
-                if geom.get("type") == "Point" and geom.get("coordinates"):
-                    coords = geom["coordinates"]
-                    points.append((coords[0], coords[1]))
-
-            if not points:
-                return {"error": "No point features"}
-
-            xs = [p[0] for p in points]
-            ys = [p[1] for p in points]
-
-            cell_deg = cell_size / 111000
-            margin = cell_deg * 3
-            x_min, x_max = min(xs) - margin, max(xs) + margin
-            y_min, y_max = min(ys) - margin, max(ys) + margin
-
-            x_bins = np.arange(x_min, x_max + cell_deg, cell_deg)
-            y_bins = np.arange(y_min, y_max + cell_deg, cell_deg)
-            H, xedges, yedges = np.histogram2d(xs, ys, bins=[x_bins, y_bins])
-
-            # 高斯平滑（sigma 由 radius/cell_size 决定，最少 1）
-            sigma = max(1.0, radius / cell_size)
-            H_smooth = gaussian_filter(H.T, sigma=sigma)  # 转置对齐经纬度轴
-
-            # 色带：透明 → 深蓝 → 青 → 黄 → 橙 → 红
-            cmap = LinearSegmentedColormap.from_list("heat", [
-                (0.00, (0.00, 0.00, 0.50, 0.00)),
-                (0.10, (0.00, 0.10, 0.90, 0.65)),
-                (0.30, (0.00, 0.75, 1.00, 0.80)),
-                (0.55, (0.10, 1.00, 0.20, 0.88)),
-                (0.75, (1.00, 0.90, 0.00, 0.93)),
-                (0.88, (1.00, 0.40, 0.00, 0.97)),
-                (1.00, (0.90, 0.00, 0.00, 1.00)),
-            ], N=256)
-
-            # 渲染为 PNG（无边框，透明背景）
-            dpi = 150
-            w = H_smooth.shape[1] / dpi * 2
-            h = H_smooth.shape[0] / dpi * 2
-            fig, ax = plt.subplots(figsize=(max(w, 2), max(h, 2)), dpi=dpi)
-            ax.imshow(
-                H_smooth,
-                cmap=cmap,
-                origin="lower",
-                aspect="auto",
-                vmin=0,
-                vmax=H_smooth.max(),
-                interpolation="bilinear",
+            # 使用 Celery 异步执行
+            from app.services.task_queue import celery_app
+            task = celery_app.send_task(
+                "app.services.spatial_tasks.run_heatmap_generation",
+                kwargs={"features": features, "cell_size": cell_size, "radius": radius}
             )
-            ax.axis("off")
-            plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
-
-            buf = io.BytesIO()
-            fig.savefig(buf, format="png", bbox_inches="tight",
-                        pad_inches=0, transparent=True)
-            plt.close(fig)
-            buf.seek(0)
-            img_b64 = "data:image/png;base64," + base64.b64encode(buf.read()).decode()
-
-            return {
-                "type": "heatmap_raster",
-                "image": img_b64,
-                "bbox": [float(xedges[0]), float(yedges[0]),
-                         float(xedges[-1]), float(yedges[-1])],
-                "total_points": len(points),
-            }
+            result = task.get(timeout=120)
+            
+            if result.get("success"):
+                return result.get("data")
+            return {"error": result.get("error")}
         except Exception as e:
             logger.error(f"Heatmap error: {e}")
             return {"error": str(e)}
