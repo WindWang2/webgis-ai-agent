@@ -63,7 +63,6 @@ async def generate_report(
     # 验证任务存在
     from app.services.layer_service import TaskService
     task_svc = TaskService(db)
-    task = task_svc.get_task(request.task_id)
     task = task_svc.get_task_by_id(request.task_id)
 
     
