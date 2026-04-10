@@ -16,15 +16,18 @@ RUN npm run build
 
 # Stage 3: Backend Dependencies
 FROM python:3.11-slim AS backend-deps
-WORKDIR /app/backend
-COPY backend/requirements.txt ./
+WORKDIR /app
+COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Stage 4: Backend Builder
 FROM python:3.11-slim AS backend-builder
-WORKDIR /app/backend
-COPY --from=backend-deps /usr/local/lib/python3.11/site-packages ./site-packages
-COPY backend/. .
+WORKDIR /app
+COPY --from=backend-deps /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY requirements.txt ./
+COPY main.py ./
+COPY app/ ./app/
+COPY mcp_servers.json ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Stage 5: Runner
@@ -32,17 +35,18 @@ FROM python:3.11-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV PYTHONPATH=/app/backend
+ENV PYTHONPATH=/app
 
 # Install Node.js for frontend
 RUN apt-get update && apt-get install -y nodejs npm && rm -rf /var/lib/apt/lists/*
 
 # Copy frontend build
-COPY --from=frontend-builder /app/frontend/out ./frontend-out
-COPY --from=frontend-builder /app/frontend/node_modules ./frontend-node-modules
+COPY --from=frontend-builder /app/frontend/.next ./frontend/.next
+COPY --from=frontend-builder /app/frontend/node_modules ./frontend/node_modules
+COPY --from=frontend-builder /app/frontend/package.json ./frontend/package.json
 
 # Copy backend
-COPY --from=backend-builder /app/backend ./backend
+COPY --from=backend-builder /app ./
 
 # Create non-root user
 RUN addgroup --system --gid 1001 appgroup && adduser --system --uid 1001 appuser
@@ -51,4 +55,4 @@ USER appuser
 
 EXPOSE 3000 8000
 
-CMD ["sh", "-c", "cd backend && uvicorn app.main:app --host 0.0.0.0 --port 8000 & cd frontend-out && npx serve -s . -l 3000"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 & cd frontend && npx next start -p 3000"]
