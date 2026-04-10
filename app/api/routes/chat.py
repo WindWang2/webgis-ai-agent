@@ -73,9 +73,50 @@ async def chat_stream(req: ChatRequest):
     )
 
 
+@router.get("/sessions")
+async def list_sessions():
+    """列出所有历史会话（最多1000条，按最近更新排序）"""
+    sessions = engine._history.list_sessions()
+    return {
+        "sessions": [
+            {
+                "id": s.id,
+                "title": s.title,
+                "created_at": s.created_at.timestamp() * 1000,
+                "updated_at": s.updated_at.timestamp() * 1000,
+            }
+            for s in sessions
+        ]
+    }
+
+
+@router.get("/sessions/{session_id}")
+async def get_session_detail(session_id: str):
+    """获取会话详情（只读）"""
+    conv = engine._history.get_session(session_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {
+        "id": conv.id,
+        "title": conv.title,
+        "created_at": conv.created_at.timestamp() * 1000,
+        "updated_at": conv.updated_at.timestamp() * 1000,
+        "messages": [
+            {
+                "id": m.id,
+                "role": m.role,
+                "content": m.content,
+                "created_at": m.created_at.timestamp() * 1000,
+            }
+            for m in conv.messages
+            if m.role in ("user", "assistant")
+        ],
+    }
+
+
 @router.delete("/sessions/{session_id}")
 async def clear_session(session_id: str):
-    """清除会话"""
+    """清除会话（内存 + DB）"""
     engine.clear_session(session_id)
     return {"status": "ok"}
 
