@@ -451,12 +451,14 @@ class SpatialAnalyzer:
             right_geoms = []
             right_features = []
             
+            results = []
+
             for l_feat in left:
                 geom = l_feat.get("geometry", {})
                 if geom:
                     try:
                         left_geoms.append(shape(geom))
-                    except:
+                    except Exception:
                         left_geoms.append(None)
                 else:
                     left_geoms.append(None)
@@ -467,7 +469,7 @@ class SpatialAnalyzer:
                     try:
                         right_geoms.append(shape(geom))
                         right_features.append(r_feat)
-                    except:
+                    except Exception:
                         right_geoms.append(None)
                         right_features.append(None)
                 else:
