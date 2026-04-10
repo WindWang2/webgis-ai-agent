@@ -115,14 +115,23 @@ class ChatEngine:
         return self._sessions[session_id]
 
     def _save_msg_async(self, session_id: str, role: str, content: str, tool_calls=None, tool_result=None):
-        """Persist a message to DB without blocking the SSE stream."""
+        """Persist a message to DB without blocking the SSE stream.
+
+        Creates its own DB session so concurrent executor calls don't share state.
+        """
+        db = SessionLocal()
         try:
-            self._history.save_message(session_id, role, content, tool_calls, tool_result)
+            HistoryService(db).save_message(session_id, role, content, tool_calls, tool_result)
         except Exception as e:
             logger.warning(f"History: failed to save message: {e}")
+        finally:
+            db.close()
 
     def _generate_title(self, session_id: str, first_user_message: str) -> None:
-        """Call LLM synchronously to generate a short title, then update DB."""
+        """Call LLM synchronously to generate a short title, then update DB.
+
+        Creates its own DB session so concurrent executor calls don't share state.
+        """
         import httpx as _httpx
         try:
             payload = {
@@ -142,7 +151,11 @@ class ChatEngine:
             resp.raise_for_status()
             title = resp.json()["choices"][0]["message"]["content"].strip()
             if title:
-                self._history.update_title(session_id, title)
+                db = SessionLocal()
+                try:
+                    HistoryService(db).update_title(session_id, title)
+                finally:
+                    db.close()
         except Exception as e:
             logger.warning(f"History: title generation failed for {session_id}: {e}")
 
