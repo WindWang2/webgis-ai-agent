@@ -1,115 +1,85 @@
 # WebGIS AI Agent 数据库设计文档
-## T008 PostGIS 数据库设计
+## T008 数据库设计
 ### 核心表结构
-#### organizations - 组织/租户表
-| 列名 | 类型 | 说明 |
-|------|-----|-------|
-| id | INTEGER | PK 自增 |
-| name | VARCHAR(255) | 组织名称 |
-| slug | VARCHAR(100) | 唯一标识(slug) |
-| created_at | DATETIME | 创建时间 |
+
+系统目前包含以下核心表，位于 `app/models/db_models.py` 中，采用 SQLAlchemy 定义。
+
 #### users - 用户表
 | 列名 | 类型 | 说明 |
 |------|-----|-------|
-| id | INTEGER | PK 自增 |
-| org_id | INTEGER | FK->organizations.id |
-| username | VARCHAR(100) | 唯一用户名 |
-| email | VARCHAR(255) | 唯一邮箱 |
-| password_hash | VARCHAR(255) | BCrypt哈希 |
-| role | VARCHAR(20) | admin/editor/viewer |
-| is_active | BOOLEAN | 是否激活 |
+| id | VARCHAR(100) | PK |
+| name | VARCHAR(100) | 用户名 |
+| email | VARCHAR(200) | 邮箱 |
+| role | VARCHAR(50) | 角色 |
 | created_at | DATETIME | 创建时间 |
 
-索引: idx_user_org(org_id)
-#### layers - 图层表(核心)
+#### user_roles - 用户角色表
 | 列名 | 类型 | 说明 |
 |------|-----|-------|
-| id | BIGINT | PK自增 |
-| org_id | INTEGER | FK->organizations.id |
-| creator_id | INTEGER | FK->users.id |
-| name | VARCHAR(255) | 图层名称(index) |
-| description | TEXT | 描述 |
-| category | VARCHAR(50) | 分类(index) |
-| layer_type | VARCHAR(20) | vector/raster/tile |
-| geometry_type | VARCHAR(50) | Point/LineString/Polygon |
-| source_format | VARCHAR(50) | geojson/shapefile/tiff |
-| source_url | VARCHAR(1000) | 数据源URL |
-| crs | VARCHAR(100) | 坐标参考系(EPSG:4326) |
-| bounds | JSONB | 空间范围{xmin,ymin,xmax,ymax} |
-| feature_count | BIGINT | 要素数量 |
-| properties_def | JSONB | 属性字段定义 |
-| style_config | JSONB | 符号化配置 |
-| visibility | VARCHAR(20) | public/org/private |
-| is_basemap | BOOLEAN | 是否底图 |
-| status | VARCHAR(20) | pending/processing/ready/error |
+| id | INTEGER | PK 自增 |
+| user_id | VARCHAR(100) | FK->users.id |
+| role | VARCHAR(50) | 角色名 |
+
+#### conversations - 聊天会话表
+| 列名 | 类型 | 说明 |
+|------|-----|-------|
+| id | VARCHAR | PK UUID |
+| title | VARCHAR(200) | 会话标题 |
 | created_at | DATETIME | 创建时间 |
 | updated_at | DATETIME | 更新时间 |
 
-约束:
-- UniqueConstraint(org__id, name)
-- CheckConstraint(layer_type IN ('vector','raster','tile'))
+#### messages - 聊天消息表
+| 列名 | 类型 | 说明 |
+|------|-----|-------|
+| id | INTEGER | PK 自增 |
+| conversation_id | VARCHAR | FK->conversations.id |
+| role | VARCHAR(20) | user/assistant/tool |
+| content | TEXT | 消息内容 |
+| tool_calls | JSON | FC Tool Calls |
+| tool_call_id | VARCHAR | Tool ID |
+| tool_result | JSON | Tool Result |
+| created_at | DATETIME | 创建时间 |
 
-索引:
-- idx_layer_status(status)
-- idx_layer_created(created_at)
+#### layers - 图层表(核心)
+| 列名 | 类型 | 说明 |
+|------|-----|-------|
+| id | INTEGER | PK自增 |
+| name | VARCHAR(200) | 图层名称 |
+| type | VARCHAR(50) | geojson/raster/vector |
+| source | VARCHAR(100) | osm/sentinel/upload |
+| data_path | TEXT | 文件路径或 GeoJSON |
+| style | JSON | MapLibre 样式配置 |
+| visible | BOOLEAN | 是否可见 |
+| opacity | FLOAT | 透明度 |
+| created_at | DATETIME | 创建时间 |
 
 #### analysis_tasks - 空间分析任务表
 | 列名 | 类型 | 说明 |
 |------|-----|-------|
-| id | BIGINT | PK自增 |
-| org_id | INTEGER | FK->organizations.id |
-| creator_id | INTEGER | FK->users.id |
-| layer_id | BIGINT | FK->layers.id |
-| result_layer_id | BIGINT | FK->layers.id 结果图层 |
-| task_type | VARCHAR(50) | 分析类型(buffer/clip...) |
-| parameters | JSONB | 分析参数 |
-| celery_task_id | VARCHAR(100) | Celery任务ID(unique) |
-| status | VARCHAR(20) | 任务状态(index) |
-| progress | INTEGER | 0-100 进度 |
-| progress_message | VARCHAR(255) | 进度描述 |
-| result_summary | JSONB | 结果统计 |
-| error_trace | TEXT | 错误堆栈 |
-| retry_count | INTEGER | 重试次数 |
-| max_retries | INTEGER | 最大重试次数3 |
+| id | INTEGER | PK自增 |
+| name | VARCHAR(200) | 任务名称 |
+| type | VARCHAR(50) | 分析类型 |
+| status | VARCHAR(50) | 任务状态 (pending/success/error...) |
+| result | JSON | 任务结果 |
 | created_at | DATETIME | 创建时间 |
 | updated_at | DATETIME | 更新时间 |
 
-索引:
-- idx_task_status(status)
-- idx_task_celery(celery_task_id)
-
-#### layer_permissions - 图层权限表
-| 列名 | 类型 | 说明 |
-|------|-----|-------|
-| id | INTEGER | PK自增 |
-| layer_id | BIGINT | FK->layers.id |
-| user_id | INTEGER | FK->users.id |
-| permission | VARCHAR(20) | view/edit/admin |
-| granted_by | INTEGER | FK->users.id 授权者 |
-| granted_at | DATETIME | 授权时间 |
-| expires_At | DATETIME | 过期时间 |
-
-约束: UniqueConstraint(layer_id, user_id)
 ### PostGIS 扩展配置
+(当前使用SQLite或标准关系库的话不强制，如果是PostgreSQL则需要以下扩展)
 ```sql
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS postgis_topology;
 CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;
 ```
-### 空间索引优化
-- GiST 索引: 对于矢量图层geom列建立GiST索引加速空间查询
-- BRIN 索引: 对于大型静态表可用BRIN块级索引
-- 定期VACUUM ANALYZE保持统计信息新鲜
 
 ### SQLAlchemy 模型
-位于: app/models/db_models.py
+位于: `app/models/db_models.py`
 ```python
-from app.models.db_model import (
-    Base, Organization, User, Layer,
-    AnalysisTask, LayerPermission
+from app.models.db_models import (
+    User, UserRole, Conversation, Message, Layer, AnalysisTask
 )
 ```
 
 ### 数据库连接配置
-- DATABASE_URL: postgresql+psycopg2://user:pass@host:5432/webgis
-- 生产环境: Docker Compose 管理，自动初始化
+- 配置文件中 `DATABASE_URL`，支持 SQLite 用于开发，PostgreSQL 用于生产。
+- 模型在启动时通过 Alembic 或 SQLAlchemy 的 `Base.metadata.create_all()` 自动创建。

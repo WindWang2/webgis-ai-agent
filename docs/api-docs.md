@@ -80,6 +80,26 @@ Content-Type: multipart/form-data
 - Backend: Redis localhost:6379/1
 - 队列: default, high_priority, spatial_analysis
 
+## T004 AI 聊天与编排
+### 会话管理
+| 方法 | 路径 | 说明 |
+|------|-----|-----|
+| GET | /api/v1/chat/sessions | 获取历史会话列表 |
+| GET | /api/v1/chat/sessions/{session_id} | 获取特定会话及消息记录 |
+| DELETE| /api/v1/chat/sessions/{session_id} | 删除会话 |
+
+### 消息发送
+| 方法 | 路径 | 说明 |
+|------|-----|-----|
+| POST | /api/v1/chat/completions | 发送单次聊天请求(非流式) |
+| POST | /api/v1/chat/stream | 发送聊天请求(SSE流式返回) |
+
+### 工具管理
+| 方法 | 路径 | 说明 |
+|------|-----|-----|
+| GET | /api/v1/chat/tools | 获取可用Agent工具列表 |
+| POST | /api/v1/chat/tools/execute | 独立执行工具 |
+
 ## 统一响应格式
 ```json
 {
