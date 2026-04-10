@@ -15,6 +15,9 @@ class Settings(BaseSettings):
         """判断是否为生产环境"""
         return self.ENV.lower() == "production"
 
+    # JWT
+    JWT_SECRET_KEY: str = "your-secret-key-change-in-production"
+
     # 数据库
     DATABASE_URL: str = "postgresql+psycopg2://postgres:postgres@localhost:15432/webgis"
 

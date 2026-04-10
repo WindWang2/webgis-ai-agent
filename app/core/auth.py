@@ -11,7 +11,7 @@ from app.core.config import settings
 security = HTTPBearer(auto_error=False)
 
 # JWT 配置
-SECRET_KEY = "your-secret-key-change-in-production"
+SECRET_KEY = settings.JWT_SECRET_KEY
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
