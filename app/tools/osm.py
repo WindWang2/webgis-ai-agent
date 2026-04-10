@@ -233,12 +233,13 @@ def register_osm_tools(registry: ToolRegistry):
         # tourism 类型
         tourism_types = {"hotel", "museum", "attraction", "viewpoint", "hostel"}
 
+        safe_category = _sanitize_overpass_value(mapped_category)
         if mapped_category in leisure_types:
-            tag_filter = f'"leisure"="{mapped_category}"'
+            tag_filter = f'"leisure"="{safe_category}"'
         elif mapped_category in tourism_types:
-            tag_filter = f'"tourism"="{mapped_category}"'
+            tag_filter = f'"tourism"="{safe_category}"'
         else:
-            tag_filter = f'"amenity"="{mapped_category}"'
+            tag_filter = f'"amenity"="{safe_category}"'
 
         query = f'node[{tag_filter}]({bbox});way[{tag_filter}]({bbox});relation[{tag_filter}]({bbox});'
         geojson = await _query_overpass(query)
