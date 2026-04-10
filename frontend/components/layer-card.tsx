@@ -42,9 +42,9 @@ export const LayerCard = memo(function LayerCard({
           {Math.round(layer.opacity * 100)}%
         </span>
         
-        {layer.source && (
+        {layer.source && typeof layer.source === "object" && (
           <span className="ml-auto text-xs">
-            Source: {layer.source}
+            {layer.source.features?.length ?? 0} 个要素
           </span>
         )}
       </div>
