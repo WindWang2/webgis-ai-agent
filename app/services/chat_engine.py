@@ -1,4 +1,5 @@
 """对话引擎 - 直接 HTTPX 调用（避免 OpenAI SDK 版本问题）"""
+import asyncio
 import json
 import logging
 import re
@@ -10,6 +11,8 @@ import httpx
 from app.core.config import settings
 from app.tools.registry import ToolRegistry
 from app.services.task_tracker import TaskTracker, detect_geojson
+from app.core.database import SessionLocal
+from app.services.history_service import HistoryService
 
 logger = logging.getLogger(__name__)
 
@@ -97,13 +100,51 @@ class ChatEngine:
         self._geojson_cache: dict[str, dict[str, str]] = {}
         # 任务跟踪器
         self.tracker = TaskTracker()
+        # History persistence
+        self._history: HistoryService = HistoryService(SessionLocal())
 
     def _get_or_create_session(self, session_id: str) -> list[dict]:
         if session_id not in self._sessions:
             self._sessions[session_id] = [
                 {"role": "system", "content": SYSTEM_PROMPT}
             ]
+            try:
+                self._history.get_or_create_conversation(session_id)
+            except Exception as e:
+                logger.warning(f"History: failed to create conversation {session_id}: {e}")
         return self._sessions[session_id]
+
+    def _save_msg_async(self, session_id: str, role: str, content: str, tool_calls=None, tool_result=None):
+        """Persist a message to DB without blocking the SSE stream."""
+        try:
+            self._history.save_message(session_id, role, content, tool_calls, tool_result)
+        except Exception as e:
+            logger.warning(f"History: failed to save message: {e}")
+
+    def _generate_title(self, session_id: str, first_user_message: str) -> None:
+        """Call LLM synchronously to generate a short title, then update DB."""
+        import httpx as _httpx
+        try:
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": "用不超过15个字概括以下用户问题，只输出标题，不要任何解释或标点以外的内容。"},
+                    {"role": "user", "content": first_user_message[:500]},
+                ],
+                "max_tokens": 64,
+            }
+            resp = _httpx.post(
+                f"{self.base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                json=payload,
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            title = resp.json()["choices"][0]["message"]["content"].strip()
+            if title:
+                self._history.update_title(session_id, title)
+        except Exception as e:
+            logger.warning(f"History: title generation failed for {session_id}: {e}")
 
     async def _call_llm(self, messages: list[dict], tools: Optional[list] = None) -> dict:
         """直接调用 LLM API"""
@@ -205,6 +246,9 @@ class ChatEngine:
 
         messages = self._get_or_create_session(session_id)
         messages.append({"role": "user", "content": message})
+        asyncio.get_event_loop().run_in_executor(
+            None, self._save_msg_async, session_id, "user", message
+        )
 
         # 创建任务
         task = self.tracker.create(session_id, message)
@@ -345,6 +389,9 @@ class ChatEngine:
                 # 最终回复
                 content = assistant_msg.get("content", "")
                 messages.append({"role": "assistant", "content": content})
+                asyncio.get_event_loop().run_in_executor(
+                    None, self._save_msg_async, session_id, "assistant", content
+                )
 
                 # 现有 content 事件（保持兼容）
                 yield f"event: content\ndata: {json.dumps({'content': content, 'session_id': session_id}, ensure_ascii=False)}\n\n"
@@ -357,6 +404,9 @@ class ChatEngine:
                     "summary": content[:100],
                 })
                 yield _sse_event("done", {"session_id": session_id})
+                asyncio.get_event_loop().run_in_executor(
+                    None, self._generate_title, session_id, message
+                )
                 return
 
         self.tracker.fail_task(task.id, "达到最大工具调用轮数")
@@ -368,6 +418,10 @@ class ChatEngine:
         if session_id in self._sessions:
             del self._sessions[session_id]
         self._geojson_cache.pop(session_id, None)
+        try:
+            self._history.delete_session(session_id)
+        except Exception as e:
+            logger.warning(f"History: failed to delete session {session_id}: {e}")
 
 
 SYSTEM_PROMPT = """你是一个专业的 GIS 分析助手，擅长地理空间数据查询、分析和可视化。
