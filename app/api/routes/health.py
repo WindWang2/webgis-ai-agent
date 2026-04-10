@@ -3,9 +3,8 @@
 """
 
 from fastapi import APIRouter
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import text
-from sqlalchemy.orm import Session as DbSession
 
 router = APIRouter()
 
@@ -30,7 +29,7 @@ def health_check():
     """
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "service": "WebGIS AI Agent",
         "version": "0.1.0"
     }
@@ -48,5 +47,5 @@ def readiness_check():
     return {
         "ready": db_ready,
         "database": "connected" if db_ready else "disconnected",
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
