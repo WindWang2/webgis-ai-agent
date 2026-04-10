@@ -13,7 +13,7 @@ from app.models.pydantic_models import (
     TaskCreate, TaskResponse, TaskListResponse,
     SuccessResponse, ErrorResponse
 )
-from app.models.db_models import User
+from app.models.db_model import User
 from app.services.layer_service import LayerService, TaskService
 from app.core.database import get_db
 
