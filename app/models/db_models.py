@@ -1,5 +1,5 @@
 """数据库模型"""
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, Text, DateTime, Float, Boolean, JSON, ForeignKey
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -19,7 +19,7 @@ class User(Base):
     name = Column(String(100))
     email = Column(String(200))
     role = Column(String(50), default="user")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class Conversation(Base):
@@ -27,8 +27,8 @@ class Conversation(Base):
 
     id = Column(String, primary_key=True)
     title = Column(String(200), default="新对话")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
 
@@ -43,7 +43,7 @@ class Message(Base):
     tool_calls = Column(JSON, nullable=True)  # FC tool calls
     tool_call_id = Column(String, nullable=True)
     tool_result = Column(JSON, nullable=True)  # tool execution result
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     conversation = relationship("Conversation", back_populates="messages")
 
@@ -59,7 +59,7 @@ class Layer(Base):
     style = Column(JSON, nullable=True)  # MapLibre 样式
     visible = Column(Boolean, default=True)
     opacity = Column(Float, default=1.0)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class AnalysisTask(Base):
@@ -70,5 +70,5 @@ class AnalysisTask(Base):
     type = Column(String(50))
     status = Column(String(50), default="pending")
     result = Column(JSON, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
