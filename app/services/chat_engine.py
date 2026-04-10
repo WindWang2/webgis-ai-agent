@@ -259,7 +259,7 @@ class ChatEngine:
 
         messages = self._get_or_create_session(session_id)
         messages.append({"role": "user", "content": message})
-        asyncio.get_event_loop().run_in_executor(
+        asyncio.get_running_loop().run_in_executor(
             None, self._save_msg_async, session_id, "user", message
         )
 
@@ -402,7 +402,7 @@ class ChatEngine:
                 # 最终回复
                 content = assistant_msg.get("content", "")
                 messages.append({"role": "assistant", "content": content})
-                asyncio.get_event_loop().run_in_executor(
+                asyncio.get_running_loop().run_in_executor(
                     None, self._save_msg_async, session_id, "assistant", content
                 )
 
@@ -417,7 +417,7 @@ class ChatEngine:
                     "summary": content[:100],
                 })
                 yield _sse_event("done", {"session_id": session_id})
-                asyncio.get_event_loop().run_in_executor(
+                asyncio.get_running_loop().run_in_executor(
                     None, self._generate_title, session_id, message
                 )
                 return
