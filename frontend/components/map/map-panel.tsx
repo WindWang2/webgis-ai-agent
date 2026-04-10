@@ -5,6 +5,7 @@ import maplibregl from "maplibre-gl"
 import { Layers, ZoomIn, ZoomOut, Maximize, MapPin, Eye, EyeOff, RotateCcw, Target, Trash2, ChevronDown, Plus, Edit, Settings, Download } from "lucide-react"
 import { LayerCard } from "@/components/layer-card"
 import type { Layer } from "@/lib/types/layer"
+import { MapActionHandler } from "./map-action-handler"
 
 interface MapPanelProps {
   layers: Layer[]
@@ -411,6 +412,7 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
           preserveDrawingBuffer={true}
         >
           <NavigationControl position="bottom-right" />
+          <MapActionHandler mapInstance={mapRef.current} />
         </Map>
 
         {/* Floating Controls - Left Side - 罗盘工具风格 */}
