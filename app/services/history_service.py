@@ -1,6 +1,6 @@
 """Chat conversation persistence service."""
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -23,13 +23,14 @@ class HistoryService:
         conv = Conversation(
             id=session_id,
             title="新对话",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
         self.db.add(conv)
+        self.db.flush()       # assign PK without committing
+        self._enforce_cap()   # prune within same transaction
         self.db.commit()
         self.db.refresh(conv)
-        self._enforce_cap()
         return conv
 
     def save_message(
@@ -46,12 +47,12 @@ class HistoryService:
             content=content,
             tool_calls=tool_calls,
             tool_result=tool_result,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         self.db.add(msg)
         conv = self.db.get(Conversation, session_id)
         if conv:
-            conv.updated_at = datetime.utcnow()
+            conv.updated_at = datetime.now(timezone.utc)
         self.db.commit()
 
     def update_title(self, session_id: str, title: str) -> None:
@@ -90,4 +91,4 @@ class HistoryService:
         )
         for conv in oldest:
             self.db.delete(conv)
-        self.db.commit()
+        # No commit here — caller commits
