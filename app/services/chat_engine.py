@@ -356,11 +356,13 @@ class ChatEngine:
                     "step_count": len(task.steps),
                     "summary": content[:100],
                 })
+                yield _sse_event("done", {"session_id": session_id})
                 return
 
         self.tracker.fail_task(task.id, "达到最大工具调用轮数")
         yield _sse_event("task_error", {"task_id": task.id, "error": "达到最大轮数"})
         yield f"event: content\ndata: {json.dumps({'content': '达到最大工具调用轮数', 'session_id': session_id}, ensure_ascii=False)}\n\n"
+        yield _sse_event("done", {"session_id": session_id})
 
     def clear_session(self, session_id: str):
         if session_id in self._sessions:
