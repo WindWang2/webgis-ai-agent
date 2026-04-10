@@ -2,7 +2,7 @@
 from typing import Optional, List, Tuple, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
-from datetime import datetime
+from datetime import datetime, timezone
 from app.models.db_model import Layer, AnalysisTask
 from app.models.pydantic_model import LayerCreate, LayerUpdate, TaskCreate, TaskResponse
 
@@ -57,7 +57,7 @@ class LayerService:
             layer.style = layer_data.style
         if layer_data.bounds is not None:
             layer.bounds = layer_data.bounds
-        layer.updated_at = datetime.utcnow()
+        layer.updated_at = datetime.now(timezone.utc)
         self.db.commit()
         self.db.refresh(layer)
         return layer
@@ -96,11 +96,6 @@ class TaskService:
 
     def get_task(self, task_id: str) -> Optional[AnalysisTask]:
         """获取任务"""
-        return self.db.query(AnalysisTask).filter(
-            AnalysisTask.task_id == task_id
-        ).first()
-
-        """获取任务（通过UUID）"""
         return self.db.query(AnalysisTask).filter(
             AnalysisTask.task_id == task_id
         ).first()

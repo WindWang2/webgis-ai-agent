@@ -2,7 +2,7 @@
 PostgreSQL + PostGIS 数据库模型
 B011 Fix: 使用统一的 Base 单例，避免重复定义冲突
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, Boolean, Float,
@@ -23,8 +23,8 @@ class Organization(Base):
     slug = Column(String(100), unique=True, nullable=False)
     description = Column(Text)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 class User(Base):
     """用户表"""
@@ -42,8 +42,8 @@ class User(Base):
     email_verified = Column(Boolean, default=False)
     last_login = Column(DateTime)
     login_count = Column(Integer, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     organization = relationship("Organization", backref="users")
 
@@ -71,8 +71,8 @@ class Layer(Base):
     status = Column(String(20), default="pending")
     error_message = Column(Text)
     processing_progress = Column(Integer, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     __table_args__ = (
         UniqueConstraint("org_id", "name", name="uq_layer_org_name"),
@@ -105,8 +105,8 @@ class AnalysisTask(Base):
     queued_at = Column(DateTime)
     started_at = Column(DateTime)
     completed_at = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     __table_args__ = (
         Index("idx_task_status", "status"),
@@ -122,7 +122,7 @@ class LayerPermission(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     permission = Column(String(20), nullable=False)
     granted_by = Column(Integer, ForeignKey("users.id"))
-    granted_at = Column(DateTime, default=datetime.utcnow)
+    granted_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     expires_at = Column(DateTime)
     
     __table_args__ = (
