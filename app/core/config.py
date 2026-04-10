@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     NASA_EARTHDATA_USERNAME: str = ""
     NASA_EARTHDATA_PASSWORD: str = ""
 
+    # OpenTopography
+    OPENTOPOGRAPHY_API_KEY: str = ""
+
     # 数据目录
     DATA_DIR: str = "./data"
     TMP_DIR: str = "./tmp"
