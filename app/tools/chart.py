@@ -73,14 +73,17 @@ def generate_chart(chart_type: str, title: str, data: str, x_label: str = "", y_
     if not safe_title:
         return {"error": "title cannot be empty"}
 
-    # DoS protection: check payload size before parsing
-    if len(data) > MAX_DATA_PAYLOAD_SIZE:
-        return {"error": f"Data payload too large (max {MAX_DATA_PAYLOAD_SIZE // 1024}KB)"}
-
-    try:
-        parsed_data = json.loads(data)
-    except (json.JSONDecodeError, TypeError) as e:
-        return {"error": "Invalid JSON format in data"}
+    # Accept pre-parsed list/dict (some LLM providers pass parsed args directly)
+    if isinstance(data, (list, dict)):
+        parsed_data = data
+    else:
+        # DoS protection: check payload size before parsing
+        if len(data) > MAX_DATA_PAYLOAD_SIZE:
+            return {"error": f"Data payload too large (max {MAX_DATA_PAYLOAD_SIZE // 1024}KB)"}
+        try:
+            parsed_data = json.loads(data)
+        except (json.JSONDecodeError, TypeError):
+            return {"error": "Invalid JSON format in data"}
 
     # Validate structure
     if not isinstance(parsed_data, list):
