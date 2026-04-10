@@ -5,7 +5,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 router = APIRouter()
 
@@ -75,7 +75,7 @@ def create_map(name: str, description: Optional[str] = None):
         "id": "new_map_id",
         "name": name,
         "description": description,
-        "created_at": datetime.utcnow().isoformat()
+        "created_at": datetime.now(timezone.utc).isoformat()
     }
 
 
