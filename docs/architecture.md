@@ -1,5 +1,5 @@
 # WebGIS AI Agent 技术架构设计文档
-> 版本：v1.0 | 日期：2026-03-25 | 状态：可落地执行
+> 版本：v1.1 | 日期：2026-04-10 | 状态：可落地执行
 
 ## 1. 架构概述
 ### 1.1 项目目标
@@ -142,60 +142,55 @@ sequenceDiagram
 ```mermaid
 erDiagram
     users {
-        int id PK
-        string username
-        string password_hash
+        string id PK
+        string name
         string email
-        int role_id
+        string role
+        datetime created_at
+    }
+    user_roles {
+        int id PK
+        string user_id FK
+        string role
+    }
+    conversations {
+        string id PK
+        string title
         datetime created_at
         datetime updated_at
+    }
+    messages {
+        int id PK
+        string conversation_id FK
+        string role
+        text content
+        json tool_calls
+        string tool_call_id
+        json tool_result
+        datetime created_at
     }
     layers {
         int id PK
         string name
-        string layer_type "vector/raster/tile"
-        string geometry_type "Point/LineString/Polygon/..."
-        string crs "默认EPSG:4326"
-        json extent "空间范围"
-        json attributes "属性字段列表"
-        string source_url "对象存储地址"
-        int owner_id FK
-        boolean is_public
+        string type "geojson/raster/vector"
+        string source "osm/sentinel/upload"
+        text data_path "路径/GeoJSON数据"
+        json style
+        boolean visible
+        float opacity
+        datetime created_at
+    }
+    analysis_tasks {
+        int id PK
+        string name
+        string type
+        string status
+        json result
         datetime created_at
         datetime updated_at
     }
-    geometry_columns {
-        int id PK
-        int layer_id FK
-        Geometry geom "PostGIS空间字段"
-        json properties "属性数据"
-    }
-    tasks {
-        string id PK
-        string task_type "buffer/clip/classification/..."
-        json parameters "任务参数"
-        int layer_id FK
-        int result_layer_id FK
-        string status "pending/running/success/failed"
-        int progress "0-100"
-        json result "任务结果"
-        string error_message
-        int retry_count
-        int created_by FK
-        datetime created_at
-        datetime updated_at
-    }
-    permissions {
-        int id PK
-        int user_id FK
-        int layer_id FK
-        string permission "read/write/admin"
-    }
-    users ||--o{ layers : 拥有
-    users ||--o{ tasks : 创建
-    layers ||--|{ geometry_columns : 包含
-    layers ||--o{ tasks : 关联
-    users ||--o{ permissions : 配置
+    users ||--o{ user_roles : 拥有
+    conversations ||--|{ messages : 包含
 ```
 ### 5.2 PostGIS扩展配置
 ```sql
