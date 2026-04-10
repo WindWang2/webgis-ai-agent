@@ -11,7 +11,6 @@ export default function Home() {
   const [analysisResult, setAnalysisResult] = useState<any>(null)
 
   const handleToolResult = useCallback((toolName: string, result: any) => {
-    console.log("[page] handleToolResult called:", toolName, "hasGeojson:", !!result?.geojson, "features:", result?.geojson?.features?.length, "resultType:", result?.type, "resultKeys:", result ? Object.keys(result) : "none")
     // 栅格热力图（base64 PNG + bbox）
     if (result?.type === "heatmap_raster" && result?.image && result?.bbox) {
       const layerId = `heatmap_raster-${Date.now()}`
@@ -31,11 +30,9 @@ export default function Home() {
     }
 
     if (result?.geojson && result.geojson.features?.length > 0) {
-      console.log("[page] CREATING LAYER from", toolName, "features:", result.geojson.features.length, "firstFeature:", JSON.stringify(result.geojson.features[0]).slice(0, 200))
       const layerId = `${toolName}-${Date.now()}`
       const colors = ["#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899"]
       const color = colors[Math.floor(Math.random() * colors.length)]
-      console.log("[page] CREATING LAYER:", layerId, "features:", result.geojson.features.length)
 
       // 计算 GeoJSON 的中心点用于地图定位
       const lngs: number[] = []
