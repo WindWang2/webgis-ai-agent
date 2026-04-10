@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
 import { JetBrains_Mono } from "next/font/google"
 import { Crimson_Pro } from "next/font/google"
+import { MapActionProvider } from "@/lib/contexts/map-action-context"
 import "./globals.css"
 
 // 使用 Crimson Pro 作为主要衬线字体，JetBrains Mono 作为代码字体
@@ -29,7 +30,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" className="dark">
-      <body className={`${crimsonPro.variable} ${jetbrainsMono.variable} font-serif`}>{children}</body>
+      <body className={`${crimsonPro.variable} ${jetbrainsMono.variable} font-serif`}>
+        <MapActionProvider>{children}</MapActionProvider>
+      </body>
     </html>
   )
 }

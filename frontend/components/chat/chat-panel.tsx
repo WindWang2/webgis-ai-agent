@@ -8,6 +8,7 @@ import { TaskProgress } from "@/components/chat/task-progress"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { ChartRenderer, ChartData, adaptChartData } from "@/components/chat/chart-renderer"
+import { MapActionRenderer } from "@/components/chat/map-action-renderer"
 
 interface Message {
   id: string
@@ -497,6 +498,9 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
                       >
                         {message.content}
                       </ReactMarkdown>
+                      {message.role === 'assistant' && (
+                        <MapActionRenderer content={message.content} />
+                      )}
                       {message.charts?.map((chart, idx) => (
                         <ChartRenderer key={`chart-${message.id}-${idx}`} chart={chart} />
                       ))}
