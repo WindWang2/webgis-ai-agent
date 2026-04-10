@@ -332,8 +332,8 @@ def raster_contour(
     layer.CreateField(ogr.FieldDefn("id", ogr.OFTInteger))
     layer.CreateField(ogr.FieldDefn(attribute, ogr.OFTReal))
 
-    band = ds.GetRasterBand(band)
-    gdal.ContourGenerate(band, interval, base, [], 0, 0.0, layer, 0, 1)
+    raster_band = ds.GetRasterBand(band)
+    gdal.ContourGenerate(raster_band, interval, base, [], 0, 0.0, layer, 0, 1)
 
     features = []
     for feat in layer:
