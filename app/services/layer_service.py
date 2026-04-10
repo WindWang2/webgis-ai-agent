@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 from datetime import datetime, timezone
 from app.models.db_model import Layer, AnalysisTask
-from app.models.pydantic_model import LayerCreate, LayerUpdate, TaskCreate, TaskResponse
+from app.models.pydantic_models import LayerCreate, LayerUpdate, TaskCreate, TaskResponse
 
 
 class LayerService:
@@ -13,15 +13,16 @@ class LayerService:
     def __init__(self, db: Session):
         self.db = db
 
-    def create(self, layer_data: LayerCreate, creator_id: int) -> Layer:
+    def create(self, layer_data: LayerCreate, creator_id: str) -> Layer:
         """创建图层"""
         layer = Layer(
             name=layer_data.name,
             layer_type=layer_data.layer_type,
-            source=layer_data.source,
-            style=layer_data.style,
-            bounds=layer_data.bounds,
+            source_url=layer_data.source_url,
+            bounds=layer_data.extent,
             creator_id=creator_id,
+            org_id=1,  # Default org ID placeholder
+            visibility="public" if layer_data.is_public else "private",
             status="active"
         )
         self.db.add(layer)
@@ -53,10 +54,10 @@ class LayerService:
             return None
         if layer_data.name is not None:
             layer.name = layer_data.name
-        if layer_data.style is not None:
-            layer.style = layer_data.style
-        if layer_data.bounds is not None:
-            layer.bounds = layer_data.bounds
+        if layer_data.source_url is not None:
+            layer.source_url = layer_data.source_url
+        if layer_data.is_public is not None:
+            layer.visibility = "public" if layer_data.is_public else "private"
         layer.updated_at = datetime.now(timezone.utc)
         self.db.commit()
         self.db.refresh(layer)
@@ -78,13 +79,14 @@ class TaskService:
     def __init__(self, db: Session):
         self.db = db
 
-    def create(self, task_data: TaskCreate, creator_id: int) -> AnalysisTask:
+    def create(self, task_data: TaskCreate, creator_id: str) -> AnalysisTask:
         """创建任务"""
         task = AnalysisTask(
             task_type=task_data.task_type,
-            params=task_data.params,
+            parameters=task_data.parameters,
             status="pending",
             creator_id=creator_id,
+            org_id=1,  # Default org ID
             progress=0,
             retry_count=0,
             max_retries=3
@@ -95,9 +97,9 @@ class TaskService:
         return task
 
     def get_task(self, task_id: str) -> Optional[AnalysisTask]:
-        """获取任务"""
+        """获取任务(按celery_task_id)"""
         return self.db.query(AnalysisTask).filter(
-            AnalysisTask.task_id == task_id
+            AnalysisTask.celery_task_id == task_id
         ).first()
 
     def get_task_by_id(self, task_id: int) -> Optional[AnalysisTask]:
