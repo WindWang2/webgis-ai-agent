@@ -133,14 +133,14 @@ _latest_tool_results: dict = {}
 
 class ToolExecuteRequest(BaseModel):
     tool: str
-    argument: dict = {}
+    arguments: dict = {}
 
 
 @router.post("/tools/execute")
 async def execute_tool_direct(req: ToolExecuteRequest):
     """直接执行单个工具（非流式通过 chat）"""
     tool_name = req.tool
-    args = req.argument
+    args = req.arguments
     if not tool_name:
         return {"error": "missing tool name"}
 
