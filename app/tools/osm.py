@@ -9,14 +9,19 @@ from app.tools.registry import ToolRegistry, tool
 
 logger = logging.getLogger(__name__)
 
-# # SSL 证书修复：使用系统 CA 证书
+# SSL 证书修复：使用 certifi 提供跨平台 CA 证书
 def _get_ssl_context() -> ssl.SSLContext:
     ctx = ssl.create_default_context()
     try:
-        ctx.load_verify_locations("/etc/ssl/certs/ca-certificates.crt")
-    except Exception:
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        import certifi
+        ctx.load_verify_locations(certifi.where())
+    except ImportError:
+        # certifi 未安装，尝试系统默认证书
+        try:
+            ctx.load_verify_locations("/etc/ssl/certs/ca-certificates.crt")
+        except Exception:
+            # 仍然失败时使用系统默认（不禁用验证）
+            pass
     return ctx
 
 
