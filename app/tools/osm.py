@@ -69,7 +69,7 @@ def _overpass_to_geojson(data: str) -> dict:
 
 async def _query_overpass(query: str) -> dict:
     """执行 Overpass QL 查询，返回 GeoJSON"""
-    full_query = f"[out:json][timeout:30];{query}out body geom;"
+    full_query = f"[out:json][timeout:30];{query.rstrip(';')};out body geom;"
 
     async with aiohttp.ClientSession(headers={"User-Agent": "WebGIS-AI-Agent/1.0"}) as session:
         async with session.post(
