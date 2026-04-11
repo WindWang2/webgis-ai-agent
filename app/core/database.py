@@ -7,9 +7,14 @@ class Base(DeclarativeBase):
     pass
 
 def get_engine():
+    connect_args = {}
+    # SQLite 特殊处理
+    if settings.DATABASE_URL.startswith("sqlite"):
+        connect_args["check_same_thread"] = False
+        
     return create_engine(
         settings.DATABASE_URL,
-        connect_args={}
+        connect_args=connect_args
     )
 
 Engine = get_engine()

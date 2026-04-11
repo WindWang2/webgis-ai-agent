@@ -325,41 +325,95 @@ class SpatialAnalyzer:
             logger.error(f"Clip分析失败: {e}")
             return AnalysisResult(success=False, error_message=str(e))
     @classmethod
+    def overlay(
+        cls,
+        features_a: List[Dict],
+        features_b: List[Dict],
+        how: str = "intersection",
+        callback: Optional[Callable] = None
+    ) -> AnalysisResult:
+        """叠加分析 - 执行相交、联合、差异等空间叠加强制操作
+        
+        参数:
+            how: 'intersection', 'union', 'identity', 'symmetric_difference', 'difference'
+        """
+        try:
+            if callback: callback(20, f"开始进行 {how} 叠加操作...")
+            
+            gdf_a = gpd.GeoDataFrame.from_features(features_a)
+            gdf_b = gpd.GeoDataFrame.from_features(features_b)
+            
+            if gdf_a.crs is None: gdf_a.set_crs("EPSG:4326", inplace=True)
+            if gdf_b.crs is None: gdf_b.set_crs("EPSG:4326", inplace=True)
+            
+            # 对齐坐标系
+            if gdf_a.crs != gdf_b.crs:
+                gdf_b = gdf_b.to_crs(gdf_a.crs)
+            
+            if callback: callback(50, "执行空间叠加...")
+            
+            # 执行叠加
+            result_gdf = gpd.overlay(gdf_a, gdf_b, how=how)
+            
+            if callback: callback(80, "整理分析结果...")
+            
+            features = result_gdf.__geo_interface__["features"]
+            
+            return AnalysisResult(success=True, data={
+                "type": "FeatureCollection",
+                "features": features
+            }, stats={
+                "layer_a_count": len(features_a),
+                "layer_b_count": len(features_b),
+                "result_count": len(features),
+                "how": how
+            })
+        except Exception as e:
+            logger.error(f"Overlay分析失败({how}): {e}")
+            return AnalysisResult(success=False, error_message=str(e))
+
+    @classmethod
+    def attribute_filter(
+        cls,
+        features: List[Dict],
+        query: str,
+        callback: Optional[Callable] = None
+    ) -> AnalysisResult:
+        """属性过滤 - 基于查询表达式筛选要素"""
+        try:
+            if callback: callback(30, f"正在执行属性过滤: {query}")
+            
+            gdf = gpd.GeoDataFrame.from_features(features)
+            
+            # 使用 pandas query
+            filtered_gdf = gdf.query(query)
+            
+            if callback: callback(80, "生成结果集...")
+            
+            result_features = filtered_gdf.__geo_interface__["features"]
+            
+            return AnalysisResult(success=True, data={
+                "type": "FeatureCollection",
+                "features": result_features
+            }, stats={
+                "input_count": len(features),
+                "filtered_count": len(result_features),
+                "query": query
+            })
+        except Exception as e:
+            logger.error(f"属性过滤失败: {e}")
+            return AnalysisResult(success=False, error_message=f"查询语法错误或字段不存在: {str(e)}")
+
+    @classmethod
     def intersect(
         cls,
         features_a: List[Dict],
         features_b: List[Dict],
         callback: Optional[Callable] = None
     ) -> AnalysisResult:
-        """相交分析 - 计算两个图层交集"""
-        try:
-            if callback: callback(20, "准备数据...")
-            
-            # 转换为GeoDataFrame
-            gdf_a = gpd.GeoDataFrame.from_features(features_a)
-            gdf_b = gpd.GeoDataFrame.from_features(features_b)
+        """相交分析 - 计算两个圖層交集 (遗留接口，建议使用 overlay)"""
+        return cls.overlay(features_a, features_b, how="intersection", callback=callback)
 
-            if callback: callback(40, "计算交集...")
-
-            # 执行相交操作
-            intersected = gpd.overlay(gdf_a, gdf_b, how='intersection')
-            
-            if callback: callback(80, "整理结果...")
-
-            # 转换回GeoJSON
-            intersection_features = intersected.__geo_interface__['features']
-
-            return AnalysisResult(success=True, data={
-                "type": "FeatureCollection",
-                "features": intersection_features
-            }, stats={
-                "layer_a_count": len(features_a),
-                "layer_b_count": len(features_b),
-                "intersection_count": len(intersection_features),
-            })
-        except Exception as e:
-            logger.error(f"Intersect分析失败: {e}")
-            return AnalysisResult(success=False, error_message=str(e))
     @classmethod
     def dissolve(
         cls,
@@ -398,6 +452,7 @@ class SpatialAnalyzer:
         except Exception as e:
             logger.error(f"Dissolve分析失败: {e}")
             return AnalysisResult(success=False, error_message=str(e))
+
     @classmethod
     def union(
         cls,
@@ -428,7 +483,9 @@ class SpatialAnalyzer:
         right: List[Dict],
         join_type: str = "inner",
         predicate: str = "intersects",
-        callback: Optional[Callable] = None
+        callback: Optional[Callable] = None,
+        left_crs: Optional[str] = None,
+        right_crs: Optional[str] = None
     ) -> AnalysisResult:
         """空间连接 - 基于空间关系的属性联接"""
         try:
@@ -441,40 +498,50 @@ class SpatialAnalyzer:
                 predicate = "intersects"
 
             if callback:
+                callback(20, "格式化与投影校验...")
+
+            # 转换为 GeoDataFrame
+            gdf_left = gpd.GeoDataFrame.from_features(left)
+            gdf_right = gpd.GeoDataFrame.from_features(right)
+
+            # 统一与识别坐标系
+            def get_fallback_crs(gdf):
+                bounds = gdf.total_bounds
+                if len(bounds) == 4 and -181 <= bounds[0] <= 181 and -91 <= bounds[1] <= 91:
+                    return "EPSG:4326"
+                return None
+
+            if left_crs: gdf_left.set_crs(left_crs, inplace=True)
+            elif gdf_left.crs is None: 
+                fallback = get_fallback_crs(gdf_left)
+                if fallback: gdf_left.set_crs(fallback, inplace=True)
+            
+            if right_crs: gdf_right.set_crs(right_crs, inplace=True)
+            elif gdf_right.crs is None:
+                fallback = get_fallback_crs(gdf_right)
+                if fallback: gdf_right.set_crs(fallback, inplace=True)
+
+            # 如果仍然缺失，默认 4326
+            if gdf_left.crs is None: gdf_left.set_crs("EPSG:4326", inplace=True)
+            if gdf_right.crs is None: gdf_right.set_crs("EPSG:4326", inplace=True)
+
+            # 如果坐标系不一致，将右图层转换为左图层坐标系
+            if gdf_left.crs != gdf_right.crs:
+                if callback: callback(40, f"正在进行重投影: {gdf_right.crs} -> {gdf_left.crs}")
+                gdf_right = gdf_right.to_crs(gdf_left.crs)
+
+            if callback:
                 callback(60, f"执行{join_type}连接(predicate:{predicate})...")
 
-            # 建立空间索引优化性能
+            # 建立空间索引
             from shapely.strtree import STRtree
-            
-            # 创建几何对象
-            left_geoms = []
-            right_geoms = []
-            right_features = []
-            
-            results = []
 
-            for l_feat in left:
-                geom = l_feat.get("geometry", {})
-                if geom:
-                    try:
-                        left_geoms.append(shape(geom))
-                    except Exception:
-                        left_geoms.append(None)
-                else:
-                    left_geoms.append(None)
-            
-            for r_feat in right:
-                geom = r_feat.get("geometry", {})
-                if geom:
-                    try:
-                        right_geoms.append(shape(geom))
-                        right_features.append(r_feat)
-                    except Exception:
-                        right_geoms.append(None)
-                        right_features.append(None)
-                else:
-                    right_geoms.append(None)
-                    right_features.append(None)
+            # 从 GeoDataFrame 提取几何对象
+            left_geoms = gdf_left.geometry.tolist()
+            right_geoms = gdf_right.geometry.tolist()
+            right_features = gdf_right.__geo_interface__['features']
+
+            results = []
             
             # 构建空间索引树
             valid_right = [(i, g) for i, g in enumerate(right_geoms) if g is not None]
@@ -574,11 +641,46 @@ class SpatialAnalyzer:
             # 空间统计
             spatial_stats_result = {}
             if spatial_stats:
+                if callback: callback(50, "执行空间几何分析...")
+                
+                # 预处理 features 确保 GeoPandas 兼容性
+                processed_features = []
+                for f in features:
+                    if not isinstance(f, dict): continue
+                    if "properties" not in f:
+                        processed_features.append({**f, "properties": {}})
+                    else:
+                        processed_features.append(f)
+
+                gdf = gpd.GeoDataFrame.from_features(processed_features)
+                if gdf.empty:
+                    return AnalysisResult(success=False, error_message="No valid features for statistics")
+
+                if gdf.crs is None: gdf.set_crs("EPSG:4326", inplace=True)
+                
+                # 为计算面积和长度，投影到适合的世界投影 (Molleweide) 或 UTM
+                if gdf.crs.is_geographic:
+                    gdf_proj = gdf.to_crs("ESRI:54009") # Mollweide
+                else:
+                    gdf_proj = gdf
+
+                def count_vertices(geom):
+                    if geom is None: return 0
+                    if geom.geom_type == 'Point': return 1
+                    if geom.geom_type == 'LineString': return len(geom.coords)
+                    if geom.geom_type == 'Polygon': return len(geom.exterior.coords)
+                    if geom.geom_type.startswith('Multi'):
+                        return sum(count_vertices(part) for part in geom.geoms)
+                    return 0
+
+                total_vertices = sum(count_vertices(g) for g in gdf.geometry)
+
                 spatial_stats_result = {
-                    "total_features": len(features),
-                    "total_vertices": 0,  # 需遍历计算
-                    "avg_area": 0,
-                    "avg_length": 0,
+                    "total_features": len(processed_features),
+                    "total_vertices": int(total_vertices),
+                    "total_area_sqkm": float(gdf_proj.area.sum() / 1e6),
+                    "total_length_km": float(gdf_proj.length.sum() / 1000),
+                    "avg_area_sqkm": float(gdf_proj.area.mean() / 1e6) if len(gdf) > 0 else 0,
                 }
 
             if callback: callback(90, "完成...")
@@ -601,7 +703,9 @@ class SpatialAnalyzer:
         max_distance: Optional[float] = None,
         unit: str = "m",
         count: int = 1,
-        callback: Optional[Callable] = None
+        callback: Optional[Callable] = None,
+        source_crs: Optional[str] = None,
+        target_crs: Optional[str] = None
     ) -> AnalysisResult:
         """最近邻分析 - 查找最近的目标要素
         
@@ -620,6 +724,25 @@ class SpatialAnalyzer:
             source_gdf = gpd.GeoDataFrame.from_features(source_features)
             target_gdf = gpd.GeoDataFrame.from_features(target_features)
             
+            # CRS 校验与重投影
+            if source_crs: source_gdf.set_crs(source_crs, inplace=True)
+            if target_crs: target_gdf.set_crs(target_crs, inplace=True)
+            
+            # Fallback 探测
+            for g in [source_gdf, target_gdf]:
+                if g.crs is None:
+                    bounds = g.total_bounds
+                    if len(bounds) == 4 and -181 <= bounds[0] <= 181 and -91 <= bounds[1] <= 91:
+                        g.set_crs("EPSG:4326", inplace=True)
+            
+            # 最终兜底
+            if source_gdf.crs is None: source_gdf.set_crs("EPSG:4326", inplace=True)
+            if target_gdf.crs is None: target_gdf.set_crs("EPSG:4326", inplace=True)
+            
+            if source_gdf.crs != target_gdf.crs:
+                if callback: callback(30, f"重投影目标图层: {target_gdf.crs} -> {source_gdf.crs}")
+                target_gdf = target_gdf.to_crs(source_gdf.crs)
+
             if callback: callback(40, "查找最近邻...")
             
             # 计算最近邻
@@ -651,78 +774,7 @@ class SpatialAnalyzer:
                     "geometry": mapping(source_geom),
                     "properties": {
                         **source_row.drop('geometry').to_dict(),
-                        "nearest_distance": float(min_distance_in_unit),
-                        "nearest_target_id": int(min_idx)
-                    }
-                }
-                results.append(result_feature)
-            
-            if callback: callback(90, "完成...")
-            
-            return AnalysisResult(success=True, data={
-                "type": "FeatureCollection",
-                "features": results
-            }, stats={
-                "source_count": len(source_features),
-                "target_count": len(target_features),
-                "result_count": len(results),
-                "max_distance_m": max_distance_m,
-                "unit": unit
-            })
-        except Exception as e:
-            logger.error(f"Nearest分析失败: {e}")
-            return AnalysisResult(success=False, error_message=str(e))
-
-    @classmethod
-    def export(
-        cls,
-        features: List[Dict],
-        format: str,
-        output_path: Optional[str] = None,
-        callback: Optional[Callable] = None
-    ) -> AnalysisResult:
-        """导出功能 - 支持GeoJSON/Shapefile/CSV格式"""
-        try:
-            if callback: callback(20, "准备导出数据...")
-            
-            # 验证格式
-            format_lower = format.lower()
-            # 支持多种格式名称
-            format_mapping = {
-                "shp": "shapefile",
-                "shapefile": "shapefile",
-                "geojson": "geojson",
-                "csv": "csv"
-            }
-            format_normalized = format_mapping.get(format_lower, format_lower)
-            
-            if format_normalized not in ["geojson", "shapefile", "csv"]:
-                return AnalysisResult(
-                    success=False,
-                    error_message=f"不支持的导出格式: {format}. 支持的格式: geojson, shp/shapefile, csv"
-                )
-            
-            # 转换为GeoDataFrame
-            gdf = gpd.GeoDataFrame.from_features(features)
-            
-            if callback: callback(50, f"导出为{format_normalized}格式...")
-            
-            # 如果没有指定输出路径，返回数据
-            if not output_path:
-                if format_normalized == "geojson":
-                    output_data = gdf.__geo_interface__
-                    return AnalysisResult(success=True, data={
-                        "format": format_lower,
-                        "content": output_data
-                    })
-                elif format_normalized == "shapefile":
-                    # Shapefile需要导出到临时目录并打包
-                    import tempfile
-                    import base64
-                    import zipfile
-                    import shutil
-                    
-                    with tempfile.TemporaryDirectory() as tmpdir:
+                        "nearest_distance": float(min_distance_in_uni                    with tempfile.TemporaryDirectory() as tmpdir:
                         shp_path = os.path.join(tmpdir, "output.shp")
                         gdf.to_file(shp_path, driver="ESRI Shapefile")
                         
@@ -779,66 +831,179 @@ class SpatialAnalyzer:
     def path_analysis(
         cls,
         network_features: List[Dict],
-        start_point: Dict,
-        end_point: Dict,
+        start_point: List[float],
+        end_point: List[float],
         analysis_type: str = "shortest",
         callback: Optional[Callable] = None
     ) -> AnalysisResult:
-        """路径分析 - 最短路径/服务区分析（可选功能，需要networkx）
-        
-        参数:
-            network_features: 网络要素（线要素）
-            start_point: 起点坐标
-            end_point: 终点坐标
-            analysis_type: 分析类型（shortest/service_area）
-            callback: 进度回调
-        """
+        """路径分析 - 使用 networkx 实现真实路网寻径"""
         try:
-            if callback: callback(20, "检查路径分析依赖...")
+            import networkx as nx
+            from shapely.geometry import shape, Point, LineString
+            from shapely.ops import nearest_points
             
-            # 检查是否有networkx
+            if callback: callback(20, "构建路网拓扑结构...")
+            
+            G = nx.Graph()
+            # 存储节点和其实际坐标
+            nodes_data = {}
+            
+            if not network_features:
+                return AnalysisResult(False, "网络要素集为空")
+
+            for feat in network_features:
+                geom = shape(feat["geometry"])
+                if not isinstance(geom, LineString): continue
+                
+                coords = list(geom.coords)
+                for i in range(len(coords) - 1):
+                    u, v = coords[i], coords[i+1]
+                    dist = Point(u).distance(Point(v))
+                    G.add_edge(u, v, weight=dist)
+            
+            if G.number_of_nodes() == 0:
+                return AnalysisResult(False, "无法从要素中提取有效的路网节点")
+
+            if callback: callback(50, "匹配起点与终点到路网...")
+            
+            # 使用 scipy 或简单的点对点匹配最近节点
+            import numpy as np
+            all_nodes = list(G.nodes)
+            nodes_arr = np.array(all_nodes)
+            
+            def find_nearest_node(pt):
+                dists = np.sum((nodes_arr - np.array(pt))**2, axis=1)
+                return all_nodes[np.argmin(dists)]
+
+            u_node = find_nearest_node(start_point)
+            v_node = find_nearest_node(end_point)
+            
+            if callback: callback(70, "执行最短路径计算...")
+            
             try:
-                import networkx as nx
-                has_networkx = True
-            except ImportError:
-                has_networkx = False
-                return AnalysisResult(
-                    success=False,
-                    error_message="路径分析需要安装networkx: pip install networkx"
-                )
-            
-            if callback: callback(40, "构建网络图...")
-            
-            # 简化实现：返回直线连接
-            # 实际应用中需要构建网络拓扑并使用networkx计算
-            result_feature = {
-                "type": "Feature",
-                "geometry": {
-                    "type": "LineString",
-                    "coordinates": [
-                        start_point.get("coordinates", [0, 0]),
-                        end_point.get("coordinates", [0, 0])
-                    ]
-                },
-                "properties": {
-                    "analysis_type": analysis_type,
-                    "distance": 0,  # 需要实际计算
-                    "note": "简化实现 - 需要networkx支持"
+                path = nx.shortest_path(G, source=u_node, target=v_node, weight='weight')
+                path_length = nx.shortest_path_length(G, source=u_node, target=v_node, weight='weight')
+                
+                result_feature = {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": path
+                    },
+                    "properties": {
+                        "analysis_type": "shortest_path",
+                        "distance_deg": round(path_length, 6),
+                        "node_count": len(path)
+                    }
                 }
-            }
-            
-            if callback: callback(90, "完成...")
-            
-            return AnalysisResult(success=True, data={
-                "type": "FeatureCollection",
-                "features": [result_feature]
-            }, stats={
-                "analysis_type": analysis_type,
-                "network_available": has_networkx
-            })
+                
+                if callback: callback(100, "路径生成成功")
+                return AnalysisResult(success=True, data={
+                    "type": "FeatureCollection",
+                    "features": [result_feature]
+                }, stats={"distance": path_length, "nodes": len(path)})
+            except nx.NetworkXNoPath:
+                return AnalysisResult(False, "路网中不存在连接起终点的路径")
+
         except Exception as e:
             logger.error(f"Path分析失败: {e}")
             return AnalysisResult(success=False, error_message=str(e))
+
+    @classmethod
+    def zonal_statistics(
+        cls,
+        zones: List[Dict],
+        raster_path: str,
+        stats: List[str] = ["mean", "sum", "count"],
+        callback: Optional[Callable] = None
+    ) -> AnalysisResult:
+        """区域统计 - 矢量区域与栅格数据的交叉统计"""
+        try:
+            import rasterio
+            from rasterio.mask import mask
+            from shapely.geometry import shape
+            import numpy as np
+            
+            if callback: callback(20, f"打开栅格文件: {raster_path}")
+            
+            with rasterio.open(raster_path) as src:
+                results = []
+                geoms = [shape(f["geometry"]) for f in zones]
+                
+                for i, geom in enumerate(geoms):
+                    if callback: callback(30 + int(60 * i/len(geoms)), f"处理区域 {i+1}...")
+                    
+                    try:
+                        out_image, out_transform = mask(src, [geom], crop=True)
+                        data = out_image[0]
+                        # 排除 NoData
+                        valid_data = data[data != src.nodata]
+                        
+                        if valid_data.size > 0:
+                            s = {
+                                "id": zones[i].get("id", i),
+                                "mean": float(np.mean(valid_data)),
+                                "sum": float(np.sum(valid_data)),
+                                "count": int(valid_data.size),
+                                "min": float(np.min(valid_data)),
+                                "max": float(np.max(valid_data))
+                            }
+                            results.append(s)
+                    except Exception:
+                        continue
+                
+                return AnalysisResult(success=True, data={"zonal_stats": results})
+        except Exception as e:
+            return AnalysisResult(False, str(e))
+
+    @classmethod
+    def classify_breaks(
+        cls,
+        values: List[float],
+        method: str = "quantiles",
+        k: int = 5
+    ) -> List[float]:
+        """计算分类间断点 (Breaks)"""
+        import numpy as np
+        if not values: return []
+        arr = np.array(values)
+        if method == "quantiles":
+            return np.unique(np.quantile(arr, np.linspace(0, 1, k + 1))).tolist()
+        elif method == "equal_interval":
+            return np.linspace(arr.min(), arr.max(), k + 1).tolist()
+        return []
+
+    @classmethod
+    def geometry_ops(
+        cls,
+        features: List[Dict],
+        op_type: str = "centroid",
+        callback: Optional[Callable] = None
+    ) -> AnalysisResult:
+        """基础几何操作: centroid, convex_hull, simplify"""
+        from shapely.geometry import shape, mapping
+        try:
+            results = []
+            for f in features:
+                geom = shape(f["geometry"])
+                if op_type == "centroid":
+                    res_geom = geom.centroid
+                elif op_type == "convex_hull":
+                    res_geom = geom.convex_hull
+                elif op_type == "simplify":
+                    res_geom = geom.simplify(0.001)
+                else:
+                    continue
+                
+                results.append({
+                    "type": "Feature",
+                    "geometry": mapping(res_geom),
+                    "properties": f.get("properties", {})
+                })
+            
+            return AnalysisResult(True, {"type": "FeatureCollection", "features": results})
+        except Exception as e:
+            return AnalysisResult(False, str(e))
 
 ANALYSIS_OPERATORS = {
     "buffer": SpatialAnalyzer.buffer,
@@ -853,8 +1018,10 @@ ANALYSIS_OPERATORS = {
     "nearest": SpatialAnalyzer.nearest,
     "export": SpatialAnalyzer.export,
     "path_analysis": SpatialAnalyzer.path_analysis,
-    "path-analysis": SpatialAnalyzer.path_analysis,
-    "path": SpatialAnalyzer.path_analysis,
+    "zonal_stats": SpatialAnalyzer.zonal_statistics,
+    "geometry_ops": SpatialAnalyzer.geometry_ops,
+    "overlay": SpatialAnalyzer.overlay,
+    "attribute_filter": SpatialAnalyzer.attribute_filter,
 }
 def execute_analysis(
     task_type: str,
@@ -864,13 +1031,11 @@ def execute_analysis(
 ) -> AnalysisResult:
     """
     执行分析的统一入口函数
-    根据 task_type 调用对应算子
     """
     op_func = ANALYSIS_OPERATORS.get(task_type.lower())
     if not op_func:
         return AnalysisResult(False, error_message=f"未知分析类型: {task_type}")
 
-    # 路由参数 - 根据不同任务类型设置不同参数
     kwargs = {"callback": callback} if callback else {}
 
     if task_type == "buffer":
@@ -879,17 +1044,17 @@ def execute_analysis(
             "distance": parameters.get("distance", 100),
             "unit": parameters.get("unit", "m"),
             "dissolve": parameters.get("dissolve", False),
-            "source_crs": parameters.get("source_crs") or input_data.get("source_crs"),
         })
     elif task_type == "clip":
         kwargs.update({
             "features": input_data.get("features", []),
             "boundary": parameters.get("boundary", {}),
         })
-    elif task_type in ["intersect", "union"]:
+    elif task_type in ["intersect", "union", "overlay"]:
         kwargs.update({
             "features_a": input_data.get("features_a", []),
             "features_b": input_data.get("features_b", []),
+            "how": parameters.get("how", "intersection")
         })
     elif task_type in ["spatial_join", "spatial-join"]:
         kwargs.update({
@@ -898,29 +1063,29 @@ def execute_analysis(
             "join_type": parameters.get("join_type", "inner"),
             "predicate": parameters.get("predicate", "intersects"),
         })
-    elif task_type == "dissolve":
-        kwargs.update({
-            "features": input_data.get("features", []),
-            "dissolve_field": parameters.get("dissolve_field"),
-        })
-    elif task_type in ["statistics", "statistic"]:
+    elif task_type == "statistics":
         kwargs.update({
             "features": input_data.get("features", []),
             "field": parameters.get("field"),
             "spatial_stats": parameters.get("spatial_stats", False),
         })
-    elif task_type == "nearest":
+    elif task_type == "path_analysis":
         kwargs.update({
-            "source_features": input_data.get("source_features", []),
-            "target_features": input_data.get("target_features", []),
-            "max_distance": parameters.get("max_distance"),
+            "network_features": input_data.get("network_features", []),
+            "start_point": parameters.get("start_point"),
+            "end_point": parameters.get("end_point"),
         })
-    elif task_type == "export":
+    elif task_type == "zonal_stats":
+        kwargs.update({
+            "zones": input_data.get("features", []),
+            "raster_path": parameters.get("raster_path"),
+        })
+    elif task_type == "geometry_ops":
         kwargs.update({
             "features": input_data.get("features", []),
-            "format": parameters.get("format", "geojson"),
-            "output_path": parameters.get("output_path"),
+            "op_type": parameters.get("op_type", "centroid"),
         })
 
     return op_func(**kwargs)
-__all__ = ["SpatialAnalyzer", "execute_analysis", "ANALYSIS_OPERATORS", "AnalysisResult"]
+
+__all__ = ["SpatialAnalyzer", "execute_analysis", "ANALYSIS_OPERATORS", "AnalysisResult"]

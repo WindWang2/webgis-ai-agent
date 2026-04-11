@@ -167,19 +167,23 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
       for await (const event of streamChat(messageText, sessionId)) {
         const { event: eventType, data } = event
 
-        // Update current step for reasoning events
+        // 步骤状态更新
         if (stepOrder.includes(eventType as SSEEventType) || eventType === 'tool_error') {
           setCurrentStep(eventType)
         }
 
         if (eventType === "session" && data?.session_id) {
           setSessionId(data.session_id)
-        } else if (eventType === "task_start" && data?.task_id) {
+        } 
+        
+        // 核心任务流处理 (由 TaskProgress 统一渲染)
+        else if (eventType === "task_start" && data?.task_id) {
           handleTaskStart(data.task_id)
         } else if (eventType === "step_start" && data?.task_id) {
           handleStepStart(data.task_id, data.step_id, data.step_index, data.tool)
         } else if (eventType === "step_result" && data?.task_id) {
           handleStepResult(data.task_id, data.step_id, data.tool, data.result, data.has_geojson)
+          // 只有在这里才向父组件发送 GeoJSON，确保数据的完整性
           if (data.has_geojson && onToolResult) {
             onToolResult(data.tool, data.result)
           }
@@ -187,25 +191,16 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
           handleStepError(data.task_id, data.step_id, data.error)
         } else if (eventType === "task_complete" && data?.task_id) {
           handleTaskComplete(data.task_id, data.step_count, data.summary)
-        } else if (eventType === "task_error" && data?.task_id) {
-          handleTaskError(data.task_id, data.error)
-        } else if (eventType === "task_cancelled" && data?.task_id) {
-          handleTaskCancelled(data.task_id)
-        } else if (eventType === "tool_call") {
-          const toolName = typeof data === "object" ? data.name || data.tool : String(data)
-          assistantContent += `\n🔧 *正在调用 ${toolName}...*\n`
-          setMessages(prev => prev.map(msg =>
-            msg.id === thinkingMessage.id
-              ? { ...msg, content: assistantContent, isThinking: false }
-              : msg
-          ))
-          scrollToBottom()
-        } else if (eventType === "tool_result") {
-          const toolName = typeof data === "object" ? data.name || "unknown" : "unknown"
+          // 如果 AI 还没说够，可以用任务总结补位
+          if (assistantContent.length < 10 && data.summary) {
+            assistantContent = data.summary
+          }
+        } 
+        
+        // 传统工具事件 (主要用于提取图表等富媒体内容，不再追加文本日志)
+        else if (eventType === "tool_result") {
           const toolResult = typeof data === "object" ? (data.result || data) : data
-          console.log("[ChatPanel] tool_result:", toolName, "hasGeojson:", !!toolResult?.geojson, "hasChart:", !!toolResult?.chart, "features:", toolResult?.geojson?.features?.length)
-
-          // 检测图表数据 - 使用安全的 validator 而非 unsafe 断言
+          // 检测图表数据
           if (toolResult?.chart) {
             const validatedChart = adaptChartData(toolResult.chart)
             if (validatedChart) {
@@ -214,38 +209,12 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
                   ? { ...msg, charts: [...(msg.charts || []), validatedChart], isThinking: false }
                   : msg
               ))
-            } else {
-              console.error("Invalid chart data received from backend")
             }
           }
-
-          // 简化显示
-          let summary = ""
-          if (toolResult?.chart) {
-            summary = `图表已生成: ${toolResult.chart.title}`
-          } else if (toolResult?.count !== undefined) {
-            summary = `找到 ${toolResult.count} 个结果`
-          } else if (toolResult?.stats) {
-            summary = `统计完成`
-          } else if (toolResult?.error) {
-            summary = `错误: ${toolResult.error}`
-          } else if (toolResult?.status === "ok") {
-            summary = `数据获取成功`
-          } else {
-            summary = "完成"
-          }
-
-          assistantContent += `\n✅ **${toolName}**: ${summary}\n`
-          setMessages(prev => prev.map(msg =>
-            msg.id === thinkingMessage.id
-              ? { ...msg, content: assistantContent, isThinking: false }
-              : msg
-          ))
-          scrollToBottom()
-        } else if (eventType === "message" || eventType === "content" || eventType === "token") {
-          if (typeof data === "object" && data?.session_id) {
-            setSessionId(data.session_id)
-          }
+        } 
+        
+        // 内容流更新
+        else if (eventType === "message" || eventType === "content" || eventType === "token") {
           const chunk = typeof data === "object" ? (data.content || data.text || data.message || "") : String(data)
           assistantContent += chunk
           setMessages(prev => prev.map(msg =>
@@ -257,9 +226,12 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
         } else if (eventType === "done" || eventType === "end") {
           setCurrentStep('done')
           break
-        } else if (eventType === "tool_error") {
+        } else if (eventType === "task_error" || eventType === "tool_error") {
           const errorMsg = typeof data === "object" ? (data.message || data.error || "未知错误") : String(data)
-          assistantContent += `\n❌ **错误**: ${errorMsg}\n`
+          // 错误信息还是需要显示在气泡中的
+          if (!assistantContent.includes(errorMsg)) {
+            assistantContent += `\n\n> ⚠️ **观测异常**: ${errorMsg}\n`
+          }
           setMessages(prev => prev.map(msg =>
             msg.id === thinkingMessage.id
               ? { ...msg, content: assistantContent, isThinking: false }
@@ -473,36 +445,54 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
                   )}
                 </div>
                 <div
-                  className={`max-w-[85%] rounded-lg p-3 text-sm border ${
+                  className={`max-w-[90%] rounded-2xl p-4 text-sm border-2 shadow-xl transition-all hover:shadow-2xl ${
                     message.role === "user"
-                      ? "bg-primary border-primary/50 text-primary-foreground"
-                      : "bg-card border-border"
+                      ? "bg-primary border-primary/20 text-primary-foreground shadow-primary/10"
+                      : "bg-card/80 border-border/40 backdrop-blur-sm shadow-black/20"
                   }`}
                 >
                   {message.isThinking ? (
-                    <div className="flex items-center gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      <span className="text-xs">思考中...</span>
+                    <div className="flex items-center gap-3 py-1">
+                      <div className="relative">
+                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                        <div className="absolute inset-0 bg-primary/30 rounded-full blur animate-pulse" />
+                      </div>
+                      <span className="text-xs font-bold tracking-widest uppercase text-muted-foreground">解构星图中...</span>
                     </div>
                   ) : (
-                    <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2 prose-pre:my-1 prose-code:text-xs break-words">
+                    <div className="prose prose-sm max-w-none dark:prose-invert 
+                                    prose-p:leading-relaxed prose-p:my-2 
+                                    prose-headings:text-primary prose-headings:font-bold prose-headings:tracking-tight
+                                    prose-li:marker:text-primary/60
+                                    prose-code:bg-muted/50 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none
+                                    break-words">
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
                         components={{
                           img: ({ src, alt }) => {
-                            // 过滤 LLM 幻觉生成的地图预览 URL
                             if (!src || src.includes('/api/map/view') || src.includes('localhost')) return null
-                            return <img src={src} alt={alt || ''} className="max-w-full rounded" />
-                          }
+                            return (
+                              <div className="my-3 rounded-lg overflow-hidden border border-border shadow-soft">
+                                <img src={src} alt={alt || ''} className="max-w-full" />
+                              </div>
+                            )
+                          },
+                          // 优化标题
+                          h1: ({children}) => <h1 className="text-xl border-b border-primary/20 pb-1 mb-4">{children}</h1>,
+                          h2: ({children}) => <h2 className="text-lg border-l-4 border-primary/40 pl-3 my-4">{children}</h2>,
                         }}
                       >
                         {message.content}
                       </ReactMarkdown>
                       {message.role === 'assistant' && (
-                        <MapActionRenderer content={message.content} />
+                        <div className="mt-4 pt-4 border-t border-border/20">
+                           <MapActionRenderer content={message.content} />
+                        </div>
                       )}
                       {message.charts?.map((chart, idx) => (
-                        <ChartRenderer key={`chart-${message.id}-${idx}`} chart={chart} />
+                        <div key={`chart-${message.id}-${idx}`} className="mt-4 p-4 bg-background-secondary/50 rounded-xl border border-border/30 shadow-inner">
+                          <ChartRenderer chart={chart} />
+                        </div>
                       ))}
                     </div>
                   )}

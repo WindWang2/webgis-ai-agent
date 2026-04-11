@@ -6,6 +6,7 @@ import { Layers, ZoomIn, ZoomOut, Maximize, MapPin, Eye, EyeOff, RotateCcw, Targ
 import { LayerCard } from "@/components/layer-card"
 import type { Layer } from "@/lib/types/layer"
 import { MapActionHandler } from "./map-action-handler"
+import { ThematicLegend } from "./thematic-legend"
 
 interface MapPanelProps {
   layers: Layer[]
@@ -234,12 +235,19 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
               } else {
                 map.addLayer({
                   id: `custom-${layer.id}-fill`, type: "fill", source: sourceId,
-                  paint: { "fill-color": color, "fill-opacity": (layer.opacity || 1) * 0.3 },
+                  paint: { 
+                    "fill-color": ["coalesce", ["get", "fill_color"], color], 
+                    "fill-opacity": (layer.opacity || 1) * 0.3 
+                  },
                   filter: ["==", "$type", "Polygon"],
                 })
                 map.addLayer({
                   id: `custom-${layer.id}-outline`, type: "line", source: sourceId,
-                  paint: { "line-color": color, "line-width": 2, "line-opacity": layer.opacity || 1 },
+                  paint: { 
+                    "line-color": ["coalesce", ["get", "stroke_color"], ["get", "fill_color"], color], 
+                    "line-width": ["coalesce", ["get", "stroke_width"], 2], 
+                    "line-opacity": layer.opacity || 1 
+                  },
                   filter: ["==", "$type", "Polygon"],
                 })
               }
@@ -247,7 +255,11 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
             if (hasLines) {
               map.addLayer({
                 id: `custom-${layer.id}-line`, type: "line", source: sourceId,
-                paint: { "line-color": color, "line-width": 3, "line-opacity": layer.opacity || 1 },
+                paint: { 
+                  "line-color": ["coalesce", ["get", "fill_color"], color], 
+                  "line-width": 3, 
+                  "line-opacity": layer.opacity || 1 
+                },
                 filter: ["==", "$type", "LineString"],
               })
             }
@@ -260,7 +272,8 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
                 filter: ["==", "$type", "Point"],
                 paint: {
                   "circle-radius": circleRadius,
-                  "circle-color": color, "circle-stroke-width": 2,
+                  "circle-color": ["coalesce", ["get", "fill_color"], color], 
+                  "circle-stroke-width": ["coalesce", ["get", "stroke_width"], 2],
                   "circle-stroke-color": "#fff", "circle-opacity": layer.opacity || 1,
                 },
               })
@@ -411,9 +424,18 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
           attributionControl={false}
           preserveDrawingBuffer={true}
         >
-          <NavigationControl position="bottom-right" />
           <MapActionHandler mapInstance={mapRef.current} />
         </Map>
+
+        {/* Legend - Floating Bottom Left */}
+        {layers.find(l => l.visible && l.source?.metadata?.thematic_type === 'choropleth') && (
+          <div className="absolute bottom-16 left-4 z-10 transition-all duration-500">
+            {(() => {
+              const tl = layers.find(l => l.visible && l.source?.metadata?.thematic_type === 'choropleth');
+              return tl ? <ThematicLegend metadata={tl.source.metadata} /> : null;
+            })()}
+          </div>
+        )}
 
         {/* Floating Controls - Left Side - 罗盘工具风格 */}
         <div className="absolute top-4 left-4 flex flex-col gap-2">

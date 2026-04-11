@@ -6,16 +6,22 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 # 初始化 Celery
-# 注意：在 docker-compose 运行模式下，settings 中的 URL 会被环境变量覆盖
+# 当不使用 Redis 时，使用 memory 代理以避免连接错误
+broker_url = settings.CELERY_BROKER_URL if settings.USE_REDIS else "memory://"
+result_backend = settings.CELERY_RESULT_BACKEND if settings.USE_REDIS else None
+
 celery_app = Celery(
     "webgis_tasks",
-    broker=settings.CELERY_BROKER_URL,
-    backend=settings.CELERY_RESULT_BACKEND,
+    broker=broker_url,
+    backend=result_backend,
     include=["app.services.spatial_tasks"]
 )
 
+
 # 常规配置
 celery_app.conf.update(
+    task_always_eager=not settings.USE_REDIS,  # 如果不使用 Redis，则同步执行任务
+    task_eager_propagates=True,                # Eager 模式下抛出异常
     task_serializer="json",
     accept_content=["json"],
     result_serializer="json",
