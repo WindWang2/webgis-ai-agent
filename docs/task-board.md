@@ -23,8 +23,8 @@
 | B006 | 地图指令渲染系统 | ✅ 已完成 | 2026-04-10 | 前端 Map Action System |
 | B007 | 空间计算剥离 (Celery) | ✅ 已完成 | 2026-04-11 | 已合并，重构为异步任务流 |
 | B008 | 工具链防幻觉与自愈机制 | ✅ 已完成 | 2026-04-11 | 引入 Pydantic 强验证与自愈循环 |
-| B009 | 配置 Prompt Caching 提速 | 🔄 待开发 | - | 利用 ephemeral 提升轻量 RAG 推理速度 |
-| B010 | GeoJSON 游标传递重构 | 🔄 进行中 | - | 建立统一的 SessionDataManager 与透明解引用体系 |
+| B009 | 配置 Prompt Caching 提速 | 🔄 进行中 | - | 利用 Few-shot 示例触发缓存，提升响应速度 |
+| B010 | GeoJSON 游标传递重构 | ✅ 已完成 | 2026-04-11 | 建立统一的 SessionDataManager 与透明解引用体系 |
 
 ## 人员状态
 - Coder: 🟢 空闲，当前无运行中任务
