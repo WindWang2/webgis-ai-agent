@@ -85,8 +85,9 @@ class ToolRegistry:
                 raise ValueError(f"Invalid JSON arguments for tool {name}: {arguments}")
 
         # 透明解引用 (Transparent Dereferencing)
+        # 注意：排除某些特殊字段（如 ref_id），这些字段本身就是为了接收引用 ID
         if session_id and isinstance(arguments, dict):
-            arguments = self._resolve_references(session_id, arguments)
+            arguments = self._resolve_references(session_id, arguments, skip_keys={"ref_id"})
 
         # Pydantic 语义校验
         model = self._models.get(name)
@@ -104,25 +105,39 @@ class ToolRegistry:
                 raise ValueError("\n".join(error_msgs))
 
         # 执行函数
+        # 探测函数签名，如果需要 session_id 则传入
+        sig = inspect.signature(self._tools[name])
+        if "session_id" in sig.parameters:
+            arguments["session_id"] = session_id
+
         result = self._tools[name](**arguments)
         if inspect.isawaitable(result):
             result = await result
         return result
 
-    def _resolve_references(self, session_id: str, arguments: Any) -> Any:
-        """递归解析参数中的数据引用 ref:xxx"""
-        if isinstance(arguments, str) and arguments.startswith("ref:"):
+    def _resolve_references(self, session_id: str, arguments: Any, skip_keys: Optional[set[str]] = None) -> Any:
+        """递归解析参数中的数据引用 ref:xxx 或 别名"""
+        if skip_keys is None: skip_keys = set()
+
+        if isinstance(arguments, str):
+            # 尝试解引用（可能是 ref:xxx 或是 用户设置的别名）
             data = session_data_manager.get(session_id, arguments)
             if data is not None:
                 return data
-            logger.warning(f"Reference not found or expired: {arguments} in session {session_id}")
+            # 如果没找到，保持原样（可能是普通字符串参数）
             return arguments
         
         if isinstance(arguments, dict):
-            return {k: self._resolve_references(session_id, v) for k, v in arguments.items()}
+            new_args = {}
+            for k, v in arguments.items():
+                if k in skip_keys:
+                    new_args[k] = v
+                else:
+                    new_args[k] = self._resolve_references(session_id, v, skip_keys)
+            return new_args
         
         if isinstance(arguments, list):
-            return [self._resolve_references(session_id, v) for v in arguments]
+            return [self._resolve_references(session_id, v, skip_keys) for v in arguments]
         
         return arguments
 
