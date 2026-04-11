@@ -47,6 +47,7 @@ class HeatmapDataArgs(BaseModel):
     geojson: Any = Field(..., description="输入点要素 GeoJSON 或数据引用(ref:xxx)")
     cell_size: int = Field(500, ge=10, le=5000, description="网格大小（米），范围 10-5000")
     radius: int = Field(1000, ge=10, le=10000, description="搜索半径（米），范围 10-10000")
+    render_type: str = Field("grid", description="渲染模式: raster(栅格), grid(格网)")
 
 
 def register_spatial_tools(registry: ToolRegistry):
@@ -114,9 +115,9 @@ def register_spatial_tools(registry: ToolRegistry):
             return {"error": str(e)}
 
     @tool(registry, name="heatmap_data",
-           description="根据点要素生成热力图数据（网格密度统计）",
+           description="根据点要素生成热力图数据。支持栅格(raster)和矢量格网(grid)两种模式。栅格适合平滑显示，格网适合明显对比和数据分析。",
            args_model=HeatmapDataArgs)
-    def heatmap_data(geojson: Any, cell_size: int = 500, radius: int = 1000) -> dict:
+    def heatmap_data(geojson: Any, cell_size: int = 500, radius: int = 1000, render_type: str = "grid") -> dict:
         try:
             data = _safe_parse_geojson(geojson)
             if not data:
@@ -124,7 +125,7 @@ def register_spatial_tools(registry: ToolRegistry):
             features = data.get("features") or data.get("feature_collection", [])
             from app.services.spatial_tasks import run_heatmap_generation
             task = run_heatmap_generation.apply_async(
-                kwargs={"features": features, "cell_size": cell_size, "radius": radius}
+                kwargs={"features": features, "cell_size": cell_size, "radius": radius, "render_type": render_type}
             )
             result = task.get(timeout=120)
             if result.get("success"):

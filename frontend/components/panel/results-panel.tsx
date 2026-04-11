@@ -24,6 +24,7 @@ import {
   Compass
 } from "lucide-react"
 import { ChartRenderer } from "./chart-renderer"
+import { DraggableLayerList } from "../map/draggable-layer-list"
 
 interface ResultItem {
   id: string
@@ -64,14 +65,27 @@ interface LayerItem {
 // Props for receiving analysis results from parent
 interface ResultsPanelProps {
   onGenerateReport?: () => void
+  onMapMove?: (center: [number, number], zoom: number) => void
   analysisResults?: ResultItem[]
   layers?: LayerItem[]
   onToggleLayer?: (layerId: string) => void
+  onRemoveLayer?: (layerId: string) => void
+  onUpdateLayer?: (layerId: string, updates: Partial<LayerItem>) => void
+  onReorderLayers?: (layers: LayerItem[]) => void
 }
 
-export function ResultsPanel({ onGenerateReport, analysisResults, layers = [], onToggleLayer }: ResultsPanelProps) {
+export function ResultsPanel({ 
+  onGenerateReport, 
+  onMapMove, 
+  analysisResults, 
+  layers = [], 
+  onToggleLayer,
+  onRemoveLayer,
+  onUpdateLayer,
+  onReorderLayers
+}: ResultsPanelProps) {
   const [expanded, setExpanded] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<"results" | "layer" | "report">("results")
+  const [activeTab, setActiveTab] = useState<"results" | "layers" | "report">("results")
 
   // State for report generation
   const [isGenerating, setIsGenerating] = useState(false)
@@ -97,6 +111,39 @@ export function ResultsPanel({ onGenerateReport, analysisResults, layers = [], o
   const toggleLayerVisibility = (layerId: string) => {
     if (onToggleLayer) {
       onToggleLayer(layerId)
+    }
+  }
+
+  // 定位到图层
+  const handleZoomToLayer = (layer: LayerItem) => {
+    if (!onMapMove || !layer.source) return
+    
+    // 计算中心点 (简化逻辑，实际可能需要更复杂的 BBox 计算)
+    const lngs: number[] = []
+    const lats: number[] = []
+    const features = layer.source.features || []
+    
+    features.forEach((f: any) => {
+      if (f.geometry?.type === "Point") {
+        lngs.push(f.geometry.coordinates[0])
+        lats.push(f.geometry.coordinates[1])
+      } else if (f.geometry?.coordinates) {
+        // 简化：只取前几个点
+        const coords = Array.isArray(f.geometry.coordinates[0]) ? f.geometry.coordinates[0] : [f.geometry.coordinates]
+        coords.forEach((c: any) => {
+          if (Array.isArray(c)) {
+            lngs.push(c[0]); lats.push(c[1])
+          }
+        })
+      }
+    })
+
+    if (lngs.length > 0) {
+      const center: [number, number] = [
+        lngs.reduce((a, b) => a + b, 0) / lngs.length,
+        lats.reduce((a, b) => a + b, 0) / lats.length
+      ]
+      onMapMove(center, features.length > 50 ? 11 : 13)
     }
   }
 
@@ -295,59 +342,21 @@ ${reportData.tables.map(t =>
               </div>
               <div className="rounded-lg border border-border p-4 bg-card hover:border-accent/30 transition-all">
                 <div className="flex items-center gap-2 text-muted-foreground text-xs mb-2">
-                  <Hash className="h-4 w-4 text-accent/60" /> 标记点
+                  <Hash className="h-4 w-4 text-accent/60" /> 要素总数
                 </div>
-                <div className="text-2xl font-semibold text-accent">{totalFeatures}</div>
+                <div className="text-2xl font-semibold text-accent">
+                  {layers.reduce((acc, l) => acc + (l.source?.features?.length || 0), 0)}
+                </div>
               </div>
             </div>
 
-            {layers?.length || 0 === 0 ? (
-              <div className="text-center text-muted-foreground text-sm py-8">
-                <Layers className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                <p>暂无图层</p>
-                <p className="text-xs mt-2">上传数据或执行空间分析后图层将显示在此处</p>
-              </div>
-            ) : (
-              layers.map((item) => {
-                const featureCount = item.source?.features?.length || 0
-                const geomTypes = getGeometryTypes(item.source)
-                const isVisible = isLayerVisible(item.id)
-                return (
-                  <div key={item.id} className="rounded-lg border border-border overflow-hidden bg-card/50 hover:border-primary/30 transition-all">
-                    <div className="flex items-center justify-between p-3 bg-card/30">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div
-                          className="h-3 w-3 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: item.style?.color || "#3b82f6" }}
-                        />
-                        <div className="min-w-0">
-                          <span className="font-medium text-sm block truncate">{item.name}</span>
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <span className="flex items-center gap-0.5">
-                              <MapPin className="h-3 w-3" /> {featureCount} 个要素
-                            </span>
-                            {geomTypes.length > 0 && (
-                              <span>{geomTypes.join(", ")}</span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => toggleLayerVisibility(item.id)}
-                        className="p-1 rounded hover:bg-muted transition-colors"
-                        title={isVisible ? "隐藏图层" : "显示图层"}
-                      >
-                        {isVisible ? (
-                          <Eye className="h-4 w-4 text-muted-foreground" />
-                        ) : (
-                          <EyeOff className="h-4 w-4 text-muted-foreground/50" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                )
-              })
-            )}
+            <DraggableLayerList
+              layers={layers}
+              onReorder={onReorderLayers || (() => {})}
+              onToggle={toggleLayerVisibility}
+              onDelete={onRemoveLayer || (() => {})}
+              onUpdate={onUpdateLayer || (() => {})}
+            />
           </div>
         ) : activeTab === "results" ? (
           /* Results Tab */
@@ -375,11 +384,27 @@ ${reportData.tables.map(t =>
                         <span className="text-xs text-muted-foreground">{formatTimestamp(result.timestamp)}</span>
                       </div>
                     </div>
-                    {expanded === result.id ? (
-                      <ChevronUp className="h-4 w-4" />
-                    ) : (
-                      <ChevronDown className="h-4 w-4" />
-                    )}
+                    <div className="flex items-center gap-1">
+                      {result.type === "map" && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // Logic to find corresponding layer and zoom
+                            const layer = layers.find(l => l.name.includes(result.title) || result.id.includes(l.id));
+                            if (layer) handleZoomToLayer(layer);
+                          }}
+                          className="p-1 rounded hover:bg-muted/50 transition-colors"
+                          title="在地图上查看"
+                        >
+                          <MapPin className="h-4 w-4 text-primary" />
+                        </button>
+                      )}
+                      {expanded === result.id ? (
+                        <ChevronUp className="h-4 w-4" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4" />
+                      )}
+                    </div>
                   </button>
                   {expanded === result.id && (
                     <div className="p-3 text-sm border-t border-border bg-card/20">

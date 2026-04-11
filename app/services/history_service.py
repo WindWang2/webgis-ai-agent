@@ -38,14 +38,15 @@ class HistoryService:
         session_id: str,
         role: str,
         content: str,
-        tool_calls=None,
         tool_result=None,
+        tool_call_id=None,
     ) -> None:
         msg = Message(
             conversation_id=session_id,
             role=role,
             content=content,
             tool_calls=tool_calls,
+            tool_call_id=tool_call_id,
             tool_result=tool_result,
             created_at=datetime.now(timezone.utc),
         )
