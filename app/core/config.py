@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = "http://localhost:8000/v1"
     LLM_API_KEY: str = "not-needed"
     LLM_MODEL: str = "MiniMax-M2.5"
+    LLM_PROMPT_CACHING_ENABLED: bool = True
 
     # OSM
     OVERPASS_API_URL: str = "https://overpass.openstreetmap.fr/api/interpreter"
