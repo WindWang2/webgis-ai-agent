@@ -245,7 +245,9 @@ class ChatEngine:
                         result = await self.registry.dispatch(tc["function"]["name"], tc["function"]["arguments"])
                         result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
                     except Exception as e:
-                        result_str = json.dumps({"error": str(e)}, ensure_ascii=False)
+                        # 区分校验错误与执行错误
+                        error_type = "参数校验失败" if isinstance(e, ValueError) and "校验失败" in str(e) else "执行出错"
+                        result_str = json.dumps({"error": f"{error_type}: {str(e)}", "note": "请根据错误信息修正参数后重新调用"}, ensure_ascii=False)
                         logger.error(f"Tool {tc['function']['name']} error: {e}")
 
                     if standard_calls:
@@ -383,18 +385,24 @@ class ChatEngine:
 
                         # 存入 messages 时压缩大型结果，避免撑爆 LLM 上下文
                         msg_result_str = _slim_tool_result(result, result_str, geojson_ref)
-                    except Exception as e:
-                        msg_result_str = json.dumps({"error": str(e)}, ensure_ascii=False)
-                        result_str = msg_result_str
-                        logger.error(f"Tool {tool_name} error: {e}")
-                        self.tracker.fail_step(task.id, step.id, str(e))
-
+                        # step_error
+                        has_geojson = False
+                        # 区分校验错误与执行错误
+                        error_type = "参数校验失败" if isinstance(e, ValueError) and "校验失败" in str(e) else "执行出错"
+                        error_msg = f"{error_type}: {str(e)}"
+                        
                         yield _sse_event("step_error", {
                             "task_id": task.id,
                             "step_id": step.id,
                             "tool": tool_name,
-                            "error": str(e),
+                            "error": error_msg,
                         })
+
+                        # 现有 tool_result 事件（保持兼容）
+                        # 对于校验错误，告知 LLM 具体原因以便自愈
+                        healing_note = "。请检查参数逻辑（如范围、类型等）并纠正后重试。" if error_type == "参数校验失败" else ""
+                        msg_result_str = json.dumps({"error": error_msg, "healing_guidance": healing_note}, ensure_ascii=False)
+                        yield f"event: tool_result\ndata: {json.dumps({'name': tool_name, 'result': msg_result_str}, ensure_ascii=False)}\n\n"
 
                     if standard_calls:
                         messages.append({
