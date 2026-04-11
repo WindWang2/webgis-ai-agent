@@ -2,8 +2,10 @@
 import inspect
 import json
 import logging
-from typing import Any, Callable, Optional, Type
+from typing import Any, Callable, Optional, Type, Dict, List
 from pydantic import BaseModel, create_model, ValidationError
+
+from app.services.session_data import session_data_manager
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +73,8 @@ class ToolRegistry:
     def get_schemas(self) -> list[dict]:
         return self._schemas
 
-    async def dispatch(self, name: str, arguments: dict | str) -> Any:
-        """执行工具，包含 Pydantic 强校验"""
+    async def dispatch(self, name: str, arguments: dict | str, session_id: Optional[str] = None) -> Any:
+        """执行工具，包含 Pydantic 校验与透明解引用"""
         if name not in self._tools:
             raise KeyError(f"Unknown tool: {name}")
             
@@ -81,6 +83,10 @@ class ToolRegistry:
                 arguments = json.loads(arguments)
             except json.JSONDecodeError:
                 raise ValueError(f"Invalid JSON arguments for tool {name}: {arguments}")
+
+        # 透明解引用 (Transparent Dereferencing)
+        if session_id and isinstance(arguments, dict):
+            arguments = self._resolve_references(session_id, arguments)
 
         # Pydantic 语义校验
         model = self._models.get(name)
@@ -102,6 +108,23 @@ class ToolRegistry:
         if inspect.isawaitable(result):
             result = await result
         return result
+
+    def _resolve_references(self, session_id: str, arguments: Any) -> Any:
+        """递归解析参数中的数据引用 ref:xxx"""
+        if isinstance(arguments, str) and arguments.startswith("ref:"):
+            data = session_data_manager.get(session_id, arguments)
+            if data is not None:
+                return data
+            logger.warning(f"Reference not found or expired: {arguments} in session {session_id}")
+            return arguments
+        
+        if isinstance(arguments, dict):
+            return {k: self._resolve_references(session_id, v) for k, v in arguments.items()}
+        
+        if isinstance(arguments, list):
+            return [self._resolve_references(session_id, v) for v in arguments]
+        
+        return arguments
 
     def list_tools(self) -> list[str]:
         return list(self._tools.keys())
