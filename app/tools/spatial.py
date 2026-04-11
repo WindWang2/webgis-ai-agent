@@ -1,7 +1,8 @@
 """空间分析 FC 工具"""
 import json
 import logging
-from typing import Optional
+from typing import Optional, List, Dict
+from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
 
@@ -40,16 +41,17 @@ def _safe_parse_geojson(geojson: str) -> dict | None:
         return None
 
 
+class BufferAnalysisArgs(BaseModel):
+    geojson: str = Field(..., description="输入 GeoJSON FeatureCollection（JSON字符串）")
+    distance: float = Field(..., gt=0, description="缓冲距离（米），必须大于0")
+    unit: str = Field("m", description="单位：m/km，默认m")
+
 def register_spatial_tools(registry: ToolRegistry):
     """注册空间分析工具"""
 
     @tool(registry, name="buffer_analysis",
            description="对几何要素进行缓冲区分析，返回缓冲区多边形",
-           param_descriptions={
-               "geojson": "输入 GeoJSON FeatureCollection（JSON字符串）",
-               "distance": "缓冲距离（米）",
-               "unit": "单位：m/km，默认m"
-           })
+           args_model=BufferAnalysisArgs)
     def buffer_analysis(geojson: str, distance: float, unit: str = "m") -> dict:
         try:
             data = _safe_parse_geojson(geojson)
@@ -126,13 +128,14 @@ def register_spatial_tools(registry: ToolRegistry):
             logger.error(f"NN analysis error: {e}")
             return {"error": str(e)}
 
+class HeatmapDataArgs(BaseModel):
+    geojson: str = Field(..., description="输入点要素 GeoJSON FeatureCollection（JSON字符串）")
+    cell_size: int = Field(500, ge=10, le=5000, description="网格大小（米），范围 10-5000")
+    radius: int = Field(1000, ge=10, le=10000, description="搜索半径（米），范围 10-10000")
+
     @tool(registry, name="heatmap_data",
            description="根据点要素生成热力图数据（网格密度统计）",
-           param_descriptions={
-               "geojson": "输入点要素 GeoJSON FeatureCollection（JSON字符串）",
-               "cell_size": "网格大小（米），默认500",
-               "radius": "搜索半径（米），默认1000"
-           })
+           args_model=HeatmapDataArgs)
     def heatmap_data(geojson: str, cell_size: int = 500, radius: int = 1000) -> dict:
         try:
             import base64
