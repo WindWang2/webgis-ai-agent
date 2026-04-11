@@ -11,8 +11,11 @@ from app.tools.registry import ToolRegistry
 from app.tools.osm import register_osm_tools
 from app.tools.geocoding import register_geocoding_tools
 from app.tools.spatial import register_spatial_tools
+from app.tools.advanced_spatial import register_advanced_spatial_tools
+from app.tools.layer_manager import register_layer_management_tools
 from app.tools.remote_sensing import register_rs_tools
 from app.tools.chart import register_chart_tools
+from app.tools.cartography import register_cartography_tools
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["对话"])
@@ -22,8 +25,11 @@ registry = ToolRegistry()
 register_geocoding_tools(registry)
 register_osm_tools(registry)
 register_spatial_tools(registry)
+register_advanced_spatial_tools(registry)
+register_layer_management_tools(registry)
 register_rs_tools(registry)
 register_chart_tools(registry)
+register_cartography_tools(registry)
 engine = ChatEngine(registry)
 
 

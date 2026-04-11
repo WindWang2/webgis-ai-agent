@@ -1,5 +1,6 @@
 """空间分析 Celery 任务定义"""
 import logging
+import math
 from typing import List, Dict, Any, Optional
 from app.services.task_queue import celery_app
 from app.services.spatial_analyzer import SpatialAnalyzer
@@ -119,27 +120,45 @@ def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, rad
     from matplotlib.colors import LinearSegmentedColormap
     from scipy.ndimage import gaussian_filter
 
+    fig = None
     try:
         points = []
-        for f in features:
+        for f in features or []:
+            if not isinstance(f, dict): continue
             geom = f.get("geometry") or {}
-            if geom.get("type") == "Point" and geom.get("coordinates"):
-                coords = geom["coordinates"]
-                points.append((coords[0], coords[1]))
+            if geom.get("type") == "Point":
+                coords = geom.get("coordinates")
+                if coords and len(coords) >= 2:
+                    # 过滤掉 None 或非数字坐标
+                    try:
+                        lon, lat = float(coords[0]), float(coords[1])
+                        if not math.isnan(lon) and not math.isnan(lat):
+                            points.append((lon, lat))
+                    except (ValueError, TypeError):
+                        continue
 
         if not points:
-            return {"success": False, "error": "No point features"}
+            return {"success": False, "error": "No valid point features found"}
 
         xs = [p[0] for p in points]
         ys = [p[1] for p in points]
 
         cell_deg = cell_size / 111000
         margin = cell_deg * 3
+        # 边界扩展，处理单点情况
         x_min, x_max = min(xs) - margin, max(xs) + margin
         y_min, y_max = min(ys) - margin, max(ys) + margin
+        
+        if x_min == x_max: x_max += cell_deg
+        if y_min == y_max: y_max += cell_deg
 
         x_bins = np.arange(x_min, x_max + cell_deg, cell_deg)
         y_bins = np.arange(y_min, y_max + cell_deg, cell_deg)
+        
+        # 防止 bins 过多导致 OOM 或过少导致失败
+        if len(x_bins) > 5000 or len(y_bins) > 5000:
+             return {"success": False, "error": "Resolution too high for the data extent"}
+
         H, xedges, yedges = np.histogram2d(xs, ys, bins=[x_bins, y_bins])
 
         sigma = max(1.0, radius / cell_size)
@@ -155,17 +174,20 @@ def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, rad
             (1.00, (0.90, 0.00, 0.00, 1.00)),
         ], N=256)
 
-        dpi = 150
-        w = H_smooth.shape[1] / dpi * 2
-        h = H_smooth.shape[0] / dpi * 2
-        fig, ax = plt.subplots(figsize=(max(w, 2), max(h, 2)), dpi=dpi)
+        dpi = 100
+        w = max(H_smooth.shape[1] / dpi, 4)
+        h = max(H_smooth.shape[0] / dpi, 4)
+        
+        fig, ax = plt.subplots(figsize=(w, h), dpi=dpi)
+        v_max = H_smooth.max() if H_smooth.max() > 0 else 1.0
+        
         ax.imshow(
             H_smooth,
             cmap=cmap,
             origin="lower",
             aspect="auto",
             vmin=0,
-            vmax=H_smooth.max(),
+            vmax=v_max,
             interpolation="bilinear",
         )
         ax.axis("off")
@@ -173,7 +195,6 @@ def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, rad
 
         buf = io.BytesIO()
         fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0, transparent=True)
-        plt.close(fig)
         buf.seek(0)
         img_b64 = "data:image/png;base64," + base64.b64encode(buf.read()).decode()
 
@@ -187,4 +208,76 @@ def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, rad
             }
         }
     except Exception as e:
+        logger.error(f"Heatmap conversion failed: {e}", exc_info=True)
         return {"success": False, "error": str(e)}
+    finally:
+        if fig:
+            plt.close(fig)
+
+@celery_app.task(name="app.services.spatial_tasks.run_overlay_analysis", bind=True)
+def run_overlay_analysis(self, features_a: List[Dict], features_b: List[Dict], how: str = "intersection"):
+    """执行叠加分析任务"""
+    logger.info(f"Starting overlay analysis: how={how}")
+    def update_progress(current, message):
+        self.update_state(state='PROGRESS', meta={'progress': current, 'message': message})
+    
+    result = SpatialAnalyzer.overlay(features_a, features_b, how=how, callback=update_progress)
+    if result.success:
+        return {"success": True, "data": result.data, "stats": result.stats}
+    return {"success": False, "error": result.error_message}
+
+@celery_app.task(name="app.services.spatial_tasks.run_attribute_filter", bind=True)
+def run_attribute_filter(self, features: List[Dict], query: str):
+    """执行属性过滤任务"""
+    logger.info(f"Starting attribute filter: query={query}")
+    def update_progress(current, message):
+        self.update_state(state='PROGRESS', meta={'progress': current, 'message': message})
+    
+    result = SpatialAnalyzer.attribute_filter(features, query=query, callback=update_progress)
+    if result.success:
+        return {"success": True, "data": result.data, "stats": result.stats}
+    return {"success": False, "error": result.error_message}
+
+@celery_app.task(name="app.services.spatial_tasks.run_spatial_join", bind=True)
+def run_spatial_join(self, left: List[Dict], right: List[Dict], join_type: str = "inner", predicate: str = "intersects"):
+    """执行空间连接任务"""
+    logger.info(f"Starting spatial join: {join_type} {predicate}")
+    def update_progress(current, message):
+        self.update_state(state='PROGRESS', meta={'progress': current, 'message': message})
+    
+    result = SpatialAnalyzer.spatial_join(left, right, join_type=join_type, predicate=predicate, callback=update_progress)
+    if result.success:
+        return {"success": True, "data": result.data, "stats": result.stats}
+    return {"success": False, "error": result.error_message}
+@celery_app.task(name="app.services.spatial_tasks.run_path_analysis", bind=True)
+def run_path_analysis(self, network_features: List[Dict], start_point: List[float], end_point: List[float]):
+    """执行路径分析任务"""
+    logger.info(f"Starting path analysis from {start_point} to {end_point}")
+    def update_progress(current, message):
+        self.update_state(state='PROGRESS', meta={'progress': current, 'message': message})
+    
+    result = SpatialAnalyzer.path_analysis(
+        network_features=network_features,
+        start_point=start_point,
+        end_point=end_point,
+        callback=update_progress
+    )
+    if result.success:
+        return {"success": True, "data": result.data, "stats": result.stats}
+    return {"success": False, "error": result.error_message}
+
+@celery_app.task(name="app.services.spatial_tasks.run_zonal_stats", bind=True)
+def run_zonal_stats(self, zones: List[Dict], raster_path: str):
+    """执行区域统计任务"""
+    logger.info(f"Starting zonal stats on raster: {raster_path}")
+    def update_progress(current, message):
+        self.update_state(state='PROGRESS', meta={'progress': current, 'message': message})
+    
+    result = SpatialAnalyzer.zonal_statistics(
+        zones=zones,
+        raster_path=raster_path,
+        callback=update_progress
+    )
+    if result.success:
+        return {"success": True, "data": result.data}
+    return {"success": False, "error": result.error_message}

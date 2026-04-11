@@ -1,7 +1,7 @@
 """空间分析 FC 工具"""
 import json
 import logging
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
@@ -9,8 +9,8 @@ from app.tools.registry import ToolRegistry, tool
 logger = logging.getLogger(__name__)
 
 
-def _safe_parse_geojson(geojson: str) -> dict | None:
-    """安全解析 GeoJSON 字符串，处理截断/格式错误"""
+def _safe_parse_geojson(geojson: Any) -> dict | None:
+    """安全解析 GeoJSON，支持字符串或字典"""
     if isinstance(geojson, dict):
         return geojson
     if not isinstance(geojson, str):
@@ -21,18 +21,14 @@ def _safe_parse_geojson(geojson: str) -> dict | None:
     try:
         return json.loads(geojson)
     except json.JSONDecodeError:
-        # 尝试修复常见的截断问题
         logger.warning(f"GeoJSON parse failed, attempting repair (length={len(geojson)})")
-        # 尝试找到最后一个完整的 feature
         try:
-            # 找到最后一个 } 并尝试闭合
             for end_pos in range(len(geojson) - 1, max(len(geojson) - 100, 0), -1):
                 if geojson[end_pos] == '}':
                     candidate = geojson[:end_pos + 1] + ']}'
                     try:
                         result = json.loads(candidate)
                         if isinstance(result, dict) and 'features' in result:
-                            logger.info(f"GeoJSON repair succeeded, recovered {len(result.get('features', []))} features")
                             return result
                     except json.JSONDecodeError:
                         continue
@@ -46,6 +42,13 @@ class BufferAnalysisArgs(BaseModel):
     distance: float = Field(..., gt=0, description="缓冲距离（米），必须大于0")
     unit: str = Field("m", description="单位：m/km，默认m")
 
+
+class HeatmapDataArgs(BaseModel):
+    geojson: Any = Field(..., description="输入点要素 GeoJSON 或数据引用(ref:xxx)")
+    cell_size: int = Field(500, ge=10, le=5000, description="网格大小（米），范围 10-5000")
+    radius: int = Field(1000, ge=10, le=10000, description="搜索半径（米），范围 10-10000")
+
+
 def register_spatial_tools(registry: ToolRegistry):
     """注册空间分析工具"""
 
@@ -58,15 +61,11 @@ def register_spatial_tools(registry: ToolRegistry):
             if not data:
                 return {"error": "Invalid GeoJSON input"}
             features = data.get("features", data) if isinstance(data, dict) else data
-            
-            # 使用 Celery 异步执行
-            from app.services.task_queue import celery_app
-            task = celery_app.send_task(
-                "app.services.spatial_tasks.run_buffer_analysis",
+            from app.services.spatial_tasks import run_buffer_analysis
+            task = run_buffer_analysis.apply_async(
                 args=[features, distance, unit]
             )
-            result = task.get(timeout=120)  # 等待结果，设置超时
-            
+            result = task.get(timeout=120)
             if result.get("success"):
                 return {"geojson": result.get("data"), "stats": result.get("stats")}
             return {"error": result.get("error")}
@@ -78,24 +77,15 @@ def register_spatial_tools(registry: ToolRegistry):
            description="计算几何要素的空间统计信息（面积、长度、中心点等）")
     def spatial_stats(geojson: Any) -> dict:
         try:
-            import geopandas as gpd
-            from shapely.geometry import shape
-
             data = _safe_parse_geojson(geojson)
             if not data:
                 return {"error": "Invalid GeoJSON input"}
             features = data.get("features", [])
-            if not features:
-                return {"error": "No features in GeoJSON"}
-
-            # 使用 Celery 异步执行
-            from app.services.task_queue import celery_app
-            task = celery_app.send_task(
-                "app.services.spatial_tasks.run_spatial_stats",
+            from app.services.spatial_tasks import run_spatial_stats
+            task = run_spatial_stats.apply_async(
                 args=[features]
             )
             result = task.get(timeout=60)
-            
             if result.get("success"):
                 return {"stats": result.get("stats")}
             return {"error": result.get("error")}
@@ -111,15 +101,11 @@ def register_spatial_tools(registry: ToolRegistry):
             if not data:
                 return {"error": "Invalid GeoJSON input"}
             features = data.get("features", [])
-
-            # 使用 Celery 异步执行
-            from app.services.task_queue import celery_app
-            task = celery_app.send_task(
-                "app.services.spatial_tasks.run_nearest_neighbor",
+            from app.services.spatial_tasks import run_nearest_neighbor
+            task = run_nearest_neighbor.apply_async(
                 args=[features]
             )
             result = task.get(timeout=60)
-            
             if result.get("success"):
                 return result.get("data")
             return {"error": result.get("error")}
@@ -127,39 +113,20 @@ def register_spatial_tools(registry: ToolRegistry):
             logger.error(f"NN analysis error: {e}")
             return {"error": str(e)}
 
-class HeatmapDataArgs(BaseModel):
-    geojson: Any = Field(..., description="输入点要素 GeoJSON 或数据引用(ref:xxx)")
-    cell_size: int = Field(500, ge=10, le=5000, description="网格大小（米），范围 10-5000")
-    radius: int = Field(1000, ge=10, le=10000, description="搜索半径（米），范围 10-10000")
-
     @tool(registry, name="heatmap_data",
            description="根据点要素生成热力图数据（网格密度统计）",
            args_model=HeatmapDataArgs)
     def heatmap_data(geojson: Any, cell_size: int = 500, radius: int = 1000) -> dict:
         try:
-            import base64
-            import io
-
-            import matplotlib
-            matplotlib.use("Agg")
-            import matplotlib.pyplot as plt
-            import numpy as np
-            from matplotlib.colors import LinearSegmentedColormap
-            from scipy.ndimage import gaussian_filter
-
             data = _safe_parse_geojson(geojson)
             if not data:
-                return {"error": "Invalid GeoJSON input: 无法解析，请确保数据完整"}
+                return {"error": "Invalid GeoJSON input"}
             features = data.get("features") or data.get("feature_collection", [])
-
-            # 使用 Celery 异步执行
-            from app.services.task_queue import celery_app
-            task = celery_app.send_task(
-                "app.services.spatial_tasks.run_heatmap_generation",
+            from app.services.spatial_tasks import run_heatmap_generation
+            task = run_heatmap_generation.apply_async(
                 kwargs={"features": features, "cell_size": cell_size, "radius": radius}
             )
             result = task.get(timeout=120)
-            
             if result.get("success"):
                 return result.get("data")
             return {"error": result.get("error")}

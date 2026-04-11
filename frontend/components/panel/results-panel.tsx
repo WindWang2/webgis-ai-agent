@@ -20,8 +20,10 @@ import {
   Eye,
   EyeOff,
   MapPin,
-  Hash
+  Hash,
+  Compass
 } from "lucide-react"
+import { ChartRenderer } from "./chart-renderer"
 
 interface ResultItem {
   id: string
@@ -224,54 +226,56 @@ ${reportData.tables.map(t =>
 
   return (
     <div className="flex h-full flex-col">
-      {/* Header - 研究笔记风格 */}
-      <div className="flex items-center justify-between border-b border-border p-4 bg-card/50">
-        <div className="flex gap-1">
+      {/* Header - 探险者档案夹风格 */}
+      <div className="flex items-center justify-between border-b border-border p-3 bg-background-secondary/40 backdrop-blur-sm">
+        <div className="flex p-1 bg-muted/30 rounded-xl gap-1 border border-border/20">
           <button
             onClick={() => setActiveTab("results")}
-            className={`text-sm font-medium px-3 py-2 rounded-lg transition-all ${
+            className={`flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-lg transition-all uppercase tracking-wider ${
               activeTab === "results"
-                ? "bg-primary/10 text-primary border border-primary/30"
-                : "text-muted-foreground hover:text-foreground hover:bg-card"
+                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20"
+                : "text-muted-foreground hover:text-foreground hover:bg-card/40"
             }`}
           >
-            📊 发现
+            <Compass className="h-3.5 w-3.5" />
+            见闻
           </button>
           <button
             onClick={() => setActiveTab("layers")}
-            className={`text-sm font-medium px-3 py-2 rounded-lg transition-all ${
+            className={`flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-lg transition-all uppercase tracking-wider ${
               activeTab === "layers"
-                ? "bg-primary/10 text-primary border border-primary/30"
-                : "text-muted-foreground hover:text-foreground hover:bg-card"
+                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20"
+                : "text-muted-foreground hover:text-foreground hover:bg-card/40"
             }`}
           >
-            <span className="flex items-center gap-1.5">
-              <Layers className="h-3.5 w-3.5" />
-              勘绘
-            </span>
-            {(layers?.length || 0) > 0 && <span className="ml-1 text-xs text-primary/70">•{layers?.length || 0}</span>}
+            <Layers className="h-3.5 w-3.5" />
+            图录
+            {(layers?.length || 0) > 0 && (
+              <span className={`ml-1 text-[10px] px-1 rounded ${activeTab === 'layers' ? 'bg-primary-foreground/20' : 'bg-primary/20 text-primary'}`}>
+                {layers?.length || 0}
+              </span>
+            )}
           </button>
           <button
             onClick={() => setActiveTab("report")}
-            className={`text-sm font-medium px-3 py-2 rounded-lg transition-all ${
+            className={`flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-lg transition-all uppercase tracking-wider ${
               activeTab === "report"
-                ? "bg-primary/10 text-primary border border-primary/30"
-                : "text-muted-foreground hover:text-foreground hover:bg-card"
+                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20"
+                : "text-muted-foreground hover:text-foreground hover:bg-card/40"
             }`}
           >
-            📜 文稿
-            {reportData && <span className="ml-1 text-success">✓</span>}
+            <FileText className="h-3.5 w-3.5" />
+            呈报
           </button>
         </div>
 
         {reportData && (
           <button
             onClick={handleExportPDF}
-            className="flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 transition-colors"
+            className="flex items-center justify-center h-8 w-8 rounded-full bg-accent/10 border border-accent/30 text-accent hover:bg-accent hover:text-white transition-all shadow-sm"
             title="导出PDF"
           >
             <Printer className="h-4 w-4" />
-            导出
           </button>
         )}
       </div>
@@ -378,11 +382,13 @@ ${reportData.tables.map(t =>
                     )}
                   </button>
                   {expanded === result.id && (
-                    <div className="p-3 text-sm border-t border-border">
-                      <p className="mb-2">{result.content}</p>
+                    <div className="p-3 text-sm border-t border-border bg-card/20">
+                      <p className="mb-3 text-muted-foreground leading-relaxed italic border-l-2 border-primary/30 pl-3">
+                        {result.content}
+                      </p>
                       {result.chartData && (
-                        <div className="mt-2 p-2 bg-muted/50 rounded text-center text-xs text-muted-foreground">
-                          [图表: {result.chartData.type}]
+                        <div className="mt-4 p-4 bg-muted/20 rounded-xl border border-border/40 shadow-inner">
+                          <ChartRenderer chart={result.chartData} />
                         </div>
                       )}
                     </div>
@@ -418,26 +424,15 @@ ${reportData.tables.map(t =>
               </section>
 
               {reportData.charts.length > 0 && (
-                <section>
-                  <h3 className="font-medium text-sm mb-2 flex items-center gap-2">
-                    <PieChart className="h-4 w-4" />
-                    统计图表
+                <section className="bg-muted/10 p-4 rounded-xl border border-border/40 shadow-sm">
+                  <h3 className="font-semibold text-xs mb-4 flex items-center gap-2 uppercase tracking-widest text-primary">
+                    <PieChart className="h-3.5 w-3.5" />
+                    统计数据洞察
                   </h3>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-6">
                     {reportData.charts.map((chart) => (
-                      <div key={chart.id} className="p-3 bg-muted/30 rounded-lg">
-                        <p className="text-xs font-medium mb-2">{chart.title}</p>
-                        <div className="h-20 flex items-end justify-around gap-1">
-                          {Array.isArray(chart.data.values || chart.data.value) &&
-                            ((chart.data.values || chart.data.value) as number[]).slice(0, 5).map((val, i) => (
-                              <div
-                                key={i}
-                                className="flex-1 bg-primary/60 rounded-t"
-                                style={{ height: `${Math.min(val / 250, 1) * 100}%` }}
-                              />
-                            ))
-                          }
-                        </div>
+                      <div key={chart.id} className="p-1 rounded-lg">
+                         <ChartRenderer chart={chart} />
                       </div>
                     ))}
                   </div>
