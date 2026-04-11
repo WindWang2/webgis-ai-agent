@@ -19,12 +19,12 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = "your-secret-key-change-in-production"
 
     # 数据库
-    DATABASE_URL: str = "postgresql+psycopg2://postgres:postgres@localhost:15432/webgis"
+    DATABASE_URL: str = Field(default="sqlite:///./data/webgis.db", env="DATABASE_URL")
 
     # LLM 配置 (OpenAI 兼容接口)
-    LLM_BASE_URL: str = "http://localhost:8000/v1"
-    LLM_API_KEY: str = "not-needed"
-    LLM_MODEL: str = "MiniMax-M2.5"
+    LLM_BASE_URL: str = Field(default="http://localhost:8000/v1", env="LLM_BASE_URL")
+    LLM_API_KEY: str = Field(default="not-needed", env="LLM_API_KEY")
+    LLM_MODEL: str = Field(default="MiniMax-M2.5", env="LLM_MODEL")
     LLM_PROMPT_CACHING_ENABLED: bool = True
 
     # OSM
@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
 
     # 天地图
-    TIANDITU_TOKEN: str = ""
+    TIANDITU_TOKEN: str = "2f2497677943d79a29e344e760c41f92"
 
     # Sentinel Hub
     SENTINELHUB_CLIENT_ID: str = ""
@@ -43,23 +43,26 @@ class Settings(BaseSettings):
     NASA_EARTHDATA_PASSWORD: str = ""
 
     # OpenTopography
-    OPENTOPOGRAPHY_API_KEY: str = ""
+    OPENTOPOGRAPHY_API_KEY: str = Field(default="", env="OPENTOPOGRAPHY_API_KEY")
 
     # 数据目录
     DATA_DIR: str = "./data"
     TMP_DIR: str = "./tmp"
 
     # CORS
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://192.168.193.121:3000", "http://192.168.193.121:3003"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     # Celery & Redis
-    REDIS_URL: str = "redis://localhost:16379/0"
-    CELERY_BROKER_URL: str = "redis://localhost:16379/0"
-    CELERY_RESULT_BACKEND: str = "redis://localhost:16379/1"
+    REDIS_URL: str = Field(default="redis://localhost:16379/0", env="REDIS_URL")
+    CELERY_BROKER_URL: str = Field(default="redis://localhost:16379/0", env="CELERY_BROKER_URL")
+    CELERY_RESULT_BACKEND: str = Field(default="redis://localhost:16379/1", env="CELERY_RESULT_BACKEND")
+    USE_REDIS: bool = False # 默认不开启，除非显式配置且可用
 
     class Config:
         env_file = ".env"
+        env_file_encoding = "utf-8"
         case_sensitive = True
+        extra = "ignore" # 忽略多余的环境变量
 
 
 settings = Settings()
