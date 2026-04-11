@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://192.168.193.121:3000", "http://192.168.193.121:3003"]
 
+    # Celery & Redis
+    REDIS_URL: str = "redis://localhost:16379/0"
+    CELERY_BROKER_URL: str = "redis://localhost:16379/0"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:16379/1"
+
     class Config:
         env_file = ".env"
         case_sensitive = True
