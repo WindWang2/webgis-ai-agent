@@ -23,7 +23,7 @@ def test_get_or_create_conversation_creates_new():
 
 
 def test_get_or_create_conversation_returns_existing():
-    from app.models.db_models import Conversation
+    from app.models.db_model import Conversation
     svc, db = make_service()
     existing = Conversation(id="sess-1", title="Old", created_at=datetime.utcnow(), updated_at=datetime.utcnow())
     db.get.return_value = existing
@@ -53,7 +53,7 @@ def test_list_sessions():
 
 
 def test_delete_session():
-    from app.models.db_models import Conversation
+    from app.models.db_model import Conversation
     svc, db = make_service()
     conv = MagicMock(spec=Conversation)
     db.get.return_value = conv
@@ -71,7 +71,7 @@ def test_delete_session_not_found():
 
 
 def test_enforce_cap_deletes_oldest():
-    from app.models.db_models import Conversation
+    from app.models.db_model import Conversation
     svc, db = make_service()
     db.query.return_value.count.return_value = 1002
     old1 = MagicMock(spec=Conversation, id="old1")

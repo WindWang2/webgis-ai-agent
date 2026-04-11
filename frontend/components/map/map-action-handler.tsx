@@ -3,7 +3,7 @@ import { useEffect } from 'react';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 
 function calculateBBox(geojson: any): [number, number, number, number] | null {
-  let bounds = [Infinity, Infinity, -Infinity, -Infinity];
+  const bounds = [Infinity, Infinity, -Infinity, -Infinity];
   const coord: number[][] = [];
 
   function extract(node: any) {

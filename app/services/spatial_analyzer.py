@@ -774,7 +774,47 @@ class SpatialAnalyzer:
                     "geometry": mapping(source_geom),
                     "properties": {
                         **source_row.drop('geometry').to_dict(),
-                        "nearest_distance": float(min_distance_in_uni                    with tempfile.TemporaryDirectory() as tmpdir:
+                        "nearest_distance": float(min_distance_in_unit)
+                    }
+                }
+                results.append(result_feature)
+
+            if callback: callback(90, "完成最近邻分析...")
+
+            return AnalysisResult(success=True, data={
+                "type": "FeatureCollection",
+                "features": results
+            }, stats={
+                "source_count": len(source_features),
+                "target_count": len(target_features),
+                "nearest_count": len(results),
+                "unit": unit
+            })
+        except Exception as e:
+            logger.error(f"最近邻分析失败: {e}")
+            return AnalysisResult(success=False, error_message=str(e))
+
+    @classmethod
+    def export(
+        cls,
+        features: List[Dict],
+        format: str = "geojson",
+        output_path: Optional[str] = None,
+        callback: Optional[Callable] = None
+    ) -> AnalysisResult:
+        """导出分析结果"""
+        try:
+            import tempfile
+            import zipfile
+            import base64
+            import os
+            
+            format_normalized = format.lower()
+            gdf = gpd.GeoDataFrame.from_features(features)
+
+            if not output_path:
+                if format_normalized in ["shp", "shapefile"]:
+                    with tempfile.TemporaryDirectory() as tmpdir:
                         shp_path = os.path.join(tmpdir, "output.shp")
                         gdf.to_file(shp_path, driver="ESRI Shapefile")
                         
@@ -800,16 +840,15 @@ class SpatialAnalyzer:
                 else:
                     return AnalysisResult(
                         success=False,
-                        error_message=f"导出{format_normalized}格式需要指定output_path"
+                        error_message=f"该格式需要指定 output_path: {format_normalized}"
                     )
             
             # 导出到文件
             if format_normalized == "geojson":
                 gdf.to_file(output_path, driver="GeoJSON")
-            elif format_normalized == "shapefile":
+            elif format_normalized in ["shp", "shapefile"]:
                 gdf.to_file(output_path, driver="ESRI Shapefile")
             elif format_normalized == "csv":
-                # 导出为CSV（包含WKT几何列）
                 gdf['geometry_wkt'] = gdf.geometry.astype(str)
                 gdf.drop(columns=['geometry']).to_csv(output_path, index=False)
             

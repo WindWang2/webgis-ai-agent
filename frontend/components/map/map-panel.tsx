@@ -74,6 +74,7 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
   const [coordinates, setCoordinates] = useState({ lng: 0, lat: 0 })
   const [viewState, setViewState] = useState(DEFAULT_VIEW_STATE)
   const [mapReady, setMapReady] = useState(false)
+  const [activeFilters, setActiveFilters] = useState<Record<string, number[][]>>({})
   const mapRef = useRef<MapRef>(null)
   const lastAnalysisCenter = useRef<string>("")
 
@@ -81,6 +82,13 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
     () => getMapStyle(MAP_STYLES[selectedBaseLayer]),
     [selectedBaseLayer]
   )
+
+  const handleFilterChange = useCallback((layerId: string, ranges: number[][]) => {
+    setActiveFilters(prev => ({
+      ...prev,
+      [layerId]: ranges
+    }))
+  }, [])
 
   // Apply analysis results to map
   useEffect(() => {
@@ -103,7 +111,7 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
     }
   }, [analysisResult])
 
-  // Dynamic layer rendering — 依赖 layers, mapReady, currentMapStyle
+  // Dynamic layer rendering — 依赖 layers, mapReady, currentMapStyle, activeFilters
   useEffect(() => {
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
@@ -114,221 +122,203 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
         return
       }
 
-      // Step 1: Remove old custom layers and sources
-      try {
-        const style = map.getStyle()
-        if (style) {
-          for (const layer of style.layers || []) {
-            if (layer.id.startsWith("custom-")) {
-              try { map.removeLayer(layer.id) } catch (e) { console.warn("[MapPanel] removeLayer failed:", layer.id, e) }
-            }
-          }
-          for (const sourceId of Object.keys(style.sources || {})) {
-            if (sourceId.startsWith("custom-")) {
-              try { map.removeSource(sourceId) } catch (e) { console.warn("[MapPanel] removeSource failed:", sourceId, e) }
+      // Step 1: Remove layers/sources that are no longer in the props
+      const currentLayers = layers.map(l => `custom-${l.id}`)
+      const style = map.getStyle()
+      if (style) {
+        // Remove layers
+        for (const layer of style.layers || []) {
+          if (layer.id.startsWith("custom-")) {
+            // Find if this layer belongs to any current layer
+            const baseId = layer.id.split('-').slice(1, 2)[0] // custom-[id]-suffix
+            if (!layers.find(l => l.id === baseId)) {
+              try { map.removeLayer(layer.id) } catch (e) {}
             }
           }
         }
-      } catch (e) {
-        console.error("[MapPanel] cleanup error:", e)
+        // Remove sources
+        for (const sourceId of Object.keys(style.sources || {})) {
+          if (sourceId.startsWith("custom-")) {
+            const baseId = sourceId.replace("custom-", "")
+            if (!layers.find(l => l.id === baseId)) {
+               try { map.removeSource(sourceId) } catch (e) {}
+            }
+          }
+        }
       }
 
-      // Step 2: Add new layers
+      // Step 2: Add or Update layers
+      // Process from bottom to top so that we can use moveLayer correctly
+      // Actually, we'll process in order and handle z-index at the end
       for (const layer of layers) {
-        console.log("[MapPanel] Processing layer:", layer.id, "type:", layer.type, "visible:", layer.visible, "style:", layer.style)
-        if (!layer.visible || !layer.source) continue
-
-        const sourceId = `custom-${layer.id}`
-
-        // Safety: force remove if somehow still exists
-        try {
-          if (map.getSource(sourceId)) {
-            console.warn("[MapPanel] source still exists after cleanup, force removing:", sourceId)
-            // Remove layers using this source first
+        if (!layer.visible || !layer.source) {
+          // If exists but not visible, hide all associated sub-layers
+          if (map.getSource(`custom-${layer.id}`)) {
             const s = map.getStyle()
-            for (const l of s?.layers || []) {
-              if (l.source === sourceId) {
-                try { map.removeLayer(l.id) } catch {}
+            s?.layers?.forEach(l => {
+              if (l.id.startsWith(`custom-${layer.id}`)) {
+                map.setLayoutProperty(l.id, 'visibility', 'none')
               }
-            }
-            map.removeSource(sourceId)
+            })
           }
-        } catch (e) {
-          console.warn("[MapPanel] force remove failed:", e)
+          continue
         }
 
+        const sourceId = `custom-${layer.id}`
+        const isNewSource = !map.getSource(sourceId)
+
         try {
+          // --- SOURCE HANDLING ---
+          if (isNewSource) {
+            if (layer.type === "raster" || layer.type === "tile") {
+              map.addSource(sourceId, { type: "raster", tiles: [layer.source as string], tileSize: 256 })
+            } else if (layer.type === "heatmap" && (layer.source as any)?.image) {
+              const src = layer.source as any
+              const [west, south, east, north] = src.bbox
+              map.addSource(sourceId, {
+                type: "image",
+                url: src.image,
+                coordinates: [[west, north], [east, north], [east, south], [west, south]],
+              } as any)
+            } else {
+              map.addSource(sourceId, { type: "geojson", data: layer.source as any })
+            }
+          } else {
+            // Update existing source data if changed (only for GeoJSON)
+            if (layer.type !== "raster" && layer.type !== "tile" && !(layer.type === "heatmap" && (layer.source as any)?.image)) {
+              const src = map.getSource(sourceId) as any
+              if (src.setData) src.setData(layer.source)
+            }
+          }
+
+          // --- LAYER HANDLING ---
+          const color = layer.style?.color || "#3b82f6"
+          const thematicField = layer.source && typeof layer.source === 'object' ? layer.source.metadata?.field : null
+          const filterRanges = activeFilters[layer.id]
+          
+          const getLayerFilter = (baseType: string) => {
+            const base: any = ["==", "$type", baseType]
+            if (thematicField && filterRanges) {
+              const rangeFilters = filterRanges.map((range: number[]) => (
+                ["all", [">=", ["get", thematicField], range[0]], ["<", ["get", thematicField], range[1]]]
+              ))
+              return ["all", base, ["any", ...rangeFilters]]
+            }
+            return base
+          }
+
+          const addOrUpdate = (subId: string, layerConfig: any) => {
+            const fullId = `custom-${layer.id}-${subId}`
+            if (!map.getLayer(fullId)) {
+              map.addLayer({ ...layerConfig, id: fullId, source: sourceId })
+            } else {
+              // Update visibility
+              map.setLayoutProperty(fullId, 'visibility', 'visible')
+              // Update filter if applicable
+              if (layerConfig.filter) map.setFilter(fullId, layerConfig.filter)
+              // Update opacity/paint
+              if (layerConfig.paint) {
+                Object.keys(layerConfig.paint).forEach(key => {
+                  map.setPaintProperty(fullId, key, layerConfig.paint[key])
+                })
+              }
+            }
+          }
+
           if (layer.type === "raster" || layer.type === "tile") {
-            map.addSource(sourceId, { type: "raster", tiles: [layer.source], tileSize: 256 })
-            map.addLayer({
-              id: `custom-${layer.id}-${layer.type}`,
+            addOrUpdate("main", {
               type: "raster",
-              source: sourceId,
               paint: { "raster-opacity": layer.opacity || 1 },
             })
           } else if (layer.type === "heatmap" && (layer.source as any)?.image) {
-            // 栅格热力图：image source
-            const src = layer.source as any
-            const [west, south, east, north] = src.bbox
-            map.addSource(sourceId, {
-              type: "image",
-              url: src.image,
-              coordinates: [
-                [west, north],  // top-left
-                [east, north],  // top-right
-                [east, south],  // bottom-right
-                [west, south],  // bottom-left
-              ],
-            } as any)
-            map.addLayer({
-              id: `custom-${layer.id}-raster`,
+            addOrUpdate("raster", {
               type: "raster",
-              source: sourceId,
-              paint: {
-                "raster-opacity": layer.opacity ?? 0.85,
-                "raster-resampling": "linear",
-              },
+              paint: { "raster-opacity": layer.opacity ?? 0.85, "raster-resampling": "linear" },
             })
-
-            // Auto-fit
-            const bounds = new maplibregl.LngLatBounds([west, south], [east, north])
-            map.fitBounds(bounds, { padding: 50, maxZoom: 14 })
-          } else if (layer.type === "vector" || layer.type === "heatmap") {
-            const src = layer.source
-            if (typeof src !== "object" || src.type !== "FeatureCollection") {
-              console.warn("[MapPanel] skipping non-FeatureCollection source for:", layer.id, "sourceType:", typeof src, src?.type)
-              continue
-            }
-
-            map.addSource(sourceId, { type: "geojson", data: src })
-
-            const features = src.feature || src.features || []
-            const color = layer.style?.color || "#3b82f6"
-
-            const hasPolygons = features.some((f: any) => f.geometry?.type === "Polygon" || f.geometry?.type === "MultiPolygon")
-            const hasLines = features.some((f: any) => ["LineString", "MultiLineString"].includes(f.geometry?.type))
-            const hasPoints = features.some((f: any) => f.geometry?.type === "Point")
-            const hasWeight = features.some((f: any) => f.properties?.weight !== undefined)
+          } else {
+            const src = layer.source as any
+            const features = src.features || []
+            const hasPolygons = features.some((f: any) => f.geometry?.type?.includes("Polygon"))
+            const hasLines = features.some((f: any) => f.geometry?.type?.includes("Line"))
+            const hasPoints = features.some((f: any) => f.geometry?.type?.includes("Point"))
             const isHeatmapMode = layer.type === "heatmap" || layer.style?.renderType === "heatmap"
 
             if (hasPolygons) {
-              if (isHeatmapMode && hasWeight) {
-                // 栅格热力图：用 choropleth fill 渲染网格单元，颜色按 weight 插值
-                map.addLayer({
-                  id: `custom-${layer.id}-heatgrid`, type: "fill", source: sourceId,
-                  filter: ["==", "$type", "Polygon"],
-                  paint: {
+              if (isHeatmapMode) {
+                addOrUpdate("heatgrid", {
+                   type: "fill",
+                   filter: getLayerFilter("Polygon"),
+                   paint: {
+                    // 高对比度格网色带：淡黄 -> 橙色 -> 深红 -> 紫黑
                     "fill-color": [
-                      "interpolate", ["linear"], ["get", "weight"],
-                      0,    "rgba(0,0,0,0)",
-                      0.05, "rgba(0,32,160,0.75)",
-                      0.2,  "rgba(0,120,255,0.82)",
-                      0.4,  "rgba(0,220,180,0.87)",
-                      0.6,  "rgba(255,220,0,0.92)",
-                      0.8,  "rgba(255,90,0,0.96)",
-                      1.0,  "rgba(200,0,0,1.0)",
+                      "interpolate",
+                      ["linear"],
+                      ["get", "weight"],
+                      0.0, "rgba(255, 255, 178, 0)",
+                      0.2, "rgba(254, 217, 118, 0.7)",
+                      0.4, "rgba(253, 141, 60, 0.8)",
+                      0.6, "rgba(240, 59, 32, 0.85)",
+                      0.8, "rgba(189, 0, 38, 0.9)",
+                      1.0, "rgba(71, 14, 0, 0.95)"
                     ],
-                    "fill-opacity": layer.opacity || 1,
-                    "fill-antialias": false,
-                  },
+                    "fill-outline-color": "rgba(255, 255, 255, 0.05)",
+                    "fill-opacity": layer.opacity ?? 1,
+                    "fill-antialias": true
+                  }
                 })
               } else {
-                map.addLayer({
-                  id: `custom-${layer.id}-fill`, type: "fill", source: sourceId,
-                  paint: { 
-                    "fill-color": ["coalesce", ["get", "fill_color"], color], 
-                    "fill-opacity": (layer.opacity || 1) * 0.3 
-                  },
-                  filter: ["==", "$type", "Polygon"],
+                addOrUpdate("fill", {
+                  type: "fill",
+                  filter: getLayerFilter("Polygon"),
+                  paint: { "fill-color": ["coalesce", ["get", "fill_color"], color], "fill-opacity": (layer.opacity || 1) * 0.3 }
                 })
-                map.addLayer({
-                  id: `custom-${layer.id}-outline`, type: "line", source: sourceId,
-                  paint: { 
-                    "line-color": ["coalesce", ["get", "stroke_color"], ["get", "fill_color"], color], 
-                    "line-width": ["coalesce", ["get", "stroke_width"], 2], 
-                    "line-opacity": layer.opacity || 1 
-                  },
-                  filter: ["==", "$type", "Polygon"],
+                addOrUpdate("outline", {
+                  type: "line",
+                  filter: getLayerFilter("Polygon"),
+                  paint: { "line-color": ["coalesce", ["get", "stroke_color"], ["get", "fill_color"], color], "line-width": 2, "line-opacity": layer.opacity || 1 }
                 })
               }
             }
             if (hasLines) {
-              map.addLayer({
-                id: `custom-${layer.id}-line`, type: "line", source: sourceId,
-                paint: { 
-                  "line-color": ["coalesce", ["get", "fill_color"], color], 
-                  "line-width": 3, 
-                  "line-opacity": layer.opacity || 1 
-                },
-                filter: ["==", "$type", "LineString"],
+              addOrUpdate("line", {
+                type: "line",
+                filter: getLayerFilter("LineString"),
+                paint: { "line-color": ["coalesce", ["get", "fill_color"], color], "line-width": 3, "line-opacity": layer.opacity || 1 }
               })
             }
-            if (hasPoints && !isHeatmapMode) {
-              const circleRadius = hasWeight
-                ? ["interpolate", ["linear"], ["get", "weight"], 0, 4, 0.5, 6, 1, 8]
-                : 7
-              map.addLayer({
-                id: `custom-${layer.id}-point`, type: "circle", source: sourceId,
-                filter: ["==", "$type", "Point"],
+            if (hasPoints) {
+              addOrUpdate("point", {
+                type: "circle",
+                filter: getLayerFilter("Point"),
                 paint: {
-                  "circle-radius": circleRadius,
-                  "circle-color": ["coalesce", ["get", "fill_color"], color], 
-                  "circle-stroke-width": ["coalesce", ["get", "stroke_width"], 2],
-                  "circle-stroke-color": "#fff", "circle-opacity": layer.opacity || 1,
-                },
-              })
-              map.addLayer({
-                id: `custom-${layer.id}-label`, type: "symbol", source: sourceId,
-                filter: ["==", "$type", "Point"],
-                layout: {
-                  "text-field": ["get", "name"], "text-size": 11,
-                  "text-offset": [0, 1.2], "text-anchor": "top", "text-optional": true,
-                },
-                paint: { "text-color": "#fff", "text-halo-color": "#000", "text-halo-width": 1.5 },
-              })
-            }
-
-            // Auto-fit bounds
-            if (features.length > 0) {
-              const bounds = new maplibregl.LngLatBounds()
-              features.forEach((f: any) => {
-                if (!f.geometry) return
-                if (f.geometry.type === "Point") {
-                  bounds.extend(f.geometry.coordinates as [number, number])
-                } else if (f.geometry.coordinates) {
-                  const coords = f.geometry.type === "Polygon"
-                    ? f.geometry.coordinates[0]
-                    : Array.isArray(f.geometry.coordinates[0]?.[0])
-                      ? f.geometry.coordinates.flat()
-                      : f.geometry.coordinates
-                  ;(Array.isArray(coords[0]) ? coords : [coords]).forEach((c: number[]) => {
-                    bounds.extend(c as [number, number])
-                  })
+                  "circle-radius": features.some((f: any) => f.properties?.weight) ? ["interpolate", ["linear"], ["get", "weight"], 0, 4, 1, 8] : 7,
+                  "circle-color": ["coalesce", ["get", "fill_color"], color],
+                  "circle-stroke-width": 2, "circle-stroke-color": "#fff", "circle-opacity": layer.opacity || 1
                 }
               })
-              if (!bounds.isEmpty()) {
-                map.fitBounds(bounds, { padding: 50, maxZoom: 15 })
-              }
             }
           }
-          console.log("[MapPanel] layer added successfully:", layer.id, "features:", layer.type === "vector" && typeof layer.source === "object" ? (layer.source as any).features?.length : "N/A")
         } catch (e) {
-          console.error("[MapPanel] ERROR adding layer:", layer.id, e)
-          // Try to clean up partial state
-          try {
-            const s = map.getStyle()
-            for (const l of s?.layers || []) {
-              if (l.source === sourceId) { try { map.removeLayer(l.id) } catch {} }
-            }
-            if (map.getSource(sourceId)) { try { map.removeSource(sourceId) } catch {} }
-          } catch {}
+          console.error("[MapPanel] incremental update error for:", layer.id, e)
         }
+      }
+
+      // Step 3: Global Z-Index Sync
+      // We process layers from BACK to FRONT (index end to 0) and use moveLayer(id) to move to top
+      // Wait, in React state, layers[0] is usually top.
+      // So iterate from index length-1 down to 0. Move each to top.
+      const reversedLayers = [...layers].reverse()
+      for (const layer of reversedLayers) {
+        const subLayers = style?.layers?.filter(sl => sl.id.startsWith(`custom-${layer.id}`)) || []
+        subLayers.forEach(sl => {
+          try { map.moveLayer(sl.id) } catch {}
+        })
       }
     }
 
     renderLayers()
     return () => { map.off('styledata', renderLayers) }
-  }, [layers, mapReady, currentMapStyle])
+  }, [layers, mapReady, currentMapStyle, activeFilters])
 
   const handleMove = useCallback((evt: ViewStateChangeEvent) => {
     setViewState(evt.viewState)
@@ -432,7 +422,13 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
           <div className="absolute bottom-16 left-4 z-10 transition-all duration-500">
             {(() => {
               const tl = layers.find(l => l.visible && l.source?.metadata?.thematic_type === 'choropleth');
-              return tl ? <ThematicLegend metadata={tl.source.metadata} /> : null;
+              if (!tl) return null;
+              return (
+                <ThematicLegend 
+                  metadata={tl.source.metadata} 
+                  onFilterChange={(ranges) => handleFilterChange(tl.id, ranges)}
+                />
+              );
             })()}
           </div>
         )}
