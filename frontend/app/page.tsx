@@ -104,28 +104,41 @@ export default function Home() {
 
   return (
     <TaskProvider>
-      <div className="h-screen w-screen overflow-hidden bg-background relative">
-        {/* 装饰边框 - 内敛色调 */}
-        <div className="absolute inset-4 border border-border-light/30 rounded-lg pointer-events-none" />
+      <div className="h-screen w-screen overflow-hidden bg-background relative selection:bg-primary/30 selection:text-foreground">
+        {/* 装饰边框 - 古典画框感 */}
+        <div className="absolute inset-0 border-[16px] border-border/10 pointer-events-none z-50 pointer-events-none" />
+        <div className="absolute inset-[15px] border border-border/20 pointer-events-none z-50 pointer-events-none" />
+        
+        {/* 背景氛围层 */}
+        <div className="absolute inset-0 opacity-20 pointer-events-none grayscale contrast-125" style={{ backgroundImage: 'url("https://www.transparenttextures.com/patterns/natural-paper.png")' }} />
+        <div className="absolute inset-0 bg-gradient-to-tr from-background via-transparent to-background/50 pointer-events-none" />
 
-        <div className="flex h-full w-full relative z-10">
-          <div className="w-80 flex-shrink-0 border-r border-border overflow-hidden">
+        <div className="flex h-full w-full relative z-10 p-4 gap-4">
+          {/* 左侧对话面板 - 悬浮玻璃感 */}
+          <div className="w-85 lg:w-96 flex-shrink-0 flex flex-col overflow-hidden rounded-xl border border-border/50 shadow-2xl bg-card/40 backdrop-blur-md">
             <ChatPanel onToolResult={handleToolResult} />
           </div>
-        <div className="flex-1 min-w-0 overflow-hidden">
-          <MapPanel
-            layers={layers}
-            onRemoveLayer={handleRemoveLayer}
-            onToggleLayer={handleToggleLayer}
-            onEditLayer={handleEditLayer}
-            analysisResult={analysisResult}
-          />
-        </div>
-        <div className="w-80 flex-shrink-0 border-l border-border overflow-hidden bg-card">
-          <ResultsPanel layers={layers} onGenerateReport={() => {}} onToggleLayer={handleToggleLayer} />
+
+          {/* 中间地图区域 - 核心视窗 */}
+          <div className="flex-1 min-w-0 flex flex-col overflow-hidden rounded-xl border border-border/50 shadow-inner bg-background relative group">
+            <MapPanel
+              layers={layers}
+              onRemoveLayer={handleRemoveLayer}
+              onToggleLayer={handleToggleLayer}
+              onEditLayer={handleEditLayer}
+              analysisResult={analysisResult}
+            />
+            {/* 角标装饰 */}
+            <div className="absolute top-4 left-4 h-12 w-12 border-t-2 border-l-2 border-primary/40 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity" />
+            <div className="absolute bottom-4 right-4 h-12 w-12 border-b-2 border-r-2 border-primary/40 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity" />
+          </div>
+
+          {/* 右侧结果面板 - 书卷感 */}
+          <div className="w-80 lg:w-85 flex-shrink-0 flex flex-col overflow-hidden rounded-xl border border-border/50 shadow-2xl bg-card/60 backdrop-blur-lg">
+            <ResultsPanel layers={layers} onToggleLayer={handleToggleLayer} />
+          </div>
         </div>
       </div>
-    </div>
     </TaskProvider>
   )
 }
