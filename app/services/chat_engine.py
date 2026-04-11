@@ -11,6 +11,7 @@ import httpx
 from app.core.config import settings
 from app.tools.registry import ToolRegistry
 from app.services.task_tracker import TaskTracker, detect_geojson
+from app.services.session_data import session_data_manager
 from collections import OrderedDict
 from app.core.database import SessionLocal
 from app.services.history_service import HistoryService
@@ -69,14 +70,13 @@ def _sse_event(event_type: str, data: dict) -> str:
 
 
 _MSG_MAX_CHARS = 6000  # 存入 messages 的工具结果最大字符数
-# 需要 geojson 参数且可引用上一步结果的工具
-_GEOJSON_CONSUMER_TOOLS = {"spatial_stats", "buffer_analysis", "nearest_neighbor", "heatmap_data"}
+_MSG_MAX_CHARS = 6000  # 存入 messages 的工具结果最大字符数
 
 
 def _slim_tool_result(result: any, result_str: str, session_geojson_ref: str | None) -> str:
     """将大型工具结果压缩为 LLM 友好的摘要版本。
     完整 GeoJSON 已通过 SSE 推送给前端，messages 里只保留摘要。
-    session_geojson_ref: 调用方存储完整 geojson 的引用 key，告知 LLM 如何引用。
+    session_geojson_ref: 调用方存储完整 geojson 的引用 key (ref:xxx)，告知 LLM 如何引用。
     """
     if len(result_str) <= _MSG_MAX_CHARS:
         return result_str
@@ -114,8 +114,6 @@ class ChatEngine:
         self.max_rounds = 10
         # 内存对话存储: session_id -> messages list (LRU Cache to bound memory)
         self._sessions: LRUCache = LRUCache(capacity=50)
-        # session 级别 GeoJSON 缓存: session_id -> {ref_key -> geojson_str}
-        self._geojson_cache: LRUCache = LRUCache(capacity=100)
         # 任务跟踪器
         self.tracker = TaskTracker()
 
@@ -242,7 +240,11 @@ class ChatEngine:
                 tool_result_msgs: list[str] = []
                 for tc in tc_list:
                     try:
-                        result = await self.registry.dispatch(tc["function"]["name"], tc["function"]["arguments"])
+                        result = await self.registry.dispatch(
+                            tc["function"]["name"], 
+                            tc["function"]["arguments"],
+                            session_id=session_id
+                        )
                         result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
                     except Exception as e:
                         # 区分校验错误与执行错误
@@ -335,14 +337,6 @@ class ChatEngine:
                     except (json.JSONDecodeError, TypeError):
                         tool_args_dict = {}
 
-                    # 如果 LLM 传入了 geojson 引用 key，替换为缓存中的完整数据
-                    if tool_name in _GEOJSON_CONSUMER_TOOLS and isinstance(tool_args_dict, dict):
-                        geojson_param = tool_args_dict.get("geojson", "")
-                        cache = self._geojson_cache.get(session_id, {})
-                        if isinstance(geojson_param, str) and geojson_param in cache:
-                            tool_args_dict["geojson"] = cache[geojson_param]
-                            tool_args_raw = tool_args_dict  # dispatch 支持 dict
-
                     # step_start
                     step = self.tracker.start_step(task.id, tool_name, tool_args_dict)
                     yield _sse_event("step_start", {
@@ -357,18 +351,18 @@ class ChatEngine:
 
                     # 执行工具
                     try:
-                        result = await self.registry.dispatch(tool_name, tool_args_raw)
+                        result = await self.registry.dispatch(
+                            tool_name, 
+                            tool_args_raw,
+                            session_id=session_id
+                        )
                         result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
                         self.tracker.complete_step(task.id, step.id, result)
 
-                        # 将 GeoJSON 结果缓存到 session，key 为工具名
+                        # 将 GeoJSON 结果存储到数据管理器，并生成标准游标
                         geojson_ref: str | None = None
-                        if isinstance(result, dict) and isinstance(result.get("geojson"), dict):
-                            geojson_str = json.dumps(result["geojson"], ensure_ascii=False)
-                            geojson_ref = f"@geojson:{tool_name}"
-                            if session_id not in self._geojson_cache:
-                                self._geojson_cache[session_id] = {}
-                            self._geojson_cache[session_id][geojson_ref] = geojson_str
+                        if isinstance(result, dict) and isinstance(result.get("geojson"), (dict, str)):
+                            geojson_ref = session_data_manager.store(session_id, result["geojson"], prefix="geojson")
 
                         # step_result
                         has_geojson = detect_geojson(result)
@@ -457,7 +451,7 @@ class ChatEngine:
     def clear_session(self, session_id: str):
         if session_id in self._sessions:
             del self._sessions[session_id]
-        self._geojson_cache.pop(session_id, None)
+        session_data_manager.clear_session(session_id)
         db = SessionLocal()
         try:
             HistoryService(db).delete_session(session_id)

@@ -42,7 +42,7 @@ def _safe_parse_geojson(geojson: str) -> dict | None:
 
 
 class BufferAnalysisArgs(BaseModel):
-    geojson: str = Field(..., description="输入 GeoJSON FeatureCollection（JSON字符串）")
+    geojson: Any = Field(..., description="输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)")
     distance: float = Field(..., gt=0, description="缓冲距离（米），必须大于0")
     unit: str = Field("m", description="单位：m/km，默认m")
 
@@ -52,7 +52,7 @@ def register_spatial_tools(registry: ToolRegistry):
     @tool(registry, name="buffer_analysis",
            description="对几何要素进行缓冲区分析，返回缓冲区多边形",
            args_model=BufferAnalysisArgs)
-    def buffer_analysis(geojson: str, distance: float, unit: str = "m") -> dict:
+    def buffer_analysis(geojson: Any, distance: float, unit: str = "m") -> dict:
         try:
             data = _safe_parse_geojson(geojson)
             if not data:
@@ -75,11 +75,8 @@ def register_spatial_tools(registry: ToolRegistry):
             return {"error": str(e)}
 
     @tool(registry, name="spatial_stats",
-           description="计算几何要素的空间统计信息（面积、长度、中心点等）",
-           param_descriptions={
-               "geojson": "输入 GeoJSON FeatureCollection（JSON字符串）"
-           })
-    def spatial_stats(geojson: str) -> dict:
+           description="计算几何要素的空间统计信息（面积、长度、中心点等）")
+    def spatial_stats(geojson: Any) -> dict:
         try:
             import geopandas as gpd
             from shapely.geometry import shape
@@ -107,10 +104,12 @@ def register_spatial_tools(registry: ToolRegistry):
             return {"error": str(e)}
 
     @tool(registry, name="nearest_neighbor",
-           description="查找最近的邻近距离和空间分布模式",
-           param_descriptions={
-               "geojson": "输入点要素 GeoJSON FeatureCollection（JSON字符串）"
-           })
+           description="查找最近的邻近距离和空间分布模式")
+    def nearest_neighbor(geojson: Any) -> dict:
+        try:
+            data = _safe_parse_geojson(geojson)
+            if not data:
+                return {"error": "Invalid GeoJSON input"}
             features = data.get("features", [])
 
             # 使用 Celery 异步执行
@@ -129,14 +128,14 @@ def register_spatial_tools(registry: ToolRegistry):
             return {"error": str(e)}
 
 class HeatmapDataArgs(BaseModel):
-    geojson: str = Field(..., description="输入点要素 GeoJSON FeatureCollection（JSON字符串）")
+    geojson: Any = Field(..., description="输入点要素 GeoJSON 或数据引用(ref:xxx)")
     cell_size: int = Field(500, ge=10, le=5000, description="网格大小（米），范围 10-5000")
     radius: int = Field(1000, ge=10, le=10000, description="搜索半径（米），范围 10-10000")
 
     @tool(registry, name="heatmap_data",
            description="根据点要素生成热力图数据（网格密度统计）",
            args_model=HeatmapDataArgs)
-    def heatmap_data(geojson: str, cell_size: int = 500, radius: int = 1000) -> dict:
+    def heatmap_data(geojson: Any, cell_size: int = 500, radius: int = 1000) -> dict:
         try:
             import base64
             import io
