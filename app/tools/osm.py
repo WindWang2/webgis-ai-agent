@@ -3,7 +3,9 @@ import json
 import logging
 import ssl
 import aiohttp
-from typing import Optional
+from typing import Optional, List, Dict
+from pydantic import BaseModel, Field
+
 from app.core.config import settings
 from app.tools.registry import ToolRegistry, tool
 
@@ -171,16 +173,17 @@ async def _nominatim_search_poi(category: str, bbox: str, limit: int) -> dict:
     return {"type": "FeatureCollection", "features": features}
 
 
+class QueryOsmPoiArgs(BaseModel):
+    area: str = Field(..., description="区域名称或地名，如'北京'、'成都天府广场5公里内'")
+    category: str = Field("restaurant", description="POI 类别，如 restaurant/school/hospital/park/bank/cafe/bar")
+    limit: int = Field(50, ge=1, le=500, description="返回数量上限，范围 1-500")
+
 def register_osm_tools(registry: ToolRegistry):
     """注册 OSM 查询工具"""
 
     @tool(registry, name="query_osm_poi",
            description="查询 OpenStreetMap 中的兴趣点（POI），如餐厅、学校、医院、公园等。会先用地理编码获取区域边界框，再查询 POI。",
-           param_descriptions={
-               "area": "区域名称或地名，如'北京'、'成都天府广场5公里内'",
-               "category": "POI 类别，如 restaurant/school/hospital/park/bank/cafe/bar",
-               "limit": "返回数量上限，默认50"
-           })
+           args_model=QueryOsmPoiArgs)
     async def query_osm_poi(area: str, category: str = "restaurant", limit: int = 50) -> dict:
         # 从 area 中提取距离信息（如 "5公里内"、"3km"）并扩大搜索范围
         import re
