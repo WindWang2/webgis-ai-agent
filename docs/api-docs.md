@@ -1,121 +1,113 @@
-# WebGIS AI Agent 后端接口文档
+# WebGIS AI Agent 后端 API 接口文档 (V2.0)
+
 ## T001 后端基础架构
-### FastAPI 入口
+### FastAPI 入口与承载流
 ```python
 from app.main import app
-# 服务端口: 8000
+# 默认服务端口: 8000
+# 运行环境拦截: Uvicorn Asyncio
 ```
-### 基础端点
+
+### 基础健康与探针端点
 | 方法 | 路径 | 说明 |
 |------|-----|-----|
-| GET | / | 根路径，健康检查 |
-| GET | /api/v1/health | 详细健康状态 |
-| GET | /docs | Swagger 文档 |
+| GET | / | 根路径，网关在线状态 |
+| GET | /api/v1/health | 详细健康状态与底层依赖 (Redis/PostGIS) |
+| GET | /docs | Swagger OpenAPI 动态文档 |
 
-### 中间件
-- CORS: 允许跨域
-- GZIP: 响应压缩
-- 日志: 结构化日志输出
-- 异常处理: 统一错误响应
+---
 
-## T002 图层管理API
-### 文件上传
+## T002 核心 AI 编排层 (SSE 流式)
+V2.0 在聊天网关注入了抵抗 `ERR_CONNECTION_RESET` 的长连接保活架构。
+
+### 会话与记忆管理
+| 方法 | 路径 | 说明 |
+|------|-----|-----|
+| GET | /api/v1/chat/sessions | 获取长短期记忆会话列表 |
+| GET | /api/v1/chat/sessions/{session_id} | 恢复上下文及工具调用帧 |
+| DELETE| /api/v1/chat/sessions/{session_id} | 删除会话与级联缓存数据 |
+
+### 流式大模型网关 (关键交互)
+| 方法 | 路径 | 说明 |
+|------|-----|-----|
+| POST | /api/v1/chat/stream | 发送分析请求 (SSE 协议分发) |
+
+#### [注意] SSE 流 Heartbeat 规范
+当 Agent 在后台调用 Celery 进行分钟级别的地理测算时，此时 LLM 端静默不输出文本。为防止云防火墙断开闲置连接，SSE 网关每 15 秒将推送一条隐式心跳：
+```text
+: keep-alive
+
+```
+前端解析流时需自动跳过此类占位符，保证长链接稳固不断。
+
+---
+
+## T003 零拷贝提取层 (Fetch-on-Demand) 
+为了保障大模型的流式文本绝不被庞杂的地理坐标卡死，大模型输出的 Layer 结果只包含 `ref_id`。实际数据拉取依靠以下接口：
+
+| 方法 | 路径 | 说明 |
+|------|-----|-----|
+| GET | `/api/v1/layer/{ref_id}/data` | 获取原始空间 Payload (从 Redis 中解压提件) |
+
+#### 提件返回格
+- **Content-Type**: `application/json` (GeoJSON FeatureCollection)
+- **404 状态**: 表示 Redis 中的缓存令牌已到期 (TTL失效)，前端需提示用户重试。
+
+---
+
+## T004 传统图层管控API (重装存储)
+用户主动上传的基建底座。
+
+### 文件载入
 ```
 POST /api/v1/layers/upload
 Content-Type: multipart/form-data
 
-参数:
-- file: 文件 (GeoJSON/Shapefile/TIFF)
-- name: 图层名称
-- layer_type: vector|raster|tile
-- description: 描述(可选)
+入参:
+- file: (GeoJSON/Shapefile/KML 支持多重压缩)
+- name: 图层标识名
 
-返回: {layer_id, feature_count, status}
+机制: 强制切网格进 PostGIS 建空间索引
 ```
 
-### CRUD 操作
+### 空间元数据探测
 | 方法 | 路径 | 说明 |
 |------|-----|-----|
-| GET | /api/v1/layers | 图层列表(分页) |
-| GET | /api/v1/layers/{id} | 图层详情 |
-| PUT | /api/v1/layers/{id} | 更新图层 |
-| DELETE | /api/v1/layers/{id} | 删除图层 |
+| GET | /api/v1/layers | PostGIS 图层目录清单 |
+| GET | /api/v1/layers/{id} | 图层元属性与几何中心 |
+| DELETE | /api/v1/layers/{id} | 层级销毁 |
 
-### 空间查询
+---
+
+## T005 异步任务队列监控 (Celery Cluster)
+被下发的空间切割重度任务监管。
+
 | 方法 | 路径 | 说明 |
 |------|-----|-----|
-| GET | /api/v1/layers/{id}/bounds | 获取边界 |
-| GET | /api/v1/layers/{id}/geojson | 导出GeoJSON |
-| POST | /api/v1/layers/spatial-query | 空间关系查询 |
+| GET | /api/v1/tasks/{id} | 读取 Celery 后台挂载状态 |
+| POST| /api/v1/tasks/{id}/cancel | 终止后台进程（释放 CPU） |
 
-### 空间查询操作符
-- `contains`: 包含
-- `intersects`: 相交
-- `within`: 范围内
-- `touches`: 接壤
-- `crosses`: 穿过
-- `distance`: 距离查询
+### 核心计算列队
+- **Queue: `default`**: API 快速搬运
+- **Queue: `spatial_heavy`**: 大于十万网格叠加运算、多点缓冲区裁剪
+- **Backend Cache**: Redis `localhost:6379`
 
-## T003 空间分析任务队列
-### 任务管理
-| 方法 | 路径 | 说明 |
-|------|-----|-----|
-| POST | /api/v1/tasks/submit | 提交分析任务 |
-| GET | /api/v1/tasks/{id} | 任务详情 |
-| GET | /api/v1/tasks/{id}/progress | 进度查询(SSE) |
-| POST | /api/v1/tasks/{id}/cancel | 取消任务 |
-| POST | /api/v1/tasks/{id}/retry | 重试失败任务 |
+---
 
-### 分析类型
-- buffer: 缓冲区分析
-- clip: 裁剪分析
-- intersect: 相交分析
-- dissolve: 融合分析
-- union: 联合分析
-- spatial_join: 空间连接
-- statistics: 统计分析
-
-### Celery 配置
-- Broker: Redis localhost:6379/0
-- Backend: Redis localhost:6379/1
-- 队列: default, high_priority, spatial_analysis
-
-## T004 AI 聊天与编排
-### 会话管理
-| 方法 | 路径 | 说明 |
-|------|-----|-----|
-| GET | /api/v1/chat/sessions | 获取历史会话列表 |
-| GET | /api/v1/chat/sessions/{session_id} | 获取特定会话及消息记录 |
-| DELETE| /api/v1/chat/sessions/{session_id} | 删除会话 |
-
-### 消息发送
-| 方法 | 路径 | 说明 |
-|------|-----|-----|
-| POST | /api/v1/chat/completions | 发送单次聊天请求(非流式) |
-| POST | /api/v1/chat/stream | 发送聊天请求(SSE流式返回) |
-
-### 工具管理
-| 方法 | 路径 | 说明 |
-|------|-----|-----|
-| GET | /api/v1/chat/tools | 获取可用Agent工具列表 |
-| POST | /api/v1/chat/tools/execute | 独立执行工具 |
-
-## 统一响应格式
+## T006 统一响应格盾与异常
 ```json
 {
-  "code": "SUCCESS",
-  "success": true,
-  "message": "操作成功",
-  "data": {...}
+  "code": "SUCCESS",         // 操作结果锁 (SUCCESS/ERROR)
+  "success": true,           // BOOLEAN 快判
+  "message": "执行通过",      // 异常阻挡或告警通报
+  "data": {...}              // Payload
 }
 ```
 
-## 错误码
-| 错误码 | 说明 |
+### 错误捕获池 (Exception Throwings)
+| 错误码 | 机制与应对层 |
 |--------|-----|
-| VALIDATE_ERROR | 参数校验失败 |
-| NOT_FOUND | 资源不存在 |
-| PERMISSION_DENIED | 权限不足 |
-| PARSE_ERROR | 文件解析失败 |
-| SERVER_ERROR | 服务器内部错误 |
-| TASK_FAILED | 任务执行失败 |
+| `VALIDATE_ERROR` | FastAPI Pydantic 参数校验溃败，需拦截。 |
+| `SPATIAL_TOPOLOGY_ERR` | GIS自交或环路错误，需通过 "Exception As Thought" 抛回给大模型启动清理指令。 |
+| `CELERY_TIMEOUT` | 分布式节点队列拥堵，要求延后补录。 |
+| `CACHE_MISS` | Fetch-On-Demand 提货码超期被清理，下发指令要求大模型从零原算。 |

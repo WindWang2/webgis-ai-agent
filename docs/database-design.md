@@ -1,26 +1,26 @@
-# WebGIS AI Agent 数据库设计文档
-## T008 数据库设计
-### 核心表结构
+# WebGIS AI Agent 数据库设计文档 (V2.0)
 
-系统目前包含以下核心表，位于 `app/models/db_models.py` 中，采用 SQLAlchemy 定义。
+本系统采用 **Hybrid 混合持久化架构**，关系与空间核心依托 `PostGIS / SQLite`，大容量临时吞吐则依赖 `Redis` 内存沙盒。
 
-#### users - 用户表
-| 列名 | 类型 | 说明 |
-|------|-----|-------|
-| id | VARCHAR(100) | PK |
-| name | VARCHAR(100) | 用户名 |
-| email | VARCHAR(200) | 邮箱 |
-| role | VARCHAR(50) | 角色 |
-| created_at | DATETIME | 创建时间 |
+## 1. Redis 内存沙盒 (V2.0 新增枢纽)
+为了支撑按需拉取 (Fetch-on-Demand) 架构，系统的热点数据交换不再入库，而是经过 Redis。
 
-#### user_roles - 用户角色表
-| 列名 | 类型 | 说明 |
-|------|-----|-------|
-| id | INTEGER | PK 自增 |
-| user_id | VARCHAR(100) | FK->users.id |
-| role | VARCHAR(50) | 角色名 |
+| Key 格式 | 类型 | 说明 | TTL (过期期) |
+|------|-----|-------|----|
+| `webgis:session:{uuid}:cache:{layer_id}` | String/JSON | 用于存放后端执行工具抓取的超大型 GeoJSON 聚合包，免除 SSE 推流负担 | 3600s |
+| `webgis:task:{task_id}:result` | JSON | Celery 处理任务后的结果挂载点 | 86400s |
+| `webgis:chat:{session_id}:status` | Hash | 会话互斥锁与 SSE 心跳控制字典 | 会话结束清除 |
 
-#### conversations - 聊天会话表
+---
+
+## 2. 核心关系表结构 (SQLAlchemy)
+
+位于 `app/models/db_models.py`，支持 SQLite 用于开发，PostgreSQL 用于生产。
+
+### 2.1 会话记忆库
+
+#### `conversations` - 聊天会话表
+持久化用户的长线分析历史。
 | 列名 | 类型 | 说明 |
 |------|-----|-------|
 | id | VARCHAR | PK UUID |
@@ -28,58 +28,58 @@
 | created_at | DATETIME | 创建时间 |
 | updated_at | DATETIME | 更新时间 |
 
-#### messages - 聊天消息表
+#### `messages` - 聊天消息表 (Tool Use 追踪器)
+完整留痕大模型调用 Tool 的签名与报错 Exception（实现自愈闭环）。
 | 列名 | 类型 | 说明 |
 |------|-----|-------|
 | id | INTEGER | PK 自增 |
 | conversation_id | VARCHAR | FK->conversations.id |
 | role | VARCHAR(20) | user/assistant/tool |
 | content | TEXT | 消息内容 |
-| tool_calls | JSON | FC Tool Calls |
-| tool_call_id | VARCHAR | Tool ID |
-| tool_result | JSON | Tool Result |
-| created_at | DATETIME | 创建时间 |
+| tool_calls | JSON | 框架级 Function Call |
+| tool_call_id | VARCHAR | Agent 取样关联码 |
+| tool_result | JSON | 此处不再存放超大 GeoJSON，而是存放 `ref_id` |
+| created_at | DATETIME | - |
 
-#### layers - 图层表(核心)
+### 2.2 核心底座物料库
+
+#### `layers` - 持久图层表
+当用户手动上传高价值基建图纸或持久化分析成果时入表。
 | 列名 | 类型 | 说明 |
 |------|-----|-------|
 | id | INTEGER | PK自增 |
 | name | VARCHAR(200) | 图层名称 |
-| type | VARCHAR(50) | geojson/raster/vector |
-| source | VARCHAR(100) | osm/sentinel/upload |
-| data_path | TEXT | 文件路径或 GeoJSON |
-| style | JSON | MapLibre 样式配置 |
+| type | VARCHAR(50) | geojson / raster / vector / heatmap |
+| source | VARCHAR(100) | osm / sentinel / user_upload |
+| data_path | TEXT | 真实服务器路径 / S3 路径 |
+| style | JSON | MapLibre 原生 Shader 参数快照 |
 | visible | BOOLEAN | 是否可见 |
-| opacity | FLOAT | 透明度 |
-| created_at | DATETIME | 创建时间 |
+| opacity | FLOAT | - |
 
-#### analysis_tasks - 空间分析任务表
+#### `analysis_tasks` - 空间算子工单表
+Celery 长耗时队列的状态机。
 | 列名 | 类型 | 说明 |
 |------|-----|-------|
 | id | INTEGER | PK自增 |
 | name | VARCHAR(200) | 任务名称 |
-| type | VARCHAR(50) | 分析类型 |
-| status | VARCHAR(50) | 任务状态 (pending/success/error...) |
-| result | JSON | 任务结果 |
-| created_at | DATETIME | 创建时间 |
-| updated_at | DATETIME | 更新时间 |
+| type | VARCHAR(50) | intersect / buffer_geo / st_join |
+| status | VARCHAR(50) | pending / success / failed / retrying |
+| result | JSON | 任务结果摘要或取件 `ref_id` |
 
-### PostGIS 扩展配置
-(当前使用SQLite或标准关系库的话不强制，如果是PostgreSQL则需要以下扩展)
+---
+
+## 3. PostGIS 生产环境拓展 (Production)
+
+当通过 Docker 配置 `DATABASE_URL=postgresql://` 接入时，系统启用高级空间扩展能力：
+
 ```sql
+-- 启用空间引擎
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS postgis_topology;
-CREATE EXTENSION IF NOT EXISTS fuzzystrmatch;
-```
 
-### SQLAlchemy 模型
-位于: `app/models/db_models.py`
-```python
-from app.models.db_models import (
-    User, UserRole, Conversation, Message, Layer, AnalysisTask
-)
-```
+-- 对用户上传的极简点位图自动构建 GIST 树索引
+CREATE INDEX idx_layer_geom_fast ON "layers" USING GIST(geom_column);
 
-### 数据库连接配置
-- 配置文件中 `DATABASE_URL`，支持 SQLite 用于开发，PostgreSQL 用于生产。
-- 模型在启动时通过 Alembic 或 SQLAlchemy 的 `Base.metadata.create_all()` 自动创建。
+-- [规划中] pgvector：用于搭建 RAG 向量知识库
+CREATE EXTENSION IF NOT EXISTS vector;
+```
