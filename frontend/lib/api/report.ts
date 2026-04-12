@@ -1,11 +1,12 @@
 /**
- * T005 报告功能 - API 客户端
+ * 报告 API 客户端
  */
 
 import type {
   ReportFormat,
   ReportGenerateRequest,
   ReportGenerateResponse,
+  ReportListApiResponse,
   ReportStatusResponse,
   ShareResponse,
   ReportInfo,
@@ -14,26 +15,44 @@ import type {
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
 
 /**
- * 生成报告
+ * 生成报告（同步等待结果）
  */
 export async function generateReport(
-  taskId: number,
+  sessionId: string,
   format: ReportFormat = 'pdf',
-  includeMapScreenshot: boolean = true
+  title?: string,
 ): Promise<ReportGenerateResponse> {
-  const res = await fetch(`${API_BASE}/reports/generate`, {
+  const body: ReportGenerateRequest = {
+    session_id: sessionId,
+    format,
+    ...(title ? { title } : {}),
+  };
+
+  const res = await fetch(`${API_BASE}/reports`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      task_id: taskId,
-      format,
-      include_map_screenshot: includeMapScreenshot,
-    } as ReportGenerateRequest),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
     throw new Error(errorData.message || `生成报告失败: ${res.status}`);
+  }
+
+  return res.json();
+}
+
+/**
+ * 获取报告列表
+ */
+export async function listReports(
+  sessionId?: string,
+): Promise<ReportListApiResponse> {
+  const params = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
+  const res = await fetch(`${API_BASE}/reports${params}`);
+
+  if (!res.ok) {
+    throw new Error(`获取报告列表失败: ${res.status}`);
   }
 
   return res.json();
@@ -53,7 +72,7 @@ export async function getReportStatus(reportId: string): Promise<ReportStatusRes
 }
 
 /**
- * 获取报告下载URL
+ * 获取报告下载 URL
  */
 export function getReportDownloadUrl(reportId: string): string {
   return `${API_BASE}/reports/${reportId}/download`;
@@ -64,10 +83,12 @@ export function getReportDownloadUrl(reportId: string): string {
  */
 export async function createShareLink(
   reportId: string,
-  ttlDays: number = 7
+  ttlDays: number = 7,
 ): Promise<ShareResponse> {
-  const res = await fetch(`${API_BASE}/reports/${reportId}/share?ttl_days=${ttlDays}`, {
+  const res = await fetch(`${API_BASE}/reports/${reportId}/share`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ttl_days: ttlDays }),
   });
 
   if (!res.ok) {
@@ -78,31 +99,23 @@ export async function createShareLink(
 }
 
 /**
- * 获取分享报告的URL
+ * 获取分享报告信息
  */
-export function getSharedReportUrl(shareCode: string): string {
-  return `${API_BASE}/reports/shared/${shareCode}`;
+export async function getSharedReportInfo(
+  shareCode: string,
+): Promise<ReportStatusResponse> {
+  const res = await fetch(`${API_BASE}/reports/shared/${shareCode}`);
+
+  if (!res.ok) {
+    throw new Error(`获取分享报告失败: ${res.status}`);
+  }
+
+  return res.json();
 }
 
 /**
- * 轮询等待报告生成完成
+ * 获取分享报告查看 URL
  */
-export async function pollReportStatus(
-  reportId: string,
-  maxAttempts: number = 30,
-  intervalMs: number = 1000
-): Promise<ReportInfo> {
-  for (let i = 0; i < maxAttempts; i++) {
-    const response = await getReportStatus(reportId);
-    const { status } = response.data;
-
-    if (status === 'completed' || status === 'failed') {
-      return response.data;
-    }
-
-    // 等待后继续轮询
-    await new Promise(resolve => setTimeout(resolve, intervalMs));
-  }
-
-  throw new Error('报告生成超时');
+export function getSharedReportUrl(shareCode: string): string {
+  return `${API_BASE}/reports/shared/${shareCode}/view`;
 }
