@@ -4,6 +4,7 @@ export interface Layer {
   type: 'vector' | 'raster' | 'tile' | 'heatmap';
   visible: boolean;
   opacity: number;
+  group?: 'analysis' | 'base' | 'reference';
   source?: string | Record<string, any>;
   style?: Record<string, any>;
   created_at?: string;
