@@ -251,9 +251,45 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
             const hasPolygons = features.some((f) => f.geometry?.type?.includes("Polygon"))
             const hasLines = features.some((f) => f.geometry?.type?.includes("Line"))
             const hasPoints = features.some((f) => f.geometry?.type?.includes("Point"))
-            const isHeatmapMode = layer.type === "heatmap" || layer.style?.renderType === "heatmap"
+            const isNativeHeatmap = layer.type === "heatmap" && src && !isHeatmapRasterSource(layer.source);
+            const isHeatmapMode = layer.type === "heatmap" || layer.style?.renderType === "heatmap" || layer.style?.renderType === "grid"
 
-            if (hasPolygons) {
+            if (isNativeHeatmap) {
+              // Native MapLibre Heatmap
+              addOrUpdate("native-heat", {
+                type: "heatmap",
+                maxzoom: 19,
+                paint: {
+                  "heatmap-weight": ["interpolate", ["linear"], ["get", "weight"], 0, 0, 1, 1],
+                  "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 0, 1, 10, 3, 15, 5, 18, 8],
+                  "heatmap-color": [
+                    "interpolate",
+                    ["linear"],
+                    ["heatmap-density"],
+                    0, "rgba(0,0,255,0)",
+                    0.15, "rgba(0,255,255,0.5)",
+                    0.4, "rgba(0,255,0,0.7)",
+                    0.6, "rgba(255,255,0,0.8)",
+                    0.8, "rgba(255,165,0,0.9)",
+                    1, "rgba(255,0,0,1)"
+                  ],
+                    // Adjust the heatmap radius by zoom level - more aggressive growth for consistent look
+                    "heatmap-radius": [
+                      "interpolate",
+                      ["linear"],
+                      ["zoom"],
+                      0, 2,
+                      5, 5,
+                      9, 25,
+                      12, 40,
+                      15, 70,
+                      18, 100
+                    ],
+                    // Transition from heatmap to circle layer by zoom level
+                    "heatmap-opacity": ["interpolate", ["linear"], ["zoom"], 7, 1, 19, 0.85],
+                }
+              })
+            } else if (hasPolygons) {
               if (isHeatmapMode) {
                 addOrUpdate("heatgrid", {
                    type: "fill",
@@ -289,14 +325,14 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
                 })
               }
             }
-            if (hasLines) {
+            if (hasLines && !isNativeHeatmap) {
               addOrUpdate("line", {
                 type: "line",
                 filter: getLayerFilter("LineString"),
                 paint: { "line-color": ["coalesce", ["get", "fill_color"], color], "line-width": 3, "line-opacity": layer.opacity || 1 }
               })
             }
-            if (hasPoints) {
+            if (hasPoints && !isNativeHeatmap) {
               addOrUpdate("point", {
                 type: "circle",
                 filter: getLayerFilter("Point"),

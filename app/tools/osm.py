@@ -72,18 +72,25 @@ def _overpass_to_geojson(data: str) -> dict:
 async def _query_overpass(query: str) -> dict:
     """执行 Overpass QL 查询，返回 GeoJSON"""
     full_query = f"[out:json][timeout:30];{query.rstrip(';')};out body geom;"
-
-    async with aiohttp.ClientSession(headers={"User-Agent": "WebGIS-AI-Agent/1.0"}) as session:
-        async with session.post(
-            settings.OVERPASS_API_URL,
-            data={"data": full_query},
-            timeout=aiohttp.ClientTimeout(total=60),
-            ssl=_get_ssl_context(),
-                    ) as resp:
-            if resp.status != 200:
-                text = await resp.text()
-                return {"type": "FeatureCollection", "features": [], "error": f"Overpass error {resp.status}: {text}"}
-            data = await resp.text()
+    logger.info(f"[OSM] Querying Overpass API...")
+    
+    try:
+        async with aiohttp.ClientSession(headers={"User-Agent": "WebGIS-AI-Agent/1.0"}) as session:
+            async with session.post(
+                settings.OVERPASS_API_URL,
+                data={"data": full_query},
+                timeout=aiohttp.ClientTimeout(total=60),
+                ssl=_get_ssl_context(),
+                        ) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    logger.error(f"[OSM] Overpass error {resp.status}: {text}")
+                    return {"type": "FeatureCollection", "features": [], "error": f"Overpass error {resp.status}: {text}"}
+                data = await resp.text()
+                logger.info(f"[OSM] Overpass query successful, data size: {len(data)} bytes")
+    except Exception as e:
+        logger.error(f"[OSM] Overpass network/timeout error: {e}")
+        return {"type": "FeatureCollection", "features": [], "error": str(e)}
 
     return _overpass_to_geojson(data)
 
@@ -188,7 +195,12 @@ def register_osm_tools(registry: ToolRegistry):
         # 从 area 中提取距离信息（如 "5公里内"、"3km"）并扩大搜索范围
         import re
         dist_match = re.search(r'(\d+)\s*(公里|千米|km|公里内)', area, re.IGNORECASE)
-        expand_km = float(dist_match.group(1)) if dist_match else 5.0  # 默认扩大5km
+        # 默认不外扩，或者仅外扩 1km 以防点不在正中心
+        expand_km = float(dist_match.group(1)) if dist_match else 1.0 
+        
+        # 如果关键词包含“区”、“县”、“街道”，通常不需要大幅外扩
+        if not dist_match and any(x in area for x in ["区", "县", "街道", "镇", "市"]):
+            expand_km = 0
 
         # 提取纯地名
         clean_area = re.sub(r'\d+\s*(公里|千米|km|公里内|内).*$', '', area, flags=re.IGNORECASE).strip()

@@ -13,11 +13,36 @@ export default function Home() {
   const [layers, setLayers] = useState<Layer[]>([])
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null)
 
-  const handleToolResult = useCallback((toolName: string, result: ToolResult) => {
-    // 栅格热力图（base64 PNG + bbox）
-    if (result?.type === "heatmap_raster" && result?.image && Array.isArray(result.bbox)) {
+  const handleToolResult = useCallback(async (toolName: string, result: any, sessionId?: string) => {
+    let geojson = result.geojson
+    let bbox = result.bbox
+    let image = result.image
+
+    // 1. 如果数据被脱敏 (只有引用 ID)，则异步拉取完整数据
+    if (!geojson && result.geojson_ref && typeof result.geojson_ref === 'string' && result.geojson_ref.startsWith('ref:') && sessionId) {
+      try {
+        const resp = await fetch(`http://localhost:8001/api/v1/layers/data/${result.geojson_ref}?session_id=${sessionId}`)
+        if (resp.ok) {
+          const fullData = await resp.json()
+          // 根据数据类型恢复字段
+          if (fullData.type === "FeatureCollection" || (typeof fullData === 'object' && 'features' in fullData)) {
+            geojson = fullData
+          } else if (fullData.image) {
+            image = fullData.image
+            bbox = fullData.bbox
+          }
+        }
+      } catch (e) {
+        console.error("Fetch layer data failed:", e)
+      }
+    }
+
+    // 2. 处理栅格热力图
+    if ((result?.type === "heatmap_raster" || image) && (result?.image || image) && (result.bbox || bbox)) {
       const layerId = `heatmap_raster-${Date.now()}`
-      const [west, south, east, north] = result.bbox
+      const finalBbox = bbox || result.bbox
+      const finalImage = image || result.image
+      const [west, south, east, north] = finalBbox
       const center: [number, number] = [(west + east) / 2, (south + north) / 2]
       setAnalysisResult({ center, zoom: 10 })
       setLayers(prev => [...prev, {
@@ -26,13 +51,14 @@ export default function Home() {
         type: "heatmap",
         visible: true,
         opacity: 0.85,
-        source: { image: result.image, bbox: result.bbox },
+        source: { image: finalImage, bbox: finalBbox },
         style: {},
       }])
       return
     }
 
-    if (result?.geojson && result.geojson.features?.length > 0) {
+    // 3. 处理矢量数据
+    if (geojson && geojson.features?.length > 0) {
       const layerId = `${toolName}-${Date.now()}`
       const colors = ["#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899"]
       const color = colors[Math.floor(Math.random() * colors.length)]
@@ -68,24 +94,34 @@ export default function Home() {
             break
         }
       }
-      result.geojson.features.forEach((f: GeoJSONFeature) => collectFromGeometry(f.geometry!))
+      geojson.features.forEach((f: GeoJSONFeature) => collectFromGeometry(f.geometry!))
 
       let center: [number, number] | undefined
       let zoom = 12
+      
+      // 优先从要素计算中心
       if (lngs.length > 0) {
         center = [
           lngs.reduce((a, b) => a + b, 0) / lngs.length,
           lats.reduce((a, b) => a + b, 0) / lats.length,
         ]
-        const count = result.geojson.features.length
+        const count = geojson.features.length
         if (count > 100) zoom = 10
         else if (count > 50) zoom = 11
         else if (count < 10) zoom = 13
-      } else if (result.bbox) {
-        const parts = result.bbox.split(",").map(Number)
+      } 
+      // 备选从 bbox 计算中心 (支持脱敏后的导航)
+      else if (bbox || result.bbox) {
+        const b = bbox || result.bbox
+        const parts = typeof b === 'string' ? b.split(",").map(Number) : b
         if (parts.length === 4) {
-          // bbox 格式: [west, south, east, north] = [minLng, minLat, maxLng, maxLat]
-          center = [(parts[0] + parts[2]) / 2, (parts[1] + parts[3]) / 2]
+          // bbox: [min_lat, min_lng, max_lat, max_lng] (backend internal) or [west, south, east, north] (frontend standard)
+          // 这里需要小心格式转换，通常 OSM 出来的 bbox string 是 s,w,n,e
+          if (typeof b === 'string') {
+            center = [(parts[1] + parts[3]) / 2, (parts[0] + parts[2]) / 2]
+          } else {
+            center = [(parts[0] + parts[2]) / 2, (parts[1] + parts[3]) / 2]
+          }
         }
       }
 
@@ -93,25 +129,36 @@ export default function Home() {
         setAnalysisResult({ center, zoom })
       }
 
-      // 确定图层类型：heatmap_raster 返回 type="heatmap"，带 grid 属性的为 vector
-      const isRaster = result.type === "heatmap_raster"
-      const isGrid = result.geojson?.metadata?.render_type === "grid"
+      // 再次确认：如果 result 本身就是脱敏后的 FeatureCollection 根对象
+      if (!geojson && result.type === "FeatureCollection" && result.geojson_ref) {
+        // 这种情况会进入下方的 fetch 逻辑
+      }
+      // 如果 result 本身就是完整的 FeatureCollection
+      if (!geojson && result.type === "FeatureCollection" && result.features) {
+        geojson = result
+      }
       
-      const layerType = isRaster ? "heatmap" : "vector"
-      const layerStyle = (isRaster || isGrid)
-        ? { color, renderType: isRaster ? "heatmap" : "grid" }
-        : { color }
+      if (geojson && geojson.features?.length > 0) {
+        const layerId = `${toolName}-${Date.now()}`
+        const colors = ["#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899"]
+        const color = colors[Math.floor(Math.random() * colors.length)]
+        // 确定图层类型
+        const isGrid = geojson?.metadata?.render_type === "grid"
+        const isNative = geojson?.metadata?.render_type === "native"
+        const layerType = (isGrid || isNative) ? "heatmap" : "vector"
+        const layerStyle = isGrid ? { color, renderType: "grid" } : (isNative ? { color, renderType: "heatmap" } : { color })
 
-      setLayers(prev => [{
-        id: layerId,
-        name: result.type === "poi_query" ? `${result.area} - ${result.category}` : (result.type || toolName),
-        type: layerType,
-        visible: true,
-        opacity: 1,
-        group: result.group || 'analysis',
-        source: result.geojson,
-        style: layerStyle,
-      }, ...prev])
+        setLayers(prev => [{
+          id: layerId,
+          name: isNative ? "原生热力图" : (isGrid ? "格网热力分析" : (result.type === "poi_query" ? `${result.area} - ${result.category}` : (result.type || toolName))),
+          type: layerType,
+          visible: true,
+          opacity: 1,
+          group: result.group || 'analysis',
+          source: geojson,
+          style: layerStyle,
+        }, ...prev])
+      }
     }
   }, [])
 
