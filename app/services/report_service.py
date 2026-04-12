@@ -234,8 +234,17 @@ class ReportService:
     def _extract_tool_name(msg: dict[str, Any]) -> str:
         tool_calls = msg.get("tool_calls")
         if isinstance(tool_calls, list) and tool_calls:
-            return tool_calls[0].get("name", "Tool")
+            first_call = tool_calls[0]
+            if isinstance(first_call, dict):
+                fn = first_call.get("function", {})
+                if isinstance(fn, dict):
+                    return fn.get("name", "Tool")
+                return first_call.get("name", "Tool")
+            return "Tool"
         if isinstance(tool_calls, dict):
+            fn = tool_calls.get("function", {})
+            if isinstance(fn, dict):
+                return fn.get("name", "Tool")
             return tool_calls.get("name", "Tool")
         return "Tool"
 
