@@ -17,32 +17,32 @@
 graph TD
     A[用户态 User] -->|自然语言/上传文件| B(前端渲染枢纽 Next.js)
     
-    subgraph 前端渲染枢纽 [前端边界 (Next.js + MapLibre)]
+    subgraph 前端渲染枢纽 ["前端边界 (Next.js + MapLibre)"]
     B1[React Chat 对话树] --> |解析拦截| B2[MapPanel 原生渲染层]
     B2 --> |GPU Shader 补帧| B3[热力图/聚类层]
     end
     B --> B1
     
-    subgraph 边界网关 [非阻塞 API 护城河 (FastAPI)]
+    subgraph 边界网关 ["非阻塞 API 护城河 (FastAPI)"]
     C{SSE 流推网关} -.-> |保活检测 :keep-alive| B1
     C1[Chat 路由进程] --> C
     C2[空间取件路由 fetch] --> B2
     end
     B1 -->|POST /chat/stream| C1
     
-    subgraph 大脑中枢 [AI Agent 调度层]
+    subgraph 大脑中枢 ["AI Agent 调度层"]
     D[Orchestrator 编排器] --> |Tool 调用指令| D1(Claude 3.5+ API)
     D1 --> |生成 JSON 架子| D
     end
     C1 --> D
     
-    subgraph 重算隔离区 [Celery 分布式超算群]
+    subgraph 重算隔离区 ["Celery 分布式超算群"]
     E[Worker: GeoPandas 交集计算] 
     E1[Worker: 遥感掩膜获取]
     end
     D -->|异步投递算子| E
     
-    subgraph 数据弹药库 [海量时空与流存储]
+    subgraph 数据弹药库 ["海量时空与流存储"]
     F[(Redis 集群)] --> |暂存超大 GeoJSON 提货券| C2
     F1[(PostGIS / SQLite)] --> |落盘长期存储| E
     end
