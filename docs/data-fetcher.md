@@ -1,137 +1,50 @@
-# 统一数据获取层 (Data Fetcher Layer) 接口文档
+# 空间数据引擎与 Fetch-on-Demand (按需拉取) 架构 V2.0
 
 ## 概述
-数据获取层是webgis-ai-agent的核心组件，封装了所有GIS数据源的访问逻辑，向上层编排层提供统一的查询接口，屏蔽底层数据源差异。
+在 V2.0 架构中，数据流引擎完成了颠覆性重构。为了彻底解决几十 MB 的 GeoJSON 撑爆大语言模型（LLM）上下文，以及导致 SSE (Server-Sent Events) 单向长流崩溃卡死的问题，我们引入了业界标准的 **Fetch-on-Demand (按需拉取与引用剥离)** 架构。
 
-## 功能特性
-### 1. 多数据源支持
-| 数据源类型 | 说明 | 支持格式 |
-|-----------|------|----------|
-| `postgis` | PostGIS空间数据库 | 矢量数据（GeoJSON） |
-| `oss` | OSS对象存储 | GeoJSON、Shapefile(zip)、KML、GML |
-| `third_party_api` | 第三方GIS服务API | 高德POI、天地图服务 |
-| `local_file` | 本地上传GIS文件 | GeoJSON、Shapefile(zip)、KML、GML |
+## 核心架构：引用剥离 (Reference Stripping)
 
-### 2. 统一数据模型
-所有数据源返回数据统一转换为`StandardGISData`格式：
+### 1. 痛点与旧模式 (V1.0)
+以前，无论数据多大（如 5 万个相交运算后的建筑物多边形），后端 Tool 均全量返回给 LLM。LLM 接纳完整的 FeatureCollection 后，再通过 SSE 全量吐回给前端，这导致了：
+- **Token 暴涨**：极大概率触发 LLM 截断，成本飙升。
+- **网络熔断**：数分钟的纯文本输出引发 Nginx 或底层 TCP 的 `ERR_CONNECTION_RESET`。
+- **解析卡死**：前端 React 强行 `JSON.parse` 超大流片段，直接崩库。
+
+### 2. V2.0 按需拉取工作流
+| 阶段 | 动作节点 | 原理描述 |
+|---|---|---|
+| **Step 1: 沙盒生成** | 后端 (Tools / Celery) | 当地理工具抓取或计算得到全量空间数据（GeoJSON 或 GeoDataFrame）时，不向函数外抛出明文实体。 |
+| **Step 2: 压缩落床** | 缓存层 (`session_data.py`) | 调用中央暂存方法，将巨型负载通过 Redis 落盘，生成一个全局唯一签名（例如：`layer_id: "custom-osm-1776000551"`）。 |
+| **Step 3: 轻量通信** | 大模型 (Claude) & SSE 通道 | 工具仅向大模型返回摘要与签名壳：`{"layer_id": "custom-osm-1776000551", "count": 50000}`。大模型以此组装回复流，瞬间推至前端。 |
+| **Step 4: 前端取件** | 前端 (`MapPanel` 等拦截器) | React 层监听到此特异性 ID 后，绕过核心状态树（State），独立在后台发起并行的 HTTP GET 轮询。 |
+| **Step 5: 原生注入** | MapLibre (GPU) | 获取到真实的实体 Payload 后，直接作为 DataSource 喂给底层的 MapLibre GL 对象原生绘制。 |
+
+## API 交互范式
+
+### 1. 前端获取凭证
+前端在解析 Agent 推送的工具调用结果卡片时，会收到诸如下方结构：
 ```json
 {
-  "success": true,
-  "data_type": "vector", // vector/raster/attribute
-  "features": [
-    {
-      "type": "Feature",
-      "geometry": {"type": "Point", "coordinates": [116.4, 40.0]},
-      "properties": {"name": "测试点", "address": "北京市"}
-    }
-  ],
+  "layer_id": "custom-heatmap_data-1776000548570",
+  "render_type": "heatmap",
   "metadata": {
-    "source": "postgis",
-    "feature_count": 1,
-    "is_fallback": false
-  },
-  "error_message": null
+    "center": [116.39, 39.9],
+    "count": 4820
+  }
 }
 ```
 
-### 3. 多级缓存机制
-- **一级缓存**：内存缓存（TTL 5分钟，最多1000条）
-- **二级缓存**：Redis缓存（可配置TTL，默认30分钟）
-- 热点数据第二次查询响应时间降低80%以上
-- 支持手动缓存失效
-
-### 4. 权限控制
-- 基于用户角色的数据过滤：
-  - `admin`：完整访问所有数据
-  - `editor`：访问非敏感数据，可编辑
-  - `user`：仅访问公开数据，敏感字段自动过滤
-  - `guest`：仅访问基础公共数据
-
-### 5. 异常降级
-- 数据源访问失败时自动返回最近缓存的数据
-- 无缓存时返回友好错误提示，不影响上层服务可用性
-
-## API 接口
-
-### POST /api/data-fetcher/query
-查询GIS数据
-
-#### 请求参数
-```json
-{
-  "data_source": "postgis", // 数据源类型，必填
-  "query_params": { // 数据源查询参数，必填
-    "table": "poi",
-    "bbox": [116.3, 39.9, 116.5, 40.1],
-    "filter": "type = 'restaurant'"
-  },
-  "data_type": "vector", // 可选，自动检测
-  "skip_cache": false, // 可选，是否跳过缓存
-  "cache_ttl": 3600 // 可选，缓存有效期（秒）
-}
-```
-
-##### 各数据源query_params说明
-1. **PostGIS**:
-   - `table`: 数据库表名（必填）
-   - `bbox`: 空间查询范围 [minx, miny, maxx, maxy]
-   - `geometry_column`: 几何字段名，默认geom
-   - `properties`: 返回字段列表，默认*
-   - `filter`: SQL过滤条件
-
-2. **OSS**:
-   - `file_path`: OSS文件路径（必填）
-   - `layer`: 图层名（多图层文件时）
-
-3. **第三方API**:
-   - `api_provider`: gaode/tianditu，默认gaode
-   - `api_type`: poi/road/geocode，默认poi
-   - `keywords`: 搜索关键词
-   - `city`: 城市名
-   - `limit`: 返回数量，默认20
-
-4. **本地文件**:
-   - `file_path`: 上传文件路径（必填）
+### 2. 前端发起真实拉取 GET `/api/v1/layer/{layer_id}/data`
+一旦 UI 组件挂载，并行执行获取指令。
 
 #### 响应
-返回`StandardGISData`格式数据，详见统一数据模型。
+直接抛回 `application/json` 类型的原始 GeoJSON，或在未来拓展抛出 `mvt` (Mapbox Vector Tile) 以适应亿级渲染。
 
-### POST /api/data-fetcher/invalidate-cache
-失效指定查询的缓存（仅管理员可调用）
+## 存储媒介隔离
 
-#### 请求参数
-同query接口的请求参数，用于定位要失效的缓存。
+- **实时会话层 (In-Memory / Redis)**: 用于存储单次生命周期内的临时抓取（如和风天气、临时 POI 爬虫）。过期时间 (TTL) 设定为 1-2 小时。即使丢失，也能通过 Agent 重试复原。
+- **重度基建层 (PostGIS + MinIO)**: 用于落底用户主动上传的文件（如极其复杂的区域控规图 `shapefile` 等）。在获取阶段，同样生成 ID 指向底座，实现存算分离。
 
-## 使用示例
-```python
-from app.services.data_fetcher import DataFetcherService, DataQuery, DataSourceType
-
-service = DataFetcherService()
-query = DataQuery(
-    data_source=DataSourceType.POSTGIS,
-    query_params={"table": "poi", "bbox": [116.3, 39.9, 116.5, 40.1]}
-)
-result = service.query(query)
-print(result.features)
-```
-
-## 配置项
-在`app/core/config.py`中添加以下配置：
-```python
-# 缓存配置
-DEFAULT_CACHE_TTL = 1800 # 30分钟
-REDIS_URL = "redis://localhost:6379/0" # 可选，不配置则仅使用内存缓存
-
-# OSS配置（可选）
-OSS_ACCESS_KEY_ID = "your-access-key"
-OSS_ACCESS_KEY_SECRET = "your-secret-key"
-OSS_ENDPOINT = "oss-cn-beijing.aliyuncs.com"
-OSS_BUCKET_NAME = "your-bucket"
-
-# 第三方API配置（可选）
-GAODE_API_KEY = "your-gaode-key"
-TIANDITU_API_KEY = "your-tianditu-key"
-
-# 上传文件配置
-UPLOAD_DIR = "./uploads"
-```
+## 异常兜底 (Graceful Degradation)
+- **404 击穿防护**：如果前端持有的 `ref_id` 因长时间未操作在 Redis 中过期失效，API 应当返回 `404/410`。前端拦截后将渲染出特殊的占位态，并向 Chat 对话框推送隐式提问 `"数据凭证已过期失效，请为我重新发起检索"`，唤起大模型的重新计算补抓循环。
