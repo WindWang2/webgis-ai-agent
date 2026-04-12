@@ -6,6 +6,8 @@ import { ResultsPanel } from "@/components/panel/results-panel"
 import { TaskProvider } from "@/lib/contexts/task-context"
 import type { Layer } from "@/lib/types/layer"
 import type { AnalysisResult, ToolResult, GeoJSONGeometry, GeoJSONFeature } from "@/lib/types"
+import type { UploadResponse } from "@/lib/api/upload"
+import { getUploadGeojson } from "@/lib/api/upload"
 
 export default function Home() {
   const [layers, setLayers] = useState<Layer[]>([])
@@ -139,6 +141,42 @@ export default function Home() {
     setAnalysisResult({ center, zoom })
   }, [])
 
+  // 上传成功后自动加载到地图
+  const handleUploadSuccess = useCallback(async (result: UploadResponse) => {
+    if (result.file_type === "vector" && result.bbox) {
+      try {
+        const geojson = await getUploadGeojson(result.id)
+        if (geojson.features?.length > 0) {
+          const layerId = `upload-${result.id}`
+          const colors = ["#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899"]
+          const color = colors[result.id % colors.length]
+          const [west, south, east, north] = result.bbox
+          const center: [number, number] = [(west + east) / 2, (south + north) / 2]
+          const zoom = result.feature_count > 100 ? 10 : result.feature_count > 20 ? 11 : 12
+
+          setAnalysisResult({ center, zoom })
+          setLayers(prev => [{
+            id: layerId,
+            name: result.original_name,
+            type: "vector",
+            visible: true,
+            opacity: 1,
+            group: "reference",
+            source: geojson,
+            style: { color },
+          }, ...prev])
+        }
+      } catch (e) {
+        console.error("加载上传数据到地图失败:", e)
+      }
+    } else if (result.file_type === "raster" && result.bbox) {
+      // 栅格数据：定位到范围
+      const [west, south, east, north] = result.bbox
+      const center: [number, number] = [(west + east) / 2, (south + north) / 2]
+      setAnalysisResult({ center, zoom: 10 })
+    }
+  }, [])
+
   return (
     <TaskProvider>
       <div className="h-screen w-screen overflow-hidden bg-background relative selection:bg-primary/30 selection:text-foreground">
@@ -153,7 +191,7 @@ export default function Home() {
         <div className="flex h-full w-full relative z-10 p-4 gap-4">
           {/* 左侧对话面板 - 悬浮玻璃感 */}
           <div className="w-85 lg:w-96 flex-shrink-0 flex flex-col overflow-hidden rounded-xl border border-border/50 shadow-2xl bg-card/40 backdrop-blur-md">
-            <ChatPanel onToolResult={handleToolResult} />
+            <ChatPanel onToolResult={handleToolResult} onUploadSuccess={handleUploadSuccess} />
           </div>
 
           {/* 中间地图区域 - 核心视窗 */}
