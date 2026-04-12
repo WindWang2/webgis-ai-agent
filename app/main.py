@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.database import init_db
-from app.api.routes import health, map, chat, layer, report, task, upload
+from app.api.routes import health, map, chat, layer, report, task, upload, knowledge
 
 logger = logging.getLogger(__name__)
 
@@ -64,3 +64,4 @@ app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(map.router, prefix="/api/v1", tags=["地图管理"])
 app.include_router(task.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(upload.router, prefix="/api/v1", tags=["数据上传"])
+app.include_router(knowledge.router, prefix="/api/v1", tags=["知识库管理"])
