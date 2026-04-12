@@ -6,6 +6,9 @@ import { ChatSession } from "@/lib/types/chat"
 import { useTask } from "@/lib/contexts/task-context"
 import type { ToolResult } from "@/lib/types"
 import { TaskProgress } from "@/components/chat/task-progress"
+import { UploadZone } from "@/components/upload/upload-zone"
+import { UploadProgress } from "@/components/upload/upload-progress"
+import type { UploadResponse } from "@/lib/api/upload"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { ChartRenderer, ChartData, adaptChartData } from "@/components/chat/chart-renderer"
@@ -33,9 +36,10 @@ interface ChatPanelProps {
   incomingMessage?: string
   incomingResponse?: string
   onToolResult?: (toolName: string, result: ToolResult) => void
+  onUploadSuccess?: (result: UploadResponse) => void
 }
 
-export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse, onToolResult }: ChatPanelProps) {
+export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse, onToolResult, onUploadSuccess }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "1",
@@ -60,6 +64,19 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
   const [historyDetail, setHistoryDetail] = useState<ChatSession | null>(null)
   const [sessionsLoading, setSessionsLoading] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+
+  // Upload state
+  const [uploadedFiles, setUploadedFiles] = useState<UploadResponse[]>([])
+  const [showUploadZone, setShowUploadZone] = useState(false)
+
+  const handleUploadSuccess = useCallback((result: UploadResponse) => {
+    setUploadedFiles(prev => [result, ...prev])
+    onUploadSuccess?.(result)
+  }, [onUploadSuccess])
+
+  const handleRemoveUpload = useCallback((id: number) => {
+    setUploadedFiles(prev => prev.filter(u => u.id !== id))
+  }, [])
 
   // Task context
   const {
@@ -520,11 +537,30 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
 
           {/* Input - 复古信笺风格 */}
           <div className="border-t border-border p-4 bg-background-secondary/30">
+            {/* Uploaded files list */}
+            {uploadedFiles.length > 0 && (
+              <div className="mb-2">
+                <UploadProgress uploads={uploadedFiles} onRemove={handleRemoveUpload} />
+              </div>
+            )}
+            {/* Upload zone (toggle) */}
+            {showUploadZone && (
+              <div className="mb-2">
+                <UploadZone
+                  sessionId={sessionId}
+                  onUploadSuccess={handleUploadSuccess}
+                  compact={false}
+                />
+              </div>
+            )}
             <div className="flex gap-3">
-              <label className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-lg border border-border hover:bg-card hover:border-primary/50 transition-all group">
-                <input type="file" multiple className="hidden" onChange={handleFileSelect} />
-                <Paperclip className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
-              </label>
+              <button
+                onClick={() => setShowUploadZone(prev => !prev)}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border hover:bg-card hover:border-primary/50 transition-all group"
+                title="上传 GIS 数据"
+              >
+                <Upload className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
+              </button>
               <input
                 ref={inputRef}
                 type="text"
