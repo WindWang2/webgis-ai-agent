@@ -1,276 +1,282 @@
 """
-T005 报告生成API - 支持PDF/HTML/Markdown格式导出空间分析结果
-创建时间: 2026-04-03
-更新时间: 2026-04-04 新增Markdown格式支持
+报告生成 API - 从会话历史生成 PDF/HTML/Markdown 报告
+支持报告列表、下载、分享等功能
 """
 import os
-import tempfile
-from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Response
-from fastapi.responses import FileResponse, StreamingResponse
+import secrets
+import uuid
+from datetime import datetime, timezone, timedelta
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-import uuid
-import logging
 
 from app.core.database import get_db
-from app.models.api_response import ApiResponse
-from app.services.report_service import ReportService
+from app.models.api_response import ApiResponse, ErrCode
+from app.models.report import Report
+from app.models.db_model import Conversation, Message
+from app.services.report_service import ReportService, REPORT_DIR
+
+import logging
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/reports", tags=["报告生成"])
 
-# ======= Schema 定义 =======
+ALLOWED_FORMATS = {"pdf", "html", "markdown", "md"}
+
+
+# ── Schemas ──────────────────────────────────────────────────────────
+
+
 class GenerateReportRequest(BaseModel):
-    """生成报告请求"""
-    task_id: int
-    format: str = "pdf"  # pdf/html/markdown/md
-    include_map_screenshot: bool = True
-    template: str = "default"
+    session_id: str
+    format: str = "pdf"
+    title: Optional[str] = None
 
 
-class ReportInfo(BaseModel):
-    """报告信息"""
-    report_id: str
-    task_id: int
-    format: str
-    status: str  # pending/completed/failed
-    download_url: str
-    created_at: int
-    file_size: int | None = None
+class ReportListResponse(BaseModel):
+    total: int
+    items: list[dict]
 
 
-# ======= 内存存储（生产环境使用数据库 + Redis） =======
-_reports: dict[str, dict] = {}
-_shared_reports: dict[str, dict] = {}  # 分享码 -> 报告ID + 过期时间
-_report_dir = tempfile.gettempdir() + "/webgis_reports"
-os.makedirs(_report_dir, exist_ok=True)
+class ShareRequest(BaseModel):
+    ttl_days: int = 7
 
-# ======= API 实现 =======
-@router.post("/generate", response_model=ApiResponse)
-async def generate_report(
-    request: GenerateReportRequest, 
-    db: Session = Depends(get_db)
+
+# ── Helpers ──────────────────────────────────────────────────────────
+
+
+def _serialize_report(r: Report) -> dict:
+    return {
+        "id": r.id,
+        "session_id": r.session_id,
+        "title": r.title,
+        "format": r.format,
+        "status": r.status,
+        "file_size": r.file_size,
+        "share_code": r.share_code,
+        "share_expires_at": (
+            r.share_expires_at.isoformat() if r.share_expires_at else None
+        ),
+        "error_message": r.error_message,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+        "download_url": f"/api/v1/reports/{r.id}/download" if r.status == "completed" else None,
+    }
+
+
+def _media_type(fmt: str) -> str:
+    if fmt == "pdf":
+        return "application/pdf"
+    if fmt == "html":
+        return "text/html"
+    return "text/markdown"
+
+
+def _file_ext(fmt: str) -> str:
+    if fmt in ("markdown", "md"):
+        return "md"
+    return fmt
+
+
+# ── Endpoints ────────────────────────────────────────────────────────
+
+
+@router.post("", response_model=ApiResponse)
+async def create_report(
+    request: GenerateReportRequest,
+    db: Session = Depends(get_db),
 ):
-    """
-    生成空间分析结果报告
-    """
-    # 验证参数
-    allowed_formats = ["pdf", "html", "markdown", "md"]
-    if request.format.lower() not in allowed_formats:
-        return ApiResponse.fail(code="INVALID_FORMAT", message=f"仅支持以下格式: {', '.join(allowed_formats)}")
-    
-    # 验证任务存在
-    from app.services.layer_service import TaskService
-    task_svc = TaskService(db)
-    task = task_svc.get_task_by_id(request.task_id)
+    """从会话历史生成报告"""
+    fmt = request.format.lower()
+    if fmt not in ALLOWED_FORMATS:
+        return ApiResponse.fail(code=ErrCode.VALIDATE_ERROR, message=f"不支持的格式: {fmt}，可选: {', '.join(sorted(ALLOWED_FORMATS))}")
 
-    
-    if not task:
-        return ApiResponse.fail(code="TASK_NOT_FOUND", message="任务不存在")
-    
-    if task.status != "completed":
-        return ApiResponse.fail(code="INVALID_TASK_STATE", message="仅支持已完成的分析任务生成报告")
-    
+    # 验证会话存在
+    conversation = db.get(Conversation, request.session_id)
+    if not conversation:
+        return ApiResponse.fail(code=ErrCode.NOT_FOUND, message="会话不存在")
+
+    messages = (
+        db.query(Message)
+        .filter(Message.conversation_id == request.session_id)
+        .order_by(Message.created_at.asc())
+        .all()
+    )
+
+    if not messages:
+        return ApiResponse.fail(code=ErrCode.VALIDATE_ERROR, message="会话中暂无消息，无法生成报告")
+
     # 创建报告记录
     report_id = str(uuid.uuid4())
-    report_file = f"{_report_dir}/{report_id}.{request.format.lower()}"
-    
-    _reports[report_id] = {
-        "id": report_id,
-        "task_id": request.task_id,
-        "format": request.format.lower(),
-        "status": "pending",
-        "file_path": report_file,
-        "created_at": int(datetime.now().timestamp() * 1000),
-        "include_map_screenshot": request.include_map_screenshot
-    }
-    
+    title = request.title or conversation.title or "分析报告"
+    file_name = f"{report_id}.{_file_ext(fmt)}"
+    file_path = os.path.join(REPORT_DIR, file_name)
+
+    report = Report(
+        id=report_id,
+        session_id=request.session_id,
+        title=title,
+        format=fmt,
+        status="generating",
+        file_path=file_path,
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+
     # 异步生成报告
-    report_svc = ReportService()
+    svc = ReportService()
     try:
-        success = await report_svc.generate_report(
-            task=task,
-            report_id=report_id,
-            output_path=report_file,
-            format=request.format.lower(),
-            include_screenshot=request.include_map_screenshot
+        msg_dicts = [
+            {
+                "role": m.role,
+                "content": m.content or "",
+                "tool_calls": m.tool_calls,
+                "tool_result": m.tool_result,
+            }
+            for m in messages
+        ]
+
+        success = await svc.generate_report(
+            session_id=request.session_id,
+            session_title=conversation.title,
+            messages=msg_dicts,
+            output_path=file_path,
+            format=fmt,
         )
-        
-        if success:
-            _reports[report_id]["status"] = "completed"
-            _reports[report_id]["file_size"] = os.path.getsize(report_file)
+
+        if success and os.path.exists(file_path):
+            report.status = "completed"
+            report.file_size = os.path.getsize(file_path)
         else:
-            _reports[report_id]["status"] = "failed"
-            return ApiResponse.fail(code="GENERATE_FAILED", message="报告生成失败")
-            
+            report.status = "failed"
+            report.error_message = "报告生成失败"
     except Exception as e:
-        logger.error(f"报告生成失败: {e}")
-        _reports[report_id]["status"] = "failed"
-        return ApiResponse.fail(code="GENERATE_ERROR", message=f"报告生成错误: {str(e)}")
-    
-    return ApiResponse.success(data={
-        "report_id": report_id,
-        "format": request.format,
-        "download_url": f"/api/v1/reports/{report_id}/download",
-        "status": "completed"
+        logger.error(f"Report generation error: {e}", exc_info=True)
+        report.status = "failed"
+        report.error_message = str(e)
+
+    db.commit()
+    db.refresh(report)
+
+    if report.status == "failed":
+        return ApiResponse.fail(
+            code=ErrCode.SERVER_ERROR,
+            message=f"报告生成失败: {report.error_message}",
+            data=_serialize_report(report),
+        )
+
+    return ApiResponse.ok(data=_serialize_report(report), message="报告生成成功")
+
+
+@router.get("", response_model=ApiResponse)
+async def list_reports(
+    session_id: Optional[str] = Query(None, description="按会话 ID 筛选"),
+    db: Session = Depends(get_db),
+):
+    """列出报告"""
+    q = db.query(Report).order_by(Report.created_at.desc())
+    if session_id:
+        q = q.filter(Report.session_id == session_id)
+
+    items = q.limit(100).all()
+    return ApiResponse.ok(data={
+        "total": len(items),
+        "items": [_serialize_report(r) for r in items],
     })
+
+
+@router.get("/shared/{share_code}", response_model=ApiResponse)
+async def get_shared_report_info(share_code: str, db: Session = Depends(get_db)):
+    """通过分享码获取报告信息"""
+    report = db.query(Report).filter(Report.share_code == share_code).first()
+    if not report:
+        return ApiResponse.fail(code=ErrCode.NOT_FOUND, message="分享链接不存在")
+
+    if report.share_expires_at and report.share_expires_at < datetime.now(timezone.utc):
+        return ApiResponse.fail(code=ErrCode.NOT_FOUND, message="分享链接已过期")
+
+    return ApiResponse.ok(data=_serialize_report(report))
+
+
+@router.get("/shared/{share_code}/view")
+async def view_shared_report(share_code: str, db: Session = Depends(get_db)):
+    """通过分享码查看/下载报告文件"""
+    report = db.query(Report).filter(Report.share_code == share_code).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="分享链接不存在")
+
+    if report.share_expires_at and report.share_expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=404, detail="分享链接已过期")
+
+    if report.status != "completed" or not report.file_path or not os.path.exists(report.file_path):
+        raise HTTPException(status_code=404, detail="报告文件不可用")
+
+    if report.format == "html":
+        with open(report.file_path, "r", encoding="utf-8") as f:
+            return Response(content=f.read(), media_type="text/html")
+
+    return FileResponse(
+        report.file_path,
+        media_type=_media_type(report.format),
+        filename=f"report_{report.id[:8]}.{_file_ext(report.format)}",
+    )
 
 
 @router.get("/{report_id}", response_model=ApiResponse)
-async def get_report_info(report_id: str):
-    """获取报告状态和信息"""
-    if report_id not in _reports:
-        raise HTTPException(status_code=404, detail="报告不存在")
-    
-    report = _reports[report_id]
-    return ApiResponse.success(data={
-        "report_id": report_id,
-        "task_id": report["task_id"],
-        "format": report["format"],
-        "status": report["status"],
-        "created_at": report["created_at"],
-        "file_size": report.get("file_size"),
-        "download_url": f"/api/v1/reports/{report_id}/download" if report["status"] == "completed" else None
-    })
+async def get_report(report_id: str, db: Session = Depends(get_db)):
+    """获取报告详情"""
+    report = db.get(Report, report_id)
+    if not report:
+        return ApiResponse.fail(code=ErrCode.NOT_FOUND, message="报告不存在")
+    return ApiResponse.ok(data=_serialize_report(report))
 
 
 @router.get("/{report_id}/download")
-async def download_report(report_id: str):
-    """下载生成好的报告"""
-    if report_id not in _reports:
+async def download_report(report_id: str, db: Session = Depends(get_db)):
+    """下载报告文件"""
+    report = db.get(Report, report_id)
+    if not report:
         raise HTTPException(status_code=404, detail="报告不存在")
-    
-    report = _reports[report_id]
-    
-    if report["status"] != "completed":
+    if report.status != "completed":
         raise HTTPException(status_code=400, detail="报告未生成完成")
-    
-    file_path = report["file_path"]
-    if not os.path.exists(file_path):
+    if not report.file_path or not os.path.exists(report.file_path):
         raise HTTPException(status_code=404, detail="报告文件不存在")
-    
-    format_ext = report['format']
-    if format_ext == "md":
-        format_ext = "markdown"
-    filename = f"analysis_report_{report['task_id']}.{format_ext}"
-    
-    if report["format"] == "pdf":
-        media_type = "application/pdf"
-    elif report["format"] in ["html"]:
-        media_type = "text/html"
-    else:  # markdown/md
-        media_type = "text/markdown"
-    
+
     return FileResponse(
-        file_path,
-        media_type=media_type,
-        filename=filename
+        report.file_path,
+        media_type=_media_type(report.format),
+        filename=f"report_{report.id[:8]}.{_file_ext(report.format)}",
     )
 
 
 @router.post("/{report_id}/share", response_model=ApiResponse)
-async def create_share_link(report_id: str, ttl_days: int = 7):
-    """
-    创建报告分享链接，默认有效期7天
-    """
-    if report_id not in _reports:
-        raise HTTPException(status_code=404, detail="报告不存在")
-    
-    report = _reports[report_id]
-    if report["status"] != "completed":
-        return ApiResponse.fail(code="REPORT_NOT_READY", message="报告还未生成完成，无法分享")
-    
-    # 生成唯一分享码
-    import secrets
+async def create_share_link(
+    report_id: str,
+    body: ShareRequest = ShareRequest(),
+    db: Session = Depends(get_db),
+):
+    """生成分享链接"""
+    report = db.get(Report, report_id)
+    if not report:
+        return ApiResponse.fail(code=ErrCode.NOT_FOUND, message="报告不存在")
+    if report.status != "completed":
+        return ApiResponse.fail(code=ErrCode.VALIDATE_ERROR, message="报告未生成完成，无法分享")
+
+    ttl_days = max(1, min(body.ttl_days, 30))
     share_code = secrets.token_urlsafe(12)
-    
-    # 保存分享记录
-    expire_at = int(datetime.now().timestamp()) + (ttl_days * 24 * 3600)
-    _shared_reports[share_code] = {
-        "report_id": report_id,
-        "created_at": int(datetime.now().timestamp()),
-        "expire_at": expire_at,
+    report.share_code = share_code
+    report.share_expires_at = datetime.now(timezone.utc) + timedelta(days=ttl_days)
+    db.commit()
+    db.refresh(report)
+
+    return ApiResponse.ok(data={
+        "share_code": share_code,
+        "share_url": f"/api/v1/reports/shared/{share_code}",
+        "expires_at": report.share_expires_at.isoformat(),
         "ttl_days": ttl_days,
-        "access_count": 0
-    }
-    
-    # 生成分享链接
-    share_url = f"/api/v1/reports/shared/{share_code}"
-    
-    return ApiResponse.success(data={
-        "share_code": share_code,
-        "share_url": share_url,
-        "expire_at": expire_at,
-        "ttl_days": ttl_days
-    })
-
-
-@router.get("/shared/{share_code}")
-async def get_shared_report(share_code: str):
-    """访问公开分享的报告"""
-    # 校验分享码是否存在
-    if share_code not in _shared_reports:
-        raise HTTPException(status_code=404, detail="分享链接不存在或已过期")
-    
-    share_info = _shared_reports[share_code]
-    current_time = int(datetime.now().timestamp())
-    
-    # 校验是否过期
-    if current_time > share_info["expire_at"]:
-        del _shared_reports[share_code]
-        raise HTTPException(status_code=404, detail="分享链接已过期")
-    
-    # 增加访问计数
-    share_info["access_count"] += 1
-    
-    # 获取报告信息
-    report_id = share_info["report_id"]
-    if report_id not in _reports:
-        raise HTTPException(status_code=404, detail="报告不存在")
-    
-    report = _reports[report_id]
-    if report["status"] != "completed":
-        raise HTTPException(status_code=400, detail="报告已被删除")
-    
-    # 重定向到下载或预览
-    if report["format"] == "html":
-        # HTML格式直接预览
-        with open(report["file_path"], "r", encoding="utf-8") as f:
-            return Response(content=f.read(), media_type="text/html")
-    else:
-        # 其他格式直接下载
-        return FileResponse(
-            report["file_path"],
-            media_type="application/octet-stream",
-            filename=f"shared_report_{report['task_id']}.{report['format']}"
-        )
-
-
-@router.get("/shared/{share_code}/info", response_model=ApiResponse)
-async def get_shared_report_info(share_code: str):
-    """获取分享报告的基本信息（无需下载文件）"""
-    if share_code not in _shared_reports:
-        raise HTTPException(status_code=404, detail="分享链接不存在或已过期")
-    
-    share_info = _shared_reports[share_code]
-    current_time = int(datetime.now().timestamp())
-    
-    if current_time > share_info["expire_at"]:
-        del _shared_reports[share_code]
-        raise HTTPException(status_code=404, detail="分享链接已过期")
-    
-    report_id = share_info["report_id"]
-    report = _reports.get(report_id, {})
-    
-    return ApiResponse.success(data={
-        "share_code": share_code,
-        "expire_at": share_info["expire_at"],
-        "access_count": share_info["access_count"],
-        "created_at": share_info["created_at"],
-        "report_id": report_id,
-        "task_id": report.get("task_id"),
-        "format": report.get("format")
     })
 
 

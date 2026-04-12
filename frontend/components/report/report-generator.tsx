@@ -1,21 +1,21 @@
 "use client";
 
 /**
- * T005 报告生成组件
- * 提供报告生成、状态轮询、下载和分享功能
+ * 报告生成组件
+ * 提供从会话历史生成、下载和分享报告功能
  */
 
 import { useState } from "react";
 import { FileText, Download, Share2, Loader2, CheckCircle, XCircle } from "lucide-react";
 import type { ReportFormat, ReportInfo } from "@/lib/types/report";
-import { generateReport, pollReportStatus, getReportDownloadUrl, createShareLink } from "@/lib/api/report";
+import { generateReport, getReportDownloadUrl, createShareLink } from "@/lib/api/report";
 
 interface ReportGeneratorProps {
-  taskId: number | null;
+  sessionId: string | null;
   onReportGenerated?: (report: ReportInfo) => void;
 }
 
-export function ReportGenerator({ taskId, onReportGenerated }: ReportGeneratorProps) {
+export function ReportGenerator({ sessionId, onReportGenerated }: ReportGeneratorProps) {
   const [format, setFormat] = useState<ReportFormat>("pdf");
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<ReportInfo | null>(null);
@@ -23,8 +23,8 @@ export function ReportGenerator({ taskId, onReportGenerated }: ReportGeneratorPr
   const [shareUrl, setShareUrl] = useState<string | null>(null);
 
   const handleGenerateReport = async () => {
-    if (!taskId) {
-      setError("请先完成一项分析任务");
+    if (!sessionId) {
+      setError("请先选择一个会话");
       return;
     }
 
@@ -34,19 +34,16 @@ export function ReportGenerator({ taskId, onReportGenerated }: ReportGeneratorPr
     setShareUrl(null);
 
     try {
-      // 1. 生成报告
-      const response = await generateReport(taskId, format, true);
+      // 后端同步生成，直接返回结果
+      const response = await generateReport(sessionId, format);
       const reportInfo = response.data;
-      
-      // 2. 轮询等待完成
-      const finalReport = await pollReportStatus(reportInfo.report_id, 30, 1000);
-      
-      setReport(finalReport);
-      
-      if (finalReport.status === "completed" && onReportGenerated) {
-        onReportGenerated(finalReport);
-      } else if (finalReport.status === "failed") {
-        setError(finalReport.error_message || "报告生成失败");
+
+      setReport(reportInfo);
+
+      if (reportInfo.status === "completed" && onReportGenerated) {
+        onReportGenerated(reportInfo);
+      } else if (reportInfo.status === "failed") {
+        setError(reportInfo.error_message || "报告生成失败");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "报告生成失败，请重试");
@@ -59,13 +56,12 @@ export function ReportGenerator({ taskId, onReportGenerated }: ReportGeneratorPr
     if (!report) return;
 
     try {
-      const response = await createShareLink(report.report_id, 7);
+      const response = await createShareLink(report.id, 7);
       const { share_url } = response.data;
       const fullUrl = window.location.origin + share_url;
-      
+
       setShareUrl(fullUrl);
-      
-      // 复制到剪贴板
+
       await navigator.clipboard.writeText(fullUrl);
       alert("分享链接已复制到剪贴板");
     } catch {
@@ -75,7 +71,7 @@ export function ReportGenerator({ taskId, onReportGenerated }: ReportGeneratorPr
 
   return (
     <div className="space-y-4">
-      {/* 格式选择 */}
+      {/* Format selection */}
       <div>
         <label className="text-sm font-medium text-foreground mb-2 block">
           导出格式
@@ -92,10 +88,10 @@ export function ReportGenerator({ taskId, onReportGenerated }: ReportGeneratorPr
         </select>
       </div>
 
-      {/* 生成按钮 */}
+      {/* Generate button */}
       <button
         onClick={handleGenerateReport}
-        disabled={loading || !taskId}
+        disabled={loading || !sessionId}
         className="w-full flex items-center justify-center gap-2 rounded-lg bg-primary text-primary-foreground py-2.5 text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {loading ? (
@@ -111,7 +107,7 @@ export function ReportGenerator({ taskId, onReportGenerated }: ReportGeneratorPr
         )}
       </button>
 
-      {/* 错误信息 */}
+      {/* Error message */}
       {error && (
         <div className="flex items-start gap-2 p-3 bg-destructive/10 text-destructive rounded-md text-sm">
           <XCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
@@ -119,7 +115,7 @@ export function ReportGenerator({ taskId, onReportGenerated }: ReportGeneratorPr
         </div>
       )}
 
-      {/* 成功信息和操作 */}
+      {/* Success and actions */}
       {report && report.status === "completed" && (
         <div className="space-y-3">
           <div className="flex items-start gap-2 p-3 bg-green-500/10 text-green-600 rounded-md text-sm">
@@ -127,14 +123,16 @@ export function ReportGenerator({ taskId, onReportGenerated }: ReportGeneratorPr
             <div>
               <p className="font-medium">报告生成成功</p>
               {report.file_size && (
-                <p className="text-xs mt-1">文件大小: {(report.file_size / 1024).toFixed(2)} KB</p>
+                <p className="text-xs mt-1">
+                  文件大小: {(report.file_size / 1024).toFixed(2)} KB
+                </p>
               )}
             </div>
           </div>
 
           <div className="flex gap-2">
             <a
-              href={getReportDownloadUrl(report.report_id)}
+              href={getReportDownloadUrl(report.id)}
               target="_blank"
               rel="noopener noreferrer"
               className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-green-600 text-white py-2 text-sm font-medium hover:bg-green-700 transition-colors"
