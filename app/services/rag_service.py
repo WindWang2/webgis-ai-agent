@@ -162,7 +162,7 @@ async def add_document(
     # 解析content
     if file_type == "markdown":
         # Markdown 特殊处理：按 ## 标题分段
-        sections_chunks = _split_markdown_sections(content)
+        sections_chunks = _split_markdown_section(content)
         chunks_list = []
         pos = 0
         for i, sec in enumerate(section_chunk):
