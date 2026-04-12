@@ -1,333 +1,255 @@
 """
-报告生成服务 - 支持将空间分析结果导出为PDF/HTML/Markdown格式
-使用Jinja2模板渲染HTML，WeasyPrint转换为PDF
-支持Markdown导出，便于文档编辑和版本控制
+报告生成服务 - 从会话历史生成 PDF/HTML/Markdown 报告
+使用 Jinja2 模板渲染 HTML，WeasyPrint 转换为 PDF
 """
+import json
 import os
+import re
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Any, Optional
+
 import jinja2
+import logging
+
 try:
     import weasyprint
 except ImportError:
     weasyprint = None
-import json
-import logging
 
 logger = logging.getLogger(__name__)
 
+REPORT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "reports")
+
+
 class ReportService:
     def __init__(self):
-        # 初始化Jinja2模板环境
         template_path = os.path.join(os.path.dirname(__file__), "templates")
         self.template_env = jinja2.Environment(
             loader=jinja2.FileSystemLoader(template_path),
-            autoescape=True
+            autoescape=False,
         )
-    
+
     async def generate_report(
         self,
-        task: Any,
-        report_id: str,
+        session_id: str,
+        session_title: str,
+        messages: list[dict[str, Any]],
         output_path: str,
         format: str = "pdf",
-        include_screenshot: bool = True
     ) -> bool:
         """
-        生成分析报告
-        
+        从会话消息生成报告。
+
         Args:
-            task: 任务对象（来自TaskService）
-            report_id: 报告唯一ID
+            session_id: 会话 ID
+            session_title: 会话标题
+            messages: 消息列表，每条包含 role / content / tool_result 等
             output_path: 输出文件路径
-            format: pdf/html/markdown/md
-            include_screenshot: 是否包含地图截图
-            
+            format: pdf / html / markdown / md
+
         Returns:
             生成是否成功
         """
         try:
-            # 准备报告数据
-            report_data = self._prepare_report_data(task, include_screenshot)
-            
-            if format in ["markdown", "md"]:
-                # 生成Markdown格式
-                md_content = self._render_markdown_template(report_data)
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+            report_data = self._prepare_report_data(
+                session_id, session_title, messages, format
+            )
+
+            if format in ("markdown", "md"):
+                md_content = self._render_markdown(report_data)
                 with open(output_path, "w", encoding="utf-8") as f:
                     f.write(md_content)
                 return True
-            else:
-                # 渲染HTML模板，用于PDF/HTML格式
-                html_content = self._render_html_template(report_data)
-                
-                if format == "html":
-                    # 直接保存HTML
-                    with open(output_path, "w", encoding="utf-8") as f:
-                        f.write(html_content)
-                    return True
-                elif format == "pdf":
-                    # 转换HTML为PDF
-                    self._html_to_pdf(html_content, output_path)
-                    return True
-                else:
-                    logger.error(f"不支持的报告格式: {format}")
-                    return False
-                
-        except Exception as e:
-            logger.error(f"报告生成失败: {e}", exc_info=True)
+
+            # HTML (also used as PDF source)
+            html_content = self._render_html(report_data)
+
+            if format == "html":
+                with open(output_path, "w", encoding="utf-8") as f:
+                    f.write(html_content)
+                return True
+
+            if format == "pdf":
+                self._html_to_pdf(html_content, output_path)
+                return True
+
+            logger.error(f"Unsupported report format: {format}")
             return False
-    
-    def _prepare_report_data(self, task: Any, include_screenshot: bool) -> Dict[str, Any]:
-        """准备报告所需的数据"""
-        # 分析结果摘要
-        result_summary = json.loads(task.result_summary) if task.result_summary else {}
-        
-        # 处理统计数据
-        stats = result_summary.get("stats", {})
-        parameters = task.parameters if task.parameters else {}
-        
+
+        except Exception as e:
+            logger.error(f"Report generation failed: {e}", exc_info=True)
+            raise
+
+    # ------------------------------------------------------------------
+    # Data preparation
+    # ------------------------------------------------------------------
+
+    def _prepare_report_data(
+        self,
+        session_id: str,
+        session_title: str,
+        messages: list[dict[str, Any]],
+        format: str,
+    ) -> dict[str, Any]:
+        """将原始消息转换为模板可用的结构化数据。"""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # 提取用户和助手消息
+        conversation_msgs = []
+        tool_results = []
+
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            tool_result_raw = msg.get("tool_result")
+
+            if role == "user":
+                conversation_msgs.append({
+                    "role": "user",
+                    "role_label": "用户",
+                    "content": self._clean_text(content),
+                })
+            elif role == "assistant":
+                conversation_msgs.append({
+                    "role": "assistant",
+                    "role_label": "助手",
+                    "content": self._clean_text(content),
+                })
+            elif role == "tool" and tool_result_raw:
+                tool_results.append({
+                    "name": self._extract_tool_name(msg),
+                    "result": self._format_tool_result(tool_result_raw),
+                })
+
         return {
-            "report_title": f"空间分析报告: {task.task_type}",
-            "task_info": {
-                "id": task.id,
-                "type": task.task_type,
-                "status": task.status,
-                "created_at": task.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-                "completed_at": task.completed_at.strftime("%Y-%m-%d %H:%M:%S") if task.completed_at else None,
-                "duration": (task.completed_at - task.created_at).total_seconds() if task.completed_at else 0
-            },
-            "parameters": parameters,
-            "summary": result_summary,
-            "statistics": stats,
-            "include_screenshot": include_screenshot,
-            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            "title": f"分析报告: {session_title}",
+            "session_id": session_id,
+            "session_title": session_title,
+            "generated_at": now,
+            "message_count": len(conversation_msgs),
+            "format": format,
+            "has_conversation": len(conversation_msgs) > 0,
+            "has_tool_results": len(tool_results) > 0,
+            "messages": conversation_msgs,
+            "tool_results": tool_results,
         }
-    
-    def _render_html_template(self, data: Dict[str, Any]) -> str:
-        """使用Jinja2渲染HTML模板"""
+
+    # ------------------------------------------------------------------
+    # HTML rendering
+    # ------------------------------------------------------------------
+
+    def _render_html(self, data: dict[str, Any]) -> str:
         try:
             template = self.template_env.get_template("report_default.html")
             return template.render(**data)
         except jinja2.TemplateNotFound:
-            # 如果模板不存在，使用默认内置模板
-            return self._get_default_html_template(data)
-    
-    def _get_default_html_template(self, data: Dict[str, Any]) -> str:
-        """内置默认HTML模板，当文件模板不存在时使用"""
-        return f"""
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <title>{data['report_title']}</title>
-    <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; padding: 40px; line-height: 1.6; color: #333; }}
-        .header {{ text-align: center; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 2px solid #2563eb; }}
-        .header h1 {{ color: #1e40af; margin-bottom: 10px; }}
-        .section {{ margin-bottom: 30px; }}
-        .section h2 {{ color: #1e40af; margin-bottom: 15px; font-size: 1.3rem; border-left: 4px solid #2563eb; padding-left: 10px; }}
-        .info-grid {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 20px; }}
-        .info-item {{ background: #f8fafc; padding: 12px; border-radius: 6px; }}
-        .info-label {{ font-weight: 600; color: #475569; margin-bottom: 3px; }}
-        .info-value {{ color: #1e293b; }}
-        .table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }}
-        .table th, .table td {{ padding: 10px; text-align: left; border: 1px solid #e2e8f0; }}
-        .table th {{ background: #f1f5f9; font-weight: 600; color: #334155; }}
-        .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-top: 15px; }}
-        .stat-card {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; text-align: center; }}
-        .stat-label {{ font-size: 0.9rem; opacity: 0.9; margin-bottom: 5px; }}
-        .stat-value {{ font-size: 1.8rem; font-weight: 700; }}
-        .footer {{ text-align: center; margin-top: 50px; padding-top: 20px; border-top: 1px solid #e2e8f0; color: #64748b; font-size: 0.9rem; }}
-        @media print {{
-            body {{ padding: 0; }}
-            .header {{ border-bottom-color: #94a3b8; }}
-        }}
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>{data['report_title']}</h1>
-        <p>生成时间: {data['generated_at']}</p>
-    </div>
+            logger.warning("Template report_default.html not found, using fallback")
+            return self._fallback_html(data)
 
-    <div class="section">
-        <h2>任务信息</h2>
-        <div class="info-grid">
-            <div class="info-item">
-                <div class="info-label">任务ID</div>
-                <div class="info-value">{data['task_info']['id']}</div>
-            </div>
-            <div class="info-item">
-                <div class="info-label">分析类型</div>
-                <div class="info-value">{data['task_info']['type']}</div>
-            </div>
-            <div class="info-item">
-                <div class="info-label">创建时间</div>
-                <div class="info-value">{data['task_info']['created_at']}</div>
-            </div>
-            <div class="info-item">
-                <div class="info-label">完成时间</div>
-                <div class="info-value">{data['task_info']['completed_at'] or 'N/A'}</div>
-            </div>
-            <div class="info-item">
-                <div class="info-label">处理时长</div>
-                <div class="info-value">{data['task_info']['duration']:.2f} 秒</div>
-            </div>
-            <div class="info-item">
-                <div class="info-label">状态</div>
-                <div class="info-value">{data['task_info']['status']}</div>
-            </div>
-        </div>
-    </div>
+    def _fallback_html(self, data: dict[str, Any]) -> str:
+        """Minimal inline fallback when template file is missing."""
+        parts = [
+            f"<h1>{data['title']}</h1>",
+            f"<p>Generated: {data['generated_at']}</p>",
+            f"<p>Messages: {data['message_count']}</p>",
+        ]
+        for msg in data.get("messages", []):
+            parts.append(
+                f"<div><b>{msg['role_label']}</b><pre>{msg['content']}</pre></div>"
+            )
+        for tr in data.get("tool_results", []):
+            parts.append(
+                f"<div><b>{tr['name']}</b><pre>{tr['result']}</pre></div>"
+            )
+        return (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            f"<title>{data['title']}</title></head><body>"
+            + "\n".join(parts)
+            + "</body></html>"
+        )
 
-    <div class="section">
-        <h2>分析参数</h2>
-        {self._render_parameters(data['parameters'])}
-    </div>
+    # ------------------------------------------------------------------
+    # Markdown rendering
+    # ------------------------------------------------------------------
 
-    <div class="section">
-        <h2>统计结果</h2>
-        {self._render_statistics(data['statistics'])}
-    </div>
+    def _render_markdown(self, data: dict[str, Any]) -> str:
+        lines: list[str] = []
+        lines.append(f"# {data['title']}")
+        lines.append("")
+        lines.append(f"> Generated: {data['generated_at']}  |  Messages: {data['message_count']}")
+        lines.append("")
 
-    <div class="section">
-        <h2>结果摘要</h2>
-        <pre style="background: #f8fafc; padding: 15px; border-radius: 6px; overflow-x: auto;">{json.dumps(data['summary'], indent=2, ensure_ascii=False)}</pre>
-    </div>
+        if data.get("has_tool_results"):
+            lines.append("## Tool Results")
+            lines.append("")
+            for tr in data["tool_results"]:
+                lines.append(f"### {tr['name']}")
+                lines.append("")
+                lines.append("```")
+                lines.append(tr["result"])
+                lines.append("```")
+                lines.append("")
 
-    <div class="footer">
-        <p>WebGIS AI Agent 自动生成报告</p>
-    </div>
-</body>
-</html>
-        """
-    
-    def _render_parameters(self, parameters: Dict[str, Any]) -> str:
-        """渲染参数部分"""
-        if not parameters:
-            return "<p>无参数</p>"
-        
-        html = "<div class='info-grid'>"
-        for key, value in parameters.items():
-            html += f"""
-            <div class="info-item">
-                <div class="info-label">{key}</div>
-                <div class="info-value">{value}</div>
-            </div>
-            """
-        html += "</div>"
-        return html
-    
-    def _render_statistics(self, stats: Dict[str, Any]) -> str:
-        """渲染统计结果部分"""
-        if not stats:
-            return "<p>无统计数据</p>"
-        
-        html = "<div class='stats-grid'>"
-        for key, value in stats.items():
-            if isinstance(value, (int, float)):
-                html += f"""
-                <div class="stat-card">
-                    <div class="stat-label">{key}</div>
-                    <div class="stat-value">{value}</div>
-                </div>
-                """
-        
-        # 剩余非数值统计
-        html += "</div><table class='table'><thead><tr><th>指标</th><th>值</th></tr></thead><tbody>"
-        for key, value in stats.items():
-            if not isinstance(value, (int, float)):
-                html += f"<tr><td>{key}</td><td>{value}</td></tr>"
-        
-        html += "</tbody></table>"
-        return html
-    
+        if data.get("has_conversation"):
+            lines.append("## Conversation")
+            lines.append("")
+            for msg in data["messages"]:
+                role = "**User**" if msg["role"] == "user" else "**Assistant**"
+                lines.append(f"##### {role}")
+                lines.append("")
+                lines.append(msg["content"])
+                lines.append("")
+
+        lines.append("---")
+        lines.append(f"*Generated by WebGIS AI Agent · {data['generated_at']}*")
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # PDF conversion
+    # ------------------------------------------------------------------
+
     def _html_to_pdf(self, html_content: str, output_path: str) -> None:
-        """将HTML内容转换为PDF"""
         if weasyprint is None:
-            raise ImportError("WeasyPrint not installed. Install with: pip install weasyprint")
+            raise ImportError(
+                "WeasyPrint is not installed. Install with: pip install weasyprint"
+            )
         weasyprint.HTML(string=html_content).write_pdf(output_path)
-    
-    def _render_markdown_template(self, data: Dict[str, Any]) -> str:
-        """生成Markdown格式报告"""
-        md_lines = []
 
-        # 标题
-        md_lines.append(f"# {data['report_title']}")
-        md_lines.append("")
-        md_lines.append(f"> 生成时间: {data['generated_at']}")
-        md_lines.append("")
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
-        # 任务信息
-        md_lines.append("## 任务信息")
-        md_lines.append("")
-        md_lines.append(f"| 项目 | 值 |")
-        md_lines.append(f"| --- | --- |")
-        task_info = data['task_info']
-        md_lines.append(f"| 任务ID | `{task_info['id']}` |")
-        md_lines.append(f"| 分析类型 | {task_info['type']} |")
-        md_lines.append(f"| 状态 | {task_info['status']} |")
-        md_lines.append(f"| 创建时间 | {task_info['created_at']} |")
-        completed_at = task_info['completed_at'] or 'N/A'
-        md_lines.append(f"| 完成时间 | {completed_at} |")
-        md_lines.append(f"| 处理时长 | {task_info['duration']:.2f} 秒 |")
-        md_lines.append("")
+    @staticmethod
+    def _clean_text(text: str) -> str:
+        """Sanitise text for safe embedding in HTML (we don't autoescape)."""
+        if not text:
+            return ""
+        # Collapse excessive blank lines
+        text = re.sub(r"\n{3,}", "\n\n", text.strip())
+        return text
 
-        # 分析参数
-        md_lines.append("## 分析参数")
-        md_lines.append("")
-        parameters = data.get('parameters', {})
-        if parameters:
-            md_lines.append(f"| 参数名 | 参数值 |")
-            md_lines.append(f"| --- | --- |")
-            for key, value in parameters.items():
-                md_lines.append(f"| {key} | `{value}` |")
-        else:
-            md_lines.append("*无参数*")
-        md_lines.append("")
+    @staticmethod
+    def _extract_tool_name(msg: dict[str, Any]) -> str:
+        tool_calls = msg.get("tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            return tool_calls[0].get("name", "Tool")
+        if isinstance(tool_calls, dict):
+            return tool_calls.get("name", "Tool")
+        return "Tool"
 
-        # 统计结果
-        md_lines.append("## 统计结果")
-        md_lines.append("")
-        stats = data.get('statistics', {})
-        if stats:
-            # 分离数值和非数值
-            numeric_stats = {k: v for k, v in stats.items() if isinstance(v, (int, float))}
-            other_stats = {k: v for k, v in stats.items() if not isinstance(v, (int, float))}
+    @staticmethod
+    def _format_tool_result(raw: Any) -> str:
+        if isinstance(raw, str):
+            return raw
+        if isinstance(raw, (dict, list)):
+            text = json.dumps(raw, indent=2, ensure_ascii=False)
+            # Truncate very large results to keep report size reasonable
+            if len(text) > 8000:
+                text = text[:8000] + "\n... (truncated)"
+            return text
+        return str(raw)
 
-            if numeric_stats:
-                md_lines.append("### 关键指标")
-                md_lines.append("")
-                for key, value in numeric_stats.items():
-                    md_lines.append(f"- **{key}**: {value}")
-                md_lines.append("")
 
-            if other_stats:
-                md_lines.append("### 详细数据")
-                md_lines.append("")
-                md_lines.append(f"| 指标 | 值 |")
-                md_lines.append(f"| --- | --- |")
-                for key, value in other_stats.items():
-                    md_lines.append(f"| {key} | {value} |")
-        else:
-            md_lines.append("*无统计数据*")
-        md_lines.append("")
-
-        # 结果摘要
-        md_lines.append("## 结果摘要")
-        md_lines.append("")
-        summary = data.get('summary', {})
-        md_lines.append("```json")
-        md_lines.append(json.dumps(summary, indent=2, ensure_ascii=False))
-        md_lines.append("```")
-        md_lines.append("")
-
-        # 页脚
-        md_lines.append("---")
-        md_lines.append("")
-        md_lines.append(f"*由 WebGIS AI Agent 自动生成 · {data['generated_at']}*")
-
-        return "\n".join(md_lines)
-
-__all__ = ["ReportService"]
+__all__ = ["ReportService", "REPORT_DIR"]

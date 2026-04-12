@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * T005 报告预览组件
- * 用于在 iframe 中预览 HTML 格式的报告
+ * 报告预览组件
+ * 用于在 iframe 中预览 HTML 格式的报告，或提供其他格式的下载链接
  */
 
 import { useState, useEffect } from "react";
@@ -21,14 +21,11 @@ export function ReportPreview({ report, shareCode }: ReportPreviewProps) {
 
   useEffect(() => {
     if (shareCode) {
-      // 分享链接预览
       setPreviewUrl(getSharedReportUrl(shareCode));
     } else if (report && report.status === "completed") {
       if (report.format === "html") {
-        // HTML 格式可以直接预览
-        setPreviewUrl(getReportDownloadUrl(report.report_id));
+        setPreviewUrl(getReportDownloadUrl(report.id));
       } else {
-        // 其他格式提供下载链接
         setPreviewUrl(null);
       }
     } else {
@@ -62,7 +59,7 @@ export function ReportPreview({ report, shareCode }: ReportPreviewProps) {
         <p className="text-sm font-medium">报告已生成</p>
         <p className="text-xs mt-2">当前格式不支持在线预览</p>
         <a
-          href={getReportDownloadUrl(report.report_id)}
+          href={getReportDownloadUrl(report.id)}
           target="_blank"
           rel="noopener noreferrer"
           className="mt-4 flex items-center gap-2 text-primary hover:underline text-sm"

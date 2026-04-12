@@ -16,11 +16,11 @@ describe('ReportPreview', () => {
 
   it('shows processing state when report is pending', () => {
     const report = {
-      report_id: 'test-id',
-      task_id: 1,
+      id: 'test-id',
+      session_id: 'session-1',
+      title: 'Test Report',
       format: 'pdf' as const,
       status: 'pending' as const,
-      download_url: '/api/v1/reports/test-id/download',
       created_at: new Date().toISOString(),
     }
     render(<ReportPreview report={report} />)
@@ -29,8 +29,9 @@ describe('ReportPreview', () => {
 
   it('shows download link for non-HTML formats', () => {
     const report = {
-      report_id: 'test-id',
-      task_id: 1,
+      id: 'test-id',
+      session_id: 'session-1',
+      title: 'Test Report',
       format: 'pdf' as const,
       status: 'completed' as const,
       download_url: '/api/v1/reports/test-id/download',
@@ -43,8 +44,9 @@ describe('ReportPreview', () => {
 
   it('shows iframe for HTML format', () => {
     const report = {
-      report_id: 'test-id',
-      task_id: 1,
+      id: 'test-id',
+      session_id: 'session-1',
+      title: 'Test Report',
       format: 'html' as const,
       status: 'completed' as const,
       download_url: '/api/v1/reports/test-id/download',
