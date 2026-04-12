@@ -24,7 +24,7 @@ export interface ChartData {
 const VALID_CHART_TYPES = new Set(["bar", "line", "pie", "scatter"] as const)
 
 // Runtime validation adapter - replaces unsafe "as ChartData" casts
-export function adaptChartData(raw: any): ChartData | null {
+export function adaptChartData(raw: unknown): ChartData | null {
   try {
     if (!raw || typeof raw !== "object") return null
 
