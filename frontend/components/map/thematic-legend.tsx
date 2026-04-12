@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Info, Eye, EyeOff } from 'lucide-react';
 
 interface LegendProps {
@@ -30,6 +30,11 @@ export function ThematicLegend({ metadata, onFilterChange }: LegendProps) {
   const [visibleClasses, setVisibleClasses] = React.useState<boolean[]>(
     new Array(breaks.length - 1).fill(true)
   );
+
+  // Reset visibility when breaks change (e.g. new thematic layer)
+  useEffect(() => {
+    setVisibleClasses(new Array(breaks.length - 1).fill(true));
+  }, [breaks]);
 
   const toggleClass = (idx: number) => {
     const newVisible = [...visibleClasses];
