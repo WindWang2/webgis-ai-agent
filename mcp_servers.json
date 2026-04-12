@@ -2,17 +2,17 @@
   "mcpServers": {
     "gdal-raster": {
       "transport": "stdio",
-      "command": "python3",
+      "command": "python",
       "args": ["mcp_servers/gdal_raster.py"]
     },
     "gdal-vector": {
       "transport": "stdio",
-      "command": "python3",
+      "command": "python",
       "args": ["mcp_servers/gdal_vector.py"]
     },
     "gdal-dem-source": {
       "transport": "stdio",
-      "command": "python3",
+      "command": "python",
       "args": ["mcp_servers/gdal_dem_source.py"],
       "env": {
         "OPENTOPOGRAPHY_API_KEY": ""
