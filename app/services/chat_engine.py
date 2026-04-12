@@ -137,6 +137,16 @@ class ChatEngine:
         # 任务跟踪器
         self.tracker = TaskTracker()
 
+    @staticmethod
+    def _fire_and_forget(func, *args):
+        """Submit a callable to the executor and log any exception on completion."""
+        loop = asyncio.get_running_loop()
+        future = loop.run_in_executor(None, func, *args)
+        future.add_done_callback(lambda f: (
+            logger.error("Background task failed: %s", f.exception())
+            if f.exception() else None
+        ))
+
     def _db_msg_to_llm(self, msg) -> dict:
         """Convert a DB message model to LLM-compatible dictionary."""
         d = {"role": msg.role, "content": msg.content or ""}
@@ -150,28 +160,34 @@ class ChatEngine:
             d["tool_call_id"] = msg.tool_call_id
         return d
 
-    def _get_or_create_session(self, session_id: str) -> list[dict]:
-        if session_id not in self._sessions:
-            db = SessionLocal()
-            history_messages = []
-            try:
-                conv = HistoryService(db).get_or_create_conversation(session_id)
-                if conv and conv.messages:
-                    # Sort by id or created_at to ensure order
-                    sorted_msgs = sorted(conv.messages, key=lambda x: x.id)
-                    history_messages = [self._db_msg_to_llm(m) for m in sorted_msgs]
-            except Exception as e:
-                logger.warning(f"History: failed to load conversation {session_id}: {e}")
-            finally:
-                db.close()
+    def _load_session_from_db(self, session_id: str) -> list[dict]:
+        """Synchronous DB call — must be run via run_in_executor."""
+        db = SessionLocal()
+        history_messages = []
+        try:
+            conv = HistoryService(db).get_or_create_conversation(session_id)
+            if conv and conv.messages:
+                sorted_msgs = sorted(conv.messages, key=lambda x: x.id)
+                history_messages = [self._db_msg_to_llm(m) for m in sorted_msgs]
+        except Exception as e:
+            logger.warning(f"History: failed to load conversation {session_id}: {e}")
+        finally:
+            db.close()
 
-            # Always ensure system prompt is at the beginning
-            has_system = any(m.get("role") == "system" for m in history_messages)
-            if not has_system:
-                history_messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
-            
+        has_system = any(m.get("role") == "system" for m in history_messages)
+        if not has_system:
+            history_messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
+
+        return history_messages
+
+    async def _get_or_create_session(self, session_id: str) -> list[dict]:
+        if session_id not in self._sessions:
+            loop = asyncio.get_running_loop()
+            history_messages = await loop.run_in_executor(
+                None, self._load_session_from_db, session_id
+            )
             self._sessions[session_id] = history_messages
-            
+
         return self._sessions[session_id]
 
     def _save_msg_async(self, session_id: str, role: str, content: str, tool_calls=None, tool_result=None, tool_call_id=None):
@@ -254,11 +270,9 @@ class ChatEngine:
         if not session_id:
             session_id = str(uuid.uuid4())
 
-        messages = self._get_or_create_session(session_id)
+        messages = await self._get_or_create_session(session_id)
         messages.append({"role": "user", "content": message})
-        asyncio.get_running_loop().run_in_executor(
-            None, self._save_msg_async, session_id, "user", message
-        )
+        self._fire_and_forget(self._save_msg_async, session_id, "user", message)
 
         # FC 循环
         max_rounds = 10
@@ -288,9 +302,7 @@ class ChatEngine:
                 if standard_calls:
                     entry["tool_calls"] = standard_calls
                 messages.append(entry)
-                asyncio.get_running_loop().run_in_executor(
-                    None, self._save_msg_async, session_id, "assistant", content_text, standard_calls
-                )
+                self._fire_and_forget(self._save_msg_async, session_id, "assistant", content_text, standard_calls)
 
                 tool_result_msgs: list[str] = []
                 for tc in tc_list:
@@ -313,9 +325,7 @@ class ChatEngine:
                             "tool_call_id": tc["id"],
                             "content": result_str,
                         })
-                        asyncio.get_running_loop().run_in_executor(
-                            None, self._save_msg_async, session_id, "tool", result_str, None, None, tc["id"]
-                        )
+                        self._fire_and_forget(self._save_msg_async, session_id, "tool", result_str, None, None, tc["id"])
                     else:
                         tool_result_msgs.append(f"{tc['function']['name']}: {result_str}")
 
@@ -329,9 +339,7 @@ class ChatEngine:
                 # 无 tool_calls，最终回复
                 content = assistant_msg.get("content", "")
                 messages.append({"role": "assistant", "content": content})
-                asyncio.get_running_loop().run_in_executor(
-                    None, self._save_msg_async, session_id, "assistant", content
-                )
+                self._fire_and_forget(self._save_msg_async, session_id, "assistant", content)
                 return {"content": content, "session_id": session_id}
 
         return {"content": "达到最大工具调用轮数", "session_id": session_id}
@@ -341,11 +349,9 @@ class ChatEngine:
         if not session_id:
             session_id = str(uuid.uuid4())
 
-        messages = self._get_or_create_session(session_id)
+        messages = await self._get_or_create_session(session_id)
         messages.append({"role": "user", "content": message})
-        asyncio.get_running_loop().run_in_executor(
-            None, self._save_msg_async, session_id, "user", message
-        )
+        self._fire_and_forget(self._save_msg_async, session_id, "user", message)
 
         # 创建任务
         task = self.tracker.create(session_id, message)
@@ -385,9 +391,7 @@ class ChatEngine:
                 if standard_calls:
                     entry["tool_calls"] = standard_calls
                 messages.append(entry)
-                asyncio.get_running_loop().run_in_executor(
-                    None, self._save_msg_async, session_id, "assistant", content_text, standard_calls
-                )
+                self._fire_and_forget(self._save_msg_async, session_id, "assistant", content_text, standard_calls)
 
                 tool_result_msgs: list[str] = []
 
@@ -468,9 +472,7 @@ class ChatEngine:
                             "tool_call_id": tc["id"],
                             "content": msg_result_str,
                         })
-                        asyncio.get_running_loop().run_in_executor(
-                            None, self._save_msg_async, session_id, "tool", msg_result_str, None, None, tc["id"]
-                        )
+                        self._fire_and_forget(self._save_msg_async, session_id, "tool", msg_result_str, None, None, tc["id"])
                     else:
                         tool_result_msgs.append(f"{tool_name}: {msg_result_str}")
 
@@ -490,9 +492,7 @@ class ChatEngine:
                 # 最终回复
                 content = assistant_msg.get("content", "")
                 messages.append({"role": "assistant", "content": content})
-                asyncio.get_running_loop().run_in_executor(
-                    None, self._save_msg_async, session_id, "assistant", content
-                )
+                self._fire_and_forget(self._save_msg_async, session_id, "assistant", content)
 
                 # 现有 content 事件（保持兼容）
                 yield f"event: content\ndata: {json.dumps({'content': content, 'session_id': session_id}, ensure_ascii=False)}\n\n"
@@ -505,9 +505,7 @@ class ChatEngine:
                     "summary": content[:100],
                 })
                 yield _sse_event("done", {"session_id": session_id})
-                asyncio.get_running_loop().run_in_executor(
-                    None, self._generate_title, session_id, message
-                )
+                self._fire_and_forget(self._generate_title, session_id, message)
                 return
 
         self.tracker.fail_task(task.id, "达到最大工具调用轮数")

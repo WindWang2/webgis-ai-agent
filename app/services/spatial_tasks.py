@@ -173,6 +173,12 @@ def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, rad
             # 矢量格网模式
             grid_features = []
             max_val = float(H.max()) if H.max() > 0 else 1.0
+
+            # OOM protection: cap total grid cells
+            MAX_GRID_FEATURES = 500_000
+            total_cells = H[H > 0].size
+            if total_cells > MAX_GRID_FEATURES:
+                return {"success": False, "error": f"Grid too dense ({total_cells} cells). Increase cell_size or reduce data extent. Max allowed: {MAX_GRID_FEATURES}"}
             
             for i in range(len(xedges) - 1):
                 for j in range(len(yedges) - 1):
