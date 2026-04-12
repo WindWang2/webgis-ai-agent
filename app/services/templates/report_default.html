@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <style>
+        :root {
+            --primary: #1e40af;
+            --primary-light: #3b82f6;
+            --accent: #059669;
+            --text: #1e293b;
+            --text-secondary: #475569;
+            --text-muted: #94a3b8;
+            --bg: #ffffff;
+            --bg-card: #f8fafc;
+            --bg-card-alt: #f1f5f9;
+            --border: #e2e8f0;
+            --border-strong: #cbd5e1;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                         "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
+            line-height: 1.7;
+            color: var(--text);
+            background: var(--bg);
+            font-size: 14px;
+        }
+
+        /* === Cover Page === */
+        .cover {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 40%, #3b82f6 100%);
+            color: white;
+            padding: 60px 40px;
+            page-break-after: always;
+        }
+        .cover-icon {
+            width: 80px;
+            height: 80px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 30px;
+            font-size: 36px;
+        }
+        .cover h1 {
+            font-size: 2.2rem;
+            font-weight: 700;
+            margin-bottom: 12px;
+            letter-spacing: 1px;
+        }
+        .cover .subtitle {
+            font-size: 1.1rem;
+            opacity: 0.85;
+            margin-bottom: 40px;
+            max-width: 500px;
+        }
+        .cover-meta {
+            display: flex;
+            gap: 32px;
+            font-size: 0.9rem;
+            opacity: 0.75;
+        }
+        .cover-meta span { display: flex; align-items: center; gap: 6px; }
+
+        /* === Content Area === */
+        .content {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 50px 60px;
+        }
+
+        /* === TOC === */
+        .toc {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 24px 32px;
+            margin-bottom: 40px;
+        }
+        .toc h2 {
+            font-size: 1rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 16px;
+            font-weight: 600;
+        }
+        .toc ul { list-style: none; }
+        .toc li {
+            padding: 6px 0;
+            border-bottom: 1px dotted var(--border);
+        }
+        .toc li:last-child { border-bottom: none; }
+        .toc a {
+            color: var(--primary);
+            text-decoration: none;
+            font-size: 0.95rem;
+        }
+        .toc a:hover { text-decoration: underline; }
+
+        /* === Sections === */
+        .section {
+            margin-bottom: 36px;
+            page-break-inside: avoid;
+        }
+        .section-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--primary);
+            margin-bottom: 18px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--primary-light);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .section-title .num {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            background: var(--primary);
+            color: white;
+            border-radius: 50%;
+            font-size: 0.85rem;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+
+        /* === Info Grid === */
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+        .info-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 16px;
+        }
+        .info-label {
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 2px;
+        }
+        .info-value {
+            font-size: 0.95rem;
+            color: var(--text);
+            font-weight: 500;
+        }
+
+        /* === Stat Cards === */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 14px;
+            margin-top: 12px;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+            color: white;
+            padding: 18px 16px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .stat-card.green {
+            background: linear-gradient(135deg, #047857 0%, #059669 100%);
+        }
+        .stat-card.purple {
+            background: linear-gradient(135deg, #6d28d9 0%, #8b5cf6 100%);
+        }
+        .stat-label {
+            font-size: 0.8rem;
+            opacity: 0.85;
+            margin-bottom: 4px;
+        }
+        .stat-value {
+            font-size: 1.6rem;
+            font-weight: 700;
+        }
+
+        /* === Table === */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 12px;
+            font-size: 0.9rem;
+        }
+        .data-table th {
+            background: var(--bg-card-alt);
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-align: left;
+            padding: 10px 14px;
+            border-bottom: 2px solid var(--border-strong);
+        }
+        .data-table td {
+            padding: 9px 14px;
+            border-bottom: 1px solid var(--border);
+        }
+        .data-table tbody tr:hover { background: var(--bg-card); }
+
+        /* === Conversation === */
+        .conversation-list { margin-top: 12px; }
+        .msg {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+            padding: 14px 16px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+        .msg.user { background: #eff6ff; border-left: 3px solid var(--primary-light); }
+        .msg.assistant { background: var(--bg-card); border-left: 3px solid var(--accent); }
+        .msg-role {
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+            padding-top: 2px;
+        }
+        .msg.user .msg-role { color: var(--primary); }
+        .msg.assistant .msg-role { color: var(--accent); }
+        .msg-content {
+            flex: 1;
+            color: var(--text);
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-size: 0.9rem;
+        }
+
+        /* === Summary Box === */
+        .summary-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 18px 20px;
+            margin-top: 12px;
+        }
+        .summary-box p { margin-bottom: 10px; color: var(--text); }
+        .summary-box p:last-child { margin-bottom: 0; }
+
+        /* === Tool Results === */
+        .tool-results { margin-top: 12px; }
+        .tool-result {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px 16px;
+            margin-bottom: 12px;
+        }
+        .tool-name {
+            font-size: 0.82rem;
+            font-weight: 700;
+            color: var(--primary);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .tool-name::before {
+            content: '';
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background: var(--primary-light);
+            border-radius: 50%;
+        }
+        .tool-content {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        /* === Footer === */
+        .footer {
+            margin-top: 50px;
+            padding-top: 20px;
+            border-top: 2px solid var(--border);
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.82rem;
+        }
+        .footer p { margin-bottom: 4px; }
+
+        /* === Print === */
+        @media print {
+            body { font-size: 12px; }
+            .cover { min-height: 100vh; padding: 40px; }
+            .content { padding: 30px 40px; }
+            .section { page-break-inside: avoid; }
+            .stat-card { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        }
+
+        @page {
+            margin: 2cm;
+            @bottom-center {
+                content: counter(page);
+                font-size: 0.8rem;
+                color: #94a3b8;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Cover Page -->
+    <div class="cover">
+        <div class="cover-icon">&#127758;</div>
+        <h1>{{ title }}</h1>
+        <p class="subtitle">基于 AI 对话分析的空间数据分析报告，包含完整的分析过程与结果</p>
+        <div class="cover-meta">
+            <span>&#128197; {{ generated_at }}</span>
+            <span>&#128172; {{ message_count }} 条消息</span>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="content">
+        <!-- TOC -->
+        {% if has_conversation or has_tool_results %}
+        <div class="toc">
+            <h2>目录</h2>
+            <ul>
+                {% if has_conversation %}
+                <li><a href="#section-overview">分析概览</a></li>
+                {% endif %}
+                {% if has_tool_results %}
+                <li><a href="#section-tools">工具调用结果</a></li>
+                {% endif %}
+                {% if has_conversation %}
+                <li><a href="#section-conversation">对话记录</a></li>
+                {% endif %}
+            </ul>
+        </div>
+        {% endif %}
+
+        {% if has_conversation %}
+        <!-- Overview -->
+        <div class="section" id="section-overview">
+            <h2 class="section-title"><span class="num">1</span> 分析概览</h2>
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">会话标题</div>
+                    <div class="info-value">{{ session_title }}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">会话 ID</div>
+                    <div class="info-value" style="font-family: monospace; font-size: 0.82rem;">{{ session_id }}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">消息总数</div>
+                    <div class="info-value">{{ message_count }} 条</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">报告格式</div>
+                    <div class="info-value">{{ format | upper }}</div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if has_tool_results %}
+        <!-- Tool Results -->
+        <div class="section" id="section-tools">
+            <h2 class="section-title"><span class="num">{% if has_conversation %}2{% else %}1{% endif %}</span> 工具调用结果</h2>
+            <div class="tool-results">
+                {% for tool in tool_results %}
+                <div class="tool-result">
+                    <div class="tool-name">{{ tool.name }}</div>
+                    <div class="tool-content">{{ tool.result }}</div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if has_conversation %}
+        <!-- Conversation -->
+        <div class="section" id="section-conversation">
+            <h2 class="section-title"><span class="num">{% if has_tool_results %}3{% else %}2{% endif %}</span> 对话记录</h2>
+            <div class="conversation-list">
+                {% for msg in messages %}
+                <div class="msg {{ msg.role }}">
+                    <div class="msg-role">{{ msg.role_label }}</div>
+                    <div class="msg-content">{{ msg.content }}</div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if not has_conversation and not has_tool_results %}
+        <!-- Empty State -->
+        <div class="section">
+            <h2 class="section-title"><span class="num">1</span> 报告内容</h2>
+            <div class="summary-box">
+                <p>当前会话暂无可分析的对话内容。报告基于会话中的消息历史和工具调用结果自动生成。</p>
+                <p>请确保会话中包含有效的分析操作后再生成报告。</p>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Footer -->
+        <div class="footer">
+            <p><strong>WebGIS AI Agent</strong> - 智能空间分析平台</p>
+            <p>本报告由系统自动生成于 {{ generated_at }}</p>
+        </div>
+    </div>
+</body>
+</html>
