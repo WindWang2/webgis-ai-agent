@@ -1,5 +1,5 @@
 "use client"
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import { Send, Paperclip, Bot, User, Loader2, Upload, X, Check, AlertCircle, History, ArrowLeft, Trash2 } from "lucide-react"
 import { streamChat, SSEEventType, getSessionList, getSessionDetail, deleteSession } from "@/lib/api/chat"
 import { ChatSession } from "@/lib/types/chat"
@@ -35,7 +35,7 @@ interface ChatPanelProps {
   onAnalysisRequest?: (message: string, attachments?: Attachment[]) => void
   incomingMessage?: string
   incomingResponse?: string
-  onToolResult?: (toolName: string, result: ToolResult) => void
+  onToolResult?: (toolName: string, result: ToolResult, sessionId?: string) => void
   onUploadSuccess?: (result: UploadResponse) => void
 }
 
@@ -201,9 +201,11 @@ export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse
           handleStepStart(data.task_id, data.step_id, data.step_index, data.tool)
         } else if (eventType === "step_result" && data?.task_id) {
           handleStepResult(data.task_id, data.step_id, data.tool, data.result, data.has_geojson)
-          // 只有在这里才向父组件发送 GeoJSON，确保数据的完整性
+          // 如果结果中包含引用 ID (geojson_ref)，则可能数据已被脱敏，需要前端后续拉取
           if (data.has_geojson && onToolResult) {
-            onToolResult(data.tool, data.result)
+            const toolResult = { ...data.result, geojson_ref: data.geojson_ref }
+            const effectiveSessionId = data.session_id || sessionId
+            onToolResult(data.tool, toolResult, effectiveSessionId)
           }
         } else if (eventType === "step_error" && data?.task_id) {
           handleStepError(data.task_id, data.step_id, data.error)

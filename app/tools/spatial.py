@@ -115,21 +115,39 @@ def register_spatial_tools(registry: ToolRegistry):
             return {"error": str(e)}
 
     @tool(registry, name="heatmap_data",
-           description="根据点要素生成热力图数据。支持栅格(raster)和矢量格网(grid)两种模式。栅格适合平滑显示，格网适合明显对比和数据分析。",
+           description="根据点要素生成热力图数据。默认为平滑的 'raster' 模式（类似传统气泡图效果），也可选 'grid' 矢量格网模式用于精确区域统计和对比分析。",
            args_model=HeatmapDataArgs)
-    def heatmap_data(geojson: Any, cell_size: int = 500, radius: int = 1000, render_type: str = "grid") -> dict:
+    def heatmap_data(geojson: Any, cell_size: int = 500, radius: int = 2000, render_type: str = "native") -> dict:
         try:
             data = _safe_parse_geojson(geojson)
             if not data:
                 return {"error": "Invalid GeoJSON input"}
             features = data.get("features") or data.get("feature_collection", [])
+            
+            # --- 新增: 原生热力图模式 (由 MapLibre 直接渲染) ---
+            if render_type == "native":
+                if isinstance(data, dict):
+                    data["metadata"] = {
+                        "render_type": "native",
+                        "point_count": len(features),
+                        "radius": radius
+                    }
+                return data
+
             from app.services.spatial_tasks import run_heatmap_generation
             task = run_heatmap_generation.apply_async(
                 kwargs={"features": features, "cell_size": cell_size, "radius": radius, "render_type": render_type}
             )
             result = task.get(timeout=120)
             if result.get("success"):
-                return result.get("data")
+                data = result.get("data")
+                # 注入 render 指令暗示前端
+                if isinstance(data, dict):
+                    if render_type == "raster":
+                        data["command"] = "add_heatmap_raster"
+                    else:
+                        data["command"] = "add_layer"
+                return data
             return {"error": result.get("error")}
         except Exception as e:
             logger.error(f"Heatmap error: {e}")

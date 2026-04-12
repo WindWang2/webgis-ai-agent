@@ -17,21 +17,30 @@ class HistoryService:
         self.db = db
 
     def get_or_create_conversation(self, session_id: str) -> Conversation:
-        conv = self.db.get(Conversation, session_id)
-        if conv:
-            return conv
-        conv = Conversation(
-            id=session_id,
-            title="新对话",
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-        )
-        self.db.add(conv)
-        self.db.flush()       # assign PK without committing
-        self._enforce_cap()   # prune within same transaction
-        self.db.commit()
-        self.db.refresh(conv)
-        return conv
+        import time
+        for attempt in range(3):
+            try:
+                conv = self.db.get(Conversation, session_id)
+                if conv:
+                    return conv
+                conv = Conversation(
+                    id=session_id,
+                    title="新对话",
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+                self.db.add(conv)
+                self.db.flush()       # assign PK without committing
+                self._enforce_cap()   # prune within same transaction
+                self.db.commit()
+                self.db.refresh(conv)
+                return conv
+            except Exception as e:
+                if "locked" in str(e).lower() and attempt < 2:
+                    time.sleep(0.1 * (attempt + 1))
+                    self.db.rollback()
+                    continue
+                raise e
 
     def save_message(
         self,
@@ -42,20 +51,30 @@ class HistoryService:
         tool_result=None,
         tool_call_id=None,
     ) -> None:
-        msg = Message(
-            conversation_id=session_id,
-            role=role,
-            content=content,
-            tool_calls=tool_calls,
-            tool_call_id=tool_call_id,
-            tool_result=tool_result,
-            created_at=datetime.now(timezone.utc),
-        )
-        self.db.add(msg)
-        conv = self.db.get(Conversation, session_id)
-        if conv:
-            conv.updated_at = datetime.now(timezone.utc)
-        self.db.commit()
+        import time
+        for attempt in range(3):
+            try:
+                msg = Message(
+                    conversation_id=session_id,
+                    role=role,
+                    content=content,
+                    tool_calls=tool_calls,
+                    tool_call_id=tool_call_id,
+                    tool_result=tool_result,
+                    created_at=datetime.now(timezone.utc),
+                )
+                self.db.add(msg)
+                conv = self.db.get(Conversation, session_id)
+                if conv:
+                    conv.updated_at = datetime.now(timezone.utc)
+                self.db.commit()
+                return
+            except Exception as e:
+                if "locked" in str(e).lower() and attempt < 2:
+                    time.sleep(0.1 * (attempt + 1))
+                    self.db.rollback()
+                    continue
+                raise e
 
     def update_title(self, session_id: str, title: str) -> None:
         conv = self.db.get(Conversation, session_id)
@@ -89,7 +108,6 @@ class HistoryService:
             self.db.query(Conversation)
             .order_by(Conversation.updated_at.asc())
             .limit(overflow)
-            .with_for_update(skip_locked=True)
             .all()
         )
         for conv in oldest:

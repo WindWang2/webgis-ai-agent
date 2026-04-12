@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import uuid
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Optional, Any
 
 import httpx
 
@@ -64,9 +64,21 @@ def _parse_minimax_xml_tool_calls(content: str) -> list[dict]:
     return tool_calls
 
 
+def _serialize_sse_data(data: dict) -> str:
+    """安全地将数据序列化为 JSON 字符串，防止序列化失败导致流中断"""
+    try:
+        return json.dumps(data, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"SSE serialization error: {e}, data keys: {list(data.keys())}")
+        return json.dumps({
+            "error": "Internal serialization error",
+            "session_id": data.get("session_id")
+        }, ensure_ascii=False)
+
+
 def _sse_event(event_type: str, data: dict) -> str:
     """构造 SSE 格式事件字符串"""
-    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+    return f"event: {event_type}\ndata: {_serialize_sse_data(data)}\n\n"
 
 
 _MSG_MAX_CHARS = 3000  # 存入 messages 的工具结果最大字符数
@@ -122,7 +134,65 @@ def _slim_tool_result(result: any, result_str: str, session_geojson_ref: str | N
             
         return json.dumps(slim, ensure_ascii=False)
 
-    return result_str[:_MSG_MAX_CHARS] + "...[截断]"
+def _calculate_bbox(geojson: Any) -> str | None:
+    """计算 GeoJSON 的 BBox 字符串格式: 'south,west,north,east'"""
+    if not isinstance(geojson, dict):
+        return None
+    features = geojson.get("features", [])
+    if not features:
+        return None
+    min_lat, min_lon = float('inf'), float('inf')
+    max_lat, max_lon = float('-inf'), float('-inf')
+    found = False
+    for f in features:
+        geom = f.get("geometry")
+        if not geom: continue
+        coords = geom.get("coordinates")
+        if not coords: continue
+        def process(c):
+            nonlocal min_lat, min_lon, max_lat, max_lon, found
+            if isinstance(c, (list, tuple)) and len(c) >= 2 and isinstance(c[0], (int, float)):
+                lng, lat = float(c[0]), float(c[1])
+                min_lon, max_lon = min(min_lon, lng), max(max_lon, lng)
+                min_lat, max_lat = min(min_lat, lat), max(max_lat, lat)
+                found = True
+            elif isinstance(c, list):
+                for item in c: process(item)
+        process(coords)
+    return f"{min_lat},{min_lon},{max_lat},{max_lon}" if found else None
+
+def _slim_event_result(result: Any) -> Any:
+    """为了 SSE 传输而脱敏工具结果，移除大体积的数据字段，但保留导航和渲染关键点。"""
+    if not isinstance(result, dict):
+        return result
+    
+    # 提取或计算 bbox 用于前端导航
+    bbox = result.get("bbox")
+    if not bbox and "geojson" in result:
+        bbox = _calculate_bbox(result["geojson"])
+
+    # 移除大数据字段，但保留 image (热力图需要) 和 bbox (导航需要)
+    exclude = {"geojson", "features", "data_list", "grid"}
+    slim = {k: v for k, v in result.items() if k not in exclude}
+    
+    
+    if isinstance(result, dict) and result.get("type") == "FeatureCollection" and "features" in result:
+        # 情况 2: Root 是 FeatureCollection
+        slim = {k: v for k, v in result.items() if k not in exclude}
+    elif isinstance(result, dict):
+        # 情况 1: 嵌套字典
+        slim = {k: v for k, v in result.items() if k not in exclude}
+    else:
+        return result
+    
+    if bbox:
+        slim["bbox"] = bbox
+        
+    # 增加指引
+    if "geojson" in result or "features" in result:
+        slim["_streaming_note"] = "大体积要素数据已过滤，仅保留元数据。完整图层已自动加载。"
+        
+    return slim
 
 
 class ChatEngine:
@@ -131,21 +201,30 @@ class ChatEngine:
         self.base_url = settings.LLM_BASE_URL.rstrip("/")
         self.model = settings.LLM_MODEL
         self.api_key = settings.LLM_API_KEY
-        self.max_rounds = 10
+        self.max_rounds = 20
         # 内存对话存储: session_id -> messages list (LRU Cache to bound memory)
         self._sessions: LRUCache = LRUCache(capacity=50)
         # 任务跟踪器
         self.tracker = TaskTracker()
 
-    @staticmethod
-    def _fire_and_forget(func, *args):
-        """Submit a callable to the executor and log any exception on completion."""
-        loop = asyncio.get_running_loop()
-        future = loop.run_in_executor(None, func, *args)
-        future.add_done_callback(lambda f: (
-            logger.error("Background task failed: %s", f.exception())
-            if f.exception() else None
-        ))
+    def _fire_and_forget(self, func, *args, **kwargs):
+        """异步执行背景任务，不阻塞主线程，并捕获异常。"""
+        # 如果 func 是 coroutine function，直接用 create_task
+        # 如果 func 是普通函数，用 run_in_executor
+        import inspect
+        if inspect.iscoroutinefunction(func):
+            task = asyncio.create_task(func(*args, **kwargs))
+            task.add_done_callback(lambda t: (
+                logger.error(f"Background async task failed: {t.exception()}") 
+                if not t.cancelled() and t.exception() else None
+            ))
+        else:
+            loop = asyncio.get_running_loop()
+            future = loop.run_in_executor(None, func, *args)
+            future.add_done_callback(lambda f: (
+                logger.error(f"Background sync task failed: {f.exception()}")
+                if f.exception() else None
+            ))
 
     def _db_msg_to_llm(self, msg) -> dict:
         """Convert a DB message model to LLM-compatible dictionary."""
@@ -190,24 +269,19 @@ class ChatEngine:
 
         return self._sessions[session_id]
 
-    def _save_msg_async(self, session_id: str, role: str, content: str, tool_calls=None, tool_result=None, tool_call_id=None):
-        """Persist a message to DB without blocking the SSE stream.
-
-        Creates its own DB session so concurrent executor calls don't share state.
-        """
+    async def _save_msg_async(self, session_id: str, role: str, content: str, tool_calls=None, tool_result=None, tool_call_id=None):
+        """异步保存消息到数据库，带重试机制。"""
         db = SessionLocal()
         try:
+            # HistoryService 内部已有重试逻辑
             HistoryService(db).save_message(session_id, role, content, tool_calls, tool_result, tool_call_id)
         except Exception as e:
-            logger.warning(f"History: failed to save message: {e}")
+            logger.error(f"Failed to save message asynchronously: {e}")
         finally:
             db.close()
 
-    def _generate_title(self, session_id: str, first_user_message: str) -> None:
-        """Call LLM synchronously to generate a short title, then update DB.
-
-        Creates its own DB session so concurrent executor calls don't share state.
-        """
+    async def _generate_title(self, session_id: str, first_user_message: str):
+        """异步生成对话标题。"""
         import httpx as _httpx
         try:
             payload = {
@@ -218,14 +292,15 @@ class ChatEngine:
                 ],
                 "max_tokens": 64,
             }
-            resp = _httpx.post(
-                f"{self.base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-                json=payload,
-                timeout=30.0,
-            )
-            resp.raise_for_status()
-            title = resp.json()["choices"][0]["message"]["content"].strip()
+            async with _httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                    json=payload,
+                )
+                resp.raise_for_status()
+                title = resp.json()["choices"][0]["message"]["content"].strip()
+            
             if title:
                 db = SessionLocal()
                 try:
@@ -275,8 +350,7 @@ class ChatEngine:
         self._fire_and_forget(self._save_msg_async, session_id, "user", message)
 
         # FC 循环
-        max_rounds = 10
-        for _ in range(max_rounds):
+        for _ in range(self.max_rounds):
             tools = self.registry.get_schemas() if self.registry.get_schemas() else None
             response = await self._call_llm(messages, tools)
             choice = response.get("choices", [{}])[0]
@@ -302,7 +376,7 @@ class ChatEngine:
                 if standard_calls:
                     entry["tool_calls"] = standard_calls
                 messages.append(entry)
-                self._fire_and_forget(self._save_msg_async, session_id, "assistant", content_text, standard_calls)
+                self._fire_and_forget(self._save_msg_async, session_id, "assistant", content_text, tc_list)
 
                 tool_result_msgs: list[str] = []
                 for tc in tc_list:
@@ -313,6 +387,12 @@ class ChatEngine:
                             session_id=session_id
                         )
                         result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
+                        
+                        # 自愈检测：检查结果是否“不对”（如为空）
+                        if self._detect_suspicious_result(result):
+                            result_str += "\n\n(提示: 查询结果为空。如果这不符合预期，请尝试扩大搜索半径、更换关键词或检查行政区划参数。)"
+                            
+                        result_str_final = result_str
                     except Exception as e:
                         # 区分校验错误与执行错误
                         error_type = "参数校验失败" if isinstance(e, ValueError) and "校验失败" in str(e) else "执行出错"
@@ -323,9 +403,9 @@ class ChatEngine:
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tc["id"],
-                            "content": result_str,
+                            "content": result_str_final,
                         })
-                        self._fire_and_forget(self._save_msg_async, session_id, "tool", "", None, result_str, tc["id"])
+                        self._fire_and_forget(self._save_msg_async, session_id, "tool", "", None, result_str_final, tc["id"])
                     else:
                         tool_result_msgs.append(f"{tc['function']['name']}: {result_str}")
 
@@ -412,41 +492,65 @@ class ChatEngine:
                         "step_id": step.id,
                         "step_index": len(task.steps),
                         "tool": tool_name,
+                        "session_id": session_id,
                     })
 
                     # 现有 tool_call 事件（保持兼容）
                     yield f"event: tool_call\ndata: {json.dumps({'name': tool_name, 'arguments': tool_args_raw}, ensure_ascii=False)}\n\n"
 
-                    # 执行工具
+                    # 执行工具 (带心跳保活)
                     try:
-                        result = await self.registry.dispatch(
-                            tool_name, 
-                            tool_args_raw,
-                            session_id=session_id
+                        # 将工具执行包装为异步任务，以便在等待期间发送心跳
+                        dispatch_task = asyncio.create_task(
+                            self.registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
                         )
+                        
+                        while not dispatch_task.done():
+                            # 每 5 秒发送一次心跳，防止连接超时
+                            done, pending = await asyncio.wait([dispatch_task], timeout=5.0)
+                            if not done:
+                                yield ": keep-alive\n\n"
+                                logger.debug(f"SSE Heartbeat sent for tool: {tool_name}")
+                        
+                        result = await dispatch_task
                         result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
                         self.tracker.complete_step(task.id, step.id, result)
 
                         # 将 GeoJSON 结果存储到数据管理器，并生成标准游标
                         geojson_ref: str | None = None
-                        if isinstance(result, dict) and isinstance(result.get("geojson"), (dict, str)):
-                            geojson_ref = session_data_manager.store(session_id, result["geojson"], prefix="geojson")
+                        # 支持两种模式：1. 嵌套在 geojson 键下； 2. 根部就是 FeatureCollection
+                        target_data = None
+                        if isinstance(result, dict):
+                            if isinstance(result.get("geojson"), (dict, list)):
+                                target_data = result["geojson"]
+                            elif result.get("type") == "FeatureCollection" and "features" in result:
+                                target_data = result
+                        
+                        if target_data is not None:
+                            geojson_ref = session_data_manager.store(session_id, target_data, prefix="geojson")
 
-                        # step_result
+                        # step_result (使用流式脱敏)
                         has_geojson = detect_geojson(result)
+                        slim_result = _slim_event_result(result)
                         yield _sse_event("step_result", {
                             "task_id": task.id,
                             "step_id": step.id,
                             "tool": tool_name,
-                            "result": result,
+                            "result": slim_result,
+                            "geojson_ref": geojson_ref,
                             "has_geojson": has_geojson,
+                            "session_id": session_id,
                         })
 
-                        # 现有 tool_result 事件（保持兼容）
-                        yield f"event: tool_result\ndata: {json.dumps({'name': tool_name, 'result': result}, ensure_ascii=False)}\n\n"
+                        # 现有 tool_result 事件 (使用流式脱敏)
+                        yield f"event: tool_result\ndata: {json.dumps({'name': tool_name, 'result': slim_result, 'session_id': session_id}, ensure_ascii=False)}\n\n"
 
                         # 存入 messages 时压缩大型结果，避免撑爆 LLM 上下文
                         msg_result_str = _slim_tool_result(result, result_str, geojson_ref)
+                        
+                        # 自愈检测
+                        if self._detect_suspicious_result(result):
+                            msg_result_str += "\n\n(注意: 此操作未返回任何空间要素或有效数据。请检查查询范围、关键词或图层名称，并根据需要尝试不同的参数。)"
 
                     except Exception as e:
                         # 区分校验错误与执行错误
@@ -472,7 +576,9 @@ class ChatEngine:
                             "tool_call_id": tc["id"],
                             "content": msg_result_str,
                         })
-                        self._fire_and_forget(self._save_msg_async, session_id, "tool", "", None, msg_result_str, tc["id"])
+                        # 写入 DB 时再次截断，防止单条消息体积过大撑爆 SQLite
+                        db_save_content = msg_result_str[:100000] if len(msg_result_str) > 100000 else msg_result_str
+                        self._fire_and_forget(self._save_msg_async, session_id, "tool", "", None, db_save_content, tc["id"])
                     else:
                         tool_result_msgs.append(f"{tool_name}: {msg_result_str}")
 
@@ -525,13 +631,37 @@ class ChatEngine:
         finally:
             db.close()
 
+    def _detect_suspicious_result(self, result: Any) -> bool:
+        """检测工具返回的结果是否“可疑”（如为空数据），用于触发自愈提示。"""
+        if not result:
+            return True
+            
+        if isinstance(result, dict):
+            # GeoJSON 检查
+            if result.get("type") == "FeatureCollection" and not result.get("features"):
+                return True
+            # 通用结果列表检查
+            if "data" in result and isinstance(result["data"], list) and not result["data"]:
+                return True
+            # OSM POI 检查
+            if "poi_count" in result and result["poi_count"] == 0:
+                return True
+                
+        if isinstance(result, list) and not result:
+            return True
+            
+        return False
+
 
 SYSTEM_PROMPT = """你是一个专业的 GIS 分析助手，擅长地理空间数据查询、分析和可视化。
 
 ## 核心使命：主动洞察 (Proactive Insight)
 
 你不仅是一个简单的指令执行器，更是一个空间智能专家。你的目标是**主动**为用户提供深度洞察。
-**规则**：当你的分析产生数值结果（统计数据、排名、占比）时，**必须主动**展示相关图表或专题地图，无需用户额外要求。
+**规则**：
+1. **统计即图表**：当你的分析产生数值结果（统计数据、排名、占比）时，**必须主动**展示相关图表或专题地图。
+2. **列表即表格**：当你查询到 POI 点位或其他要素列表时，**必须主动**在回复中输出一个 Markdown 格式的汇总表格。
+3. **空间严密性**：如果用户指定了行政区划（如“锦江区”），在调用工具时必须确保搜索范围尽可能与之匹配。如果你已获取了边界，应明确告知用户你在该边界内搜索。
 
 ## 任务规划（必须执行）
 

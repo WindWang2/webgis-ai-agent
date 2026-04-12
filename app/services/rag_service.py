@@ -91,14 +91,14 @@ def split_into_chunks(
     Returns:
         [{content, start_char, end_char, chunk_index}, ...]
     """
-    chunks_size = max_tokens * 4  # 粗略估计: 1 token ≈ 4 chars
+    chunk_size = max_tokens * 4  # 粗略估计: 1 token ≈ 4 chars
     overlap_chars = overlap * 4
     
-    chunks_size = min(chunk_size, len(text))
+    chunk_size = min(chunk_size, len(text))
     if chunk_size <= 0:
         return []
     
-    chunks_list = []
+    chunk_list = []
     start = 0
     idx = 0
     

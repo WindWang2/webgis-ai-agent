@@ -202,7 +202,6 @@ def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, rad
                     "features": grid_features,
                     "metadata": {
                         "render_type": "grid",
-                        "thematic_type": "choropleth", # 提示前端使用专题图样式
                         "field": "weight",
                         "cell_size": cell_size,
                         "point_count": len(points)
@@ -216,15 +215,14 @@ def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, rad
             sigma = max(1.0, radius / cell_size)
             H_smooth = gaussian_filter(H.T, sigma=sigma)
 
-            # 优化配色方案：淡黄 -> 橙 -> 红 -> 棕
-            cmap = LinearSegmentedColormap.from_list("heat", [
-                (0.00, (0.00, 0.00, 0.50, 0.00)),   # 透明
-                (0.10, (0.50, 0.00, 0.50, 0.50)),   # 淡紫
-                (0.30, (0.00, 0.40, 0.80, 0.70)),   # 浅蓝
-                (0.50, (0.00, 0.80, 0.40, 0.80)),   # 绿
-                (0.70, (1.00, 1.00, 0.00, 0.90)),   # 黄
-                (0.90, (1.00, 0.50, 0.00, 0.95)),   # 橙
-                (1.00, (1.00, 0.00, 0.00, 1.00)),   # 红
+            # 优化配色方案：标准热力图色带 (Cyan -> Green -> Yellow -> Red)
+            cmap = LinearSegmentedColormap.from_list("classic_heat", [
+                (0.00, (0.0, 0.0, 0.0, 0.0)),      # 完全透明
+                (0.15, (0.0, 1.0, 1.0, 0.4)),      # 蓝青色 (低密度)
+                (0.40, (0.0, 1.0, 0.0, 0.6)),      # 亮绿色
+                (0.70, (1.0, 1.0, 0.0, 0.8)),      # 鲜黄色
+                (0.90, (1.0, 0.5, 0.0, 0.9)),      # 橙色
+                (1.00, (1.0, 0.0, 0.0, 1.0)),      # 纯红色 (最高密度)
             ], N=256)
 
             fig, ax = plt.subplots(figsize=(10, 10), dpi=100)
