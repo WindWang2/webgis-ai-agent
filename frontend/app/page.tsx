@@ -72,21 +72,25 @@ export default function Home() {
         setAnalysisResult({ center, zoom })
       }
 
-      // 确定图层类型：heatmap_data 返回 type="heatmap"，其他默认为 vector
-      const layerType = result.type === "heatmap" ? "heatmap" : "vector"
-      const layerStyle = result.type === "heatmap"
-        ? { color, renderType: "heatmap" }
+      // 确定图层类型：heatmap_raster 返回 type="heatmap"，带 grid 属性的为 vector
+      const isRaster = result.type === "heatmap_raster"
+      const isGrid = result.geojson?.metadata?.render_type === "grid"
+      
+      const layerType = isRaster ? "heatmap" : "vector"
+      const layerStyle = (isRaster || isGrid)
+        ? { color, renderType: isRaster ? "heatmap" : "grid" }
         : { color }
 
-      setLayers(prev => [...prev, {
+      setLayers(prev => [{
         id: layerId,
         name: result.type === "poi_query" ? `${result.area} - ${result.category}` : (result.type || toolName),
         type: layerType,
         visible: true,
         opacity: 1,
+        group: result.group || 'analysis',
         source: result.geojson,
         style: layerStyle,
-      }])
+      }, ...prev])
     }
   }, [])
 
@@ -101,6 +105,20 @@ export default function Home() {
   }, [])
 
   const handleEditLayer = useCallback((_layer: Layer) => {}, [])
+  
+  const handleUpdateLayer = useCallback((layerId: string, updates: Partial<Layer>) => {
+    setLayers(prev => prev.map(l => 
+      l.id === layerId ? { ...l, ...updates } : l
+    ))
+  }, [])
+
+  const handleReorderLayers = useCallback((newLayers: Layer[]) => {
+    setLayers(newLayers)
+  }, [])
+  
+  const handleMapMove = useCallback((center: [number, number], zoom: number) => {
+    setAnalysisResult({ center, zoom })
+  }, [])
 
   return (
     <TaskProvider>
@@ -135,7 +153,14 @@ export default function Home() {
 
           {/* 右侧结果面板 - 书卷感 */}
           <div className="w-80 lg:w-85 flex-shrink-0 flex flex-col overflow-hidden rounded-xl border border-border/50 shadow-2xl bg-card/60 backdrop-blur-lg">
-            <ResultsPanel layers={layers} onToggleLayer={handleToggleLayer} />
+            <ResultsPanel 
+              layers={layers} 
+              onToggleLayer={handleToggleLayer} 
+              onMapMove={handleMapMove}
+              onRemoveLayer={handleRemoveLayer}
+              onUpdateLayer={handleUpdateLayer}
+              onReorderLayers={handleReorderLayers}
+            />
           </div>
         </div>
       </div>

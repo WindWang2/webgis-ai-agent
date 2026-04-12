@@ -26,6 +26,7 @@ class ApplyStyleArgs(BaseModel):
     color: str = Field("#3b82f6", description="颜色 (Hex, 例如 #ff0000)")
     opacity: float = Field(0.7, ge=0, le=1, description="不透明度 (0~1)")
     stroke_width: float = Field(2.0, description="边框宽度")
+    group: str = Field("analysis", description="图层组: analysis(分析), base(底图), reference(参考)")
 
 class ThematicMapArgs(BaseModel):
     geojson: Any = Field(..., description="输入 GeoJSON 或数据引用(ref:xxx)")
@@ -33,6 +34,7 @@ class ThematicMapArgs(BaseModel):
     method: str = Field("quantiles", description="分类方法: quantiles(分位数), equal_interval(等间距)")
     k: int = Field(5, ge=2, le=10, description="分类数量 (2-10)")
     palette: str = Field("YlOrRd", description="调色板: YlOrRd, Blues, Greens, Reds, Viridis, Magma")
+    group: str = Field("analysis", description="图层组: analysis(分析), base(底图), reference(参考)")
 
 def register_cartography_tools(registry: ToolRegistry):
     """注册制图工具"""
@@ -40,7 +42,7 @@ def register_cartography_tools(registry: ToolRegistry):
     @tool(registry, name="apply_layer_style",
            description="为地理图层设置统一的显示样式（颜色、透明度等）。",
            args_model=ApplyStyleArgs)
-    def apply_layer_style(geojson: Any, color: str, opacity: float = 0.7, stroke_width: float = 2.0) -> dict:
+    def apply_layer_style(geojson: Any, color: str, opacity: float = 0.7, stroke_width: float = 2.0, group: str = "analysis") -> dict:
         try:
             data = _safe_parse_geojson(geojson)
             if not data:
@@ -57,6 +59,7 @@ def register_cartography_tools(registry: ToolRegistry):
             
             return {
                 "geojson": data,
+                "group": group,
                 "style_applied": {
                     "color": color,
                     "opacity": opacity,
@@ -69,7 +72,7 @@ def register_cartography_tools(registry: ToolRegistry):
     @tool(registry, name="create_thematic_map",
            description="根据指定字段制作分层设色专题图 (Choropleth Map)，自动计算颜色级别。",
            args_model=ThematicMapArgs)
-    def create_thematic_map(geojson: Any, field: str, method: str = "quantiles", k: int = 5, palette: str = "YlOrRd") -> dict:
+    def create_thematic_map(geojson: Any, field: str, method: str = "quantiles", k: int = 5, palette: str = "YlOrRd", group: str = "analysis") -> dict:
         try:
             data = _safe_parse_geojson(geojson)
             if not data:
@@ -86,6 +89,7 @@ def register_cartography_tools(registry: ToolRegistry):
             
             return {
                 "geojson": result_geojson,
+                "group": group,
                 "metadata": result_geojson.get("metadata", {})
             }
         except Exception as e:

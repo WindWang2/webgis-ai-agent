@@ -24,7 +24,12 @@ def run_buffer_analysis(self, features: List[Dict], distance: float, unit: str =
     )
     
     if result.success:
-        return {"success": True, "data": result.data, "stats": result.stats}
+        return {
+            "success": True, 
+            "data": result.data, 
+            "stats": result.stats,
+            "status_desc": f"已完成缓冲区分析：距离 {distance} {unit}。"
+        }
     else:
         return {"success": False, "error": result.error_message}
 
@@ -68,7 +73,11 @@ def run_spatial_stats(self, features: List[Dict]):
             },
         }
         update_progress(100, "完成统计")
-        return {"success": True, "stats": stats}
+        return {
+            "success": True, 
+            "stats": stats, 
+            "status_desc": f"已完成空间统计分析，共处理 {stats['feature_count']} 个要素。"
+        }
     except Exception as e:
         logger.error(f"Spatial stats task failed: {e}")
         return {"success": False, "error": str(e)}
@@ -109,8 +118,8 @@ def run_nearest_neighbor(self, features: List[Dict]):
         return {"success": False, "error": str(e)}
 
 @celery_app.task(name="app.services.spatial_tasks.run_heatmap_generation", bind=True)
-def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, radius: int = 1000):
-    """执行热加图任务"""
+def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, radius: int = 1000, render_type: str = "raster"):
+    """执行热力图任务 - 支持栅格(raster)和矢量格网(grid)模式"""
     import base64
     import io
     import matplotlib
@@ -119,6 +128,7 @@ def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, rad
     import numpy as np
     from matplotlib.colors import LinearSegmentedColormap
     from scipy.ndimage import gaussian_filter
+    from shapely.geometry import box, mapping
 
     fig = None
     try:
@@ -129,7 +139,6 @@ def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, rad
             if geom.get("type") == "Point":
                 coords = geom.get("coordinates")
                 if coords and len(coords) >= 2:
-                    # 过滤掉 None 或非数字坐标
                     try:
                         lon, lat = float(coords[0]), float(coords[1])
                         if not math.isnan(lon) and not math.isnan(lat):
@@ -143,9 +152,9 @@ def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, rad
         xs = [p[0] for p in points]
         ys = [p[1] for p in points]
 
+        # 1度约等于 111000m
         cell_deg = cell_size / 111000
-        margin = cell_deg * 3
-        # 边界扩展，处理单点情况
+        margin = cell_deg * 2
         x_min, x_max = min(xs) - margin, max(xs) + margin
         y_min, y_max = min(ys) - margin, max(ys) + margin
         
@@ -155,58 +164,99 @@ def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, rad
         x_bins = np.arange(x_min, x_max + cell_deg, cell_deg)
         y_bins = np.arange(y_min, y_max + cell_deg, cell_deg)
         
-        # 防止 bins 过多导致 OOM 或过少导致失败
         if len(x_bins) > 5000 or len(y_bins) > 5000:
              return {"success": False, "error": "Resolution too high for the data extent"}
 
         H, xedges, yedges = np.histogram2d(xs, ys, bins=[x_bins, y_bins])
 
-        sigma = max(1.0, radius / cell_size)
-        H_smooth = gaussian_filter(H.T, sigma=sigma)
-
-        cmap = LinearSegmentedColormap.from_list("heat", [
-            (0.00, (0.00, 0.00, 0.50, 0.00)),
-            (0.10, (0.00, 0.10, 0.90, 0.65)),
-            (0.30, (0.00, 0.75, 1.00, 0.80)),
-            (0.55, (0.10, 1.00, 0.20, 0.88)),
-            (0.75, (1.00, 0.90, 0.00, 0.93)),
-            (0.88, (1.00, 0.40, 0.00, 0.97)),
-            (1.00, (0.90, 0.00, 0.00, 1.00)),
-        ], N=256)
-
-        dpi = 100
-        w = max(H_smooth.shape[1] / dpi, 4)
-        h = max(H_smooth.shape[0] / dpi, 4)
-        
-        fig, ax = plt.subplots(figsize=(w, h), dpi=dpi)
-        v_max = H_smooth.max() if H_smooth.max() > 0 else 1.0
-        
-        ax.imshow(
-            H_smooth,
-            cmap=cmap,
-            origin="lower",
-            aspect="auto",
-            vmin=0,
-            vmax=v_max,
-            interpolation="bilinear",
-        )
-        ax.axis("off")
-        plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
-
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0, transparent=True)
-        buf.seek(0)
-        img_b64 = "data:image/png;base64," + base64.b64encode(buf.read()).decode()
-
-        return {
-            "success": True,
-            "data": {
-                "type": "heatmap_raster",
-                "image": img_b64,
-                "bbox": [float(xedges[0]), float(yedges[0]), float(xedges[-1]), float(yedges[-1])],
-                "total_points": len(points),
+        if render_type == "grid":
+            # 矢量格网模式
+            grid_features = []
+            max_val = float(H.max()) if H.max() > 0 else 1.0
+            
+            for i in range(len(xedges) - 1):
+                for j in range(len(yedges) - 1):
+                    count = H[i, j]
+                    if count > 0:
+                        # 创建正方形
+                        rect = box(xedges[i], yedges[j], xedges[i+1], yedges[j+1])
+                        grid_features.append({
+                            "type": "Feature",
+                            "geometry": mapping(rect),
+                            "properties": {
+                                "count": int(count),
+                                "weight": round(float(count / max_val), 4)
+                            }
+                        })
+            
+            return {
+                "success": True,
+                "data": {
+                    "type": "FeatureCollection",
+                    "features": grid_features,
+                    "metadata": {
+                        "render_type": "grid",
+                        "thematic_type": "choropleth", # 提示前端使用专题图样式
+                        "field": "weight",
+                        "cell_size": cell_size,
+                        "point_count": len(points)
+                    }
+                },
+                "status_desc": f"已生成矢量格网热力图，共包含 {len(grid_features)} 个有效格网单元。"
             }
-        }
+
+        else:
+            # 栅格模式 (原有逻辑增强)
+            sigma = max(1.0, radius / cell_size)
+            H_smooth = gaussian_filter(H.T, sigma=sigma)
+
+            # 优化配色方案：淡黄 -> 橙 -> 红 -> 棕
+            cmap = LinearSegmentedColormap.from_list("heat", [
+                (0.00, (0.00, 0.00, 0.50, 0.00)),   # 透明
+                (0.10, (0.50, 0.00, 0.50, 0.50)),   # 淡紫
+                (0.30, (0.00, 0.40, 0.80, 0.70)),   # 浅蓝
+                (0.50, (0.00, 0.80, 0.40, 0.80)),   # 绿
+                (0.70, (1.00, 1.00, 0.00, 0.90)),   # 黄
+                (0.90, (1.00, 0.50, 0.00, 0.95)),   # 橙
+                (1.00, (1.00, 0.00, 0.00, 1.00)),   # 红
+            ], N=256)
+
+            fig, ax = plt.subplots(figsize=(10, 10), dpi=100)
+            # 使用 98 分位数抑制离群值，增强对比度
+            v_max = np.percentile(H_smooth, 98) if H_smooth.max() > 0 else 1.0
+            if v_max <= 0: v_max = H_smooth.max() or 1.0
+            
+            ax.imshow(
+                H_smooth,
+                cmap=cmap,
+                origin="lower",
+                aspect="auto",
+                vmin=0,
+                vmax=v_max,
+                interpolation="bilinear",
+            )
+            ax.axis("off")
+            plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0, transparent=True)
+            buf.seek(0)
+            img_b64 = "data:image/png;base64," + base64.b64encode(buf.read()).decode()
+
+            return {
+                "success": True,
+                "data": {
+                    "type": "heatmap_raster",
+                    "image": img_b64,
+                    "bbox": [float(xedges[0]), float(yedges[0]), float(xedges[-1]), float(yedges[-1])],
+                    "total_points": len(points),
+                    "metadata": {
+                        "render_type": "raster",
+                        "point_count": len(points)
+                    }
+                },
+                "status_desc": f"已生成增强对照度栅格热力图，覆盖范围包含 {len(points)} 个要素点。"
+            }
     except Exception as e:
         logger.error(f"Heatmap conversion failed: {e}", exc_info=True)
         return {"success": False, "error": str(e)}
@@ -223,7 +273,12 @@ def run_overlay_analysis(self, features_a: List[Dict], features_b: List[Dict], h
     
     result = SpatialAnalyzer.overlay(features_a, features_b, how=how, callback=update_progress)
     if result.success:
-        return {"success": True, "data": result.data, "stats": result.stats}
+        return {
+            "success": True, 
+            "data": result.data, 
+            "stats": result.stats,
+            "status_desc": f"已完成 {how} 叠加分析，生成了 {len(result.data.get('features', []))} 个新要素。"
+        }
     return {"success": False, "error": result.error_message}
 
 @celery_app.task(name="app.services.spatial_tasks.run_attribute_filter", bind=True)
@@ -263,7 +318,12 @@ def run_path_analysis(self, network_features: List[Dict], start_point: List[floa
         callback=update_progress
     )
     if result.success:
-        return {"success": True, "data": result.data, "stats": result.stats}
+        return {
+            "success": True, 
+            "data": result.data, 
+            "stats": result.stats,
+            "status_desc": "路径分析已完成，成功找到最优路径。"
+        }
     return {"success": False, "error": result.error_message}
 
 @celery_app.task(name="app.services.spatial_tasks.run_zonal_stats", bind=True)
