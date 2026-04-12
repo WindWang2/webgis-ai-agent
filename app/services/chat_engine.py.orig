@@ -325,7 +325,7 @@ class ChatEngine:
                             "tool_call_id": tc["id"],
                             "content": result_str,
                         })
-                        self._fire_and_forget(self._save_msg_async, session_id, "tool", "", None, result_str, tc["id"])
+                        self._fire_and_forget(self._save_msg_async, session_id, "tool", result_str, None, None, tc["id"])
                     else:
                         tool_result_msgs.append(f"{tc['function']['name']}: {result_str}")
 
@@ -472,7 +472,7 @@ class ChatEngine:
                             "tool_call_id": tc["id"],
                             "content": msg_result_str,
                         })
-                        self._fire_and_forget(self._save_msg_async, session_id, "tool", "", None, msg_result_str, tc["id"])
+                        self._fire_and_forget(self._save_msg_async, session_id, "tool", msg_result_str, None, None, tc["id"])
                     else:
                         tool_result_msgs.append(f"{tool_name}: {msg_result_str}")
 
