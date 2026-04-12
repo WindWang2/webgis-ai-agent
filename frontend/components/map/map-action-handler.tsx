@@ -1,22 +1,38 @@
 'use client';
 import { useEffect } from 'react';
 import { useMapAction } from '@/lib/contexts/map-action-context';
+import type { GeoJSONFeatureCollection } from '@/lib/types';
 
-function calculateBBox(geojson: any): [number, number, number, number] | null {
+interface MapInstanceLike {
+  getMap?: () => maplibregl.Map;
+  getSource?: (id: string) => { setData: (data: unknown) => void } | undefined;
+  addSource?: (id: string, source: unknown) => void;
+  addLayer?: (layer: unknown) => void;
+  getLayer?: (id: string) => unknown;
+  fitBounds?: (bounds: unknown, options?: unknown) => void;
+  flyTo?: (options: unknown) => void;
+}
+
+function calculateBBox(geojson: GeoJSONFeatureCollection): [number, number, number, number] | null {
   const bounds = [Infinity, Infinity, -Infinity, -Infinity];
   const coord: number[][] = [];
 
-  function extract(node: any) {
+  function extract(node: unknown) {
     if (Array.isArray(node) && typeof node[0] === 'number') {
       coord.push(node);
     } else if (Array.isArray(node)) {
       node.forEach(extract);
-    } else if (node?.type === 'FeatureCollection') {
-      node.features.forEach((f: any) => extract(f.geometry.coordinates));
-    } else if (node?.type === 'Feature') {
-      extract(node.geometry.coordinates);
-    } else if (node?.coordinates) {
-      extract(node.coordinates);
+    } else if (node && typeof node === 'object' && 'type' in node) {
+      const obj = node as Record<string, unknown>;
+      if (obj.type === 'FeatureCollection' && Array.isArray(obj.features)) {
+        (obj.features as Array<{ geometry?: { coordinates: unknown } }>).forEach(f => {
+          if (f.geometry?.coordinates) extract(f.geometry.coordinates);
+        });
+      } else if (obj.type === 'Feature' && (obj as { geometry?: { coordinates: unknown } }).geometry?.coordinates) {
+        extract((obj as { geometry: { coordinates: unknown } }).geometry.coordinates);
+      } else if ('coordinates' in obj) {
+        extract(obj.coordinates);
+      }
     }
   }
 
@@ -33,7 +49,7 @@ function calculateBBox(geojson: any): [number, number, number, number] | null {
   return bounds as [number, number, number, number];
 }
 
-export function MapActionHandler({ mapInstance }: { mapInstance?: any }) {
+export function MapActionHandler({ mapInstance }: { mapInstance?: MapInstanceLike }) {
   const { action, clearAction } = useMapAction();
 
   useEffect(() => {
@@ -48,10 +64,10 @@ export function MapActionHandler({ mapInstance }: { mapInstance?: any }) {
           const { layerId, type, geojson, style, flyTo } = action.params;
           if (!layerId || !geojson) break;
 
-          if (!map.getSource(layerId)) {
-            map.addSource(layerId, { type: 'geojson', data: geojson });
+          if (!map.getSource?.(layerId)) {
+            map.addSource?.(layerId, { type: 'geojson', data: geojson });
           } else {
-            (map.getSource(layerId) as any).setData(geojson);
+            map.getSource?.(layerId)?.setData(geojson);
           }
 
           if (!map.getLayer(layerId)) {

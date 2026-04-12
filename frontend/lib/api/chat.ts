@@ -2,6 +2,8 @@
  * Chat API - 对接后端 SSE 流式接口
  */
 
+import type { ToolResult } from '@/lib/types';
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 export interface ChatMessage {
@@ -13,7 +15,7 @@ export interface ChatMessage {
   }>;
   toolResults?: Array<{
     name: string;
-    result: any;
+    result: ToolResult;
   }>;
 }
 
@@ -39,7 +41,7 @@ export type SSEEventType =
 
 export interface SSEEvent {
   event: SSEEventType;
-  data: any;
+  data: Record<string, unknown>;
 }
 
 /**
@@ -155,7 +157,7 @@ export async function clearSessionMessages(sessionId: string): Promise<void> {
 /**
  * 直接执行单个工具（REST API，不依赖SSE）
  */
-export async function executeToolDirect(tool: string, argument: Record<string, any>): Promise<any> {
+export async function executeToolDirect(tool: string, argument: Record<string, unknown>): Promise<ToolResult> {
   const res = await fetch(`${API_BASE}/chat/tools/execute`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

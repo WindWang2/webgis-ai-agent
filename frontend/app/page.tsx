@@ -5,14 +5,15 @@ import { MapPanel } from "@/components/map/map-panel"
 import { ResultsPanel } from "@/components/panel/results-panel"
 import { TaskProvider } from "@/lib/contexts/task-context"
 import type { Layer } from "@/lib/types/layer"
+import type { AnalysisResult, ToolResult, GeoJSONGeometry, GeoJSONFeature } from "@/lib/types"
 
 export default function Home() {
   const [layers, setLayers] = useState<Layer[]>([])
-  const [analysisResult, setAnalysisResult] = useState<any>(null)
+  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null)
 
-  const handleToolResult = useCallback((toolName: string, result: any) => {
+  const handleToolResult = useCallback((toolName: string, result: ToolResult) => {
     // 栅格热力图（base64 PNG + bbox）
-    if (result?.type === "heatmap_raster" && result?.image && result?.bbox) {
+    if (result?.type === "heatmap_raster" && result?.image && Array.isArray(result.bbox)) {
       const layerId = `heatmap_raster-${Date.now()}`
       const [west, south, east, north] = result.bbox
       const center: [number, number] = [(west + east) / 2, (south + north) / 2]
@@ -40,31 +41,32 @@ export default function Home() {
       const collectCoords = (coords: number[][]) => {
         coords.forEach((c: number[]) => { lngs.push(c[0]); lats.push(c[1]) })
       }
-      const collectFromGeometry = (geometry: any) => {
-        if (!geometry?.coordinates) return
+      const collectFromGeometry = (geometry: GeoJSONGeometry) => {
+        const c = geometry.coordinates as number[] | number[][]
+        if (!c) return
         switch (geometry.type) {
           case "Point":
-            lngs.push(geometry.coordinates[0])
-            lats.push(geometry.coordinates[1])
+            lngs.push((c as number[])[0])
+            lats.push((c as number[])[1])
             break
           case "MultiPoint":
-            collectCoords(geometry.coordinates)
+            collectCoords(c as number[][])
             break
           case "LineString":
-            collectCoords(geometry.coordinates)
+            collectCoords(c as number[][])
             break
           case "MultiLineString":
-            geometry.coordinates.forEach((ring: number[][]) => collectCoords(ring))
+            (c as number[][][]).forEach((ring: number[][]) => collectCoords(ring))
             break
           case "Polygon":
-            collectCoords(geometry.coordinates[0] || [])
+            collectCoords((c as number[][][])[0] || [])
             break
           case "MultiPolygon":
-            geometry.coordinates.forEach((poly: number[][][]) => collectCoords(poly[0] || []))
+            (c as number[][][][]).forEach((poly: number[][][]) => collectCoords(poly[0] || []))
             break
         }
       }
-      result.geojson.features.forEach((f: any) => collectFromGeometry(f.geometry))
+      result.geojson.features.forEach((f: GeoJSONFeature) => collectFromGeometry(f.geometry!))
 
       let center: [number, number] | undefined
       let zoom = 12

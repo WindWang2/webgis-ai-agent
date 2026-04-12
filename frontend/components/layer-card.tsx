@@ -9,7 +9,7 @@ interface LayerCardProps {
   onDelete: (id: string) => void;
   onEdit: (layer: Layer) => void; // Keep for backward compatibility if needed
   onUpdate?: (id: string, updates: Partial<Layer>) => void;
-  dragHandleProps?: any;
+  dragHandleProps?: React.HTMLAttributes<HTMLDivElement>;
 }
 
 export const LayerCard = memo(function LayerCard({

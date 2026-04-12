@@ -2,11 +2,12 @@
 import json
 import logging
 from collections import OrderedDict
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 
+from app.core.auth import get_current_user, get_current_user_optional
 from app.services.chat_engine import ChatEngine
 from app.services.history_service import HistoryService
 from app.core.database import SessionLocal
@@ -49,7 +50,7 @@ class ChatResponse(BaseModel):
 
 
 @router.post("/completions", response_model=ChatResponse)
-async def chat_completions(req: ChatRequest):
+async def chat_completions(req: ChatRequest, _user: dict = Depends(get_current_user_optional)):
     """非流式对话接口"""
     try:
         result = await engine.chat(req.message, session_id=req.session_id)
@@ -60,7 +61,7 @@ async def chat_completions(req: ChatRequest):
 
 
 @router.post("/stream")
-async def chat_stream(req: ChatRequest):
+async def chat_stream(req: ChatRequest, _user: dict = Depends(get_current_user_optional)):
     """SSE 流式对话接口"""
     async def event_generator():
         try:
@@ -83,7 +84,7 @@ async def chat_stream(req: ChatRequest):
 
 
 @router.get("/sessions")
-async def list_sessions():
+async def list_sessions(_user: dict = Depends(get_current_user_optional)):
     """列出所有历史会话（最多1000条，按最近更新排序）"""
     db = SessionLocal()
     try:
@@ -104,7 +105,7 @@ async def list_sessions():
 
 
 @router.get("/sessions/{session_id}")
-async def get_session_detail(session_id: str):
+async def get_session_detail(session_id: str, _user: dict = Depends(get_current_user_optional)):
     """获取会话详情（只读）"""
     db = SessionLocal()
     try:
@@ -132,7 +133,7 @@ async def get_session_detail(session_id: str):
 
 
 @router.delete("/sessions/{session_id}")
-async def clear_session(session_id: str):
+async def clear_session(session_id: str, _user: dict = Depends(get_current_user_optional)):
     """清除会话（内存 + DB）"""
     engine.clear_session(session_id)
     return {"status": "ok"}
@@ -154,7 +155,7 @@ class ToolExecuteRequest(BaseModel):
 
 
 @router.post("/tools/execute")
-async def execute_tool_direct(req: ToolExecuteRequest):
+async def execute_tool_direct(req: ToolExecuteRequest, _user: dict = Depends(get_current_user)):
     """直接执行单个工具（非流式通过 chat）"""
     tool_name = req.tool
     args = req.arguments
@@ -171,7 +172,7 @@ async def execute_tool_direct(req: ToolExecuteRequest):
 
 
 @router.get("/tools/results")
-async def get_latest_result(session_id: str = "", tool: str = ""):
+async def get_latest_result(session_id: str = "", tool: str = "", _user: dict = Depends(get_current_user)):
     """获取指定 session 的工具执行结果（需提供 session_id）"""
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id is required")
