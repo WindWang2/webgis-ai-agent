@@ -120,21 +120,27 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
     }
   }, [analysisResult])
 
+  const isUpdatingRef = useRef(false)
+
   // Dynamic layer rendering — 依赖 layers, mapReady, currentMapStyle, activeFilters
   useEffect(() => {
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
 
     const renderLayers = () => {
+      if (isUpdatingRef.current) return
+
       if (!map.isStyleLoaded()) {
         map.once('styledata', renderLayers)
         return
       }
 
-      // Step 1: Remove layers/sources that are no longer in the props
-      const currentLayers = layers.map(l => `custom-${l.id}`)
-      const style = map.getStyle()
-      if (style) {
+      isUpdatingRef.current = true
+      try {
+        // Step 1: Remove layers/sources that are no longer in the props
+        const currentLayers = layers.map(l => `custom-${l.id}`)
+        const style = map.getStyle()
+        if (style) {
         // Remove layers
         for (const layer of style.layers || []) {
           if (layer.id.startsWith("custom-")) {
@@ -350,20 +356,36 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
       }
 
       // Step 3: Global Z-Index Sync
-      // We process layers from BACK to FRONT (index end to 0) and use moveLayer(id) to move to top
-      // Wait, in React state, layers[0] is usually top.
-      // So iterate from index length-1 down to 0. Move each to top.
+      // Process from BACK to FRONT to bring each to top
       const reversedLayers = [...layers].reverse()
+      // 注意：这里需要获取最新的 Live Style，因为 Step 1/2 可能已经改变了 style
+      const liveStyle = map.getStyle()
+      
       for (const layer of reversedLayers) {
-        const subLayers = style?.layers?.filter(sl => sl.id.startsWith(`custom-${layer.id}`)) || []
+        const subLayers = liveStyle?.layers?.filter(sl => sl.id.startsWith(`custom-${layer.id}`)) || []
         subLayers.forEach(sl => {
-          try { map.moveLayer(sl.id) } catch (e) { console.warn("[MapPanel] failed to move layer:", sl.id, e) }
+          try { 
+            if (map.getLayer(sl.id)) {
+              map.moveLayer(sl.id) 
+            }
+          } catch (e) { 
+            // 如果图层在这一刻由于某些原因不存在，静默跳过
+          }
         })
       }
+    } catch (err) {
+      console.error("[MapPanel] renderLayers error:", err)
+    } finally {
+      isUpdatingRef.current = false
     }
+  };
 
     renderLayers()
-    return () => { map.off('styledata', renderLayers) }
+    map.on('styledata', renderLayers)
+    return () => { 
+      map.off('styledata', renderLayers) 
+      isUpdatingRef.current = false
+    }
   }, [layers, mapReady, currentMapStyle, activeFilters])
 
   const handleMove = useCallback((evt: ViewStateChangeEvent) => {
