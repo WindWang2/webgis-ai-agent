@@ -76,7 +76,7 @@ def test_enforce_cap_deletes_oldest():
     db.query.return_value.count.return_value = 1002
     old1 = MagicMock(spec=Conversation, id="old1")
     old2 = MagicMock(spec=Conversation, id="old2")
-    db.query.return_value.order_by.return_value.limit.return_value.all.return_value = [old1, old2]
+    db.query.return_value.order_by.return_value.limit.return_value.with_for_update.return_value.all.return_value = [old1, old2]
 
     svc._enforce_cap()
 

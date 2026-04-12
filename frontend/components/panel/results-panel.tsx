@@ -409,9 +409,43 @@ ${reportData.tables.map(t =>
                   </button>
                   {expanded === result.id && (
                     <div className="p-3 text-sm border-t border-border bg-card/20">
-                      <p className="mb-3 text-muted-foreground leading-relaxed italic border-l-2 border-primary/30 pl-3">
+                      <p className="mb-3 text-muted-foreground leading-relaxed italic border-l-2 border-primary/30 pl-3 whitespace-pre-wrap">
                         {result.content}
                       </p>
+                      
+                      {/* 自动渲染表格数据（如果存在 features 且未被 chart 渲染） */}
+                      {!result.chartData && result.type === 'map' && (
+                        <div className="mt-2 overflow-x-auto rounded border border-border/30">
+                          <table className="w-full text-[10px] border-collapse">
+                            <thead className="bg-muted/50">
+                              <tr>
+                                <th className="p-1.5 border border-border/30 text-left">名称</th>
+                                <th className="p-1.5 border border-border/30 text-left">属性</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {layers.find(l => l.name.includes(result.title) || result.id.includes(l.id))?.source?.features?.slice(0, 5).map((f: any, fi: number) => (
+                                <tr key={fi} className="hover:bg-muted/20">
+                                  <td className="p-1.5 border border-border/30 font-medium truncate max-w-24">
+                                    {(f.properties as any)?.name || '未命名'}
+                                  </td>
+                                  <td className="p-1.5 border border-border/30 text-muted-foreground truncate max-w-40">
+                                    {Object.entries(f.properties || {})
+                                      .filter(([k]) => k !== 'name' && k !== 'osm_id')
+                                      .slice(0, 2)
+                                      .map(([k, v]) => `${k}:${v}`)
+                                      .join(', ') || '-'}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          <div className="p-1.5 bg-muted/10 text-[9px] text-center text-muted-foreground border-t border-border/30">
+                             前 5 条记录展示 (详细数据在右侧“图录”面板)
+                          </div>
+                        </div>
+                      )}
+
                       {result.chartData && (
                         <div className="mt-4 p-4 bg-muted/20 rounded-xl border border-border/40 shadow-inner">
                           <ChartRenderer chart={result.chartData} />

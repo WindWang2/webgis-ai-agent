@@ -16,8 +16,26 @@ from app.models.pydantic_models import (
 from app.models.db_model import User
 from app.services.layer_service import LayerService, TaskService
 from app.core.database import get_db
+from app.services.session_data import session_data_manager
 
 router = APIRouter()
+
+
+# ==================== 数据获取 API ====================
+
+@router.get("/layers/data/{ref_id}", tags=["图层数据"])
+def get_session_layer_data(
+    ref_id: str,
+    session_id: str = Query(..., description="会话 ID"),
+):
+    """
+    通过引用 ID 获取会话缓存中的大数据对象（如分析产生的 GeoJSON）
+    用于 Fetch-on-Demand 链路。
+    """
+    data = session_data_manager.get(session_id, ref_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="数据已过期或不存在")
+    return data
 
 
 # ==================== 图层 CRUD ====================

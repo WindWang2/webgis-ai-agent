@@ -28,13 +28,17 @@ export function ThematicLegend({ metadata, onFilterChange }: LegendProps) {
   
   // State to track which classes are visible (default all true)
   const [visibleClasses, setVisibleClasses] = React.useState<boolean[]>(
-    new Array(breaks.length - 1).fill(true)
+    breaks ? new Array(breaks.length - 1).fill(true) : []
   );
 
   // Reset visibility when breaks change (e.g. new thematic layer)
   useEffect(() => {
-    setVisibleClasses(new Array(breaks.length - 1).fill(true));
+    if (breaks) {
+      setVisibleClasses(new Array(breaks.length - 1).fill(true));
+    }
   }, [breaks]);
+
+  if (!breaks || breaks.length < 2) return null;
 
   const toggleClass = (idx: number) => {
     const newVisible = [...visibleClasses];

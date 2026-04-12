@@ -35,7 +35,7 @@ async def test_chat_history_reloading(chat_engine):
             mock_history_service.get_or_create_conversation.return_value = mock_conv
             
             # 2. Call _get_or_create_session (should load from mock DB)
-            messages = chat_engine._get_or_create_session(session_id)
+            messages = await chat_engine._get_or_create_session(session_id)
             
             # 3. Verify
             # Should have: SYSTEM_PROMPT, user: First message, assistant: First response

@@ -2,34 +2,35 @@
 import { useEffect } from 'react';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
+import maplibregl from 'maplibre-gl';
 
 interface MapInstanceLike {
   getMap?: () => maplibregl.Map;
-  getSource?: (id: string) => { setData: (data: unknown) => void } | undefined;
-  addSource?: (id: string, source: unknown) => void;
-  addLayer?: (layer: unknown) => void;
-  getLayer?: (id: string) => unknown;
-  fitBounds?: (bounds: unknown, options?: unknown) => void;
-  flyTo?: (options: unknown) => void;
+  getSource?: (id: string) => maplibregl.Source | undefined;
+  addSource?: (id: string, source: any) => void;
+  addLayer?: (layer: any) => void;
+  getLayer?: (id: string) => any;
+  fitBounds?: (bounds: any, options?: any) => void;
+  flyTo?: (options: any) => void;
 }
 
 function calculateBBox(geojson: GeoJSONFeatureCollection): [number, number, number, number] | null {
   const bounds = [Infinity, Infinity, -Infinity, -Infinity];
   const coord: number[][] = [];
 
-  function extract(node: unknown) {
+  function extract(node: any) {
     if (Array.isArray(node) && typeof node[0] === 'number') {
-      coord.push(node);
+      coord.push(node as number[]);
     } else if (Array.isArray(node)) {
       node.forEach(extract);
     } else if (node && typeof node === 'object' && 'type' in node) {
-      const obj = node as Record<string, unknown>;
+      const obj = node as any;
       if (obj.type === 'FeatureCollection' && Array.isArray(obj.features)) {
-        (obj.features as Array<{ geometry?: { coordinates: unknown } }>).forEach(f => {
+        obj.features.forEach((f: any) => {
           if (f.geometry?.coordinates) extract(f.geometry.coordinates);
         });
-      } else if (obj.type === 'Feature' && (obj as { geometry?: { coordinates: unknown } }).geometry?.coordinates) {
-        extract((obj as { geometry: { coordinates: unknown } }).geometry.coordinates);
+      } else if (obj.type === 'Feature' && obj.geometry?.coordinates) {
+        extract(obj.geometry.coordinates);
       } else if ('coordinates' in obj) {
         extract(obj.coordinates);
       }
@@ -55,7 +56,7 @@ export function MapActionHandler({ mapInstance }: { mapInstance?: MapInstanceLik
   useEffect(() => {
     if (!action || !mapInstance) return;
 
-    const map = mapInstance.getMap ? mapInstance.getMap() : mapInstance;
+    const map = mapInstance.getMap ? mapInstance.getMap() : (mapInstance as unknown as maplibregl.Map);
     if (!map) return;
 
     try {
@@ -64,10 +65,10 @@ export function MapActionHandler({ mapInstance }: { mapInstance?: MapInstanceLik
           const { layerId, type, geojson, style, flyTo } = action.params;
           if (!layerId || !geojson) break;
 
-          if (!map.getSource?.(layerId)) {
-            map.addSource?.(layerId, { type: 'geojson', data: geojson });
+          if (!map.getSource(layerId)) {
+            map.addSource(layerId, { type: 'geojson', data: geojson });
           } else {
-            map.getSource?.(layerId)?.setData(geojson);
+            (map.getSource(layerId) as maplibregl.GeoJSONSource).setData(geojson);
           }
 
           if (!map.getLayer(layerId)) {
@@ -97,6 +98,43 @@ export function MapActionHandler({ mapInstance }: { mapInstance?: MapInstanceLik
             });
           }
           break;
+        
+        case 'add_heatmap_raster': {
+          const { image, bbox, opacity, layerId } = action.params;
+          if (!image || !bbox) break;
+          
+          const id = layerId || 'heatmap-' + Date.now();
+          
+          // top-left, top-right, bottom-right, bottom-left
+          const coordinates = [
+            [bbox[1], bbox[3]], 
+            [bbox[2], bbox[3]], 
+            [bbox[2], bbox[0]], 
+            [bbox[1], bbox[0]]  
+          ];
+
+          if (!map.getSource(id)) {
+            map.addSource(id, {
+              type: 'image',
+              url: image,
+              coordinates: coordinates
+            });
+            map.addLayer({
+              id: id,
+              type: 'raster',
+              source: id,
+              paint: { 'raster-opacity': opacity || 0.7 }
+            });
+          } else {
+            const source = map.getSource(id) as maplibregl.ImageSource;
+            if (source.updateImage) {
+              source.updateImage({ url: image, coordinates: coordinates });
+            }
+          }
+          
+          map.fitBounds([[bbox[1], bbox[0]], [bbox[2], bbox[3]]], { padding: 50 });
+          break;
+        }
       }
     } catch (error) {
       console.error('[MapActionHandler] Error executing action:', error);
