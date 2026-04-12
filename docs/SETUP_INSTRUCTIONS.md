@@ -1,80 +1,64 @@
-# 仓库初始化说明
+# WebGIS AI Agent - 开发者本地调试手册 (V2.0)
 
-## 当前状态
+本项目经历了底层的核心演变，当前架构深度结合了**流式编排、大模型工具调用与分布式队列计算**。请仔细遵循以下 V2.0 特别启动流程。
 
-前端项目结构已完成，本地 Git 仓库已初始化：
-
-- **当前分支**: `feature/frontend-scaffold`
-- **目标分支**: `develop`
-- **远程仓库**: 待创建
-
-## 初始化步骤（需管理员操作）
-
-### 1. 创建 GitHub 仓库
-
-在 https://github.com/new 创建仓库：
-- 仓库名：`webgis-ai-agent`
-- 组织：`webgis-ai-team`
-- 可见性：私有/公开（根据团队需求）
-- **不要** 初始化 README、.gitignore 或 license
-
-### 2. 配置远程并推送
+## 1. 代码拉取与配置挂载
 
 ```bash
-cd /home/kevin/.openclaw/agents/frontend-dev/workspace/projects/webgis-ai-agent
+git clone https://github.com/WindWang2/webgis-ai-agent.git
+cd webgis-ai-agent
 
-# 添加远程仓库（替换为你的实际仓库 URL）
-git remote set-url origin https://github.com/webgis-ai-team/webgis-ai-agent.git
-
-# 创建并推送 develop 分支
-git checkout develop
-git push -u origin develop
-
-# 推送 feature 分支
-git checkout feature/frontend-scaffold
-git push -u origin feature/frontend-scaffold
+# 基于母带构建自己的凭证档案
+cp .env.example .env
 ```
 
-### 3. 创建 Pull Request
+打开 `.env` 文件补充以下必须的核心密码：
+- `CLAUDE_API_KEY`: 支持体系化工具调用的 Anthropic 密钥
+- `REDIS_URL`: 连接凭证 (默认 `redis://localhost:6379/0`)
 
-在 GitHub 上创建 PR：
-- 源分支：`feature/frontend-scaffold`
-- 目标分支：`develop`
-- 标题：`feat: 初始化前端项目结构`
+## 2. 三轨并行启动方案 (V2.0 Core)
 
-## 本地验证
+有别于以往单体应用，本地联调必须保证**这三个终端处于并发在线状态**，缺一不可！
 
-### 开发环境测试
-
+### 终端一: Redis 与 Celery 超算后台 (必须)
+所有 GIS 的坐标切割运算都被下放在此，不启动本服务系统会假死卡顿。
 ```bash
-# 安装依赖（如果还没安装）
+# 请确保你的机器装有本机 Redis Server 并处于启动态
+redis-server & 
+
+# 激活 Python 虚拟空间
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# 拉起超算节点
+celery -A main.celery_app worker --loglevel=info
+```
+
+### 终端二: FastAPI 长链接网桥 (路由与大模型流中转)
+```bash
+# (同在前文的虚拟空间内)
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### 终端三: Next.js 原生渲染极客桌面
+```bash
+cd frontend
 npm install
 
-# 启动开发服务器
+# 拉起包含 MapLibre GPU 组件的前台
 npm run dev
-
-# 访问 http://localhost:3000
+# -> Local: http://localhost:3000
 ```
 
-### Docker 测试
+## 3. 开发校验与提交铁律
 
-```bash
-# 开发模式（热重载）
-docker-compose up --build
+1. **绝对禁传大数**: 在编写新的 Python Backend Tool 时，绝不允许把十万个地图图元当结果直接打包塞给 LLM 返回通道。必须使用系统的 `session_data` 转存为引用 ID 后流转。
+2. **强制使用并发锁**: 前端由于 MapLibre 的 Style 刷新极度频密，切忌引发无条件的 React Rendering Loop，操作图层栈必须有 `try-catch` 包裹。
 
-# 生产构建
-docker build -t webgis-ai-agent:latest .
-docker run -p 3000:3000 webgis-ai-agent:latest
-```
+## 代码分支协作说明 
 
-## 后续任务
+- `master`： 经历过严格审核的线上唯一真理源（V2.0 Core 已锁闭入此）。
+- `feature/*`： 新算子与面板开发分支（请由 master 剥离）。
 
-完成仓库初始化后，继续以下任务：
-
-- [ ] T003: 实现自然语言对话界面
-- [ ] T004: 集成 MapLibre 地图功能
-- [ ] T005: 实现报告生成与预览
-
-## 联系人
-
-如有问题，请联系：frontend@webgis.ai
+欢迎进入新时代的 GIS 大规模智能演算领域！探索愉快！
