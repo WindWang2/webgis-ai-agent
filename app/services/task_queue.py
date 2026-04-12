@@ -35,11 +35,32 @@ celery_app.conf.update(
 celery_app.autodiscover_tasks(["app.services"])
 
 class TaskQueueService:
+    DEFAULT_RETRY_POLICY = {
+        'max_retries': 3,
+        'interval_start': 5,
+        'interval_step': 10,
+        'interval_max': 60,
+    }
+
     @staticmethod
-    def submit_task(task_name: str, *args, **kwargs) -> str:
+    def submit_task(
+        task_name: str,
+        *args,
+        retry: bool = False,
+        retry_policy: dict = None,
+        callback: str = None,
+        **kwargs
+    ) -> str:
         """提交任务到队列"""
         try:
-            result = celery_app.send_task(task_name, args=args, kwargs=kwargs)
+            send_kwargs = {}
+            if retry:
+                policy = retry_policy if retry_policy is not None else TaskQueueService.DEFAULT_RETRY_POLICY
+                send_kwargs['retry'] = True
+                send_kwargs['retry_policy'] = policy
+            if callback:
+                send_kwargs['link'] = celery_app.signature(callback)
+            result = celery_app.send_task(task_name, args=args, kwargs=kwargs, **send_kwargs)
             return result.id
         except Exception as e:
             logger.error(f"Failed to submit task {task_name}: {e}")
@@ -49,9 +70,22 @@ class TaskQueueService:
     def get_task_status(task_id: str) -> dict:
         """查询任务状态"""
         result = celery_app.AsyncResult(task_id)
+        info = result.info
+        traceback = result.traceback if result.failed() else None
         return {
             "task_id": task_id,
             "status": result.status,
             "result": result.result if result.ready() else None,
-            "progress": result.info.get("progress", 0) if isinstance(result.info, dict) else 0
+            "progress": info.get("progress", 0) if isinstance(info, dict) else 0,
+            "traceback": traceback,
         }
+
+    @staticmethod
+    def revoke_task(task_id: str) -> bool:
+        """撤销任务"""
+        try:
+            celery_app.control.revoke(task_id, terminate=True)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to revoke task {task_id}: {e}")
+            return False

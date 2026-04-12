@@ -99,3 +99,20 @@ async def cancel_task(task_id: str) -> TaskCancelResponse:
     """取消正在执行的任务"""
     cancelled = engine.tracker.cancel(task_id)
     return TaskCancelResponse(cancelled=cancelled)
+
+
+# ── Celery Task Status API ──────────────────────────────────────────
+
+@router.get("/status/{task_id}")
+async def get_celery_task_status(task_id: str):
+    """查询 Celery 异步任务状态"""
+    from app.services.task_queue import TaskQueueService
+    return TaskQueueService.get_task_status(task_id)
+
+
+@router.delete("/status/{task_id}")
+async def revoke_celery_task(task_id: str):
+    """撤销 Celery 异步任务"""
+    from app.services.task_queue import TaskQueueService
+    revoked = TaskQueueService.revoke_task(task_id)
+    return {"revoked": revoked, "task_id": task_id}
