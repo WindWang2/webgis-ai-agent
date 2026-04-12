@@ -1,19 +1,9 @@
 'use client';
 
 import React, { createContext, useContext, useState, useCallback } from 'react';
+import type { MapActionPayload } from '@/lib/types';
 
-export interface MapActionPayload {
-  command: 'add_layer' | 'remove_layer' | 'fly_to';
-  params: {
-    layerId?: string;
-    type?: 'fill' | 'line' | 'circle' | 'symbol';
-    geojson?: any;
-    style?: any;
-    flyTo?: boolean;
-    center?: [number, number];
-    zoom?: number;
-  };
-}
+export type { MapActionPayload };
 
 export interface MapActionContextType {
   action: MapActionPayload | null;

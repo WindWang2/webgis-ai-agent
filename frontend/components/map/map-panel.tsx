@@ -5,6 +5,7 @@ import maplibregl from "maplibre-gl"
 import { Layers, ZoomIn, ZoomOut, Maximize, MapPin, Eye, EyeOff, RotateCcw, Target, Trash2, ChevronDown, Plus, Edit, Settings, Download } from "lucide-react"
 import { LayerCard } from "@/components/layer-card"
 import type { Layer } from "@/lib/types/layer"
+import type { AnalysisResult, GeoJSONFeatureCollection, HeatmapRasterSource } from "@/lib/types"
 import { MapActionHandler } from "./map-action-handler"
 import { ThematicLegend } from "./thematic-legend"
 
@@ -13,7 +14,7 @@ interface MapPanelProps {
   onRemoveLayer: (id: string) => void
   onToggleLayer: (id: string) => void
   onEditLayer: (layer: Layer) => void
-  analysisResult?: any
+  analysisResult?: AnalysisResult
 }
 
 // Map layer types
@@ -65,6 +66,14 @@ const DEFAULT_VIEW_STATE = {
   longitude: 116.4074,
   latitude: 39.9042,
   zoom: 4,
+}
+
+function isHeatmapRasterSource(source: Layer['source']): source is HeatmapRasterSource {
+  return typeof source === 'object' && source !== null && 'image' in source && 'bbox' in source
+}
+
+function isGeoJSONSource(source: Layer['source']): source is GeoJSONFeatureCollection {
+  return typeof source === 'object' && source !== null && 'type' in source && source.type === 'FeatureCollection'
 }
 
 export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, analysisResult }: MapPanelProps) {
@@ -173,21 +182,21 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
           if (isNewSource) {
             if (layer.type === "raster" || layer.type === "tile") {
               map.addSource(sourceId, { type: "raster", tiles: [layer.source as string], tileSize: 256 })
-            } else if (layer.type === "heatmap" && (layer.source as any)?.image) {
-              const src = layer.source as any
+            } else if (layer.type === "heatmap" && isHeatmapRasterSource(layer.source)) {
+              const src = layer.source as HeatmapRasterSource
               const [west, south, east, north] = src.bbox
               map.addSource(sourceId, {
                 type: "image",
                 url: src.image,
                 coordinates: [[west, north], [east, north], [east, south], [west, south]],
-              } as any)
+              })
             } else {
-              map.addSource(sourceId, { type: "geojson", data: layer.source as any })
+              map.addSource(sourceId, { type: "geojson", data: layer.source as GeoJSONFeatureCollection })
             }
           } else {
             // Update existing source data if changed (only for GeoJSON)
-            if (layer.type !== "raster" && layer.type !== "tile" && !(layer.type === "heatmap" && (layer.source as any)?.image)) {
-              const src = map.getSource(sourceId) as any
+            if (layer.type !== "raster" && layer.type !== "tile" && !(layer.type === "heatmap" && isHeatmapRasterSource(layer.source))) {
+              const src = map.getSource(sourceId) as { setData: (data: unknown) => void }
               if (src.setData) src.setData(layer.source)
             }
           }
@@ -197,8 +206,8 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
           const thematicField = layer.source && typeof layer.source === 'object' ? layer.source.metadata?.field : null
           const filterRanges = activeFilters[layer.id]
           
-          const getLayerFilter = (baseType: string) => {
-            const base: any = ["==", "$type", baseType]
+          const getLayerFilter = (baseType: string): unknown[] => {
+            const base: unknown[] = ["==", "$type", baseType]
             if (thematicField && filterRanges) {
               const rangeFilters = filterRanges.map((range: number[]) => (
                 ["all", [">=", ["get", thematicField], range[0]], ["<", ["get", thematicField], range[1]]]
@@ -208,7 +217,7 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
             return base
           }
 
-          const addOrUpdate = (subId: string, layerConfig: any) => {
+          const addOrUpdate = (subId: string, layerConfig: Record<string, unknown>) => {
             const fullId = `custom-${layer.id}-${subId}`
             if (!map.getLayer(fullId)) {
               map.addLayer({ ...layerConfig, id: fullId, source: sourceId })
@@ -231,17 +240,17 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
               type: "raster",
               paint: { "raster-opacity": layer.opacity || 1 },
             })
-          } else if (layer.type === "heatmap" && (layer.source as any)?.image) {
+          } else if (layer.type === "heatmap" && isHeatmapRasterSource(layer.source)) {
             addOrUpdate("raster", {
               type: "raster",
               paint: { "raster-opacity": layer.opacity ?? 0.85, "raster-resampling": "linear" },
             })
           } else {
-            const src = layer.source as any
-            const features = src.features || []
-            const hasPolygons = features.some((f: any) => f.geometry?.type?.includes("Polygon"))
-            const hasLines = features.some((f: any) => f.geometry?.type?.includes("Line"))
-            const hasPoints = features.some((f: any) => f.geometry?.type?.includes("Point"))
+            const src = isGeoJSONSource(layer.source) ? layer.source : null
+            const features = src?.features || []
+            const hasPolygons = features.some((f) => f.geometry?.type?.includes("Polygon"))
+            const hasLines = features.some((f) => f.geometry?.type?.includes("Line"))
+            const hasPoints = features.some((f) => f.geometry?.type?.includes("Point"))
             const isHeatmapMode = layer.type === "heatmap" || layer.style?.renderType === "heatmap"
 
             if (hasPolygons) {
@@ -292,7 +301,7 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
                 type: "circle",
                 filter: getLayerFilter("Point"),
                 paint: {
-                  "circle-radius": features.some((f: any) => f.properties?.weight) ? ["interpolate", ["linear"], ["get", "weight"], 0, 4, 1, 8] : 7,
+                  "circle-radius": features.some((f) => f.properties?.weight != null) ? ["interpolate", ["linear"], ["get", "weight"], 0, 4, 1, 8] : 7,
                   "circle-color": ["coalesce", ["get", "fill_color"], color],
                   "circle-stroke-width": 2, "circle-stroke-color": "#fff", "circle-opacity": layer.opacity || 1
                 }
@@ -325,7 +334,7 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
     setViewState(evt.viewState)
   }, [])
 
-  const handleMouseMove = useCallback((e: any) => {
+  const handleMouseMove = useCallback((e: { lngLat: { lng: number; lat: number } }) => {
     setCoordinates({
       lng: Number(e.lngLat.lng.toFixed(4)),
       lat: Number(e.lngLat.lat.toFixed(4)),

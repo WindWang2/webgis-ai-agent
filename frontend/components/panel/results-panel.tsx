@@ -25,6 +25,7 @@ import {
 } from "lucide-react"
 import { ChartRenderer } from "./chart-renderer"
 import { DraggableLayerList } from "../map/draggable-layer-list"
+import type { ChartData, GeoJSONFeatureCollection, GeoJSONFeature, GeoJSONGeometry } from "@/lib/types"
 
 interface ResultItem {
   id: string
@@ -32,7 +33,7 @@ interface ResultItem {
   type: "text" | "chart" | "map" | "table"
   content: string
   timestamp: Date
-  chartData?: any
+  chartData?: ChartData
 }
 
 interface ReportData {
@@ -42,7 +43,7 @@ interface ReportData {
     id: string
     type: "bar" | "pie" | "line"
     title: string
-    data: any
+    data: unknown
   }>
   tables: Array<{
     headers: string[]
@@ -58,8 +59,8 @@ interface LayerItem {
   type: string
   visible: boolean
   opacity: number
-  source?: any
-  style?: any
+  source?: GeoJSONFeatureCollection
+  style?: Record<string, unknown>
 }
 
 // Props for receiving analysis results from parent
@@ -123,14 +124,14 @@ export function ResultsPanel({
     const lats: number[] = []
     const features = layer.source.features || []
     
-    features.forEach((f: any) => {
+    features.forEach((f: GeoJSONFeature) => {
       if (f.geometry?.type === "Point") {
-        lngs.push(f.geometry.coordinates[0])
-        lats.push(f.geometry.coordinates[1])
+        lngs.push((f.geometry.coordinates as [number, number])[0])
+        lats.push((f.geometry.coordinates as [number, number])[1])
       } else if (f.geometry?.coordinates) {
         // 简化：只取前几个点
         const coords = Array.isArray(f.geometry.coordinates[0]) ? f.geometry.coordinates[0] : [f.geometry.coordinates]
-        coords.forEach((c: any) => {
+        coords.forEach((c: number[]) => {
           if (Array.isArray(c)) {
             lngs.push(c[0]); lats.push(c[1])
           }
@@ -148,10 +149,10 @@ export function ResultsPanel({
   }
 
   // Get geometry types from a GeoJSON FeatureCollection
-  const getGeometryTypes = (geojson: any): string[] => {
+  const getGeometryTypes = (geojson: GeoJSONFeatureCollection): string[] => {
     if (!geojson?.features) return []
     const types = new Set<string>()
-    geojson.features.forEach((f: any) => {
+    geojson.features.forEach((f: GeoJSONFeature) => {
       if (f.geometry?.type) types.add(f.geometry.type)
     })
     return Array.from(types)
@@ -197,7 +198,7 @@ export function ResultsPanel({
         generatedAt: new Date(),
       })
       setActiveTab("report")
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Fallback: generate report from local data
       setReportData({
         title: "空间分析报告",
