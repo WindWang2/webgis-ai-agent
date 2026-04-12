@@ -385,7 +385,20 @@ class SpatialAnalyzer:
             
             gdf = gpd.GeoDataFrame.from_features(features)
             
-            # 使用 pandas query
+            # 安全验证：仅允许简单比较表达式，禁止函数调用和属性访问
+            # 允许模式: field_name operator value (如: population > 1000)
+            import re
+            safe_pattern = re.compile(
+                r'^[\w\u4e00-\u9fff]+\s*(==|!=|>=|<=|>|<)\s*[\d\.\-eE]+$'
+            )
+            if not safe_pattern.match(query.strip()):
+                # 支持多个条件的 AND 组合
+                parts = [p.strip() for p in query.split('&')]
+                if not all(safe_pattern.match(p) for p in parts):
+                    raise ValueError(
+                        f"不安全的查询表达式: '{query}'。仅支持简单比较表达式，如: population > 1000"
+                    )
+            
             filtered_gdf = gdf.query(query)
             
             if callback: callback(80, "生成结果集...")
@@ -743,6 +756,22 @@ class SpatialAnalyzer:
                 if callback: callback(30, f"重投影目标图层: {target_gdf.crs} -> {source_gdf.crs}")
                 target_gdf = target_gdf.to_crs(source_gdf.crs)
 
+            # 如果是地理坐标系，投影到 UTM 以获得米单位距离
+            needs_reproject = source_gdf.crs.is_geographic
+            if needs_reproject:
+                bounds = source_gdf.total_bounds
+                center_lon = (bounds[0] + bounds[2]) / 2
+                center_lat = (bounds[1] + bounds[3]) / 2
+                utm_zone = int((center_lon + 180) / 6) + 1
+                utm_crs_code = 32600 + utm_zone if center_lat >= 0 else 32700 + utm_zone
+                utm_crs = f"EPSG:{utm_crs_code}"
+                if callback: callback(35, f"投影到 UTM ({utm_crs}) 以计算米制距离...")
+                source_gdf_proj = source_gdf.to_crs(utm_crs)
+                target_gdf_proj = target_gdf.to_crs(utm_crs)
+            else:
+                source_gdf_proj = source_gdf
+                target_gdf_proj = target_gdf
+
             if callback: callback(40, "查找最近邻...")
             
             # 计算最近邻
@@ -751,11 +780,11 @@ class SpatialAnalyzer:
             factor = cls.UNIT_METERS.get(unit.lower(), 1.0)
             max_distance_m = max_distance * factor if max_distance else None
             
-            for idx, source_row in source_gdf.iterrows():
+            for idx, source_row in source_gdf_proj.iterrows():
                 source_geom = source_row.geometry
-                
-                # 计算到所有目标的距离
-                distances = target_gdf.geometry.distance(source_geom)
+
+                # 计算到所有目标的距离（投影坐标系，单位米）
+                distances = target_gdf_proj.geometry.distance(source_geom)
                 
                 # 找到最近的
                 min_idx = distances.idxmin()
@@ -771,7 +800,7 @@ class SpatialAnalyzer:
                 # 合并属性
                 result_feature = {
                     "type": "Feature",
-                    "geometry": mapping(source_geom),
+                    "geometry": mapping(source_gdf.geometry.iloc[idx]),
                     "properties": {
                         **source_row.drop('geometry').to_dict(),
                         "nearest_distance": float(min_distance_in_unit)
@@ -965,6 +994,23 @@ class SpatialAnalyzer:
             
             if callback: callback(20, f"打开栅格文件: {raster_path}")
             
+            # 路径安全验证：禁止路径遍历
+            import os
+            resolved = os.path.realpath(raster_path)
+            allowed_dirs = [
+                os.path.realpath("/data"),
+                os.path.realpath("/tmp"),
+                os.path.realpath("/opt/data"),
+            ]
+            # 也允许当前工作目录下的数据
+            cwd_data = os.path.realpath(os.path.join(os.getcwd(), "data"))
+            allowed_dirs.append(cwd_data)
+            
+            if not any(resolved.startswith(d) for d in allowed_dirs):
+                raise ValueError(
+                    f"栅格文件路径不允许: '{raster_path}'。仅允许 /data, /tmp, /opt/data 或项目 data 目录下的文件"
+                )
+            
             with rasterio.open(raster_path) as src:
                 results = []
                 geoms = [shape(f["geometry"]) for f in zones]
@@ -1127,4 +1173,4 @@ def execute_analysis(
 
     return op_func(**kwargs)
 
-__all__ = ["SpatialAnalyzer", "execute_analysis", "ANALYSIS_OPERATORS", "AnalysisResult"]
+__all__ = ["SpatialAnalyzer", "execute_analysis", "ANALYSIS_OPERATORS", "AnalysisResult"]

@@ -1,12 +1,15 @@
 """Chat API Route - SSE 流式对话"""
 import json
 import logging
+from collections import OrderedDict
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 
 from app.services.chat_engine import ChatEngine
+from app.services.history_service import HistoryService
+from app.core.database import SessionLocal
 from app.tools.registry import ToolRegistry
 from app.tools.osm import register_osm_tools
 from app.tools.geocoding import register_geocoding_tools
@@ -82,42 +85,50 @@ async def chat_stream(req: ChatRequest):
 @router.get("/sessions")
 async def list_sessions():
     """列出所有历史会话（最多1000条，按最近更新排序）"""
-    sessions = engine._history.list_sessions()
-    return {
-        "sessions": [
-            {
-                "id": s.id,
-                "title": s.title,
-                "createdAt": s.created_at.timestamp() * 1000,
-                "updatedAt": s.updated_at.timestamp() * 1000,
-            }
-            for s in sessions
-        ]
-    }
+    db = SessionLocal()
+    try:
+        sessions = HistoryService(db).list_sessions()
+        return {
+            "sessions": [
+                {
+                    "id": s.id,
+                    "title": s.title,
+                    "createdAt": s.created_at.timestamp() * 1000,
+                    "updatedAt": s.updated_at.timestamp() * 1000,
+                }
+                for s in sessions
+            ]
+        }
+    finally:
+        db.close()
 
 
 @router.get("/sessions/{session_id}")
 async def get_session_detail(session_id: str):
     """获取会话详情（只读）"""
-    conv = engine._history.get_session(session_id)
-    if not conv:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return {
-        "id": conv.id,
-        "title": conv.title,
-        "createdAt": conv.created_at.timestamp() * 1000,
-        "updatedAt": conv.updated_at.timestamp() * 1000,
-        "messages": [
-            {
-                "id": str(m.id),
-                "role": m.role,
-                "content": m.content,
-                "timestamp": m.created_at.timestamp() * 1000,
-            }
-            for m in conv.messages
-            if m.role in ("user", "assistant")
-        ],
-    }
+    db = SessionLocal()
+    try:
+        conv = HistoryService(db).get_session(session_id)
+        if not conv:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {
+            "id": conv.id,
+            "title": conv.title,
+            "createdAt": conv.created_at.timestamp() * 1000,
+            "updatedAt": conv.updated_at.timestamp() * 1000,
+            "messages": [
+                {
+                    "id": str(m.id),
+                    "role": m.role,
+                    "content": m.content,
+                    "timestamp": m.created_at.timestamp() * 1000,
+                }
+                for m in conv.messages
+                if m.role in ("user", "assistant")
+            ],
+        }
+    finally:
+        db.close()
 
 
 @router.delete("/sessions/{session_id}")
@@ -133,8 +144,8 @@ async def list_tools():
     return {"tools": registry.get_schemas()}
 
 
-# 简单的工具结果存储（内存中）
-_latest_tool_results: dict = {}
+# 工具结果存储（内存中，按 session 隔离）
+_tool_results_by_session: dict = {}
 
 
 class ToolExecuteRequest(BaseModel):
@@ -153,8 +164,6 @@ async def execute_tool_direct(req: ToolExecuteRequest):
     try:
         # 使用 registry.dispatch 自动处理参数
         result = await registry.dispatch(tool_name, args)
-        # 保存最新结果供轮询
-        _latest_tool_results[tool_name] = result
         return result
     except Exception as e:
         logger.error(f"Tool execute error: {e}")
@@ -162,8 +171,11 @@ async def execute_tool_direct(req: ToolExecuteRequest):
 
 
 @router.get("/tools/results")
-async def get_latest_result(tool: str = ""):
-    """获取最新的工具执行结果"""
-    if tool and tool in _latest_tool_results:
-        return _latest_tool_results[tool]
-    return _latest_tool_results
+async def get_latest_result(session_id: str = "", tool: str = ""):
+    """获取指定 session 的工具执行结果（需提供 session_id）"""
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    session_results = _tool_results_by_session.get(session_id, {})
+    if tool and tool in session_results:
+        return {tool: session_results[tool]}
+    return session_results

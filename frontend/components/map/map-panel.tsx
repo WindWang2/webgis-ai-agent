@@ -129,10 +129,11 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
         // Remove layers
         for (const layer of style.layers || []) {
           if (layer.id.startsWith("custom-")) {
-            // Find if this layer belongs to any current layer
-            const baseId = layer.id.split('-').slice(1, 2)[0] // custom-[id]-suffix
+            // Extract the layer ID by stripping the "custom-" prefix and then the "-suffix" part
+            const withoutPrefix = layer.id.slice(7) // remove "custom-"
+            const baseId = withoutPrefix.replace(/-[^-]*$/, '') // remove last "-suffix"
             if (!layers.find(l => l.id === baseId)) {
-              try { map.removeLayer(layer.id) } catch (e) {}
+              try { map.removeLayer(layer.id) } catch (e) { console.warn("[MapPanel] failed to remove layer:", layer.id, e) }
             }
           }
         }
@@ -141,7 +142,7 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
           if (sourceId.startsWith("custom-")) {
             const baseId = sourceId.replace("custom-", "")
             if (!layers.find(l => l.id === baseId)) {
-               try { map.removeSource(sourceId) } catch (e) {}
+               try { map.removeSource(sourceId) } catch (e) { console.warn("[MapPanel] failed to remove source:", sourceId, e) }
             }
           }
         }
@@ -311,7 +312,7 @@ export function MapPanel({ layers, onRemoveLayer, onToggleLayer, onEditLayer, an
       for (const layer of reversedLayers) {
         const subLayers = style?.layers?.filter(sl => sl.id.startsWith(`custom-${layer.id}`)) || []
         subLayers.forEach(sl => {
-          try { map.moveLayer(sl.id) } catch {}
+          try { map.moveLayer(sl.id) } catch (e) { console.warn("[MapPanel] failed to move layer:", sl.id, e) }
         })
       }
     }
