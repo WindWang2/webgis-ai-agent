@@ -38,6 +38,7 @@ class HistoryService:
         session_id: str,
         role: str,
         content: str,
+        tool_calls=None,
         tool_result=None,
         tool_call_id=None,
     ) -> None:
@@ -88,6 +89,7 @@ class HistoryService:
             self.db.query(Conversation)
             .order_by(Conversation.updated_at.asc())
             .limit(overflow)
+            .with_for_update(skip_locked=True)
             .all()
         )
         for conv in oldest:

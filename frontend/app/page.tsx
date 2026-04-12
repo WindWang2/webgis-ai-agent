@@ -37,18 +37,34 @@ export default function Home() {
       // 计算 GeoJSON 的中心点用于地图定位
       const lngs: number[] = []
       const lats: number[] = []
-      result.geojson.features.forEach((f: any) => {
-        if (f.geometry?.coordinates) {
-          if (f.geometry.type === "Point") {
-            lngs.push(f.geometry.coordinates[0])
-            lats.push(f.geometry.coordinates[1])
-          } else if (f.geometry.type === "LineString") {
-            f.geometry.coordinates.forEach((c: number[]) => { lngs.push(c[0]); lats.push(c[1]) })
-          } else if (f.geometry.type === "Polygon") {
-            f.geometry.coordinates[0]?.forEach((c: number[]) => { lngs.push(c[0]); lats.push(c[1]) })
-          }
+      const collectCoords = (coords: number[][]) => {
+        coords.forEach((c: number[]) => { lngs.push(c[0]); lats.push(c[1]) })
+      }
+      const collectFromGeometry = (geometry: any) => {
+        if (!geometry?.coordinates) return
+        switch (geometry.type) {
+          case "Point":
+            lngs.push(geometry.coordinates[0])
+            lats.push(geometry.coordinates[1])
+            break
+          case "MultiPoint":
+            collectCoords(geometry.coordinates)
+            break
+          case "LineString":
+            collectCoords(geometry.coordinates)
+            break
+          case "MultiLineString":
+            geometry.coordinates.forEach((ring: number[][]) => collectCoords(ring))
+            break
+          case "Polygon":
+            collectCoords(geometry.coordinates[0] || [])
+            break
+          case "MultiPolygon":
+            geometry.coordinates.forEach((poly: number[][][]) => collectCoords(poly[0] || []))
+            break
         }
-      })
+      }
+      result.geojson.features.forEach((f: any) => collectFromGeometry(f.geometry))
 
       let center: [number, number] | undefined
       let zoom = 12
@@ -64,7 +80,8 @@ export default function Home() {
       } else if (result.bbox) {
         const parts = result.bbox.split(",").map(Number)
         if (parts.length === 4) {
-          center = [(parts[1] + parts[3]) / 2, (parts[0] + parts[2]) / 2]
+          // bbox 格式: [west, south, east, north] = [minLng, minLat, maxLng, maxLat]
+          center = [(parts[0] + parts[2]) / 2, (parts[1] + parts[3]) / 2]
         }
       }
 
@@ -128,7 +145,7 @@ export default function Home() {
         <div className="absolute inset-[15px] border border-border/20 pointer-events-none z-50 pointer-events-none" />
         
         {/* 背景氛围层 */}
-        <div className="absolute inset-0 opacity-20 pointer-events-none grayscale contrast-125" style={{ backgroundImage: 'url("https://www.transparenttextures.com/patterns/natural-paper.png")' }} />
+        <div className="absolute inset-0 opacity-5 pointer-events-none bg-[radial-gradient(circle_at_50%_50%,rgba(120,119,198,0.15),transparent_70%)]" />
         <div className="absolute inset-0 bg-gradient-to-tr from-background via-transparent to-background/50 pointer-events-none" />
 
         <div className="flex h-full w-full relative z-10 p-4 gap-4">
