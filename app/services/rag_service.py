@@ -158,14 +158,14 @@ async def add_document(
     from app.models.knowledge_base import Document, Chunk
     
     doc_id = str(uuid.uuid4())
-    
+
     # 解析content
     if file_type == "markdown":
         # Markdown 特殊处理：按 ## 标题分段
-        sections_chunks = _split_markdown_sections(content)
-        chunks_list = []
+        section_chunks = _split_markdown_section(content)
+        chunk_list = []
         pos = 0
-        for i, sec in enumerate(section_chunk):
+        for i, sec in enumerate(section_chunks):
             chunk_list.append({
                 "content": sec.strip(),
                 "start_char": pos,
