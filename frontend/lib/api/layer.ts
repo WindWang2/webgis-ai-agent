@@ -149,7 +149,7 @@ export const layerApi = {
   // 创建空间分析任务
   async createAnalysisTask(layerId: string | number, taskData: {
     task_type: string;
-    parameters: Record<string, any>;
+    parameters: Record<string, unknown>;
   }) {
     const response = await fetch(`${API_BASE}/layers/${layerId}/tasks`, {
       method: "POST",

@@ -9,14 +9,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   ZAxis
 } from 'recharts';
-
-interface ChartData {
-  type: 'bar' | 'line' | 'pie' | 'scatter';
-  title: string;
-  data: any[];
-  x_label?: string;
-  y_label?: string;
-}
+import type { ChartData, RechartsTooltipProps } from '@/lib/types';
 
 interface ChartRendererProps {
   chart: ChartData;
@@ -24,12 +17,12 @@ interface ChartRendererProps {
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+const CustomTooltip = ({ active, payload, label }: RechartsTooltipProps) => {
   if (active && payload && payload.length) {
     return (
       <div className="bg-card/90 backdrop-blur-md border border-border p-3 rounded-lg shadow-xl text-xs">
         <p className="font-bold mb-1 text-foreground">{label || payload[0].payload.name}</p>
-        {payload.map((item: any, index: number) => (
+        {payload.map((item, index: number) => (
           <div key={index} className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color || item.fill }} />
             <p className="text-muted-foreground">

@@ -4,6 +4,7 @@ import { Send, Paperclip, Bot, User, Loader2, Upload, X, Check, AlertCircle, His
 import { streamChat, SSEEventType, getSessionList, getSessionDetail, deleteSession } from "@/lib/api/chat"
 import { ChatSession } from "@/lib/types/chat"
 import { useTask } from "@/lib/contexts/task-context"
+import type { ToolResult } from "@/lib/types"
 import { TaskProgress } from "@/components/chat/task-progress"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -31,7 +32,7 @@ interface ChatPanelProps {
   onAnalysisRequest?: (message: string, attachments?: Attachment[]) => void
   incomingMessage?: string
   incomingResponse?: string
-  onToolResult?: (toolName: string, result: any) => void
+  onToolResult?: (toolName: string, result: ToolResult) => void
 }
 
 export function ChatPanel({ onAnalysisRequest, incomingMessage, incomingResponse, onToolResult }: ChatPanelProps) {

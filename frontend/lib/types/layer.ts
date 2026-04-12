@@ -1,3 +1,11 @@
+import type { GeoJSONFeatureCollection, HeatmapRasterSource } from '../types';
+
+export interface LayerStyle {
+  color?: string;
+  renderType?: 'heatmap' | 'grid';
+  [key: string]: unknown;
+}
+
 export interface Layer {
   id: string;
   name: string;
@@ -5,8 +13,8 @@ export interface Layer {
   visible: boolean;
   opacity: number;
   group?: 'analysis' | 'base' | 'reference';
-  source?: string | Record<string, any>;
-  style?: Record<string, any>;
+  source?: string | GeoJSONFeatureCollection | HeatmapRasterSource;
+  style?: LayerStyle;
   created_at?: string;
   updated_at?: string;
 }
