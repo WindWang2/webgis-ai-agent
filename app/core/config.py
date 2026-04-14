@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     TMP_DIR: str = "./tmp"
 
     # CORS
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001"]
 
     # Celery & Redis
     REDIS_URL: str = Field(default="redis://localhost:16379/0", env="REDIS_URL")
