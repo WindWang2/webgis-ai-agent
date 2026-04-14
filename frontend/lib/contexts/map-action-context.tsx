@@ -1,32 +1,74 @@
 'use client';
 
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import type { MapActionPayload } from '@/lib/types';
 
 export type { MapActionPayload };
 
 export interface MapActionContextType {
-  action: MapActionPayload | null;
+  actions: MapActionPayload[];
   dispatchAction: (action: MapActionPayload) => void;
-  clearAction: () => void;
+  popAction: () => void;
+  selectedBaseLayer: number;
+  setSelectedBaseLayer: (index: number) => void;
 }
 
 export const MapActionContext = createContext<MapActionContextType | undefined>(undefined);
 
 export function MapActionProvider({ children }: { children: React.ReactNode }) {
-  const [action, setAction] = useState<MapActionPayload | null>(null);
+  const [actions, setActions] = useState<MapActionPayload[]>([]);
+  const [selectedBaseLayer, setSelectedBaseLayer] = useState(0);
+  
+  // Last action tracking for physical throttling
+  const lastDispatchRef = useRef<{ 
+    command: string; 
+    params: any; 
+    timestamp: number 
+  } | null>(null);
 
   const dispatchAction = useCallback((newAction: MapActionPayload) => {
-    console. log('[MapAction] Dispatching:', newAction);
-    setAction(newAction);
+    const now = Date.now();
+    const last = lastDispatchRef.current;
+    
+    // Physical Throttling: Ignore identical matches within 2 seconds
+    if (last && 
+        last.command === newAction.command && 
+        JSON.stringify(last.params) === JSON.stringify(newAction.params) &&
+        (now - last.timestamp) < 2000) {
+      console.log('[MapAction] Throttled redundant command:', newAction.command);
+      return;
+    }
+    
+    lastDispatchRef.current = { 
+      command: newAction.command, 
+      params: newAction.params, 
+      timestamp: now 
+    };
+
+    setActions(prev => {
+      const isDup = prev.some(a => 
+        a.command === newAction.command && 
+        JSON.stringify(a.params) === JSON.stringify(newAction.params)
+      );
+      if (isDup) return prev;
+      return [...prev, newAction];
+    });
+
+    console.log('[MapAction] Dispatched to queue:', newAction.command, newAction.params);
   }, []);
 
-  const clearAction = useCallback(() => {
-    setAction(null);
+  const popAction = useCallback(() => {
+    setActions(prev => prev.slice(1));
   }, []);
 
   return (
-    <MapActionContext.Provider value={{ action, dispatchAction, clearAction }}>
+    <MapActionContext.Provider value={{ 
+      actions, 
+      dispatchAction, 
+      popAction, 
+      selectedBaseLayer, 
+      setSelectedBaseLayer 
+    }}>
       {children}
     </MapActionContext.Provider>
   );

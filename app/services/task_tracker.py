@@ -45,6 +45,7 @@ class TaskInfo:
     original_request: str          # 用户原始消息
     steps: list[TaskStep] = field(default_factory=list)
     status: TaskStatus = TaskStatus.running
+    plan: list[dict] = field(default_factory=list)  # JSON 格式的任务树/规划
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: datetime | None = None
     _cancelled: bool = field(default=False, repr=False)  # 内部取消标志

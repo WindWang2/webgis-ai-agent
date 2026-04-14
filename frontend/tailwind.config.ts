@@ -11,6 +11,23 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        /* ── Deep Space HUD Palette ── */
+        "ds-black": "#0a0a0b",
+        "ds-surface": "rgba(14, 14, 16, 0.72)",
+        "ds-glass": "rgba(255, 255, 255, 0.04)",
+
+        /* Action colors */
+        "hud-cyan": "#00f2ff",
+        "hud-green": "#00ff41",
+        "hud-orange": "#ff5f00",
+        "hud-red": "#ff2d55",
+
+        /* Neutral tints */
+        "hud-muted": "rgba(255, 255, 255, 0.45)",
+        "hud-dim": "rgba(255, 255, 255, 0.12)",
+        "hud-border": "rgba(255, 255, 255, 0.08)",
+
+        /* Legacy compat (CSS vars) */
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
@@ -44,15 +61,6 @@ const config: Config = {
           DEFAULT: "hsl(var(--popover))",
           foreground: "hsl(var(--popover-foreground))",
         },
-        // Cyberpunk colors palette
-        cyber: {
-          black: "#0a0a0f",
-          cyan: "#00f0ff",
-          purple: "#8b5cf6",
-          pink: "#ff00aa",
-          dark: "#1a1a2e",
-          surface: "rgba(30, 30, 40, 0.8)",
-        },
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -60,31 +68,58 @@ const config: Config = {
         sm: "calc(var(--radius) - 4px)",
       },
       fontFamily: {
+        sans: ["Inter", "system-ui", "sans-serif"],
         mono: ["JetBrains Mono", "Fira Code", "monospace"],
         display: ["Orbitron", "Rajdhani", "sans-serif"],
       },
       boxShadow: {
-        glow: "0 0 20px rgba(0, 240, 255, 0.5)",
-        "glow-purple": "0 0 20px rgba(139, 92, 246, 0.5)",
-        "glow-pink": "0 0 20px rgba(255, 0, 170, 0.5)",
-        "glow-sm": "0 0 10px rgba(0, 240, 255, 0.3)",
+        "glow-cyan": "0 0 20px rgba(0, 242, 255, 0.35), 0 0 60px rgba(0, 242, 255, 0.10)",
+        "glow-green": "0 0 16px rgba(0, 255, 65, 0.30)",
+        "glow-orange": "0 0 16px rgba(255, 95, 0, 0.30)",
+        "glow-sm": "0 0 8px rgba(0, 242, 255, 0.20)",
+        "hud": "0 8px 32px rgba(0, 0, 0, 0.60), inset 0 1px 0 rgba(255, 255, 255, 0.05)",
+      },
+      backdropBlur: {
+        hud: "20px",
       },
       animation: {
-        "pulse-glow": "pulse-glow 2s ease-in-out infinite",
-        "glow-border": "glow-border 3s ease-in-out infinite",
+        "pulse-glow": "pulse-glow 2.5s ease-in-out infinite",
+        "scan-line": "scan-line 3s linear infinite",
+        "fade-in": "fade-in 0.4s ease-out",
+        "slide-up": "slide-up 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
+        "slide-right": "slide-right 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
+        "radar": "radar 2s ease-out",
       },
       keyframes: {
         "pulse-glow": {
-          "0%, 50%": { boxShadow: "0 0 20px rgba(0, 240, 255, 0.3)" },
-          "100%": { boxShadow: "0 0 30px rgba(0, 240, 255, 0.6)" },
+          "0%, 100%": { boxShadow: "0 0 12px rgba(0, 242, 255, 0.15)" },
+          "50%": { boxShadow: "0 0 28px rgba(0, 242, 255, 0.45)" },
         },
-        "glow-border": {
-          "0%, 50%": { borderColor: "rgba(0, 240, 255, 0.3)" },
-          "100%": { borderColor: "rgba(0, 240, 255, 0.8)" },
+        "scan-line": {
+          "0%": { transform: "translateY(-100%)", opacity: "0.6" },
+          "100%": { transform: "translateY(100vh)", opacity: "0" },
+        },
+        "fade-in": {
+          "0%": { opacity: "0", transform: "translateY(8px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        "slide-up": {
+          "0%": { opacity: "0", transform: "translateY(24px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        "slide-right": {
+          "0%": { opacity: "0", transform: "translateX(-24px)" },
+          "100%": { opacity: "1", transform: "translateX(0)" },
+        },
+        "radar": {
+          "0%": { opacity: "0", transform: "scale(0.3)" },
+          "50%": { opacity: "0.8" },
+          "100%": { opacity: "1", transform: "scale(1)" },
         },
       },
       backgroundImage: {
-        "grid-pattern": "linear-gradient(rgba(0, 240, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 240, 255, 0.03) 1px, transparent 1px)",
+        "grid-hud":
+          "linear-gradient(rgba(0, 242, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 242, 255, 0.03) 1px, transparent 1px)",
       },
     },
   },

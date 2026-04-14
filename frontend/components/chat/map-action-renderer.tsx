@@ -18,37 +18,44 @@ export function MapActionRenderer({ content }: MapActionRendererProps) {
     }
 
     try {
-      // Try to extract JSON from markdown code blocks or find the first { ... } block
-      let jsonStr = content.trim();
-      
-      const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (codeBlockMatch) {
-        jsonStr = codeBlockMatch[1].trim();
-      } else {
-        const jsonMatch = jsonStr.match(/(\{[\s\S]*\})/);
-        if (jsonMatch) {
-          jsonStr = jsonMatch[1].trim();
-        }
+      // Find all JSON blocks (either in ```json ... ``` or just { ... })
+      const jsonBlocks: string[] = [];
+      const regex = /```(?:json)?\s*([\s\S]*?)```|(\{[\s\S]*?\})/g;
+      let match;
+
+      while ((match = regex.exec(content)) !== null) {
+        // match[1] is the content of ```json ... ```
+        // match[2] is the content of { ... }
+        const raw = match[1] || match[2];
+        if (raw) jsonBlocks.push(raw.trim());
       }
 
-      const action = JSON.parse(jsonStr);
-      if (action && action.command) {
-        dispatchAction(action);
+      if (jsonBlocks.length === 0) {
+        // Only set error if it doesn't look like JSON is starting
+        if (!content.includes('{')) setStatus('error');
+        return;
+      }
+
+      let successCount = 0;
+      jsonBlocks.forEach(block => {
+        try {
+          const action = JSON.parse(block);
+          if (action && action.command) {
+            dispatchAction(action);
+            successCount++;
+          }
+        } catch (e) {
+          // Individual block failed, skip it
+        }
+      });
+
+      if (successCount > 0) {
         setStatus('success');
       } else {
         setStatus('error');
       }
     } catch (e) {
-      // For streaming, we might have incomplete JSON, so we stay in 'parsing' state
-      // unless we are sure it's not JSON
-      if (content.includes('{') && !content.includes('}')) {
-        setStatus('parsing');
-      } else {
-        // Only set error if it doesn't look like it's still being built
-        if (content.length > 100 && !content.includes('{')) {
-          setStatus('error');
-        }
-      }
+      setStatus('error');
     }
   }, [content, dispatchAction]);
 
@@ -61,7 +68,7 @@ export function MapActionRenderer({ content }: MapActionRendererProps) {
       ) : (
         <CheckCircle2 className="h-4 w-4" />
       )}
-      <span>{status === 'parsing' ? '正在解析地图指令...' : '已更新地图图层'}</span>
+      <span>{status === 'parsing' ? '正在连接地图终端...' : '地图指令已同步'}</span>
     </div>
   );
 }
