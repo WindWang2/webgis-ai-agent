@@ -1,6 +1,6 @@
-# WebGIS AI Agent - 开发者本地调试手册 (V2.0)
+# WebGIS AI Agent - 开发者本地调试手册 (V2.1)
 
-本项目经历了底层的核心演变，当前架构深度结合了**流式编排、大模型工具调用与分布式队列计算**。请仔细遵循以下 V2.0 特别启动流程。
+本项目经历了底层的核心演变，当前架构深度结合了**一切皆 Agent (Everything is Agent)** 的哲学。系统通过 **Agent CNS (中枢神经系统)** 实现感官同步与全称异步计算。请仔细遵循以下 V2.1 特别启动流程。
 
 ## 1. 代码拉取与配置挂载
 
@@ -16,7 +16,7 @@ cp .env.example .env
 - `CLAUDE_API_KEY`: 支持体系化工具调用的 Anthropic 密钥
 - `REDIS_URL`: 连接凭证 (默认 `redis://localhost:6379/0`)
 
-## 2. 三轨并行启动方案 (V2.0 Core)
+## 2. 三轨并行启动方案 (Agent CNS Core)
 
 有别于以往单体应用，本地联调必须保证**这三个终端处于并发在线状态**，缺一不可！
 
@@ -31,14 +31,16 @@ python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# 拉起超算节点
+# 拉起超算节点 (执行肌肉)
 celery -A main.celery_app worker --loglevel=info
 ```
 
-### 终端二: FastAPI 长链接网桥 (路由与大模型流中转)
+### 终端二: FastAPI 中枢神经系统 (路由与大模型流中转)
 ```bash
 # (同在前文的虚拟空间内)
-python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+python main.py
+# 或者使用 uvicorn 直接启动 (默认端口 8001)
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 8001
 ```
 
 ### 终端三: Next.js 原生渲染极客桌面

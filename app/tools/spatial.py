@@ -47,7 +47,8 @@ class HeatmapDataArgs(BaseModel):
     geojson: Any = Field(..., description="输入点要素 GeoJSON 或数据引用(ref:xxx)")
     cell_size: int = Field(500, ge=10, le=5000, description="网格大小（米），范围 10-5000")
     radius: int = Field(1000, ge=10, le=10000, description="搜索半径（米），范围 10-10000")
-    render_type: str = Field("grid", description="渲染模式: raster(栅格), grid(格网)")
+    render_type: str = Field("raster", description="渲染模式: raster(栅格), grid(格网), native(原生)")
+    palette: str = Field("classic", description="配色方案: classic, magma, viridis, thermal")
 
 
 def register_spatial_tools(registry: ToolRegistry):
@@ -115,28 +116,29 @@ def register_spatial_tools(registry: ToolRegistry):
             return {"error": str(e)}
 
     @tool(registry, name="heatmap_data",
-           description="根据点要素生成热力图数据。默认为平滑的 'raster' 模式（类似传统气泡图效果），也可选 'grid' 矢量格网模式用于精确区域统计和对比分析。",
+           description="根据点要素生成热力图。支持 'raster' (栅格图片)、'grid' (矢量格网) 和 'native' (原生渲染) 模式。支持通过 palette 参数切换配色方案。",
            args_model=HeatmapDataArgs)
-    def heatmap_data(geojson: Any, cell_size: int = 500, radius: int = 2000, render_type: str = "native") -> dict:
+    def heatmap_data(geojson: Any, cell_size: int = 500, radius: int = 2000, render_type: str = "raster", palette: str = "classic") -> dict:
         try:
             data = _safe_parse_geojson(geojson)
             if not data:
                 return {"error": "Invalid GeoJSON input"}
             features = data.get("features") or data.get("feature_collection", [])
             
-            # --- 新增: 原生热力图模式 (由 MapLibre 直接渲染) ---
+            # --- 原生热力图模式 ---
             if render_type == "native":
                 if isinstance(data, dict):
                     data["metadata"] = {
                         "render_type": "native",
                         "point_count": len(features),
-                        "radius": radius
+                        "radius": radius,
+                        "palette": palette
                     }
                 return data
 
             from app.services.spatial_tasks import run_heatmap_generation
             task = run_heatmap_generation.apply_async(
-                kwargs={"features": features, "cell_size": cell_size, "radius": radius, "render_type": render_type}
+                kwargs={"features": features, "cell_size": cell_size, "radius": radius, "render_type": render_type, "palette": palette}
             )
             result = task.get(timeout=120)
             if result.get("success"):

@@ -1,14 +1,14 @@
-# WebGIS AI Agent (V2.0 深度智能版)
+# WebGIS AI Agent: 具身空间智能引擎 (Embodied Spatial Intelligence) - V2.1
 
-基于大语言模型 (LLM) 的通用空间智能先知与 GIS 处理引擎。不再仅仅是制图工具，而是能够执行极智场景计算、主动检索和预测性地理模拟的私人数据科学家。
+不再仅仅是一个 GIS 展示工具，而是一个拥有**中枢神经系统 (Agent CNS)** 的具身智能代理。通过实时感官同步与全称异步计算矩阵，它能像专业数据科学家一样感知地图、决策逻辑并执行复杂的地理推演。
 
-## 🌟 核心技术架构 (V2.0)
+## 🌟 核心技术架构 (Agent CNS)
 
-| 层 | 核心技术选型 | 架构亮点 |
+| 层级 | 核心技术选型 | 具身智能特性 |
 |---|---|---|
-| **前端脑** | Next.js 14 + MapLibre GL JS + HUD 2.0 | **极智交互体验**：自研全沉浸式 HUD 概念，包含 Dynamic Island 任务指挥舱。基于原生 GPU 实现 60fps 平滑渲染与超百万点位动态聚合。 |
-| **神经流** | FastAPI + SSE + Map State Sync | **感知级同步**：引入实时地图状态回传机制，AI 实时感知视野与底图状态。配合 Fetch-on-Demand (按需提货) 机制，彻底攻克大数据量阻塞难题。 |
-| **后超算** | Docker + Celery + Redis + PostGIS | **严格计算隔离**：空间算子被隔离至专用 Worker。具备 "Exception As Thought" 自愈回路，能在计算失败时主动反思并重调参数修复。 |
+| **具身感官 (Sensory)** | Next.js 14 + MapLibre + HUD 2.0 | **Agentic HUD 2.0**：全沉浸式座舱设计，实时反馈 Agent 的思考、感知与任务深度。基于 GPU 构建 60fps 的思维外化渲染。 |
+| **中枢神经 (CNS)** | FastAPI + SSE + Sensory Sync | **主动感知 (Perception)**：AI 动态获取视角、底图与图层状态。Fetch-on-Demand 提货机制确保 Agent 上下文永远保持逻辑极致。 |
+| **执行肌肉 (Execution)** | Celery + Redis + PostGIS | **计算隔离与自愈**：空间算子在隔离区运行。具备 "Exception As Thought" 自愈回路，实现投影与拓扑异常的自主修正。 |
 
 ## 🏗️ 项目核心目录
 
@@ -24,7 +24,7 @@
 │   ├── app/                # App Router 后端式页面渲染
 │   ├── components/         # 罗盘风 UI / 会话板 / 原生 MapPanel
 │   └── lib/                # Fetch-on-Demand 取件客户端
-├── docs/                   # V2.0 规划书与架构深潜
+├── docs/                   # V2.1 规划书与架构深潜
 ├── tests/                  # 智能边界突围测试、防死锁断言
 ├── Dockerfile              # 分阶段企业级部署映像
 └── docker-compose.yml      # 一键拉起 Redis+Celery+DB 战斗群
@@ -47,7 +47,7 @@ docker-compose up -d --build
 # 后端 (需预先安装并启动 Redis)
 pip install -r requirements.txt
 celery -A main.celery_app worker --loglevel=info &
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uvicorn main:app --reload --host 0.0.0.0 --port 8001
 
 # 前端
 cd frontend && npm install && npm run dev
@@ -57,7 +57,7 @@ cd frontend && npm install && npm run dev
 ## 📚 开发极客指导
 
 全案项目架构图与防崩坏代码纪律，强烈建议所有共建者入职前通读：
-- 📈 [技术方案说明书 V2.0](docs/技术方案说明书.md) (宏观顶层)
+- 📈 [技术方案说明书 V2.1](docs/技术方案说明书.md) (宏观顶层)
 - ⚙️ [整体架构深潜](docs/architecture.md) (数据流与 Celery 拓扑)
 - 📡 [API 数据流与心跳规范](docs/api-docs.md) (流式连接底线)
 - 🗃️ [分片拉取与取件流](docs/data-fetcher.md) (Fetch-On-Demand 机制)
@@ -65,3 +65,4 @@ cd frontend && npm install && npm run dev
 
 ## License
 MIT
+

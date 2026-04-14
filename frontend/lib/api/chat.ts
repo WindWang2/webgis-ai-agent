@@ -52,12 +52,17 @@ export interface SSEEvent {
  */
 export async function* streamChat(
   message: string,
-  sessionId?: string
+  sessionId?: string,
+  mapState?: Record<string, unknown>
 ): AsyncGenerator<SSEEvent> {
   const response = await fetch(`${API_BASE}/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, session_id: sessionId }),
+    body: JSON.stringify({ 
+      message, 
+      session_id: sessionId,
+      map_state: mapState 
+    }),
   });
 
   if (!response.ok) {
