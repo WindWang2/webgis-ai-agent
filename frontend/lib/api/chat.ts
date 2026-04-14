@@ -37,11 +37,14 @@ export type SSEEventType =
   | 'step_error'
   | 'task_complete'
   | 'task_error'
-  | 'task_cancelled';
+  | 'task_cancelled'
+  | 'session'
+  | 'task_plan'
+  | 'token';
 
 export interface SSEEvent {
   event: SSEEventType;
-  data: Record<string, unknown>;
+  data: Record<string, unknown> | string;
 }
 
 /**
@@ -85,9 +88,9 @@ export async function* streamChat(
       } else if (line === "" && currentEvent && currentData) {
         // Empty line = end of event
         try {
-          yield { event: currentEvent, data: JSON.parse(currentData) };
+          yield { event: currentEvent as SSEEventType, data: JSON.parse(currentData) };
         } catch {
-          yield { event: currentEvent, data: currentData };
+          yield { event: currentEvent as SSEEventType, data: currentData };
         }
         currentEvent = "";
         currentData = "";

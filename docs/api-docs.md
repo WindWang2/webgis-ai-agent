@@ -32,6 +32,17 @@ V2.0 在聊天网关注入了抵抗 `ERR_CONNECTION_RESET` 的长连接保活架
 |------|-----|-----|
 | POST | /api/v1/chat/stream | 发送分析请求 (SSE 协议分发) |
 
+#### [重要] SSE 事件类型扩展 (HUD 指令型)
+V2.1 引入了更加细粒度的任务跟踪事件，用于驱动前端 HUD (Task Timeline & Dynamic Island)：
+
+| 事件名 | 载荷数据 (Data) | 描述 |
+|--------|----------------|------|
+| `task_start` | `{"task_id": "..."}` | 任务总线开启 |
+| `step_start` | `{"step_id": "...", "tool": "..."}` | 具体算子开始执行 |
+| `step_result`| `{"result": {...}, "has_geojson": bool}` | 算子执行成功，包含部分脱敏结果 |
+| `step_error` | `{"error": "..."}` | 算子执行失败，反馈给 AI 进行自愈 |
+| `task_complete` | `{"summary": "..."}` | 整个任务链条完成 |
+
 #### [注意] SSE 流 Heartbeat 规范
 当 Agent 在后台调用 Celery 进行分钟级别的地理测算时，此时 LLM 端静默不输出文本。为防止云防火墙断开闲置连接，SSE 网关每 15 秒将推送一条隐式心跳：
 ```text
@@ -42,7 +53,29 @@ V2.0 在聊天网关注入了抵抗 `ERR_CONNECTION_RESET` 的长连接保活架
 
 ---
 
-## T003 零拷贝提取层 (Fetch-on-Demand) 
+## T003 地图控制协议 (Map Interaction Protocol)
+AI Agent 通过在流式回复中嵌入特定的 JSON 指令，直接驱动前端 MapLibre 实例。
+
+### 核心指令集
+| 指令 (Command) | 参数 (Params) | 说明 |
+|---------------|--------------|------|
+| `BASE_LAYER_CHANGE` | `{"name": "高德影像"}` | 切换底图样式 |
+| `LAYER_VISIBILITY_UPDATE` | `{"layer_id": "...", "visible": true, "opacity": 0.5}` | 修改图层状态 |
+| `FLY_TO` | `{"center": [lng, lat], "zoom": 12}` | 视场平滑飞越 |
+| `LAYER_STYLE_UPDATE` | `{"layer_id": "...", "color": "#ff0000"}` | 实时修改图层渲染色 |
+
+#### 回复格式要求
+AI 会在 Markdown 回复的末尾或逻辑断点处插入以下原生 JSON 块，前端 `MapActionHandler` 将捕获并执行：
+```json
+{
+  "command": "BASE_LAYER_CHANGE",
+  "params": { "name": "ESRI 影像" }
+}
+```
+
+---
+
+## T004 零拷贝提取层 (Fetch-on-Demand) 
 为了保障大模型的流式文本绝不被庞杂的地理坐标卡死，大模型输出的 Layer 结果只包含 `ref_id`。实际数据拉取依靠以下接口：
 
 | 方法 | 路径 | 说明 |
