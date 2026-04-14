@@ -118,7 +118,7 @@ def run_nearest_neighbor(self, features: List[Dict]):
         return {"success": False, "error": str(e)}
 
 @celery_app.task(name="app.services.spatial_tasks.run_heatmap_generation", bind=True)
-def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, radius: int = 1000, render_type: str = "raster"):
+def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, radius: int = 1000, render_type: str = "raster", palette: str = "classic"):
     """执行热力图任务 - 支持栅格(raster)和矢量格网(grid)模式"""
     import base64
     import io
@@ -204,29 +204,54 @@ def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, rad
                         "render_type": "grid",
                         "field": "weight",
                         "cell_size": cell_size,
-                        "point_count": len(points)
+                        "point_count": len(points),
+                        "palette": palette
                     }
                 },
                 "status_desc": f"已生成矢量格网热力图，共包含 {len(grid_features)} 个有效格网单元。"
             }
 
         else:
-            # 栅格模式 (原有逻辑增强)
+            # 栅格模式
             sigma = max(1.0, radius / cell_size)
             H_smooth = gaussian_filter(H.T, sigma=sigma)
 
-            # 优化配色方案：标准热力图色带 (Cyan -> Green -> Yellow -> Red)
-            cmap = LinearSegmentedColormap.from_list("classic_heat", [
-                (0.00, (0.0, 0.0, 0.0, 0.0)),      # 完全透明
-                (0.15, (0.0, 1.0, 1.0, 0.4)),      # 蓝青色 (低密度)
-                (0.40, (0.0, 1.0, 0.0, 0.6)),      # 亮绿色
-                (0.70, (1.0, 1.0, 0.0, 0.8)),      # 鲜黄色
-                (0.90, (1.0, 0.5, 0.0, 0.9)),      # 橙色
-                (1.00, (1.0, 0.0, 0.0, 1.0)),      # 纯红色 (最高密度)
-            ], N=256)
+            # 调色板定义
+            PALETTES = {
+                "classic": [
+                    (0.00, (0.0, 0.0, 0.0, 0.0)),      # 完全透明
+                    (0.15, (0.0, 1.0, 1.0, 0.4)),      # 蓝青色
+                    (0.40, (0.0, 1.0, 0.0, 0.6)),      # 亮绿色
+                    (0.70, (1.0, 1.0, 0.0, 0.8)),      # 鲜黄色
+                    (0.90, (1.0, 0.5, 0.0, 0.9)),      # 橙色
+                    (1.00, (1.0, 0.0, 0.0, 1.0)),      # 纯红色
+                ],
+                "magma": [
+                    (0.00, (0.0, 0.0, 0.0, 0.0)),
+                    (0.20, (0.2, 0.04, 0.48, 0.5)),    # 深紫
+                    (0.50, (0.7, 0.13, 0.45, 0.7)),    # 品红
+                    (0.80, (0.99, 0.55, 0.35, 0.85)),  # 橙亮
+                    (1.00, (0.98, 0.94, 0.60, 1.0)),   # 浅黄
+                ],
+                "viridis": [
+                    (0.00, (0.0, 0.0, 0.0, 0.0)),
+                    (0.25, (0.27, 0.0, 0.33, 0.5)),    # 深蓝
+                    (0.50, (0.13, 0.57, 0.55, 0.7)),   # 墨绿
+                    (0.75, (0.37, 0.79, 0.36, 0.85)),  # 草绿
+                    (1.00, (0.99, 0.9, 0.14, 1.0)),    # 亮黄
+                ],
+                "thermal": [
+                    (0.00, (0.0, 0.0, 0.0, 0.0)),
+                    (0.33, (0.0, 0.0, 1.0, 0.5)),      # 蓝
+                    (0.66, (1.0, 1.0, 0.0, 0.8)),      # 黄
+                    (1.00, (1.0, 0.0, 0.0, 1.0)),      # 红
+                ]
+            }
+
+            colors = PALETTES.get(palette, PALETTES["classic"])
+            cmap = LinearSegmentedColormap.from_list("dynamic_heat", colors, N=256)
 
             fig, ax = plt.subplots(figsize=(10, 10), dpi=100)
-            # 使用 98 分位数抑制离群值，增强对比度
             v_max = np.percentile(H_smooth, 98) if H_smooth.max() > 0 else 1.0
             if v_max <= 0: v_max = H_smooth.max() or 1.0
             
@@ -256,10 +281,11 @@ def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, rad
                     "total_points": len(points),
                     "metadata": {
                         "render_type": "raster",
-                        "point_count": len(points)
+                        "point_count": len(points),
+                        "palette": palette
                     }
                 },
-                "status_desc": f"已生成增强对照度栅格热力图，覆盖范围包含 {len(points)} 个要素点。"
+                "status_desc": f"已生成增强对照度栅格热力图 (配色: {palette})，覆盖范围包含 {len(points)} 个要素点。"
             }
     except Exception as e:
         logger.error(f"Heatmap conversion failed: {e}", exc_info=True)

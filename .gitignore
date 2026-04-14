@@ -38,3 +38,8 @@ build/
 # Tool artifacts
 .playwright-mcp/
 .superpowers/
+
+# Project specific artifacts
+webgis.db
+deploy.tar.gz
+
