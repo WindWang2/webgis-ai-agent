@@ -116,8 +116,29 @@ export function ChatHud({
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm]}
                       components={{
+                        // Use div instead of p to avoid "div inside p" hydration errors if content is complex
+                        p: ({ children }) => <div className="mb-4 last:mb-0 leading-relaxed text-white/85">{children}</div>,
+                        
+                        // Strict list handling
+                        ul: ({ children }) => <ul className="list-disc list-inside mb-4 space-y-1 text-white/80">{children}</ul>,
+                        ol: ({ children }) => <ol className="list-decimal list-inside mb-4 space-y-1 text-white/80">{children}</ol>,
+                        li: ({ children }) => <li className="mb-0.5">{children}</li>,
+
                         img: ({ src, alt }) => {
-                          if (!src || src.includes("/api/map/view") || src.includes("localhost")) return null
+                          // 严密过滤：只允许真正的 HTTP(S) 或 Data URL，过滤掉本地占位符或 hallucinated paths
+                          const isValidUrl = src && (
+                            src.startsWith("http://") || 
+                            src.startsWith("https://") || 
+                            src.startsWith("data:")
+                          );
+                          
+                          // 额外过滤：如果是 localhost 但不是预期的 API 路径，也过滤掉
+                          const isSafe = isValidUrl && (!src.includes("localhost") || src.includes("/api/map/view"));
+                          
+                          if (!isSafe) {
+                            return null;
+                          }
+
                           return (
                             <div className="my-2 rounded-lg overflow-hidden border border-white/[0.06]">
                               <img src={src} alt={alt || ""} className="max-w-full" />
@@ -147,6 +168,16 @@ export function ChatHud({
                         td: ({ children }) => (
                           <td className="px-2 py-1.5 border-b border-white/[0.03] text-white/60">{children}</td>
                         ),
+                        code: ({ children, className }) => {
+                          const inline = !className?.includes("language-")
+                          return inline ? (
+                            <code className="bg-white/10 px-1 rounded text-hud-cyan text-[12px]">{children}</code>
+                          ) : (
+                            <pre className="p-3 bg-black/30 rounded-lg overflow-x-auto my-3 border border-white/5 font-mono text-[11px] text-white/90">
+                              <code>{children}</code>
+                            </pre>
+                          )
+                        },
                       }}
                     >
                       {message.content}
