@@ -102,44 +102,80 @@ def register_layer_management_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="set_layer_status",
-           description="修改图层的显示状态（如可见性和透明度）。可以通过 ID (ref:xxx) 或别名引用图层。")
+           description="修改图层的显示状态（如可见性和透明度）。可以通过 ID (ref:xxx)、别名或图层名称引用图层。")
     def set_layer_status(layer_ref: str, visible: Optional[bool] = None, opacity: Optional[float] = None, session_id: Optional[str] = None) -> dict:
         """修改图层状态"""
         if not session_id:
             return {"error": "Missing session_id context"}
         
-        # 尝试转换别名为 ID
+        # 1. 尝试从当前 Session 别名查找
         ref_id = session_data_manager._aliases.get(session_id, {}).get(layer_ref, layer_ref)
+        
+        # 2. 如果没找到（或者是 legacy 图层），尝试从地图实时状态中模糊查找
+        map_state = session_data_manager.get_map_state(session_id)
+        layers = map_state.get("layers", [])
+        
+        # 精确 ID 匹配优先
+        found_id = None
+        for l in layers:
+            if l.get("id") == ref_id or l.get("id") == layer_ref:
+                found_id = l.get("id")
+                break
+        
+        # 名称模糊匹配作为兜底
+        if not found_id:
+            for l in layers:
+                if l.get("name") == layer_ref or layer_ref in l.get("name", ""):
+                    found_id = l.get("id")
+                    break
+        
+        id_to_use = found_id or ref_id
         
         return {
             "success": True,
             "command": "LAYER_VISIBILITY_UPDATE",
             "params": {
-                "layer_id": ref_id,
+                "layer_id": id_to_use,
                 "visible": visible,
                 "opacity": opacity
             },
-            "message": f"已更新图层 {layer_ref} 的显示设置。"
+            "message": f"已向地图发送指令：更新图层 {layer_ref} (目标 ID: {id_to_use}) 的显示设置。"
         }
 
     @tool(registry, name="update_layer_appearance",
-           description="修改图层的视觉样式（如颜色、线宽）。可以通过 ID (ref:xxx) 或别名引用图层。")
+           description="修改图层的视觉样式（如颜色、线宽）。可以通过 ID (ref:xxx)、别名或图层名称引用图层。")
     def update_layer_appearance(layer_ref: str, color: Optional[str] = None, stroke_width: Optional[float] = None, session_id: Optional[str] = None) -> dict:
         """修改图层外观"""
         if not session_id:
             return {"error": "Missing session_id context"}
             
+        # 逻辑同上
         ref_id = session_data_manager._aliases.get(session_id, {}).get(layer_ref, layer_ref)
+        map_state = session_data_manager.get_map_state(session_id)
+        layers = map_state.get("layers", [])
+        
+        found_id = None
+        for l in layers:
+            if l.get("id") == ref_id or l.get("id") == layer_ref:
+                found_id = l.get("id")
+                break
+        if not found_id:
+            for l in layers:
+                if l.get("name") == layer_ref or layer_ref in l.get("name", ""):
+                    found_id = l.get("id")
+                    break
+        
+        id_to_use = found_id or ref_id
         
         return {
             "success": True,
             "command": "LAYER_STYLE_UPDATE",
             "params": {
-                "layer_id": ref_id,
+                "layer_id": id_to_use,
                 "style": {
                     "color": color,
                     "strokeWidth": stroke_width
                 }
             },
-            "message": f"已更新图层 {layer_ref} 的外观样式。"
+            "message": f"已向地图发送指令：更新图层 {layer_ref} (目标 ID: {id_to_use}) 的外观样式。"
         }

@@ -1,5 +1,6 @@
 "use client"
 import { useState, useCallback } from "react"
+import { motion, AnimatePresence } from "framer-motion"
 import { MapPanel } from "@/components/map/map-panel"
 import { HudPanel } from "@/components/hud/hud-panel"
 import { DynamicIsland } from "@/components/hud/dynamic-island"
@@ -58,6 +59,35 @@ export default function Home() {
   const [sessionId, setSessionId] = useState<string>()
   const [currentStep, setCurrentStep] = useState<SSEEventType | "error" | null>(null)
   const [showUploadZone, setShowUploadZone] = useState(false)
+
+  // 1. Restore session from localStorage on mount
+  useEffect(() => {
+    const savedSessionId = localStorage.getItem("webgis_session_id")
+    if (savedSessionId) {
+      setSessionId(savedSessionId)
+      // Fetch history if needed
+      fetch(`http://localhost:8001/api/v1/chat/sessions/${savedSessionId}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.messages && data.messages.length > 0) {
+            setMessages(data.messages.map((m: any) => ({
+              id: m.id,
+              role: m.role,
+              content: m.content,
+              timestamp: new Date(m.timestamp),
+            })))
+          }
+        })
+        .catch(err => console.error("Restore session history failed:", err))
+    }
+  }, [])
+
+  // 2. Persist session_id when it changes
+  useEffect(() => {
+    if (sessionId) {
+      localStorage.setItem("webgis_session_id", sessionId)
+    }
+  }, [sessionId])
 
   // Initialize WebSocket connection
   useWebSocket(sessionId)
@@ -214,10 +244,24 @@ export default function Home() {
     [addLayer, setAnalysisResult]
   )
 
+  const [showScanEffect, setShowScanEffect] = useState(false)
+
   /* ─── Send handler (from Dynamic Island) ─── */
+  const viewport = useHudStore((s) => s.viewport)
   const handleSend = useCallback(
     async (messageText: string) => {
       if (!messageText || isLoading) return
+      
+      // Trigger sensory sync visual effect
+      setShowScanEffect(true)
+      setTimeout(() => setShowScanEffect(false), 2000)
+
+      // Prepare sensory data (map_state)
+      const mapState = {
+        viewport,
+        layers: layers.map(l => ({ id: l.id, name: l.name, visible: l.visible, opacity: l.opacity }))
+      }
+
       const userMessage = {
         id: Date.now().toString(),
         role: "user" as const,
@@ -240,7 +284,7 @@ export default function Home() {
         let assistantContent = ""
         setCurrentStep("thinking")
 
-        for await (const event of streamChat(messageText, sessionId)) {
+        for await (const event of streamChat(messageText, sessionId, mapState)) {
           const { event: eventType, data: dataRaw } = event
           const data = dataRaw as any
 
@@ -313,7 +357,7 @@ export default function Home() {
         setIsLoading(false)
       }
     },
-    [isLoading, sessionId, taskStart, stepStart, stepResult, stepError, taskComplete, clearTask, handleToolResult]
+    [isLoading, sessionId, taskStart, stepStart, stepResult, stepError, taskComplete, clearTask, handleToolResult, viewport, layers, dispatchAction]
   )
 
   /* ─── Status text for Dynamic Island ─── */
@@ -337,6 +381,30 @@ export default function Home() {
           onEditLayer={() => {}}
           analysisResult={analysisResult}
         />
+        
+        {/* Sensory Sync Overlay (Scanning effect) */}
+        <AnimatePresence>
+          {showScanEffect && (
+            <motion.div 
+              className="absolute inset-0 z-10 border-2 border-hud-cyan pointer-events-none"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 0.4, scale: 1 }}
+              exit={{ opacity: 0, scale: 1.02 }}
+              transition={{ duration: 0.8, ease: "easeOut" }}
+            >
+              <div className="absolute inset-0 bg-hud-cyan/5" />
+              <div className="absolute top-0 left-0 right-0 h-1/3 bg-gradient-to-b from-hud-cyan/20 to-transparent animate-scan-line" />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Cockpit HUD Decorations */}
+        <div className="absolute inset-0 pointer-events-none z-10">
+          <div className="hud-corner top-8 left-8 border-t-2 border-l-2" />
+          <div className="hud-corner top-8 right-8 border-t-2 border-r-2" />
+          <div className="hud-corner bottom-24 left-8 border-b-2 border-l-2" />
+          <div className="hud-corner bottom-24 right-8 border-b-2 border-r-2" />
+        </div>
       </div>
 
       {/* ═══ HUD Overlay Layer (Z-10+) ═══ */}

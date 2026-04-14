@@ -65,6 +65,10 @@ interface HudState {
   removeProcessLayer: (stepId: string) => void;
   clearProcessLayers: () => void;
 
+  /* ─── Map View State (Real-time Perception) ─── */
+  viewport: { center: [number, number]; zoom: number };
+  setViewport: (center: [number, number], zoom: number) => void;
+
   /* ─── HUD Panel Visibility ─── */
   leftPanelOpen: boolean;
   rightPanelOpen: boolean;
@@ -189,4 +193,8 @@ export const useHudStore = create<HudState>((set) => ({
   /* ─── RAG ─── */
   ragInsight: null,
   setRagInsight: (insight) => set({ ragInsight: insight }),
+
+  /* ─── Viewport Sync ─── */
+  viewport: { center: [116.4074, 39.9042], zoom: 4 },
+  setViewport: (center, zoom) => set({ viewport: { center, zoom } }),
 }));
