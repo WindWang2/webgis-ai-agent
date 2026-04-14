@@ -1,15 +1,12 @@
 import type { Metadata } from "next"
-import { JetBrains_Mono } from "next/font/google"
-import { Crimson_Pro } from "next/font/google"
-import { MapActionProvider } from "@/lib/contexts/map-action-context"
+import { Inter, JetBrains_Mono } from "next/font/google"
+import { ClientProviders } from "@/components/providers/client-providers"
 import "./globals.css"
 
-// 使用 Crimson Pro 作为主要衬线字体，JetBrains Mono 作为代码字体
-const crimsonPro = Crimson_Pro({
+const inter = Inter({
   subsets: ["latin"],
-  weight: ["400", "600", "700"],
-  style: ["normal", "italic"],
-  variable: "--font-crimson",
+  weight: ["300", "400", "500", "600", "700"],
+  variable: "--font-inter",
 })
 
 const jetbrainsMono = JetBrains_Mono({
@@ -19,8 +16,8 @@ const jetbrainsMono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "WebGIS AI Agent - 探索者日志",
-  description: "智能地理空间分析系统 - 基于大语言模型的空间数据分析与制图",
+  title: "WebGIS AI Agent — Spatial Intelligence HUD",
+  description: "智能地理空间分析系统 — Deep Space HUD 沉浸式空间智能平台",
 }
 
 export default function RootLayout({
@@ -30,8 +27,15 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" className="dark">
-      <body className={`${crimsonPro.variable} ${jetbrainsMono.variable} font-serif`}>
-        <MapActionProvider>{children}</MapActionProvider>
+      <head>
+        {/* Orbitron for HUD display font (loaded via Google Fonts external) */}
+        <link
+          href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&display=swap"
+          rel="stylesheet"
+        />
+      </head>
+      <body className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased`}>
+        <ClientProviders>{children}</ClientProviders>
       </body>
     </html>
   )

@@ -69,15 +69,21 @@ export interface ChartData {
 // === Map action types ===
 
 export interface MapActionPayload {
-  command: 'add_layer' | 'remove_layer' | 'fly_to';
+  command: 'add_layer' | 'remove_layer' | 'fly_to' | 'add_heatmap_raster' | 'BASE_LAYER_CHANGE' | 'LAYER_VISIBILITY_UPDATE' | 'LAYER_STYLE_UPDATE' | 'REMOVE_LAYER';
   params: {
     layerId?: string;
+    layer_id?: string; // Support for snake_case from backend
+    name?: string;     // For base layer change
     type?: 'fill' | 'line' | 'circle' | 'symbol';
     geojson?: GeoJSONFeatureCollection;
     style?: Record<string, unknown>;
     flyTo?: boolean;
     center?: [number, number];
     zoom?: number;
+    image?: string;
+    bbox?: [number, number, number, number];
+    opacity?: number;
+    visible?: boolean;
   };
 }
 

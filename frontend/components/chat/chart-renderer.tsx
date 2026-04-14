@@ -28,7 +28,7 @@ export function adaptChartData(raw: unknown): ChartData | null {
   try {
     if (!raw || typeof raw !== "object") return null
 
-    const { type, title, data, x_label, y_label } = raw
+    const { type, title, data, x_label, y_label } = raw as any
 
     // Validate type
     if (!type || !VALID_CHART_TYPES.has(type)) {
@@ -174,7 +174,7 @@ export function ChartRenderer({ chart }: { chart: ChartData }) {
   if (!Renderer) {
     return (
       <div className="mt-2 rounded-lg border border-red-500/20 bg-red-950/30 p-3">
-        <h4 className="text-xs font-medium text-red-300">无法渲染图表：未支持的类型 \"{chart.type}\"</h4>
+        <h4 className="text-xs font-medium text-red-300">{`无法渲染图表：未支持的类型 "${chart.type}"`}</h4>
       </div>
     )
   }

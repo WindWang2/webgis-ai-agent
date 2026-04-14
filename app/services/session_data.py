@@ -13,6 +13,8 @@ class SessionDataManager:
         self._store: dict[str, OrderedDict[str, Any]] = {}
         # session_id -> {alias -> ref_id}
         self._aliases: dict[str, dict[str, str]] = {}
+        # session_id -> {state_key -> value} (e.g., base_layer, current_view)
+        self._map_state: dict[str, dict[str, Any]] = {}
         self.capacity = capacity
 
     def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
@@ -78,10 +80,21 @@ class SessionDataManager:
             for k in to_delete:
                 del aliases[k]
 
+    def set_map_state(self, session_id: str, key: str, value: Any):
+        """设置地图状态元数据"""
+        if session_id not in self._map_state:
+            self._map_state[session_id] = {}
+        self._map_state[session_id][key] = value
+
+    def get_map_state(self, session_id: str) -> dict[str, Any]:
+        """获取当前地图所有状态"""
+        return self._map_state.get(session_id, {})
+
     def clear_session(self, session_id: str):
         """清理会话数据"""
         self._store.pop(session_id, None)
         self._aliases.pop(session_id, None)
+        self._map_state.pop(session_id, None)
 
 # 单例模式供全局使用
 session_data_manager = SessionDataManager()

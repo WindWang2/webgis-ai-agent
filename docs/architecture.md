@@ -57,16 +57,22 @@ graph TD
 ### 3.1 Fetch-on-Demand (按需提件流)
 在传统的 LLM+GIS 应用中，由于大模型需要输出计算结果，常常会导致上下文被 50MB 的 GeoJSON 所撑爆。
 **V2.0 解决方案**：
-1. **Tool 层封箱**：当后端 Python 函数运行完毕获得大尺寸 `FeatureCollection` 时，生成一个唯一随机签名，如 `geojson_09a8b7c`。数据本体被悄然封存在 Redis 中，过期时间设为 1 小时。
+1. **Tool 层封箱**：当后端 Python 函数运行完毕获得大尺寸 `FeatureCollection` 时，生成一个唯一随机签名，如 `ref_id: geojson_09a8b7c`。数据本体被悄然封存在 Redis 中，过期时间设为 1 小时。
 2. **LLM 传输层**：大模型仅看到 `{"layer_id": "geojson_09a8b7c", "render_type": "heatmap"}` 这样的虚壳签名，立刻返回给主路由。
-3. **SSE 极简下发**：网关以每秒数十个 Token 的速度推流，包含提货码。
-4. **前端提货**：客户端 React 拦截器一旦拼装出完整 `layer_id` 且带有 `geojson_` 协议头，立刻通过 `/api/v1/layer/{id}/data` 路由发起独立的 HTTP 拉取任务。
+3. **SSE 极简下发**：网关实时推送提货码，前端 HUD 同步展示任务进度。
+4. **前端提货**：客户端 React 拦截器拼装出 `layer_id` 后，通过 `/api/v1/layer/{id}/data` 发起独立的 HTTP 拉取任务。
 5. **挂载**：获取的巨量点位直接绕过 React State，注入 `mapRef` 实例底层源生绘制。
 
 ### 3.2 SSE Keep-Alive 心跳保活阵列
 在进行动辄数分钟的全国级道路网相交测算时，前端与 FastAPI 极易因为长时间无响应而发生 `ERR_CONNECTION_RESET`。
 **V2.0 解决方案**：
 在 `chat_engine.py` 的主异步生成器中，植入了一组独立看门狗循环。当测算被丢给 Celery 且进入阻塞等待时，看门狗每隔 15 秒向传输层丢弃一个透明的注释型数据框（如 `data: [HEARTBEAT]\n\n` 或空字段）。此机制从硬件网关（Nginx等）层面维系了通道常开。
+
+### 3.3 Map State & Interaction Synchronization (地图感知同步)
+为了解决 AI 盲目调用工具以及重复切换底图的问题，引入了**实时地图观测反馈机制**。
+- **状态注入**：每一轮对话请求发起前，前端会将当前的地图中心（Center）、缩放（Zoom）和底图（BaseLayer）打包附带。
+- **执行后观测 (Observation After Execution)**：在 `chat_engine.py` 中，每个 Tool 执行完毕后，会自动追加一段 `[执行后观察 - 当前地图状态]` 至 AI 的上下文。
+- **原子化控制**：AI 被约束在一次交互中只能发送一条地图控制指令（如 `BASE_LAYER_CHANGE`），通过“执行-观察-再执行”的闭环机制方案，确保了地图交互的极高稳定性。
 
 ---
 
