@@ -1,4 +1,4 @@
-# WebGIS AI Agent 数据库设计文档 (V2.0)
+# WebGIS AI Agent 数据库设计说明书 (V2.1)
 
 本系统采用 **Hybrid 混合持久化架构**，关系与空间核心依托 `PostGIS / SQLite`，大容量临时吞吐则依赖 `Redis` 内存沙盒。
 

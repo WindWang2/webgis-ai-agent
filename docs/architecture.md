@@ -1,13 +1,13 @@
-# WebGIS AI Agent 技术架构设计文档 (V2.0)
-> 版本：v2.0 | 日期：2026-04 | 状态：深度落地
+# WebGIS AI Agent 技术架构设计文档 (V2.1)
+> 版本：v2.1 | 日期：2026-04 | 状态：深度落地
 
-## 1. 架构概述与设计原则
-本项目定位于“具备深层自主决策与 GPU 级流式渲染的空间数据科学家”。
-从 V1.0 到 V2.0，工程底座经历了彻底的重构重组，严格贯彻以下工业级防崩坏原则：
-- **极致的计算隔离**：FastAPI 主路由只负责搬运状态，任何涉及到 GeoPandas 裁剪、数万坐标转换的阻塞性算子，强制下放至 Celery 军团。
-- **内存防雪崩传输 (Fetch-on-Demand)**：大模型不读矢量源码、SSE 不推巨量坐标。大数据传输压缩为全局 `ref_id` 提货券流转。
-- **GPU 原生释压**：抛弃后端栅格化生图，全面转由前端 MapLibre 掌管 Vector Tile 与 Shader 原生着色。
-- **Exception 级自组织**：失败不抛错，化作伪系统提示语交办大模型完成逻辑缝合。
+## 1. 架构概述与设计原则：一切皆 Agent (Everything is Agent)
+本项目不仅是 WebGIS 工具，而是一个**主权级空间智能体 (Sovereign Spatial Agent)**。我们遵循“Agent 即系统”的哲学：
+-   **中枢神经系统 (Agent CNS)**：AI 不再是外部插件，而是系统的逻辑核心。它拥有对数据、渲染和交互的绝对主权。
+-   **具身感知 (Embodied Perception)**：前端 MapLibre 实例是 Agent 的感官延伸。通过实时状态回传（Map State Sync），Agent 能“感知”用户正在看的分辨率、范围和活跃图层。
+-   **思维外化 (Externalized Thought)**：UI 的每一次变化、图层的每一次叠加，都是 Agent 思维过程的实体化。
+-   **极致的计算隔离**：FastAPI 只负责神经信号传输，Celery Worker 是 Agent 强大的“肌肉”，负责处理 GeoPandas 裁剪、遥感影像掩膜等高密计算。
+-   **数据主权存储 (Data Sovereignty)**：大数据传输通过 `ref_id` 提货券流转，确保 Agent 内存（上下文）只保留本质的逻辑关联。
 
 ---
 
@@ -17,9 +17,10 @@
 graph TD
     A[用户态 User] -->|自然语言/上传文件| B(前端渲染枢纽 Next.js)
     
-    subgraph 前端渲染枢纽 ["前端边界 (Next.js + MapLibre)"]
+    subgraph 前端渲染枢纽 ["具身感官与外化层 (Next.js + MapLibre)"]
     B1[React Chat 对话树] --> |解析拦截| B2[MapPanel 原生渲染层]
     B2 --> |GPU Shader 补帧| B3[热力图/聚类层]
+    B4[Agentic HUD 2.0] --> |反应式反馈/状态灯语| B1
     end
     B --> B1
     
@@ -68,11 +69,22 @@ graph TD
 **V2.0 解决方案**：
 在 `chat_engine.py` 的主异步生成器中，植入了一组独立看门狗循环。当测算被丢给 Celery 且进入阻塞等待时，看门狗每隔 15 秒向传输层丢弃一个透明的注释型数据框（如 `data: [HEARTBEAT]\n\n` 或空字段）。此机制从硬件网关（Nginx等）层面维系了通道常开。
 
-### 3.3 Map State & Interaction Synchronization (地图感知同步)
-为了解决 AI 盲目调用工具以及重复切换底图的问题，引入了**实时地图观测反馈机制**。
-- **状态注入**：每一轮对话请求发起前，前端会将当前的地图中心（Center）、缩放（Zoom）和底图（BaseLayer）打包附带。
-- **执行后观测 (Observation After Execution)**：在 `chat_engine.py` 中，每个 Tool 执行完毕后，会自动追加一段 `[执行后观察 - 当前地图状态]` 至 AI 的上下文。
-- **原子化控制**：AI 被约束在一次交互中只能发送一条地图控制指令（如 `BASE_LAYER_CHANGE`），通过“执行-观察-再执行”的闭环机制方案，确保了地图交互的极高稳定性。
+3.3 Map State & Sensory Integration (感官与状态同步)
+为了实现“一切皆 Agent”，我们构建了双向的感官反馈闭环：
+1. **主动感知 (Proactive Perception)**：
+   - 每一次聊天请求发起时，前端会自动采集当前的 `viewport`（中心点、Zoom）和 `layers`（显隐状态、透明度）。
+   - 这些数据作为 `map_state` 发送至后端，并持久化到 `SessionDataManager`。
+2. **实时 HUD 注入与双源算法**：
+   - `ChatEngine` 会将上述数据转化为 `[当前地图状态 (实时感知)]` 块，作为系统观测注入 AI 的 Context。
+   - **双源感知策略 (Strategy 2)**：当后端 Session 数据过期或重置时，Agent 会回退到前端实时上报的图层 ID 进行“具身感知”。这种自愈能力允许 Agent 控制由于页面刷新或 Session 过期遗留的“客场图层”，实现跨 Session 的操控主权。
+3. **闭环稳定性**：AI 被约束在单轮交互中通过“执行-观察-感知”完成逻辑缝合，极大减少了由于视角不匹配导致的盲目重复调用。
+
+### 3.4 Operational Stability & State Resilience (操作稳定性与状态自愈)
+为了确保 Agent 在复杂的网络和浏览器环境下依然稳健，引入了以下硬化指标：
+1. **Hydration Integrity (水合完整性)**：React 界面中，我们将 `ReactMarkdown` 的段落标签 (`p`) 语义化映射为除块级元素之外的 `div`，彻底杜绝了由于内容嵌套非法（如 `div` 嵌套在 `p` 中）导致的前端 Hydration 警告。
+2. **Image Safety Guards (图片渲染护城河)**：通过自定义渲染器强制过滤非法的或由模型幻觉产生的图片地址。仅允许合规的 `http(s)` 或 `data:` 协议，且阻断任何非预期的本地占位符（如 `![Status](Message)`），有效消灭了控制台中的 404 资源错误。
+3. **Sequence-Guaranteed Persistence (序贯持久化)**：后端 `Message` 的数据库写入由“异步 background”改为“同步 await”。这确保了 auto-increment ID 严格遵循对话的时间轴，彻底解决了并发写入可能导致的会话历史重构混乱（Context Corruption）问题。
+
 
 ---
 

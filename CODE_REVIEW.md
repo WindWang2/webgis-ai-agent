@@ -1,4 +1,4 @@
-# Code Review & Integrity Standards (V2.0 Core)
+# Code Review & Integrity Standards (V2.1 Core)
 
 **Date**: 2026-04-12
 **Scope**: Full Stack (FastAPI + Next.js + Celery)
