@@ -1,4 +1,4 @@
-# 空间数据引擎与 Fetch-on-Demand (按需拉取) 架构 V2.0
+# 空间数据引擎与 Fetch-on-Demand (按需拉取) 架构 V2.1
 
 ## 概述
 在 V2.0 架构中，数据流引擎完成了颠覆性重构。为了彻底解决几十 MB 的 GeoJSON 撑爆大语言模型（LLM）上下文，以及导致 SSE (Server-Sent Events) 单向长流崩溃卡死的问题，我们引入了业界标准的 **Fetch-on-Demand (按需拉取与引用剥离)** 架构。

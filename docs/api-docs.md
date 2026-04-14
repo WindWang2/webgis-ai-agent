@@ -1,10 +1,10 @@
-# WebGIS AI Agent 后端 API 接口文档 (V2.0)
+# WebGIS AI Agent 后端 API 接口文档 (V2.1)
 
 ## T001 后端基础架构
 ### FastAPI 入口与承载流
 ```python
 from app.main import app
-# 默认服务端口: 8000
+# 默认服务端口: 8001
 # 运行环境拦截: Uvicorn Asyncio
 ```
 
@@ -18,7 +18,8 @@ from app.main import app
 ---
 
 ## T002 核心 AI 编排层 (SSE 流式)
-V2.0 在聊天网关注入了抵抗 `ERR_CONNECTION_RESET` 的长连接保活架构。
+V2.1 在聊天网关注入了抵抗 `ERR_CONNECTION_RESET` 的长连接保活架构。
+
 
 ### 会话与记忆管理
 | 方法 | 路径 | 说明 |
