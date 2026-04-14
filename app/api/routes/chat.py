@@ -48,6 +48,7 @@ class ChatRequest(BaseModel):
     """聊天请求"""
     message: str = Field(..., min_length=1, max_length=5000)
     session_id: Optional[str] = None
+    map_state: Optional[dict] = Field(None, description="当前的地图状态（视角、图层等）")
 
 
 class ChatResponse(BaseModel):
@@ -60,7 +61,7 @@ class ChatResponse(BaseModel):
 async def chat_completions(req: ChatRequest, _user: dict = Depends(get_current_user_optional)):
     """非流式对话接口"""
     try:
-        result = await engine.chat(req.message, session_id=req.session_id)
+        result = await engine.chat(req.message, session_id=req.session_id, map_state=req.map_state)
         return ChatResponse(**result)
     except Exception as e:
         logger.error(f"Chat error: {e}")
@@ -72,7 +73,7 @@ async def chat_stream(req: ChatRequest, _user: dict = Depends(get_current_user_o
     """SSE 流式对话接口"""
     async def event_generator():
         try:
-            async for event in engine.chat_stream(req.message, session_id=req.session_id):
+            async for event in engine.chat_stream(req.message, session_id=req.session_id, map_state=req.map_state):
                 yield event
         except Exception as e:
             logger.error(f"Stream error: {e}")

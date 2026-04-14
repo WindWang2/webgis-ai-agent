@@ -50,13 +50,21 @@ export function HudPanel({
           className={`absolute ${positionClasses} ${width} z-20 flex flex-col glass-panel rounded-2xl overflow-hidden ${className}`}
           variants={slideVariants[position]}
           initial="initial"
-          animate="animate"
+          animate={{
+            ...slideVariants[position].animate,
+            y: [0, -4, 0],
+          }}
           exit="exit"
-          transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+          transition={{ 
+            type: 'spring', 
+            stiffness: 300, 
+            damping: 30,
+            y: { repeat: Infinity, duration: 5, ease: "easeInOut" }
+          }}
         >
           {/* Header */}
           {title && (
-            <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06]">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06] bg-white/[0.01]">
               <div className="flex items-center gap-2.5">
                 {icon && (
                   <div className="relative">
@@ -64,7 +72,7 @@ export function HudPanel({
                     <div className="absolute -inset-1 bg-hud-cyan/15 rounded-full blur-sm" />
                   </div>
                 )}
-                <h2 className="text-sm font-semibold tracking-wide text-white/90 font-display uppercase">
+                <h2 className="hud-holographic text-[11px] font-bold">
                   {title}
                 </h2>
               </div>

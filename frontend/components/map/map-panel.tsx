@@ -424,9 +424,12 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
     }
   }, [layers, mapReady, currentMapStyle, activeFilters, processLayers])
 
+  const setViewport = useHudStore((s) => s.setViewport)
+
   const handleMove = useCallback((evt: ViewStateChangeEvent) => {
     setViewState(evt.viewState)
-  }, [])
+    setViewport([evt.viewState.longitude, evt.viewState.latitude], evt.viewState.zoom)
+  }, [setViewport])
 
   const handleMouseMove = useCallback((e: { lngLat: { lng: number; lat: number } }) => {
     setCoordinates({
