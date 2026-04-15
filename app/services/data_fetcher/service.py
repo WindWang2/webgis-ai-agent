@@ -75,6 +75,7 @@ class DataFetcherService:
                 cached_data = self._cache_manager.get(query)
                 if cached_data:
                     logger.info("Falling back to cached data after source failure")
+                    # 移除缓存中的 metadata 避免重复键冲突
                     cached_clean = {k: v for k, v in cached_data.items() if k != "metadata"}
                     return StandardGISData(**cached_clean, metadata={"is_fallback": True, "fallback_reason": str(e)})
             # Return error response if no cache fallback
