@@ -231,9 +231,11 @@ class ReportService:
         return text
 
     @staticmethod
+    @staticmethod
     def _extract_tool_name(msg: dict[str, Any]) -> str:
         tool_calls = msg.get("tool_calls")
         if isinstance(tool_calls, list) and tool_calls:
+            # OpenAI 格式: tool_calls[0]["function"]["name"]
             first_call = tool_calls[0]
             if isinstance(first_call, dict):
                 fn = first_call.get("function", {})
@@ -242,23 +244,7 @@ class ReportService:
                 return first_call.get("name", "Tool")
             return "Tool"
         if isinstance(tool_calls, dict):
+            # 单个 tool_call 格式
             fn = tool_calls.get("function", {})
             if isinstance(fn, dict):
                 return fn.get("name", "Tool")
-            return tool_calls.get("name", "Tool")
-        return "Tool"
-
-    @staticmethod
-    def _format_tool_result(raw: Any) -> str:
-        if isinstance(raw, str):
-            return raw
-        if isinstance(raw, (dict, list)):
-            text = json.dumps(raw, indent=2, ensure_ascii=False)
-            # Truncate very large results to keep report size reasonable
-            if len(text) > 8000:
-                text = text[:8000] + "\n... (truncated)"
-            return text
-        return str(raw)
-
-
-__all__ = ["ReportService", "REPORT_DIR"]
