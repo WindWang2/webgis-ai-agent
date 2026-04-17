@@ -38,3 +38,7 @@ build/
 # Tool artifacts
 .playwright-mcp/
 .superpowers/
+
+# DB and Deploy artifacts
+*.db
+*.tar.gz
