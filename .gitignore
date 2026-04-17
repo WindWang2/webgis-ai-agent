@@ -39,7 +39,6 @@ build/
 .playwright-mcp/
 .superpowers/
 
-# Project specific artifacts
-webgis.db
-deploy.tar.gz
-
+# DB and Deploy artifacts
+*.db
+*.tar.gz
