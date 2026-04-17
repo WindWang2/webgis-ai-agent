@@ -17,6 +17,39 @@
       "env": {
         "OPENTOPOGRAPHY_API_KEY": ""
       }
+    },
+    "zai-mcp-server": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@z_ai/mcp-server"
+      ],
+      "env": {
+        "Z_AI_API_KEY": "${Z_AI_API_KEY}",
+        "Z_AI_MODE": "ZHIPU"
+      }
+    },
+    "web-search-prime": {
+      "transport": "sse",
+      "url": "https://open.bigmodel.cn/api/mcp/web_search_prime/sse",
+      "headers": {
+        "Authorization": "Bearer ${Z_AI_API_KEY}"
+      }
+    },
+    "web-reader": {
+      "transport": "sse",
+      "url": "https://open.bigmodel.cn/api/mcp/web_reader/sse",
+      "headers": {
+        "Authorization": "Bearer ${Z_AI_API_KEY}"
+      }
+    },
+    "zread": {
+      "transport": "sse",
+      "url": "https://open.bigmodel.cn/api/mcp/zread/sse",
+      "headers": {
+        "Authorization": "Bearer ${Z_AI_API_KEY}"
+      }
     }
   }
 }

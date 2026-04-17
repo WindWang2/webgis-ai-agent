@@ -57,20 +57,22 @@ export function ChatHud({
 
   return (
     <div className="flex flex-col h-full">
-      {/* Task Progress (inline, if active) */}
-      {currentTask && (
-        <div className="border-b border-white/[0.04] shrink-0">
-          <TaskTimeline />
-        </div>
-      )}
-
-      {/* Messages */}
+      {/* Scrollable Content */}
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-4 py-3 space-y-3"
+        className="flex-1 overflow-y-auto pb-6"
       >
-        <AnimatePresence initial={false}>
-          {messages.map((message) => (
+        {/* Task Progress (inline, if active) */}
+        {currentTask && (
+          <div className="border-b border-white/[0.04] mb-3">
+            <TaskTimeline />
+          </div>
+        )}
+
+        {/* Messages */}
+        <div className="px-4 py-3 space-y-3">
+          <AnimatePresence initial={false}>
+            {messages.map((message) => (
             <motion.div
               key={message.id}
               className={`flex gap-2.5 ${message.role === "user" ? "flex-row-reverse" : ""}`}
@@ -201,6 +203,7 @@ export function ChatHud({
             </motion.div>
           ))}
         </AnimatePresence>
+        </div>
       </div>
 
       {/* Upload zone (toggle) */}

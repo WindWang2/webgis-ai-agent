@@ -1,5 +1,5 @@
 "use client"
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { MapPanel } from "@/components/map/map-panel"
 import { HudPanel } from "@/components/hud/hud-panel"
