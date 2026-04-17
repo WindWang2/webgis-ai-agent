@@ -1,10 +1,10 @@
-# WebGIS AI Agent - V2.0 部署与运行指南
+# WebGIS AI Agent - V2.1 部署与运行指南
 
 ## 前置环境要求 (Prerequisites)
 - Docker & Docker Compose (生产首选)
 - Python 3.10+
 - Node.js 18+
-- Redis 6+ (V2.0 强制依赖)
+- Redis 6+ (V2.1 强制依赖)
 - PostgreSQL 14+ (携带 PostGIS 3+)
 
 ## 🚀 方式一：Docker 一键挂载 (推荐)
