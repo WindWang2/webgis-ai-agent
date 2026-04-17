@@ -50,3 +50,6 @@ mcp[cli]>=1.0.0
 sentence-transformers>=2.2.0
 faiss-cpu>=1.7.4
 tiktoken>=0.5.0
+
+# Sub-Agent Web Crawler
+duckduckgo-search>=6.0.0
