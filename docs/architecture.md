@@ -18,11 +18,12 @@ graph TD
     A[用户态 User] -->|自然语言/上传文件| B(前端渲染枢纽 Next.js)
     
     subgraph 前端渲染枢纽 ["具身感官与外化层 (Next.js + MapLibre)"]
-    B1[React Chat 对话树] --> |解析拦截| B2[MapPanel 原生渲染层]
-    B2 --> |GPU Shader 补帧| B3[热力图/聚类层]
-    B4[Agentic HUD 2.0] --> |反应式反馈/状态灯语| B1
+    B1[React Chat/StoryMap 引擎] --> |解析拦截| B2[MapPanel 原生渲染层]
+    B2 --> |3D/GPU Shader 补帧| B3[热力图/实体模型]
+    B4[Agentic HUD / Narrative UI] --> |反应式反馈/状态灯语| B1
     end
     B --> B1
+
     
     subgraph 边界网关 ["非阻塞 API 护城河 (FastAPI)"]
     C{SSE 流推网关} -.-> |保活检测 :keep-alive| B1
@@ -34,6 +35,7 @@ graph TD
     subgraph 大脑中枢 ["AI Agent 调度层"]
     D[Orchestrator 编排器] --> |Tool 调用指令| D1(Claude 3.5+ API)
     D1 --> |生成 JSON 架子| D
+    D --> |MCP 协议透传| D2(MCP 外网探测器节点)
     end
     C1 --> D
     
@@ -78,6 +80,11 @@ graph TD
    - `ChatEngine` 会将上述数据转化为 `[当前地图状态 (实时感知)]` 块，作为系统观测注入 AI 的 Context。
    - **双源感知策略 (Strategy 2)**：当后端 Session 数据过期或重置时，Agent 会回退到前端实时上报的图层 ID 进行“具身感知”。这种自愈能力允许 Agent 控制由于页面刷新或 Session 过期遗留的“客场图层”，实现跨 Session 的操控主权。
 3. **闭环稳定性**：AI 被约束在单轮交互中通过“执行-观察-感知”完成逻辑缝合，极大减少了由于视角不匹配导致的盲目重复调用。
+
+### 3.4 MCP 外接超脑与破网抓取 (Sub-Agent)
+系统通过 Model Context Protocol 实现了标准化插件生态。
+1. **破网爬行者 (Crawler)**：在 Tool 层嵌入 `duckduckgo-search` 组件。当 AI 在本地数据库寻址失败时，隐秘释放探测器向外网请求当前地理百科或新闻流。
+2. **ZHIPU 远端阅读器**：通过对接 Z_AI 的 MCP Server (`web-search-prime`, `web-reader`)，将网络非结构化报文送发远端清洗并提纯中心坐标返回给主脑。
 
 ### 3.4 Operational Stability & State Resilience (操作稳定性与状态自愈)
 为了确保 Agent 在复杂的网络和浏览器环境下依然稳健，引入了以下硬化指标：
