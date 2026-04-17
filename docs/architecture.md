@@ -1,5 +1,5 @@
 # WebGIS AI Agent 技术架构设计文档 (V2.1)
-> 版本：v2.1 | 日期：2026-04 | 状态：深度落地
+> 版本：v2.1 | 日期：2026-04 | 状态：最终稳定版
 
 ## 1. 架构概述与设计原则：一切皆 Agent (Everything is Agent)
 本项目不仅是 WebGIS 工具，而是一个**主权级空间智能体 (Sovereign Spatial Agent)**。我们遵循“Agent 即系统”的哲学：
