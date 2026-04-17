@@ -139,7 +139,10 @@ class MCPAdapter:
         if not os.path.exists(path):
             return {}
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            content = f.read()
+            # 扩展系统环境变量和 .env 变量
+            content = os.path.expandvars(content)
+            return json.loads(content)
 
     @classmethod
     async def from_config(cls, config: dict, registry: ToolRegistry) -> "MCPAdapter":

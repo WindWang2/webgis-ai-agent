@@ -84,10 +84,9 @@ class ToolRegistry:
             except json.JSONDecodeError:
                 raise ValueError(f"Invalid JSON arguments for tool {name}: {arguments}")
 
-        # 透明解引用 (Transparent Dereferencing)
-        # 注意：排除某些特殊字段（如 ref_id），这些字段本身就是为了接收引用 ID
+        # 注意：排除某些特殊字段（如 ref_id, layer_ref, layer_id），这些字段本身就是为了接收引用 ID
         if session_id and isinstance(arguments, dict):
-            arguments = self._resolve_references(session_id, arguments, skip_keys={"ref_id"})
+            arguments = self._resolve_references(session_id, arguments, skip_keys={"ref_id", "layer_ref", "layer_id"})
 
         # Pydantic 语义校验
         model = self._models.get(name)

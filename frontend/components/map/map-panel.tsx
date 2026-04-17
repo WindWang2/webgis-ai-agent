@@ -11,6 +11,7 @@ import {
   ChevronDown,
   Layers,
   Compass,
+  Box,
 } from "lucide-react"
 import type { Layer } from "@/lib/types/layer"
 import type { AnalysisResult, GeoJSONFeatureCollection, HeatmapRasterSource } from "@/lib/types"
@@ -89,6 +90,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   const [coordinates, setCoordinates] = useState({ lng: 0, lat: 0 })
   const [viewState, setViewState] = useState(DEFAULT_VIEW_STATE)
   const [mapReady, setMapReady] = useState(false)
+  const [is3D, setIs3D] = useState(false)
   const [activeFilters, setActiveFilters] = useState<Record<string, number[][]>>({})
   const mapRef = useRef<MapRef>(null)
   const lastAnalysisCenter = useRef<string>("")
@@ -127,6 +129,28 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
       }
     }
   }, [analysisResult])
+
+  // 3D Terrain Toggle Effect
+  useEffect(() => {
+    const map = mapRef.current?.getMap()
+    if (!map || !mapReady) return
+
+    if (is3D) {
+      if (!map.getSource("terrain-aws")) {
+        map.addSource("terrain-aws", {
+          type: "raster-dem",
+          tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+          tileSize: 256,
+          maxzoom: 14,
+        })
+      }
+      map.setTerrain({ source: "terrain-aws", exaggeration: 1.5 })
+      map.easeTo({ pitch: 60, bearing: 20, duration: 1000 })
+    } else {
+      map.setTerrain(null)
+      map.easeTo({ pitch: 0, bearing: 0, duration: 1000 })
+    }
+  }, [is3D, mapReady])
 
   const isUpdatingRef = useRef(false)
 
@@ -301,6 +325,19 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
                       "fill-opacity": (layer.opacity || 1) * 0.3,
                     },
                   })
+                  // If 3D mode is active, also add an extrusion layer for polygons
+                  if (is3D) {
+                    addOrUpdate("extrusion", {
+                      type: "fill-extrusion",
+                      filter: getLayerFilter("Polygon"),
+                      paint: {
+                        "fill-extrusion-color": color,
+                        "fill-extrusion-height": ["coalesce", ["get", "height"], ["*", ["random"], 100], 20],
+                        "fill-extrusion-base": 0,
+                        "fill-extrusion-opacity": layer.opacity || 0.8,
+                      },
+                    })
+                  }
                   addOrUpdate("outline", {
                     type: "line",
                     filter: getLayerFilter("Polygon"),
@@ -522,6 +559,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
           { onClick: handleZoomOut, icon: <ZoomOut className="h-3.5 w-3.5" />, title: "缩小" },
           { onClick: handleReset, icon: <RotateCcw className="h-3.5 w-3.5" />, title: "复位" },
           { onClick: handleLocate, icon: <Target className="h-3.5 w-3.5" />, title: "定位" },
+          { onClick: () => setIs3D(!is3D), icon: <Box className={`h-3.5 w-3.5 ${is3D ? "text-hud-cyan" : ""}`} />, title: "3D视界" },
           { onClick: handleExportPng, icon: <Download className="h-3.5 w-3.5" />, title: "导出PNG" },
         ].map((btn, i) => (
           <button

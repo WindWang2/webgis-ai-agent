@@ -279,7 +279,10 @@ class ChatEngine:
         # 前端实时上报的图层（由 map_state.layers 携带）
         active_layers = state.get("layers", [])
         
-        summary = f"[当前地图状态 (实时感知)]\n"
+        import datetime
+        current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        summary = f"[环境感知]\n- 当前系统时间: {current_time}\n\n"
+        summary += f"[当前地图状态 (实时感知)]\n"
         summary += f"- 当前视角: 经度 {center[0]:.4f}, 纬度 {center[1]:.4f}, 缩放层级 {zoom:.1f}\n"
         summary += f"- 当前底图: {base_layer}\n"
         

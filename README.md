@@ -6,9 +6,9 @@
 
 | 层级 | 核心技术选型 | 具身智能特性 |
 |---|---|---|
-| **具身感官 (Sensory)** | Next.js 14 + MapLibre + HUD 2.0 | **Agentic HUD 2.0**：全沉浸式座舱设计，实时反馈 Agent 的思考、感知与任务深度。基于 GPU 构建 60fps 的思维外化渲染。 |
-| **中枢神经 (CNS)** | FastAPI + SSE + Sensory Sync | **主动感知 (Perception)**：AI 动态获取视角、底图与图层状态。Fetch-on-Demand 提货机制确保 Agent 上下文永远保持逻辑极致。 |
-| **执行肌肉 (Execution)** | Celery + Redis + PostGIS | **计算隔离与自愈**：空间算子在隔离区运行。具备 "Exception As Thought" 自愈回路，实现投影与拓扑异常的自主修正。 |
+| **具身感官 (Sensory)** | Next.js 14 + MapLibre + HUD 2.0 | **Agentic HUD 2.0 / StoryMap**：全沉浸式座舱设计与双向汇报路由，3D 数字底座引擎。 |
+| **中枢神经 (CNS)** | FastAPI + SSE + MCP Protocol | **主动感知与破网检索**：除了自带 Tool 外，成功挂载 Model Context Protocol 接管公网搜索，内置盲区爬虫 Sub-Agent 探测器。 |
+| **执行肌肉 (Execution)** | Celery + Redis + PostGIS | **计算隔离与自愈**：空间算子在隔离区运行。具备 "Exception As Thought" 自愈回路。 |
 
 ## 🏗️ 项目核心目录
 
@@ -31,9 +31,10 @@
 ```
 
 ## 🚀 进阶与愿景级功能群
-- **感知级实时地图同步**：AI 不再“盲目”操作。每一轮工具执行后，系统自动同步当前地图中心、缩放等级及已选底图至 AI 上下文，确保决策逻辑的连续性和稳定性。
+- **感知级实时地图同步与 3D 孪生**：AI 不再“盲目”操作。此外支持 AWS/Opentopography DEM 实时高程渲染与 3D 建筑挤压。
 - **自愈式智能空间计算**：具备 "Exception As Thought" 失败逻辑自重构反射。捕捉投影、坐标或拓扑异常，由 AI 在极速静默模式中主动重试修复。
-- **全沉浸式 HUD 指挥舱**：采用 Dynamic Island、RagInsightCard 与任务时装化 Timeline，提供工业级专业地理分析的可视化交互流程。
+- **全沉浸式 HUD 指挥舱与影院级大屏**：采用 Dynamic Island、RagInsightCard 提供操作座舱，另辟 `/story` 提供脱敏展示级的左文右图推演大屏。
+- **MCP 星系级外源探测器**：引入智谱等 Model Context Protocol。当本地数据库无特定商业点位时，派出 Sub-Agent 去暗网抓取非结构化报文并洗入坐标底盘。
 
 ## ⚡ 极速点火部署
 

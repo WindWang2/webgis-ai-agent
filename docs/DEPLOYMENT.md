@@ -64,6 +64,7 @@ npm run dev
 | `DATABASE_URL` | PostGIS 或 SQLite 地址 | 是 |
 | `REDIS_URL` | V2.0 数据枢纽 (Celery与缓存流使用) | 是 |
 | `CLAUDE_API_KEY` | 必须支持 Tool Use (工具装载) 的大模型密钥 | 是 |
+| `Z_AI_API_KEY` | (V2.1 新增) 智谱大模型 MCP 外置搜图与阅读挂载密钥 | 否 |
 | `MAPLIBRE_STYLE` | 矢量栅格叠加套壳风格 | 否 |
 
 ## 排障雷达 (Troubleshooting)
