@@ -96,12 +96,20 @@ export default function Home() {
       const res = await fetch(`http://localhost:8001/api/v1/chat/sessions/${sid}`)
       const data = await res.json()
       if (data.messages && data.messages.length > 0) {
-        setMessages(data.messages.map((m: any) => ({
+        const restored = data.messages.map((m: any) => ({
           id: m.id,
           role: m.role,
           content: m.content,
           timestamp: new Date(m.timestamp),
-        })))
+        }))
+        // Append a session-context notice so the Agent knows user switched
+        restored.push({
+          id: `session-switch-${Date.now()}`,
+          role: "assistant",
+          content: `📂 已恢复历史会话「${data.title || "未命名"}」— 共 ${data.messages.length} 条记录。可继续提问。`,
+          timestamp: new Date(),
+        })
+        setMessages(restored)
       }
       setSessionId(sid)
       setShowHistory(false)
@@ -305,6 +313,28 @@ export default function Home() {
               source: geojson as any,
               style: { color },
             })
+
+            // ── Agent Perception: Notify Agent about the uploaded data ──
+            // This maintains "Agent is Everything" — the Agent must know about
+            // every data change on the map, even those from direct user actions.
+            const notifyMsg = `[系统通知] 用户刚刚上传了矢量数据文件「${result.original_name}」，` +
+              `包含 ${result.feature_count} 个要素，坐标系 ${result.crs}，` +
+              `已作为图层 "${layerId}" 加载到地图上。请在后续对话中感知此图层的存在。`
+            setMessages(prev => [...prev, {
+              id: `upload-notify-${Date.now()}`,
+              role: "assistant",
+              content: `📡 已感知新数据源：**${result.original_name}**（${result.feature_count} 个要素）已挂载到地图。`,
+              timestamp: new Date(),
+            }])
+            // Fire a silent background notification to the Agent backend
+            fetch("http://localhost:8001/api/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                message: notifyMsg,
+                session_id: sessionId,
+              }),
+            }).catch(() => { /* silent: best-effort notification */ })
           }
         } catch (e) {
           console.error("加载上传数据到地图失败:", e)
@@ -315,7 +345,7 @@ export default function Home() {
         setAnalysisResult({ center, zoom: 10 })
       }
     },
-    [addLayer, setAnalysisResult]
+    [addLayer, setAnalysisResult, sessionId]
   )
 
   const [showScanEffect, setShowScanEffect] = useState(false)
