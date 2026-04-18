@@ -1,11 +1,18 @@
 """
-地图服务路由
+地图服务路由 — 遗留管理接口 (Legacy Admin)
+
+⚠️ 架构对齐声明 (Agent Philosophy Alignment):
+这些路由属于传统 CRUD 管理接口，不经过 Agent CNS。
+在 "Agent is Everything" 架构下，所有地图操作应通过 AI 对话链路完成。
+这些端点仅保留用于内部调试/运维，不对前端用户暴露。
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional
 from datetime import datetime, timezone
+
+from app.core.auth import get_current_user
 
 router = APIRouter()
 
@@ -28,64 +35,38 @@ class MapInfo(BaseModel):
     created_at: Optional[datetime] = None
 
 
-@router.get("/maps")
-def list_maps(limit: int = 100, offset: int = 0):
+@router.get("/maps", tags=["内部管理"], deprecated=True)
+def list_maps(
+    limit: int = 100,
+    offset: int = 0,
+    _user: dict = Depends(get_current_user)
+):
     """
-    获取地图列表
-    
-    返回所有可用的地图图层
+    [已废弃] 获取地图列表 — 请通过 AI 对话使用 `inventory_layers` 工具替代
     """
     return {
         "total": 0,
         "limit": limit,
         "offset": offset,
-        "maps": []
+        "maps": [],
+        "_deprecation_notice": "此接口为遗留管理接口，不经过 Agent CNS。请通过对话指令操作地图。",
     }
 
 
-@router.get("/maps/{map_id}")
-def get_map(map_id: str):
+@router.get("/maps/{map_id}", tags=["内部管理"], deprecated=True)
+def get_map(map_id: str, _user: dict = Depends(get_current_user)):
     """
-    获取地图详情
-    
-    Args:
-        map_id: 地图 ID
-    
-    Returns:
-        地图详细信息
+    [已废弃] 获取地图详情 — 请通过 AI 对话查询
     """
-    # TODO: 实现从数据库获取地图信息
     raise HTTPException(status_code=404, detail=f"地图 {map_id} 不存在")
 
 
-@router.post("/maps")
-def create_map(name: str, description: Optional[str] = None):
+@router.get("/layers", tags=["内部管理"], deprecated=True)
+def list_layers(_user: dict = Depends(get_current_user)):
     """
-    创建新地图
-    
-    Args:
-        name: 地图名称
-        description: 地图描述
-    
-    Returns:
-        创建的地图信息
-    """
-    # TODO: 实现创建地图逻辑
-    return {
-        "id": "new_map_id",
-        "name": name,
-        "description": description,
-        "created_at": datetime.now(timezone.utc).isoformat()
-    }
-
-
-@router.get("/layers")
-def list_layers():
-    """
-    获取图层列表
-    
-    返回所有可用的 GIS 图层
+    [已废弃] 获取图层列表 — 请通过 AI 对话使用 `inventory_layers` 工具替代
     """
     return {
-        "layers": []
+        "layers": [],
+        "_deprecation_notice": "此接口为遗留管理接口。请通过对话指令操作图层。",
     }

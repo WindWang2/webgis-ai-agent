@@ -1,5 +1,10 @@
 """
 图层管理 API 路由
+
+⚠️ 架构对齐声明 (Agent Philosophy Alignment):
+- GET /layers/data/{ref_id}：核心 Fetch-on-Demand 端点，Agent 执行链路的一部分，必须保留。
+- 其余 CRUD 路由（POST/PUT/DELETE /layers, GET /tasks 等）属于传统管理接口，
+  不经过 Agent CNS。在 "Agent is Everything" 架构下标记为 deprecated。
 """
 
 from fastapi import APIRouter, HTTPException, Query, Depends
@@ -40,27 +45,21 @@ def get_session_layer_data(
 
 # ==================== 图层 CRUD ====================
 
-@router.post("/layers", response_model=LayerResponse, tags=["图层管理"])
+@router.post("/layers", response_model=LayerResponse, tags=["内部管理"], deprecated=True)
 def create_layer(
     layer: LayerCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(auth_get_current_user)
 ):
     """
-    创建新图层
-    
-    - **name**: 图层名称（必填）
-    - **layer_type**: 图层类型（vector, raster, tile）
-    - **description**: 图层描述（可选）
-    - **source_url**: 数据源 URL（可选）
-    - **is_public**: 是否公开（默认 true）
+    [已废弃] 创建新图层 — Agent 通过工具链自动创建和管理图层，无需手动 CRUD。
     """
     layer_service = LayerService(db)
     created_layer = layer_service.create(layer, owner_id=current_user.id)
     return created_layer
 
 
-@router.get("/layers", response_model=LayerListResponse, tags=["图层管理"])
+@router.get("/layers", response_model=LayerListResponse, tags=["内部管理"], deprecated=True)
 def list_layers(
     limit: int = Query(100, le=1000, description="每页数量"),
     offset: int = Query(0, ge=0, description="偏移量"),
@@ -70,9 +69,7 @@ def list_layers(
     db: Session = Depends(get_db)
 ):
     """
-    获取图层列表
-    
-    支持按类型、公开状态、关键词筛选
+    [已废弃] 获取图层列表 — 请通过 AI 对话使用 `inventory_layers` 工具替代
     """
     layer_service = LayerService(db)
     layers, total = layer_service.list_all(
@@ -91,17 +88,13 @@ def list_layers(
     }
 
 
-@router.get("/layers/{layer_id}", response_model=LayerResponse, tags=["图层管理"])
+@router.get("/layers/{layer_id}", response_model=LayerResponse, tags=["内部管理"], deprecated=True)
 def get_layer(
     layer_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(auth_get_current_user)
 ):
-    """
-    获取单个图层详情
-    
-    包含完整的元数据信息
-    """
+    """[已废弃] 获取单个图层详情"""
     layer_service = LayerService(db)
     layer = layer_service.get(layer_id)
     
@@ -116,18 +109,14 @@ def get_layer(
     return layer
 
 
-@router.put("/layers/{layer_id}", response_model=LayerResponse, tags=["图层管理"])
+@router.put("/layers/{layer_id}", response_model=LayerResponse, tags=["内部管理"], deprecated=True)
 def update_layer(
     layer_id: int,
     layer_update: LayerUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(auth_get_current_user)
 ):
-    """
-    更新图层信息
-    
-    仅图层所有者或管理员可更新
-    """
+    """[已废弃] 更新图层信息 — Agent 通过 `update_layer_appearance` / `alias_layer` 工具操作"""
     layer_service = LayerService(db)
     
     # 权限检查
@@ -143,17 +132,13 @@ def update_layer(
     return updated_layer
 
 
-@router.delete("/layers/{layer_id}", response_model=SuccessResponse, tags=["图层管理"])
+@router.delete("/layers/{layer_id}", response_model=SuccessResponse, tags=["内部管理"], deprecated=True)
 def delete_layer(
     layer_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(auth_get_current_user)
 ):
-    """
-    删除图层（软删除）
-    
-    仅图层所有者可删除
-    """
+    """[已废弃] 删除图层 — Agent 通过 `set_layer_status` 控制图层显隐"""
     layer_service = LayerService(db)
     layer = layer_service.get(layer_id)
     
