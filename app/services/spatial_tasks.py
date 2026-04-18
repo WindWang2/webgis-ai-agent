@@ -1,9 +1,16 @@
 """空间分析 Celery 任务定义"""
 import logging
 import math
+import os
+import io
+import base64
 from typing import List, Dict, Any, Optional
 from app.services.task_queue import celery_app
 from app.services.spatial_analyzer import SpatialAnalyzer
+from app.services.nature_resource_analyzer import NatureResourceAnalyzer
+from app.core.config import settings
+from app.core.database import SessionLocal
+from app.models.upload import UploadRecord
 
 logger = logging.getLogger(__name__)
 
@@ -371,3 +378,88 @@ def run_zonal_stats(self, zones: List[Dict], raster_path: str):
     if result.success:
         return {"success": True, "data": result.data}
     return {"success": False, "error": result.error_message}
+@celery_app.task(name="app.services.spatial_tasks.run_ndvi_analysis", bind=True)
+def run_ndvi_analysis(self, raster_path: str, nir_band: Optional[int] = None, red_band: Optional[int] = None, session_id: Optional[str] = None):
+    """
+    执行 NDVI 植被指数分析并持久化结果
+    """
+    import rasterio
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    
+    logger.info(f"Starting NDVI analysis for {raster_path}")
+    self.update_state(state='PROGRESS', meta={'progress': 10, 'message': '正在读取影像数据...'})
+    
+    output_dir = os.path.join(settings.DATA_DIR, "analysis_results")
+    
+    # 1. 执行计算
+    result = NatureResourceAnalyzer.calculate_ndvi(
+        tif_path=raster_path,
+        red_band=red_band,
+        nir_band=nir_band,
+        output_dir=output_dir
+    )
+    
+    if not result.get("success"):
+        return result
+    
+    self.update_state(state='PROGRESS', meta={'progress': 60, 'message': '计算完成，正在生成渲染预览...'})
+    
+    # 2. 生成 PNG 预览 (用于前端 Immediate Map Render)
+    # 这一步将 NDVI 矩阵转换为彩色 PNG，采用 RdYlGn (红-黄-绿) 色带
+    preview_base64 = ""
+    try:
+        with rasterio.open(result["result_path"]) as src:
+            ndvi_data = src.read(1)
+            # 极简渲染方案：使用 matplotlib 快速出图
+            fig, ax = plt.subplots(figsize=(10, 10))
+            ax.set_axis_off()
+            # NDVI 范围限定 [-1, 1], RdYlGn 是植被分析标配
+            im = ax.imshow(ndvi_data, cmap='RdYlGn', vmin=-1.0, vmax=1.0)
+            
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', transparent=True, bbox_inches='tight', pad_inches=0)
+            plt.close(fig)
+            buf.seek(0)
+            preview_base64 = "data:image/png;base64," + base64.b64encode(buf.read()).decode('utf-8')
+    except Exception as e:
+        logger.error(f"Failed to generate NDVI preview: {e}")
+
+    # 3. 持久化到数据库 (让 Agent 在资产管理器中能“感知”到它)
+    db = SessionLocal()
+    try:
+        file_size = os.path.getsize(result["result_path"])
+        record = UploadRecord(
+            filename=f"analysis_results/{result['filename']}",
+            original_name=result["filename"],
+            file_type="raster",
+            format="geotiff",
+            crs=result.get("crs", "EPSG:4326"),
+            geometry_type="raster_analysis",
+            bbox=result.get("bbox"),
+            file_size=file_size,
+            session_id=session_id
+        )
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+        asset_id = record.id
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to log NDVI result to DB: {e}")
+        asset_id = None
+    finally:
+        db.close()
+
+    return {
+        "success": True,
+        "type": "ndvi_result",
+        "asset_id": asset_id,
+        "filename": result["filename"],
+        "bbox": result["bbox"],
+        "image": preview_base64, # 图层立即回显
+        "stats": result["stats"],
+        "detected_bands": result["detected_bands"],
+        "message": f"植被指数 (NDVI) 分析执行成功。结果已存入资产库：{result['filename']}"
+    }

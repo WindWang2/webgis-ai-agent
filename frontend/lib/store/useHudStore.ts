@@ -78,6 +78,16 @@ interface HudState {
   /* ─── RAG Insight ─── */
   ragInsight: { title: string; content: string; source?: string } | null;
   setRagInsight: (insight: { title: string; content: string; source?: string } | null) => void;
+
+  /* ─── System Callback ─── */
+  pendingSystemMessage: string | null;
+  setPendingSystemMessage: (msg: string | null) => void;
+
+  /* ─── Analysis Assets ─── */
+  analysisAssets: any[];
+  fetchAnalysisAssets: (sessionId?: string) => Promise<void>;
+  updateAsset: (assetId: number, updates: any) => void;
+  deleteAsset: (assetId: number) => void;
 }
 
 export const useHudStore = create<HudState>((set) => ({
@@ -197,4 +207,35 @@ export const useHudStore = create<HudState>((set) => ({
   /* ─── Viewport Sync ─── */
   viewport: { center: [116.4074, 39.9042], zoom: 4 },
   setViewport: (center, zoom) => set({ viewport: { center, zoom } }),
+
+  /* ─── System Callback ─── */
+  pendingSystemMessage: null,
+  setPendingSystemMessage: (msg) => set({ pendingSystemMessage: msg }),
+
+  /* ─── Analysis Assets ─── */
+  analysisAssets: [],
+  fetchAnalysisAssets: async (sessionId) => {
+    try {
+      const url = `http://localhost:8001/api/v1/chat/tools/call?tool=list_analysis_assets&session_id=${sessionId || ''}`;
+      // In a real app we'd have a specific GET route, but our current tools can be invoked via specific API if set up, 
+      // or we just call the helper defined in nature_resources. 
+      // For now, let's assume a direct GET endpoint for assets if we want to be clean, 
+      // but I'll implement a fetch from the list_analysis_assets tool logic.
+      const resp = await fetch(`http://localhost:8001/api/v1/uploads?session_id=${sessionId || ''}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        // Filter for raster_analysis types
+        const assets = data.uploads.filter((u: any) => u.geometry_type === "raster_analysis");
+        set({ analysisAssets: assets });
+      }
+    } catch (e) {
+      console.error("Failed to fetch assets:", e);
+    }
+  },
+  updateAsset: (id, updates) => set(s => ({
+    analysisAssets: s.analysisAssets.map(a => a.id === id ? { ...a, ...updates } : a)
+  })),
+  deleteAsset: (id) => set(s => ({
+    analysisAssets: s.analysisAssets.filter(a => a.id !== id)
+  })),
 }));

@@ -1,4 +1,4 @@
-# WebGIS AI Agent: 具身空间智能引擎 (Embodied Spatial Intelligence) - V2.1
+# WebGIS AI Agent: 具身空间智能引擎 (Embodied Spatial Intelligence) - V3.0
 
 不再仅仅是一个 GIS 展示工具，而是一个拥有**中枢神经系统 (Agent CNS)** 的具身智能代理。通过实时感官同步与全称异步计算矩阵，它能像专业数据科学家一样感知地图、决策逻辑并执行复杂的地理推演。
 
@@ -30,11 +30,11 @@
 └── docker-compose.yml      # 一键拉起 Redis+Celery+DB 战斗群
 ```
 
-## 🚀 进阶与愿景级功能群
+## 🚀 进阶与旗舰级功能群 (V3.0 New!)
+- **AI 专题制图与高清合成 (AI Cartographer)**：Agent 现在是一名专业制图师。支持通过 Canvas 2D 重绘合成具有“玻璃质感”标题、动态水印及美学遮罩的高清专题图，并支持云端持久化下载链路。
+- **自然资源遥感智能 (Nature Resource AI)**：深度集成 `rasterio`。支持 NDVI 指数秒级计算、多波段卫星影像 (Sentinel-2/Landsat) 智能识别。
+- **分析资产库管理 (Asset Manager)**：分析结果不再随 Session 消失。支持对持久化 GeoTIFF 资产进行全生命周期管理（重命名、查看、删除）。
 - **感知级实时地图同步与 3D 孪生**：AI 不再“盲目”操作。此外支持 AWS/Opentopography DEM 实时高程渲染与 3D 建筑挤压。
-- **自愈式智能空间计算**：具备 "Exception As Thought" 失败逻辑自重构反射。捕捉投影、坐标或拓扑异常，由 AI 在极速静默模式中主动重试修复。
-- **全沉浸式 HUD 指挥舱与影院级大屏**：采用 Dynamic Island、RagInsightCard 提供操作座舱，另辟 `/story` 提供脱敏展示级的左文右图推演大屏。
-- **MCP 星系级外源探测器**：引入智谱等 Model Context Protocol。当本地数据库无特定商业点位时，派出 Sub-Agent 去暗网抓取非结构化报文并洗入坐标底盘。
 
 ## ⚡ 极速点火部署
 
