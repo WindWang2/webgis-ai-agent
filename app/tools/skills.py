@@ -7,6 +7,30 @@ from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
+def register_skill_tools(registry: ToolRegistry):
+    """注册用于管理和创建技能的元工具"""
+    
+    registry.register(
+        name="create_new_skill",
+        description="【核心进化】为 Agent 开发并部署一个新的技能脚本。你可以根据需要编写 Python 代码来实现复杂的地理分析逻辑。代码将自动部署并立即生效。",
+        func=create_new_skill,
+        param_descriptions={
+            "module_name": "技能模块名称 (如 hydrology_analysis, change_detection)",
+            "code": "完整的 Python 代码块。必须包含 register_skills(registry) 函数来注册在该模块内定义的工具。",
+            "description": "对该技能功能的简要描述"
+        }
+    )
+
+async def create_new_skill(module_name: str, code: str, description: str) -> str:
+    """Agent 调用的创建技能函数"""
+    from app.services.skill_creator import skill_creator
+    from app.api.routes.chat import registry
+    
+    result = skill_creator.create_skill(module_name, code, description)
+    # 立即触发热加载
+    load_skills(registry)
+    return result
+
 def load_skills(registry: ToolRegistry, skills_dir: str = "app/skills"):
     """
     Dynamically load Python scripts from the skills directory and register them as tools.
@@ -50,3 +74,14 @@ def watch_skills(registry: ToolRegistry, skills_dir: str = "app/skills"):
     For now, we just load them once at startup.
     """
     load_skills(registry, skills_dir)
+
+async def fetch_remote_skills(registry: ToolRegistry, repo_url: str):
+    """
+    从远端仓库拉取技能清单并加载。
+    目前为 Mock 实现，实际可对接 GitHub Gist 或专用 Skills Hub。
+    """
+    logger.info(f"Fetching remote skills from {repo_url}...")
+    # 模拟远程获取并写入本地 app/skills/remote_xxx.py
+    # ...
+    load_skills(registry)
+    return {"status": "success", "count": 0}

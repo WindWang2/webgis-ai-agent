@@ -13,17 +13,17 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.core.database import init_db
-from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws
+from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config
 
 logger = logging.getLogger(__name__)
 
-_mcp_adapter = None
+mcp_adapter = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化数据库和 MCP 连接"""
-    global _mcp_adapter
+    global mcp_adapter
     init_db()
 
     # 加载 MCP server 配置（项目根目录下的 mcp_servers.json）
@@ -33,14 +33,14 @@ async def lifespan(app: FastAPI):
     mcp_config = MCPAdapter.load_config(mcp_config_path)
     if mcp_config.get("mcpServers"):
         logger.info(f"[MCP] loading config from {mcp_config_path}")
-        _mcp_adapter = await MCPAdapter.from_config(mcp_config, tool_registry)
+        mcp_adapter = await MCPAdapter.from_config(mcp_config, tool_registry)
     else:
         logger.info("[MCP] no mcp_servers.json found or empty, skipping MCP setup")
 
     yield
 
-    if _mcp_adapter:
-        await _mcp_adapter.close()
+    if mcp_adapter:
+        await mcp_adapter.close()
 
 
 
@@ -71,6 +71,7 @@ app.include_router(task.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(upload.router, prefix="/api/v1", tags=["数据上传"])
 app.include_router(knowledge.router, prefix="/api/v1", tags=["知识库管理"])
 app.include_router(ws.router, prefix="/api/v1", tags=["WebSocket"])
+app.include_router(config.router, prefix="/api/v1", tags=["系统配置"])
 
 # 静态文件服务 - 用于访问导出的地图和分析后的 GeoTIFF
 if not os.path.exists(settings.DATA_DIR):

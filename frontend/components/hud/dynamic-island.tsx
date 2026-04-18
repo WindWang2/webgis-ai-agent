@@ -2,7 +2,8 @@
 
 import React, { useState, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Loader2, Upload, Sparkles } from 'lucide-react';
+import { Send, Loader2, Upload, Sparkles, Settings } from 'lucide-react';
+import { useHudStore } from '@/lib/store/useHudStore';
 
 interface DynamicIslandProps {
   onSend: (message: string) => void;
@@ -22,6 +23,8 @@ export function DynamicIsland({ onSend, isLoading, onUploadClick, statusText }: 
     onSend(text);
     setInput('');
   }, [input, isLoading, onSend]);
+
+  const { setSettingsOpen } = useHudStore();
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -65,6 +68,15 @@ export function DynamicIsland({ onSend, isLoading, onUploadClick, statusText }: 
           title="上传 GIS 数据"
         >
           <Upload className="h-4 w-4" />
+        </button>
+
+        {/* Settings button */}
+        <button
+          onClick={() => setSettingsOpen(true)}
+          className="hud-btn h-9 w-9 shrink-0 rounded-lg text-white/30 hover:text-white/60"
+          title="系统设置"
+        >
+          <Settings className="h-4 w-4" />
         </button>
 
         {/* Input field */}

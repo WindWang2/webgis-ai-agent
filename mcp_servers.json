@@ -5,6 +5,11 @@
       "command": "./venv/Scripts/python.exe",
       "args": ["mcp_servers/gdal_raster.py"]
     },
+    "spatial-analysis": {
+      "transport": "stdio",
+      "command": "./venv/Scripts/python.exe",
+      "args": ["mcp_servers/spatial_analysis.py"]
+    },
     "gdal-vector": {
       "transport": "stdio",
       "command": "./venv/Scripts/python.exe",

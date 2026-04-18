@@ -95,9 +95,18 @@ class MCPAdapter:
         _original_name = tool_def.name
         _session = session
 
-        async def call_mcp_tool(**kwargs: Any) -> Any:
+        async def call_mcp_tool(session_id: str = "", **kwargs: Any) -> Any:
             try:
-                result = await _session.call_tool(_original_name, kwargs)
+                # 智能解引用：如果参数值是字典且包含 path，则提取 path (透传给 MCP)
+                # 这解决了 ToolRegistry 预解析 ref:xxx 为 dict 的问题
+                mcp_kwargs = {}
+                for k, v in kwargs.items():
+                    if isinstance(v, dict) and "path" in v:
+                        mcp_kwargs[k] = v["path"]
+                    else:
+                        mcp_kwargs[k] = v
+                
+                result = await _session.call_tool(_original_name, mcp_kwargs)
                 if not result.content:
                     return {"result": None}
                 texts = [c.text for c in result.content if hasattr(c, "text") and c.text]
@@ -170,3 +179,27 @@ class MCPAdapter:
             except Exception as e:
                 logger.error(f"[MCP] failed to connect server '{name}': {e}")
         return adapter
+
+    async def reload_all(self, config_path: str = "mcp_servers.json"):
+        """重载配置并重连所有 MCP server"""
+        logger.info("[MCP] Reloading all servers...")
+        # 1. 关闭旧连接
+        await self.close()
+        # 2. 从 registry 中移除所有以 MCP 前缀命名的 Schema (简单处理)
+        # 注意：此处并没有物理删除 _tools，但 _schemas 的重新生成会覆盖前端感知的工具列表
+        # 实际生产中应更精确地清理 registry
+        self.registry._schemas = [s for s in self.registry._schemas if not s["function"]["name"].startswith(tuple(self._sessions.keys()))]
+        
+        # 3. 重新加载
+        config = self.load_config(config_path)
+        servers = config.get("mcpServers", {})
+        for name, cfg in servers.items():
+            transport = cfg.get("transport", "stdio")
+            try:
+                if transport == "stdio":
+                    await self.connect_stdio(name, cfg["command"], cfg.get("args", []), cfg.get("env"))
+                elif transport == "sse":
+                    await self.connect_sse(name, cfg["url"], cfg.get("headers"))
+            except Exception as e:
+                logger.error(f"[MCP] Reload failed for '{name}': {e}")
+        logger.info("[MCP] Reload complete")

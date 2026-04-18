@@ -201,11 +201,29 @@ class ChatEngine:
         self.base_url = settings.LLM_BASE_URL.rstrip("/")
         self.model = settings.LLM_MODEL
         self.api_key = settings.LLM_API_KEY
+        self.use_prompt_caching = settings.LLM_PROMPT_CACHING_ENABLED
         self.max_rounds = 20
         # 内存对话存储: session_id -> messages list (LRU Cache to bound memory)
         self._sessions: LRUCache = LRUCache(capacity=50)
         # 任务跟踪器
         self.tracker = TaskTracker()
+
+    def update_config(self, base_url: str = None, model: str = None, api_key: str = None, use_prompt_caching: bool = None):
+        """动态更新 LLM 配置"""
+        if base_url: self.base_url = base_url.rstrip("/")
+        if model: self.model = model
+        if api_key: self.api_key = api_key
+        if use_prompt_caching is not None: self.use_prompt_caching = use_prompt_caching
+        logger.info(f"ChatEngine config updated: model={self.model}, base_url={self.base_url}")
+
+    def get_config(self) -> dict:
+        """获取当前配置"""
+        return {
+            "base_url": self.base_url,
+            "model": self.model,
+            "api_key": "***" + self.api_key[-4:] if self.api_key else "",
+            "use_prompt_caching": self.use_prompt_caching
+        }
 
     def _fire_and_forget(self, func, *args, **kwargs):
         """异步执行背景任务，不阻塞主线程，并捕获异常。"""
@@ -388,7 +406,7 @@ class ChatEngine:
             "Authorization": f"Bearer {self.api_key}"
         }
         # 针对部分 Provider (如 DeepSeek) 启用 Prompt Caching 提示
-        if settings.LLM_PROMPT_CACHING_ENABLED:
+        if self.use_prompt_caching:
             headers["X-Prompt-Cache"] = "1"  # 通用缓存提示头
             if "deepseek" in self.base_url.lower():
                 headers["deepseek-caching"] = "true"
