@@ -8,6 +8,7 @@
 -   **思维外化 (Externalized Thought)**：UI 的每一次变化、图层的每一次叠加，都是 Agent 思维过程的实体化。
 -   **极致的计算隔离**：FastAPI 只负责神经信号传输，Celery Worker 是 Agent 强大的“肌肉”，负责处理 GeoPandas 裁剪、遥感影像掩膜等高密计算。
 -   **数据主权存储 (Data Sovereignty)**：大数据传输通过 `ref_id` 提货券流转，确保 Agent 内存（上下文）只保留本质的逻辑关联。
+-   **防旁路纪律 (Anti-Bypass Discipline)**：严禁绕过 Agent 的端点或交互逻辑。即使是传统的文件上传或地图操作，也必须通过“感知-上报”机制同步给 Agent，确保 Agent 是系统中唯一的真理来源。
 
 ---
 
