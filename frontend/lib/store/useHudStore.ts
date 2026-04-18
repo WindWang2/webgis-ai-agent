@@ -88,6 +88,16 @@ interface HudState {
   fetchAnalysisAssets: (sessionId?: string) => Promise<void>;
   updateAsset: (assetId: number, updates: any) => void;
   deleteAsset: (assetId: number) => void;
+  
+  /* ─── System Settings ─── */
+  settingsOpen: boolean;
+  setSettingsOpen: (open: boolean) => void;
+  mcpConfig: string;
+  setMcpConfig: (config: string) => void;
+  llmConfig: any;
+  setLlmConfig: (config: any) => void;
+  availableSkills: any[];
+  setAvailableSkills: (skills: any[]) => void;
 }
 
 export const useHudStore = create<HudState>((set) => ({
@@ -238,4 +248,14 @@ export const useHudStore = create<HudState>((set) => ({
   deleteAsset: (id) => set(s => ({
     analysisAssets: s.analysisAssets.filter(a => a.id !== id)
   })),
+
+  /* ─── Settings ─── */
+  settingsOpen: false,
+  setSettingsOpen: (open) => set({ settingsOpen: open }),
+  mcpConfig: "{}",
+  setMcpConfig: (config) => set({ mcpConfig: config }),
+  llmConfig: {},
+  setLlmConfig: (config) => set({ llmConfig: config }),
+  availableSkills: [],
+  setAvailableSkills: (skills) => set({ availableSkills: skills }),
 }));

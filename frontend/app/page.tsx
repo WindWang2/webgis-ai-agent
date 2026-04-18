@@ -8,6 +8,7 @@ import { RagInsightCard } from "@/components/hud/rag-insight-card"
 import { ChatHud } from "@/components/chat/chat-panel"
 import { ChatSidebar } from "@/components/chat-sidebar"
 import { DataHud } from "@/components/panel/results-panel"
+import { SettingsPanel } from "@/components/hud/settings-panel"
 import { useHudStore } from "@/lib/store/useHudStore"
 import { streamChat, SSEEventType } from "@/lib/api/chat"
 import { useWebSocket } from "@/lib/hooks/use-websocket"
@@ -658,6 +659,8 @@ export default function Home() {
           onReorderLayers={reorderLayers}
         />
       </HudPanel>
+
+      <SettingsPanel />
 
       {/* Dynamic Island — Bottom Center */}
       <DynamicIsland

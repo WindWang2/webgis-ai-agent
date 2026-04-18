@@ -24,7 +24,7 @@ from app.tools.nature_resources import register_nature_resource_tools
 from app.tools.upload_tools import register_upload_tools
 from app.tools.web_crawler import register_crawler_tools
 from app.tools.report import register_report_tools
-from app.tools.skills import load_skills
+from app.tools.skills import load_skills, register_skill_tools
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["对话"])
@@ -43,6 +43,7 @@ register_nature_resource_tools(registry)
 register_upload_tools(registry)
 register_crawler_tools(registry)
 register_report_tools(registry)
+register_skill_tools(registry)
 
 # 加载动态技能 (app/skills/*.py)
 load_skills(registry)

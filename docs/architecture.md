@@ -1,5 +1,5 @@
-# WebGIS AI Agent 技术架构设计文档 (V3.0)
-> 版本：v3.0 | 日期：2026-04 | 状态：最终稳定版
+# WebGIS AI Agent 技术架构设计文档 (V3.2)
+> 版本：v3.2 | 日期：2026-04 | 状态：最终稳定版
 
 ## 1. 架构概述与设计原则：一切皆 Agent (Everything is Agent)
 本项目不仅是 WebGIS 工具，而是一个**主权级空间智能体 (Sovereign Spatial Agent)**。我们遵循“Agent 即系统”的哲学：
@@ -99,10 +99,16 @@ graph TD
 2. **隐式感知回路 (Implicit Feedback Loop)**：制图落盘后，前端通过隐式系统消息（System Callback）告知 Agent 具体的存储 URL，Agent 再通过对话交付下载直链，实现了“制图-交付-存档”的完整权利闭环。
 
 ### 3.6 Nature Resource Intelligence & Persistent Assets (自然资源智能与持久化资产)
-**V3.0 核心能力**：
+**V3.1 & V3.2 核心能力**：
 1. **遥感算子下沉**：深度集成 `rasterio`，支持 NDVI (归一化植被指数) 等专业算子的秒级计算。支持对 Sentinel-2, Landsat 等多波段数据的智能波段识别 (Smart Band Detection)。
 2. **分析资产管理 (Asset Management)**：突破了“Session 消失即数据丢失”的限制。分析产生的 GeoTIFF 结果将被永久保存并注册到 `uploads` 数据库。
 3. **高特权指令集**：Agent 获得了对这些数字资产的“自主意志”，能够执行 `manage_analysis_asset`（重命名、永久删除等）指令，成为真正的云端资源管家。
+
+### 3.7 MCP-Centric Spatial Intelligence Hub (算子 MCP 化)
+**V3.2 创新点**：
+1. **算法解耦 (Decoupling)**：将地理分析算子从 Web 后端解耦，下沉为独立的 `spatial-analysis` MCP Server。
+2. **智能解引用桥接 (Magic Resolving Bridge)**：在 `MCPAdapter` 中实现了自动参数转换。当 Agent 发起 `ref:xxx` ID 调用 MCP 工具时，适配器会自动将其解析为物理路径，实现了 backend-less 的专业算法集成。
+3. **专业算子库**：新增 `analyze_terrain`（地形特征）、`detect_raster_change`（时序对比）和 `calculate_zonal_stats`（区域分区分级统计）等工业级 MCP 算子。
 
 
 ---
