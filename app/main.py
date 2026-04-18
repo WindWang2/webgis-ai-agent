@@ -9,6 +9,7 @@ load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.core.database import init_db
@@ -70,3 +71,8 @@ app.include_router(task.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(upload.router, prefix="/api/v1", tags=["数据上传"])
 app.include_router(knowledge.router, prefix="/api/v1", tags=["知识库管理"])
 app.include_router(ws.router, prefix="/api/v1", tags=["WebSocket"])
+
+# 静态文件服务 - 用于访问导出的地图和分析后的 GeoTIFF
+if not os.path.exists(settings.DATA_DIR):
+    os.makedirs(settings.DATA_DIR, exist_ok=True)
+app.mount("/api/v1/static", StaticFiles(directory=settings.DATA_DIR), name="static")

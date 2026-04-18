@@ -20,6 +20,7 @@ from app.tools.layer_manager import register_layer_management_tools
 from app.tools.remote_sensing import register_rs_tools
 from app.tools.chart import register_chart_tools
 from app.tools.cartography import register_cartography_tools
+from app.tools.nature_resources import register_nature_resource_tools
 from app.tools.upload_tools import register_upload_tools
 from app.tools.web_crawler import register_crawler_tools
 from app.tools.report import register_report_tools
@@ -38,6 +39,7 @@ register_layer_management_tools(registry)
 register_rs_tools(registry)
 register_chart_tools(registry)
 register_cartography_tools(registry)
+register_nature_resource_tools(registry)
 register_upload_tools(registry)
 register_crawler_tools(registry)
 register_report_tools(registry)

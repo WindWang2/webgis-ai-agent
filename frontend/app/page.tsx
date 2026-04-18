@@ -416,6 +416,38 @@ export default function Home() {
               const toolResult = { ...data.result as object, geojson_ref: data.geojson_ref }
               handleToolResult(data.tool as string, toolResult, (data.session_id || sessionId) as string)
             }
+            
+            // ─── NDVI / Raster Result Perception ───
+            if (result && result.type === "ndvi_result" && result.image && result.bbox) {
+              console.log('[Home] Raster result detected, adding to map...')
+              dispatchAction({
+                type: 'add_raster_layer',
+                params: {
+                  id: `ndvi-${result.asset_id || Date.now()}`,
+                  name: `NDVI分析结果 (${result.filename})`,
+                  image: result.image,
+                  bbox: result.bbox,
+                  opacity: 0.8
+                }
+              });
+              
+              // Trigger Agent awareness
+              useHudStore.getState().setPendingSystemMessage(
+                `[系统通知] 植被指数(NDVI)分析已完成并持久化。资产ID: ${result.asset_id}。` +
+                `你现在可以告诉用户分析结论（Max: ${result.stats.max.toFixed(2)}, Mean: ${result.stats.mean.toFixed(2)}），` +
+                `并向其介绍如何通过右侧“ASSETS”面板管理这份永久资产。`
+              );
+            }
+            // CRITICAL: Append chart data into message
+            if (data.tool === "generate_chart" && result && result.chart) {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === thinkingMessage.id
+                    ? { ...msg, charts: [...(msg.charts || []), result.chart] }
+                    : msg
+                )
+              )
+            }
           } else if (eventType === "step_error" && data?.task_id) {
             stepError(data.task_id as string, data.step_id as string, data.error as string)
           } else if (eventType === "task_complete" && data?.task_id) {
@@ -463,6 +495,18 @@ export default function Home() {
     },
     [isLoading, sessionId, taskStart, stepStart, stepResult, stepError, taskComplete, clearTask, handleToolResult, viewport, layers, dispatchAction]
   )
+
+  /* ─── System Callback Effect ─── */
+  const pendingSystemMessage = useHudStore(s => s.pendingSystemMessage);
+  const setPendingSystemMessage = useHudStore(s => s.setPendingSystemMessage);
+
+  useEffect(() => {
+    if (pendingSystemMessage && !isLoading) {
+      handleSend(pendingSystemMessage);
+      setPendingSystemMessage(null);
+    }
+  }, [pendingSystemMessage, isLoading, handleSend, setPendingSystemMessage]);
+
 
   /* ─── Status text for Dynamic Island ─── */
   const statusText = currentStep

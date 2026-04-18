@@ -1,4 +1,4 @@
-# WebGIS AI Agent 后端 API 接口文档 (V2.1)
+# WebGIS AI Agent 后端 API 接口文档 (V3.0)
 
 ## T001 后端基础架构
 ### FastAPI 入口与承载流
@@ -145,3 +145,37 @@ Content-Type: multipart/form-data
 | `SPATIAL_TOPOLOGY_ERR` | GIS自交或环路错误，需通过 "Exception As Thought" 抛回给大模型启动清理指令。 |
 | `CELERY_TIMEOUT` | 分布式节点队列拥堵，要求延后补录。 |
 | `CACHE_MISS` | Fetch-On-Demand 提货码超期被清理，下发指令要求大模型从零原算。 |
+
+---
+
+## T007 专题制图与高清导出 (Cartography Export)
+V3.0 引入了由 Agent 编排的高清 Canvas 合成导出链路。
+
+### 导出任务接口
+| 方法 | 路径 | 说明 |
+|------|-----|-----|
+| POST | `/api/v1/export` | 接收前端合成的 Canvas 图像 Blob 并持久化 |
+| GET | `/api/v1/export/download/{filename}` | 提取生成的精美专题地图成果（支持内联预览） |
+
+### 关联指令 (Map Command)
+| 指令 (Command) | 参数 (Params) | 说明 |
+|---------------|--------------|------|
+| `export_map` | `{"title": "...", "subtitle": "...", "dark_mode": bool}` | 驱动前端执行可视化合成提取 |
+
+---
+
+## T008 遥感分析资产管理 (Analysis Assets)
+针对持久化分析成果（如 NDVI GeoTIFF）的管理接口。
+
+### 资产管控
+| 方法 | 路径 | 说明 |
+|------|-----|-----|
+| GET | `/api/v1/uploads` | 获取包含 `raster_analysis` 类型的分析产物清单 |
+| GET | `/api/v1/static/analysis_results/{file}` | 静态资源访问链路（由 FastAPI 挂载） |
+
+### 遥感分析算子 (Agent Tools)
+| 工具名 | 描述 |
+|--------|-----|
+| `analyze_vegetation_index` | 计算归一化植被指数并启动持久化流程 |
+| `list_analysis_assets` | 检索历史分析产物 |
+| `manage_analysis_asset` | 执行重命名或逻辑/物理删除 |
