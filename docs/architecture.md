@@ -1,5 +1,5 @@
-# WebGIS AI Agent 技术架构设计文档 (V2.1)
-> 版本：v2.1 | 日期：2026-04 | 状态：最终稳定版
+# WebGIS AI Agent 技术架构设计文档 (V3.0)
+> 版本：v3.0 | 日期：2026-04 | 状态：最终稳定版
 
 ## 1. 架构概述与设计原则：一切皆 Agent (Everything is Agent)
 本项目不仅是 WebGIS 工具，而是一个**主权级空间智能体 (Sovereign Spatial Agent)**。我们遵循“Agent 即系统”的哲学：
@@ -92,6 +92,17 @@ graph TD
 1. **Hydration Integrity (水合完整性)**：React 界面中，我们将 `ReactMarkdown` 的段落标签 (`p`) 语义化映射为除块级元素之外的 `div`，彻底杜绝了由于内容嵌套非法（如 `div` 嵌套在 `p` 中）导致的前端 Hydration 警告。
 2. **Image Safety Guards (图片渲染护城河)**：通过自定义渲染器强制过滤非法的或由模型幻觉产生的图片地址。仅允许合规的 `http(s)` 或 `data:` 协议，且阻断任何非预期的本地占位符（如 `![Status](Message)`），有效消灭了控制台中的 404 资源错误。
 3. **Sequence-Guaranteed Persistence (序贯持久化)**：后端 `Message` 的数据库写入由“异步 background”改为“同步 await”。这确保了 auto-increment ID 严格遵循对话的时间轴，彻底解决了并发写入可能导致的会话历史重构混乱（Context Corruption）问题。
+
+### 3.5 Agentic Cartography & Professional Synthesis (Agent 主导制图与合成)
+**V3.0 创新点**：
+1. **Canvas 重绘合成器**：Agent 不再只是被动的截图者。它能调用 `export_thematic_map` 指令，驱动前端拦截 WebGL 画布，并利用 Canvas 2D API 叠加“玻璃质感”标题、动态水印及渐变遮罩，生成符合现代设计审美的专题地图母带。
+2. **隐式感知回路 (Implicit Feedback Loop)**：制图落盘后，前端通过隐式系统消息（System Callback）告知 Agent 具体的存储 URL，Agent 再通过对话交付下载直链，实现了“制图-交付-存档”的完整权利闭环。
+
+### 3.6 Nature Resource Intelligence & Persistent Assets (自然资源智能与持久化资产)
+**V3.0 核心能力**：
+1. **遥感算子下沉**：深度集成 `rasterio`，支持 NDVI (归一化植被指数) 等专业算子的秒级计算。支持对 Sentinel-2, Landsat 等多波段数据的智能波段识别 (Smart Band Detection)。
+2. **分析资产管理 (Asset Management)**：突破了“Session 消失即数据丢失”的限制。分析产生的 GeoTIFF 结果将被永久保存并注册到 `uploads` 数据库。
+3. **高特权指令集**：Agent 获得了对这些数字资产的“自主意志”，能够执行 `manage_analysis_asset`（重命名、永久删除等）指令，成为真正的云端资源管家。
 
 
 ---

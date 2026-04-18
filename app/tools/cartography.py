@@ -36,6 +36,12 @@ class ThematicMapArgs(BaseModel):
     palette: str = Field("YlOrRd", description="调色板: YlOrRd, Blues, Greens, Reds, Viridis, Magma")
     group: str = Field("analysis", description="图层组: analysis(分析), base(底图), reference(参考)")
 
+class ExportMapArgs(BaseModel):
+    title: str = Field(..., description="制图主标题 (如: '2026年朝阳区绿地分布监测图')")
+    subtitle: str = Field(default="", description="制图副标题")
+    include_legend: bool = Field(default=True, description="是否在导出图中附带图例")
+    dark_mode: bool = Field(default=True, description="强制使用暗色现代高斯模糊底纹")
+
 def register_cartography_tools(registry: ToolRegistry):
     """注册制图工具"""
 
@@ -95,3 +101,21 @@ def register_cartography_tools(registry: ToolRegistry):
         except Exception as e:
             logger.error(f"Error creating thematic map: {e}")
             return {"error": str(e)}
+
+    @tool(registry, name="export_thematic_map",
+           description="当用户请求导出精美地图、制图排版、保存当前地图视图为图片时调用。该工具会指挥前端抽取当前地图画面并合成带标题的高质量图片。",
+           args_model=ExportMapArgs)
+    def export_thematic_map(title: str, subtitle: str = "", include_legend: bool = True, dark_mode: bool = True) -> dict:
+        # 该工具直接触发一个隐藏的同步 command，前端据此完成截图、上传及后续系统回调
+        return {
+            "status": "export_task_created",
+            "command": "export_map",
+            "params": {
+                "title": title,
+                "subtitle": subtitle,
+                "include_legend": include_legend,
+                "dark_mode": dark_mode
+            },
+            "system_message": ("已将导出任务发送至前端！前端合成排版需要两到三秒时间，合成完成后将自动通过"
+                               " `[系统通知]` 回传带有下载安全链接的高清截图。请直接告知用户你正在制图排版合成...")
+        }
