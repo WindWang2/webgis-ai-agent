@@ -45,11 +45,11 @@ build/
 
 # Node.js / Next.js
 node_modules/
-frontend/node_modules/
+**/node_modules/
 .next/
-frontend/.next/
+**/.next/
 out/
-frontend/out/
+**/out/
 next-env.d.ts
 tsconfig.tsbuildinfo
-frontend/tsconfig.tsbuildinfo
+**/tsconfig.tsbuildinfo
