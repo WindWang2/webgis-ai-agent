@@ -42,3 +42,7 @@ build/
 # DB and Deploy artifacts
 *.db
 *.tar.gz
+
+# Node.js
+node_modules/
+frontend/node_modules/
