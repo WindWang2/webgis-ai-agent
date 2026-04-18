@@ -6,11 +6,13 @@ import { HudPanel } from "@/components/hud/hud-panel"
 import { DynamicIsland } from "@/components/hud/dynamic-island"
 import { RagInsightCard } from "@/components/hud/rag-insight-card"
 import { ChatHud } from "@/components/chat/chat-panel"
+import { ChatSidebar } from "@/components/chat-sidebar"
 import { DataHud } from "@/components/panel/results-panel"
 import { useHudStore } from "@/lib/store/useHudStore"
 import { streamChat, SSEEventType } from "@/lib/api/chat"
 import { useWebSocket } from "@/lib/hooks/use-websocket"
 import type { GeoJSONGeometry, GeoJSONFeature } from "@/lib/types"
+import type { ChatSession } from "@/lib/types/chat"
 import type { UploadResponse } from "@/lib/api/upload"
 import { getUploadGeojson } from "@/lib/api/upload"
 import { useMapAction } from "@/lib/contexts/map-action-context"
@@ -19,6 +21,7 @@ import {
   Activity,
   PanelLeftOpen,
   PanelRightOpen,
+  History,
 } from "lucide-react"
 
 export default function Home() {
@@ -59,6 +62,85 @@ export default function Home() {
   const [sessionId, setSessionId] = useState<string>()
   const [currentStep, setCurrentStep] = useState<SSEEventType | "error" | null>(null)
   const [showUploadZone, setShowUploadZone] = useState(false)
+
+  /* ─── Session history state ─── */
+  const [sessions, setSessions] = useState<ChatSession[]>([])
+  const [showHistory, setShowHistory] = useState(false)
+
+  // Fetch session list on mount
+  useEffect(() => {
+    fetch("http://localhost:8001/api/v1/chat/sessions")
+      .then(res => res.json())
+      .then(data => {
+        if (data.sessions) setSessions(data.sessions)
+      })
+      .catch(err => console.error("Fetch sessions failed:", err))
+  }, [])
+
+  // Refresh session list whenever sessionId changes (e.g. after first message creates a session)
+  useEffect(() => {
+    if (!sessionId) return
+    const timer = setTimeout(() => {
+      fetch("http://localhost:8001/api/v1/chat/sessions")
+        .then(res => res.json())
+        .then(data => {
+          if (data.sessions) setSessions(data.sessions)
+        })
+        .catch(() => {})
+    }, 2000) // delay to allow backend to persist title
+    return () => clearTimeout(timer)
+  }, [sessionId])
+
+  const handleSelectSession = useCallback(async (sid: string) => {
+    try {
+      const res = await fetch(`http://localhost:8001/api/v1/chat/sessions/${sid}`)
+      const data = await res.json()
+      if (data.messages && data.messages.length > 0) {
+        const restored = data.messages.map((m: any) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          timestamp: new Date(m.timestamp),
+        }))
+        // Append a session-context notice so the Agent knows user switched
+        restored.push({
+          id: `session-switch-${Date.now()}`,
+          role: "assistant",
+          content: `📂 已恢复历史会话「${data.title || "未命名"}」— 共 ${data.messages.length} 条记录。可继续提问。`,
+          timestamp: new Date(),
+        })
+        setMessages(restored)
+      }
+      setSessionId(sid)
+      setShowHistory(false)
+    } catch (err) {
+      console.error("Load session failed:", err)
+    }
+  }, [])
+
+  const handleNewSession = useCallback(() => {
+    setSessionId(undefined)
+    setMessages([{
+      id: "1",
+      role: "assistant",
+      content: "你好！我是空间智能分析系统。请输入空间分析指令，例如「分析北京市学校分布」或「成都市人口密度热力图」",
+      timestamp: new Date(),
+    }])
+    localStorage.removeItem("webgis_session_id")
+    setShowHistory(false)
+  }, [])
+
+  const handleDeleteSession = useCallback(async (sid: string) => {
+    try {
+      await fetch(`http://localhost:8001/api/v1/chat/sessions/${sid}`, { method: "DELETE" })
+      setSessions(prev => prev.filter(s => s.id !== sid))
+      if (sessionId === sid) {
+        handleNewSession()
+      }
+    } catch (err) {
+      console.error("Delete session failed:", err)
+    }
+  }, [sessionId, handleNewSession])
 
   // 1. Restore session from localStorage on mount
   useEffect(() => {
@@ -231,6 +313,28 @@ export default function Home() {
               source: geojson as any,
               style: { color },
             })
+
+            // ── Agent Perception: Notify Agent about the uploaded data ──
+            // This maintains "Agent is Everything" — the Agent must know about
+            // every data change on the map, even those from direct user actions.
+            const notifyMsg = `[系统通知] 用户刚刚上传了矢量数据文件「${result.original_name}」，` +
+              `包含 ${result.feature_count} 个要素，坐标系 ${result.crs}，` +
+              `已作为图层 "${layerId}" 加载到地图上。请在后续对话中感知此图层的存在。`
+            setMessages(prev => [...prev, {
+              id: `upload-notify-${Date.now()}`,
+              role: "assistant",
+              content: `📡 已感知新数据源：**${result.original_name}**（${result.feature_count} 个要素）已挂载到地图。`,
+              timestamp: new Date(),
+            }])
+            // Fire a silent background notification to the Agent backend
+            fetch("http://localhost:8001/api/v1/chat/completions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                message: notifyMsg,
+                session_id: sessionId,
+              }),
+            }).catch(() => { /* silent: best-effort notification */ })
           }
         } catch (e) {
           console.error("加载上传数据到地图失败:", e)
@@ -241,7 +345,7 @@ export default function Home() {
         setAnalysisResult({ center, zoom: 10 })
       }
     },
-    [addLayer, setAnalysisResult]
+    [addLayer, setAnalysisResult, sessionId]
   )
 
   const [showScanEffect, setShowScanEffect] = useState(false)
@@ -432,7 +536,7 @@ export default function Home() {
         </button>
       )}
 
-      {/* Left Panel — Chat + Data HUD */}
+      {/* Left Panel — Chat + History HUD */}
       <HudPanel
         position="left"
         isOpen={leftPanelOpen}
@@ -441,14 +545,56 @@ export default function Home() {
         icon={<MessageSquare className="h-4 w-4" />}
         width="w-[380px]"
       >
-        <ChatHud
-          messages={messages}
-          isLoading={isLoading}
-          onUploadSuccess={handleUploadSuccess}
-          sessionId={sessionId}
-          showUploadZone={showUploadZone}
-          setShowUploadZone={setShowUploadZone}
-        />
+        {/* History / Chat toggle tabs */}
+        <div className="flex items-center border-b border-white/[0.06] px-2">
+          <button
+            onClick={() => setShowHistory(false)}
+            className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-medium transition-colors border-b-2 ${
+              !showHistory
+                ? 'border-hud-cyan text-hud-cyan'
+                : 'border-transparent text-white/30 hover:text-white/50'
+            }`}
+          >
+            <MessageSquare className="h-3 w-3" />
+            对话
+          </button>
+          <button
+            onClick={() => setShowHistory(true)}
+            className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-medium transition-colors border-b-2 ${
+              showHistory
+                ? 'border-hud-cyan text-hud-cyan'
+                : 'border-transparent text-white/30 hover:text-white/50'
+            }`}
+          >
+            <History className="h-3 w-3" />
+            历史
+            {sessions.length > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 text-[9px] rounded-full bg-white/[0.06] text-white/40">
+                {sessions.length}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Content: Chat or History */}
+        {showHistory ? (
+          <ChatSidebar
+            sessions={sessions}
+            currentSessionId={sessionId || null}
+            onSelectSession={handleSelectSession}
+            onNewSession={handleNewSession}
+            onDeleteSession={handleDeleteSession}
+          />
+        ) : (
+          <ChatHud
+            messages={messages}
+            isLoading={isLoading}
+            onUploadSuccess={handleUploadSuccess}
+            sessionId={sessionId}
+            showUploadZone={showUploadZone}
+            setShowUploadZone={setShowUploadZone}
+          />
+        )}
       </HudPanel>
 
       {/* Right Panel — Task Flow + Layers HUD */}
