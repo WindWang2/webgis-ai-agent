@@ -42,3 +42,14 @@ build/
 # DB and Deploy artifacts
 *.db
 *.tar.gz
+
+# Node.js / Next.js
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+out/
+**/out/
+next-env.d.ts
+tsconfig.tsbuildinfo
+**/tsconfig.tsbuildinfo
