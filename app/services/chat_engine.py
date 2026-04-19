@@ -64,6 +64,31 @@ def _parse_minimax_xml_tool_calls(content: str) -> list[dict]:
     return tool_calls
 
 
+def _construct_self_healing_message(tool_name: str, error_msg: str, error_type: str) -> str:
+    """构造用于辅助 AI 自愈的系统提示语"""
+    is_validation = "校验" in error_type
+    
+    guidance = ""
+    if is_validation:
+        guidance = "请仔细检查参数的【类型】（是否为数值或字符串）、【层级结构】以及【是否缺失必填项】。你可以通过工具定义查看正确的 JSON Schema。"
+    elif "无法找到引用数据" in error_msg:
+        guidance = "这通常意味着你引用的 ID 或别名不正确，或者该数据已因 Session 重置而丢失。请先调用查询或分析工具重新生成数据引用。"
+    else:
+        guidance = "请检查你的空间查询逻辑（如行政区划名称是否准确）、网络连接或数据源状态。你可以尝试调整关键词或搜索半径后重试。"
+
+    prompt = (
+        f"【工具执行失败通知】\n"
+        f"- 工具名称: `{tool_name}`\n"
+        f"- 错误类型: {error_type}\n"
+        f"- 详细错误: {error_msg}\n\n"
+        f"### 诊断与自愈指令：\n"
+        f"1. **分析原因**：{guidance}\n"
+        f"2. **纠正策略**：根据上述错误信息修改参数、切换到另一个适合的工具，或者如果多次失败，请向用户如实解释并请求更多关键信息（如具体的县名、POI类型等）。\n"
+        f"3. **注意**：请直接在回复中尝试修复后的指令，不要在没有修复尝试的情况下重复相同的错误指令。"
+    )
+    return prompt
+
+
 def _serialize_sse_data(data: dict) -> str:
     """安全地将数据序列化为 JSON 字符串，防止序列化失败导致流中断"""
     try:
@@ -499,9 +524,12 @@ class ChatEngine:
                         result_str_final = result_str
                     except Exception as e:
                         # 区分校验错误与执行错误
-                        error_type = "参数校验失败" if isinstance(e, ValueError) and "校验失败" in str(e) else "执行出错"
-                        result_str = json.dumps({"error": f"{error_type}: {str(e)}", "note": "请根据错误信息修正参数后重新调用"}, ensure_ascii=False)
+                        error_type = "参数校验失败" if isinstance(e, ValueError) and "失败" in str(e) else "执行出错"
+                        error_msg = str(e)
                         logger.error(f"Tool {tc['function']['name']} error: {e}")
+                        
+                        # 构造自愈提示词作为工具结果返回给 LLM
+                        result_str_final = _construct_self_healing_message(tc['function']['name'], error_msg, error_type)
 
                     if standard_calls:
                         messages.append({
@@ -653,7 +681,6 @@ class ChatEngine:
                             if not done:
                                 yield ": keep-alive\n\n"
                                 logger.debug(f"SSE Heartbeat sent for tool: {tool_name}")
-                        
                         result = await dispatch_task
                         result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
                         self.tracker.complete_step(task.id, step.id, result)
@@ -706,10 +733,12 @@ class ChatEngine:
 
                     except Exception as e:
                         # 区分校验错误与执行错误
-                        error_type = "参数校验失败" if isinstance(e, ValueError) and "校验失败" in str(e) else "执行出错"
-                        error_msg = f"{error_type}: {str(e)}"
+                        error_type = "参数校验失败" if isinstance(e, ValueError) and "失败" in str(e) else "执行出错"
+                        error_msg = str(e)
                         logger.error(f"Tool {tool_name} error: {e}")
                         
+                        # 1. 更新任务跟踪器
+                        self.tracker.fail_step(task.id, step.id, error_msg)
                         yield _sse_event("step_error", {
                             "task_id": task.id,
                             "step_id": step.id,
@@ -717,10 +746,11 @@ class ChatEngine:
                             "error": error_msg,
                         })
 
-                        # 针对校验错误推出自愈提示
-                        healing_note = "。请检查参数逻辑（如范围、类型等）并纠正后重试。" if error_type == "参数校验失败" else ""
-                        msg_result_str = json.dumps({"error": error_msg, "healing_guidance": healing_note}, ensure_ascii=False)
-                        yield f"event: tool_result\ndata: {json.dumps({'name': tool_name, 'result': msg_result_str}, ensure_ascii=False)}\n\n"
+                        # 2. 构造自愈提示词作为工具结果反馈给 LLM
+                        msg_result_str = _construct_self_healing_message(tool_name, error_msg, error_type)
+                        
+                        # 3. 发送给前端兼容事件
+                        yield f"event: tool_result\ndata: {json.dumps({'name': tool_name, 'result': msg_result_str, 'session_id': session_id}, ensure_ascii=False)}\n\n"
 
                     if standard_calls:
                         messages.append({

@@ -1,5 +1,6 @@
 "use client"
 import { useState, useRef, useCallback, useEffect, useMemo } from "react"
+import { MAP_STYLES, MapStyleOption } from "@/lib/constants"
 import Map, { MapRef, ViewStateChangeEvent } from "react-map-gl/maplibre"
 import maplibregl from "maplibre-gl"
 import {
@@ -27,15 +28,6 @@ interface MapPanelProps {
   analysisResult?: AnalysisResult | null
 }
 
-type LayerType = "raster" | "style"
-
-interface MapStyleOption {
-  name: string
-  url: string
-  type: LayerType
-}
-
-import { MAP_STYLES, MapStyleOption } from "@/lib/constants"
 import { useMapAction } from "@/lib/contexts/map-action-context"
 
 function getMapStyle(option: MapStyleOption, index: number): maplibregl.StyleSpecification {
@@ -152,9 +144,10 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
     }
   }, [is3D, mapReady])
 
+  const renderTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const isUpdatingRef = useRef(false)
 
-  // Dynamic layer rendering
+  // Dynamic layer rendering with debounce optimization
   useEffect(() => {
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
@@ -453,13 +446,20 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
       }
     }
 
-    renderLayers()
-    map.on("styledata", renderLayers)
+    // Debounced trigger
+    if (renderTimeoutRef.current) clearTimeout(renderTimeoutRef.current)
+    renderTimeoutRef.current = setTimeout(() => {
+      renderLayers()
+      map.on("styledata", renderLayers)
+    }, 50)
+
     return () => {
+      if (renderTimeoutRef.current) clearTimeout(renderTimeoutRef.current)
       map.off("styledata", renderLayers)
       isUpdatingRef.current = false
     }
   }, [layers, mapReady, currentMapStyle, activeFilters, processLayers])
+
 
   const setViewport = useHudStore((s) => s.setViewport)
 
