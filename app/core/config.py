@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = Field(default="redis://localhost:16379/1", env="CELERY_RESULT_BACKEND")
     USE_REDIS: bool = False # 默认不开启，除非显式配置且可用
 
+    # 代理设置
+    HTTP_PROXY: Optional[str] = Field(default=None, env="HTTP_PROXY")
+    HTTPS_PROXY: Optional[str] = Field(default=None, env="HTTPS_PROXY")
+
     @model_validator(mode="after")
     def _ensure_jwt_secret(self) -> "Settings":
         if not self.JWT_SECRET_KEY:
