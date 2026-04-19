@@ -1,4 +1,4 @@
-# WebGIS AI Agent: 具身空间智能引擎 (Embodied Spatial Intelligence) - V3.0
+# WebGIS AI Agent: 具身空间智能引擎 (Embodied Spatial Intelligence) - V3.2 Beta
 
 不再仅仅是一个 GIS 展示工具，而是一个拥有**中枢神经系统 (Agent CNS)** 的具身智能代理。通过实时感官同步与全称异步计算矩阵，它能像专业数据科学家一样感知地图、决策逻辑并执行复杂的地理推演。
 
@@ -33,8 +33,10 @@
 ## 🚀 进阶与旗舰级功能群 (V3.0 New!)
 - **AI 专题制图与高清合成 (AI Cartographer)**：Agent 现在是一名专业制图师。支持通过 Canvas 2D 重绘合成具有“玻璃质感”标题、动态水印及美学遮罩的高清专题图，并支持云端持久化下载链路。
 - **自然资源遥感智能 (Nature Resource AI)**：深度集成 `rasterio`。支持 NDVI 指数秒级计算、多波段卫星影像 (Sentinel-2/Landsat) 智能识别。
-- **分析资产库管理 (Asset Manager)**：分析结果不再随 Session 消失。支持对持久化 GeoTIFF 资产进行全生命周期管理（重命名、查看、删除）。
-- **感知级实时地图同步与 3D 孪生**：AI 不再“盲目”操作。此外支持 AWS/Opentopography DEM 实时高程渲染与 3D 建筑挤压。
+- **Agent 主控中枢 (The Mainframe - V3.2)**：新增全屏设置面板，支持 LLM 热切换、MCP 服务器可视化配置及 JSON 实时重载。
+- **能力自我进化 (Skill Creator)**：Agent 具备自主编写并部署 Python 技能脚本的能力。
+- **空间分析 MCP 服务器**：独立解耦的 `spatial-analysis` 服务，提供地形分析、变化检测与区域统计等工业级算子。
+- **感知级实时地图同步与 3D 孪生**：AI 不再“盲目”操作。且支持高程渲染与 3D 建筑挤压。
 
 ## ⚡ 极速点火部署
 

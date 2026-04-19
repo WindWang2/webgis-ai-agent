@@ -15,28 +15,40 @@ class ToolRegistry:
         self._tools: dict[str, Callable] = {}
         self._models: dict[str, Type[BaseModel]] = {}
         self._schemas: list[dict] = []
+    def tool(self, name: str, description: str, **kwargs):
+        """装饰器：注册工具到此 registry 实例"""
+        def decorator(func: Callable):
+            self.register(name, description, func, **kwargs)
+            return func
+        return decorator
 
     def register(self, name: str, description: str, func: Callable, 
                  param_descriptions: Optional[dict[str, str]] = None,
-                 args_model: Optional[Type[BaseModel]] = None):
+                 args_model: Optional[Type[BaseModel]] = None,
+                 parameters: Optional[dict] = None):
         """注册一个工具函数"""
         self._tools[name] = func
-        
-        # 如果没有显式提供 model，则根据函数签名自动推导
-        if args_model is None:
-            args_model = self._generate_model(name, func, param_descriptions)
-        
-        self._models[name] = args_model
-        
-        # 使用 Pydantic 生成 JSON Schema
-        schema_json = args_model.model_json_schema()
-        
-        properties = schema_json.get("properties", {})
-        # 将 description 注入到 properties 中（OpenAI 格式需要）
-        if param_descriptions:
-            for p_name, p_desc in param_descriptions.items():
-                if p_name in properties:
-                    properties[p_name]["description"] = p_desc
+        if parameters:
+            # 优先使用显式提供的 parameters (OpenAI 格式)
+            properties = parameters.get("properties", {})
+            required = parameters.get("required", [])
+        else:
+            # 如果没有显式提供 parameters 或 model，则根据函数签名自动推导
+            if args_model is None:
+                args_model = self._generate_model(name, func, param_descriptions)
+            
+            self._models[name] = args_model
+            
+            # 使用 Pydantic 生成 JSON Schema
+            schema_json = args_model.model_json_schema()
+            
+            properties = schema_json.get("properties", {})
+            # 将 description 注入到 properties 中（OpenAI 格式需要）
+            if param_descriptions:
+                for p_name, p_desc in param_descriptions.items():
+                    if p_name in properties:
+                        properties[p_name]["description"] = p_desc
+            required = schema_json.get("required", [])
 
         schema = {
             "type": "function",
@@ -46,7 +58,7 @@ class ToolRegistry:
                 "parameters": {
                     "type": "object",
                     "properties": properties,
-                    "required": schema_json.get("required", []),
+                    "required": required,
                 }
             }
         }
@@ -120,10 +132,23 @@ class ToolRegistry:
 
         if isinstance(arguments, str):
             # 尝试解引用（可能是 ref:xxx 或是 用户设置的别名）
-            data = session_data_manager.get(session_id, arguments)
-            if data is not None:
-                return data
-            # 如果没找到，保持原样（可能是普通字符串参数）
+            if arguments.startswith("ref:") or (session_id in session_data_manager._aliases and arguments in session_data_manager._aliases[session_id]):
+                data = session_data_manager.get(session_id, arguments)
+                if data is not None:
+                    return data
+                
+                # 解引用失败：构造详细错误信息引导 AI 自愈
+                available_refs = session_data_manager.list_refs(session_id)
+                ref_info = "\n".join([f"- {rid} ({alias})" if alias else f"- {rid}" for rid, alias in available_refs.items()])
+                error_msg = f"无法找到引用数据或别名: '{arguments}'。"
+                if available_refs:
+                    error_msg += f" 当前会话中可用的引用 ID 如下，请检查名称是否正确，并确保在同一次会话生命周期内使用:\n{ref_info}"
+                else:
+                    error_msg += " 当前会话中没有任何可用的数据引用。可能是因为页面刷新导致后端会话重置，请通过查询工具重新获取数据。"
+                
+                raise ValueError(error_msg)
+            
+            # 如果没找到且不是 ref: 格式，保持原样（可能是普通字符串参数）
             return arguments
         
         if isinstance(arguments, dict):
