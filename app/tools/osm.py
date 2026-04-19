@@ -1,30 +1,13 @@
 """OSM 数据查询工具 - Overpass API (修复版)"""
 import json
 import logging
-import ssl
 import aiohttp
 from typing import Optional, List, Dict
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
+from app.core.network import get_ssl_context, get_base_headers
 from app.tools.registry import ToolRegistry, tool
-
-logger = logging.getLogger(__name__)
-
-# SSL 证书修复：使用 certifi 提供跨平台 CA 证书
-def _get_ssl_context() -> ssl.SSLContext:
-    ctx = ssl.create_default_context()
-    try:
-        import certifi
-        ctx.load_verify_locations(certifi.where())
-    except ImportError:
-        # certifi 未安装，尝试系统默认证书
-        try:
-            ctx.load_verify_locations("/etc/ssl/certs/ca-certificates.crt")
-        except Exception:
-            # 仍然失败时使用系统默认（不禁用验证）
-            pass
-    return ctx
 
 
 
@@ -75,12 +58,13 @@ async def _query_overpass(query: str) -> dict:
     logger.info(f"[OSM] Querying Overpass API...")
     
     try:
-        async with aiohttp.ClientSession(headers={"User-Agent": "WebGIS-AI-Agent/1.0"}) as session:
+        async with aiohttp.ClientSession(headers=get_base_headers()) as session:
             async with session.post(
                 settings.OVERPASS_API_URL,
                 data={"data": full_query},
                 timeout=aiohttp.ClientTimeout(total=60),
-                ssl=_get_ssl_context(),
+                ssl=get_ssl_context(),
+                proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY
                         ) as resp:
                 if resp.status != 200:
                     text = await resp.text()
@@ -103,8 +87,12 @@ async def _geocode_bbox(query: str, expand_km: float = 0) -> Optional[str]:
         "limit": 5,
         "accept-language": "zh",
     }
-    async with aiohttp.ClientSession(headers={"User-Agent": "WebGIS-AI-Agent/1.0"}) as session:
-        async with session.get(settings.NOMINATIM_URL, params=params, ssl=_get_ssl_context(),
+    async with aiohttp.ClientSession(headers=get_base_headers()) as session:
+        async with session.get(
+            settings.NOMINATIM_URL, 
+            params=params, 
+            ssl=get_ssl_context(),
+            proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY
             ) as resp:
             if resp.status != 200:
                 logger.error(f"Nominatim error: {resp.status}")
@@ -369,9 +357,13 @@ def register_osm_tools(registry: ToolRegistry):
                 "accept-language": "zh",
                 "polygon_geojson": "1",
             }
-            async with aiohttp.ClientSession(headers={"User-Agent": "WebGIS-AI-Agent/1.0"}) as session:
-                async with session.get(settings.NOMINATIM_URL, params=params, ssl=_get_ssl_context(),
-            ) as resp:
+            async with aiohttp.ClientSession(headers=get_base_headers()) as session:
+                async with session.get(
+                    settings.NOMINATIM_URL, 
+                    params=params, 
+                    ssl=get_ssl_context(),
+                    proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY
+                ) as resp:
                     if resp.status == 200:
                         results = await resp.json()
                         if results:
