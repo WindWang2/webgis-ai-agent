@@ -15,6 +15,10 @@ cp .env.example .env
 打开 `.env` 文件补充以下必须的核心密码：
 - `CLAUDE_API_KEY`: 支持体系化工具调用的 Anthropic 密钥
 - `REDIS_URL`: 连接凭证 (默认 `redis://localhost:6379/0`)
+- `HTTP_PROXY` / `HTTPS_PROXY`: (可选) 如果 Nominatim 或 OSM 服务连接不稳定，可配置代理
+
+> [!TIP]
+> 如果你在使用地理编码 (Geocoding) 或 OSM 搜索时遇到 SSL 报错或无法连接，建议正确配置 `HTTPS_PROXY`。系统已内置跨平台 SSL 证书修复机制 (Certifi)。
 
 ## 2. 三轨并行启动方案 (Agent CNS Core)
 
