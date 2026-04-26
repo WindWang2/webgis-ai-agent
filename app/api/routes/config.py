@@ -72,18 +72,27 @@ async def update_mcp_config(req: MCPConfigRequest):
 
 @router.get("/skills")
 async def list_skills():
-    """列出当前已加载的技能"""
+    """列出当前已加载的技能（.py + .md）"""
     skills_dir = "app/skills"
     if not os.path.exists(skills_dir):
         return {"skills": []}
-    
+
     skills = []
     for filename in os.listdir(skills_dir):
-        if filename.endswith(".py") and not filename.startswith("__"):
+        if filename.startswith("__"):
+            continue
+        filepath = os.path.join(skills_dir, filename)
+        if filename.endswith(".py"):
             skills.append({
                 "name": filename,
-                "path": os.path.join(skills_dir, filename),
-                "size": os.path.getsize(os.path.join(skills_dir, filename))
+                "type": "python",
+                "size": os.path.getsize(filepath)
+            })
+        elif filename.endswith(".md"):
+            skills.append({
+                "name": filename,
+                "type": "workflow",
+                "size": os.path.getsize(filepath)
             })
     return {"skills": skills}
 
