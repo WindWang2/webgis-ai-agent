@@ -592,7 +592,7 @@ class ChatEngine:
 
         yield ("done", {"message": assembled_message, "finish_reason": finish_reason})
 
-    async def chat(self, message: str, session_id: Optional[str] = None, map_state: Optional[dict] = None) -> dict:
+    async def chat(self, message: str, session_id: Optional[str] = None, map_state: Optional[dict] = None, skill_name: Optional[str] = None) -> dict:
         """非流式对话"""
         if not session_id:
             session_id = str(uuid.uuid4())
@@ -603,6 +603,12 @@ class ChatEngine:
                 session_data_manager.set_map_state(session_id, k, v)
 
         messages = await self._get_or_create_session(session_id)
+
+        if skill_name:
+            from app.tools.skills import get_md_skill
+            skill = get_md_skill(skill_name)
+            if skill:
+                messages.append({"role": "system", "content": f"[Skill指令: {skill_name}]\n\n{skill['body']}"})
         messages.append({"role": "user", "content": message})
         await self._save_msg_async(session_id, "user", message)
 
@@ -694,7 +700,7 @@ class ChatEngine:
 
         return {"content": "达到最大工具调用轮数", "session_id": session_id}
 
-    async def chat_stream(self, message: str, session_id: Optional[str] = None, map_state: Optional[dict] = None) -> AsyncGenerator[str, None]:
+    async def chat_stream(self, message: str, session_id: Optional[str] = None, map_state: Optional[dict] = None, skill_name: Optional[str] = None) -> AsyncGenerator[str, None]:
         """流式对话，yield SSE 格式事件含任务跟踪"""
         if not session_id:
             session_id = str(uuid.uuid4())
@@ -705,6 +711,12 @@ class ChatEngine:
                 session_data_manager.set_map_state(session_id, k, v)
 
         messages = await self._get_or_create_session(session_id)
+
+        if skill_name:
+            from app.tools.skills import get_md_skill
+            skill = get_md_skill(skill_name)
+            if skill:
+                messages.append({"role": "system", "content": f"[Skill指令: {skill_name}]\n\n{skill['body']}"})
         messages.append({"role": "user", "content": message})
         await self._save_msg_async(session_id, "user", message)
 

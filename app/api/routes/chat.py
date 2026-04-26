@@ -27,7 +27,7 @@ from app.tools.spatial_stats import register_spatial_stats_tools
 from app.tools.terrain_analysis import register_terrain_tools
 from app.tools.interpolation_network import register_interpolation_network_tools
 from app.tools.report import register_report_tools
-from app.tools.skills import load_skills, register_skill_tools
+from app.tools.skills import load_skills, register_skill_tools, list_md_skills, get_md_skill
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["对话"])
@@ -63,6 +63,7 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=5000)
     session_id: Optional[str] = None
     map_state: Optional[dict] = Field(None, description="当前的地图状态（视角、图层等）")
+    skill_name: Optional[str] = Field(None, description="要激活的技能名称")
 
 
 class ChatResponse(BaseModel):
@@ -75,7 +76,7 @@ class ChatResponse(BaseModel):
 async def chat_completions(req: ChatRequest, _user: dict = Depends(get_current_user_optional)):
     """非流式对话接口"""
     try:
-        result = await engine.chat(req.message, session_id=req.session_id, map_state=req.map_state)
+        result = await engine.chat(req.message, session_id=req.session_id, map_state=req.map_state, skill_name=req.skill_name)
         return ChatResponse(**result)
     except Exception as e:
         logger.error(f"Chat error: {e}")
@@ -87,7 +88,7 @@ async def chat_stream(req: ChatRequest, _user: dict = Depends(get_current_user_o
     """SSE 流式对话接口"""
     async def event_generator():
         try:
-            async for event in engine.chat_stream(req.message, session_id=req.session_id, map_state=req.map_state):
+            async for event in engine.chat_stream(req.message, session_id=req.session_id, map_state=req.map_state, skill_name=req.skill_name):
                 yield event
         except Exception as e:
             logger.error(f"Stream error: {e}")
@@ -152,6 +153,20 @@ async def get_session_detail(session_id: str, _user: dict = Depends(get_current_
         }
     finally:
         db.close()
+
+
+@router.get("/sessions/{session_id}/map-state")
+async def get_session_map_state(session_id: str):
+    """Return persisted map state (viewport, layers) for session restoration."""
+    from app.services.session_data import session_data_manager
+    state = session_data_manager.get_map_state(session_id)
+    return {"session_id": session_id, "map_state": state}
+
+
+@router.get("/skills")
+async def list_skills_api():
+    """列出可用的 .md 技能"""
+    return {"skills": list_md_skills()}
 
 
 @router.delete("/sessions/{session_id}")
