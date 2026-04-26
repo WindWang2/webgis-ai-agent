@@ -12,6 +12,7 @@ import {
   Calendar
 } from "lucide-react"
 import { motion } from "framer-motion"
+import { API_BASE } from '@/lib/api/config';
 
 interface AssetCardProps {
   asset: any
@@ -96,7 +97,7 @@ export function AssetCard({ asset, onLoad, onDelete, onRename }: AssetCardProps)
               <Edit size={12} />
             </button>
             <button
-              onClick={() => window.open(`http://localhost:8001/api/v1/layers/data/${asset.id}?download=true`)}
+              onClick={() => window.open(`${API_BASE}/api/v1/layers/data/${asset.id}?download=true`)}
               className="p-1.5 rounded hover:bg-white/5 text-white/30 hover:text-white/60 transition-colors"
               title="下载 TIFF"
             >

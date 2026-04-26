@@ -16,6 +16,7 @@ import type { GeoJSONGeometry, GeoJSONFeature } from "@/lib/types"
 import type { ChatSession } from "@/lib/types/chat"
 import type { UploadResponse } from "@/lib/api/upload"
 import { getUploadGeojson } from "@/lib/api/upload"
+import { API_BASE } from '@/lib/api/config';
 import { useMapAction } from "@/lib/contexts/map-action-context"
 import {
   MessageSquare,
@@ -70,7 +71,7 @@ export default function Home() {
 
   // Fetch session list on mount
   useEffect(() => {
-    fetch("http://localhost:8001/api/v1/chat/sessions")
+    fetch(`${API_BASE}/api/v1/chat/sessions`)
       .then(res => res.json())
       .then(data => {
         if (data.sessions) setSessions(data.sessions)
@@ -82,7 +83,7 @@ export default function Home() {
   useEffect(() => {
     if (!sessionId) return
     const timer = setTimeout(() => {
-      fetch("http://localhost:8001/api/v1/chat/sessions")
+      fetch(`${API_BASE}/api/v1/chat/sessions`)
         .then(res => res.json())
         .then(data => {
           if (data.sessions) setSessions(data.sessions)
@@ -94,7 +95,7 @@ export default function Home() {
 
   const handleSelectSession = useCallback(async (sid: string) => {
     try {
-      const res = await fetch(`http://localhost:8001/api/v1/chat/sessions/${sid}`)
+      const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}`)
       const data = await res.json()
       if (data.messages && data.messages.length > 0) {
         const restored = data.messages.map((m: any) => ({
@@ -133,7 +134,7 @@ export default function Home() {
 
   const handleDeleteSession = useCallback(async (sid: string) => {
     try {
-      await fetch(`http://localhost:8001/api/v1/chat/sessions/${sid}`, { method: "DELETE" })
+      await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}`, { method: "DELETE" })
       setSessions(prev => prev.filter(s => s.id !== sid))
       if (sessionId === sid) {
         handleNewSession()
@@ -149,7 +150,7 @@ export default function Home() {
     if (savedSessionId) {
       setSessionId(savedSessionId)
       // Fetch history if needed
-      fetch(`http://localhost:8001/api/v1/chat/sessions/${savedSessionId}`)
+      fetch(`${API_BASE}/api/v1/chat/sessions/${savedSessionId}`)
         .then(res => res.json())
         .then(data => {
           if (data.messages && data.messages.length > 0) {
@@ -185,7 +186,7 @@ export default function Home() {
       // Fetch deferred data via reference
       if (!geojson && result.geojson_ref && typeof result.geojson_ref === "string" && result.geojson_ref.startsWith("ref:") && sid) {
         try {
-          const resp = await fetch(`http://localhost:8001/api/v1/layers/data/${result.geojson_ref}?session_id=${sid}`)
+          const resp = await fetch(`${API_BASE}/api/v1/layers/data/${result.geojson_ref}?session_id=${sid}`)
           if (resp.ok) {
             const fullData = await resp.json()
             if (fullData.type === "FeatureCollection" || (typeof fullData === "object" && "features" in fullData)) {
@@ -328,7 +329,7 @@ export default function Home() {
               timestamp: new Date(),
             }])
             // Fire a silent background notification to the Agent backend
-            fetch("http://localhost:8001/api/v1/chat/completions", {
+            fetch(`${API_BASE}/api/v1/chat/completions`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
