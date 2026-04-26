@@ -1,4 +1,5 @@
 import os
+import ast
 import importlib.util
 import sys
 import logging
@@ -6,6 +7,42 @@ from typing import Optional
 from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+_BLOCKED_IMPORTS = {"subprocess", "multiprocessing", "ctypes", "socket", "http", "urllib", "ftplib", "smtplib", "telnetlib", "xmlrpc"}
+_BLOCKED_BUILTINS = {"eval", "exec", "compile", "__import__", "open", "input"}
+_BLOCKED_ATTRS = {"system", "popen", "call", "run", "Popen"}
+
+
+def _validate_skill_code(code: str) -> list[str]:
+    """Validate skill code for dangerous patterns. Returns list of errors."""
+    errors = []
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        return [f"Syntax error: {e}"]
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root_mod = alias.name.split(".")[0]
+                if root_mod in _BLOCKED_IMPORTS:
+                    errors.append(f"Blocked import: {alias.name}")
+
+        if isinstance(node, ast.ImportFrom):
+            if node.module:
+                root_mod = node.module.split(".")[0]
+                if root_mod in _BLOCKED_IMPORTS:
+                    errors.append(f"Blocked import: {node.module}")
+
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id in _BLOCKED_BUILTINS:
+                errors.append(f"Blocked builtin: {func.id}")
+            if isinstance(func, ast.Attribute) and func.attr in _BLOCKED_ATTRS:
+                errors.append(f"Blocked attribute: {func.attr}")
+
+    return errors
+
 
 def register_skill_tools(registry: ToolRegistry):
     """注册用于管理和创建技能的元工具"""
@@ -23,9 +60,13 @@ def register_skill_tools(registry: ToolRegistry):
 
 async def create_new_skill(module_name: str, code: str, description: str) -> str:
     """Agent 调用的创建技能函数"""
+    errors = _validate_skill_code(code)
+    if errors:
+        return f"Skill validation failed:\n" + "\n".join(f"- {e}" for e in errors) + "\nPlease revise your code to remove dangerous patterns."
+
     from app.services.skill_creator import skill_creator
     from app.api.routes.chat import registry
-    
+
     result = skill_creator.create_skill(module_name, code, description)
     # 立即触发热加载
     load_skills(registry)
@@ -69,11 +110,33 @@ def load_skills(registry: ToolRegistry, skills_dir: str = "app/skills"):
                 logger.error(f"Failed to load skill {filename}: {e}")
 
 def watch_skills(registry: ToolRegistry, skills_dir: str = "app/skills"):
+    """Poll-based file watcher for hot-reloading skills.
+
+    Tracks file modification times. Returns a check function that can be
+    called periodically (e.g., every 5s) to detect new or changed skill files.
     """
-    TODO: Implement a file watcher (e.g., using watchdog) to hot-reload skills.
-    For now, we just load them once at startup.
-    """
-    load_skills(registry, skills_dir)
+    _mtimes: dict[str, float] = {}
+
+    def _check():
+        if not os.path.exists(skills_dir):
+            return
+        changed = False
+        for filename in os.listdir(skills_dir):
+            if not filename.endswith(".py") or filename.startswith("__"):
+                continue
+            filepath = os.path.join(skills_dir, filename)
+            try:
+                mtime = os.path.getmtime(filepath)
+            except OSError:
+                continue
+            if filepath not in _mtimes or _mtimes[filepath] < mtime:
+                _mtimes[filepath] = mtime
+                changed = True
+        if changed:
+            load_skills(registry, skills_dir)
+
+    _check()
+    return _check
 
 async def fetch_remote_skills(registry: ToolRegistry, repo_url: str):
     """
