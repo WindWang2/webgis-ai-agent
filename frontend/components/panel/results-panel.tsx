@@ -8,6 +8,7 @@ import {
 import { DraggableLayerList } from "../map/draggable-layer-list"
 import { TaskTimeline } from "@/components/hud/task-timeline"
 import { AssetCard } from "./asset-card"
+import { LayerStylePanel } from '@/components/hud/layer-style-panel';
 import { API_BASE } from '@/lib/api/config';
 import { useHudStore } from "@/lib/store/useHudStore"
 import { motion, AnimatePresence } from "framer-motion"
@@ -36,6 +37,7 @@ export function DataHud({
   void _onMapMove;
 
   const [activeTab, setActiveTab] = useState<"tasks" | "layers" | "assets">("tasks")
+  const editingLayerId = useHudStore((s) => s.editingLayerId);
   const {
     currentTask,
     analysisAssets,
@@ -60,59 +62,93 @@ export function DataHud({
   )
 
   const tabs = [
-    { id: "tasks" as const, label: "TASKS", icon: <Activity className="h-3 w-3" />, count: currentTask ? currentTask.steps.length : 0 },
-    { id: "layers" as const, label: "LAYERS", icon: <Layers className="h-3 w-3" />, count: layers.length },
-    { id: "assets" as const, label: "ASSETS", icon: <Hash className="h-3 w-3" />, count: analysisAssets.length },
+    { id: "tasks" as const, label: "任务", icon: <Activity className="h-3 w-3" />, count: currentTask ? currentTask.steps.length : 0 },
+    { id: "layers" as const, label: "图层", icon: <Layers className="h-3 w-3" />, count: layers.length },
+    { id: "assets" as const, label: "资产", icon: <Hash className="h-3 w-3" />, count: analysisAssets.length },
   ]
+
+  const activeIndex = tabs.findIndex(t => t.id === activeTab)
+
+  const slideVariants = {
+    enter: (direction: number) => ({
+      x: direction > 0 ? 30 : -30,
+      opacity: 0,
+    }),
+    center: { x: 0, opacity: 1 },
+    exit: (direction: number) => ({
+      x: direction > 0 ? -30 : 30,
+      opacity: 0,
+    }),
+  }
 
   return (
     <div className="flex flex-col h-full">
       {/* Tab bar */}
-      <div className="flex px-3 pt-2 pb-1 gap-1 border-b border-white/[0.04]">
-        {tabs.map((tab) => (
+      <div className="relative flex px-3 pt-2 pb-0 gap-0.5">
+        {tabs.map((tab, i) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-display font-semibold uppercase tracking-[0.12em] transition-all ${
-              activeTab === tab.id
-                ? "bg-hud-cyan/10 text-hud-cyan border border-hud-cyan/20"
-                : "text-white/30 hover:text-white/50 border border-transparent"
-            }`}
+            className={`
+              relative flex items-center gap-1.5 px-3 py-2 text-[10px] font-display font-semibold uppercase tracking-[0.12em] transition-colors rounded-t-lg
+              ${activeTab === tab.id
+                ? "text-hud-cyan bg-hud-cyan/[0.06]"
+                : "text-white/25 hover:text-white/40"
+              }
+            `}
           >
             {tab.icon}
             {tab.label}
             {tab.count > 0 && (
-              <span
-                className={`ml-1 text-[9px] px-1.5 py-0.5 rounded-full ${
-                  activeTab === tab.id ? "bg-hud-cyan/20" : "bg-white/[0.06]"
-                }`}
-              >
+              <span className={`
+                ml-0.5 text-[8px] px-1.5 py-0.5 rounded-full font-mono tabular-nums
+                ${activeTab === tab.id ? "bg-hud-cyan/20 text-hud-cyan" : "bg-white/[0.04] text-white/30"}
+              `}>
                 {tab.count}
               </span>
             )}
           </button>
         ))}
+        {/* Animated underline */}
+        <motion.div
+          className="absolute bottom-0 h-[2px] bg-hud-cyan rounded-full shadow-[0_0_8px_rgba(0,242,255,0.5)]"
+          layoutId="tab-indicator"
+          style={{ width: `${100 / tabs.length}%` }}
+          animate={{ x: activeIndex * (100 / tabs.length) + '%' }}
+          transition={{ type: "spring", stiffness: 400, damping: 30 }}
+        />
       </div>
+
+      {/* Separator */}
+      <div className="h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent" />
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
-        <AnimatePresence mode="wait">
+        {editingLayerId ? (
+          <LayerStylePanel />
+        ) : (
+        <AnimatePresence mode="wait" custom={activeIndex}>
           {activeTab === "tasks" ? (
             <motion.div
               key="tasks"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
+              custom={1}
+              variants={slideVariants}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: 0.2, ease: "easeOut" }}
             >
               {currentTask ? (
                 <TaskTimeline />
               ) : (
-                <div className="flex flex-col items-center justify-center h-48 text-center">
-                  <Activity className="h-8 w-8 text-white/[0.06] mb-3" />
-                  <p className="text-[11px] text-white/20 font-light">
-                    无活跃任务
-                  </p>
+                <div className="flex flex-col items-center justify-center h-48 text-center px-6">
+                  <div className="relative">
+                    <Activity className="h-8 w-8 text-white/[0.06]" />
+                    <div className="absolute inset-0 animate-ping opacity-20">
+                      <Activity className="h-8 w-8 text-hud-cyan/30" />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-white/20 font-light mt-4">无活跃任务</p>
                   <p className="text-[10px] text-white/10 mt-1">
                     空间分析运行时将在此显示执行进度
                   </p>
@@ -122,28 +158,32 @@ export function DataHud({
           ) : activeTab === "layers" ? (
             <motion.div
               key="layers"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
+              custom={2}
+              variants={slideVariants}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: 0.2, ease: "easeOut" }}
               className="p-3"
             >
               {/* Stats Summary */}
               <div className="grid grid-cols-2 gap-2 mb-3">
-                <div className="rounded-lg p-3 bg-white/[0.02] border border-white/[0.04]">
-                  <div className="flex items-center gap-1.5 text-white/30 text-[10px] mb-1">
-                    <Layers className="h-3 w-3 text-hud-cyan/40" /> 图层数
+                <div className="rounded-xl p-3 bg-white/[0.02] border border-white/[0.04] relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-12 h-12 bg-hud-cyan/[0.03] rounded-full -translate-y-1/3 translate-x-1/3" />
+                  <div className="flex items-center gap-1.5 text-white/25 text-[9px] mb-1.5 uppercase tracking-wider">
+                    <Layers className="h-2.5 w-2.5 text-hud-cyan/40" /> 图层
                   </div>
-                  <div className="text-lg font-semibold text-hud-cyan font-display">
+                  <div className="text-xl font-bold text-hud-cyan font-display tabular-nums">
                     {layers.length}
                   </div>
                 </div>
-                <div className="rounded-lg p-3 bg-white/[0.02] border border-white/[0.04]">
-                  <div className="flex items-center gap-1.5 text-white/30 text-[10px] mb-1">
-                    <Hash className="h-3 w-3 text-hud-green/40" /> 要素总数
+                <div className="rounded-xl p-3 bg-white/[0.02] border border-white/[0.04] relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-12 h-12 bg-emerald-500/[0.03] rounded-full -translate-y-1/3 translate-x-1/3" />
+                  <div className="flex items-center gap-1.5 text-white/25 text-[9px] mb-1.5 uppercase tracking-wider">
+                    <Hash className="h-2.5 w-2.5 text-emerald-400/40" /> 要素
                   </div>
-                  <div className="text-lg font-semibold text-hud-green font-display">
-                    {totalFeatures}
+                  <div className="text-xl font-bold text-emerald-400 font-display tabular-nums">
+                    {totalFeatures.toLocaleString()}
                   </div>
                 </div>
               </div>
@@ -159,8 +199,13 @@ export function DataHud({
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center h-32 text-center">
-                  <Layers className="h-8 w-8 text-white/[0.06] mb-3" />
-                  <p className="text-[11px] text-white/20 font-light">无图层</p>
+                  <div className="relative">
+                    <Layers className="h-8 w-8 text-white/[0.06]" />
+                    <div className="absolute inset-0 animate-ping opacity-20">
+                      <Layers className="h-8 w-8 text-hud-cyan/20" />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-white/20 font-light mt-4">无图层</p>
                   <p className="text-[10px] text-white/10 mt-1">
                     通过 AI 分析自动生成空间图层
                   </p>
@@ -168,21 +213,22 @@ export function DataHud({
               )}
             </motion.div>
           ) : (
-             <motion.div
+            <motion.div
               key="assets"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
+              custom={3}
+              variants={slideVariants}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: 0.2, ease: "easeOut" }}
               className="p-3 space-y-2"
             >
               {analysisAssets.length > 0 ? (
                 analysisAssets.map(asset => (
-                  <AssetCard 
+                  <AssetCard
                     key={asset.id}
                     asset={asset}
                     onDelete={(id) => {
-                      // Call backend manage_analysis_asset tool
                       fetch(`${API_BASE}/api/v1/chat/tools/call?tool=manage_analysis_asset&asset_id=${id}&action=delete`)
                         .then(() => deleteAsset(id))
                     }}
@@ -191,14 +237,13 @@ export function DataHud({
                         .then(() => updateAsset(id, { original_name: newName }))
                     }}
                     onLoad={(asset) => {
-                      // Load as a new raster layer
                       addLayer({
                         id: `asset-${asset.id}`,
                         name: asset.original_name,
                         type: "raster",
                         visible: true,
                         opacity: 0.8,
-                        source: asset.filename, // Backend will serve this
+                        source: asset.filename,
                         style: {}
                       })
                     }}
@@ -206,8 +251,13 @@ export function DataHud({
                 ))
               ) : (
                 <div className="flex flex-col items-center justify-center h-48 text-center">
-                  <Hash className="h-8 w-8 text-white/[0.06] mb-3" />
-                  <p className="text-[11px] text-white/20 font-light">无分析资产</p>
+                  <div className="relative">
+                    <Hash className="h-8 w-8 text-white/[0.06]" />
+                    <div className="absolute inset-0 animate-ping opacity-20">
+                      <Hash className="h-8 w-8 text-emerald-400/20" />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-white/20 font-light mt-4">无分析资产</p>
                   <p className="text-[10px] text-white/10 mt-1">
                     完成遥感分析后成果将永久保存在此
                   </p>
@@ -216,10 +266,10 @@ export function DataHud({
             </motion.div>
           )}
         </AnimatePresence>
+        )}
       </div>
     </div>
   )
 }
 
-/* Re-export for backward compat */
 export { DataHud as ResultsPanel }

@@ -154,10 +154,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
 
     const renderLayers = () => {
       if (isUpdatingRef.current) return
-      if (!map.isStyleLoaded()) {
-        map.once("styledata", renderLayers)
-        return
-      }
+      if (!map.isStyleLoaded()) return
 
       isUpdatingRef.current = true
       try {
@@ -223,6 +220,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
             }
 
             const color = layer.style?.color || "#00f2ff"
+            const strokeColor = layer.style?.strokeColor || layer.style?.color || "#00f2ff"
             const thematicField = layer.source && typeof layer.source === "object" ? (layer.source as any).metadata?.field : null
             const filterRanges = activeFilters[layer.id]
 
@@ -314,8 +312,10 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
                     type: "fill",
                     filter: getLayerFilter("Polygon"),
                     paint: {
-                      "fill-color": ["coalesce", ["get", "fill_color"], color],
-                      "fill-opacity": (layer.opacity || 1) * 0.3,
+                      "fill-color": layer.style?.fill !== false
+                        ? ["coalesce", ["get", "fill_color"], color]
+                        : "rgba(0,0,0,0)",
+                      "fill-opacity": layer.style?.fill !== false ? (layer.opacity || 1) * 0.3 : 0,
                     },
                   })
                   // If 3D mode is active, also add an extrusion layer for polygons
@@ -335,8 +335,8 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
                     type: "line",
                     filter: getLayerFilter("Polygon"),
                     paint: {
-                      "line-color": ["coalesce", ["get", "stroke_color"], ["get", "fill_color"], color],
-                      "line-width": 2,
+                      "line-color": ["coalesce", ["get", "stroke_color"], ["get", "fill_color"], strokeColor],
+                      "line-width": layer.style?.strokeWidth ?? 2,
                       "line-opacity": layer.opacity || 1,
                     },
                   })
@@ -347,8 +347,8 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
                   type: "line",
                   filter: getLayerFilter("LineString"),
                   paint: {
-                    "line-color": ["coalesce", ["get", "fill_color"], color],
-                    "line-width": 3,
+                    "line-color": ["coalesce", ["get", "fill_color"], strokeColor],
+                    "line-width": layer.style?.strokeWidth ?? 2,
                     "line-opacity": layer.opacity || 1,
                   },
                 })
@@ -448,24 +448,27 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
 
     // Debounced trigger
     if (renderTimeoutRef.current) clearTimeout(renderTimeoutRef.current)
-    renderTimeoutRef.current = setTimeout(() => {
-      renderLayers()
-      map.on("styledata", renderLayers)
-    }, 50)
+    renderTimeoutRef.current = setTimeout(renderLayers, 50)
 
     return () => {
       if (renderTimeoutRef.current) clearTimeout(renderTimeoutRef.current)
-      map.off("styledata", renderLayers)
       isUpdatingRef.current = false
     }
   }, [layers, mapReady, currentMapStyle, activeFilters, processLayers])
 
 
   const setViewport = useHudStore((s) => s.setViewport)
+  const setBaseLayer = useHudStore((s) => s.setBaseLayer)
+  const pushPerception = useHudStore((s) => s.pushPerception)
 
   const handleMove = useCallback((evt: ViewStateChangeEvent) => {
     setViewState(evt.viewState)
-    setViewport([evt.viewState.longitude, evt.viewState.latitude], evt.viewState.zoom)
+    setViewport(
+      [evt.viewState.longitude, evt.viewState.latitude],
+      evt.viewState.zoom,
+      evt.viewState.bearing,
+      evt.viewState.pitch
+    )
   }, [setViewport])
 
   const handleMouseMove = useCallback((e: { lngLat: { lng: number; lat: number } }) => {
@@ -503,6 +506,9 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   const handleBaseLayerSelect = (index: number) => {
     setSelectedBaseLayer(index)
     setShowLayerSelector(false)
+    const name = MAP_STYLES[index].name
+    setBaseLayer(name)
+    pushPerception('base_layer_changed', { name })
   }
 
   const handleExportPng = () => {
