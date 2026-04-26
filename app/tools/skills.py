@@ -1,9 +1,11 @@
 import os
+import re
 import ast
 import importlib.util
 import sys
 import logging
 from typing import Optional
+import yaml
 from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -11,6 +13,59 @@ logger = logging.getLogger(__name__)
 _BLOCKED_IMPORTS = {"os", "subprocess", "multiprocessing", "ctypes", "socket", "http", "urllib", "ftplib", "smtplib", "telnetlib", "xmlrpc", "shutil", "pathlib", "signal"}
 _BLOCKED_BUILTINS = {"eval", "exec", "compile", "__import__", "open", "input", "getattr", "setattr", "delattr", "globals", "locals", "vars", "dir"}
 _BLOCKED_ATTRS = {"system", "popen", "call", "run", "Popen"}
+
+# In-memory store for .md skill files: {name: {description, body, filename}}
+_md_skills: dict[str, dict] = {}
+
+
+def _parse_md_frontmatter(text: str) -> tuple[dict, str]:
+    """Parse YAML frontmatter from a markdown string.
+
+    Returns (metadata_dict, body_text). If no valid frontmatter is found,
+    returns ({}, text) gracefully.
+    """
+    match = re.match(r"^---\s*\n(.*?)\n---\s*\n?(.*)", text, re.DOTALL)
+    if not match:
+        return {}, text
+    yaml_str, body = match.group(1), match.group(2)
+    try:
+        meta = yaml.safe_load(yaml_str)
+        if not isinstance(meta, dict):
+            return {}, text
+    except yaml.YAMLError:
+        return {}, text
+    return meta, body
+
+
+def list_md_skills() -> list[dict]:
+    """Return a list of all loaded .md skills as [{name, description}, ...]."""
+    return [{"name": k, "description": v["description"]} for k, v in _md_skills.items()]
+
+
+def get_md_skill(name: str) -> dict | None:
+    """Return the full skill data dict for the given name, or None."""
+    return _md_skills.get(name)
+
+
+def _load_md_skill(file_path: str, filename: str):
+    """Read a .md file, parse frontmatter, and store in _md_skills."""
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            text = f.read()
+        meta, body = _parse_md_frontmatter(text)
+        name = meta.get("name")
+        if not name:
+            logger.warning(f"Skipping {filename}: no 'name' in frontmatter")
+            return
+        description = meta.get("description", "")
+        _md_skills[name] = {
+            "description": description,
+            "body": body.strip(),
+            "filename": filename,
+        }
+        logger.info(f"Loaded .md skill '{name}' from {filename}")
+    except Exception as e:
+        logger.error(f"Failed to load .md skill {filename}: {e}")
 
 
 def _validate_skill_code(code: str) -> list[str]:
@@ -103,6 +158,8 @@ def load_skills(registry: ToolRegistry, skills_dir: str = "app/skills"):
     for filename in os.listdir(skills_dir):
         if filename.endswith(".py") and not filename.startswith("__"):
             _load_single_skill(registry, os.path.join(skills_dir, filename), filename)
+        elif filename.endswith(".md"):
+            _load_md_skill(os.path.join(skills_dir, filename), filename)
 
 def watch_skills(registry: ToolRegistry, skills_dir: str = "app/skills"):
     """Poll-based file watcher for hot-reloading skills.
@@ -117,7 +174,9 @@ def watch_skills(registry: ToolRegistry, skills_dir: str = "app/skills"):
         if not os.path.exists(skills_dir):
             return
         for filename in os.listdir(skills_dir):
-            if not filename.endswith(".py") or filename.startswith("__"):
+            if filename.startswith("__"):
+                continue
+            if not (filename.endswith(".py") or filename.endswith(".md")):
                 continue
             filepath = os.path.join(skills_dir, filename)
             try:
@@ -126,7 +185,10 @@ def watch_skills(registry: ToolRegistry, skills_dir: str = "app/skills"):
                 continue
             if filepath not in _mtimes or _mtimes[filepath] < mtime:
                 _mtimes[filepath] = mtime
-                _load_single_skill(registry, filepath, filename)
+                if filename.endswith(".py"):
+                    _load_single_skill(registry, filepath, filename)
+                else:
+                    _load_md_skill(filepath, filename)
 
     _check()
     return _check
