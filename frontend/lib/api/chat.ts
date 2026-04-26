@@ -3,8 +3,7 @@
  */
 
 import type { ToolResult } from '@/lib/types';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+import { API_BASE } from './config';
 
 export interface ChatMessage {
   role: "user" | "assistant" | "tool";

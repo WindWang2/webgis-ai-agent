@@ -6,6 +6,7 @@ import {
   X, Settings, Cpu, Network, Sparkles, Save, RefreshCw, 
   Upload, Download, ShieldCheck, Globe, Code, Terminal
 } from 'lucide-react';
+import { API_BASE } from '@/lib/api/config';
 import { useHudStore } from '@/lib/store/useHudStore';
 
 export function SettingsPanel() {
@@ -31,9 +32,9 @@ export function SettingsPanel() {
   const fetchConfig = async () => {
     try {
       const [llmResp, mcpResp, skillsResp] = await Promise.all([
-        fetch('http://localhost:8001/api/v1/config/llm'),
-        fetch('http://localhost:8001/api/v1/config/mcp'),
-        fetch('http://localhost:8001/api/v1/config/skills')
+        fetch(`${API_BASE}/api/v1/config/llm`),
+        fetch(`${API_BASE}/api/v1/config/mcp`),
+        fetch(`${API_BASE}/api/v1/config/skills`)
       ]);
 
       if (llmResp.ok) {
@@ -58,7 +59,7 @@ export function SettingsPanel() {
   const saveLlm = async () => {
     setIsSaving(true);
     try {
-      const resp = await fetch('http://localhost:8001/api/v1/config/llm', {
+      const resp = await fetch(`${API_BASE}/api/v1/config/llm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(localLlm)
@@ -75,7 +76,7 @@ export function SettingsPanel() {
   const saveMcp = async () => {
     setIsSaving(true);
     try {
-      const resp = await fetch('http://localhost:8001/api/v1/config/mcp', {
+      const resp = await fetch(`${API_BASE}/api/v1/config/mcp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ config_json: localMcp })
