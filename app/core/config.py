@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     # 天地图
     TIANDITU_TOKEN: str = Field(default="", env="TIANDITU_TOKEN")
 
+    # 高德地图 (Amap)
+    AMAP_API_KEY: str = Field(default="", env="AMAP_API_KEY")
+
+    # 百度地图 (Baidu Maps)
+    BAIDU_MAP_AK: str = Field(default="", env="BAIDU_MAP_AK")
+
     # Sentinel Hub
     SENTINELHUB_CLIENT_ID: str = Field(default="", env="SENTINELHUB_CLIENT_ID")
     SENTINELHUB_CLIENT_SECRET: str = Field(default="", env="SENTINELHUB_CLIENT_SECRET")
