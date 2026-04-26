@@ -52,6 +52,7 @@ function calculateBBox(geojson: GeoJSONFeatureCollection): [number, number, numb
 
 import { useMap } from 'react-map-gl/maplibre';
 
+import { API_BASE } from '@/lib/api/config';
 import { MAP_STYLES } from '@/lib/constants';
 import { useHudStore } from '@/lib/store/useHudStore';
 
@@ -71,8 +72,6 @@ export function MapActionHandler() {
 
     const map = mapInstance.getMap();
     if (!map) return;
-
-    console.log('[MapActionHandler] Processing action:', action.command, 'on map:', map.getContainer().id);
 
     try {
       switch (action.command) {
@@ -174,7 +173,6 @@ export function MapActionHandler() {
             }
 
             if (idx !== -1) {
-              console.log('[MapActionHandler] Directly setting base layer to:', MAP_STYLES[idx].name);
               setSelectedBaseLayer(idx);
             } else {
               console.warn('[MapActionHandler] Could not match base layer name:', name);
@@ -297,7 +295,7 @@ export function MapActionHandler() {
               formData.append("file", blob, "export.png");
               if (title) formData.append("title", title);
               
-              const uploadRes = await fetch("http://localhost:8001/api/v1/export", {
+              const uploadRes = await fetch(`${API_BASE}/api/v1/export`, {
                 method: "POST",
                 body: formData
               });
@@ -308,7 +306,7 @@ export function MapActionHandler() {
                 // Important: Trigger background system ping implicitly so the Agent can speak
                 useHudStore.getState().setPendingSystemMessage(
                   `[系统通知] 专题地图 \`${title || '未命名'}\` 已成功排版合成，` +
-                  `文件已落盘并分配URL：${url}。 请利用Markdown的图片语法 \`![地图](http://localhost:8001${url})\` 将该成品展示给用户，并祝其研究顺利！注意展示完图片后直接结束。`
+                  `文件已落盘并分配URL：${url}。 请利用Markdown的图片语法 \`![地图](${API_BASE}${url})\` 将该成品展示给用户，并祝其研究顺利！注意展示完图片后直接结束。`
                 );
               } else {
                  throw new Error("Export URL generation failed");

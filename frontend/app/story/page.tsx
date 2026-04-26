@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { MapPanel } from "@/components/map/map-panel"
+import { API_BASE } from '@/lib/api/config';
 import { useHudStore } from "@/lib/store/useHudStore"
 import { Play, SkipBack, Share2 } from "lucide-react"
 
@@ -19,7 +20,7 @@ export default function StoryPage() {
 
   useEffect(() => {
     if (sessionId) {
-      fetch(`http://localhost:8001/api/v1/chat/sessions/${sessionId}`)
+      fetch(`${API_BASE}/api/v1/chat/sessions/${sessionId}`)
         .then((res) => res.json())
         .then((data) => {
           if (data.messages && data.messages.length > 0) {
