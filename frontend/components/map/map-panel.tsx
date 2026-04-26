@@ -24,7 +24,6 @@ interface MapPanelProps {
   layers: Layer[]
   onRemoveLayer: (id: string) => void
   onToggleLayer: (id: string) => void
-  onEditLayer: (layer: Layer) => void
   analysisResult?: AnalysisResult | null
 }
 
@@ -72,10 +71,9 @@ function isGeoJSONSource(source: Layer["source"]): source is GeoJSONFeatureColle
   return typeof source === "object" && source !== null && "type" in source && source.type === "FeatureCollection"
 }
 
-export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer: _onToggleLayer, onEditLayer: _onEditLayer, analysisResult }: MapPanelProps) {
+export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer: _onToggleLayer, analysisResult }: MapPanelProps) {
   void _onRemoveLayer;
   void _onToggleLayer;
-  void _onEditLayer;
 
   const { selectedBaseLayer, setSelectedBaseLayer } = useMapAction()
   const [showLayerSelector, setShowLayerSelector] = useState(false)
