@@ -410,7 +410,6 @@ export default function Home() {
             // CRITICAL: Dispatch map commands (BASE_LAYER_CHANGE, etc.) regardless of geojson
             const result = data.result as any
             if (result && result.command) {
-              console.log('[Home] Direct command dispatch from tool result:', result.command)
               dispatchAction(result)
             }
             
@@ -421,7 +420,6 @@ export default function Home() {
             
             // ─── NDVI / Raster Result Perception ───
             if (result && result.type === "ndvi_result" && result.image && result.bbox) {
-              console.log('[Home] Raster result detected, adding to map...')
               dispatchAction({
                 type: 'add_raster_layer',
                 params: {
