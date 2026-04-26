@@ -45,6 +45,10 @@ interface HudState {
   reorderLayers: (layers: Layer[]) => void;
   clearLayers: () => void;
 
+  /* ─── Layer Editing ─── */
+  editingLayerId: string | null;
+  setEditingLayerId: (id: string | null) => void;
+
   /* ─── Analysis Navigation ─── */
   analysisResult: AnalysisResult | null;
   setAnalysisResult: (result: AnalysisResult | null) => void;
@@ -67,8 +71,17 @@ interface HudState {
   clearProcessLayers: () => void;
 
   /* ─── Map View State (Real-time Perception) ─── */
-  viewport: { center: [number, number]; zoom: number };
-  setViewport: (center: [number, number], zoom: number) => void;
+  viewport: { center: [number, number]; zoom: number; bearing: number; pitch: number };
+  setViewport: (center: [number, number], zoom: number, bearing?: number, pitch?: number) => void;
+  baseLayer: string;
+  setBaseLayer: (name: string) => void;
+  is3D: boolean;
+  setIs3D: (v: boolean) => void;
+
+  /* ─── Perception Buffer (Agent-Everything) ─── */
+  _perceptionQueue: Array<{ event: string; data: Record<string, unknown> }>;
+  pushPerception: (event: string, data: Record<string, unknown>) => void;
+  drainPerception: () => Array<{ event: string; data: Record<string, unknown> }>;
 
   /* ─── HUD Panel Visibility ─── */
   leftPanelOpen: boolean;
@@ -116,6 +129,10 @@ export const useHudStore = create<HudState>((set) => ({
     })),
   reorderLayers: (layers) => set({ layers }),
   clearLayers: () => set({ layers: [] }),
+
+  /* ─── Layer Editing ─── */
+  editingLayerId: null,
+  setEditingLayerId: (id) => set({ editingLayerId: id }),
 
   /* ─── Analysis ─── */
   analysisResult: null,
@@ -216,8 +233,24 @@ export const useHudStore = create<HudState>((set) => ({
   setRagInsight: (insight) => set({ ragInsight: insight }),
 
   /* ─── Viewport Sync ─── */
-  viewport: { center: [116.4074, 39.9042], zoom: 4 },
-  setViewport: (center, zoom) => set({ viewport: { center, zoom } }),
+  viewport: { center: [116.4074, 39.9042], zoom: 4, bearing: 0, pitch: 0 },
+  setViewport: (center, zoom, bearing, pitch) =>
+    set({ viewport: { center, zoom, bearing: bearing ?? 0, pitch: pitch ?? 0 } }),
+  baseLayer: 'Carto Dark',
+  setBaseLayer: (name) => set({ baseLayer: name }),
+  is3D: false,
+  setIs3D: (v) => set({ is3D: v }),
+
+  /* ─── Perception Buffer ─── */
+  _perceptionQueue: [],
+  pushPerception: (event, data) =>
+    set((s) => ({ _perceptionQueue: [...s._perceptionQueue, { event, data }] })),
+  drainPerception: () => {
+    const queue = useHudStore.getState()._perceptionQueue;
+    if (queue.length === 0) return [];
+    set({ _perceptionQueue: [] });
+    return queue;
+  },
 
   /* ─── System Callback ─── */
   pendingSystemMessage: null,
