@@ -16,6 +16,7 @@ import { useEffect } from "react"
 
 interface DataHudProps {
   layers?: Layer[]
+  sessionId?: string
   onToggleLayer?: (layerId: string) => void
   onRemoveLayer?: (layerId: string) => void
   onUpdateLayer?: (layerId: string, updates: Partial<Layer>) => void
@@ -25,6 +26,7 @@ interface DataHudProps {
 
 export function DataHud({
   layers = [],
+  sessionId: sessionIdProp,
   onToggleLayer,
   onRemoveLayer,
   onUpdateLayer,
@@ -34,21 +36,23 @@ export function DataHud({
   void _onMapMove;
 
   const [activeTab, setActiveTab] = useState<"tasks" | "layers" | "assets">("tasks")
-  const { 
-    currentTask, 
-    analysisAssets, 
-    fetchAnalysisAssets, 
-    deleteAsset, 
+  const {
+    currentTask,
+    analysisAssets,
+    fetchAnalysisAssets,
+    deleteAsset,
     updateAsset,
     addLayer,
-    sessionId 
+    sessionId: storeSessionId
   } = useHudStore()
+
+  const effectiveSessionId = sessionIdProp ?? storeSessionId
 
   useEffect(() => {
     if (activeTab === "assets") {
-      fetchAnalysisAssets(sessionId)
+      fetchAnalysisAssets(effectiveSessionId)
     }
-  }, [activeTab, fetchAnalysisAssets, sessionId])
+  }, [activeTab, fetchAnalysisAssets, effectiveSessionId])
 
   const totalFeatures = layers.reduce(
     (sum, l) => sum + (l.source && typeof l.source === 'object' && 'features' in l.source ? (l.source as any).features?.length || 0 : 0),
