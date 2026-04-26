@@ -2,7 +2,13 @@ import type { GeoJSONFeatureCollection, HeatmapRasterSource } from '../types';
 
 export interface LayerStyle {
   color?: string;
-  renderType?: 'heatmap' | 'grid';
+  strokeColor?: string;
+  strokeWidth?: number;
+  fill?: boolean;
+  renderType?: 'heatmap' | 'grid' | 'vector';
+  palette?: string;
+  radius?: number;
+  intensity?: number;
   [key: string]: unknown;
 }
 
