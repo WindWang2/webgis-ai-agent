@@ -72,55 +72,50 @@ async def create_new_skill(module_name: str, code: str, description: str) -> str
     load_skills(registry)
     return result
 
+def _load_single_skill(registry: ToolRegistry, file_path: str, filename: str):
+    """Load or reload a single skill file into the registry."""
+    module_name = f"app.skills.{filename[:-3]}"
+    try:
+        spec = importlib.util.spec_from_file_location(module_name, file_path)
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
+
+            if hasattr(module, "register_skills"):
+                module.register_skills(registry)
+                logger.info(f"Loaded skill from {filename} via register_skills")
+            elif hasattr(module, "register"):
+                module.register(registry)
+                logger.info(f"Loaded skill from {filename} via register")
+            else:
+                logger.warning(f"Skill {filename} has no 'register' or 'register_skills' function.")
+    except Exception as e:
+        logger.error(f"Failed to load skill {filename}: {e}")
+
+
 def load_skills(registry: ToolRegistry, skills_dir: str = "app/skills"):
-    """
-    Dynamically load Python scripts from the skills directory and register them as tools.
-    Each script should have a 'register' function or use the @tool decorator with a global registry.
-    """
+    """Load all skill scripts from the skills directory."""
     if not os.path.exists(skills_dir):
         os.makedirs(skills_dir, exist_ok=True)
-        logger.info(f"Created skills directory: {skills_dir}")
         return
 
     for filename in os.listdir(skills_dir):
         if filename.endswith(".py") and not filename.startswith("__"):
-            file_path = os.path.join(skills_dir, filename)
-            module_name = f"app.skills.{filename[:-3]}"
-            
-            try:
-                spec = importlib.util.spec_from_file_location(module_name, file_path)
-                if spec and spec.loader:
-                    module = importlib.util.module_from_spec(spec)
-                    sys.modules[module_name] = module
-                    spec.loader.exec_module(module)
-                    
-                    # Look for a register function that takes the registry
-                    if hasattr(module, "register_skills"):
-                        module.register_skills(registry)
-                        logger.info(f"Loaded skills from {filename} via register_skills")
-                    elif hasattr(module, "register"):
-                        module.register(registry)
-                        logger.info(f"Loaded skills from {filename} via register")
-                    else:
-                        # Fallback: find all functions decorated with @tool if they were registered to a local registry
-                        # This depends on how the skill script is written. 
-                        # Usually, we expect a register(registry) function.
-                        logger.warning(f"Skill {filename} has no 'register' or 'register_skills' function.")
-            except Exception as e:
-                logger.error(f"Failed to load skill {filename}: {e}")
+            _load_single_skill(registry, os.path.join(skills_dir, filename), filename)
 
 def watch_skills(registry: ToolRegistry, skills_dir: str = "app/skills"):
     """Poll-based file watcher for hot-reloading skills.
 
     Tracks file modification times. Returns a check function that can be
     called periodically (e.g., every 5s) to detect new or changed skill files.
+    Only reloads files that actually changed.
     """
     _mtimes: dict[str, float] = {}
 
     def _check():
         if not os.path.exists(skills_dir):
             return
-        changed = False
         for filename in os.listdir(skills_dir):
             if not filename.endswith(".py") or filename.startswith("__"):
                 continue
@@ -131,9 +126,7 @@ def watch_skills(registry: ToolRegistry, skills_dir: str = "app/skills"):
                 continue
             if filepath not in _mtimes or _mtimes[filepath] < mtime:
                 _mtimes[filepath] = mtime
-                changed = True
-        if changed:
-            load_skills(registry, skills_dir)
+                _load_single_skill(registry, filepath, filename)
 
     _check()
     return _check

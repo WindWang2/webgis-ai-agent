@@ -9,10 +9,11 @@ export function useWebSocket(sessionId?: string) {
   const retryCountRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [connected, setConnected] = useState(false);
-  const { addProcessLayer, removeProcessLayer } = useHudStore();
 
   const connect = useCallback(() => {
     if (!sessionId) return;
+
+    const { addProcessLayer, removeProcessLayer } = useHudStore.getState();
 
     const url = `${WS_URL}/${sessionId}`;
     const socket = new WebSocket(url);
@@ -51,7 +52,7 @@ export function useWebSocket(sessionId?: string) {
     socket.onerror = () => {
       socket.close();
     };
-  }, [sessionId, addProcessLayer, removeProcessLayer]);
+  }, [sessionId]);
 
   useEffect(() => {
     connect();
