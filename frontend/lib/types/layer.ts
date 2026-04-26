@@ -21,6 +21,7 @@ export interface Layer {
   group?: 'analysis' | 'base' | 'reference';
   source?: string | GeoJSONFeatureCollection | HeatmapRasterSource;
   style?: LayerStyle;
+  _refId?: string;
   created_at?: string;
   updated_at?: string;
 }
