@@ -1,14 +1,17 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
-import { WS_BASE } from '../api/config';
+import { WS_BASE } from '@/lib/api/config';
 
 const WS_URL = `${WS_BASE}/api/v1/ws`;
 
 export function useWebSocket(sessionId?: string) {
   const socketRef = useRef<WebSocket | null>(null);
+  const retryCountRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [connected, setConnected] = useState(false);
   const { addProcessLayer, removeProcessLayer } = useHudStore();
 
-  useEffect(() => {
+  const connect = useCallback(() => {
     if (!sessionId) return;
 
     const url = `${WS_URL}/${sessionId}`;
@@ -16,7 +19,8 @@ export function useWebSocket(sessionId?: string) {
     socketRef.current = socket;
 
     socket.onopen = () => {
-      console.log(`[WS] Connected to ${url}`);
+      retryCountRef.current = 0;
+      setConnected(true);
     };
 
     socket.onmessage = (event) => {
@@ -25,7 +29,6 @@ export function useWebSocket(sessionId?: string) {
         const { event: eventType, data } = payload;
 
         if (eventType === 'STEP_COMPLETED' || eventType === 'geojson_update') {
-          // data should contain { step_id, geojson }
           if (data.step_id && data.geojson) {
             addProcessLayer(data.step_id, data.geojson);
           }
@@ -34,25 +37,35 @@ export function useWebSocket(sessionId?: string) {
             removeProcessLayer(data.step_id);
           }
         }
-      } catch (err) {
-        console.error('[WS] Failed to parse message:', err);
-      }
+      } catch {}
     };
 
     socket.onclose = () => {
-      console.log(`[WS] Disconnected from ${url}`);
+      setConnected(false);
       socketRef.current = null;
+      const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 30000);
+      retryCountRef.current += 1;
+      timerRef.current = setTimeout(connect, delay);
     };
 
-    socket.onerror = (err) => {
-      console.error('[WS] Error:', err);
-    };
-
-    return () => {
+    socket.onerror = () => {
       socket.close();
-      socketRef.current = null;
     };
   }, [sessionId, addProcessLayer, removeProcessLayer]);
+
+  useEffect(() => {
+    connect();
+
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      if (socketRef.current) {
+        socketRef.current.onclose = null;
+        socketRef.current.close();
+        socketRef.current = null;
+      }
+      setConnected(false);
+    };
+  }, [connect]);
 
   const sendMessage = useCallback((message: any) => {
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
@@ -60,5 +73,5 @@ export function useWebSocket(sessionId?: string) {
     }
   }, []);
 
-  return { sendMessage };
+  return { sendMessage, connected };
 }
