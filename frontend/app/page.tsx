@@ -476,6 +476,32 @@ export default function Home() {
             setMessages((prev) =>
               prev.map((msg) => (msg.id === thinkingMessage.id ? { ...msg, content: assistantContent, isThinking: false } : msg))
             )
+          } else if (eventType === "tool_call" && data?.tool) {
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === thinkingMessage.id
+                  ? { ...msg, content: assistantContent + `\n\n> 🔧 **执行工具**: ${data.tool}...` }
+                  : msg
+              )
+            )
+          } else if (eventType === "task_plan" && data?.steps) {
+            const planSteps = (data.steps as string[]).map((s, i) => `${i + 1}. ${s}`).join("\n")
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === thinkingMessage.id
+                  ? { ...msg, content: assistantContent + `\n\n📋 **任务计划**:\n${planSteps}` }
+                  : msg
+              )
+            )
+          } else if (eventType === "task_cancelled") {
+            clearTask()
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === thinkingMessage.id
+                  ? { ...msg, content: assistantContent + "\n\n> ⏹ 任务已取消" }
+                  : msg
+              )
+            )
           }
         }
 
@@ -654,6 +680,7 @@ export default function Home() {
       >
         <DataHud
           layers={layers}
+          sessionId={sessionId}
           onToggleLayer={toggleLayer}
           onRemoveLayer={removeLayer}
           onUpdateLayer={updateLayer}
