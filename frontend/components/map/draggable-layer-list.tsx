@@ -50,7 +50,6 @@ function SortableLayerItem({ layer, onToggle, onDelete, onUpdate }: SortableLaye
         layer={layer}
         onToggle={onToggle}
         onDelete={onDelete}
-        onEdit={() => {}} // Legacy
         onUpdate={onUpdate}
         dragHandleProps={{ ...attributes, ...listeners }}
       />

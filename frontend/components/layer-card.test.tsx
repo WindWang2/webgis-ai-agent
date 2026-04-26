@@ -1,6 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react'
 import { LayerCard } from './layer-card'
 import type { Layer } from '@/lib/types/layer'
+import { useHudStore } from '@/lib/store/useHudStore'
 
 const mockLayer: Layer = {
   id: 'test-layer-1',
@@ -14,7 +15,6 @@ const mockLayer: Layer = {
 describe('LayerCard', () => {
   const mockOnToggle = vi.fn()
   const mockOnDelete = vi.fn()
-  const mockOnEdit = vi.fn()
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -26,7 +26,6 @@ describe('LayerCard', () => {
         layer={mockLayer}
         onToggle={mockOnToggle}
         onDelete={mockOnDelete}
-        onEdit={mockOnEdit}
       />
     )
 
@@ -39,13 +38,12 @@ describe('LayerCard', () => {
 
   it('shows EyeOff icon when layer is not visible', () => {
     const hiddenLayer = { ...mockLayer, visible: false }
-    
+
     render(
       <LayerCard
         layer={hiddenLayer}
         onToggle={mockOnToggle}
         onDelete={mockOnDelete}
-        onEdit={mockOnEdit}
       />
     )
 
@@ -58,7 +56,6 @@ describe('LayerCard', () => {
         layer={mockLayer}
         onToggle={mockOnToggle}
         onDelete={mockOnDelete}
-        onEdit={mockOnEdit}
       />
     )
 
@@ -66,18 +63,22 @@ describe('LayerCard', () => {
     expect(mockOnToggle).toHaveBeenCalledWith('test-layer-1')
   })
 
-  it('calls onEdit when edit button is clicked', () => {
+  it('calls setEditingLayerId from store when edit button is clicked', () => {
+    const setEditingLayerId = vi.fn()
+    vi.spyOn(useHudStore, 'getState').mockReturnValue({
+      setEditingLayerId,
+    } as any)
+
     render(
       <LayerCard
         layer={mockLayer}
         onToggle={mockOnToggle}
         onDelete={mockOnDelete}
-        onEdit={mockOnEdit}
       />
     )
 
     fireEvent.click(screen.getByText('Edit'))
-    expect(mockOnEdit).toHaveBeenCalledWith(mockLayer)
+    expect(setEditingLayerId).toHaveBeenCalledWith(mockLayer.id)
   })
 
   it('calls onDelete when delete button is clicked', () => {
@@ -86,7 +87,6 @@ describe('LayerCard', () => {
         layer={mockLayer}
         onToggle={mockOnToggle}
         onDelete={mockOnDelete}
-        onEdit={mockOnEdit}
       />
     )
 
