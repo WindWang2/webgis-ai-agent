@@ -26,6 +26,7 @@ from app.tools.web_crawler import register_crawler_tools
 from app.tools.chinese_maps import register_chinese_map_tools
 from app.tools.spatial_stats import register_spatial_stats_tools
 from app.tools.terrain_analysis import register_terrain_tools
+from app.tools.interpolation_network import register_interpolation_network_tools
 from app.tools.report import register_report_tools
 from app.tools.skills import load_skills, register_skill_tools
 
@@ -48,6 +49,7 @@ register_crawler_tools(registry)
 register_chinese_map_tools(registry)
 register_spatial_stats_tools(registry)
 register_terrain_tools(registry)
+register_interpolation_network_tools(registry)
 register_report_tools(registry)
 register_skill_tools(registry)
 
