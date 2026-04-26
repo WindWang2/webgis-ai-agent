@@ -96,10 +96,29 @@ def register_spatial_tools(registry: ToolRegistry):
                 task = run_spatial_stats.apply_async(args=[features])
                 result = task.get(timeout=60)
             except ImportError:
-                r = SpatialAnalyzer.statistics(features, spatial_stats=True)
-                result = {"success": r.success, "stats": r.stats}
-                if not r.success:
-                    result["error"] = r.error_message
+                from shapely.geometry import shape
+                import geopandas as gpd
+                geometries = [shape(f["geometry"]) for f in features if f.get("geometry")]
+                if not geometries:
+                    return {"error": "No valid geometries"}
+                gdf = gpd.GeoSeries(geometries, crs="EPSG:4326")
+                gdf_proj = gdf.to_crs("ESRI:54009")
+                stats = {
+                    "feature_count": len(geometries),
+                    "total_area_sqkm": round(float(gdf_proj.area.sum()) / 1e6, 4),
+                    "total_length_km": round(float(gdf_proj.length.sum()) / 1000, 4),
+                    "centroid": {
+                        "lat": round(float(gdf.centroid.y.mean()), 6),
+                        "lon": round(float(gdf.centroid.x.mean()), 6),
+                    },
+                    "bounds": {
+                        "min_lon": round(float(gdf.bounds.minx.min()), 6),
+                        "min_lat": round(float(gdf.bounds.miny.min()), 6),
+                        "max_lon": round(float(gdf.bounds.maxx.max()), 6),
+                        "max_lat": round(float(gdf.bounds.maxy.max()), 6),
+                    },
+                }
+                result = {"success": True, "stats": stats}
 
             if result.get("success"):
                 return {"stats": result.get("stats")}
@@ -122,11 +141,30 @@ def register_spatial_tools(registry: ToolRegistry):
                 task = run_nearest_neighbor.apply_async(args=[features])
                 result = task.get(timeout=60)
             except ImportError:
-                r = SpatialAnalyzer.nearest(features)
-                if r.success:
-                    result = {"success": True, "data": r.data}
-                else:
-                    result = {"success": False, "error": r.error_message}
+                import numpy as np
+                from scipy.spatial import distance_matrix
+                points = []
+                for f in features:
+                    geom = f.get("geometry") or {}
+                    if geom.get("type") == "Point" and geom.get("coordinates"):
+                        coords = geom["coordinates"]
+                        points.append((coords[0], coords[1]))
+                if len(points) < 2:
+                    return {"error": "Need at least 2 points"}
+                coords_arr = np.array(points)
+                dist = distance_matrix(coords_arr, coords_arr)
+                np.fill_diagonal(dist, np.inf)
+                nn_distances = dist.min(axis=1)
+                result = {
+                    "success": True,
+                    "data": {
+                        "point_count": len(points),
+                        "mean_nearest_distance": round(float(nn_distances.mean()), 4),
+                        "std_nearest_distance": round(float(nn_distances.std()), 4),
+                        "min_distance": round(float(nn_distances.min()), 4),
+                        "max_distance": round(float(nn_distances.max()), 4),
+                    }
+                }
 
             if result.get("success"):
                 return result.get("data")
