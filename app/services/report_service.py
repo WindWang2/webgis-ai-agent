@@ -26,7 +26,7 @@ class ReportService:
         template_path = os.path.join(os.path.dirname(__file__), "templates")
         self.template_env = jinja2.Environment(
             loader=jinja2.FileSystemLoader(template_path),
-            autoescape=False,
+            autoescape=jinja2.select_autoescape(["html", "xml"]),
         )
 
     async def generate_report(

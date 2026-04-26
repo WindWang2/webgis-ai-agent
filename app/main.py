@@ -7,12 +7,17 @@ from dotenv import load_dotenv
 # 核心：确保 .env 被注入到 os.environ，供 MCP Adapter 的 os.path.expandvars 消费
 load_dotenv()
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+import time
+from collections import defaultdict
 
 from app.core.config import settings
-from app.core.database import init_db
+from app.core.database import init_db, Engine
+from app.core.exception import global_exception_handler
 from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config
 
 logger = logging.getLogger(__name__)
@@ -41,6 +46,7 @@ async def lifespan(app: FastAPI):
 
     if mcp_adapter:
         await mcp_adapter.close()
+    Engine.dispose()
 
 
 
@@ -52,6 +58,35 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+app.add_exception_handler(Exception, global_exception_handler)
+
+
+# Rate limiting middleware (in-memory, per-IP)
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app, max_requests: int = 60, window_seconds: int = 60):
+        super().__init__(app)
+        self.max_requests = max_requests
+        self.window = window_seconds
+        self._requests: dict[str, list[float]] = defaultdict(list)
+
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path.startswith(("/docs", "/redoc", "/openapi.json")):
+            return await call_next(request)
+
+        client_ip = request.client.host if request.client else "unknown"
+        now = time.time()
+        timestamps = self._requests[client_ip]
+        self._requests[client_ip] = [t for t in timestamps if now - t < self.window]
+
+        if len(self._requests[client_ip]) >= self.max_requests:
+            return JSONResponse(status_code=429, content={"detail": "请求过于频繁，请稍后再试"})
+
+        self._requests[client_ip].append(now)
+        return await call_next(request)
+
+
+app.add_middleware(RateLimitMiddleware, max_requests=60, window_seconds=60)
 
 # CORS
 app.add_middleware(
