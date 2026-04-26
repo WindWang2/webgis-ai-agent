@@ -5,6 +5,7 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
+from app.services.spatial_analyzer import SpatialAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -63,11 +64,17 @@ def register_spatial_tools(registry: ToolRegistry):
             if not data:
                 return {"error": "Invalid GeoJSON input"}
             features = data.get("features", data) if isinstance(data, dict) else data
-            from app.services.spatial_tasks import run_buffer_analysis
-            task = run_buffer_analysis.apply_async(
-                args=[features, distance, unit]
-            )
-            result = task.get(timeout=120)
+
+            try:
+                from app.services.spatial_tasks import run_buffer_analysis
+                task = run_buffer_analysis.apply_async(args=[features, distance, unit])
+                result = task.get(timeout=120)
+            except ImportError:
+                r = SpatialAnalyzer.buffer(features, distance=distance, unit=unit)
+                result = {"success": r.success, "data": r.data, "stats": r.stats}
+                if not r.success:
+                    result["error"] = r.error_message
+
             if result.get("success"):
                 return {"geojson": result.get("data"), "stats": result.get("stats")}
             return {"error": result.get("error")}
@@ -83,11 +90,17 @@ def register_spatial_tools(registry: ToolRegistry):
             if not data:
                 return {"error": "Invalid GeoJSON input"}
             features = data.get("features", [])
-            from app.services.spatial_tasks import run_spatial_stats
-            task = run_spatial_stats.apply_async(
-                args=[features]
-            )
-            result = task.get(timeout=60)
+
+            try:
+                from app.services.spatial_tasks import run_spatial_stats
+                task = run_spatial_stats.apply_async(args=[features])
+                result = task.get(timeout=60)
+            except ImportError:
+                r = SpatialAnalyzer.statistics(features, spatial_stats=True)
+                result = {"success": r.success, "stats": r.stats}
+                if not r.success:
+                    result["error"] = r.error_message
+
             if result.get("success"):
                 return {"stats": result.get("stats")}
             return {"error": result.get("error")}
@@ -103,11 +116,18 @@ def register_spatial_tools(registry: ToolRegistry):
             if not data:
                 return {"error": "Invalid GeoJSON input"}
             features = data.get("features", [])
-            from app.services.spatial_tasks import run_nearest_neighbor
-            task = run_nearest_neighbor.apply_async(
-                args=[features]
-            )
-            result = task.get(timeout=60)
+
+            try:
+                from app.services.spatial_tasks import run_nearest_neighbor
+                task = run_nearest_neighbor.apply_async(args=[features])
+                result = task.get(timeout=60)
+            except ImportError:
+                r = SpatialAnalyzer.nearest(features)
+                if r.success:
+                    result = {"success": True, "data": r.data}
+                else:
+                    result = {"success": False, "error": r.error_message}
+
             if result.get("success"):
                 return result.get("data")
             return {"error": result.get("error")}
@@ -136,11 +156,14 @@ def register_spatial_tools(registry: ToolRegistry):
                     }
                 return data
 
-            from app.services.spatial_tasks import run_heatmap_generation
-            task = run_heatmap_generation.apply_async(
-                kwargs={"features": features, "cell_size": cell_size, "radius": radius, "render_type": render_type, "palette": palette}
-            )
-            result = task.get(timeout=120)
+            try:
+                from app.services.spatial_tasks import run_heatmap_generation
+                task = run_heatmap_generation.apply_async(
+                    kwargs={"features": features, "cell_size": cell_size, "radius": radius, "render_type": render_type, "palette": palette}
+                )
+                result = task.get(timeout=120)
+            except ImportError:
+                return {"error": "Heatmap generation requires Celery. Use render_type='native' for client-side rendering."}
             if result.get("success"):
                 data = result.get("data")
                 # 注入 render 指令暗示前端
