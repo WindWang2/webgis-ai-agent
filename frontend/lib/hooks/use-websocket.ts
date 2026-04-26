@@ -4,6 +4,20 @@ import { WS_BASE } from '@/lib/api/config';
 
 const WS_URL = `${WS_BASE}/api/v1/ws`;
 
+function enrichLayerMeta(l: any) {
+  return {
+    id: l.id,
+    name: l.name,
+    type: l.type,
+    visible: l.visible,
+    opacity: l.opacity,
+    group: l.group,
+    featureCount: l.source && typeof l.source === 'object' && 'features' in l.source
+      ? (l.source as any).features?.length || 0 : undefined,
+    style: l.style,
+  };
+}
+
 export function useWebSocket(sessionId?: string) {
   const socketRef = useRef<WebSocket | null>(null);
   const retryCountRef = useRef(0);
@@ -72,6 +86,71 @@ export function useWebSocket(sessionId?: string) {
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify(message));
     }
+  }, []);
+
+  // ─── Perception Buffer Flush (300ms) ───
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const events = useHudStore.getState().drainPerception();
+      if (events.length > 0 && socketRef.current?.readyState === WebSocket.OPEN) {
+        for (const evt of events) {
+          socketRef.current.send(JSON.stringify(evt));
+        }
+      }
+    }, 300);
+    return () => clearInterval(interval);
+  }, []);
+
+  // ─── Zustand Subscription: viewport + layer changes → perception ───
+  useEffect(() => {
+    const unsub = useHudStore.subscribe((state, prevState) => {
+      // Viewport change
+      if (state.viewport !== prevState.viewport) {
+        useHudStore.getState().pushPerception('viewport_change', {
+          center: state.viewport.center,
+          zoom: state.viewport.zoom,
+          bearing: state.viewport.bearing,
+          pitch: state.viewport.pitch,
+        });
+      }
+      // Layer list structural change
+      if (state.layers !== prevState.layers) {
+        useHudStore.getState().pushPerception('layers_changed', {
+          layers: state.layers.map(enrichLayerMeta),
+        });
+      }
+      // Base layer change
+      if (state.baseLayer !== prevState.baseLayer) {
+        useHudStore.getState().pushPerception('base_layer_changed', {
+          name: state.baseLayer,
+        });
+      }
+      // 3D mode change
+      if (state.is3D !== prevState.is3D) {
+        useHudStore.getState().pushPerception('mode_changed', {
+          is_3d: state.is3D,
+        });
+      }
+    });
+    return unsub;
+  }, []);
+
+  // ─── Periodic Full State Snapshot (30s) ───
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const state = useHudStore.getState();
+      if (socketRef.current?.readyState !== WebSocket.OPEN) return;
+      socketRef.current.send(JSON.stringify({
+        event: 'state_snapshot',
+        data: {
+          viewport: state.viewport,
+          base_layer: state.baseLayer,
+          is_3d: state.is3D,
+          layers: state.layers.map(enrichLayerMeta),
+        },
+      }));
+    }, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   return { sendMessage, connected };

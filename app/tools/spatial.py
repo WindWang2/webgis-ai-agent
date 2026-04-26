@@ -249,7 +249,9 @@ def register_spatial_tools(registry: ToolRegistry):
                 from app.services.spatial_tasks import run_buffer_analysis
                 task = run_buffer_analysis.apply_async(args=[features, distance, unit])
                 result = task.get(timeout=120)
-            except ImportError:
+            except Exception as exc:
+                if not isinstance(exc, ImportError):
+                    logger.warning(f"Celery unavailable for buffer_analysis: {exc}")
                 r = SpatialAnalyzer.buffer(features, distance=distance, unit=unit)
                 result = {"success": r.success, "data": r.data, "stats": r.stats}
                 if not r.success:
@@ -275,7 +277,9 @@ def register_spatial_tools(registry: ToolRegistry):
                 from app.services.spatial_tasks import run_spatial_stats
                 task = run_spatial_stats.apply_async(args=[features])
                 result = task.get(timeout=60)
-            except ImportError:
+            except Exception as exc:
+                if not isinstance(exc, ImportError):
+                    logger.warning(f"Celery unavailable for spatial_stats: {exc}")
                 from shapely.geometry import shape
                 import geopandas as gpd
                 geometries = [shape(f["geometry"]) for f in features if f.get("geometry")]
@@ -320,7 +324,9 @@ def register_spatial_tools(registry: ToolRegistry):
                 from app.services.spatial_tasks import run_nearest_neighbor
                 task = run_nearest_neighbor.apply_async(args=[features])
                 result = task.get(timeout=60)
-            except ImportError:
+            except Exception as exc:
+                if not isinstance(exc, ImportError):
+                    logger.warning(f"Celery unavailable for nearest_neighbor: {exc}")
                 import numpy as np
                 from scipy.spatial import distance_matrix
                 points = []
@@ -380,7 +386,9 @@ def register_spatial_tools(registry: ToolRegistry):
                     kwargs={"features": features, "cell_size": cell_size, "radius": radius, "render_type": render_type, "palette": palette}
                 )
                 result = task.get(timeout=120)
-            except ImportError:
+            except Exception as exc:
+                if not isinstance(exc, ImportError):
+                    logger.warning(f"Celery unavailable for heatmap: {exc}")
                 result = _generate_heatmap(features, cell_size, radius, render_type, palette)
             if result.get("success"):
                 data = result.get("data")

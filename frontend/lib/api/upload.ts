@@ -2,7 +2,7 @@
  * Upload API - 用户数据上传接口
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+import { API_BASE } from './config';
 
 export interface UploadResponse {
   id: number;
@@ -36,10 +36,9 @@ export async function uploadFile(
     formData.append("session_id", sessionId);
   }
 
-  // 使用 XMLHttpRequest 以支持进度回调
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${API_BASE}/upload`);
+    xhr.open("POST", `${API_BASE}/api/v1/upload`);
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) {
@@ -74,7 +73,7 @@ export async function uploadFile(
  */
 export async function listUploads(sessionId?: string): Promise<UploadListResponse> {
   const params = sessionId ? `?session_id=${sessionId}` : "";
-  const res = await fetch(`${API_BASE}/uploads${params}`);
+  const res = await fetch(`${API_BASE}/api/v1/uploads${params}`);
   if (!res.ok) throw new Error(`API Error: ${res.status}`);
   return res.json();
 }
@@ -85,7 +84,7 @@ export async function listUploads(sessionId?: string): Promise<UploadListRespons
 export async function getUploadGeojson(
   uploadId: number
 ): Promise<GeoJSON.FeatureCollection> {
-  const res = await fetch(`${API_BASE}/uploads/${uploadId}/geojson`);
+  const res = await fetch(`${API_BASE}/api/v1/uploads/${uploadId}/geojson`);
   if (!res.ok) throw new Error(`API Error: ${res.status}`);
   return res.json();
 }
@@ -94,6 +93,6 @@ export async function getUploadGeojson(
  * 删除上传记录
  */
 export async function deleteUpload(uploadId: number): Promise<void> {
-  const res = await fetch(`${API_BASE}/uploads/${uploadId}`, { method: "DELETE" });
+  const res = await fetch(`${API_BASE}/api/v1/uploads/${uploadId}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`API Error: ${res.status}`);
 }
