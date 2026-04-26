@@ -4,6 +4,7 @@ from typing import Any, List, Dict, Optional
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
+from app.services.spatial_analyzer import SpatialAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         try:
             from app.services.spatial_tasks import run_path_analysis
             features = network_features.get("features", network_features) if isinstance(network_features, dict) else network_features
-            
+
             task = run_path_analysis.apply_async(
                 args=[features, start_point, end_point]
             )
@@ -49,6 +50,12 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             if result.get("success"):
                 return {"geojson": result.get("data"), "stats": result.get("stats")}
             return {"error": result.get("error")}
+        except ImportError:
+            features = network_features.get("features", network_features) if isinstance(network_features, dict) else network_features
+            r = SpatialAnalyzer.path_analysis(features, start_point=start_point, end_point=end_point)
+            if r.success:
+                return {"geojson": r.data, "stats": r.stats}
+            return {"error": r.error_message}
         except Exception as e:
             return {"error": str(e)}
 
@@ -59,7 +66,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         try:
             from app.services.spatial_tasks import run_zonal_stats
             features = geojson.get("features", geojson) if isinstance(geojson, dict) else geojson
-            
+
             task = run_zonal_stats.apply_async(
                 args=[features, raster_path]
             )
@@ -67,6 +74,12 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             if result.get("success"):
                 return {"zonal_stats": result.get("data").get("zonal_stats")}
             return {"error": result.get("error")}
+        except ImportError:
+            features = geojson.get("features", geojson) if isinstance(geojson, dict) else geojson
+            r = SpatialAnalyzer.zonal_statistics(features, raster_path=raster_path)
+            if r.success:
+                return {"zonal_stats": r.data.get("zonal_stats") if isinstance(r.data, dict) else r.data}
+            return {"error": r.error_message}
         except Exception as e:
             return {"error": str(e)}
 
@@ -79,7 +92,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             # 解析要素
             features_a = layer_a.get("features", layer_a) if isinstance(layer_a, dict) else layer_a
             features_b = layer_b.get("features", layer_b) if isinstance(layer_b, dict) else layer_b
-            
+
             task = run_overlay_analysis.apply_async(
                 args=[features_a, features_b, how]
             )
@@ -87,6 +100,13 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             if result.get("success"):
                 return {"geojson": result.get("data"), "stats": result.get("stats")}
             return {"error": result.get("error")}
+        except ImportError:
+            features_a = layer_a.get("features", layer_a) if isinstance(layer_a, dict) else layer_a
+            features_b = layer_b.get("features", layer_b) if isinstance(layer_b, dict) else layer_b
+            r = SpatialAnalyzer.overlay(features_a, features_b, how=how)
+            if r.success:
+                return {"geojson": r.data, "stats": r.stats}
+            return {"error": r.error_message}
         except Exception as e:
             return {"error": str(e)}
 
@@ -97,7 +117,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         try:
             from app.services.spatial_tasks import run_attribute_filter
             features = geojson.get("features", geojson) if isinstance(geojson, dict) else geojson
-            
+
             task = run_attribute_filter.apply_async(
                 args=[features, query]
             )
@@ -105,6 +125,12 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             if result.get("success"):
                 return {"geojson": result.get("data"), "stats": result.get("stats")}
             return {"error": result.get("error")}
+        except ImportError:
+            features = geojson.get("features", geojson) if isinstance(geojson, dict) else geojson
+            r = SpatialAnalyzer.attribute_filter(features, query=query)
+            if r.success:
+                return {"geojson": r.data, "stats": r.stats}
+            return {"error": r.error_message}
         except Exception as e:
             return {"error": str(e)}
 
@@ -116,7 +142,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             from app.services.spatial_tasks import run_spatial_join
             features_left = left_layer.get("features", left_layer) if isinstance(left_layer, dict) else left_layer
             features_right = right_layer.get("features", right_layer) if isinstance(right_layer, dict) else right_layer
-            
+
             task = run_spatial_join.apply_async(
                 args=[features_left, features_right, join_type, predicate]
             )
@@ -124,5 +150,12 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             if result.get("success"):
                 return {"geojson": result.get("data"), "stats": result.get("stats")}
             return {"error": result.get("error")}
+        except ImportError:
+            features_left = left_layer.get("features", left_layer) if isinstance(left_layer, dict) else left_layer
+            features_right = right_layer.get("features", right_layer) if isinstance(right_layer, dict) else right_layer
+            r = SpatialAnalyzer.spatial_join(features_left, features_right, join_type=join_type, predicate=predicate)
+            if r.success:
+                return {"geojson": r.data, "stats": r.stats}
+            return {"error": r.error_message}
         except Exception as e:
             return {"error": str(e)}
