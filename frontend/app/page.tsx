@@ -26,6 +26,27 @@ import {
   History,
 } from "lucide-react"
 
+function computeBBoxFromFeatures(features: any[]): [number, number, number, number] | undefined {
+  if (!features || features.length === 0) return undefined
+  let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity
+  const collect = (coords: number[][]) => {
+    for (const c of coords) { minLng = Math.min(minLng, c[0]); maxLng = Math.max(maxLng, c[0]); minLat = Math.min(minLat, c[1]); maxLat = Math.max(maxLat, c[1]) }
+  }
+  for (const f of features) {
+    const g = f.geometry
+    if (!g?.coordinates) continue
+    switch (g.type) {
+      case 'Point': { minLng = Math.min(minLng, g.coordinates[0]); maxLng = Math.max(maxLng, g.coordinates[0]); minLat = Math.min(minLat, g.coordinates[1]); maxLat = Math.max(maxLat, g.coordinates[1]); break }
+      case 'MultiPoint': case 'LineString': collect(g.coordinates); break
+      case 'MultiLineString': g.coordinates.forEach((r: number[][]) => collect(r)); break
+      case 'Polygon': collect(g.coordinates[0] || []); break
+      case 'MultiPolygon': g.coordinates.forEach((p: number[][][]) => collect(p[0] || [])); break
+    }
+  }
+  if (minLng === Infinity) return undefined
+  return [minLng, minLat, maxLng, maxLat]
+}
+
 export default function Home() {
   const { dispatchAction } = useMapAction()
   /* ─── Zustand state ─── */
@@ -79,19 +100,22 @@ export default function Home() {
       .catch(err => console.error("Fetch sessions failed:", err))
   }, [])
 
-  // Refresh session list whenever sessionId changes (e.g. after first message creates a session)
+  const refreshSessions = useCallback(() => {
+    fetch(`${API_BASE}/api/v1/chat/sessions`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.sessions) setSessions(data.sessions)
+      })
+      .catch(() => {})
+  }, [])
+
+  // Refresh session list when sessionId changes — two passes to catch LLM-generated title
   useEffect(() => {
     if (!sessionId) return
-    const timer = setTimeout(() => {
-      fetch(`${API_BASE}/api/v1/chat/sessions`)
-        .then(res => res.json())
-        .then(data => {
-          if (data.sessions) setSessions(data.sessions)
-        })
-        .catch(() => {})
-    }, 2000) // delay to allow backend to persist title
-    return () => clearTimeout(timer)
-  }, [sessionId])
+    const t1 = setTimeout(refreshSessions, 2000)
+    const t2 = setTimeout(refreshSessions, 6000)
+    return () => { clearTimeout(t1); clearTimeout(t2) }
+  }, [sessionId, refreshSessions])
 
   const handleSelectSession = useCallback(async (sid: string) => {
     try {
@@ -316,27 +340,20 @@ export default function Home() {
               style: { color },
             })
 
-            // ── Agent Perception: Notify Agent about the uploaded data ──
-            // This maintains "Agent is Everything" — the Agent must know about
-            // every data change on the map, even those from direct user actions.
-            const notifyMsg = `[系统通知] 用户刚刚上传了矢量数据文件「${result.original_name}」，` +
-              `包含 ${result.feature_count} 个要素，坐标系 ${result.crs}，` +
-              `已作为图层 "${layerId}" 加载到地图上。请在后续对话中感知此图层的存在。`
+            // ── Agent Perception: Push upload event via perception buffer ──
+            useHudStore.getState().pushPerception('upload_completed', {
+              original_name: result.original_name,
+              feature_count: result.feature_count,
+              layer_id: layerId,
+              crs: result.crs,
+              file_type: result.file_type,
+            })
             setMessages(prev => [...prev, {
               id: `upload-notify-${Date.now()}`,
               role: "assistant",
               content: `📡 已感知新数据源：**${result.original_name}**（${result.feature_count} 个要素）已挂载到地图。`,
               timestamp: new Date(),
             }])
-            // Fire a silent background notification to the Agent backend
-            fetch(`${API_BASE}/api/v1/chat/completions`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                message: notifyMsg,
-                session_id: sessionId,
-              }),
-            }).catch(() => { /* silent: best-effort notification */ })
           }
         } catch (e) {
           console.error("加载上传数据到地图失败:", e)
@@ -353,19 +370,38 @@ export default function Home() {
   const [showScanEffect, setShowScanEffect] = useState(false)
 
   /* ─── Send handler (from Dynamic Island) ─── */
-  const viewport = useHudStore((s) => s.viewport)
   const handleSend = useCallback(
     async (messageText: string) => {
       if (!messageText || isLoading) return
-      
+
       // Trigger sensory sync visual effect
       setShowScanEffect(true)
       setTimeout(() => setShowScanEffect(false), 2000)
 
-      // Prepare sensory data (map_state)
+      // Read current state from store at call time (avoids reactive deps)
+      const { viewport: currentViewport, layers: currentLayers, baseLayer: currentBaseLayer, is3D: currentIs3D } = useHudStore.getState()
       const mapState = {
-        viewport,
-        layers: layers.map(l => ({ id: l.id, name: l.name, visible: l.visible, opacity: l.opacity }))
+        viewport: {
+          center: currentViewport.center,
+          zoom: currentViewport.zoom,
+          bearing: currentViewport.bearing || 0,
+          pitch: currentViewport.pitch || 0,
+        },
+        base_layer: currentBaseLayer,
+        is_3d: currentIs3D,
+        layers: currentLayers.map(l => ({
+          id: l.id,
+          name: l.name,
+          type: l.type,
+          visible: l.visible,
+          opacity: l.opacity,
+          group: l.group,
+          featureCount: l.source && typeof l.source === 'object' && 'features' in l.source
+            ? (l.source as any).features?.length || 0 : undefined,
+          bbox: l.source && typeof l.source === 'object' && 'features' in l.source
+            ? computeBBoxFromFeatures((l.source as any).features) : undefined,
+          style: l.style,
+        })),
       }
 
       const userMessage = {
@@ -519,7 +555,7 @@ export default function Home() {
         setIsLoading(false)
       }
     },
-    [isLoading, sessionId, taskStart, stepStart, stepResult, stepError, taskComplete, clearTask, handleToolResult, viewport, layers, dispatchAction]
+    [isLoading, sessionId, taskStart, stepStart, stepResult, stepError, taskComplete, clearTask, handleToolResult, dispatchAction]
   )
 
   /* ─── System Callback Effect ─── */
@@ -552,7 +588,6 @@ export default function Home() {
           layers={layers}
           onRemoveLayer={removeLayer}
           onToggleLayer={toggleLayer}
-          onEditLayer={() => {}}
           analysisResult={analysisResult}
         />
         
@@ -679,10 +714,25 @@ export default function Home() {
         <DataHud
           layers={layers}
           sessionId={sessionId}
-          onToggleLayer={toggleLayer}
-          onRemoveLayer={removeLayer}
-          onUpdateLayer={updateLayer}
-          onReorderLayers={reorderLayers}
+          onToggleLayer={(id) => {
+            const layer = layers.find(l => l.id === id)
+            toggleLayer(id)
+            useHudStore.getState().pushPerception('layer_toggled', { layer_id: id, visible: layer ? !layer.visible : undefined })
+          }}
+          onRemoveLayer={(id) => {
+            removeLayer(id)
+            useHudStore.getState().pushPerception('layer_removed', { layer_id: id })
+          }}
+          onUpdateLayer={(id, updates) => {
+            updateLayer(id, updates)
+            if (updates.opacity !== undefined) {
+              useHudStore.getState().pushPerception('layer_opacity_changed', { layer_id: id, opacity: updates.opacity })
+            }
+          }}
+          onReorderLayers={(newLayers) => {
+            reorderLayers(newLayers)
+            useHudStore.getState().pushPerception('layers_reordered', { order: newLayers.map(l => l.id) })
+          }}
         />
       </HudPanel>
 

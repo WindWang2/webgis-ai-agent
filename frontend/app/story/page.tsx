@@ -101,7 +101,6 @@ export default function StoryPage() {
           layers={layers}
           onRemoveLayer={removeLayer}
           onToggleLayer={toggleLayer}
-          onEditLayer={() => {}}
           analysisResult={analysisResult}
         />
       </div>
