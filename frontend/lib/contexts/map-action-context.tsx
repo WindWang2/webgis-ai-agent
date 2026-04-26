@@ -31,11 +31,10 @@ export function MapActionProvider({ children }: { children: React.ReactNode }) {
     const last = lastDispatchRef.current;
     
     // Physical Throttling: Ignore identical matches within 2 seconds
-    if (last && 
-        last.command === newAction.command && 
+    if (last &&
+        last.command === newAction.command &&
         JSON.stringify(last.params) === JSON.stringify(newAction.params) &&
         (now - last.timestamp) < 2000) {
-      console.log('[MapAction] Throttled redundant command:', newAction.command);
       return;
     }
     
@@ -53,8 +52,6 @@ export function MapActionProvider({ children }: { children: React.ReactNode }) {
       if (isDup) return prev;
       return [...prev, newAction];
     });
-
-    console.log('[MapAction] Dispatched to queue:', newAction.command, newAction.params);
   }, []);
 
   const popAction = useCallback(() => {
