@@ -21,7 +21,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 await websocket.send_json({"event": "pong"})
             elif event_type in PERCEPTION_HANDLERS:
                 handler = PERCEPTION_HANDLERS[event_type]
-                await asyncio.get_event_loop().run_in_executor(
+                await asyncio.get_running_loop().run_in_executor(
                     None, handler, session_id, data.get("data", {})
                 )
     except WebSocketDisconnect:
