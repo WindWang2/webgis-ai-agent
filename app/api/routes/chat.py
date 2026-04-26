@@ -23,6 +23,7 @@ from app.tools.cartography import register_cartography_tools
 from app.tools.nature_resources import register_nature_resource_tools
 from app.tools.upload_tools import register_upload_tools
 from app.tools.web_crawler import register_crawler_tools
+from app.tools.chinese_maps import register_chinese_map_tools
 from app.tools.report import register_report_tools
 from app.tools.skills import load_skills, register_skill_tools
 
@@ -42,6 +43,7 @@ register_cartography_tools(registry)
 register_nature_resource_tools(registry)
 register_upload_tools(registry)
 register_crawler_tools(registry)
+register_chinese_map_tools(registry)
 register_report_tools(registry)
 register_skill_tools(registry)
 
@@ -167,6 +169,7 @@ _tool_results_by_session: dict = {}
 class ToolExecuteRequest(BaseModel):
     tool: str
     arguments: dict = {}
+    session_id: Optional[str] = None
 
 
 @router.post("/tools/execute")
@@ -178,8 +181,7 @@ async def execute_tool_direct(req: ToolExecuteRequest, _user: dict = Depends(get
         return {"error": "missing tool name"}
 
     try:
-        # 使用 registry.dispatch 自动处理参数
-        result = await registry.dispatch(tool_name, args)
+        result = await registry.dispatch(tool_name, args, session_id=req.session_id)
         return result
     except Exception as e:
         logger.error(f"Tool execute error: {e}")
