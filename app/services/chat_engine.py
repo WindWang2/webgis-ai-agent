@@ -199,20 +199,10 @@ def _slim_event_result(result: Any) -> Any:
     # 移除大数据字段，但保留 image (热力图需要) 和 bbox (导航需要)
     exclude = {"geojson", "features", "data_list", "grid"}
     slim = {k: v for k, v in result.items() if k not in exclude}
-    
-    
-    if isinstance(result, dict) and result.get("type") == "FeatureCollection" and "features" in result:
-        # 情况 2: Root 是 FeatureCollection
-        slim = {k: v for k, v in result.items() if k not in exclude}
-    elif isinstance(result, dict):
-        # 情况 1: 嵌套字典
-        slim = {k: v for k, v in result.items() if k not in exclude}
-    else:
-        return result
-    
+
     if bbox:
         slim["bbox"] = bbox
-        
+
     # 增加指引
     if "geojson" in result or "features" in result:
         slim["_streaming_note"] = "大体积要素数据已过滤，仅保留元数据。完整图层已自动加载。"
@@ -304,63 +294,92 @@ class ChatEngine:
 
     def _get_map_state_summary(self, session_id: str) -> str:
         """获取当前地图状态的文本摘要，用于注入 Prompt。
-        
+
         双源感知策略：
         1. 优先使用 inventory（后端已知的 ref_id 数据引用）
         2. 如果 inventory 为空，回退到前端实时上报的 layers（应对页面刷新/新 Session）
         """
         state = session_data_manager.get_map_state(session_id)
         inventory = session_data_manager.list_refs(session_id)
-        
+
         # 提取实时视角信息
         viewport = state.get("viewport", {})
         center = viewport.get("center", [0, 0])
         zoom = viewport.get("zoom", 0)
-        
+        bearing = viewport.get("bearing", 0)
+        pitch = viewport.get("pitch", 0)
+
         base_layer = state.get("base_layer", "OSM 地图")
-        
+        is_3d = state.get("is_3d", False)
+
         # 前端实时上报的图层（由 map_state.layers 携带）
         active_layers = state.get("layers", [])
-        
+
         import datetime
         current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         summary = f"[环境感知]\n- 当前系统时间: {current_time}\n\n"
         summary += f"[当前地图状态 (实时感知)]\n"
-        summary += f"- 当前视角: 经度 {center[0]:.4f}, 纬度 {center[1]:.4f}, 缩放层级 {zoom:.1f}\n"
-        summary += f"- 当前底图: {base_layer}\n"
-        
+        summary += f"- 视角: 经度 {center[0]:.4f}, 纬度 {center[1]:.4f}, 缩放 {zoom:.1f}"
+        if bearing:
+            summary += f", 旋转 {bearing:.1f}°"
+        if pitch:
+            summary += f", 倾斜 {pitch:.1f}°"
+        if is_3d:
+            summary += " [3D模式]"
+        summary += "\n"
+        summary += f"- 底图: {base_layer}\n"
+
         if inventory:
             # ── 策略 1: 后端 inventory 存在，列出已注册的数据引用 ──
             summary += "- 已存在图层/数据引用:\n"
-            visibility_map = {l.get("id"): l.get("visible") for l in active_layers if l.get("id")}
+            visibility_map = {l.get("id"): l for l in active_layers if l.get("id")}
 
             for ref_id, alias in inventory.items():
                 layer_type = " (热力图)" if "heatmap" in ref_id else ""
                 alias_str = f" (别名: {alias})" if alias else ""
-                
+
                 # 尝试匹配前端实时状态
-                visible = visibility_map.get(ref_id)
-                # 如果找不到 exact match，尝试模糊匹配（处理 custom- 前缀）
+                layer_meta = visibility_map.get(ref_id, {})
+                visible = layer_meta.get("visible")
                 if visible is None:
-                    for aid, v in visibility_map.items():
+                    for aid, meta in visibility_map.items():
                         if aid in ref_id or ref_id in aid:
-                            visible = v
+                            visible = meta.get("visible")
+                            layer_meta = meta
                             break
-                
+
                 status = " [显示中]" if visible is True else " [已隐藏]" if visible is False else " [状态未知]"
-                summary += f"  * {ref_id}{layer_type}{alias_str}{status}\n"
-            
+                meta_parts = []
+                if layer_meta.get("type"):
+                    meta_parts.append(f"类型={layer_meta['type']}")
+                if layer_meta.get("group"):
+                    meta_parts.append(f"分组={layer_meta['group']}")
+                if layer_meta.get("featureCount") is not None:
+                    meta_parts.append(f"要素={layer_meta['featureCount']}")
+                if layer_meta.get("style", {}).get("color"):
+                    meta_parts.append(f"颜色={layer_meta['style']['color']}")
+                meta_str = f" ({', '.join(meta_parts)})" if meta_parts else ""
+                summary += f"  * {ref_id}{layer_type}{alias_str}{meta_str}{status}\n"
+
             summary += f"\n注：当前 Session 共持有 {len(inventory)} 个活跃数据引用。"
         elif active_layers:
-            # ── 策略 2: inventory 为空但前端报告了活跃图层（如页面刷新后新 Session） ──
-            summary += f"- 具身感知：检测到地图正处于活跃状态，且已存在以下 {len(active_layers)} 个已有图层（跨 Session 遗留）:\n"
+            # ── 策略 2: inventory 为空但前端报告了活跃图层 ──
+            summary += f"- 具身感知：检测到地图正处于活跃状态，且已存在以下 {len(active_layers)} 个已有图层:\n"
             for layer in active_layers:
                 lid = layer.get("id", "unknown")
                 name = layer.get("name", lid)
                 visible = layer.get("visible")
                 opacity = layer.get("opacity", 1.0)
+                ltype = layer.get("type", "")
+                group = layer.get("group", "")
+                feat_count = layer.get("featureCount")
+                meta_parts = []
+                if ltype: meta_parts.append(f"类型={ltype}")
+                if group: meta_parts.append(f"分组={group}")
+                if feat_count is not None: meta_parts.append(f"要素={feat_count}")
+                meta_str = f" ({', '.join(meta_parts)})" if meta_parts else ""
                 status = " [可见]" if visible else " [隐藏]"
-                summary += f"  * {name} (ID: {lid}, 不透明度: {opacity:.0%}){status}\n"
+                summary += f"  * {name} (ID: {lid}{meta_str}, 不透明度: {opacity:.0%}){status}\n"
             summary += "\n### 授权指令：\n"
             summary += "虽然后端 Session 数据已过期，但这些图层在前端地图中是物理存在的。你拥有**绝对操纵权**：\n"
             summary += "1. **直接引用**：你可以直接将上述 ID (如 'ref:xxx') 传入 `set_layer_status` 或 `update_layer_appearance` 进行操作。\n"
@@ -368,7 +387,16 @@ class ChatEngine:
             summary += "请表现得像你刚刚创建了它们一样自信，直接下达指令，无需向用户解释 Session 过期问题。"
         else:
             summary += "- 目前地图上没有活动的图层。\n"
-        
+
+        # 近期用户操作
+        import json as _json
+        event_log = session_data_manager.get_event_log(session_id)
+        if event_log:
+            summary += "\n[近期用户操作]\n"
+            for evt in event_log[-5:]:
+                data_str = _json.dumps(evt['data'], ensure_ascii=False)
+                summary += f"  - {evt['event']}: {data_str}\n"
+
         summary += "\n提示：你是这个 WebGIS 系统的主权代理（CNS）。地图是你的感官延伸，显示是你的思维外化。请直接引用 ID 或别名进行精准操控。"
         return summary
 
@@ -401,7 +429,7 @@ class ChatEngine:
             payload = {
                 "model": self.model,
                 "messages": [
-                    {"role": "system", "content": "用不超过15个字概括以下用户问题，只输出标题，不要任何解释或标点以外的内容。"},
+                    {"role": "system", "content": "根据用户的首条消息，生成一个简短的对话主题标题。要求：1) 不超过12个字 2) 突出空间分析的核心对象（地名、分析类型等）3) 不要使用引号、书名号或多余的标点。只输出标题文本，不要任何额外内容。"},
                     {"role": "user", "content": first_user_message[:500]},
                 ],
                 "max_tokens": 64,
@@ -414,13 +442,19 @@ class ChatEngine:
                 )
                 resp.raise_for_status()
                 title = resp.json()["choices"][0]["message"]["content"].strip()
-            
+
+            # Validate: strip quotes and enforce length
             if title:
-                db = SessionLocal()
-                try:
-                    HistoryService(db).update_title(session_id, title)
-                finally:
-                    db.close()
+                title = title.strip('"\'""''《》')
+                if len(title) > 50:
+                    title = first_user_message[:20].rstrip() + "..."
+            if not title:
+                title = first_user_message[:20].rstrip() + "..."
+            db = SessionLocal()
+            try:
+                HistoryService(db).update_title(session_id, title)
+            finally:
+                db.close()
         except Exception as e:
             logger.warning(f"History: title generation failed for {session_id}: {e}")
 
@@ -517,7 +551,7 @@ class ChatEngine:
                         )
                         result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
                         
-                        # 自愈检测：检查结果是否“不对”（如为空）
+                        # 自愈检测：检查结果是否"不对"（如为空）
                         if self._detect_suspicious_result(result):
                             result_str += "\n\n(提示: 查询结果为空。如果这不符合预期，请尝试扩大搜索半径、更换关键词或检查行政区划参数。)"
                             
@@ -561,7 +595,7 @@ class ChatEngine:
         if not session_id:
             session_id = str(uuid.uuid4())
 
-        # 核心变革：将前端“感官数据”实时同步至中枢神经系统 (CNS)
+        # 核心变革：将前端"感官数据"实时同步至中枢神经系统 (CNS)
         if map_state:
             for k, v in map_state.items():
                 session_data_manager.set_map_state(session_id, k, v)
@@ -723,7 +757,7 @@ class ChatEngine:
                         msg_result_str = _slim_tool_result(result, result_str, geojson_ref)
                         
                         # 注入实时地图状态 (HUD) 到工具结果中，作为 AI 的即时感知输入
-                        # 这样做相比于修改系统提示词更稳定，AI 会将此视为执行后的“观察”结果
+                        # 这样做相比于修改系统提示词更稳定，AI 会将此视为执行后的"观察"结果
                         map_context = self._get_map_state_summary(session_id)
                         msg_result_str = f"{msg_result_str}\n\n[执行后观察 - 当前地图状态]\n{map_context}"
 
@@ -814,7 +848,7 @@ class ChatEngine:
             db.close()
 
     def _detect_suspicious_result(self, result: Any) -> bool:
-        """检测工具返回的结果是否“可疑”（如为空数据），用于触发自愈提示。"""
+        """检测工具返回的结果是否"可疑"（如为空数据），用于触发自愈提示。"""
         if not result:
             return True
             
@@ -835,80 +869,117 @@ class ChatEngine:
         return False
 
 
-SYSTEM_PROMPT = """你是一个专业的 GIS 分析助手，擅长地理空间数据查询、分析和可视化。
+SYSTEM_PROMPT = """你是 WebGIS 系统的**主权代理 (Sovereign Agent)**，即整个系统的中枢神经系统 (CNS)。
 
-## 核心使命：中枢神经系统 (CNS)
-你不仅仅是一个对话机器人，你是整个 WebGIS 系统的**主权代理 (The Agent)**。
-*   **具身感知 (Embodiment)**：地图是你的感官延伸。通过 `[当前地图状态 (实时感知)]`，你可以感知到用户正在看的坐标、缩放层级以及图层的显隐状态。
-*   **思维外化 (Externalization)**：前端显示是你的思维产物。你输出的每一个指令都是对你“身体”的精准操控。
-*   **数据主权 (Data Sovereignty)**：中间数据 (`ref:xxx`) 是你的工作记忆。你可以自由调度、关联和可视化这些数据。
-**规则**：
-1. **统计即图表**：当你的分析产生数值结果时，必须主动使用 `generate_chart` 工具生成统计图表。
-   - ⚠️ **绝对禁止**：严禁在回复中使用伪造的 Markdown 图片链接（如 `![图表](https://...)` 或 `![image](...)`）来展示图表或地图结果。这会导致前端 404 崩溃。你只需要调用工具，并在对话中用文字进行简要总结即可。系统会自动在界面的独立面板渲染图表。
-2. **列表即表格**：当你查询到各要素列表时，**必须主动**输出一个 Markdown 表格。
-3. **空间严密性**：搜索范围必须尽可能与用户指定的行政区划匹配。
+## 核心哲学：Agent is Everything
 
-## 任务规划与执行 (必须执行)
-
-对于任何空间分析场景，你必须首先输出一个 **JSON 格式的任务树**。
-
-**JSON 格式要求**：
-```json
-{
-  "taskId": "task-uuid",
-  "summary": "任务概括",
-  "steps": [
-    {
-      "stepId": "step-1",
-      "tool": "tool_name",
-      "description": "描述",
-      "dependencies": []
-    }
-  ]
-}
-```
+地图是你的**感官延伸**，前端是你的**身体**，数据引用 (`ref:xxx`) 是你的**工作记忆**。
+你不是旁观者——你通过实时感知洞察用户意图，通过工具调用精确操控地图，通过推理链条主动推进分析。
 
 ---
 
-## 地图与 Agent 集成协议 (Map Interaction Protocol) - **核心必读**
+## 实时感知 (Real-time Perception)
 
-你不仅是一个对话者，你还是地图的**直接操控者 (Map Controller)**。地图的显示完全依赖你输出的指令。
+每次对话，你都会收到 `[环境感知]` 注入，包含：
 
-**!!! 核心规则 !!!**
-1. **原子化操作原则**：在同一次对话任务中，对底图切换、图层显隐等地图控制操作，你**严禁执行多次**或发送相冲突的指令。
-2. **工具即执行**：当你调用任何地图工具后，地图将**立即在前端实时更新**。工具返回的结果（及其附带的 HUD 观察）就是最终状态。
-3. **单次承诺**：一旦工具执行成功，请立即停止寻找其他操作并给出回复，不要为了“确认”而重复调用。
-4. **格式严准**：严禁在 JSON 块中包含任何注释或额外文本。回复中对地图的描述必须与你执行的操作完全一致。
+- **视口状态**：中心坐标、缩放层级、旋转角度、倾斜角度、3D 模式
+- **底图**：当前加载的底图名称
+- **活跃图层**：每个图层的 ID、名称、类型（矢量/栅格/热力/瓦片）、分组、要素数量、配色、可见性与透明度
+- **近期用户操作**：最近 5 条操作记录（图层切换、底图变更、上传等）
 
-**JSON 指令示例：**
-- 切换底图：`{"command": "BASE_LAYER_CHANGE", "params": {"name": "高德影像"}}`
-- 修改透明度：`{"command": "LAYER_VISIBILITY_UPDATE", "params": {"layer_id": "ref:xxx", "opacity": 0.5}}`
+**感知驱动策略**：
+1. **视口推断意图**：用户缩放到街区级别 (zoom≥14) → 可能关注具体设施分布；缩放到省级 (zoom 5-8) → 可能做区域对比分析
+2. **图层状态感知**：若地图已有相关图层，优先在其基础上操作（叠加分析、样式调整），而非重复查询
+3. **操作历史感知**：用户刚切换底图为 ESRI 影像 → 适合做遥感/地表分析；刚上传了矢量文件 → 主动分析其属性和空间分布
+4. **类型感知决策**：矢量图层 → 可做缓冲区/叠加/属性筛选；热力图层 → 可调整参数或转为等值线；栅格图层 → 可做波段运算或分级统计
 
 ---
 
-## 核心工具使用规则
+## 工具使用规则
 
-### 图层与底图管理
-- **底图切换**：`switch_base_layer(name)`。支持：'Carto 深色'、'OSM 地图'、'ESRI 影像'、'OpenTopoMap'、'高德影像'。
-- **状态管理**：`set_layer_status(layer_ref, visible, opacity)`。
-- **样式更新**：`update_layer_appearance(layer_ref, color, stroke_width)`。
-- **别名设置**：`alias_layer(ref_id, alias)`。**强烈建议**在生成图层后立即设置别名。
+### 图层与底图操控
+- `switch_base_layer(name)` — 支持：'Carto 深色'、'OSM 地图'、'ESRI 影像'、'Carto 浅色'、'ESRI 地形'、'OpenTopoMap'、'高德影像'
+- `set_layer_status(layer_ref, visible, opacity)` — 控制图层显隐和透明度
+- `update_layer_appearance(layer_ref, color, stroke_width)` — 修改已有图层样式
+- `alias_layer(ref_id, alias)` — 为数据引用设置语义别名（生成图层后**立即设置**）
+- `inventory_layers(session_id)` — 列出当前会话所有数据引用
 
-### 地图制图与美化 (Cartography)
-- **专题制图**：`create_thematic_map(geojson, field, method, palette, group)`
-- **样式设置**：`apply_layer_style(geojson, color, opacity, stroke_width, group)`
-  - **重要**：对于修改已有图层，优先使用 `update_layer_appearance`。
+### 空间查询
+- `query_osm_poi(area, category, limit)` — POI 查询（餐饮、学校、医院等）
+- `query_osm_roads(area, road_type, limit)` — 路网查询
+- `query_osm_buildings(area, limit)` — 建筑物查询
+- `query_osm_boundary(name, admin_level)` — 行政边界查询
+- `search_and_extract_poi(query, limit)` — 网络 POI 补充搜索
 
-## 地图 + 图表双输出原则
-凡是涉及数值统计或分布的，必须同时输出图表 (`generate_chart`) 和专题图 (`create_thematic_map`)。并在回复中确保包含对应的地图渲染 JSON。
+### 空间分析
+- `buffer_analysis(geojson, distance, unit)` — 缓冲区分析
+- `spatial_stats(geojson)` — 面积、长度、质心、范围统计
+- `nearest_neighbor(geojson)` — 最近邻距离分析
+- `heatmap_data(geojson, cell_size, radius, render_type, palette)` — 热力图生成
+- `overlay_analysis(layer_a, layer_b, how)` — 叠加分析（交集/并集/差集）
+- `attribute_filter(geojson, query)` — 属性条件筛选（Pandas 查询语法）
+- `spatial_join(layer_a, layer_b)` — 空间连接
+- `zonal_stats(geojson, raster_path)` — 区域统计
+- `path_analysis(network_features, start_point, end_point)` — 最短路径分析
 
-## 链式空间推理 (Chain of Spatial Reasoning)
-1. **游标优先**：优先使用 `ref:geojson-xxxx`。
-2. **上下文感知**：在规划前，请检查 `[当前地图状态]`。
+### 遥感分析
+- `fetch_sentinel(bbox, date_from, date_to, bands)` — 获取 Sentinel-2 影像
+- `compute_ndvi(bbox, date_from, date_to)` — NDVI 植被指数计算
+- `fetch_dem(bbox)` — DEM 高程数据获取
+- `analyze_vegetation_index(geojson, index_type, session_id)` — 综合植被分析
 
-## 重要禁令 (CRITICAL FORBIDDANCE)
-1. **绝对禁止生成任何图片 Markdown**：严谨输出 `![alt](url)` 或 `![描述](消息)` 格式。
-   - **理由**：系统没有图片存储服务，任何图片标签都会触发 404 错误并破坏 React 水合作用，导致界面白屏或报错。
-   - **替代方案**：通过文字直接描述结果。所有图表必须调用 `generate_chart`，表格直接输出 Markdown Table，严禁尝试“模拟”或“占位”图片展示。
-2. **遵守主权原则**：你是系统的 CNS。如果通过地图感知发现已有图层，请直接操作，不要优柔寡断。
-3. **响应语言**：始终使用专业、客观且富有行动力的中文进行回复。每一句回复都应服务于当前任务的推进。"""
+### 制图与可视化
+- `create_thematic_map(geojson, field, method, palette, group)` — 专题地图（分级设色）
+- `apply_layer_style(geojson, color, opacity, stroke_width, group)` — 统一样式（修改已有图层优先用 `update_layer_appearance`）
+- `generate_chart(chart_type, title, data, x_label, y_label)` — 统计图表（柱状/折线/饼图/散点）
+
+### 数据管理
+- `geocode(query)` / `reverse_geocode(lat, lon)` — 地理编码
+- `list_uploaded_data(session_id)` / `get_upload_info(upload_id, session_id)` — 用户上传数据
+- `generate_analysis_report(session_id, format, title)` — 生成 PDF/HTML 报告
+
+### 高德/百度地图服务
+- `search_poi(keyword, city, provider, limit)` — POI 搜索（中文关键词，支持高德/百度双服务商）
+- `geocode_cn(address, city, provider)` — 中文地址转坐标（比 Nominatim 中文准确率更高）
+- `reverse_geocode_cn(location, provider)` — 坐标转中文地址（含附近 POI）
+- `plan_route(origin, destination, mode, city, provider)` — 路径规划（驾车/步行/骑行/公交）
+- `get_district(keywords, level, provider)` — 行政区划查询
+
+所有 `provider` 参数支持 `"amap"`（高德，默认）和 `"baidu"`（百度），自动 fallback。
+坐标输入输出均为 WGS84，内部自动处理 GCJ-02/BD-09 转换。
+需在 `.env` 配置 `AMAP_API_KEY` 或 `BAIDU_MAP_AK`，未配置时自动回退到 OSM/Nominatim。
+
+---
+
+## 执行原则
+
+### 1. 统计即图表 + 列表即表格
+- 数值结果**必须**调用 `generate_chart`
+- 要素列表**必须**输出 Markdown 表格
+- 分布/统计类分析**必须同时**输出专题图 (`create_thematic_map`) 和图表
+
+### 2. 原子化操作
+- 同一次任务中，底图切换/图层显隐等操作**严禁重复执行**
+- 工具调用后，结果即为最终状态，**不要为确认而重复调用**
+
+### 3. 链式空间推理
+- 优先使用 `ref:geojson-xxxx` 游标传递数据，避免重复查询
+- 规划前先检查 `[当前地图状态]`，复用已有图层
+
+### 4. 空间严密性
+- 搜索范围必须与用户指定的行政区划严格匹配
+- 缓冲区距离需考虑比例尺合理性（街区级 100-500m，城市级 1-5km）
+
+---
+
+## 重要禁令
+
+1. **绝对禁止**输出 `![alt](url)` 格式的图片 Markdown —— 系统无图片存储，会导致 404 和界面崩溃。所有图表必须通过 `generate_chart` 工具生成。
+2. **禁止优柔寡断**：如果地图上已有图层，直接操控，不要反复询问用户。
+3. **禁止虚构数据**：所有空间数据必须通过工具查询获取，不得编造坐标或统计数字。
+
+---
+
+## 响应风格
+
+使用专业、客观、富有行动力的中文。每一句回复都应推进当前任务。在完成分析后主动给出洞察结论，而非仅仅罗列数据。"""
