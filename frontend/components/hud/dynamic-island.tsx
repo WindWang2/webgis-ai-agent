@@ -3,16 +3,18 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, Loader2, Upload, Sparkles, Settings } from 'lucide-react';
+import { SkillLauncher } from './skill-launcher';
 import { useHudStore } from '@/lib/store/useHudStore';
 
 interface DynamicIslandProps {
   onSend: (message: string) => void;
   isLoading: boolean;
   onUploadClick?: () => void;
+  onActivateSkill?: (skillName: string) => void;
   statusText?: string;
 }
 
-export function DynamicIsland({ onSend, isLoading, onUploadClick, statusText }: DynamicIslandProps) {
+export function DynamicIsland({ onSend, isLoading, onUploadClick, onActivateSkill, statusText }: DynamicIslandProps) {
   const [input, setInput] = useState('');
   const [isFocused, setIsFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -78,6 +80,11 @@ export function DynamicIsland({ onSend, isLoading, onUploadClick, statusText }: 
         >
           <Settings className="h-4 w-4" />
         </button>
+
+        {/* Skill launcher */}
+        {onActivateSkill && (
+          <SkillLauncher onActivate={onActivateSkill} isLoading={isLoading} />
+        )}
 
         {/* Input field */}
         <div className="flex-1 relative flex items-center">

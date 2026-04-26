@@ -1,5 +1,5 @@
 "use client"
-import { useState, useCallback, useEffect } from "react"
+import { useState, useCallback, useEffect, useRef } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { MapPanel } from "@/components/map/map-panel"
 import { HudPanel } from "@/components/hud/hud-panel"
@@ -11,6 +11,7 @@ import { DataHud } from "@/components/panel/results-panel"
 import { SettingsPanel } from "@/components/hud/settings-panel"
 import { useHudStore } from "@/lib/store/useHudStore"
 import { streamChat, SSEEventType } from "@/lib/api/chat"
+import { getSkills } from '@/lib/api/skills'
 import { useWebSocket } from "@/lib/hooks/use-websocket"
 import type { GeoJSONGeometry, GeoJSONFeature } from "@/lib/types"
 import type { ChatSession } from "@/lib/types/chat"
@@ -85,6 +86,7 @@ export default function Home() {
   const [sessionId, setSessionId] = useState<string>()
   const [currentStep, setCurrentStep] = useState<SSEEventType | "error" | null>(null)
   const [showUploadZone, setShowUploadZone] = useState(false)
+  const abortControllerRef = useRef<AbortController | null>(null)
 
   /* ─── Session history state ─── */
   const [sessions, setSessions] = useState<ChatSession[]>([])
@@ -118,7 +120,11 @@ export default function Home() {
   }, [sessionId, refreshSessions])
 
   const handleSelectSession = useCallback(async (sid: string) => {
+    abortControllerRef.current?.abort()
+    // Clear current layers before switching
+    useHudStore.getState().clearLayers()
     try {
+      // Restore chat messages
       const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}`)
       const data = await res.json()
       if (data.messages && data.messages.length > 0) {
@@ -128,7 +134,6 @@ export default function Home() {
           content: m.content,
           timestamp: new Date(m.timestamp),
         }))
-        // Append a session-context notice so the Agent knows user switched
         restored.push({
           id: `session-switch-${Date.now()}`,
           role: "assistant",
@@ -139,12 +144,39 @@ export default function Home() {
       }
       setSessionId(sid)
       setShowHistory(false)
+
+      // Restore map state for this session
+      const stateRes = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}/map-state`)
+      if (stateRes.ok) {
+        const stateData = await stateRes.json()
+        const state = stateData?.map_state
+        if (state) {
+          const store = useHudStore.getState()
+          if (state.viewport) {
+            store.setViewport(state.viewport.center, state.viewport.zoom, state.viewport.bearing, state.viewport.pitch)
+          }
+          if (state.base_layer) store.setBaseLayer(state.base_layer)
+          for (const layer of state.layers || []) {
+            if (layer._refId && layer._refId.startsWith("ref:")) {
+              fetch(`${API_BASE}/api/v1/layers/data/${layer._refId}?session_id=${sid}`)
+                .then(r => r.ok ? r.json() : null)
+                .then(geojson => {
+                  if (geojson && (geojson.type === "FeatureCollection" || geojson.features)) {
+                    store.addLayer({ ...layer, source: geojson })
+                  }
+                })
+                .catch(() => {})
+            }
+          }
+        }
+      }
     } catch (err) {
       console.error("Load session failed:", err)
     }
   }, [])
 
   const handleNewSession = useCallback(() => {
+    abortControllerRef.current?.abort()
     setSessionId(undefined)
     setMessages([{
       id: "1",
@@ -173,7 +205,7 @@ export default function Home() {
     const savedSessionId = localStorage.getItem("webgis_session_id")
     if (savedSessionId) {
       setSessionId(savedSessionId)
-      // Fetch history if needed
+      // Fetch history
       fetch(`${API_BASE}/api/v1/chat/sessions/${savedSessionId}`)
         .then(res => res.json())
         .then(data => {
@@ -187,6 +219,44 @@ export default function Home() {
           }
         })
         .catch(err => console.error("Restore session history failed:", err))
+
+      // Restore map state (viewport + layers) from backend
+      fetch(`${API_BASE}/api/v1/chat/sessions/${savedSessionId}/map-state`)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (!data?.map_state) return
+          const state = data.map_state
+          const store = useHudStore.getState()
+
+          // Restore viewport
+          if (state.viewport) {
+            const vp = state.viewport
+            store.setViewport(vp.center, vp.zoom, vp.bearing, vp.pitch)
+          }
+
+          // Restore base layer
+          if (state.base_layer) {
+            store.setBaseLayer(state.base_layer)
+          }
+
+          // Restore layers — re-fetch GeoJSON data via ref_ids
+          const layers = state.layers || []
+          for (const layer of layers) {
+            if (layer._refId && layer._refId.startsWith("ref:")) {
+              fetch(`${API_BASE}/api/v1/layers/data/${layer._refId}?session_id=${savedSessionId}`)
+                .then(r => r.ok ? r.json() : null)
+                .then(geojson => {
+                  if (geojson && (geojson.type === "FeatureCollection" || geojson.features)) {
+                    store.addLayer({ ...layer, source: geojson })
+                  }
+                })
+                .catch(() => {})
+            } else if (layer.source && typeof layer.source === "object") {
+              store.addLayer(layer)
+            }
+          }
+        })
+        .catch(() => {})
     }
   }, [])
 
@@ -199,6 +269,11 @@ export default function Home() {
 
   // Initialize WebSocket connection
   useWebSocket(sessionId)
+
+  // Abort in-flight SSE stream on unmount
+  useEffect(() => {
+    return () => { abortControllerRef.current?.abort() }
+  }, [])
 
   /* ─── Tool result handler ─── */
   const handleToolResult = useCallback(
@@ -308,6 +383,7 @@ export default function Home() {
             group: result.group || "analysis",
             source: geojson,
             style: layerStyle,
+            _refId: result.geojson_ref || undefined,
           })
         }
       }
@@ -378,6 +454,11 @@ export default function Home() {
       setShowScanEffect(true)
       setTimeout(() => setShowScanEffect(false), 2000)
 
+      // Cancel any in-flight SSE stream
+      abortControllerRef.current?.abort()
+      abortControllerRef.current = new AbortController()
+      const currentSignal = abortControllerRef.current.signal
+
       // Read current state from store at call time (avoids reactive deps)
       const { viewport: currentViewport, layers: currentLayers, baseLayer: currentBaseLayer, is3D: currentIs3D } = useHudStore.getState()
       const mapState = {
@@ -396,6 +477,7 @@ export default function Home() {
           visible: l.visible,
           opacity: l.opacity,
           group: l.group,
+          _refId: l._refId,
           featureCount: l.source && typeof l.source === 'object' && 'features' in l.source
             ? (l.source as any).features?.length || 0 : undefined,
           bbox: l.source && typeof l.source === 'object' && 'features' in l.source
@@ -426,7 +508,13 @@ export default function Home() {
         let assistantContent = ""
         setCurrentStep("thinking")
 
-        for await (const event of streamChat(messageText, sessionId, mapState)) {
+        let skillName: string | undefined
+        const skillMatch = messageText.match(/^使用技能「(.+?)」/)
+        if (skillMatch) {
+          skillName = skillMatch[1]
+        }
+
+        for await (const event of streamChat(messageText, sessionId, mapState, currentSignal, skillName)) {
           const { event: eventType, data: dataRaw } = event
           const data = dataRaw as any
 
@@ -557,6 +645,11 @@ export default function Home() {
     },
     [isLoading, sessionId, taskStart, stepStart, stepResult, stepError, taskComplete, clearTask, handleToolResult, dispatchAction]
   )
+
+  const handleActivateSkill = useCallback((skillName: string) => {
+    if (isLoading) return
+    handleSend(`使用技能「${skillName}」开始分析`)
+  }, [isLoading, handleSend])
 
   /* ─── System Callback Effect ─── */
   const pendingSystemMessage = useHudStore((s: any) => s.pendingSystemMessage);
@@ -743,6 +836,7 @@ export default function Home() {
         onSend={handleSend}
         isLoading={isLoading}
         onUploadClick={() => setShowUploadZone((prev) => !prev)}
+        onActivateSkill={handleActivateSkill}
         statusText={statusText}
       />
 

@@ -52,16 +52,20 @@ export interface SSEEvent {
 export async function* streamChat(
   message: string,
   sessionId?: string,
-  mapState?: Record<string, unknown>
+  mapState?: Record<string, unknown>,
+  signal?: AbortSignal,
+  skillName?: string
 ): AsyncGenerator<SSEEvent> {
   const response = await fetch(`${API_BASE}/api/v1/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ 
-      message, 
+    body: JSON.stringify({
+      message,
       session_id: sessionId,
-      map_state: mapState 
+      map_state: mapState,
+      skill_name: skillName
     }),
+    signal,
   });
 
   if (!response.ok) {
@@ -77,6 +81,10 @@ export async function* streamChat(
   let currentData = "";
 
   while (true) {
+    if (signal?.aborted) {
+      reader.cancel();
+      break;
+    }
     const { done, value } = await reader.read();
     if (done) break;
 
