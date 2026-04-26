@@ -79,6 +79,14 @@ def register_interpolation_network_tools(registry: ToolRegistry):
         grid_x, grid_y, xmin, ymin, xmax, ymax = _build_regular_grid(gdf, cell_size, utm_bounds)
         nx, ny = len(grid_x), len(grid_y)
 
+        # Grid safety limit to prevent OOM
+        MAX_GRID_CELLS = 100_000
+        if nx * ny > MAX_GRID_CELLS:
+            cell_size = max(cell_size, ((xmax - xmin) * (ymax - ymin)) ** 0.5 / (MAX_GRID_CELLS ** 0.5))
+            grid_x, grid_y, xmin, ymin, xmax, ymax = _build_regular_grid(gdf, cell_size, utm_bounds)
+            nx, ny = len(grid_x), len(grid_y)
+            logger.warning(f"IDW grid auto-adjusted to {nx}x{ny}={nx*ny} cells (cell_size={cell_size:.0f}m)")
+
         # IDW computation using vectorized distance matrix
         grid_points = np.array([(gx, gy) for gy in grid_y for gx in grid_x])
         dist = distance_matrix(grid_points, coords)
@@ -223,6 +231,14 @@ def register_interpolation_network_tools(registry: ToolRegistry):
         grid_x, grid_y, xmin, ymin, xmax, ymax = _build_regular_grid(gdf, cell_size, utm_bounds)
         nx, ny = len(grid_x), len(grid_y)
 
+        # Grid safety limit to prevent OOM
+        MAX_GRID_CELLS = 100_000
+        if nx * ny > MAX_GRID_CELLS:
+            cell_size = max(cell_size, ((xmax - xmin) * (ymax - ymin)) ** 0.5 / (MAX_GRID_CELLS ** 0.5))
+            grid_x, grid_y, xmin, ymin, xmax, ymax = _build_regular_grid(gdf, cell_size, utm_bounds)
+            nx, ny = len(grid_x), len(grid_y)
+            logger.warning(f"Kriging grid auto-adjusted to {nx}x{ny}={nx*ny} cells (cell_size={cell_size:.0f}m)")
+
         # Precompute LU factorization of kriging matrix (constant for all prediction points)
         A = vario(dist_points)
         np.fill_diagonal(A, 0)
@@ -317,26 +333,27 @@ def register_interpolation_network_tools(registry: ToolRegistry):
         ring_distances = [distance * (i + 1) / n_rings for i in range(n_rings)]
         out_features = []
 
-        for ring_dist in ring_distances:
-            n_points = max(int(2 * np.pi * ring_dist / resolution), 16)
-            angles = np.linspace(0, 2 * np.pi, n_points, endpoint=False)
+        prev_circle = None
+        for ring_idx, ring_dist in enumerate(ring_distances):
+            circle_geom = Point(cx, cy).buffer(ring_dist, resolution=64)
 
-            # Generate circle points
-            ring_x = cx + ring_dist * np.cos(angles)
-            ring_y = cy + ring_dist * np.sin(angles)
+            # Create donut by subtracting previous ring
+            if prev_circle is not None:
+                donut = circle_geom.difference(prev_circle)
+            else:
+                donut = circle_geom
 
-            circle_geom = Point(cx, cy).buffer(ring_dist, resolution=int(n_points / 4))
-            circle_wgs84 = gpd.GeoSeries([circle_geom], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
-
+            donut_wgs84 = gpd.GeoSeries([donut], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
             out_features.append({
                 "type": "Feature",
-                "geometry": mapping(circle_wgs84),
+                "geometry": mapping(donut_wgs84),
                 "properties": {
                     "distance_m": round(ring_dist, 0),
-                    "area_km2": round(float(circle_geom.area) / 1e6, 2),
-                    "ring": ring_distances.index(ring_dist) + 1,
+                    "area_km2": round(float(donut.area) / 1e6, 2),
+                    "ring": ring_idx + 1,
                 },
             })
+            prev_circle = circle_geom
 
         return {
             "type": "FeatureCollection",
@@ -403,14 +420,18 @@ def register_interpolation_network_tools(registry: ToolRegistry):
         dest_names = [f"P{i}" for i in range(len(dest_gdf))]
 
         # Try to use name from properties
-        for i, row in orig_gdf.iterrows():
-            name = row.get("name") or row.get("Name") or row.get("名称")
-            if name:
-                orig_names[i] = str(name)[:20]
-        for i, row in dest_gdf.iterrows():
-            name = row.get("name") or row.get("Name") or row.get("名称")
-            if name:
-                dest_names[i] = str(name)[:20]
+        for i, (_, row) in enumerate(orig_gdf.iterrows()):
+            for key in ("name", "Name", "名称"):
+                val = row.get(key)
+                if val and isinstance(val, str):
+                    orig_names[i] = val[:20]
+                    break
+        for i, (_, row) in enumerate(dest_gdf.iterrows()):
+            for key in ("name", "Name", "名称"):
+                val = row.get(key)
+                if val and isinstance(val, str):
+                    dest_names[i] = val[:20]
+                    break
 
         matrix = {}
         for i, oname in enumerate(orig_names):

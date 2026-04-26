@@ -1,7 +1,6 @@
 """Chat API Route - SSE 流式对话"""
 import json
 import logging
-from collections import OrderedDict
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -166,10 +165,6 @@ async def clear_session(session_id: str, _user: dict = Depends(get_current_user_
 async def list_tools():
     """列出可用工具"""
     return {"tools": registry.get_schemas()}
-
-
-# 工具结果存储（内存中，按 session 隔离）
-_tool_results_by_session: dict = {}
 
 
 class ToolExecuteRequest(BaseModel):

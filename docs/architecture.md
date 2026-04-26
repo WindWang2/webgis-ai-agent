@@ -30,11 +30,12 @@ graph TD
     C{SSE 流推网关} -.-> |保活检测 :keep-alive| B1
     C1[Chat 路由进程] --> C
     C2[空间取件路由 fetch] --> B2
+    C3[WebSocket 感知通道] -.-> |实时双向| B1
     end
     B1 -->|POST /chat/stream| C1
     
     subgraph 大脑中枢 ["AI Agent 调度层"]
-    D[Orchestrator 编排器] --> |Tool 调用指令| D1(Claude 3.5+ API)
+    D[Orchestrator 编排器] --> |Tool 调用指令| D1(LLM API — 兼容 OpenAI 格式)
     D1 --> |生成 JSON 架子| D
     D --> |MCP 协议透传| D2(MCP 外网探测器节点)
     end
@@ -47,7 +48,7 @@ graph TD
     D -->|异步投递算子| E
     
     subgraph 数据弹药库 ["海量时空与流存储"]
-    F[(Redis 集群)] --> |暂存超大 GeoJSON 提货券| C2
+    F[(Redis 集群)] --> |Celery 结果后端 & 会话缓存| C2
     F1[(PostGIS / SQLite)] --> |落盘长期存储| E
     end
     E --> F
@@ -61,7 +62,7 @@ graph TD
 ### 3.1 Fetch-on-Demand (按需提件流)
 在传统的 LLM+GIS 应用中，由于大模型需要输出计算结果，常常会导致上下文被 50MB 的 GeoJSON 所撑爆。
 **V2.0 解决方案**：
-1. **Tool 层封箱**：当后端 Python 函数运行完毕获得大尺寸 `FeatureCollection` 时，生成一个唯一随机签名，如 `ref_id: geojson_09a8b7c`。数据本体被悄然封存在 Redis 中，过期时间设为 1 小时。
+1. **Tool 层封箱**：当后端 Python 函数运行完毕获得大尺寸 `FeatureCollection` 时，生成一个唯一随机签名，如 `ref_id: ref:geojson-a1b2c3d4`。数据本体被存入内存 `SessionDataManager`（LRU 淘汰策略，每 session 最多 200 条）。
 2. **LLM 传输层**：大模型仅看到 `{"layer_id": "geojson_09a8b7c", "render_type": "heatmap"}` 这样的虚壳签名，立刻返回给主路由。
 3. **SSE 极简下发**：网关实时推送提货码，前端 HUD 同步展示任务进度。
 4. **前端提货**：客户端 React 拦截器拼装出 `layer_id` 后，通过 `/api/v1/layer/{id}/data` 发起独立的 HTTP 拉取任务。

@@ -488,6 +488,110 @@ class ChatEngine:
             response.raise_for_status()
             return response.json()
 
+    async def _call_llm_stream(self, messages: list[dict], tools: Optional[list] = None) -> AsyncGenerator[tuple[str, dict], None]:
+        """Stream LLM API response. Yields (event_type, data) tuples.
+        event_type: 'token' for content chunks, 'done' when stream ends.
+        """
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}"
+        }
+        if self.use_prompt_caching:
+            headers["X-Prompt-Cache"] = "1"
+            if "deepseek" in self.base_url.lower():
+                headers["deepseek-caching"] = "true"
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": 16384,
+            "stream": True,
+        }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
+        # Accumulated content and tool_calls from deltas
+        content_parts: list[str] = []
+        tool_calls_accum: dict[int, dict] = {}  # index -> {id, function: {name, arguments}}
+        finish_reason: Optional[str] = None
+
+        timeout = httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream("POST", f"{self.base_url}/chat/completions", headers=headers, json=payload) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if not line.startswith("data: "):
+                        continue
+
+                    data_str = line[6:]  # strip "data: " prefix
+                    if data_str == "[DONE]":
+                        break
+
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        logger.warning(f"Failed to parse SSE chunk: {data_str[:200]}")
+                        continue
+
+                    choices = chunk.get("choices", [])
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta", {})
+                    finish_reason = choices[0].get("finish_reason") or finish_reason
+
+                    # Handle content delta
+                    delta_content = delta.get("content")
+                    if delta_content:
+                        content_parts.append(delta_content)
+                        yield ("token", {"content": delta_content})
+
+                    # Handle tool_calls delta
+                    delta_tool_calls = delta.get("tool_calls")
+                    if delta_tool_calls:
+                        for tc_delta in delta_tool_calls:
+                            idx = tc_delta.get("index", 0)
+                            if idx not in tool_calls_accum:
+                                tool_calls_accum[idx] = {
+                                    "id": "",
+                                    "type": "function",
+                                    "function": {"name": "", "arguments": ""},
+                                }
+                            tc_entry = tool_calls_accum[idx]
+                            if tc_delta.get("id"):
+                                tc_entry["id"] = tc_delta["id"]
+                            if tc_delta.get("type"):
+                                tc_entry["type"] = tc_delta["type"]
+                            fn_delta = tc_delta.get("function", {})
+                            if fn_delta.get("name"):
+                                tc_entry["function"]["name"] += fn_delta["name"]
+                            if fn_delta.get("arguments"):
+                                tc_entry["function"]["arguments"] += fn_delta["arguments"]
+
+        # Assemble the final message from accumulated deltas
+        assembled_content = "".join(content_parts)
+        assembled_message: dict = {"role": "assistant", "content": assembled_content}
+
+        if tool_calls_accum:
+            # Sort by index and build list
+            assembled_tool_calls = []
+            for idx in sorted(tool_calls_accum.keys()):
+                tc = tool_calls_accum[idx]
+                assembled_tool_calls.append({
+                    "id": tc["id"],
+                    "type": tc.get("type", "function"),
+                    "function": {
+                        "name": tc["function"]["name"],
+                        "arguments": tc["function"]["arguments"],
+                    },
+                })
+            assembled_message["tool_calls"] = assembled_tool_calls
+
+        yield ("done", {"message": assembled_message, "finish_reason": finish_reason})
+
     async def chat(self, message: str, session_id: Optional[str] = None, map_state: Optional[dict] = None) -> dict:
         """非流式对话"""
         if not session_id:
@@ -628,9 +732,17 @@ class ChatEngine:
                 return
 
             tools = self.registry.get_schemas() if self.registry.get_schemas() else None
-            response = await self._call_llm(messages_with_context, tools)
-            choice = response.get("choices", [{}])[0]
-            assistant_msg = choice.get("message", {})
+
+            # ── Streaming LLM call: yield tokens in real-time ──
+            streamed_content_parts: list[str] = []
+            assistant_msg: dict = {}
+            async for event_type, event_data in self._call_llm_stream(messages_with_context, tools):
+                if event_type == "token":
+                    # Forward each token chunk to the frontend for real-time display
+                    streamed_content_parts.append(event_data["content"])
+                    yield _sse_event("token", {"content": event_data["content"], "session_id": session_id})
+                elif event_type == "done":
+                    assistant_msg = event_data["message"]
 
             # 检查是否有 tool_calls（OpenAI 标准格式或 MiniMax XML 格式）
             standard_calls = assistant_msg.get("tool_calls") or []
@@ -648,8 +760,10 @@ class ChatEngine:
                     content_text = re.sub(r'\s*minimax:tool_call[\s\S]*', '', content_text).strip()
 
                 # 将规划文本推送到前端（工具调用前的思考/规划内容）
+                # For streaming path, content was already streamed as token events,
+                # but emit a content event too for backward compat with clients expecting it
                 if content_text:
-                    yield f"event: content\ndata: {json.dumps({'content': content_text + '\n', 'session_id': session_id}, ensure_ascii=False)}\n\n"
+                    yield _sse_event("content", {"content": "\n", "session_id": session_id})
 
                 entry: dict = {"role": "assistant", "content": content_text}
                 if standard_calls:
@@ -680,7 +794,7 @@ class ChatEngine:
                     })
 
                     # 现有 tool_call 事件（保持兼容）
-                    yield f"event: tool_call\ndata: {json.dumps({'name': tool_name, 'arguments': tool_args_raw}, ensure_ascii=False)}\n\n"
+                    yield _sse_event("tool_call", {"name": tool_name, "arguments": tool_args_raw})
 
                     # 循环哨兵：如果在同一次对话中重复执行完全相同的指令，直接返回拦截
                     tool_key = (tool_name, str(tool_args_raw))
@@ -751,7 +865,7 @@ class ChatEngine:
                         })
 
                         # 现有 tool_result 事件 (使用流式脱敏)
-                        yield f"event: tool_result\ndata: {json.dumps({'name': tool_name, 'result': slim_result, 'session_id': session_id}, ensure_ascii=False)}\n\n"
+                        yield _sse_event("tool_result", {"name": tool_name, "result": slim_result, "session_id": session_id})
 
                         # 存入 messages 时压缩大型结果，避免撑爆 LLM 上下文
                         msg_result_str = _slim_tool_result(result, result_str, geojson_ref)
@@ -784,7 +898,7 @@ class ChatEngine:
                         msg_result_str = _construct_self_healing_message(tool_name, error_msg, error_type)
                         
                         # 3. 发送给前端兼容事件
-                        yield f"event: tool_result\ndata: {json.dumps({'name': tool_name, 'result': msg_result_str, 'session_id': session_id}, ensure_ascii=False)}\n\n"
+                        yield _sse_event("tool_result", {"name": tool_name, "result": msg_result_str, "session_id": session_id})
 
                     if standard_calls:
                         messages.append({
@@ -811,13 +925,14 @@ class ChatEngine:
 
                 continue
             else:
-                # 最终回复
+                # 最终回复 - content was already streamed token-by-token above
                 content = assistant_msg.get("content", "")
                 messages.append({"role": "assistant", "content": content})
                 await self._save_msg_async(session_id, "assistant", content)
 
-                # 现有 content 事件（保持兼容）
-                yield f"event: content\ndata: {json.dumps({'content': content, 'session_id': session_id}, ensure_ascii=False)}\n\n"
+                # Emit a final content event (empty, since tokens were already sent)
+                # This signals to the frontend that the message is complete
+                yield _sse_event("content", {"content": "", "session_id": session_id, "streaming_done": True})
 
                 # task_complete
                 self.tracker.complete_task(task.id)
@@ -832,7 +947,7 @@ class ChatEngine:
 
         self.tracker.fail_task(task.id, "达到最大工具调用轮数")
         yield _sse_event("task_error", {"task_id": task.id, "error": "达到最大轮数"})
-        yield f"event: content\ndata: {json.dumps({'content': '达到最大工具调用轮数', 'session_id': session_id}, ensure_ascii=False)}\n\n"
+        yield _sse_event("content", {"content": "达到最大工具调用轮数", "session_id": session_id})
         yield _sse_event("done", {"session_id": session_id})
 
     def clear_session(self, session_id: str):
@@ -929,6 +1044,9 @@ SYSTEM_PROMPT = """你是 WebGIS 系统的**主权代理 (Sovereign Agent)**，�
 - `kriging_interpolation(geojson, value_field, cell_size, variogram_model, nugget, bounds)` — 普通克里金插值
 - `service_area(center, distance, n_rings, resolution)` — 服务区分析（等距缓冲区）
 - `od_matrix(origins, destinations, method)` — 起讫点距离矩阵
+- `voronoi_polygons(geojson, clip_bounds)` — Voronoi/泰森多边形，按最近邻划分空间势力范围
+- `convex_hull(geojson, group_by)` — 凸包分析，计算点群最小凸多边形（支持分组）
+- `multi_ring_buffer(geojson, distances, merge_rings)` — 多环缓冲区，生成同心环带
 
 ### 遥感分析
 - `fetch_sentinel(bbox, date_from, date_to, bands)` — 获取 Sentinel-2 影像

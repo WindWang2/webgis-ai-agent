@@ -1,9 +1,9 @@
-# Code Review & Integrity Standards (V2.1 Core)
+# Code Review & Integrity Standards (V3.2 Core)
 
-**Date**: 2026-04-12
+**Date**: 2026-04-27
 **Scope**: Full Stack (FastAPI + Next.js + Celery)
 
-This document establishes the **V2.0 Engineering Invariants**. All future Pull Requests MUST be audited against these rules to prevent system regression into the V1.0 bottleneck states.
+This document establishes the **V3.x Engineering Invariants**. All future Pull Requests MUST be audited against these rules to prevent system regression into the V1.0 bottleneck states.
 
 ---
 
@@ -28,6 +28,14 @@ This document establishes the **V2.0 Engineering Invariants**. All future Pull R
 ### 5. 前端渲染并发锁 (Frontend isUpdatingRef)
 - **Rule**: 任何引起 `MapLibre` 图层增删、显隐状态变化的 `useEffect` 或 `renderLayers`，必须受到互斥锁保护。
 - **Audit**: 在 `map-panel.tsx` 中，`isUpdatingRef.current = true` 与 `try...finally` 配对使用验证。禁止重排引发 React 的渲染死循环。
+
+### 6. SSE 事件格式统一 (SSE Event Format Consistency)
+- **Rule**: 所有 SSE 事件必须通过 `_sse_event()` 辅助函数生成，禁止直接使用 `f"event: ...\ndata: ...\n\n"` 格式。
+- **Audit**: `_sse_event()` 包含序列化安全保护（`_serialize_sse_data`），防止 JSON 编码失败导致流中断。
+
+### 7. 双通道感知同步 (Dual-Channel Perception Sync)
+- **Rule**: 前端必须同时通过 SSE `map_state` 参数和 WebSocket 感知通道上报地图状态。
+- **Audit**: `page.tsx` 的 `handleSend` 必须传递 `mapState`；图层操作必须通过 `pushPerception()` 同步到后端。
 
 ---
 

@@ -140,5 +140,22 @@ class SessionDataManager:
             self.clear_session(sid)
         logger.info(f"Cleaned up {len(to_remove)} idle sessions")
 
-# 单例模式供全局使用
-session_data_manager = SessionDataManager()
+def create_session_data_manager():
+    """Factory: returns Redis-backed or in-memory manager based on config."""
+    from app.core.config import settings
+    if settings.USE_REDIS:
+        try:
+            from app.services.session_data_redis import RedisSessionDataManager
+            manager = RedisSessionDataManager(settings.REDIS_URL)
+            # Verify Redis is actually reachable
+            manager.ping()
+            logger.info("SessionDataManager: using Redis backend")
+            return manager
+        except Exception as e:
+            logger.warning(f"Redis unavailable ({e}), falling back to in-memory")
+    logger.info("SessionDataManager: using in-memory backend")
+    return SessionDataManager()
+
+
+# Singleton - created once at import time via factory
+session_data_manager = create_session_data_manager()
