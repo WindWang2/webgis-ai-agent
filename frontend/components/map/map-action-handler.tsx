@@ -73,8 +73,6 @@ export function MapActionHandler() {
     const map = mapInstance.getMap();
     if (!map) return;
 
-    console.log('[MapActionHandler] Processing action:', action.command, 'on map:', map.getContainer().id);
-
     try {
       switch (action.command) {
         case 'add_layer': {
@@ -175,7 +173,6 @@ export function MapActionHandler() {
             }
 
             if (idx !== -1) {
-              console.log('[MapActionHandler] Directly setting base layer to:', MAP_STYLES[idx].name);
               setSelectedBaseLayer(idx);
             } else {
               console.warn('[MapActionHandler] Could not match base layer name:', name);
