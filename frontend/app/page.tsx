@@ -478,7 +478,7 @@ export default function Home() {
             setMessages((prev) =>
               prev.map((msg) =>
                 msg.id === thinkingMessage.id
-                  ? { ...msg, content: assistantContent + `\n\n> 🔧 **执行工具**: ${data.tool}...` }
+                  ? { ...msg, content: msg.content + `\n\n> 🔧 **执行工具**: ${data.tool}...` }
                   : msg
               )
             )
@@ -487,7 +487,7 @@ export default function Home() {
             setMessages((prev) =>
               prev.map((msg) =>
                 msg.id === thinkingMessage.id
-                  ? { ...msg, content: assistantContent + `\n\n📋 **任务计划**:\n${planSteps}` }
+                  ? { ...msg, content: msg.content + `\n\n📋 **任务计划**:\n${planSteps}` }
                   : msg
               )
             )
@@ -496,7 +496,7 @@ export default function Home() {
             setMessages((prev) =>
               prev.map((msg) =>
                 msg.id === thinkingMessage.id
-                  ? { ...msg, content: assistantContent + "\n\n> ⏹ 任务已取消" }
+                  ? { ...msg, content: msg.content + "\n\n> ⏹ 任务已取消" }
                   : msg
               )
             )
