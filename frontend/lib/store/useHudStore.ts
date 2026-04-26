@@ -3,6 +3,7 @@
 import { create } from 'zustand';
 import type { Layer } from '@/lib/types/layer';
 import type { AnalysisResult, GeoJSONFeatureCollection } from '@/lib/types';
+import { API_BASE } from '../api/config';
 
 /* ══════════════════════════════════════════
    Task Types
@@ -226,12 +227,12 @@ export const useHudStore = create<HudState>((set) => ({
   analysisAssets: [],
   fetchAnalysisAssets: async (sessionId) => {
     try {
-      const url = `http://localhost:8001/api/v1/chat/tools/call?tool=list_analysis_assets&session_id=${sessionId || ''}`;
+      const url = `${API_BASE}/api/v1/chat/tools/call?tool=list_analysis_assets&session_id=${sessionId || ''}`;
       // In a real app we'd have a specific GET route, but our current tools can be invoked via specific API if set up, 
       // or we just call the helper defined in nature_resources. 
       // For now, let's assume a direct GET endpoint for assets if we want to be clean, 
       // but I'll implement a fetch from the list_analysis_assets tool logic.
-      const resp = await fetch(`http://localhost:8001/api/v1/uploads?session_id=${sessionId || ''}`);
+      const resp = await fetch(`${API_BASE}/api/v1/uploads?session_id=${sessionId || ''}`);
       if (resp.ok) {
         const data = await resp.json();
         // Filter for raster_analysis types
