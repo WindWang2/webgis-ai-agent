@@ -38,7 +38,6 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
   const [currentTask, setCurrentTask] = useState<TaskState | null>(null);
 
   const handleTaskStart = useCallback((taskId: string) => {
-    console.log('[Task] Starting task:', taskId);
     setCurrentTask({
       id: taskId,
       steps: [],
@@ -47,7 +46,6 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const handleStepStart = useCallback((taskId: string, stepId: string, stepIndex: number, tool: string) => {
-    console.log('[Task] Step started:', taskId, stepId, stepIndex, tool);
     setCurrentTask((prev) => {
       if (!prev || prev.id !== taskId) return prev;
       const newStep: TaskStep = {
@@ -65,7 +63,6 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
 
   const handleStepResult = useCallback(
     (taskId: string, stepId: string, tool: string, result: unknown, hasGeojson: boolean) => {
-      console.log('[Task] Step result:', taskId, stepId, tool);
       setCurrentTask((prev) => {
         if (!prev || prev.id !== taskId) return prev;
         return {
@@ -82,7 +79,6 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
   );
 
   const handleStepError = useCallback((taskId: string, stepId: string, error: string) => {
-    console.log('[Task] Step error:', taskId, stepId, error);
     setCurrentTask((prev) => {
       if (!prev || prev.id !== taskId) return prev;
       return {
@@ -96,7 +92,6 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
 
   const handleTaskComplete = useCallback(
     (taskId: string, stepCount: number, summary: string) => {
-      console.log('[Task] Task completed:', taskId, stepCount, summary);
       setCurrentTask((prev) => {
         if (!prev || prev.id !== taskId) return prev;
         return {
@@ -111,7 +106,6 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
   );
 
   const handleTaskError = useCallback((taskId: string, error: string) => {
-    console.log('[Task] Task error:', taskId, error);
     setCurrentTask((prev) => {
       if (!prev || prev.id !== taskId) return prev;
       return {
@@ -123,7 +117,6 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const handleTaskCancelled = useCallback((taskId: string) => {
-    console.log('[Task] Task cancelled:', taskId);
     setCurrentTask((prev) => {
       if (!prev || prev.id !== taskId) return prev;
       return {
@@ -134,7 +127,6 @@ export function TaskProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const clearTask = useCallback(() => {
-    console.log('[Task] Clearing task');
     setCurrentTask(null);
   }, []);
 

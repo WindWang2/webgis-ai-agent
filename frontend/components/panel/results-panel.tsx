@@ -8,6 +8,7 @@ import {
 import { DraggableLayerList } from "../map/draggable-layer-list"
 import { TaskTimeline } from "@/components/hud/task-timeline"
 import { AssetCard } from "./asset-card"
+import { API_BASE } from '@/lib/api/config';
 import { useHudStore } from "@/lib/store/useHudStore"
 import { motion, AnimatePresence } from "framer-motion"
 import { Layer } from "@/lib/types/layer"
@@ -15,6 +16,7 @@ import { useEffect } from "react"
 
 interface DataHudProps {
   layers?: Layer[]
+  sessionId?: string
   onToggleLayer?: (layerId: string) => void
   onRemoveLayer?: (layerId: string) => void
   onUpdateLayer?: (layerId: string, updates: Partial<Layer>) => void
@@ -24,6 +26,7 @@ interface DataHudProps {
 
 export function DataHud({
   layers = [],
+  sessionId: sessionIdProp,
   onToggleLayer,
   onRemoveLayer,
   onUpdateLayer,
@@ -33,21 +36,23 @@ export function DataHud({
   void _onMapMove;
 
   const [activeTab, setActiveTab] = useState<"tasks" | "layers" | "assets">("tasks")
-  const { 
-    currentTask, 
-    analysisAssets, 
-    fetchAnalysisAssets, 
-    deleteAsset, 
+  const {
+    currentTask,
+    analysisAssets,
+    fetchAnalysisAssets,
+    deleteAsset,
     updateAsset,
     addLayer,
-    sessionId 
+    sessionId: storeSessionId
   } = useHudStore()
+
+  const effectiveSessionId = sessionIdProp ?? storeSessionId
 
   useEffect(() => {
     if (activeTab === "assets") {
-      fetchAnalysisAssets(sessionId)
+      fetchAnalysisAssets(effectiveSessionId)
     }
-  }, [activeTab, fetchAnalysisAssets, sessionId])
+  }, [activeTab, fetchAnalysisAssets, effectiveSessionId])
 
   const totalFeatures = layers.reduce(
     (sum, l) => sum + (l.source && typeof l.source === 'object' && 'features' in l.source ? (l.source as any).features?.length || 0 : 0),
@@ -178,11 +183,11 @@ export function DataHud({
                     asset={asset}
                     onDelete={(id) => {
                       // Call backend manage_analysis_asset tool
-                      fetch(`http://localhost:8001/api/v1/chat/tools/call?tool=manage_analysis_asset&asset_id=${id}&action=delete`)
+                      fetch(`${API_BASE}/api/v1/chat/tools/call?tool=manage_analysis_asset&asset_id=${id}&action=delete`)
                         .then(() => deleteAsset(id))
                     }}
                     onRename={(id, newName) => {
-                      fetch(`http://localhost:8001/api/v1/chat/tools/call?tool=manage_analysis_asset&asset_id=${id}&action=rename&new_name=${encodeURIComponent(newName)}`)
+                      fetch(`${API_BASE}/api/v1/chat/tools/call?tool=manage_analysis_asset&asset_id=${id}&action=rename&new_name=${encodeURIComponent(newName)}`)
                         .then(() => updateAsset(id, { original_name: newName }))
                     }}
                     onLoad={(asset) => {
