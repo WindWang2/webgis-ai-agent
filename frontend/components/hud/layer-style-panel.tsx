@@ -16,12 +16,12 @@ const PALETTES: Record<string, { label: string; colors: string[] }> = {
 const MODE_LABELS: Record<string, string> = { vector: '矢量', heatmap: '热力', grid: '格网' };
 
 export const LayerStylePanel = memo(function LayerStylePanel() {
-  const editingLayerId = useHudStore((s) => s.editingLayerId);
-  const layers = useHudStore((s) => s.layers);
-  const updateLayer = useHudStore((s) => s.updateLayer);
-  const setEditingLayerId = useHudStore((s) => s.setEditingLayerId);
+  const editingLayerId = useHudStore((s: any) => s.editingLayerId);
+  const layers = useHudStore((s: any) => s.layers);
+  const updateLayer = useHudStore((s: any) => s.updateLayer);
+  const setEditingLayerId = useHudStore((s: any) => s.setEditingLayerId);
 
-  const layer = layers.find((l) => l.id === editingLayerId);
+  const layer = layers.find((l: any) => l.id === editingLayerId);
 
   const updateStyle = (patch: Partial<LayerStyle>) => {
     if (!layer) return;

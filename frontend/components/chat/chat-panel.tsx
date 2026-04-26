@@ -41,7 +41,7 @@ export function ChatHud({
   void _isLoading;
   void _setShowUploadZone;
   const scrollRef = useRef<HTMLDivElement>(null)
-  const currentTask = useHudStore((s) => s.currentTask)
+  const currentTask = useHudStore((s: any) => s.currentTask)
 
   const scrollToBottom = useCallback(() => {
     if (scrollRef.current) {

@@ -2,7 +2,8 @@
 import uuid
 import logging
 from typing import Any, Optional
-from collections import OrderedDict
+from collections import OrderedDict, deque
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -15,22 +16,24 @@ class SessionDataManager:
         self._aliases: dict[str, dict[str, str]] = {}
         # session_id -> {state_key -> value} (e.g., base_layer, current_view)
         self._map_state: dict[str, dict[str, Any]] = {}
+        # session_id -> deque of recent user actions (max 20)
+        self._event_log: dict[str, deque] = {}
         self.capacity = capacity
 
     def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
         """存储数据并返回生成的游标 ID"""
         if session_id not in self._store:
             self._store[session_id] = OrderedDict()
-        
+
         ref_id = f"ref:{prefix}-{uuid.uuid4().hex[:8]}"
-        
-        # 维护容量
+
+        # 维护容量：按 LRU 淘汰最久未访问的项
         session_cache = self._store[session_id]
-        if len(session_cache) >= self.capacity:
-            # 清理时也要检查别名
+        while len(session_cache) >= self.capacity:
             oldest_ref, _ = session_cache.popitem(last=False)
             self._remove_alias_by_ref(session_id, oldest_ref)
-            
+            logger.debug(f"Session {session_id}: evicted {oldest_ref} (capacity={self.capacity})")
+
         session_cache[ref_id] = data
         return ref_id
 
@@ -90,11 +93,52 @@ class SessionDataManager:
         """获取当前地图所有状态"""
         return self._map_state.get(session_id, {})
 
+    def update_layer_in_state(self, session_id: str, layer_id: str, updates: dict):
+        """更新地图状态中单个图层的属性"""
+        layers = list(self._map_state.get(session_id, {}).get("layers", []))
+        for layer in layers:
+            if layer.get("id") == layer_id:
+                layer.update(updates)
+                break
+        else:
+            layers.append({"id": layer_id, **updates})
+        self.set_map_state(session_id, "layers", layers)
+
+    def remove_layer_from_state(self, session_id: str, layer_id: str):
+        """从地图状态中移除指定图层"""
+        layers = self._map_state.get(session_id, {}).get("layers", [])
+        self.set_map_state(session_id, "layers", [l for l in layers if l.get("id") != layer_id])
+
+    def append_event(self, session_id: str, event: str, data: dict):
+        """追加用户操作到事件日志"""
+        if session_id not in self._event_log:
+            self._event_log[session_id] = deque(maxlen=20)
+        self._event_log[session_id].append({
+            "event": event,
+            "data": data,
+            "timestamp": datetime.now().isoformat(),
+        })
+
+    def get_event_log(self, session_id: str) -> list[dict]:
+        """获取近期用户操作日志"""
+        return list(self._event_log.get(session_id, []))
+
     def clear_session(self, session_id: str):
         """清理会话数据"""
         self._store.pop(session_id, None)
         self._aliases.pop(session_id, None)
         self._map_state.pop(session_id, None)
+        self._event_log.pop(session_id, None)
+
+    def cleanup_idle_sessions(self, max_sessions: int = 100):
+        """Evict oldest sessions when total exceeds max_sessions."""
+        if len(self._store) <= max_sessions:
+            return
+        # Remove oldest sessions (first inserted in OrderedDict-like fashion)
+        to_remove = list(self._store.keys())[:len(self._store) - max_sessions + 10]
+        for sid in to_remove:
+            self.clear_session(sid)
+        logger.info(f"Cleaned up {len(to_remove)} idle sessions")
 
 # 单例模式供全局使用
 session_data_manager = SessionDataManager()

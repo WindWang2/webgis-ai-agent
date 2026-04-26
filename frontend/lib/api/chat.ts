@@ -54,7 +54,7 @@ export async function* streamChat(
   sessionId?: string,
   mapState?: Record<string, unknown>
 ): AsyncGenerator<SSEEvent> {
-  const response = await fetch(`${API_BASE}/chat/stream`, {
+  const response = await fetch(`${API_BASE}/api/v1/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ 
@@ -110,7 +110,7 @@ export async function sendChat(
   message: string,
   sessionId?: string
 ): Promise<{ content: string; session_id: string }> {
-  const response = await fetch(`${API_BASE}/chat/completions`, {
+  const response = await fetch(`${API_BASE}/api/v1/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, session_id: sessionId }),
@@ -127,7 +127,7 @@ export async function sendChat(
  * 获取会话历史列表
  */
 export async function getSessionList() {
-  const res = await fetch(`${API_BASE}/chat/sessions`);
+  const res = await fetch(`${API_BASE}/api/v1/chat/sessions`);
   if (!res.ok) throw new Error(`API Error: ${res.status}`);
   return res.json();
 }
@@ -136,7 +136,7 @@ export async function getSessionList() {
  * 获取会话详细内容
  */
 export async function getSessionDetail(sessionId: string) {
-  const res = await fetch(`${API_BASE}/chat/sessions/${sessionId}`);
+  const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sessionId}`);
   if (!res.ok) throw new Error(`API Error: ${res.status}`);
   return res.json();
 }
@@ -145,7 +145,7 @@ export async function getSessionDetail(sessionId: string) {
  * 删除会话
  */
 export async function deleteSession(sessionId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/chat/sessions/${sessionId}`, {
+  const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sessionId}`, {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(`API Error: ${res.status}`);
@@ -155,7 +155,7 @@ export async function deleteSession(sessionId: string): Promise<void> {
  * 清空会话消息（保留会话）
  */
 export async function clearSessionMessages(sessionId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/chat/sessions/${sessionId}/clear`, {
+  const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sessionId}/clear`, {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(`API Error: ${res.status}`);
@@ -165,7 +165,7 @@ export async function clearSessionMessages(sessionId: string): Promise<void> {
  * 直接执行单个工具（REST API，不依赖SSE）
  */
 export async function executeToolDirect(tool: string, argument: Record<string, unknown>): Promise<ToolResult> {
-  const res = await fetch(`${API_BASE}/chat/tools/execute`, {
+  const res = await fetch(`${API_BASE}/api/v1/chat/tools/execute`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ tool, argument }),

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Loader2, Check, X, ChevronDown, ChevronUp, Ban, Compass, AlertCircle } from 'lucide-react';
 import { cancelTask } from '@/lib/api/task';
-import { TaskState } from '@/lib/contexts/task-context';
+import { TaskState } from '@/lib/store/useHudStore';
 
 interface TaskProgressProps {
   task: TaskState;

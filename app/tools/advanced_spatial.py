@@ -50,14 +50,14 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             if result.get("success"):
                 return {"geojson": result.get("data"), "stats": result.get("stats")}
             return {"error": result.get("error")}
-        except ImportError:
+        except Exception as exc:
+            if not isinstance(exc, ImportError):
+                logger.warning(f"Celery unavailable for path_analysis: {exc}")
             features = network_features.get("features", network_features) if isinstance(network_features, dict) else network_features
             r = SpatialAnalyzer.path_analysis(features, start_point=start_point, end_point=end_point)
             if r.success:
                 return {"geojson": r.data, "stats": r.stats}
             return {"error": r.error_message}
-        except Exception as e:
-            return {"error": str(e)}
 
     @tool(registry, name="zonal_stats",
            description="计算矢量区域内的栅格数据统计信息（如平均值、总和等）。",
@@ -74,14 +74,14 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             if result.get("success"):
                 return {"zonal_stats": result.get("data").get("zonal_stats")}
             return {"error": result.get("error")}
-        except ImportError:
+        except Exception as exc:
+            if not isinstance(exc, ImportError):
+                logger.warning(f"Celery unavailable for zonal_stats: {exc}")
             features = geojson.get("features", geojson) if isinstance(geojson, dict) else geojson
             r = SpatialAnalyzer.zonal_statistics(features, raster_path=raster_path)
             if r.success:
                 return {"zonal_stats": r.data.get("zonal_stats") if isinstance(r.data, dict) else r.data}
             return {"error": r.error_message}
-        except Exception as e:
-            return {"error": str(e)}
 
     @tool(registry, name="overlay_analysis",
            description="对两个几何图层进行空间叠加分析（如求交、合并、擦除等），返回结果及其统计信息",
@@ -100,15 +100,15 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             if result.get("success"):
                 return {"geojson": result.get("data"), "stats": result.get("stats")}
             return {"error": result.get("error")}
-        except ImportError:
+        except Exception as exc:
+            if not isinstance(exc, ImportError):
+                logger.warning(f"Celery unavailable for overlay_analysis: {exc}")
             features_a = layer_a.get("features", layer_a) if isinstance(layer_a, dict) else layer_a
             features_b = layer_b.get("features", layer_b) if isinstance(layer_b, dict) else layer_b
             r = SpatialAnalyzer.overlay(features_a, features_b, how=how)
             if r.success:
                 return {"geojson": r.data, "stats": r.stats}
             return {"error": r.error_message}
-        except Exception as e:
-            return {"error": str(e)}
 
     @tool(registry, name="attribute_filter",
            description="根据属性条件筛选地理要素。输入 Pandas 风格的查询表达式，返回过滤后的结果。",
@@ -125,14 +125,14 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             if result.get("success"):
                 return {"geojson": result.get("data"), "stats": result.get("stats")}
             return {"error": result.get("error")}
-        except ImportError:
+        except Exception as exc:
+            if not isinstance(exc, ImportError):
+                logger.warning(f"Celery unavailable for attribute_filter: {exc}")
             features = geojson.get("features", geojson) if isinstance(geojson, dict) else geojson
             r = SpatialAnalyzer.attribute_filter(features, query=query)
             if r.success:
                 return {"geojson": r.data, "stats": r.stats}
             return {"error": r.error_message}
-        except Exception as e:
-            return {"error": str(e)}
 
     @tool(registry, name="spatial_join",
            description="基于空间拓扑关系将两个图层的属性进行联接。",
@@ -150,12 +150,12 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             if result.get("success"):
                 return {"geojson": result.get("data"), "stats": result.get("stats")}
             return {"error": result.get("error")}
-        except ImportError:
+        except Exception as exc:
+            if not isinstance(exc, ImportError):
+                logger.warning(f"Celery unavailable for spatial_join: {exc}")
             features_left = left_layer.get("features", left_layer) if isinstance(left_layer, dict) else left_layer
             features_right = right_layer.get("features", right_layer) if isinstance(right_layer, dict) else right_layer
             r = SpatialAnalyzer.spatial_join(features_left, features_right, join_type=join_type, predicate=predicate)
             if r.success:
                 return {"geojson": r.data, "stats": r.stats}
             return {"error": r.error_message}
-        except Exception as e:
-            return {"error": str(e)}
