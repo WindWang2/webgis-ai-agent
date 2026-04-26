@@ -1,4 +1,4 @@
-"""高德地图/百度地图 API 工具 — POI搜索、地理编码、路径规划、行政区划查询"""
+"""高德/百度/天地图 API 工具 — POI搜索、地理编码、路径规划、行政区划查询"""
 import logging
 import aiohttp
 from typing import Optional
@@ -12,9 +12,10 @@ from app.utils.coord_transform import (
 
 logger = logging.getLogger(__name__)
 
-_VALID_PROVIDERS = ("amap", "baidu")
+_VALID_PROVIDERS = ("amap", "baidu", "tianditu")
 _AMAP_BASE = "https://restapi.amap.com/v3"
 _BAIDU_BASE = "https://api.map.baidu.com"
+_TIANDITU_BASE = "https://api.tianditu.gov.cn"
 
 
 def _has_provider(provider: str) -> bool:
@@ -22,13 +23,19 @@ def _has_provider(provider: str) -> bool:
         return bool(settings.AMAP_API_KEY)
     if provider == "baidu":
         return bool(settings.BAIDU_MAP_AK)
+    if provider == "tianditu":
+        return bool(settings.TIANDITU_TOKEN)
     return False
 
 
-def _provider_key(provider: str) -> str:
-    if provider == "amap":
-        return settings.AMAP_API_KEY
-    return settings.BAIDU_MAP_AK
+def _fallback_order(preferred: str, exclude: set[str] | None = None) -> list[str]:
+    order = ["amap", "baidu", "tianditu"]
+    if exclude:
+        order = [p for p in order if p not in exclude]
+    if preferred in order:
+        order.remove(preferred)
+        order.insert(0, preferred)
+    return order
 
 
 async def _amap_get(endpoint: str, params: dict) -> dict:
@@ -67,88 +74,101 @@ async def _baidu_get(endpoint: str, params: dict) -> dict:
             return data
 
 
+async def _tianditu_get(endpoint: str, params: dict) -> dict:
+    params["tk"] = settings.TIANDITU_TOKEN
+    url = f"{_TIANDITU_BASE}{endpoint}"
+    async with aiohttp.ClientSession(headers=get_base_headers()) as session:
+        async with session.get(
+            url, params=params, ssl=get_ssl_context(),
+            proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY,
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status != 200:
+                return {"error": f"Tianditu API HTTP {resp.status}"}
+            data = await resp.json()
+            returncode = str(data.get("returncode", data.get("status", "")))
+            if returncode not in ("100", "0"):
+                msg = data.get("msg") or data.get("message") or "unknown error"
+                return {"error": f"Tianditu: {msg}"}
+            return data
+
+
 def register_chinese_map_tools(registry: ToolRegistry):
 
     @tool(registry, name="search_poi",
-           description="使用高德或百度地图搜索 POI（餐厅、学校、医院等），支持中文关键词和城市限定",
+           description="搜索 POI（餐厅、学校、医院等），支持中文关键词和城市限定，可选高德/百度/天地图",
            param_descriptions={
                "keyword": "搜索关键词，如'火锅店'、'三甲医院'",
                "city": "城市名称，如'北京'、'上海'",
-               "provider": "服务商: 'amap'(高德, 默认) 或 'baidu'(百度)",
+               "provider": "服务商: 'amap'(高德, 默认), 'baidu'(百度), 'tianditu'(天地图)",
                "limit": "返回结果数量，默认20",
            })
     async def search_poi(keyword: str, city: str = "", provider: str = "amap", limit: int = 20) -> dict:
         if provider not in _VALID_PROVIDERS:
-            return {"error": f"provider 必须是 'amap' 或 'baidu'，收到: {provider}"}
+            return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'，收到: {provider}"}
 
-        if _has_provider(provider):
-            try:
-                if provider == "amap":
-                    return await _search_poi_amap(keyword, city, limit)
-                else:
-                    return await _search_poi_baidu(keyword, city, limit)
-            except Exception as e:
-                logger.warning(f"search_poi {provider} failed: {e}, trying fallback")
-
-        # Try other provider as fallback
-        other = "baidu" if provider == "amap" else "amap"
-        if _has_provider(other):
-            try:
-                if other == "amap":
-                    return await _search_poi_amap(keyword, city, limit)
-                else:
-                    return await _search_poi_baidu(keyword, city, limit)
-            except Exception as e:
-                return {"error": f"两个服务商均失败: {e}"}
-
-        return {"error": "未配置高德或百度 API Key，请在 .env 中设置 AMAP_API_KEY 或 BAIDU_MAP_AK"}
-
-    @tool(registry, name="geocode_cn",
-           description="中文地址转坐标（高德/百度），比 Nominatim 中文地址准确率更高",
-           param_descriptions={
-               "address": "中文地址，如'北京市海淀区中关村'",
-               "city": "限定城市，如'北京'",
-               "provider": "服务商: 'amap'(默认) 或 'baidu'",
-           })
-    async def geocode_cn(address: str, city: str = "", provider: str = "amap") -> dict:
-        if provider not in _VALID_PROVIDERS:
-            return {"error": f"provider 必须是 'amap' 或 'baidu'"}
-
-        for p in [provider, "baidu" if provider == "amap" else "amap"]:
+        _dispatch = {
+            "amap": _search_poi_amap, "baidu": _search_poi_baidu, "tianditu": _search_poi_tianditu,
+        }
+        errors = []
+        for p in _fallback_order(provider):
             if not _has_provider(p):
                 continue
             try:
-                if p == "amap":
-                    return await _geocode_amap(address, city)
-                else:
-                    return await _geocode_baidu(address, city)
+                return await _dispatch[p](keyword, city, limit)
+            except Exception as e:
+                logger.warning(f"search_poi {p} failed: {e}")
+                errors.append(f"{p}: {e}")
+
+        return {"error": f"所有服务商均失败: {'; '.join(errors)}" if errors else "未配置任何地图 API Key"}
+
+    @tool(registry, name="geocode_cn",
+           description="中文地址转坐标，比 Nominatim 中文地址准确率更高，可选高德/百度/天地图",
+           param_descriptions={
+               "address": "中文地址，如'北京市海淀区中关村'",
+               "city": "限定城市，如'北京'",
+               "provider": "服务商: 'amap'(默认), 'baidu', 'tianditu'",
+           })
+    async def geocode_cn(address: str, city: str = "", provider: str = "amap") -> dict:
+        if provider not in _VALID_PROVIDERS:
+            return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
+
+        _dispatch = {
+            "amap": _geocode_amap, "baidu": _geocode_baidu, "tianditu": _geocode_tianditu,
+        }
+        for p in _fallback_order(provider):
+            if not _has_provider(p):
+                continue
+            try:
+                return await _dispatch[p](address, city)
             except Exception as e:
                 logger.warning(f"geocode_cn {p} failed: {e}")
-        return {"error": "未配置高德或百度 API Key"}
+        return {"error": "未配置任何地图 API Key"}
 
     @tool(registry, name="reverse_geocode_cn",
-           description="坐标转中文地址（高德/百度），返回详细地址和附近 POI",
+           description="坐标转中文地址，返回详细地址和附近 POI，可选高德/百度/天地图",
            param_descriptions={
                "location": "WGS84 坐标 [经度, 纬度]",
-               "provider": "服务商: 'amap'(默认) 或 'baidu'",
+               "provider": "服务商: 'amap'(默认), 'baidu', 'tianditu'",
            })
     async def reverse_geocode_cn(location: list, provider: str = "amap") -> dict:
         if len(location) != 2:
             return {"error": "location 必须是 [经度, 纬度]"}
         if provider not in _VALID_PROVIDERS:
-            return {"error": f"provider 必须是 'amap' 或 'baidu'"}
+            return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
-        for p in [provider, "baidu" if provider == "amap" else "amap"]:
+        _dispatch = {
+            "amap": _reverse_geocode_amap, "baidu": _reverse_geocode_baidu,
+            "tianditu": _reverse_geocode_tianditu,
+        }
+        for p in _fallback_order(provider):
             if not _has_provider(p):
                 continue
             try:
-                if p == "amap":
-                    return await _reverse_geocode_amap(location[0], location[1])
-                else:
-                    return await _reverse_geocode_baidu(location[0], location[1])
+                return await _dispatch[p](location[0], location[1])
             except Exception as e:
                 logger.warning(f"reverse_geocode_cn {p} failed: {e}")
-        return {"error": "未配置高德或百度 API Key"}
+        return {"error": "未配置任何地图 API Key"}
 
     @tool(registry, name="plan_route",
            description="路径规划（驾车/步行/骑行/公交），返回距离、时间和路线坐标",
@@ -157,7 +177,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "destination": "终点 WGS84 坐标 [经度, 纬度]",
                "mode": "出行方式: 'driving'(默认), 'walking', 'cycling', 'transit'",
                "city": "城市名（公交模式必填）",
-               "provider": "服务商: 'amap'(默认) 或 'baidu'",
+               "provider": "服务商: 'amap'(默认) 或 'baidu'（天地图不支持路径规划）",
            })
     async def plan_route(origin: list, destination: list, mode: str = "driving", city: str = "", provider: str = "amap") -> dict:
         if len(origin) != 2 or len(destination) != 2:
@@ -165,40 +185,38 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if provider not in _VALID_PROVIDERS:
             return {"error": f"provider 必须是 'amap' 或 'baidu'"}
 
-        for p in [provider, "baidu" if provider == "amap" else "amap"]:
+        _dispatch = {"amap": _route_amap, "baidu": _route_baidu}
+        for p in _fallback_order(provider, exclude={"tianditu"}):
             if not _has_provider(p):
                 continue
             try:
-                if p == "amap":
-                    return await _route_amap(origin, destination, mode, city)
-                else:
-                    return await _route_baidu(origin, destination, mode, city)
+                return await _dispatch[p](origin, destination, mode, city)
             except Exception as e:
                 logger.warning(f"plan_route {p} failed: {e}")
         return {"error": "未配置高德或百度 API Key，路径规划需要 API Key"}
 
     @tool(registry, name="get_district",
-           description="查询行政区划边界（高德/百度），返回 GeoJSON 格式",
+           description="查询行政区划边界，返回 GeoJSON 格式，可选高德/百度/天地图",
            param_descriptions={
                "keywords": "行政区划名称，如'海淀区'、'成都市'",
                "level": "级别: 'province', 'city', 'district'",
-               "provider": "服务商: 'amap'(默认) 或 'baidu'",
+               "provider": "服务商: 'amap'(默认), 'baidu', 'tianditu'",
            })
     async def get_district(keywords: str, level: str = "district", provider: str = "amap") -> dict:
         if provider not in _VALID_PROVIDERS:
-            return {"error": f"provider 必须是 'amap' 或 'baidu'"}
+            return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
-        for p in [provider, "baidu" if provider == "amap" else "amap"]:
+        _dispatch = {
+            "amap": _district_amap, "baidu": _district_baidu, "tianditu": _district_tianditu,
+        }
+        for p in _fallback_order(provider):
             if not _has_provider(p):
                 continue
             try:
-                if p == "amap":
-                    return await _district_amap(keywords, level)
-                else:
-                    return await _district_baidu(keywords, level)
+                return await _dispatch[p](keywords, level)
             except Exception as e:
                 logger.warning(f"get_district {p} failed: {e}")
-        return {"error": "未配置高德或百度 API Key"}
+        return {"error": "未配置任何地图 API Key"}
 
 
 # ── Provider-specific helper functions ──────────────────────────
@@ -485,3 +503,116 @@ async def _district_baidu(keywords: str, level: str) -> dict:
             },
         })
     return {"type": "FeatureCollection", "features": features, "count": len(features), "provider": "baidu"}
+
+
+# ── Tianditu (天地图) provider functions ───────────────────────
+# CGCS2000 ≈ WGS84, no coordinate transformation needed
+
+import json as _json
+
+
+async def _search_poi_tianditu(keyword: str, city: str, limit: int) -> dict:
+    post_str = _json.dumps({
+        "keyWord": keyword,
+        "level": "12",
+        "mapBound": "-180,-90,180,90",
+        "queryType": "1",
+        "start": "0",
+        "count": str(min(limit, 50)),
+        "specifyAdminCode": city,
+    }, ensure_ascii=False)
+    data = await _tianditu_get("/search", {"postStr": post_str, "type": "query"})
+    if "error" in data:
+        return data
+    pois = data.get("pois", [])
+    if not pois and isinstance(data.get("resultType"), int):
+        return {"type": "FeatureCollection", "features": [], "count": 0, "provider": "tianditu"}
+    features = []
+    for p in pois[:limit]:
+        lonlat = p.get("lonlat", "").split(" ")
+        if len(lonlat) != 2:
+            continue
+        lng, lat = float(lonlat[0]), float(lonlat[1])
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lng, lat]},
+            "properties": {
+                "name": p.get("name", ""),
+                "address": p.get("address", ""),
+                "tel": p.get("phone", ""),
+            },
+        })
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "count": len(features),
+        "provider": "tianditu",
+    }
+
+
+async def _geocode_tianditu(address: str, city: str) -> dict:
+    ds = _json.dumps({"keyWord": address}, ensure_ascii=False)
+    data = await _tianditu_get("/geocoder", {"ds": ds})
+    if "error" in data:
+        return data
+    result = data.get("result", {})
+    loc = result.get("location", {})
+    lng, lat = loc.get("lon", 0), loc.get("lat", 0)
+    return {
+        "results": [{
+            "location": [lng, lat],
+            "formatted_address": address,
+            "level": result.get("level", ""),
+        }],
+        "count": 1,
+        "provider": "tianditu",
+    }
+
+
+async def _reverse_geocode_tianditu(lng: float, lat: float) -> dict:
+    post_str = _json.dumps({"lon": lng, "lat": lat, "ver": 1})
+    data = await _tianditu_get("/geocoder", {"postStr": post_str, "type": "geocode"})
+    if "error" in data:
+        return data
+    result = data.get("result", {})
+    addr = result.get("addressComponent", {})
+    return {
+        "formatted_address": result.get("formatted_address", ""),
+        "province": addr.get("province", ""),
+        "city": addr.get("city", ""),
+        "district": addr.get("county", ""),
+        "street": addr.get("street", ""),
+        "street_number": addr.get("streetNumber", ""),
+        "provider": "tianditu",
+    }
+
+
+async def _district_tianditu(keywords: str, level: str) -> dict:
+    post_str = _json.dumps({
+        "searchWord": keywords,
+        "searchType": "1",
+        "needSubInfo": "true",
+        "needAll": "false",
+        "needPolygon": "false",
+        "needPre": "true",
+    }, ensure_ascii=False)
+    data = await _tianditu_get("/administrative", {"postStr": post_str})
+    if "error" in data:
+        return data
+    districts = data.get("data", [])
+    if isinstance(districts, dict):
+        districts = [districts]
+    features = []
+    for d in districts:
+        lng = d.get("lnt", 0)
+        lat = d.get("lat", 0)
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lng, lat]},
+            "properties": {
+                "name": d.get("name", ""),
+                "level": d.get("adminType", d.get("level", "")),
+                "code": str(d.get("cityCode", "")),
+            },
+        })
+    return {"type": "FeatureCollection", "features": features, "count": len(features), "provider": "tianditu"}
