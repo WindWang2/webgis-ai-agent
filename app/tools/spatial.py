@@ -329,12 +329,17 @@ def register_spatial_tools(registry: ToolRegistry):
                     logger.warning(f"Celery unavailable for nearest_neighbor: {exc}")
                 import numpy as np
                 from scipy.spatial import distance_matrix
+                from shapely.geometry import shape
                 points = []
                 for f in features:
                     geom = f.get("geometry") or {}
-                    if geom.get("type") == "Point" and geom.get("coordinates"):
-                        coords = geom["coordinates"]
-                        points.append((coords[0], coords[1]))
+                    try:
+                        s = shape(geom)
+                        if not s.is_empty:
+                            c = s.centroid
+                            points.append((c.x, c.y))
+                    except Exception:
+                        continue
                 if len(points) < 2:
                     return {"error": "Need at least 2 points"}
                 coords_arr = np.array(points)
