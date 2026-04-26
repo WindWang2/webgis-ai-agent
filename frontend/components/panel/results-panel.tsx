@@ -8,6 +8,7 @@ import {
 import { DraggableLayerList } from "../map/draggable-layer-list"
 import { TaskTimeline } from "@/components/hud/task-timeline"
 import { AssetCard } from "./asset-card"
+import { API_BASE } from '@/lib/api/config';
 import { useHudStore } from "@/lib/store/useHudStore"
 import { motion, AnimatePresence } from "framer-motion"
 import { Layer } from "@/lib/types/layer"
@@ -178,11 +179,11 @@ export function DataHud({
                     asset={asset}
                     onDelete={(id) => {
                       // Call backend manage_analysis_asset tool
-                      fetch(`http://localhost:8001/api/v1/chat/tools/call?tool=manage_analysis_asset&asset_id=${id}&action=delete`)
+                      fetch(`${API_BASE}/api/v1/chat/tools/call?tool=manage_analysis_asset&asset_id=${id}&action=delete`)
                         .then(() => deleteAsset(id))
                     }}
                     onRename={(id, newName) => {
-                      fetch(`http://localhost:8001/api/v1/chat/tools/call?tool=manage_analysis_asset&asset_id=${id}&action=rename&new_name=${encodeURIComponent(newName)}`)
+                      fetch(`${API_BASE}/api/v1/chat/tools/call?tool=manage_analysis_asset&asset_id=${id}&action=rename&new_name=${encodeURIComponent(newName)}`)
                         .then(() => updateAsset(id, { original_name: newName }))
                     }}
                     onLoad={(asset) => {
