@@ -239,12 +239,12 @@ export const useHudStore = create<HudState>((set) => ({
   baseLayer: 'Carto Dark',
   setBaseLayer: (name) => set({ baseLayer: name }),
   is3D: false,
-  setIs3D: (v) => set({ is3D: v }),
+  setIs3D: (v: boolean) => set({ is3D: v }),
 
   /* ─── Perception Buffer ─── */
   _perceptionQueue: [],
-  pushPerception: (event, data) =>
-    set((s) => ({ _perceptionQueue: [...s._perceptionQueue, { event, data }] })),
+  pushPerception: (event: string, data: Record<string, unknown>) =>
+    set((s: any) => ({ _perceptionQueue: [...s._perceptionQueue, { event, data }] })),
   drainPerception: () => {
     const queue = useHudStore.getState()._perceptionQueue;
     if (queue.length === 0) return [];
@@ -254,11 +254,11 @@ export const useHudStore = create<HudState>((set) => ({
 
   /* ─── System Callback ─── */
   pendingSystemMessage: null,
-  setPendingSystemMessage: (msg) => set({ pendingSystemMessage: msg }),
+  setPendingSystemMessage: (msg: string | null) => set({ pendingSystemMessage: msg }),
 
   /* ─── Analysis Assets ─── */
   analysisAssets: [],
-  fetchAnalysisAssets: async (sessionId) => {
+  fetchAnalysisAssets: async (sessionId: string | undefined) => {
     try {
       const url = `${API_BASE}/api/v1/chat/tools/call?tool=list_analysis_assets&session_id=${sessionId || ''}`;
       // In a real app we'd have a specific GET route, but our current tools can be invoked via specific API if set up, 
@@ -276,20 +276,20 @@ export const useHudStore = create<HudState>((set) => ({
       console.error("Failed to fetch assets:", e);
     }
   },
-  updateAsset: (id, updates) => set(s => ({
-    analysisAssets: s.analysisAssets.map(a => a.id === id ? { ...a, ...updates } : a)
+  updateAsset: (id: string, updates: Record<string, unknown>) => set((s: any) => ({
+    analysisAssets: s.analysisAssets.map((a: any) => a.id === id ? { ...a, ...updates } : a)
   })),
-  deleteAsset: (id) => set(s => ({
-    analysisAssets: s.analysisAssets.filter(a => a.id !== id)
+  deleteAsset: (id: string) => set((s: any) => ({
+    analysisAssets: s.analysisAssets.filter((a: any) => a.id !== id)
   })),
 
   /* ─── Settings ─── */
   settingsOpen: false,
-  setSettingsOpen: (open) => set({ settingsOpen: open }),
+  setSettingsOpen: (open: boolean) => set({ settingsOpen: open }),
   mcpConfig: "{}",
-  setMcpConfig: (config) => set({ mcpConfig: config }),
+  setMcpConfig: (config: string) => set({ mcpConfig: config }),
   llmConfig: {},
-  setLlmConfig: (config) => set({ llmConfig: config }),
+  setLlmConfig: (config: Record<string, unknown>) => set({ llmConfig: config }),
   availableSkills: [],
-  setAvailableSkills: (skills) => set({ availableSkills: skills }),
+  setAvailableSkills: (skills: any[]) => set({ availableSkills: skills }),
 }));

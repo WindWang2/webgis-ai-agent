@@ -1,6 +1,5 @@
 import type { Layer, SortOption } from "@/lib/types/layer";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api";
+import { API_BASE } from './config';
 
 // 图层 API 接口
 export const layerApi = {
@@ -22,7 +21,7 @@ export const layerApi = {
       });
     }
 
-    const response = await fetch(`${API_BASE}/layers?${searchParams.toString()}`, {
+    const response = await fetch(`${API_BASE}/api/v1/layers?${searchParams.toString()}`, {
       credentials: "include",
     });
 
@@ -41,7 +40,7 @@ export const layerApi = {
 
   // 获取单个图层详情
   async get(layerId: string | number) {
-    const response = await fetch(`${API_BASE}/layers/${layerId}`, {
+    const response = await fetch(`${API_BASE}/api/v1/layers/${layerId}`, {
       credentials: "include",
     });
 
@@ -61,7 +60,7 @@ export const layerApi = {
 
   // 创建图层
   async create(layerData: Partial<Layer>) {
-    const response = await fetch(`${API_BASE}/layers`, {
+    const response = await fetch(`${API_BASE}/api/v1/layers`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -81,7 +80,7 @@ export const layerApi = {
 
   // 更新图层
   async update(layerId: string | number, layerData: Partial<Layer>) {
-    const response = await fetch(`${API_BASE}/layers/${layerId}`, {
+    const response = await fetch(`${API_BASE}/api/v1/layers/${layerId}`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
@@ -101,7 +100,7 @@ export const layerApi = {
 
   // 删除图层
   async delete(layerId: string | number) {
-    const response = await fetch(`${API_BASE}/layers/${layerId}`, {
+    const response = await fetch(`${API_BASE}/api/v1/layers/${layerId}`, {
       method: "DELETE",
       credentials: "include",
     });
@@ -117,7 +116,7 @@ export const layerApi = {
 
   // 获取图层元数据
   async getMetadata(layerId: string | number) {
-    const response = await fetch(`${API_BASE}/layers/${layerId}/metadata`, {
+    const response = await fetch(`${API_BASE}/api/v1/layers/${layerId}/metadata`, {
       credentials: "include",
     });
 
@@ -131,7 +130,7 @@ export const layerApi = {
 
   // 获取支持的图层类型
   async getLayerTypes() {
-    const response = await fetch(`${API_BASE}/layer-types`, {
+    const response = await fetch(`${API_BASE}/api/v1/layer-types`, {
       credentials: "include",
     });
 
@@ -151,7 +150,7 @@ export const layerApi = {
     task_type: string;
     parameters: Record<string, unknown>;
   }) {
-    const response = await fetch(`${API_BASE}/layers/${layerId}/tasks`, {
+    const response = await fetch(`${API_BASE}/api/v1/layers/${layerId}/tasks`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

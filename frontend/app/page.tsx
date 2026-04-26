@@ -389,7 +389,7 @@ export default function Home() {
         },
         base_layer: currentBaseLayer,
         is_3d: currentIs3D,
-        layers: currentLayers.map(l => ({
+        layers: currentLayers.map((l: any) => ({
           id: l.id,
           name: l.name,
           type: l.type,
@@ -559,8 +559,8 @@ export default function Home() {
   )
 
   /* ─── System Callback Effect ─── */
-  const pendingSystemMessage = useHudStore(s => s.pendingSystemMessage);
-  const setPendingSystemMessage = useHudStore(s => s.setPendingSystemMessage);
+  const pendingSystemMessage = useHudStore((s: any) => s.pendingSystemMessage);
+  const setPendingSystemMessage = useHudStore((s: any) => s.setPendingSystemMessage);
 
   useEffect(() => {
     if (pendingSystemMessage && !isLoading) {
@@ -715,7 +715,7 @@ export default function Home() {
           layers={layers}
           sessionId={sessionId}
           onToggleLayer={(id) => {
-            const layer = layers.find(l => l.id === id)
+            const layer = layers.find((l: any) => l.id === id)
             toggleLayer(id)
             useHudStore.getState().pushPerception('layer_toggled', { layer_id: id, visible: layer ? !layer.visible : undefined })
           }}

@@ -54,6 +54,9 @@ class TaskInfo:
 class TaskTracker:
     """内存任务跟踪器"""
 
+    MAX_TASKS_PER_SESSION = 20
+    MAX_TOTAL_TASKS = 500
+
     def __init__(self) -> None:
         self._tasks: dict[str, TaskInfo] = {}
         self._session_tasks: dict[str, list[str]] = {}
@@ -65,6 +68,9 @@ class TaskTracker:
 
     def create(self, session_id: str, request: str) -> TaskInfo:
         """创建新任务"""
+        # Evict old tasks if limits exceeded
+        self._evict_if_needed()
+
         task_id = self._generate_task_id()
         task = TaskInfo(
             id=task_id,
@@ -78,10 +84,32 @@ class TaskTracker:
             self._session_tasks[session_id] = []
         self._session_tasks[session_id].append(task_id)
 
+        # Per-session task limit
+        session_task_ids = self._session_tasks[session_id]
+        while len(session_task_ids) > self.MAX_TASKS_PER_SESSION:
+            old_id = session_task_ids.pop(0)
+            self._tasks.pop(old_id, None)
+            self._step_counters.pop(old_id, None)
+
         # 初始化步骤计数器
         self._step_counters[task_id] = 0
 
         return task
+
+    def _evict_if_needed(self):
+        """Evict oldest finished tasks if total exceeds limit."""
+        if len(self._tasks) <= self.MAX_TOTAL_TASKS:
+            return
+        finished_ids = [
+            tid for tid, t in self._tasks.items()
+            if t.status in (TaskStatus.completed, TaskStatus.failed, TaskStatus.cancelled)
+        ]
+        for tid in finished_ids[:len(self._tasks) - self.MAX_TOTAL_TASKS + 50]:
+            self._tasks.pop(tid, None)
+            self._step_counters.pop(tid, None)
+            for sids in self._session_tasks.values():
+                if tid in sids:
+                    sids.remove(tid)
 
     def start_step(self, task_id: str, tool: str, params: dict) -> TaskStep:
         """启动步骤"""
