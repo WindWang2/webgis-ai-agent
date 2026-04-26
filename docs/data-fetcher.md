@@ -1,4 +1,4 @@
-# 空间数据引擎与 Fetch-on-Demand (按需拉取) 架构 V2.1
+# 空间数据引擎与 Fetch-on-Demand (按需拉取) 架构 V3.2
 
 ## 概述
 在 V2.0 架构中，数据流引擎完成了颠覆性重构。为了彻底解决几十 MB 的 GeoJSON 撑爆大语言模型（LLM）上下文，以及导致 SSE (Server-Sent Events) 单向长流崩溃卡死的问题，我们引入了业界标准的 **Fetch-on-Demand (按需拉取与引用剥离)** 架构。
@@ -15,10 +15,10 @@
 | 阶段 | 动作节点 | 原理描述 |
 |---|---|---|
 | **Step 1: 沙盒生成** | 后端 (Tools / Celery) | 当地理工具抓取或计算得到全量空间数据（GeoJSON 或 GeoDataFrame）时，不向函数外抛出明文实体。 |
-| **Step 2: 压缩落床** | 缓存层 (`session_data.py`) | 调用中央暂存方法，将巨型负载通过 Redis 落盘，生成一个全局唯一签名（例如：`layer_id: "custom-osm-1776000551"`）。 |
-| **Step 3: 轻量通信** | 大模型 (Claude) & SSE 通道 | 工具仅向大模型返回摘要与签名壳：`{"layer_id": "custom-osm-1776000551", "count": 50000}`。大模型以此组装回复流，瞬间推至前端。 |
-| **Step 4: 前端取件** | 前端 (`MapPanel` 等拦截器) | React 层监听到此特异性 ID 后，绕过核心状态树（State），独立在后台发起并行的 HTTP GET 轮询。 |
-| **Step 5: 原生注入** | MapLibre (GPU) | 获取到真实的实体 Payload 后，直接作为 DataSource 喂给底层的 MapLibre GL 对象原生绘制。 |
+| **Step 2: 压缩落床** | 缓存层 (`session_data.py`) | 调用 `SessionDataManager.store()` 方法，将巨型负载存入内存 LRU 缓存，生成一个全局唯一签名（例如：`ref_id: "ref:geojson-a1b2c3d4"`）。 |
+| **Step 3: 轻量通信** | 大模型 (LLM) & SSE 通道 | 工具仅向大模型返回摘要与签名壳：`{"layer_id": "ref:geojson-a1b2c3d4", "count": 50000}`。大模型以此组装回复流，瞬间推至前端。 |
+| **Step 4: 前端取件** | 前端 (`page.tsx` handleToolResult) | React 层识别 `geojson_ref` 字段后，通过 `GET /api/v1/layers/data/{ref_id}?session_id=xxx` 发起独立 HTTP 请求获取完整数据。 |
+| **Step 5: 原生注入** | MapLibre (GPU) | 获取到真实的实体 Payload 后，通过 `MapActionHandler` dispatch `add_layer` 指令，直接注入 MapLibre GL 原生绘制。 |
 
 ## API 交互范式
 
@@ -35,15 +35,15 @@
 }
 ```
 
-### 2. 前端发起真实拉取 GET `/api/v1/layer/{layer_id}/data`
-一旦 UI 组件挂载，并行执行获取指令。
+### 2. 前端发起真实拉取 GET `/api/v1/layers/data/{ref_id}?session_id=xxx`
+一旦 UI 组件识别到 `geojson_ref` 字段，并行执行获取指令。
 
 #### 响应
-直接抛回 `application/json` 类型的原始 GeoJSON，或在未来拓展抛出 `mvt` (Mapbox Vector Tile) 以适应亿级渲染。
+直接返回 `application/json` 类型的原始 GeoJSON，或在未来拓展抛出 `mvt` (Mapbox Vector Tile) 以适应亿级渲染。
 
 ## 存储媒介隔离
 
-- **实时会话层 (In-Memory / Redis)**: 用于存储单次生命周期内的临时抓取（如和风天气、临时 POI 爬虫）。过期时间 (TTL) 设定为 1-2 小时。即使丢失，也能通过 Agent 重试复原。
+- **实时会话层 (In-Memory `SessionDataManager`)**: 用于存储单次生命周期内的临时抓取（如 POI 查询结果、空间分析产物）。采用 LRU 淘汰策略（每个 session 最多 200 个引用），支持别名机制。数据随服务器重启丢失，但可通过 Agent 重试复原。生产环境建议迁移至 Redis 以支持持久化和水平扩展。
 - **重度基建层 (PostGIS + MinIO)**: 用于落底用户主动上传的文件（如极其复杂的区域控规图 `shapefile` 等）。在获取阶段，同样生成 ID 指向底座，实现存算分离。
 
 ## 异常兜底 (Graceful Degradation)

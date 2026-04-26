@@ -359,6 +359,15 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         # Grid
         nx = max(int((xmax - xmin) / cell_size), 2)
         ny = max(int((ymax - ymin) / cell_size), 2)
+
+        # Grid safety limit to prevent OOM
+        MAX_GRID_CELLS = 100_000
+        if nx * ny > MAX_GRID_CELLS:
+            cell_size = max(cell_size, ((xmax - xmin) * (ymax - ymin)) ** 0.5 / (MAX_GRID_CELLS ** 0.5))
+            nx = max(int((xmax - xmin) / cell_size), 2)
+            ny = max(int((ymax - ymin) / cell_size), 2)
+            logger.warning(f"KDE grid auto-adjusted to {nx}x{ny}={nx*ny} cells (cell_size={cell_size:.0f}m)")
+
         grid_x = np.linspace(xmin, xmax, nx)
         grid_y = np.linspace(ymin, ymax, ny)
         gx, gy = np.meshgrid(grid_x, grid_y)
@@ -390,4 +399,195 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                 "mean_density": round(float(density.mean()), 8),
             },
             "bandwidth_m": round(bw, 1),
+        }
+
+    @tool(registry, name="voronoi_polygons",
+           description="生成 Voronoi (泰森多边形/Thiessen多边形)，将空间按最近邻原则划分为势力范围",
+           param_descriptions={
+               "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+               "clip_bounds": "可选：裁剪范围 [xmin, ymin, xmax, ymax]（WGS84），默认使用数据范围+10%缓冲",
+           })
+    def voronoi_polygons(geojson: Any, clip_bounds: list = []) -> dict:
+        from scipy.spatial import Voronoi
+
+        data = _safe_parse_geojson(geojson)
+        if not data:
+            return {"error": "无效的 GeoJSON 输入"}
+
+        result = to_utm_gdf(data)
+        if result is None:
+            return {"error": "无法转换 GeoJSON"}
+        gdf, utm_crs = result
+
+        if len(gdf) < 3:
+            return {"error": "至少需要3个点要素"}
+
+        coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
+
+        # Add mirror points for bounded Voronoi
+        xmin, ymin, xmax, ymax = gdf.total_bounds
+        margin = max(xmax - xmin, ymax - ymin) * 0.5
+        mirror_points = np.array([
+            coords[:, 0], 2 * ymin - coords[:, 1],  # bottom mirror
+        ]).T
+        mirror_points2 = np.array([
+            2 * xmax - coords[:, 0], coords[:, 1],  # right mirror
+        ]).T
+        mirror_points3 = np.array([
+            coords[:, 0], 2 * ymax - coords[:, 1],  # top mirror
+        ]).T
+        mirror_points4 = np.array([
+            2 * xmin - coords[:, 0], coords[:, 1],  # left mirror
+        ]).T
+        all_points = np.vstack([coords, mirror_points, mirror_points2, mirror_points3, mirror_points4])
+
+        try:
+            vor = Voronoi(all_points)
+        except Exception as e:
+            return {"error": f"Voronoi 计算失败: {e}"}
+
+        out_features = []
+        clip_box = box(xmin - margin, ymin - margin, xmax + margin, ymax + margin)
+
+        for i in range(len(coords)):
+            region_idx = vor.point_region[i]
+            region = vor.regions[region_idx]
+            if -1 in region or len(region) == 0:
+                continue
+            polygon_coords = [vor.vertices[v] for v in region]
+            try:
+                from shapely.geometry import Polygon
+                poly = Polygon(polygon_coords)
+                if not poly.is_valid:
+                    poly = poly.buffer(0)
+                poly = poly.intersection(clip_box)
+                if poly.is_empty:
+                    continue
+                poly_wgs84 = gpd.GeoSeries([poly], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
+                props = {k: v for k, v in gdf.iloc[i].items() if k != "geometry"}
+                props["area_km2"] = round(float(poly.area) / 1e6, 4)
+                out_features.append({
+                    "type": "Feature",
+                    "geometry": mapping(poly_wgs84),
+                    "properties": props,
+                })
+            except Exception:
+                continue
+
+        return {
+            "type": "FeatureCollection",
+            "features": out_features,
+            "count": len(out_features),
+        }
+
+    @tool(registry, name="convex_hull",
+           description="计算要素集合的凸包（最小凸多边形），用于确定点群的空间范围",
+           param_descriptions={
+               "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+               "group_by": "可选：按属性字段分组，每组生成一个凸包",
+           })
+    def convex_hull(geojson: Any, group_by: str = "") -> dict:
+        data = _safe_parse_geojson(geojson)
+        if not data:
+            return {"error": "无效的 GeoJSON 输入"}
+
+        result = to_utm_gdf(data)
+        if result is None:
+            return {"error": "无法转换 GeoJSON"}
+        gdf, utm_crs = result
+
+        if len(gdf) < 3:
+            return {"error": "至少需要3个要素"}
+
+        out_features = []
+
+        if group_by and group_by in gdf.columns:
+            for name, group in gdf.groupby(group_by):
+                try:
+                    hull = group.geometry.unary_union.convex_hull
+                    if hull.is_empty:
+                        continue
+                    hull_wgs84 = gpd.GeoSeries([hull], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
+                    out_features.append({
+                        "type": "Feature",
+                        "geometry": mapping(hull_wgs84),
+                        "properties": {
+                            group_by: str(name),
+                            "feature_count": len(group),
+                            "area_km2": round(float(hull.area) / 1e6, 4),
+                        },
+                    })
+                except Exception:
+                    continue
+        else:
+            hull = gdf.geometry.unary_union.convex_hull
+            hull_wgs84 = gpd.GeoSeries([hull], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
+            out_features.append({
+                "type": "Feature",
+                "geometry": mapping(hull_wgs84),
+                "properties": {
+                    "feature_count": len(gdf),
+                    "area_km2": round(float(hull.area) / 1e6, 4),
+                },
+            })
+
+        return {
+            "type": "FeatureCollection",
+            "features": out_features,
+            "count": len(out_features),
+        }
+
+    @tool(registry, name="multi_ring_buffer",
+           description="多环缓冲区分析：围绕要素生成多个同心缓冲带（环形区域）",
+           param_descriptions={
+               "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+               "distances": "缓冲距离列表（米），例如 [500, 1000, 1500]",
+               "merge_rings": "是否合并为环形区域（默认true），false则生成独立圆",
+           })
+    def multi_ring_buffer(geojson: Any, distances: list = [500, 1000, 1500],
+                           merge_rings: bool = True) -> dict:
+        data = _safe_parse_geojson(geojson)
+        if not data:
+            return {"error": "无效的 GeoJSON 输入"}
+
+        result = to_utm_gdf(data)
+        if result is None:
+            return {"error": "无法转换 GeoJSON"}
+        gdf, utm_crs = result
+
+        if not distances:
+            return {"error": "需要至少一个缓冲距离"}
+
+        distances = sorted([float(d) for d in distances])
+        union_geom = gdf.geometry.unary_union
+        out_features = []
+
+        prev_buffer = None
+        for dist in distances:
+            buf = union_geom.buffer(dist, resolution=32)
+
+            if merge_rings and prev_buffer is not None:
+                ring = buf.difference(prev_buffer)
+            else:
+                ring = buf
+
+            if ring.is_empty:
+                continue
+
+            ring_wgs84 = gpd.GeoSeries([ring], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
+            out_features.append({
+                "type": "Feature",
+                "geometry": mapping(ring_wgs84),
+                "properties": {
+                    "distance_m": dist,
+                    "area_km2": round(float(ring.area) / 1e6, 4),
+                },
+            })
+            prev_buffer = buf
+
+        return {
+            "type": "FeatureCollection",
+            "features": out_features,
+            "count": len(out_features),
+            "method": "多环缓冲区" + ("（环形区域）" if merge_rings else ""),
         }

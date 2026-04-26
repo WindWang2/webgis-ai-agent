@@ -108,12 +108,13 @@ export async function* streamChat(
  */
 export async function sendChat(
   message: string,
-  sessionId?: string
+  sessionId?: string,
+  mapState?: Record<string, unknown>
 ): Promise<{ content: string; session_id: string }> {
   const response = await fetch(`${API_BASE}/api/v1/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, session_id: sessionId }),
+    body: JSON.stringify({ message, session_id: sessionId, map_state: mapState }),
   });
 
   if (!response.ok) {
