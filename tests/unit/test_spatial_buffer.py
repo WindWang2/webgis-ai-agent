@@ -3,6 +3,10 @@
 """
 import pytest
 import json
+import pytest
+
+pytestmark = pytest.mark.heavy
+
 from app.services.spatial_analyzer import SpatialAnalyzer, AnalysisResult
 
 

@@ -1,5 +1,8 @@
 import pytest
 import os
+
+pytestmark = pytest.mark.heavy
+
 from unittest.mock import MagicMock, patch
 from app.services.rag_service import add_document, semantic_search
 from app.services.report_service import ReportService

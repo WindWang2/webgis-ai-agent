@@ -1,5 +1,8 @@
 import pytest
 import json
+
+pytestmark = pytest.mark.heavy
+
 from app.services.spatial_analyzer import SpatialAnalyzer
 from app.services.spatial_tasks import run_buffer_analysis, run_heatmap_generation, run_spatial_stats
 from unittest.mock import MagicMock
