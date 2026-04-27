@@ -77,6 +77,18 @@ class TestLRUEviction:
         result = mgr.get("s1", "alias_0")
         assert result is None
 
+    def test_get_promotes_item_prevents_eviction(self, mgr):
+        refs = []
+        for i in range(5):
+            ref = mgr.store("s1", f"data_{i}")
+            refs.append(ref)
+        # Access item 0 — promotes it to end of LRU
+        mgr.get("s1", refs[0])
+        # Store one more — should evict item 1 (oldest unaccessed), not item 0
+        mgr.store("s1", "data_6")
+        assert mgr.get("s1", refs[0]) == "data_0"
+        assert mgr.get("s1", refs[1]) is None
+
 
 class TestMapState:
     def test_set_and_get_map_state(self, mgr):
@@ -87,6 +99,29 @@ class TestMapState:
 
     def test_get_map_state_empty(self, mgr):
         assert mgr.get_map_state("missing") == {}
+
+
+class TestLayerState:
+    def test_update_existing_layer(self, mgr):
+        mgr.set_map_state("s1", "layers", [{"id": "l1", "opacity": 0.5}])
+        mgr.update_layer_in_state("s1", "l1", {"opacity": 0.8})
+        layers = mgr.get_map_state("s1")["layers"]
+        assert len(layers) == 1
+        assert layers[0]["opacity"] == 0.8
+
+    def test_update_adds_new_layer_if_missing(self, mgr):
+        mgr.set_map_state("s1", "layers", [])
+        mgr.update_layer_in_state("s1", "l_new", {"opacity": 1.0})
+        layers = mgr.get_map_state("s1")["layers"]
+        assert len(layers) == 1
+        assert layers[0]["id"] == "l_new"
+
+    def test_remove_layer(self, mgr):
+        mgr.set_map_state("s1", "layers", [{"id": "l1"}, {"id": "l2"}])
+        mgr.remove_layer_from_state("s1", "l1")
+        layers = mgr.get_map_state("s1")["layers"]
+        assert len(layers) == 1
+        assert layers[0]["id"] == "l2"
 
 
 class TestEventLog:
@@ -117,3 +152,13 @@ class TestClearSession:
         assert mgr.get("s1", "anything") is None
         assert mgr.get_map_state("s1") == {}
         assert mgr.get_event_log("s1") == []
+
+
+class TestCleanupIdleSessions:
+    def test_evicts_oldest_sessions(self):
+        mgr = SessionDataManager(capacity=10)
+        for i in range(12):
+            mgr.store(f"s{i}", f"data_{i}")
+        mgr.cleanup_idle_sessions(max_sessions=10)
+        # Should have cleaned up some sessions
+        assert len(mgr._store) <= 10
