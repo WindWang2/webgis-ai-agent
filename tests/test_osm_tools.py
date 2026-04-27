@@ -40,12 +40,19 @@ async def test_query_osm_poi_mock():
     registry = ToolRegistry()
     register_osm_tools(registry)
 
-    mock_response = MagicMock()
-    mock_response.status = 200
-    mock_response.text = AsyncMock(return_value='{"elements": []}')
+    # Mock for _geocode_bbox (session.get)
+    geo_response = MagicMock()
+    geo_response.status = 200
+    geo_response.json = AsyncMock(return_value=[{"boundingbox": ["39.8","40.0","116.3","116.5"], "importance": 0.9}])
+
+    # Mock for Overpass query (session.post)
+    overpass_response = MagicMock()
+    overpass_response.status = 200
+    overpass_response.text = AsyncMock(return_value='{"elements": []}')
 
     mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=mock_response)
+    mock_session.get = MagicMock(return_value=geo_response)
+    mock_session.post = MagicMock(return_value=overpass_response)
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
 

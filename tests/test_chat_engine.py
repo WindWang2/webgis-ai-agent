@@ -1,7 +1,6 @@
 """对话引擎测试"""
 import pytest
-import json
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 
 from app.services.chat_engine import ChatEngine
 from app.tools.registry import ToolRegistry, tool
@@ -28,13 +27,9 @@ def test_engine_init(registry):
 async def test_chat_simple_response(registry):
     """测试无工具调用的简单对话"""
     engine = ChatEngine(registry)
-    mock_msg = MagicMock()
-    mock_msg.content = "你好！我是 GIS 分析助手。"
-    mock_msg.tool_calls = None
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock(message=mock_msg)]
+    mock_response = {"choices": [{"message": {"content": "你好！", "tool_calls": None}}]}
 
-    with patch.object(engine.client.chat.completions, "create", new_callable=AsyncMock, return_value=mock_response):
+    with patch.object(engine, "_call_llm", new_callable=AsyncMock, return_value=mock_response):
         result = await engine.chat("你好")
         assert "session_id" in result
         assert result["content"]
@@ -45,61 +40,46 @@ async def test_chat_with_tool_call(registry):
     """测试工具调用流程"""
     engine = ChatEngine(registry)
 
-    # 第一次调用返回 tool_call
-    tc = MagicMock()
-    tc.id = "call_1"
-    tc.function.name = "geocode"
-    tc.function.arguments = '{"query": "北京"}'
-    msg1 = MagicMock()
-    msg1.content = None
-    msg1.tool_calls = [tc]
-    resp1 = MagicMock()
-    resp1.choices = [MagicMock(message=msg1)]
+    resp1 = {"choices": [{"message": {
+        "content": None,
+        "tool_calls": [{"id": "call_1", "function": {"name": "geocode", "arguments": '{"query": "北京"}'}}]
+    }}]}
+    resp2 = {"choices": [{"message": {"content": "北京的坐标是 39.9042, 116.4074", "tool_calls": None}}]}
 
-    # 第二次调用返回最终回复
-    msg2 = MagicMock()
-    msg2.content = "北京的坐标是 39.9042, 116.4074"
-    msg2.tool_calls = None
-    resp2 = MagicMock()
-    resp2.choices = [MagicMock(message=msg2)]
-
-    with patch.object(engine.client.chat.completions, "create", new_callable=AsyncMock, side_effect=[resp1, resp2]):
-        result = await engine.chat("北京的坐标在哪？")
-        assert "39.9042" in result["content"] or result["content"]
+    with patch.object(engine, "_call_llm", new_callable=AsyncMock, side_effect=[resp1, resp2]):
+        with patch.object(engine, "_save_msg_async", new_callable=AsyncMock):
+            result = await engine.chat("北京的坐标在哪？")
+            assert "39.9042" in result["content"]
 
 
 @pytest.mark.asyncio
 async def test_chat_stream(registry):
     """测试流式对话"""
     engine = ChatEngine(registry)
-    mock_msg = MagicMock()
-    mock_msg.content = "你好"
-    mock_msg.tool_calls = None
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock(message=mock_msg)]
+    msg = {"content": "你好", "tool_calls": None}
 
-    with patch.object(engine.client.chat.completions, "create", new_callable=AsyncMock, return_value=mock_response):
-        events = []
-        async for event in engine.chat_stream("你好"):
-            events.append(event)
-        assert len(events) >= 1
-        assert any("content" in e for e in events)
+    async def fake_stream(*args, **kwargs):
+        yield ("done", {"message": msg})
+
+    with patch.object(engine, "_call_llm_stream", return_value=fake_stream()):
+        with patch.object(engine, "_save_msg_async", new_callable=AsyncMock):
+            events = []
+            async for event in engine.chat_stream("你好"):
+                events.append(event)
+            assert len(events) >= 1
+            assert any("content" in e for e in events)
 
 
 @pytest.mark.asyncio
 async def test_session_persistence(registry):
     """测试会话保持"""
     engine = ChatEngine(registry)
-    mock_msg = MagicMock()
-    mock_msg.content = "OK"
-    mock_msg.tool_calls = None
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock(message=mock_msg)]
+    mock_response = {"choices": [{"message": {"content": "OK", "tool_calls": None}}]}
 
-    with patch.object(engine.client.chat.completions, "create", new_callable=AsyncMock, return_value=mock_response):
-        r1 = await engine.chat("hello", session_id="s1")
-        r2 = await engine.chat("world", session_id="s1")
-        assert r1["session_id"] == "s1"
-        assert r2["session_id"] == "s1"
-        # 同一 session 应该有历史
-        assert len(engine._sessions["s1"]) >= 4  # system + 2 user + 2 assistant
+    with patch.object(engine, "_call_llm", new_callable=AsyncMock, return_value=mock_response):
+        with patch.object(engine, "_save_msg_async", new_callable=AsyncMock):
+            r1 = await engine.chat("hello", session_id="s1")
+            r2 = await engine.chat("world", session_id="s1")
+            assert r1["session_id"] == "s1"
+            assert r2["session_id"] == "s1"
+            assert len(engine._sessions["s1"]) >= 4
