@@ -9,6 +9,8 @@ from app.core.config import settings
 from app.core.network import get_ssl_context, get_base_headers
 from app.tools.registry import ToolRegistry, tool
 
+logger = logging.getLogger(__name__)
+
 
 
 
