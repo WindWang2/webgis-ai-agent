@@ -1,8 +1,9 @@
 "use client"
 
 import { useState, useRef, useCallback } from "react"
-import { Upload, X, FileText, Loader2 } from "lucide-react"
+import { Upload, X, Loader2 } from "lucide-react"
 import { uploadFile, type UploadResponse } from "@/lib/api/upload"
+import { useToastStore } from "@/components/ui/toast"
 
 interface UploadZoneProps {
   sessionId?: string
@@ -27,6 +28,7 @@ function getFileTypeInfo(filename: string) {
 }
 
 export function UploadZone({ sessionId, onUploadSuccess, compact }: UploadZoneProps) {
+  const addToast = useToastStore((s) => s.addToast)
   const [isDragging, setIsDragging] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -41,13 +43,14 @@ export function UploadZone({ sessionId, onUploadSuccess, compact }: UploadZonePr
     try {
       const result = await uploadFile(file, sessionId, setProgress)
       onUploadSuccess(result)
+      addToast(`${result.original_name} 上传成功`, "success")
     } catch (e) {
       setError(e instanceof Error ? e.message : "上传失败")
     } finally {
       setIsUploading(false)
       setProgress(0)
     }
-  }, [sessionId, onUploadSuccess])
+  }, [sessionId, onUploadSuccess, addToast])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()

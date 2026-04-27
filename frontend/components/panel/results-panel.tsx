@@ -10,7 +10,8 @@ import { TaskTimeline } from "@/components/hud/task-timeline"
 import { AssetCard } from "./asset-card"
 import { LayerStylePanel } from '@/components/hud/layer-style-panel';
 import { API_BASE } from '@/lib/api/config';
-import { useHudStore } from "@/lib/store/useHudStore"
+import { useHudStore, type HudState } from "@/lib/store/useHudStore"
+import { useToastStore } from "@/components/ui/toast"
 import { motion, AnimatePresence } from "framer-motion"
 import { Layer } from "@/lib/types/layer"
 import { useEffect } from "react"
@@ -36,8 +37,9 @@ export function DataHud({
 }: DataHudProps) {
   void _onMapMove;
 
+  const addToast = useToastStore((s) => s.addToast)
   const [activeTab, setActiveTab] = useState<"tasks" | "layers" | "assets">("tasks")
-  const editingLayerId = useHudStore((s) => s.editingLayerId);
+  const editingLayerId = useHudStore((s: HudState) => s.editingLayerId);
   const {
     currentTask,
     analysisAssets,
@@ -45,10 +47,9 @@ export function DataHud({
     deleteAsset,
     updateAsset,
     addLayer,
-    sessionId: storeSessionId
   } = useHudStore()
 
-  const effectiveSessionId = sessionIdProp ?? storeSessionId
+  const effectiveSessionId = sessionIdProp
 
   useEffect(() => {
     if (activeTab === "assets") {
@@ -85,7 +86,7 @@ export function DataHud({
     <div className="flex flex-col h-full">
       {/* Tab bar */}
       <div className="relative flex px-3 pt-2 pb-0 gap-0.5">
-        {tabs.map((tab, i) => (
+        {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
@@ -224,13 +225,13 @@ export function DataHud({
               className="p-3 space-y-2"
             >
               {analysisAssets.length > 0 ? (
-                analysisAssets.map(asset => (
+                analysisAssets.map((asset: any) => (
                   <AssetCard
                     key={asset.id}
                     asset={asset}
                     onDelete={(id) => {
                       fetch(`${API_BASE}/api/v1/chat/tools/call?tool=manage_analysis_asset&asset_id=${id}&action=delete`)
-                        .then(() => deleteAsset(id))
+                        .then(() => { deleteAsset(id); addToast("资产已删除", "info") })
                     }}
                     onRename={(id, newName) => {
                       fetch(`${API_BASE}/api/v1/chat/tools/call?tool=manage_analysis_asset&asset_id=${id}&action=rename&new_name=${encodeURIComponent(newName)}`)
@@ -246,6 +247,7 @@ export function DataHud({
                         source: asset.filename,
                         style: {}
                       })
+                      addToast(`${asset.original_name} 已加载到地图`, "success")
                     }}
                   />
                 ))

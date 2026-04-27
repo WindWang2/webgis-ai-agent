@@ -11,7 +11,7 @@ interface TaskProgressProps {
 }
 
 // 探险步进图标 - 使用更精致的样式
-function StepIcon({ status }: { status: 'running' | 'completed' | 'failed' }) {
+function StepIcon({ status }: { status: 'running' | 'completed' | 'failed' | 'pending' }) {
   switch (status) {
     case 'running':
       return (
@@ -29,7 +29,7 @@ function StepIcon({ status }: { status: 'running' | 'completed' | 'failed' }) {
   }
 }
 
-export function TaskProgress({ task, originalRequest = '' }: TaskProgressProps) {
+export function TaskProgress({ task }: TaskProgressProps) {
   const [expanded, setExpanded] = useState(true);
   const [cancelling, setCancelling] = useState(false);
 

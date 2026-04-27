@@ -1,9 +1,8 @@
 "use client"
 import { useState, useCallback, useEffect, useRef } from "react"
+import dynamic from "next/dynamic"
 import { motion, AnimatePresence } from "framer-motion"
-import { MapPanel } from "@/components/map/map-panel"
 import { HudPanel } from "@/components/hud/hud-panel"
-import { DynamicIsland } from "@/components/hud/dynamic-island"
 import { RagInsightCard } from "@/components/hud/rag-insight-card"
 import { ChatHud } from "@/components/chat/chat-panel"
 import { ChatSidebar } from "@/components/chat-sidebar"
@@ -11,7 +10,7 @@ import { DataHud } from "@/components/panel/results-panel"
 import { SettingsPanel } from "@/components/hud/settings-panel"
 import { useHudStore } from "@/lib/store/useHudStore"
 import { streamChat, SSEEventType } from "@/lib/api/chat"
-import { getSkills } from '@/lib/api/skills'
+
 import { useWebSocket } from "@/lib/hooks/use-websocket"
 import type { GeoJSONGeometry, GeoJSONFeature } from "@/lib/types"
 import type { ChatSession } from "@/lib/types/chat"
@@ -26,6 +25,24 @@ import {
   PanelRightOpen,
   History,
 } from "lucide-react"
+
+const MapPanel = dynamic(
+  () => import("@/components/map/map-panel").then((m) => ({ default: m.MapPanel })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex-1 flex items-center justify-center bg-[#0a0a0a]">
+        <div className="animate-pulse text-hud-cyan/30 text-xs font-mono uppercase tracking-widest">
+          Loading Map...
+        </div>
+      </div>
+    ),
+  }
+)
+
+const DynamicIsland = dynamic(
+  () => import("@/components/hud/dynamic-island").then((m) => ({ default: m.DynamicIsland }))
+)
 
 function computeBBoxFromFeatures(features: any[]): [number, number, number, number] | undefined {
   if (!features || features.length === 0) return undefined
@@ -440,7 +457,7 @@ export default function Home() {
         setAnalysisResult({ center, zoom: 10 })
       }
     },
-    [addLayer, setAnalysisResult, sessionId]
+    [addLayer, setAnalysisResult]
   )
 
   const [showScanEffect, setShowScanEffect] = useState(false)
@@ -545,7 +562,7 @@ export default function Home() {
             // ─── NDVI / Raster Result Perception ───
             if (result && result.type === "ndvi_result" && result.image && result.bbox) {
               dispatchAction({
-                type: 'add_raster_layer',
+                command: 'add_raster_layer',
                 params: {
                   id: `ndvi-${result.asset_id || Date.now()}`,
                   name: `NDVI分析结果 (${result.filename})`,
@@ -630,7 +647,7 @@ export default function Home() {
         setMessages((prev) =>
           prev.map((msg) => (msg.id === thinkingMessage.id ? { ...msg, isThinking: false } : msg))
         )
-      } catch (_) {
+      } catch {
         setCurrentStep("error")
         setMessages((prev) =>
           prev.map((msg) => (msg.id === thinkingMessage.id ? { ...msg, content: "请求失败，请重试。", isThinking: false } : msg))
@@ -791,6 +808,7 @@ export default function Home() {
             sessionId={sessionId}
             showUploadZone={showUploadZone}
             setShowUploadZone={setShowUploadZone}
+            onSend={handleSend}
           />
         )}
       </HudPanel>

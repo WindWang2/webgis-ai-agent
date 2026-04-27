@@ -13,7 +13,7 @@ import {
   Zap,
   Clock,
 } from 'lucide-react';
-import { useHudStore, TaskStep } from '@/lib/store/useHudStore';
+import { useHudStore, type HudState, TaskStep } from '@/lib/store/useHudStore';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 
 /* Tool display name mapping */
@@ -144,8 +144,8 @@ function StepCard({ step, onViewSnapshot }: { step: TaskStep; onViewSnapshot?: (
 }
 
 export function TaskTimeline() {
-  const currentTask = useHudStore((s) => s.currentTask);
-  const addProcessLayer = useHudStore((s) => s.addProcessLayer);
+  const currentTask = useHudStore((s: HudState) => s.currentTask);
+  const addProcessLayer = useHudStore((s: HudState) => s.addProcessLayer);
 
   if (!currentTask) return null;
 
@@ -179,7 +179,7 @@ export function TaskTimeline() {
 
       {/* Steps Timeline */}
       <div className="space-y-0">
-        {currentTask.steps.map((step) => (
+        {currentTask.steps.map((step: TaskStep) => (
           <StepCard
             key={step.id}
             step={step}

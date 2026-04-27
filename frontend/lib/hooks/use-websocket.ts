@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { useHudStore } from '@/lib/store/useHudStore';
+import { useHudStore, type HudState } from '@/lib/store/useHudStore';
 import { WS_BASE } from '@/lib/api/config';
 
 const WS_URL = `${WS_BASE}/api/v1/ws`;
@@ -103,7 +103,7 @@ export function useWebSocket(sessionId?: string) {
 
   // ─── Zustand Subscription: viewport + layer changes → perception ───
   useEffect(() => {
-    const unsub = useHudStore.subscribe((state, prevState) => {
+    const unsub = useHudStore.subscribe((state: HudState, prevState: HudState) => {
       // Viewport change
       if (state.viewport !== prevState.viewport) {
         useHudStore.getState().pushPerception('viewport_change', {

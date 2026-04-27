@@ -37,13 +37,13 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PYTHONPATH=/app
 
-# Install Node.js for frontend
+# Install Node.js for frontend standalone server
 RUN apt-get update && apt-get install -y nodejs npm && rm -rf /var/lib/apt/lists/*
 
-# Copy frontend build
-COPY --from=frontend-builder /app/frontend/.next ./frontend/.next
-COPY --from=frontend-builder /app/frontend/node_modules ./frontend/node_modules
-COPY --from=frontend-builder /app/frontend/package.json ./frontend/package.json
+# Copy frontend standalone output
+COPY --from=frontend-builder /app/frontend/.next/standalone ./frontend/.next/standalone
+COPY --from=frontend-builder /app/frontend/.next/static ./frontend/.next/static
+COPY --from=frontend-builder /app/frontend/public ./frontend/public
 
 # Copy backend
 COPY --from=backend-builder /app ./
@@ -55,4 +55,4 @@ USER appuser
 
 EXPOSE 3000 8000
 
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 & cd frontend && npx next start -p 3000"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 & node frontend/.next/standalone/server.js -p 3000"]

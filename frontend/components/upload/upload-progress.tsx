@@ -1,6 +1,6 @@
 "use client"
 
-import { X, MapPin, CheckCircle2 } from "lucide-react"
+import { X, CheckCircle2 } from "lucide-react"
 import type { UploadResponse } from "@/lib/api/upload"
 
 interface UploadProgressProps {
