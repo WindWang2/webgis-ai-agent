@@ -24,7 +24,7 @@ function StoryPageInner() {
   const [loading, setLoading] = useState(true)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  const { layers, addLayer, removeLayer, toggleLayer, setAnalysisResult, analysisResult } = useHudStore()
+  const { layers, removeLayer, toggleLayer, analysisResult } = useHudStore()
 
   useEffect(() => {
     if (sessionId) {
@@ -47,7 +47,7 @@ function StoryPageInner() {
   }, [sessionId])
 
   // ScrollSpy - Parse specific locations from markdown text and fly to them
-  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+  const handleScroll = () => {
     // Advanced ScrollSpy logic can be added here to trigger camera flyTo
     // based on visible Markdown headers.
   }

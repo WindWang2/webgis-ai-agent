@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { TaskProgress } from './task-progress';
 import type { TaskState } from '@/lib/store/useHudStore';
 import { createMockTaskStep, createMockTaskState } from '@/test/test-utils';

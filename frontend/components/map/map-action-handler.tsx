@@ -4,16 +4,6 @@ import { useMapAction } from '@/lib/contexts/map-action-context';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 import maplibregl from 'maplibre-gl';
 
-interface MapInstanceLike {
-  getMap?: () => maplibregl.Map;
-  getSource?: (id: string) => maplibregl.Source | undefined;
-  addSource?: (id: string, source: any) => void;
-  addLayer?: (layer: any) => void;
-  getLayer?: (id: string) => any;
-  fitBounds?: (bounds: any, options?: any) => void;
-  flyTo?: (options: any) => void;
-}
-
 function calculateBBox(geojson: GeoJSONFeatureCollection): [number, number, number, number] | null {
   const bounds = [Infinity, Infinity, -Infinity, -Infinity];
   const coord: number[][] = [];
@@ -243,7 +233,7 @@ export function MapActionHandler() {
         }
 
         case 'export_map': {
-          const { title, subtitle, include_legend, dark_mode } = action.params;
+          const { title, subtitle, dark_mode } = action.params;
           map.once("render", async () => {
             try {
               const canvas = map.getCanvas();
@@ -366,6 +356,7 @@ export function MapActionHandler() {
     } finally {
       popAction();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [action, mapInstance, popAction]);
 
   return null;

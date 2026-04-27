@@ -44,7 +44,7 @@ export function MapActionRenderer({ content }: MapActionRendererProps) {
             dispatchAction(action);
             successCount++;
           }
-        } catch (e) {
+        } catch {
           // Individual block failed, skip it
         }
       });
@@ -54,7 +54,7 @@ export function MapActionRenderer({ content }: MapActionRendererProps) {
       } else {
         setStatus('error');
       }
-    } catch (e) {
+    } catch {
       setStatus('error');
     }
   }, [content, dispatchAction]);

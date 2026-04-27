@@ -2,7 +2,6 @@
 import React, { memo, useState, useRef, useEffect } from 'react';
 import { Eye, EyeOff, Trash2, GripVertical, Check, X, Type } from 'lucide-react';
 import type { Layer } from '@/lib/types/layer';
-import { useHudStore, type HudState } from '@/lib/store/useHudStore';
 
 interface LayerCardProps {
   layer: Layer;
@@ -33,7 +32,6 @@ export const LayerCard = memo(function LayerCard({
   onUpdate,
   dragHandleProps,
 }: LayerCardProps) {
-  const setEditingLayerId = useHudStore((s: HudState) => s.setEditingLayerId);
   const [isEditing, setIsEditing] = useState(false);
   const [tempName, setTempName] = useState(layer.name);
   const inputRef = useRef<HTMLInputElement>(null);

@@ -29,7 +29,7 @@ function StepIcon({ status }: { status: 'running' | 'completed' | 'failed' | 'pe
   }
 }
 
-export function TaskProgress({ task, originalRequest = '' }: TaskProgressProps) {
+export function TaskProgress({ task }: TaskProgressProps) {
   const [expanded, setExpanded] = useState(true);
   const [cancelling, setCancelling] = useState(false);
 

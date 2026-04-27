@@ -2,9 +2,6 @@
 import React, { useState, memo } from 'react';
 import { ArrowUpDown } from 'lucide-react';
 import type { SortOption, SortField } from '@/lib/types/layer';
-import clsx from 'clsx';
-import { twMerge } from 'tailwind-merge';
-import { cn } from '@/lib/utils';
 
 interface SortControlsProps {
   onSort: (sort: SortOption) => void;

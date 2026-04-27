@@ -164,7 +164,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
               const withoutPrefix = layer.id.slice(7)
               const baseId = withoutPrefix.replace(/-[^-]*$/, "")
               if (!layers.find((l) => l.id === baseId)) {
-                try { map.removeLayer(layer.id) } catch (_e) { /* silent */ }
+                try { map.removeLayer(layer.id) } catch { /* silent */ }
               }
             }
           }
@@ -172,7 +172,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
             if (sourceId.startsWith("custom-")) {
               const baseId = sourceId.replace("custom-", "")
               if (!layers.find((l) => l.id === baseId)) {
-                try { map.removeSource(sourceId) } catch (_e) { /* silent */ }
+                try { map.removeSource(sourceId) } catch { /* silent */ }
               }
             }
           }
@@ -415,7 +415,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
           if (sl.id.startsWith("process-")) {
             const stepId = sl.id.replace("process-", "").replace(/-[^-]*$/, "")
             if (!currentProcessIds.has(stepId)) {
-              try { map.removeLayer(sl.id) } catch (_e) { /* silent */ }
+              try { map.removeLayer(sl.id) } catch { /* silent */ }
             }
           }
         }
@@ -423,7 +423,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
           if (sid.startsWith("process-")) {
             const stepId = sid.replace("process-", "")
             if (!currentProcessIds.has(stepId)) {
-              try { map.removeSource(sid) } catch (_e) { /* silent */ }
+              try { map.removeSource(sid) } catch { /* silent */ }
             }
           }
         }
@@ -434,7 +434,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
         for (const layer of reversedLayers) {
           const subLayers = finalStyle?.layers?.filter((sl) => sl.id.startsWith(`custom-${layer.id}`)) || []
           subLayers.forEach((sl) => {
-            try { if (map.getLayer(sl.id)) map.moveLayer(sl.id) } catch (_e) { /* silent */ }
+            try { if (map.getLayer(sl.id)) map.moveLayer(sl.id) } catch { /* silent */ }
           })
         }
       } catch (err) {
@@ -452,6 +452,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
       if (renderTimeoutRef.current) clearTimeout(renderTimeoutRef.current)
       isUpdatingRef.current = false
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layers, mapReady, currentMapStyle, activeFilters, processLayers])
 
 
