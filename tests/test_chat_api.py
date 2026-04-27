@@ -8,24 +8,29 @@ from httpx import AsyncClient, ASGITransport
 from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi import FastAPI
 import importlib.util
-import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+_chat_mod = None
+_router = None
 
-# Load chat module directly without triggering __init__.py
-_spec = importlib.util.spec_from_file_location(
-    "app.api.routes.chat",
-    os.path.join(os.path.dirname(__file__), "..", "app", "api", "routes", "chat.py"),
-    submodule_search_locations=[]
-)
-_chat_mod = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_chat_mod)
-router = _chat_mod.router
+
+def _load_chat_module():
+    global _chat_mod, _router
+    if _chat_mod is None:
+        spec = importlib.util.spec_from_file_location(
+            "app.api.routes.chat",
+            os.path.join(os.path.dirname(__file__), "..", "app", "api", "routes", "chat.py"),
+            submodule_search_locations=[]
+        )
+        _chat_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_chat_mod)
+        _router = _chat_mod.router
+    return _chat_mod, _router
 
 
 @pytest.fixture
 def app():
+    _chat_mod, router = _load_chat_module()
     app = FastAPI()
     app.include_router(router, prefix="/api")
     return app
@@ -54,7 +59,7 @@ async def test_chat_completions(client):
     mock_response = MagicMock()
     mock_response.choices = [MagicMock(message=mock_msg)]
 
-    with patch.object(_chat_mod.engine.client.chat.completions, "create", new_callable=AsyncMock, return_value=mock_response):
+    with patch.object(_chat_mod.engine, "_call_llm", new_callable=AsyncMock, return_value=mock_response):
         resp = await client.post("/api/chat/completions", json={"message": "你好"})
         assert resp.status_code == 200
         data = resp.json()
