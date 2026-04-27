@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { SuggestedPrompts } from './suggested-prompts'
 
 vi.mock('framer-motion', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const actual = require('../../test/__mocks__/framer-motion')
   return actual.default || actual
 })
