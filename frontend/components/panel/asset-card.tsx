@@ -10,7 +10,7 @@ import {
   Map as MapIcon,
   Layers,
   Calendar,
-  Image,
+  Image as ImageIcon,
   FileBarChart,
 } from "lucide-react"
 import { motion } from "framer-motion"
@@ -29,12 +29,13 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// eslint-disable-next-line jsx-a11y/alt-text
 function getAssetTypeInfo(asset: any): { icon: React.ReactNode; label: string; color: string } {
   const name = (asset.original_name || '').toLowerCase();
   const format = (asset.format || '').toLowerCase();
 
   if (name.includes('ndvi') || name.includes('ndwi') || name.includes('ndbi')) {
-    return { icon: <Image className="h-4 w-4" />, label: name.toUpperCase().slice(0, name.indexOf('_') > -1 ? name.indexOf('_') : 4), color: 'text-emerald-400' };
+    return { icon: <ImageIcon className="h-4 w-4" />, label: name.toUpperCase().slice(0, name.indexOf('_') > -1 ? name.indexOf('_') : 4), color: 'text-emerald-400' };
   }
   if (name.includes('dem') || name.includes('dtm') || name.includes('dsm')) {
     return { icon: <FileBarChart className="h-4 w-4" />, label: '高程分析', color: 'text-amber-400' };
@@ -43,7 +44,7 @@ function getAssetTypeInfo(asset: any): { icon: React.ReactNode; label: string; c
     return { icon: <Layers className="h-4 w-4" />, label: '分类结果', color: 'text-purple-400' };
   }
   if (format.includes('tif') || format.includes('tiff') || format.includes('geotiff')) {
-    return { icon: <Image className="h-4 w-4" />, label: '栅格数据', color: 'text-orange-400' };
+    return { icon: <ImageIcon className="h-4 w-4" />, label: '栅格数据', color: 'text-orange-400' };
   }
   if (format.includes('shp') || format.includes('geojson')) {
     return { icon: <Layers className="h-4 w-4" />, label: '矢量数据', color: 'text-hud-cyan' };

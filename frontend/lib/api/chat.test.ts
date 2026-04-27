@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { sendChat, getSessionList, deleteSession, clearSessionMessages, executeToolDirect } from './chat';
 
 const mockFetch = vi.fn();

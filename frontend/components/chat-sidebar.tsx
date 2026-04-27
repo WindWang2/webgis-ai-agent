@@ -14,7 +14,6 @@ interface ChatSidebarProps {
 type TimeGroup = 'today' | 'yesterday' | 'week' | 'older';
 
 function getTimeGroup(timestamp: number): TimeGroup {
-  const d = new Date(timestamp);
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const startOfYesterday = startOfToday - 86400000;
