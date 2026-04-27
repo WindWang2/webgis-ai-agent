@@ -1,6 +1,6 @@
 'use client';
 import React, { memo, useState, useRef, useEffect } from 'react';
-import { Eye, EyeOff, Trash2, GripVertical, Check, X, Type } from 'lucide-react';
+import { Eye, EyeOff, Trash2, GripVertical, Check, X, Type, Palette } from 'lucide-react';
 import type { Layer } from '@/lib/types/layer';
 import { useHudStore } from '@/lib/store/useHudStore';
 
@@ -33,10 +33,10 @@ export const LayerCard = memo(function LayerCard({
   onUpdate,
   dragHandleProps,
 }: LayerCardProps) {
-  const setEditingLayerId = useHudStore((s) => s.setEditingLayerId);
   const [isEditing, setIsEditing] = useState(false);
   const [tempName, setTempName] = useState(layer.name);
   const inputRef = useRef<HTMLInputElement>(null);
+  const setEditingLayerId = useHudStore((s) => s.setEditingLayerId);
 
   const typeStyle = TYPE_STYLES[layer.type] || TYPE_STYLES.vector;
 
@@ -170,6 +170,13 @@ export const LayerCard = memo(function LayerCard({
               title="重命名"
             >
               <Type size={12} />
+            </button>
+            <button
+              onClick={() => setEditingLayerId(layer.id)}
+              className="p-1 rounded text-white/20 hover:text-hud-cyan hover:bg-hud-cyan/10 transition-all"
+              title="编辑样式"
+            >
+              <Palette size={12} />
             </button>
             <div className="flex-1" />
             <button
