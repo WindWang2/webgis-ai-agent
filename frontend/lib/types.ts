@@ -69,8 +69,9 @@ export interface ChartData {
 // === Map action types ===
 
 export interface MapActionPayload {
-  command: 'add_layer' | 'remove_layer' | 'fly_to' | 'add_heatmap_raster' | 'BASE_LAYER_CHANGE' | 'LAYER_VISIBILITY_UPDATE' | 'LAYER_STYLE_UPDATE' | 'REMOVE_LAYER';
+  command: 'add_layer' | 'remove_layer' | 'fly_to' | 'add_heatmap_raster' | 'add_raster_layer' | 'export_map' | 'BASE_LAYER_CHANGE' | 'LAYER_VISIBILITY_UPDATE' | 'LAYER_STYLE_UPDATE' | 'REMOVE_LAYER';
   params: {
+    id?: string;
     layerId?: string;
     layer_id?: string; // Support for snake_case from backend
     name?: string;     // For base layer change
@@ -81,9 +82,14 @@ export interface MapActionPayload {
     center?: [number, number];
     zoom?: number;
     image?: string;
+    url?: string;
     bbox?: [number, number, number, number];
     opacity?: number;
     visible?: boolean;
+    title?: string;
+    subtitle?: string;
+    include_legend?: boolean;
+    dark_mode?: boolean;
   };
 }
 

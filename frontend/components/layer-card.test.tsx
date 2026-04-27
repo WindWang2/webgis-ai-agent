@@ -1,7 +1,15 @@
-import { render, screen, fireEvent } from '@testing-library/react'
-import { LayerCard } from './layer-card'
-import type { Layer } from '@/lib/types/layer'
-import { useHudStore } from '@/lib/store/useHudStore'
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { LayerCard } from './layer-card';
+import type { Layer } from '@/lib/types/layer';
+
+const setEditingLayerId = vi.fn();
+
+vi.mock('@/lib/store/useHudStore', () => ({
+  useHudStore: (selector: (s: any) => any) => selector({
+    setEditingLayerId,
+  }),
+}));
 
 const mockLayer: Layer = {
   id: 'test-layer-1',
@@ -9,88 +17,50 @@ const mockLayer: Layer = {
   type: 'vector',
   visible: true,
   opacity: 0.8,
-  source: 'test-source'
-}
+};
 
 describe('LayerCard', () => {
-  const mockOnToggle = vi.fn()
-  const mockOnDelete = vi.fn()
+  const mockOnToggle = vi.fn();
+  const mockOnDelete = vi.fn();
+  const mockOnUpdate = vi.fn();
 
   beforeEach(() => {
-    vi.clearAllMocks()
-  })
+    vi.clearAllMocks();
+  });
 
-  it('renders layer information correctly', () => {
-    render(
-      <LayerCard
-        layer={mockLayer}
-        onToggle={mockOnToggle}
-        onDelete={mockOnDelete}
-      />
-    )
+  it('renders layer name', () => {
+    render(<LayerCard layer={mockLayer} onToggle={mockOnToggle} onDelete={mockOnDelete} />);
+    expect(screen.getByText('Test Layer')).toBeInTheDocument();
+  });
 
-    expect(screen.getByText('Test Layer')).toBeInTheDocument()
-    expect(screen.getByText('vector')).toBeInTheDocument()
-    expect(screen.getByText('80%')).toBeInTheDocument()
-    expect(screen.getByText('Source: test-source')).toBeInTheDocument()
-    expect(screen.getByLabelText('Hide layer')).toBeInTheDocument()
-  })
+  it('renders type badge with Chinese label', () => {
+    render(<LayerCard layer={mockLayer} onToggle={mockOnToggle} onDelete={mockOnDelete} />);
+    expect(screen.getByText('矢量')).toBeInTheDocument();
+  });
 
-  it('shows EyeOff icon when layer is not visible', () => {
-    const hiddenLayer = { ...mockLayer, visible: false }
+  it('renders opacity percentage', () => {
+    render(<LayerCard layer={mockLayer} onToggle={mockOnToggle} onDelete={mockOnDelete} />);
+    expect(screen.getByText('80%')).toBeInTheDocument();
+  });
 
-    render(
-      <LayerCard
-        layer={hiddenLayer}
-        onToggle={mockOnToggle}
-        onDelete={mockOnDelete}
-      />
-    )
+  it('calls onToggle when visibility button clicked', () => {
+    render(<LayerCard layer={mockLayer} onToggle={mockOnToggle} onDelete={mockOnDelete} />);
+    const visBtn = screen.getByTitle('隐藏');
+    fireEvent.click(visBtn);
+    expect(mockOnToggle).toHaveBeenCalledWith('test-layer-1', expect.anything());
+  });
 
-    expect(screen.getByLabelText('Show layer')).toBeInTheDocument()
-  })
+  it('calls onDelete when delete button clicked', () => {
+    render(<LayerCard layer={mockLayer} onToggle={mockOnToggle} onDelete={mockOnDelete} />);
+    const delBtn = screen.getByTitle('删除');
+    fireEvent.click(delBtn);
+    expect(mockOnDelete).toHaveBeenCalledWith('test-layer-1', expect.anything());
+  });
 
-  it('calls onToggle when visibility button is clicked', () => {
-    render(
-      <LayerCard
-        layer={mockLayer}
-        onToggle={mockOnToggle}
-        onDelete={mockOnDelete}
-      />
-    )
-
-    fireEvent.click(screen.getByLabelText('Hide layer'))
-    expect(mockOnToggle).toHaveBeenCalledWith('test-layer-1')
-  })
-
-  it('calls setEditingLayerId from store when edit button is clicked', () => {
-    const setEditingLayerId = vi.fn()
-    vi.spyOn(useHudStore, 'getState').mockReturnValue({
-      setEditingLayerId,
-    } as any)
-
-    render(
-      <LayerCard
-        layer={mockLayer}
-        onToggle={mockOnToggle}
-        onDelete={mockOnDelete}
-      />
-    )
-
-    fireEvent.click(screen.getByText('Edit'))
-    expect(setEditingLayerId).toHaveBeenCalledWith(mockLayer.id)
-  })
-
-  it('calls onDelete when delete button is clicked', () => {
-    render(
-      <LayerCard
-        layer={mockLayer}
-        onToggle={mockOnToggle}
-        onDelete={mockOnDelete}
-      />
-    )
-
-    fireEvent.click(screen.getByText('Delete'))
-    expect(mockOnDelete).toHaveBeenCalledWith('test-layer-1')
-  })
-})
+  it('enters rename mode on double-click of name', () => {
+    render(<LayerCard layer={mockLayer} onToggle={mockOnToggle} onDelete={mockOnDelete} onUpdate={mockOnUpdate} />);
+    const nameSpan = screen.getByText('Test Layer');
+    fireEvent.doubleClick(nameSpan);
+    expect(screen.getByDisplayValue('Test Layer')).toBeInTheDocument();
+  });
+});

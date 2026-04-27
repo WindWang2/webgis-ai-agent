@@ -18,7 +18,7 @@ import type { Layer } from "@/lib/types/layer"
 import type { AnalysisResult, GeoJSONFeatureCollection, HeatmapRasterSource } from "@/lib/types"
 import { MapActionHandler } from "./map-action-handler"
 import { ThematicLegend } from "./thematic-legend"
-import { useHudStore } from "@/lib/store/useHudStore"
+import { useHudStore, type HudState } from "@/lib/store/useHudStore"
 
 interface MapPanelProps {
   layers: Layer[]
@@ -84,7 +84,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   const [activeFilters, setActiveFilters] = useState<Record<string, number[][]>>({})
   const mapRef = useRef<MapRef>(null)
   const lastAnalysisCenter = useRef<string>("")
-  const processLayers = useHudStore((s) => s.processLayers)
+  const processLayers = useHudStore((s: HudState) => s.processLayers)
 
   const currentMapStyle = useMemo(
     () => getMapStyle(MAP_STYLES[selectedBaseLayer], selectedBaseLayer),
@@ -455,9 +455,9 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   }, [layers, mapReady, currentMapStyle, activeFilters, processLayers])
 
 
-  const setViewport = useHudStore((s) => s.setViewport)
-  const setBaseLayer = useHudStore((s) => s.setBaseLayer)
-  const pushPerception = useHudStore((s) => s.pushPerception)
+  const setViewport = useHudStore((s: HudState) => s.setViewport)
+  const setBaseLayer = useHudStore((s: HudState) => s.setBaseLayer)
+  const pushPerception = useHudStore((s: HudState) => s.pushPerception)
 
   const handleMove = useCallback((evt: ViewStateChangeEvent) => {
     setViewState(evt.viewState)

@@ -11,7 +11,7 @@ interface TaskProgressProps {
 }
 
 // 探险步进图标 - 使用更精致的样式
-function StepIcon({ status }: { status: 'running' | 'completed' | 'failed' }) {
+function StepIcon({ status }: { status: 'running' | 'completed' | 'failed' | 'pending' }) {
   switch (status) {
     case 'running':
       return (
