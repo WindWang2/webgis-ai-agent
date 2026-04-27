@@ -85,7 +85,7 @@ def _generate_heatmap(features: list, cell_size: int = 500, radius: int = 1000,
                         continue
 
         if not points:
-            return {"success": False, "error": "No valid point features found"}
+            return {"error": "No valid point features found"}
 
         xs = [p[0] for p in points]
         ys = [p[1] for p in points]
@@ -105,7 +105,7 @@ def _generate_heatmap(features: list, cell_size: int = 500, radius: int = 1000,
         y_bins = np.arange(y_min, y_max + cell_deg, cell_deg)
 
         if len(x_bins) > 5000 or len(y_bins) > 5000:
-            return {"success": False, "error": "Resolution too high for the data extent"}
+            return {"error": "Resolution too high for the data extent"}
 
         H, xedges, yedges = np.histogram2d(xs, ys, bins=[x_bins, y_bins])
 
@@ -116,7 +116,7 @@ def _generate_heatmap(features: list, cell_size: int = 500, radius: int = 1000,
             MAX_GRID_FEATURES = 500_000
             total_cells = H[H > 0].size
             if total_cells > MAX_GRID_FEATURES:
-                return {"success": False, "error": f"Grid too dense ({total_cells} cells). Increase cell_size or reduce data extent. Max allowed: {MAX_GRID_FEATURES}"}
+                return {"error": f"Grid too dense ({total_cells} cells). Increase cell_size or reduce data extent. Max allowed: {MAX_GRID_FEATURES}"}
 
             for i in range(len(xedges) - 1):
                 for j in range(len(yedges) - 1):
@@ -226,7 +226,7 @@ def _generate_heatmap(features: list, cell_size: int = 500, radius: int = 1000,
             }
     except Exception as e:
         logger.error(f"Heatmap generation failed: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {"error": str(e)}
     finally:
         if fig:
             plt.close(fig)
