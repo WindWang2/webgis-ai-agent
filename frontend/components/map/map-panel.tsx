@@ -71,6 +71,15 @@ function isGeoJSONSource(source: Layer["source"]): source is GeoJSONFeatureColle
   return typeof source === "object" && source !== null && "type" in source && source.type === "FeatureCollection"
 }
 
+function parseDashArray(dash: string): number[] {
+  switch (dash) {
+    case 'dashed': return [4, 2]
+    case 'dotted': return [1, 2]
+    case 'dashdot': return [4, 2, 1, 2]
+    default: return []
+  }
+}
+
 export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer: _onToggleLayer, analysisResult }: MapPanelProps) {
   void _onRemoveLayer;
   void _onToggleLayer;
@@ -247,9 +256,13 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
             }
 
             if (layer.type === "raster" || layer.type === "tile") {
+              const rasterPaint: Record<string, any> = { "raster-opacity": layer.opacity || 1 }
+              if (layer.style?.brightness != null) rasterPaint["raster-brightness-max"] = layer.style.brightness
+              if (layer.style?.contrast != null) rasterPaint["raster-contrast"] = layer.style.contrast
+              if (layer.style?.saturation != null) rasterPaint["raster-saturation"] = layer.style.saturation
               addOrUpdate("main", {
                 type: "raster",
-                paint: { "raster-opacity": layer.opacity || 1 },
+                paint: rasterPaint,
               })
             } else if (layer.type === "heatmap" && isHeatmapRasterSource(layer.source)) {
               addOrUpdate("raster", {
@@ -336,6 +349,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
                       "line-color": ["coalesce", ["get", "stroke_color"], ["get", "fill_color"], strokeColor],
                       "line-width": layer.style?.strokeWidth ?? 2,
                       "line-opacity": layer.opacity || 1,
+                      ...(layer.style?.dashArray && layer.style.dashArray !== 'solid' ? { "line-dasharray": parseDashArray(layer.style.dashArray) } : {}),
                     },
                   })
                 }
@@ -348,6 +362,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
                     "line-color": ["coalesce", ["get", "fill_color"], strokeColor],
                     "line-width": layer.style?.strokeWidth ?? 2,
                     "line-opacity": layer.opacity || 1,
+                    ...(layer.style?.dashArray && layer.style.dashArray !== 'solid' ? { "line-dasharray": parseDashArray(layer.style.dashArray) } : {}),
                   },
                 })
               }
@@ -356,7 +371,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
                   type: "circle",
                   filter: getLayerFilter("Point"),
                   paint: {
-                    "circle-radius": features.some((f) => f.properties?.weight != null) ? ["interpolate", ["linear"], ["get", "weight"], 0, 4, 1, 8] : 6,
+                    "circle-radius": layer.style?.pointSize != null ? layer.style.pointSize : features.some((f) => f.properties?.weight != null) ? ["interpolate", ["linear"], ["get", "weight"], 0, 4, 1, 8] : 6,
                     "circle-color": ["coalesce", ["get", "fill_color"], color],
                     "circle-stroke-width": 1.5,
                     "circle-stroke-color": "rgba(0, 242, 255, 0.3)",
