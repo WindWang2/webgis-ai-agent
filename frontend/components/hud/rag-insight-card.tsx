@@ -4,10 +4,11 @@ import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BookOpen, X, Database, FileText } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import type { HudState } from '@/lib/store/useHudStore';
 
 export function RagInsightCard() {
-  const ragInsight = useHudStore((s) => s.ragInsight);
-  const setRagInsight = useHudStore((s) => s.setRagInsight);
+  const ragInsight = useHudStore((s: HudState) => s.ragInsight);
+  const setRagInsight = useHudStore((s: HudState) => s.setRagInsight);
 
   return (
     <AnimatePresence>

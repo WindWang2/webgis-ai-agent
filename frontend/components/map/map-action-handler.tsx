@@ -325,10 +325,10 @@ export function MapActionHandler() {
         case 'add_raster_layer': {
           const { id, url, image, bbox, opacity = 1.0 } = action.params;
           const imageUrl = image || url;
-          if (!imageUrl || !bbox) break;
+          if (!imageUrl || !bbox || !id) break;
 
           // bbox should be [west, south, east, north]
-          const coordinates = [
+          const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
             [bbox[0], bbox[3]], // top-left
             [bbox[2], bbox[3]], // top-right
             [bbox[2], bbox[1]], // bottom-right

@@ -17,7 +17,7 @@ describe('useKeyboardShortcut Hook', () => {
 
     // Simulate keydown
     const event = new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true });
-    document.dispatchEvent(event);
+    window.dispatchEvent(event);
 
     expect(onSend).toHaveBeenCalledTimes(1);
   });
@@ -30,7 +30,7 @@ describe('useKeyboardShortcut Hook', () => {
     }));
 
     const event = new KeyboardEvent('keydown', { key: 'Enter', metaKey: true });
-    document.dispatchEvent(event);
+    window.dispatchEvent(event);
 
     expect(onSend).toHaveBeenCalledTimes(1);
   });
@@ -43,7 +43,7 @@ describe('useKeyboardShortcut Hook', () => {
     }));
 
     const event = new KeyboardEvent('keydown', { key: 'Escape' });
-    document.dispatchEvent(event);
+    window.dispatchEvent(event);
 
     expect(onClear).toHaveBeenCalledTimes(1);
   });
@@ -76,7 +76,7 @@ describe('useKeyboardShortcut Hook', () => {
     }));
 
     const event = new KeyboardEvent('keydown', { key: 'Enter' });
-    document.dispatchEvent(event);
+    window.dispatchEvent(event);
 
     expect(onSend).not.toHaveBeenCalled();
   });
@@ -89,7 +89,7 @@ describe('useKeyboardShortcut Hook', () => {
     }));
 
     const event = new KeyboardEvent('keydown', { key: 's', ctrlKey: true });
-    document.dispatchEvent(event);
+    window.dispatchEvent(event);
 
     expect(onSave).toHaveBeenCalledTimes(1);
   });
@@ -108,7 +108,7 @@ describe('useKeyboardShortcut Hook', () => {
       preventDefault 
     });
     Object.defineProperty(event, 'preventDefault', { value: preventDefault });
-    document.dispatchEvent(event);
+    window.dispatchEvent(event);
 
     expect(preventDefault).toHaveBeenCalled();
   });

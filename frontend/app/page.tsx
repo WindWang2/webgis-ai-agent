@@ -545,7 +545,7 @@ export default function Home() {
             // ─── NDVI / Raster Result Perception ───
             if (result && result.type === "ndvi_result" && result.image && result.bbox) {
               dispatchAction({
-                type: 'add_raster_layer',
+                command: 'add_raster_layer',
                 params: {
                   id: `ndvi-${result.asset_id || Date.now()}`,
                   name: `NDVI分析结果 (${result.filename})`,

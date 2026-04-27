@@ -427,7 +427,7 @@ function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) 
   );
 }
 
-function Field({ label, icon, ...props }: any) {
+function Field({ label, icon, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { label?: string; icon?: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
       <label className="text-[10px] font-mono text-white/30 uppercase tracking-wider">{label}</label>
