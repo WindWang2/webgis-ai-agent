@@ -41,6 +41,8 @@ class Settings(BaseSettings):
 
     # 高德地图 (Amap)
     AMAP_API_KEY: str = Field(default="", env="AMAP_API_KEY")
+    AMAP_JS_KEY: str = Field(default="", env="AMAP_JS_KEY")
+    AMAP_JS_SECURITY_KEY: str = Field(default="", env="AMAP_JS_SECURITY_KEY")
 
     # 百度地图 (Baidu Maps)
     BAIDU_MAP_AK: str = Field(default="", env="BAIDU_MAP_AK")

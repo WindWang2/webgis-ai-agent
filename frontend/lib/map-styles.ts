@@ -1,8 +1,10 @@
 /**
- * 地图底图样式配置 - OSM + 天地图
+ * 地图底图样式配置 - OSM + 天地图 + 高德
  */
 
 type StyleSpecification = any;
+
+const TIANDITU_TOKEN = process.env.NEXT_PUBLIC_TIANDITU_TOKEN || "";
 
 const osmStyle: StyleSpecification = {
   version: 8,
@@ -28,10 +30,10 @@ const osmStyle: StyleSpecification = {
   ],
 };
 
-function getTiandituStyle(token: string): StyleSpecification {
+function getTiandituVecStyle(token: string): StyleSpecification {
   return {
     version: 8,
-    name: "天地图",
+    name: "天地图矢量",
     sources: {
       tianditu_vec: {
         type: "raster",
@@ -108,16 +110,83 @@ function getTiandituImgStyle(token: string): StyleSpecification {
   };
 }
 
-export type BasemapType = "osm" | "tianditu-vec" | "tianditu-img";
+const amapVecStyle: StyleSpecification = {
+  version: 8,
+  name: "高德矢量",
+  sources: {
+    amap_vec: {
+      type: "raster",
+      tiles: [
+        "https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}",
+      ],
+      tileSize: 256,
+      attribution: "© 高德地图",
+    },
+  },
+  layers: [
+    {
+      id: "amap-vec",
+      type: "raster",
+      source: "amap_vec",
+      minzoom: 0,
+      maxzoom: 18,
+    },
+  ],
+};
+
+const amapImgStyle: StyleSpecification = {
+  version: 8,
+  name: "高德影像",
+  sources: {
+    amap_img: {
+      type: "raster",
+      tiles: [
+        "https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}",
+      ],
+      tileSize: 256,
+      attribution: "© 高德地图",
+    },
+    amap_cia: {
+      type: "raster",
+      tiles: [
+        "https://webst0{s}.is.autonavi.com/appmaptile?style=8&x={x}&y={y}&z={z}",
+      ],
+      tileSize: 256,
+    },
+  },
+  layers: [
+    {
+      id: "amap-img",
+      type: "raster",
+      source: "amap_img",
+      minzoom: 0,
+      maxzoom: 18,
+    },
+    {
+      id: "amap-cia",
+      type: "raster",
+      source: "amap_cia",
+      minzoom: 0,
+      maxzoom: 18,
+    },
+  ],
+};
+
+export type BasemapType = "osm" | "tianditu-vec" | "tianditu-img" | "amap-vec" | "amap-img";
 
 export function getBasemapStyle(type: BasemapType, tiandituToken?: string) {
+  const token = tiandituToken || TIANDITU_TOKEN;
   switch (type) {
     case "osm":
       return osmStyle;
     case "tianditu-vec":
-      return getTiandituStyle(tiandituToken || "");
+      return getTiandituVecStyle(token);
     case "tianditu-img":
-      return getTiandituImgStyle(tiandituToken || "");
+      return getTiandituImgStyle(token);
+    case "amap-vec":
+      return amapVecStyle;
+    case "amap-img":
+      return amapImgStyle;
     default:
       return osmStyle;
   }
@@ -127,4 +196,6 @@ export const BASEMAP_OPTIONS: { id: BasemapType; name: string }[] = [
   { id: "osm", name: "OSM 标准地图" },
   { id: "tianditu-vec", name: "天地图 矢量" },
   { id: "tianditu-img", name: "天地图 影像" },
+  { id: "amap-vec", name: "高德 矢量" },
+  { id: "amap-img", name: "高德 影像" },
 ];
