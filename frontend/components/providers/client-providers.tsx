@@ -3,6 +3,7 @@
 import React, { Component } from "react"
 import { MapProvider } from "react-map-gl/maplibre"
 import { MapActionProvider } from "@/lib/contexts/map-action-context"
+import { ToastContainer } from "@/components/ui/toast"
 
 interface ErrorBoundaryState {
   hasError: boolean
@@ -43,7 +44,10 @@ export function ClientProviders({ children }: { children: React.ReactNode }) {
   return (
     <ErrorBoundary>
       <MapProvider>
-        <MapActionProvider>{children}</MapActionProvider>
+        <MapActionProvider>
+          {children}
+          <ToastContainer />
+        </MapActionProvider>
       </MapProvider>
     </ErrorBoundary>
   )
