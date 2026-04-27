@@ -6,15 +6,13 @@
 name: CI/CD Pipeline
 
 on:
-  # 推送 main 分支时触发
   push:
     branches:
       - main
       - 'release/**'
-  # 定期检查（每日凌晨）
+  pull_request:
   schedule:
     - cron: '0 2 * * *'
-  # 手动触发
   workflow_dispatch:
 
 env:
@@ -97,13 +95,20 @@ jobs:
           echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV
 
       - name: Run Tests with Coverage
-        run: pytest --cov=app --cov-report=xml --cov-report=term-missing -v
+        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=40 -v
 
       - name: Upload Coverage Report
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage.xml
           fail_ci_if_error: false
+
+      - name: Upload Coverage XML
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 7
 
   test-frontend:
     name: Frontend Tests
