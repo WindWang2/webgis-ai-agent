@@ -10,7 +10,7 @@ import { TaskTimeline } from "@/components/hud/task-timeline"
 import { AssetCard } from "./asset-card"
 import { LayerStylePanel } from '@/components/hud/layer-style-panel';
 import { API_BASE } from '@/lib/api/config';
-import { useHudStore } from "@/lib/store/useHudStore"
+import { useHudStore, type HudState } from "@/lib/store/useHudStore"
 import { motion, AnimatePresence } from "framer-motion"
 import { Layer } from "@/lib/types/layer"
 import { useEffect } from "react"
@@ -37,7 +37,7 @@ export function DataHud({
   void _onMapMove;
 
   const [activeTab, setActiveTab] = useState<"tasks" | "layers" | "assets">("tasks")
-  const editingLayerId = useHudStore((s) => s.editingLayerId);
+  const editingLayerId = useHudStore((s: HudState) => s.editingLayerId);
   const {
     currentTask,
     analysisAssets,
@@ -45,10 +45,9 @@ export function DataHud({
     deleteAsset,
     updateAsset,
     addLayer,
-    sessionId: storeSessionId
   } = useHudStore()
 
-  const effectiveSessionId = sessionIdProp ?? storeSessionId
+  const effectiveSessionId = sessionIdProp
 
   useEffect(() => {
     if (activeTab === "assets") {
@@ -224,7 +223,7 @@ export function DataHud({
               className="p-3 space-y-2"
             >
               {analysisAssets.length > 0 ? (
-                analysisAssets.map(asset => (
+                analysisAssets.map((asset: any) => (
                   <AssetCard
                     key={asset.id}
                     asset={asset}
