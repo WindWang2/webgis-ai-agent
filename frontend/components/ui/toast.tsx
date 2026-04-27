@@ -29,30 +29,25 @@ const DEFAULT_DURATION_MS = 3000
 
 let toastCounter = 0
 
-export const useToastStore = create<ToastStore>((set) => ({
+export const useToastStore = create<ToastStore>((set, get) => ({
   toasts: [],
 
   addToast: (message, type = "info", duration = DEFAULT_DURATION_MS) => {
-    set((state) => {
-      // Dedup: reject if same message was added within the dedup window
-      const now = Date.now()
-      const isDuplicate = state.toasts.some(
-        (t) => t.message === message && now - t.createdAt < DEDUP_WINDOW_MS
-      )
-      if (isDuplicate) return state
+    const now = Date.now()
+    const isDuplicate = get().toasts.some(
+      (t) => t.message === message && now - t.createdAt < DEDUP_WINDOW_MS
+    )
+    if (isDuplicate) return
 
-      const id = `toast-${++toastCounter}`
-      const toast: Toast = { id, message, type, createdAt: now }
+    const id = `toast-${++toastCounter}`
+    const toast: Toast = { id, message, type, createdAt: now }
+    set((state) => ({ toasts: [...state.toasts, toast] }))
 
-      // Auto-dismiss
-      if (duration > 0) {
-        setTimeout(() => {
-          set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }))
-        }, duration)
-      }
-
-      return { toasts: [...state.toasts, toast] }
-    })
+    if (duration > 0) {
+      setTimeout(() => {
+        set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }))
+      }, duration)
+    }
   },
 
   removeToast: (id) => {
