@@ -11,7 +11,7 @@ import { DataHud } from "@/components/panel/results-panel"
 import { SettingsPanel } from "@/components/hud/settings-panel"
 import { useHudStore } from "@/lib/store/useHudStore"
 import { streamChat, SSEEventType } from "@/lib/api/chat"
-import { getSkills } from '@/lib/api/skills'
+
 import { useWebSocket } from "@/lib/hooks/use-websocket"
 import type { GeoJSONGeometry, GeoJSONFeature } from "@/lib/types"
 import type { ChatSession } from "@/lib/types/chat"
@@ -440,7 +440,7 @@ export default function Home() {
         setAnalysisResult({ center, zoom: 10 })
       }
     },
-    [addLayer, setAnalysisResult, sessionId]
+    [addLayer, setAnalysisResult]
   )
 
   const [showScanEffect, setShowScanEffect] = useState(false)
@@ -630,7 +630,7 @@ export default function Home() {
         setMessages((prev) =>
           prev.map((msg) => (msg.id === thinkingMessage.id ? { ...msg, isThinking: false } : msg))
         )
-      } catch (_) {
+      } catch {
         setCurrentStep("error")
         setMessages((prev) =>
           prev.map((msg) => (msg.id === thinkingMessage.id ? { ...msg, content: "请求失败，请重试。", isThinking: false } : msg))

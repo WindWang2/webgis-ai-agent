@@ -84,7 +84,7 @@ export function DataHud({
     <div className="flex flex-col h-full">
       {/* Tab bar */}
       <div className="relative flex px-3 pt-2 pb-0 gap-0.5">
-        {tabs.map((tab, i) => (
+        {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}

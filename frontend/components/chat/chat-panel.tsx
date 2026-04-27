@@ -1,5 +1,5 @@
 "use client"
-import { useRef, useEffect, useCallback } from "react"
+import { useRef, useEffect, useCallback } from 'react'
 import { Bot, User, Loader2 } from "lucide-react"
 import { UploadZone } from "@/components/upload/upload-zone"
 
@@ -143,6 +143,7 @@ export function ChatHud({
 
                           return (
                             <div className="my-2 rounded-lg overflow-hidden border border-white/[0.06]">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img src={src} alt={alt || ""} className="max-w-full" />
                             </div>
                           )

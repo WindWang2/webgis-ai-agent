@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useCallback } from "react"
-import { Upload, X, FileText, Loader2 } from "lucide-react"
+import { Upload, X, Loader2 } from "lucide-react"
 import { uploadFile, type UploadResponse } from "@/lib/api/upload"
 
 interface UploadZoneProps {
