@@ -10,6 +10,7 @@ import { ChartRenderer } from "@/components/chat/chart-renderer"
 import { MapActionRenderer } from "@/components/chat/map-action-renderer"
 import { TaskTimeline } from "@/components/hud/task-timeline"
 import { useHudStore } from "@/lib/store/useHudStore"
+import { SuggestedPrompts } from "./suggested-prompts"
 import { motion, AnimatePresence } from "framer-motion"
 
 interface Message {
@@ -28,6 +29,7 @@ interface ChatHudProps {
   sessionId?: string
   showUploadZone: boolean
   setShowUploadZone: (show: boolean | ((prev: boolean) => boolean)) => void
+  onSend?: (message: string) => void
 }
 
 export function ChatHud({
@@ -37,6 +39,7 @@ export function ChatHud({
   sessionId,
   showUploadZone,
   setShowUploadZone: _setShowUploadZone,
+  onSend,
 }: ChatHudProps) {
   void _isLoading;
   void _setShowUploadZone;
@@ -205,6 +208,11 @@ export function ChatHud({
           ))}
         </AnimatePresence>
         </div>
+
+        {/* Suggested Prompts — shown when chat is empty */}
+        {messages.length === 0 && !_isLoading && onSend && (
+          <SuggestedPrompts onSend={onSend} />
+        )}
       </div>
 
       {/* Upload zone (toggle) */}
