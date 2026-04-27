@@ -12,6 +12,7 @@ import { useHudStore } from "@/lib/store/useHudStore"
 import { streamChat, SSEEventType } from "@/lib/api/chat"
 
 import { useWebSocket } from "@/lib/hooks/use-websocket"
+import { useGeolocation } from "@/lib/hooks/use-geolocation"
 import type { GeoJSONGeometry, GeoJSONFeature } from "@/lib/types"
 import type { ChatSession } from "@/lib/types/chat"
 import type { UploadResponse } from "@/lib/api/upload"
@@ -287,6 +288,9 @@ export default function Home() {
   // Initialize WebSocket connection
   useWebSocket(sessionId)
 
+  // Browser geolocation
+  const { location: userLocation } = useGeolocation()
+
   // Abort in-flight SSE stream on unmount
   useEffect(() => {
     return () => { abortControllerRef.current?.abort() }
@@ -501,6 +505,7 @@ export default function Home() {
             ? computeBBoxFromFeatures((l.source as any).features) : undefined,
           style: l.style,
         })),
+        user_location: userLocation ? { lng: userLocation.lng, lat: userLocation.lat, accuracy: userLocation.accuracy } : null,
       }
 
       const userMessage = {
@@ -660,7 +665,7 @@ export default function Home() {
         setIsLoading(false)
       }
     },
-    [isLoading, sessionId, taskStart, stepStart, stepResult, stepError, taskComplete, clearTask, handleToolResult, dispatchAction]
+    [isLoading, sessionId, userLocation, taskStart, stepStart, stepResult, stepError, taskComplete, clearTask, handleToolResult, dispatchAction]
   )
 
   const handleActivateSkill = useCallback((skillName: string) => {
