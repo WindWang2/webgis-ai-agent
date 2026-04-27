@@ -231,11 +231,20 @@ export function DataHud({
                     asset={asset}
                     onDelete={(id) => {
                       fetch(`${API_BASE}/api/v1/chat/tools/call?tool=manage_analysis_asset&asset_id=${id}&action=delete`)
-                        .then(() => { deleteAsset(id); addToast("资产已删除", "info") })
+                        .then((res) => {
+                          if (!res.ok) throw new Error("Delete failed")
+                          deleteAsset(id)
+                          addToast("资产已删除", "info")
+                        })
+                        .catch(() => addToast("删除失败", "error"))
                     }}
                     onRename={(id, newName) => {
                       fetch(`${API_BASE}/api/v1/chat/tools/call?tool=manage_analysis_asset&asset_id=${id}&action=rename&new_name=${encodeURIComponent(newName)}`)
-                        .then(() => updateAsset(id, { original_name: newName }))
+                        .then((res) => {
+                          if (!res.ok) throw new Error("Rename failed")
+                          updateAsset(id, { original_name: newName })
+                        })
+                        .catch(() => addToast("重命名失败", "error"))
                     }}
                     onLoad={(asset) => {
                       addLayer({
