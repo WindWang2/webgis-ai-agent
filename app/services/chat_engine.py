@@ -218,6 +218,7 @@ class ChatEngine:
         self.api_key = settings.LLM_API_KEY
         self.use_prompt_caching = settings.LLM_PROMPT_CACHING_ENABLED
         self.max_rounds = 20
+        self.tracker = TaskTracker()
         # 内存对话存储: session_id -> messages list (LRU Cache to bound memory)
         self._sessions: LRUCache = LRUCache(capacity=50)
 
@@ -231,8 +232,6 @@ class ChatEngine:
         else:
             skill_text = "（暂无预置技能）"
         return SYSTEM_PROMPT.format(skill_list=skill_text)
-        # 任务跟踪器
-        self.tracker = TaskTracker()
 
     def update_config(self, base_url: str = None, model: str = None, api_key: str = None, use_prompt_caching: bool = None):
         """动态更新 LLM 配置"""
@@ -623,18 +622,15 @@ class ChatEngine:
         messages.append({"role": "user", "content": message})
         await self._save_msg_async(session_id, "user", message)
 
-        # 注入地图状态上下文
-        map_context = self._get_map_state_summary(session_id)
-        
-        # 优化点：将地图感知信息作为历史背景的一部分，而不是放在最后，避免覆盖 User 的最新指令
-        messages_with_context = [
-            messages[0], # System Prompt
-            {"role": "system", "content": map_context}, 
-            *messages[1:] # 之前的历史 + 刚添加的 User Msg
-        ]
-
         # FC 循环
         for _ in range(self.max_rounds):
+            map_context = self._get_map_state_summary(session_id)
+            messages_with_context = [
+                messages[0], # System Prompt
+                {"role": "system", "content": map_context},
+                *messages[1:] # 之前的历史 + 刚添加的 User Msg
+            ]
+
             tools = self.registry.get_schemas() if self.registry.get_schemas() else None
             response = await self._call_llm(messages_with_context, tools)
             choice = response.get("choices", [{}])[0]
