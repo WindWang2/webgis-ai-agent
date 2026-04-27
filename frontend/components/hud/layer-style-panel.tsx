@@ -1,6 +1,6 @@
 'use client';
 import { memo, useState, useRef, useEffect } from 'react';
-import { X, Palette } from 'lucide-react';
+import { X, Palette, RotateCcw } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { LayerStyle } from '@/lib/types/layer';
@@ -50,6 +50,11 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
   const palette = style.palette || 'inferno';
   const radius = style.radius ?? 30;
   const intensity = style.intensity ?? 1;
+  const pointSize = style.pointSize ?? 5;
+  const dashArray = style.dashArray || 'solid';
+  const brightness = style.brightness ?? 1;
+  const contrast = style.contrast ?? 1;
+  const saturation = style.saturation ?? 1;
 
   return (
     <motion.div
@@ -154,6 +159,41 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
                 className="w-full accent-hud-cyan" />
             </div>
 
+            {/* Point Size */}
+            <div>
+              <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block">
+                点大小 <span className="text-white/15 font-mono">{pointSize}px</span>
+              </label>
+              <input type="range" min={1} max={20} step={0.5} value={pointSize}
+                onChange={(e) => updateStyle({ pointSize: parseFloat(e.target.value) })}
+                className="w-full accent-hud-cyan" />
+            </div>
+
+            {/* Line Dash */}
+            <div>
+              <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block">线型</label>
+              <div className="flex gap-1">
+                {([
+                  { value: 'solid', label: '实线', dash: '' },
+                  { value: 'dashed', label: '虚线', dash: '4 2' },
+                  { value: 'dotted', label: '点线', dash: '1 2' },
+                  { value: 'dashdot', label: '点划线', dash: '4 2 1 2' },
+                ] as const).map((d) => (
+                  <button
+                    key={d.value}
+                    onClick={() => updateStyle({ dashArray: d.value })}
+                    className={`flex-1 px-2 py-1.5 text-[9px] rounded-lg font-semibold transition-colors ${
+                      dashArray === d.value
+                        ? 'bg-hud-cyan/20 text-hud-cyan'
+                        : 'text-white/20 hover:text-white/40 hover:bg-white/[0.03]'
+                    }`}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Fill Toggle */}
             <div className="flex items-center justify-between">
               <label className="text-[9px] text-white/25 uppercase tracking-wider">填充开关</label>
@@ -241,6 +281,36 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
           </>
         )}
 
+        {/* === RASTER CONTROLS === */}
+        {(layer.type === 'raster' || layer.type === 'tile') && (
+          <>
+            <div>
+              <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block">
+                亮度 <span className="text-white/15 font-mono">{brightness.toFixed(1)}</span>
+              </label>
+              <input type="range" min={0.5} max={2} step={0.1} value={brightness}
+                onChange={(e) => updateStyle({ brightness: parseFloat(e.target.value) })}
+                className="w-full accent-hud-cyan" />
+            </div>
+            <div>
+              <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block">
+                对比度 <span className="text-white/15 font-mono">{contrast.toFixed(1)}</span>
+              </label>
+              <input type="range" min={0.5} max={2} step={0.1} value={contrast}
+                onChange={(e) => updateStyle({ contrast: parseFloat(e.target.value) })}
+                className="w-full accent-hud-cyan" />
+            </div>
+            <div>
+              <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block">
+                饱和度 <span className="text-white/15 font-mono">{saturation.toFixed(1)}</span>
+              </label>
+              <input type="range" min={0} max={2} step={0.1} value={saturation}
+                onChange={(e) => updateStyle({ saturation: parseFloat(e.target.value) })}
+                className="w-full accent-hud-cyan" />
+            </div>
+          </>
+        )}
+
         {/* === OPACITY (ALL TYPES) === */}
         <div>
           <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block">
@@ -250,6 +320,16 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
             onChange={(e) => updateLayer(layer.id, { opacity: parseFloat(e.target.value) })}
             className="w-full accent-hud-cyan" />
         </div>
+
+        {/* Reset */}
+        <button
+          onClick={() => {
+            updateLayer(layer.id, { opacity: 0.8, style: {} });
+          }}
+          className="flex items-center justify-center gap-1.5 w-full py-2 text-[9px] text-white/25 hover:text-white/50 border border-white/[0.06] rounded-lg hover:border-white/[0.12] transition-all"
+        >
+          <RotateCcw size={10} /> 重置样式
+        </button>
       </div>
     </motion.div>
   );
