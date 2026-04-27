@@ -1,13 +1,12 @@
 # ============================================================
 # WebGIS AI Agent 生产环境 Dockerfile
-# 优化版：多阶段构建，最终镜像小于 600MB
+# 多阶段构建，使用 Next.js standalone 输出
 # ============================================================
 
 # Stage 1: Frontend Dependencies
 FROM node:20-alpine AS frontend-deps
 WORKDIR /app/frontend
 
-# 安装依赖
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci --prefer-offline
 
@@ -17,7 +16,6 @@ WORKDIR /app/frontend
 COPY --from=frontend-deps /app/frontend/node_modules ./node_modules
 COPY frontend/ ./
 
-# 构建 Next.js（仅生产模式）
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NEXT_RUNTIME=nodejs
 RUN npm run build
@@ -26,34 +24,41 @@ RUN npm run build
 FROM python:3.11-slim-bookworm AS backend-deps
 WORKDIR /app/backend
 
-# 安装构建所需依赖
 COPY requirements.txt .
 RUN pip install --no-cache-dir --break-system-packages \
     uv==0.5.11 \
     && uv pip install --system --no-cache -r requirements.txt
 
-# Stage 4: Backend Builder (最终产物)
-FROM python:3.11-slim-bookworm AS backend-builder
+# Stage 4: Final Runner
+FROM python:3.11-slim-bookworm AS runner
 WORKDIR /app/backend
 
-# 复制预安装的包
+# Install Node.js for frontend standalone server
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy frontend standalone output
+COPY --from=frontend-builder /app/frontend/.next/standalone ./frontend/.next/standalone
+COPY --from=frontend-builder /app/frontend/.next/static ./frontend/.next/static
+COPY --from=frontend-builder /app/frontend/public ./frontend/public
+
+# Copy Python packages
 COPY --from=backend-deps /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=backend-deps /usr/local/bin /usr/local/bin
+
+# Copy application code
 COPY . .
 
-# 创建非 root 用户
+# Create non root user
 RUN groupadd --system --gid 1001 appgroup && \
     useradd --system --uid 1001 --gid appgroup --shell /bin/false --home /app appuser && \
     mkdir -p /app/uploads && chown -R appuser:appgroup /app
 
 USER appuser
 
-# 暴露端口
 EXPOSE 3000 8000
 
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8000/api/v1/health/live || exit 1
 
-# 启动命令：前端静态服务 + 后端 API
-CMD ["sh", "-c", "cd /app/frontend/out && npx serve@latest -s . -l 3000 & uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 & node frontend/.next/standalone/server.js -p 3000"]

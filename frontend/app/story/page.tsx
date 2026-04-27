@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -9,6 +9,14 @@ import { useHudStore } from "@/lib/store/useHudStore"
 import { Play, SkipBack, Share2 } from "lucide-react"
 
 export default function StoryPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-screen text-white/50">Loading...</div>}>
+      <StoryPageInner />
+    </Suspense>
+  )
+}
+
+function StoryPageInner() {
   const searchParams = useSearchParams()
   const sessionId = searchParams.get("session_id")
 
@@ -16,7 +24,7 @@ export default function StoryPage() {
   const [loading, setLoading] = useState(true)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  const { layers, addLayer, removeLayer, toggleLayer, setAnalysisResult, analysisResult } = useHudStore()
+  const { layers, removeLayer, toggleLayer, analysisResult } = useHudStore()
 
   useEffect(() => {
     if (sessionId) {
@@ -39,7 +47,7 @@ export default function StoryPage() {
   }, [sessionId])
 
   // ScrollSpy - Parse specific locations from markdown text and fly to them
-  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+  const handleScroll = () => {
     // Advanced ScrollSpy logic can be added here to trigger camera flyTo
     // based on visible Markdown headers.
   }

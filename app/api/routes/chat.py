@@ -27,7 +27,7 @@ from app.tools.spatial_stats import register_spatial_stats_tools
 from app.tools.terrain_analysis import register_terrain_tools
 from app.tools.interpolation_network import register_interpolation_network_tools
 from app.tools.report import register_report_tools
-from app.tools.skills import load_skills, register_skill_tools, list_md_skills, get_md_skill
+from app.tools.skills import load_skills, register_skill_tools, list_md_skills
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["对话"])

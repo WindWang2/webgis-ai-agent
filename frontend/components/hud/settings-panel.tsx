@@ -4,7 +4,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X, Settings, Cpu, Network, Sparkles, Save, RefreshCw,
-  Upload, Download, ShieldCheck, Globe, Code, Terminal,
+  Upload, Download, Globe, Code, Terminal,
   CheckCircle2, XCircle, Loader2
 } from 'lucide-react';
 import { API_BASE } from '@/lib/api/config';
@@ -13,8 +13,8 @@ import { useHudStore } from '@/lib/store/useHudStore';
 export function SettingsPanel() {
   const {
     settingsOpen, setSettingsOpen,
-    mcpConfig, setMcpConfig,
-    llmConfig, setLlmConfig,
+    setMcpConfig,
+    setLlmConfig,
     availableSkills, setAvailableSkills
   } = useHudStore();
 
@@ -26,6 +26,7 @@ export function SettingsPanel() {
 
   useEffect(() => {
     if (settingsOpen) fetchConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsOpen]);
 
   const fetchConfig = async () => {
@@ -427,7 +428,7 @@ function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) 
   );
 }
 
-function Field({ label, icon, ...props }: any) {
+function Field({ label, icon, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { label?: string; icon?: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
       <label className="text-[10px] font-mono text-white/30 uppercase tracking-wider">{label}</label>

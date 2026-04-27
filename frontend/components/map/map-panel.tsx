@@ -18,7 +18,7 @@ import type { Layer } from "@/lib/types/layer"
 import type { AnalysisResult, GeoJSONFeatureCollection, HeatmapRasterSource } from "@/lib/types"
 import { MapActionHandler } from "./map-action-handler"
 import { ThematicLegend } from "./thematic-legend"
-import { useHudStore } from "@/lib/store/useHudStore"
+import { useHudStore, type HudState } from "@/lib/store/useHudStore"
 
 interface MapPanelProps {
   layers: Layer[]
@@ -71,6 +71,15 @@ function isGeoJSONSource(source: Layer["source"]): source is GeoJSONFeatureColle
   return typeof source === "object" && source !== null && "type" in source && source.type === "FeatureCollection"
 }
 
+function parseDashArray(dash: string): number[] {
+  switch (dash) {
+    case 'dashed': return [4, 2]
+    case 'dotted': return [1, 2]
+    case 'dashdot': return [4, 2, 1, 2]
+    default: return []
+  }
+}
+
 export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer: _onToggleLayer, analysisResult }: MapPanelProps) {
   void _onRemoveLayer;
   void _onToggleLayer;
@@ -84,7 +93,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   const [activeFilters, setActiveFilters] = useState<Record<string, number[][]>>({})
   const mapRef = useRef<MapRef>(null)
   const lastAnalysisCenter = useRef<string>("")
-  const processLayers = useHudStore((s) => s.processLayers)
+  const processLayers = useHudStore((s: HudState) => s.processLayers)
 
   const currentMapStyle = useMemo(
     () => getMapStyle(MAP_STYLES[selectedBaseLayer], selectedBaseLayer),
@@ -164,7 +173,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
               const withoutPrefix = layer.id.slice(7)
               const baseId = withoutPrefix.replace(/-[^-]*$/, "")
               if (!layers.find((l) => l.id === baseId)) {
-                try { map.removeLayer(layer.id) } catch (_e) { /* silent */ }
+                try { map.removeLayer(layer.id) } catch { /* silent */ }
               }
             }
           }
@@ -172,7 +181,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
             if (sourceId.startsWith("custom-")) {
               const baseId = sourceId.replace("custom-", "")
               if (!layers.find((l) => l.id === baseId)) {
-                try { map.removeSource(sourceId) } catch (_e) { /* silent */ }
+                try { map.removeSource(sourceId) } catch { /* silent */ }
               }
             }
           }
@@ -247,9 +256,13 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
             }
 
             if (layer.type === "raster" || layer.type === "tile") {
+              const rasterPaint: Record<string, any> = { "raster-opacity": layer.opacity || 1 }
+              if (layer.style?.brightness != null) rasterPaint["raster-brightness-max"] = layer.style.brightness
+              if (layer.style?.contrast != null) rasterPaint["raster-contrast"] = layer.style.contrast
+              if (layer.style?.saturation != null) rasterPaint["raster-saturation"] = layer.style.saturation
               addOrUpdate("main", {
                 type: "raster",
-                paint: { "raster-opacity": layer.opacity || 1 },
+                paint: rasterPaint,
               })
             } else if (layer.type === "heatmap" && isHeatmapRasterSource(layer.source)) {
               addOrUpdate("raster", {
@@ -336,6 +349,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
                       "line-color": ["coalesce", ["get", "stroke_color"], ["get", "fill_color"], strokeColor],
                       "line-width": layer.style?.strokeWidth ?? 2,
                       "line-opacity": layer.opacity || 1,
+                      ...(layer.style?.dashArray && layer.style.dashArray !== 'solid' ? { "line-dasharray": parseDashArray(layer.style.dashArray) } : {}),
                     },
                   })
                 }
@@ -348,6 +362,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
                     "line-color": ["coalesce", ["get", "fill_color"], strokeColor],
                     "line-width": layer.style?.strokeWidth ?? 2,
                     "line-opacity": layer.opacity || 1,
+                    ...(layer.style?.dashArray && layer.style.dashArray !== 'solid' ? { "line-dasharray": parseDashArray(layer.style.dashArray) } : {}),
                   },
                 })
               }
@@ -356,7 +371,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
                   type: "circle",
                   filter: getLayerFilter("Point"),
                   paint: {
-                    "circle-radius": features.some((f) => f.properties?.weight != null) ? ["interpolate", ["linear"], ["get", "weight"], 0, 4, 1, 8] : 6,
+                    "circle-radius": layer.style?.pointSize != null ? layer.style.pointSize : features.some((f) => f.properties?.weight != null) ? ["interpolate", ["linear"], ["get", "weight"], 0, 4, 1, 8] : 6,
                     "circle-color": ["coalesce", ["get", "fill_color"], color],
                     "circle-stroke-width": 1.5,
                     "circle-stroke-color": "rgba(0, 242, 255, 0.3)",
@@ -415,7 +430,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
           if (sl.id.startsWith("process-")) {
             const stepId = sl.id.replace("process-", "").replace(/-[^-]*$/, "")
             if (!currentProcessIds.has(stepId)) {
-              try { map.removeLayer(sl.id) } catch (_e) { /* silent */ }
+              try { map.removeLayer(sl.id) } catch { /* silent */ }
             }
           }
         }
@@ -423,7 +438,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
           if (sid.startsWith("process-")) {
             const stepId = sid.replace("process-", "")
             if (!currentProcessIds.has(stepId)) {
-              try { map.removeSource(sid) } catch (_e) { /* silent */ }
+              try { map.removeSource(sid) } catch { /* silent */ }
             }
           }
         }
@@ -434,7 +449,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
         for (const layer of reversedLayers) {
           const subLayers = finalStyle?.layers?.filter((sl) => sl.id.startsWith(`custom-${layer.id}`)) || []
           subLayers.forEach((sl) => {
-            try { if (map.getLayer(sl.id)) map.moveLayer(sl.id) } catch (_e) { /* silent */ }
+            try { if (map.getLayer(sl.id)) map.moveLayer(sl.id) } catch { /* silent */ }
           })
         }
       } catch (err) {
@@ -452,12 +467,13 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
       if (renderTimeoutRef.current) clearTimeout(renderTimeoutRef.current)
       isUpdatingRef.current = false
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layers, mapReady, currentMapStyle, activeFilters, processLayers])
 
 
-  const setViewport = useHudStore((s) => s.setViewport)
-  const setBaseLayer = useHudStore((s) => s.setBaseLayer)
-  const pushPerception = useHudStore((s) => s.pushPerception)
+  const setViewport = useHudStore((s: HudState) => s.setViewport)
+  const setBaseLayer = useHudStore((s: HudState) => s.setBaseLayer)
+  const pushPerception = useHudStore((s: HudState) => s.pushPerception)
 
   const handleMove = useCallback((evt: ViewStateChangeEvent) => {
     setViewState(evt.viewState)

@@ -29,6 +29,7 @@ export default function RootLayout({
     <html lang="zh-CN" className="dark">
       <head>
         {/* Orbitron for HUD display font (loaded via Google Fonts external) */}
+        {/* eslint-disable-next-line @next/next/no-page-custom-font */}
         <link
           href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&display=swap"
           rel="stylesheet"

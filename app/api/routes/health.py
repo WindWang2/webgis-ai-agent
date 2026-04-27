@@ -1,32 +1,41 @@
-"""
-健康检查路由
-"""
+"""健康检查路由"""
 
-from fastapi import APIRouter
+import logging
 from datetime import datetime, timezone
 from sqlalchemy import text
+from fastapi import APIRouter
 
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def get_db_for_check():
-    """获取数据库连接（仅用于健康检查）"""
-    from app.core.database import Engine as engine, SessionLocal
+def _check_db():
+    """检查数据库连接"""
+    from app.core.database import Engine
     try:
-        with engine.connect() as conn:
+        with Engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         return True
     except Exception:
         return False
 
 
+def _check_llm():
+    """检查 LLM API 连通性（3 秒超时）"""
+    try:
+        import httpx
+        base_url = settings.LLM_BASE_URL.rstrip("/")
+        resp = httpx.head(f"{base_url}/models", timeout=3.0)
+        return resp.status_code < 500
+    except Exception:
+        return False
+
+
 @router.get("/health")
 def health_check():
-    """
-    健康检查接口
-    
-    返回服务状态信息
-    """
+    """基础存活检查"""
     return {
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -37,15 +46,13 @@ def health_check():
 
 @router.get("/ready")
 def readiness_check():
-    """
-    就绪检查接口
-    
-    检查服务是否准备好接收请求，包括数据库连接
-    """
-    db_ready = get_db_for_check()
-    
+    """就绪检查：数据库 + LLM 连通性"""
+    db_ready = _check_db()
+    llm_ready = _check_llm()
+
     return {
-        "ready": db_ready,
+        "ready": db_ready and llm_ready,
         "database": "connected" if db_ready else "disconnected",
+        "llm": "reachable" if llm_ready else "unreachable",
         "timestamp": datetime.now(timezone.utc).isoformat()
     }

@@ -9,6 +9,11 @@ export interface LayerStyle {
   palette?: string;
   radius?: number;
   intensity?: number;
+  pointSize?: number;
+  dashArray?: string;
+  brightness?: number;
+  contrast?: number;
+  saturation?: number;
   [key: string]: unknown;
 }
 
