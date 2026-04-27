@@ -31,7 +31,6 @@ def test_get_schemas():
     assert s["function"]["parameters"]["required"] == ["query"]
 
 
-@pytest.mark.asyncio
 async def test_dispatch_sync():
     registry = ToolRegistry()
 
@@ -43,7 +42,6 @@ async def test_dispatch_sync():
     assert result == 8
 
 
-@pytest.mark.asyncio
 async def test_dispatch_async():
     registry = ToolRegistry()
 
@@ -55,7 +53,6 @@ async def test_dispatch_async():
     assert result == "hello"
 
 
-@pytest.mark.asyncio
 async def test_dispatch_with_json_string():
     registry = ToolRegistry()
 
@@ -67,7 +64,6 @@ async def test_dispatch_with_json_string():
     assert result == "hello"
 
 
-@pytest.mark.asyncio
 async def test_dispatch_unknown_raises():
     registry = ToolRegistry()
     with pytest.raises(KeyError):
