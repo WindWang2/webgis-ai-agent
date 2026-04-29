@@ -3,6 +3,7 @@
 import { useMemo, useState, useCallback } from 'react';
 import { Eye, EyeOff, Trash2, GripVertical } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import type { Layer } from '@/lib/types/layer';
 
 const GROUP_NAMES: Record<string, string> = {
   analysis: '分析结果',
@@ -10,6 +11,14 @@ const GROUP_NAMES: Record<string, string> = {
   reference: '参考数据',
   default: '未分组',
 };
+
+function getFeatureCount(layer: Layer): number {
+  const src = layer.source;
+  if (src && typeof src === 'object' && 'features' in src) {
+    return src.features?.length ?? 0;
+  }
+  return 0;
+}
 
 export function LayersTab() {
   const layers = useHudStore((s) => s.layers);
@@ -26,24 +35,20 @@ export function LayersTab() {
     [layers]
   );
 
-  const totalFeatures = useMemo(() => {
-    return layers.reduce((sum, l) => {
-      if (l.source && typeof l.source === 'object' && 'features' in l.source) {
-        return sum + ((l.source as any).features?.length ?? 0);
-      }
-      return sum;
-    }, 0);
-  }, [layers]);
+  const totalFeatures = useMemo(
+    () => layers.reduce((sum, l) => sum + getFeatureCount(l), 0),
+    [layers]
+  );
 
   // Group layers
   const groups = useMemo(() => {
-    const groupMap = new Map<string, any[]>();
+    const groupMap = new Map<string, Layer[]>();
     layers.forEach((layer) => {
       const key = layer.group || 'default';
       if (!groupMap.has(key)) groupMap.set(key, []);
       groupMap.get(key)!.push(layer);
     });
-    const result: { name: string; layers: any[] }[] = [];
+    const result: { name: string; layers: Layer[] }[] = [];
     groupMap.forEach((gLayers, key) => {
       result.push({ name: key, layers: gLayers });
     });
@@ -126,11 +131,8 @@ export function LayersTab() {
                 </div>
 
                 <div className="space-y-1">
-                  {group.layers.map((layer: any) => {
-                    const featureCount =
-                      layer.source && typeof layer.source === 'object' && 'features' in layer.source
-                        ? (layer.source as any).features?.length ?? 0
-                        : null;
+                  {group.layers.map((layer) => {
+                    const featureCount = getFeatureCount(layer);
 
                     const color = layer.style?.color || '#16a34a';
                     const isHeatmap = layer.type === 'heatmap';
