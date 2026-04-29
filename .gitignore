@@ -43,6 +43,14 @@ build/
 *.db
 *.tar.gz
 
+# Runtime data (exports, reports, uploads generated at runtime)
+data/
+
+# Test / coverage artifacts
+.coverage
+htmlcov/
+.pytest_cache/
+
 # Node.js / Next.js
 node_modules/
 **/node_modules/
