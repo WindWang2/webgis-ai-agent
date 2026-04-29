@@ -7,27 +7,34 @@ const config: Config = {
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
   ],
-  darkMode: "class",
   theme: {
     extend: {
       colors: {
-        /* ── Deep Space HUD Palette ── */
-        "ds-black": "#0a0a0b",
-        "ds-surface": "rgba(14, 14, 16, 0.72)",
-        "ds-glass": "rgba(255, 255, 255, 0.04)",
+        /* ── All is Agent — Light Glass Palette ── */
+        "agent-bg": "#dce8f2",
+        "agent-panel": "rgba(252, 253, 254, 0.88)",
+        "agent-panel2": "rgba(248, 250, 252, 0.72)",
+        "agent-glass": "rgba(255, 255, 255, 0.70)",
+        "agent-border": "rgba(15, 23, 42, 0.08)",
+        "agent-border-mid": "rgba(15, 23, 42, 0.12)",
 
-        /* Action colors */
-        "hud-cyan": "#00f2ff",
-        "hud-green": "#00ff41",
-        "hud-orange": "#ff5f00",
-        "hud-red": "#ff2d55",
+        /* Text */
+        "agent-tp": "#0f172a",
+        "agent-ts": "#475569",
+        "agent-tm": "#94a3b8",
 
-        /* Neutral tints */
-        "hud-muted": "rgba(255, 255, 255, 0.45)",
-        "hud-dim": "rgba(255, 255, 255, 0.12)",
-        "hud-border": "rgba(255, 255, 255, 0.08)",
+        /* Accent */
+        "agent-accent": "#16a34a",
+        "agent-accent-dim": "rgba(22, 163, 74, 0.08)",
+        "agent-accent-brd": "rgba(22, 163, 74, 0.22)",
+        "agent-accent-text": "#15803d",
 
-        /* Legacy compat (CSS vars) */
+        /* Semantic */
+        "agent-blue": "#2563eb",
+        "agent-orange": "#ea580c",
+        "agent-red": "#dc2626",
+
+        /* Legacy compat (CSS vars for shadcn) */
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
@@ -68,58 +75,77 @@ const config: Config = {
         sm: "calc(var(--radius) - 4px)",
       },
       fontFamily: {
-        sans: ["Inter", "system-ui", "sans-serif"],
+        sans: ["DM Sans", "system-ui", "sans-serif"],
         mono: ["JetBrains Mono", "Fira Code", "monospace"],
-        display: ["Orbitron", "Rajdhani", "sans-serif"],
       },
       boxShadow: {
-        "glow-cyan": "0 0 20px rgba(0, 242, 255, 0.35), 0 0 60px rgba(0, 242, 255, 0.10)",
-        "glow-green": "0 0 16px rgba(0, 255, 65, 0.30)",
-        "glow-orange": "0 0 16px rgba(255, 95, 0, 0.30)",
-        "glow-sm": "0 0 8px rgba(0, 242, 255, 0.20)",
-        "hud": "0 8px 32px rgba(0, 0, 0, 0.60), inset 0 1px 0 rgba(255, 255, 255, 0.05)",
-      },
-      backdropBlur: {
-        hud: "20px",
+        "agent-sm":
+          "0 1px 4px rgba(15,23,42,0.06), 0 0 0 1px rgba(15,23,42,0.04)",
+        "agent-md":
+          "0 4px 24px rgba(15,23,42,0.09), 0 1px 4px rgba(15,23,42,0.05)",
+        "agent-lg":
+          "0 8px 40px rgba(15,23,42,0.12), 0 2px 8px rgba(15,23,42,0.06)",
       },
       animation: {
-        "pulse-glow": "pulse-glow 2.5s ease-in-out infinite",
-        "scan-line": "scan-line 3s linear infinite",
-        "fade-in": "fade-in 0.4s ease-out",
-        "slide-up": "slide-up 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
-        "slide-right": "slide-right 0.5s cubic-bezier(0.16, 1, 0.3, 1)",
-        "radar": "radar 2s ease-out",
+        "hb-scan": "hbScan 2.2s ease-in-out infinite",
+        "ring-pulse": "ringPulse 2.5s ease-out infinite",
+        "ring-pulse-delay": "ringPulse 2.5s ease-out 0.8s infinite",
+        "ring-pulse-delay2": "ringPulse 2.5s ease-out 1.6s infinite",
+        "fade-up": "fadeUp 0.2s ease both",
+        spulse: "spulse 1.6s ease-in-out infinite",
+        "dot-1": "dotPulse 1.3s infinite 0s",
+        "dot-2": "dotPulse 1.3s infinite 0.18s",
+        "dot-3": "dotPulse 1.3s infinite 0.36s",
+        "sidebar-in": "sidebarIn 0.22s cubic-bezier(0.4, 0, 0.2, 1)",
+        "sidebar-out": "sidebarOut 0.22s cubic-bezier(0.4, 0, 0.2, 1)",
+        "slide-from-right":
+          "slideFromRight 0.22s cubic-bezier(0.4, 0, 0.2, 1)",
       },
       keyframes: {
-        "pulse-glow": {
-          "0%, 100%": { boxShadow: "0 0 12px rgba(0, 242, 255, 0.15)" },
-          "50%": { boxShadow: "0 0 28px rgba(0, 242, 255, 0.45)" },
+        hbScan: {
+          "0%": { left: "-30%", opacity: "0" },
+          "20%": { opacity: "0.7" },
+          "80%": { opacity: "0.7" },
+          "100%": { left: "110%", opacity: "0" },
         },
-        "scan-line": {
-          "0%": { transform: "translateY(-100%)", opacity: "0.6" },
-          "100%": { transform: "translateY(100vh)", opacity: "0" },
+        ringPulse: {
+          "0%": {
+            transform: "translate(-50%, -50%) scale(0.6)",
+            opacity: "0.5",
+          },
+          "100%": {
+            transform: "translate(-50%, -50%) scale(2.2)",
+            opacity: "0",
+          },
         },
-        "fade-in": {
-          "0%": { opacity: "0", transform: "translateY(8px)" },
-          "100%": { opacity: "1", transform: "translateY(0)" },
+        fadeUp: {
+          from: { opacity: "0", transform: "translateY(6px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
         },
-        "slide-up": {
-          "0%": { opacity: "0", transform: "translateY(24px)" },
-          "100%": { opacity: "1", transform: "translateY(0)" },
+        spulse: {
+          "0%, 100%": { opacity: "1" },
+          "50%": { opacity: "0.3" },
         },
-        "slide-right": {
-          "0%": { opacity: "0", transform: "translateX(-24px)" },
-          "100%": { opacity: "1", transform: "translateX(0)" },
+        dotPulse: {
+          "0%, 80%, 100%": { opacity: "0.2", transform: "scale(0.75)" },
+          "40%": { opacity: "1", transform: "scale(1)" },
         },
-        "radar": {
-          "0%": { opacity: "0", transform: "scale(0.3)" },
-          "50%": { opacity: "0.8" },
-          "100%": { opacity: "1", transform: "scale(1)" },
+        sidebarIn: {
+          from: { transform: "translateX(-100%)" },
+          to: { transform: "translateX(0)" },
+        },
+        sidebarOut: {
+          from: { transform: "translateX(0)" },
+          to: { transform: "translateX(-100%)" },
+        },
+        slideFromRight: {
+          from: { transform: "translateX(100%)" },
+          to: { transform: "translateX(0)" },
         },
       },
       backgroundImage: {
-        "grid-hud":
-          "linear-gradient(rgba(0, 242, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 242, 255, 0.03) 1px, transparent 1px)",
+        "grid-agent":
+          "linear-gradient(rgba(15,23,42,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(15,23,42,0.04) 1px, transparent 1px)",
       },
     },
   },
