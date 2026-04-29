@@ -44,7 +44,7 @@ export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#
   return (
     <aside
       ref={sidebarRef}
-      className="fixed top-0 left-0 bottom-0 z-40 flex flex-col"
+      className="fixed top-[42px] left-0 bottom-[24px] z-40 flex flex-col"
       style={{
         width: 330,
         background: 'rgba(252,253,254,0.90)',
