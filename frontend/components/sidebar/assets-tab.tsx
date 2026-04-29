@@ -2,7 +2,24 @@
 
 import { FileText, Image, MapPin } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useToastStore } from '@/components/ui/toast';
 import { getUploadGeojson } from '@/lib/api/upload';
+import type { GeoJSONFeatureCollection } from '@/lib/types';
+
+// The /uploads endpoint returns more fields than UploadResponse declares,
+// and the store keeps them as-is. This shape captures what AssetsTab reads.
+interface AnalysisAsset {
+  id: number | string;
+  filename?: string;
+  original_name?: string;
+  name?: string;
+  geometry_type?: string | null;
+  type?: string;
+  created_at?: string | null;
+  uploaded_at?: string | null;
+  file_size?: number | string | null;
+  size?: number | string | null;
+}
 
 function formatDate(dateStr: string | undefined | null): string {
   if (!dateStr) return '--';
@@ -27,31 +44,41 @@ function formatSize(bytes: number | string | undefined | null): string {
   return `${(num / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function AssetsTab() {
-  const analysisAssets = useHudStore((s) => s.analysisAssets);
-  const addLayer = useHudStore((s) => s.addLayer);
+const ASSET_COLORS = ['#16a34a', '#2563eb', '#ea580c', '#8b5cf6', '#ec4899'];
 
-  const handleLoadToMap = async (asset: any) => {
+function colorFor(id: AnalysisAsset['id']): string {
+  const key = String(id ?? '');
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) hash = (hash + key.charCodeAt(i)) | 0;
+  return ASSET_COLORS[Math.abs(hash) % ASSET_COLORS.length];
+}
+
+export function AssetsTab() {
+  const analysisAssets = useHudStore((s) => s.analysisAssets) as AnalysisAsset[];
+  const addLayer = useHudStore((s) => s.addLayer);
+  const addToast = useToastStore((s) => s.addToast);
+
+  const handleLoadToMap = async (asset: AnalysisAsset) => {
     try {
-      const geojson = await getUploadGeojson(asset.id);
-      if (geojson?.features?.length > 0) {
-        const colors = ['#16a34a', '#2563eb', '#ea580c', '#8b5cf6', '#ec4899'];
-        const key = String(asset.id ?? '');
-        let hash = 0;
-        for (let i = 0; i < key.length; i++) hash = (hash + key.charCodeAt(i)) | 0;
-        addLayer({
-          id: `asset-${asset.id}`,
-          name: asset.filename || asset.name || 'Asset',
-          type: 'vector',
-          visible: true,
-          opacity: 1,
-          group: 'reference',
-          source: geojson as any,
-          style: { color: colors[Math.abs(hash) % colors.length] },
-        });
+      const geojson = await getUploadGeojson(Number(asset.id));
+      if (!geojson?.features?.length) {
+        addToast('该资产不包含可加载的要素', 'warning');
+        return;
       }
+      addLayer({
+        id: `asset-${asset.id}`,
+        name: asset.filename || asset.original_name || asset.name || 'Asset',
+        type: 'vector',
+        visible: true,
+        opacity: 1,
+        group: 'reference',
+        source: geojson as unknown as GeoJSONFeatureCollection,
+        style: { color: colorFor(asset.id) },
+      });
+      addToast('资产已加载到地图', 'success');
     } catch (e) {
       console.error('加载资产到地图失败:', e);
+      addToast(e instanceof Error ? e.message : '加载资产失败', 'error');
     }
   };
 
@@ -78,7 +105,7 @@ export function AssetsTab() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-2.5 py-2 space-y-2">
-        {analysisAssets.map((asset: any) => {
+        {analysisAssets.map((asset) => {
           const isRaster =
             typeof asset.geometry_type === 'string'
               ? asset.geometry_type.startsWith('raster')
@@ -103,7 +130,7 @@ export function AssetsTab() {
                   <div className="flex items-center gap-1.5">
                     <Icon size={11} className="text-slate-400 shrink-0" />
                     <span className="text-[11.5px] font-mono text-slate-700 truncate">
-                      {asset.filename || asset.name || 'unnamed'}
+                      {asset.filename || asset.original_name || asset.name || 'unnamed'}
                     </span>
                   </div>
                   {/* Meta */}
