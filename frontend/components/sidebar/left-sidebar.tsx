@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { MessageCircle, Layers, Hash } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { ChatTab } from '@/components/sidebar/chat-tab';
@@ -27,7 +27,6 @@ export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#
   const [activeTab, setActiveTab] = useState<LeftTab>('chat');
   const layers = useHudStore((s) => s.layers);
   const analysisAssets = useHudStore((s) => s.analysisAssets);
-  const sidebarRef = useRef<HTMLDivElement>(null);
 
   const tabs: { key: LeftTab; icon: typeof MessageCircle; label: string; badge?: number }[] = [
     { key: 'chat', icon: MessageCircle, label: '对话' },
@@ -35,15 +34,8 @@ export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#
     { key: 'assets', icon: Hash, label: '资产', badge: analysisAssets.length },
   ];
 
-  useEffect(() => {
-    const el = sidebarRef.current;
-    if (!el) return;
-    el.style.transform = open ? 'translateX(0)' : 'translateX(-100%)';
-  }, [open]);
-
   return (
     <aside
-      ref={sidebarRef}
       className="fixed top-[42px] left-0 bottom-[24px] z-40 flex flex-col"
       style={{
         width: 330,

@@ -34,8 +34,11 @@ export function AssetsTab() {
   const handleLoadToMap = async (asset: any) => {
     try {
       const geojson = await getUploadGeojson(asset.id);
-      if (geojson.features?.length > 0) {
+      if (geojson?.features?.length > 0) {
         const colors = ['#16a34a', '#2563eb', '#ea580c', '#8b5cf6', '#ec4899'];
+        const key = String(asset.id ?? '');
+        let hash = 0;
+        for (let i = 0; i < key.length; i++) hash = (hash + key.charCodeAt(i)) | 0;
         addLayer({
           id: `asset-${asset.id}`,
           name: asset.filename || asset.name || 'Asset',
@@ -44,7 +47,7 @@ export function AssetsTab() {
           opacity: 1,
           group: 'reference',
           source: geojson as any,
-          style: { color: colors[Number(asset.id) % colors.length] },
+          style: { color: colors[Math.abs(hash) % colors.length] },
         });
       }
     } catch (e) {
@@ -76,7 +79,10 @@ export function AssetsTab() {
 
       <div className="flex-1 overflow-y-auto px-2.5 py-2 space-y-2">
         {analysisAssets.map((asset: any) => {
-          const isRaster = asset.geometry_type === 'raster' || asset.type === 'raster';
+          const isRaster =
+            typeof asset.geometry_type === 'string'
+              ? asset.geometry_type.startsWith('raster')
+              : asset.type === 'raster';
           const dotColor = isRaster ? '#3b82f6' : '#16a34a';
           const Icon = isRaster ? Image : MapPin;
 
