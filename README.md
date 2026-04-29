@@ -31,7 +31,7 @@
 ```
 
 ## 🚀 进阶与旗舰级功能群 (V3.0 New!)
-- **AI 专题制图与高清合成 (AI Cartographer)**：Agent 现在是一名专业制图师。支持通过 Canvas 2D 重绘合成具有“玻璃质感”标题、动态水印及美学遮罩的高清专题图，并支持云端持久化下载链路。
+- **AI 专题制图与高清合成 (AI Cartographer)**：Agent 现在是一名专业制图师。支持通过 Canvas 2D 合成标准专题底图，自动叠加**指北针**（随地图旋转同步）、**比例尺**（基于 zoom 与纬度动态计算）、**图例**（自动读取 choropleth 图层元数据），并支持导出为高清 **PNG** 或标准 **A4 横向 PDF**（后端 matplotlib 排版，含页眉页脚元数据）。
 - **自然资源遥感智能 (Nature Resource AI)**：深度集成 `rasterio`。支持 NDVI 指数秒级计算、多波段卫星影像 (Sentinel-2/Landsat) 智能识别。
 - **Agent 主控中枢 (The Mainframe - V3.2)**：新增全屏设置面板，支持 LLM 热切换、MCP 服务器可视化配置及 JSON 实时重载。
 - **能力自我进化 (Skill Creator)**：Agent 具备自主编写并部署 Python 技能脚本的能力。
