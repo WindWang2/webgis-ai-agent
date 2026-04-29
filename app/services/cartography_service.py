@@ -29,17 +29,66 @@ class CartographyService:
         return palette[idx]
 
     @classmethod
+    def _jenks_natural_breaks(cls, values: np.ndarray, k: int) -> List[float]:
+        """Fisher-Jenks 自然断点算法 (O(n²k) 动态规划实现)"""
+        arr = np.sort(values)
+        n = len(arr)
+        if n <= k:
+            # Too few points for k classes — return all unique values as breaks
+            uniq = sorted(set(arr.tolist()))
+            return uniq if len(uniq) >= 2 else [uniq[0], uniq[0]]
+        # Cap sample size for performance (Jenks is O(n²k))
+        if n > 1000:
+            rng = np.random.default_rng(42)
+            arr = np.sort(rng.choice(arr, size=1000, replace=False))
+
+        # SSM[i][j] = 从 arr[i..j] 组成单个类的加权平方偏差
+        def ssm(i: int, j: int) -> float:
+            s = arr[i : j + 1]
+            return float(np.sum((s - s.mean()) ** 2))
+
+        # DP: mat[c][j] = 把 arr[0..j] 分为 c 类的最小总方差
+        mat = [[float("inf")] * n for _ in range(k + 1)]
+        back = [[0] * n for _ in range(k + 1)]
+
+        # 1 类：直接取区间方差
+        for j in range(n):
+            mat[1][j] = ssm(0, j)
+
+        for c in range(2, k + 1):
+            for j in range(c - 1, n):
+                best_cost = float("inf")
+                best_split = c - 1
+                for i in range(c - 1, j + 1):
+                    cost = mat[c - 1][i - 1] + ssm(i, j)
+                    if cost < best_cost:
+                        best_cost = cost
+                        best_split = i
+                mat[c][j] = best_cost
+                back[c][j] = best_split
+
+        # 回溯断点
+        breaks = [float(arr[-1])]
+        j = n - 1
+        for c in range(k, 1, -1):
+            split_idx = back[c][j]
+            breaks.append(float(arr[split_idx - 1]))
+            j = split_idx - 1
+        breaks.append(float(arr[0]))
+        breaks.sort()
+        return list(dict.fromkeys(breaks))  # deduplicate while preserving order
+
+    @classmethod
     def classify(cls, values: List[float], method: str = "quantiles", k: int = 5) -> List[float]:
-        """数据分类方法"""
+        """数据分类方法 (quantiles / equal_interval / natural_breaks)"""
         if not values: return []
-        arr = np.array(values)
+        arr = np.array(values, dtype=float)
         if method == "quantiles":
             return np.unique(np.quantile(arr, np.linspace(0, 1, k + 1))).tolist()
         elif method == "equal_interval":
             return np.linspace(arr.min(), arr.max(), k + 1).tolist()
         elif method == "natural_breaks":
-            # 简化版 Jenks (使用等间距兜底，如果需要真 Jenks 需要辅助库)
-            return np.linspace(arr.min(), arr.max(), k + 1).tolist()
+            return cls._jenks_natural_breaks(arr, k)
         return np.linspace(arr.min(), arr.max(), k + 1).tolist()
 
     @classmethod

@@ -1,5 +1,5 @@
-# WebGIS AI Agent 技术架构设计文档 (V3.2)
-> 版本：v3.2 | 日期：2026-04 | 状态：最终稳定版
+# WebGIS AI Agent 技术架构设计文档 (V3.3)
+> 版本：v3.3 | 日期：2026-04 | 状态：最终稳定版
 
 ## 1. 架构概述与设计原则：一切皆 Agent (Everything is Agent)
 本项目不仅是 WebGIS 工具，而是一个**主权级空间智能体 (Sovereign Spatial Agent)**。我们遵循“Agent 即系统”的哲学：
@@ -96,8 +96,16 @@ graph TD
 
 ### 3.5 Agentic Cartography & Professional Synthesis (Agent 主导制图与合成)
 **V3.0 创新点**：
-1. **Canvas 重绘合成器**：Agent 不再只是被动的截图者。它能调用 `export_thematic_map` 指令，驱动前端拦截 WebGL 画布，并利用 Canvas 2D API 叠加“玻璃质感”标题、动态水印及渐变遮罩，生成符合现代设计审美的专题地图母带。
-2. **隐式感知回路 (Implicit Feedback Loop)**：制图落盘后，前端通过隐式系统消息（System Callback）告知 Agent 具体的存储 URL，Agent 再通过对话交付下载直链，实现了“制图-交付-存档”的完整权利闭环。
+1. **Canvas 重绘合成器**：Agent 不再只是被动的截图者。它能调用 `export_thematic_map` 指令，驱动前端拦截 WebGL 画布，并利用 Canvas 2D API 叠加”玻璃质感”标题、动态水印及渐变遮罩，生成符合现代设计审美的专题地图母带。
+2. **隐式感知回路 (Implicit Feedback Loop)**：制图落盘后，前端通过隐式系统消息（System Callback）告知 Agent 具体的存储 URL，Agent 再通过对话交付下载直链，实现了”制图-交付-存档”的完整权利闭环。
+
+**V3.3 升级：标准制图饰件 + PDF 输出**：
+3. **标准地图饰件 (Cartographic Elements)**：Canvas 2D 渲染流水线新增三类专业地图饰件，全部在纯前端完成：
+   - **指北针**：红/白双色四方向箭头，旋转角自动与 MapLibre `bearing` 同步；
+   - **比例尺**：4 段交替刻度尺，根据 `156543 × cos(lat) / 2^zoom` 公式动态计算像素宽度，单位自适应（m / km）；
+   - **图例**：自动检测当前可见 choropleth 图层的 `metadata`，渲染色块 + 数值区间面板。
+4. **PDF 专业输出流水线**：`export_thematic_map` 新增 `format: “pdf”` 选项。PNG 合成完成后由 FastAPI `/api/v1/export/pdf` 接口接收，后端使用 matplotlib 排版为标准 A4 横向版式（页眉含标题/副标题，页脚含制图日期/制图者/比例尺文本），并将 PDF 元数据（Title/Author/Subject）写入文件头。
+5. **Jenks 自然断点算法 (Fisher-Jenks Natural Breaks)**：`CartographyService.classify()` 的 `natural_breaks` 方法从”等间距兜底”升级为真正的 Fisher-Jenks O(n²k) 动态规划实现，并内置 1 000 样本上限以防大数据集性能衰退。配合 `spatial_join` 的 STRtree 索引修正（`valid_right[c_idx][0]` 原始下标），专题图分类精度和空间连接正确性均显著提升。
 
 ### 3.6 Nature Resource Intelligence & Persistent Assets (自然资源智能与持久化资产)
 **V3.1 & V3.2 核心能力**：
