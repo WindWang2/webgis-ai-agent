@@ -573,21 +573,23 @@ class SpatialAnalyzer:
                 for idx, l_geom in enumerate(left_geoms):
                     if l_geom is None:
                         continue
-                    
+
                     matched = False
                     candidates = strtree.query(l_geom)
-                    
+
                     for c_idx in candidates:
-                        r_geom = valid_right[c_idx][1]
+                        # c_idx is an index into the strtree's geometry list (valid_right),
+                        # not into the original right_geoms/right_features list.
+                        orig_idx, r_geom = valid_right[c_idx]
                         if r_geom is not None and spatial_pred(l_geom, r_geom):
-                            r_feat = right_features[c_idx]
+                            r_feat = right_features[orig_idx]
                             results.append({
                                 "type": "Feature",
                                 "properties": {**left[idx].get("properties", {}), **r_feat.get("properties", {})},
                                 "geometry": left[idx].get("geometry", {})
                             })
                             matched = True
-                    
+
                     if not matched and join_type.lower() == "left":
                         results.append({
                             "type": "Feature",
