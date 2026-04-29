@@ -7,28 +7,20 @@ import MiniMd from '@/components/chat/mini-md';
 import { ToolCallCard, ToolCallChain } from '@/components/chat/tool-call-card';
 
 /* ─── Thinking dots animation ─── */
+const DOT_ANIMS = ['animate-dot-1', 'animate-dot-2', 'animate-dot-3'];
+
 function ThinkingDots({ text }: { text: string }) {
   return (
     <div className="flex items-center gap-2 py-1.5 px-1">
       <div className="flex gap-[3px]">
-        {[0, 1, 2].map((i) => (
+        {DOT_ANIMS.map((anim) => (
           <span
-            key={i}
-            className="block w-[5px] h-[5px] rounded-full bg-emerald-500"
-            style={{
-              animation: 'pulse-dot 1.2s ease-in-out infinite',
-              animationDelay: `${i * 0.2}s`,
-            }}
+            key={anim}
+            className={`block w-[5px] h-[5px] rounded-full bg-emerald-500 ${anim}`}
           />
         ))}
       </div>
       <span className="text-[11px] text-slate-400">{text}</span>
-      <style>{`
-        @keyframes pulse-dot {
-          0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
-          40% { opacity: 1; transform: scale(1); }
-        }
-      `}</style>
     </div>
   );
 }
@@ -230,7 +222,7 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor }: ChatTabProp
             className="shrink-0 flex items-center justify-center w-6 h-6 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
             title="上传文件"
           >
-            <Upload size={24} className="w-[14px] h-[14px]" />
+            <Upload size={14} />
           </button>
 
           {/* Textarea */}
@@ -254,7 +246,7 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor }: ChatTabProp
               color: input.trim() ? '#fff' : '#94a3b8',
             }}
           >
-            <Send size={26} className="w-[13px] h-[13px]" />
+            <Send size={13} />
           </button>
         </div>
 

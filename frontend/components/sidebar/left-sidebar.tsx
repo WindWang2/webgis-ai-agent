@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
 import { MessageCircle, Layers, Hash } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { ChatTab } from '@/components/sidebar/chat-tab';
 import { LayersTab } from '@/components/sidebar/layers-tab';
@@ -23,28 +23,33 @@ export interface LeftSidebarProps {
   accentColor?: string;
 }
 
+interface TabDef {
+  key: LeftTab;
+  icon: LucideIcon;
+  label: string;
+}
+
+const TAB_DEFS: TabDef[] = [
+  { key: 'chat', icon: MessageCircle, label: '对话' },
+  { key: 'layers', icon: Layers, label: '图层' },
+  { key: 'assets', icon: Hash, label: '资产' },
+];
+
 export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#16a34a' }: LeftSidebarProps) {
-  const [activeTab, setActiveTab] = useState<LeftTab>('chat');
+  const activeTab = useHudStore((s) => s.activeLeftTab);
+  const setActiveTab = useHudStore((s) => s.setActiveLeftTab);
   const layers = useHudStore((s) => s.layers);
   const analysisAssets = useHudStore((s) => s.analysisAssets);
-  const sidebarRef = useRef<HTMLDivElement>(null);
 
-  const tabs: { key: LeftTab; icon: typeof MessageCircle; label: string; badge?: number }[] = [
-    { key: 'chat', icon: MessageCircle, label: '对话' },
-    { key: 'layers', icon: Layers, label: '图层', badge: layers.length },
-    { key: 'assets', icon: Hash, label: '资产', badge: analysisAssets.length },
-  ];
-
-  useEffect(() => {
-    const el = sidebarRef.current;
-    if (!el) return;
-    el.style.transform = open ? 'translateX(0)' : 'translateX(-100%)';
-  }, [open]);
+  const badges: Record<LeftTab, number | undefined> = {
+    chat: undefined,
+    layers: layers.length,
+    assets: analysisAssets.length,
+  };
 
   return (
     <aside
-      ref={sidebarRef}
-      className="fixed top-0 left-0 bottom-0 z-40 flex flex-col"
+      className="fixed top-[42px] left-0 bottom-[24px] z-40 flex flex-col"
       style={{
         width: 330,
         background: 'rgba(252,253,254,0.90)',
@@ -58,8 +63,9 @@ export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#
     >
       {/* Tab bar */}
       <div className="flex shrink-0 border-b border-slate-200/60 bg-white/40">
-        {tabs.map(({ key, icon: Icon, label, badge }) => {
+        {TAB_DEFS.map(({ key, icon: Icon, label }) => {
           const isActive = activeTab === key;
+          const badge = badges[key];
           return (
             <button
               key={key}
