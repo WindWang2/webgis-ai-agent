@@ -3,17 +3,6 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react"
 import { MAP_STYLES, MapStyleOption } from "@/lib/constants"
 import Map, { MapRef, ViewStateChangeEvent } from "react-map-gl/maplibre"
 import maplibregl from "maplibre-gl"
-import {
-  ZoomIn,
-  ZoomOut,
-  RotateCcw,
-  Target,
-  Download,
-  ChevronDown,
-  Layers,
-  Compass,
-  Box,
-} from "lucide-react"
 import type { Layer } from "@/lib/types/layer"
 import type { AnalysisResult, GeoJSONFeatureCollection, HeatmapRasterSource } from "@/lib/types"
 import { MapActionHandler } from "./map-action-handler"
@@ -84,12 +73,10 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   void _onRemoveLayer;
   void _onToggleLayer;
 
-  const { selectedBaseLayer, setSelectedBaseLayer } = useMapAction()
-  const [showLayerSelector, setShowLayerSelector] = useState(false)
-  const [coordinates, setCoordinates] = useState({ lng: 0, lat: 0 })
+  const { selectedBaseLayer, registerSnapshotFn } = useMapAction()
   const [viewState, setViewState] = useState(DEFAULT_VIEW_STATE)
   const [mapReady, setMapReady] = useState(false)
-  const [is3D, setIs3D] = useState(false)
+  const [is3D] = useState(false)
   const [activeFilters, setActiveFilters] = useState<Record<string, number[][]>>({})
   const mapRef = useRef<MapRef>(null)
   const lastAnalysisCenter = useRef<string>("")
@@ -161,7 +148,11 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
 
     const renderLayers = () => {
       if (isUpdatingRef.current) return
-      if (!map.isStyleLoaded()) return
+      // Style not loaded yet — retry after a short delay instead of silently dropping
+      if (!map.isStyleLoaded()) {
+        setTimeout(renderLayers, 100)
+        return
+      }
 
       isUpdatingRef.current = true
       try {
@@ -226,8 +217,8 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
               }
             }
 
-            const color = layer.style?.color || "#00f2ff"
-            const strokeColor = layer.style?.strokeColor || layer.style?.color || "#00f2ff"
+            const color = layer.style?.color || "#16a34a"
+            const strokeColor = layer.style?.strokeColor || layer.style?.color || "#16a34a"
             const thematicField = layer.source && typeof layer.source === "object" ? (layer.source as any).metadata?.field : null
             const filterRanges = activeFilters[layer.id]
 
@@ -374,7 +365,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
                     "circle-radius": layer.style?.pointSize != null ? layer.style.pointSize : features.some((f) => f.properties?.weight != null) ? ["interpolate", ["linear"], ["get", "weight"], 0, 4, 1, 8] : 6,
                     "circle-color": ["coalesce", ["get", "fill_color"], color],
                     "circle-stroke-width": 1.5,
-                    "circle-stroke-color": "rgba(0, 242, 255, 0.3)",
+                    "circle-stroke-color": "rgba(22, 163, 74, 0.3)",
                     "circle-opacity": layer.opacity || 1,
                   },
                 })
@@ -395,8 +386,8 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
               type: "fill",
               source: sourceId,
               paint: {
-                "fill-color": "rgba(0, 242, 255, 0.08)",
-                "fill-outline-color": "rgba(0, 242, 255, 0.3)",
+                "fill-color": "rgba(22, 163, 74, 0.08)",
+                "fill-outline-color": "rgba(22, 163, 74, 0.3)",
               },
             })
             map.addLayer({
@@ -404,7 +395,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
               type: "line",
               source: sourceId,
               paint: {
-                "line-color": "#00f2ff",
+                "line-color": "#16a34a",
                 "line-width": 1.5,
                 "line-opacity": 0.4,
                 "line-dasharray": [3, 3],
@@ -416,9 +407,9 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
               source: sourceId,
               paint: {
                 "circle-radius": 4,
-                "circle-color": "rgba(0, 242, 255, 0.3)",
+                "circle-color": "rgba(22, 163, 74, 0.3)",
                 "circle-stroke-width": 1,
-                "circle-stroke-color": "#00f2ff",
+                "circle-stroke-color": "#16a34a",
               },
             })
           }
@@ -463,8 +454,19 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
     if (renderTimeoutRef.current) clearTimeout(renderTimeoutRef.current)
     renderTimeoutRef.current = setTimeout(renderLayers, 50)
 
+    // Re-apply layers after basemap style changes (MapLibre destroys custom layers on style change)
+    const onStyleData = () => {
+      if (isUpdatingRef.current) {
+        isUpdatingRef.current = false
+      }
+      if (renderTimeoutRef.current) clearTimeout(renderTimeoutRef.current)
+      renderTimeoutRef.current = setTimeout(renderLayers, 100)
+    }
+    map.on('styledata', onStyleData)
+
     return () => {
       if (renderTimeoutRef.current) clearTimeout(renderTimeoutRef.current)
+      map.off('styledata', onStyleData)
       isUpdatingRef.current = false
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -472,71 +474,56 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
 
 
   const setViewport = useHudStore((s: HudState) => s.setViewport)
-  const setBaseLayer = useHudStore((s: HudState) => s.setBaseLayer)
-  const pushPerception = useHudStore((s: HudState) => s.pushPerception)
+  const aiStatus = useHudStore((s: HudState) => s.aiStatus)
 
   const handleMove = useCallback((evt: ViewStateChangeEvent) => {
     setViewState(evt.viewState)
+    const map = mapRef.current?.getMap()
+    const b = map?.getBounds()
+    const bounds: [number, number, number, number] | undefined = b
+      ? [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]
+      : undefined
     setViewport(
       [evt.viewState.longitude, evt.viewState.latitude],
       evt.viewState.zoom,
       evt.viewState.bearing,
-      evt.viewState.pitch
+      evt.viewState.pitch,
+      bounds
     )
   }, [setViewport])
 
-  const handleMouseMove = useCallback((e: { lngLat: { lng: number; lat: number } }) => {
-    setCoordinates({
-      lng: Number(e.lngLat.lng.toFixed(4)),
-      lat: Number(e.lngLat.lat.toFixed(4)),
+  // Register snapshot function — reads directly from MapLibre instance (always fresh)
+  useEffect(() => {
+    registerSnapshotFn(() => {
+      const map = mapRef.current?.getMap()
+      if (!map) {
+        return {
+          center: [viewState.longitude, viewState.latitude],
+          zoom: viewState.zoom,
+          bearing: (viewState as any).bearing ?? 0,
+          pitch: (viewState as any).pitch ?? 0,
+          bounds: undefined,
+        }
+      }
+      const center = map.getCenter()
+      const zoom = map.getZoom()
+      const bearing = map.getBearing()
+      const pitch = map.getPitch()
+      const b = map.getBounds()
+      const bounds: [number, number, number, number] | undefined = b
+        ? [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]
+        : undefined
+      return {
+        center: [center.lng, center.lat] as [number, number],
+        zoom,
+        bearing,
+        pitch,
+        bounds,
+      }
     })
-  }, [])
+  }, [registerSnapshotFn])
 
-  const handleZoomIn = () => mapRef.current?.zoomIn({ duration: 300 })
-  const handleZoomOut = () => mapRef.current?.zoomOut({ duration: 300 })
-  const handleReset = () => {
-    mapRef.current?.flyTo({
-      center: [DEFAULT_VIEW_STATE.longitude, DEFAULT_VIEW_STATE.latitude],
-      zoom: DEFAULT_VIEW_STATE.zoom,
-      duration: 1000,
-    })
-  }
-  const handleLocate = () => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          mapRef.current?.flyTo({
-            center: [pos.coords.longitude, pos.coords.latitude],
-            zoom: 14,
-            duration: 1000,
-          })
-        },
-        (err) => console.warn("Location denied:", err),
-        { enableHighAccuracy: true }
-      )
-    }
-  }
-
-  const handleBaseLayerSelect = (index: number) => {
-    setSelectedBaseLayer(index)
-    setShowLayerSelector(false)
-    const name = MAP_STYLES[index].name
-    setBaseLayer(name)
-    pushPerception('base_layer_changed', { name })
-  }
-
-  const handleExportPng = () => {
-    const map = mapRef.current?.getMap()
-    if (!map) return
-    map.once("render", () => {
-      const dataUrl = map.getCanvas().toDataURL("image/png")
-      const link = document.createElement("a")
-      link.download = `map-${Date.now()}.png`
-      link.href = dataUrl
-      link.click()
-    })
-    map.triggerRepaint()
-  }
+  const showPerceptionRings = aiStatus === 'thinking' || aiStatus === 'acting'
 
   return (
     <div className="absolute inset-0">
@@ -546,7 +533,6 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
         ref={mapRef}
         {...viewState}
         onMove={handleMove}
-        onMouseMove={handleMouseMove}
         onLoad={() => setMapReady(true)}
         style={{ position: "absolute", inset: 0 }}
         mapStyle={currentMapStyle}
@@ -572,74 +558,16 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
         </div>
       )}
 
-      {/* Floating Map Controls — Left Side */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 flex gap-1.5">
-        {[
-          { onClick: handleZoomIn, icon: <ZoomIn className="h-3.5 w-3.5" />, title: "放大" },
-          { onClick: handleZoomOut, icon: <ZoomOut className="h-3.5 w-3.5" />, title: "缩小" },
-          { onClick: handleReset, icon: <RotateCcw className="h-3.5 w-3.5" />, title: "复位" },
-          { onClick: handleLocate, icon: <Target className="h-3.5 w-3.5" />, title: "定位" },
-          { onClick: () => setIs3D(!is3D), icon: <Box className={`h-3.5 w-3.5 ${is3D ? "text-hud-cyan" : ""}`} />, title: "3D视界" },
-          { onClick: handleExportPng, icon: <Download className="h-3.5 w-3.5" />, title: "导出PNG" },
-        ].map((btn, i) => (
-          <button
-            key={i}
-            onClick={btn.onClick}
-            className="hud-btn h-9 w-9 rounded-lg glass-panel text-white/50 hover:text-hud-cyan"
-            title={btn.title}
-          >
-            {btn.icon}
-          </button>
-        ))}
-      </div>
-
-      {/* Base Layer Selector — Top Right */}
-      <div className="absolute top-16 right-4 z-10">
-        <div className="relative">
-          <button
-            onClick={() => setShowLayerSelector(!showLayerSelector)}
-            className="flex h-9 items-center gap-2 rounded-lg glass-panel px-3 text-white/60 hover:text-white/80 transition-all"
-          >
-            <Layers className="h-3.5 w-3.5 text-hud-cyan/50" />
-            <span className="text-[11px] font-medium">{MAP_STYLES[selectedBaseLayer].name}</span>
-            <ChevronDown className={`h-3 w-3 transition-transform ${showLayerSelector ? "rotate-180" : ""}`} />
-          </button>
-
-          {showLayerSelector && (
-            <div className="absolute top-11 right-0 glass-panel-dense rounded-xl py-1 min-w-44 z-20">
-              {MAP_STYLES.map((style, index) => (
-                <button
-                  key={style.name}
-                  onClick={() => handleBaseLayerSelect(index)}
-                  className={`w-full text-left px-4 py-2.5 text-[11px] transition-all ${
-                    index === selectedBaseLayer
-                      ? "text-hud-cyan bg-hud-cyan/10 border-l-2 border-hud-cyan font-medium"
-                      : "text-white/50 hover:text-white/70 hover:bg-white/[0.03] border-l-2 border-transparent"
-                  }`}
-                >
-                  {style.name}
-                </button>
-              ))}
-            </div>
-          )}
+      {/* Perception Rings — AI activity indicator at map center */}
+      {showPerceptionRings && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+          <svg width="120" height="120" viewBox="0 0 120 120" className="opacity-60">
+            <circle cx="60" cy="60" r="20" fill="none" stroke="#16a34a" strokeWidth="1.5" className="animate-ring-pulse" />
+            <circle cx="60" cy="60" r="35" fill="none" stroke="#16a34a" strokeWidth="1" className="animate-ring-pulse-delay" />
+            <circle cx="60" cy="60" r="50" fill="none" stroke="#16a34a" strokeWidth="0.75" className="animate-ring-pulse-delay2" />
+          </svg>
         </div>
-      </div>
-
-      {/* Coordinate Bar — Bottom Left */}
-      <div className="absolute bottom-3 left-4 z-10 flex items-center gap-3 glass-panel rounded-lg px-3 py-1.5">
-        <span className="flex items-center gap-1.5 text-[10px] text-white/25">
-          <Compass className="h-3 w-3 text-hud-cyan/30" />
-          {MAP_STYLES[selectedBaseLayer].name}
-        </span>
-        <span className="text-white/[0.06]">|</span>
-        <span className="font-mono text-[10px] text-white/40">
-          {coordinates.lng.toFixed(4)}°E, {coordinates.lat.toFixed(4)}°N
-        </span>
-        <span className="text-white/[0.06]">|</span>
-        <span className="font-mono text-[10px] text-hud-cyan/40">
-          Z{viewState.zoom.toFixed(1)}
-        </span>
-      </div>
+      )}
     </div>
   )
 }

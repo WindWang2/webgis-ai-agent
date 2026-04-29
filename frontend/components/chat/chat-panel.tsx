@@ -8,7 +8,7 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { ChartRenderer } from "@/components/chat/chart-renderer"
 import { MapActionRenderer } from "@/components/chat/map-action-renderer"
-import { TaskTimeline } from "@/components/hud/task-timeline"
+import { TaskProgress } from "./task-progress"
 import { useHudStore } from "@/lib/store/useHudStore"
 import { SuggestedPrompts } from "./suggested-prompts"
 import { motion, AnimatePresence } from "framer-motion"
@@ -68,7 +68,7 @@ export function ChatHud({
         {/* Task Progress (inline, if active) */}
         {currentTask && (
           <div className="border-b border-white/[0.04] mb-3">
-            <TaskTimeline />
+            <TaskProgress task={currentTask} />
           </div>
         )}
 

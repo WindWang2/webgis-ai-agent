@@ -1,16 +1,8 @@
 "use client"
 import { useState, useCallback, useEffect, useRef } from "react"
 import dynamic from "next/dynamic"
-import { motion, AnimatePresence } from "framer-motion"
-import { HudPanel } from "@/components/hud/hud-panel"
-import { RagInsightCard } from "@/components/hud/rag-insight-card"
-import { ChatHud } from "@/components/chat/chat-panel"
-import { ChatSidebar } from "@/components/chat-sidebar"
-import { DataHud } from "@/components/panel/results-panel"
-import { SettingsPanel } from "@/components/hud/settings-panel"
 import { useHudStore } from "@/lib/store/useHudStore"
-import { streamChat, SSEEventType } from "@/lib/api/chat"
-
+import { streamChat } from "@/lib/api/chat"
 import { useWebSocket } from "@/lib/hooks/use-websocket"
 import { useGeolocation } from "@/lib/hooks/use-geolocation"
 import type { GeoJSONGeometry, GeoJSONFeature } from "@/lib/types"
@@ -19,30 +11,28 @@ import type { UploadResponse } from "@/lib/api/upload"
 import { getUploadGeojson } from "@/lib/api/upload"
 import { API_BASE } from '@/lib/api/config';
 import { useMapAction } from "@/lib/contexts/map-action-context"
-import {
-  MessageSquare,
-  Activity,
-  PanelLeftOpen,
-  PanelRightOpen,
-  History,
-} from "lucide-react"
+
+// New layout components
+import TopBar from "@/components/layout/top-bar"
+import StatusBar from "@/components/layout/status-bar"
+import { LeftSidebar } from "@/components/sidebar/left-sidebar"
+import MapToolbar from "@/components/map/map-toolbar"
+import AITracker from "@/components/map/ai-tracker"
+import { HistoryDrawer } from "@/components/drawers/history-drawer"
+import { SettingsPanel } from "@/components/settings/settings-panel"
 
 const MapPanel = dynamic(
   () => import("@/components/map/map-panel").then((m) => ({ default: m.MapPanel })),
   {
     ssr: false,
     loading: () => (
-      <div className="flex-1 flex items-center justify-center bg-[#0a0a0a]">
-        <div className="animate-pulse text-hud-cyan/30 text-xs font-mono uppercase tracking-widest">
+      <div className="flex-1 flex items-center justify-center bg-[#dce8f2]">
+        <div className="animate-pulse text-slate-300 text-xs font-mono uppercase tracking-widest">
           Loading Map...
         </div>
       </div>
     ),
   }
-)
-
-const DynamicIsland = dynamic(
-  () => import("@/components/hud/dynamic-island").then((m) => ({ default: m.DynamicIsland }))
 )
 
 function computeBBoxFromFeatures(features: any[]): [number, number, number, number] | undefined {
@@ -66,23 +56,33 @@ function computeBBoxFromFeatures(features: any[]): [number, number, number, numb
   return [minLng, minLat, maxLng, maxLat]
 }
 
+type ToolCallEntry = {
+  id: string;
+  tool: string;
+  arguments?: string;
+  result?: any;
+  status: "running" | "completed" | "failed";
+  hasGeojson?: boolean;
+  error?: string;
+  startedAt?: number;
+  completedAt?: number;
+};
+
 export default function Home() {
-  const { dispatchAction } = useMapAction()
-  /* ─── Zustand state ─── */
+  const { dispatchAction, getMapSnapshot } = useMapAction()
   const {
     layers,
     addLayer,
     removeLayer,
     toggleLayer,
-    updateLayer,
-    reorderLayers,
     analysisResult,
     setAnalysisResult,
     leftPanelOpen,
-    rightPanelOpen,
-    toggleLeftPanel,
-    toggleRightPanel,
-    /* Task actions */
+    settingsOpen,
+    historyOpen,
+    setHistoryOpen,
+    setAiStatus,
+    setSessions: setStoreSessions,
     taskStart,
     stepStart,
     stepResult,
@@ -92,23 +92,31 @@ export default function Home() {
   } = useHudStore()
 
   /* ─── Chat state ─── */
-  const [messages, setMessages] = useState<Array<{ id: string; role: "user" | "assistant"; content: string; timestamp: Date; isThinking?: boolean; charts?: unknown[] }>>([
+  const [messages, setMessages] = useState<Array<{ id: string; role: "user" | "assistant"; content: string; timestamp: Date; isThinking?: boolean; charts?: unknown[]; toolCalls?: ToolCallEntry[] }>>([
     {
       id: "1",
       role: "assistant",
-      content: "你好！我是空间智能分析系统。请输入空间分析指令，例如「分析北京市学校分布」或「成都市人口密度热力图」",
+      content: "你好！我是 GeoAgent。\n\n我感知地图、分析空间、生成洞察——地图上的一切都是我的一部分。\n\n试着告诉我：\n- 分析北京市学校分布密度\n- 成都市人口热力图\n- 计算各区 POI 覆盖率",
       timestamp: new Date(),
     },
   ])
   const [isLoading, setIsLoading] = useState(false)
   const [sessionId, setSessionId] = useState<string>()
-  const [currentStep, setCurrentStep] = useState<SSEEventType | "error" | null>(null)
-  const [showUploadZone, setShowUploadZone] = useState(false)
   const abortControllerRef = useRef<AbortController | null>(null)
 
   /* ─── Session history state ─── */
   const [sessions, setSessions] = useState<ChatSession[]>([])
-  const [showHistory, setShowHistory] = useState(false)
+
+  // Sync sessions to store for HistoryDrawer
+  useEffect(() => {
+    setStoreSessions(sessions.map(s => ({
+      id: s.id,
+      title: s.title || "未命名",
+      time: new Date(s.createdAt).toLocaleString('zh') || "",
+      msgs: s.messages?.length || 0,
+      tags: [],
+    })))
+  }, [sessions, setStoreSessions])
 
   // Fetch session list on mount
   useEffect(() => {
@@ -129,7 +137,6 @@ export default function Home() {
       .catch(() => {})
   }, [])
 
-  // Refresh session list when sessionId changes — two passes to catch LLM-generated title
   useEffect(() => {
     if (!sessionId) return
     const t1 = setTimeout(refreshSessions, 2000)
@@ -139,10 +146,8 @@ export default function Home() {
 
   const handleSelectSession = useCallback(async (sid: string) => {
     abortControllerRef.current?.abort()
-    // Clear current layers before switching
     useHudStore.getState().clearLayers()
     try {
-      // Restore chat messages
       const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}`)
       const data = await res.json()
       if (data.messages && data.messages.length > 0) {
@@ -155,15 +160,14 @@ export default function Home() {
         restored.push({
           id: `session-switch-${Date.now()}`,
           role: "assistant",
-          content: `📂 已恢复历史会话「${data.title || "未命名"}」— 共 ${data.messages.length} 条记录。可继续提问。`,
+          content: `已恢复历史会话「${data.title || "未命名"}」— 共 ${data.messages.length} 条记录。可继续提问。`,
           timestamp: new Date(),
         })
         setMessages(restored)
       }
       setSessionId(sid)
-      setShowHistory(false)
+      setHistoryOpen(false)
 
-      // Restore map state for this session
       const stateRes = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}/map-state`)
       if (stateRes.ok) {
         const stateData = await stateRes.json()
@@ -191,7 +195,7 @@ export default function Home() {
     } catch (err) {
       console.error("Load session failed:", err)
     }
-  }, [])
+  }, [setHistoryOpen])
 
   const handleNewSession = useCallback(() => {
     abortControllerRef.current?.abort()
@@ -199,14 +203,15 @@ export default function Home() {
     setMessages([{
       id: "1",
       role: "assistant",
-      content: "你好！我是空间智能分析系统。请输入空间分析指令，例如「分析北京市学校分布」或「成都市人口密度热力图」",
+      content: "你好！我是 GeoAgent。\n\n我感知地图、分析空间、生成洞察——地图上的一切都是我的一部分。",
       timestamp: new Date(),
     }])
     localStorage.removeItem("webgis_session_id")
-    setShowHistory(false)
-  }, [])
+    setHistoryOpen(false)
+  }, [setHistoryOpen])
 
-  const handleDeleteSession = useCallback(async (sid: string) => {
+  /* reserved for future HistoryDrawer delete support */
+  const _handleDeleteSession = useCallback(async (sid: string) => {
     try {
       await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}`, { method: "DELETE" })
       setSessions(prev => prev.filter(s => s.id !== sid))
@@ -217,13 +222,13 @@ export default function Home() {
       console.error("Delete session failed:", err)
     }
   }, [sessionId, handleNewSession])
+  void _handleDeleteSession;
 
-  // 1. Restore session from localStorage on mount
+  // Restore session from localStorage on mount
   useEffect(() => {
     const savedSessionId = localStorage.getItem("webgis_session_id")
     if (savedSessionId) {
       setSessionId(savedSessionId)
-      // Fetch history
       fetch(`${API_BASE}/api/v1/chat/sessions/${savedSessionId}`)
         .then(res => res.json())
         .then(data => {
@@ -238,26 +243,17 @@ export default function Home() {
         })
         .catch(err => console.error("Restore session history failed:", err))
 
-      // Restore map state (viewport + layers) from backend
       fetch(`${API_BASE}/api/v1/chat/sessions/${savedSessionId}/map-state`)
         .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (!data?.map_state) return
           const state = data.map_state
           const store = useHudStore.getState()
-
-          // Restore viewport
           if (state.viewport) {
             const vp = state.viewport
             store.setViewport(vp.center, vp.zoom, vp.bearing, vp.pitch)
           }
-
-          // Restore base layer
-          if (state.base_layer) {
-            store.setBaseLayer(state.base_layer)
-          }
-
-          // Restore layers — re-fetch GeoJSON data via ref_ids
+          if (state.base_layer) store.setBaseLayer(state.base_layer)
           const layers = state.layers || []
           for (const layer of layers) {
             if (layer._refId && layer._refId.startsWith("ref:")) {
@@ -278,20 +274,15 @@ export default function Home() {
     }
   }, [])
 
-  // 2. Persist session_id when it changes
   useEffect(() => {
     if (sessionId) {
       localStorage.setItem("webgis_session_id", sessionId)
     }
   }, [sessionId])
 
-  // Initialize WebSocket connection
   useWebSocket(sessionId)
-
-  // Browser geolocation
   const { location: userLocation } = useGeolocation()
 
-  // Abort in-flight SSE stream on unmount
   useEffect(() => {
     return () => { abortControllerRef.current?.abort() }
   }, [])
@@ -303,7 +294,6 @@ export default function Home() {
       let bbox = result.bbox
       let image = result.image
 
-      // Fetch deferred data via reference
       if (!geojson && result.geojson_ref && typeof result.geojson_ref === "string" && result.geojson_ref.startsWith("ref:") && sid) {
         try {
           const resp = await fetch(`${API_BASE}/api/v1/layers/data/${result.geojson_ref}?session_id=${sid}`)
@@ -321,7 +311,6 @@ export default function Home() {
         }
       }
 
-      // Handle raster heatmap
       if ((result?.type === "heatmap_raster" || image) && (result?.image || image) && (result.bbox || bbox)) {
         const layerId = `heatmap_raster-${Date.now()}`
         const finalBbox = bbox || result.bbox
@@ -341,13 +330,11 @@ export default function Home() {
         return
       }
 
-      // Handle vector data
       if (geojson && geojson.features?.length > 0) {
         const layerId = `${toolName}-${Date.now()}`
-        const colors = ["#00f2ff", "#00ff41", "#ff5f00", "#8b5cf6", "#ec4899", "#3b82f6"]
+        const colors = ["#16a34a", "#2563eb", "#ea580c", "#8b5cf6", "#ec4899", "#dc2626"]
         const color = colors[Math.floor(Math.random() * colors.length)]
 
-        // Calculate center
         const lngs: number[] = []
         const lats: number[] = []
         const collectCoords = (coords: number[][]) => {
@@ -385,10 +372,6 @@ export default function Home() {
 
         if (center) setAnalysisResult({ center, zoom })
 
-        if (!geojson && result.type === "FeatureCollection" && result.features) {
-          geojson = result
-        }
-
         if (geojson && geojson.features?.length > 0) {
           const isGrid = geojson?.metadata?.render_type === "grid"
           const isNative = geojson?.metadata?.render_type === "native"
@@ -412,15 +395,15 @@ export default function Home() {
     [addLayer, setAnalysisResult]
   )
 
-  /* ─── Upload handler ─── */
-  const handleUploadSuccess = useCallback(
+  /* ─── Upload handler (reserved for future upload zone) ─── */
+  const _handleUploadSuccess = useCallback(
     async (result: UploadResponse) => {
       if (result.file_type === "vector" && result.bbox) {
         try {
           const geojson = await getUploadGeojson(result.id)
           if (geojson.features?.length > 0) {
             const layerId = `upload-${result.id}`
-            const colors = ["#00f2ff", "#00ff41", "#ff5f00", "#8b5cf6", "#ec4899", "#3b82f6"]
+            const colors = ["#16a34a", "#2563eb", "#ea580c", "#8b5cf6", "#ec4899", "#dc2626"]
             const color = colors[result.id % colors.length]
             const [west, south, east, north] = result.bbox
             const center: [number, number] = [(west + east) / 2, (south + north) / 2]
@@ -436,8 +419,6 @@ export default function Home() {
               source: geojson as any,
               style: { color },
             })
-
-            // ── Agent Perception: Push upload event via perception buffer ──
             useHudStore.getState().pushPerception('upload_completed', {
               original_name: result.original_name,
               feature_count: result.feature_count,
@@ -448,7 +429,7 @@ export default function Home() {
             setMessages(prev => [...prev, {
               id: `upload-notify-${Date.now()}`,
               role: "assistant",
-              content: `📡 已感知新数据源：**${result.original_name}**（${result.feature_count} 个要素）已挂载到地图。`,
+              content: `已感知新数据源：**${result.original_name}**（${result.feature_count} 个要素）已挂载到地图。`,
               timestamp: new Date(),
             }])
           }
@@ -463,31 +444,27 @@ export default function Home() {
     },
     [addLayer, setAnalysisResult]
   )
+  void _handleUploadSuccess;
 
-  const [showScanEffect, setShowScanEffect] = useState(false)
-
-  /* ─── Send handler (from Dynamic Island) ─── */
+  /* ─── Send handler ─── */
   const handleSend = useCallback(
     async (messageText: string) => {
       if (!messageText || isLoading) return
 
-      // Trigger sensory sync visual effect
-      setShowScanEffect(true)
-      setTimeout(() => setShowScanEffect(false), 2000)
-
-      // Cancel any in-flight SSE stream
       abortControllerRef.current?.abort()
       abortControllerRef.current = new AbortController()
       const currentSignal = abortControllerRef.current.signal
 
-      // Read current state from store at call time (avoids reactive deps)
       const { viewport: currentViewport, layers: currentLayers, baseLayer: currentBaseLayer, is3D: currentIs3D } = useHudStore.getState()
+      // Get real-time snapshot from the map instance (more accurate than store state)
+      const liveSnapshot = getMapSnapshot()
       const mapState = {
         viewport: {
-          center: currentViewport.center,
-          zoom: currentViewport.zoom,
-          bearing: currentViewport.bearing || 0,
-          pitch: currentViewport.pitch || 0,
+          center: liveSnapshot?.center ?? currentViewport.center,
+          zoom: liveSnapshot?.zoom ?? currentViewport.zoom,
+          bearing: liveSnapshot?.bearing ?? currentViewport.bearing ?? 0,
+          pitch: liveSnapshot?.pitch ?? currentViewport.pitch ?? 0,
+          bounds: liveSnapshot?.bounds ?? currentViewport.bounds ?? undefined,
         },
         base_layer: currentBaseLayer,
         is_3d: currentIs3D,
@@ -528,7 +505,7 @@ export default function Home() {
 
       try {
         let assistantContent = ""
-        setCurrentStep("thinking")
+        setAiStatus("thinking")
 
         let skillName: string | undefined
         const skillMatch = messageText.match(/^使用技能「(.+?)」/)
@@ -540,8 +517,10 @@ export default function Home() {
           const { event: eventType, data: dataRaw } = event
           const data = dataRaw as any
 
-          if (["thinking", "planning", "acting", "observing", "done", "tool_error"].includes(eventType)) {
-            setCurrentStep(eventType as SSEEventType)
+          if (["thinking", "planning"].includes(eventType)) {
+            setAiStatus("thinking")
+          } else if (["acting", "observing"].includes(eventType)) {
+            setAiStatus("acting")
           }
 
           if (eventType === "session" && data?.session_id) {
@@ -550,21 +529,33 @@ export default function Home() {
             taskStart(data.task_id as string)
           } else if (eventType === "step_start" && data?.task_id) {
             stepStart(data.task_id as string, data.step_id as string, data.step_index as number, data.tool as string)
+            // Add tool call entry to current message
+            const tcEntry: ToolCallEntry = {
+              id: data.step_id as string,
+              tool: data.tool as string,
+              status: "running",
+              startedAt: Date.now(),
+            }
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === thinkingMessage.id
+                  ? { ...msg, toolCalls: [...(msg.toolCalls || []), tcEntry] }
+                  : msg
+              )
+            )
           } else if (eventType === "step_result" && data?.task_id) {
             stepResult(data.task_id as string, data.step_id as string, data.tool as string, data.result, data.has_geojson as boolean)
-            
-            // CRITICAL: Dispatch map commands (BASE_LAYER_CHANGE, etc.) regardless of geojson
+
             const result = data.result as any
             if (result && result.command) {
               dispatchAction(result)
             }
-            
+
             if (data.has_geojson && handleToolResult) {
               const toolResult = { ...data.result as object, geojson_ref: data.geojson_ref }
               handleToolResult(data.tool as string, toolResult, (data.session_id || sessionId) as string)
             }
-            
-            // ─── NDVI / Raster Result Perception ───
+
             if (result && result.type === "ndvi_result" && result.image && result.bbox) {
               dispatchAction({
                 command: 'add_raster_layer',
@@ -576,15 +567,11 @@ export default function Home() {
                   opacity: 0.8
                 }
               });
-              
-              // Trigger Agent awareness
               useHudStore.getState().setPendingSystemMessage(
-                `[系统通知] 植被指数(NDVI)分析已完成并持久化。资产ID: ${result.asset_id}。` +
-                `你现在可以告诉用户分析结论（Max: ${result.stats.max.toFixed(2)}, Mean: ${result.stats.mean.toFixed(2)}），` +
-                `并向其介绍如何通过右侧“ASSETS”面板管理这份永久资产。`
+                `[系统通知] 植被指数(NDVI)分析已完成并持久化。资产ID: ${result.asset_id}。`
               );
             }
-            // CRITICAL: Append chart data into message
+
             if (data.tool === "generate_chart" && result && result.chart) {
               setMessages((prev) =>
                 prev.map((msg) =>
@@ -594,8 +581,38 @@ export default function Home() {
                 )
               )
             }
+
+            // Update tool call entry with result
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === thinkingMessage.id
+                  ? {
+                      ...msg,
+                      toolCalls: (msg.toolCalls || []).map((tc) =>
+                        tc.id === data.step_id
+                          ? { ...tc, status: "completed" as const, result: data.result, hasGeojson: data.has_geojson, completedAt: Date.now() }
+                          : tc
+                      ),
+                    }
+                  : msg
+              )
+            )
           } else if (eventType === "step_error" && data?.task_id) {
             stepError(data.task_id as string, data.step_id as string, data.error as string)
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === thinkingMessage.id
+                  ? {
+                      ...msg,
+                      toolCalls: (msg.toolCalls || []).map((tc) =>
+                        tc.id === data.step_id
+                          ? { ...tc, status: "failed" as const, error: data.error, completedAt: Date.now() }
+                          : tc
+                      ),
+                    }
+                  : msg
+              )
+            )
           } else if (eventType === "task_complete" && data?.task_id) {
             taskComplete(data.task_id as string, data.step_count as number, data.summary as string)
             if (assistantContent.length < 10 && data.summary) {
@@ -610,41 +627,44 @@ export default function Home() {
               )
             )
           } else if (eventType === "done" || eventType === "end") {
-            setCurrentStep("done")
             break
           } else if (eventType === "task_error" || eventType === "tool_error") {
             const errorMsg = typeof data === "object" ? ((data as any).message || (data as any).error || "未知错误") : String(data)
             if (!assistantContent.includes(errorMsg)) {
-              assistantContent += `\n\n> ⚠️ **异常**: ${errorMsg}\n`
+              assistantContent += `\n\n> **异常**: ${errorMsg}\n`
             }
             setMessages((prev) =>
               prev.map((msg) => (msg.id === thinkingMessage.id ? { ...msg, content: assistantContent, isThinking: false } : msg))
             )
-          } else if (eventType === "tool_call" && data?.tool) {
+          } else if (eventType === "tool_call" && data?.name) {
+            // Update the most recent running tool call with arguments
+            const argsStr = data.arguments as string | undefined
             setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === thinkingMessage.id
-                  ? { ...msg, content: msg.content + `\n\n> 🔧 **执行工具**: ${data.tool}...` }
-                  : msg
-              )
-            )
-          } else if (eventType === "task_plan" && data?.steps) {
-            const planSteps = (data.steps as string[]).map((s, i) => `${i + 1}. ${s}`).join("\n")
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === thinkingMessage.id
-                  ? { ...msg, content: msg.content + `\n\n📋 **任务计划**:\n${planSteps}` }
-                  : msg
-              )
+              prev.map((msg) => {
+                if (msg.id !== thinkingMessage.id) return msg
+                const tcs = msg.toolCalls || []
+                // Find the last running entry matching this tool
+                const lastRunningIdx = [...tcs].reverse().findIndex((tc) => tc.status === "running" && tc.tool === data.name)
+                if (lastRunningIdx === -1) return msg
+                const realIdx = tcs.length - 1 - lastRunningIdx
+                const updated = [...tcs]
+                updated[realIdx] = { ...updated[realIdx], arguments: argsStr }
+                return { ...msg, toolCalls: updated }
+              })
             )
           } else if (eventType === "task_cancelled") {
             clearTask()
             setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === thinkingMessage.id
-                  ? { ...msg, content: msg.content + "\n\n> ⏹ 任务已取消" }
-                  : msg
-              )
+              prev.map((msg) => {
+                if (msg.id !== thinkingMessage.id) return msg
+                return {
+                  ...msg,
+                  content: msg.content + "\n\n> 任务已取消",
+                  toolCalls: (msg.toolCalls || []).map((tc) =>
+                    tc.status === "running" ? { ...tc, status: "failed" as const, error: "任务已取消", completedAt: Date.now() } : tc
+                  ),
+                }
+              })
             )
           }
         }
@@ -653,25 +673,21 @@ export default function Home() {
           prev.map((msg) => (msg.id === thinkingMessage.id ? { ...msg, isThinking: false } : msg))
         )
       } catch {
-        setCurrentStep("error")
+        setAiStatus("error")
         setMessages((prev) =>
           prev.map((msg) => (msg.id === thinkingMessage.id ? { ...msg, content: "请求失败，请重试。", isThinking: false } : msg))
         )
       } finally {
+        setAiStatus("done")
         setTimeout(() => {
-          setCurrentStep(null)
+          setAiStatus("idle")
           clearTask()
-        }, 1500)
+        }, 2000)
         setIsLoading(false)
       }
     },
-    [isLoading, sessionId, userLocation, taskStart, stepStart, stepResult, stepError, taskComplete, clearTask, handleToolResult, dispatchAction]
+    [isLoading, sessionId, userLocation, taskStart, stepStart, stepResult, stepError, taskComplete, clearTask, handleToolResult, dispatchAction, setAiStatus]
   )
-
-  const handleActivateSkill = useCallback((skillName: string) => {
-    if (isLoading) return
-    handleSend(`使用技能「${skillName}」开始分析`)
-  }, [isLoading, handleSend])
 
   /* ─── System Callback Effect ─── */
   const pendingSystemMessage = useHudStore((s: any) => s.pendingSystemMessage);
@@ -684,187 +700,69 @@ export default function Home() {
     }
   }, [pendingSystemMessage, isLoading, handleSend, setPendingSystemMessage]);
 
+  // Map SSE event status to aiStatus for the top bar/tracker
+  const aiStatus = useHudStore((s) => s.aiStatus)
 
-  /* ─── Status text for Dynamic Island ─── */
-  const statusText = currentStep
-    ? currentStep === "thinking" ? "思考中..."
-    : currentStep === "planning" ? "规划方案..."
-    : currentStep === "acting" ? "执行操作..."
-    : currentStep === "observing" ? "分析结果..."
-    : currentStep === "done" ? "✓ 完成"
-    : currentStep === "error" ? "⚠ 出错" : undefined
-    : undefined
+  // Get current session title for TopBar
+  const currentSessionTitle = sessionId
+    ? sessions.find(s => s.id === sessionId)?.title || "新会话"
+    : "新会话"
 
+  /* ══════════════════════════════════════════
+     JSX — All is Agent Layout
+     ══════════════════════════════════════════ */
   return (
-    <div className="h-screen w-screen overflow-hidden bg-ds-black relative">
-      {/* ═══ Full-Viewport Map Canvas (Z-0) ═══ */}
-      <div className="absolute inset-0 z-0">
-        <MapPanel
-          layers={layers}
-          onRemoveLayer={removeLayer}
-          onToggleLayer={toggleLayer}
-          analysisResult={analysisResult}
-        />
-        
-        {/* Sensory Sync Overlay (Scanning effect) */}
-        <AnimatePresence>
-          {showScanEffect && (
-            <motion.div 
-              className="absolute inset-0 z-10 border-2 border-hud-cyan pointer-events-none"
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 0.4, scale: 1 }}
-              exit={{ opacity: 0, scale: 1.02 }}
-              transition={{ duration: 0.8, ease: "easeOut" }}
-            >
-              <div className="absolute inset-0 bg-hud-cyan/5" />
-              <div className="absolute top-0 left-0 right-0 h-1/3 bg-gradient-to-b from-hud-cyan/20 to-transparent animate-scan-line" />
-            </motion.div>
-          )}
-        </AnimatePresence>
+    <div className="h-screen w-screen flex flex-col overflow-hidden bg-[#dce8f2]">
+      {/* TopBar */}
+      <TopBar sessionName={currentSessionTitle} onNewSession={handleNewSession} />
 
-        {/* Cockpit HUD Decorations */}
-        <div className="absolute inset-0 pointer-events-none z-10">
-          <div className="hud-corner top-8 left-8 border-t-2 border-l-2" />
-          <div className="hud-corner top-8 right-8 border-t-2 border-r-2" />
-          <div className="hud-corner bottom-24 left-8 border-b-2 border-l-2" />
-          <div className="hud-corner bottom-24 right-8 border-b-2 border-r-2" />
+      {/* Map Area */}
+      <div className="flex-1 relative overflow-hidden">
+        {/* Map Canvas */}
+        <div className="absolute inset-0">
+          <MapPanel
+            layers={layers}
+            onRemoveLayer={removeLayer}
+            onToggleLayer={toggleLayer}
+            analysisResult={analysisResult}
+          />
         </div>
+
+        {/* Left Sidebar */}
+        <LeftSidebar
+          open={leftPanelOpen}
+          messages={messages}
+          aiStatus={aiStatus}
+          onSend={handleSend}
+          accentColor="#16a34a"
+        />
+
+        {/* Map Toolbar */}
+        <MapToolbar sidebarOpen={leftPanelOpen} />
+
+        {/* AI Step Tracker */}
+        <AITracker />
       </div>
 
-      {/* ═══ HUD Overlay Layer (Z-10+) ═══ */}
+      {/* Status Bar */}
+      <StatusBar />
 
-      {/* RAG Insight Card — top center */}
-      <RagInsightCard />
-
-      {/* Toggle buttons for collapsed panels */}
-      {!leftPanelOpen && (
-        <button
-          onClick={toggleLeftPanel}
-          className="absolute top-4 left-4 z-20 hud-btn h-10 w-10 rounded-xl glass-panel"
-          title="打开对话面板"
-        >
-          <PanelLeftOpen className="h-4 w-4 text-hud-cyan/70" />
-        </button>
-      )}
-      {!rightPanelOpen && (
-        <button
-          onClick={toggleRightPanel}
-          className="absolute top-4 right-4 z-20 hud-btn h-10 w-10 rounded-xl glass-panel"
-          title="打开任务面板"
-        >
-          <PanelRightOpen className="h-4 w-4 text-hud-cyan/70" />
-        </button>
-      )}
-
-      {/* Left Panel — Chat + History HUD */}
-      <HudPanel
-        position="left"
-        isOpen={leftPanelOpen}
-        onClose={toggleLeftPanel}
-        title="COMMS"
-        icon={<MessageSquare className="h-4 w-4" />}
-        width="w-[380px]"
-      >
-        {/* History / Chat toggle tabs */}
-        <div className="flex items-center border-b border-white/[0.06] px-2">
-          <button
-            onClick={() => setShowHistory(false)}
-            className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-medium transition-colors border-b-2 ${
-              !showHistory
-                ? 'border-hud-cyan text-hud-cyan'
-                : 'border-transparent text-white/30 hover:text-white/50'
-            }`}
-          >
-            <MessageSquare className="h-3 w-3" />
-            对话
-          </button>
-          <button
-            onClick={() => setShowHistory(true)}
-            className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-medium transition-colors border-b-2 ${
-              showHistory
-                ? 'border-hud-cyan text-hud-cyan'
-                : 'border-transparent text-white/30 hover:text-white/50'
-            }`}
-          >
-            <History className="h-3 w-3" />
-            历史
-            {sessions.length > 0 && (
-              <span className="ml-1 px-1.5 py-0.5 text-[9px] rounded-full bg-white/[0.06] text-white/40">
-                {sessions.length}
-              </span>
-            )}
-          </button>
-        </div>
-
-        {/* Content: Chat or History */}
-        {showHistory ? (
-          <ChatSidebar
-            sessions={sessions}
-            currentSessionId={sessionId || null}
-            onSelectSession={handleSelectSession}
-            onNewSession={handleNewSession}
-            onDeleteSession={handleDeleteSession}
-          />
-        ) : (
-          <ChatHud
-            messages={messages}
-            isLoading={isLoading}
-            onUploadSuccess={handleUploadSuccess}
-            sessionId={sessionId}
-            showUploadZone={showUploadZone}
-            setShowUploadZone={setShowUploadZone}
-            onSend={handleSend}
-          />
-        )}
-      </HudPanel>
-
-      {/* Right Panel — Task Flow + Layers HUD */}
-      <HudPanel
-        position="right"
-        isOpen={rightPanelOpen}
-        onClose={toggleRightPanel}
-        title="OPERATIONS"
-        icon={<Activity className="h-4 w-4" />}
-        width="w-[360px]"
-      >
-        <DataHud
-          layers={layers}
-          sessionId={sessionId}
-          onToggleLayer={(id) => {
-            const layer = layers.find((l: any) => l.id === id)
-            toggleLayer(id)
-            useHudStore.getState().pushPerception('layer_toggled', { layer_id: id, visible: layer ? !layer.visible : undefined })
-          }}
-          onRemoveLayer={(id) => {
-            removeLayer(id)
-            useHudStore.getState().pushPerception('layer_removed', { layer_id: id })
-          }}
-          onUpdateLayer={(id, updates) => {
-            updateLayer(id, updates)
-            if (updates.opacity !== undefined) {
-              useHudStore.getState().pushPerception('layer_opacity_changed', { layer_id: id, opacity: updates.opacity })
-            }
-          }}
-          onReorderLayers={(newLayers) => {
-            reorderLayers(newLayers)
-            useHudStore.getState().pushPerception('layers_reordered', { order: newLayers.map(l => l.id) })
-          }}
-        />
-      </HudPanel>
-
-      <SettingsPanel />
-
-      {/* Dynamic Island — Bottom Center */}
-      <DynamicIsland
-        onSend={handleSend}
-        isLoading={isLoading}
-        onUploadClick={() => setShowUploadZone((prev) => !prev)}
-        onActivateSkill={handleActivateSkill}
-        statusText={statusText}
+      {/* History Drawer */}
+      <HistoryDrawer
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        onSelect={(session) => {
+          if (session && session.id) {
+            handleSelectSession(session.id)
+          } else {
+            handleNewSession()
+          }
+        }}
+        accentColor="#16a34a"
       />
 
-      {/* Grid overlay for depth */}
-      <div className="absolute inset-0 pointer-events-none z-[1] opacity-[0.015] bg-grid-hud bg-[size:60px_60px]" />
+      {/* Settings Panel */}
+      {settingsOpen && <SettingsPanel />}
     </div>
   )
 }
