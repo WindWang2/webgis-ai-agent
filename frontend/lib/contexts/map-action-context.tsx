@@ -5,12 +5,22 @@ import type { MapActionPayload } from '@/lib/types';
 
 export type { MapActionPayload };
 
+export interface MapSnapshot {
+  center: [number, number];
+  zoom: number;
+  bearing: number;
+  pitch: number;
+  bounds?: [number, number, number, number];
+}
+
 export interface MapActionContextType {
   actions: MapActionPayload[];
   dispatchAction: (action: MapActionPayload) => void;
   popAction: () => void;
   selectedBaseLayer: number;
   setSelectedBaseLayer: (index: number) => void;
+  registerSnapshotFn: (fn: () => MapSnapshot) => void;
+  getMapSnapshot: () => MapSnapshot | null;
 }
 
 export const MapActionContext = createContext<MapActionContextType | undefined>(undefined);
@@ -18,12 +28,13 @@ export const MapActionContext = createContext<MapActionContextType | undefined>(
 export function MapActionProvider({ children }: { children: React.ReactNode }) {
   const [actions, setActions] = useState<MapActionPayload[]>([]);
   const [selectedBaseLayer, setSelectedBaseLayer] = useState(0);
-  
+  const snapshotFnRef = useRef<(() => MapSnapshot) | null>(null);
+
   // Last action tracking for physical throttling
-  const lastDispatchRef = useRef<{ 
-    command: string; 
-    params: any; 
-    timestamp: number 
+  const lastDispatchRef = useRef<{
+    command: string;
+    params: any;
+    timestamp: number
   } | null>(null);
 
   const dispatchAction = useCallback((newAction: MapActionPayload) => {
@@ -58,13 +69,23 @@ export function MapActionProvider({ children }: { children: React.ReactNode }) {
     setActions(prev => prev.slice(1));
   }, []);
 
+  const registerSnapshotFn = useCallback((fn: () => MapSnapshot) => {
+    snapshotFnRef.current = fn;
+  }, []);
+
+  const getMapSnapshot = useCallback((): MapSnapshot | null => {
+    return snapshotFnRef.current?.() ?? null;
+  }, []);
+
   return (
-    <MapActionContext.Provider value={{ 
-      actions, 
-      dispatchAction, 
-      popAction, 
-      selectedBaseLayer, 
-      setSelectedBaseLayer 
+    <MapActionContext.Provider value={{
+      actions,
+      dispatchAction,
+      popAction,
+      selectedBaseLayer,
+      setSelectedBaseLayer,
+      registerSnapshotFn,
+      getMapSnapshot,
     }}>
       {children}
     </MapActionContext.Provider>

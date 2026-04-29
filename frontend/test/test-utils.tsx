@@ -2,7 +2,7 @@ import { render, type RenderOptions } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import { vi } from 'vitest'
 import { useHudStore } from '@/lib/store/useHudStore'
-import type { HudState, TaskState, TaskStep } from '@/lib/store/useHudStore'
+import type { HudState, TaskState, TaskStep, AiStatus, LeftTab, SettingsTab } from '@/lib/store/useHudStore'
 import type { Layer } from '@/lib/types/layer'
 
 export function createMockTaskStep(overrides?: Partial<TaskStep>): TaskStep {
@@ -46,7 +46,7 @@ export function createMockStoreState(overrides?: Partial<HudState>): Record<stri
     currentTask: null,
     processLayers: {},
     viewport: { center: [116.4, 39.9] as [number, number], zoom: 10, bearing: 0, pitch: 0 },
-    baseLayer: 'Carto Dark',
+    baseLayer: 'Carto Light',
     is3D: false,
     _perceptionQueue: [],
     leftPanelOpen: true,
@@ -93,6 +93,32 @@ export function createMockStoreState(overrides?: Partial<HudState>): Record<stri
     setMcpConfig: vi.fn(),
     setLlmConfig: vi.fn(),
     setAvailableSkills: vi.fn(),
+    aiStatus: 'idle' as AiStatus,
+    setAiStatus: vi.fn(),
+    activeLeftTab: 'chat' as LeftTab,
+    setActiveLeftTab: vi.fn(),
+    historyOpen: false,
+    setHistoryOpen: vi.fn(),
+    settingsTab: 'llm' as SettingsTab,
+    setSettingsTab: vi.fn(),
+    sessions: [],
+    setSessions: vi.fn(),
+    mcpServers: [],
+    setMcpServers: vi.fn(),
+    toggleMcpServer: vi.fn(),
+    skills: [],
+    setSkills: vi.fn(),
+    toggleSkill: vi.fn(),
+    ragConfig: { spatialWeight: 60, topK: 5, rerank: true, vectorDb: '', collection: 'geoagent' },
+    setRagConfig: vi.fn(),
+    ragSpatial: [],
+    setRagSpatial: vi.fn(),
+    ragSemantic: [],
+    setRagSemantic: vi.fn(),
+    mapStyles: [],
+    setMapStyles: vi.fn(),
+    llmConfigFull: { baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-4o', caching: true },
+    setLlmConfigFull: vi.fn(),
     ...overrides,
   }
 }

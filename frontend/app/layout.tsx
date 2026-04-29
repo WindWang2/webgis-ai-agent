@@ -1,12 +1,12 @@
 import type { Metadata } from "next"
-import { Inter, JetBrains_Mono } from "next/font/google"
+import { DM_Sans, JetBrains_Mono } from "next/font/google"
 import { ClientProviders } from "@/components/providers/client-providers"
 import "./globals.css"
 
-const inter = Inter({
+const dmSans = DM_Sans({
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
-  variable: "--font-inter",
+  weight: ["300", "400", "500", "600"],
+  variable: "--font-dm-sans",
 })
 
 const jetbrainsMono = JetBrains_Mono({
@@ -16,8 +16,8 @@ const jetbrainsMono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "WebGIS AI Agent — Spatial Intelligence HUD",
-  description: "智能地理空间分析系统 — Deep Space HUD 沉浸式空间智能平台",
+  title: "GeoAgent — All is Agent",
+  description: "智能地理空间分析系统 — 地图即感知，图层即记忆，分析即行动",
 }
 
 export default function RootLayout({
@@ -26,16 +26,8 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="zh-CN" className="dark">
-      <head>
-        {/* Orbitron for HUD display font (loaded via Google Fonts external) */}
-        {/* eslint-disable-next-line @next/next/no-page-custom-font */}
-        <link
-          href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&display=swap"
-          rel="stylesheet"
-        />
-      </head>
-      <body className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased`}>
+    <html lang="zh-CN">
+      <body className={`${dmSans.variable} ${jetbrainsMono.variable} font-sans antialiased`}>
         <ClientProviders>{children}</ClientProviders>
       </body>
     </html>

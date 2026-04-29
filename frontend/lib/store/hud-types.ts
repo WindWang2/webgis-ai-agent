@@ -23,6 +23,77 @@ export interface TaskState {
   planJson?: unknown;
 }
 
+export type AiStatus = 'idle' | 'thinking' | 'acting' | 'done' | 'error';
+export type LeftTab = 'chat' | 'layers' | 'assets';
+export type SettingsTab = 'llm' | 'mcp' | 'skills' | 'rag' | 'layers' | 'map' | 'system';
+
+export interface McpServer {
+  id: string;
+  name: string;
+  transport: 'stdio' | 'sse';
+  cmd?: string;
+  url?: string;
+  status: 'active' | 'inactive';
+  desc: string;
+  warn?: boolean;
+}
+
+export interface SkillEntry {
+  id: string;
+  name: string;
+  desc: string;
+  enabled: boolean;
+  calls: number;
+  category: string;
+}
+
+export interface RagSpatialDoc {
+  id: string;
+  name: string;
+  type: string;
+  features: number | null;
+  indexed: boolean;
+  size: string;
+}
+
+export interface RagSemanticDoc {
+  id: string;
+  name: string;
+  chunks: number;
+  indexed: boolean;
+  size: string;
+}
+
+export interface RagConfig {
+  spatialWeight: number;
+  topK: number;
+  rerank: boolean;
+  vectorDb: string;
+  collection: string;
+}
+
+export interface MapStyleEntry {
+  id: number;
+  name: string;
+  desc: string;
+  url?: string;
+}
+
+export interface LlmConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  caching: boolean;
+}
+
+export interface SessionSummary {
+  id: string;
+  title: string;
+  time: string;
+  msgs: number;
+  tags: string[];
+}
+
 export interface HudState {
   /* ─── Layers ─── */
   layers: Layer[];
@@ -59,8 +130,8 @@ export interface HudState {
   clearProcessLayers: () => void;
 
   /* ─── Map View State (Real-time Perception) ─── */
-  viewport: { center: [number, number]; zoom: number; bearing: number; pitch: number };
-  setViewport: (center: [number, number], zoom: number, bearing?: number, pitch?: number) => void;
+  viewport: { center: [number, number]; zoom: number; bearing: number; pitch: number; bounds?: [number, number, number, number] };
+  setViewport: (center: [number, number], zoom: number, bearing?: number, pitch?: number, bounds?: [number, number, number, number]) => void;
   baseLayer: string;
   setBaseLayer: (name: string) => void;
   is3D: boolean;
@@ -71,7 +142,7 @@ export interface HudState {
   pushPerception: (event: string, data: Record<string, unknown>) => void;
   drainPerception: () => Array<{ event: string; data: Record<string, unknown> }>;
 
-  /* ─── HUD Panel Visibility ─── */
+  /* ─── HUD Panel Visibility (legacy compat during migration) ─── */
   leftPanelOpen: boolean;
   rightPanelOpen: boolean;
   toggleLeftPanel: () => void;
@@ -100,4 +171,34 @@ export interface HudState {
   setLlmConfig: (config: any) => void;
   availableSkills: any[];
   setAvailableSkills: (skills: any[]) => void;
+
+  /* ─── Agent UI State ─── */
+  aiStatus: AiStatus;
+  setAiStatus: (status: AiStatus) => void;
+  activeLeftTab: LeftTab;
+  setActiveLeftTab: (tab: LeftTab) => void;
+  historyOpen: boolean;
+  setHistoryOpen: (open: boolean) => void;
+  settingsTab: SettingsTab;
+  setSettingsTab: (tab: SettingsTab) => void;
+  sessions: SessionSummary[];
+  setSessions: (sessions: SessionSummary[]) => void;
+
+  /* ─── Settings Data ─── */
+  mcpServers: McpServer[];
+  setMcpServers: (servers: McpServer[]) => void;
+  toggleMcpServer: (id: string) => void;
+  skills: SkillEntry[];
+  setSkills: (skills: SkillEntry[]) => void;
+  toggleSkill: (id: string) => void;
+  ragConfig: RagConfig;
+  setRagConfig: (config: Partial<RagConfig>) => void;
+  ragSpatial: RagSpatialDoc[];
+  setRagSpatial: (docs: RagSpatialDoc[]) => void;
+  ragSemantic: RagSemanticDoc[];
+  setRagSemantic: (docs: RagSemanticDoc[]) => void;
+  mapStyles: MapStyleEntry[];
+  setMapStyles: (styles: MapStyleEntry[]) => void;
+  llmConfigFull: LlmConfig;
+  setLlmConfigFull: (config: Partial<LlmConfig>) => void;
 }
