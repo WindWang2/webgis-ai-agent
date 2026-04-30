@@ -2,6 +2,7 @@
  * Upload API - 用户数据上传接口
  */
 
+/// <reference types="geojson" />
 import { API_BASE } from './config';
 
 export interface UploadResponse {

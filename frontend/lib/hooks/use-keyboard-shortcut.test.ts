@@ -102,12 +102,8 @@ describe('useKeyboardShortcut Hook', () => {
       onSend,
     }));
 
-    const event = new KeyboardEvent('keydown', { 
-      key: 'Enter', 
-      ctrlKey: true,
-      preventDefault 
-    });
-    Object.defineProperty(event, 'preventDefault', { value: preventDefault });
+    const event = new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true });
+    Object.defineProperty(event, 'preventDefault', { value: preventDefault, writable: true });
     window.dispatchEvent(event);
 
     expect(preventDefault).toHaveBeenCalled();

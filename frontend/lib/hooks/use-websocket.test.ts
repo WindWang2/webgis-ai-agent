@@ -30,7 +30,10 @@ class MockWebSocket {
 
 let mockSocketInstance: MockWebSocket;
 
-const WebSocketMock = vi.fn(() => mockSocketInstance);
+const WebSocketMock = vi.fn(() => mockSocketInstance) as ReturnType<typeof vi.fn> & {
+  OPEN: number;
+  CLOSED: number;
+};
 WebSocketMock.OPEN = 1;
 WebSocketMock.CLOSED = 3;
 
