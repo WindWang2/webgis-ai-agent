@@ -89,7 +89,10 @@ export interface MapActionPayload {
     title?: string;
     subtitle?: string;
     include_legend?: boolean;
+    include_compass?: boolean;
+    include_scale?: boolean;
     dark_mode?: boolean;
+    format?: string;
   };
 }
 
