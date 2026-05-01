@@ -211,6 +211,7 @@ export default function Home() {
   }, [setHistoryOpen])
 
   /* reserved for future HistoryDrawer delete support */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const _handleDeleteSession = useCallback(async (sid: string) => {
     try {
       await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}`, { method: "DELETE" })
@@ -222,7 +223,6 @@ export default function Home() {
       console.error("Delete session failed:", err)
     }
   }, [sessionId, handleNewSession])
-  void _handleDeleteSession;
 
   // Restore session from localStorage on mount
   useEffect(() => {
