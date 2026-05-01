@@ -48,19 +48,19 @@ async def _amap_get(endpoint: str, params: dict) -> dict:
     url = f"{_AMAP_BASE}{endpoint}"
     try:
         session = await get_shared_client()
-            async with session.get(
-                url, params=params, ssl=get_ssl_context(),
-                proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY,
-            ) as resp:
-                if resp.status != 200:
-                    await ht.record_error("amap")
-                    return {"error": f"Amap API HTTP {resp.status}"}
-                data = await resp.json()
-                if data.get("status") != "1" and data.get("infocode") != "10000":
-                    await ht.record_error("amap")
-                    return {"error": f"Amap: {data.get('info', 'unknown error')}"}
-                await ht.record_success("amap")
-                return data
+        async with session.get(
+            url, params=params, ssl=get_ssl_context(),
+            proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY,
+        ) as resp:
+            if resp.status != 200:
+                await ht.record_error("amap")
+                return {"error": f"Amap API HTTP {resp.status}"}
+            data = await resp.json()
+            if data.get("status") != "1" and data.get("infocode") != "10000":
+                await ht.record_error("amap")
+                return {"error": f"Amap: {data.get('info', 'unknown error')}"}
+            await ht.record_success("amap")
+            return data
     except Exception as e:
         await ht.record_error("amap", e)
         raise
@@ -74,19 +74,19 @@ async def _baidu_get(endpoint: str, params: dict) -> dict:
     url = f"{_BAIDU_BASE}{endpoint}"
     try:
         session = await get_shared_client()
-            async with session.get(
-                url, params=params, ssl=get_ssl_context(),
-                proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY,
-            ) as resp:
-                if resp.status != 200:
-                    await ht.record_error("baidu")
-                    return {"error": f"Baidu API HTTP {resp.status}"}
-                data = await resp.json()
-                if data.get("status") != 0:
-                    await ht.record_error("baidu")
-                    return {"error": f"Baidu: {data.get('message', 'unknown error')}"}
-                await ht.record_success("baidu")
-                return data
+        async with session.get(
+            url, params=params, ssl=get_ssl_context(),
+            proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY,
+        ) as resp:
+            if resp.status != 200:
+                await ht.record_error("baidu")
+                return {"error": f"Baidu API HTTP {resp.status}"}
+            data = await resp.json()
+            if data.get("status") != 0:
+                await ht.record_error("baidu")
+                return {"error": f"Baidu: {data.get('message', 'unknown error')}"}
+            await ht.record_success("baidu")
+            return data
     except Exception as e:
         await ht.record_error("baidu", e)
         raise
@@ -99,21 +99,21 @@ async def _tianditu_get(endpoint: str, params: dict) -> dict:
     url = f"{_TIANDITU_BASE}{endpoint}"
     try:
         session = await get_shared_client()
-            async with session.get(
-                url, params=params, ssl=get_ssl_context(),
-                proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY,
-            ) as resp:
-                if resp.status != 200:
-                    await ht.record_error("tianditu")
-                    return {"error": f"Tianditu API HTTP {resp.status}"}
-                data = await resp.json()
-                returncode = str(data.get("returncode", data.get("status", "")))
-                if returncode not in ("100", "0"):
-                    await ht.record_error("tianditu")
-                    msg = data.get("msg") or data.get("message") or "unknown error"
-                    return {"error": f"Tianditu: {msg}"}
-                await ht.record_success("tianditu")
-                return data
+        async with session.get(
+            url, params=params, ssl=get_ssl_context(),
+            proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY,
+        ) as resp:
+            if resp.status != 200:
+                await ht.record_error("tianditu")
+                return {"error": f"Tianditu API HTTP {resp.status}"}
+            data = await resp.json()
+            returncode = str(data.get("returncode", data.get("status", "")))
+            if returncode not in ("100", "0"):
+                await ht.record_error("tianditu")
+                msg = data.get("msg") or data.get("message") or "unknown error"
+                return {"error": f"Tianditu: {msg}"}
+            await ht.record_success("tianditu")
+            return data
     except Exception as e:
         await ht.record_error("tianditu", e)
         raise
@@ -269,21 +269,21 @@ def register_chinese_map_tools(registry: ToolRegistry):
         semaphore = asyncio.Semaphore(max_concurrency)
 
         async def _one(idx: int, addr: str) -> dict:
-            if not await ht.record_attempt(provider):
-                return {"index": idx, "status": "skipped", "address": addr,
-                        "error": f"{provider} 暂时不可用（频率限制或服务故障）"}
-            try:
-                result = await geocode_cn(addr, provider=provider)
-                await ht.record_success(provider)
-                if "error" in result:
-                    return {"index": idx, "status": "error", "address": addr, "error": str(result["error"])}
-                return {"index": idx, "status": "ok", "address": addr, **result}
-            except Exception as e:
-                await ht.record_error(provider, e)
-                return {"index": idx, "status": "error", "address": addr, "error": str(e)}
+            async with semaphore:
+                if not await ht.record_attempt(provider):
+                    return {"index": idx, "status": "skipped", "address": addr,
+                            "error": f"{provider} 暂时不可用（频率限制或服务故障）"}
+                try:
+                    result = await geocode_cn(addr, provider=provider)
+                    await ht.record_success(provider)
+                    if "error" in result:
+                        return {"index": idx, "status": "error", "address": addr, "error": str(result["error"])}
+                    return {"index": idx, "status": "ok", "address": addr, **result}
+                except Exception as e:
+                    await ht.record_error(provider, e)
+                    return {"index": idx, "status": "error", "address": addr, "error": str(e)}
 
-        async with semaphore:
-            results = await asyncio.gather(*[_one(i, a) for i, a in enumerate(addresses)])
+        results = await asyncio.gather(*[_one(i, a) for i, a in enumerate(addresses)])
 
         ok = [r for r in results if r["status"] == "ok"]
         errs = [r for r in results if r["status"] != "ok"]
@@ -321,12 +321,12 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return await _distance_matrix_baidu(origins, destinations, mode)
 
     @tool(registry, name="isochrone_analysis",
-           description="等时圈分析：从一个中心点出发，计算并可视化指定时间内可达的范围。支持驾驶/步行/骑行方向。返回 GeoJSON 面数据和半径米数。",
+           description="等时圈分析：从一个中心点出发，计算并可视化指定时间内可达的范围。支持驾驶/步行/骑行方向。返回 GeoJSON 面数据和半径米数。当前仅支持高德路径规划。",
            param_descriptions={
                "center": "中心点坐标 [lng, lat]（WGS84）",
                "minutes": "时间（分钟），如 5, 10, 15",
                "mode": "出行方式: 'driving'(默认)，'walking'，'riding'",
-               "provider": "服务商: 'amap'(默认)，'baidu'",
+               "provider": "服务商: 'amap'(默认，当前仅支持高德)",
            })
     async def isochrone_analysis(
         center: list,
@@ -340,8 +340,8 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": "minutes 必须是 1~60 的整数（分钟）"}
         if mode not in ("driving", "walking", "riding"):
             return {"error": "mode 必须是 'driving', 'walking' 或 'riding'"}
-        if provider not in ("amap", "baidu"):
-            return {"error": "provider 必须是 'amap' 或 'baidu'"}
+        if provider != "amap":
+            return {"error": "等时圈分析当前仅支持 amap（高德）"}
         if not _has_provider(provider):
             return {"error": f"未配置 {provider} API Key"}
 
@@ -586,7 +586,7 @@ async def _route_baidu(origin: list, dest: list, mode: str, city: str) -> dict:
 
 
 async def _district_amap(keywords: str, level: str, return_geometry: str = "point") -> dict:
-    params = {"keywords": keywords, "subdistrict": "1", "extensions": "all"}
+    params = {"keywords": keywords, "subdistrict": "1", "extensions": "all" if return_geometry == "polygon" else "base"}
     level_map = {"country": "0", "province": "1", "city": "2", "district": "3"}
     if level in level_map:
         params["subdistrict"] = level_map[level]
@@ -608,7 +608,7 @@ async def _district_amap(keywords: str, level: str, return_geometry: str = "poin
                 ]
                 wgs84_coords = [gcj02_to_wgs84(lon, lat) for lon, lat in coords]
                 from shapely.geometry import LineString
-                from shapely.simplify import simplify
+                from shapely import simplify
                 line = LineString(wgs84_coords)
                 simplified = simplify(line, tolerance=0.001, preserve_topology=True)
                 geometry = simplified.__geo_interface__
@@ -795,19 +795,19 @@ async def _distance_matrix_amap(
     if "error" in data:
         return data
 
-    rows = data.get("results", [])
-    # 构建二维矩阵
-    matrix = []
-    for row_idx, row in enumerate(rows):
-        row_dist = []
-        for col_idx, item in enumerate(row.get("elements", [])):
-            row_dist.append({
-                "origin_index": row_idx,
-                "dest_index": col_idx,
+    results = data.get("results", [])
+    # Amap /v3/distance 返回扁平列表，每项含 origin_id/dest_id/distance/duration
+    matrix: list[list[dict | None]] = [[None] * len(destinations) for _ in range(len(origins))]
+    for item in results:
+        oi = int(item.get("origin_id", 0))
+        di = int(item.get("dest_id", 0))
+        if 0 <= oi < len(origins) and 0 <= di < len(destinations):
+            matrix[oi][di] = {
+                "origin_index": oi,
+                "dest_index": di,
                 "distance_km": item.get("distance", 0) / 1000.0,  # 米→公里
                 "duration_sec": item.get("duration", 0),
-            })
-        matrix.append(row_dist)
+            }
 
     return {
         "matrix": matrix,
@@ -902,8 +902,11 @@ async def _isochrone_analysis(
     semaphore = asyncio.Semaphore(6)
     angles = [angle_step * i for i in range(num_radials)]
 
-    async with semaphore:
-        pts = await asyncio.gather(*[_radial_point(a) for a in angles])
+    async def _guarded_radial(angle: float) -> tuple[float, float]:
+        async with semaphore:
+            return await _radial_point(angle)
+
+    pts = await asyncio.gather(*[_guarded_radial(a) for a in angles])
 
     all_points = list(pts)
 
