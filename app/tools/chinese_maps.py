@@ -1,9 +1,11 @@
 """高德/百度/天地图 API 工具 — POI搜索、地理编码、路径规划、行政区划查询"""
+import asyncio
 import logging
 import aiohttp
 from typing import Optional
 from app.core.config import settings
-from app.core.network import get_ssl_context, get_base_headers
+from app.core.network import get_ssl_context, get_base_headers, get_shared_client
+from app.services.provider_health import health_tracker as ht
 from app.tools.registry import ToolRegistry, tool
 from app.utils.coord_transform import (
     wgs84_to_gcj02, gcj02_to_wgs84,
@@ -39,58 +41,82 @@ def _fallback_order(preferred: str, exclude: set[str] | None = None) -> list[str
 
 
 async def _amap_get(endpoint: str, params: dict) -> dict:
+    if not await ht.record_attempt("amap"):
+        return {"error": "Amap 暂时不可用（频率限制或服务故障），请稍后重试"}
     params["key"] = settings.AMAP_API_KEY
     params["output"] = "json"
     url = f"{_AMAP_BASE}{endpoint}"
-    async with aiohttp.ClientSession(headers=get_base_headers()) as session:
-        async with session.get(
-            url, params=params, ssl=get_ssl_context(),
-            proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY,
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as resp:
-            if resp.status != 200:
-                return {"error": f"Amap API HTTP {resp.status}"}
-            data = await resp.json()
-            if data.get("status") != "1" and data.get("infocode") != "10000":
-                return {"error": f"Amap: {data.get('info', 'unknown error')}"}
-            return data
+    try:
+        session = await get_shared_client()
+            async with session.get(
+                url, params=params, ssl=get_ssl_context(),
+                proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY,
+            ) as resp:
+                if resp.status != 200:
+                    await ht.record_error("amap")
+                    return {"error": f"Amap API HTTP {resp.status}"}
+                data = await resp.json()
+                if data.get("status") != "1" and data.get("infocode") != "10000":
+                    await ht.record_error("amap")
+                    return {"error": f"Amap: {data.get('info', 'unknown error')}"}
+                await ht.record_success("amap")
+                return data
+    except Exception as e:
+        await ht.record_error("amap", e)
+        raise
 
 
 async def _baidu_get(endpoint: str, params: dict) -> dict:
+    if not await ht.record_attempt("baidu"):
+        return {"error": "百度地图暂时不可用（频率限制或服务故障），请稍后重试"}
     params["ak"] = settings.BAIDU_MAP_AK
     params["output"] = "json"
     url = f"{_BAIDU_BASE}{endpoint}"
-    async with aiohttp.ClientSession(headers=get_base_headers()) as session:
-        async with session.get(
-            url, params=params, ssl=get_ssl_context(),
-            proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY,
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as resp:
-            if resp.status != 200:
-                return {"error": f"Baidu API HTTP {resp.status}"}
-            data = await resp.json()
-            if data.get("status") != 0:
-                return {"error": f"Baidu: {data.get('message', 'unknown error')}"}
-            return data
+    try:
+        session = await get_shared_client()
+            async with session.get(
+                url, params=params, ssl=get_ssl_context(),
+                proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY,
+            ) as resp:
+                if resp.status != 200:
+                    await ht.record_error("baidu")
+                    return {"error": f"Baidu API HTTP {resp.status}"}
+                data = await resp.json()
+                if data.get("status") != 0:
+                    await ht.record_error("baidu")
+                    return {"error": f"Baidu: {data.get('message', 'unknown error')}"}
+                await ht.record_success("baidu")
+                return data
+    except Exception as e:
+        await ht.record_error("baidu", e)
+        raise
 
 
 async def _tianditu_get(endpoint: str, params: dict) -> dict:
+    if not await ht.record_attempt("tianditu"):
+        return {"error": "天地图暂时不可用（频率限制或服务故障），请稍后重试"}
     params["tk"] = settings.TIANDITU_TOKEN
     url = f"{_TIANDITU_BASE}{endpoint}"
-    async with aiohttp.ClientSession(headers=get_base_headers()) as session:
-        async with session.get(
-            url, params=params, ssl=get_ssl_context(),
-            proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY,
-            timeout=aiohttp.ClientTimeout(total=10),
-        ) as resp:
-            if resp.status != 200:
-                return {"error": f"Tianditu API HTTP {resp.status}"}
-            data = await resp.json()
-            returncode = str(data.get("returncode", data.get("status", "")))
-            if returncode not in ("100", "0"):
-                msg = data.get("msg") or data.get("message") or "unknown error"
-                return {"error": f"Tianditu: {msg}"}
-            return data
+    try:
+        session = await get_shared_client()
+            async with session.get(
+                url, params=params, ssl=get_ssl_context(),
+                proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY,
+            ) as resp:
+                if resp.status != 200:
+                    await ht.record_error("tianditu")
+                    return {"error": f"Tianditu API HTTP {resp.status}"}
+                data = await resp.json()
+                returncode = str(data.get("returncode", data.get("status", "")))
+                if returncode not in ("100", "0"):
+                    await ht.record_error("tianditu")
+                    msg = data.get("msg") or data.get("message") or "unknown error"
+                    return {"error": f"Tianditu: {msg}"}
+                await ht.record_success("tianditu")
+                return data
+    except Exception as e:
+        await ht.record_error("tianditu", e)
+        raise
 
 
 def register_chinese_map_tools(registry: ToolRegistry):
@@ -202,7 +228,10 @@ def register_chinese_map_tools(registry: ToolRegistry):
                "level": "级别: 'province', 'city', 'district'",
                "provider": "服务商: 'amap'(默认), 'baidu', 'tianditu'",
            })
-    async def get_district(keywords: str, level: str = "district", provider: str = "amap") -> dict:
+    async def get_district(keywords: str, level: str = "district", provider: str = "amap",
+                           return_geometry: str = "point") -> dict:
+        if return_geometry not in ("point", "polygon"):
+            return {"error": "return_geometry 必须是 'point' 或 'polygon'"}
         if provider not in _VALID_PROVIDERS:
             return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
@@ -213,10 +242,110 @@ def register_chinese_map_tools(registry: ToolRegistry):
             if not _has_provider(p):
                 continue
             try:
-                return await _dispatch[p](keywords, level)
+                return await _dispatch[p](keywords, level, return_geometry)
             except Exception as e:
                 logger.warning(f"get_district {p} failed: {e}")
         return {"error": "未配置任何地图 API Key"}
+
+    @tool(registry, name="batch_geocode_cn",
+           description="批量中文地址转坐标，支持高德/百度/天地图。一次处理多条地址，带并发控制。返回每个地址的 WGS84 坐标、成功/失败状态和标准化地址。",
+           param_descriptions={
+               "addresses": "地址列表，最多100条，例如 ['北京市朝阳区','上海市浦东新区']",
+               "provider": "服务商: 'amap'(默认，高德国内准确率最高)，'baidu'，'tianditu'",
+               "max_concurrency": "最大并发调用数（默认3，防止触发限流）",
+           })
+    async def batch_geocode_cn(
+        addresses: list[str],
+        provider: str = "amap",
+        max_concurrency: int = 3,
+    ) -> dict:
+        if provider not in _VALID_PROVIDERS:
+            return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
+        if not addresses or len(addresses) > 100:
+            return {"error": "地址列表长度必须在 1~100 之间"}
+        if not _has_provider(provider):
+            return {"error": f"未配置 {provider} API Key"}
+
+        semaphore = asyncio.Semaphore(max_concurrency)
+
+        async def _one(idx: int, addr: str) -> dict:
+            if not await ht.record_attempt(provider):
+                return {"index": idx, "status": "skipped", "address": addr,
+                        "error": f"{provider} 暂时不可用（频率限制或服务故障）"}
+            try:
+                result = await geocode_cn(addr, provider=provider)
+                await ht.record_success(provider)
+                if "error" in result:
+                    return {"index": idx, "status": "error", "address": addr, "error": str(result["error"])}
+                return {"index": idx, "status": "ok", "address": addr, **result}
+            except Exception as e:
+                await ht.record_error(provider, e)
+                return {"index": idx, "status": "error", "address": addr, "error": str(e)}
+
+        async with semaphore:
+            results = await asyncio.gather(*[_one(i, a) for i, a in enumerate(addresses)])
+
+        ok = [r for r in results if r["status"] == "ok"]
+        errs = [r for r in results if r["status"] != "ok"]
+        return {"total": len(addresses), "success_count": len(ok), "error_count": len(errs),
+                "results": ok, "errors": errs, "provider": provider}
+
+    @tool(registry, name="distance_matrix_cn",
+           description="OD距离矩阵：计算多个起点到多个终点之间的驾驶/步行/骑行距离和时间，结果为二维矩阵。适合物流选址、通勤可达性分析。",
+           param_descriptions={
+               "origins": "起点坐标列表 [[lng, lat], ...]，最多10个（WGS84）",
+               "destinations": "终点坐标列表 [[lng, lat], ...]，最多10个（WGS84）",
+               "mode": "出行方式: 'driving'(默认)，'walking'，'riding'",
+               "provider": "服务商: 'amap'(默认)，'baidu'",
+           })
+    async def distance_matrix_cn(
+        origins: list[list],
+        destinations: list[list],
+        mode: str = "driving",
+        provider: str = "amap",
+    ) -> dict:
+        if provider not in ("amap", "baidu"):
+            return {"error": "provider 必须是 'amap' 或 'baidu'"}
+        if not origins or not destinations:
+            return {"error": "origins 和 destinations 不能为空"}
+        if len(origins) > 10 or len(destinations) > 10:
+            return {"error": "origins 和 destinations 最多支持 10 个"}
+        if mode not in ("driving", "walking", "riding"):
+            return {"error": "mode 必须是 'driving', 'walking' 或 'riding'"}
+        if not _has_provider(provider):
+            return {"error": f"未配置 {provider} API Key"}
+
+        if provider == "amap":
+            return await _distance_matrix_amap(origins, destinations, mode)
+        else:
+            return await _distance_matrix_baidu(origins, destinations, mode)
+
+    @tool(registry, name="isochrone_analysis",
+           description="等时圈分析：从一个中心点出发，计算并可视化指定时间内可达的范围。支持驾驶/步行/骑行方向。返回 GeoJSON 面数据和半径米数。",
+           param_descriptions={
+               "center": "中心点坐标 [lng, lat]（WGS84）",
+               "minutes": "时间（分钟），如 5, 10, 15",
+               "mode": "出行方式: 'driving'(默认)，'walking'，'riding'",
+               "provider": "服务商: 'amap'(默认)，'baidu'",
+           })
+    async def isochrone_analysis(
+        center: list,
+        minutes: int = 10,
+        mode: str = "driving",
+        provider: str = "amap",
+    ) -> dict:
+        if not center or len(center) != 2:
+            return {"error": "center 必须是 [经度, 纬度] 格式"}
+        if not isinstance(minutes, int) or minutes <= 0 or minutes > 60:
+            return {"error": "minutes 必须是 1~60 的整数（分钟）"}
+        if mode not in ("driving", "walking", "riding"):
+            return {"error": "mode 必须是 'driving', 'walking' 或 'riding'"}
+        if provider not in ("amap", "baidu"):
+            return {"error": "provider 必须是 'amap' 或 'baidu'"}
+        if not _has_provider(provider):
+            return {"error": f"未配置 {provider} API Key"}
+
+        return await _isochrone_analysis(provider, center, minutes, mode)
 
 
 # ── Provider-specific helper functions ──────────────────────────
@@ -456,8 +585,8 @@ async def _route_baidu(origin: list, dest: list, mode: str, city: str) -> dict:
     }
 
 
-async def _district_amap(keywords: str, level: str) -> dict:
-    params = {"keywords": keywords, "subdistrict": "1", "extensions": "base"}
+async def _district_amap(keywords: str, level: str, return_geometry: str = "point") -> dict:
+    params = {"keywords": keywords, "subdistrict": "1", "extensions": "all"}
     level_map = {"country": "0", "province": "1", "city": "2", "district": "3"}
     if level in level_map:
         params["subdistrict"] = level_map[level]
@@ -469,9 +598,28 @@ async def _district_amap(keywords: str, level: str) -> dict:
     for d in districts:
         center = d.get("center", "").split(",")
         lng, lat = (gcj02_to_wgs84(float(center[0]), float(center[1])) if len(center) == 2 else (0, 0))
+
+        if return_geometry == "polygon":
+            polyline_str = d.get("boundary", "")
+            if polyline_str:
+                coords = [
+                    [float(v) for v in pt.split(",")]
+                    for pt in polyline_str.split(";") if pt
+                ]
+                wgs84_coords = [gcj02_to_wgs84(lon, lat) for lon, lat in coords]
+                from shapely.geometry import LineString
+                from shapely.simplify import simplify
+                line = LineString(wgs84_coords)
+                simplified = simplify(line, tolerance=0.001, preserve_topology=True)
+                geometry = simplified.__geo_interface__
+            else:
+                geometry = {"type": "Point", "coordinates": [lng, lat]}
+        else:
+            geometry = {"type": "Point", "coordinates": [lng, lat]}
+
         features.append({
             "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [lng, lat]},
+            "geometry": geometry,
             "properties": {
                 "name": d.get("name", ""),
                 "level": d.get("level", ""),
@@ -479,10 +627,11 @@ async def _district_amap(keywords: str, level: str) -> dict:
                 "citycode": d.get("citycode", ""),
             },
         })
-    return {"type": "FeatureCollection", "features": features, "count": len(features), "provider": "amap"}
+    return {"type": "FeatureCollection", "features": features, "count": len(features),
+            "provider": "amap", "geometry_type": features[0]["geometry"]["type"] if features else "Point"}
 
 
-async def _district_baidu(keywords: str, level: str) -> dict:
+async def _district_baidu(keywords: str, level: str, return_geometry: str = "point") -> dict:
     params = {"q": keywords}
     data = await _baidu_get("/api/v2/administrative", params)
     if "error" in data:
@@ -587,7 +736,7 @@ async def _reverse_geocode_tianditu(lng: float, lat: float) -> dict:
     }
 
 
-async def _district_tianditu(keywords: str, level: str) -> dict:
+async def _district_tianditu(keywords: str, level: str, return_geometry: str = "point") -> dict:
     post_str = _json.dumps({
         "searchWord": keywords,
         "searchType": "1",
@@ -616,3 +765,208 @@ async def _district_tianditu(keywords: str, level: str) -> dict:
             },
         })
     return {"type": "FeatureCollection", "features": features, "count": len(features), "provider": "tianditu"}
+
+
+# ── Phase 2 helpers: distance matrix, isochrone ─────────────────
+
+
+async def _distance_matrix_amap(
+    origins: list[list],
+    destinations: list[list],
+    mode: str,
+) -> dict:
+    """Amap v3 驾车距离矩阵 API（一次请求完成全量 OD 计算）。"""
+    # 将 WGS84 → GCJ-02 再送入 API
+    origin_str = ";".join(
+        f"{wgs84_to_gcj02(lng, lat)[0]},{wgs84_to_gcj02(lng, lat)[1]}"
+        for lng, lat in origins
+    )
+    dest_str = ";".join(
+        f"{wgs84_to_gcj02(lng, lat)[0]},{wgs84_to_gcj02(lng, lat)[1]}"
+        for lng, lat in destinations
+    )
+    params = {
+        "origins": origin_str,
+        "destination": dest_str,
+        "strategy": {"driving": 10, "walking": 4}[mode],
+        "output": "json",
+    }
+    data = await _amap_get("/distance", params)
+    if "error" in data:
+        return data
+
+    rows = data.get("results", [])
+    # 构建二维矩阵
+    matrix = []
+    for row_idx, row in enumerate(rows):
+        row_dist = []
+        for col_idx, item in enumerate(row.get("elements", [])):
+            row_dist.append({
+                "origin_index": row_idx,
+                "dest_index": col_idx,
+                "distance_km": item.get("distance", 0) / 1000.0,  # 米→公里
+                "duration_sec": item.get("duration", 0),
+            })
+        matrix.append(row_dist)
+
+    return {
+        "matrix": matrix,
+        "origins_count": len(origins),
+        "dests_count": len(destinations),
+        "mode": mode,
+        "provider": "amap",
+    }
+
+
+async def _distance_matrix_baidu(
+    origins: list[list],
+    destinations: list[list],
+    mode: str,
+) -> dict:
+    """Baidu v2 direction Matrix API — 一次请求完成全量 OD 计算。"""
+
+    def _bd_fmt(lng: float, lat: float) -> str:
+        # WGS84 → BD09，然后按"纬度,经度"格式提交给百度
+        bd_lng, bd_lat = wgs84_to_bd09(lng, lat)
+        return f"{bd_lat},{bd_lng}"
+
+    origin_str = "|".join(_bd_fmt(lo, la) for lo, la in origins)
+    dest_str = "|".join(_bd_fmt(ld, la) for ld, la in destinations)
+    mode_map = {"driving": "car", "walking": "foot", "riding": "bike"}
+    params = {
+        "origin": origin_str,
+        "destination": dest_str,
+        "mode": mode_map.get(mode, "car"),
+    }
+    data = await _baidu_get("/direction/v2/matrix", params)
+    if "error" in data:
+        return data
+
+    result = data.get("result", {})
+    rows = result.get("rows", [])
+    matrix = []
+    for ri, row in enumerate(rows):
+        row_dist = []
+        for ci, elem in enumerate(row.get("elements", [])):
+            row_dist.append({
+                "origin_index": ri,
+                "dest_index": ci,
+                "distance_km": elem.get("distance", {}).get("value", 0) / 1000.0,
+                "duration_sec": elem.get("duration", {}).get("value", 0),
+            })
+        matrix.append(row_dist)
+    return {
+        "matrix": matrix,
+        "origins_count": len(origins),
+        "dests_count": len(destinations),
+        "mode": mode,
+        "provider": "baidu",
+    }
+
+
+async def _isochrone_analysis(
+    provider: str,
+    center: list,
+    minutes: int,
+    mode: str,
+) -> dict:
+    """沿 N 个方向调用路径规划 API，收集各方向在 `minutes` 时间内的最远到达点，用 Convex Hull 近似等时圈。"""
+    import math
+
+    num_radials = 12  # 每30°一条射线
+    km_scale = {"driving": 1.0, "walking": 0.06, "riding": 0.35}[mode]
+    angle_step = 2 * math.pi / num_radials
+
+    # 生成候选径向目的地（在中心点周围大致方向）
+    async def _radial_point(angle: float) -> tuple[float, float]:
+        # 用单位向量 × 固定半径来确定方向，再做线性缩放
+        probe_lng = center[0] + 0.01 * math.cos(angle) * km_scale
+        probe_lat = center[1] + 0.01 * math.sin(angle) * km_scale
+
+        try:
+            dist_m = await _get_route_distance_amap(center, [probe_lng, probe_lat], mode)
+            ratio = (minutes * 60 * _speed_mps(mode)) / max(dist_m, 1)
+            capped_ratio = min(ratio, 1.0)  # 不超过探测器本身的位置
+            return (
+                center[0] + (probe_lng - center[0]) * capped_ratio,
+                center[1] + (probe_lat - center[1]) * capped_ratio,
+            )
+        except Exception:
+            # 回退：用均匀半径圆上的点
+            fallback_radius_m = minutes * 60 * _speed_mps(mode)
+            return (
+                center[0] + fallback_radius_m * math.cos(angle) / 111000,
+                center[1] + fallback_radius_m * math.sin(angle) / 111000,
+            )
+
+    semaphore = asyncio.Semaphore(6)
+    angles = [angle_step * i for i in range(num_radials)]
+
+    async with semaphore:
+        pts = await asyncio.gather(*[_radial_point(a) for a in angles])
+
+    all_points = list(pts)
+
+    if len(all_points) >= 3:
+        from shapely.geometry import MultiPoint
+        hull = MultiPoint(all_points).convex_hull
+        geometry = hull.__geo_interface__
+    else:
+        geometry = {"type": "Point", "coordinates": center}
+
+    return {
+        "type": "Feature",
+        "geometry": geometry,
+        "properties": {
+            "center": center,
+            "minutes": minutes,
+            "mode": mode,
+            "provider": provider,
+            "radius_m": minutes * 60 * _speed_mps(mode),
+        },
+    }
+
+
+async def _get_route_distance_amap(
+    origin: list,
+    destination: list,
+    mode: str,
+) -> float:
+    """调用 Amap 路径规划 API，返回两点间单程距离（米）。用于等时圈半径探测。"""
+    try:
+        og_lng, og_lat = origin
+        dg_lng, dg_lat = destination
+        og_gcj = wgs84_to_gcj02(og_lng, og_lat)
+        dg_gcj = wgs84_to_gcj02(dg_lng, dg_lat)
+        o_str = f"{og_gcj[0]},{og_gcj[1]}"
+        d_str = f"{dg_gcj[0]},{dg_gcj[1]}"
+
+        if mode == "walking":
+            params = {"origin": o_str, "destination": d_str, "strategy": "4"}
+            data = await _amap_get("/direction/walking", params)
+        elif mode == "riding":
+            params = {"origin": o_str, "destination": d_str}
+            data = await _amap_get("/direction/bicycling", params)
+        else:  # driving
+            params = {"origin": o_str, "destination": d_str, "strategy": "10"}
+            data = await _amap_get("/direction/drive", params)
+
+        if "error" in data:
+            return 0.0
+        route = data.get("route", {})
+        paths = route.get("paths", [])
+        if not paths:
+            return 0.0
+        return float(paths[0].get("distance", 0))
+    except Exception:
+        return 0.0
+
+
+# ── Math / angle utilities ──────────────────────────────────────
+
+
+def _speed_mps(mode: str) -> float:
+    """各模式的典型速度（米/秒），用于等时圈半径估算。"""
+    return {"driving": 13.9, "walking": 1.4, "riding": 4.2}[mode]
+
+
