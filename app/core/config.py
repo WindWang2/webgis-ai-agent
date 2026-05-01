@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     # 百度地图 (Baidu Maps)
     BAIDU_MAP_AK: str = Field(default="", env="BAIDU_MAP_AK")
 
+    # MapBox / Bing / Tencent
+    MAPBOX_TOKEN: str = Field(default="", env="MAPBOX_TOKEN")
+    BING_MAP_KEY: str = Field(default="", env="BING_MAP_KEY")
+    TENCENT_MAP_KEY: str = Field(default="", env="TENCENT_MAP_KEY")
+
     # Sentinel Hub
     SENTINELHUB_CLIENT_ID: str = Field(default="", env="SENTINELHUB_CLIENT_ID")
     SENTINELHUB_CLIENT_SECRET: str = Field(default="", env="SENTINELHUB_CLIENT_SECRET")
