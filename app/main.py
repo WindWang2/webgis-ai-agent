@@ -46,6 +46,8 @@ async def lifespan(app: FastAPI):
 
     if mcp_adapter:
         await mcp_adapter.close()
+    from app.core.network import close_shared_client
+    await close_shared_client()
     Engine.dispose()
 
 
