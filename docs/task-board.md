@@ -1,4 +1,4 @@
-# WebGIS AI Agent 任务看板 (V2.1 Core)
+# WebGIS AI Agent 任务看板 (V3.2 Core)
 
 更新时间: 2026-04-18 (Asia/Shanghai)
 
