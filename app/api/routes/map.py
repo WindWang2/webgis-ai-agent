@@ -8,11 +8,15 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from typing import Optional
 import io
+import logging
 import os
 import uuid
 import time
+import tempfile
 from fastapi.responses import FileResponse
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -43,14 +47,17 @@ async def upload_map_export(
         ext = ".png"
 
     filename = f"map_export_{int(time.time())}_{uuid.uuid4().hex[:6]}{ext}"
-    filepath = os.path.join(EXPORT_DIR, filename)
 
     try:
         content = await file.read(MAX_EXPORT_SIZE + 1)
         if len(content) > MAX_EXPORT_SIZE:
             raise HTTPException(status_code=413, detail="文件过大，上限 50MB")
-        with open(filepath, "wb") as f:
-            f.write(content)
+
+        # 写入临时文件再原子移动，防止进程崩溃留下残缺文件
+        with tempfile.NamedTemporaryFile(dir=EXPORT_DIR, delete=False, suffix=ext) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        os.replace(tmp_path, os.path.join(EXPORT_DIR, filename))
     except HTTPException:
         raise
     except Exception as e:
@@ -104,6 +111,11 @@ async def export_map_as_pdf(
              if any(kw in f.name.lower() for kw in cjk_keywords)),
             None,
         )
+        if not cjk_font:
+            logger.warning(
+                "[export_map_as_pdf] 未找到 CJK 字体，中文标题/副标题可能会渲染为方块。"
+                " 建议安装 Noto CJK、Source Han Sans 或微软雅黑等字体。"
+            )
         if cjk_font:
             plt.rcParams["font.family"] = cjk_font
 
