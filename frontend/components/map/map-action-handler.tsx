@@ -43,7 +43,7 @@ function calculateBBox(geojson: GeoJSONFeatureCollection): [number, number, numb
 import { useMap } from 'react-map-gl/maplibre';
 
 import { API_BASE } from '@/lib/api/config';
-import { MAP_STYLES } from '@/lib/constants';
+import { TILE_PROVIDERS } from '@/lib/providers';
 import { useHudStore } from '@/lib/store/useHudStore';
 
 export function MapActionHandler() {
@@ -140,33 +140,32 @@ export function MapActionHandler() {
         }
 
         case 'BASE_LAYER_CHANGE': {
-          const name = action.params?.name;
-          if (name) {
-            const searchName = name.toLowerCase();
-            let idx = MAP_STYLES.findIndex(s => s.name.toLowerCase() === searchName);
-            
-            if (idx === -1) {
-              idx = MAP_STYLES.findIndex(s => {
-                const lowerS = s.name.toLowerCase();
-                return lowerS.includes(searchName) || searchName.includes(lowerS);
-              });
-            }
-            
-            if (idx === -1) {
-              if (searchName.includes("卫星") || searchName.includes("影像") || searchName.includes("satellite")) {
-                idx = MAP_STYLES.findIndex(s => s.name.includes("影像"));
-              } else if (searchName.includes("深色") || searchName.includes("dark")) {
-                idx = MAP_STYLES.findIndex(s => s.name.includes("深色"));
-              } else if (searchName.includes("地图") || searchName.includes("osm") || searchName.includes("street")) {
-                idx = MAP_STYLES.findIndex(s => s.name.includes("OSM"));
-              }
-            }
+          const name = action.params?.name as string | undefined;
+          if (!name) break;
+          const search = name.toLowerCase();
 
-            if (idx !== -1) {
-              setSelectedBaseLayer(idx);
-            } else {
-              console.warn('[MapActionHandler] Could not match base layer name:', name);
-            }
+          // 1. Exact name match (case-insensitive)
+          let idx = TILE_PROVIDERS.findIndex(p => p.name.toLowerCase() === search);
+
+          // 2. Bidirectional substring match
+          if (idx === -1) {
+            idx = TILE_PROVIDERS.findIndex(p => {
+              const n = p.name.toLowerCase();
+              return n.includes(search) || search.includes(n);
+            });
+          }
+
+          // 3. Keyword index — ai команды like "卫星"/"dark"/"osm"命中对应条目
+          if (idx === -1) {
+            idx = TILE_PROVIDERS.findIndex(p =>
+              p.keywords.some(k => search.includes(k.toLowerCase())),
+            );
+          }
+
+          if (idx !== -1) {
+            setSelectedBaseLayer(idx);
+          } else {
+            console.warn('[MapActionHandler] Could not match base layer name:', name);
           }
           break;
         }
