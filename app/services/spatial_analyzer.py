@@ -235,9 +235,19 @@ class SpatialAnalyzer:
                 
                 # 计算UTM zone
                 utm_zone = int((center_lon + 180) / 6) + 1
-                # 北半球南半球判断
-                utm_crs_code = 32600 + utm_zone if center_lat >= 0 else 32700 + utm_zone
-                utm_crs = f"EPSG:{utm_crs_code}"
+                # 极区保护阈值
+                ARCTIC_LAT_THRESHOLD = 84.0
+                ANTARCTIC_LAT_THRESHOLD = -80.0
+                EPSG_ARCTIC = "EPSG:3413"
+                EPSG_ANTARCTIC = "EPSG:3414"
+                if center_lat >= ARCTIC_LAT_THRESHOLD:
+                    utm_crs = EPSG_ARCTIC
+                elif center_lat <= ANTARCTIC_LAT_THRESHOLD:
+                    utm_crs = EPSG_ANTARCTIC
+                else:
+                    # 北半球南半球判断
+                    utm_crs_code = 32600 + utm_zone if center_lat >= 0 else 32700 + utm_zone
+                    utm_crs = f"EPSG:{utm_crs_code}"
                 
                 # 投影到UTM（米单位坐标系）
                 gdf_utm = gdf.to_crs(utm_crs)
