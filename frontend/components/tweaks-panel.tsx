@@ -26,8 +26,6 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
   const showGrid = useHudStore((s) => s.showGrid);
   const setShowGrid = useHudStore((s) => s.setShowGrid);
 
-  if (!tweaksOpen) return <>{children}</>;
-
   return (
     <>
       {/* Tweaks panel */}
@@ -36,7 +34,7 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
           position: 'fixed',
           bottom: 30,
           left: '50%',
-          transform: 'translateX(-50%)',
+          transform: tweaksOpen ? 'translateX(-50%)' : 'translateX(-50%) translateY(105%)',
           zIndex: 100,
           background: 'rgba(252,253,254,0.96)',
           backdropFilter: 'blur(20px)',
@@ -46,6 +44,9 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
           borderRadius: 16,
           padding: 16,
           minWidth: 300,
+          transition: 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+          pointerEvents: tweaksOpen ? 'auto' : 'none',
+          opacity: tweaksOpen ? 1 : 0,
         }}
       >
         {/* Header */}
