@@ -1,9 +1,75 @@
 'use client';
 
+import { useHudStore, DEMO_RAG } from '@/lib/store/useHudStore';
+
 export function RagTab() {
+  const ragResults = useHudStore((s) => s.ragResults);
+  const demoMode = useHudStore((s) => s.demoMode);
+  const setDemoMode = useHudStore((s) => s.setDemoMode);
+
+  const displayResults = demoMode && ragResults.length === 0 ? DEMO_RAG : ragResults;
+
   return (
-    <div className="p-3">
-      <div className="text-xs text-slate-400">RAG结果 (待实现)</div>
+    <div className='flex flex-col h-full'>
+      {/* Header */}
+      <div className='flex items-center justify-between px-3 py-2 border-b border-slate-200/60'>
+        <span className='text-[10px] font-semibold text-slate-400 uppercase tracking-wider'>
+          RAG检索结果
+        </span>
+        {!demoMode && ragResults.length === 0 && (
+          <button
+            onClick={() => setDemoMode(true)}
+            className='text-[10px] text-slate-400 hover:text-slate-600'
+          >
+            加载演示
+          </button>
+        )}
+      </div>
+
+      {/* Results list */}
+      <div className='flex-1 overflow-y-auto p-2'>
+        {displayResults.length === 0 ? (
+          <div className='text-center py-8 text-xs text-slate-400'>
+            暂无检索结果
+          </div>
+        ) : (
+          <div className='space-y-2'>
+            {displayResults.map((result) => (
+              <div
+                key={result.id}
+                className='p-3 rounded-xl border border-slate-200/60 bg-white/60'
+              >
+                {/* Source header */}
+                <div className='flex items-center justify-between mb-2'>
+                  <div className='text-xs font-medium text-slate-700 truncate flex-1'>
+                    {result.source}
+                  </div>
+                  <div className='flex items-center gap-2 ml-2'>
+                    <span className='text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-mono font-semibold'>
+                      {result.score}
+                    </span>
+                    <span className='text-[10px] text-slate-400 font-mono'>
+                      {result.chunks} 块
+                    </span>
+                  </div>
+                </div>
+
+                {/* Excerpts */}
+                <div className='space-y-1.5'>
+                  {result.excerpts.map((excerpt, idx) => (
+                    <div
+                      key={idx}
+                      className='text-[11px] text-slate-500 leading-relaxed'
+                    >
+                      "{excerpt}"
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

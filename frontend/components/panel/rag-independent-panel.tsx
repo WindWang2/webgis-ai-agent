@@ -1,15 +1,116 @@
 'use client';
 
+import { X } from 'lucide-react';
+import { useHudStore, DEMO_RAG } from '@/lib/store/useHudStore';
+
 interface RagIndependentPanelProps {
   open: boolean;
   onClose: () => void;
 }
 
 export function RagIndependentPanel({ open, onClose }: RagIndependentPanelProps) {
+  const ragResults = useHudStore((s) => s.ragResults);
+  const demoMode = useHudStore((s) => s.demoMode);
+  const setDemoMode = useHudStore((s) => s.setDemoMode);
+
+  const displayResults = demoMode && ragResults.length === 0 ? DEMO_RAG : ragResults;
+
   if (!open) return null;
+
   return (
-    <div className="fixed right-3 bottom-10 z-40 w-96 bg-white/90 backdrop-blur-xl rounded-xl border p-4">
-      <div className="text-xs text-slate-400">独立RAG面板 (待实现)</div>
+    <div
+      style={{
+        position: 'absolute',
+        right: 10,
+        bottom: 40,
+        zIndex: 40,
+        width: 380,
+        maxHeight: 320,
+        background: 'rgba(252,253,254,0.96)',
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+        border: '1px solid rgba(255,255,255,0.95)',
+        boxShadow: '0 8px 32px rgba(15,23,42,0.12)',
+        borderRadius: 16,
+        overflow: 'hidden',
+      }}
+    >
+      {/* Header */}
+      <div className='flex items-center justify-between px-4 py-3 border-b border-slate-200/60 bg-white/40'>
+        <div className='flex items-center gap-2'>
+          <div className='w-6 h-6 rounded-lg bg-green-100 flex items-center justify-center'>
+            <svg width='14' height='14' viewBox='0 0 14 14' fill='none'>
+              <path d='M3 7h8M7 3v8' stroke='#16a34a' strokeWidth='1.5' strokeLinecap='round'/>
+              <circle cx='7' cy='7' r='5' stroke='#16a34a' strokeWidth='1'/>
+            </svg>
+          </div>
+          <div>
+            <div className='text-xs font-semibold text-slate-800'>RAG 检索</div>
+            <div className='text-[10px] text-slate-400'>{displayResults.length} 个结果</div>
+          </div>
+        </div>
+        <div className='flex items-center gap-1'>
+          {!demoMode && ragResults.length === 0 && (
+            <button
+              onClick={() => setDemoMode(true)}
+              className='text-[10px] text-slate-400 hover:text-slate-600 px-2 py-1 rounded hover:bg-slate-100'
+            >
+              加载演示
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className='w-6 h-6 flex items-center justify-center rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600'
+          >
+            <X size={14} />
+          </button>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className='overflow-y-auto max-h-[240px] p-3'>
+        {displayResults.length === 0 ? (
+          <div className='text-center py-8 text-xs text-slate-400'>
+            暂无检索结果
+          </div>
+        ) : (
+          <div className='space-y-2'>
+            {displayResults.map((result) => (
+              <div
+                key={result.id}
+                className='p-3 rounded-xl border border-slate-200/60 bg-white/60'
+              >
+                {/* Source header */}
+                <div className='flex items-center justify-between mb-2'>
+                  <div className='text-xs font-medium text-slate-700 truncate flex-1'>
+                    {result.source}
+                  </div>
+                  <div className='flex items-center gap-2 ml-2'>
+                    <span className='text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-mono font-semibold'>
+                      {result.score}
+                    </span>
+                    <span className='text-[10px] text-slate-400 font-mono'>
+                      {result.chunks} 块
+                    </span>
+                  </div>
+                </div>
+
+                {/* Excerpts */}
+                <div className='space-y-1.5'>
+                  {result.excerpts.map((excerpt, idx) => (
+                    <div
+                      key={idx}
+                      className='text-[11px] text-slate-500 leading-relaxed'
+                    >
+                      "{excerpt}"
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
