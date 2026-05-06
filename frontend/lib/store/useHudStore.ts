@@ -306,6 +306,8 @@ export const useHudStore = create<HudState>()(
       /* ─── v2 UI Tweaks ─── */
       accentColor: '#16a34a',
       setAccentColor: (color) => set({ accentColor: color }),
+      theme: 'light' as const,
+      setTheme: (theme) => set({ theme: theme }),
       fontSize: 13,
       setFontSize: (size) => set({ fontSize: size }),
       density: 'compact' as const,

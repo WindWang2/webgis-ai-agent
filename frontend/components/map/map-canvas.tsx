@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { useHudStore } from '@/lib/store/useHudStore';
+import { getThemeColors } from '@/lib/theme';
 
 interface MapCanvasProps {
   children?: React.ReactNode;
@@ -9,6 +11,8 @@ interface MapCanvasProps {
 
 export default function MapCanvas({ children, showGrid = true }: MapCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const theme = useHudStore((s) => s.theme);
+  const colors = getThemeColors(theme);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -24,30 +28,40 @@ export default function MapCanvas({ children, showGrid = true }: MapCanvasProps)
     const W = canvas.width;
     const H = canvas.height;
 
+    const isDark = theme === 'dark';
+
     // Background gradient
     const bg = ctx.createLinearGradient(0, 0, W, H);
-    bg.addColorStop(0, '#d4e4f0');
-    bg.addColorStop(0.5, '#dce8f2');
-    bg.addColorStop(1, '#c8dae8');
+    if (isDark) {
+      bg.addColorStop(0, '#1e293b');
+      bg.addColorStop(0.5, '#0f172a');
+      bg.addColorStop(1, '#1e293b');
+    } else {
+      bg.addColorStop(0, '#d4e4f0');
+      bg.addColorStop(0.5, '#dce8f2');
+      bg.addColorStop(1, '#c8dae8');
+    }
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
 
     // Land masses
-    ctx.fillStyle = 'rgba(167,210,180,0.35)';
+    const landColor = isDark ? 'rgba(30,64,175,0.3)' : 'rgba(167,210,180,0.35)';
+    const landColorLight = isDark ? 'rgba(30,64,175,0.15)' : 'rgba(167,210,180,0.25)';
+    ctx.fillStyle = landColor;
     roundRect(ctx, 0.05 * W, 0.1 * H, 0.18 * W, 0.28 * H, 12);
     ctx.fill();
-    ctx.fillStyle = 'rgba(167,210,180,0.25)';
+    ctx.fillStyle = landColorLight;
     roundRect(ctx, 0.6 * W, 0.05 * H, 0.3 * W, 0.22 * H, 12);
     ctx.fill();
-    ctx.fillStyle = 'rgba(167,210,180,0.30)';
+    ctx.fillStyle = landColorLight;
     roundRect(ctx, 0.2 * W, 0.55 * H, 0.25 * W, 0.35 * H, 12);
     ctx.fill();
-    ctx.fillStyle = 'rgba(167,210,180,0.20)';
+    ctx.fillStyle = landColor;
     roundRect(ctx, 0.7 * W, 0.6 * H, 0.25 * W, 0.32 * H, 12);
     ctx.fill();
 
     // Grid lines
-    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.strokeStyle = isDark ? 'rgba(148,163,184,0.25)' : 'rgba(255,255,255,0.5)';
     ctx.lineWidth = 1.8;
     for (let i = 0; i < 8; i++) {
       ctx.beginPath();
@@ -63,7 +77,7 @@ export default function MapCanvas({ children, showGrid = true }: MapCanvasProps)
     }
 
     // Major lines
-    ctx.strokeStyle = 'rgba(255,255,255,0.82)';
+    ctx.strokeStyle = isDark ? 'rgba(148,163,184,0.5)' : 'rgba(255,255,255,0.82)';
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(0, H * 0.42);
@@ -75,7 +89,7 @@ export default function MapCanvas({ children, showGrid = true }: MapCanvasProps)
     ctx.stroke();
 
     // Lake
-    ctx.fillStyle = 'rgba(163,199,225,0.55)';
+    ctx.fillStyle = isDark ? 'rgba(59,130,246,0.35)' : 'rgba(163,199,225,0.55)';
     ctx.beginPath();
     ctx.ellipse(W * 0.72, H * 0.32, W * 0.12, H * 0.09, 0.3, 0, Math.PI * 2);
     ctx.fill();
@@ -89,14 +103,15 @@ export default function MapCanvas({ children, showGrid = true }: MapCanvasProps)
       [0.18, 0.53, 0.07, 0.06], [0.28, 0.53, 0.08, 0.06],
     ];
     fields.forEach(([x, y, w, h]) => {
-      ctx.fillStyle = 'rgba(200,215,228,0.58)';
+      ctx.fillStyle = isDark ? 'rgba(51,65,85,0.55)' : 'rgba(200,215,228,0.58)';
       ctx.fillRect(x * W, y * H, w * W, h * H);
-      ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+      ctx.strokeStyle = isDark ? 'rgba(148,163,184,0.35)' : 'rgba(255,255,255,0.45)';
       ctx.lineWidth = 0.5;
       ctx.strokeRect(x * W, y * H, w * W, h * H);
     });
-  }, []);
+  }, [theme]);
 
+  const isDark = theme === 'dark';
   return (
     <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
       <canvas
@@ -111,8 +126,10 @@ export default function MapCanvas({ children, showGrid = true }: MapCanvasProps)
             mixBlendMode: 'multiply',
             opacity: 0.38,
             pointerEvents: 'none',
-            backgroundColor: '#dce8f2',
-            backgroundImage: 'linear-gradient(rgba(15,23,42,0.032) 1px, transparent 1px), linear-gradient(90deg, rgba(15,23,42,0.032) 1px, transparent 1px)',
+            backgroundColor: isDark ? '#1e293b' : '#dce8f2',
+            backgroundImage: isDark
+              ? 'linear-gradient(rgba(148,163,184,0.15) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.15) 1px, transparent 1px)'
+              : 'linear-gradient(rgba(15,23,42,0.032) 1px, transparent 1px), linear-gradient(90deg, rgba(15,23,42,0.032) 1px, transparent 1px)',
             backgroundSize: '40px 40px',
             animation: 'mapGridMove 8s linear infinite',
           }}
