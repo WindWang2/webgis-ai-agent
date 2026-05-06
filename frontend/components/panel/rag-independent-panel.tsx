@@ -102,7 +102,7 @@ export function RagIndependentPanel({ open, onClose }: RagIndependentPanelProps)
                       key={idx}
                       className='text-[11px] text-slate-500 leading-relaxed'
                     >
-                      "{excerpt}"
+                      &quot;{excerpt}&quot;
                     </div>
                   ))}
                 </div>
