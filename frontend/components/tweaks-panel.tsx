@@ -25,6 +25,8 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
   const setRagPanelOpen = useHudStore((s) => s.setRagPanelOpen);
   const showGrid = useHudStore((s) => s.showGrid);
   const setShowGrid = useHudStore((s) => s.setShowGrid);
+  const sidebarWidth = useHudStore((s) => s.sidebarWidth);
+  const setSidebarWidth = useHudStore((s) => s.setSidebarWidth);
 
   return (
     <>
@@ -154,6 +156,25 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Sidebar width */}
+        <div className='mb-4'>
+          <div className='flex items-center justify-between mb-2'>
+            <div className='text-[10px] font-semibold text-slate-400 uppercase tracking-wider'>
+              侧边栏宽度
+            </div>
+            <span className='text-[10px] text-slate-500 font-mono'>{sidebarWidth}px</span>
+          </div>
+          <input
+            type='range'
+            min={240}
+            max={480}
+            step={10}
+            value={sidebarWidth}
+            onChange={(e) => setSidebarWidth(parseInt(e.target.value))}
+            className='w-full'
+          />
         </div>
 
         {/* Toggles */}

@@ -40,6 +40,7 @@ const TAB_DEFS: TabDef[] = [
 export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#16a34a' }: LeftSidebarProps) {
   const activeTab = useHudStore((s) => s.activeLeftTab);
   const setActiveTab = useHudStore((s) => s.setActiveLeftTab);
+  const sidebarWidth = useHudStore((s) => s.sidebarWidth);
   const layers = useHudStore((s) => s.layers);
   const opsLog = useHudStore((s) => s.opsLog);
   const exports = useHudStore((s) => s.exports);
@@ -55,14 +56,15 @@ export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#
     <aside
       className="fixed top-[42px] left-0 bottom-[24px] z-40 flex flex-col"
       style={{
-        width: 330,
+        width: sidebarWidth,
+        maxWidth: '90vw',
         background: 'rgba(252,253,254,0.90)',
         backdropFilter: 'blur(28px)',
         WebkitBackdropFilter: 'blur(28px)',
         borderRight: '1px solid rgba(255,255,255,0.85)',
         boxShadow: '2px 0 24px rgba(15,23,42,0.09)',
         transform: open ? 'translateX(0)' : 'translateX(-100%)',
-        transition: 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+        transition: 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), width 0.2s ease',
       }}
     >
       {/* Tab bar */}
