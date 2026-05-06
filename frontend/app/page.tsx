@@ -1,15 +1,12 @@
 'use client';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
-import { useHudStore, DEMO_OPS_LOG, DEMO_RAG, DEMO_EXPORTS, DEMO_CAUSAL_CHAIN, DEMO_LAYERS } from '@/lib/store/useHudStore';
+import { useHudStore, DEMO_LAYERS } from '@/lib/store/useHudStore';
 import { getThemeColors } from '@/lib/theme';
 import { streamChat } from '@/lib/api/chat';
 import { useWebSocket } from '@/lib/hooks/use-websocket';
 import { useGeolocation } from '@/lib/hooks/use-geolocation';
-import type { GeoJSONFeatureCollection } from '@/lib/types';
 import type { ChatSession } from '@/lib/types/chat';
-import type { UploadResponse } from '@/lib/api/upload';
-import { getUploadGeojson } from '@/lib/api/upload';
 import { API_BASE } from '@/lib/api/config';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 
@@ -43,27 +40,6 @@ const MapPanel = dynamic(
   }
 );
 
-function computeBBoxFromFeatures(features: any[]): [number, number, number, number] | undefined {
-  if (!features || features.length === 0) return undefined;
-  let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
-  const collect = (coords: number[][]) => {
-    for (const c of coords) { minLng = Math.min(minLng, c[0]); maxLng = Math.max(maxLng, c[0]); minLat = Math.min(minLat, c[1]); maxLat = Math.max(maxLat, c[1]); }
-  };
-  for (const f of features) {
-    const g = f.geometry;
-    if (!g?.coordinates) continue;
-    switch (g.type) {
-      case 'Point': { minLng = Math.min(minLng, g.coordinates[0]); maxLng = Math.max(maxLng, g.coordinates[0]); minLat = Math.min(minLat, g.coordinates[1]); maxLat = Math.max(maxLat, g.coordinates[1]); break; }
-      case 'MultiPoint': case 'LineString': collect(g.coordinates); break;
-      case 'MultiLineString': g.coordinates.forEach((r: number[][]) => collect(r)); break;
-      case 'Polygon': collect(g.coordinates[0] || []); break;
-      case 'MultiPolygon': g.coordinates.forEach((p: number[][][]) => collect(p[0] || [])); break;
-    }
-  }
-  if (minLng === Infinity) return undefined;
-  return [minLng, minLat, maxLng, maxLat];
-}
-
 type ToolCallEntry = {
   id: string;
   tool: string;
@@ -77,19 +53,16 @@ type ToolCallEntry = {
 };
 
 export default function Home() {
-  const { dispatchAction, getMapSnapshot } = useMapAction();
+  const { getMapSnapshot } = useMapAction();
   const {
     layers,
     addLayer,
-    addProcessLayer,
     removeLayer,
     toggleLayer,
     clearLayers,
     setLayers,
     analysisResult,
-    setAnalysisResult,
     leftPanelOpen,
-    toggleLeftPanel,
     settingsOpen,
     historyOpen,
     setHistoryOpen,
@@ -112,9 +85,7 @@ export default function Home() {
     taskStart,
     stepStart,
     stepResult,
-    stepError,
     taskComplete,
-    clearTask,
   } = useHudStore();
 
   /* ─── Chat state ─── */
@@ -230,164 +201,6 @@ export default function Home() {
     return () => { abortControllerRef.current?.abort(); };
   }, []);
 
-  /* ─── Tool result handler ─── */
-  const handleToolResult = useCallback(
-    async (toolName: string, result: any, sid?: string) => {
-      let geojson = result.geojson;
-      let bbox = result.bbox;
-      let image = result.image;
-
-      if (!geojson && result.geojson_ref && typeof result.geojson_ref === 'string' && result.geojson_ref.startsWith('ref:') && sid) {
-        try {
-          const resp = await fetch(`${API_BASE}/api/v1/layers/data/${result.geojson_ref}?session_id=${sid}`);
-          if (resp.ok) {
-            const fullData = await resp.json();
-            if (fullData.type === 'FeatureCollection' || (typeof fullData === 'object' && 'features' in fullData)) {
-              geojson = fullData;
-            } else if (fullData.image) {
-              image = fullData.image;
-              bbox = fullData.bbox;
-            }
-          }
-        } catch (e) {
-          console.error('Fetch layer data failed:', e);
-        }
-      }
-
-      if ((result?.type === 'heatmap_raster' || image) && (result?.image || image) && (result.bbox || bbox)) {
-        const layerId = `heatmap_raster-${Date.now()}`;
-        const finalBbox = bbox || result.bbox;
-        const finalImage = image || result.image;
-        const [west, south, east, north] = finalBbox;
-        const center: [number, number] = [(west + east) / 2, (south + north) / 2];
-        setAnalysisResult({ center, zoom: 10 });
-        addLayer({
-          id: layerId,
-          name: '热力图（栅格）',
-          type: 'heatmap',
-          visible: true,
-          opacity: 0.85,
-          source: { image: finalImage, bbox: finalBbox },
-          style: {},
-        });
-        return;
-      }
-
-      if (geojson && geojson.features?.length > 0) {
-        const layerId = `${toolName}-${Date.now()}`;
-        const colors = ['#16a34a', '#2563eb', '#ea580c', '#8b5cf6', '#ec4899', '#dc2626'];
-        const color = colors[Math.floor(Math.random() * colors.length)];
-
-        const lngs: number[] = [];
-        const lats: number[] = [];
-        const collectCoords = (coords: number[][]) => {
-          coords.forEach((c: number[]) => { lngs.push(c[0]); lats.push(c[1]); });
-        };
-        const collectFromGeometry = (geometry: any) => {
-          const c = geometry.coordinates;
-          if (!c) return;
-          switch (geometry.type) {
-            case 'Point': { const pt = c as number[]; lngs.push(pt[0]); lats.push(pt[1]); break; }
-            case 'MultiPoint': collectCoords(c as number[][]); break;
-            case 'LineString': collectCoords(c as number[][]); break;
-            case 'MultiLineString': (c as unknown as number[][][]).forEach((ring: number[][]) => collectCoords(ring)); break;
-            case 'Polygon': collectCoords((c as unknown as number[][][])[0] || []); break;
-            case 'MultiPolygon': (c as unknown as number[][][][]).forEach((poly: number[][][]) => collectCoords(poly[0] || [])); break;
-          }
-        };
-        geojson.features.forEach((f: any) => collectFromGeometry(f.geometry));
-
-        let center: [number, number] | undefined;
-        let zoom = 12;
-        if (lngs.length > 0) {
-          center = [lngs.reduce((a: number, b: number) => a + b, 0) / lngs.length, lats.reduce((a: number, b: number) => a + b, 0) / lats.length];
-          const count = geojson.features.length;
-          if (count > 100) zoom = 10;
-          else if (count > 50) zoom = 11;
-          else if (count < 10) zoom = 13;
-        } else if (bbox || result.bbox) {
-          const b = bbox || result.bbox;
-          const parts = typeof b === 'string' ? b.split(',').map(Number) : b;
-          if (parts.length === 4) {
-            center = typeof b === 'string' ? [(parts[1] + parts[3]) / 2, (parts[0] + parts[2]) / 2] : [(parts[0] + parts[2]) / 2, (parts[1] + parts[3]) / 2];
-          }
-        }
-
-        if (center) setAnalysisResult({ center, zoom });
-
-        if (geojson && geojson.features?.length > 0) {
-          const isGrid = geojson?.metadata?.render_type === 'grid';
-          const isNative = geojson?.metadata?.render_type === 'native';
-          const layerType = isGrid || isNative ? 'heatmap' : 'vector';
-          const layerStyle = isGrid ? { color, renderType: 'grid' as const } : isNative ? { color, renderType: 'heatmap' as const } : { color };
-
-          addLayer({
-            id: layerId,
-            name: isNative ? '原生热力图' : isGrid ? '格网热力分析' : result.type === 'poi_query' ? `${result.area} - ${result.category}` : result.type || toolName,
-            type: layerType,
-            visible: true,
-            opacity: 1,
-            group: result.group || 'analysis',
-            source: geojson,
-            style: layerStyle,
-            _refId: result.geojson_ref || undefined,
-          });
-        }
-      }
-    },
-    [addLayer, setAnalysisResult]
-  );
-
-  /* ─── Upload handler (reserved) ─── */
-  const _handleUploadSuccess = useCallback(
-    async (result: UploadResponse) => {
-      if (result.file_type === 'vector' && result.bbox) {
-        try {
-          const geojson = await getUploadGeojson(result.id);
-          if (geojson.features?.length > 0) {
-            const layerId = `upload-${result.id}`;
-            const colors = ['#16a34a', '#2563eb', '#ea580c', '#8b5cf6', '#ec4899', '#dc2626'];
-            const color = colors[result.id % colors.length];
-            const [west, south, east, north] = result.bbox;
-            const center: [number, number] = [(west + east) / 2, (south + north) / 2];
-            const zoom = result.feature_count > 100 ? 10 : result.feature_count > 50 ? 11 : 12;
-            setAnalysisResult({ center, zoom });
-            addLayer({
-              id: layerId,
-              name: result.original_name,
-              type: 'vector',
-              visible: true,
-              opacity: 1,
-              group: 'reference',
-              source: geojson as any,
-              style: { color },
-            });
-            useHudStore.getState().pushPerception('upload_completed', {
-              original_name: result.original_name,
-              feature_count: result.feature_count,
-              layer_id: layerId,
-              crs: result.crs,
-              file_type: result.file_type,
-            });
-            setMessages(prev => [...prev, {
-              id: `upload-notify-${Date.now()}`,
-              role: 'assistant',
-              content: `已感知新数据源：「${result.original_name}」（${result.feature_count} 个要素）已挂载到地图。`,
-              timestamp: new Date(),
-            }]);
-          }
-        } catch (e) {
-          console.error('加载上传数据到地图失败:', e);
-        }
-      } else if (result.file_type === 'raster' && result.bbox) {
-        const [west, south, east, north] = result.bbox;
-        const center: [number, number] = [(west + east) / 2, (south + north) / 2];
-        setAnalysisResult({ center, zoom: 10 });
-      }
-    },
-    [addLayer, setAnalysisResult]
-  );
-
   /* ─── Map control functions ─── */
   const handleZoomIn = useCallback(() => {
     const { viewport, setViewport } = useHudStore.getState();
@@ -427,7 +240,7 @@ export default function Home() {
   }, []);
 
   const handleExport = useCallback(() => {
-    const { setExports, pushOpLog } = useHudStore.getState();
+    const { setExports, pushOpLog, exports } = useHudStore.getState();
     pushOpLog({
       id: Date.now().toString(),
       type: 'add',
@@ -439,7 +252,7 @@ export default function Home() {
       { id: Date.now().toString(), name: '地图快照', type: 'png', size: '1.2 MB', date: '刚刚' },
       ...exports,
     ]);
-  }, [exports]);
+  }, []);
 
   /* ─── Simulate run handler (for demo) ─── */
   const simulateRun = useCallback(async (userMsg: string) => {
@@ -454,13 +267,6 @@ export default function Home() {
     // Add thinking message
     const thinkId = (Date.now() + 1).toString();
     setMessages(prev => [...prev, { id: thinkId, role: 'assistant', content: '', timestamp: new Date(), isThinking: true, toolCalls: [] }]);
-
-    // Simulate steps
-    const steps = [
-      { tool: 'geocode_cn', duration: 800 },
-      { tool: 'query_osm_poi', duration: 1200 },
-      { tool: 'kde_surface', duration: 2100 },
-    ];
 
     // Simulate adding layers, ops log, causal chain
     taskStart(Date.now().toString());
@@ -647,7 +453,8 @@ export default function Home() {
         setIsLoading(false);
       }
     },
-    [isLoading, demoMode, simulateRun, getMapSnapshot, userLocation, setAiStatus]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isLoading, demoMode, simulateRun, getMapSnapshot, userLocation, setAiStatus, sessionId]
   );
 
   /* ─── Main render ─── */
@@ -655,7 +462,6 @@ export default function Home() {
   const theme = useHudStore((s) => s.theme);
   const fontSize = useHudStore((s) => s.fontSize);
   const showGrid = useHudStore((s) => s.showGrid);
-  const leftTab = useHudStore((s) => s.activeLeftTab);
   const setLeftTab = useHudStore((s) => s.setActiveLeftTab);
   const sidebarWidth = useHudStore((s) => s.sidebarWidth);
   const colors = getThemeColors(theme);

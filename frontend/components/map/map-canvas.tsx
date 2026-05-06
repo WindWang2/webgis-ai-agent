@@ -12,7 +12,7 @@ interface MapCanvasProps {
 export default function MapCanvas({ children, showGrid = true }: MapCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const theme = useHudStore((s) => s.theme);
-  const colors = getThemeColors(theme);
+  getThemeColors(theme); // Keep this for theme context
 
   useEffect(() => {
     const canvas = canvasRef.current;
