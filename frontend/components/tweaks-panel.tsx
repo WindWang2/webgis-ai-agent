@@ -13,6 +13,8 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
   const setTweaksOpen = useHudStore((s) => s.setTweaksOpen);
   const accentColor = useHudStore((s) => s.accentColor);
   const setAccentColor = useHudStore((s) => s.setAccentColor);
+  const theme = useHudStore((s) => s.theme);
+  const setTheme = useHudStore((s) => s.setTheme);
   const fontSize = useHudStore((s) => s.fontSize);
   const setFontSize = useHudStore((s) => s.setFontSize);
   const density = useHudStore((s) => s.density);
@@ -97,6 +99,33 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
             onChange={(e) => setFontSize(parseFloat(e.target.value))}
             className='w-full'
           />
+        </div>
+
+        {/* Theme */}
+        <div className='mb-4'>
+          <div className='text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2'>
+            主题
+          </div>
+          <div className='flex gap-1'>
+            {['light', 'dark'].map((t) => (
+              <button
+                key={t}
+                onClick={() => setTheme(t as 'light' | 'dark')}
+                style={{
+                  flex: 1,
+                  padding: '6px 12px',
+                  borderRadius: 8,
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: 11,
+                  background: theme === t ? 'rgba(15,23,42,0.06)' : 'transparent',
+                  color: theme === t ? '#0f172a' : '#64748b',
+                }}
+              >
+                {t === 'light' ? '亮色' : '暗色'}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Density */}
