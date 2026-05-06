@@ -1,10 +1,8 @@
 'use client';
 
-import { ZoomIn, ZoomOut, RotateCcw, Crosshair, Box, Download, Eye } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 
 interface MapToolbarProps {
-  sidebarOpen: boolean;
   hudOpen?: boolean;
   onToggleHud?: () => void;
   onZoomIn?: () => void;
@@ -15,7 +13,6 @@ interface MapToolbarProps {
 }
 
 export default function MapToolbar({
-  sidebarOpen,
   hudOpen = false,
   onToggleHud,
   onZoomIn,
@@ -26,12 +23,6 @@ export default function MapToolbar({
 }: MapToolbarProps) {
   const is3D = useHudStore((s) => s.is3D);
   const setIs3D = useHudStore((s) => s.setIs3D);
-  const accentColor = useHudStore((s) => s.accentColor);
-
-  const btnBase =
-    'flex items-center justify-center w-[32px] h-[32px] rounded-[8px] ' +
-    'transition-all duration-100 cursor-pointer border-0 p-0 ' +
-    'bg-transparent hover:bg-slate-100/80 active:bg-slate-200/80';
 
   return (
     <div

@@ -17,6 +17,7 @@ import TopBar from '@/components/layout/top-bar';
 import StatusBar from '@/components/layout/status-bar';
 import { LeftSidebar } from '@/components/sidebar/left-sidebar';
 import MapToolbar from '@/components/map/map-toolbar';
+import AITracker from '@/components/map/ai-tracker';
 import BaselayerSwitcher from '@/components/map/baselayer-switcher';
 import FloatingLegend from '@/components/map/floating-legend';
 import MapCanvas from '@/components/map/map-canvas';
@@ -386,6 +387,59 @@ export default function Home() {
     [addLayer, setAnalysisResult]
   );
 
+  /* ─── Map control functions ─── */
+  const handleZoomIn = useCallback(() => {
+    const { viewport, setViewport } = useHudStore.getState();
+    setViewport(viewport.center, Math.min(viewport.zoom + 1, 22), viewport.bearing, viewport.pitch);
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    const { viewport, setViewport } = useHudStore.getState();
+    setViewport(viewport.center, Math.max(viewport.zoom - 1, 1), viewport.bearing, viewport.pitch);
+  }, []);
+
+  const handleHome = useCallback(() => {
+    const { setViewport } = useHudStore.getState();
+    setViewport([116.4074, 39.9042], 4.0, 0, 0);
+  }, []);
+
+  const handleLocate = useCallback(() => {
+    const { setViewport, pushOpLog } = useHudStore.getState();
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setViewport([pos.coords.longitude, pos.coords.latitude], 12.0, 0, 0);
+          pushOpLog({
+            id: Date.now().toString(),
+            type: 'flyto',
+            label: '飞到 — 当前位置',
+            time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+            detail: `[${pos.coords.longitude.toFixed(5)}, ${pos.coords.latitude.toFixed(5)}]`,
+          });
+        },
+        () => {
+          // Fallback if geolocation fails
+          setViewport([116.4074, 39.9042], 10.0, 0, 0);
+        }
+      );
+    }
+  }, []);
+
+  const handleExport = useCallback(() => {
+    const { setExports, pushOpLog } = useHudStore.getState();
+    pushOpLog({
+      id: Date.now().toString(),
+      type: 'add',
+      label: '导出 — 地图快照',
+      time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+      detail: '保存为 PNG',
+    });
+    setExports([
+      { id: Date.now().toString(), name: '地图快照', type: 'png', size: '1.2 MB', date: '刚刚' },
+      ...exports,
+    ]);
+  }, [exports]);
+
   /* ─── Simulate run handler (for demo) ─── */
   const simulateRun = useCallback(async (userMsg: string) => {
     const aiStatus = useHudStore.getState().aiStatus;
@@ -685,13 +739,39 @@ export default function Home() {
           sidebarOpen={leftPanelOpen}
           hudOpen={hudOpen}
           onToggleHud={() => setHudOpen(!hudOpen)}
+          onZoomIn={handleZoomIn}
+          onZoomOut={handleZoomOut}
+          onHome={handleHome}
+          onLocate={handleLocate}
+          onExport={handleExport}
         />
+
+        {/* AI Tracker */}
+        <AITracker />
 
         {/* Agent HUD */}
         <AgentEnvHud open={hudOpen} onClose={() => setHudOpen(false)} />
 
         {/* RAG Independent Panel */}
         <RagIndependentPanel open={ragPanelOpen} onClose={() => setRagPanelOpen(false)} />
+
+        {/* Map attribution */}
+        <div style={{
+          position: 'absolute',
+          bottom: 30,
+          right: 12,
+          fontSize: '9.5px',
+          color: 'rgba(15,23,42,0.35)',
+          fontFamily: "'JetBrains Mono', monospace",
+          background: 'rgba(255,255,255,0.72)',
+          padding: '2px 8px',
+          borderRadius: 4,
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+          zIndex: 10,
+        }}>
+          © OpenStreetMap contributors
+        </div>
       </div>
 
       <StatusBar />

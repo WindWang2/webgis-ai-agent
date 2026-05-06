@@ -13,10 +13,12 @@ const BASE_LAYER_LABELS: Record<string, string> = {
 export default function StatusBar() {
   const viewport = useHudStore((s) => s.viewport);
   const baseLayer = useHudStore((s) => s.baseLayer);
+  const layers = useHudStore((s) => s.layers);
 
   const lng = viewport.center[0];
   const lat = viewport.center[1];
   const zoom = viewport.zoom;
+  const visibleLayerCount = layers.filter(l => l.visible).length;
 
   const items = [
     { label: "CRS", value: "EPSG:4326" },
@@ -27,6 +29,7 @@ export default function StatusBar() {
       label: "底图",
       value: BASE_LAYER_LABELS[baseLayer] ?? baseLayer,
     },
+    { label: "LAYERS", value: visibleLayerCount.toString() },
   ];
 
   return (
