@@ -18,9 +18,9 @@ export const DEMO_MESSAGES = [
 ];
 
 export const DEMO_LAYERS = [
-  { id: 'poi-schools', name: '北京市学校 POI', type: 'vector', visible: true, color: '#16a34a', group: 'analysis', info: '312 个要素 · query_osm_poi', mockPoints: [[22,18],[28,22],[35,28],[42,15],[50,32],[55,25],[60,18],[38,42],[46,38],[62,45]] },
-  { id: 'heatmap-density', name: '密度热力图', type: 'heatmap', visible: true, color: '#ff5f00', group: 'analysis', info: '核密度估计 · kde_surface', mockPoints: [[30,25],[35,30],[40,28],[38,22],[33,20],[45,35],[50,28],[44,22]] },
-  { id: 'boundary-districts', name: '北京市行政区划', type: 'vector', visible: false, color: '#2563eb', group: 'reference', info: '16 个区 · get_district', mockPoints: [] },
+  { id: 'poi-schools', name: '北京市学校 POI', type: 'vector', visible: true, opacity: 1, color: '#16a34a', group: 'analysis', info: '312 个要素 · query_osm_poi', mockPoints: [[22,18],[28,22],[35,28],[42,15],[50,32],[55,25],[60,18],[38,42],[46,38],[62,45]], style: { color: '#16a34a' }, source: { type: 'FeatureCollection', features: [] } as any },
+  { id: 'heatmap-density', name: '密度热力图', type: 'heatmap', visible: true, opacity: 0.9, color: '#ff5f00', group: 'analysis', info: '核密度估计 · kde_surface', mockPoints: [[30,25],[35,30],[40,28],[38,22],[33,20],[45,35],[50,28],[44,22]], style: { color: '#ff5f00' }, source: { type: 'FeatureCollection', features: [] } as any },
+  { id: 'boundary-districts', name: '北京市行政区划', type: 'vector', visible: false, opacity: 1, color: '#2563eb', group: 'reference', info: '16 个区 · get_district', mockPoints: [], style: { color: '#2563eb' }, source: { type: 'FeatureCollection', features: [] } as any },
 ];
 
 export const DEMO_RAG = [
@@ -95,6 +95,7 @@ export const useHudStore = create<HudState>()(
           layers: s.layers.map((l) => (l.id === id ? { ...l, ...updates } : l)),
         })),
       reorderLayers: (layers) => set({ layers }),
+      setLayers: (layers) => set({ layers }),
       clearLayers: () => set({ layers: [] }),
 
       /* ─── Layer Editing ─── */
