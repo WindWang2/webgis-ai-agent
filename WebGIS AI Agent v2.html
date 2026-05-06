@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>GeoAgent v2 — WebGIS AI Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; background: #dce8f2; }
+body { font-family: 'DM Sans', system-ui, sans-serif; font-size: 13px; -webkit-font-smoothing: antialiased; }
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(15,23,42,0.15); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(15,23,42,0.25); }
+::selection { background: rgba(22,163,74,0.18); color: #0f172a; }
+textarea { scrollbar-width: thin; }
+button { font-family: inherit; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes dotPulse { 0%,80%,100%{opacity:.2;transform:scale(.75)} 40%{opacity:1;transform:scale(1)} }
+@keyframes fadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+@keyframes ringPulse { 0%{transform:translate(-50%,-50%) scale(0.5);opacity:.6} 100%{transform:translate(-50%,-50%) scale(2.5);opacity:0} }
+@keyframes topBarDotPulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+@keyframes mapGridMove { from{background-position:0 0} to{background-position:40px 40px} }
+
+.map-bg {
+  background-color: #dce8f2;
+  background-image:
+    linear-gradient(rgba(15,23,42,0.032) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15,23,42,0.032) 1px, transparent 1px);
+  background-size: 40px 40px;
+  animation: mapGridMove 8s linear infinite;
+}
+</style>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="components/TopBar.jsx"></script>
+<script type="text/babel" src="components/Sidebar.jsx"></script>
+<script type="text/babel" src="components/Overlays.jsx"></script>
+<script type="text/babel" src="components/AgentEnvHUD.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ══ Map Canvas ══ */
+function MapCanvas({ sidebarOpen, hudOpen, layers, aiStatus }) {
+  const canvasRef = useRef(null);
+  const showRings = aiStatus === 'thinking' || aiStatus === 'acting';
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    const bg = ctx.createLinearGradient(0, 0, W, H);
+    bg.addColorStop(0, '#d4e4f0'); bg.addColorStop(0.5, '#dce8f2'); bg.addColorStop(1, '#c8dae8');
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+    [{ x:.05,y:.1,w:.18,h:.28,c:'rgba(167,210,180,0.35)' },{ x:.6,y:.05,w:.3,h:.22,c:'rgba(167,210,180,0.25)' },
+     { x:.2,y:.55,w:.25,h:.35,c:'rgba(167,210,180,0.3)' },{ x:.7,y:.6,w:.25,h:.32,c:'rgba(167,210,180,0.2)' }]
+      .forEach(p => { ctx.fillStyle=p.c; ctx.beginPath(); ctx.roundRect(p.x*W,p.y*H,p.w*W,p.h*H,12); ctx.fill(); });
+    ctx.strokeStyle='rgba(255,255,255,0.5)'; ctx.lineWidth=1.8;
+    for (let i=0;i<8;i++) { ctx.beginPath(); ctx.moveTo(0,(i+1)*H/8); ctx.bezierCurveTo(W*.3,(i+1)*H/8+Math.sin(i)*20,W*.7,(i+1)*H/8-Math.cos(i)*15,W,(i+1)*H/8+10); ctx.stroke(); }
+    for (let i=0;i<10;i++) { ctx.beginPath(); ctx.moveTo((i+1)*W/10,0); ctx.bezierCurveTo((i+1)*W/10+Math.sin(i)*15,H*.3,(i+1)*W/10-Math.cos(i)*10,H*.7,(i+1)*W/10+5,H); ctx.stroke(); }
+    ctx.strokeStyle='rgba(255,255,255,0.82)'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(0,H*.42); ctx.lineTo(W,H*.42); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(W*.38,0); ctx.lineTo(W*.38,H); ctx.stroke();
+    ctx.fillStyle='rgba(163,199,225,0.55)'; ctx.beginPath(); ctx.ellipse(W*.72,H*.32,W*.12,H*.09,.3,0,Math.PI*2); ctx.fill();
+    [[.41,.1,.08,.06],[.51,.1,.07,.06],[.41,.18,.08,.05],[.51,.18,.07,.05],[.08,.44,.08,.07],[.18,.44,.07,.07],
+     [.28,.44,.08,.07],[.08,.53,.08,.06],[.18,.53,.07,.06],[.28,.53,.08,.06]]
+      .forEach(([x,y,w,h])=>{ ctx.fillStyle='rgba(200,215,228,0.58)'; ctx.fillRect(x*W,y*H,w*W,h*H); ctx.strokeStyle='rgba(255,255,255,0.45)'; ctx.lineWidth=0.5; ctx.strokeRect(x*W,y*H,w*W,h*H); });
+  }, []);
+
+  return (
+    <div style={{ position:'absolute', inset:0, overflow:'hidden' }}>
+      <canvas ref={canvasRef} width={1440} height={900} style={{ position:'absolute', inset:0, width:'100%', height:'100%' }} />
+      <div className="map-bg" style={{ position:'absolute', inset:0, mixBlendMode:'multiply', opacity:.38, pointerEvents:'none' }} />
+
+      {/* Layer dots */}
+      {layers.filter(l=>l.visible).map((layer,li) =>
+        (layer.mockPoints||[]).map((pt,pi) => (
+          <div key={`${li}-${pi}`} style={{ position:'absolute', left:`${pt[0]}%`, top:`${pt[1]}%`, width:layer.type==='heatmap'?28:9, height:layer.type==='heatmap'?28:9, borderRadius:'50%', background:layer.type==='heatmap'?`radial-gradient(circle,${layer.color}88 0%,transparent 70%)`:layer.color, transform:'translate(-50%,-50%)', pointerEvents:'none', boxShadow:`0 0 ${layer.type==='heatmap'?18:4}px ${layer.color}55` }} />
+        ))
+      )}
+
+      {/* Perception rings */}
+      {showRings && (
+        <div style={{ position:'absolute', left:'50%', top:'50%', pointerEvents:'none', zIndex:5 }}>
+          {[0, 0.8, 1.6].map((delay,i) => (
+            <div key={i} style={{ position:'absolute', borderRadius:'50%', border:'1.5px solid rgba(22,163,74,0.5)', width:`${60+i*40}px`, height:`${60+i*40}px`, top:'50%', left:'50%', transform:'translate(-50%,-50%)', animation:`ringPulse 2.5s ease-out ${delay}s infinite` }} />
+          ))}
+          <div style={{ position:'absolute', width:8, height:8, background:'#16a34a', borderRadius:'50%', top:'50%', left:'50%', transform:'translate(-50%,-50%)', boxShadow:'0 0 12px rgba(22,163,74,0.7)' }} />
+        </div>
+      )}
+
+      {/* Map attribution */}
+      <div style={{ position:'absolute', bottom:30, right:12, fontSize:9.5, color:'rgba(15,23,42,0.35)', fontFamily:'"JetBrains Mono",monospace', background:'rgba(255,255,255,0.72)', padding:'2px 8px', borderRadius:4, backdropFilter:'blur(8px)' }}>
+        © OpenStreetMap contributors
+      </div>
+    </div>
+  );
+}
+
+/* ══ Map Toolbar — right side, vertical stack ══ */
+function MapToolbar({ hudOpen, is3D, onToggle3D, onToggleHud }) {
+  const right = hudOpen ? 338 : 10;
+  const btnStyle = { width:32, height:32, borderRadius:8, border:'none', background:'transparent', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', color:'#64748b', transition:'all 0.1s', fontFamily:'ui-monospace,"Courier New",monospace' };
+  const hov = (on) => e => { e.currentTarget.style.background = on ? 'rgba(15,23,42,0.06)' : 'transparent'; e.currentTarget.style.color = on ? '#0f172a' : '#64748b'; };
+  return (
+    <div style={{ position:'absolute', top:'50%', right, transform:'translateY(-50%)', zIndex:20, transition:'right 0.22s cubic-bezier(0.4,0,0.2,1)', display:'flex', flexDirection:'column', gap:1, background:'rgba(255,255,255,0.90)', backdropFilter:'blur(20px)', border:'1px solid rgba(255,255,255,0.95)', boxShadow:'0 4px 24px rgba(15,23,42,0.10)', borderRadius:12, padding:3 }}>
+      {/* Zoom in */}
+      <button title="放大" style={btnStyle} onMouseEnter={hov(true)} onMouseLeave={hov(false)}>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.3"/><path d="M10 10l3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/><path d="M4 6h4M6 4v4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>
+      </button>
+      {/* Zoom out */}
+      <button title="缩小" style={btnStyle} onMouseEnter={hov(true)} onMouseLeave={hov(false)}>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.3"/><path d="M10 10l3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/><path d="M4 6h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>
+      </button>
+      {/* Home */}
+      <button title="复位" style={btnStyle} onMouseEnter={hov(true)} onMouseLeave={hov(false)}>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 6.5l5-4.5 5 4.5V12H9V9H5v3H2V6.5z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/></svg>
+      </button>
+      {/* Locate */}
+      <button title="定位我" style={btnStyle} onMouseEnter={hov(true)} onMouseLeave={hov(false)}>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="2.5" stroke="currentColor" strokeWidth="1.2"/><path d="M7 1v2.5M7 10.5V13M1 7h2.5M10.5 7H13" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
+      </button>
+
+      <div style={{ width:20, height:1, background:'rgba(15,23,42,0.08)', margin:'2px auto' }} />
+
+      {/* 2D/3D toggle */}
+      <button onClick={onToggle3D} title={is3D?'切换 2D':'切换 3D'} style={{ ...btnStyle, fontSize:9.5, fontWeight:700, letterSpacing:'0.06em', background:is3D?'rgba(22,163,74,0.1)':'transparent', color:is3D?'#15803d':'#64748b' }}>
+        {is3D?'3D':'2D'}
+      </button>
+
+      {/* Agent ENV HUD toggle */}
+      <button onClick={onToggleHud} title="Agent 环境感知" style={{ ...btnStyle, background:hudOpen?'rgba(139,92,246,0.12)':'transparent', color:hudOpen?'#7c3aed':'#64748b' }}>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.2"/><circle cx="7" cy="7" r="2" stroke="currentColor" strokeWidth="1.2"/><path d="M7 1.5v2M7 10.5v2M1.5 7h2M10.5 7h2" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round"/></svg>
+      </button>
+
+      {/* Export */}
+      <button title="导出地图" style={btnStyle} onMouseEnter={hov(true)} onMouseLeave={hov(false)}>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2v7M4.5 6.5L7 9l2.5-2.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 11h10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>
+      </button>
+    </div>
+  );
+}
+
+/* ══ Base Layer Switcher ══ */
+function BaselayerSwitcher({ current, onChange }) {
+  const [open, setOpen] = useState(false);
+  const layers = [{ id:'osm',label:'OpenStreetMap' },{ id:'amap',label:'高德地图' },{ id:'satellite',label:'卫星影像' },{ id:'dark',label:'暗色底图' },{ id:'tianditu',label:'天地图' }];
+  return (
+    <div style={{ position:'absolute', bottom:32, right:12, zIndex:15 }}>
+      <button onClick={()=>setOpen(!open)} style={{ padding:'5px 10px', borderRadius:8, background:'rgba(255,255,255,0.88)', backdropFilter:'blur(12px)', border:'1px solid rgba(255,255,255,0.92)', boxShadow:'0 2px 12px rgba(15,23,42,0.08)', fontSize:10.5, color:'#475569', cursor:'pointer', fontFamily:'"JetBrains Mono",monospace', display:'flex', alignItems:'center', gap:5 }}>
+        <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M5.5 1L1 4l4.5 2.5L10 4 5.5 1z" stroke="#94a3b8" strokeWidth="1"/><path d="M1 7l4.5 2.5L10 7" stroke="#94a3b8" strokeWidth="1" strokeLinecap="round"/></svg>
+        {layers.find(l=>l.id===current)?.label||current}
+        <svg width="8" height="8" viewBox="0 0 8 8" fill="none" style={{ transform:open?'rotate(180deg)':'none', transition:'transform 0.15s' }}><path d="M1 2.5l3 3 3-3" stroke="#94a3b8" strokeWidth="1.2" strokeLinecap="round"/></svg>
+      </button>
+      {open && (
+        <div style={{ position:'absolute', bottom:'100%', right:0, marginBottom:4, background:'rgba(252,253,254,0.96)', backdropFilter:'blur(20px)', border:'1px solid rgba(255,255,255,0.92)', boxShadow:'0 4px 24px rgba(15,23,42,0.09)', borderRadius:10, overflow:'hidden', minWidth:140 }}>
+          {layers.map(l => (
+            <button key={l.id} onClick={()=>{ onChange(l.id); setOpen(false); }} style={{ display:'block', width:'100%', padding:'7px 12px', border:'none', background:l.id===current?'rgba(22,163,74,0.07)':'transparent', color:l.id===current?'#15803d':'#475569', fontSize:11, cursor:'pointer', textAlign:'left', fontFamily:'"DM Sans",system-ui,sans-serif', fontWeight:l.id===current?500:400 }}
+            onMouseEnter={e=>{if(l.id!==current)e.currentTarget.style.background='rgba(15,23,42,0.04)';}}
+            onMouseLeave={e=>{if(l.id!==current)e.currentTarget.style.background='transparent';}}
+            >{l.label}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ══ Floating Legend ══ */
+function FloatingLegend({ layer }) {
+  if (!layer) return null;
+  const colors = ['#0ff0ff','#00ff41','#ffff00','#ff5f00','#ff2d55'];
+  return (
+    <div style={{ position:'absolute', bottom:34, left:10, background:'rgba(252,253,254,0.92)', backdropFilter:'blur(20px)', border:'1px solid rgba(255,255,255,0.92)', boxShadow:'0 4px 24px rgba(15,23,42,0.09)', borderRadius:10, padding:'8px 12px', zIndex:10, fontSize:10.5, fontFamily:'"DM Sans",system-ui,sans-serif', minWidth:140 }}>
+      <div style={{ fontSize:10, color:'#94a3b8', fontFamily:'"JetBrains Mono",monospace', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:6 }}>{layer.name}</div>
+      <div style={{ display:'flex', height:8, borderRadius:4, overflow:'hidden', marginBottom:5 }}>
+        {colors.map((c,i)=><div key={i} style={{flex:1,background:c}}/>)}
+      </div>
+      <div style={{ display:'flex', justifyContent:'space-between', color:'#64748b', fontSize:9 }}>
+        {['极低','低','中','高','极高'].map((s,i)=><span key={i}>{s}</span>)}
+      </div>
+    </div>
+  );
+}
+
+/* ══ Status Bar ══ */
+function StatusBar({ viewport, baseLayer, layerCount }) {
+  const items = [
+    { label:'CRS', value:'EPSG:4326' },
+    { label:'LNG', value:viewport.lng.toFixed(5) },
+    { label:'LAT', value:viewport.lat.toFixed(5) },
+    { label:'ZOOM', value:viewport.zoom.toFixed(1) },
+    { label:'底图', value:baseLayer==='osm'?'OpenStreetMap':baseLayer==='amap'?'高德地图':baseLayer==='satellite'?'卫星影像':baseLayer },
+    { label:'LAYERS', value:layerCount },
+  ];
+  return (
+    <div style={{ position:'fixed', bottom:0, left:0, right:0, height:24, zIndex:50, display:'flex', alignItems:'center', gap:20, padding:'0 12px', background:'rgba(255,255,255,0.78)', backdropFilter:'blur(20px)', borderTop:'1px solid rgba(15,23,42,0.05)', fontFamily:'"JetBrains Mono",monospace' }}>
+      {items.map(item=>(
+        <div key={item.label} style={{ display:'flex', alignItems:'center', gap:5 }}>
+          <span style={{ fontSize:9, textTransform:'uppercase', color:'#94a3b8', letterSpacing:'0.06em' }}>{item.label}</span>
+          <span style={{ fontSize:10, color:'#475569' }}>{item.value}</span>
+        </div>
+      ))}
+      <div style={{ flex:1 }} />
+      <span style={{ fontSize:9, color:'#cbd5e1', letterSpacing:'0.06em' }}>GeoAgent · All is Agent · V3.2</span>
+    </div>
+  );
+}
+
+/* ══ DEMO DATA ══ */
+const DEMO_MESSAGES = [{
+  id:'1', role:'assistant',
+  content:'你好！我是 **GeoAgent**。\n\n我感知地图、分析空间、生成洞察——地图上的一切都是我的一部分。\n\n试着告诉我：\n- 分析北京市学校分布密度\n- 成都市人口热力图\n- 计算各区 POI 覆盖率',
+  timestamp:'14:30',
+}];
+
+const DEMO_LAYERS = [
+  { id:'poi-schools', name:'北京市学校 POI', type:'vector', visible:true, color:'#16a34a', group:'analysis', info:'312 个要素 · query_osm_poi', mockPoints:[[22,18],[28,22],[35,28],[42,15],[50,32],[55,25],[60,18],[38,42],[46,38],[62,45]] },
+  { id:'heatmap-density', name:'密度热力图', type:'heatmap', visible:true, color:'#ff5f00', group:'analysis', info:'核密度估计 · kde_surface', mockPoints:[[30,25],[35,30],[40,28],[38,22],[33,20],[45,35],[50,28],[44,22]] },
+  { id:'boundary-districts', name:'北京市行政区划', type:'vector', visible:false, color:'#2563eb', group:'reference', info:'16 个区 · get_district', mockPoints:[] },
+];
+
+const DEMO_RAG = [
+  { source:'GIS空间分析方法论.pdf', score:'0.91', chunks:3, excerpts:['核密度估计（KDE）是一种非参数方法，用于估计随机变量的概率密度函数。在 GIS 中，常用于分析点要素的空间分布密度...','带宽选择是 KDE 的关键参数，过小会造成过拟合，过大则会掩盖局部模式。常用的带宽选择方法包括 Silverman 规则...'] },
+  { source:'北京市空间数据手册v3.md', score:'0.87', chunks:2, excerpts:['北京市共辖 16 个区，总面积 16410 平方公里。核心区包括东城区和西城区...','2023年北京市常住人口 2185 万人，其中城镇人口 1891 万人，城镇化率为 86.6%...'] },
+  { source:'OpenStreetMap POI 分类标准.pdf', score:'0.79', chunks:1, excerpts:['教育类 POI 在 OSM 中使用 amenity=school/university/college 标签进行标注...'] },
+];
+
+const DEMO_EXPORTS = [
+  { name:'北京学校密度专题图', type:'png', size:'2.4 MB', date:'今天 14:35' },
+  { name:'核密度分析报告', type:'pdf', size:'840 KB', date:'今天 14:33' },
+  { name:'学校POI数据', type:'geojson', size:'156 KB', date:'今天 14:30' },
+  { name:'行政区划叠加图', type:'png', size:'1.8 MB', date:'昨天' },
+];
+
+const DEMO_OPS_LOG = [
+  { type:'add', label:'添加图层 — 北京市学校 POI', time:'14:30', detail:'312 个点要素' },
+  { type:'flyto', label:'飞到 — 北京市中心', time:'14:31', detail:'zoom 11.5 / [116.40, 39.90]' },
+  { type:'add', label:'添加图层 — 密度热力图', time:'14:32', detail:'kde_surface 输出' },
+  { type:'style', label:'样式变更 — 热力图不透明度', time:'14:33', detail:'0.85 → 0.70' },
+  { type:'toggle', label:'隐藏图层 — 北京市行政区划', time:'14:34', detail:'切换为不可见' },
+];
+
+const DEMO_CAUSAL = [
+  { tool:'geocode_cn', mapAction:'fly_to', time:'14:30', toolInput:'北京市', mapEffect:'地图飞至 [116.40, 39.90] zoom 10', mapState:{ center:[116.40,39.90], zoom:10 } },
+  { tool:'query_osm_poi', mapAction:'add_layer', time:'14:31', toolInput:'category=school, city=北京市', mapEffect:'新增 "北京市学校 POI" 图层 (312 要素)', mapState:{ layer_id:'poi-schools', feature_count:312 } },
+  { tool:'kde_surface', mapAction:'add_layer', time:'14:32', toolInput:'layer_id=poi-schools, bandwidth=500m', mapEffect:'新增 "密度热力图" 图层', mapState:{ layer_id:'heatmap-density', render_type:'native_heatmap' } },
+];
+
+/* ══ TWEAK DEFAULTS ══ */
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accentColor": "#2563eb",
+  "theme": "light",
+  "fontSize": 13,
+  "showGrid": true,
+  "density": "compact",
+  "sidebarWidth": 330
+}/*EDITMODE-END*/;
+
+/* ══ MAIN APP ══ */
+function App() {
+  const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
+
+  const [aiStatus, setAiStatus] = useState('idle');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [hudOpen, setHudOpen] = useState(false);
+  const [ragPanelOpen, setRagPanelOpen] = useState(false);
+  const [messages, setMessages] = useState(DEMO_MESSAGES);
+  const [layers, setLayers] = useState(DEMO_LAYERS);
+  const [opsLog, setOpsLog] = useState(DEMO_OPS_LOG);
+  const [ragResults, setRagResults] = useState([]);
+  const [exports, setExports] = useState(DEMO_EXPORTS);
+  const [causalChain, setCausalChain] = useState(DEMO_CAUSAL);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [is3D, setIs3D] = useState(false);
+  const [baseLayer, setBaseLayer] = useState('osm');
+  const [activeTask, setActiveTask] = useState(null);
+  const [viewport, setViewport] = useState({ lng:116.4074, lat:39.9042, zoom:4.0, bearing:0, pitch:0 });
+
+  /* ── Simulate agent run ── */
+  const simulateRun = useCallback(async (userMsg) => {
+    if (aiStatus === 'thinking' || aiStatus === 'acting') return;
+    setAiStatus('thinking');
+
+    const userMsgObj = { id:Date.now().toString(), role:'user', content:userMsg, timestamp:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}) };
+    setMessages(prev=>[...prev, userMsgObj]);
+
+    const thinkId = (Date.now()+1).toString();
+    setMessages(prev=>[...prev, { id:thinkId, role:'assistant', content:'', timestamp:'', isThinking:true, toolCalls:[] }]);
+
+    const tools = [
+      { tool:'geocode_cn', duration:'0.3s' },
+      { tool:'query_osm_poi', duration:'1.2s' },
+      { tool:'kde_surface', duration:'2.1s' },
+    ];
+
+    setActiveTask({ id:Date.now().toString().slice(-6)+'...', steps:tools.map(t=>({...t,status:'running'})), currentStep:tools[0].tool });
+
+    for (let i=0; i<tools.length; i++) {
+      await new Promise(r=>setTimeout(r, 800 + i*500));
+      setAiStatus(i===0?'thinking':'acting');
+
+      const completedCalls = tools.slice(0,i+1).map((t,ti)=>({ ...t, status:ti<=i?'done':'running', hasGeojson:ti===1||ti===2 }));
+      setMessages(prev=>prev.map(m=>m.id===thinkId?{...m,toolCalls:completedCalls}:m));
+      setActiveTask(prev=>prev?{ ...prev, steps:tools.map((t,ti)=>({...t,status:ti<i+1?'done':ti===i+1?'running':'pending'})), currentStep:tools[i+1]?.tool||null }:null);
+
+      if (i===1) {
+        const keyword = userMsg.includes('医院')?'医院':userMsg.includes('商场')?'商场':userMsg.includes('公园')?'公园':'POI';
+        const newLayer = { id:`layer-${Date.now()}`, name:`${keyword} 查询结果`, type:'vector', visible:true, color:'#8b5cf6', group:'analysis', info:`${Math.floor(Math.random()*200)+50} 个要素`, mockPoints:Array.from({length:8},()=>[Math.random()*60+15,Math.random()*60+15]) };
+        setLayers(prev=>[...prev, newLayer]);
+        setOpsLog(prev=>[{ type:'add', label:`添加图层 — ${newLayer.name}`, time:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}), detail:newLayer.info },...prev]);
+        setCausalChain(prev=>[{ tool:'query_osm_poi', mapAction:'add_layer', time:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}), toolInput:`category=${keyword}`, mapEffect:`新增 "${newLayer.name}" 图层`, mapState:{ layer_id:newLayer.id, feature_count:parseInt(newLayer.info) } },...prev]);
+        setViewport(prev=>({ ...prev, lng:116.4+(Math.random()-.5)*.1, lat:39.9+(Math.random()-.5)*.1, zoom:11.5 }));
+        setOpsLog(prev=>[{ type:'flyto', label:`飞到 — ${keyword}区域`, time:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}), detail:`zoom 11.5` },...prev]);
+      }
+    }
+
+    // Activate RAG
+    setRagResults(DEMO_RAG);
+
+    await new Promise(r=>setTimeout(r, 400));
+
+    const keyword = userMsg.includes('医院')?'医院':userMsg.includes('商场')?'商场':userMsg.includes('公园')?'公园':'目标设施';
+    const count = Math.floor(Math.random()*200)+80;
+    const finalContent = `分析完成。已完成 **${keyword}** 空间分析，共识别 **${count}** 个要素。\n\n主要发现：\n- 核心城区密度显著高于郊区\n- 东部区域分布较为均衡\n- 已生成核密度估计图层供参考`;
+
+    setMessages(prev=>prev.map(m=>m.id===thinkId?{ ...m, content:finalContent, isThinking:false, timestamp:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}), ragRefs:DEMO_RAG.slice(0,2).map(r=>({ source:r.source, score:r.score, excerpt:r.excerpts[0] })) }:m));
+
+    // Add export
+    setExports(prev=>[{ name:`${keyword}分析专题图`, type:'png', size:'2.1 MB', date:'刚刚' },...prev]);
+
+    setActiveTask(null);
+    setAiStatus('done');
+    setTimeout(()=>setAiStatus('idle'), 1500);
+  }, [aiStatus]);
+
+  const visibleHeatLayer = layers.find(l=>l.visible&&l.type==='heatmap');
+
+  return (
+    <div style={{ height:'100vh', width:'100vw', display:'flex', flexDirection:'column', overflow:'hidden', background:'#dce8f2', fontSize:tweaks.fontSize||13 }}>
+      <TopBar
+        sessionName="北京市设施分析"
+        aiStatus={aiStatus}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={()=>setSidebarOpen(o=>!o)}
+        onNewSession={()=>{ setMessages(DEMO_MESSAGES); setLayers(DEMO_LAYERS); setRagResults([]); setOpsLog(DEMO_OPS_LOG); }}
+        onHistory={()=>setHistoryOpen(o=>!o)}
+        onSettings={()=>setSettingsOpen(true)}
+      />
+
+      <div style={{ flex:1, position:'relative', overflow:'hidden', marginTop:42, marginBottom:24 }}>
+        {/* Map */}
+        <MapCanvas sidebarOpen={sidebarOpen} hudOpen={hudOpen} layers={layers} aiStatus={aiStatus} />
+
+        {/* Base layer switcher — bottom right, offset from toolbar */}
+        <div style={{ position:'absolute', bottom:32, right: hudOpen ? 346 : 56, zIndex:15, transition:'right 0.22s cubic-bezier(0.4,0,0.2,1)' }}>
+          <BaselayerSwitcher current={baseLayer} onChange={setBaseLayer} />
+        </div>
+
+        {/* Left Sidebar */}
+        <LeftSidebar
+          open={sidebarOpen}
+          messages={messages}
+          layers={layers}
+          opsLog={opsLog}
+          ragResults={ragResults}
+          exports={exports}
+          aiStatus={aiStatus}
+          onSend={simulateRun}
+          onRemoveLayer={id=>{ setLayers(prev=>prev.filter(l=>l.id!==id)); setOpsLog(prev=>[{ type:'remove', label:`删除图层 — ${layers.find(l=>l.id===id)?.name||id}`, time:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}), detail:'手动删除' },...prev]); }}
+          onToggleLayer={id=>{ setLayers(prev=>prev.map(l=>l.id===id?{...l,visible:!l.visible}:l)); setOpsLog(prev=>[{ type:'toggle', label:`切换图层 — ${layers.find(l=>l.id===id)?.name||id}`, time:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}), detail:layers.find(l=>l.id===id)?.visible?'隐藏':'显示' },...prev]); }}
+          ragPanelOpen={ragPanelOpen}
+          setRagPanelOpen={setRagPanelOpen}
+        />
+
+        {/* Map Toolbar — right side */}
+        <MapToolbar hudOpen={hudOpen} is3D={is3D} onToggle3D={()=>setIs3D(v=>!v)} onToggleHud={()=>setHudOpen(o=>!o)} />
+
+        {/* AI Task Tracker */}
+        <AITracker task={activeTask} />
+
+        {/* Floating Legend — bottom left, clears sidebar */}
+        {visibleHeatLayer && (
+          <div style={{ position:'absolute', bottom:34, left:sidebarOpen?344:10, transition:'left 0.22s cubic-bezier(0.4,0,0.2,1)', zIndex:10 }}>
+            <FloatingLegend layer={visibleHeatLayer} />
+          </div>
+        )}
+
+        {/* Agent Environment HUD — right side */}
+        <AgentEnvHUD
+          open={hudOpen}
+          onClose={()=>setHudOpen(false)}
+          viewport={viewport}
+          causalChain={causalChain}
+          mapState={{ viewport, base_layer:baseLayer, is_3d:is3D, layers }}
+          layers={layers}
+        />
+
+        {/* RAG Independent Panel */}
+        <RagIndependentPanel
+          open={ragPanelOpen}
+          onClose={()=>setRagPanelOpen(false)}
+          ragResults={ragResults}
+        />
+      </div>
+
+      <StatusBar viewport={viewport} baseLayer={baseLayer} layerCount={layers.filter(l=>l.visible).length} />
+
+      {settingsOpen && <SettingsPanel onClose={()=>setSettingsOpen(false)} />}
+      <HistoryDrawer
+        open={historyOpen}
+        onClose={()=>setHistoryOpen(false)}
+        onSelect={()=>setHistoryOpen(false)}
+        onNew={()=>{ setMessages(DEMO_MESSAGES); setLayers(DEMO_LAYERS); setRagResults([]); setOpsLog(DEMO_OPS_LOG); setHistoryOpen(false); }}
+      />
+
+      {/* Tweaks Panel */}
+      <TweaksPanel>
+        <TweakSection title="主题色">
+          <TweakColor label="强调色" value={tweaks.accentColor} options={['#16a34a','#2563eb','#7c3aed','#dc2626','#0891b2']} onChange={v=>setTweak('accentColor',v)} />
+        </TweakSection>
+        <TweakSection title="布局">
+          <TweakSlider label="字体大小" min={11} max={16} step={0.5} value={tweaks.fontSize} onChange={v=>setTweak('fontSize',v)} />
+          <TweakRadio label="信息密度" value={tweaks.density} options={['compact','comfortable']} onChange={v=>setTweak('density',v)} />
+        </TweakSection>
+        <TweakSection title="面板">
+          <TweakToggle label="Agent 环境 HUD" value={hudOpen} onChange={v=>setHudOpen(v)} />
+          <TweakToggle label="RAG 独立面板" value={ragPanelOpen} onChange={v=>setRagPanelOpen(v)} />
+          <TweakToggle label="显示地图网格" value={tweaks.showGrid} onChange={v=>setTweak('showGrid',v)} />
+        </TweakSection>
+      </TweaksPanel>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

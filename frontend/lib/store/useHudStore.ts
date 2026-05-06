@@ -3,7 +3,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { API_BASE } from '../api/config';
-import type { AiStatus, HudState, LeftTab, SettingsTab, OpLogEntry, RagResult, ExportItem, CausalEntry } from './hud-types';
+import type { AiStatus, HudState, LeftTab, SettingsTab } from './hud-types';
 
 export type { HudState, TaskStep, TaskState, AiStatus, LeftTab, SettingsTab } from './hud-types';
 
