@@ -1,17 +1,12 @@
-"use client";
+'use client';
 
-import {
-  ZoomIn,
-  ZoomOut,
-  RotateCcw,
-  Crosshair,
-  Box,
-  Download,
-} from "lucide-react";
-import { useHudStore } from "@/lib/store/useHudStore";
+import { ZoomIn, ZoomOut, RotateCcw, Crosshair, Box, Download, Eye } from 'lucide-react';
+import { useHudStore } from '@/lib/store/useHudStore';
 
 interface MapToolbarProps {
   sidebarOpen: boolean;
+  hudOpen?: boolean;
+  onToggleHud?: () => void;
   onZoomIn?: () => void;
   onZoomOut?: () => void;
   onHome?: () => void;
@@ -21,6 +16,8 @@ interface MapToolbarProps {
 
 export default function MapToolbar({
   sidebarOpen,
+  hudOpen = false,
+  onToggleHud,
   onZoomIn,
   onZoomOut,
   onHome,
@@ -29,51 +26,124 @@ export default function MapToolbar({
 }: MapToolbarProps) {
   const is3D = useHudStore((s) => s.is3D);
   const setIs3D = useHudStore((s) => s.setIs3D);
+  const accentColor = useHudStore((s) => s.accentColor);
 
   const btnBase =
-    "flex items-center justify-center w-[27px] h-[27px] rounded-md " +
-    "text-slate-500 hover:text-slate-700 hover:bg-slate-100/80 " +
-    "active:bg-slate-200/80 transition-colors";
+    'flex items-center justify-center w-[32px] h-[32px] rounded-[8px] ' +
+    'transition-all duration-100 cursor-pointer border-0 p-0 ' +
+    'bg-transparent hover:bg-slate-100/80 active:bg-slate-200/80';
 
   return (
     <div
-      className="absolute top-1/2 -translate-y-1/2 z-40
-                 bg-white/85 backdrop-blur-[20px] border border-white/90
-                 shadow-agent-md rounded-xl p-0.5
-                 flex flex-col items-center gap-0.5
-                 transition-all duration-300 ease-in-out"
-      style={{ left: sidebarOpen ? "calc(330px + 10px)" : "10px" }}
+      style={{
+        position: 'absolute',
+        top: '50%',
+        right: hudOpen ? 340 : 10,
+        transform: 'translateY(-50%)',
+        zIndex: 40,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 1,
+        background: 'rgba(255,255,255,0.85)',
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+        border: '1px solid rgba(255,255,255,0.9)',
+        boxShadow: '0 4px 24px rgba(15,23,42,0.10)',
+        borderRadius: 12,
+        padding: 3,
+        transition: 'right 0.22s cubic-bezier(0.4,0,0.2,1)',
+      }}
     >
-      <button className={btnBase} onClick={onZoomIn} title="放大">
-        <ZoomIn size={14} />
+      {/* Zoom in */}
+      <button style={{ ...buttonStyle, color: '#64748b' }} onClick={onZoomIn} title='放大'>
+        <svg width='14' height='14' viewBox='0 0 14 14' fill='none' style={{ display: 'block' }}>
+          <circle cx='6' cy='6' r='4.5' stroke='currentColor' strokeWidth='1.3'/>
+          <path d='M10 10l3 3' stroke='currentColor' strokeWidth='1.4' strokeLinecap='round'/>
+          <path d='M4 6h4M6 4v4' stroke='currentColor' strokeWidth='1.3' strokeLinecap='round'/>
+        </svg>
       </button>
 
-      <button className={btnBase} onClick={onZoomOut} title="缩小">
-        <ZoomOut size={14} />
+      {/* Zoom out */}
+      <button style={{ ...buttonStyle, color: '#64748b' }} onClick={onZoomOut} title='缩小'>
+        <svg width='14' height='14' viewBox='0 0 14 14' fill='none' style={{ display: 'block' }}>
+          <circle cx='6' cy='6' r='4.5' stroke='currentColor' strokeWidth='1.3'/>
+          <path d='M10 10l3 3' stroke='currentColor' strokeWidth='1.4' strokeLinecap='round'/>
+          <path d='M4 6h4' stroke='currentColor' strokeWidth='1.3' strokeLinecap='round'/>
+        </svg>
       </button>
 
-      <button className={btnBase} onClick={onHome} title="复位">
-        <RotateCcw size={14} />
+      {/* Home */}
+      <button style={{ ...buttonStyle, color: '#64748b' }} onClick={onHome} title='复位'>
+        <svg width='14' height='14' viewBox='0 0 14 14' fill='none' style={{ display: 'block' }}>
+          <path d='M2 6.5l5-4.5 5 4.5V12H9V9H5v3H2V6.5z' stroke='currentColor' strokeWidth='1.3' strokeLinejoin='round'/>
+        </svg>
       </button>
 
-      <button className={btnBase} onClick={onLocate} title="定位">
-        <Crosshair size={14} />
+      {/* Locate */}
+      <button style={{ ...buttonStyle, color: '#64748b' }} onClick={onLocate} title='定位我'>
+        <svg width='14' height='14' viewBox='0 0 14 14' fill='none' style={{ display: 'block' }}>
+          <circle cx='7' cy='7' r='2.5' stroke='currentColor' strokeWidth='1.2'/>
+          <path d='M7 1v2.5M7 10.5V13M1 7h2.5M10.5 7H13' stroke='currentColor' strokeWidth='1.2' strokeLinecap='round'/>
+        </svg>
       </button>
 
-      {/* divider */}
-      <span className="w-4 h-px bg-slate-200 my-0.5" />
+      {/* Divider */}
+      <div style={{ width: 20, height: 1, background: 'rgba(15,23,42,0.08)', margin: '2px auto' }} />
 
+      {/* 2D/3D toggle */}
       <button
-        className={`${btnBase} ${is3D ? "on text-green-600 bg-green-50 hover:bg-green-100/80" : ""}`}
         onClick={() => setIs3D(!is3D)}
-        title={is3D ? "切换 2D" : "切换 3D"}
+        title={is3D ? '切换 2D' : '切换 3D'}
+        style={{
+          ...buttonStyle,
+          fontSize: '9.5px',
+          fontWeight: 700,
+          letterSpacing: '0.06em',
+          background: is3D ? 'rgba(22,163,74,0.1)' : 'transparent',
+          color: is3D ? '#15803d' : '#64748b',
+        }}
       >
-        <Box size={14} />
+        {is3D ? '3D' : '2D'}
       </button>
 
-      <button className={btnBase} onClick={onExport} title="导出地图">
-        <Download size={14} />
+      {/* HUD toggle */}
+      <button
+        onClick={onToggleHud}
+        title='Agent 环境感知'
+        style={{
+          ...buttonStyle,
+          background: hudOpen ? 'rgba(139,92,246,0.12)' : 'transparent',
+          color: hudOpen ? '#7c3aed' : '#64748b',
+        }}
+      >
+        <svg width='14' height='14' viewBox='0 0 14 14' fill='none' style={{ display: 'block' }}>
+          <circle cx='7' cy='7' r='5.5' stroke='currentColor' strokeWidth='1.2'/>
+          <circle cx='7' cy='7' r='2' stroke='currentColor' strokeWidth='1.2'/>
+          <path d='M7 1.5v2M7 10.5v2M1.5 7h2M10.5 7h2' stroke='currentColor' strokeWidth='1.1' strokeLinecap='round'/>
+        </svg>
+      </button>
+
+      {/* Export */}
+      <button style={{ ...buttonStyle, color: '#64748b' }} onClick={onExport} title='导出地图'>
+        <svg width='14' height='14' viewBox='0 0 14 14' fill='none' style={{ display: 'block' }}>
+          <path d='M7 2v7M4.5 6.5L7 9l2.5-2.5' stroke='currentColor' strokeWidth='1.3' strokeLinecap='round' strokeLinejoin='round'/>
+          <path d='M2 11h10' stroke='currentColor' strokeWidth='1.3' strokeLinecap='round'/>
+        </svg>
       </button>
     </div>
   );
 }
+
+const buttonStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 32,
+  height: 32,
+  borderRadius: 8,
+  border: 'none',
+  background: 'transparent',
+  cursor: 'pointer',
+  transition: 'all 0.1s',
+  fontFamily: "'JetBrains Mono', monospace",
+} as const;
