@@ -5,7 +5,7 @@ import { Upload, Send, Sparkles, CheckCircle2 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { AiStatus } from '@/lib/store/hud-types';
 import MiniMd from '@/components/chat/mini-md';
-import { ToolCallCard, ToolCallChain } from '@/components/chat/tool-call-card';
+import { ToolCallChain } from '@/components/chat/tool-call-card';
 
 /* ─── Thinking dots animation ─── */
 const DOT_ANIMS = ['animate-dot-1', 'animate-dot-2', 'animate-dot-3'];

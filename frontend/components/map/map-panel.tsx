@@ -521,6 +521,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
         bounds,
       }
     })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [registerSnapshotFn])
 
   const showPerceptionRings = aiStatus === 'thinking' || aiStatus === 'acting'
