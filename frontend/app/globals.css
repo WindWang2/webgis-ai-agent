@@ -292,3 +292,56 @@ body {
 textarea {
   scrollbar-width: thin;
 }
+
+/* ═══ v2 Animations ═══ */
+
+@keyframes spulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.15);
+  }
+}
+
+.animate-spulse {
+  animation: spulse 1.5s ease-in-out infinite;
+}
+
+.animate-dot-1 {
+  animation: dotPulse 1.2s ease-in-out infinite 0s;
+}
+
+.animate-dot-2 {
+  animation: dotPulse 1.2s ease-in-out infinite 0.2s;
+}
+
+.animate-dot-3 {
+  animation: dotPulse 1.2s ease-in-out infinite 0.4s;
+}
+
+@keyframes dotPulse {
+  0%, 80%, 100% {
+    opacity: 0.3;
+    transform: scale(0.85);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes mapGridMove {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 40px 40px;
+  }
+}
+
+.animate-map-grid-move {
+  animation: mapGridMove 8s linear infinite;
+}
