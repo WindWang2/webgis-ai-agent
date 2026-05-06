@@ -13,8 +13,6 @@ export function FloatingLegend({ className }: FloatingLegendProps) {
   const layers = useHudStore((s) => s.layers);
   const visibleHeatLayer = layers.find((l) => l.visible && l.type === 'heatmap');
 
-  if (!visibleHeatLayer) return null;
-
   return (
     <div
       style={{
@@ -28,11 +26,15 @@ export function FloatingLegend({ className }: FloatingLegendProps) {
         fontSize: '10.5px',
         fontFamily: "'DM Sans', system-ui, sans-serif",
         minWidth: 140,
+        transform: visibleHeatLayer ? 'translateY(0)' : 'translateY(20px)',
+        opacity: visibleHeatLayer ? 1 : 0,
+        transition: 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+        pointerEvents: visibleHeatLayer ? 'auto' : 'none',
       }}
       className={className}
     >
       <div style={{ fontSize: 10, color: '#94a3b8', fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
-        {visibleHeatLayer.name}
+        {visibleHeatLayer?.name || ''}
       </div>
       <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', marginBottom: 5 }}>
         {COLORS.map((color, idx) => (

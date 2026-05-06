@@ -15,15 +15,13 @@ export function AgentEnvHud({ open, onClose }: AgentEnvHudProps) {
   const is3D = useHudStore((s) => s.is3D);
   const layers = useHudStore((s) => s.layers);
 
-  if (!open) return null;
-
   return (
     <div
       style={{
         position: 'absolute',
         right: 10,
         top: '50%',
-        transform: 'translateY(-50%)',
+        transform: open ? 'translateY(-50%)' : 'translateY(-50%) translateX(105%)',
         zIndex: 40,
         width: 320,
         maxHeight: 'calc(100vh - 120px)',
@@ -34,6 +32,9 @@ export function AgentEnvHud({ open, onClose }: AgentEnvHudProps) {
         boxShadow: '0 8px 32px rgba(15,23,42,0.12)',
         borderRadius: 16,
         overflow: 'hidden',
+        transition: 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+        pointerEvents: open ? 'auto' : 'none',
+        opacity: open ? 1 : 0,
       }}
     >
       {/* Header */}

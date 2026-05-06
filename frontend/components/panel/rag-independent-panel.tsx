@@ -15,8 +15,6 @@ export function RagIndependentPanel({ open, onClose }: RagIndependentPanelProps)
 
   const displayResults = demoMode && ragResults.length === 0 ? DEMO_RAG : ragResults;
 
-  if (!open) return null;
-
   return (
     <div
       style={{
@@ -33,6 +31,10 @@ export function RagIndependentPanel({ open, onClose }: RagIndependentPanelProps)
         boxShadow: '0 8px 32px rgba(15,23,42,0.12)',
         borderRadius: 16,
         overflow: 'hidden',
+        transform: open ? 'translateY(0)' : 'translateY(105%)',
+        transition: 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+        pointerEvents: open ? 'auto' : 'none',
+        opacity: open ? 1 : 0,
       }}
     >
       {/* Header */}
