@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from 'react';
 import { Upload, Send, Sparkles, CheckCircle2 } from 'lucide-react';
+import { useHudStore } from '@/lib/store/useHudStore';
 import type { AiStatus } from '@/lib/store/hud-types';
 import MiniMd from '@/components/chat/mini-md';
 import { ToolCallCard, ToolCallChain } from '@/components/chat/tool-call-card';
@@ -9,18 +10,22 @@ import { ToolCallCard, ToolCallChain } from '@/components/chat/tool-call-card';
 /* ─── Thinking dots animation ─── */
 const DOT_ANIMS = ['animate-dot-1', 'animate-dot-2', 'animate-dot-3'];
 
-function ThinkingDots({ text }: { text: string }) {
+function ThinkingDots({ text, accentColor, isDark }: { text: string; accentColor: string; isDark: boolean }) {
   return (
     <div className="flex items-center gap-2 py-1.5 px-1">
       <div className="flex gap-[3px]">
         {DOT_ANIMS.map((anim) => (
           <span
             key={anim}
-            className={`block w-[5px] h-[5px] rounded-full bg-emerald-500 ${anim}`}
+            style={{
+              display: 'block', width: 5, height: 5, borderRadius: '50%',
+              backgroundColor: accentColor
+            }}
+            className={anim}
           />
         ))}
       </div>
-      <span className="text-[11px] text-slate-400">{text}</span>
+      <span className="text-[11px]" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>{text}</span>
     </div>
   );
 }
@@ -33,19 +38,25 @@ const SUGGESTED_PROMPTS = [
   '叠加分析两个图层',
 ];
 
-function SuggestedPromptButtons({ onSend, accentColor }: { onSend: (text: string) => void; accentColor: string }) {
+function SuggestedPromptButtons({ onSend, accentColor, isDark }: { onSend: (text: string) => void; accentColor: string; isDark: boolean }) {
   return (
     <div className="px-3 pt-3 pb-2">
-      <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-2">快捷指令</p>
+      <p className="text-[10px] uppercase tracking-wider mb-2" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>快捷指令</p>
       <div className="flex flex-wrap gap-1.5">
         {SUGGESTED_PROMPTS.map((prompt) => (
           <button
             key={prompt}
             onClick={() => onSend(prompt)}
-            className="px-2.5 py-1.5 rounded-lg text-[11px] text-slate-600 border border-slate-200/80 bg-white/60 hover:bg-white/90 transition-colors"
             style={{
+              padding: '6px 10px', borderRadius: 8, fontSize: 11,
+              color: isDark ? '#e2e8f0' : '#475569',
+              borderWidth: 1, borderStyle: 'solid',
               borderColor: `${accentColor}22`,
+              backgroundColor: isDark ? 'rgba(30,41,59,0.6)' : 'rgba(255,255,255,0.6)',
+              cursor: 'pointer', transition: 'background-color 0.15s'
             }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(30,41,59,0.9)' : 'rgba(255,255,255,0.9)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(30,41,59,0.6)' : 'rgba(255,255,255,0.6)'; }}
           >
             {prompt}
           </button>
@@ -64,6 +75,8 @@ interface ChatTabProps {
 }
 
 export function ChatTab({ messages, aiStatus, onSend, accentColor }: ChatTabProps) {
+  const theme = useHudStore((s) => s.theme);
+  const isDark = theme === 'dark';
   const [input, setInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -125,8 +138,8 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor }: ChatTabProp
             >
               <Sparkles size={22} style={{ color: accentColor }} />
             </div>
-            <h3 className="text-[13px] font-semibold text-slate-800 mb-1">GeoAgent</h3>
-            <p className="text-[11.5px] text-slate-400 leading-relaxed">
+            <h3 className="text-[13px] font-semibold mb-1" style={{ color: isDark ? '#e2e8f0' : '#1e293b' }}>GeoAgent</h3>
+            <p className="text-[11.5px] leading-relaxed" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>
               输入空间分析指令，开始智能 GIS 分析
             </p>
           </div>
@@ -148,12 +161,16 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor }: ChatTabProp
               <div key={msg.id ?? idx} className="flex justify-end">
                 <div className="max-w-[85%]">
                   <div className="flex items-center justify-end gap-1.5 mb-0.5">
-                    {time && <span className="text-[9px] text-slate-300">{time}</span>}
+                    {time && <span className="text-[9px]" style={{ color: isDark ? '#475569' : '#cbd5e1' }}>{time}</span>}
                     <span className="text-[10px] font-semibold" style={{ color: accentColor }}>You</span>
                   </div>
                   <div
-                    className="rounded-2xl rounded-tr-sm px-3 py-2 text-[12.5px] leading-[1.6] text-white"
-                    style={{ backgroundColor: accentColor }}
+                    style={{
+                      borderTopRightRadius: 4, borderTopLeftRadius: 16,
+                      borderBottomLeftRadius: 16, borderBottomRightRadius: 16,
+                      padding: '8px 12px', fontSize: 12.5, lineHeight: 1.6, color: '#fff',
+                      backgroundColor: accentColor
+                    }}
                   >
                     <div className="whitespace-pre-wrap">{msg.content}</div>
                   </div>
@@ -174,13 +191,16 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor }: ChatTabProp
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
                     <span className="text-[10px] font-semibold" style={{ color: accentColor }}>GeoAgent</span>
-                    {time && <span className="text-[9px] text-slate-300">{time}</span>}
+                    {time && <span className="text-[9px]" style={{ color: isDark ? '#475569' : '#cbd5e1' }}>{time}</span>}
                   </div>
 
                   {msg.layerAdded && (
                     <div
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium text-white mb-1.5"
-                      style={{ backgroundColor: accentColor }}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px',
+                        borderRadius: 999, fontSize: 10, fontWeight: 500, color: '#fff',
+                        backgroundColor: accentColor, marginBottom: 6
+                      }}
                     >
                       <CheckCircle2 size={10} />
                       感知图层已挂载：{msg.layerAdded}
@@ -188,9 +208,16 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor }: ChatTabProp
                   )}
 
                   {msg.isThinking ? (
-                    <ThinkingDots text={thinkingText} />
+                    <ThinkingDots text={thinkingText} accentColor={accentColor} isDark={isDark} />
                   ) : msg.content || msg.toolCalls?.length ? (
-                    <div className="rounded-2xl rounded-tl-sm bg-slate-50/80 border border-slate-100 px-3 py-2">
+                    <div style={{
+                      borderTopLeftRadius: 4, borderTopRightRadius: 16,
+                      borderBottomLeftRadius: 16, borderBottomRightRadius: 16,
+                      backgroundColor: isDark ? 'rgba(30,41,59,0.8)' : 'rgba(248,250,252,0.8)',
+                      borderWidth: 1, borderStyle: 'solid',
+                      borderColor: isDark ? 'rgba(148,163,184,0.2)' : 'rgba(226,232,240,0.8)',
+                      padding: '8px 12px'
+                    }}>
                       {msg.content && <MiniMd text={msg.content} />}
                       {msg.toolCalls && msg.toolCalls.length > 0 && (
                         <ToolCallChain calls={msg.toolCalls} />
@@ -204,22 +231,33 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor }: ChatTabProp
 
           {/* Thinking indicator at end of messages */}
           {isBusy && messages.length > 0 && !messages[messages.length - 1]?.isThinking && (
-            <ThinkingDots text={thinkingText} />
+            <ThinkingDots text={thinkingText} accentColor={accentColor} isDark={isDark} />
           )}
         </div>
 
         {/* Suggested prompts when not busy and few messages */}
         {!isBusy && messages.length <= 1 && (
-          <SuggestedPromptButtons onSend={onSend} accentColor={accentColor} />
+          <SuggestedPromptButtons onSend={onSend} accentColor={accentColor} isDark={isDark} />
         )}
       </div>
 
       {/* Input area */}
-      <div className="shrink-0 border-t border-slate-200/60 bg-white/50" style={{ backdropFilter: 'blur(12px)' }}>
+      <div style={{
+        borderTopWidth: 1, borderTopStyle: 'solid',
+        borderTopColor: isDark ? 'rgba(148,163,184,0.2)' : 'rgba(226,232,240,0.6)',
+        backgroundColor: isDark ? 'rgba(15,23,42,0.6)' : 'rgba(255,255,255,0.6)',
+        backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)'
+      }} className="shrink-0">
         <div className="flex items-end gap-2 px-3 pt-2.5 pb-1.5">
           {/* Upload button */}
           <button
-            className="shrink-0 flex items-center justify-center w-6 h-6 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+            style={{
+              flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 24, height: 24, borderRadius: 6, color: isDark ? '#64748b' : '#94a3b8',
+              backgroundColor: 'transparent', cursor: 'pointer'
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)'; e.currentTarget.style.color = isDark ? '#e2e8f0' : '#475569'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = isDark ? '#64748b' : '#94a3b8'; }}
             title="上传文件"
           >
             <Upload size={14} />
@@ -233,17 +271,24 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor }: ChatTabProp
             onKeyDown={handleKeyDown}
             placeholder="输入空间分析指令..."
             rows={1}
-            className="flex-1 resize-none bg-transparent text-[12.5px] text-slate-800 placeholder:text-slate-300 outline-none leading-[1.5] max-h-[80px] py-1"
+            style={{
+              flex: 1, resize: 'none', backgroundColor: 'transparent',
+              fontSize: 12.5, color: isDark ? '#e2e8f0' : '#1e293b',
+              outline: 'none', lineHeight: 1.5, maxHeight: 80, paddingTop: 4, paddingBottom: 4
+            }}
           />
 
           {/* Send button */}
           <button
             onClick={handleSend}
             disabled={!input.trim() || isBusy}
-            className="shrink-0 flex items-center justify-center w-[26px] h-[26px] rounded-lg transition-colors disabled:opacity-40"
             style={{
-              backgroundColor: input.trim() ? accentColor : '#e2e8f0',
-              color: input.trim() ? '#fff' : '#94a3b8',
+              flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 26, height: 26, borderRadius: 8, transition: 'opacity 0.15s',
+              opacity: !input.trim() || isBusy ? 0.4 : 1,
+              backgroundColor: input.trim() ? accentColor : isDark ? '#334155' : '#e2e8f0',
+              color: input.trim() ? '#fff' : isDark ? '#64748b' : '#94a3b8',
+              cursor: 'pointer'
             }}
           >
             <Send size={13} />
@@ -252,7 +297,7 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor }: ChatTabProp
 
         {/* Hint */}
         <div className="px-3 pb-2">
-          <span className="text-[9.5px] text-slate-300">
+          <span className="text-[9.5px]" style={{ color: isDark ? '#475569' : '#cbd5e1' }}>
             Enter 发送 · Shift+Enter 换行
           </span>
         </div>
