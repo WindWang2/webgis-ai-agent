@@ -231,6 +231,8 @@ export interface HudState {
   /* ─── v2 UI Tweaks ─── */
   accentColor: string;
   setAccentColor: (color: string) => void;
+  theme: 'light' | 'dark';
+  setTheme: (theme: 'light' | 'dark') => void;
   fontSize: number;
   setFontSize: (size: number) => void;
   density: 'compact' | 'comfortable';

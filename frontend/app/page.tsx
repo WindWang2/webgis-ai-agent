@@ -2,6 +2,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { useHudStore, DEMO_OPS_LOG, DEMO_RAG, DEMO_EXPORTS, DEMO_CAUSAL_CHAIN, DEMO_LAYERS } from '@/lib/store/useHudStore';
+import { getThemeColors } from '@/lib/theme';
 import { streamChat } from '@/lib/api/chat';
 import { useWebSocket } from '@/lib/hooks/use-websocket';
 import { useGeolocation } from '@/lib/hooks/use-geolocation';
@@ -651,10 +652,12 @@ export default function Home() {
 
   /* ─── Main render ─── */
   const aiStatus = useHudStore((s) => s.aiStatus);
+  const theme = useHudStore((s) => s.theme);
   const fontSize = useHudStore((s) => s.fontSize);
   const showGrid = useHudStore((s) => s.showGrid);
   const leftTab = useHudStore((s) => s.activeLeftTab);
   const setLeftTab = useHudStore((s) => s.setActiveLeftTab);
+  const colors = getThemeColors(theme);
 
   // Get current session title for TopBar
   const currentSessionTitle = sessionId
@@ -662,7 +665,7 @@ export default function Home() {
     : '新会话';
 
   return (
-    <div style={{ height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#dce8f2', fontSize: `${fontSize}px` }}>
+    <div style={{ height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: colors.bg, fontSize: `${fontSize}px` }}>
       <TopBar
         sessionName={currentSessionTitle}
         onNewSession={() => {
@@ -736,7 +739,6 @@ export default function Home() {
 
         {/* Map Toolbar */}
         <MapToolbar
-          sidebarOpen={leftPanelOpen}
           hudOpen={hudOpen}
           onToggleHud={() => setHudOpen(!hudOpen)}
           onZoomIn={handleZoomIn}
@@ -761,9 +763,9 @@ export default function Home() {
           bottom: 30,
           right: 12,
           fontSize: '9.5px',
-          color: 'rgba(15,23,42,0.35)',
+          color: theme === 'dark' ? 'rgba(148,163,184,0.6)' : 'rgba(15,23,42,0.35)',
           fontFamily: "'JetBrains Mono', monospace",
-          background: 'rgba(255,255,255,0.72)',
+          background: theme === 'dark' ? 'rgba(30,41,59,0.72)' : 'rgba(255,255,255,0.72)',
           padding: '2px 8px',
           borderRadius: 4,
           backdropFilter: 'blur(8px)',
