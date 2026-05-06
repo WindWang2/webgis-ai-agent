@@ -657,6 +657,7 @@ export default function Home() {
   const showGrid = useHudStore((s) => s.showGrid);
   const leftTab = useHudStore((s) => s.activeLeftTab);
   const setLeftTab = useHudStore((s) => s.setActiveLeftTab);
+  const sidebarWidth = useHudStore((s) => s.sidebarWidth);
   const colors = getThemeColors(theme);
 
   // Get current session title for TopBar
@@ -723,7 +724,7 @@ export default function Home() {
 
         {/* Floating Legend */}
         {layers.find(l => l.visible && l.type === 'heatmap') && (
-          <div style={{ position: 'absolute', bottom: 34, left: leftPanelOpen ? 344 : 10, transition: 'left 0.22s cubic-bezier(0.4,0,0.2,1)', zIndex: 10 }}>
+          <div style={{ position: 'absolute', bottom: 34, left: leftPanelOpen ? sidebarWidth + 14 : 10, transition: 'left 0.22s cubic-bezier(0.4,0,0.2,1)', zIndex: 10 }}>
             <FloatingLegend />
           </div>
         )}

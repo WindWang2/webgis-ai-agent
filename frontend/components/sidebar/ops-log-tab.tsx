@@ -20,6 +20,7 @@ const colorForType: Record<string, string> = {
 
 export function OpsLogTab() {
   const opsLog = useHudStore((s) => s.opsLog);
+  const clearOpsLog = useHudStore((s) => s.clearOpsLog);
   const demoMode = useHudStore((s) => s.demoMode);
   const setDemoMode = useHudStore((s) => s.setDemoMode);
 
@@ -32,14 +33,25 @@ export function OpsLogTab() {
         <span className='text-[10px] font-semibold text-slate-400 uppercase tracking-wider'>
           操作日志
         </span>
-        {!demoMode && opsLog.length === 0 && (
-          <button
-            onClick={() => setDemoMode(true)}
-            className='text-[10px] text-slate-400 hover:text-slate-600'
-          >
-            加载演示
-          </button>
-        )}
+        <div className='flex items-center gap-1'>
+          {!demoMode && opsLog.length === 0 && (
+            <button
+              onClick={() => setDemoMode(true)}
+              className='text-[10px] text-slate-400 hover:text-slate-600 px-2 py-1 rounded hover:bg-slate-100'
+            >
+              加载演示
+            </button>
+          )}
+          {displayLog.length > 0 && (
+            <button
+              onClick={clearOpsLog}
+              className='text-[10px] text-slate-400 hover:text-red-500 px-2 py-1 rounded hover:bg-red-50'
+              title='清空日志'
+            >
+              清空
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Log list */}
