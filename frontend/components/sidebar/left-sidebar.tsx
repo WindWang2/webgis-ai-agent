@@ -1,11 +1,12 @@
 'use client';
 
-import { MessageCircle, Layers, Hash } from 'lucide-react';
+import { MessageCircle, Layers, List, Download } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { ChatTab } from '@/components/sidebar/chat-tab';
 import { LayersTab } from '@/components/sidebar/layers-tab';
-import { AssetsTab } from '@/components/sidebar/assets-tab';
+import { OpsLogTab } from '@/components/sidebar/ops-log-tab';
+import { ExportsTab } from '@/components/sidebar/exports-tab';
 import type { AiStatus, LeftTab } from '@/lib/store/hud-types';
 
 export interface LeftSidebarProps {
@@ -32,19 +33,22 @@ interface TabDef {
 const TAB_DEFS: TabDef[] = [
   { key: 'chat', icon: MessageCircle, label: '对话' },
   { key: 'layers', icon: Layers, label: '图层' },
-  { key: 'assets', icon: Hash, label: '资产' },
+  { key: 'ops', icon: List, label: '日志' },
+  { key: 'exports', icon: Download, label: '导出' },
 ];
 
 export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#16a34a' }: LeftSidebarProps) {
   const activeTab = useHudStore((s) => s.activeLeftTab);
   const setActiveTab = useHudStore((s) => s.setActiveLeftTab);
   const layers = useHudStore((s) => s.layers);
-  const analysisAssets = useHudStore((s) => s.analysisAssets);
+  const opsLog = useHudStore((s) => s.opsLog);
+  const exports = useHudStore((s) => s.exports);
 
   const badges: Record<LeftTab, number | undefined> = {
     chat: undefined,
     layers: layers.length,
-    assets: analysisAssets.length,
+    ops: opsLog.length,
+    exports: exports.length,
   };
 
   return (
@@ -102,7 +106,8 @@ export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#
           <ChatTab messages={messages} aiStatus={aiStatus} onSend={onSend} accentColor={accentColor} />
         )}
         {activeTab === 'layers' && <LayersTab />}
-        {activeTab === 'assets' && <AssetsTab />}
+        {activeTab === 'ops' && <OpsLogTab />}
+        {activeTab === 'exports' && <ExportsTab />}
       </div>
     </aside>
   );

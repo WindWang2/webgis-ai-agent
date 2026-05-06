@@ -3,9 +3,49 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { API_BASE } from '../api/config';
-import type { AiStatus, HudState, LeftTab, SettingsTab } from './hud-types';
+import type { AiStatus, HudState, LeftTab, SettingsTab, OpLogEntry, RagResult, ExportItem, CausalEntry } from './hud-types';
 
 export type { HudState, TaskStep, TaskState, AiStatus, LeftTab, SettingsTab } from './hud-types';
+
+// v2 Demo Data
+export const DEMO_MESSAGES = [
+  {
+    id: '1',
+    role: 'assistant' as const,
+    content: '你好！我是 GeoAgent。\n\n我感知地图、分析空间、生成洞察——地图上的一切都是我的一部分。\n\n试着告诉我：\n- 分析北京市学校分布密度\n- 成都市人口热力图\n- 计算各区 POI覆盖率',
+    timestamp: '14:30',
+  },
+];
+
+export const DEMO_LAYERS = [
+  { id: 'poi-schools', name: '北京市学校 POI', type: 'vector', visible: true, color: '#16a34a', group: 'analysis', info: '312 个要素 · query_osm_poi', mockPoints: [[22,18],[28,22],[35,28],[42,15],[50,32],[55,25],[60,18],[38,42],[46,38],[62,45]] },
+  { id: 'heatmap-density', name: '密度热力图', type: 'heatmap', visible: true, color: '#ff5f00', group: 'analysis', info: '核密度估计 · kde_surface', mockPoints: [[30,25],[35,30],[40,28],[38,22],[33,20],[45,35],[50,28],[44,22]] },
+  { id: 'boundary-districts', name: '北京市行政区划', type: 'vector', visible: false, color: '#2563eb', group: 'reference', info: '16 个区 · get_district', mockPoints: [] },
+];
+
+export const DEMO_RAG = [
+  { id: '1', source: 'GIS空间分析方法论.pdf', score: '0.92', chunks: 4, excerpts: ['核密度估计（KDE）是一种非参数方法，用于估计随机变量的概率密度函数。在 GIS 中，常用于分析点要素的空间分布密度...', '带宽选择是 KDE 的关键参数，过小会造成过拟合，过大则会掩盖局部模式。常用的带宽选择方法包括 Silverman 规则...'] },
+  { id: '2', source: '北京市空间数据手册v3.md', score: '0.87', chunks: 2, excerpts: ['北京市共辖 16 个区，总面积 16410 平方公里。核心区包括东城区和西城区...', '2023年北京市常住人口 2185 万人，其中城镇人口 1891 万人，城镇化率为 86.6%...'] },
+  { id: '3', source: 'OpenStreetMap POI 分类标准.pdf', score: '0.79', chunks: 1, excerpts: ['教育设施分类标准...'] },
+];
+
+export const DEMO_EXPORTS = [
+  { id: '1', name: '北京学校密度专题图.png', type: 'png' as const, size: '2.4 MB', date: '刚刚' },
+  { id: '2', name: '核密度分析报告.pdf', type: 'pdf' as const, size: '840 KB', date: '刚刚' },
+  { id: '3', name: '学校POI数据.geojson', type: 'geojson' as const, size: '156 KB', date: '刚刚' },
+];
+
+export const DEMO_OPS_LOG = [
+  { id: '1', type: 'add' as const, label: '添加图层 — POI 查询结果', time: '14:30', detail: '123 个要素' },
+  { id: '2', type: 'flyto' as const, label: '飞到 — 目标区域', time: '14:31', detail: 'zoom 11.5' },
+  { id: '3', type: 'add' as const, label: '添加图层 — 密度热力图', time: '14:32', detail: 'kde_surface 输出' },
+];
+
+export const DEMO_CAUSAL_CHAIN = [
+  { id: '1', tool: 'geocode_cn', mapAction: 'fly_to', time: '14:30', toolInput: '北京市', mapEffect: '地图飞至目标位置', mapState: { center: [116.40,39.90], zoom: 10 } },
+  { id: '2', tool: 'query_osm_poi', mapAction: 'add_layer', time: '14:31', toolInput: 'category=school, city=北京市', mapEffect: '新增 POI 图层', mapState: { layer_id: 'poi-schools', feature_count: 312 } },
+  { id: '3', tool: 'kde_surface', mapAction: 'add_layer', time: '14:32', toolInput: 'layer_id=poi-schools, bandwidth=500m', mapEffect: '新增热力图图层', mapState: { layer_id: 'heatmap-density', render_type: 'native_heatmap' } },
+];
 
 const DEFAULT_MCP_SERVERS = [
   { id: 'gdal-raster', name: 'gdal-raster', transport: 'stdio' as const, cmd: 'python mcp_servers/gdal_raster.py', status: 'active' as const, desc: '栅格数据处理（重采样、裁切、投影）' },
@@ -253,6 +293,42 @@ export const useHudStore = create<HudState>()(
       setMapStyles: (styles) => set({ mapStyles: styles }),
       llmConfigFull: { baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-4o', caching: true },
       setLlmConfigFull: (config) => set((s) => ({ llmConfigFull: { ...s.llmConfigFull, ...config } })),
+
+      /* ─── v2 Panel Visibility ─── */
+      hudOpen: false,
+      setHudOpen: (open) => set({ hudOpen: open }),
+      ragPanelOpen: false,
+      setRagPanelOpen: (open) => set({ ragPanelOpen: open }),
+      tweaksOpen: false,
+      setTweaksOpen: (open) => set({ tweaksOpen: open }),
+
+      /* ─── v2 UI Tweaks ─── */
+      accentColor: '#16a34a',
+      setAccentColor: (color) => set({ accentColor: color }),
+      fontSize: 13,
+      setFontSize: (size) => set({ fontSize: size }),
+      density: 'compact' as const,
+      setDensity: (density) => set({ density: density }),
+      showGrid: true,
+      setShowGrid: (show) => set({ showGrid: show }),
+      sidebarWidth: 330,
+      setSidebarWidth: (width) => set({ sidebarWidth: width }),
+
+      /* ─── v2 Feature Data ─── */
+      opsLog: [],
+      pushOpLog: (entry) => set((s) => ({ opsLog: [entry, ...s.opsLog] })),
+      clearOpsLog: () => set({ opsLog: [] }),
+      ragResults: [],
+      setRagResults: (results) => set({ ragResults: results }),
+      exports: [],
+      setExports: (items) => set({ exports: items }),
+      causalChain: [],
+      pushCausalEntry: (entry) => set((s) => ({ causalChain: [entry, ...s.causalChain] })),
+      clearCausalChain: () => set({ causalChain: [] }),
+
+      /* ─── Demo Mode ─── */
+      demoMode: false,
+      setDemoMode: (enabled) => set({ demoMode: enabled }),
     }),
     {
       name: 'geoagent-settings',

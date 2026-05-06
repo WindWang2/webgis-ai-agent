@@ -24,7 +24,42 @@ export interface TaskState {
 }
 
 export type AiStatus = 'idle' | 'thinking' | 'acting' | 'done' | 'error';
-export type LeftTab = 'chat' | 'layers' | 'assets';
+// 新增 v2 类型
+export interface OpLogEntry {
+  id: string;
+  type: 'add' | 'remove' | 'toggle' | 'flyto' | 'style';
+  label: string;
+  time: string;
+  detail?: string;
+}
+
+export interface RagResult {
+  id: string;
+  source: string;
+  score: string;
+  chunks: number;
+  excerpts: string[];
+}
+
+export interface ExportItem {
+  id: string;
+  name: string;
+  type: 'png' | 'pdf' | 'geojson';
+  size: string;
+  date: string;
+}
+
+export interface CausalEntry {
+  id: string;
+  tool: string;
+  mapAction?: string;
+  time: string;
+  toolInput?: string;
+  mapEffect?: string;
+  mapState?: Record<string, unknown>;
+}
+
+export type LeftTab = 'chat' | 'layers' | 'ops' | 'exports';
 export type SettingsTab = 'llm' | 'mcp' | 'skills' | 'rag' | 'layers' | 'map' | 'system';
 
 export interface McpServer {
@@ -183,6 +218,42 @@ export interface HudState {
   setSettingsTab: (tab: SettingsTab) => void;
   sessions: SessionSummary[];
   setSessions: (sessions: SessionSummary[]) => void;
+
+  /* ─── v2 Panel Visibility ─── */
+  hudOpen: boolean;
+  setHudOpen: (open: boolean) => void;
+  ragPanelOpen: boolean;
+  setRagPanelOpen: (open: boolean) => void;
+  tweaksOpen: boolean;
+  setTweaksOpen: (open: boolean) => void;
+
+  /* ─── v2 UI Tweaks ─── */
+  accentColor: string;
+  setAccentColor: (color: string) => void;
+  fontSize: number;
+  setFontSize: (size: number) => void;
+  density: 'compact' | 'comfortable';
+  setDensity: (density: 'compact' | 'comfortable') => void;
+  showGrid: boolean;
+  setShowGrid: (show: boolean) => void;
+  sidebarWidth: number;
+  setSidebarWidth: (width: number) => void;
+
+  /* ─── v2 Feature Data ─── */
+  opsLog: OpLogEntry[];
+  pushOpLog: (entry: OpLogEntry) => void;
+  clearOpsLog: () => void;
+  ragResults: RagResult[];
+  setRagResults: (results: RagResult[]) => void;
+  exports: ExportItem[];
+  setExports: (items: ExportItem[]) => void;
+  causalChain: CausalEntry[];
+  pushCausalEntry: (entry: CausalEntry) => void;
+  clearCausalChain: () => void;
+
+  /* ─── Demo Mode ─── */
+  demoMode: boolean;
+  setDemoMode: (enabled: boolean) => void;
 
   /* ─── Settings Data ─── */
   mcpServers: McpServer[];
