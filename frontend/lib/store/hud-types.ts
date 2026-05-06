@@ -137,6 +137,7 @@ export interface HudState {
   toggleLayer: (id: string) => void;
   updateLayer: (id: string, updates: Partial<Layer>) => void;
   reorderLayers: (layers: Layer[]) => void;
+  setLayers: (layers: Layer[]) => void;
   clearLayers: () => void;
 
   /* ─── Layer Editing ─── */
