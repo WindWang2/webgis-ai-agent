@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import { useEffect, useState } from "react";
+import { useEffect, useState } from 'react';
 import {
   PanelLeftClose,
   Menu,
@@ -8,34 +8,37 @@ import {
   Plus,
   History,
   Settings,
-} from "lucide-react";
-import { useHudStore } from "@/lib/store/useHudStore";
+} from 'lucide-react';
+import { useHudStore } from '@/lib/store/useHudStore';
 
 interface TopBarProps {
   sessionName?: string;
   onNewSession?: () => void;
 }
 
-const STATUS_CONFIG: Record<
-  string,
-  { label: string; color: string; bg: string }
-> = {
-  idle: { label: "就绪", color: "bg-slate-400", bg: "bg-slate-50" },
-  thinking: { label: "感知中", color: "bg-blue-500", bg: "bg-blue-50" },
-  acting: { label: "执行中", color: "bg-blue-500", bg: "bg-blue-50" },
-  done: { label: "完成", color: "bg-green-600", bg: "bg-green-50" },
-  error: { label: "异常", color: "bg-red-500", bg: "bg-red-50" },
-};
-
-export default function TopBar({ sessionName = "未命名", onNewSession }: TopBarProps) {
+export default function TopBar({ sessionName = '未命名', onNewSession }: TopBarProps) {
   const leftPanelOpen = useHudStore((s) => s.leftPanelOpen);
   const toggleLeftPanel = useHudStore((s) => s.toggleLeftPanel);
   const aiStatus = useHudStore((s) => s.aiStatus);
   const setSettingsOpen = useHudStore((s) => s.setSettingsOpen);
   const setHistoryOpen = useHudStore((s) => s.setHistoryOpen);
+  const theme = useHudStore((s) => s.theme);
+  const accentColor = useHudStore((s) => s.accentColor);
+  const isDark = theme === 'dark';
 
-  const isActive = aiStatus === "thinking" || aiStatus === "acting";
-  const status = STATUS_CONFIG[aiStatus] ?? STATUS_CONFIG.idle;
+  const isActive = aiStatus === 'thinking' || aiStatus === 'acting';
+
+  const getStatusConfig = (status: string) => {
+    switch (status) {
+      case 'idle': return { label: '就绪', color: isDark ? '#64748b' : '#94a3b8', bg: isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)' };
+      case 'thinking': case 'acting': return { label: status === 'thinking' ? '感知中' : '执行中', color: accentColor, bg: isDark ? `${accentColor}15` : `${accentColor}10` };
+      case 'done': return { label: '完成', color: isDark ? '#4ade80' : '#16a34a', bg: isDark ? 'rgba(74,222,128,0.15)' : 'rgba(16,185,129,0.10)' };
+      case 'error': return { label: '异常', color: isDark ? '#fca5a5' : '#ef4444', bg: isDark ? 'rgba(248,113,113,0.15)' : 'rgba(254,226,226,0.6)' };
+      default: return { label: '就绪', color: isDark ? '#64748b' : '#94a3b8', bg: isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)' };
+    }
+  };
+
+  const status = getStatusConfig(aiStatus);
 
   /* scan-line position 0-100% */
   const [scanX, setScanX] = useState(0);
@@ -56,24 +59,25 @@ export default function TopBar({ sessionName = "未命名", onNewSession }: TopB
 
   return (
     <div
-      className="fixed top-0 inset-x-0 z-50 flex items-center h-[42px] px-2 gap-2
-                 bg-white/75 backdrop-blur-[20px] border-b transition-colors duration-300"
       style={{
-        borderBottomColor: isActive
-          ? "rgba(22,163,74,0.35)"
-          : "rgba(0,0,0,0.06)",
+        position: 'fixed', top: 0, left: 0, right: 0, zIndex: 50,
+        display: 'flex', alignItems: 'center', height: 42, paddingLeft: 8, paddingRight: 8, gap: 8,
+        backgroundColor: isDark ? 'rgba(15,23,42,0.75)' : 'rgba(255,255,255,0.75)',
+        backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+        borderBottomWidth: isActive ? 2 : 1,
+        borderBottomStyle: 'solid',
+        borderBottomColor: isActive ? `${accentColor}55` : isDark ? 'rgba(148,163,184,0.2)' : 'rgba(0,0,0,0.06)'
       }}
     >
       {/* heartbeat scan line */}
       {isActive && (
-        <div className="absolute top-0 inset-x-0 h-[2px] overflow-hidden pointer-events-none">
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, overflow: 'hidden', pointerEvents: 'none' }}>
           <div
-            className="h-full animate-hb-scan"
             style={{
-              background:
-                "linear-gradient(90deg, transparent 0%, rgba(22,163,74,0.6) 50%, transparent 100%)",
-              width: "40%",
+              background: `linear-gradient(90deg, transparent 0%, ${accentColor}99 50%, transparent 100%)`,
+              width: '40%',
               transform: `translateX(${scanX * 2.5}%)`,
+              height: '100%'
             }}
           />
         </div>
@@ -82,60 +86,80 @@ export default function TopBar({ sessionName = "未命名", onNewSession }: TopB
       {/* sidebar toggle */}
       <button
         onClick={toggleLeftPanel}
-        className="flex items-center justify-center w-7 h-7 rounded-md
-                   hover:bg-slate-100 active:bg-slate-200 transition-colors text-slate-600"
-        title={leftPanelOpen ? "收起侧栏" : "展开侧栏"}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          width: 28, height: 28, borderRadius: 6, cursor: 'pointer',
+          color: isDark ? '#e2e8f0' : '#475569', backgroundColor: 'transparent'
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+        title={leftPanelOpen ? '收起侧栏' : '展开侧栏'}
       >
         {leftPanelOpen ? <PanelLeftClose size={15} /> : <Menu size={15} />}
       </button>
 
       {/* logo */}
-      <div className="flex items-center gap-1.5 select-none">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, userSelect: 'none' }}>
         <span
-          className="flex items-center justify-center w-6 h-6 rounded-[5px]"
           style={{
-            background: "linear-gradient(135deg, #16a34a, #22c55e)",
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 24, height: 24, borderRadius: 6,
+            background: `linear-gradient(135deg, ${accentColor}, ${accentColor}dd)`
           }}
         >
-          <Compass size={13} className="text-white" />
+          <Compass size={13} style={{ color: '#fff' }} />
         </span>
-        <div className="leading-none">
-          <span className="text-[13px] font-semibold text-slate-800">
+        <div style={{ lineHeight: 1 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: isDark ? '#e2e8f0' : '#1e293b' }}>
             GeoAgent
           </span>
-          <span className="text-[9px] text-slate-400 ml-1">All is Agent</span>
+          <span style={{ fontSize: 9, marginLeft: 4, color: isDark ? '#64748b' : '#94a3b8' }}>All is Agent</span>
         </div>
       </div>
 
       {/* session name pill */}
       <span
-        className="ml-1 px-2 py-0.5 rounded-full bg-slate-50 text-[10px] text-slate-500
-                    border border-slate-100 select-none max-w-[180px] truncate"
+        style={{
+          marginLeft: 4, padding: '2px 8px', borderRadius: 999,
+          backgroundColor: isDark ? 'rgba(30,41,59,0.6)' : 'rgba(226,232,240,0.6)',
+          fontSize: 10, color: isDark ? '#94a3b8' : '#64748b',
+          borderWidth: 1, borderStyle: 'solid',
+          borderColor: isDark ? 'rgba(148,163,184,0.2)' : 'rgba(226,232,240,0.8)',
+          maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+        }}
       >
         会话 / {sessionName}
       </span>
 
       {/* spacer */}
-      <div className="flex-1" />
+      <div style={{ flex: 1 }} />
 
       {/* agent status badge */}
       <span
-        className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${status.bg}`}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px',
+          borderRadius: 999, backgroundColor: status.bg, fontSize: 10, fontWeight: 500
+        }}
       >
         <span
-          className={`w-1.5 h-1.5 rounded-full ${status.color} ${
-            isActive ? "animate-spulse" : ""
-          }`}
+          style={{
+            width: 6, height: 6, borderRadius: '50%', backgroundColor: status.color
+          }}
         />
-        <span className="text-slate-600">{status.label}</span>
+        <span style={{ color: isDark ? '#e2e8f0' : '#1e293b' }}>{status.label}</span>
       </span>
 
       {/* right actions */}
-      <div className="flex items-center gap-0.5">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
         <button
           onClick={onNewSession}
-          className="flex items-center justify-center w-7 h-7 rounded-md
-                     hover:bg-slate-100 active:bg-slate-200 transition-colors text-slate-500"
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 28, height: 28, borderRadius: 6, cursor: 'pointer',
+            color: isDark ? '#94a3b8' : '#64748b', backgroundColor: 'transparent'
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)'; e.currentTarget.style.color = isDark ? '#e2e8f0' : '#475569'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = isDark ? '#94a3b8' : '#64748b'; }}
           title="新建会话"
         >
           <Plus size={15} />
@@ -143,19 +167,29 @@ export default function TopBar({ sessionName = "未命名", onNewSession }: TopB
 
         <button
           onClick={() => setHistoryOpen(true)}
-          className="flex items-center justify-center w-7 h-7 rounded-md
-                     hover:bg-slate-100 active:bg-slate-200 transition-colors text-slate-500"
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 28, height: 28, borderRadius: 6, cursor: 'pointer',
+            color: isDark ? '#94a3b8' : '#64748b', backgroundColor: 'transparent'
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)'; e.currentTarget.style.color = isDark ? '#e2e8f0' : '#475569'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = isDark ? '#94a3b8' : '#64748b'; }}
           title="历史记录"
         >
           <History size={15} />
         </button>
 
-        <span className="mx-1 h-4 w-px bg-slate-200" />
+        <span style={{ marginLeft: 4, marginRight: 4, width: 1, height: 16, backgroundColor: isDark ? 'rgba(148,163,184,0.2)' : 'rgba(226,232,240,0.8)' }} />
 
         <button
           onClick={() => setSettingsOpen(true)}
-          className="flex items-center justify-center w-7 h-7 rounded-md
-                     hover:bg-slate-100 active:bg-slate-200 transition-colors text-slate-500"
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 28, height: 28, borderRadius: 6, cursor: 'pointer',
+            color: isDark ? '#94a3b8' : '#64748b', backgroundColor: 'transparent'
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)'; e.currentTarget.style.color = isDark ? '#e2e8f0' : '#475569'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = isDark ? '#94a3b8' : '#64748b'; }}
           title="设置"
         >
           <Settings size={15} />
