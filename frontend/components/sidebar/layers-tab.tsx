@@ -26,6 +26,8 @@ export function LayersTab() {
   const removeLayer = useHudStore((s) => s.removeLayer);
   const updateLayer = useHudStore((s) => s.updateLayer);
   const reorderLayers = useHudStore((s) => s.reorderLayers);
+  const theme = useHudStore((s) => s.theme);
+  const isDark = theme === 'dark';
 
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -93,18 +95,18 @@ export function LayersTab() {
   return (
     <div className="flex flex-col h-full">
       {/* Stats header */}
-      <div className="shrink-0 grid grid-cols-3 gap-px bg-slate-200/60 border-b border-slate-200/60">
-        <div className="bg-white/60 px-2.5 py-2 text-center">
-          <div className="text-[14px] font-semibold text-slate-800">{layers.length}</div>
-          <div className="text-[9px] text-slate-400 uppercase tracking-wider">总图层</div>
+      <div className="shrink-0 grid grid-cols-3 gap-px" style={{ backgroundColor: isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)', borderBottomColor: isDark ? 'rgba(148,163,184,0.2)' : 'rgba(226,232,240,0.6)' }}>
+        <div className="px-2.5 py-2 text-center" style={{ backgroundColor: isDark ? 'rgba(30,41,59,0.6)' : 'rgba(255,255,255,0.6)' }}>
+          <div className="text-[14px] font-semibold" style={{ color: isDark ? '#e2e8f0' : '#1e293b' }}>{layers.length}</div>
+          <div className="text-[9px] uppercase tracking-wider" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>总图层</div>
         </div>
-        <div className="bg-white/60 px-2.5 py-2 text-center">
-          <div className="text-[14px] font-semibold text-emerald-600">{visibleCount}</div>
-          <div className="text-[9px] text-slate-400 uppercase tracking-wider">可见</div>
+        <div className="px-2.5 py-2 text-center" style={{ backgroundColor: isDark ? 'rgba(30,41,59,0.6)' : 'rgba(255,255,255,0.6)' }}>
+          <div className="text-[14px] font-semibold" style={{ color: isDark ? '#4ade80' : '#059669' }}>{visibleCount}</div>
+          <div className="text-[9px] uppercase tracking-wider" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>可见</div>
         </div>
-        <div className="bg-white/60 px-2.5 py-2 text-center">
-          <div className="text-[14px] font-semibold text-slate-800">{totalFeatures}</div>
-          <div className="text-[9px] text-slate-400 uppercase tracking-wider">要素</div>
+        <div className="px-2.5 py-2 text-center" style={{ backgroundColor: isDark ? 'rgba(30,41,59,0.6)' : 'rgba(255,255,255,0.6)' }}>
+          <div className="text-[14px] font-semibold" style={{ color: isDark ? '#e2e8f0' : '#1e293b' }}>{totalFeatures}</div>
+          <div className="text-[9px] uppercase tracking-wider" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>要素</div>
         </div>
       </div>
 
@@ -112,11 +114,11 @@ export function LayersTab() {
       <div className="flex-1 overflow-y-auto">
         {layers.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center px-6">
-            <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center mb-2">
-              <Eye size={16} className="text-slate-300" />
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-2" style={{ backgroundColor: isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)' }}>
+              <Eye size={16} style={{ color: isDark ? '#475569' : '#cbd5e1' }} />
             </div>
-            <p className="text-[11.5px] text-slate-400">暂无图层</p>
-            <p className="text-[10px] text-slate-300 mt-0.5">开始分析后图层将自动添加</p>
+            <p className="text-[11.5px]" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>暂无图层</p>
+            <p className="text-[10px] mt-0.5" style={{ color: isDark ? '#475569' : '#cbd5e1' }}>开始分析后图层将自动添加</p>
           </div>
         ) : (
           <div className="px-2 py-2 space-y-3">
@@ -140,6 +142,16 @@ export function LayersTab() {
                     const isDragging = dragId === layer.id;
                     const isDragOver = overId === layer.id;
 
+                    let borderColor = 'transparent';
+                    let bgColor = 'transparent';
+                    if (isDragging) {
+                      borderColor = isDark ? 'rgba(74,222,128,0.4)' : 'rgba(52,211,153,0.5)';
+                      bgColor = 'transparent';
+                    } else if (isDragOver) {
+                      borderColor = isDark ? 'rgba(74,222,128,0.6)' : 'rgba(16,185,129,0.7)';
+                      bgColor = isDark ? 'rgba(74,222,128,0.15)' : 'rgba(16,185,129,0.12)';
+                    }
+
                     return (
                       <div
                         key={layer.id}
@@ -148,63 +160,75 @@ export function LayersTab() {
                         onDragOver={(e) => handleDragOver(e, layer.id)}
                         onDrop={(e) => handleDrop(e, layer.id)}
                         onDragEnd={handleDragEnd}
-                        className={`rounded-lg border px-2 py-1.5 transition-all ${
-                          isDragging
-                            ? 'opacity-40 border-emerald-300'
-                            : isDragOver
-                              ? 'border-emerald-400 bg-emerald-50/40'
-                              : 'border-transparent hover:bg-slate-50/80'
-                        } ${!layer.visible ? 'opacity-60' : ''}`}
+                        style={{
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderStyle: 'solid',
+                          borderColor,
+                          backgroundColor: bgColor,
+                          padding: '6px 8px',
+                          transition: 'all 0.15s ease',
+                          opacity: !layer.visible ? 0.6 : isDragging ? 0.4 : 1,
+                          cursor: isDragging ? 'grabbing' : 'default'
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isDragging && !isDragOver) {
+                            e.currentTarget.style.backgroundColor = isDark ? 'rgba(148,163,184,0.1)' : 'rgba(248,250,252,0.8)';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!isDragging && !isDragOver) {
+                            e.currentTarget.style.backgroundColor = bgColor;
+                          }
+                        }}
                       >
                         {/* Row 1: drag handle + name + actions */}
-                        <div className="flex items-center gap-1.5">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           {/* Drag handle */}
-                          <div className="cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 shrink-0">
+                          <div style={{ cursor: 'grab', color: isDark ? '#475569' : '#cbd5e1', flexShrink: 0 }}
+                            onMouseDown={(e) => (e.currentTarget.style.cursor = 'grabbing')}
+                            onMouseUp={(e) => (e.currentTarget.style.cursor = 'grab')}
+                          >
                             <GripVertical size={12} />
                           </div>
 
                           {/* Color dot */}
                           {isRaster ? (
-                            <div
-                              className="w-2 h-2 rounded-[2px] shrink-0"
-                              style={{ backgroundColor: color }}
-                            />
+                            <div style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: color, flexShrink: 0 }} />
                           ) : isHeatmap ? (
-                            <div
-                              className="w-2 h-2 rounded-full shrink-0"
-                              style={{ background: `radial-gradient(circle, ${color} 0%, transparent 70%)` }}
-                            />
+                            <div style={{ width: 8, height: 8, borderRadius: '50%', background: `radial-gradient(circle, ${color} 0%, transparent 70%)`, flexShrink: 0 }} />
                           ) : (
-                            <div
-                              className="w-[7px] h-[7px] rounded-full shrink-0"
-                              style={{ backgroundColor: color }}
-                            />
+                            <div style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: color, flexShrink: 0 }} />
                           )}
 
                           {/* Layer name */}
-                          <span className="flex-1 text-[11px] text-slate-700 truncate min-w-0">
+                          <span style={{ flex: 1, fontSize: 11, color: isDark ? '#e2e8f0' : '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
                             {layer.name}
                           </span>
 
                           {/* Feature count */}
                           {featureCount > 0 && (
-                            <span className="shrink-0 text-[9px] text-slate-300">
+                            <span style={{ flexShrink: 0, fontSize: 9, color: isDark ? '#475569' : '#cbd5e1' }}>
                               {featureCount}
                             </span>
                           )}
 
                           {/* Action buttons — always visible */}
-                          <div className="flex items-center gap-0.5 shrink-0">
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
                             <button
                               onClick={() => toggleLayer(layer.id)}
-                              className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+                              style={{ padding: 4, borderRadius: 4, border: 'none', backgroundColor: 'transparent', cursor: 'pointer', color: isDark ? '#64748b' : '#94a3b8' }}
+                              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)'; e.currentTarget.style.color = isDark ? '#e2e8f0' : '#475569'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = isDark ? '#64748b' : '#94a3b8'; }}
                               title={layer.visible ? '隐藏图层' : '显示图层'}
                             >
-                              {layer.visible ? <Eye size={11} /> : <EyeOff size={11} className="text-slate-300" />}
+                              {layer.visible ? <Eye size={11} /> : <EyeOff size={11} />}
                             </button>
                             <button
                               onClick={() => removeLayer(layer.id)}
-                              className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors"
+                              style={{ padding: 4, borderRadius: 4, border: 'none', backgroundColor: 'transparent', cursor: 'pointer', color: isDark ? '#64748b' : '#94a3b8' }}
+                              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(248,113,113,0.15)' : 'rgba(254,226,226,0.6)'; e.currentTarget.style.color = isDark ? '#fca5a5' : '#ef4444'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = isDark ? '#64748b' : '#94a3b8'; }}
                               title="删除图层"
                             >
                               <Trash2 size={11} />
@@ -213,7 +237,7 @@ export function LayersTab() {
                         </div>
 
                         {/* Row 2: Opacity slider */}
-                        <div className="flex items-center gap-2 mt-1 pl-5">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, paddingLeft: 20 }}>
                           <input
                             type="range"
                             min={0}
@@ -222,12 +246,14 @@ export function LayersTab() {
                             onChange={(e) =>
                               updateLayer(layer.id, { opacity: parseInt(e.target.value, 10) / 100 })
                             }
-                            className="flex-1 h-1 appearance-none bg-slate-200 rounded-full cursor-pointer
-                              [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:h-2.5
-                              [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-emerald-500
-                              [&::-webkit-slider-thumb]:shadow-sm [&::-webkit-slider-thumb]:cursor-pointer"
+                            style={{
+                              flex: 1, height: 4, appearance: 'none' as any,
+                              backgroundColor: isDark ? 'rgba(148,163,184,0.3)' : 'rgba(226,232,240,0.8)',
+                              borderRadius: 999, cursor: 'pointer',
+                              WebkitAppearance: 'none'
+                            }}
                           />
-                          <span className="text-[9px] text-slate-400 w-7 text-right tabular-nums">
+                          <span style={{ fontSize: 9, color: isDark ? '#64748b' : '#94a3b8', width: 28, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                             {Math.round((layer.opacity ?? 1) * 100)}%
                           </span>
                         </div>
