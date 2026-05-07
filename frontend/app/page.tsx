@@ -440,6 +440,20 @@ export default function Home() {
             const chunk = typeof data === 'object' ? ((data as any).content || (data as any).text || (data as any).message || '') : String(data);
             assistantContent += chunk;
             setMessages(prev => prev.map(m => m.id === thinkingMsg.id ? { ...m, content: assistantContent, isThinking: false } : m));
+          } else if (eventType === 'explorer_progress') {
+            const expData = data as any;
+            const taskId = expData.task_id as string;
+            const stage = expData.stage as string;
+            const status = expData.status as string;
+            const context = expData.context as Record<string, unknown> || {};
+            useHudStore.getState().updateExplorerTask(taskId, {
+              stage,
+              status: status === 'completed' ? 'completed' :
+                      status === 'failed' ? 'failed' :
+                      status === 'decision_point' ? 'decision_required' :
+                      `${stage}ing` as any,
+              progress: (context?.progress as number) || 0,
+            });
           } else if (eventType === 'done' || eventType === 'end') {
             break;
           }

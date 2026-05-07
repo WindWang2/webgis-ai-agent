@@ -332,6 +332,23 @@ export const useHudStore = create<HudState>()(
       /* ─── Demo Mode ─── */
       demoMode: false,
       setDemoMode: (enabled) => set({ demoMode: enabled }),
+
+      /* ─── Explorer Tasks ─── */
+      explorerTasks: [],
+      addExplorerTask: (task) =>
+        set((state) => ({
+          explorerTasks: [...state.explorerTasks, task],
+        })),
+      updateExplorerTask: (taskId, updates) =>
+        set((state) => ({
+          explorerTasks: state.explorerTasks.map((t) =>
+            t.taskId === taskId ? { ...t, ...updates, updatedAt: Date.now() } : t
+          ),
+        })),
+      removeExplorerTask: (taskId) =>
+        set((state) => ({
+          explorerTasks: state.explorerTasks.filter((t) => t.taskId !== taskId),
+        })),
     }),
     {
       name: 'geoagent-settings',
