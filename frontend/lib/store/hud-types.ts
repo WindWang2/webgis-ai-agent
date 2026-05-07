@@ -1,5 +1,6 @@
 import type { Layer } from '@/lib/types/layer';
 import type { AnalysisResult, GeoJSONFeatureCollection } from '@/lib/types';
+import type { ExplorerTask } from '@/lib/types/explorer';
 
 export interface TaskStep {
   id: string;
@@ -275,4 +276,10 @@ export interface HudState {
   setMapStyles: (styles: MapStyleEntry[]) => void;
   llmConfigFull: LlmConfig;
   setLlmConfigFull: (config: Partial<LlmConfig>) => void;
+
+  /* --- Explorer Tasks --- */
+  explorerTasks: ExplorerTask[];
+  addExplorerTask: (task: ExplorerTask) => void;
+  updateExplorerTask: (taskId: string, updates: Partial<ExplorerTask>) => void;
+  removeExplorerTask: (taskId: string) => void;
 }
