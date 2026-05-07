@@ -18,7 +18,7 @@ from collections import defaultdict
 from app.core.config import settings
 from app.core.database import init_db, Engine
 from app.core.exception import global_exception_handler
-from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config
+from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +109,7 @@ app.include_router(upload.router, prefix="/api/v1", tags=["数据上传"])
 app.include_router(knowledge.router, prefix="/api/v1", tags=["知识库管理"])
 app.include_router(ws.router, prefix="/api/v1", tags=["WebSocket"])
 app.include_router(config.router, prefix="/api/v1", tags=["系统配置"])
+app.include_router(explorer.router, prefix="/api/v1", tags=["探索引擎"])
 
 # 静态文件服务 - 用于访问导出的地图和分析后的 GeoTIFF
 if not os.path.exists(settings.DATA_DIR):
