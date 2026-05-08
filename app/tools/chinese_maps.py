@@ -119,6 +119,60 @@ async def _tianditu_get(endpoint: str, params: dict) -> dict:
         raise
 
 
+async def geocode_cn(address: str, city: str = "", provider: str = "amap") -> dict:
+    if provider not in _VALID_PROVIDERS:
+        return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
+
+    _dispatch = {
+        "amap": _geocode_amap, "baidu": _geocode_baidu, "tianditu": _geocode_tianditu,
+    }
+    for p in _fallback_order(provider):
+        if not _has_provider(p):
+            continue
+        try:
+            return await _dispatch[p](address, city)
+        except Exception as e:
+            logger.warning(f"geocode_cn {p} failed: {e}")
+    return {"error": "未配置任何地图 API Key"}
+
+
+async def batch_geocode_cn(
+    addresses: list[str],
+    provider: str = "amap",
+    max_concurrency: int = 3,
+) -> dict:
+    if provider not in _VALID_PROVIDERS:
+        return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
+    if not addresses or len(addresses) > 100:
+        return {"error": "地址列表长度必须在 1~100 之间"}
+    if not _has_provider(provider):
+        return {"error": f"未配置 {provider} API Key"}
+
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def _one(idx: int, addr: str) -> dict:
+        async with semaphore:
+            if not await ht.record_attempt(provider):
+                return {"index": idx, "status": "skipped", "address": addr,
+                        "error": f"{provider} 暂时不可用（频率限制或服务故障）"}
+            try:
+                result = await geocode_cn(addr, provider=provider)
+                await ht.record_success(provider)
+                if "error" in result:
+                    return {"index": idx, "status": "error", "address": addr, "error": str(result["error"])}
+                return {"index": idx, "status": "ok", "address": addr, **result}
+            except Exception as e:
+                await ht.record_error(provider, e)
+                return {"index": idx, "status": "error", "address": addr, "error": str(e)}
+
+    results = await asyncio.gather(*[_one(i, a) for i, a in enumerate(addresses)])
+
+    ok = [r for r in results if r["status"] == "ok"]
+    errs = [r for r in results if r["status"] != "ok"]
+    return {"total": len(addresses), "success_count": len(ok), "error_count": len(errs),
+            "results": ok, "errors": errs, "provider": provider}
+
+
 def register_chinese_map_tools(registry: ToolRegistry):
 
     @tool(registry, name="search_poi",
@@ -148,28 +202,13 @@ def register_chinese_map_tools(registry: ToolRegistry):
 
         return {"error": f"所有服务商均失败: {'; '.join(errors)}" if errors else "未配置任何地图 API Key"}
 
-    @tool(registry, name="geocode_cn",
-           description="中文地址转坐标，比 Nominatim 中文地址准确率更高，可选高德/百度/天地图",
-           param_descriptions={
-               "address": "中文地址，如'北京市海淀区中关村'",
-               "city": "限定城市，如'北京'",
-               "provider": "服务商: 'amap'(默认), 'baidu', 'tianditu'",
-           })
-    async def geocode_cn(address: str, city: str = "", provider: str = "amap") -> dict:
-        if provider not in _VALID_PROVIDERS:
-            return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
-
-        _dispatch = {
-            "amap": _geocode_amap, "baidu": _geocode_baidu, "tianditu": _geocode_tianditu,
-        }
-        for p in _fallback_order(provider):
-            if not _has_provider(p):
-                continue
-            try:
-                return await _dispatch[p](address, city)
-            except Exception as e:
-                logger.warning(f"geocode_cn {p} failed: {e}")
-        return {"error": "未配置任何地图 API Key"}
+    tool(registry, name="geocode_cn",
+         description="中文地址转坐标，比 Nominatim 中文地址准确率更高，可选高德/百度/天地图",
+         param_descriptions={
+             "address": "中文地址，如'北京市海淀区中关村'",
+             "city": "限定城市，如'北京'",
+             "provider": "服务商: 'amap'(默认), 'baidu', 'tianditu'",
+         })(geocode_cn)
 
     @tool(registry, name="reverse_geocode_cn",
            description="坐标转中文地址，返回详细地址和附近 POI，可选高德/百度/天地图",
@@ -247,48 +286,13 @@ def register_chinese_map_tools(registry: ToolRegistry):
                 logger.warning(f"get_district {p} failed: {e}")
         return {"error": "未配置任何地图 API Key"}
 
-    @tool(registry, name="batch_geocode_cn",
-           description="批量中文地址转坐标，支持高德/百度/天地图。一次处理多条地址，带并发控制。返回每个地址的 WGS84 坐标、成功/失败状态和标准化地址。",
-           param_descriptions={
-               "addresses": "地址列表，最多100条，例如 ['北京市朝阳区','上海市浦东新区']",
-               "provider": "服务商: 'amap'(默认，高德国内准确率最高)，'baidu'，'tianditu'",
-               "max_concurrency": "最大并发调用数（默认3，防止触发限流）",
-           })
-    async def batch_geocode_cn(
-        addresses: list[str],
-        provider: str = "amap",
-        max_concurrency: int = 3,
-    ) -> dict:
-        if provider not in _VALID_PROVIDERS:
-            return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
-        if not addresses or len(addresses) > 100:
-            return {"error": "地址列表长度必须在 1~100 之间"}
-        if not _has_provider(provider):
-            return {"error": f"未配置 {provider} API Key"}
-
-        semaphore = asyncio.Semaphore(max_concurrency)
-
-        async def _one(idx: int, addr: str) -> dict:
-            async with semaphore:
-                if not await ht.record_attempt(provider):
-                    return {"index": idx, "status": "skipped", "address": addr,
-                            "error": f"{provider} 暂时不可用（频率限制或服务故障）"}
-                try:
-                    result = await geocode_cn(addr, provider=provider)
-                    await ht.record_success(provider)
-                    if "error" in result:
-                        return {"index": idx, "status": "error", "address": addr, "error": str(result["error"])}
-                    return {"index": idx, "status": "ok", "address": addr, **result}
-                except Exception as e:
-                    await ht.record_error(provider, e)
-                    return {"index": idx, "status": "error", "address": addr, "error": str(e)}
-
-        results = await asyncio.gather(*[_one(i, a) for i, a in enumerate(addresses)])
-
-        ok = [r for r in results if r["status"] == "ok"]
-        errs = [r for r in results if r["status"] != "ok"]
-        return {"total": len(addresses), "success_count": len(ok), "error_count": len(errs),
-                "results": ok, "errors": errs, "provider": provider}
+    tool(registry, name="batch_geocode_cn",
+         description="批量中文地址转坐标，支持高德/百度/天地图。一次处理多条地址，带并发控制。返回每个地址的 WGS84 坐标、成功/失败状态和标准化地址。",
+         param_descriptions={
+             "addresses": "地址列表，最多100条，例如 ['北京市朝阳区','上海市浦东新区']",
+             "provider": "服务商: 'amap'(默认，高德国内准确率最高)，'baidu'，'tianditu'",
+             "max_concurrency": "最大并发调用数（默认3，防止触发限流）",
+         })(batch_geocode_cn)
 
     @tool(registry, name="distance_matrix_cn",
            description="OD距离矩阵：计算多个起点到多个终点之间的驾驶/步行/骑行距离和时间，结果为二维矩阵。适合物流选址、通勤可达性分析。",
