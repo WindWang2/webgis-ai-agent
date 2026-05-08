@@ -104,7 +104,6 @@ graph TD
 ### 3.4 MCP 外接超脑与破网抓取 (Sub-Agent)
 系统通过 Model Context Protocol 实现了标准化插件生态。
 1. **破网爬行者 (Crawler)**：在 Tool 层嵌入 `duckduckgo-search` 组件。当 AI 在本地数据库寻址失败时，隐秘释放探测器向外网请求当前地理百科或新闻流。
-2. **ZHIPU 远端阅读器**：通过对接 Z_AI 的 MCP Server (`web-search-prime`, `web-reader`)，将网络非结构化报文送发远端清洗并提纯中心坐标返回给主脑。
 
 ### 3.4 Operational Stability & State Resilience (操作稳定性与状态自愈)
 为了确保 Agent 在复杂的网络和浏览器环境下依然稳健，引入了以下硬化指标：
