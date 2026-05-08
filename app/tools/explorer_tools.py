@@ -4,6 +4,8 @@ from pydantic import BaseModel, Field
 from app.tools.registry import ToolRegistry, tool
 from app.services.explorer.orchestrator import ExplorerOrchestrator
 from app.services.explorer.models import SearchContext
+from app.tools.spatial_reasoning import register_spatial_reasoning
+from app.tools.what_if_simulate import register_what_if_simulate
 
 logger = logging.getLogger(__name__)
 
@@ -61,3 +63,6 @@ def register_explorer_tools(registry: ToolRegistry):
                 "status": "failed",
                 "error": str(e),
             }
+
+    register_spatial_reasoning(registry)
+    register_what_if_simulate(registry)
