@@ -176,7 +176,7 @@ def explorer_geocode_task(self, prev_result: dict):
     total_rows = sum(r["row_count"] for r in parsed_results)
 
     if total_rows == 0:
-        return {"task_id": task_id, "geocoded_ref_id": None, "success_rate": 0.0}
+        return {"task_id": task_id, "geocoded_ref_id": None, "total_rows": 0, "success_rate": 0.0}
 
     providers = ["amap", "baidu", "tianditu"]
     all_geocoded = []
