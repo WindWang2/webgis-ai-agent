@@ -237,19 +237,28 @@ def _build_metrics(impact: dict) -> dict[str, MetricDelta]:
     return metrics
 
 
-def _build_impact_summary(metrics: dict[str, MetricDelta], rule_name: str) -> dict:
+def _build_impact_summary(
+    metrics: dict[str, MetricDelta],
+    rule_name: str,
+    scenario_type: str,
+    rule: dict,
+) -> dict:
     """Build impact summary from metrics."""
-    deltas = [m.delta_pct for m in metrics.values()]
+    direct_r = rule.get("direct_radius_m")
+    indirect_r = rule.get("indirect_radius_m")
+    direct_area = round(math.pi * (direct_r / 1000) ** 2, 2) if direct_r else 0.0
+    indirect_area = (
+        round(math.pi * ((indirect_r / 1000) ** 2 - (direct_r / 1000) ** 2), 2)
+        if indirect_r and direct_r
+        else 0.0
+    )
+
     return {
+        "scenario_type": scenario_type,
         "scenario_name": rule_name,
+        "direct_area_km2": direct_area,
+        "indirect_area_km2": indirect_area,
         "affected_metrics": list(metrics.keys()),
-        "total_metrics": len(metrics),
-        "max_positive_impact": round(
-            max((d for d in deltas if d > 0), default=0.0), 2
-        ),
-        "max_negative_impact": round(
-            min((d for d in deltas if d < 0), default=0.0), 2
-        ),
     }
 
 
@@ -272,7 +281,13 @@ def what_if_simulate(
                 scenario=scenario,
                 target_area=target_area,
                 simulation_ref_id=uuid.uuid4().hex[:12],
-                impact_summary={"error": f"无法识别场景: {scenario}"},
+                impact_summary={
+                    "scenario_type": "unknown",
+                    "scenario_name": "未知场景",
+                    "direct_area_km2": 0.0,
+                    "indirect_area_km2": 0.0,
+                    "affected_metrics": [],
+                },
                 metrics={},
                 uncertainty="无法计算影响：未识别的场景类型",
                 rules_applied=[],
@@ -286,7 +301,13 @@ def what_if_simulate(
                 scenario=scenario,
                 target_area=target_area,
                 simulation_ref_id=uuid.uuid4().hex[:12],
-                impact_summary={"error": f"未找到规则: {scenario_type}"},
+                impact_summary={
+                    "scenario_type": scenario_type,
+                    "scenario_name": "规则缺失",
+                    "direct_area_km2": 0.0,
+                    "indirect_area_km2": 0.0,
+                    "affected_metrics": [],
+                },
                 metrics={},
                 uncertainty="无法计算影响：规则不存在",
                 rules_applied=[],
@@ -300,7 +321,7 @@ def what_if_simulate(
         target_center = [116.4, 39.9]
         geojson = _generate_simulation_geojson(scenario_type, target_center, impact)
 
-        summary = _build_impact_summary(metrics, rule["name"])
+        summary = _build_impact_summary(metrics, rule["name"], scenario_type, rule)
 
         result = WhatIfSimulationResult(
             type="what_if_simulation",
@@ -322,7 +343,13 @@ def what_if_simulate(
             scenario=scenario,
             target_area=target_area,
             simulation_ref_id=uuid.uuid4().hex[:12],
-            impact_summary={"error": f"模拟执行错误: {str(e)}"},
+            impact_summary={
+                "scenario_type": "error",
+                "scenario_name": "执行错误",
+                "direct_area_km2": 0.0,
+                "indirect_area_km2": 0.0,
+                "affected_metrics": [],
+            },
             metrics={},
             uncertainty=f"错误: {str(e)}",
             rules_applied=[],
