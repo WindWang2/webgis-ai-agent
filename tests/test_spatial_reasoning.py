@@ -10,6 +10,7 @@ from app.tools.spatial_reasoning import (
     _build_system_prompt,
     _build_user_prompt,
     register_spatial_reasoning,
+    spatial_reasoning,
 )
 from app.tools.registry import ToolRegistry
 
@@ -35,7 +36,7 @@ def test_spatial_reasoning_args_validation():
     valid = SpatialReasoningArgs(query="test", reasoning_depth="deep")
     assert valid.reasoning_depth == "deep"
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         SpatialReasoningArgs(query="test", reasoning_depth="invalid")
 
 
