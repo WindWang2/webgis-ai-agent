@@ -163,7 +163,7 @@ def explorer_parse_task(self, prev_result: dict):
     }
 
 
-@celery_app.task(bind=True, soft_time_limit=290, time_limit=300)
+@celery_app.task(bind=True, max_retries=2, soft_time_limit=290, time_limit=300)
 def explorer_geocode_task(self, prev_result: dict):
     """地理编码阶段"""
     from app.tools.chinese_maps import batch_geocode_cn
@@ -186,6 +186,7 @@ def explorer_geocode_task(self, prev_result: dict):
     for parsed in parsed_results:
         data = _load_ref(parsed["ref_id"])
         if not data:
+            processed += parsed["row_count"]
             continue
 
         rows = data["rows"]
@@ -266,11 +267,14 @@ def explorer_geocode_task(self, prev_result: dict):
                         if lon is None:
                             lon = r.get("lon")
 
-                        row["_lat"] = lat
-                        row["_lon"] = lon
-                        row["_geocode_status"] = "ok"
-                        row["_geocode_provider"] = provider
-                        row["_geocode_error"] = None
+                        if lat is not None and lon is not None:
+                            row["_lat"] = lat
+                            row["_lon"] = lon
+                            row["_geocode_status"] = "ok"
+                            row["_geocode_provider"] = provider
+                            row["_geocode_error"] = None
+                        else:
+                            failed_this_attempt.append(p_idx)
                     else:
                         failed_this_attempt.append(p_idx)
 
@@ -288,7 +292,9 @@ def explorer_geocode_task(self, prev_result: dict):
                         row["_lon"] = None
                         row["_geocode_status"] = "failed"
                         row["_geocode_provider"] = provider
-                        if p_idx in error_by_idx:
+                        if provider_idx == len(providers) - 1:
+                            row["_geocode_error"] = "all_providers_failed"
+                        elif p_idx in error_by_idx:
                             row["_geocode_error"] = error_by_idx[p_idx].get("error", "unknown error")
                         else:
                             row["_geocode_error"] = "no response"
@@ -302,7 +308,7 @@ def explorer_geocode_task(self, prev_result: dict):
                 row["_lon"] = None
                 row["_geocode_status"] = "failed"
                 row["_geocode_provider"] = providers[-1] if providers else None
-                row["_geocode_error"] = "all providers failed"
+                row["_geocode_error"] = "all_providers_failed"
 
         processed += len(rows)
         progress = int(processed / total_rows * 100)
