@@ -177,3 +177,149 @@ def test_geocode_task_empty_data():
         assert result["success_rate"] == 0.0
         mock_load.assert_not_called()
         mock_store.assert_not_called()
+
+
+def test_geocode_task_predefined_coordinates():
+    """Rows with existing lat/lon should be marked predefined and skipped from geocoding"""
+    prev_result = {
+        "task_id": "test_task",
+        "parsed_results": [
+            {
+                "ref_id": "ref_1",
+                "row_count": 3,
+                "mapping": {"address": "addr", "lat": "latitude", "lon": "longitude"},
+            }
+        ],
+    }
+
+    rows = [
+        {"name": "A", "addr": "北京", "latitude": 39.9, "longitude": 116.4},
+        {"name": "B", "addr": "上海", "latitude": None, "longitude": None},
+        {"name": "C", "addr": "广州"},
+    ]
+
+    with patch("app.tasks.explorer.task_chain._load_ref") as mock_load, \
+         patch("app.tasks.explorer.task_chain._store_ref") as mock_store, \
+         patch("app.tools.chinese_maps.batch_geocode_cn", new_callable=AsyncMock) as mock_batch:
+
+        mock_load.return_value = {
+            "rows": rows,
+            "mapping": {"address": "addr", "lat": "latitude", "lon": "longitude"},
+        }
+        mock_store.return_value = "geocoded_ref_789"
+
+        mock_batch.return_value = {
+            "total": 2,
+            "success_count": 2,
+            "error_count": 0,
+            "results": [
+                {"index": 0, "status": "ok", "address": "上海", "results": [{"location": [121.5, 31.2]}]},
+                {"index": 1, "status": "ok", "address": "广州", "results": [{"location": [113.3, 23.1]}]},
+            ],
+            "errors": [],
+            "provider": "amap",
+        }
+
+        result = explorer_geocode_task.run(prev_result)
+
+        assert result["task_id"] == "test_task"
+        assert result["total_rows"] == 3
+        assert result["success_rate"] == 1.0
+
+        stored_data = mock_store.call_args[0][0]
+        assert stored_data["summary"]["total"] == 3
+        assert stored_data["summary"]["success"] == 2
+        assert stored_data["summary"]["failed"] == 0
+        assert stored_data["summary"]["predefined"] == 1
+
+        # Verify row statuses
+        row_a = stored_data["rows"][0]
+        assert row_a["_geocode_status"] == "predefined"
+        assert row_a["_lat"] == 39.9
+        assert row_a["_lon"] == 116.4
+        assert row_a["_geocode_provider"] is None
+
+        row_b = stored_data["rows"][1]
+        assert row_b["_geocode_status"] == "ok"
+        assert row_b["_lat"] == 31.2
+        assert row_b["_lon"] == 121.5
+        assert row_b["_geocode_provider"] == "amap"
+
+        row_c = stored_data["rows"][2]
+        assert row_c["_geocode_status"] == "ok"
+        assert row_c["_lat"] == 23.1
+        assert row_c["_lon"] == 113.3
+        assert row_c["_geocode_provider"] == "amap"
+
+        # batch_geocode_cn should only be called once with 2 addresses (skips predefined)
+        mock_batch.assert_called_once()
+        call_args = mock_batch.call_args[0]
+        assert len(call_args[0]) == 2
+        assert call_args[0][0] == "上海"
+        assert call_args[0][1] == "广州"
+
+
+def test_geocode_task_all_providers_failed():
+    """When all providers return errors, all rows should be marked failed with all_providers_failed"""
+    prev_result = {
+        "task_id": "test_task",
+        "parsed_results": [
+            {
+                "ref_id": "ref_1",
+                "row_count": 2,
+                "mapping": {"address": "addr"},
+            }
+        ],
+    }
+
+    rows = [
+        {"name": "A", "addr": "北京"},
+        {"name": "B", "addr": "上海"},
+    ]
+
+    async def mock_batch(addresses, provider="amap", max_concurrency=3):
+        return {
+            "total": len(addresses),
+            "success_count": 0,
+            "error_count": len(addresses),
+            "results": [],
+            "errors": [
+                {"index": i, "status": "error", "address": a, "error": "service unavailable"}
+                for i, a in enumerate(addresses)
+            ],
+            "provider": provider,
+        }
+
+    mock_batch_obj = AsyncMock(side_effect=mock_batch)
+
+    with patch("app.tasks.explorer.task_chain._load_ref") as mock_load, \
+         patch("app.tasks.explorer.task_chain._store_ref") as mock_store, \
+         patch("app.tools.chinese_maps.batch_geocode_cn", mock_batch_obj):
+
+        mock_load.return_value = {
+            "rows": rows,
+            "mapping": {"address": "addr"},
+        }
+        mock_store.return_value = "geocoded_ref_abc"
+
+        result = explorer_geocode_task.run(prev_result)
+
+        assert result["task_id"] == "test_task"
+        assert result["total_rows"] == 2
+        assert result["success_rate"] == 0.0
+
+        stored_data = mock_store.call_args[0][0]
+        assert stored_data["summary"]["total"] == 2
+        assert stored_data["summary"]["success"] == 0
+        assert stored_data["summary"]["failed"] == 2
+        assert stored_data["summary"]["predefined"] == 0
+
+        for row in stored_data["rows"]:
+            assert row["_geocode_status"] == "failed"
+            assert row["_lat"] is None
+            assert row["_lon"] is None
+            assert row["_geocode_error"] == "all_providers_failed"
+
+        # Should have tried all 3 providers for each batch
+        # Since both rows are in one batch, 3 provider calls total
+        assert mock_batch_obj.call_count == 3
