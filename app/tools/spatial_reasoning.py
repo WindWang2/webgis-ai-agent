@@ -170,6 +170,34 @@ async def _call_llm(system_prompt: str, user_prompt: str) -> dict:
     }
 
 
+async def spatial_reasoning(
+    query: str,
+    context: dict = None,
+    reasoning_depth: str = "standard",
+) -> dict:
+    """空间规则推演核心逻辑。"""
+    if context is None:
+        context = {}
+
+    system_prompt = _build_system_prompt()
+    user_prompt = _build_user_prompt(query, context, reasoning_depth)
+
+    try:
+        llm_result = await _call_llm(system_prompt, user_prompt)
+        result = SpatialReasoningResult.model_validate(llm_result)
+        return result.model_dump()
+    except Exception as e:
+        logger.error(f"[SpatialReasoning] Failed: {e}")
+        return {
+            "type": "spatial_reasoning",
+            "conclusion": "推演过程中发生错误",
+            "reasoning_chain": [],
+            "confidence": 0.0,
+            "uncertainty": f"错误: {str(e)}",
+            "recommendations": ["请稍后重试，或简化问题后再次询问"],
+        }
+
+
 def register_spatial_reasoning(registry: ToolRegistry):
     """注册空间推理工具到 ToolRegistry。"""
 
@@ -179,16 +207,9 @@ def register_spatial_reasoning(registry: ToolRegistry):
         description="空间规则推演：基于地理/城市规划规则库，对空间现象进行可解释的逻辑推理。适用于趋势分析、选址对比、空间关联分析等场景。",
         args_model=SpatialReasoningArgs,
     )
-    async def spatial_reasoning(
+    async def _spatial_reasoning_wrapper(
         query: str,
         context: dict = None,
         reasoning_depth: str = "standard",
     ) -> dict:
-        if context is None:
-            context = {}
-
-        system_prompt = _build_system_prompt()
-        user_prompt = _build_user_prompt(query, context, reasoning_depth)
-
-        result = await _call_llm(system_prompt, user_prompt)
-        return result
+        return await spatial_reasoning(query, context, reasoning_depth)
