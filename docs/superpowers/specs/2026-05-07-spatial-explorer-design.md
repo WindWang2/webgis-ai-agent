@@ -12,7 +12,7 @@
 当前 WebGIS AI Agent 已具备：
 - 标准地图 API 层（高德/百度/OSM/天地图）的 POI 查询、地理编码、路径规划
 - 基础网络爬虫（DuckDuckGo + LLM 提取）
-- MCP 增强层（智谱 web_search_prime / web_reader / zread）
+- MCP 增强层（预留）
 - Celery + Redis 异步任务执行集群
 - V2 UI 玻璃拟态界面与 SSE 实时流
 
