@@ -54,13 +54,13 @@ KEYWORD_MAP = {
 }
 
 
-def _detect_scenario_type(scenario: str) -> str:
+def _detect_scenario_type(scenario: str) -> str | None:
     """Detect scenario type from Chinese keywords."""
     for scenario_type, keywords in KEYWORD_MAP.items():
         for kw in keywords:
             if kw in scenario:
                 return scenario_type
-    return "subway"  # default fallback
+    return None
 
 
 # --- Impact calculation ---
@@ -264,43 +264,70 @@ def what_if_simulate(
     if parameters is None:
         parameters = {}
 
-    scenario_type = _detect_scenario_type(scenario)
-    rule = get_rule(scenario_type)
-    if not rule:
-        return {
-            "type": "what_if_simulation",
-            "scenario": scenario,
-            "target_area": target_area,
-            "simulation_ref_id": uuid.uuid4().hex[:12],
-            "impact_summary": {"error": f"未找到规则: {scenario_type}"},
-            "metrics": {},
-            "uncertainty": "无法计算影响：规则不存在",
-            "rules_applied": [],
-            "simulation_geojson": {"type": "FeatureCollection", "features": []},
-        }
+    try:
+        scenario_type = _detect_scenario_type(scenario)
+        if scenario_type is None:
+            return WhatIfSimulationResult(
+                type="what_if_simulation",
+                scenario=scenario,
+                target_area=target_area,
+                simulation_ref_id=uuid.uuid4().hex[:12],
+                impact_summary={"error": f"无法识别场景: {scenario}"},
+                metrics={},
+                uncertainty="无法计算影响：未识别的场景类型",
+                rules_applied=[],
+                simulation_geojson={"type": "FeatureCollection", "features": []},
+            ).model_dump()
 
-    impact = _calculate_impact(scenario_type, parameters)
-    metrics = _build_metrics(impact)
+        rule = get_rule(scenario_type)
+        if not rule:
+            return WhatIfSimulationResult(
+                type="what_if_simulation",
+                scenario=scenario,
+                target_area=target_area,
+                simulation_ref_id=uuid.uuid4().hex[:12],
+                impact_summary={"error": f"未找到规则: {scenario_type}"},
+                metrics={},
+                uncertainty="无法计算影响：规则不存在",
+                rules_applied=[],
+                simulation_geojson={"type": "FeatureCollection", "features": []},
+            ).model_dump()
 
-    # Placeholder target center (Beijing)
-    target_center = [116.4, 39.9]
-    geojson = _generate_simulation_geojson(scenario_type, target_center, impact)
+        impact = _calculate_impact(scenario_type, parameters)
+        metrics = _build_metrics(impact)
 
-    summary = _build_impact_summary(metrics, rule["name"])
+        # Placeholder target center (Beijing)
+        target_center = [116.4, 39.9]
+        geojson = _generate_simulation_geojson(scenario_type, target_center, impact)
 
-    result = WhatIfSimulationResult(
-        type="what_if_simulation",
-        scenario=scenario,
-        target_area=target_area,
-        simulation_ref_id=uuid.uuid4().hex[:12],
-        impact_summary=summary,
-        metrics=metrics,
-        uncertainty="基于规则库的中点估计，实际影响可能因具体地段、市场条件而异",
-        rules_applied=[f"{scenario_type}: {rule['name']}"],
-        simulation_geojson=geojson,
-    )
+        summary = _build_impact_summary(metrics, rule["name"])
 
-    return result.model_dump()
+        result = WhatIfSimulationResult(
+            type="what_if_simulation",
+            scenario=scenario,
+            target_area=target_area,
+            simulation_ref_id=uuid.uuid4().hex[:12],
+            impact_summary=summary,
+            metrics=metrics,
+            uncertainty="基于规则库的中点估计，实际影响可能因具体地段、市场条件而异",
+            rules_applied=[f"{scenario_type}: {rule['name']}"],
+            simulation_geojson=geojson,
+        )
+
+        return result.model_dump()
+    except Exception as e:
+        logger.error(f"[WhatIfSimulate] Failed: {e}")
+        return WhatIfSimulationResult(
+            type="what_if_simulation",
+            scenario=scenario,
+            target_area=target_area,
+            simulation_ref_id=uuid.uuid4().hex[:12],
+            impact_summary={"error": f"模拟执行错误: {str(e)}"},
+            metrics={},
+            uncertainty=f"错误: {str(e)}",
+            rules_applied=[],
+            simulation_geojson={"type": "FeatureCollection", "features": []},
+        ).model_dump()
 
 
 def register_what_if_simulate(registry: ToolRegistry):
