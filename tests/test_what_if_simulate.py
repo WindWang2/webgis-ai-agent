@@ -173,8 +173,8 @@ def test_detect_scenario_type():
     assert _detect_scenario_type("人口增长预测") == "population_growth"
     assert _detect_scenario_type("交通限行政策") == "traffic_restriction"
     assert _detect_scenario_type("公园规划") == "park"
-    # Default fallback
-    assert _detect_scenario_type("未知场景") == "subway"
+    # Unknown scenario returns None
+    assert _detect_scenario_type("未知场景") is None
 
 
 def test_list_scenarios():
