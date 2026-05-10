@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = Field(default="redis://localhost:16379/0", env="REDIS_URL")
     CELERY_BROKER_URL: str = Field(default="redis://localhost:16379/0", env="CELERY_BROKER_URL")
     CELERY_RESULT_BACKEND: str = Field(default="redis://localhost:16379/1", env="CELERY_RESULT_BACKEND")
-    USE_REDIS: bool = False # 默认不开启，除非显式配置且可用
+    USE_REDIS: bool = True
 
     # 代理设置
     HTTP_PROXY: Optional[str] = Field(default=None, env="HTTP_PROXY")
@@ -83,6 +83,11 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _ensure_jwt_secret(self) -> "Settings":
         if not self.JWT_SECRET_KEY:
+            if self.is_production():
+                raise RuntimeError(
+                    "JWT_SECRET_KEY is required in production. "
+                    "Set it via the JWT_SECRET_KEY environment variable."
+                )
             self.JWT_SECRET_KEY = secrets.token_urlsafe(32)
             warnings.warn(
                 "JWT_SECRET_KEY is not set. A random secret has been generated. "

@@ -6,20 +6,9 @@ from typing import Optional
 from datetime import date, datetime
 import aiohttp
 from app.core.config import settings
+from app.tools._utils import asset_href
 
 logger = logging.getLogger(__name__)
-
-
-def _asset_href(assets: dict, key: str) -> str:
-    """兼容 pystac Asset 对象和旧版 dict 两种格式取 href"""
-    asset = assets.get(key)
-    if asset is None:
-        return ""
-    if hasattr(asset, "href"):
-        return asset.href or ""
-    if isinstance(asset, dict):
-        return asset.get("href", "")
-    return ""
 
 
 class RemoteSensingService:
@@ -73,12 +62,12 @@ class RemoteSensingService:
                     "bbox": item.bbox,
                     "cloud_cover": item.properties.get("eo:cloud_cover", "N/A"),
                     "assets": {
-                        "thumbnail": _asset_href(item.assets, "thumbnail"),
-                        "visual": _asset_href(item.assets, "visual"),
-                        "B04": _asset_href(item.assets, "red"),
-                        "B03": _asset_href(item.assets, "green"),
-                        "B02": _asset_href(item.assets, "blue"),
-                        "B08": _asset_href(item.assets, "nir"),
+                        "thumbnail": asset_href(item.assets, "thumbnail"),
+                        "visual": asset_href(item.assets, "visual"),
+                        "B04": asset_href(item.assets, "red"),
+                        "B03": asset_href(item.assets, "green"),
+                        "B02": asset_href(item.assets, "blue"),
+                        "B08": asset_href(item.assets, "nir"),
                     },
                 })
             
@@ -123,8 +112,8 @@ class RemoteSensingService:
                 return {"error": "No data found"}
             
             item = items[0]
-            red_url = _asset_href(item.assets, "red")
-            nir_url = _asset_href(item.assets, "nir")
+            red_url = asset_href(item.assets, "red")
+            nir_url = asset_href(item.assets, "nir")
             
             if not red_url or not nir_url:
                 return {"error": "Missing band assets", "available": list(item.assets.keys())}
@@ -190,7 +179,7 @@ class RemoteSensingService:
                     "id": item.id,
                     "bbox": item.bbox,
                     "assets": {
-                        "dem": _asset_href(item.assets, "data"),
+                        "dem": asset_href(item.assets, "data"),
                     },
                 })
             
@@ -228,7 +217,7 @@ class RemoteSensingService:
             if not items:
                 return {"error": "指定区域无 DEM 数据"}
 
-            dem_url = _asset_href(items[0].assets, "data")
+            dem_url = asset_href(items[0].assets, "data")
             if not dem_url:
                 return {"error": "DEM 数据链接不可用"}
 
@@ -404,7 +393,7 @@ class RemoteSensingService:
 
             def read_band(band_name: str) -> "np.ndarray":
                 stac_key = stac_keys[band_name]
-                url = _asset_href(item.assets, stac_key)
+                url = asset_href(item.assets, stac_key)
                 if not url:
                     return None
                 with rasterio.open(url) as src:

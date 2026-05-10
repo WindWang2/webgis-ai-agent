@@ -1,6 +1,6 @@
 from typing import Any, Dict
 from sqlalchemy import text
-from app.core.database import SessionLocal
+from app.tools._utils import db_session
 from .base import DataSourceAdapter
 
 class PostGISAdapter(DataSourceAdapter):
@@ -19,8 +19,7 @@ class PostGISAdapter(DataSourceAdapter):
         if not table:
             raise ValueError("Table name is required for PostGIS query")
 
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             # Build GeoJSON query
             if bbox and len(bbox) == 4:
                 minx, miny, maxx, maxy = bbox
@@ -45,5 +44,3 @@ class PostGISAdapter(DataSourceAdapter):
             result = db.execute(sql)
             geojson = result.scalar_one_or_none()
             return geojson or {"type": "FeatureCollection", "features": []}
-        finally:
-            db.close()

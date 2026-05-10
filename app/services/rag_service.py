@@ -153,10 +153,10 @@ async def add_document(
         {document_id, chunk_count, status}
     """
     from datetime import datetime, timezone
-    from sqlalchemy.orm import Session
-    from app.core.database import SessionLocal
+    from sqlalchemy import select, func
+    from app.tools._utils import async_db_session
     from app.models.knowledge_base import Document, Chunk
-    
+
     doc_id = str(uuid.uuid4())
 
     # 解析content
@@ -165,79 +165,74 @@ async def add_document(
         sections_chunks = _split_markdown_section(content)
         chunks_list = []
         pos = 0
-        for i, sec in enumerate(section_chunks):
-            chunk_list.append({
+        for i, sec in enumerate(sections_chunks):
+            chunks_list.append({
                 "content": sec.strip(),
                 "start_char": pos,
                 "end_char": pos + len(sec),
                 "chunk_index": i,
             })
             pos += len(sec)
+        chunk_list = chunks_list
     else:
         # 默认分块策略
         chunk_list = split_into_chunks(content)
-    
+
     if not chunk_list:
         return {"error": "Empty content"}
-    
-    # 保存到数据库
-    db: Session = SessionLocal()
-    try:
-        doc = Document(
-            id=doc_id,
-            title=title,
-            content=content[:1000] if content else "",
-            file_type=file_type,
-            chunk_count=len(chunk_list),
-            status="indexing",
-        )
-        db.add(doc)
 
-        for ch in chunk_list:
-            chunk = Chunk(
-                id=str(uuid.uuid4()),
-                document_id=doc_id,
-                content=ch["content"],
-                chunk_index=ch["chunk_index"],
-                start_char=ch.get("start_char"),
-                end_char=ch.get("end_char"),
+    # 保存到数据库
+    try:
+        async with async_db_session() as db:
+            doc = Document(
+                id=doc_id,
+                title=title,
+                content=content[:1000] if content else "",
+                file_type=file_type,
+                chunk_count=len(chunk_list),
+                status="indexing",
             )
-            db.add(chunk)
-        
-        db.commit()
-        
-        # 生成 embeddings 并建立向量索引
-        embed_model = _get_embedding_model()
-        texts = [ch["content"] for ch in chunk_list]
-        vectors = embed_model.encode(texts, normalize_embeddings=True)
-        
-        # L2归一化转为一维数组
-        vectors = np.array(vectors, dtype=np.float32)
-        
-        faiss_idx = _get_faiss_index(vectors.shape[1])
-        faiss_idx.add(vectors)
-        
-        # 元数据保存
-        _save_metadata(doc_id, title, len(chunk_list), texts)
-        _save_index()
-        
-        doc.status = "completed"
-        doc.indexed_at = datetime.now(timezone.utc)
-        db.commit()
-        
+            db.add(doc)
+
+            for ch in chunk_list:
+                chunk = Chunk(
+                    id=str(uuid.uuid4()),
+                    document_id=doc_id,
+                    content=ch["content"],
+                    chunk_index=ch["chunk_index"],
+                    start_char=ch.get("start_char"),
+                    end_char=ch.get("end_char"),
+                )
+                db.add(chunk)
+
+            # 生成 embeddings 并建立向量索引
+            embed_model = _get_embedding_model()
+            texts = [ch["content"] for ch in chunk_list]
+            vectors = embed_model.encode(texts, normalize_embeddings=True)
+
+            # L2归一化转为一维数组
+            vectors = np.array(vectors, dtype=np.float32)
+
+            faiss_idx = _get_faiss_index(vectors.shape[1])
+            faiss_idx.add(vectors)
+
+            # 元数据保存
+            _save_metadata(doc_id, title, len(chunk_list), texts)
+            _save_index()
+
+            doc.status = "completed"
+            doc.indexed_at = datetime.now(timezone.utc)
+
         return {
             "document_id": doc_id,
             "title": title,
             "chunk_count": len(chunk_list),
             "status": "completed"
         }
-        
+
     except Exception as e:
         logger.error(f"[RAG] add_document failed: {e}", exc_info=True)
-        db.rollback()
         return {"error": str(e)}
-    finally:
-        db.close()
 
 
 def _split_markdown_section(text: str) -> list[str]:
@@ -306,25 +301,22 @@ async def delete_document(document_id: str) -> bool:
     Note: FAISS 目前无法真正删除向量，仅标记删除。
     实际可通过重建索引实现完全删除。此处简化处理返回成功。
     """
-    from sqlalchemy.orm import Session
-    from app.core.database import SessionLocal
+    from sqlalchemy import select, delete
+    from app.tools._utils import async_db_session
     from app.models.knowledge_base import Document, Chunk
-    
-    db: Session = SessionLocal()
+
     try:
-        db.query(Chunk).filter(Chunk.document_id == document_id).delete()
-        db.query(Document).filter(Document.id == document_id).delete()
-        db.commit()
-        
-        # 更新元数据标记删除
-        _mark_deleted(document_id)
-        
+        async with async_db_session() as db:
+            await db.execute(delete(Chunk).where(Chunk.document_id == document_id))
+            await db.execute(delete(Document).where(Document.id == document_id))
+
+            # 更新元数据标记删除
+            _mark_deleted(document_id)
+
         return True
     except Exception as e:
         logger.error(f"[RAG] delete_document failed: {e}", exc_info=True)
         return False
-    finally:
-        db.close()
 
 
 async def list_documents(
@@ -332,20 +324,23 @@ async def list_documents(
     offset: int = 0
 ) -> dict[str, Any]:
     """列出知识库文档"""
-    from sqlalchemy.orm import Session
-    from app.core.database import SessionLocal
+    from sqlalchemy import select, func
+    from app.tools._utils import async_db_session
     from app.models.knowledge_base import Document
-    
-    db: Session = SessionLocal()
-    try:
-        total = db.query(Document).count()
-        items = (
-            db.query(Document)
+
+    async with async_db_session() as db:
+        count_stmt = select(func.count()).select_from(Document)
+        total_result = await db.execute(count_stmt)
+        total = total_result.scalar_one()
+
+        stmt = (
+            select(Document)
             .order_by(Document.created_at.desc())
             .offset(offset)
             .limit(limit)
-            .all()
         )
+        result = await db.execute(stmt)
+        items = result.scalars().all()
         return {
             "total": total,
             "items": [
@@ -360,8 +355,6 @@ async def list_documents(
                 for d in items
             ]
         }
-    finally:
-        db.close()
 
 
 # ----------------------------------------------------------------------

@@ -33,7 +33,7 @@ def _safe_parse_geojson(geojson: Any) -> dict | None:
                             return result
                     except json.JSONDecodeError:
                         continue
-        except Exception:
+        except (json.JSONDecodeError, ValueError, TypeError):
             pass
         return None
 
@@ -224,7 +224,7 @@ def _generate_heatmap(features: list, cell_size: int = 500, radius: int = 1000,
                 },
                 "status_desc": f"Raster heatmap generated (palette: {palette}) covering {len(points)} points."
             }
-    except Exception as e:
+    except (ValueError, TypeError, OSError, RuntimeError) as e:
         logger.error(f"Heatmap generation failed: {e}", exc_info=True)
         return {"error": str(e)}
     finally:
@@ -249,7 +249,7 @@ def register_spatial_tools(registry: ToolRegistry):
                 from app.services.spatial_tasks import run_buffer_analysis
                 task = run_buffer_analysis.apply_async(args=[features, distance, unit])
                 result = task.get(timeout=120)
-            except Exception as exc:
+            except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
                 if not isinstance(exc, ImportError):
                     logger.warning(f"Celery unavailable for buffer_analysis: {exc}")
                 r = SpatialAnalyzer.buffer(features, distance=distance, unit=unit)
@@ -260,7 +260,7 @@ def register_spatial_tools(registry: ToolRegistry):
             if result.get("success"):
                 return {"geojson": result.get("data"), "stats": result.get("stats")}
             return {"error": result.get("error")}
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"Buffer analysis error: {e}")
             return {"error": str(e)}
 
@@ -277,7 +277,7 @@ def register_spatial_tools(registry: ToolRegistry):
                 from app.services.spatial_tasks import run_spatial_stats
                 task = run_spatial_stats.apply_async(args=[features])
                 result = task.get(timeout=60)
-            except Exception as exc:
+            except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
                 if not isinstance(exc, ImportError):
                     logger.warning(f"Celery unavailable for spatial_stats: {exc}")
                 from shapely.geometry import shape
@@ -307,7 +307,7 @@ def register_spatial_tools(registry: ToolRegistry):
             if result.get("success"):
                 return {"stats": result.get("stats")}
             return {"error": result.get("error")}
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"Spatial stats error: {e}")
             return {"error": str(e)}
 
@@ -324,7 +324,7 @@ def register_spatial_tools(registry: ToolRegistry):
                 from app.services.spatial_tasks import run_nearest_neighbor
                 task = run_nearest_neighbor.apply_async(args=[features])
                 result = task.get(timeout=60)
-            except Exception as exc:
+            except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
                 if not isinstance(exc, ImportError):
                     logger.warning(f"Celery unavailable for nearest_neighbor: {exc}")
                 import numpy as np
@@ -338,7 +338,7 @@ def register_spatial_tools(registry: ToolRegistry):
                         if not s.is_empty:
                             c = s.centroid
                             points.append((c.x, c.y))
-                    except Exception:
+                    except (ValueError, TypeError):
                         continue
                 if len(points) < 2:
                     return {"error": "Need at least 2 points"}
@@ -360,7 +360,7 @@ def register_spatial_tools(registry: ToolRegistry):
             if result.get("success"):
                 return result.get("data")
             return {"error": result.get("error")}
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"NN analysis error: {e}")
             return {"error": str(e)}
 
@@ -391,7 +391,7 @@ def register_spatial_tools(registry: ToolRegistry):
                     kwargs={"features": features, "cell_size": cell_size, "radius": radius, "render_type": render_type, "palette": palette}
                 )
                 result = task.get(timeout=120)
-            except Exception as exc:
+            except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
                 if not isinstance(exc, ImportError):
                     logger.warning(f"Celery unavailable for heatmap: {exc}")
                 result = _generate_heatmap(features, cell_size, radius, render_type, palette)
@@ -405,6 +405,6 @@ def register_spatial_tools(registry: ToolRegistry):
                         data["command"] = "add_layer"
                 return data
             return {"error": result.get("error")}
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"Heatmap error: {e}")
             return {"error": str(e)}

@@ -4,6 +4,7 @@ from typing import Any
 
 from app.tools.registry import ToolRegistry, tool
 from app.services.rs_service import rs_service
+from app.tools._utils import parse_bbox
 
 logger = logging.getLogger(__name__)
 
@@ -18,11 +19,11 @@ def register_terrain_tools(registry: ToolRegistry):
            })
     async def compute_terrain(bbox: str, products: list[str] | None = None) -> dict:
         try:
-            parts = [float(x.strip()) for x in bbox.strip("[]()").split(",")]
-            if len(parts) != 4:
-                return {"error": "bbox 格式错误，需要 [west, south, east, north]"}
+            parts = parse_bbox(bbox)
             return await rs_service.compute_terrain(parts, products)
-        except Exception as e:
+        except ValueError as e:
+            return {"error": str(e)}
+        except (RuntimeError, OSError) as e:
             return {"error": str(e)}
 
     @tool(registry, name="compute_vegetation_index",
@@ -36,9 +37,9 @@ def register_terrain_tools(registry: ToolRegistry):
     async def compute_vegetation_index(bbox: str, date_from: str, date_to: str,
                                         index_type: str = "ndvi") -> dict:
         try:
-            parts = [float(x.strip()) for x in bbox.strip("[]()").split(",")]
-            if len(parts) != 4:
-                return {"error": "bbox 格式错误"}
+            parts = parse_bbox(bbox)
             return await rs_service.compute_vegetation_index(parts, date_from, date_to, index_type)
-        except Exception as e:
+        except ValueError as e:
+            return {"error": str(e)}
+        except (RuntimeError, OSError) as e:
             return {"error": str(e)}

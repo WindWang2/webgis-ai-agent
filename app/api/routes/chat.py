@@ -9,55 +9,16 @@ from typing import Optional
 from app.core.auth import get_current_user, get_current_user_optional
 from app.services.chat_engine import ChatEngine
 from app.services.history_service import HistoryService
-from app.core.database import SessionLocal
+from app.services.history_service_async import AsyncHistoryService
+from app.tools._utils import async_db_session
 from app.tools.registry import ToolRegistry
-from app.tools.osm import register_osm_tools
-from app.tools.geocoding import register_geocoding_tools
-from app.tools.spatial import register_spatial_tools
-from app.tools.advanced_spatial import register_advanced_spatial_tools
-from app.tools.layer_manager import register_layer_management_tools
-from app.tools.remote_sensing import register_rs_tools
-from app.tools.chart import register_chart_tools
-from app.tools.cartography import register_cartography_tools
-from app.tools.nature_resources import register_nature_resource_tools
-from app.tools.upload_tools import register_upload_tools
-from app.tools.web_crawler import register_crawler_tools
-from app.tools.chinese_maps import register_chinese_map_tools
-from app.tools.spatial_stats import register_spatial_stats_tools
-from app.tools.terrain_analysis import register_terrain_tools
-from app.tools.interpolation_network import register_interpolation_network_tools
-from app.tools.report import register_report_tools
-from app.tools.skills import load_skills, register_skill_tools, list_md_skills
-from app.tools.explorer_tools import register_explorer_tools
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["对话"])
 
-# 全局工具注册中心和对话引擎
-registry = ToolRegistry()
-register_geocoding_tools(registry)
-register_osm_tools(registry)
-register_spatial_tools(registry)
-register_advanced_spatial_tools(registry)
-register_layer_management_tools(registry)
-register_rs_tools(registry)
-register_chart_tools(registry)
-register_cartography_tools(registry)
-register_nature_resource_tools(registry)
-register_upload_tools(registry)
-register_crawler_tools(registry)
-register_chinese_map_tools(registry)
-register_spatial_stats_tools(registry)
-register_terrain_tools(registry)
-register_interpolation_network_tools(registry)
-register_report_tools(registry)
-register_skill_tools(registry)
-register_explorer_tools(registry)
-
-# 加载动态技能 (app/skills/*.py)
-load_skills(registry)
-
-engine = ChatEngine(registry)
+# 由 lifespan 在启动时注入
+registry: ToolRegistry = None  # type: ignore[assignment]
+engine: ChatEngine = None  # type: ignore[assignment]
 
 
 class ChatRequest(BaseModel):
@@ -111,9 +72,8 @@ async def chat_stream(req: ChatRequest, _user: dict = Depends(get_current_user_o
 @router.get("/sessions")
 async def list_sessions(_user: dict = Depends(get_current_user_optional)):
     """列出所有历史会话（最多1000条，按最近更新排序）"""
-    db = SessionLocal()
-    try:
-        sessions = HistoryService(db).list_sessions()
+    async with async_db_session() as db:
+        sessions = await AsyncHistoryService(db).list_sessions()
         return {
             "sessions": [
                 {
@@ -125,16 +85,13 @@ async def list_sessions(_user: dict = Depends(get_current_user_optional)):
                 for s in sessions
             ]
         }
-    finally:
-        db.close()
 
 
 @router.get("/sessions/{session_id}")
 async def get_session_detail(session_id: str, _user: dict = Depends(get_current_user_optional)):
     """获取会话详情（只读）"""
-    db = SessionLocal()
-    try:
-        conv = HistoryService(db).get_session(session_id)
+    async with async_db_session() as db:
+        conv = await AsyncHistoryService(db).get_session(session_id)
         if not conv:
             raise HTTPException(status_code=404, detail="Session not found")
         return {
@@ -153,8 +110,6 @@ async def get_session_detail(session_id: str, _user: dict = Depends(get_current_
                 if m.role in ("user", "assistant")
             ],
         }
-    finally:
-        db.close()
 
 
 @router.get("/sessions/{session_id}/map-state")
@@ -168,13 +123,14 @@ async def get_session_map_state(session_id: str):
 @router.get("/skills")
 async def list_skills_api():
     """列出可用的 .md 技能"""
+    from app.tools.skills import list_md_skills
     return {"skills": list_md_skills()}
 
 
 @router.delete("/sessions/{session_id}")
 async def clear_session(session_id: str, _user: dict = Depends(get_current_user_optional)):
     """清除会话（内存 + DB）"""
-    engine.clear_session(session_id)
+    await engine.clear_session(session_id)
     return {"status": "ok"}
 
 
@@ -215,3 +171,10 @@ async def get_latest_result(session_id: str = "", tool: str = "", _user: dict = 
     if tool and tool in session_results:
         return {tool: session_results[tool]}
     return session_results
+
+
+# 模块级缓存（会话 -> 工具结果），由工具执行时写入
+try:
+    _tool_results_by_session: dict = {}
+except NameError:
+    _tool_results_by_session = {}

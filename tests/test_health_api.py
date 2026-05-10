@@ -51,7 +51,9 @@ async def test_health_check(client):
 async def test_readiness_check_healthy(client):
     mod = _get_module()
     with patch.object(mod, "_check_db", return_value=True), \
-         patch.object(mod, "_check_llm", return_value=True):
+         patch.object(mod, "_check_llm", return_value=True), \
+         patch.object(mod, "_check_redis", return_value=True), \
+         patch.object(mod, "_check_celery", return_value=True):
         resp = await client.get("/api/v1/ready")
         assert resp.status_code == 200
         data = resp.json()

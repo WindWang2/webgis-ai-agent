@@ -23,53 +23,55 @@ CONSOLE_FORMATTER = logging.Formatter(
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 
+# 单一共享文件 handler（所有 logger 共用，避免文件描述符膨胀）
+_shared_file_handler: RotatingFileHandler | None = None
+
+
+def _get_shared_file_handler(level: int = logging.INFO) -> RotatingFileHandler:
+    global _shared_file_handler
+    if _shared_file_handler is None:
+        _shared_file_handler = RotatingFileHandler(
+            filename=str(LOG_DIR / "app.log"),
+            maxBytes=50 * 1024 * 1024,  # 50MB
+            backupCount=14,
+            encoding="utf-8",
+        )
+        _shared_file_handler.setFormatter(LOG_FORMATTER)
+        _shared_file_handler.setLevel(level)
+    return _shared_file_handler
+
 
 def get_logger(name: str, level: str = "INFO"):
     """
     创建标准化的日志记录器
-    
+
     Args:
         name: 日志记录器名称，通常使用 __name__
         level: 日志级别 (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-    
+
     Returns:
         配置好的 Logger 实例
     """
     logger = logging.getLogger(name)
-    
+
     # 避免重复添加 handler
     if logger.handlers:
         return logger
-    
+
     # 将字符串级别转换为 logging 常量
     numeric_level = getattr(logging, level.upper(), logging.INFO)
     logger.setLevel(numeric_level)
-    
+
     # 控制台 Handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(CONSOLE_FORMATTER)
     console_handler.setLevel(numeric_level)
     logger.addHandler(console_handler)
-    
-    # 文件 Handler - 按日期轮转
-    # 生产环境使用 Rollover 每天午夜轮转，保留 14 天
-    file_handler = RotatingFileHandler(
-        filename=str(LOG_DIR / f"{name.replace('.', '_')}.log"),
-        maxBytes=10 * 1024 * 1024,  # 10MB
-        backupCount=14,
-        encoding="utf-8"
-    )
-    file_handler.setFormatter(LOG_FORMATTER)
-    file_handler.setLevel(numeric_level)
+
+    # 文件 Handler - 所有 logger 共享同一个文件
+    file_handler = _get_shared_file_handler(numeric_level)
     logger.addHandler(file_handler)
-    
-    # 结构化日志增强（如需要在结构化环境使用）
-    # 未来可以在这里添加 JSON formatter 给 ELK/Loki
-    # from logging_formatters import JSONFormatter
-    # json_handler = RotatingFileHandler(...)
-    # json_handler.setFormatter(JSONFormatter())
-    # logger.addHandler(json_handler)
-    
+
     return logger
 
 
@@ -95,7 +97,7 @@ celery_logger = get_logger("celery", "INFO")
 def setup_logging_from_env():
     """
     根据环境变量配置日志级别
-    
+
     可用环境变量:
     - LOG_LEVEL: DEBUG, INFO, WARNING, ERROR
     - ENABLE_FILE_LOGGING: true/false (默认为是)
@@ -103,14 +105,14 @@ def setup_logging_from_env():
     - RETAIN_DAYS: 保留天数
     """
     import os
-    
+
     env = os.environ.get("ENV", "development").lower()
     log_level = os.environ.get("LOG_LEVEL", "INFO" if env == "production" else "DEBUG")
-    
+
     # 配置根日志器
     root_logger = logging.getLogger()
     root_logger.setLevel(getattr(logging, log_level.upper()))
-    
+
     # 返回配置
     return {
         "env": env,

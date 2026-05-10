@@ -13,7 +13,7 @@ from typing import Optional
 
 from app.tools.registry import ToolRegistry
 from app.services.report_service import ReportService, REPORT_DIR
-from app.core.database import SessionLocal
+from app.tools._utils import db_session
 from app.models.db_model import Conversation, Message
 from app.models.report import Report
 
@@ -58,8 +58,7 @@ def register_report_tools(registry: ToolRegistry):
         if not session_id:
             return {"error": "无法确定当前会话 ID，请在对话中重试。"}
 
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             conversation = db.get(Conversation, session_id)
             if not conversation:
                 return {"error": f"会话 {session_id} 不存在"}
@@ -90,7 +89,7 @@ def register_report_tools(registry: ToolRegistry):
                 file_path=file_path,
             )
             db.add(report)
-            db.commit()
+            db.flush()  # flush so the record exists for the ID
 
             # Generate
             svc = ReportService()
@@ -130,11 +129,4 @@ def register_report_tools(registry: ToolRegistry):
             else:
                 report.status = "failed"
                 report.error_message = "生成过程未产出文件"
-                db.commit()
                 return {"error": "报告生成失败，请稍后重试。"}
-
-        except Exception as e:
-            logger.error(f"Report tool error: {e}", exc_info=True)
-            return {"error": f"报告生成异常: {str(e)}"}
-        finally:
-            db.close()

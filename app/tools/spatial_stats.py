@@ -443,7 +443,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
 
         try:
             vor = Voronoi(all_points)
-        except Exception as e:
+        except (ValueError, TypeError, RuntimeError) as e:
             return {"error": f"Voronoi 计算失败: {e}"}
 
         out_features = []
@@ -471,7 +471,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                     "geometry": mapping(poly_wgs84),
                     "properties": props,
                 })
-            except Exception:
+            except (ValueError, TypeError):
                 continue
 
         return {
@@ -517,7 +517,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                             "area_km2": round(float(hull.area) / 1e6, 4),
                         },
                     })
-                except Exception:
+                except (ValueError, TypeError):
                     continue
         else:
             hull = gdf.geometry.unary_union.convex_hull

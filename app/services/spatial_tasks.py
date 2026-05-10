@@ -10,6 +10,7 @@ from app.services.spatial_analyzer import SpatialAnalyzer
 from app.services.nature_resource_analyzer import NatureResourceAnalyzer
 from app.core.config import settings
 from app.core.database import SessionLocal
+from app.tools._utils import db_session
 from app.models.upload import UploadRecord
 
 logger = logging.getLogger(__name__)
@@ -426,31 +427,27 @@ def run_ndvi_analysis(self, raster_path: str, nir_band: Optional[int] = None, re
     except Exception as e:
         logger.error(f"Failed to generate NDVI preview: {e}")
 
-    # 3. 持久化到数据库 (让 Agent 在资产管理器中能“感知”到它)
-    db = SessionLocal()
+    # 3. 持久化到数据库 (让 Agent 在资产管理器中能”感知”到它)
+    asset_id = None
     try:
-        file_size = os.path.getsize(result["result_path"])
-        record = UploadRecord(
-            filename=f"analysis_results/{result['filename']}",
-            original_name=result["filename"],
-            file_type="raster",
-            format="geotiff",
-            crs=result.get("crs", "EPSG:4326"),
-            geometry_type="raster_analysis",
-            bbox=result.get("bbox"),
-            file_size=file_size,
-            session_id=session_id
-        )
-        db.add(record)
-        db.commit()
-        db.refresh(record)
-        asset_id = record.id
+        with db_session() as db:
+            file_size = os.path.getsize(result[“result_path”])
+            record = UploadRecord(
+                filename=f”analysis_results/{result['filename']}”,
+                original_name=result[“filename”],
+                file_type=”raster”,
+                format=”geotiff”,
+                crs=result.get(“crs”, “EPSG:4326”),
+                geometry_type=”raster_analysis”,
+                bbox=result.get(“bbox”),
+                file_size=file_size,
+                session_id=session_id
+            )
+            db.add(record)
+            db.refresh(record)
+            asset_id = record.id
     except Exception as e:
-        db.rollback()
-        logger.error(f"Failed to log NDVI result to DB: {e}")
-        asset_id = None
-    finally:
-        db.close()
+        logger.error(f”Failed to log NDVI result to DB: {e}”)
 
     return {
         "success": True,
@@ -463,3 +460,300 @@ def run_ndvi_analysis(self, raster_path: str, nir_band: Optional[int] = None, re
         "detected_bands": result["detected_bands"],
         "message": f"植被指数 (NDVI) 分析执行成功。结果已存入资产库：{result['filename']}"
     }
+
+
+@celery_app.task(name="app.services.spatial_tasks.run_change_detection", bind=True)
+def run_change_detection(
+    self,
+    bbox: list,
+    t1_from: str,
+    t1_to: str,
+    t2_from: str,
+    t2_to: str,
+    index_type: str = "ndvi",
+    change_threshold: float = 0.1,
+    session_id: Optional[str] = None,
+):
+    """
+    执行双时相植被指数变化检测分析
+    """
+    import uuid
+    import time
+    import pystac_client
+    import rasterio
+    import numpy as np
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from rasterio.enums import Resampling
+    from rasterio.transform import from_bounds
+    from app.tools._utils import asset_href
+
+    def read_band(item, stac_key: str, out_shape: tuple) -> Optional[np.ndarray]:
+        url = asset_href(item.assets, stac_key)
+        if not url:
+            return None
+        with rasterio.open(url) as src:
+            return src.read(1, out_shape=out_shape, resampling=Resampling.average).astype(float)
+
+    self.update_state(state='PROGRESS', meta={'progress': 5, 'message': '正在连接 Sentinel-2 数据目录...'})
+
+    try:
+        catalog = pystac_client.Client.open("https://earth-search.aws.element84.com/v1")
+
+        # ========== T1 数据获取 ==========
+        self.update_state(state='PROGRESS', meta={'progress': 10, 'message': f'正在搜索 T1 时期影像 ({t1_from} ~ {t1_to})...'})
+        search1 = catalog.search(
+            collections=["sentinel-2-l2a"],
+            bbox=bbox,
+            datetime=f"{t1_from}/{t1_to}",
+            max_items=5,
+        )
+        items1 = list(search1.items())
+        if not items1:
+            return {"success": False, "error": f"T1 时期 ({t1_from} ~ {t1_to}) 未找到 Sentinel-2 数据"}
+
+        # 选择云量最少的影像
+        item1 = min(items1, key=lambda x: x.properties.get("eo:cloud_cover", 100))
+
+        # ========== T2 数据获取 ==========
+        self.update_state(state='PROGRESS', meta={'progress': 20, 'message': f'正在搜索 T2 时期影像 ({t2_from} ~ {t2_to})...'})
+        search2 = catalog.search(
+            collections=["sentinel-2-l2a"],
+            bbox=bbox,
+            datetime=f"{t2_from}/{t2_to}",
+            max_items=5,
+        )
+        items2 = list(search2.items())
+        if not items2:
+            return {"success": False, "error": f"T2 时期 ({t2_from} ~ {t2_to}) 未找到 Sentinel-2 数据"}
+
+        item2 = min(items2, key=lambda x: x.properties.get("eo:cloud_cover", 100))
+
+        self.update_state(state='PROGRESS', meta={'progress': 30, 'message': f'已选定 T1: {item1.id} (云量 {item1.properties.get("eo:cloud_cover", "N/A")}%), T2: {item2.id} (云量 {item2.properties.get("eo:cloud_cover", "N/A")}%)'})
+
+        # ========== 波段映射 ==========
+        stac_keys = {
+            "blue": "blue",
+            "green": "green",
+            "red": "red",
+            "nir": "nir",
+            "swir12": "swir22",
+        }
+
+        index_bands = {
+            "ndvi": (["red", "nir"], lambda r, nir: np.divide(nir - r, np.where((nir + r) > 0, nir + r, 1), out=np.zeros_like(r), where=(nir + r) > 0)),
+            "ndwi": (["green", "nir"], lambda g, nir: np.divide(g - nir, np.where((g + nir) > 0, g + nir, 1), out=np.zeros_like(g), where=(g + nir) > 0)),
+            "nbr": (["nir", "swir12"], lambda nir, swir: np.divide(nir - swir, np.where((nir + swir) > 0, nir + swir, 1), out=np.zeros_like(nir), where=(nir + swir) > 0)),
+            "evi": (["blue", "red", "nir"], lambda b, r, nir: 2.5 * np.divide(nir - r, np.where((nir + 6 * r - 7.5 * b + 1) > 0, nir + 6 * r - 7.5 * b + 1, 1), out=np.zeros_like(nir), where=(nir + 6 * r - 7.5 * b + 1) > 0)),
+        }
+
+        bands_needed, formula = index_bands[index_type]
+
+        # 统一分辨率：以 T1 为基准
+        self.update_state(state='PROGRESS', meta={'progress': 35, 'message': '正在读取 T1 波段数据...'})
+        with rasterio.open(_asset_href(item1.assets, stac_keys[bands_needed[0]])) as src:
+            out_shape = (1, src.height // 4, src.width // 4)
+            t1_transform = src.transform
+            t1_crs = src.crs
+
+        t1_bands = {}
+        for bname in bands_needed:
+            arr = read_band(item1, stac_keys[bname], out_shape)
+            if arr is None:
+                return {"success": False, "error": f"T1 波段 {bname} 不可用", "available": list(item1.assets.keys())}
+            t1_bands[bname] = arr
+
+        self.update_state(state='PROGRESS', meta={'progress': 50, 'message': '正在读取 T2 波段数据...'})
+        t2_bands = {}
+        for bname in bands_needed:
+            arr = read_band(item2, stac_keys[bname], out_shape)
+            if arr is None:
+                return {"success": False, "error": f"T2 波段 {bname} 不可用", "available": list(item2.assets.keys())}
+            t2_bands[bname] = arr
+
+        # ========== 计算植被指数 ==========
+        self.update_state(state='PROGRESS', meta={'progress': 60, 'message': f'正在计算 {index_type.upper()} 指数...'})
+        idx1 = formula(**t1_bands)
+        idx2 = formula(**t2_bands)
+
+        # 处理 nodata
+        valid_mask = np.isfinite(idx1) & np.isfinite(idx2)
+
+        # ========== 变化检测 ==========
+        self.update_state(state='PROGRESS', meta={'progress': 70, 'message': '正在计算变化差异并分类...'})
+        change = np.where(valid_mask, idx2 - idx1, np.nan)
+
+        # 5 级分类
+        sig_thresh = max(change_threshold * 3, 0.3)  # 显著变化阈值
+
+        classes = {
+            "significant_increase": np.nansum(change > sig_thresh),
+            "slight_increase": np.nansum((change > change_threshold) & (change <= sig_thresh)),
+            "no_change": np.nansum((change >= -change_threshold) & (change <= change_threshold)),
+            "slight_decrease": np.nansum((change >= -sig_thresh) & (change < -change_threshold)),
+            "significant_decrease": np.nansum(change < -sig_thresh),
+        }
+        total_pixels = sum(classes.values())
+
+        class_distribution = {
+            k: {
+                "pixel_count": int(v),
+                "percentage": round(float(v / total_pixels * 100), 2) if total_pixels > 0 else 0,
+            }
+            for k, v in classes.items()
+        }
+
+        # 变化统计
+        valid_change = change[np.isfinite(change)]
+        change_stats = {
+            "min": round(float(np.nanmin(change)), 4),
+            "max": round(float(np.nanmax(change)), 4),
+            "mean": round(float(np.nanmean(change)), 4),
+            "std": round(float(np.nanstd(change)), 4),
+        }
+
+        # ========== 生成分类栅格 ==========
+        self.update_state(state='PROGRESS', meta={'progress': 80, 'message': '正在生成分类结果栅格...'})
+        classification = np.full(change.shape, 0, dtype=np.int8)  # 0 = no_change
+        classification[(change > change_threshold) & (change <= sig_thresh)] = 1   # slight_increase
+        classification[change > sig_thresh] = 2                                       # significant_increase
+        classification[(change >= -sig_thresh) & (change < -change_threshold)] = -1 # slight_decrease
+        classification[change < -sig_thresh] = -2                                     # significant_decrease
+        classification[~valid_mask] = -99  # nodata
+
+        # 保存 GeoTIFF
+        output_dir = os.path.join(settings.DATA_DIR, "analysis_results")
+        os.makedirs(output_dir, exist_ok=True)
+        filename = f"Change_{index_type.upper()}_{int(time.time())}_{uuid.uuid4().hex[:6]}.tif"
+        result_path = os.path.join(output_dir, filename)
+
+        # 使用 bbox 计算 transform
+        transform = from_bounds(bbox[0], bbox[1], bbox[2], bbox[3], classification.shape[1], classification.shape[0])
+
+        with rasterio.open(
+            result_path,
+            'w',
+            driver='GTiff',
+            height=classification.shape[0],
+            width=classification.shape[1],
+            count=1,
+            dtype=classification.dtype,
+            crs='EPSG:4326',
+            transform=transform,
+            nodata=-99,
+        ) as dst:
+            dst.write(classification, 1)
+
+        # ========== 生成预览图 ==========
+        self.update_state(state='PROGRESS', meta={'progress': 90, 'message': '正在生成预览图...'})
+        preview_base64 = ""
+        try:
+            # 颜色映射: 深绿(显著改善) -> 浅绿(轻微改善) -> 灰(无变化) -> 橙(轻微退化) -> 红(显著退化)
+            colors = {
+                2: (0.0, 0.6, 0.0),    # significant_increase - 深绿
+                1: (0.5, 0.9, 0.5),    # slight_increase - 浅绿
+                0: (0.7, 0.7, 0.7),    # no_change - 灰色
+                -1: (1.0, 0.6, 0.2),   # slight_decrease - 橙色
+                -2: (0.8, 0.1, 0.1),   # significant_decrease - 深红
+            }
+
+            rgb = np.zeros((*classification.shape, 3), dtype=np.float32)
+            for val, (r, g, b) in colors.items():
+                mask = classification == val
+                rgb[mask, 0] = r
+                rgb[mask, 1] = g
+                rgb[mask, 2] = b
+
+            fig, ax = plt.subplots(figsize=(12, 10))
+            ax.imshow(rgb, extent=[bbox[0], bbox[2], bbox[1], bbox[3]])
+            ax.set_title(f"{index_type.upper()} Change Detection: {t1_from} vs {t2_from}")
+            ax.set_xlabel("Longitude")
+            ax.set_ylabel("Latitude")
+
+            # 添加图例
+            from matplotlib.patches import Patch
+            legend_elements = [
+                Patch(facecolor=colors[2], label=f"显著改善 ({class_distribution['significant_increase']['percentage']:.1f}%)"),
+                Patch(facecolor=colors[1], label=f"轻微改善 ({class_distribution['slight_increase']['percentage']:.1f}%)"),
+                Patch(facecolor=colors[0], label=f"无变化 ({class_distribution['no_change']['percentage']:.1f}%)"),
+                Patch(facecolor=colors[-1], label=f"轻微退化 ({class_distribution['slight_decrease']['percentage']:.1f}%)"),
+                Patch(facecolor=colors[-2], label=f"显著退化 ({class_distribution['significant_decrease']['percentage']:.1f}%)"),
+            ]
+            ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.02, 1))
+
+            plt.tight_layout()
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', dpi=120, bbox_inches='tight')
+            plt.close(fig)
+            buf.seek(0)
+            preview_base64 = "data:image/png;base64," + base64.b64encode(buf.read()).decode('utf-8')
+        except Exception as e:
+            logger.error(f"Failed to generate change detection preview: {e}")
+
+        # ========== 持久化到数据库 ==========
+        self.update_state(state='PROGRESS', meta={'progress': 95, 'message': '正在保存分析结果...'})
+        asset_id = None
+        try:
+            with db_session() as db:
+                file_size = os.path.getsize(result_path)
+                record = UploadRecord(
+                    filename=f"analysis_results/{filename}",
+                    original_name=filename,
+                    file_type="raster",
+                    format="geotiff",
+                    crs="EPSG:4326",
+                    geometry_type="raster_analysis",
+                    bbox=bbox,
+                    file_size=file_size,
+                    session_id=session_id,
+                )
+                db.add(record)
+                db.refresh(record)
+                asset_id = record.id
+        except Exception as e:
+            logger.error(f"Failed to log change detection result to DB: {e}")
+
+        # 友好的类别名称映射
+        friendly_names = {
+            "ndvi": {"significant_increase": "显著改善", "slight_increase": "轻微改善", "no_change": "无变化", "slight_decrease": "轻微退化", "significant_decrease": "显著退化"},
+            "ndwi": {"significant_increase": "水体显著增加", "slight_increase": "水体轻微增加", "no_change": "无变化", "slight_decrease": "水体轻微减少", "significant_decrease": "水体显著减少"},
+            "nbr": {"significant_increase": "显著恢复", "slight_increase": "轻微恢复", "no_change": "无变化", "slight_decrease": "轻微受损", "significant_decrease": "严重受损"},
+            "evi": {"significant_increase": "显著改善", "slight_increase": "轻微改善", "no_change": "无变化", "slight_decrease": "轻微退化", "significant_decrease": "显著退化"},
+        }
+
+        summary = {
+            k: {**v, "label": friendly_names[index_type].get(k, k)}
+            for k, v in class_distribution.items()
+        }
+
+        return {
+            "success": True,
+            "type": "change_detection_result",
+            "asset_id": asset_id,
+            "filename": filename,
+            "bbox": bbox,
+            "image": preview_base64,
+            "index_type": index_type.upper(),
+            "t1": {"item_id": item1.id, "datetime": str(item1.datetime), "cloud_cover": item1.properties.get("eo:cloud_cover", "N/A")},
+            "t2": {"item_id": item2.id, "datetime": str(item2.datetime), "cloud_cover": item2.properties.get("eo:cloud_cover", "N/A")},
+            "change_stats": change_stats,
+            "classification": summary,
+            "threshold": {"change": change_threshold, "significant": sig_thresh},
+            "message": (
+                f"{index_type.upper()} 双时相变化检测完成。"
+                f"T1 ({t1_from}) 使用影像 {item1.id}，"
+                f"T2 ({t2_from}) 使用影像 {item2.id}。"
+                f"变化区域分布：显著改善 {summary['significant_increase']['percentage']:.1f}%，"
+                f"轻微改善 {summary['slight_increase']['percentage']:.1f}%，"
+                f"无变化 {summary['no_change']['percentage']:.1f}%，"
+                f"轻微退化 {summary['slight_decrease']['percentage']:.1f}%，"
+                f"显著退化 {summary['significant_decrease']['percentage']:.1f}%。"
+            ),
+        }
+
+    except ImportError as e:
+        return {"success": False, "error": f"缺少依赖: {e}。请安装 pystac-client, rasterio, numpy, matplotlib。"}
+    except Exception as e:
+        logger.error(f"Change detection task failed: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}

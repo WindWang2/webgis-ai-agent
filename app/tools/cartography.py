@@ -75,7 +75,7 @@ def register_cartography_tools(registry: ToolRegistry):
                     "stroke_width": stroke_width
                 }
             }
-        except Exception as e:
+        except (ValueError, TypeError, KeyError) as e:
             return {"error": str(e)}
 
     @tool(registry, name="create_thematic_map",
@@ -101,7 +101,7 @@ def register_cartography_tools(registry: ToolRegistry):
                 "group": group,
                 "metadata": result_geojson.get("metadata", {})
             }
-        except Exception as e:
+        except (ValueError, TypeError, KeyError) as e:
             logger.error(f"Error creating thematic map: {e}")
             return {"error": str(e)}
 

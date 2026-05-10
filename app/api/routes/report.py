@@ -11,9 +11,10 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_async_db
 from app.models.api_response import ApiResponse, ErrCode
 from app.models.report import Report
 from app.models.db_model import Conversation, Message
@@ -86,7 +87,7 @@ def _file_ext(fmt: str) -> str:
 @router.post("", response_model=ApiResponse)
 async def create_report(
     request: GenerateReportRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """从会话历史生成报告"""
     fmt = request.format.lower()
@@ -94,16 +95,16 @@ async def create_report(
         return ApiResponse.fail(code=ErrCode.VALIDATE_ERROR, message=f"不支持的格式: {fmt}，可选: {', '.join(sorted(ALLOWED_FORMATS))}")
 
     # 验证会话存在
-    conversation = db.get(Conversation, request.session_id)
+    conversation = await db.get(Conversation, request.session_id)
     if not conversation:
         return ApiResponse.fail(code=ErrCode.NOT_FOUND, message="会话不存在")
 
-    messages = (
-        db.query(Message)
-        .filter(Message.conversation_id == request.session_id)
+    result = await db.execute(
+        select(Message)
+        .where(Message.conversation_id == request.session_id)
         .order_by(Message.created_at.asc())
-        .all()
     )
+    messages = result.scalars().all()
 
     if not messages:
         return ApiResponse.fail(code=ErrCode.VALIDATE_ERROR, message="会话中暂无消息，无法生成报告")
@@ -123,8 +124,8 @@ async def create_report(
         file_path=file_path,
     )
     db.add(report)
-    db.commit()
-    db.refresh(report)
+    await db.commit()
+    await db.refresh(report)
 
     # 异步生成报告
     svc = ReportService()
@@ -158,8 +159,8 @@ async def create_report(
         report.status = "failed"
         report.error_message = str(e)
 
-    db.commit()
-    db.refresh(report)
+    await db.commit()
+    await db.refresh(report)
 
     if report.status == "failed":
         return ApiResponse.fail(
@@ -174,14 +175,15 @@ async def create_report(
 @router.get("", response_model=ApiResponse)
 async def list_reports(
     session_id: Optional[str] = Query(None, description="按会话 ID 筛选"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """列出报告"""
-    q = db.query(Report).order_by(Report.created_at.desc())
+    stmt = select(Report).order_by(Report.created_at.desc())
     if session_id:
-        q = q.filter(Report.session_id == session_id)
+        stmt = stmt.where(Report.session_id == session_id)
 
-    items = q.limit(100).all()
+    result = await db.execute(stmt.limit(100))
+    items = result.scalars().all()
     return ApiResponse.ok(data={
         "total": len(items),
         "items": [_serialize_report(r) for r in items],
@@ -189,9 +191,10 @@ async def list_reports(
 
 
 @router.get("/shared/{share_code}", response_model=ApiResponse)
-async def get_shared_report_info(share_code: str, db: Session = Depends(get_db)):
+async def get_shared_report_info(share_code: str, db: AsyncSession = Depends(get_async_db)):
     """通过分享码获取报告信息"""
-    report = db.query(Report).filter(Report.share_code == share_code).first()
+    result = await db.execute(select(Report).where(Report.share_code == share_code))
+    report = result.scalar_one_or_none()
     if not report:
         return ApiResponse.fail(code=ErrCode.NOT_FOUND, message="分享链接不存在")
 
@@ -202,9 +205,10 @@ async def get_shared_report_info(share_code: str, db: Session = Depends(get_db))
 
 
 @router.get("/shared/{share_code}/view")
-async def view_shared_report(share_code: str, db: Session = Depends(get_db)):
+async def view_shared_report(share_code: str, db: AsyncSession = Depends(get_async_db)):
     """通过分享码查看/下载报告文件"""
-    report = db.query(Report).filter(Report.share_code == share_code).first()
+    result = await db.execute(select(Report).where(Report.share_code == share_code))
+    report = result.scalar_one_or_none()
     if not report:
         raise HTTPException(status_code=404, detail="分享链接不存在")
 
@@ -226,18 +230,18 @@ async def view_shared_report(share_code: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{report_id}", response_model=ApiResponse)
-async def get_report(report_id: str, db: Session = Depends(get_db)):
+async def get_report(report_id: str, db: AsyncSession = Depends(get_async_db)):
     """获取报告详情"""
-    report = db.get(Report, report_id)
+    report = await db.get(Report, report_id)
     if not report:
         return ApiResponse.fail(code=ErrCode.NOT_FOUND, message="报告不存在")
     return ApiResponse.ok(data=_serialize_report(report))
 
 
 @router.get("/{report_id}/download")
-async def download_report(report_id: str, db: Session = Depends(get_db)):
+async def download_report(report_id: str, db: AsyncSession = Depends(get_async_db)):
     """下载报告文件"""
-    report = db.get(Report, report_id)
+    report = await db.get(Report, report_id)
     if not report:
         raise HTTPException(status_code=404, detail="报告不存在")
     if report.status != "completed":
@@ -256,10 +260,10 @@ async def download_report(report_id: str, db: Session = Depends(get_db)):
 async def create_share_link(
     report_id: str,
     body: ShareRequest = ShareRequest(),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """生成分享链接"""
-    report = db.get(Report, report_id)
+    report = await db.get(Report, report_id)
     if not report:
         return ApiResponse.fail(code=ErrCode.NOT_FOUND, message="报告不存在")
     if report.status != "completed":
@@ -269,8 +273,8 @@ async def create_share_link(
     share_code = secrets.token_urlsafe(12)
     report.share_code = share_code
     report.share_expires_at = datetime.now(timezone.utc) + timedelta(days=ttl_days)
-    db.commit()
-    db.refresh(report)
+    await db.commit()
+    await db.refresh(report)
 
     return ApiResponse.ok(data={
         "share_code": share_code,
