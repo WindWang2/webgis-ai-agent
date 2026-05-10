@@ -3,7 +3,7 @@ import os
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 from datetime import datetime
 import importlib.util
 
@@ -53,10 +53,10 @@ BASE = "/api/v1/chat"
 def test_list_sessions_returns_json(client):
     conv = make_conv("s1", "Test", datetime(2026, 4, 10))
     mod = _get_chat_mod()
-    with patch.object(mod, "HistoryService") as MockHS:
+    with patch.object(mod, "AsyncHistoryService") as MockHS:
         mock_svc = MagicMock()
         MockHS.return_value = mock_svc
-        mock_svc.list_sessions.return_value = [conv]
+        mock_svc.list_sessions = AsyncMock(return_value=[conv])
         resp = client.get(f"{BASE}/sessions")
     assert resp.status_code == 200
     data = resp.json()
@@ -77,10 +77,10 @@ def test_get_session_detail(client):
     msg.created_at = datetime(2026, 4, 10)
     conv.messages = [msg]
     mod = _get_chat_mod()
-    with patch.object(mod, "HistoryService") as MockHS:
+    with patch.object(mod, "AsyncHistoryService") as MockHS:
         mock_svc = MagicMock()
         MockHS.return_value = mock_svc
-        mock_svc.get_session.return_value = conv
+        mock_svc.get_session = AsyncMock(return_value=conv)
         resp = client.get(f"{BASE}/sessions/s1")
     assert resp.status_code == 200
     data = resp.json()
@@ -91,17 +91,19 @@ def test_get_session_detail(client):
 
 def test_get_session_detail_not_found(client):
     mod = _get_chat_mod()
-    with patch.object(mod, "HistoryService") as MockHS:
+    with patch.object(mod, "AsyncHistoryService") as MockHS:
         mock_svc = MagicMock()
         MockHS.return_value = mock_svc
-        mock_svc.get_session.return_value = None
+        mock_svc.get_session = AsyncMock(return_value=None)
         resp = client.get(f"{BASE}/sessions/nonexistent")
     assert resp.status_code == 404
 
 
 def test_delete_session(client):
     mod = _get_chat_mod()
-    with patch.object(mod.engine, "clear_session") as mock_clear:
+    mock_engine = MagicMock()
+    mock_engine.clear_session = AsyncMock(return_value=None)
+    with patch.object(mod, "engine", mock_engine):
         resp = client.delete(f"{BASE}/sessions/s1")
     assert resp.status_code == 200
-    mock_clear.assert_called_once_with("s1")
+    mock_engine.clear_session.assert_awaited_once_with("s1")

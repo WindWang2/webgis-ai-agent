@@ -64,7 +64,7 @@ def _load_md_skill(file_path: str, filename: str):
             "filename": filename,
         }
         logger.info(f"Loaded .md skill '{name}' from {filename}")
-    except Exception as e:
+    except OSError as e:
         logger.error(f"Failed to load .md skill {filename}: {e}")
 
 
@@ -145,7 +145,7 @@ def _load_single_skill(registry: ToolRegistry, file_path: str, filename: str):
                 logger.info(f"Loaded skill from {filename} via register")
             else:
                 logger.warning(f"Skill {filename} has no 'register' or 'register_skills' function.")
-    except Exception as e:
+    except (ImportError, SyntaxError, AttributeError) as e:
         logger.error(f"Failed to load skill {filename}: {e}")
 
 

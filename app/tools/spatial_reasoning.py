@@ -186,7 +186,7 @@ async def spatial_reasoning(
         llm_result = await _call_llm(system_prompt, user_prompt)
         result = SpatialReasoningResult.model_validate(llm_result)
         return result.model_dump()
-    except Exception as e:
+    except (ValueError, TypeError, RuntimeError, OSError) as e:
         logger.error(f"[SpatialReasoning] Failed: {e}")
         return {
             "type": "spatial_reasoning",

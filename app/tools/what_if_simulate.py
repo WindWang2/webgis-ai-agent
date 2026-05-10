@@ -336,7 +336,7 @@ def what_if_simulate(
         )
 
         return result.model_dump()
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, RuntimeError) as e:
         logger.error(f"[WhatIfSimulate] Failed: {e}")
         return WhatIfSimulationResult(
             type="what_if_simulation",

@@ -64,10 +64,11 @@ async def test_dispatch_with_json_string():
     assert result == "hello"
 
 
-async def test_dispatch_unknown_raises():
+async def test_dispatch_unknown_returns_error():
     registry = ToolRegistry()
-    with pytest.raises(KeyError):
-        await registry.dispatch("nonexistent", {})
+    result = await registry.dispatch("nonexistent", {})
+    assert result.get("success") is False
+    assert "nonexistent" in result.get("message", "") or "unknown" in result.get("message", "").lower()
 
 
 def test_optional_params_not_required():

@@ -4,6 +4,7 @@ import logging
 from typing import Optional
 from app.tools.registry import ToolRegistry, tool
 from app.services.rs_service import rs_service
+from app.tools._utils import parse_bbox
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +22,11 @@ def register_rs_tools(registry: ToolRegistry):
            })
     async def fetch_sentinel(bbox: str, date_from: str, date_to: str, bands: str = "true-color") -> dict:
         try:
-            parts = [float(x.strip()) for x in bbox.strip("[]()").split(",")]
-            if len(parts) != 4:
-                return {"error": "bbox 格式错误"}
+            parts = parse_bbox(bbox)
             return await rs_service.fetch_sentinel_thumbnail(parts, date_from, date_to, bands)
-        except Exception as e:
+        except ValueError as e:
+            return {"error": str(e)}
+        except (RuntimeError, OSError) as e:
             return {"error": str(e)}
 
     @tool(registry, name="compute_ndvi",
@@ -37,11 +38,11 @@ def register_rs_tools(registry: ToolRegistry):
            })
     async def compute_ndvi(bbox: str, date_from: str, date_to: str) -> dict:
         try:
-            parts = [float(x.strip()) for x in bbox.strip("[]()").split(",")]
-            if len(parts) != 4:
-                return {"error": "bbox 格式错误"}
+            parts = parse_bbox(bbox)
             return await rs_service.compute_ndvi(parts, date_from, date_to)
-        except Exception as e:
+        except ValueError as e:
+            return {"error": str(e)}
+        except (RuntimeError, OSError) as e:
             return {"error": str(e)}
 
     @tool(registry, name="fetch_dem",
@@ -51,9 +52,9 @@ def register_rs_tools(registry: ToolRegistry):
            })
     async def fetch_dem(bbox: str) -> dict:
         try:
-            parts = [float(x.strip()) for x in bbox.strip("[]()").split(",")]
-            if len(parts) != 4:
-                return {"error": "bbox 格式错误"}
+            parts = parse_bbox(bbox)
             return await rs_service.fetch_dem(parts)
-        except Exception as e:
+        except ValueError as e:
+            return {"error": str(e)}
+        except (RuntimeError, OSError) as e:
             return {"error": str(e)}

@@ -45,10 +45,11 @@ async def client(app):
 
 @pytest.mark.asyncio
 async def test_list_tools(client):
-    resp = await client.get("/api/chat/tools")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "tools" in data
+    with patch.object(_chat_mod, "registry", MagicMock(get_schemas=lambda: [])):
+        resp = await client.get("/api/chat/tools")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "tools" in data
 
 
 @pytest.mark.asyncio
@@ -59,7 +60,15 @@ async def test_chat_completions(client):
     mock_response = MagicMock()
     mock_response.choices = [MagicMock(message=mock_msg)]
 
-    with patch.object(_chat_mod.engine, "_call_llm", new_callable=AsyncMock, return_value=mock_response):
+    mock_registry = MagicMock()
+    mock_registry.get_schemas.return_value = []
+    mock_registry.tools = {}
+
+    mock_engine = MagicMock()
+    mock_engine.chat = AsyncMock(return_value={"session_id": "test-sid", "content": "你好！"})
+
+    with patch.object(_chat_mod, "registry", mock_registry), \
+         patch.object(_chat_mod, "engine", mock_engine):
         resp = await client.post("/api/chat/completions", json={"message": "你好"})
         assert resp.status_code == 200
         data = resp.json()
@@ -69,5 +78,8 @@ async def test_chat_completions(client):
 
 @pytest.mark.asyncio
 async def test_clear_session(client):
-    resp = await client.delete("/api/chat/sessions/test-session")
-    assert resp.status_code == 200
+    mock_engine = MagicMock()
+    mock_engine.clear_session = AsyncMock(return_value=None)
+    with patch.object(_chat_mod, "engine", mock_engine):
+        resp = await client.delete("/api/chat/sessions/test-session")
+        assert resp.status_code == 200

@@ -35,12 +35,54 @@ Engine = get_engine()
 SessionLocal = sessionmaker(bind=Engine)
 
 
+# Async support
+def _to_async_url(url: str) -> str:
+    """Transform a sync DB URL into an async-compatible driver URL."""
+    if url.startswith("sqlite:///"):
+        return url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    return url
+
+
+try:
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+
+    AsyncEngine = create_async_engine(
+        _to_async_url(settings.DATABASE_URL),
+        pool_size=10,
+        max_overflow=20,
+        pool_timeout=30,
+        pool_recycle=3600,
+    )
+    AsyncSessionLocal = async_sessionmaker(bind=AsyncEngine, expire_on_commit=False)
+except ImportError:
+    AsyncEngine = None  # type: ignore[misc,assignment]
+    AsyncSessionLocal = None  # type: ignore[misc,assignment]
+
+
 def get_db():
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
+
+async def get_async_db():
+    """Async DB dependency for FastAPI routes. Falls back to threadpool if async driver unavailable."""
+    if AsyncSessionLocal is not None:
+        async with AsyncSessionLocal() as db:
+            yield db
+    else:
+        # Fallback: run sync session in threadpool
+        db = SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
 
 
 def init_db():

@@ -13,6 +13,12 @@ import os
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
+from app.services.chat_engine import ChatEngine
+from app.tools.registry import ToolRegistry
+
+# Create a real ChatEngine instance for tests
+_engine = ChatEngine(ToolRegistry())
+
 # Load chat module directly to get engine instance
 chat_path = os.path.join(PROJECT_ROOT, "app", "api", "routes", "chat.py")
 _spec = importlib.util.spec_from_file_location(
@@ -23,9 +29,6 @@ _spec = importlib.util.spec_from_file_location(
 _chat_mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_chat_mod)
 router = _chat_mod.router
-
-# 获取 engine 实例
-_engine = _chat_mod.engine
 
 # 加载 task 模块
 task_path = os.path.join(PROJECT_ROOT, "app", "api", "routes", "task.py")

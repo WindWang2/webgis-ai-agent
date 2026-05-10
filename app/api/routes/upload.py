@@ -7,9 +7,10 @@ from typing import List, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
+from sqlalchemy import select, func
 
 from app.core.config import settings
-from app.core.database import SessionLocal
+from app.tools._utils import db_session, async_db_session
 from app.models.upload import UploadRecord
 from app.services.data_parser import (
     MAX_RASTER_SIZE,
@@ -111,7 +112,7 @@ async def upload_files(
     try:
         with open(temp_path, "wb") as f:
             f.write(content)
-    except Exception as e:
+    except OSError as e:
         raise HTTPException(status_code=500, detail=f"文件保存失败: {e}")
 
     # 解析文件
@@ -122,7 +123,7 @@ async def upload_files(
             meta = parse_vector(temp_path, upload_dir, upload_id)
     except ParseError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
+    except (OSError, RuntimeError) as e:
         logger.error(f"文件解析异常: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"文件解析失败: {e}")
 
@@ -130,29 +131,26 @@ async def upload_files(
     save_meta(upload_dir, meta)
 
     # 写入数据库
-    db = SessionLocal()
     try:
-        record = UploadRecord(
-            filename=meta.get("output_path", str(upload_dir / filename)),
-            original_name=filename,
-            file_type=meta["file_type"],
-            format=meta["format"],
-            crs=meta.get("crs", "EPSG:4326"),
-            geometry_type=meta.get("geometry_type"),
-            feature_count=meta.get("feature_count", 0),
-            bbox=meta.get("bbox"),
-            file_size=file_size,
-            session_id=session_id,
-        )
-        db.add(record)
-        db.commit()
-        db.refresh(record)
-    except Exception as e:
-        db.rollback()
+        async with async_db_session() as db:
+            record = UploadRecord(
+                filename=meta.get("output_path", str(upload_dir / filename)),
+                original_name=filename,
+                file_type=meta["file_type"],
+                format=meta["format"],
+                crs=meta.get("crs", "EPSG:4326"),
+                geometry_type=meta.get("geometry_type"),
+                feature_count=meta.get("feature_count", 0),
+                bbox=meta.get("bbox"),
+                file_size=file_size,
+                session_id=session_id,
+            )
+            db.add(record)
+            await db.flush()
+            await db.refresh(record)
+    except (OSError, RuntimeError) as e:
         logger.error(f"数据库写入失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="记录保存失败")
-    finally:
-        db.close()
 
     return UploadResponse(
         id=record.id,
@@ -176,15 +174,15 @@ async def list_uploads(
     offset: int = 0,
 ):
     """获取上传文件列表"""
-    db = SessionLocal()
-    try:
-        query = db.query(UploadRecord).order_by(UploadRecord.upload_time.desc())
+    async with async_db_session() as db:
+        stmt = select(UploadRecord).order_by(UploadRecord.upload_time.desc())
         if session_id:
-            query = query.filter(UploadRecord.session_id == session_id)
-        total = query.count()
-        records = query.offset(offset).limit(limit).all()
-    finally:
-        db.close()
+            stmt = stmt.where(UploadRecord.session_id == session_id)
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total_result = await db.execute(count_stmt)
+        total = total_result.scalar_one()
+        result = await db.execute(stmt.offset(offset).limit(limit))
+        records = result.scalars().all()
 
     return UploadListResponse(
         total=total,
@@ -208,11 +206,9 @@ async def list_uploads(
 @router.get("/uploads/{upload_id}", response_model=UploadResponse)
 async def get_upload(upload_id: int):
     """获取单个上传文件的详情"""
-    db = SessionLocal()
-    try:
-        record = db.query(UploadRecord).filter(UploadRecord.id == upload_id).first()
-    finally:
-        db.close()
+    async with async_db_session() as db:
+        result = await db.execute(select(UploadRecord).where(UploadRecord.id == upload_id))
+        record = result.scalar_one_or_none()
 
     if not record:
         raise HTTPException(status_code=404, detail="上传记录不存在")
@@ -233,11 +229,9 @@ async def get_upload(upload_id: int):
 @router.get("/uploads/{upload_id}/geojson")
 async def get_upload_geojson(upload_id: int):
     """获取上传文件的 GeoJSON 数据（用于地图渲染）"""
-    db = SessionLocal()
-    try:
-        record = db.query(UploadRecord).filter(UploadRecord.id == upload_id).first()
-    finally:
-        db.close()
+    async with async_db_session() as db:
+        result = await db.execute(select(UploadRecord).where(UploadRecord.id == upload_id))
+        record = result.scalar_one_or_none()
 
     if not record:
         raise HTTPException(status_code=404, detail="上传记录不存在")
@@ -256,9 +250,9 @@ async def get_upload_geojson(upload_id: int):
 @router.delete("/uploads/{upload_id}")
 async def delete_upload(upload_id: int):
     """删除上传记录及文件"""
-    db = SessionLocal()
-    try:
-        record = db.query(UploadRecord).filter(UploadRecord.id == upload_id).first()
+    async with async_db_session() as db:
+        result = await db.execute(select(UploadRecord).where(UploadRecord.id == upload_id))
+        record = result.scalar_one_or_none()
         if not record:
             raise HTTPException(status_code=404, detail="上传记录不存在")
 
@@ -269,14 +263,6 @@ async def delete_upload(upload_id: int):
             import shutil
             shutil.rmtree(upload_dir, ignore_errors=True)
 
-        db.delete(record)
-        db.commit()
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"删除失败: {e}")
-    finally:
-        db.close()
+        await db.delete(record)
 
     return {"success": True, "message": "已删除"}

@@ -12,13 +12,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-import time
-from collections import defaultdict
-
 from app.core.config import settings
-from app.core.database import init_db, Engine
+from app.core.database import Engine
 from app.core.exception import global_exception_handler
+from app.core.rate_limiter import get_rate_limiter
 from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer
+from app.tools.registry import ToolRegistry
+from app.tools import init_tools
+from app.services.chat_engine import ChatEngine
 
 logger = logging.getLogger(__name__)
 
@@ -27,18 +28,22 @@ mcp_adapter = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期：启动时初始化数据库和 MCP 连接"""
+    """应用生命周期：启动时初始化工具注册和 MCP 连接"""
     global mcp_adapter
-    init_db()
+
+    # 初始化工具注册中心（替代 chat.py 模块级导入）
+    registry = ToolRegistry()
+    init_tools(registry)
+    chat.registry = registry
+    chat.engine = ChatEngine(registry)
 
     # 加载 MCP server 配置（项目根目录下的 mcp_servers.json）
     mcp_config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "mcp_servers.json")
     from app.services.mcp_adapter import MCPAdapter
-    from app.api.routes.chat import registry as tool_registry
     mcp_config = MCPAdapter.load_config(mcp_config_path)
     if mcp_config.get("mcpServers"):
         logger.info(f"[MCP] loading config from {mcp_config_path}")
-        mcp_adapter = await MCPAdapter.from_config(mcp_config, tool_registry)
+        mcp_adapter = await MCPAdapter.from_config(mcp_config, registry)
     else:
         logger.info("[MCP] no mcp_servers.json found or empty, skipping MCP setup")
 
@@ -64,27 +69,27 @@ app = FastAPI(
 app.add_exception_handler(Exception, global_exception_handler)
 
 
-# Rate limiting middleware (in-memory, per-IP)
+# Rate limiting middleware (Redis with in-memory fallback)
 class RateLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, max_requests: int = 60, window_seconds: int = 60):
         super().__init__(app)
         self.max_requests = max_requests
         self.window = window_seconds
-        self._requests: dict[str, list[float]] = defaultdict(list)
 
     async def dispatch(self, request: Request, call_next):
         if request.url.path.startswith(("/docs", "/redoc", "/openapi.json")):
             return await call_next(request)
 
         client_ip = request.client.host if request.client else "unknown"
-        now = time.time()
-        timestamps = self._requests[client_ip]
-        self._requests[client_ip] = [t for t in timestamps if now - t < self.window]
-
-        if len(self._requests[client_ip]) >= self.max_requests:
+        limiter = await get_rate_limiter()
+        allowed = await limiter.is_allowed(
+            f"rate_limit:{client_ip}",
+            self.max_requests,
+            self.window,
+        )
+        if not allowed:
             return JSONResponse(status_code=429, content={"detail": "请求过于频繁，请稍后再试"})
 
-        self._requests[client_ip].append(now)
         return await call_next(request)
 
 
