@@ -7,6 +7,7 @@ from typing import Optional, Any
 from pydantic import BaseModel, Field
 from app.tools.registry import ToolRegistry, tool
 from app.services.spatial_tasks import run_ndvi_analysis
+from app.tools._utils import db_session
 
 logger = logging.getLogger(__name__)
 
@@ -36,17 +37,15 @@ def register_nature_resource_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="list_analysis_assets",
-          description="获取当前系统中保存的所有遥感分析产物（如 NDVI、NDWI 结果文件）列表。用于回答用户“我之前生成了什么”或进行资产回顾。")
+          description='获取当前系统中保存的所有遥感分析产物（如 NDVI、NDWI 结果文件）列表。用于回答用户"我之前生成了什么"或进行资产回顾。')
     def list_analysis_assets(session_id: Optional[str] = None) -> dict:
-        from app.core.database import SessionLocal
         from app.models.upload import UploadRecord
-        
-        db = SessionLocal()
-        try:
+
+        with db_session() as db:
             query = db.query(UploadRecord).filter(UploadRecord.geometry_type == "raster_analysis")
             if session_id:
                 query = query.filter(UploadRecord.session_id == session_id)
-            
+
             records = query.order_by(UploadRecord.upload_time.desc()).all()
             assets = [{
                 "id": r.id,
@@ -55,47 +54,39 @@ def register_nature_resource_tools(registry: ToolRegistry):
                 "time": r.upload_time.isoformat(),
                 "bbox": r.bbox
             } for r in records]
-            
+
             return {
                 "success": True,
                 "assets": assets,
                 "count": len(assets),
                 "system_message": "这是目前的分析资产列表。你可以直接告诉用户这些成果，或建议将其加载到地图上。"
             }
-        finally:
-            db.close()
 
     @tool(registry, name="manage_analysis_asset",
           description="对已有的分析资产进行重命名或永久删除操作。")
     def manage_analysis_asset(asset_id: int, action: str, new_name: Optional[str] = None) -> dict:
-        from app.core.database import SessionLocal
         from app.models.upload import UploadRecord
         import os
         from app.core.config import settings
-        
-        db = SessionLocal()
-        try:
+
+        with db_session() as db:
             record = db.query(UploadRecord).filter(UploadRecord.id == asset_id).first()
             if not record:
                 return {"error": "未找到对应的分析资产记录"}
-            
+
             if action == "rename" and new_name:
                 old_name = record.original_name
                 record.original_name = new_name
-                db.commit()
                 return {"success": True, "message": f"资产已从「{old_name}」重命名为「{new_name}」"}
-            
+
             elif action == "delete":
                 # 删除物理文件
                 full_path = os.path.join(settings.DATA_DIR, record.filename)
                 if os.path.exists(full_path):
                     os.remove(full_path)
-                
+
                 name = record.original_name
                 db.delete(record)
-                db.commit()
                 return {"success": True, "message": f"资产「{name}」及物理文件已永久删除"}
-            
+
             return {"error": f"不支持的动作或缺少必要参数: {action}"}
-        finally:
-            db.close()

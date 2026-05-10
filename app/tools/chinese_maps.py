@@ -61,7 +61,7 @@ async def _amap_get(endpoint: str, params: dict) -> dict:
                 return {"error": f"Amap: {data.get('info', 'unknown error')}"}
             await ht.record_success("amap")
             return data
-    except Exception as e:
+    except (aiohttp.ClientError, json.JSONDecodeError) as e:
         await ht.record_error("amap", e)
         raise
 
@@ -87,7 +87,7 @@ async def _baidu_get(endpoint: str, params: dict) -> dict:
                 return {"error": f"Baidu: {data.get('message', 'unknown error')}"}
             await ht.record_success("baidu")
             return data
-    except Exception as e:
+    except (aiohttp.ClientError, json.JSONDecodeError) as e:
         await ht.record_error("baidu", e)
         raise
 
@@ -114,7 +114,7 @@ async def _tianditu_get(endpoint: str, params: dict) -> dict:
                 return {"error": f"Tianditu: {msg}"}
             await ht.record_success("tianditu")
             return data
-    except Exception as e:
+    except (aiohttp.ClientError, json.JSONDecodeError) as e:
         await ht.record_error("tianditu", e)
         raise
 
@@ -131,7 +131,7 @@ async def geocode_cn(address: str, city: str = "", provider: str = "amap") -> di
             continue
         try:
             return await _dispatch[p](address, city)
-        except Exception as e:
+        except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
             logger.warning(f"geocode_cn {p} failed: {e}")
     return {"error": "未配置任何地图 API Key"}
 
@@ -161,7 +161,7 @@ async def batch_geocode_cn(
                 if "error" in result:
                     return {"index": idx, "status": "error", "address": addr, "error": str(result["error"])}
                 return {"index": idx, "status": "ok", "address": addr, **result}
-            except Exception as e:
+            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
                 await ht.record_error(provider, e)
                 return {"index": idx, "status": "error", "address": addr, "error": str(e)}
 
@@ -196,7 +196,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
                 continue
             try:
                 return await _dispatch[p](keyword, city, limit)
-            except Exception as e:
+            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
                 logger.warning(f"search_poi {p} failed: {e}")
                 errors.append(f"{p}: {e}")
 
@@ -231,7 +231,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
                 continue
             try:
                 return await _dispatch[p](location[0], location[1])
-            except Exception as e:
+            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
                 logger.warning(f"reverse_geocode_cn {p} failed: {e}")
         return {"error": "未配置任何地图 API Key"}
 
@@ -256,7 +256,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
                 continue
             try:
                 return await _dispatch[p](origin, destination, mode, city)
-            except Exception as e:
+            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
                 logger.warning(f"plan_route {p} failed: {e}")
         return {"error": "未配置高德或百度 API Key，路径规划需要 API Key"}
 
@@ -282,7 +282,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
                 continue
             try:
                 return await _dispatch[p](keywords, level, return_geometry)
-            except Exception as e:
+            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
                 logger.warning(f"get_district {p} failed: {e}")
         return {"error": "未配置任何地图 API Key"}
 
@@ -895,7 +895,7 @@ async def _isochrone_analysis(
                 center[0] + (probe_lng - center[0]) * capped_ratio,
                 center[1] + (probe_lat - center[1]) * capped_ratio,
             )
-        except Exception:
+        except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError):
             # 回退：用均匀半径圆上的点
             fallback_radius_m = minutes * 60 * _speed_mps(mode)
             return (
@@ -965,7 +965,7 @@ async def _get_route_distance_amap(
         if not paths:
             return 0.0
         return float(paths[0].get("distance", 0))
-    except Exception:
+    except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError):
         return 0.0
 
 

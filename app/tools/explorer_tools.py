@@ -56,7 +56,7 @@ def register_explorer_tools(registry: ToolRegistry):
                 "message": f"深度探索任务已启动 (task_id={task_id})。数据将通过 SSE 实时推送。",
             }
 
-        except Exception as e:
+        except (ValueError, TypeError, RuntimeError, OSError) as e:
             logger.error(f"deep_explore failed: {e}")
             return {
                 "type": "explorer_task",

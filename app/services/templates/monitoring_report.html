@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ title }}</title>
+    <style>
+        :root {
+            --primary: #1e40af;
+            --primary-light: #3b82f6;
+            --accent: #059669;
+            --accent-warm: #d97706;
+            --danger: #dc2626;
+            --text: #1e293b;
+            --text-secondary: #475569;
+            --text-muted: #94a3b8;
+            --bg: #ffffff;
+            --bg-card: #f8fafc;
+            --bg-card-alt: #f1f5f9;
+            --border: #e2e8f0;
+            --border-strong: #cbd5e1;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                         "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
+            line-height: 1.7;
+            color: var(--text);
+            background: var(--bg);
+            font-size: 14px;
+        }
+
+        /* === Cover === */
+        .cover {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 40%, #059669 100%);
+            color: white;
+            padding: 60px 40px;
+            page-break-after: always;
+            position: relative;
+            overflow: hidden;
+        }
+        .cover::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle at 30% 70%, rgba(59,130,246,0.15) 0%, transparent 50%),
+                        radial-gradient(circle at 70% 30%, rgba(5,150,105,0.12) 0%, transparent 50%);
+            pointer-events: none;
+        }
+        .cover-badge {
+            display: inline-block;
+            padding: 6px 18px;
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 20px;
+            font-size: 12px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 30px;
+            background: rgba(255,255,255,0.08);
+            backdrop-filter: blur(8px);
+        }
+        .cover h1 {
+            font-size: 2.4rem;
+            font-weight: 700;
+            margin-bottom: 16px;
+            line-height: 1.3;
+        }
+        .cover-subtitle {
+            font-size: 1.1rem;
+            opacity: 0.85;
+            margin-bottom: 40px;
+            max-width: 500px;
+        }
+        .cover-meta {
+            margin-top: auto;
+            padding-top: 40px;
+            font-size: 13px;
+            opacity: 0.7;
+        }
+        .cover-meta div {
+            margin: 6px 0;
+        }
+
+        /* === Content === */
+        .content {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px;
+        }
+        h2 {
+            font-size: 1.4rem;
+            color: var(--primary);
+            margin: 36px 0 16px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--border);
+        }
+        h3 {
+            font-size: 1.1rem;
+            color: var(--text);
+            margin: 24px 0 12px;
+        }
+        p { margin-bottom: 12px; }
+
+        /* === Summary Box === */
+        .summary-box {
+            background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+            border-left: 4px solid var(--accent);
+            border-radius: 0 8px 8px 0;
+            padding: 20px 24px;
+            margin: 20px 0;
+        }
+        .summary-box h3 {
+            color: var(--accent);
+            margin-top: 0;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .summary-box p {
+            margin: 8px 0 0;
+            color: var(--text-secondary);
+        }
+
+        /* === Asset Cards === */
+        .asset-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+            margin: 20px 0;
+        }
+        .asset-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 18px;
+            transition: box-shadow 0.2s;
+        }
+        .asset-card:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+        }
+        .asset-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+        .asset-icon.raster { background: #dbeafe; color: var(--primary); }
+        .asset-icon.vector { background: #dcfce7; color: var(--accent); }
+        .asset-icon.chart { background: #fef3c7; color: var(--accent-warm); }
+        .asset-name {
+            font-weight: 600;
+            font-size: 14px;
+            color: var(--text);
+            margin-bottom: 4px;
+        }
+        .asset-meta {
+            font-size: 12px;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+        .asset-meta span {
+            display: inline-block;
+            margin-right: 12px;
+        }
+
+        /* === Stats Grid === */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 12px;
+            margin: 16px 0;
+        }
+        .stat-item {
+            background: var(--bg-card-alt);
+            border-radius: 8px;
+            padding: 16px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+        .stat-label {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        /* === Conclusions === */
+        .conclusions-box {
+            background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+            border-left: 4px solid var(--primary-light);
+            border-radius: 0 8px 8px 0;
+            padding: 20px 24px;
+            margin: 20px 0;
+        }
+        .conclusions-box h3 {
+            color: var(--primary);
+            margin-top: 0;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* === Table === */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 16px 0;
+            font-size: 13px;
+        }
+        th, td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        th {
+            background: var(--bg-card-alt);
+            font-weight: 600;
+            color: var(--text-secondary);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        tr:hover { background: var(--bg-card); }
+
+        /* === Footer === */
+        .report-footer {
+            text-align: center;
+            padding: 30px;
+            color: var(--text-muted);
+            font-size: 12px;
+            border-top: 1px solid var(--border);
+            margin-top: 40px;
+        }
+
+        /* === Print === */
+        @media print {
+            .cover { page-break-after: always; }
+            h2 { page-break-after: avoid; }
+            .asset-card { break-inside: avoid; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Cover Page -->
+<div class="cover">
+    <div class="cover-badge">自然资源监测报告</div>
+    <h1>{{ title }}</h1>
+    <div class="cover-subtitle">{{ region_name }} · {{ period }}</div>
+    <div class="cover-meta">
+        <div>生成时间：{{ generated_at }}</div>
+        <div>包含分析资产：{{ asset_count }} 项</div>
+        <div>WebGIS AI Agent 自动生成</div>
+    </div>
+</div>
+
+<!-- Content -->
+<div class="content">
+
+    {% if summary %}
+    <h2>执行摘要</h2>
+    <div class="summary-box">
+        <h3>概述</h3>
+        <p>{{ summary }}</p>
+    </div>
+    {% endif %}
+
+    <h2>监测概况</h2>
+    <div class="stats-grid">
+        <div class="stat-item">
+            <div class="stat-value">{{ asset_count }}</div>
+            <div class="stat-label">分析资产</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value">{{ region_name }}</div>
+            <div class="stat-label">监测区域</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value">{{ period }}</div>
+            <div class="stat-label">监测时期</div>
+        </div>
+    </div>
+
+    <h2>分析资产详情</h2>
+    {% for group_name, group_assets in asset_groups.items() %}
+    <h3>{{ group_name }}</h3>
+    <div class="asset-grid">
+        {% for asset in group_assets %}
+        <div class="asset-card">
+            <div class="asset-icon {{ 'raster' if asset.format == 'geotiff' else 'vector' if asset.format == 'geojson' else 'chart' }}">
+                {{ '🛰️' if asset.format == 'geotiff' else '📍' if asset.format == 'geojson' else '📊' }}
+            </div>
+            <div class="asset-name">{{ asset.name }}</div>
+            <div class="asset-meta">
+                <span>ID: {{ asset.id }}</span>
+                <span>格式: {{ asset.format }}</span>
+                <span>大小: {{ asset.file_size_kb }} KB</span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <table>
+        <thead>
+            <tr>
+                <th>资产名称</th>
+                <th>ID</th>
+                <th>类型</th>
+                <th>格式</th>
+                <th>大小</th>
+                <th>生成时间</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for asset in assets %}
+            <tr>
+                <td>{{ asset.name }}</td>
+                <td>{{ asset.id }}</td>
+                <td>{{ asset.type }}</td>
+                <td>{{ asset.format }}</td>
+                <td>{{ asset.file_size_kb }} KB</td>
+                <td>{{ asset.time or 'N/A' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endfor %}
+
+    {% if conclusions %}
+    <h2>结论与建议</h2>
+    <div class="conclusions-box">
+        <h3>综合分析</h3>
+        <p>{{ conclusions }}</p>
+    </div>
+    {% endif %}
+
+    <div class="report-footer">
+        <p>本报告由 WebGIS AI Agent 自动生成</p>
+        <p>生成时间：{{ generated_at }} | 报告 ID：{{ report_id or 'N/A' }}</p>
+    </div>
+
+</div>
+
+</body>
+</html>

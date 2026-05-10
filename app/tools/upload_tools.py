@@ -6,7 +6,7 @@ from typing import Optional
 
 from app.tools.registry import ToolRegistry, tool
 from app.core.config import settings
-from app.core.database import SessionLocal
+from app.tools._utils import db_session
 from app.models.upload import UploadRecord
 
 logger = logging.getLogger(__name__)
@@ -20,14 +20,11 @@ def register_upload_tools(registry: ToolRegistry):
           description="列出当前会话中用户上传的 GIS 数据文件列表。返回文件名、类型、格式、要素数量等摘要信息。")
     def list_uploaded_data(session_id: Optional[str] = None) -> dict:
         """列出上传数据"""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             query = db.query(UploadRecord).order_by(UploadRecord.upload_time.desc())
             if session_id:
                 query = query.filter(UploadRecord.session_id == session_id)
             records = query.limit(50).all()
-        finally:
-            db.close()
 
         if not records:
             return {
@@ -66,11 +63,8 @@ def register_upload_tools(registry: ToolRegistry):
           })
     def get_upload_info(upload_id: int, session_id: Optional[str] = None) -> dict:
         """获取上传数据详情"""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             record = db.query(UploadRecord).filter(UploadRecord.id == upload_id).first()
-        finally:
-            db.close()
 
         if not record:
             return {"error": f"未找到 ID 为 {upload_id} 的上传记录"}
@@ -108,7 +102,7 @@ def register_upload_tools(registry: ToolRegistry):
                         info["sample_properties"] = [
                             f.get("properties", {}) for f in features[:3]
                         ]
-                except Exception as e:
+                except (json.JSONDecodeError, OSError) as e:
                     logger.warning(f"读取 GeoJSON 示例失败: {e}")
 
         # 栅格数据：读取 meta.json

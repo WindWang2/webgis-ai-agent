@@ -34,7 +34,7 @@ def to_utm_gdf(geojson: dict) -> tuple[gpd.GeoDataFrame, str] | None:
                 continue
             props = f.get("properties", {}) or {}
             rows.append({"geometry": s, **props})
-        except Exception:
+        except (ValueError, TypeError):
             continue
     if not rows:
         return None

@@ -50,7 +50,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             if result.get("success"):
                 return {"geojson": result.get("data"), "stats": result.get("stats")}
             return {"error": result.get("error")}
-        except Exception as exc:
+        except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
             if not isinstance(exc, ImportError):
                 logger.warning(f"Celery unavailable for path_analysis: {exc}")
             features = network_features.get("features", network_features) if isinstance(network_features, dict) else network_features
@@ -74,7 +74,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             if result.get("success"):
                 return {"zonal_stats": result.get("data").get("zonal_stats")}
             return {"error": result.get("error")}
-        except Exception as exc:
+        except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
             if not isinstance(exc, ImportError):
                 logger.warning(f"Celery unavailable for zonal_stats: {exc}")
             features = geojson.get("features", geojson) if isinstance(geojson, dict) else geojson
@@ -100,7 +100,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             if result.get("success"):
                 return {"geojson": result.get("data"), "stats": result.get("stats")}
             return {"error": result.get("error")}
-        except Exception as exc:
+        except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
             if not isinstance(exc, ImportError):
                 logger.warning(f"Celery unavailable for overlay_analysis: {exc}")
             features_a = layer_a.get("features", layer_a) if isinstance(layer_a, dict) else layer_a
@@ -125,7 +125,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             if result.get("success"):
                 return {"geojson": result.get("data"), "stats": result.get("stats")}
             return {"error": result.get("error")}
-        except Exception as exc:
+        except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
             if not isinstance(exc, ImportError):
                 logger.warning(f"Celery unavailable for attribute_filter: {exc}")
             features = geojson.get("features", geojson) if isinstance(geojson, dict) else geojson
@@ -150,7 +150,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             if result.get("success"):
                 return {"geojson": result.get("data"), "stats": result.get("stats")}
             return {"error": result.get("error")}
-        except Exception as exc:
+        except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
             if not isinstance(exc, ImportError):
                 logger.warning(f"Celery unavailable for spatial_join: {exc}")
             features_left = left_layer.get("features", left_layer) if isinstance(left_layer, dict) else left_layer

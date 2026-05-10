@@ -6,7 +6,7 @@ def test_default_settings():
     s = Settings()
     assert s.PROJECT_NAME == "WebGIS AI Agent"
     assert s.DEBUG is True
-    assert s.LLM_MODEL == "MiniMax-M2.5"
+    assert s.LLM_MODEL == "MiniMax-M2.7"
     assert s.DATA_DIR == "./data"
 
 

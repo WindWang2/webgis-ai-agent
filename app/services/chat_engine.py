@@ -13,8 +13,8 @@ from app.tools.registry import ToolRegistry
 from app.services.task_tracker import TaskTracker, detect_geojson
 from app.services.session_data import session_data_manager
 from collections import OrderedDict
-from app.core.database import SessionLocal
-from app.services.history_service import HistoryService
+from app.tools._utils import async_db_session
+from app.services.history_service_async import AsyncHistoryService
 
 class LRUCache(OrderedDict):
     """Simple LRU Cache to bound memory usage"""
@@ -275,19 +275,17 @@ class ChatEngine:
             d["tool_call_id"] = msg.tool_call_id
         return d
 
-    def _load_session_from_db(self, session_id: str) -> list[dict]:
-        """Synchronous DB call — must be run via run_in_executor."""
-        db = SessionLocal()
+    async def _load_session_from_db(self, session_id: str) -> list[dict]:
+        """Async DB call to load conversation history."""
         history_messages = []
         try:
-            conv = HistoryService(db).get_or_create_conversation(session_id)
-            if conv and conv.messages:
-                sorted_msgs = sorted(conv.messages, key=lambda x: x.id)
-                history_messages = [self._db_msg_to_llm(m) for m in sorted_msgs]
+            async with async_db_session() as db:
+                conv = await AsyncHistoryService(db).get_or_create_conversation(session_id)
+                if conv and conv.messages:
+                    sorted_msgs = sorted(conv.messages, key=lambda x: x.id)
+                    history_messages = [self._db_msg_to_llm(m) for m in sorted_msgs]
         except Exception as e:
             logger.warning(f"History: failed to load conversation {session_id}: {e}")
-        finally:
-            db.close()
 
         has_system = any(m.get("role") == "system" for m in history_messages)
         if not has_system:
@@ -455,24 +453,18 @@ class ChatEngine:
 
     async def _get_or_create_session(self, session_id: str) -> list[dict]:
         if session_id not in self._sessions:
-            loop = asyncio.get_running_loop()
-            history_messages = await loop.run_in_executor(
-                None, self._load_session_from_db, session_id
-            )
+            history_messages = await self._load_session_from_db(session_id)
             self._sessions[session_id] = history_messages
 
         return self._sessions[session_id]
 
     async def _save_msg_async(self, session_id: str, role: str, content: str, tool_calls=None, tool_result=None, tool_call_id=None):
         """异步保存消息到数据库，带重试机制。"""
-        db = SessionLocal()
         try:
-            # HistoryService 内部已有重试逻辑
-            HistoryService(db).save_message(session_id, role, content, tool_calls, tool_result, tool_call_id)
+            async with async_db_session() as db:
+                await AsyncHistoryService(db).save_message(session_id, role, content, tool_calls, tool_result, tool_call_id)
         except Exception as e:
             logger.error(f"Failed to save message asynchronously: {e}")
-        finally:
-            db.close()
 
     async def _generate_title(self, session_id: str, first_user_message: str):
         """异步生成对话标题。"""
@@ -502,11 +494,8 @@ class ChatEngine:
                     title = first_user_message[:20].rstrip() + "..."
             if not title:
                 title = first_user_message[:20].rstrip() + "..."
-            db = SessionLocal()
-            try:
-                HistoryService(db).update_title(session_id, title)
-            finally:
-                db.close()
+            async with async_db_session() as db:
+                await AsyncHistoryService(db).update_title(session_id, title)
         except Exception as e:
             logger.warning(f"History: title generation failed for {session_id}: {e}")
 
@@ -999,17 +988,15 @@ class ChatEngine:
         yield _sse_event("content", {"content": "达到最大工具调用轮数", "session_id": session_id})
         yield _sse_event("done", {"session_id": session_id})
 
-    def clear_session(self, session_id: str):
+    async def clear_session(self, session_id: str):
         if session_id in self._sessions:
             del self._sessions[session_id]
         session_data_manager.clear_session(session_id)
-        db = SessionLocal()
         try:
-            HistoryService(db).delete_session(session_id)
+            async with async_db_session() as db:
+                await AsyncHistoryService(db).delete_session(session_id)
         except Exception as e:
             logger.warning(f"History: failed to delete session {session_id}: {e}")
-        finally:
-            db.close()
 
     def _detect_suspicious_result(self, result: Any) -> bool:
         """检测工具返回的结果是否"可疑"（如为空数据），用于触发自愈提示。"""

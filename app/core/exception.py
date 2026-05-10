@@ -75,18 +75,17 @@ def format_error_response(
     
     # 开发环境返回详细错误信息
     if include_details:
+        response_data.update({
+            "error_type": error_type,
+            "error_detail": error_message,
+            "path": str(request.url.path),
+            "method": request.method,
+        })
         exc_info = sys.exc_info()
         tb_stack = traceback.format_exception(*exc_info)
         tb_str = "".join(tb_stack)
         tb_str = sanitize_traceback(tb_str)
-        
-        response_data.update({
-            "error_type": error_type,
-            "error_detail": error_message,
-            "traceback": tb_str,
-            "path": str(request.url.path),
-            "method": request.method,
-        })
+        response_data["traceback"] = tb_str
         # 开发环境可以使用较详细的message
         response_data["message"] = "{0}: {1}".format(error_type, error_message)
     

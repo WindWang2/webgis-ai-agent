@@ -52,6 +52,6 @@ def register_crawler_tools(registry: ToolRegistry):
                 # 注意：如果大模型在这次调用中只是得到了文字，它会在下一次循环中使用 geocode 等工具将其转为点
                 "message": "Web search returned text results. Please extract locations and use `geocoding` or similar tools to get exact coordinates if needed, or answer the user directly based on the snippets."
             }
-        except Exception as e:
+        except (ConnectionError, TimeoutError, RuntimeError) as e:
             logger.error(f"[Crawler] Error during web search: {str(e)}")
             return {"type": "poi_web_search", "error": str(e), "data": []}

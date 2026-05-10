@@ -14,7 +14,9 @@ class TestUploadTools:
     def test_list_uploaded_data_empty(self, registry):
         mock_db = MagicMock()
         mock_db.query.return_value.order_by.return_value.limit.return_value.all.return_value = []
-        with patch("app.tools.upload_tools.SessionLocal", return_value=mock_db):
+        with patch("app.tools.upload_tools.db_session") as mock_ctx:
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
             register_upload_tools(registry)
             result = registry._tools["list_uploaded_data"]()
         assert result["success"] is True
@@ -35,7 +37,9 @@ class TestUploadTools:
         mock_db = MagicMock()
         mock_db.query.return_value.order_by.return_value.filter.return_value = mock_db.query.return_value.order_by.return_value
         mock_db.query.return_value.order_by.return_value.limit.return_value.all.return_value = [mock_record]
-        with patch("app.tools.upload_tools.SessionLocal", return_value=mock_db):
+        with patch("app.tools.upload_tools.db_session") as mock_ctx:
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
             register_upload_tools(registry)
             result = registry._tools["list_uploaded_data"](session_id="sess-1")
         assert result["success"] is True
@@ -45,7 +49,9 @@ class TestUploadTools:
     def test_get_upload_info_not_found(self, registry):
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = None
-        with patch("app.tools.upload_tools.SessionLocal", return_value=mock_db):
+        with patch("app.tools.upload_tools.db_session") as mock_ctx:
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
             register_upload_tools(registry)
             result = registry._tools["get_upload_info"](upload_id=99999)
         assert "error" in result
@@ -67,8 +73,10 @@ class TestUploadTools:
 
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = mock_record
-        with patch("app.tools.upload_tools.SessionLocal", return_value=mock_db), \
+        with patch("app.tools.upload_tools.db_session") as mock_ctx, \
              patch("pathlib.Path.exists", return_value=False):
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
             register_upload_tools(registry)
             result = registry._tools["get_upload_info"](upload_id=1)
         assert result["success"] is True

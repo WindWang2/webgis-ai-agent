@@ -74,7 +74,7 @@ async def _query_overpass(query: str) -> dict:
                     return {"type": "FeatureCollection", "features": [], "error": f"Overpass error {resp.status}: {text}"}
                 data = await resp.text()
                 logger.info(f"[OSM] Overpass query successful, data size: {len(data)} bytes")
-    except Exception as e:
+    except aiohttp.ClientError as e:
         logger.error(f"[OSM] Overpass network/timeout error: {e}")
         return {"type": "FeatureCollection", "features": [], "error": str(e)}
 

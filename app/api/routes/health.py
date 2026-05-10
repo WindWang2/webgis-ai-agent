@@ -44,6 +44,28 @@ def _check_llm():
     return _llm_last_result
 
 
+def _check_redis():
+    """检查 Redis 连通性"""
+    try:
+        import redis
+        r = redis.from_url(settings.REDIS_URL, socket_connect_timeout=2)
+        return r.ping()
+    except Exception:
+        return False
+
+
+def _check_celery():
+    """检查 Celery Worker 是否在线"""
+    try:
+        from celery import Celery
+        app = Celery(broker=settings.CELERY_BROKER_URL)
+        inspect = app.control.inspect(timeout=2.0)
+        active = inspect.active()
+        return active is not None
+    except Exception:
+        return False
+
+
 @router.get("/health")
 def health_check():
     """基础存活检查"""
@@ -57,13 +79,19 @@ def health_check():
 
 @router.get("/ready")
 def readiness_check():
-    """就绪检查：数据库 + LLM 连通性"""
+    """就绪检查：数据库 + LLM + Redis + Celery 连通性"""
     db_ready = _check_db()
     llm_ready = _check_llm()
+    redis_ready = _check_redis()
+    celery_ready = _check_celery()
+
+    all_ready = db_ready and llm_ready and redis_ready and celery_ready
 
     return {
-        "ready": db_ready and llm_ready,
+        "ready": all_ready,
         "database": "connected" if db_ready else "disconnected",
         "llm": "reachable" if llm_ready else "unreachable",
+        "redis": "connected" if redis_ready else "disconnected",
+        "celery": "active" if celery_ready else "inactive",
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
