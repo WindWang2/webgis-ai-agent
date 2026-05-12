@@ -20,42 +20,31 @@ cp .env.example .env
 > [!TIP]
 > 如果你在使用地理编码 (Geocoding) 或 OSM 搜索时遇到 SSL 报错或无法连接，建议正确配置 `HTTPS_PROXY`。系统已内置跨平台 SSL 证书修复机制 (Certifi)。
 
-## 2. 三轨并行启动方案 (Agent CNS Core)
+## 2. 基础设施一键诊断 (Agent CNS Health Check)
 
-有别于以往单体应用，本地联调必须保证**这三个终端处于并发在线状态**，缺一不可！
+在启动任何服务之前，强烈建议运行诊断工具确保你的 Redis、数据库和 LLM API 处于就绪状态：
 
-### 终端一: Redis 与 Celery 超算后台 (必须)
-所有 GIS 的坐标切割运算都被下放在此，不启动本服务系统会假死卡顿。
 ```bash
-# 请确保你的机器装有本机 Redis Server 并处于启动态
-redis-server & 
-
-# 激活 Python 虚拟空间
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# 拉起超算节点 (执行肌肉)
-celery -A main.celery_app worker --loglevel=info
+python manage.py check
 ```
 
-### 终端二: FastAPI 中枢神经系统 (路由与大模型流中转)
+该工具会输出一个专业的状态面板。如果 Redis 或 Celery Worker 离线，面板会给出明确的红色警示。
+
+## 3. 全栈一键启动方案 (NEW!)
+
+为了简化开发流程，V3.2 引入了统一的开发指令。你不再需要手动开启三个终端，只需一个指令即可拉起整个 CNS 生态位：
+
 ```bash
-# (同在前文的虚拟空间内)
-python main.py
-# 或者使用 uvicorn 直接启动 (默认端口 8001)
-python -m uvicorn main:app --reload --host 0.0.0.0 --port 8001
+python manage.py dev
 ```
 
-### 终端三: Next.js 原生渲染极客桌面
-```bash
-cd frontend
-npm install
+该指令会同时启动：
+- **FastAPI Backend** (Port 8001, with hot-reload)
+- **Celery Worker** (Background spatial compute)
+- **Next.js Frontend** (Port 3000)
 
-# 拉起包含 MapLibre GPU 组件的前台
-npm run dev
-# -> Local: http://localhost:3000
-```
+> [!NOTE]
+> 如果你更喜欢手动控制每个组件，依然可以使用 `python manage.py server` 和 `python manage.py worker`。
 
 ## 3. 开发校验与提交铁律
 

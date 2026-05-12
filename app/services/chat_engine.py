@@ -82,21 +82,7 @@ def _construct_self_healing_message(tool_name: str, error_msg: str, error_type: 
     )
 
 
-def _serialize_sse_data(data: dict) -> str:
-    """安全地将数据序列化为 JSON 字符串，防止序列化失败导致流中断"""
-    try:
-        return json.dumps(data, ensure_ascii=False)
-    except Exception as e:
-        logger.error(f"SSE serialization error: {e}, data keys: {list(data.keys())}")
-        return json.dumps({
-            "error": "Internal serialization error",
-            "session_id": data.get("session_id")
-        }, ensure_ascii=False)
-
-
-def _sse_event(event_type: str, data: dict) -> str:
-    """构造 SSE 格式事件字符串"""
-    return f"event: {event_type}\ndata: {_serialize_sse_data(data)}\n\n"
+from app.utils.sse import sse_event
 
 
 _MSG_MAX_CHARS = 3000  # 存入 messages 的工具结果最大字符数
@@ -755,7 +741,7 @@ class ChatEngine:
 
         # 创建任务
         task = self.tracker.create(session_id, message)
-        yield _sse_event("task_start", {"task_id": task.id})
+        yield sse_event("task_start", {"task_id": task.id})
 
         # 初始化局部哨兵，防止 AI 在单次任务中陷入相同指令的无限循环
         executed_tools = set()
@@ -765,7 +751,7 @@ class ChatEngine:
 
             # 检查取消
             if self.tracker.is_cancelled(task.id):
-                yield _sse_event("task_cancelled", {"task_id": task.id})
+                yield sse_event("task_cancelled", {"task_id": task.id})
                 return
 
             tools = self.registry.get_schemas() if self.registry.get_schemas() else None
@@ -777,7 +763,7 @@ class ChatEngine:
                 if event_type == "token":
                     # Forward each token chunk to the frontend for real-time display
                     streamed_content_parts.append(event_data["content"])
-                    yield _sse_event("token", {"content": event_data["content"], "session_id": session_id})
+                    yield sse_event("token", {"content": event_data["content"], "session_id": session_id})
                 elif event_type == "done":
                     assistant_msg = event_data["message"]
 
@@ -800,7 +786,7 @@ class ChatEngine:
                 # For streaming path, content was already streamed as token events,
                 # but emit a content event too for backward compat with clients expecting it
                 if content_text:
-                    yield _sse_event("content", {"content": "\n", "session_id": session_id})
+                    yield sse_event("content", {"content": "\n", "session_id": session_id})
 
                 entry: dict = {"role": "assistant", "content": content_text}
                 if standard_calls:
@@ -824,7 +810,7 @@ class ChatEngine:
 
                     # step_start
                     step = self.tracker.start_step(task.id, tool_name, tool_args_dict)
-                    yield _sse_event("step_start", {
+                    yield sse_event("step_start", {
                         "task_id": task.id,
                         "step_id": step.id,
                         "step_index": len(task.steps),
@@ -833,7 +819,7 @@ class ChatEngine:
                     })
 
                     # 现有 tool_call 事件（保持兼容）
-                    yield _sse_event("tool_call", {"name": tool_name, "arguments": tool_args_raw})
+                    yield sse_event("tool_call", {"name": tool_name, "arguments": tool_args_raw})
 
                     # 循环哨兵：如果在同一次对话中重复执行完全相同的指令，直接返回拦截
                     tool_key = (tool_name, str(tool_args_raw))
@@ -847,7 +833,7 @@ class ChatEngine:
                             "tool_call_id": tc["id"],
                             "content": msg_result_str,
                         })
-                        yield _sse_event("step_result", {
+                        yield sse_event("step_result", {
                             "task_id": task.id,
                             "step_id": step.id,
                             "tool": tool_name,
@@ -896,7 +882,7 @@ class ChatEngine:
                         # step_result (使用流式脱敏)
                         has_geojson = detect_geojson(result)
                         slim_result = _slim_event_result(result)
-                        yield _sse_event("step_result", {
+                        yield sse_event("step_result", {
                             "task_id": task.id,
                             "step_id": step.id,
                             "tool": tool_name,
@@ -907,7 +893,7 @@ class ChatEngine:
                         })
 
                         # 现有 tool_result 事件 (使用流式脱敏)
-                        yield _sse_event("tool_result", {"name": tool_name, "result": slim_result, "session_id": session_id})
+                        yield sse_event("tool_result", {"name": tool_name, "result": slim_result, "session_id": session_id})
 
                         # 存入 messages 时压缩大型结果，避免撑爆 LLM 上下文。
                         # 注：不再把 map_state 拼到工具结果里——下一轮 LLM 调用前的
@@ -925,7 +911,7 @@ class ChatEngine:
                         
                         # 1. 更新任务跟踪器
                         self.tracker.fail_step(task.id, step.id, error_msg)
-                        yield _sse_event("step_error", {
+                        yield sse_event("step_error", {
                             "task_id": task.id,
                             "step_id": step.id,
                             "tool": tool_name,
@@ -936,7 +922,7 @@ class ChatEngine:
                         msg_result_str = _construct_self_healing_message(tool_name, error_msg, error_type)
                         
                         # 3. 发送给前端兼容事件
-                        yield _sse_event("tool_result", {"name": tool_name, "result": msg_result_str, "session_id": session_id})
+                        yield sse_event("tool_result", {"name": tool_name, "result": msg_result_str, "session_id": session_id})
 
                     if standard_calls:
                         messages.append({
@@ -952,7 +938,7 @@ class ChatEngine:
 
                     # 检查取消（每步执行后）
                     if self.tracker.is_cancelled(task.id):
-                        yield _sse_event("task_cancelled", {"task_id": task.id})
+                        yield sse_event("task_cancelled", {"task_id": task.id})
                         return
 
                 if xml_calls and tool_result_msgs:
@@ -970,23 +956,23 @@ class ChatEngine:
 
                 # Emit a final content event (empty, since tokens were already sent)
                 # This signals to the frontend that the message is complete
-                yield _sse_event("content", {"content": "", "session_id": session_id, "streaming_done": True})
+                yield sse_event("content", {"content": "", "session_id": session_id, "streaming_done": True})
 
                 # task_complete
                 self.tracker.complete_task(task.id)
-                yield _sse_event("task_complete", {
+                yield sse_event("task_complete", {
                     "task_id": task.id,
                     "step_count": len(task.steps),
                     "summary": content[:100],
                 })
-                yield _sse_event("done", {"session_id": session_id})
+                yield sse_event("done", {"session_id": session_id})
                 self._fire_and_forget(self._generate_title, session_id, message)
                 return
 
         self.tracker.fail_task(task.id, "达到最大工具调用轮数")
-        yield _sse_event("task_error", {"task_id": task.id, "error": "达到最大轮数"})
-        yield _sse_event("content", {"content": "达到最大工具调用轮数", "session_id": session_id})
-        yield _sse_event("done", {"session_id": session_id})
+        yield sse_event("task_error", {"task_id": task.id, "error": "达到最大轮数"})
+        yield sse_event("content", {"content": "达到最大工具调用轮数", "session_id": session_id})
+        yield sse_event("done", {"session_id": session_id})
 
     async def clear_session(self, session_id: str):
         if session_id in self._sessions:

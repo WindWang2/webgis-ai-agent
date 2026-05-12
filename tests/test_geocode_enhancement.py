@@ -5,6 +5,13 @@ from unittest.mock import patch, AsyncMock
 from app.tasks.explorer.task_chain import explorer_geocode_task
 
 
+@pytest.fixture(autouse=True)
+def mock_update_state():
+    """Mock update_state to avoid ValueError when calling .run() directly"""
+    with patch.object(explorer_geocode_task, "update_state") as mock:
+        yield mock
+
+
 def test_geocode_task_calls_batch_geocode_cn():
     """Verify task calls batch_geocode_cn, maps results back, returns correct success_rate"""
     prev_result = {
