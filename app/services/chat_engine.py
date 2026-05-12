@@ -88,6 +88,28 @@ from app.utils.sse import sse_event
 _MSG_MAX_CHARS = 3000  # 存入 messages 的工具结果最大字符数
 
 
+def _normalize_tool_args(raw: Any) -> str:
+    """规范化工具参数为稳定 key，避免 LLM 拼 JSON 字段顺序导致重复调用拦截被绕过。"""
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+        return json.dumps(parsed, ensure_ascii=False, sort_keys=True)
+    except (json.JSONDecodeError, TypeError):
+        return str(raw)
+
+
+def _is_error_dict(result: Any) -> bool:
+    """识别 std_error_response 形状的错误返回。"""
+    return isinstance(result, dict) and result.get("success") is False and "code" in result
+
+
+def _wrap_error_dict_for_llm(tool_name: str, result: dict) -> str:
+    """将 std_error_response dict 包装为统一的自愈消息字符串。"""
+    code = result.get("code", "TOOL_ERROR")
+    message = result.get("message", "")
+    error_type = result.get("error_type", code)
+    return _construct_self_healing_message(tool_name, message, error_type)
+
+
 def _slim_tool_result(result: any, result_str: str, session_geojson_ref: str | None) -> str:
     """将大型工具结果压缩为 LLM 友好的摘要版本。
     完整 GeoJSON 已通过 SSE 推送给前端，messages 里只保留摘要。
@@ -453,6 +475,26 @@ class ChatEngine:
 
         return self._sessions[session_id]
 
+    def _apply_skill(self, messages: list[dict], skill_name: Optional[str]) -> None:
+        """注入或刷新 skill 指令，保证 messages 里同一 skill 只有一份 system body。
+
+        会话累积多轮带 skill_name 的请求时，旧实现会把同一段 system body 不断 append；
+        这里先扫历史移除该 skill 已有的 system，再追加最新版，避免上下文膨胀。
+        """
+        if not skill_name:
+            return
+        from app.tools.skills import get_md_skill
+        skill = get_md_skill(skill_name)
+        if not skill:
+            return
+        marker = f"[Skill指令: {skill_name}]"
+        # 移除该 skill 在历史里残留的旧 system 消息（去重 + 重新置于尾部）
+        messages[:] = [
+            m for m in messages
+            if not (m.get("role") == "system" and isinstance(m.get("content"), str) and m["content"].startswith(marker))
+        ]
+        messages.append({"role": "system", "content": f"{marker}\n\n{skill['body']}"})
+
     async def _save_msg_async(self, session_id: str, role: str, content: str, tool_calls=None, tool_result=None, tool_call_id=None):
         """异步保存消息到数据库，带重试机制。"""
         try:
@@ -551,8 +593,11 @@ class ChatEngine:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
 
-        # Accumulated content and tool_calls from deltas
+        # Accumulated content / reasoning / tool_calls from deltas.
+        # 推理 token 与正文 token 分开累积，避免 DeepSeek-R1 / MiniMax-M2.7 把"思考过程"
+        # 拼进 assistant.content 污染下一轮的历史摘要。
         content_parts: list[str] = []
+        reasoning_parts: list[str] = []
         tool_calls_accum: dict[int, dict] = {}  # index -> {id, function: {name, arguments}}
         finish_reason: Optional[str] = None
 
@@ -588,10 +633,10 @@ class ChatEngine:
                     delta_reasoning = delta.get("reasoning") or delta.get("reasoning_content")
                     
                     if delta_reasoning:
-                        # 兼容 MiniMax-M2.7/DeepSeek-V3 的思考过程
-                        content_parts.append(delta_reasoning)
+                        # 兼容 MiniMax-M2.7/DeepSeek-V3 的思考过程：单独累积，不进 content_parts
+                        reasoning_parts.append(delta_reasoning)
                         yield ("token", {"content": delta_reasoning, "is_reasoning": True})
-                    elif delta_content:
+                    if delta_content:
                         content_parts.append(delta_content)
                         yield ("token", {"content": delta_content})
 
@@ -617,9 +662,14 @@ class ChatEngine:
                             if fn_delta.get("arguments"):
                                 tc_entry["function"]["arguments"] += fn_delta["arguments"]
 
-        # Assemble the final message from accumulated deltas
+        # Assemble the final message from accumulated deltas.
+        # reasoning 单独挂在 `reasoning` 字段上，便于 chat_stream 在没有正文时
+        # 仍能拿到模型的有效输出，但不与 content 混为一谈。
         assembled_content = "".join(content_parts)
+        assembled_reasoning = "".join(reasoning_parts)
         assembled_message: dict = {"role": "assistant", "content": assembled_content}
+        if assembled_reasoning:
+            assembled_message["reasoning"] = assembled_reasoning
 
         if tool_calls_accum:
             # Sort by index and build list
@@ -650,13 +700,12 @@ class ChatEngine:
 
         messages = await self._get_or_create_session(session_id)
 
-        if skill_name:
-            from app.tools.skills import get_md_skill
-            skill = get_md_skill(skill_name)
-            if skill:
-                messages.append({"role": "system", "content": f"[Skill指令: {skill_name}]\n\n{skill['body']}"})
+        self._apply_skill(messages, skill_name)
         messages.append({"role": "user", "content": message})
         await self._save_msg_async(session_id, "user", message)
+
+        # 非流式路径也需要重复调用拦截，避免 LLM 在同一任务里循环刷同一工具
+        executed_tools: set[tuple[str, str]] = set()
 
         # FC 循环
         for _ in range(self.max_rounds):
@@ -685,7 +734,7 @@ class ChatEngine:
                 if xml_calls:
                     # Strip XML artifact from content before storing
                     content_text = re.sub(r'\s*minimax:tool_call[\s\S]*', '', content_text).strip()
-                
+
                 # 如果只有 reasoning 没有 content，把 reasoning 充当 content
                 if not content_text and reasoning:
                     content_text = reasoning
@@ -698,37 +747,18 @@ class ChatEngine:
 
                 tool_result_msgs: list[str] = []
                 for tc in tc_list:
-                    try:
-                        result = await self.registry.dispatch(
-                            tc["function"]["name"], 
-                            tc["function"]["arguments"],
-                            session_id=session_id
-                        )
-                        result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
-                        
-                        # 自愈检测：检查结果是否"不对"（如为空）
-                        if self._detect_suspicious_result(result):
-                            result_str += "\n\n(提示: 查询结果为空。如果这不符合预期，请尝试扩大搜索半径、更换关键词或检查行政区划参数。)"
-                            
-                        result_str_final = result_str
-                    except Exception as e:
-                        # 区分校验错误与执行错误
-                        error_type = "参数校验失败" if isinstance(e, ValueError) and "失败" in str(e) else "执行出错"
-                        error_msg = str(e)
-                        logger.error(f"Tool {tc['function']['name']} error: {e}")
-                        
-                        # 构造自愈提示词作为工具结果返回给 LLM
-                        result_str_final = _construct_self_healing_message(tc['function']['name'], error_msg, error_type)
+                    outcome = await self._dispatch_tool(tc, session_id, executed_tools)
+                    llm_payload = outcome["llm_payload"]
 
                     if standard_calls:
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tc["id"],
-                            "content": result_str_final,
+                            "content": llm_payload,
                         })
-                        await self._save_msg_async(session_id, "tool", "", None, result_str_final, tc["id"])
+                        await self._save_msg_async(session_id, "tool", "", None, llm_payload, tc["id"])
                     else:
-                        tool_result_msgs.append(f"{tc['function']['name']}: {result_str}")
+                        tool_result_msgs.append(f"{tc['function']['name']}: {llm_payload}")
 
                 if xml_calls and tool_result_msgs:
                     messages.append({
@@ -760,11 +790,7 @@ class ChatEngine:
 
         messages = await self._get_or_create_session(session_id)
 
-        if skill_name:
-            from app.tools.skills import get_md_skill
-            skill = get_md_skill(skill_name)
-            if skill:
-                messages.append({"role": "system", "content": f"[Skill指令: {skill_name}]\n\n{skill['body']}"})
+        self._apply_skill(messages, skill_name)
         messages.append({"role": "user", "content": message})
         await self._save_msg_async(session_id, "user", message)
 
@@ -828,7 +854,8 @@ class ChatEngine:
                 if standard_calls:
                     entry["tool_calls"] = standard_calls
                 messages.append(entry)
-                await self._save_msg_async(session_id, "assistant", content_text, standard_calls)
+                # 保存完整 tc_list（含 MiniMax XML 解析出的 call），避免 DB 重载后链路断裂
+                await self._save_msg_async(session_id, "assistant", content_text, tc_list)
 
                 tool_result_msgs: list[str] = []
 
@@ -844,7 +871,6 @@ class ChatEngine:
                         logger.warning(f"工具参数解析失败 tool={tool_name} raw={repr(_arg_preview)}: {e}")
                         tool_args_dict = {}
 
-                    # step_start
                     step = self.tracker.start_step(task.id, tool_name, tool_args_dict)
                     yield sse_event("step_start", {
                         "task_id": task.id,
@@ -853,112 +879,51 @@ class ChatEngine:
                         "tool": tool_name,
                         "session_id": session_id,
                     })
-
-                    # 现有 tool_call 事件（保持兼容）
                     yield sse_event("tool_call", {"name": tool_name, "arguments": tool_args_raw})
 
-                    # 循环哨兵：如果在同一次对话中重复执行完全相同的指令，直接返回拦截
-                    tool_key = (tool_name, str(tool_args_raw))
-                    if tool_key in executed_tools:
-                        msg_result_str = (
-                            f"[重复调用拦截] {tool_name} 已在本任务中以相同参数成功执行，"
-                            f"结果已生效。请直接基于既有结果汇报，不要再次调用。"
-                        )
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc["id"],
-                            "content": msg_result_str,
-                        })
+                    # 用统一 helper 跑工具，外层包一层心跳保活
+                    dispatch_task = asyncio.create_task(
+                        self._dispatch_tool(tc, session_id, executed_tools)
+                    )
+                    while not dispatch_task.done():
+                        done, _pending = await asyncio.wait([dispatch_task], timeout=5.0)
+                        if not done:
+                            yield ": keep-alive\n\n"
+                            logger.debug(f"SSE Heartbeat sent for tool: {tool_name}")
+                    outcome = await dispatch_task
+
+                    msg_result_str = outcome["llm_payload"]
+
+                    if outcome["repeated"]:
+                        # 重复调用拦截：不更新 tracker（没有真实执行），只发 step_result
                         yield sse_event("step_result", {
                             "task_id": task.id,
                             "step_id": step.id,
                             "tool": tool_name,
-                            "result": {"success": True, "note": "Loop blocked"},
+                            "result": outcome["slim_event"],
                             "session_id": session_id,
                         })
-                        continue
-                    
-                    executed_tools.add(tool_key)
-
-                    # 执行工具 (带心跳保活)
-                    try:
-                        # 将工具执行包装为异步任务，以便在等待期间发送心跳
-                        dispatch_task = asyncio.create_task(
-                            self.registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
-                        )
-                        
-                        while not dispatch_task.done():
-                            # 每 5 秒发送一次心跳，防止连接超时
-                            done, pending = await asyncio.wait([dispatch_task], timeout=5.0)
-                            if not done:
-                                yield ": keep-alive\n\n"
-                                logger.debug(f"SSE Heartbeat sent for tool: {tool_name}")
-                        result = await dispatch_task
-                        result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
-                        self.tracker.complete_step(task.id, step.id, result)
-
-                        # 将结果存储到数据管理器，并生成标准游标
-                        geojson_ref: str | None = None
-                        target_data = None
-                        if isinstance(result, dict):
-                            # 1. 处理 GeoJSON/FeatureCollection
-                            if isinstance(result.get("geojson"), (dict, list)):
-                                target_data = result["geojson"]
-                            elif result.get("type") == "FeatureCollection" and "features" in result:
-                                target_data = result
-                            
-                            if target_data is not None:
-                                geojson_ref = session_data_manager.store(session_id, target_data, prefix="geojson")
-                            
-                            # 2. 处理热力图栅格 (Heatmap Raster)
-                            if result.get("type") == "heatmap_raster":
-                                # 存储热力图元数据，以便 HUD 感知
-                                session_data_manager.store(session_id, result, prefix="heatmap")
-
-                        # step_result (使用流式脱敏)
-                        has_geojson = detect_geojson(result)
-                        slim_result = _slim_event_result(result)
-                        yield sse_event("step_result", {
-                            "task_id": task.id,
-                            "step_id": step.id,
-                            "tool": tool_name,
-                            "result": slim_result,
-                            "geojson_ref": geojson_ref,
-                            "has_geojson": has_geojson,
-                            "session_id": session_id,
-                        })
-
-                        # 现有 tool_result 事件 (使用流式脱敏)
-                        yield sse_event("tool_result", {"name": tool_name, "result": slim_result, "session_id": session_id})
-
-                        # 存入 messages 时压缩大型结果，避免撑爆 LLM 上下文。
-                        # 注：不再把 map_state 拼到工具结果里——下一轮 LLM 调用前的
-                        # 系统消息会重新注入最新感知，这里追加只会让历史无意义膨胀。
-                        msg_result_str = _slim_tool_result(result, result_str, geojson_ref)
-
-                        if self._detect_suspicious_result(result):
-                            msg_result_str += "\n\n(注意: 此操作未返回任何空间要素或有效数据。请检查查询范围、关键词或图层名称，并根据需要尝试不同的参数。)"
-
-                    except Exception as e:
-                        # 区分校验错误与执行错误
-                        error_type = "参数校验失败" if isinstance(e, ValueError) and "失败" in str(e) else "执行出错"
-                        error_msg = str(e)
-                        logger.error(f"Tool {tool_name} error: {e}")
-                        
-                        # 1. 更新任务跟踪器
-                        self.tracker.fail_step(task.id, step.id, error_msg)
+                    elif outcome["is_error"]:
+                        self.tracker.fail_step(task.id, step.id, outcome["error_msg"])
                         yield sse_event("step_error", {
                             "task_id": task.id,
                             "step_id": step.id,
                             "tool": tool_name,
-                            "error": error_msg,
+                            "error": outcome["error_msg"],
                         })
-
-                        # 2. 构造自愈提示词作为工具结果反馈给 LLM
-                        msg_result_str = _construct_self_healing_message(tool_name, error_msg, error_type)
-                        
-                        # 3. 发送给前端兼容事件
                         yield sse_event("tool_result", {"name": tool_name, "result": msg_result_str, "session_id": session_id})
+                    else:
+                        self.tracker.complete_step(task.id, step.id, outcome["result"])
+                        yield sse_event("step_result", {
+                            "task_id": task.id,
+                            "step_id": step.id,
+                            "tool": tool_name,
+                            "result": outcome["slim_event"],
+                            "geojson_ref": outcome["geojson_ref"],
+                            "has_geojson": outcome["has_geojson"],
+                            "session_id": session_id,
+                        })
+                        yield sse_event("tool_result", {"name": tool_name, "result": outcome["slim_event"], "session_id": session_id})
 
                     if standard_calls:
                         messages.append({
@@ -1013,6 +978,138 @@ class ChatEngine:
         yield sse_event("content", {"content": "达到最大工具调用轮数", "session_id": session_id})
         yield sse_event("done", {"session_id": session_id})
 
+    async def _dispatch_tool(
+        self,
+        tc: dict,
+        session_id: str,
+        executed_tools: set[tuple[str, str]],
+    ) -> dict:
+        """统一的工具执行入口，chat 与 chat_stream 共用。
+
+        负责：
+        1. 重复调用拦截（同 session 内同参数同名工具只执行一次）
+        2. 调用 registry.dispatch（含 ref 解析、参数校验、异常包装）
+        3. 错误自愈消息构造（同时识别 std_error_response 字典与异常抛出两条路径）
+        4. 大型结果压缩 + GeoJSON 落入 session_data_manager 形成 ref 游标
+        5. 把工具动作回写到 event_log，让下一轮 [环境感知] 反映最新地图变化
+
+        返回 dict 字段：
+            - result: 原始工具返回（可能是 dict/str/list/error_dict）
+            - llm_payload: 给 LLM 看的字符串（已压缩、已附加自愈提示）
+            - slim_event: 给前端 SSE 用的脱敏版本
+            - geojson_ref: 若工具产出新图层数据则非空
+            - has_geojson: bool
+            - repeated: 是否被重复调用拦截
+            - is_error: 是否是错误（影响前端 step_error 派发）
+            - error_msg: 错误消息字符串（仅 is_error 时有值）
+        """
+        tool_name = tc["function"]["name"]
+        tool_args_raw = tc["function"]["arguments"]
+
+        tool_key = (tool_name, _normalize_tool_args(tool_args_raw))
+        if tool_key in executed_tools:
+            note = (
+                f"[重复调用拦截] {tool_name} 已在本任务中以相同参数成功执行，"
+                f"结果已生效。请直接基于既有结果汇报，不要再次调用。"
+            )
+            return {
+                "result": {"success": True, "note": "Loop blocked"},
+                "llm_payload": note,
+                "slim_event": {"success": True, "note": "Loop blocked"},
+                "geojson_ref": None,
+                "has_geojson": False,
+                "repeated": True,
+                "is_error": False,
+                "error_msg": "",
+            }
+        executed_tools.add(tool_key)
+
+        is_error = False
+        error_msg = ""
+        try:
+            result = await self.registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
+        except Exception as e:
+            # 这里只有 _resolve_references 抛 ValueError 才会走到（其余路径都返回 std_error_response dict）
+            error_type = "参数校验失败" if isinstance(e, ValueError) and "失败" in str(e) else "执行出错"
+            error_msg = str(e)
+            logger.error(f"Tool {tool_name} error: {e}")
+            llm_payload = _construct_self_healing_message(tool_name, error_msg, error_type)
+            return {
+                "result": {"success": False, "code": error_type, "message": error_msg, "data": None},
+                "llm_payload": llm_payload,
+                "slim_event": {"success": False, "code": error_type, "message": error_msg},
+                "geojson_ref": None,
+                "has_geojson": False,
+                "repeated": False,
+                "is_error": True,
+                "error_msg": error_msg,
+            }
+
+        # registry 返回 std_error_response dict 的统一路径
+        if _is_error_dict(result):
+            is_error = True
+            error_msg = result.get("message", "")
+            llm_payload = _wrap_error_dict_for_llm(tool_name, result)
+            session_data_manager.append_event(
+                session_id,
+                "tool_failed",
+                {"tool": tool_name, "code": result.get("code"), "message": error_msg[:200]},
+            )
+            return {
+                "result": result,
+                "llm_payload": llm_payload,
+                "slim_event": _slim_event_result(result),
+                "geojson_ref": None,
+                "has_geojson": False,
+                "repeated": False,
+                "is_error": True,
+                "error_msg": error_msg,
+            }
+
+        # 正常路径：把大型 GeoJSON 存为 ref，热力图等元数据落地
+        geojson_ref: Optional[str] = None
+        target_data = None
+        if isinstance(result, dict):
+            if isinstance(result.get("geojson"), (dict, list)):
+                target_data = result["geojson"]
+            elif result.get("type") == "FeatureCollection" and "features" in result:
+                target_data = result
+            if target_data is not None:
+                geojson_ref = session_data_manager.store(session_id, target_data, prefix="geojson")
+            if result.get("type") == "heatmap_raster":
+                session_data_manager.store(session_id, result, prefix="heatmap")
+
+        result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
+        llm_payload = _slim_tool_result(result, result_str, geojson_ref) or result_str
+
+        if self._detect_suspicious_result(result):
+            llm_payload += (
+                "\n\n(注意: 此操作未返回任何空间要素或有效数据。请检查查询范围、关键词或图层名称，"
+                "并根据需要尝试不同的参数。不要重复完全相同的调用。)"
+            )
+
+        # 把工具动作回写到事件日志：下一轮 [环境感知] 会看到最新地图变化
+        event_payload: dict = {"tool": tool_name}
+        if geojson_ref:
+            event_payload["ref"] = geojson_ref
+        if isinstance(result, dict):
+            for k in ("layer_id", "bbox", "feature_count", "alias"):
+                v = result.get(k)
+                if v is not None:
+                    event_payload[k] = v
+        session_data_manager.append_event(session_id, "tool_executed", event_payload)
+
+        return {
+            "result": result,
+            "llm_payload": llm_payload,
+            "slim_event": _slim_event_result(result),
+            "geojson_ref": geojson_ref,
+            "has_geojson": detect_geojson(result),
+            "repeated": False,
+            "is_error": is_error,
+            "error_msg": error_msg,
+        }
+
     async def clear_session(self, session_id: str):
         if session_id in self._sessions:
             del self._sessions[session_id]
@@ -1024,11 +1121,14 @@ class ChatEngine:
             logger.warning(f"History: failed to delete session {session_id}: {e}")
 
     def _detect_suspicious_result(self, result: Any) -> bool:
-        """检测工具返回的结果是否"可疑"（如为空数据），用于触发自愈提示。"""
+        """检测工具返回的结果是否"可疑"（空数据/错误响应），用于触发自愈提示。"""
         if not result:
             return True
-            
+
         if isinstance(result, dict):
+            # std_error_response 形状
+            if result.get("success") is False:
+                return True
             # GeoJSON 检查
             if result.get("type") == "FeatureCollection" and not result.get("features"):
                 return True
@@ -1038,16 +1138,21 @@ class ChatEngine:
             # OSM POI 检查
             if "poi_count" in result and result["poi_count"] == 0:
                 return True
-                
+
         if isinstance(result, list) and not result:
             return True
-            
+
         return False
 
 
 SYSTEM_PROMPT = """你是一名 WebGIS 空间分析助手。用户与一张 MapLibre 地图实时交互，你通过工具调用读取/修改地图状态并执行空间分析。
 
-每轮对话开始时，系统会注入一条 `[环境感知]` 消息，包含当前时间、用户位置（如有授权）、视口、底图、活跃图层与近期操作。读取它再做规划，不要凭空假设地图状态。
+## 地图即 Agent（核心约束）
+
+地图本身就是你的一部分：它显示的数据、可见的图层、当前的视口与最近的操作流，都会在每轮对话开始时通过 `[环境感知]` 消息注入给你。
+- 必须先读 `[环境感知]`，再决定本轮行动；不要凭空假设位置、缩放或图层是否存在。
+- `近期操作` 里以 `tool_executed` / `tool_failed` 开头的条目是你上一轮自己执行的工具结果摘要——把它当成"我刚才做了什么"的记忆，而不是用户的新指令。
+- 用户的图层切换、底图切换、上传等动作以 `layer_toggled` / `layer_removed` / `base_layer_changed` / `upload_completed` 等事件出现，是地图当前真实状态的来源。
 
 ## 工作方式
 
