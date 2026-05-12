@@ -103,14 +103,15 @@ cd frontend && npm install && npm run dev
 - 🛂 [代码纪律与安全准线](CODE_REVIEW.md) (如何不把这个庞然大物写崩溃)
 - 🎨 [前端 V2 设计文档](frontend/README.md) (新 UI 组件架构)
 
-## 🎯 里程碑速览
+## 🚀 里程碑速览
 
 - ✅ **Phase 1**: 创生、连通与深层筑底
 - ✅ **Phase 2**: 具身智化与 CNS 架构融合
 - ✅ **Phase 3**: 专业制图与遥感分析增强 (V3.0)
-- ✅ **Phase 4**: 主控中枢与算子 MCP 化 (V3.2)
+- ✅ **Phase 4**: 主控中枢与算子 MCP 化 (V3.2) - [查看 Release Notes](./docs/release-notes-v3.2.md)
 - ✅ **Phase 4+**: V2 UI 重新设计，玻璃拟态体验
 - 🌌 **Phase 5**: "超我"演进与星辰大海 (终极谋划期)
+
 
 ## License
 
