@@ -6,6 +6,7 @@ from celery import chain
 from app.services.explorer.models import SearchContext, ExplorerPerceptionEvent
 from app.services.explorer.intent_detector import IntentDetector, ExploreDecision
 from app.services.task_queue import TaskQueueService
+from app.utils.sse import sse_event
 
 logger = logging.getLogger(__name__)
 
@@ -99,13 +100,13 @@ class ExplorerOrchestrator:
                     context={"progress": meta.get("progress", 0)},
                 )
 
-                yield f"event: explorer_progress\ndata: {event.model_dump_json()}\n\n"
+                yield sse_event("explorer_progress", event)
                 last_state = current_state
 
             # 心跳
             now = time.time()
             if now - last_heartbeat >= heartbeat_interval:
-                yield f"event: heartbeat\ndata: {{\"ts\": {now}}}\n\n"
+                yield sse_event("heartbeat", {"ts": now})
                 last_heartbeat = now
 
             # 结束条件
@@ -117,7 +118,7 @@ class ExplorerOrchestrator:
                     status="completed" if current_state == "SUCCESS" else "failed",
                     context={"final_status": current_state},
                 )
-                yield f"event: explorer_progress\ndata: {final_event.model_dump_json()}\n\n"
+                yield sse_event("explorer_progress", final_event)
                 break
 
             await asyncio.sleep(1)

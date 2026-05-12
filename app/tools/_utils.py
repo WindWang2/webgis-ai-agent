@@ -101,29 +101,7 @@ async def async_db_session():
 # STAC Asset Href 提取
 # ============================================================================
 
-def validate_data_path(path: str, data_dir: str = "./data") -> str:
-    """
-    验证并规范化用户传入的文件路径，防止目录遍历攻击。
-
-    Args:
-        path: 用户传入的路径（可为相对路径或绝对路径）
-        data_dir: 允许的基础目录
-
-    Returns:
-        规范化的绝对路径
-
-    Raises:
-        ValueError: 路径包含 .. 组件或解析后超出 data_dir 范围
-    """
-    import os
-    resolved = os.path.abspath(os.path.join(data_dir, path))
-    data_dir_abs = os.path.abspath(data_dir)
-
-    # 确保解析后的路径在 data_dir 之下
-    if not resolved.startswith(data_dir_abs + os.sep) and resolved != data_dir_abs:
-        raise ValueError(f"非法路径: '{path}' 超出允许目录范围")
-
-    return resolved
+from app.utils.path import validate_data_path
 
 
 def std_error_response(message: str, code: str = "TOOL_ERROR", error_type: str = "") -> dict:
