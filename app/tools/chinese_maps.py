@@ -1,5 +1,6 @@
 """高德/百度/天地图 API 工具 — POI搜索、地理编码、路径规划、行政区划查询"""
 import asyncio
+import json
 import logging
 import aiohttp
 from typing import Optional
@@ -151,18 +152,15 @@ async def batch_geocode_cn(
     semaphore = asyncio.Semaphore(max_concurrency)
 
     async def _one(idx: int, addr: str) -> dict:
+        # 不在这里 record_attempt/success/error —— 内层 _amap_get/_baidu_get/_tianditu_get
+        # 已经做过熔断计数，重复打点会让 5 错熔断和速率窗口提前误触发。
         async with semaphore:
-            if not await ht.record_attempt(provider):
-                return {"index": idx, "status": "skipped", "address": addr,
-                        "error": f"{provider} 暂时不可用（频率限制或服务故障）"}
             try:
                 result = await geocode_cn(addr, provider=provider)
-                await ht.record_success(provider)
                 if "error" in result:
                     return {"index": idx, "status": "error", "address": addr, "error": str(result["error"])}
                 return {"index": idx, "status": "ok", "address": addr, **result}
             except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
-                await ht.record_error(provider, e)
                 return {"index": idx, "status": "error", "address": addr, "error": str(e)}
 
     results = await asyncio.gather(*[_one(i, a) for i, a in enumerate(addresses)])
@@ -351,6 +349,164 @@ def register_chinese_map_tools(registry: ToolRegistry):
 
         return await _isochrone_analysis(provider, center, minutes, mode)
 
+    @tool(registry, name="search_poi_around",
+           description="在指定坐标周围按半径搜索 POI。适合『附近 500 米的便利店』『地铁站周边餐厅』等近邻问题。返回 GeoJSON 点集。",
+           param_descriptions={
+               "center": "中心点 WGS84 坐标 [经度, 纬度]",
+               "radius_m": "搜索半径（米），1~50000，默认 1000",
+               "keyword": "搜索关键词（可选）；为空则按 types 检索",
+               "types": "POI 分类编码或中文分类（可选），如 '050000'(餐饮) 或 '餐饮'",
+               "provider": "服务商: 'amap'(默认), 'baidu', 'tianditu'",
+               "limit": "返回结果数量，默认 20",
+           })
+    async def search_poi_around(
+        center: list,
+        radius_m: int = 1000,
+        keyword: str = "",
+        types: str = "",
+        provider: str = "amap",
+        limit: int = 20,
+    ) -> dict:
+        if not center or len(center) != 2:
+            return {"error": "center 必须是 [经度, 纬度]"}
+        if radius_m <= 0 or radius_m > 50000:
+            return {"error": "radius_m 必须在 1~50000 之间"}
+        if not keyword and not types:
+            return {"error": "keyword 与 types 至少提供一个"}
+        if provider not in _VALID_PROVIDERS:
+            return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
+
+        _dispatch = {
+            "amap": _search_poi_around_amap,
+            "baidu": _search_poi_around_baidu,
+            "tianditu": _search_poi_around_tianditu,
+        }
+        for p in _fallback_order(provider):
+            if not _has_provider(p):
+                continue
+            try:
+                return await _dispatch[p](center, radius_m, keyword, types, limit)
+            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+                logger.warning(f"search_poi_around {p} failed: {e}")
+        return {"error": "未配置任何地图 API Key"}
+
+    @tool(registry, name="search_poi_polygon",
+           description="在指定多边形/矩形范围内搜索 POI。适合『在这片区域里找所有学校』『框选范围统计餐厅』。多边形点序按经度,纬度排列。当前仅 Amap 支持原生 polygon 查询。",
+           param_descriptions={
+               "polygon": "WGS84 坐标点列表 [[lng,lat], ...]，闭合多边形（首尾可不重合，3 个点起）；或 4 元素 [west,south,east,north] bbox",
+               "keyword": "搜索关键词（可选）",
+               "types": "POI 分类（可选），如 '050000'",
+               "provider": "服务商: 'amap'(默认)。Baidu 用 bbox 模式近似",
+               "limit": "返回结果数量，默认 50",
+           })
+    async def search_poi_polygon(
+        polygon: list,
+        keyword: str = "",
+        types: str = "",
+        provider: str = "amap",
+        limit: int = 50,
+    ) -> dict:
+        if not polygon or len(polygon) < 3:
+            return {"error": "polygon 至少 3 个 [lng,lat] 点，或一个 4 元素 bbox [west,south,east,north]"}
+        if not keyword and not types:
+            return {"error": "keyword 与 types 至少提供一个"}
+        if provider not in ("amap", "baidu"):
+            return {"error": "provider 必须是 'amap' 或 'baidu'"}
+
+        # bbox 形式 → 转 4 点多边形
+        if len(polygon) == 4 and all(isinstance(v, (int, float)) for v in polygon):
+            w, s, e, n = polygon
+            polygon = [[w, s], [e, s], [e, n], [w, n]]
+
+        _dispatch = {"amap": _search_poi_polygon_amap, "baidu": _search_poi_polygon_baidu}
+        for p in _fallback_order(provider, exclude={"tianditu"}):
+            if not _has_provider(p):
+                continue
+            try:
+                return await _dispatch[p](polygon, keyword, types, limit)
+            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+                logger.warning(f"search_poi_polygon {p} failed: {e}")
+        return {"error": "未配置高德或百度 API Key"}
+
+    @tool(registry, name="input_tips",
+           description="地点输入联想/纠错。给一个不完整或可能拼错的地名（如『中关创业大街』），返回候选地名+坐标，帮助消除歧义。比直接 geocode 更鲁棒，适合用户口语化输入。",
+           param_descriptions={
+               "keyword": "用户输入的地名片段，如『中关创』",
+               "city": "限定城市（可选）",
+               "location": "附近优先排序的坐标 [lng,lat]（可选）",
+               "provider": "服务商: 'amap'(默认), 'baidu'",
+           })
+    async def input_tips(
+        keyword: str,
+        city: str = "",
+        location: Optional[list] = None,
+        provider: str = "amap",
+    ) -> dict:
+        if not keyword:
+            return {"error": "keyword 不能为空"}
+        if provider not in ("amap", "baidu"):
+            return {"error": "provider 必须是 'amap' 或 'baidu'"}
+
+        _dispatch = {"amap": _input_tips_amap, "baidu": _input_tips_baidu}
+        for p in _fallback_order(provider, exclude={"tianditu"}):
+            if not _has_provider(p):
+                continue
+            try:
+                return await _dispatch[p](keyword, city, location)
+            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+                logger.warning(f"input_tips {p} failed: {e}")
+        return {"error": "未配置高德或百度 API Key"}
+
+    @tool(registry, name="search_transit_route",
+           description="公交路径规划：起终点之间的公交/地铁换乘方案，返回多个备选路线（步行段+乘车段），含换乘次数、总耗时、票价。仅支持 Amap。",
+           param_descriptions={
+               "origin": "起点 WGS84 [lng,lat]",
+               "destination": "终点 WGS84 [lng,lat]",
+               "city": "起点城市名（必填），如'北京'",
+               "city_d": "终点城市名（跨城公交才需要）",
+               "strategy": "策略: 0=最快捷, 1=最经济, 2=最少换乘, 3=最少步行, 5=不乘地铁。默认 0",
+           })
+    async def search_transit_route(
+        origin: list,
+        destination: list,
+        city: str,
+        city_d: str = "",
+        strategy: int = 0,
+    ) -> dict:
+        if not city:
+            return {"error": "公交查询必须传 city（起点城市）"}
+        if len(origin) != 2 or len(destination) != 2:
+            return {"error": "origin/destination 必须是 [lng,lat]"}
+        if not _has_provider("amap"):
+            return {"error": "公交查询当前仅支持 amap，请配置 AMAP_API_KEY"}
+        return await _transit_amap(origin, destination, city, city_d, strategy)
+
+    @tool(registry, name="get_traffic_status",
+           description="查询实时路况：指定矩形或圆形范围内的道路拥堵情况。返回道路名+拥堵等级+长度。适合『现在三环堵不堵』『机场高速路况』等问题。仅 Amap。",
+           param_descriptions={
+               "mode": "查询模式: 'rectangle'(矩形) 或 'circle'(圆形)",
+               "rectangle": "矩形左下右上 [west,south,east,north]（mode=rectangle 时）",
+               "center": "圆心 [lng,lat]（mode=circle 时）",
+               "radius_m": "圆半径米数（mode=circle，默认 1000）",
+               "level": "拥堵等级过滤: 0=全部 1=畅通 2=缓行 3=拥堵 4=严重拥堵。默认 0",
+           })
+    async def get_traffic_status(
+        mode: str = "rectangle",
+        rectangle: Optional[list] = None,
+        center: Optional[list] = None,
+        radius_m: int = 1000,
+        level: int = 0,
+    ) -> dict:
+        if mode not in ("rectangle", "circle"):
+            return {"error": "mode 必须是 'rectangle' 或 'circle'"}
+        if mode == "rectangle" and (not rectangle or len(rectangle) != 4):
+            return {"error": "rectangle 模式需要 [west,south,east,north]"}
+        if mode == "circle" and (not center or len(center) != 2):
+            return {"error": "circle 模式需要 center=[lng,lat]"}
+        if not _has_provider("amap"):
+            return {"error": "实时路况当前仅支持 amap"}
+        return await _traffic_amap(mode, rectangle, center, radius_m, level)
+
 
 # ── Provider-specific helper functions ──────────────────────────
 
@@ -453,17 +609,22 @@ async def _geocode_baidu(address: str, city: str) -> dict:
     data = await _baidu_get("/geocoding/v3/", params)
     if "error" in data:
         return data
-    loc = data.get("result", {}).get("location", {})
+    result = data.get("result", {})
+    loc = result.get("location", {})
     bd_lng, bd_lat = loc.get("lng", 0), loc.get("lat", 0)
     lng, lat = bd09_to_wgs84(bd_lng, bd_lat)
+    # Baidu geocoding v3 不返回 canonical 地址，回显用户输入并把精度等级单独暴露
     return {
         "results": [{
             "location": [lng, lat],
-            "formatted_address": data.get("result", {}).get("level", ""),
+            "formatted_address": address,
+            "precision_level": result.get("level", ""),
+            "confidence": result.get("confidence"),
+            "comprehension": result.get("comprehension"),
             "province": "",
             "city": city,
             "district": "",
-            "adcode": str(data.get("result", {}).get("cityCode", "")),
+            "adcode": str(result.get("cityCode", "")),
         }],
         "count": 1,
         "provider": "baidu",
@@ -661,19 +822,20 @@ async def _district_baidu(keywords: str, level: str, return_geometry: str = "poi
 # ── Tianditu (天地图) provider functions ───────────────────────
 # CGCS2000 ≈ WGS84, no coordinate transformation needed
 
-import json as _json
-
 
 async def _search_poi_tianditu(keyword: str, city: str, limit: int) -> dict:
-    post_str = _json.dumps({
+    # specifyAdminCode 必须是数字行政区代码（如 "110000"），中文名传进去等于无过滤
+    payload: dict = {
         "keyWord": keyword,
         "level": "12",
         "mapBound": "-180,-90,180,90",
         "queryType": "1",
         "start": "0",
         "count": str(min(limit, 50)),
-        "specifyAdminCode": city,
-    }, ensure_ascii=False)
+    }
+    if city and city.isdigit():
+        payload["specifyAdminCode"] = city
+    post_str = json.dumps(payload, ensure_ascii=False)
     data = await _tianditu_get("/search", {"postStr": post_str, "type": "query"})
     if "error" in data:
         return data
@@ -704,7 +866,7 @@ async def _search_poi_tianditu(keyword: str, city: str, limit: int) -> dict:
 
 
 async def _geocode_tianditu(address: str, city: str) -> dict:
-    ds = _json.dumps({"keyWord": address}, ensure_ascii=False)
+    ds = json.dumps({"keyWord": address}, ensure_ascii=False)
     data = await _tianditu_get("/geocoder", {"ds": ds})
     if "error" in data:
         return data
@@ -723,7 +885,7 @@ async def _geocode_tianditu(address: str, city: str) -> dict:
 
 
 async def _reverse_geocode_tianditu(lng: float, lat: float) -> dict:
-    post_str = _json.dumps({"lon": lng, "lat": lat, "ver": 1})
+    post_str = json.dumps({"lon": lng, "lat": lat, "ver": 1})
     data = await _tianditu_get("/geocoder", {"postStr": post_str, "type": "geocode"})
     if "error" in data:
         return data
@@ -741,7 +903,7 @@ async def _reverse_geocode_tianditu(lng: float, lat: float) -> dict:
 
 
 async def _district_tianditu(keywords: str, level: str, return_geometry: str = "point") -> dict:
-    post_str = _json.dumps({
+    post_str = json.dumps({
         "searchWord": keywords,
         "searchType": "1",
         "needSubInfo": "true",
@@ -779,46 +941,84 @@ async def _distance_matrix_amap(
     destinations: list[list],
     mode: str,
 ) -> dict:
-    """Amap v3 驾车距离矩阵 API（一次请求完成全量 OD 计算）。"""
-    # 将 WGS84 → GCJ-02 再送入 API
-    origin_str = ";".join(
-        f"{wgs84_to_gcj02(lng, lat)[0]},{wgs84_to_gcj02(lng, lat)[1]}"
-        for lng, lat in origins
-    )
-    dest_str = ";".join(
-        f"{wgs84_to_gcj02(lng, lat)[0]},{wgs84_to_gcj02(lng, lat)[1]}"
-        for lng, lat in destinations
-    )
-    params = {
-        "origins": origin_str,
-        "destination": dest_str,
-        "strategy": {"driving": 10, "walking": 4}[mode],
-        "output": "json",
-    }
-    data = await _amap_get("/distance", params)
-    if "error" in data:
-        return data
+    """Amap 距离矩阵。
 
-    results = data.get("results", [])
-    # Amap /v3/distance 返回扁平列表，每项含 origin_id/dest_id/distance/duration
-    matrix: list[list[dict | None]] = [[None] * len(destinations) for _ in range(len(origins))]
-    for item in results:
-        oi = int(item.get("origin_id", 0))
-        di = int(item.get("dest_id", 0))
-        if 0 <= oi < len(origins) and 0 <= di < len(destinations):
-            matrix[oi][di] = {
+    - driving / walking 走 `/v3/distance`（一次请求完成全量 OD 计算）
+        - type=1 驾车，type=3 步行
+    - riding 该批量接口不支持，回退到 N×M 并发调用 /direction/bicycling
+
+    所有坐标在请求前 WGS84 → GCJ-02。
+    """
+    # ── driving / walking：批量接口
+    if mode in ("driving", "walking"):
+        origin_str = ";".join(
+            f"{wgs84_to_gcj02(lng, lat)[0]},{wgs84_to_gcj02(lng, lat)[1]}"
+            for lng, lat in origins
+        )
+        dest_str = ";".join(
+            f"{wgs84_to_gcj02(lng, lat)[0]},{wgs84_to_gcj02(lng, lat)[1]}"
+            for lng, lat in destinations
+        )
+        params = {
+            "origins": origin_str,
+            "destination": dest_str,
+            "type": "1" if mode == "driving" else "3",
+        }
+        data = await _amap_get("/distance", params)
+        if "error" in data:
+            return data
+
+        results = data.get("results", [])
+        matrix: list[list[dict | None]] = [
+            [None] * len(destinations) for _ in range(len(origins))
+        ]
+        for item in results:
+            # Amap origin_id/dest_id 从 1 开始计数
+            oi = int(item.get("origin_id", 0)) - 1
+            di = int(item.get("dest_id", 0)) - 1
+            if 0 <= oi < len(origins) and 0 <= di < len(destinations):
+                matrix[oi][di] = {
+                    "origin_index": oi,
+                    "dest_index": di,
+                    "distance_km": float(item.get("distance", 0)) / 1000.0,
+                    "duration_sec": int(item.get("duration", 0)),
+                }
+        return {
+            "matrix": matrix,
+            "origins_count": len(origins),
+            "dests_count": len(destinations),
+            "mode": mode,
+            "provider": "amap",
+        }
+
+    # ── riding：批量接口不支持 → N×M 并发兜底
+    semaphore = asyncio.Semaphore(6)
+
+    async def _one(oi: int, di: int) -> dict | None:
+        async with semaphore:
+            dist_m = await _get_route_distance_amap(origins[oi], destinations[di], "riding")
+            if dist_m <= 0:
+                return None
+            # 骑行速度估算 4.2 m/s 给个粗略 duration
+            return {
                 "origin_index": oi,
                 "dest_index": di,
-                "distance_km": item.get("distance", 0) / 1000.0,  # 米→公里
-                "duration_sec": item.get("duration", 0),
+                "distance_km": dist_m / 1000.0,
+                "duration_sec": int(dist_m / 4.2),
             }
 
+    pairs = [(oi, di) for oi in range(len(origins)) for di in range(len(destinations))]
+    flat = await asyncio.gather(*[_one(oi, di) for oi, di in pairs])
+    matrix = [[None] * len(destinations) for _ in range(len(origins))]
+    for (oi, di), cell in zip(pairs, flat):
+        matrix[oi][di] = cell
     return {
         "matrix": matrix,
         "origins_count": len(origins),
         "dests_count": len(destinations),
         "mode": mode,
         "provider": "amap",
+        "note": "Amap 批量距离接口不支持骑行，已通过 N×M 并发路径规划兜底",
     }
 
 
@@ -949,14 +1149,14 @@ async def _get_route_distance_amap(
         d_str = f"{dg_gcj[0]},{dg_gcj[1]}"
 
         if mode == "walking":
-            params = {"origin": o_str, "destination": d_str, "strategy": "4"}
+            params = {"origin": o_str, "destination": d_str}
             data = await _amap_get("/direction/walking", params)
         elif mode == "riding":
             params = {"origin": o_str, "destination": d_str}
             data = await _amap_get("/direction/bicycling", params)
         else:  # driving
             params = {"origin": o_str, "destination": d_str, "strategy": "10"}
-            data = await _amap_get("/direction/drive", params)
+            data = await _amap_get("/direction/driving", params)
 
         if "error" in data:
             return 0.0
@@ -975,5 +1175,398 @@ async def _get_route_distance_amap(
 def _speed_mps(mode: str) -> float:
     """各模式的典型速度（米/秒），用于等时圈半径估算。"""
     return {"driving": 13.9, "walking": 1.4, "riding": 4.2}[mode]
+
+
+# ── POI around / polygon / input tips / transit / traffic ────────
+
+
+async def _search_poi_around_amap(
+    center: list, radius_m: int, keyword: str, types: str, limit: int
+) -> dict:
+    gcj_lng, gcj_lat = wgs84_to_gcj02(center[0], center[1])
+    params = {
+        "location": f"{gcj_lng},{gcj_lat}",
+        "radius": str(radius_m),
+        "offset": str(min(limit, 25)),
+        "sortrule": "distance",
+    }
+    if keyword:
+        params["keywords"] = keyword
+    if types:
+        params["types"] = types
+    data = await _amap_get("/place/around", params)
+    if "error" in data:
+        return data
+    pois = data.get("pois", [])
+    features = []
+    for p in pois[:limit]:
+        loc = p.get("location", "").split(",")
+        if len(loc) != 2:
+            continue
+        lng, lat = gcj02_to_wgs84(float(loc[0]), float(loc[1]))
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lng, lat]},
+            "properties": {
+                "name": p.get("name", ""),
+                "address": p.get("address", "") or p.get("pname", ""),
+                "type": p.get("type", ""),
+                "distance_m": int(p.get("distance", 0) or 0),
+                "tel": p.get("tel", ""),
+            },
+        })
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "count": len(features),
+        "center": center,
+        "radius_m": radius_m,
+        "provider": "amap",
+    }
+
+
+async def _search_poi_around_baidu(
+    center: list, radius_m: int, keyword: str, types: str, limit: int
+) -> dict:
+    bd_lng, bd_lat = wgs84_to_bd09(center[0], center[1])
+    params = {
+        "query": keyword or types,
+        "location": f"{bd_lat},{bd_lng}",
+        "radius": str(radius_m),
+        "page_size": str(min(limit, 20)),
+        "scope": "2",
+    }
+    data = await _baidu_get("/place/v2/search", params)
+    if "error" in data:
+        return data
+    pois = data.get("results", [])
+    features = []
+    for p in pois[:limit]:
+        loc = p.get("location", {})
+        b_lng, b_lat = loc.get("lng", 0), loc.get("lat", 0)
+        lng, lat = bd09_to_wgs84(b_lng, b_lat)
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lng, lat]},
+            "properties": {
+                "name": p.get("name", ""),
+                "address": p.get("address", ""),
+                "type": p.get("detail_info", {}).get("type", ""),
+                "distance_m": int(p.get("detail_info", {}).get("distance", 0) or 0),
+                "tel": p.get("telephone", ""),
+            },
+        })
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "count": len(features),
+        "center": center,
+        "radius_m": radius_m,
+        "provider": "baidu",
+    }
+
+
+async def _search_poi_around_tianditu(
+    center: list, radius_m: int, keyword: str, types: str, limit: int
+) -> dict:
+    payload = {
+        "keyWord": keyword or types,
+        "queryRadius": str(radius_m),
+        "pointLonlat": f"{center[0]},{center[1]}",
+        "queryType": "3",  # 周边搜索
+        "start": "0",
+        "count": str(min(limit, 50)),
+    }
+    post_str = json.dumps(payload, ensure_ascii=False)
+    data = await _tianditu_get("/search", {"postStr": post_str, "type": "query"})
+    if "error" in data:
+        return data
+    pois = data.get("pois", [])
+    features = []
+    for p in pois[:limit]:
+        lonlat = p.get("lonlat", "").split(" ")
+        if len(lonlat) != 2:
+            continue
+        lng, lat = float(lonlat[0]), float(lonlat[1])
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lng, lat]},
+            "properties": {
+                "name": p.get("name", ""),
+                "address": p.get("address", ""),
+                "tel": p.get("phone", ""),
+            },
+        })
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "count": len(features),
+        "center": center,
+        "radius_m": radius_m,
+        "provider": "tianditu",
+    }
+
+
+async def _search_poi_polygon_amap(
+    polygon: list, keyword: str, types: str, limit: int
+) -> dict:
+    # Amap polygon 参数：lng,lat|lng,lat|...
+    gcj_pts = [wgs84_to_gcj02(p[0], p[1]) for p in polygon]
+    poly_str = "|".join(f"{lng},{lat}" for lng, lat in gcj_pts)
+    params = {"polygon": poly_str, "offset": str(min(limit, 25))}
+    if keyword:
+        params["keywords"] = keyword
+    if types:
+        params["types"] = types
+    data = await _amap_get("/place/polygon", params)
+    if "error" in data:
+        return data
+    pois = data.get("pois", [])
+    features = []
+    for p in pois[:limit]:
+        loc = p.get("location", "").split(",")
+        if len(loc) != 2:
+            continue
+        lng, lat = gcj02_to_wgs84(float(loc[0]), float(loc[1]))
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lng, lat]},
+            "properties": {
+                "name": p.get("name", ""),
+                "address": p.get("address", "") or p.get("pname", ""),
+                "type": p.get("type", ""),
+                "tel": p.get("tel", ""),
+            },
+        })
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "count": len(features),
+        "polygon": polygon,
+        "provider": "amap",
+    }
+
+
+async def _search_poi_polygon_baidu(
+    polygon: list, keyword: str, types: str, limit: int
+) -> dict:
+    # Baidu place v2 不接收 polygon 直接参数；用 polygon 外接 bbox 近似
+    lngs = [p[0] for p in polygon]
+    lats = [p[1] for p in polygon]
+    w, e = min(lngs), max(lngs)
+    s, n = min(lats), max(lats)
+    sw_bd = wgs84_to_bd09(w, s)
+    ne_bd = wgs84_to_bd09(e, n)
+    params = {
+        "query": keyword or types,
+        "bounds": f"{sw_bd[1]},{sw_bd[0]},{ne_bd[1]},{ne_bd[0]}",
+        "page_size": str(min(limit, 20)),
+    }
+    data = await _baidu_get("/place/v2/search", params)
+    if "error" in data:
+        return data
+    pois = data.get("results", [])
+    features = []
+    for p in pois[:limit]:
+        loc = p.get("location", {})
+        b_lng, b_lat = loc.get("lng", 0), loc.get("lat", 0)
+        lng, lat = bd09_to_wgs84(b_lng, b_lat)
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lng, lat]},
+            "properties": {
+                "name": p.get("name", ""),
+                "address": p.get("address", ""),
+                "type": p.get("detail_info", {}).get("type", ""),
+                "tel": p.get("telephone", ""),
+            },
+        })
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "count": len(features),
+        "polygon": polygon,
+        "provider": "baidu",
+        "note": "Baidu 用 polygon 外接矩形 (bbox) 近似查询",
+    }
+
+
+async def _input_tips_amap(
+    keyword: str, city: str, location: Optional[list]
+) -> dict:
+    params = {"keywords": keyword}
+    if city:
+        params["city"] = city
+        params["citylimit"] = "true"
+    if location and len(location) == 2:
+        lng, lat = wgs84_to_gcj02(location[0], location[1])
+        params["location"] = f"{lng},{lat}"
+    data = await _amap_get("/assistant/inputtips", params)
+    if "error" in data:
+        return data
+    tips = data.get("tips", [])
+    out = []
+    for t in tips:
+        loc_str = t.get("location", "")
+        coords = None
+        if isinstance(loc_str, str) and "," in loc_str:
+            parts = loc_str.split(",")
+            if len(parts) == 2:
+                try:
+                    lng, lat = gcj02_to_wgs84(float(parts[0]), float(parts[1]))
+                    coords = [lng, lat]
+                except ValueError:
+                    coords = None
+        out.append({
+            "name": t.get("name", ""),
+            "district": t.get("district", ""),
+            "address": t.get("address", ""),
+            "location": coords,
+            "adcode": t.get("adcode", ""),
+        })
+    return {"tips": out, "count": len(out), "provider": "amap"}
+
+
+async def _input_tips_baidu(
+    keyword: str, city: str, location: Optional[list]
+) -> dict:
+    params = {"query": keyword, "region": city or "全国"}
+    if location and len(location) == 2:
+        bd_lng, bd_lat = wgs84_to_bd09(location[0], location[1])
+        params["location"] = f"{bd_lat},{bd_lng}"
+    data = await _baidu_get("/place/v2/suggestion", params)
+    if "error" in data:
+        return data
+    suggestions = data.get("result", [])
+    out = []
+    for s in suggestions:
+        loc = s.get("location") or {}
+        coords = None
+        if loc.get("lng") and loc.get("lat"):
+            lng, lat = bd09_to_wgs84(loc["lng"], loc["lat"])
+            coords = [lng, lat]
+        out.append({
+            "name": s.get("name", ""),
+            "district": s.get("district", ""),
+            "address": s.get("address", ""),
+            "location": coords,
+            "adcode": str(s.get("city_id", "")),
+        })
+    return {"tips": out, "count": len(out), "provider": "baidu"}
+
+
+async def _transit_amap(
+    origin: list, destination: list, city: str, city_d: str, strategy: int
+) -> dict:
+    o_gcj = wgs84_to_gcj02(origin[0], origin[1])
+    d_gcj = wgs84_to_gcj02(destination[0], destination[1])
+    params: dict = {
+        "origin": f"{o_gcj[0]},{o_gcj[1]}",
+        "destination": f"{d_gcj[0]},{d_gcj[1]}",
+        "city": city,
+        "strategy": str(strategy),
+    }
+    if city_d:
+        params["cityd"] = city_d
+    data = await _amap_get("/direction/transit/integrated", params)
+    if "error" in data:
+        return data
+    route = data.get("route", {})
+    transits = route.get("transits", []) or []
+    plans = []
+    for t in transits[:5]:
+        segments = []
+        polyline = []
+        for seg in t.get("segments", []):
+            walking = seg.get("walking", {})
+            bus = seg.get("bus", {})
+            for step in walking.get("steps", []) or []:
+                for loc in (step.get("polyline", "") or "").split(";"):
+                    parts = loc.split(",")
+                    if len(parts) == 2:
+                        try:
+                            lng, lat = gcj02_to_wgs84(float(parts[0]), float(parts[1]))
+                            polyline.append([lng, lat])
+                        except ValueError:
+                            pass
+            for bl in bus.get("buslines", []) or []:
+                segments.append({
+                    "type": "bus",
+                    "name": bl.get("name", ""),
+                    "departure_stop": bl.get("departure_stop", {}).get("name", ""),
+                    "arrival_stop": bl.get("arrival_stop", {}).get("name", ""),
+                    "via_num": int(bl.get("via_num", 0) or 0),
+                })
+                for loc in (bl.get("polyline", "") or "").split(";"):
+                    parts = loc.split(",")
+                    if len(parts) == 2:
+                        try:
+                            lng, lat = gcj02_to_wgs84(float(parts[0]), float(parts[1]))
+                            polyline.append([lng, lat])
+                        except ValueError:
+                            pass
+        plans.append({
+            "duration_s": int(t.get("duration", 0) or 0),
+            "walking_distance_m": int(t.get("walking_distance", 0) or 0),
+            "cost_yuan": float(t.get("cost", 0) or 0),
+            "transit_count": len([s for s in t.get("segments", []) if s.get("bus", {}).get("buslines")]),
+            "segments": segments,
+            "polyline": polyline,
+        })
+    return {
+        "plans": plans,
+        "count": len(plans),
+        "provider": "amap",
+    }
+
+
+async def _traffic_amap(
+    mode: str,
+    rectangle: Optional[list],
+    center: Optional[list],
+    radius_m: int,
+    level: int,
+) -> dict:
+    if mode == "rectangle":
+        w, s, e, n = rectangle  # type: ignore[misc]
+        # WGS84 → GCJ02 双角
+        sw = wgs84_to_gcj02(w, s)
+        ne = wgs84_to_gcj02(e, n)
+        params = {"rectangle": f"{sw[0]},{sw[1]};{ne[0]},{ne[1]}"}
+        endpoint = "/traffic/status/rectangle"
+    else:
+        gcj_lng, gcj_lat = wgs84_to_gcj02(center[0], center[1])  # type: ignore[index]
+        params = {"location": f"{gcj_lng},{gcj_lat}", "radius": str(radius_m)}
+        endpoint = "/traffic/status/circle"
+    if level:
+        params["level"] = str(level)
+    data = await _amap_get(endpoint, params)
+    if "error" in data:
+        return data
+    ts = data.get("trafficinfo", {})
+    eval_block = ts.get("evaluation", {})
+    roads = ts.get("roads", [])
+    out_roads = []
+    for r in roads:
+        out_roads.append({
+            "name": r.get("name", ""),
+            "status": r.get("status", ""),
+            "speed_kmh": float(r.get("speed", 0) or 0),
+            "direction": r.get("direction", ""),
+            "lcodes": r.get("lcodes", ""),
+        })
+    return {
+        "description": ts.get("description", ""),
+        "evaluation": {
+            "status": eval_block.get("status", ""),
+            "expedite": eval_block.get("expedite", ""),
+            "congested": eval_block.get("congested", ""),
+            "blocked": eval_block.get("blocked", ""),
+            "unknown": eval_block.get("unknown", ""),
+        },
+        "roads": out_roads,
+        "road_count": len(out_roads),
+        "provider": "amap",
+    }
 
 
