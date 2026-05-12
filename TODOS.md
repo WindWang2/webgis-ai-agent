@@ -7,15 +7,15 @@ Generated from /plan-eng-review on 2026-05-09.
 - [ ] D3 — Require JWT_SECRET_KEY in production, fail startup if missing
 - [ ] D4 — Replace in-memory rate limiter with Redis-backed implementation
 - [ ] D5 — Move tool imports to lazy init function called from lifespan startup
-- [ ] D6 — Move schema init (init_db) to standalone CLI command
-- [ ] D7 — Add Redis and Celery checks to /ready health endpoint
+- [x] D6 — Move schema init (init_db) to standalone CLI command (Completed: `manage.py init-db`)
+- [x] D7 — Add Redis and Celery checks to /ready health endpoint (Completed: `app/api/routes/health.py:80` — /ready returns database/llm/redis/celery status)
 
 ## Code Quality (D8–D12)
 - [ ] D8 — Migrate all API routes to Depends(get_db), services to db_session() context manager
 - [ ] D9 — Audit and narrow exception types in tool functions
 - [ ] D10 — Use single app.log file with shared handler
 - [ ] D11 — Standardize error response format to match global exception handler
-- [ ] D12 — Add validate_data_path() helper for file-based tools
+- [x] D12 — Add validate_data_path() helper for file-based tools (Completed: v3.2 — `app/utils/path.py`; threat model documented inline, see docstring re: symlinks)
 
 ## Tests (D13)
 - [ ] D13 — Add comprehensive framework tests:
