@@ -96,6 +96,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 app.add_middleware(RateLimitMiddleware, max_requests=60, window_seconds=60)
 
 # CORS
+# THREAT MODEL: CORS_ORIGINS=["*"] + allow_credentials=True causes the middleware
+# to echo the request Origin header back as Access-Control-Allow-Origin. Any site
+# can therefore initiate credentialed requests against this API. This is
+# accepted because:
+#   1. The API is deployed behind a trusted gateway / not publicly exposed, OR
+#   2. Auth-protected endpoints rely on non-cookie credentials (Authorization
+#      header bearer tokens) which browsers do NOT auto-attach cross-origin.
+# If either assumption changes (cookie auth introduced, public deployment),
+# tighten CORS_ORIGINS to an explicit allow-list before shipping.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
