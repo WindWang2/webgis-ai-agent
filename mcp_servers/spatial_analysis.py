@@ -24,7 +24,7 @@ def _ensure_dir(path: str):
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
 @mcp.tool()
-def analyze_terrain(path: str, mode: str = "slope", azimuth: float = 315.0, altitude: float = 45.0) -> Dict[str, Any]:
+def analyze_terrain(path: str, mode: str = "slope", azimuth: float = 315.0, altitude: float = 45.0) -> dict:
     """基于 DEM 执行地形分析。
     path: DEM 文件的物理路径。
     mode: 分析模式：'slope' (坡度), 'aspect' (坡向), 'hillshade' (山体阴影)。
@@ -81,7 +81,7 @@ def analyze_terrain(path: str, mode: str = "slope", azimuth: float = 315.0, alti
         return {"error": str(e)}
 
 @mcp.tool()
-def detect_raster_change(base_path: str, comp_path: str, threshold: float = 0.1) -> Dict[str, Any]:
+def detect_raster_change(base_path: str, comp_path: str, threshold: float = 0.1) -> dict:
     """计算两个时期栅格的差异变化（如 NDVI 差异）。
     base_path: 基期数据路径。
     comp_path: 对比期数据路径。
@@ -122,7 +122,7 @@ def detect_raster_change(base_path: str, comp_path: str, threshold: float = 0.1)
         return {"error": str(e)}
 
 @mcp.tool()
-def calculate_zonal_stats(raster_path: str, vector_path: str, column: str = "id") -> Dict[str, Any]:
+def calculate_zonal_stats(raster_path: str, vector_path: str, column: str = "id") -> dict:
     """执行区域统计：计算矢量面要素内部的栅格值统计（均值/总和等）。
     raster_path: 栅格数据路径 (如 NDVI)。
     vector_path: 矢量数据点路径 (如 行政区划 GeoJSON)。

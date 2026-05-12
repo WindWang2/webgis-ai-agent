@@ -997,7 +997,13 @@ class SpatialAnalyzer:
         stats: List[str] = ["mean", "sum", "count"],
         callback: Optional[Callable] = None
     ) -> AnalysisResult:
-        """区域统计 - 矢量区域与栅格数据的交叉统计"""
+        """区域统计 - 矢量区域与栅格数据的交叉统计
+
+        Contract: 失败路径（含非法 raster_path、IO 错误、rasterio 异常）
+        统一以 AnalysisResult(success=False, error_message=...) 返回，
+        不抛异常。调用方必须先检查 result.success 再访问 result_path 或
+        统计字段，否则会读到默认空值而非真实数据。
+        """
         try:
             import rasterio
             from rasterio.mask import mask

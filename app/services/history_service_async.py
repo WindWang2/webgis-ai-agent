@@ -5,6 +5,7 @@ from typing import Optional
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.db_model import Conversation, Message
 
@@ -21,9 +22,12 @@ class AsyncHistoryService:
         import anyio
         for attempt in range(3):
             try:
-                result = await self.db.get(Conversation, session_id)
-                if result:
-                    return result
+                stmt = select(Conversation).where(Conversation.id == session_id).options(selectinload(Conversation.messages))
+                result = await self.db.execute(stmt)
+                conv = result.scalar_one_or_none()
+                if conv:
+                    return conv
+
                 conv = Conversation(
                     id=session_id,
                     title="新对话",
@@ -34,8 +38,9 @@ class AsyncHistoryService:
                 await self.db.flush()
                 await self._enforce_cap()
                 await self.db.commit()
-                await self.db.refresh(conv)
-                return conv
+                # 重新查询以确保加载了关系
+                result = await self.db.execute(stmt)
+                return result.scalar_one()
             except Exception as e:
                 if "locked" in str(e).lower() and attempt < 2:
                     await anyio.sleep(0.1 * (attempt + 1))
@@ -87,13 +92,16 @@ class AsyncHistoryService:
         stmt = (
             select(Conversation)
             .order_by(Conversation.updated_at.desc())
+            .options(selectinload(Conversation.messages))
             .limit(limit)
         )
         result = await self.db.execute(stmt)
         return result.scalars().all()
 
     async def get_session(self, session_id: str) -> Optional[Conversation]:
-        return await self.db.get(Conversation, session_id)
+        stmt = select(Conversation).where(Conversation.id == session_id).options(selectinload(Conversation.messages))
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def delete_session(self, session_id: str) -> None:
         conv = await self.db.get(Conversation, session_id)
