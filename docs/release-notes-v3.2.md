@@ -46,4 +46,36 @@ V3.2 is a major stability and security release focusing on the **Agent CNS (Cent
 - [ ] Phase 5: "超我"演进与星辰大海 (Next: Distributed Multi-Agent Coordination)
 
 ---
+
+## v3.2.1 — Perception & Hardening Patch
+
+**Date**: 2026-05-12
+**Status**: Patch release on top of V3.2
+
+### Perception Pipeline Fixes
+
+The Agent's `[环境感知]` system message could go stale or drop entirely when users panned the map on a fresh session, causing the LLM to fabricate viewport coordinates ("地图显示上海" while the map was over Africa). Three causes, three fixes:
+
+- **Layer state no longer wiped on every chat turn.** `frontend/app/page.tsx` now serializes the actual `useHudStore.layers` into the chat request body (previously hardcoded `layers: []`).
+- **Session-aware WebSocket reconnect.** The chat stream now carries `session_id` on the `task_start` event; the frontend captures it and reconnects WebSocket so subsequent pan/zoom/layer events reach the backend.
+- **No more (0,0) coordinate fallback.** `_get_map_state_summary` in `app/services/chat_engine.py` now emits an explicit "视口: 未知" line when the frontend hasn't reported state, so the LLM stops mistaking missing data for the Gulf of Guinea.
+
+A new `[ENV-INJECT]` debug log records the exact env block sent to the LLM each turn, gated behind `logger.debug`.
+
+### LLM Reasoning Tokens
+
+`token` events now carry an `is_reasoning` flag so the frontend can split thinking content from answer content. Supports MiniMax-M2.7 and DeepSeek-V3 reasoning streams.
+
+The new `frontend/components/chat/collapsible-think.tsx` renders a collapsible "思考过程" panel above the answer when reasoning tokens are present.
+
+### CORS Threat Model
+
+`CORS_ORIGINS=["*"]` with `allow_credentials=True` is now documented inline in `app/main.py`. The pattern is intentional and accepted as risk under the assumption that the API is fronted by a trusted gateway or uses non-cookie credentials. Tighten before any public, cookie-authenticated deployment.
+
+### Misc
+
+- `dump.rdb` and `*.rdb` added to `.gitignore` so local Redis snapshots stop following commits around.
+- `validate_data_path` docstring now spells out the symlink threat model (abspath-based, not realpath — fine for trusted deploys).
+
+---
 *WebGIS AI Agent Team*

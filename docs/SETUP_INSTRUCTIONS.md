@@ -46,7 +46,7 @@ python manage.py dev
 > [!NOTE]
 > 如果你更喜欢手动控制每个组件，依然可以使用 `python manage.py server` 和 `python manage.py worker`。
 
-## 3. 开发校验与提交铁律
+## 4. 开发校验与提交铁律
 
 1. **绝对禁传大数**: 在编写新的 Python Backend Tool 时，绝不允许把十万个地图图元当结果直接打包塞给 LLM 返回通道。必须使用系统的 `session_data` 转存为引用 ID 后流转。
 2. **强制使用并发锁**: 前端由于 MapLibre 的 Style 刷新极度频密，切忌引发无条件的 React Rendering Loop，操作图层栈必须有 `try-catch` 包裹。
