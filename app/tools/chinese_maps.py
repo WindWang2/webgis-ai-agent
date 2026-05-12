@@ -82,7 +82,10 @@ async def _baidu_get(endpoint: str, params: dict) -> dict:
             if resp.status != 200:
                 await ht.record_error("baidu")
                 return {"error": f"Baidu API HTTP {resp.status}"}
-            data = await resp.json()
+            # Baidu 的 success 响应有时返回 Content-Type: text/javascript
+            # （/geocoding/v3 就是这样），aiohttp .json() 默认会因此 ContentTypeError；
+            # 用 content_type=None 跳过校验，让它纯按 JSON 解析。
+            data = await resp.json(content_type=None)
             if data.get("status") != 0:
                 await ht.record_error("baidu")
                 return {"error": f"Baidu: {data.get('message', 'unknown error')}"}
