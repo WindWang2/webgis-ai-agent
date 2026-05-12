@@ -75,11 +75,22 @@ class NatureResourceAnalyzer:
         计算归一化植被指数 (NDVI)
         公式: (NIR - Red) / (NIR + Red)
         """
-        if not os.path.exists(tif_path):
+        from app.utils.path import validate_data_path
+        try:
+            resolved_tif_path = validate_data_path(tif_path)
+            if output_dir:
+                output_dir = validate_data_path(output_dir)
+            else:
+                from app.core.config import settings
+                output_dir = os.path.join(settings.DATA_DIR, "analysis_results")
+        except ValueError as ve:
+            return {"success": False, "error": f"路径安全错误: {ve}"}
+
+        if not os.path.exists(resolved_tif_path):
             return {"success": False, "error": "输入影像文件不存在"}
 
         try:
-            with rasterio.open(tif_path) as src:
+            with rasterio.open(resolved_tif_path) as src:
                 # 自动分配波段
                 detected = cls.auto_detect_bands(src)
                 r_idx = red_band or detected.get("red")

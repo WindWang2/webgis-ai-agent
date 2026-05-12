@@ -13,6 +13,8 @@ from app.services.history_service_async import AsyncHistoryService
 from app.tools._utils import async_db_session
 from app.tools.registry import ToolRegistry
 
+from app.utils.sse import sse_event
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["对话"])
 
@@ -55,8 +57,7 @@ async def chat_stream(req: ChatRequest, _user: dict = Depends(get_current_user_o
                 yield event
         except Exception as e:
             logger.error(f"Stream error: {e}")
-            error_data = json.dumps({"error": str(e)}, ensure_ascii=False)
-            yield f"event: error\ndata: {error_data}\n\n"
+            yield sse_event("error", {"error": str(e)})
 
     return StreamingResponse(
         event_generator(),

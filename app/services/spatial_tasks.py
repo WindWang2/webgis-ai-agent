@@ -427,27 +427,28 @@ def run_ndvi_analysis(self, raster_path: str, nir_band: Optional[int] = None, re
     except Exception as e:
         logger.error(f"Failed to generate NDVI preview: {e}")
 
-    # 3. 持久化到数据库 (让 Agent 在资产管理器中能”感知”到它)
+    # 3. 持久化到数据库 (让 Agent 在资产管理器中能"感知"到它)
     asset_id = None
     try:
         with db_session() as db:
-            file_size = os.path.getsize(result[“result_path”])
+            file_size = os.path.getsize(result["result_path"])
             record = UploadRecord(
-                filename=f”analysis_results/{result['filename']}”,
-                original_name=result[“filename”],
-                file_type=”raster”,
-                format=”geotiff”,
-                crs=result.get(“crs”, “EPSG:4326”),
-                geometry_type=”raster_analysis”,
-                bbox=result.get(“bbox”),
+                filename=f"analysis_results/{result['filename']}",
+                original_name=result["filename"],
+                file_type="raster",
+                format="geotiff",
+                crs=result.get("crs", "EPSG:4326"),
+                geometry_type="raster_analysis",
+                bbox=result.get("bbox"),
                 file_size=file_size,
                 session_id=session_id
             )
             db.add(record)
+            db.commit()
             db.refresh(record)
             asset_id = record.id
     except Exception as e:
-        logger.error(f”Failed to log NDVI result to DB: {e}”)
+        logger.error(f"Failed to log NDVI result to DB: {e}")
 
     return {
         "success": True,

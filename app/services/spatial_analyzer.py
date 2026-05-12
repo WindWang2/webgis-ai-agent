@@ -1006,24 +1006,14 @@ class SpatialAnalyzer:
             
             if callback: callback(20, f"打开栅格文件: {raster_path}")
             
-            # 路径安全验证：禁止路径遍历
-            import os
-            resolved = os.path.realpath(raster_path)
-            allowed_dirs = [
-                os.path.realpath("/data"),
-                os.path.realpath("/tmp"),
-                os.path.realpath("/opt/data"),
-            ]
-            # 也允许当前工作目录下的数据
-            cwd_data = os.path.realpath(os.path.join(os.getcwd(), "data"))
-            allowed_dirs.append(cwd_data)
+            # 路径安全验证
+            from app.utils.path import validate_data_path
+            try:
+                resolved_path = validate_data_path(raster_path)
+            except ValueError as ve:
+                return AnalysisResult(success=False, error_message=str(ve))
             
-            if not any(resolved.startswith(d) for d in allowed_dirs):
-                raise ValueError(
-                    f"栅格文件路径不允许: '{raster_path}'。仅允许 /data, /tmp, /opt/data 或项目 data 目录下的文件"
-                )
-            
-            with rasterio.open(raster_path) as src:
+            with rasterio.open(resolved_path) as src:
                 results = []
                 geoms = [shape(f["geometry"]) for f in zones]
                 
