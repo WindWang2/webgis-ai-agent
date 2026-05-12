@@ -572,7 +572,13 @@ class ChatEngine:
 
                     # Handle content delta
                     delta_content = delta.get("content")
-                    if delta_content:
+                    delta_reasoning = delta.get("reasoning") or delta.get("reasoning_content")
+                    
+                    if delta_reasoning:
+                        # 兼容 MiniMax-M2.7/DeepSeek-V3 的思考过程
+                        content_parts.append(delta_reasoning)
+                        yield ("token", {"content": delta_reasoning})
+                    elif delta_content:
                         content_parts.append(delta_content)
                         yield ("token", {"content": delta_content})
 
