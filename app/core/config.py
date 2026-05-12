@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     # 百度地图 (Baidu Maps)
     BAIDU_MAP_AK: str = Field(default="", env="BAIDU_MAP_AK")
 
+    # 百度千帆 (Baidu Qianfan AI Search v2) — 网络搜索能力
+    # token 形如 bce-v3/ALTAK-xxx/sk-xxx，作为 Authorization: Bearer 头使用
+    BAIDU_QIANFAN_TOKEN: str = Field(default="", env="BAIDU_QIANFAN_TOKEN")
+
     # MapBox / Bing / Tencent
     MAPBOX_TOKEN: str = Field(default="", env="MAPBOX_TOKEN")
     BING_MAP_KEY: str = Field(default="", env="BING_MAP_KEY")
