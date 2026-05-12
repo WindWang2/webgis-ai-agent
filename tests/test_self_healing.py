@@ -60,4 +60,4 @@ async def test_self_healing_hint_injection():
                     assert call_count == 2, f"Expected 2 _call_llm calls, got {call_count}"
                     messages_in_second_call = engine._call_llm.call_args_list[1][0][0]
                     tool_msg = next(m for m in messages_in_second_call if m["role"] == "tool")
-                    assert "提示: 查询结果为空" in tool_msg["content"]
+                    assert "未返回任何空间要素或有效数据" in tool_msg["content"]
