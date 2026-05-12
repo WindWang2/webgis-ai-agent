@@ -74,6 +74,9 @@ class NatureResourceAnalyzer:
         """
         计算归一化植被指数 (NDVI)
         公式: (NIR - Red) / (NIR + Red)
+
+        Contract: 失败时返回 {"success": False, "error": "..."}，不抛异常。
+        调用方必须在使用 result_path、bbox 等字段前先检查 success 标志。
         """
         from app.utils.path import validate_data_path
         try:

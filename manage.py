@@ -76,7 +76,7 @@ async def check_infrastructure():
     try:
         # 尝试通过 shell 命令检查 worker
         res = subprocess.run(
-            ["celery", "-A", "main.celery_app", "inspect", "ping"],
+            ["celery", "-A", "app.services.task_queue.celery_app", "inspect", "ping"],
             capture_output=True, text=True, timeout=5
         )
         if "pong" in res.stdout.lower():
@@ -105,13 +105,13 @@ def run_dev():
             return
 
         # 2. Start Backend
-        console.print("[dim]Launch: Backend Server (Port 8001)...[/dim]")
-        p_server = subprocess.Popen([sys.executable, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"])
+        console.print("[dim]Launch: Backend Server (Port 18000)...[/dim]")
+        p_server = subprocess.Popen([sys.executable, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "18000", "--reload"])
         processes.append(p_server)
 
         # 3. Start Worker
         console.print("[dim]Launch: Celery Worker...[/dim]")
-        p_worker = subprocess.Popen(["celery", "-A", "main.celery_app", "worker", "--loglevel=info"])
+        p_worker = subprocess.Popen(["celery", "-A", "app.services.task_queue.celery_app", "worker", "--loglevel=info"])
         processes.append(p_worker)
 
         # 4. Start Frontend
@@ -173,9 +173,9 @@ def main():
     elif args.command == "dev":
         run_dev()
     elif args.command == "server":
-        subprocess.run([sys.executable, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"])
+        subprocess.run([sys.executable, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "18000", "--reload"])
     elif args.command == "worker":
-        subprocess.run(["celery", "-A", "main.celery_app", "worker", "--loglevel=info"])
+        subprocess.run(["celery", "-A", "app.services.task_queue.celery_app", "worker", "--loglevel=info"])
     else:
         parser.print_help()
         sys.exit(1)

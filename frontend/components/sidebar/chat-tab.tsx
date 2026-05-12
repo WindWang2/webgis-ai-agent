@@ -6,6 +6,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import type { AiStatus } from '@/lib/store/hud-types';
 import MiniMd from '@/components/chat/mini-md';
 import { ToolCallChain } from '@/components/chat/tool-call-card';
+import { CollapsibleThink } from '@/components/chat/collapsible-think';
 
 /* ─── Thinking dots animation ─── */
 const DOT_ANIMS = ['animate-dot-1', 'animate-dot-2', 'animate-dot-3'];
@@ -209,7 +210,7 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor }: ChatTabProp
 
                   {msg.isThinking ? (
                     <ThinkingDots text={thinkingText} accentColor={accentColor} isDark={isDark} />
-                  ) : msg.content || msg.toolCalls?.length ? (
+                  ) : msg.content || msg.think || msg.toolCalls?.length ? (
                     <div style={{
                       borderTopLeftRadius: 4, borderTopRightRadius: 16,
                       borderBottomLeftRadius: 16, borderBottomRightRadius: 16,
@@ -218,6 +219,13 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor }: ChatTabProp
                       borderColor: isDark ? 'rgba(148,163,184,0.2)' : 'rgba(226,232,240,0.8)',
                       padding: '8px 12px'
                     }}>
+                      {msg.think && (
+                        <CollapsibleThink 
+                          content={msg.think} 
+                          isDark={isDark} 
+                          accentColor={accentColor} 
+                        />
+                      )}
                       {msg.content && <MiniMd text={msg.content} />}
                       {msg.toolCalls && msg.toolCalls.length > 0 && (
                         <ToolCallChain calls={msg.toolCalls} />

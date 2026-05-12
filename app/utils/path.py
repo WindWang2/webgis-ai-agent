@@ -4,12 +4,19 @@ def validate_data_path(path: str, data_dir: str = "./data") -> str:
     """
     验证并规范化用户传入的文件路径，防止目录遍历攻击。
 
+    THREAT MODEL: 本函数使用 os.path.abspath（不解析符号链接）而非
+    os.path.realpath。这意味着 ./data 下的符号链接可以指向 data_dir
+    外部（如 /etc），校验会通过但下游 open() 会跟随符号链接读取真实目标。
+    可接受的前提：data/tmp 目录由部署方控制，普通用户与上传流程无法
+    在其中创建符号链接。若未来引入用户可控的写入路径，必须改用
+    os.path.realpath。
+
     Args:
         path: 用户传入的路径（可为相对路径或绝对路径）
         data_dir: 允许的基础目录
 
     Returns:
-        规范化的绝对路径
+        规范化的绝对路径（未解析符号链接）
 
     Raises:
         ValueError: 路径非法或超出允许范围

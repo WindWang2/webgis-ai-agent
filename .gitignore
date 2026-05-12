@@ -61,3 +61,7 @@ out/
 next-env.d.ts
 tsconfig.tsbuildinfo
 **/tsconfig.tsbuildinfo
+
+# Redis snapshots
+dump.rdb
+*.rdb

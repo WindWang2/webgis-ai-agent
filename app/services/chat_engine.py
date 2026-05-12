@@ -291,9 +291,9 @@ class ChatEngine:
 
         state = session_data_manager.get_map_state(session_id)
         inventory = session_data_manager.list_refs(session_id)
-        viewport = state.get("viewport", {}) or {}
-        center = viewport.get("center", [0, 0]) or [0, 0]
-        zoom = viewport.get("zoom", 0) or 0
+        viewport = state.get("viewport") or {}
+        center = viewport.get("center")
+        zoom = viewport.get("zoom")
         bearing = viewport.get("bearing", 0) or 0
         pitch = viewport.get("pitch", 0) or 0
         bounds = viewport.get("bounds")
@@ -302,7 +302,7 @@ class ChatEngine:
         active_layers = state.get("layers", []) or []
 
         lines = [
-            "[环境感知]",
+            "[环境感知 — 当前地图实时状态，必读，不要凭空假设位置]",
             f"- 时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         ]
 
@@ -312,15 +312,22 @@ class ChatEngine:
                 f"- 用户位置: {user_location.get('lng', 0):.6f}, {user_location.get('lat', 0):.6f} "
                 f"(±{user_location.get('accuracy', '?')}m)"
             )
+        else:
+            lines.append("- 用户位置: 未授权")
 
-        viewport_line = f"- 视口: 中心 {center[0]:.4f},{center[1]:.4f} 缩放 {zoom:.1f}"
-        if bearing:
-            viewport_line += f" 旋转 {bearing:.0f}°"
-        if pitch:
-            viewport_line += f" 倾斜 {pitch:.0f}°"
-        if is_3d:
-            viewport_line += " 3D"
-        lines.append(viewport_line)
+        if isinstance(center, (list, tuple)) and len(center) == 2 and zoom is not None:
+            viewport_line = (
+                f"- 视口中心(WGS84 经纬度): lng={center[0]:.4f}, lat={center[1]:.4f}, zoom={zoom:.2f}"
+            )
+            if bearing:
+                viewport_line += f", bearing={bearing:.0f}°"
+            if pitch:
+                viewport_line += f", pitch={pitch:.0f}°"
+            if is_3d:
+                viewport_line += ", 3D"
+            lines.append(viewport_line)
+        else:
+            lines.append("- 视口: 未知（前端尚未上报，回答位置类问题前请先告知用户无法获取地图状态）")
 
         if isinstance(bounds, (list, tuple)) and len(bounds) == 4:
             w, s, e, n = bounds
@@ -388,9 +395,11 @@ class ChatEngine:
         感知状态只在每次请求前注入一次，不再写进工具结果里——保持历史紧凑。
         chat() 与 chat_stream() 共享此入口，避免两条路径行为漂移。
         """
+        env_summary = self._get_map_state_summary(session_id)
+        logger.debug(f"[ENV-INJECT] session={session_id}\n{env_summary}")
         head = [
             messages[0],
-            {"role": "system", "content": self._get_map_state_summary(session_id)},
+            {"role": "system", "content": env_summary},
         ]
         last_ctx = self._build_last_analysis_context(messages)
         if last_ctx:
@@ -471,7 +480,11 @@ class ChatEngine:
                     json=payload,
                 )
                 resp.raise_for_status()
-                title = resp.json()["choices"][0]["message"]["content"].strip()
+                choice = resp.json()["choices"][0]
+                msg = choice["message"]
+                title = msg.get("content") or msg.get("reasoning") or msg.get("reasoning_content")
+                if title:
+                    title = title.strip()
 
             # Validate: strip quotes and enforce length
             if title:
@@ -577,7 +590,7 @@ class ChatEngine:
                     if delta_reasoning:
                         # 兼容 MiniMax-M2.7/DeepSeek-V3 的思考过程
                         content_parts.append(delta_reasoning)
-                        yield ("token", {"content": delta_reasoning})
+                        yield ("token", {"content": delta_reasoning, "is_reasoning": True})
                     elif delta_content:
                         content_parts.append(delta_content)
                         yield ("token", {"content": delta_content})
@@ -654,21 +667,28 @@ class ChatEngine:
             choice = response.get("choices", [{}])[0]
             assistant_msg = choice.get("message", {})
 
+            # 提取文本内容，优先 content，次之 reasoning
+            raw_content = assistant_msg.get("content") or ""
+            reasoning = assistant_msg.get("reasoning") or assistant_msg.get("reasoning_content") or ""
+
             # 检查是否有 tool_calls（OpenAI 标准格式或 MiniMax XML 格式）
             standard_calls = assistant_msg.get("tool_calls") or []
             xml_calls: list[dict] = []
             if not standard_calls:
-                body = assistant_msg.get("content") or ""
-                if "minimax:tool_call" in body:
-                    xml_calls = _parse_minimax_xml_tool_calls(body)
+                if "minimax:tool_call" in raw_content:
+                    xml_calls = _parse_minimax_xml_tool_calls(raw_content)
 
             tc_list = standard_calls or xml_calls
 
             if tc_list:
-                content_text = assistant_msg.get("content", "") or ""
+                content_text = raw_content
                 if xml_calls:
                     # Strip XML artifact from content before storing
                     content_text = re.sub(r'\s*minimax:tool_call[\s\S]*', '', content_text).strip()
+                
+                # 如果只有 reasoning 没有 content，把 reasoning 充当 content
+                if not content_text and reasoning:
+                    content_text = reasoning
 
                 entry: dict = {"role": "assistant", "content": content_text}
                 if standard_calls:
@@ -718,7 +738,10 @@ class ChatEngine:
                 continue  # 继续循环让 LLM 处理工具结果
             else:
                 # 无 tool_calls，最终回复
-                content = assistant_msg.get("content", "")
+                content = raw_content
+                if not content and reasoning:
+                    content = reasoning
+                
                 messages.append({"role": "assistant", "content": content})
                 await self._save_msg_async(session_id, "assistant", content)
                 return {"content": content, "session_id": session_id}
@@ -747,7 +770,7 @@ class ChatEngine:
 
         # 创建任务
         task = self.tracker.create(session_id, message)
-        yield sse_event("task_start", {"task_id": task.id})
+        yield sse_event("task_start", {"task_id": task.id, "session_id": session_id})
 
         # 初始化局部哨兵，防止 AI 在单次任务中陷入相同指令的无限循环
         executed_tools = set()
@@ -776,19 +799,26 @@ class ChatEngine:
             # 检查是否有 tool_calls（OpenAI 标准格式或 MiniMax XML 格式）
             standard_calls = assistant_msg.get("tool_calls") or []
             xml_calls: list[dict] = []
+            
+            raw_content = assistant_msg.get("content") or ""
+            reasoning = assistant_msg.get("reasoning") or assistant_msg.get("reasoning_content") or ""
+
             if not standard_calls:
-                body = assistant_msg.get("content") or ""
-                if "minimax:tool_call" in body:
-                    xml_calls = _parse_minimax_xml_tool_calls(body)
+                if "minimax:tool_call" in raw_content:
+                    xml_calls = _parse_minimax_xml_tool_calls(raw_content)
 
             tc_list = standard_calls or xml_calls
 
             if tc_list:
-                content_text = assistant_msg.get("content", "") or ""
+                content_text = raw_content
                 if xml_calls:
                     content_text = re.sub(r'\s*minimax:tool_call[\s\S]*', '', content_text).strip()
+                
+                # 合并内容
+                if not content_text and reasoning:
+                    content_text = reasoning
 
-                # 将规划文本推送到前端（工具调用前的思考/规划内容）
+                # 将规划文本推送到前端
                 # For streaming path, content was already streamed as token events,
                 # but emit a content event too for backward compat with clients expecting it
                 if content_text:
@@ -955,8 +985,11 @@ class ChatEngine:
 
                 continue
             else:
-                # 最终回复 - content was already streamed token-by-token above
-                content = assistant_msg.get("content", "")
+                # 最终回复
+                content = raw_content
+                if not content and reasoning:
+                    content = reasoning
+                
                 messages.append({"role": "assistant", "content": content})
                 await self._save_msg_async(session_id, "assistant", content)
 

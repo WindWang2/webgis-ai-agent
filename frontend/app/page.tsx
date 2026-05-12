@@ -399,7 +399,7 @@ export default function Home() {
       abortControllerRef.current = new AbortController();
       const currentSignal = abortControllerRef.current.signal;
 
-      const { viewport, baseLayer, is3D } = useHudStore.getState();
+      const { viewport, baseLayer, is3D, layers: hudLayers } = useHudStore.getState();
       const liveSnapshot = getMapSnapshot();
       const mapState = {
         viewport: {
@@ -411,7 +411,17 @@ export default function Home() {
         },
         base_layer: baseLayer,
         is_3d: is3D,
-        layers: [],
+        layers: hudLayers.map((l: any) => ({
+          id: l.id,
+          name: l.name,
+          type: l.type,
+          visible: l.visible,
+          opacity: l.opacity,
+          group: l.group,
+          featureCount: l.source && typeof l.source === 'object' && 'features' in l.source
+            ? (l.source as any).features?.length ?? 0 : undefined,
+          style: l.style,
+        })),
         user_location: userLocation ? { lng: userLocation.lng, lat: userLocation.lat, accuracy: userLocation.accuracy } : null,
       };
 
@@ -424,22 +434,88 @@ export default function Home() {
 
       try {
         let assistantContent = '';
+        let assistantThinking = '';
         setAiStatus('thinking');
 
         for await (const event of streamChat(userMsg, sessionId, mapState, currentSignal)) {
           const { event: eventType, data: dataRaw } = event;
           const data = dataRaw as any;
 
-          if (['thinking', 'planning'].includes(eventType)) {
+          if (data?.session_id && data.session_id !== sessionId) {
+            setSessionId(data.session_id);
+          }
+
+          if (['thinking', 'planning', 'step_start'].includes(eventType)) {
             setAiStatus('thinking');
-          } else if (['acting', 'observing'].includes(eventType)) {
+          } else if (['acting', 'observing', 'tool_call'].includes(eventType)) {
             setAiStatus('acting');
           }
 
-          if (eventType === 'message' || eventType === 'content' || eventType === 'token') {
-            const chunk = typeof data === 'object' ? ((data as any).content || (data as any).text || (data as any).message || '') : String(data);
+          if (eventType === 'token') {
+            const chunk = data.content || '';
+            // 简单的启发式识别：如果内容包含大量推理标记或在工具调用前，归类为思考
+            // 实际上后端已经修正了，如果是推理令牌，eventType 依然是 token 但内容不同
+            // 这里我们根据后端发送的字段来区分
+            if (data.is_reasoning || data.type === 'reasoning') {
+              assistantThinking += chunk;
+            } else {
+              assistantContent += chunk;
+            }
+            setMessages(prev => prev.map(m => m.id === thinkingMsg.id ? { 
+              ...m, 
+              content: assistantContent, 
+              think: assistantThinking,
+              isThinking: false 
+            } : m));
+          } else if (eventType === 'content') {
+            const chunk = data.content || '';
             assistantContent += chunk;
             setMessages(prev => prev.map(m => m.id === thinkingMsg.id ? { ...m, content: assistantContent, isThinking: false } : m));
+          } else if (eventType === 'step_result') {
+            // 1. 自动图层挂载
+            if (data.geojson_ref || data.result?.image) {
+              const layerId = `layer-${Date.now()}`;
+              const layerName = data.tool === 'search_poi' ? `搜索结果: ${data.name || 'POI'}` : 
+                               data.tool === 'heatmap_data' ? '热力图分析' : `分析结果: ${data.tool}`;
+              
+              useHudStore.getState().addLayer({
+                id: layerId,
+                name: layerName,
+                type: data.result?.image ? 'heatmap' : 'vector',
+                visible: true,
+                opacity: 1,
+                color: colors.accent,
+                group: 'analysis',
+                source: data.geojson_ref ? { type: 'FeatureCollection', features: [], metadata: { ref_id: data.geojson_ref } } as any : data.result,
+                style: { color: colors.accent }
+              });
+              
+              setMessages(prev => prev.map(m => m.id === thinkingMsg.id ? { ...m, layerAdded: layerName } : m));
+            }
+
+            // 2. 自动缩放 (bbox)
+            const bbox = data.result?.bbox || data.bbox;
+            if (bbox) {
+              // bbox 格式: [west, south, east, north]
+              const center: [number, number] = [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2];
+              // 粗略计算 zoom
+              const latDiff = Math.abs(bbox[3] - bbox[1]);
+              const lonDiff = Math.abs(bbox[2] - bbox[0]);
+              const maxDiff = Math.max(latDiff, lonDiff);
+              const zoom = maxDiff > 10 ? 4 : maxDiff > 1 ? 8 : maxDiff > 0.1 ? 11 : 14;
+              
+              // 使用 setAnalysisResult 触发 MapPanel 的 useEffect flyTo
+              useHudStore.getState().setAnalysisResult({
+                center,
+                zoom,
+                success: true
+              });
+            }
+          } else if (eventType === 'task_complete') {
+            setAiStatus('done');
+            if (data.summary) {
+              // 可以将 summary 追加到消息或更新状态
+            }
           } else if (eventType === 'explorer_progress') {
             const expData = data as any;
             const taskId = expData.task_id as string;
