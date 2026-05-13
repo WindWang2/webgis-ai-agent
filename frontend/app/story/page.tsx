@@ -24,7 +24,7 @@ function StoryPageInner() {
   const [loading, setLoading] = useState(true)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  const { layers, removeLayer, toggleLayer, analysisResult } = useHudStore()
+  const { layers, removeLayer, toggleLayer } = useHudStore()
 
   useEffect(() => {
     if (sessionId) {
@@ -109,7 +109,6 @@ function StoryPageInner() {
           layers={layers}
           onRemoveLayer={removeLayer}
           onToggleLayer={toggleLayer}
-          analysisResult={analysisResult}
         />
       </div>
     </div>
