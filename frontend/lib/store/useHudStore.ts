@@ -52,10 +52,6 @@ const DEFAULT_MCP_SERVERS = [
   { id: 'spatial-analysis', name: 'spatial-analysis', transport: 'stdio' as const, cmd: 'python mcp_servers/spatial_analysis.py', status: 'active' as const, desc: '空间分析算法库（缓冲区、叠加、统计）' },
   { id: 'gdal-vector', name: 'gdal-vector', transport: 'stdio' as const, cmd: 'python mcp_servers/gdal_vector.py', status: 'active' as const, desc: '矢量数据读写与格式转换' },
   { id: 'gdal-dem-source', name: 'gdal-dem-source', transport: 'stdio' as const, cmd: 'python mcp_servers/gdal_dem_source.py', status: 'inactive' as const, desc: '高程数据源接入（需 OpenTopography Key）', warn: true },
-  { id: 'zai-mcp-server', name: 'zai-mcp-server', transport: 'stdio' as const, cmd: 'npx @z_ai/mcp-server', status: 'active' as const, desc: '智谱 AI 模型服务' },
-  { id: 'web-search-prime', name: 'web-search-prime', transport: 'sse' as const, url: 'https://open.bigmodel.cn/api/mcp/web_search_prime/sse', status: 'active' as const, desc: '实时网络搜索' },
-  { id: 'web-reader', name: 'web-reader', transport: 'sse' as const, url: 'https://open.bigmodel.cn/api/mcp/web_reader/sse', status: 'active' as const, desc: '网页内容读取与解析' },
-  { id: 'zread', name: 'zread', transport: 'sse' as const, url: 'https://open.bigmodel.cn/api/mcp/zread/sse', status: 'inactive' as const, desc: '长文档阅读理解' },
 ];
 
 const DEFAULT_SKILLS = [
