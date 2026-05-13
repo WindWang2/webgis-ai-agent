@@ -1,13 +1,36 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { STitle } from '@/components/shared/section-title';
 import ToggleSwitch from '@/components/shared/toggle-switch';
+import { API_BASE } from '@/lib/api/config';
 
 export function SkillsHub() {
   const skills = useHudStore((s) => s.skills);
   const toggleSkill = useHudStore((s) => s.toggleSkill);
+  const setSkills = useHudStore((s) => s.setSkills);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/v1/chat/skills`)
+      .then((r) => r.json())
+      .then((data: { skills?: Array<{ name: string; description: string }> }) => {
+        if (!data.skills?.length) return;
+        const existing = useHudStore.getState().skills;
+        const existingMap = Object.fromEntries(existing.map((s) => [s.id, s]));
+        setSkills(
+          data.skills.map((sk) => ({
+            id: sk.name,
+            name: sk.name,
+            desc: sk.description,
+            enabled: existingMap[sk.name]?.enabled ?? true,
+            calls: existingMap[sk.name]?.calls ?? 0,
+            category: '工作流',
+          }))
+        );
+      })
+      .catch(() => {});
+  }, [setSkills]);
 
   /* Group skills by category */
   const grouped = skills.reduce<Record<string, typeof skills>>((acc, sk) => {
