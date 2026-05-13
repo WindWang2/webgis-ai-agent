@@ -3,7 +3,7 @@ import secrets
 import logging
 import warnings
 from typing import List, Optional
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, model_validator
 
 logger = logging.getLogger(__name__)
@@ -11,6 +11,13 @@ logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     """应用配置"""
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="ignore",
+    )
+
     PROJECT_NAME: str = "WebGIS AI Agent"
     DEBUG: bool = True
     API_V1_STR: str = "/api"
@@ -21,15 +28,15 @@ class Settings(BaseSettings):
         return self.ENV.lower() == "production"
 
     # JWT
-    JWT_SECRET_KEY: str = Field(default="", env="JWT_SECRET_KEY")
+    JWT_SECRET_KEY: str = ""
 
     # 数据库
-    DATABASE_URL: str = Field(default="sqlite:///./data/webgis.db", env="DATABASE_URL")
+    DATABASE_URL: str = "sqlite:///./data/webgis.db"
 
     # LLM 配置 (OpenAI 兼容接口)
-    LLM_BASE_URL: str = Field(default="http://localhost:8000/v1", env="LLM_BASE_URL")
-    LLM_API_KEY: str = Field(default="not-needed", env="LLM_API_KEY")
-    LLM_MODEL: str = Field(default="MiniMax-M2.5", env="LLM_MODEL")
+    LLM_BASE_URL: str = "http://localhost:8000/v1"
+    LLM_API_KEY: str = "not-needed"
+    LLM_MODEL: str = "MiniMax-M2.5"
     LLM_PROMPT_CACHING_ENABLED: bool = True
 
     # OSM
@@ -37,35 +44,35 @@ class Settings(BaseSettings):
     NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
 
     # 天地图
-    TIANDITU_TOKEN: str = Field(default="", env="TIANDITU_TOKEN")
+    TIANDITU_TOKEN: str = ""
 
     # 高德地图 (Amap)
-    AMAP_API_KEY: str = Field(default="", env="AMAP_API_KEY")
-    AMAP_JS_KEY: str = Field(default="", env="AMAP_JS_KEY")
-    AMAP_JS_SECURITY_KEY: str = Field(default="", env="AMAP_JS_SECURITY_KEY")
+    AMAP_API_KEY: str = ""
+    AMAP_JS_KEY: str = ""
+    AMAP_JS_SECURITY_KEY: str = ""
 
     # 百度地图 (Baidu Maps)
-    BAIDU_MAP_AK: str = Field(default="", env="BAIDU_MAP_AK")
+    BAIDU_MAP_AK: str = ""
 
     # 百度千帆 (Baidu Qianfan AI Search v2) — 网络搜索能力
     # token 形如 bce-v3/ALTAK-xxx/sk-xxx，作为 Authorization: Bearer 头使用
-    BAIDU_QIANFAN_TOKEN: str = Field(default="", env="BAIDU_QIANFAN_TOKEN")
+    BAIDU_QIANFAN_TOKEN: str = ""
 
     # MapBox / Bing / Tencent
-    MAPBOX_TOKEN: str = Field(default="", env="MAPBOX_TOKEN")
-    BING_MAP_KEY: str = Field(default="", env="BING_MAP_KEY")
-    TENCENT_MAP_KEY: str = Field(default="", env="TENCENT_MAP_KEY")
+    MAPBOX_TOKEN: str = ""
+    BING_MAP_KEY: str = ""
+    TENCENT_MAP_KEY: str = ""
 
     # Sentinel Hub
-    SENTINELHUB_CLIENT_ID: str = Field(default="", env="SENTINELHUB_CLIENT_ID")
-    SENTINELHUB_CLIENT_SECRET: str = Field(default="", env="SENTINELHUB_CLIENT_SECRET")
+    SENTINELHUB_CLIENT_ID: str = ""
+    SENTINELHUB_CLIENT_SECRET: str = ""
 
     # NASA EarthData
-    NASA_EARTHDATA_USERNAME: str = Field(default="", env="NASA_EARTHDATA_USERNAME")
-    NASA_EARTHDATA_PASSWORD: str = Field(default="", env="NASA_EARTHDATA_PASSWORD")
+    NASA_EARTHDATA_USERNAME: str = ""
+    NASA_EARTHDATA_PASSWORD: str = ""
 
     # OpenTopography
-    OPENTOPOGRAPHY_API_KEY: str = Field(default="", env="OPENTOPOGRAPHY_API_KEY")
+    OPENTOPOGRAPHY_API_KEY: str = ""
 
     # 数据目录
     DATA_DIR: str = "./data"
@@ -75,14 +82,14 @@ class Settings(BaseSettings):
     CORS_ORIGINS: List[str] = ["*"]
 
     # Celery & Redis
-    REDIS_URL: str = Field(default="redis://localhost:16379/0", env="REDIS_URL")
-    CELERY_BROKER_URL: str = Field(default="redis://localhost:16379/0", env="CELERY_BROKER_URL")
-    CELERY_RESULT_BACKEND: str = Field(default="redis://localhost:16379/1", env="CELERY_RESULT_BACKEND")
+    REDIS_URL: str = "redis://localhost:16379/0"
+    CELERY_BROKER_URL: str = "redis://localhost:16379/0"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:16379/1"
     USE_REDIS: bool = True
 
     # 代理设置
-    HTTP_PROXY: Optional[str] = Field(default=None, env="HTTP_PROXY")
-    HTTPS_PROXY: Optional[str] = Field(default=None, env="HTTPS_PROXY")
+    HTTP_PROXY: Optional[str] = None
+    HTTPS_PROXY: Optional[str] = None
 
     @model_validator(mode="after")
     def _ensure_jwt_secret(self) -> "Settings":
@@ -100,12 +107,6 @@ class Settings(BaseSettings):
             )
             logger.warning("JWT_SECRET_KEY not set, generated random secret for this session")
         return self
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = True
-        extra = "ignore" # 忽略多余的环境变量
 
 
 settings = Settings()

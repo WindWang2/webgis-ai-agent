@@ -1,7 +1,7 @@
 # tests/test_history_service.py
 import pytest
 from unittest.mock import MagicMock, patch, call
-from datetime import datetime
+from datetime import datetime, timezone
 from app.services.history_service import HistoryService
 
 
@@ -25,7 +25,7 @@ def test_get_or_create_conversation_creates_new():
 def test_get_or_create_conversation_returns_existing():
     from app.models.db_model import Conversation
     svc, db = make_service()
-    existing = Conversation(id="sess-1", title="Old", created_at=datetime.utcnow(), updated_at=datetime.utcnow())
+    existing = Conversation(id="sess-1", title="Old", created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc))
     db.get.return_value = existing
 
     conv = svc.get_or_create_conversation("sess-1")
