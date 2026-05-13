@@ -1,25 +1,22 @@
 'use client';
 
-import { useHudStore, DEMO_CAUSAL_CHAIN } from '@/lib/store/useHudStore';
+import { useHudStore } from '@/lib/store/useHudStore';
 
 export function CausalTrace() {
   const causalChain = useHudStore((s) => s.causalChain);
-  const demoMode = useHudStore((s) => s.demoMode);
 
-  const displayChain = demoMode && causalChain.length === 0 ? DEMO_CAUSAL_CHAIN : causalChain;
-
-  if (displayChain.length === 0) return null;
+  if (causalChain.length === 0) return null;
 
   return (
     <div className='space-y-2'>
-      {displayChain.map((entry, idx) => (
+      {causalChain.map((entry, idx) => (
         <div key={entry.id} className='flex gap-2'>
           {/* Step number */}
           <div className='flex flex-col items-center'>
             <div className='w-5 h-5 rounded-full bg-violet-100 text-violet-700 flex items-center justify-center text-[10px] font-bold'>
-              {displayChain.length - idx}
+              {causalChain.length - idx}
             </div>
-            {idx < displayChain.length - 1 && (
+            {idx < causalChain.length - 1 && (
               <div className='w-0.5 flex-1 bg-violet-200 my-1' />
             )}
           </div>
