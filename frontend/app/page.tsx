@@ -714,8 +714,8 @@ export default function Home() {
         ⚙
       </button>
 
-      {/* Demo Mode Toggle */}
-      {!demoMode && (
+      {/* Demo Mode Toggle — dev-only */}
+      {process.env.NODE_ENV === 'development' && !demoMode && (
         <button
           onClick={() => {
             setDemoMode(true);
