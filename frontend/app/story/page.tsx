@@ -40,7 +40,7 @@ function StoryPageInner() {
     } else {
       setLoading(false)
       setMessages([
-        { role: "assistant", content: "# 欢迎进入影院级互动演示 (StoryMap)模式\n这是一场地理空间叙事的全新体验。在这里，数据不仅仅是图表，更是一段可以探索的旅程。" },
+        { role: "assistant", content: "# StoryMap 回放模式\n以叙事形式重现 GeoAgent 的分析推演过程。" },
         { role: "assistant", content: "您可以尝试在 URL 中追加 `?session_id=您的会话ID` 来回放之前的分析推演。" },
       ])
     }
