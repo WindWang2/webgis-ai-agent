@@ -121,6 +121,28 @@ async def get_session_map_state(session_id: str):
     return {"session_id": session_id, "map_state": state}
 
 
+class MapStatePushRequest(BaseModel):
+    viewport: Optional[dict] = None
+    layers: Optional[list] = None
+    base_layer: Optional[str] = None
+
+
+@router.post("/sessions/{session_id}/map-state", status_code=204)
+async def push_session_map_state(
+    session_id: str,
+    req: MapStatePushRequest,
+    _user: dict = Depends(get_current_user_optional),
+):
+    """Persist live map state pushed by the frontend during agent execution."""
+    from app.services.session_data import session_data_manager
+    if req.viewport:
+        session_data_manager.set_map_state(session_id, "viewport", req.viewport)
+    if req.layers is not None:
+        session_data_manager.set_map_state(session_id, "layers", req.layers)
+    if req.base_layer:
+        session_data_manager.set_map_state(session_id, "base_layer", req.base_layer)
+
+
 @router.get("/skills")
 async def list_skills_api():
     """列出可用的 .md 技能"""

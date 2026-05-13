@@ -4,7 +4,7 @@ import { MAP_STYLES, MapStyleOption } from "@/lib/constants"
 import Map, { MapRef, ViewStateChangeEvent } from "react-map-gl/maplibre"
 import maplibregl from "maplibre-gl"
 import type { Layer } from "@/lib/types/layer"
-import type { AnalysisResult, GeoJSONFeatureCollection, HeatmapRasterSource } from "@/lib/types"
+import type { GeoJSONFeatureCollection, HeatmapRasterSource } from "@/lib/types"
 import { MapActionHandler } from "./map-action-handler"
 import { ThematicLegend } from "./thematic-legend"
 import { useHudStore, type HudState } from "@/lib/store/useHudStore"
@@ -13,7 +13,7 @@ interface MapPanelProps {
   layers: Layer[]
   onRemoveLayer: (id: string) => void
   onToggleLayer: (id: string) => void
-  analysisResult?: AnalysisResult | null
+  onViewportChange?: (center: [number, number], zoom: number, bearing: number, pitch: number) => void
 }
 
 import { useMapAction } from "@/lib/contexts/map-action-context"
@@ -69,7 +69,7 @@ function parseDashArray(dash: string): number[] {
   }
 }
 
-export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer: _onToggleLayer, analysisResult }: MapPanelProps) {
+export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer: _onToggleLayer, onViewportChange }: MapPanelProps) {
   void _onRemoveLayer;
   void _onToggleLayer;
 
@@ -79,7 +79,6 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   const [is3D] = useState(false)
   const [activeFilters, setActiveFilters] = useState<Record<string, number[][]>>({})
   const mapRef = useRef<MapRef>(null)
-  const lastAnalysisCenter = useRef<string>("")
   const processLayers = useHudStore((s: HudState) => s.processLayers)
 
   const currentMapStyle = useMemo(
@@ -93,28 +92,6 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
       [layerId]: ranges,
     }))
   }, [])
-
-  // Listen for base layer change events (triggered by AI or other components)
-  // Apply analysis results to map
-  useEffect(() => {
-    if (analysisResult?.center) {
-      const centerKey = `${analysisResult.center[0]},${analysisResult.center[1]},${analysisResult.zoom}`
-      if (centerKey !== lastAnalysisCenter.current) {
-        lastAnalysisCenter.current = centerKey
-        setViewState((prev) => ({
-          ...prev,
-          longitude: analysisResult.center[0],
-          latitude: analysisResult.center[1],
-          zoom: analysisResult.zoom || prev.zoom,
-        }))
-        mapRef.current?.flyTo({
-          center: analysisResult.center,
-          zoom: analysisResult.zoom || 10,
-          duration: 1500,
-        })
-      }
-    }
-  }, [analysisResult])
 
   // 3D Terrain Toggle Effect
   useEffect(() => {
@@ -490,7 +467,13 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
       evt.viewState.pitch,
       bounds
     )
-  }, [setViewport])
+    onViewportChange?.(
+      [evt.viewState.longitude, evt.viewState.latitude],
+      evt.viewState.zoom,
+      evt.viewState.bearing,
+      evt.viewState.pitch,
+    )
+  }, [setViewport, onViewportChange])
 
   // Register snapshot function — reads directly from MapLibre instance (always fresh)
   useEffect(() => {
@@ -534,7 +517,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
         ref={mapRef}
         {...viewState}
         onMove={handleMove}
-        onLoad={() => setMapReady(true)}
+        onLoad={() => { setMapReady(true); useHudStore.getState().setMapLoaded(true); }}
         style={{ position: "absolute", inset: 0 }}
         mapStyle={currentMapStyle}
         attributionControl={false}

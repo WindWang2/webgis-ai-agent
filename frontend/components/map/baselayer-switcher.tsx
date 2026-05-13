@@ -57,9 +57,9 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
         <div
           style={{
             position: 'absolute',
-            bottom: '100%',
+            top: '100%',
             right: 0,
-            marginBottom: 4,
+            marginTop: 4,
             background: 'rgba(252,253,254,0.96)',
             backdropFilter: 'blur(20px)',
             WebkitBackdropFilter: 'blur(20px)',
