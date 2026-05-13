@@ -1,13 +1,9 @@
 'use client';
 
-import { useHudStore, DEMO_RAG } from '@/lib/store/useHudStore';
+import { useHudStore } from '@/lib/store/useHudStore';
 
 export function RagTab() {
   const ragResults = useHudStore((s) => s.ragResults);
-  const demoMode = useHudStore((s) => s.demoMode);
-  const setDemoMode = useHudStore((s) => s.setDemoMode);
-
-  const displayResults = demoMode && ragResults.length === 0 ? DEMO_RAG : ragResults;
 
   return (
     <div className='flex flex-col h-full'>
@@ -16,25 +12,17 @@ export function RagTab() {
         <span className='text-[10px] font-semibold text-slate-400 uppercase tracking-wider'>
           RAG检索结果
         </span>
-        {!demoMode && ragResults.length === 0 && (
-          <button
-            onClick={() => setDemoMode(true)}
-            className='text-[10px] text-slate-400 hover:text-slate-600'
-          >
-            加载演示
-          </button>
-        )}
       </div>
 
       {/* Results list */}
       <div className='flex-1 overflow-y-auto p-2'>
-        {displayResults.length === 0 ? (
+        {ragResults.length === 0 ? (
           <div className='text-center py-8 text-xs text-slate-400'>
             暂无检索结果
           </div>
         ) : (
           <div className='space-y-2'>
-            {displayResults.map((result) => (
+            {ragResults.map((result) => (
               <div
                 key={result.id}
                 className='p-3 rounded-xl border border-slate-200/60 bg-white/60'
