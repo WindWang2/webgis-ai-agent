@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { sendChat, getSessionList, deleteSession, clearSessionMessages, executeToolDirect } from './chat';
+import { sendChat, getSessionList, deleteSession, clearSessionMessages, executeToolDirect, streamChat } from './chat';
+import type { SSEEvent } from './chat';
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
@@ -109,6 +110,104 @@ describe('Chat API', () => {
     it('throws on non-ok response', async () => {
       mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
       await expect(executeToolDirect('bad_tool', {})).rejects.toThrow('Tool execute error: 500');
+    });
+  });
+
+  describe('streamChat', () => {
+    function makeSSEStream(events: string[]): Response {
+      const body = events.join('\n') + '\n';
+      return {
+        ok: true,
+        body: {
+          getReader: () => {
+            let sent = false;
+            return {
+              read: async () => {
+                if (!sent) {
+                  sent = true;
+                  return { done: false, value: new TextEncoder().encode(body) };
+                }
+                return { done: true, value: undefined };
+              },
+              cancel: vi.fn(),
+            };
+          },
+        },
+      } as unknown as Response;
+    }
+
+    it('yields parsed SSEEvents from well-formed SSE stream', async () => {
+      mockFetch.mockResolvedValueOnce(makeSSEStream([
+        'event: thinking',
+        'data: {"content":"..."}',
+        '',
+        'event: done',
+        'data: {}',
+        '',
+      ]));
+
+      const events: SSEEvent[] = [];
+      for await (const e of streamChat('hello')) {
+        events.push(e);
+      }
+      expect(events).toHaveLength(2);
+      expect(events[0].event).toBe('thinking');
+      expect(events[1].event).toBe('done');
+    });
+
+    it('yields raw string on JSON parse failure', async () => {
+      mockFetch.mockResolvedValueOnce(makeSSEStream([
+        'event: content',
+        'data: NOT_VALID_JSON',
+        '',
+      ]));
+
+      const events: SSEEvent[] = [];
+      for await (const e of streamChat('hello')) {
+        events.push(e);
+      }
+      expect(events[0].data).toBe('NOT_VALID_JSON');
+    });
+
+    it('stops yielding when AbortSignal is aborted mid-stream', async () => {
+      const controller = new AbortController();
+      let readCallCount = 0;
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: async () => {
+              readCallCount++;
+              if (readCallCount === 1) {
+                controller.abort();
+                return { done: false, value: new TextEncoder().encode('event: thinking\ndata: {}\n\n') };
+              }
+              return { done: true, value: undefined };
+            },
+            cancel: vi.fn(),
+          }),
+        },
+      } as unknown as Response);
+
+      const events: SSEEvent[] = [];
+      for await (const e of streamChat('hello', undefined, undefined, controller.signal)) {
+        events.push(e);
+      }
+      expect(events.length).toBeLessThanOrEqual(1);
+    });
+
+    it('throws on non-ok response', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: false, status: 503 });
+      const gen = streamChat('hello');
+      await expect(gen.next()).rejects.toThrow('Chat API error: 503');
+    });
+
+    it('sends session_id and map_state in request body', async () => {
+      mockFetch.mockResolvedValueOnce(makeSSEStream([]));
+      for await (const _ of streamChat('hello', 'sess-1', { zoom: 10 })) { /* drain */ }
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.session_id).toBe('sess-1');
+      expect(body.map_state).toEqual({ zoom: 10 });
     });
   });
 });

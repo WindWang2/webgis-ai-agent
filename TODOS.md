@@ -31,6 +31,23 @@ Generated from /plan-eng-review on 2026-05-09.
 - [ ] D15 — Use deque(maxlen) in rate limiting middleware
 - [ ] D16 — Skip traceback formatting in production exception handler
 
+## Frontend Bridge Tests (D17)
+- [x] D17 — Write missing tests for Agent-Map Bridge (identified in eng review 2026-05-13):
+  - `lib/utils/geo.test.ts` (NEW) — `bboxToFlyTo`: all 4 zoom thresholds, center calc, invalid bbox guard
+  - `lib/api/chat.test.ts` (EXTEND) — `streamChat` SSE: parse loop, JSON failure yields raw string, AbortSignal abort
+  - `lib/hooks/useMapBridge.test.ts` (NEW) — send/abort/onEvent routing/all guards/aiStatus transitions (10 cases)
+  - `components/map/map-action-handler.test.tsx` (NEW) — `fly_to` bearing+pitch forwarded to `map.flyTo()`
+  - `test/test-utils.tsx` (UPDATE) — add `mapLoaded: false` + `setMapLoaded: vi.fn()`, remove `analysisResult`/`setAnalysisResult`
+  - Test plan: `~/.gstack/projects/WindWang2-webgis-ai-agent/kevin-master-eng-review-test-plan-20260513-1448.md`
+
+## Frontend Bridge DX (D18)
+- [x] D18 — Apply DX review decisions for Agent-Map Bridge (identified in devex review 2026-05-13):
+  - `types/agent-events.ts` (UPDATE) — add `export type { SSEEvent, SSEEventType } from '@/lib/api/chat'` [DX3]
+  - `page.tsx` (UPDATE) — remove `isLoading` useState; derive `const isLoading = bridge.aiStatus === 'thinking' || bridge.aiStatus === 'acting'` [DX4]
+  - `lib/hooks/useMapBridge.ts` (NEW) — add JSDoc + dev-mode console.error guard for onEvent [DX5]
+  - `page.tsx` (UPDATE) — remove all explicit `abort()` call-sites; AbortController is internal to hook [DX1]
+  - DX plan: `~/.gstack/projects/WindWang2-webgis-ai-agent/ceo-plans/2026-05-13-agent-map-bridge.md` (## GSTACK REVIEW REPORT → DX section)
+
 ## NOT in scope
 - Individual tool implementations (remote_sensing.py, terrain_analysis.py, etc.)
 - Frontend components and tests

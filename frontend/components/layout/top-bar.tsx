@@ -10,6 +10,7 @@ import {
   Settings,
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import BaselayerSwitcher from '@/components/map/baselayer-switcher';
 
 interface TopBarProps {
   sessionName?: string;
@@ -178,6 +179,10 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
         >
           <History size={15} />
         </button>
+
+        <span style={{ marginLeft: 4, marginRight: 4, width: 1, height: 16, backgroundColor: isDark ? 'rgba(148,163,184,0.2)' : 'rgba(226,232,240,0.8)' }} />
+
+        <BaselayerSwitcher />
 
         <span style={{ marginLeft: 4, marginRight: 4, width: 1, height: 16, backgroundColor: isDark ? 'rgba(148,163,184,0.2)' : 'rgba(226,232,240,0.8)' }} />
 

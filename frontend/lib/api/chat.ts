@@ -39,7 +39,9 @@ export type SSEEventType =
   | 'task_cancelled'
   | 'session'
   | 'task_plan'
-  | 'token';
+  | 'token'
+  | 'error'
+  | 'explorer_progress';
 
 export interface SSEEvent {
   event: SSEEventType;

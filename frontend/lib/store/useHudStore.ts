@@ -98,10 +98,6 @@ export const useHudStore = create<HudState>()(
       editingLayerId: null,
       setEditingLayerId: (id) => set({ editingLayerId: id }),
 
-      /* ─── Analysis ─── */
-      analysisResult: null,
-      setAnalysisResult: (result) => set({ analysisResult: result }),
-
       /* ─── Task ─── */
       currentTask: null,
 
@@ -204,6 +200,10 @@ export const useHudStore = create<HudState>()(
       setBaseLayer: (name) => set({ baseLayer: name }),
       is3D: false,
       setIs3D: (v: boolean) => set({ is3D: v }),
+
+      /* ─── Map Load State ─── */
+      mapLoaded: false,
+      setMapLoaded: (v: boolean) => set({ mapLoaded: v }),
 
       /* ─── Perception Buffer ─── */
       _perceptionQueue: [],

@@ -1,5 +1,5 @@
 import type { Layer } from '@/lib/types/layer';
-import type { AnalysisResult, GeoJSONFeatureCollection } from '@/lib/types';
+import type { GeoJSONFeatureCollection } from '@/lib/types';
 import type { ExplorerTask } from '@/lib/types/explorer';
 
 export interface TaskStep {
@@ -145,10 +145,6 @@ export interface HudState {
   editingLayerId: string | null;
   setEditingLayerId: (id: string | null) => void;
 
-  /* ─── Analysis Navigation ─── */
-  analysisResult: AnalysisResult | null;
-  setAnalysisResult: (result: AnalysisResult | null) => void;
-
   /* ─── Task Stack ─── */
   currentTask: TaskState | null;
   taskStart: (taskId: string) => void;
@@ -173,6 +169,10 @@ export interface HudState {
   setBaseLayer: (name: string) => void;
   is3D: boolean;
   setIs3D: (v: boolean) => void;
+
+  /* ─── Map Load State ─── */
+  mapLoaded: boolean;
+  setMapLoaded: (v: boolean) => void;
 
   /* ─── Perception Buffer (Agent-Everything) ─── */
   _perceptionQueue: Array<{ event: string; data: Record<string, unknown> }>;

@@ -98,7 +98,9 @@ export function MapActionHandler() {
             map.flyTo({
               center: action.params.center,
               zoom: action.params?.zoom || 12,
-              duration: 1500
+              duration: 1500,
+              bearing: action.params?.bearing,
+              pitch: action.params?.pitch,
             });
           }
           break;

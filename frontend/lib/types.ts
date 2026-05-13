@@ -81,6 +81,8 @@ export interface MapActionPayload {
     flyTo?: boolean;
     center?: [number, number];
     zoom?: number;
+    bearing?: number;
+    pitch?: number;
     image?: string;
     url?: string;
     bbox?: [number, number, number, number];

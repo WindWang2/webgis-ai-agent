@@ -160,8 +160,8 @@ def _slim_tool_result(result: any, result_str: str, session_geojson_ref: str | N
             
         return json.dumps(slim, ensure_ascii=False)
 
-def _calculate_bbox(geojson: Any) -> str | None:
-    """计算 GeoJSON 的 BBox 字符串格式: 'south,west,north,east'"""
+def _calculate_bbox(geojson: Any) -> list | None:
+    """计算 GeoJSON 的 BBox，返回 [west, south, east, north] 数组（与前端期望格式一致）。"""
     if not isinstance(geojson, dict):
         return None
     features = geojson.get("features", [])
@@ -185,17 +185,29 @@ def _calculate_bbox(geojson: Any) -> str | None:
             elif isinstance(c, list):
                 for item in c: process(item)
         process(coords)
-    return f"{min_lat},{min_lon},{max_lat},{max_lon}" if found else None
+    # Return [west, south, east, north] — matches the frontend bbox array format
+    return [min_lon, min_lat, max_lon, max_lat] if found else None
 
 def _slim_event_result(result: Any) -> Any:
     """为了 SSE 传输而脱敏工具结果，移除大体积的数据字段，但保留导航和渲染关键点。"""
     if not isinstance(result, dict):
         return result
     
-    # 提取或计算 bbox 用于前端导航
+    # 提取或计算 bbox 用于前端导航，统一转为 [west, south, east, north] 数组
     bbox = result.get("bbox")
-    if not bbox and "geojson" in result:
-        bbox = _calculate_bbox(result["geojson"])
+    if not bbox:
+        if "geojson" in result:
+            bbox = _calculate_bbox(result["geojson"])
+        elif result.get("type") == "FeatureCollection" and "features" in result:
+            # 工具直接返回 FeatureCollection（如 search_poi）
+            bbox = _calculate_bbox(result)
+
+    # 规范化 bbox：OSM 工具返回 "south,west,north,east" 字符串，需转为数组
+    if isinstance(bbox, str) and bbox:
+        parts = [float(x) for x in bbox.split(",") if x.strip()]
+        if len(parts) == 4:
+            south, west, north, east = parts
+            bbox = [west, south, east, north]  # → [west, south, east, north]
 
     # 移除大数据字段，但保留 image (热力图需要) 和 bbox (导航需要)
     exclude = {"geojson", "features", "data_list", "grid"}
@@ -419,10 +431,14 @@ class ChatEngine:
         """
         env_summary = self._get_map_state_summary(session_id)
         logger.debug(f"[ENV-INJECT] session={session_id}\n{env_summary}")
-        head = [
-            messages[0],
-            {"role": "system", "content": env_summary},
-        ]
+
+        # Merge env summary directly into the system prompt so it is always read.
+        # Injecting it as a separate system message is unreliable — many LLMs
+        # (including MiniMax) silently drop all but the first system entry.
+        sys_msg = dict(messages[0])
+        sys_msg["content"] = sys_msg["content"] + "\n\n" + env_summary
+
+        head = [sys_msg]
         last_ctx = self._build_last_analysis_context(messages)
         if last_ctx:
             head.append({"role": "system", "content": last_ctx})
@@ -600,6 +616,7 @@ class ChatEngine:
         reasoning_parts: list[str] = []
         tool_calls_accum: dict[int, dict] = {}  # index -> {id, function: {name, arguments}}
         finish_reason: Optional[str] = None
+        _in_think_block: bool = False  # 跟踪 <think>...</think> 标签状态
 
         timeout = httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -630,15 +647,47 @@ class ChatEngine:
 
                     # Handle content delta
                     delta_content = delta.get("content")
-                    delta_reasoning = delta.get("reasoning") or delta.get("reasoning_content")
-                    
+                    delta_reasoning = (
+                        delta.get("reasoning")
+                        or delta.get("reasoning_content")
+                        or delta.get("thinking_content")
+                        or delta.get("thinking")
+                    )
+
                     if delta_reasoning:
                         # 兼容 MiniMax-M2.7/DeepSeek-V3 的思考过程：单独累积，不进 content_parts
                         reasoning_parts.append(delta_reasoning)
                         yield ("token", {"content": delta_reasoning, "is_reasoning": True})
                     if delta_content:
-                        content_parts.append(delta_content)
-                        yield ("token", {"content": delta_content})
+                        # 检测 <think>...</think> 标签（MiniMax-M2.7 在 content 中嵌入思考）
+                        remaining = delta_content
+                        while remaining:
+                            if not _in_think_block:
+                                idx = remaining.find('<think>')
+                                if idx == -1:
+                                    content_parts.append(remaining)
+                                    yield ("token", {"content": remaining})
+                                    remaining = ""
+                                else:
+                                    pre = remaining[:idx]
+                                    if pre:
+                                        content_parts.append(pre)
+                                        yield ("token", {"content": pre})
+                                    _in_think_block = True
+                                    remaining = remaining[idx + 7:]
+                            else:
+                                idx = remaining.find('</think>')
+                                if idx == -1:
+                                    reasoning_parts.append(remaining)
+                                    yield ("token", {"content": remaining, "is_reasoning": True})
+                                    remaining = ""
+                                else:
+                                    think_chunk = remaining[:idx]
+                                    if think_chunk:
+                                        reasoning_parts.append(think_chunk)
+                                        yield ("token", {"content": think_chunk, "is_reasoning": True})
+                                    _in_think_block = False
+                                    remaining = remaining[idx + 8:].lstrip()
 
                     # Handle tool_calls delta
                     delta_tool_calls = delta.get("tool_calls")
