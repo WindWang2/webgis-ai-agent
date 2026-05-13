@@ -1,7 +1,7 @@
 'use client';
 
 import { Download, Trash2 } from 'lucide-react';
-import { useHudStore, DEMO_EXPORTS } from '@/lib/store/useHudStore';
+import { useHudStore } from '@/lib/store/useHudStore';
 
 const iconForType: Record<string, string> = {
   png: '🖼',
@@ -12,12 +12,8 @@ const iconForType: Record<string, string> = {
 export function ExportsTab() {
   const exports = useHudStore((s) => s.exports);
   const setExports = useHudStore((s) => s.setExports);
-  const demoMode = useHudStore((s) => s.demoMode);
-  const setDemoMode = useHudStore((s) => s.setDemoMode);
   const theme = useHudStore((s) => s.theme);
   const isDark = theme === 'dark';
-
-  const displayExports = demoMode && exports.length === 0 ? DEMO_EXPORTS : exports;
 
   const handleDownload = (item: any) => {
     // Mock download
@@ -36,18 +32,7 @@ export function ExportsTab() {
           导出文件
         </span>
         <div className='flex items-center gap-1'>
-          {!demoMode && exports.length === 0 && (
-            <button
-              onClick={() => setDemoMode(true)}
-              className='text-[10px] px-2 py-1 rounded hover:bg-opacity-50'
-              style={{ color: isDark ? '#64748b' : '#94a3b8', backgroundColor: 'transparent' }}
-              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
-            >
-              加载演示
-            </button>
-          )}
-          {displayExports.length > 0 && (
+          {exports.length > 0 && (
             <button
               onClick={() => setExports([])}
               className='text-[10px] px-2 py-1 rounded hover:bg-opacity-50'
@@ -63,7 +48,7 @@ export function ExportsTab() {
 
       {/* Exports list */}
       <div className='flex-1 overflow-y-auto p-2'>
-        {displayExports.length === 0 ? (
+        {exports.length === 0 ? (
           <div className='flex flex-col items-center justify-center h-full text-center px-6'>
             <div className='w-10 h-10 rounded-xl flex items-center justify-center mb-2' style={{ backgroundColor: isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)' }}>
               <Download size={16} style={{ color: isDark ? '#475569' : '#cbd5e1' }} />
@@ -72,7 +57,7 @@ export function ExportsTab() {
           </div>
         ) : (
           <div className='space-y-1'>
-            {displayExports.map((item) => (
+            {exports.map((item) => (
               <div
                 key={item.id}
                 className='flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-colors'
