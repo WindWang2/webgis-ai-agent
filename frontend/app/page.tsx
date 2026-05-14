@@ -265,7 +265,7 @@ export default function Home() {
 
     const thinkingId = thinkingMsgIdRef.current;
 
-    if (event.event === 'token') {
+    if (event.event === 'token' || event.event === 'content') {
       const chunk = data.content || '';
       if (data.is_reasoning || data.type === 'reasoning') {
         setMessages(prev => prev.map(m => m.id === thinkingId ? { ...m, think: ((m as any).think || '') + chunk, isThinking: false } : m));
@@ -274,9 +274,6 @@ export default function Home() {
         const parsed = parseThink(rawContentRef.current);
         setMessages(prev => prev.map(m => m.id === thinkingId ? { ...m, content: parsed.content, think: parsed.thinking || (m as any).think, isThinking: false } : m));
       }
-    } else if (event.event === 'content') {
-      const chunk = data.content || '';
-      setMessages(prev => prev.map(m => m.id === thinkingId ? { ...m, content: ((m as any).content || '') + chunk, isThinking: false } : m));
     } else if (event.event === 'step_result') {
       // Layer auto-mount
       if (data.geojson_ref || data.result?.image) {
