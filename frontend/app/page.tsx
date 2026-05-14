@@ -292,8 +292,23 @@ export default function Home() {
           opacity: 1,
           group: 'analysis',
           source: data.geojson_ref ? { type: 'FeatureCollection', features: [], metadata: { ref_id: data.geojson_ref } } as any : data.result,
-          style: { color: accentColor }
+          style: { color: accentColor },
+          _refId: data.geojson_ref,
         });
+
+        // Asynchronously fetch the actual GeoJSON data for the reference
+        if (data.geojson_ref) {
+          const sid = sessionIdRef.current;
+          fetch(`${API_BASE}/api/v1/layers/data/${data.geojson_ref}?session_id=${sid}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(geojson => {
+              if (geojson && (geojson.type === 'FeatureCollection' || geojson.features)) {
+                useHudStore.getState().updateLayer(layerId, { source: geojson });
+              }
+            })
+            .catch(err => console.error('[LiveLayerFetch] Failed to fetch geojson_ref:', err));
+        }
+
         setMessages(prev => prev.map(m => m.id === thinkingId ? { ...m, layerAdded: layerName } : m));
       }
       // NOTE: command dispatch + bbox flyTo are handled by the bridge
