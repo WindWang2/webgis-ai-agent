@@ -59,8 +59,6 @@ export function useMapBridge(
 
   const send = useCallback(
     async (content: string, mapSnapshot: Record<string, unknown>): Promise<void> => {
-      if (!sessionId) return;
-
       // [ENG-P4] abort any in-flight stream before starting a new one
       abortControllerRef.current?.abort();
       const controller = new AbortController();
@@ -114,6 +112,7 @@ export function useMapBridge(
         if (err instanceof DOMException && err.name === 'AbortError') return;
         setAiStatus('error');
         console.error('[useMapBridge] SSE stream error:', err);
+        onEvent({ event: 'error', data: { error: err instanceof Error ? err.message : String(err) } as unknown as Record<string, unknown> });
       } finally {
         if (abortControllerRef.current === controller) {
           // Still the active controller — update aiStatus appropriately
