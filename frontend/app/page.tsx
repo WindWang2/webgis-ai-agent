@@ -246,10 +246,10 @@ export default function Home() {
     const start = raw.indexOf('<think>');
     const end = raw.indexOf('</think>');
     if (start !== -1 && end !== -1 && end > start) {
-      return { thinking: raw.slice(start + 7, end), content: raw.slice(end + 8).trimStart() };
+      return { thinking: raw.slice(start + 7, end), content: raw.slice(0, start) + raw.slice(end + 8).trimStart() };
     }
     if (start !== -1) {
-      return { thinking: raw.slice(start + 7), content: '' };
+      return { thinking: raw.slice(start + 7), content: raw.slice(0, start) };
     }
     return { thinking: '', content: raw };
   }, []);

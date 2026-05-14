@@ -95,13 +95,14 @@ export function MapActionHandler() {
 
         case 'fly_to':
           if (action.params?.center) {
-            map.flyTo({
+            const flyOptions: maplibregl.FlyToOptions = {
               center: action.params.center,
               zoom: action.params?.zoom || 12,
               duration: 1500,
-              bearing: action.params?.bearing,
-              pitch: action.params?.pitch,
-            });
+            };
+            if (action.params.bearing !== undefined) flyOptions.bearing = action.params.bearing;
+            if (action.params.pitch !== undefined) flyOptions.pitch = action.params.pitch;
+            map.flyTo(flyOptions);
           }
           break;
         
