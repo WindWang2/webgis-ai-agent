@@ -7,6 +7,7 @@ import { ChatTab } from '@/components/sidebar/chat-tab';
 import { LayersTab } from '@/components/sidebar/layers-tab';
 import { OpsLogTab } from '@/components/sidebar/ops-log-tab';
 import { ExportsTab } from '@/components/sidebar/exports-tab';
+import { ExportLayoutTab } from '@/components/sidebar/export-layout-tab';
 import type { AiStatus, LeftTab } from '@/lib/store/hud-types';
 
 export interface LeftSidebarProps {
@@ -114,6 +115,7 @@ export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#
         )}
         {activeTab === 'layers' && <LayersTab />}
         {activeTab === 'ops' && <OpsLogTab />}
+        {activeTab === 'export_layout' && <ExportLayoutTab />}
         {activeTab === 'exports' && <ExportsTab />}
       </div>
     </aside>
