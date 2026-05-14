@@ -39,14 +39,17 @@ describe('useMapBridge', () => {
     vi.useRealTimers();
   });
 
-  it('does not call streamChat when sessionId is undefined', async () => {
+  it('calls streamChat even when sessionId is undefined (new session)', async () => {
+    mockStreamChat.mockReturnValue(makeAsyncGen([]));
     const { result } = renderHook(() =>
       useMapBridge(undefined, dispatchAction, onEvent)
     );
     await act(async () => {
       await result.current.send('hello', {});
     });
-    expect(mockStreamChat).not.toHaveBeenCalled();
+    expect(mockStreamChat).toHaveBeenCalledWith(
+      'hello', undefined, {}, expect.any(AbortSignal)
+    );
   });
 
   it('calls streamChat with (message, sessionId, mapState, signal)', async () => {
