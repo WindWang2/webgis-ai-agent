@@ -43,6 +43,7 @@ export function useMapBridge(
   const aiStatusRef = useRef<AiStatus>('idle');
   const abortControllerRef = useRef<AbortController | null>(null);
   const lastMapStatePushRef = useRef<number>(0);
+  const prevSessionIdRef = useRef(sessionId);
 
   const setAiStatus = useCallback((status: AiStatus) => {
     aiStatusRef.current = status;
@@ -52,10 +53,18 @@ export function useMapBridge(
 
   // [DX1] Auto-abort on sessionId change and unmount — AbortController is fully internal
   useEffect(() => {
+    if (prevSessionIdRef.current !== undefined && sessionId !== undefined && prevSessionIdRef.current !== sessionId) {
+      // Abort only on explicit session switch, not on server assignment for a new session
+      abortControllerRef.current?.abort();
+    }
+    prevSessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  useEffect(() => {
     return () => {
       abortControllerRef.current?.abort();
     };
-  }, [sessionId]);
+  }, []);
 
   const send = useCallback(
     async (content: string, mapSnapshot: Record<string, unknown>): Promise<void> => {
