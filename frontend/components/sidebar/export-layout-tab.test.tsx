@@ -62,4 +62,18 @@ describe('ExportLayoutTab', () => {
     expect(useHudStore.getState().exportSettings.showCompass).toBe(false);
     expect(compassCheckbox).not.toBeChecked();
   });
+
+  it('resets DPI to 150 when switching to A4 and current DPI is 300', () => {
+    useHudStore.setState({
+      exportSettings: { ...useHudStore.getState().exportSettings, dpi: 300, paperSize: 'screen' }
+    });
+    
+    render(<ExportLayoutTab />);
+    
+    const paperSelect = screen.getByDisplayValue('当前屏幕比例 (Screen)');
+    fireEvent.change(paperSelect, { target: { value: 'A4' } });
+    
+    expect(useHudStore.getState().exportSettings.paperSize).toBe('A4');
+    expect(useHudStore.getState().exportSettings.dpi).toBe(150);
+  });
 });
