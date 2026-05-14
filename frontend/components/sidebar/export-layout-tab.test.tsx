@@ -18,7 +18,7 @@ describe('ExportLayoutTab', () => {
         orientation: 'landscape',
         dpi: 96,
         format: 'png',
-      } as any,
+      },
     });
   });
 

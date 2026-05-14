@@ -6,8 +6,12 @@ export function ExportLayoutTab() {
   const updateExportSettings = useHudStore((s) => s.updateExportSettings);
 
   // Helper to update specific fields
-  const handleChange = (key: keyof typeof exportSettings, value: any) => {
-    updateExportSettings({ [key]: value });
+  const handleChange = (key: keyof typeof exportSettings, value: string | number | boolean) => {
+    if (key === 'paperSize' && value === 'A4' && exportSettings.dpi === 300) {
+      updateExportSettings({ [key]: value, dpi: 150 });
+    } else {
+      updateExportSettings({ [key]: value });
+    }
   };
 
   // Auto-enable export mode when tab is opened
