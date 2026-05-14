@@ -345,6 +345,25 @@ export const useHudStore = create<HudState>()(
         set((state) => ({
           explorerTasks: state.explorerTasks.filter((t) => t.taskId !== taskId),
         })),
+
+      /* ─── Export Layout ─── */
+      exportSettings: {
+        isExportMode: false,
+        title: '',
+        subtitle: '',
+        showWatermark: true,
+        showCompass: true,
+        showScale: true,
+        showLegend: true,
+        paperSize: 'screen',
+        orientation: 'landscape',
+        dpi: 96,
+        format: 'png',
+      },
+      updateExportSettings: (updates) =>
+        set((s) => ({
+          exportSettings: { ...s.exportSettings, ...updates },
+        })),
     }),
     {
       name: 'geoagent-settings',
