@@ -23,6 +23,7 @@ import RagIndependentPanel from '@/components/panel/rag-independent-panel';
 import TweaksPanel from '@/components/tweaks-panel';
 import { HistoryDrawer } from '@/components/drawers/history-drawer';
 import { SettingsPanel } from '@/components/settings/settings-panel';
+import { ExportMask } from '@/components/map/export-mask';
 
 const MapPanel = dynamic(
   () => import('@/components/map/map-panel').then((m) => ({ default: m.MapPanel })),
@@ -403,6 +404,7 @@ export default function Home() {
             onToggleLayer={toggleLayer}
             onViewportChange={bridge.onViewportChange}
           />
+          <ExportMask />
         </div>
 
         {/* Floating Legend */}
