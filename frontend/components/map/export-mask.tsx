@@ -1,20 +1,29 @@
 import { useHudStore } from '@/lib/store/useHudStore';
-import { useMemo, useEffect, useState } from 'react';
+import { useMemo, useEffect, useState, useRef } from 'react';
 
 export function ExportMask() {
   const settings = useHudStore(s => s.exportSettings);
   const isDark = useHudStore(s => s.theme === 'dark');
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const updateSize = () => setContainerSize({ w: window.innerWidth, h: window.innerHeight });
-    window.addEventListener('resize', updateSize);
-    updateSize();
-    return () => window.removeEventListener('resize', updateSize);
-  }, []);
+    const el = containerRef.current;
+    if (!el) return;
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.target.getBoundingClientRect();
+        setContainerSize({ w: width, h: height });
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [settings.isExportMode]);
 
   const maskStyle = useMemo(() => {
-    if (settings.paperSize === 'screen' || containerSize.w === 0) return { display: 'none' };
+    const baseStyle = { pointerEvents: 'none' as const, position: 'absolute' as const, inset: 0, zIndex: 20, borderWidth: 0 };
+    if (settings.paperSize === 'screen' || containerSize.w === 0) return baseStyle;
     
     // A4 ratio: 1 : 1.414
     let targetRatio = settings.orientation === 'landscape' ? 1.414 : 1 / 1.414;
@@ -34,20 +43,17 @@ export function ExportMask() {
     const padY = (containerSize.h - boxH) / 2;
 
     return {
+      ...baseStyle,
       borderWidth: `${Math.max(0, padY)}px ${Math.max(0, padX)}px`,
       borderColor: 'rgba(0,0,0,0.6)',
       borderStyle: 'solid',
-      pointerEvents: 'none' as const,
-      position: 'absolute' as const,
-      inset: 0,
-      zIndex: 20
     };
   }, [settings.paperSize, settings.orientation, containerSize]);
 
   if (!settings.isExportMode) return null;
 
   return (
-    <div style={maskStyle}>
+    <div ref={containerRef} style={maskStyle}>
        {/* Preview Header */}
        {(settings.title || settings.subtitle) && (
          <div className="absolute top-0 left-0 w-full p-8 pointer-events-none" style={{ background: `linear-gradient(to bottom, ${isDark ? 'rgba(0,10,20,0.8)' : 'rgba(255,255,255,0.9)'}, transparent)` }}>
