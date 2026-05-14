@@ -50,6 +50,20 @@ export interface ExportItem {
   date: string;
 }
 
+export interface ExportSettings {
+  isExportMode: boolean;
+  title: string;
+  subtitle: string;
+  showWatermark: boolean;
+  showCompass: boolean;
+  showScale: boolean;
+  showLegend: boolean;
+  paperSize: 'screen' | 'A4';
+  orientation: 'landscape' | 'portrait';
+  dpi: number;
+  format: 'png' | 'pdf';
+}
+
 export interface CausalEntry {
   id: string;
   tool: string;
@@ -60,7 +74,7 @@ export interface CausalEntry {
   mapState?: Record<string, unknown>;
 }
 
-export type LeftTab = 'chat' | 'layers' | 'ops' | 'exports';
+export type LeftTab = 'chat' | 'layers' | 'ops' | 'exports' | 'assets' | 'export_layout';
 export type SettingsTab = 'llm' | 'mcp' | 'skills' | 'rag' | 'layers' | 'map' | 'system';
 
 export interface McpServer {
@@ -282,4 +296,8 @@ export interface HudState {
   addExplorerTask: (task: ExplorerTask) => void;
   updateExplorerTask: (taskId: string, updates: Partial<ExplorerTask>) => void;
   removeExplorerTask: (taskId: string) => void;
+
+  /* ─── Export Layout ─── */
+  exportSettings: ExportSettings;
+  updateExportSettings: (updates: Partial<ExportSettings>) => void;
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { MessageCircle, Layers, List, Download } from 'lucide-react';
+import { MessageCircle, Layers, List, Download, Database, Printer } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { ChatTab } from '@/components/sidebar/chat-tab';
@@ -34,6 +34,8 @@ const TAB_DEFS: TabDef[] = [
   { key: 'chat', icon: MessageCircle, label: '对话' },
   { key: 'layers', icon: Layers, label: '图层' },
   { key: 'ops', icon: List, label: '日志' },
+  { key: 'assets', icon: Database, label: '资源' },
+  { key: 'export_layout', icon: Printer, label: '制图' },
   { key: 'exports', icon: Download, label: '导出' },
 ];
 
@@ -44,11 +46,14 @@ export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#
   const layers = useHudStore((s) => s.layers);
   const opsLog = useHudStore((s) => s.opsLog);
   const exports = useHudStore((s) => s.exports);
+  const assets = useHudStore((s) => s.analysisAssets);
 
   const badges: Record<LeftTab, number | undefined> = {
     chat: undefined,
     layers: layers.length,
     ops: opsLog.length,
+    assets: assets?.length || 0,
+    export_layout: undefined,
     exports: exports.length,
   };
 
