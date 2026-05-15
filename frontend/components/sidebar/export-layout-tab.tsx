@@ -1,9 +1,11 @@
 import { useEffect } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useMapAction } from '@/lib/contexts/map-action-context';
 
 export function ExportLayoutTab() {
   const exportSettings = useHudStore((s) => s.exportSettings);
   const updateExportSettings = useHudStore((s) => s.updateExportSettings);
+  const { dispatchAction } = useMapAction();
 
   // Helper to update specific fields
   const handleChange = (key: keyof typeof exportSettings, value: string | number | boolean) => {
@@ -136,8 +138,10 @@ export function ExportLayoutTab() {
         <button 
           className="w-full bg-blue-600 text-white font-medium py-2 rounded shadow hover:bg-blue-700 transition" 
           onClick={() => {
-            // We will wire this up later to useMapAction
-            alert("Export pending implementation");
+            dispatchAction({
+              command: 'export_map',
+              params: { ...exportSettings }
+            });
           }}
         >
           导出 {exportSettings.format.toUpperCase()}
