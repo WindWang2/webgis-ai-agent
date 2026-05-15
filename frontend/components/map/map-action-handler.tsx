@@ -238,55 +238,87 @@ export function MapActionHandler() {
           const {
             title,
             subtitle,
-            dark_mode,
-            include_legend = true,
-            include_compass = true,
-            include_scale = true,
+            showWatermark = true,
+            showLegend = true,
+            showCompass = true,
+            showScale = true,
             format = "png",
+            paperSize = "screen",
+            orientation = "landscape",
+            dpi = 96
           } = action.params;
+          
+          const dark_mode = useHudStore.getState().theme === 'dark';
 
           map.once("render", async () => {
             try {
-              const canvas = map.getCanvas();
-              const width = canvas.width;
-              const height = canvas.height;
+              const baseCanvas = map.getCanvas();
+              let srcW = baseCanvas.width;
+              let srcH = baseCanvas.height;
+              let srcX = 0;
+              let srcY = 0;
+
+              // 1. Calculate Crop Box if A4
+              if (paperSize === 'A4') {
+                const targetRatio = orientation === 'landscape' ? 1.414 : 1 / 1.414;
+                const canvasRatio = srcW / srcH;
+                
+                if (canvasRatio > targetRatio) {
+                  const newW = srcH * targetRatio;
+                  srcX = (srcW - newW) / 2;
+                  srcW = newW;
+                } else {
+                  const newH = srcW / targetRatio;
+                  srcY = (srcH - newH) / 2;
+                  srcH = newH;
+                }
+              }
+
+              // 2. High-DPI Upscaling calculation
+              const dpiMultiplier = dpi / 96;
+              const targetW = Math.round(srcW * dpiMultiplier);
+              const targetH = Math.round(srcH * dpiMultiplier);
 
               const exportCanvas = document.createElement("canvas");
-              exportCanvas.width = width;
-              exportCanvas.height = height;
+              exportCanvas.width = targetW;
+              exportCanvas.height = targetH;
               const ctx = exportCanvas.getContext("2d");
               if (!ctx) return;
 
-              // ── 0. Base map ──────────────────────────────────────────────
-              ctx.drawImage(canvas, 0, 0);
+              // Draw cropped base map
+              ctx.drawImage(baseCanvas, srcX, srcY, srcW, srcH, 0, 0, targetW, targetH);
 
-              // ── 1. Header gradient + title ───────────────────────────────
-              const headerH = subtitle ? 130 : 100;
+              // 3. Draw Overlays (scaled by dpiMultiplier)
+              const scalePx = (val: number) => val * dpiMultiplier;
+
+              // Header gradient
+              const headerH = subtitle ? scalePx(130) : scalePx(100);
               const headerGrad = ctx.createLinearGradient(0, 0, 0, headerH);
               headerGrad.addColorStop(0, dark_mode ? "rgba(0,10,20,0.88)" : "rgba(255,255,255,0.96)");
               headerGrad.addColorStop(0.65, dark_mode ? "rgba(0,10,20,0.45)" : "rgba(255,255,255,0.55)");
               headerGrad.addColorStop(1, "rgba(0,0,0,0)");
               ctx.fillStyle = headerGrad;
-              ctx.fillRect(0, 0, width, headerH);
+              ctx.fillRect(0, 0, targetW, headerH);
 
+              // Title
               ctx.fillStyle = dark_mode ? "#00f2ff" : "#1e293b";
-              ctx.font = `bold ${Math.max(28, Math.round(width / 22))}px sans-serif`;
-              ctx.fillText(title || "WebGIS AI Agent 专题制图", 56, Math.round(headerH * 0.52));
+              ctx.font = `bold ${scalePx(32)}px sans-serif`;
+              ctx.fillText(title || "WebGIS AI Agent", scalePx(56), scalePx(52));
 
               if (subtitle) {
                 ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.72)" : "rgba(30,41,59,0.72)";
-                ctx.font = `${Math.max(18, Math.round(width / 36))}px sans-serif`;
-                ctx.fillText(subtitle, 56, Math.round(headerH * 0.82));
+                ctx.font = `${scalePx(20)}px sans-serif`;
+                ctx.fillText(subtitle, scalePx(56), scalePx(82));
               }
 
               // ── 2. Scale bar ──────────────────────────────────────────────
-              if (include_scale) {
+              if (showScale) {
                 const center = map.getCenter();
                 const zoom = map.getZoom();
                 const metersPerPx =
                   (156543.03392 * Math.cos((center.lat * Math.PI) / 180)) /
                   Math.pow(2, zoom);
-                const targetPx = Math.round(width * 0.12);
+                const targetPx = Math.round(srcW * 0.12);
                 const rawMeters = metersPerPx * targetPx;
                 // Round to a nice number
                 const magnitude = Math.pow(10, Math.floor(Math.log10(rawMeters)));
@@ -296,13 +328,13 @@ export function MapActionHandler() {
                     ? candidate
                     : prev;
                 }, magnitude);
-                const barPx = nice / metersPerPx;
+                const barPx = (nice / metersPerPx) * dpiMultiplier;
                 const barLabel = nice >= 1000 ? `${nice / 1000} km` : `${nice} m`;
 
-                const bx = 56, by = height - 52, bh = 8;
+                const bx = scalePx(56), by = targetH - scalePx(52), bh = scalePx(8);
                 // Outer frame
                 ctx.strokeStyle = dark_mode ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.8)";
-                ctx.lineWidth = 1.5;
+                ctx.lineWidth = scalePx(1.5);
                 ctx.strokeRect(bx, by, barPx, bh);
                 // Alternating fill segments
                 const segCount = 4;
@@ -316,25 +348,25 @@ export function MapActionHandler() {
                 }
                 // Label
                 ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.95)" : "#1e293b";
-                ctx.font = "bold 13px sans-serif";
+                ctx.font = `bold ${scalePx(13)}px sans-serif`;
                 ctx.textAlign = "left";
-                ctx.fillText("0", bx, by - 4);
+                ctx.fillText("0", bx, by - scalePx(4));
                 ctx.textAlign = "right";
-                ctx.fillText(barLabel, bx + barPx, by - 4);
+                ctx.fillText(barLabel, bx + barPx, by - scalePx(4));
                 ctx.textAlign = "left";
               }
 
               // ── 3. North arrow (compass) ─────────────────────────────────
-              if (include_compass) {
+              if (showCompass) {
                 const bearing = map.getBearing();
-                const cx = width - 64, cy = 64, r = 28;
+                const cx = targetW - scalePx(64), cy = scalePx(64), r = scalePx(28);
                 ctx.save();
                 ctx.translate(cx, cy);
                 ctx.rotate((bearing * Math.PI) / 180);
 
                 // Shadow halo
                 ctx.shadowColor = "rgba(0,0,0,0.4)";
-                ctx.shadowBlur = 6;
+                ctx.shadowBlur = scalePx(6);
 
                 // North half (red)
                 ctx.beginPath();
@@ -359,7 +391,7 @@ export function MapActionHandler() {
                 // Center dot
                 ctx.shadowBlur = 0;
                 ctx.beginPath();
-                ctx.arc(0, 0, 4, 0, 2 * Math.PI);
+                ctx.arc(0, 0, scalePx(4), 0, 2 * Math.PI);
                 ctx.fillStyle = "#1e293b";
                 ctx.fill();
 
@@ -367,14 +399,14 @@ export function MapActionHandler() {
 
                 // "N" label above arrow
                 ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.95)" : "#1e293b";
-                ctx.font = "bold 13px sans-serif";
+                ctx.font = `bold ${scalePx(13)}px sans-serif`;
                 ctx.textAlign = "center";
-                ctx.fillText("N", cx, cy - r - 6);
+                ctx.fillText("N", cx, cy - r - scalePx(6));
                 ctx.textAlign = "left";
               }
 
               // ── 4. Legend (choropleth only) ───────────────────────────────
-              if (include_legend) {
+              if (showLegend) {
                 const COLOR_PALETTES: Record<string, string[]> = {
                   YlOrRd: ["#ffffb2","#fed976","#feb24c","#fd8d3c","#f03b20","#bd0026"],
                   Blues:  ["#eff3ff","#bdd7e7","#6baed6","#3182bd","#08519c"],
@@ -397,11 +429,11 @@ export function MapActionHandler() {
                   };
                   const colors = COLOR_PALETTES[meta.palette] ?? COLOR_PALETTES["YlOrRd"];
                   const classes = meta.breaks.length - 1;
-                  const itemH = 22, itemW = 18, padding = 10, gapX = 8;
-                  const legendW = 180;
-                  const legendH = padding * 2 + 24 + classes * itemH;
-                  const lx = width - legendW - 56;
-                  const ly = height - legendH - 56;
+                  const itemH = scalePx(22), itemW = scalePx(18), padding = scalePx(10), gapX = scalePx(8);
+                  const legendW = scalePx(180);
+                  const legendH = padding * 2 + scalePx(24) + classes * itemH;
+                  const lx = targetW - legendW - scalePx(56);
+                  const ly = targetH - legendH - scalePx(56);
 
                   // Background panel
                   ctx.fillStyle = dark_mode
@@ -409,7 +441,7 @@ export function MapActionHandler() {
                     : "rgba(255,255,255,0.88)";
                   ctx.beginPath();
                   // Rounded rect polyfill
-                  const rad = 8;
+                  const rad = scalePx(8);
                   ctx.moveTo(lx + rad, ly);
                   ctx.lineTo(lx + legendW - rad, ly);
                   ctx.arcTo(lx + legendW, ly, lx + legendW, ly + rad, rad);
@@ -424,8 +456,8 @@ export function MapActionHandler() {
 
                   // Field title
                   ctx.fillStyle = dark_mode ? "#00f2ff" : "#1e293b";
-                  ctx.font = "bold 12px sans-serif";
-                  ctx.fillText(`字段: ${meta.field}`, lx + padding, ly + padding + 12);
+                  ctx.font = `bold ${scalePx(12)}px sans-serif`;
+                  ctx.fillText(`字段: ${meta.field}`, lx + padding, ly + padding + scalePx(12));
 
                   // Color boxes + labels
                   const formatNum = (n: number) =>
@@ -434,30 +466,32 @@ export function MapActionHandler() {
                     n.toFixed(1);
 
                   for (let i = 0; i < classes; i++) {
-                    const iy = ly + padding + 24 + i * itemH;
+                    const iy = ly + padding + scalePx(24) + i * itemH;
                     const colorIdx = Math.min(i, colors.length - 1);
                     ctx.fillStyle = colors[colorIdx];
-                    ctx.fillRect(lx + padding, iy, itemW, itemH - 4);
+                    ctx.fillRect(lx + padding, iy, itemW, itemH - scalePx(4));
                     ctx.strokeStyle = "rgba(128,128,128,0.4)";
-                    ctx.lineWidth = 0.5;
-                    ctx.strokeRect(lx + padding, iy, itemW, itemH - 4);
+                    ctx.lineWidth = scalePx(0.5);
+                    ctx.strokeRect(lx + padding, iy, itemW, itemH - scalePx(4));
                     ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.85)" : "#334155";
-                    ctx.font = "11px sans-serif";
+                    ctx.font = `${scalePx(11)}px sans-serif`;
                     ctx.fillText(
                       `${formatNum(meta.breaks[i])} – ${formatNum(meta.breaks[i + 1])}`,
                       lx + padding + itemW + gapX,
-                      iy + itemH - 8
+                      iy + itemH - scalePx(8)
                     );
                   }
                 }
               }
 
               // ── 5. Watermark ─────────────────────────────────────────────
-              ctx.fillStyle = dark_mode ? "rgba(0,242,255,0.12)" : "rgba(30,41,59,0.08)";
-              ctx.textAlign = "right";
-              ctx.font = "14px monospace";
-              ctx.fillText("Generated by WebGIS AI Agent", width - 36, height - 18);
-              ctx.textAlign = "left";
+              if (showWatermark) {
+                ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.4)";
+                ctx.textAlign = "right";
+                ctx.font = `bold ${scalePx(16)}px monospace`;
+                ctx.fillText("Generated by WebGIS AI Agent", targetW - scalePx(36), targetH - scalePx(18));
+                ctx.textAlign = "left";
+              }
 
               // ── 6. Upload / convert ───────────────────────────────────────
               const dataUrl = exportCanvas.toDataURL("image/png");
@@ -477,8 +511,8 @@ export function MapActionHandler() {
                 const mpp =
                   (156543.03392 * Math.cos((centerLat * Math.PI) / 180)) /
                   Math.pow(2, zoom);
-                const mapWidthMeters = mpp * canvas.width;
-                const scaleApprox = Math.round(mapWidthMeters / (canvas.width / 96 / 0.0254));
+                const mapWidthMeters = mpp * srcW;
+                const scaleApprox = Math.round(mapWidthMeters / (srcW / 96 / 0.0254));
                 pdfForm.append("scale_text", `1:${scaleApprox.toLocaleString()}`);
 
                 const pdfRes = await fetch(`${API_BASE}/api/v1/export/pdf`, {
