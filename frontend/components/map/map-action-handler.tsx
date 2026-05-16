@@ -246,7 +246,7 @@ export function MapActionHandler() {
             paperSize = "screen",
             orientation = "landscape",
             dpi = 96
-          } = action.params;
+          } = action.params || {};
           
           const dark_mode = useHudStore.getState().theme === 'dark';
 
@@ -512,7 +512,9 @@ export function MapActionHandler() {
                   (156543.03392 * Math.cos((centerLat * Math.PI) / 180)) /
                   Math.pow(2, zoom);
                 const mapWidthMeters = mpp * srcW;
-                const scaleApprox = Math.round(mapWidthMeters / (srcW / 96 / 0.0254));
+                // Physical distance = pixels * (meters per inch / dpi)
+                const physicalWidthMeters = srcW * (0.0254 / 96);
+                const scaleApprox = Math.round(mapWidthMeters / physicalWidthMeters);
                 pdfForm.append("scale_text", `1:${scaleApprox.toLocaleString()}`);
 
                 const pdfRes = await fetch(`${API_BASE}/api/v1/export/pdf`, {
