@@ -25,11 +25,11 @@ interface ExportSettings {
   isExportMode: boolean; // Enables the WYSIWYG mask and UI decorators
   title: string;
   subtitle: string;
-  watermark: string;
+  showWatermark: boolean;
   showCompass: boolean;
   showScale: boolean;
   showLegend: boolean;
-  paperSize: 'screen' | 'A4' | 'A3';
+  paperSize: 'screen' | 'A4';
   orientation: 'landscape' | 'portrait';
   dpi: number;
   format: 'png' | 'pdf';
@@ -57,4 +57,4 @@ For high DPI and custom aspect ratio exports:
 ## 5. Review Checklist (Self-Review completed)
 - [x] Clear architectural boundaries? (Yes, clear separation between UI, State, and Canvas compositor).
 - [x] Scope defined? (Yes, focused entirely on map layout and high-res canvas extraction).
-- [x] Ambiguity resolved? (Yes, WYSIWYG is chosen over isolated modal, ensuring smooth user experience).
+- [x] Ambiguity resolved? (Yes, WYSIWYG is chosen over isolated modal, ensuring smooth user experience).olved? (Yes, WYSIWYG is chosen over isolated modal, ensuring smooth user experience).
