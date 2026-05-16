@@ -154,6 +154,7 @@ class Message(Base):
     conversation_id = Column(String(255), ForeignKey("conversations.id"))
     role = Column(String(20), nullable=False)  # user / assistant / tool
     content = Column(Text, default="")
+    reasoning_content = Column(Text, nullable=True)  # reasoning/thinking process
     tool_calls = Column(JSON, nullable=True)  # FC tool calls
     tool_call_id = Column(String(255), nullable=True)
     tool_result = Column(JSON, nullable=True)  # tool execution result

@@ -200,9 +200,7 @@ def register_osm_tools(registry: ToolRegistry):
         # 先地理编码获取 bbox，并扩大范围
         bbox = await _geocode_bbox(clean_area, expand_km=expand_km)
         if not bbox:
-            return {"type": "poi_query", "area": area, "category": category, "count": 0,
-                    "geojson": {"type": "FeatureCollection", "features": []},
-                    "error": f"无法地理编码: {clean_area}"}
+            raise ValueError(f"无法地理编码: {clean_area}")
 
         # 中文 category 转英文
         category_map = {
@@ -256,6 +254,10 @@ def register_osm_tools(registry: ToolRegistry):
 
         # Overpass 失败时，fallback 到 Nominatim 搜索
         if geojson.get("error") or len(geojson.get("features", [])) == 0:
+            # Overpass 明确报错，抛出异常以触发标准化错误响应
+            if geojson.get("error"):
+                 raise RuntimeError(geojson["error"])
+
             # 用中英文关键词搜索（优先使用英文 tag，增加成功率）
             category_names = {
                 "park": ["park", "公园"], "garden": ["garden", "花园"],
@@ -281,6 +283,9 @@ def register_osm_tools(registry: ToolRegistry):
             # 使用 Nominatim 结果作为 fallback
             if len(nom_geojson.get("features", [])) > 0:
                 geojson = nom_geojson
+            else:
+                # 依然没找到数据，抛出异常引导 AI 自愈或向用户解释
+                raise ValueError(f"在区域 '{clean_area}' 内找不到类别为 '{category}' 的兴趣点。")
 
         return {
             "type": "poi_query",
@@ -301,12 +306,15 @@ def register_osm_tools(registry: ToolRegistry):
     async def query_osm_roads(area: str, road_type: str = "primary", limit: int = 100) -> dict:
         bbox = await _geocode_bbox(area)
         if not bbox:
-            return {"type": "road_query", "area": area, "road_type": road_type, "count": 0,
-                    "geojson": {"type": "FeatureCollection", "features": []},
-                    "error": f"无法地理编码: {area}"}
+            raise ValueError(f"无法地理编码: {area}")
 
         query = f'way["highway"="{_sanitize_overpass_value(road_type)}"]({bbox});'
         geojson = await _query_overpass(query)
+        if geojson.get("error"):
+            raise RuntimeError(geojson["error"])
+        if len(geojson.get("features", [])) == 0:
+            raise ValueError(f"在区域 '{area}' 内找不到类型为 '{road_type}' 的道路数据。")
+
         return {
             "type": "road_query",
             "area": area,
@@ -325,12 +333,15 @@ def register_osm_tools(registry: ToolRegistry):
     async def query_osm_buildings(area: str, limit: int = 100) -> dict:
         bbox = await _geocode_bbox(area)
         if not bbox:
-            return {"type": "building_query", "area": area, "count": 0,
-                    "geojson": {"type": "FeatureCollection", "features": []},
-                    "error": f"无法地理编码: {area}"}
+            raise ValueError(f"无法地理编码: {area}")
 
         query = f'way["building"]({bbox});'
         geojson = await _query_overpass(query)
+        if geojson.get("error"):
+            raise RuntimeError(geojson["error"])
+        if len(geojson.get("features", [])) == 0:
+            raise ValueError(f"在区域 '{area}' 内找不到建筑物数据。")
+
         return {
             "type": "building_query",
             "area": area,

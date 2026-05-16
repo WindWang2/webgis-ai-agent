@@ -78,6 +78,9 @@ interface ChatTabProps {
 export function ChatTab({ messages, aiStatus, onSend, accentColor }: ChatTabProps) {
   const theme = useHudStore((s) => s.theme);
   const isDark = theme === 'dark';
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   const [input, setInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -150,7 +153,7 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor }: ChatTabProp
         <div className="px-3 py-3 space-y-3">
           {messages.map((msg: any, idx: number) => {
             const isUser = msg.role === 'user';
-            const time = msg.timestamp
+            const time = (mounted && msg.timestamp)
               ? new Date(msg.timestamp).toLocaleTimeString('zh-CN', {
                   hour: '2-digit',
                   minute: '2-digit',

@@ -285,6 +285,8 @@ class ChatEngine:
     def _db_msg_to_llm(self, msg) -> dict:
         """Convert a DB message model to LLM-compatible dictionary."""
         d = {"role": msg.role, "content": msg.content or ""}
+        if msg.reasoning_content:
+            d["reasoning_content"] = msg.reasoning_content
         if msg.tool_calls:
             try:
                 # Store tool_calls as list of dicts
@@ -511,11 +513,11 @@ class ChatEngine:
         ]
         messages.append({"role": "system", "content": f"{marker}\n\n{skill['body']}"})
 
-    async def _save_msg_async(self, session_id: str, role: str, content: str, tool_calls=None, tool_result=None, tool_call_id=None):
+    async def _save_msg_async(self, session_id: str, role: str, content: str, tool_calls=None, tool_result=None, tool_call_id=None, reasoning_content=None):
         """异步保存消息到数据库，带重试机制。"""
         try:
             async with async_db_session() as db:
-                await AsyncHistoryService(db).save_message(session_id, role, content, tool_calls, tool_result, tool_call_id)
+                await AsyncHistoryService(db).save_message(session_id, role, content, tool_calls, tool_result, tool_call_id, reasoning_content)
         except Exception as e:
             logger.error(f"Failed to save message asynchronously: {e}")
 
@@ -621,6 +623,9 @@ class ChatEngine:
         timeout = httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream("POST", f"{self.base_url}/chat/completions", headers=headers, json=payload) as response:
+                if response.status_code != 200:
+                    error_text = await response.aread()
+                    logger.error(f"LLM Stream Error {response.status_code}: {error_text.decode()}")
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     line = line.strip()
@@ -712,13 +717,13 @@ class ChatEngine:
                                 tc_entry["function"]["arguments"] += fn_delta["arguments"]
 
         # Assemble the final message from accumulated deltas.
-        # reasoning 单独挂在 `reasoning` 字段上，便于 chat_stream 在没有正文时
-        # 仍能拿到模型的有效输出，但不与 content 混为一谈。
+        # reasoning 单独挂在 `reasoning_content` 字段上，满足 DeepSeek 等模型
+        # 的历史回传要求，避免 400 错误。
         assembled_content = "".join(content_parts)
         assembled_reasoning = "".join(reasoning_parts)
         assembled_message: dict = {"role": "assistant", "content": assembled_content}
         if assembled_reasoning:
-            assembled_message["reasoning"] = assembled_reasoning
+            assembled_message["reasoning_content"] = assembled_reasoning
 
         if tool_calls_accum:
             # Sort by index and build list
@@ -784,15 +789,13 @@ class ChatEngine:
                     # Strip XML artifact from content before storing
                     content_text = re.sub(r'\s*minimax:tool_call[\s\S]*', '', content_text).strip()
 
-                # 如果只有 reasoning 没有 content，把 reasoning 充当 content
-                if not content_text and reasoning:
-                    content_text = reasoning
-
                 entry: dict = {"role": "assistant", "content": content_text}
+                if reasoning:
+                    entry["reasoning_content"] = reasoning
                 if standard_calls:
                     entry["tool_calls"] = standard_calls
                 messages.append(entry)
-                await self._save_msg_async(session_id, "assistant", content_text, tc_list)
+                await self._save_msg_async(session_id, "assistant", content_text, tc_list, reasoning_content=reasoning)
 
                 tool_result_msgs: list[str] = []
                 for tc in tc_list:
@@ -818,12 +821,13 @@ class ChatEngine:
             else:
                 # 无 tool_calls，最终回复
                 content = raw_content
-                if not content and reasoning:
-                    content = reasoning
-                
-                messages.append({"role": "assistant", "content": content})
-                await self._save_msg_async(session_id, "assistant", content)
-                return {"content": content, "session_id": session_id}
+
+                entry = {"role": "assistant", "content": content}
+                if reasoning:
+                    entry["reasoning_content"] = reasoning
+                messages.append(entry)
+                await self._save_msg_async(session_id, "assistant", content, reasoning_content=reasoning)
+                return {"session_id": session_id, "content": content, "reasoning": reasoning}
 
         return {"content": "达到最大工具调用轮数", "session_id": session_id}
 
@@ -889,22 +893,18 @@ class ChatEngine:
                 if xml_calls:
                     content_text = re.sub(r'\s*minimax:tool_call[\s\S]*', '', content_text).strip()
                 
-                # 合并内容
-                if not content_text and reasoning:
-                    content_text = reasoning
-
                 # 将规划文本推送到前端
-                # For streaming path, content was already streamed as token events,
-                # but emit a content event too for backward compat with clients expecting it
                 if content_text:
                     yield sse_event("content", {"content": "\n", "session_id": session_id})
 
                 entry: dict = {"role": "assistant", "content": content_text}
+                if reasoning:
+                    entry["reasoning_content"] = reasoning
                 if standard_calls:
                     entry["tool_calls"] = standard_calls
                 messages.append(entry)
                 # 保存完整 tc_list（含 MiniMax XML 解析出的 call），避免 DB 重载后链路断裂
-                await self._save_msg_async(session_id, "assistant", content_text, tc_list)
+                await self._save_msg_async(session_id, "assistant", content_text, tc_list, reasoning_content=reasoning)
 
                 tool_result_msgs: list[str] = []
 
@@ -1001,11 +1001,12 @@ class ChatEngine:
             else:
                 # 最终回复
                 content = raw_content
-                if not content and reasoning:
-                    content = reasoning
                 
-                messages.append({"role": "assistant", "content": content})
-                await self._save_msg_async(session_id, "assistant", content)
+                entry = {"role": "assistant", "content": content}
+                if reasoning:
+                    entry["reasoning_content"] = reasoning
+                messages.append(entry)
+                await self._save_msg_async(session_id, "assistant", content, reasoning_content=reasoning)
 
                 # Emit a final content event (empty, since tokens were already sent)
                 # This signals to the frontend that the message is complete
@@ -1205,29 +1206,33 @@ SYSTEM_PROMPT = """你是一名 WebGIS 空间分析助手。用户与一张 MapL
 
 ## 工作方式
 
-- **工具优先**：所有空间数据必须来自工具，不要编造坐标、面积、统计数字或图层 ID。可用工具及其参数以本次请求随附的 `tools` 列表为准；本提示不再重复工具清单。
-- **数据游标**：工具产生的数据通过 `ref:xxx` 引用传递。生成新图层后立刻 `alias_layer` 设个语义别名，下一步直接用别名引用，不要重复查询同一份数据。
-- **复用已有图层**：规划前先看 `[环境感知]` 里的活跃图层。如果用户的请求可以基于现有图层完成（叠加、统计、改样式），不要重新拉数据。
-- **单次任务原子化**：底图切换、图层显隐、样式更新等同一参数的调用在本轮内只执行一次；执行完即视为生效，不要"再确认"。
+- **工具优先**：所有空间数据必须来自工具，不要编造坐标、面积、统计数字或图层 ID。
+- **由简入深（核心原则）**：面对用户的宽泛请求（如"分布情况"、"看一看某地"），优先使用搜索/查询工具获取数据并直接可视化点位。**不要在第一轮对话中就堆叠多个重型空间统计工具（如 KDE、Moran's I 等）**，除非用户明确要求"深度分析"或"密度建模"。
+- **数据优先（中国区域）**：对于涉及**中国境内**的行政区划查询、地址定位及 POI 搜索，**必须优先使用 `get_admin_division` (天地图)、`geocode_cn` 及 `search_poi(provider='amap')` 等中文优化工具**。只有在中国境外或需要获取 OSM 独有属性时才考虑使用 OSM/Overpass 工具。
+- **鲁棒执行（边界获取）**：如果 `get_admin_division` (天地图) 失败（如报错 418），**必须立即尝试使用 `get_district(return_geometry='polygon')` (高德) 作为备选**。不要在同一个失败工具上循环调用。
+- **数据游标**：工具产生的数据通过 `ref:xxx` 引用传递。生成新图层后立刻 `alias_layer` 设个语义别名，下一步直接用别名引用。
 
 ## 分析方法选择
 
-按数据类型与问题选择方法，避免误用：
+按问题深度与数据类型选择方法：
 
-- **POI 分布是否聚集**：用 `moran_i` 或 `hotspot_analysis`；不要只用 `heatmap_data` 来下"显著聚集"的结论——热力图只是可视化。
-- **生成连续密度面**：点数据用 `kde_surface`；属性值在空间上插值用 `idw_interpolation` / `kriging_interpolation`。
-- **缓冲/服务区**：固定半径用 `buffer_analysis`；多环带用 `multi_ring_buffer`；按距离衰减的可达性用 `service_area`。
-- **要素属性筛选**：用 `attribute_filter`（pandas query 语法）；不要把筛选写进自然语言里让下游瞎猜。
-- **栅格区域统计**：`zonal_stats`，输入需要矢量分区 + 栅格路径。
-- **缓冲距离与比例尺匹配**：街区级 100–500 m，城市级 1–5 km，区域级 5–50 km；用户没明说时按当前缩放推断而非取默认值。
+- **行政区划轮廓**：查询省、市、区/县及其轮廓，首选 `get_admin_division` (天地图)；若失败则换用 `get_district(return_geometry='polygon')` (高德)。
+- **基础分布可视化**：直接搜索要素添加点图层。点数过多（>500）时，改用 `heatmap_data(render_type="raster")` 进行热力图渲染。
+- **空间聚集性检验**：用户询问"是否聚集"、"有没有规律"时，用 `moran_i` 或 `hotspot_analysis`。若由于后端依赖（如 Redis）导致统计工具不可用，**不要反复重试**，应直接告知用户由于系统暂时受限，改用热力图（Heatmap）进行视觉化分析。
+- **单次任务上限**：单轮对话内工具调用尽量控制在 5 次以内。如果已获取足够回答问题的数据，应立即停止调用并给出洞察，不要追求“完美覆盖”。
+- **密度建模与选址基础**：需要生成连续概率面或为后续叠加分析做准备时，用 `kde_surface`。注意：`kde_surface` 生成的是覆盖全域的格网要素，默认不建议作为首选可视化方式。
+- **缓冲/服务区**：固定半径用 `buffer_analysis`；多环带用 `multi_ring_buffer`；可达性分析用 `service_area`。
+- **属性筛选**：用 `attribute_filter`。
+- **比例尺适配**：分析半径应适配视口：街区级 100–500m，城市级 1–5km，区域级 >5km。建议在调用前先检查当前缩放级别。
 
 ## 图层生命周期
 
-中间数据（原始 POI、筛选结果）在最终成果（专题图/热力面/聚类结果）出现后调用 `set_layer_status(visible=false)` 隐藏，保持地图清爽。最终成果保持可见。
+中间步骤的原始数据（如搜索出的几千个点）在产出最终分析结果（如热力图、缓冲区）后，应调用 `set_layer_status(visible=false)` 隐藏，避免界面杂乱。最终核心结果保持可见。
 
 ## 输出格式
 
-- 数值结果调用 `generate_chart` 生成图表；要素列表用 Markdown 表格。
+- 数值结果优先调用 `generate_chart` 生成图表；要素列表用 Markdown 表格。
+- **制图与导出**：完成分析后，如果用户需要保存结果或查看精美图件，调用 `export_thematic_map` 进行制图排版并导出 PNG/PDF。
 - **绝对不要**输出 `![alt](url)` 形式的图片 Markdown——系统不托管图片，会 404。
 - 完成分析后给出洞察结论（"哪里聚集、为什么、下一步建议"），不要只罗列数字。
 

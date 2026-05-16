@@ -112,11 +112,13 @@ export function MapActionHandler() {
           
           const id = layerId || 'heatmap-' + Date.now();
           
+          // bbox is [west, south, east, north]
+          // MapLibre image source expects: [top-left, top-right, bottom-right, bottom-left]
           const coords = [
-            [bbox[1], bbox[3]], 
-            [bbox[2], bbox[3]], 
-            [bbox[2], bbox[0]], 
-            [bbox[1], bbox[0]]  
+            [bbox[0], bbox[3]], // west, north
+            [bbox[2], bbox[3]], // east, north
+            [bbox[2], bbox[1]], // east, south
+            [bbox[0], bbox[1]]  // west, south
           ] as [[number, number], [number, number], [number, number], [number, number]];
 
           if (!map.getSource(id)) {

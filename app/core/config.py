@@ -34,9 +34,9 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./data/webgis.db"
 
     # LLM 配置 (OpenAI 兼容接口)
-    LLM_BASE_URL: str = "http://localhost:8000/v1"
-    LLM_API_KEY: str = "not-needed"
-    LLM_MODEL: str = "MiniMax-M2.5"
+    LLM_BASE_URL: str = "https://api.deepseek.com"
+    LLM_API_KEY: str = "your-api-key-here"
+    LLM_MODEL: str = "deepseek-v4-flash"
     LLM_PROMPT_CACHING_ENABLED: bool = True
 
     # OSM
