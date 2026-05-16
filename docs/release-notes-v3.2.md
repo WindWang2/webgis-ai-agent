@@ -78,4 +78,26 @@ The new `frontend/components/chat/collapsible-think.tsx` renders a collapsible "
 - `validate_data_path` docstring now spells out the symlink threat model (abspath-based, not realpath — fine for trusted deploys).
 
 ---
+
+## v3.2.2 — Professional Cartography & Bridge Hardening
+
+**Date**: 2026-05-14
+**Status**: Feature & Stability release on top of V3.2.1
+
+### Professional Map Export Panel
+
+Delivered a complete, professional-grade map layout and export system tailored for GIS professionals:
+- **WYSIWYG Export Mask**: Real-time aspect ratio cropping simulation using `ResizeObserver` for exact print previews on the map canvas.
+- **Dedicated Sidebar Panel**: A new `ExportLayoutTab` for configuring paper size (Screen, A4), orientation, DPI (96, 150, 300), titles, and watermarks.
+- **High-DPI Canvas Compositing**: Refactored `MapActionHandler` to support high-resolution vector resampling. Cartographic elements (Compass, Scale Bar, Legend) scale dynamically with DPI multipliers to prevent blurring in printed outputs.
+
+### Agent-Map Bridge Stability Improvements
+
+A deep audit of the frontend/backend communication pipeline resolved several intermittent data-loss issues:
+- **SSE Parser Resilience**: Handled `\r\n` (CRLF) packet boundaries in the SSE parser, preventing catastrophic chunk drops in certain network topologies.
+- **React Lifecycle Race Conditions**: Internalized `AbortController` in `useMapBridge` to prevent "suicidal" stream aborts caused by server-assigned session IDs triggering early re-renders.
+- **MapLibre Matrix Crashes Fixed**: Sanitized `map.flyTo()` payload injection; null/undefined `pitch` and `bearing` values are now actively stripped, preventing `gl-matrix` deep math panics.
+- **Token Overwrite Prevention**: Unified `token` and `content` event buffering to stop LLM `content` updates from being erased by subsequent `token` events in `page.tsx`.
+
+---
 *WebGIS AI Agent Team*

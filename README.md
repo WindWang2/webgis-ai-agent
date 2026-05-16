@@ -45,7 +45,9 @@
 ## 🚀 进阶与旗舰级功能群
 
 ### V3.2 (当前)
-- **AI 专题制图与高清合成 (AI Cartographer)**：Canvas 2D 合成标准专题底图，自动指北针、比例尺、图例，导出 PNG/PDF
+- **专业化地图导出面板 (Professional Map Export)**：支持所见即所得的 WYSIWYG 遮罩预览，配置 A4/屏幕画幅，最高支持 300 DPI 矢量重采样的高清图件导出（包含动态适配的指北针、比例尺、图例及自定义标题水印），一键导出 PNG / PDF。
+- **AI 专题制图与高清合成 (AI Cartographer)**：Canvas 2D 合成标准专题底图，结合 LLM 动态空间分析结果。
+- **Agent-Map Bridge 稳定性加固**：重构 SSE 解析与会话状态同步，彻底消除生命周期竞态条件，实现无损长文本传输流与毫秒级地图感知回传。
 - **自然资源遥感智能 (Nature Resource AI)**：rasterio 集成，NDVI 指数秒级计算
 - **Agent 主控中枢 (The Mainframe)**：全屏设置面板，LLM 热切换、MCP 配置
 - **能力自我进化 (Skill Creator)**：自主编写并部署 Python 技能脚本
