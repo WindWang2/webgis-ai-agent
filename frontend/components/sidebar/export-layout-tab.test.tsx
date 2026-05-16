@@ -1,7 +1,13 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import ExportLayoutTab from './export-layout-tab';
 import { useHudStore } from '@/lib/store/useHudStore';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/lib/contexts/map-action-context', () => ({
+  useMapAction: () => ({
+    dispatchAction: vi.fn(),
+  }),
+}));
 
 describe('ExportLayoutTab', () => {
   beforeEach(() => {
