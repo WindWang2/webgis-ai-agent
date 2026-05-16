@@ -9,15 +9,16 @@ export function ExportMask() {
 
   useEffect(() => {
     const el = containerRef.current;
-    if (!el) return;
+    if (!el || !el.parentElement) return;
 
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
+        // Observe parent container size to avoid infinite loop when border is applied to self
         const { width, height } = entry.target.getBoundingClientRect();
         setContainerSize({ w: width, h: height });
       }
     });
-    observer.observe(el);
+    observer.observe(el.parentElement);
     return () => observer.disconnect();
   }, [settings.isExportMode]);
 
