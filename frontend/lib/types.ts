@@ -90,11 +90,18 @@ export interface MapActionPayload {
     visible?: boolean;
     title?: string;
     subtitle?: string;
+    showWatermark?: boolean;
+    showLegend?: boolean;
+    showCompass?: boolean;
+    showScale?: boolean;
     include_legend?: boolean;
     include_compass?: boolean;
     include_scale?: boolean;
     dark_mode?: boolean;
     format?: string;
+    paperSize?: 'screen' | 'A4';
+    orientation?: 'landscape' | 'portrait';
+    dpi?: number;
   };
 }
 
