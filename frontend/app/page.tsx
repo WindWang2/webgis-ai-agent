@@ -79,12 +79,15 @@ export default function Home() {
   } = useHudStore();
 
   /* ─── Chat state ─── */
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   const [messages, setMessages] = useState<Array<{ id: string; role: 'user' | 'assistant'; content: string; timestamp: any; isThinking?: boolean; charts?: unknown[]; toolCalls?: ToolCallEntry[] }>>([
     {
       id: '1',
       role: 'assistant',
       content: '你好！我是 GeoAgent。\n\n我感知地图、分析空间、生成洞察——地图上的一切都是我的一部分。\n\n试着告诉我：\n- 分析北京市学校分布密度\n- 成都市人口热力图\n- 计算各区 POI覆盖率',
-      timestamp: new Date(),
+      timestamp: null,
     },
   ]);
   const [sessionId, setSessionId] = useState<string>();
@@ -215,7 +218,7 @@ export default function Home() {
             id: Date.now().toString(),
             type: 'flyto',
             label: '飞到 — 当前位置',
-            time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+            time: mounted ? new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '',
             detail: `[${pos.coords.longitude.toFixed(5)}, ${pos.coords.latitude.toFixed(5)}]`,
           });
         },
@@ -233,7 +236,7 @@ export default function Home() {
       id: Date.now().toString(),
       type: 'add',
       label: '导出 — 地图快照',
-      time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+      time: mounted ? new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '',
       detail: '保存为 PNG',
     });
     setExports([

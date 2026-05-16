@@ -289,7 +289,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="kde_surface",
-           description="高斯核密度估计，生成连续密度面，比热力图更精确的空间密度分析",
+           description="高斯核密度估计，生成连续密度面。适用于深度密度建模和选址分析基础。注意：该工具生成的是覆盖分析范围的完整矢量格网，如果不进行阈值过滤，在大范围内会遮挡底图，单纯查看'分布热度'建议优先使用 heatmap_data。",
            param_descriptions={
                "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "bandwidth": "核函数带宽（米），0表示自动计算（Silverman法则）",
@@ -374,10 +374,16 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         grid_coords = np.vstack([gx.ravel(), gy.ravel()])
         density = kde(grid_coords).reshape(ny, nx)
 
-        # Build grid polygons
+        # Build grid polygons - Filter out low density cells (e.g. < 10% of max) to avoid full-grid block artifact
+        max_d = density.max()
+        threshold = max_d * 0.1
         out_features = []
         for i in range(ny):
             for j in range(nx):
+                d_val = float(density[i, j])
+                if d_val < threshold:
+                    continue
+                    
                 x0, x1 = grid_x[j] - cell_size / 2, grid_x[j] + cell_size / 2
                 y0, y1 = grid_y[i] - cell_size / 2, grid_y[i] + cell_size / 2
                 cell_geom = box(x0, y0, x1, y1)
@@ -385,7 +391,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                 out_features.append({
                     "type": "Feature",
                     "geometry": mapping(cell_wgs84),
-                    "properties": {"density": round(float(density[i, j]), 8)},
+                    "properties": {"density": round(d_val, 8)},
                 })
 
         return {
