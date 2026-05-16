@@ -99,18 +99,33 @@ async def _baidu_get(endpoint: str, params: dict) -> dict:
 async def _tianditu_get(endpoint: str, params: dict) -> dict:
     if not await ht.record_attempt("tianditu"):
         return {"error": "天地图暂时不可用（频率限制或服务故障），请稍后重试"}
-    params["tk"] = settings.TIANDITU_TOKEN
+    
+    if "tk" not in params:
+        params["tk"] = settings.TIANDITU_TOKEN
+        
     url = f"{_TIANDITU_BASE}{endpoint}"
+    
+    # 模拟浏览器 Header 以绕过 WAF 418 拦截
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+        "Referer": "https://www.tianditu.gov.cn/",
+        "Connection": "keep-alive"
+    }
+    
     try:
         session = await get_shared_client()
         async with session.get(
-            url, params=params, ssl=get_ssl_context(),
+            url, params=params, headers=headers, ssl=get_ssl_context(),
             proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY,
         ) as resp:
             if resp.status != 200:
                 await ht.record_error("tianditu")
                 return {"error": f"Tianditu API HTTP {resp.status}"}
-            data = await resp.json()
+            
+            # 天地图有些接口返回 text/plain 但内容是 JSON
+            data = await resp.json(content_type=None)
+            
             returncode = str(data.get("returncode", data.get("status", "")))
             if returncode not in ("100", "0"):
                 await ht.record_error("tianditu")
@@ -118,6 +133,9 @@ async def _tianditu_get(endpoint: str, params: dict) -> dict:
                 return {"error": f"Tianditu: {msg}"}
             await ht.record_success("tianditu")
             return data
+    except Exception as e:
+        await ht.record_error("tianditu", e)
+        return {"error": f"Tianditu Error: {str(e)}"}
     except (aiohttp.ClientError, json.JSONDecodeError) as e:
         await ht.record_error("tianditu", e)
         raise
@@ -510,6 +528,33 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": "实时路况当前仅支持 amap"}
         return await _traffic_amap(mode, rectangle, center, radius_m, level)
 
+    @tool(registry, name="get_admin_division",
+           description="查询行政区划：获取省、市、区/县的行政边界（GeoJSON）及下级行政单元列表。适合『成都市的轮廓』『查询锦江区下属街道』等场景。支持 Tianditu。",
+           param_descriptions={
+               "keywords": "行政区名称，如'成都市'、'锦江区'",
+               "child_level": "是否查询下一级行政单元: 0=不查询(默认), 1=查询一级, 2=查询二级",
+               "extensions": "是否返回行政边界轮廓（GeoJSON）: 'base'=不返回, 'all'=返回(默认)",
+               "provider": "服务商: 'tianditu'(默认)",
+           })
+    async def get_admin_division(
+        keywords: str,
+        child_level: int = 0,
+        extensions: str = "all",
+        provider: str = "tianditu",
+    ) -> dict:
+        if not keywords:
+            return {"error": "keywords 不能为空"}
+        
+        # 目前仅 Tianditu 支持较好的边界输出
+        if provider != "tianditu":
+            # 自动 fallback 到 tianditu 如果可用
+            provider = "tianditu"
+
+        if not _has_provider("tianditu"):
+            return {"error": "行政区划查询需要配置 TIANDITU_TOKEN"}
+
+        return await _district_tianditu_v2(keywords, child_level, extensions == "all")
+
 
 # ── Provider-specific helper functions ──────────────────────────
 
@@ -768,18 +813,37 @@ async def _district_amap(keywords: str, level: str, return_geometry: str = "poin
         lng, lat = (gcj02_to_wgs84(float(center[0]), float(center[1])) if len(center) == 2 else (0, 0))
 
         if return_geometry == "polygon":
-            polyline_str = d.get("boundary", "")
+            # 高德行政区划边界字段名为 'polyline'
+            polyline_str = d.get("polyline", "")
             if polyline_str:
-                coords = [
-                    [float(v) for v in pt.split(",")]
-                    for pt in polyline_str.split(";") if pt
-                ]
-                wgs84_coords = [gcj02_to_wgs84(lon, lat) for lon, lat in coords]
-                from shapely.geometry import LineString
+                from shapely.geometry import Polygon, MultiPolygon
                 from shapely import simplify
-                line = LineString(wgs84_coords)
-                simplified = simplify(line, tolerance=0.001, preserve_topology=True)
-                geometry = simplified.__geo_interface__
+                
+                polygons = []
+                # 高德 polyline 可能包含多个部分，以 | 分隔
+                for part in polyline_str.split("|"):
+                    coords = [
+                        [float(v) for v in pt.split(",")]
+                        for pt in part.split(";") if pt
+                    ]
+                    if len(coords) >= 3:
+                        wgs84_coords = [gcj02_to_wgs84(lon, lat) for lon, lat in coords]
+                        # 闭合环
+                        if wgs84_coords[0] != wgs84_coords[-1]:
+                            wgs84_coords.append(wgs84_coords[0])
+                        polygons.append(Polygon(wgs84_coords))
+                
+                if not polygons:
+                    geometry = {"type": "Point", "coordinates": [lng, lat]}
+                else:
+                    if len(polygons) == 1:
+                        geom_obj = polygons[0]
+                    else:
+                        geom_obj = MultiPolygon(polygons)
+                    
+                    # 简化几何以提高传输效率
+                    simplified = simplify(geom_obj, tolerance=0.0005, preserve_topology=True)
+                    geometry = simplified.__geo_interface__
             else:
                 geometry = {"type": "Point", "coordinates": [lng, lat]}
         else:
@@ -903,6 +967,101 @@ async def _reverse_geocode_tianditu(lng: float, lat: float) -> dict:
         "street_number": addr.get("streetNumber", ""),
         "provider": "tianditu",
     }
+
+
+async def _district_tianditu_v2(keywords: str, child_level: int, return_polygon: bool) -> dict:
+    """天地图行政区划查询 V2 (支持边界轮廓)"""
+    post_str = json.dumps({
+        "searchWord": keywords,
+        "searchType": "1",
+        "needSubInfo": "true" if child_level > 0 else "false",
+        "needAll": "false",
+        "needPolygon": "true" if return_polygon else "false",
+        "needPre": "true",
+    }, ensure_ascii=False)
+    
+    data = await _tianditu_get("/administrative", {"postStr": post_str})
+    if "error" in data:
+        return data
+    
+    # 状态码 100 表示成功
+    if str(data.get("status")) != "100":
+        return {"error": f"Tianditu: {data.get('msg', '查询失败')}"}
+        
+    districts = data.get("data", [])
+    if isinstance(districts, dict):
+        districts = [districts]
+        
+    features = []
+    children = []
+    
+    for d in districts:
+        props = {
+            "name": d.get("name", ""),
+            "cityCode": d.get("cityCode", ""),
+            "level": d.get("adminType", ""),
+            "bound": d.get("bound", ""),
+        }
+        
+        # 处理边界轮廓 (points 字段)
+        geometry = None
+        points_str = d.get("points", "")
+        if return_polygon and points_str:
+            try:
+                # 天地图格式: "lng1,lat1,lng2,lat2;lng3,lat3..." 
+                # 或多面格式: "p1;p2|p3;p4"
+                polygons = []
+                for poly_str in points_str.split("|"):
+                    coords = []
+                    for pair in poly_str.split(";"):
+                        parts = pair.split(",")
+                        if len(parts) >= 2:
+                            coords.append([float(parts[0]), float(parts[1])])
+                    if len(coords) >= 3:
+                        # 闭合环
+                        if coords[0] != coords[-1]:
+                            coords.append(coords[0])
+                        polygons.append([coords])
+                
+                if len(polygons) == 1:
+                    geometry = {"type": "Polygon", "coordinates": polygons[0]}
+                elif len(polygons) > 1:
+                    geometry = {"type": "MultiPolygon", "coordinates": polygons}
+            except Exception as e:
+                logger.warning(f"Failed to parse Tianditu polygon for {keywords}: {e}")
+
+        # 如果没有面，回退到点
+        if not geometry:
+            lng = float(d.get("lnt", 0))
+            lat = float(d.get("lat", 0))
+            geometry = {"type": "Point", "coordinates": [lng, lat]}
+            
+        features.append({
+            "type": "Feature",
+            "geometry": geometry,
+            "properties": props,
+        })
+        
+        # 下级行政区
+        if child_level > 0:
+            child_data = d.get("child", [])
+            for c in child_data:
+                children.append({
+                    "name": c.get("name", ""),
+                    "cityCode": c.get("cityCode", ""),
+                    "location": [float(c.get("lnt", 0)), float(c.get("lat", 0))]
+                })
+
+    res = {
+        "type": "FeatureCollection",
+        "features": features,
+        "count": len(features),
+        "provider": "tianditu",
+    }
+    if children:
+        res["children"] = children
+        
+    return res
 
 
 async def _district_tianditu(keywords: str, level: str, return_geometry: str = "point") -> dict:

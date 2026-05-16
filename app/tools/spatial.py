@@ -152,6 +152,11 @@ def _generate_heatmap(features: list, cell_size: int = 500, radius: int = 1000,
             # Raster mode
             sigma = max(1.0, radius / cell_size)
             H_smooth = gaussian_filter(H.T, sigma=sigma)
+            
+            # 过滤极低密度区域，避免平滑后的边缘产生淡色底色方块
+            v_max_actual = H_smooth.max()
+            if v_max_actual > 0:
+                H_smooth[H_smooth < v_max_actual * 0.01] = 0
 
             PALETTES = {
                 "classic": [
@@ -239,172 +244,167 @@ def register_spatial_tools(registry: ToolRegistry):
            description="对几何要素进行缓冲区分析，返回缓冲区多边形",
            args_model=BufferAnalysisArgs)
     def buffer_analysis(geojson: Any, distance: float, unit: str = "m") -> dict:
+        data = _safe_parse_geojson(geojson)
+        if not data:
+            raise ValueError("Invalid GeoJSON input")
+        features = data.get("features", data) if isinstance(data, dict) else data
+
         try:
-            data = _safe_parse_geojson(geojson)
-            if not data:
-                return {"error": "Invalid GeoJSON input"}
-            features = data.get("features", data) if isinstance(data, dict) else data
+            from app.services.spatial_tasks import run_buffer_analysis
+            task = run_buffer_analysis.apply_async(args=[features, distance, unit])
+            result = task.get(timeout=120)
+        except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
+            if not isinstance(exc, ImportError):
+                logger.warning(f"Celery unavailable for buffer_analysis: {exc}")
+            r = SpatialAnalyzer.buffer(features, distance=distance, unit=unit)
+            result = {"success": r.success, "data": r.data, "stats": r.stats}
+            if not r.success:
+                result["error"] = r.error_message
 
-            try:
-                from app.services.spatial_tasks import run_buffer_analysis
-                task = run_buffer_analysis.apply_async(args=[features, distance, unit])
-                result = task.get(timeout=120)
-            except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
-                if not isinstance(exc, ImportError):
-                    logger.warning(f"Celery unavailable for buffer_analysis: {exc}")
-                r = SpatialAnalyzer.buffer(features, distance=distance, unit=unit)
-                result = {"success": r.success, "data": r.data, "stats": r.stats}
-                if not r.success:
-                    result["error"] = r.error_message
-
-            if result.get("success"):
-                return {"geojson": result.get("data"), "stats": result.get("stats")}
-            return {"error": result.get("error")}
-        except (ValueError, TypeError, KeyError, OSError, RuntimeError) as e:
-            logger.error(f"Buffer analysis error: {e}")
-            return {"error": str(e)}
+        if result.get("success"):
+            return {"geojson": result.get("data"), "stats": result.get("stats")}
+        
+        error_msg = result.get("error", "Buffer analysis failed")
+        raise RuntimeError(error_msg)
 
     @tool(registry, name="spatial_stats",
            description="计算几何要素的空间统计信息（面积、长度、中心点等）")
     def spatial_stats(geojson: Any) -> dict:
+        data = _safe_parse_geojson(geojson)
+        if not data:
+            raise ValueError("Invalid GeoJSON input")
+        features = data.get("features", [])
+
         try:
-            data = _safe_parse_geojson(geojson)
-            if not data:
-                return {"error": "Invalid GeoJSON input"}
-            features = data.get("features", [])
+            from app.services.spatial_tasks import run_spatial_stats
+            task = run_spatial_stats.apply_async(args=[features])
+            result = task.get(timeout=60)
+        except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
+            if not isinstance(exc, ImportError):
+                logger.warning(f"Celery unavailable for spatial_stats: {exc}")
+            from shapely.geometry import shape
+            import geopandas as gpd
+            geometries = [shape(f["geometry"]) for f in features if f.get("geometry")]
+            if not geometries:
+                raise ValueError("No valid geometries found in input")
+            gdf = gpd.GeoSeries(geometries, crs="EPSG:4326")
+            gdf_proj = gdf.to_crs("ESRI:54009")
+            stats = {
+                "feature_count": len(geometries),
+                "total_area_sqkm": round(float(gdf_proj.area.sum()) / 1e6, 4),
+                "total_length_km": round(float(gdf_proj.length.sum()) / 1000, 4),
+                "centroid": {
+                    "lat": round(float(gdf.centroid.y.mean()), 6),
+                    "lon": round(float(gdf.centroid.x.mean()), 6),
+                },
+                "bounds": {
+                    "min_lon": round(float(gdf.bounds.minx.min()), 6),
+                    "min_lat": round(float(gdf.bounds.miny.min()), 6),
+                    "max_lon": round(float(gdf.bounds.maxx.max()), 6),
+                    "max_lat": round(float(gdf.bounds.maxy.max()), 6),
+                },
+            }
+            result = {"success": True, "stats": stats}
 
-            try:
-                from app.services.spatial_tasks import run_spatial_stats
-                task = run_spatial_stats.apply_async(args=[features])
-                result = task.get(timeout=60)
-            except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
-                if not isinstance(exc, ImportError):
-                    logger.warning(f"Celery unavailable for spatial_stats: {exc}")
-                from shapely.geometry import shape
-                import geopandas as gpd
-                geometries = [shape(f["geometry"]) for f in features if f.get("geometry")]
-                if not geometries:
-                    return {"error": "No valid geometries"}
-                gdf = gpd.GeoSeries(geometries, crs="EPSG:4326")
-                gdf_proj = gdf.to_crs("ESRI:54009")
-                stats = {
-                    "feature_count": len(geometries),
-                    "total_area_sqkm": round(float(gdf_proj.area.sum()) / 1e6, 4),
-                    "total_length_km": round(float(gdf_proj.length.sum()) / 1000, 4),
-                    "centroid": {
-                        "lat": round(float(gdf.centroid.y.mean()), 6),
-                        "lon": round(float(gdf.centroid.x.mean()), 6),
-                    },
-                    "bounds": {
-                        "min_lon": round(float(gdf.bounds.minx.min()), 6),
-                        "min_lat": round(float(gdf.bounds.miny.min()), 6),
-                        "max_lon": round(float(gdf.bounds.maxx.max()), 6),
-                        "max_lat": round(float(gdf.bounds.maxy.max()), 6),
-                    },
-                }
-                result = {"success": True, "stats": stats}
-
-            if result.get("success"):
-                return {"stats": result.get("stats")}
-            return {"error": result.get("error")}
-        except (ValueError, TypeError, KeyError, OSError, RuntimeError) as e:
-            logger.error(f"Spatial stats error: {e}")
-            return {"error": str(e)}
+        if result.get("success"):
+            return {"stats": result.get("stats")}
+        
+        error_msg = result.get("error", "Spatial stats failed")
+        raise RuntimeError(error_msg)
 
     @tool(registry, name="nearest_neighbor",
            description="查找最近的邻近距离和空间分布模式")
     def nearest_neighbor(geojson: Any) -> dict:
+        data = _safe_parse_geojson(geojson)
+        if not data:
+            raise ValueError("Invalid GeoJSON input")
+        features = data.get("features", [])
+
         try:
-            data = _safe_parse_geojson(geojson)
-            if not data:
-                return {"error": "Invalid GeoJSON input"}
-            features = data.get("features", [])
-
-            try:
-                from app.services.spatial_tasks import run_nearest_neighbor
-                task = run_nearest_neighbor.apply_async(args=[features])
-                result = task.get(timeout=60)
-            except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
-                if not isinstance(exc, ImportError):
-                    logger.warning(f"Celery unavailable for nearest_neighbor: {exc}")
-                import numpy as np
-                from scipy.spatial import distance_matrix
-                from shapely.geometry import shape
-                points = []
-                for f in features:
-                    geom = f.get("geometry") or {}
-                    try:
-                        s = shape(geom)
-                        if not s.is_empty:
-                            c = s.centroid
-                            points.append((c.x, c.y))
-                    except (ValueError, TypeError):
-                        continue
-                if len(points) < 2:
-                    return {"error": "Need at least 2 points"}
-                coords_arr = np.array(points)
-                dist = distance_matrix(coords_arr, coords_arr)
-                np.fill_diagonal(dist, np.inf)
-                nn_distances = dist.min(axis=1)
-                result = {
-                    "success": True,
-                    "data": {
-                        "point_count": len(points),
-                        "mean_nearest_distance": round(float(nn_distances.mean()), 4),
-                        "std_nearest_distance": round(float(nn_distances.std()), 4),
-                        "min_distance": round(float(nn_distances.min()), 4),
-                        "max_distance": round(float(nn_distances.max()), 4),
-                    }
+            from app.services.spatial_tasks import run_nearest_neighbor
+            task = run_nearest_neighbor.apply_async(args=[features])
+            result = task.get(timeout=60)
+        except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
+            if not isinstance(exc, ImportError):
+                logger.warning(f"Celery unavailable for nearest_neighbor: {exc}")
+            import numpy as np
+            from scipy.spatial import distance_matrix
+            from shapely.geometry import shape
+            points = []
+            for f in features:
+                geom = f.get("geometry") or {}
+                try:
+                    s = shape(geom)
+                    if not s.is_empty:
+                        c = s.centroid
+                        points.append((c.x, c.y))
+                except (ValueError, TypeError):
+                    continue
+            if len(points) < 2:
+                raise ValueError("Nearest neighbor analysis requires at least 2 points")
+            coords_arr = np.array(points)
+            dist = distance_matrix(coords_arr, coords_arr)
+            np.fill_diagonal(dist, np.inf)
+            nn_distances = dist.min(axis=1)
+            result = {
+                "success": True,
+                "data": {
+                    "point_count": len(points),
+                    "mean_nearest_distance": round(float(nn_distances.mean()), 4),
+                    "std_nearest_distance": round(float(nn_distances.std()), 4),
+                    "min_distance": round(float(nn_distances.min()), 4),
+                    "max_distance": round(float(nn_distances.max()), 4),
                 }
+            }
 
-            if result.get("success"):
-                return result.get("data")
-            return {"error": result.get("error")}
-        except (ValueError, TypeError, KeyError, OSError, RuntimeError) as e:
-            logger.error(f"NN analysis error: {e}")
-            return {"error": str(e)}
+        if result.get("success"):
+            return result.get("data")
+        
+        error_msg = result.get("error", "Nearest neighbor analysis failed")
+        raise RuntimeError(error_msg)
 
     @tool(registry, name="heatmap_data",
            description="根据点要素生成热力图。支持 'raster' (栅格图片)、'grid' (矢量格网) 和 'native' (原生渲染) 模式。支持通过 palette 参数切换配色方案。",
            args_model=HeatmapDataArgs)
     def heatmap_data(geojson: Any, cell_size: int = 500, radius: int = 2000, render_type: str = "raster", palette: str = "classic") -> dict:
-        try:
-            data = _safe_parse_geojson(geojson)
-            if not data:
-                return {"error": "Invalid GeoJSON input"}
-            features = data.get("features") or data.get("feature_collection", [])
-            
-            # --- 原生热力图模式 ---
-            if render_type == "native":
-                if isinstance(data, dict):
-                    data["metadata"] = {
-                        "render_type": "native",
-                        "point_count": len(features),
-                        "radius": radius,
-                        "palette": palette
-                    }
-                return data
+        data = _safe_parse_geojson(geojson)
+        if not data:
+            raise ValueError("Invalid GeoJSON input")
+        features = data.get("features") or data.get("feature_collection", [])
+        
+        # --- 原生热力图模式 ---
+        if render_type == "native":
+            if isinstance(data, dict):
+                data["metadata"] = {
+                    "render_type": "native",
+                    "point_count": len(features),
+                    "radius": radius,
+                    "palette": palette
+                }
+            return data
 
-            try:
-                from app.services.spatial_tasks import run_heatmap_generation
-                task = run_heatmap_generation.apply_async(
-                    kwargs={"features": features, "cell_size": cell_size, "radius": radius, "render_type": render_type, "palette": palette}
-                )
-                result = task.get(timeout=120)
-            except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
-                if not isinstance(exc, ImportError):
-                    logger.warning(f"Celery unavailable for heatmap: {exc}")
-                result = _generate_heatmap(features, cell_size, radius, render_type, palette)
-            if result.get("success"):
-                data = result.get("data")
-                # 注入 render 指令暗示前端
-                if isinstance(data, dict):
-                    if render_type == "raster":
-                        data["command"] = "add_heatmap_raster"
-                    else:
-                        data["command"] = "add_layer"
-                return data
-            return {"error": result.get("error")}
-        except (ValueError, TypeError, KeyError, OSError, RuntimeError) as e:
-            logger.error(f"Heatmap error: {e}")
-            return {"error": str(e)}
+        try:
+            from app.services.spatial_tasks import run_heatmap_generation
+            task = run_heatmap_generation.apply_async(
+                kwargs={"features": features, "cell_size": cell_size, "radius": radius, "render_type": render_type, "palette": palette}
+            )
+            result = task.get(timeout=120)
+        except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
+            if not isinstance(exc, ImportError):
+                logger.warning(f"Celery unavailable for heatmap: {exc}")
+            result = _generate_heatmap(features, cell_size, radius, render_type, palette)
+        
+        if result.get("success"):
+            res_data = result.get("data")
+            # 注入 render 指令暗示前端
+            if isinstance(res_data, dict):
+                if render_type == "raster":
+                    res_data["command"] = "add_heatmap_raster"
+                else:
+                    res_data["command"] = "add_layer"
+            return res_data
+        
+        error_msg = result.get("error", "Heatmap generation failed")
+        if "dense" in error_msg.lower() or "resolution" in error_msg.lower():
+            raise ValueError(error_msg)
+        raise RuntimeError(error_msg)

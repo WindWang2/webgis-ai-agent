@@ -50,6 +50,7 @@ class HistoryService:
         tool_calls=None,
         tool_result=None,
         tool_call_id=None,
+        reasoning_content: Optional[str] = None,
     ) -> None:
         import time
         for attempt in range(3):
@@ -58,6 +59,7 @@ class HistoryService:
                     conversation_id=session_id,
                     role=role,
                     content=content,
+                    reasoning_content=reasoning_content,
                     tool_calls=tool_calls,
                     tool_call_id=tool_call_id,
                     tool_result=tool_result,

@@ -67,7 +67,7 @@ def register_upload_tools(registry: ToolRegistry):
             record = db.query(UploadRecord).filter(UploadRecord.id == upload_id).first()
 
         if not record:
-            return {"error": f"未找到 ID 为 {upload_id} 的上传记录"}
+            raise KeyError(f"未找到 ID 为 {upload_id} 的上传记录")
 
         info = {
             "id": record.id,

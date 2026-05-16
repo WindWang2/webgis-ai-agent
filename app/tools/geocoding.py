@@ -27,7 +27,7 @@ def register_geocoding_tools(registry: ToolRegistry):
                 proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY
             ) as resp:
                 if resp.status != 200:
-                    return {"error": f"Nominatim API error: {resp.status}"}
+                    raise RuntimeError(f"Nominatim API error: {resp.status}")
                 results = await resp.json()
 
         if not results:
@@ -67,11 +67,11 @@ def register_geocoding_tools(registry: ToolRegistry):
                 proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY
             ) as resp:
                 if resp.status != 200:
-                    return {"error": f"Nominatim API error: {resp.status}"}
+                    raise RuntimeError(f"Nominatim API error: {resp.status}")
                 data = await resp.json()
 
         if "error" in data:
-            return {"error": data["error"]}
+            raise ValueError(data["error"])
 
         return {
             "name": data.get("display_name", ""),
