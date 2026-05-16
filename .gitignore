@@ -66,3 +66,4 @@ tsconfig.tsbuildinfo
 dump.rdb
 *.rdb
 .context/
+.gstack/

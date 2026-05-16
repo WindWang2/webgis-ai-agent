@@ -110,14 +110,16 @@ git commit -m "feat(export): add store state for map layout settings"
   Build a form-like sidebar tab that binds to `useHudStore` exportSettings.
 
 ```tsx
+import { useEffect } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useMapAction } from '@/lib/contexts/map-action-context';
 
 export function ExportLayoutTab() {
-  const { exportSettings, updateExportSettings, dispatchAction } = useHudStore(s => ({
+  const { exportSettings, updateExportSettings } = useHudStore(s => ({
     exportSettings: s.exportSettings,
-    updateExportSettings: s.updateExportSettings,
-    dispatchAction: undefined // We will grab this from MapActionContext later, for now just UI
+    updateExportSettings: s.updateExportSettings
   }));
+  const { dispatchAction } = useMapAction();
 
   // Helper to update specific fields
   const handleChange = (key: keyof typeof exportSettings, value: any) => {
@@ -125,7 +127,6 @@ export function ExportLayoutTab() {
   };
 
   // Auto-enable export mode when tab is opened
-  import { useEffect } from 'react';
   useEffect(() => {
     updateExportSettings({ isExportMode: true });
     return () => updateExportSettings({ isExportMode: false });
@@ -418,18 +419,142 @@ Modify the `export_map` case to read `action.params.dpi` and `paperSize`, scalin
                 ctx.fillText(subtitle, scalePx(56), scalePx(82));
               }
 
-              // Watermark
+              // ── 2. Scale bar ──────────────────────────────────────────────
+              if (showScale) {
+                const center = map.getCenter();
+                const zoom = map.getZoom();
+                const metersPerPx =
+                  (156543.03392 * Math.cos((center.lat * Math.PI) / 180)) /
+                  Math.pow(2, zoom);
+                const targetPx = Math.round(srcW * 0.12);
+                const rawMeters = metersPerPx * targetPx;
+                const magnitude = Math.pow(10, Math.floor(Math.log10(rawMeters)));
+                const nice = [1, 2, 5, 10].reduce((prev, n) => {
+                  const candidate = n * magnitude;
+                  return Math.abs(candidate - rawMeters) < Math.abs(prev - rawMeters)
+                    ? candidate
+                    : prev;
+                }, magnitude);
+                const barPx = (nice / metersPerPx) * dpiMultiplier;
+                const barLabel = nice >= 1000 ? `${nice / 1000} km` : `${nice} m`;
+
+                const bx = scalePx(56), by = targetH - scalePx(52), bh = scalePx(8);
+                ctx.strokeStyle = dark_mode ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.8)";
+                ctx.lineWidth = scalePx(1.5);
+                ctx.strokeRect(bx, by, barPx, bh);
+                const segCount = 4;
+                const segW = barPx / segCount;
+                for (let i = 0; i < segCount; i++) {
+                  ctx.fillStyle =
+                    i % 2 === 0
+                      ? dark_mode ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.8)"
+                      : "rgba(0,0,0,0)";
+                  ctx.fillRect(bx + i * segW, by, segW, bh);
+                }
+                ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.95)" : "#1e293b";
+                ctx.font = `bold ${scalePx(13)}px sans-serif`;
+                ctx.textAlign = "left";
+                ctx.fillText("0", bx, by - scalePx(4));
+                ctx.textAlign = "right";
+                ctx.fillText(barLabel, bx + barPx, by - scalePx(4));
+                ctx.textAlign = "left";
+              }
+
+              // ── 3. North arrow (compass) ─────────────────────────────────
+              if (showCompass) {
+                const bearing = map.getBearing();
+                const cx = targetW - scalePx(64), cy = scalePx(64), r = scalePx(28);
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.rotate((bearing * Math.PI) / 180);
+                ctx.shadowColor = "rgba(0,0,0,0.4)";
+                ctx.shadowBlur = scalePx(6);
+                ctx.beginPath();
+                ctx.moveTo(0, -r);
+                ctx.lineTo(r * 0.35, 0);
+                ctx.lineTo(0, r * 0.2);
+                ctx.lineTo(-r * 0.35, 0);
+                ctx.closePath();
+                ctx.fillStyle = "#e53e3e";
+                ctx.fill();
+                ctx.beginPath();
+                ctx.moveTo(0, r);
+                ctx.lineTo(r * 0.35, 0);
+                ctx.lineTo(0, r * 0.2);
+                ctx.lineTo(-r * 0.35, 0);
+                ctx.closePath();
+                ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.9)" : "#f8fafc";
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.beginPath();
+                ctx.arc(0, 0, scalePx(4), 0, 2 * Math.PI);
+                ctx.fillStyle = "#1e293b";
+                ctx.fill();
+                ctx.restore();
+                ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.95)" : "#1e293b";
+                ctx.font = `bold ${scalePx(13)}px sans-serif`;
+                ctx.textAlign = "center";
+                ctx.fillText("N", cx, cy - r - scalePx(6));
+                ctx.textAlign = "left";
+              }
+
+              // ── 4. Legend (choropleth only) ───────────────────────────────
+              if (showLegend) {
+                const COLOR_PALETTES: Record<string, string[]> = {
+                  YlOrRd: ["#ffffb2","#fed976","#feb24c","#fd8d3c","#f03b20","#bd0026"],
+                  Blues:  ["#eff3ff","#bdd7e7","#6baed6","#3182bd","#08519c"],
+                };
+                const storeState = useHudStore.getState();
+                const thematicLayer = storeState.layers.find(
+                  (l) => l.visible && (l.source as any)?.metadata?.thematic_type === "choropleth"
+                );
+                if (thematicLayer) {
+                  const meta = (thematicLayer.source as any).metadata;
+                  const colors = COLOR_PALETTES[meta.palette] ?? COLOR_PALETTES["YlOrRd"];
+                  const classes = meta.breaks.length - 1;
+                  const itemH = scalePx(22), itemW = scalePx(18), padding = scalePx(10), gapX = scalePx(8);
+                  const legendW = scalePx(180);
+                  const legendH = padding * 2 + scalePx(24) + classes * itemH;
+                  const lx = targetW - legendW - scalePx(56);
+                  const ly = targetH - legendH - scalePx(56);
+                  ctx.fillStyle = dark_mode ? "rgba(0,10,20,0.82)" : "rgba(255,255,255,0.88)";
+                  ctx.fillRect(lx, ly, legendW, legendH);
+                  ctx.fillStyle = dark_mode ? "#00f2ff" : "#1e293b";
+                  ctx.font = `bold ${scalePx(12)}px sans-serif`;
+                  ctx.fillText(`字段: ${meta.field}`, lx + padding, ly + padding + scalePx(12));
+                  for (let i = 0; i < classes; i++) {
+                    const iy = ly + padding + scalePx(24) + i * itemH;
+                    const colorIdx = Math.min(i, colors.length - 1);
+                    ctx.fillStyle = colors[colorIdx];
+                    ctx.fillRect(lx + padding, iy, itemW, itemH - scalePx(4));
+                    ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.85)" : "#334155";
+                    ctx.font = `${scalePx(11)}px sans-serif`;
+                    ctx.fillText(`${meta.breaks[i]} – ${meta.breaks[i + 1]}`, lx + padding + itemW + gapX, iy + itemH - scalePx(8));
+                  }
+                }
+              }
+
+              // ── 5. Watermark ─────────────────────────────────────────────
               if (showWatermark) {
                 ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.4)";
                 ctx.textAlign = "right";
                 ctx.font = `bold ${scalePx(16)}px monospace`;
-                ctx.fillText("Generated by WebGIS AI Agent", targetW - scalePx(36), targetH - scalePx(36));
+                ctx.fillText("Generated by WebGIS AI Agent", targetW - scalePx(36), targetH - scalePx(18));
                 ctx.textAlign = "left";
               }
 
-              // ... (Keep existing Scale, Compass, Legend drawing logic but wrap literal numbers in `scalePx()` function so they scale with DPI, removing any hardcoded numbers. For brevity in this plan, ensure the implementer uses `scalePx()` on all layout coordinates).
-
-              // (The rest of the file stays the same: toDataUrl, fetch backend, upload)
+              // ── 6. Upload / convert ───────────────────────────────────────
+              const dataUrl = exportCanvas.toDataURL("image/png");
+              const res = await fetch(dataUrl);
+              const blob = await res.blob();
+              const formData = new FormData();
+              formData.append("file", blob, "export.png");
+              if (title) formData.append("title", title);
+              const uploadRes = await fetch(`${API_BASE}/api/v1/export`, { method: "POST", body: formData });
+              const data = await uploadRes.json();
+              useHudStore.getState().setPendingSystemMessage(
+                `[系统通知] 专题地图 \`${title || "未命名"}\` 已成功排版合成，分配URL：${data.url}。`
+              );
 ```
 
 - [ ] **Step 3: Commit**
