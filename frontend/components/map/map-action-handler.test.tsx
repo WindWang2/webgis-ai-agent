@@ -105,4 +105,24 @@ describe('MapActionHandler', () => {
 
     expect(popAction).toHaveBeenCalled();
   });
+
+  it('adds custom- prefix to layer and source IDs for add_layer', async () => {
+    const geojson = { type: 'FeatureCollection', features: [] };
+    actions = [{
+      command: 'add_layer',
+      params: { layerId: 'test-layer', type: 'fill', geojson },
+    }];
+
+    const map = mockGetMap();
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(map.addSource).toHaveBeenCalledWith('custom-test-layer', expect.anything());
+    expect(map.addLayer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'custom-test-layer', source: 'custom-test-layer' }),
+      undefined
+    );
+  });
 });
