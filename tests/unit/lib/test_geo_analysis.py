@@ -3,7 +3,7 @@ import json
 from app.lib.geo_analysis.statistics import calculate_sde, moran_i_narrated, hotspot_narrated
 from app.lib.geo_analysis.aggregation import spatial_aggregate, generate_fishnet
 from app.lib.geo_analysis.network import calculate_isochrones
-from app.lib.geoprocessing.interface import GeoAnalysisResult
+from app.lib.geo_processor.core import GeoAnalysisResult
 
 @pytest.fixture
 def sample_points():

@@ -8,7 +8,8 @@ from shapely.geometry import box, mapping
 from scipy.spatial import distance_matrix
 
 from app.tools.registry import ToolRegistry, tool
-from app.tools._geojson_utils import safe_parse_geojson, to_utm_gdf, extract_numeric_values
+from app.lib.geo_processor.core import safe_parse as safe_parse_geojson, to_utm_gdf
+from app.lib.geo_analysis.statistics import _extract_numeric_values as extract_numeric_values
 from app.services.spatial_analyzer import SpatialAnalyzer
 
 logger = logging.getLogger(__name__)

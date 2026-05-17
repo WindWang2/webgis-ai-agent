@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
 from app.services.spatial_analyzer import SpatialAnalyzer
-from app.tools._geojson_utils import safe_parse_geojson
+from app.lib.geo_processor.core import safe_parse as safe_parse_geojson
 
 logger = logging.getLogger(__name__)
 

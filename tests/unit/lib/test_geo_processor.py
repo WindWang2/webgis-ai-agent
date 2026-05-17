@@ -59,14 +59,15 @@ def test_buffer_smart():
     from app.lib.geo_processor.geometry import buffer_smart
     geojson = {"type": "Point", "coordinates": [116.4, 39.9]}
     # 100 meters buffer
-    buffered = buffer_smart(geojson, distance=100)
-    assert buffered["type"] == "FeatureCollection"
+    res = buffer_smart(geojson, distance=100)
+    assert res.success is True
+    assert res.data["type"] == "FeatureCollection"
+    
     # Check if area is roughly pi * 100^2
     import geopandas as gpd
-    from shapely.geometry import shape
     # Convert back to UTM to check area
     from app.lib.geo_processor.core import to_utm_gdf
-    gdf, _ = to_utm_gdf(buffered)
+    gdf, _ = to_utm_gdf(res.data)
     assert abs(gdf.area.iloc[0] - 3.14159 * 100**2) < 500 # Allowing some tolerance
 
 def test_clip_smart():
@@ -79,11 +80,13 @@ def test_clip_smart():
         "type": "FeatureCollection",
         "features": [{"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[5,5], [15,5], [15,15], [5,15], [5,5]]]}, "properties": {}}]
     }
-    clipped = clip_smart(target, mask)
-    assert clipped["type"] == "FeatureCollection"
+    res = clip_smart(target, mask)
+    assert res.success is True
+    assert res.data["type"] == "FeatureCollection"
+    
     # Result should be a 5x5 square
     from app.lib.geo_processor.core import to_utm_gdf
-    gdf, _ = to_utm_gdf(clipped)
+    gdf, _ = to_utm_gdf(res.data)
     assert len(gdf) > 0
 
 def test_dissolve_smart():
@@ -95,8 +98,9 @@ def test_dissolve_smart():
             {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[1,0], [2,0], [2,1], [1,1], [1,0]]]}, "properties": {"group": 1}}
         ]
     }
-    dissolved = dissolve_smart(geojson, field="group")
-    assert len(dissolved["features"]) == 1
+    res = dissolve_smart(geojson, field="group")
+    assert res.success is True
+    assert len(res.data["features"]) == 1
 
 def test_overlay_smart():
     from app.lib.geo_processor.overlay import overlay_smart
@@ -111,8 +115,10 @@ def test_overlay_smart():
     
     # Intersection
     res_int = overlay_smart(poly1, poly2, how="intersection")
-    assert len(res_int["features"]) > 0
+    assert res_int.success is True
+    assert len(res_int.data["features"]) > 0
     
     # Union
     res_uni = overlay_smart(poly1, poly2, how="union")
-    assert len(res_uni["features"]) > 0
+    assert res_uni.success is True
+    assert len(res_uni.data["features"]) > 0
