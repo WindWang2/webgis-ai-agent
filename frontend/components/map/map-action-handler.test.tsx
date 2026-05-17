@@ -3,7 +3,7 @@ import { render, act } from '@testing-library/react';
 import { MapActionHandler } from './map-action-handler';
 
 const mockFlyTo = vi.fn();
-const mockGetMap = vi.fn(() => ({
+const mapMockInstance = {
   flyTo: mockFlyTo,
   getSource: vi.fn(() => null),
   addSource: vi.fn(),
@@ -17,7 +17,9 @@ const mockGetMap = vi.fn(() => ({
   getBearing: vi.fn(() => 0),
   once: vi.fn((_e: string, cb: () => void) => cb()),
   triggerRepaint: vi.fn(),
-}));
+};
+
+const mockGetMap = vi.fn(() => mapMockInstance);
 
 let popAction: ReturnType<typeof vi.fn>;
 let dispatchActionFn: ReturnType<typeof vi.fn>;
@@ -122,6 +124,39 @@ describe('MapActionHandler', () => {
     expect(map.addSource).toHaveBeenCalledWith('custom-test-layer', expect.anything());
     expect(map.addLayer).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'custom-test-layer', source: 'custom-test-layer' }),
+      undefined
+    );
+  });
+
+  it('calls addThematicLayer when style has a thematic type (choropleth)', async () => {
+    const geojson = { type: 'FeatureCollection', features: [] };
+    const style = {
+      type: 'choropleth',
+      field: 'density',
+      breaks: [10],
+      colors: ['#000', '#fff']
+    };
+
+    actions = [{
+      command: 'add_layer',
+      params: { layerId: 'thematic-layer', geojson, style },
+    }];
+
+    const map = mockGetMap();
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(map.addSource).toHaveBeenCalledWith('custom-thematic-layer', expect.anything());
+    // Since addThematicLayer delegates to addVectorLayer eventually, we can check the paint expression
+    expect(map.addLayer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'custom-thematic-layer',
+        paint: expect.objectContaining({
+          'fill-color': ['step', ['get', 'density'], '#000', 10, '#fff']
+        })
+      }),
       undefined
     );
   });

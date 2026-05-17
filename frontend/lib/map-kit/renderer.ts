@@ -1,4 +1,5 @@
 import maplibregl from 'maplibre-gl';
+import { ThematicStyleDef } from './types';
 
 /**
  * Safely adds or updates an image source.
@@ -62,6 +63,65 @@ export function addVectorLayer(map: any, options: VectorLayerOptions, beforeId?:
     ...(options.minzoom !== undefined && { minzoom: options.minzoom }),
     ...(options.maxzoom !== undefined && { maxzoom: options.maxzoom }),
     ...(options.filter && { filter: options.filter }),
+  }, beforeId);
+}
+
+/**
+ * Adds a thematic layer (choropleth or lisa) to the map using data-driven styling.
+ */
+export function addThematicLayer(map: any, id: string, data: any, styleDef: ThematicStyleDef, beforeId?: string) {
+  const geomType = styleDef.geometry_type || 'Polygon';
+  const layerType = geomType === 'Point' ? 'circle' : 'fill';
+  
+  let colorExpression: any;
+  
+  if (styleDef.type === 'choropleth') {
+    const breaks = styleDef.breaks || [];
+    const colors = styleDef.colors || [];
+    
+    // Default fallback if colors is empty, though backend should provide it
+    if (breaks.length > 0 && colors.length > 0) {
+      colorExpression = ['step', ['get', styleDef.field]];
+      colorExpression.push(colors[0]); // Base color for values < first break
+      
+      // Step expression alternates: base_color, break1, color1, break2, color2...
+      for (let i = 0; i < breaks.length; i++) {
+        colorExpression.push(breaks[i]);
+        colorExpression.push(colors[Math.min(i + 1, colors.length - 1)]);
+      }
+    } else {
+      colorExpression = colors[0] || '#ccc';
+    }
+  } else if (styleDef.type === 'lisa') {
+    const categories = styleDef.categories || {};
+    colorExpression = ['match', ['get', styleDef.field]];
+    
+    for (const [key, color] of Object.entries(categories)) {
+      colorExpression.push(key);
+      colorExpression.push(color);
+    }
+    
+    // Add default color for unmatched values
+    colorExpression.push('#cccccc');
+  } else {
+    colorExpression = '#cccccc';
+  }
+
+  const paint: any = {};
+  if (layerType === 'fill') {
+    paint['fill-color'] = colorExpression;
+    paint['fill-opacity'] = 0.8;
+  } else {
+    paint['circle-color'] = colorExpression;
+    paint['circle-opacity'] = 0.8;
+    paint['circle-radius'] = 6;
+  }
+
+  addVectorLayer(map, {
+    id,
+    type: layerType,
+    source: id,
+    paint
   }, beforeId);
 }
 
