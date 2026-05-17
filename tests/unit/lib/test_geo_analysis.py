@@ -1,7 +1,7 @@
 import pytest
 import json
 from app.lib.geo_analysis.statistics import calculate_sde, moran_i_narrated, hotspot_narrated
-from app.lib.geo_analysis.aggregation import spatial_aggregate, generate_fishnet
+from app.lib.geo_analysis.aggregation import spatial_aggregate, generate_fishnet, h3_binning
 from app.lib.geo_analysis.network import calculate_isochrones
 from app.lib.geo_processor.core import GeoAnalysisResult
 
@@ -82,3 +82,18 @@ def test_calculate_isochrones(sample_points):
     result = calculate_isochrones(network, sample_points, 5)
     assert isinstance(result, GeoAnalysisResult)
     assert result.success is True
+
+def test_h3_binning(sample_points):
+    # Test count stat
+    result = h3_binning(sample_points, resolution=8)
+    assert isinstance(result, GeoAnalysisResult)
+    assert result.success is True
+    assert "features" in result.data
+    assert len(result.data["features"]) > 0
+    assert "count" in result.data["features"][0]["properties"]
+    
+    # Test sum stat with stat_field
+    result_sum = h3_binning(sample_points, resolution=8, stat_field="val", stat_method="sum")
+    assert result_sum.success is True
+    assert "sum" in result_sum.data["features"][0]["properties"]
+

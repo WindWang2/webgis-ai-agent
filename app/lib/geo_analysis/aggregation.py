@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import geopandas as gpd
+import h3
 from shapely.geometry import box, Polygon, mapping
 from app.lib.geo_processor.core import GeoAnalysisResult
 from app.lib.geo_processor.core import to_utm_gdf
@@ -133,3 +134,67 @@ def spatial_aggregate(points_geojson, polygons_geojson, stats=['count', 'sum', '
 
 # Alias for backward compatibility with plan
 aggregate_points_to_polygons = spatial_aggregate
+
+def h3_binning(geojson, resolution, stat_field=None, stat_method='count'):
+    """
+    Bin points into H3 hexagons.
+    Supports stats: count, sum, mean.
+    """
+    try:
+        if isinstance(geojson, dict) and 'features' in geojson:
+            gdf = gpd.GeoDataFrame.from_features(geojson['features'], crs="EPSG:4326")
+        else:
+            return GeoAnalysisResult(success=False, data=None, summary="Invalid geojson input.")
+            
+        if gdf.empty:
+            return GeoAnalysisResult(success=False, data=None, summary="Empty geojson input.")
+            
+        # Ensure point geometry
+        if not all(geom.geom_type == 'Point' for geom in gdf.geometry):
+            gdf['geometry'] = gdf.geometry.centroid
+            
+        if gdf.crs != "EPSG:4326":
+            gdf = gdf.to_crs("EPSG:4326")
+            
+        # Assign H3 index
+        # gdf.geometry.y is lat, gdf.geometry.x is lng
+        gdf['h3_index'] = gdf.apply(lambda row: h3.latlng_to_cell(row.geometry.y, row.geometry.x, resolution), axis=1)
+        
+        # Group by H3 index
+        if stat_method == 'count':
+            grouped = gdf.groupby('h3_index').size().rename('count').reset_index()
+        elif stat_field and stat_field in gdf.columns:
+            if stat_method in ['sum', 'mean']:
+                grouped = gdf.groupby('h3_index')[stat_field].agg(stat_method).rename(stat_method).reset_index()
+            else:
+                grouped = gdf.groupby('h3_index').size().rename('count').reset_index()
+                stat_method = 'count'
+        else:
+            grouped = gdf.groupby('h3_index').size().rename('count').reset_index()
+            stat_method = 'count'
+            
+        # Create Polygons from H3 indices
+        polygons = []
+        for h3_id in grouped['h3_index']:
+            # cell_to_boundary returns ((lat, lng), ...)
+            boundary = h3.cell_to_boundary(h3_id)
+            # shapely expects (lng, lat)
+            coords = [(lng, lat) for lat, lng in boundary]
+            polygons.append(Polygon(coords))
+            
+        hex_gdf = gpd.GeoDataFrame(grouped, geometry=polygons, crs="EPSG:4326")
+        
+        summary = f"Binned {len(gdf)} points into {len(hex_gdf)} hexagons at resolution {resolution}."
+        
+        return GeoAnalysisResult(
+            success=True,
+            data=hex_gdf.__geo_interface__,
+            summary=summary
+        )
+    except Exception as e:
+        return GeoAnalysisResult(
+            success=False,
+            data=None,
+            summary=f"H3 binning failed: {str(e)}"
+        )
+
