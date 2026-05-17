@@ -437,3 +437,99 @@ def cluster_narrated(
     }
 
     return GeoAnalysisResult(True, data_out, summary)
+
+def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
+    """
+    Calculate Local Indicators of Spatial Association (LISA) for H3 hex bins.
+    """
+    try:
+        from libpysal.weights import Queen
+        from esda.moran import Moran_Local
+    except ImportError:
+        return GeoAnalysisResult(False, None, "libpysal or esda not installed", error_type="ImportError")
+
+    res = to_utm_gdf(h3_geojson)
+    if not res:
+        return GeoAnalysisResult(False, None, "Invalid GeoJSON or no features found", error_type="ValueError")
+    
+    gdf, utm_crs = res
+    import pandas as pd
+    values = _extract_numeric_values(gdf, value_field)
+    if values is None or len(values) == 0:
+        return GeoAnalysisResult(False, None, f"Field '{value_field}' missing or non-numeric", error_type="ValueError")
+    
+    if len(values) < 3:
+        return GeoAnalysisResult(False, None, "At least 3 features required for LISA", error_type="InsufficientData")
+
+    # Use original geometries (hexagons) to build weights
+    # We must ensure there is no index duplication
+    gdf = gdf.reset_index(drop=True)
+    w = Queen.from_dataframe(gdf)
+    w.transform = 'r'
+    
+    # Calculate LISA
+    lisa = Moran_Local(values, w)
+    
+    # Assign clusters
+    clusters = []
+    cluster_counts = {"HH": 0, "LL": 0, "HL": 0, "LH": 0, "NS": 0}
+    for i, p in enumerate(lisa.p_sim):
+        if p < 0.05:
+            q = lisa.q[i]
+            if q == 1:
+                c = "HH"
+            elif q == 2:
+                c = "LH"
+            elif q == 3:
+                c = "LL"
+            elif q == 4:
+                c = "HL"
+            else:
+                c = "NS"
+        else:
+            c = "NS"
+        clusters.append(c)
+        cluster_counts[c] += 1
+        
+    out_features = []
+    for i, row in gdf.iterrows():
+        # Project back to WGS84 for output
+        geom_wgs84 = gpd.GeoSeries([row.geometry], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
+        props = {k: v for k, v in row.items() if k != "geometry"}
+        props["lisa_cluster"] = clusters[i]
+        out_features.append({
+            "type": "Feature",
+            "geometry": mapping(geom_wgs84),
+            "properties": props,
+        })
+        
+    summary_parts = []
+    if cluster_counts["HH"] > 0:
+        summary_parts.append(f"{cluster_counts['HH']} High-High hotspots")
+    if cluster_counts["LL"] > 0:
+        summary_parts.append(f"{cluster_counts['LL']} Low-Low coldspots")
+    if cluster_counts["HL"] > 0:
+        summary_parts.append(f"{cluster_counts['HL']} High-Low spatial outliers")
+    if cluster_counts["LH"] > 0:
+        summary_parts.append(f"{cluster_counts['LH']} Low-High spatial outliers")
+        
+    if summary_parts:
+        summary = "Found " + ", ".join(summary_parts) + "."
+        
+        # Determine dominant pattern
+        # Excluding NS
+        sig_counts = {k: v for k, v in cluster_counts.items() if k != "NS" and v > 0}
+        if sig_counts:
+            dominant = max(sig_counts, key=sig_counts.get)
+            dom_name = {"HH": "High-High clustering", "LL": "Low-Low clustering", "HL": "High-Low outliers", "LH": "Low-High outliers"}
+            summary += f" Dominant pattern is {dom_name[dominant]}."
+    else:
+        summary = "No significant local spatial autocorrelation found."
+        
+    data_out = {
+        "type": "FeatureCollection",
+        "features": out_features,
+        "cluster_stats": cluster_counts
+    }
+    
+    return GeoAnalysisResult(True, data_out, summary)

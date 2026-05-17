@@ -433,3 +433,15 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             "count": len(out_features),
             "method": "多环缓冲区" + ("（环形区域）" if merge_rings else ""),
         }
+
+    @tool(registry, name="h3_lisa",
+           description="H3网格LISA空间自相关分析：基于H3网格的Local Moran's I热点和冷点聚类分析（如识别显著的高-高或低-低聚集区）。必须传入带有数值字段的H3网格数据（如通过 h3_binning 得到的数据）。",
+           param_descriptions={
+               "h3_geojson": "带有属性值的H3网格 GeoJSON 数据或引用(ref:xxx)",
+               "value_field": "参与LISA分析的数值字段名",
+           })
+    def h3_lisa(h3_geojson: Any, value_field: str) -> dict:
+        from app.lib.geo_analysis.statistics import h3_lisa as _h3_lisa
+        data = safe_parse_geojson(h3_geojson)
+        res = _h3_lisa(data, value_field)
+        return res.to_llm_response()
