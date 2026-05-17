@@ -179,3 +179,38 @@ def register_layer_management_tools(registry: ToolRegistry):
             },
             "message": f"已向地图发送指令：更新图层 {layer_ref} (目标 ID: {id_to_use}) 的外观样式。"
         }
+
+    @tool(registry, name="apply_layer_filter",
+           description="实时数据过滤：根据属性条件动态隐藏/显示地图上的地理要素。适合快速筛选数据（如『只看人口>1000的区域』）而无需重新计算新图层。",
+           param_descriptions={
+               "layer_ref": "图层引用 (ref:xxx) 或名称",
+               "expression": "过滤表达式，例如 'pop > 1000' 或 MapLibre/Mapbox GL 风格表达式。设为 null 或空字符串可清除过滤。",
+           })
+    def apply_layer_filter(layer_ref: str, expression: Any, session_id: Optional[str] = None) -> dict:
+        """应用实时图层过滤"""
+        if not session_id:
+            return {"error": "Missing session_id context"}
+        
+        # Resolve ref/alias
+        ref_id = session_data_manager._aliases.get(session_id, {}).get(layer_ref, layer_ref)
+        
+        # Find canonical ID if it exists in state
+        map_state = session_data_manager.get_map_state(session_id)
+        layers = map_state.get("layers", [])
+        found_id = None
+        for l in layers:
+            if l.get("id") == ref_id or l.get("id") == layer_ref:
+                found_id = l.get("id")
+                break
+        
+        id_to_use = found_id or ref_id
+        
+        return {
+            "success": True,
+            "command": "APPLY_LAYER_FILTER",
+            "params": {
+                "layer_id": id_to_use,
+                "filter": expression
+            },
+            "summary": f"Applied instant filter to layer {layer_ref} with expression: {expression}"
+        }
