@@ -31,7 +31,7 @@ class ApplyStyleArgs(BaseModel):
 class ThematicMapArgs(BaseModel):
     geojson: Any = Field(..., description="输入 GeoJSON 或数据引用(ref:xxx)")
     field: str = Field(..., description="用于分类的数值字段名")
-    method: str = Field("quantiles", description="分类方法: quantiles(分位数), equal_interval(等间距)")
+    method: str = Field("quantiles", description="分类方法: quantiles(分位数), equal_interval(等间距), lisa(局部空间自相关)")
     k: int = Field(5, ge=2, le=10, description="分类数量 (2-10)")
     palette: str = Field("YlOrRd", description="调色板: YlOrRd, Blues, Greens, Reds, Viridis, Magma")
     group: str = Field("analysis", description="图层组: analysis(分析), base(底图), reference(参考)")
@@ -88,7 +88,7 @@ def register_cartography_tools(registry: ToolRegistry):
                 return {"error": "Invalid GeoJSON input"}
             
             from app.services.cartography_service import CartographyService
-            result_geojson = CartographyService.apply_choropleth(
+            style_def = CartographyService.build_thematic_style(
                 geojson=data,
                 field=field,
                 method=method,
@@ -97,9 +97,9 @@ def register_cartography_tools(registry: ToolRegistry):
             )
             
             return {
-                "geojson": result_geojson,
+                "geojson": data,  # return unmodified geojson
                 "group": group,
-                "metadata": result_geojson.get("metadata", {})
+                "style": style_def
             }
         except (ValueError, TypeError, KeyError) as e:
             logger.error(f"Error creating thematic map: {e}")
