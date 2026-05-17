@@ -39,12 +39,17 @@ export function MapActionHandler() {
 
           const id = `custom-${layerId}`;
           renderer.addGeoJsonSource(map, id, geojson);
-          renderer.addVectorLayer(map, {
-            id,
-            type: type || 'fill',
-            source: id,
-            paint: style || {}
-          });
+          
+          if (style && (style.type === 'choropleth' || style.type === 'lisa')) {
+            renderer.addThematicLayer(map, id, geojson, style as any);
+          } else {
+            renderer.addVectorLayer(map, {
+              id,
+              type: type || 'fill',
+              source: id,
+              paint: style || {}
+            });
+          }
 
           if (flyTo) {
             const bbox = navigation.calculateBBox(geojson);
@@ -207,9 +212,10 @@ export function MapActionHandler() {
               });
 
               const storeState = useHudStore.getState();
-              const thematicLayer = storeState.layers.find(
-                (l) => l.visible && (l.source as any)?.metadata?.thematic_type === "choropleth"
+              const thematicLayerInfo = storeState.layers.find(
+                (l) => l.visible && ((l.style as any)?.type === "choropleth" || (l.style as any)?.type === "lisa" || (l.source as any)?.metadata?.thematic_type === "choropleth")
               );
+              const thematicLayer = (thematicLayerInfo?.style as any)?.type ? thematicLayerInfo?.style : thematicLayerInfo;
 
               exporter.composeLayout(exportCanvas, title, subtitle, {
                 dpi,

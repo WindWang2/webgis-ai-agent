@@ -226,26 +226,53 @@ export function composeLayout(
 
   // 5. Legend
   if (showLegend && thematicLayer) {
-    const COLOR_PALETTES: Record<string, string[]> = {
-      YlOrRd: ["#ffffb2","#fed976","#feb24c","#fd8d3c","#f03b20","#bd0026"],
-      Blues:  ["#eff3ff","#bdd7e7","#6baed6","#3182bd","#08519c"],
-      Greens: ["#edf8e9","#bae4b3","#74c476","#31a354","#006d2c"],
-      Reds:   ["#fee5d9","#fcae91","#fb6a4a","#de2d26","#a50f15"],
-      Viridis:["#440154","#3b528b","#21908c","#5dc963","#fde725"],
-      Magma:  ["#000004","#3b0f70","#8c2981","#de4968","#feb078","#fcfdbf"],
-    };
+    // Treat thematicLayer as ThematicStyleDef
+    const styleDef = thematicLayer as any;
+    const field = styleDef.field || '未知字段';
+    const colors = styleDef.colors || [];
+    const legendLabels = styleDef.legend_labels || [];
     
-    const meta = (thematicLayer.source as any)?.metadata as {
-      field: string;
-      breaks: number[];
-      palette: string;
-    } | undefined;
+    // Fallback if it's the old object structure (l.source.metadata)
+    const meta = (styleDef.source as any)?.metadata;
+    let actualField = field;
+    let actualColors = colors;
+    let actualLabels = legendLabels;
     
-    if (meta && meta.breaks) {
-      const colors = COLOR_PALETTES[meta.palette] ?? COLOR_PALETTES["YlOrRd"];
-      const classes = meta.breaks.length - 1;
+    if (meta && meta.breaks && meta.palette) {
+      const COLOR_PALETTES: Record<string, string[]> = {
+        YlOrRd: ["#ffffb2","#fed976","#feb24c","#fd8d3c","#f03b20","#bd0026"],
+        Blues:  ["#eff3ff","#bdd7e7","#6baed6","#3182bd","#08519c"],
+        Greens: ["#edf8e9","#bae4b3","#74c476","#31a354","#006d2c"],
+        Reds:   ["#fee5d9","#fcae91","#fb6a4a","#de2d26","#a50f15"],
+        Viridis:["#440154","#3b528b","#21908c","#5dc963","#fde725"],
+        Magma:  ["#000004","#3b0f70","#8c2981","#de4968","#feb078","#fcfdbf"],
+      };
+      actualField = meta.field || actualField;
+      actualColors = COLOR_PALETTES[meta.palette] ?? COLOR_PALETTES["YlOrRd"];
+      
+      const formatNum = (n: number) =>
+        n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` :
+        n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` :
+        n.toFixed(1);
+        
+      actualLabels = [];
+      for (let i = 0; i < meta.breaks.length - 1; i++) {
+        actualLabels.push(`${formatNum(meta.breaks[i])} – ${formatNum(meta.breaks[i + 1])}`);
+      }
+    }
+
+    if (actualColors.length > 0 && actualLabels.length > 0) {
+      const classes = Math.min(actualColors.length, actualLabels.length);
       const itemH = scalePx(22), itemW = scalePx(18), padding = scalePx(10), gapX = scalePx(8);
-      const legendW = scalePx(180);
+      
+      // Calculate max text width for legend labels
+      ctx.font = `${scalePx(11)}px sans-serif`;
+      let maxTextW = 0;
+      for (const label of actualLabels) {
+        maxTextW = Math.max(maxTextW, ctx.measureText(label).width);
+      }
+      
+      const legendW = padding * 2 + itemW + gapX + maxTextW + scalePx(10);
       const legendH = padding * 2 + scalePx(24) + classes * itemH;
       const lx = targetW - legendW - scalePx(56);
       const ly = targetH - legendH - scalePx(56);
@@ -267,17 +294,11 @@ export function composeLayout(
 
       ctx.fillStyle = dark_mode ? "#00f2ff" : "#1e293b";
       ctx.font = `bold ${scalePx(12)}px sans-serif`;
-      ctx.fillText(`字段: ${meta.field}`, lx + padding, ly + padding + scalePx(12));
-
-      const formatNum = (n: number) =>
-        n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` :
-        n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` :
-        n.toFixed(1);
+      ctx.fillText(`字段: ${actualField}`, lx + padding, ly + padding + scalePx(12));
 
       for (let i = 0; i < classes; i++) {
         const iy = ly + padding + scalePx(24) + i * itemH;
-        const colorIdx = Math.min(i, colors.length - 1);
-        ctx.fillStyle = colors[colorIdx];
+        ctx.fillStyle = actualColors[i];
         ctx.fillRect(lx + padding, iy, itemW, itemH - scalePx(4));
         ctx.strokeStyle = "rgba(128,128,128,0.4)";
         ctx.lineWidth = scalePx(0.5);
@@ -285,7 +306,7 @@ export function composeLayout(
         ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.85)" : "#334155";
         ctx.font = `${scalePx(11)}px sans-serif`;
         ctx.fillText(
-          `${formatNum(meta.breaks[i])} – ${formatNum(meta.breaks[i + 1])}`,
+          actualLabels[i],
           lx + padding + itemW + gapX,
           iy + itemH - scalePx(8)
         );
