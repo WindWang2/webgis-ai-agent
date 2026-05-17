@@ -4,8 +4,9 @@ Supports the standardized GeoAnalysisResult.
 """
 import logging
 from typing import Dict, List, Any, Optional, Callable
-from app.lib.geoprocessing.interface import GeoAnalysisResult
-from app.lib.geoprocessing.geometry import buffer_smart, clip_smart, overlay_smart
+from app.lib.geo_processor.core import GeoAnalysisResult
+from app.lib.geo_processor.geometry import buffer_smart, clip_smart
+from app.lib.geo_processor.overlay import overlay_smart
 from app.lib.geo_analysis.statistics import (
     calculate_sde, 
     moran_i_narrated, 
@@ -15,8 +16,8 @@ from app.lib.geo_analysis.statistics import (
     calculate_nearest
 )
 from app.lib.geo_analysis.aggregation import spatial_aggregate
-from app.lib.geoprocessing.network import calculate_isochrones
-from app.tools._geojson_utils import to_utm_gdf
+from app.lib.geo_analysis.network import calculate_isochrones
+from app.lib.geo_processor.core import to_utm_gdf
 
 logger = logging.getLogger(__name__)
 

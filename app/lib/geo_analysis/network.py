@@ -2,7 +2,7 @@ import networkx as nx
 import geopandas as gpd
 import numpy as np
 from shapely.geometry import Point, LineString, mapping, MultiPoint
-from app.lib.geoprocessing.interface import GeoAnalysisResult
+from app.lib.geo_processor.core import GeoAnalysisResult
 from app.lib.geo_processor.core import to_utm_gdf
 
 def calculate_isochrones(network_geojson, facility_points, travel_time_min, mode='walking'):
@@ -99,3 +99,56 @@ def calculate_isochrones(network_geojson, facility_points, travel_time_min, mode
             summary=f"Failed to calculate isochrones: {str(e)}",
             error_type="ProcessingError"
         )
+
+def nearest_neighbor_features(source_points, target_points):
+    """
+    For each source point, find the closest target point.
+    """
+    try:
+        from scipy.spatial import distance_matrix
+        from app.lib.geo_processor.core import to_utm_gdf
+        
+        res_src = to_utm_gdf(source_points)
+        res_tgt = to_utm_gdf(target_points)
+        
+        if not res_src or not res_tgt:
+             return GeoAnalysisResult(False, None, "Invalid input GeoJSON")
+             
+        gdf_src, utm_crs = res_src
+        gdf_tgt, tgt_crs = res_tgt
+        
+        if utm_crs != tgt_crs:
+            gdf_tgt = gdf_tgt.to_crs(utm_crs)
+            
+        src_coords = np.array([(g.x, g.y) for g in gdf_src.geometry])
+        tgt_coords = np.array([(g.x, g.y) for g in gdf_tgt.geometry])
+        
+        dist_mat = distance_matrix(src_coords, tgt_coords)
+        min_indices = dist_mat.argmin(axis=1)
+        min_distances = dist_mat.min(axis=1)
+        
+        # Build result
+        out_features = []
+        for i, idx in enumerate(min_indices):
+            feat = gdf_src.iloc[i].to_dict()
+            feat.pop("geometry", None)
+            
+            out_features.append({
+                "type": "Feature",
+                "geometry": mapping(gdf_src.geometry.iloc[i]),
+                "properties": {
+                    **feat,
+                    "nearest_target_id": gdf_tgt.index[idx],
+                    "distance_m": float(min_distances[i])
+                }
+            })
+            
+        avg_dist = float(min_distances.mean())
+        
+        return GeoAnalysisResult(
+            success=True,
+            data={"type": "FeatureCollection", "features": out_features},
+            summary=f"Calculated nearest neighbors for {len(gdf_src)} points. Average distance: {avg_dist:.1f}m."
+        )
+    except Exception as e:
+        return GeoAnalysisResult(False, None, f"Nearest neighbor analysis failed: {str(e)}")

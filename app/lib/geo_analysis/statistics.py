@@ -4,7 +4,7 @@ import geopandas as gpd
 from shapely.geometry import Point, Polygon, mapping
 from scipy.spatial import distance_matrix
 from scipy.stats import norm
-from app.lib.geoprocessing.interface import GeoAnalysisResult
+from app.lib.geo_processor.core import GeoAnalysisResult
 from app.lib.geo_processor.core import to_utm_gdf, safe_parse
 
 def _build_weights(gdf, k=8):

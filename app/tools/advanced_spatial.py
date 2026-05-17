@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
 from app.services.spatial_analyzer import SpatialAnalyzer
-from app.tools._geojson_utils import safe_parse_geojson
+from app.lib.geo_processor.core import safe_parse as safe_parse_geojson
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         features = data.get("features", [])
         # Note: SpatialAnalyzer.zonal_statistics is not fully implemented in the thin wrapper yet, 
         # but let's keep the tool definition calling it.
-        from app.lib.geoprocessing.interface import GeoAnalysisResult
+        from app.lib.geo_processor.core import GeoAnalysisResult
         return GeoAnalysisResult(False, None, "Zonal statistics not yet implemented").to_llm_response()
 
     @tool(registry, name="overlay_analysis",
