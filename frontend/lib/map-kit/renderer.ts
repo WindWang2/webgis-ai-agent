@@ -281,3 +281,15 @@ export function updateLayerStyle(map: any, id: string, style: StyleUpdateOptions
     }
   }
 }
+
+/**
+ * Sets a filter on a specific layer.
+ * filterExp should be a MapLibre filter expression.
+ */
+export function setLayerFilter(map: any, layerId: string, filterExp: any[]) {
+  if (map.getLayer(layerId)) {
+    map.setFilter(layerId, filterExp);
+  } else {
+    throw new Error(`Layer '${layerId}' not found.`);
+  }
+}
