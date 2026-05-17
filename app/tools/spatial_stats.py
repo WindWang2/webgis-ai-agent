@@ -9,44 +9,9 @@ from scipy.spatial import distance_matrix
 
 from app.tools.registry import ToolRegistry, tool
 from app.tools._geojson_utils import safe_parse_geojson, to_utm_gdf, extract_numeric_values
-from app.lib.geoprocessing.statistics import (
-    calculate_sde as _calculate_sde,
-    moran_i_narrated as _moran_i_narrated,
-    hotspot_narrated as _hotspot_narrated
-)
+from app.services.spatial_analyzer import SpatialAnalyzer
 
 logger = logging.getLogger(__name__)
-
-
-# Backward-compatible aliases for local usage
-_safe_parse_geojson = safe_parse_geojson
-_extract_numeric_values = extract_numeric_values
-
-
-def _to_utm_gdf(geojson: dict) -> gpd.GeoDataFrame | None:
-    """Convert GeoJSON to GeoDataFrame (UTM). Returns gdf only, for compat with existing callers."""
-    result = to_utm_gdf(geojson)
-    return result[0] if result is not None else None
-
-
-def _build_weights_matrix(gdf: gpd.GeoDataFrame, method: str = "knn", k: int = 8,
-                          distance_band: float | None = None) -> np.ndarray:
-    """Build spatial weights matrix. KNN for points, distance-band for hotspot."""
-    coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
-    n = len(coords)
-    dist = distance_matrix(coords, coords)
-
-    if distance_band is not None:
-        w = (dist <= distance_band).astype(float)
-    else:
-        w = np.zeros((n, n))
-        for i in range(n):
-            sorted_idx = np.argsort(dist[i])
-            for j in sorted_idx[1:k + 1]:
-                w[i, j] = 1.0
-    np.fill_diagonal(w, 0)
-    return w
-
 
 def register_spatial_stats_tools(registry: ToolRegistry):
 
@@ -63,63 +28,13 @@ def register_spatial_stats_tools(registry: ToolRegistry):
     def spatial_cluster(geojson: Any, method: str = "dbscan", n_clusters: int = 5,
                         eps: float = 1000, min_samples: int = 5,
                         value_field: str = "") -> dict:
-        try:
-            from sklearn.cluster import DBSCAN, KMeans
-            from sklearn.preprocessing import StandardScaler
-        except ImportError:
-            return {"error": "需要 scikit-learn，请运行: pip install scikit-learn"}
-
-        data = _safe_parse_geojson(geojson)
-        if not data:
-            return {"error": "无效的 GeoJSON 输入"}
-
-        gdf = _to_utm_gdf(data)
-        if gdf is None or len(gdf) < 3:
-            return {"error": "至少需要3个有效要素进行聚类"}
-
-        coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
-
-        if value_field:
-            vals = _extract_numeric_values(gdf, value_field)
-            if vals is None:
-                numeric_cols = [c for c in gdf.columns if c != "geometry" and gdf[c].dtype in ("float64", "int64", "float32", "int32")]
-                return {"error": f"字段 '{value_field}' 不是数值类型。可用字段: {numeric_cols}"}
-            scaler = StandardScaler()
-            vals_scaled = scaler.fit_transform(vals.reshape(-1, 1))
-            features = np.column_stack([coords, vals_scaled])
-        else:
-            features = coords
-
-        if method == "kmeans":
-            model = KMeans(n_clusters=min(n_clusters, len(gdf)), random_state=42, n_init=10)
-            labels = model.fit_predict(features)
-        else:
-            model = DBSCAN(eps=eps, min_samples=min_samples)
-            labels = model.fit_predict(features)
-
-        out_features = []
-        for i, row in gdf.iterrows():
-            geom_wgs84 = gpd.GeoSeries([row.geometry], crs=gdf.crs).to_crs("EPSG:4326").iloc[0]
-            props = {k: v for k, v in row.items() if k != "geometry"}
-            props["cluster_id"] = int(labels[i])
-            out_features.append({
-                "type": "Feature",
-                "geometry": mapping(geom_wgs84),
-                "properties": props,
-            })
-
-        cluster_counts = {}
-        for l in labels:
-            cluster_counts[str(int(l))] = cluster_counts.get(str(int(l)), 0) + 1
-
-        return {
-            "type": "FeatureCollection",
-            "features": out_features,
-            "count": len(out_features),
-            "cluster_stats": cluster_counts,
-            "method": method,
-            "n_clusters": len(set(labels)) - (1 if -1 in labels else 0),
-        }
+        data = safe_parse_geojson(geojson)
+        features = data.get("features", [])
+        res = SpatialAnalyzer.cluster(
+            features, method=method, n_clusters=n_clusters, eps=eps, 
+            min_samples=min_samples, value_field=value_field
+        )
+        return res.to_llm_response()
 
     @tool(registry, name="standard_deviational_ellipse",
            description="计算标准离差椭圆（SDE），用于分析地理要素的空间分布趋势和方向性。",
@@ -128,7 +43,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            })
     def standard_deviational_ellipse(geojson: Any) -> dict:
         data = safe_parse_geojson(geojson)
-        res = _calculate_sde(data)
+        features = data.get("features", [])
+        res = SpatialAnalyzer.statistics(features, spatial_stats=True)
         return res.to_llm_response()
 
     @tool(registry, name="moran_i",
@@ -139,7 +55,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            })
     def moran_i(geojson: Any, value_field: str) -> dict:
         data = safe_parse_geojson(geojson)
-        res = _moran_i_narrated(data, value_field)
+        features = data.get("features", [])
+        res = SpatialAnalyzer.statistics(features, field=value_field, spatial_stats=True)
         return res.to_llm_response()
 
     @tool(registry, name="hotspot_analysis",
@@ -150,8 +67,9 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "distance_band": "空间权重距离阈值（米），0表示自动计算（默认）",
            })
     def hotspot_analysis(geojson: Any, value_field: str, distance_band: float = 0) -> dict:
+        from app.lib.geo_analysis.statistics import hotspot_narrated
         data = safe_parse_geojson(geojson)
-        res = _hotspot_narrated(data, value_field, distance_band)
+        res = hotspot_narrated(data, value_field, distance_band)
         return res.to_llm_response()
 
     @tool(registry, name="kde_surface",
@@ -167,18 +85,22 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                     value_field: str = "", bounds: list = []) -> dict:
         from scipy.stats import gaussian_kde
 
-        data = _safe_parse_geojson(geojson)
+        data = safe_parse_geojson(geojson)
         if not data:
             return {"error": "无效的 GeoJSON 输入"}
 
-        gdf = _to_utm_gdf(data)
-        if gdf is None or len(gdf) < 3:
+        result = to_utm_gdf(data)
+        if result is None:
+             return {"error": "无法解析矢量数据"}
+        gdf, utm_crs = result
+        
+        if len(gdf) < 3:
             return {"error": "至少需要3个有效点要素"}
 
         coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
 
         if value_field:
-            weights = _extract_numeric_values(gdf, value_field)
+            weights = extract_numeric_values(gdf, value_field)
             if weights is None:
                 numeric_cols = [c for c in gdf.columns if c != "geometry" and gdf[c].dtype in ("float64", "int64", "float32", "int32")]
                 return {"error": f"字段 '{value_field}' 不是数值类型。可用字段: {numeric_cols}"}
@@ -196,19 +118,15 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             data_std = 1.0
 
         if bandwidth <= 0:
-            # Silverman's rule: bw_method as a scalar = bandwidth / std of data
             kde = gaussian_kde(kde_data, bw_method="scott")
-            # Derive actual bandwidth in meters for reporting
-            scott_factor = kde.factor  # scott's factor = n^{-1/(d+4)}
+            scott_factor = kde.factor
             bw = float(scott_factor * data_std)
         else:
-            # Convert absolute bandwidth (meters) to scipy's bw_method (scalar factor)
             bw_factor = float(bandwidth / data_std)
             kde = gaussian_kde(kde_data, bw_method=bw_factor)
             bw = bandwidth
 
         # Bounds
-        utm_crs = gdf.crs
         if bounds and len(bounds) == 4:
             bounds_gdf = gpd.GeoDataFrame(geometry=[box(bounds[0], bounds[1], bounds[2], bounds[3])],
                                           crs="EPSG:4326").to_crs(utm_crs)
@@ -240,7 +158,6 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         grid_coords = np.vstack([gx.ravel(), gy.ravel()])
         density = kde(grid_coords).reshape(ny, nx)
 
-        # Build grid polygons - Filter out low density cells (e.g. < 10% of max) to avoid full-grid block artifact
         max_d = density.max()
         threshold = max_d * 0.1
         out_features = []
@@ -287,33 +204,31 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         except ImportError:
             return {"error": "需要 matplotlib 和 scipy"}
 
-        data = _safe_parse_geojson(geojson)
-        gdf = _to_utm_gdf(data)
-        if gdf is None or len(gdf) < 5:
+        data = safe_parse_geojson(geojson)
+        result = to_utm_gdf(data)
+        if result is None:
+             return {"error": "无法解析矢量数据"}
+        gdf, utm_crs = result
+
+        if len(gdf) < 5:
             return {"error": "至少需要5个有效点要素进行等值面分析"}
 
         coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
         kde_data = coords.T
         
-        # Calculate KDE
         kde = gaussian_kde(kde_data, bw_method="scott" if bandwidth <= 0 else bandwidth/np.std(kde_data))
         
-        # Create grid for contour calculation
         xmin, ymin, xmax, ymax = gdf.total_bounds
         buf_x, buf_y = (xmax-xmin)*0.2, (ymax-ymin)*0.2
         X, Y = np.mgrid[xmin-buf_x:xmax+buf_x:100j, ymin-buf_y:ymax+buf_y:100j]
         positions = np.vstack([X.ravel(), Y.ravel()])
         Z = np.reshape(kde(positions).T, X.shape)
 
-        # Generate contours using matplotlib
         fig, ax = plt.subplots()
         cs = ax.contourf(X, Y, Z, levels=levels)
         plt.close(fig)
 
         out_features = []
-        utm_crs = gdf.crs
-        
-        # Convert path collections to GeoJSON
         for i, collection in enumerate(cs.collections):
             val = cs.levels[i]
             for path in collection.get_paths():
@@ -346,13 +261,10 @@ def register_spatial_stats_tools(registry: ToolRegistry):
     def voronoi_polygons(geojson: Any, clip_bounds: list = []) -> dict:
         from scipy.spatial import Voronoi
 
-        data = _safe_parse_geojson(geojson)
-        if not data:
-            return {"error": "无效的 GeoJSON 输入"}
-
+        data = safe_parse_geojson(geojson)
         result = to_utm_gdf(data)
         if result is None:
-            return {"error": "无法转换 GeoJSON"}
+            return {"error": "无法解析矢量数据"}
         gdf, utm_crs = result
 
         if len(gdf) < 3:
@@ -360,20 +272,19 @@ def register_spatial_stats_tools(registry: ToolRegistry):
 
         coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
 
-        # Add mirror points for bounded Voronoi
         xmin, ymin, xmax, ymax = gdf.total_bounds
         margin = max(xmax - xmin, ymax - ymin) * 0.5
         mirror_points = np.array([
-            coords[:, 0], 2 * ymin - coords[:, 1],  # bottom mirror
+            coords[:, 0], 2 * ymin - coords[:, 1],
         ]).T
         mirror_points2 = np.array([
-            2 * xmax - coords[:, 0], coords[:, 1],  # right mirror
+            2 * xmax - coords[:, 0], coords[:, 1],
         ]).T
         mirror_points3 = np.array([
-            coords[:, 0], 2 * ymax - coords[:, 1],  # top mirror
+            coords[:, 0], 2 * ymax - coords[:, 1],
         ]).T
         mirror_points4 = np.array([
-            2 * xmin - coords[:, 0], coords[:, 1],  # left mirror
+            2 * xmin - coords[:, 0], coords[:, 1],
         ]).T
         all_points = np.vstack([coords, mirror_points, mirror_points2, mirror_points3, mirror_points4])
 
@@ -423,13 +334,10 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "group_by": "可选：按属性字段分组，每组生成一个凸包",
            })
     def convex_hull(geojson: Any, group_by: str = "") -> dict:
-        data = _safe_parse_geojson(geojson)
-        if not data:
-            return {"error": "无效的 GeoJSON 输入"}
-
+        data = safe_parse_geojson(geojson)
         result = to_utm_gdf(data)
         if result is None:
-            return {"error": "无法转换 GeoJSON"}
+            return {"error": "无法解析矢量数据"}
         gdf, utm_crs = result
 
         if len(gdf) < 3:
@@ -482,13 +390,10 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            })
     def multi_ring_buffer(geojson: Any, distances: list = [500, 1000, 1500],
                            merge_rings: bool = True) -> dict:
-        data = _safe_parse_geojson(geojson)
-        if not data:
-            return {"error": "无效的 GeoJSON 输入"}
-
+        data = safe_parse_geojson(geojson)
         result = to_utm_gdf(data)
         if result is None:
-            return {"error": "无法转换 GeoJSON"}
+            return {"error": "无法解析矢量数据"}
         gdf, utm_crs = result
 
         if not distances:

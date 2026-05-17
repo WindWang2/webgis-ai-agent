@@ -280,11 +280,12 @@ def register_chinese_map_tools(registry: ToolRegistry):
         return {"error": "未配置高德或百度 API Key，路径规划需要 API Key"}
 
     @tool(registry, name="get_district",
-           description="查询行政区划边界，返回 GeoJSON 格式，可选高德/百度/天地图",
+           description="查询行政区划边界及下级单元列表。适合获取省、市、区/县的范围轮廓或下级列表。支持高德/百度/天地图。",
            param_descriptions={
                "keywords": "行政区划名称，如'海淀区'、'成都市'",
                "level": "级别: 'province', 'city', 'district'",
                "provider": "服务商: 'amap'(默认), 'baidu', 'tianditu'",
+               "return_geometry": "返回几何类型: 'point'(默认,中心点), 'polygon'(返回完整的行政边界轮廓)",
            })
     async def get_district(keywords: str, level: str = "district", provider: str = "amap",
                            return_geometry: str = "point") -> dict:
@@ -412,39 +413,62 @@ def register_chinese_map_tools(registry: ToolRegistry):
         return {"error": "未配置任何地图 API Key"}
 
     @tool(registry, name="search_poi_polygon",
-           description="在指定多边形/矩形范围内搜索 POI。适合『在这片区域里找所有学校』『框选范围统计餐厅』。多边形点序按经度,纬度排列。当前仅 Amap 支持原生 polygon 查询。",
+           description="多边形区域内搜索：在指定的闭合多边形区域内搜索 POI。适合『查询锦江区内的咖啡馆』等精准场景。注意：如果是行政区，请先拿边界再搜。",
            param_descriptions={
-               "polygon": "WGS84 坐标点列表 [[lng,lat], ...]，闭合多边形（首尾可不重合，3 个点起）；或 4 元素 [west,south,east,north] bbox",
-               "keyword": "搜索关键词（可选）",
-               "types": "POI 分类（可选），如 '050000'",
-               "provider": "服务商: 'amap'(默认)。Baidu 用 bbox 模式近似",
-               "limit": "返回结果数量，默认 50",
+               "polygon": "闭合多边形坐标列表 [[lng,lat],...]，或 4 元素 bbox [w,s,e,n]，或 GeoJSON 要素引用(ref:xxx)",
+               "keyword": "搜索关键词，如'咖啡'",
+               "types": "POI 类型，如'餐饮服务'",
+               "provider": "服务商: 'amap'(默认), 'baidu'",
+               "limit": "返回数量限制，默认 50",
            })
     async def search_poi_polygon(
-        polygon: list,
+        polygon: Any,
         keyword: str = "",
         types: str = "",
         provider: str = "amap",
         limit: int = 50,
     ) -> dict:
-        if not polygon or len(polygon) < 3:
-            return {"error": "polygon 至少 3 个 [lng,lat] 点，或一个 4 元素 bbox [west,south,east,north]"}
+        if not polygon:
+            return {"error": "polygon 参数不能为空"}
+
+        target_poly = []
+
+        # 处理 GeoJSON 或引用解析后的 dict
+        if isinstance(polygon, dict):
+            # 尝试从 FeatureCollection 或 Feature 中提取多边形
+            features = polygon.get("features", []) if polygon.get("type") == "FeatureCollection" else [polygon]
+            for f in features:
+                geom = f.get("geometry") or {}
+                if geom.get("type") in ("Polygon", "MultiPolygon"):
+                    # 取第一个多边形的外环作为搜索范围（API 限制）
+                    coords = geom["coordinates"]
+                    ring = coords[0] if geom["type"] == "Polygon" else coords[0][0]
+                    target_poly = ring
+                    break
+            if not target_poly:
+                return {"error": "无法从输入数据中提取有效的多边形边界"}
+        elif isinstance(polygon, list):
+            # bbox 形式 → 转 4 点多边形
+            if len(polygon) == 4 and all(isinstance(v, (int, float)) for v in polygon):
+                w, s, e, n = polygon
+                target_poly = [[w, s], [e, s], [e, n], [w, n]]
+            else:
+                target_poly = polygon
+        else:
+            return {"error": f"不支持的多边形格式: {type(polygon)}"}
+
+        if len(target_poly) < 3:
+            return {"error": "多边形至少需要 3 个坐标点"}
+
         if not keyword and not types:
             return {"error": "keyword 与 types 至少提供一个"}
-        if provider not in ("amap", "baidu"):
-            return {"error": "provider 必须是 'amap' 或 'baidu'"}
-
-        # bbox 形式 → 转 4 点多边形
-        if len(polygon) == 4 and all(isinstance(v, (int, float)) for v in polygon):
-            w, s, e, n = polygon
-            polygon = [[w, s], [e, s], [e, n], [w, n]]
 
         _dispatch = {"amap": _search_poi_polygon_amap, "baidu": _search_poi_polygon_baidu}
         for p in _fallback_order(provider, exclude={"tianditu"}):
             if not _has_provider(p):
                 continue
             try:
-                return await _dispatch[p](polygon, keyword, types, limit)
+                return await _dispatch[p](target_poly, keyword, types, limit)
             except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
                 logger.warning(f"search_poi_polygon {p} failed: {e}")
         return {"error": "未配置高德或百度 API Key"}
@@ -555,6 +579,79 @@ def register_chinese_map_tools(registry: ToolRegistry):
 
         return await _district_tianditu_v2(keywords, child_level, extensions == "all")
 
+    @tool(registry, name="get_child_districts",
+           description="获取下级行政区列表及轮廓。例如『获取成都市的所有区县边界』或『获取锦江区的所有街道边界』。比多次调用 get_district 更高效。",
+           param_descriptions={
+               "keywords": "父级行政区名称，如'成都市'、'锦江区'",
+               "return_geometry": "返回几何类型: 'point'(默认), 'polygon'(返回下级单位的完整轮廓)",
+               "provider": "服务商: 'amap'(默认), 'tianditu'",
+           })
+    async def get_child_districts(keywords: str, return_geometry: str = "point", provider: str = "amap") -> dict:
+        """获取下级行政区的列表及几何边界"""
+        if not keywords:
+            return {"error": "keywords 不能为空"}
+            
+        if provider == "tianditu" or not _has_provider("amap"):
+            # 天地图 V2 本身就支持返回下级，且支持 polygon
+            return await _district_tianditu_v2(keywords, child_level=1, return_polygon=(return_geometry == "polygon"))
+        
+        # 高德方案：先获取下级名称列表，然后（如果是 polygon 模式）并发获取每个下级的边界
+        params = {"keywords": keywords, "subdistrict": "1", "extensions": "base"}
+        data = await _amap_get("/config/district", params)
+        if "error" in data: return data
+        
+        districts = data.get("districts", [])
+        if not districts: return {"error": f"未找到 '{keywords}' 的下级行政区"}
+        
+        sub_units = districts[0].get("districts", [])
+        if not sub_units: return {"error": f"'{keywords}' 没有更细分的下级单位"}
+        
+        if return_geometry == "point":
+            features = []
+            for s in sub_units:
+                loc = s.get("center", "").split(",")
+                if len(loc) == 2:
+                    lng, lat = gcj02_to_wgs84(float(loc[0]), float(loc[1]))
+                    features.append({
+                        "type": "Feature",
+                        "geometry": {"type": "Point", "coordinates": [lng, lat]},
+                        "properties": {"name": s.get("name"), "adcode": s.get("adcode"), "level": s.get("level")}
+                    })
+            return {"type": "FeatureCollection", "features": features, "count": len(features), "provider": "amap"}
+        
+        # Polygon 模式：并发请求每个子级的边界
+        import asyncio
+        tasks = []
+        for s in sub_units:
+            name = s.get("name")
+            if name:
+                tasks.append(_district_amap(name, level=s.get("level", "district"), return_geometry="polygon"))
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        all_features = []
+        for r in results:
+            if isinstance(r, dict) and "features" in r:
+                all_features.extend(r["features"])
+        
+        return {
+            "type": "FeatureCollection", 
+            "features": all_features, 
+            "count": len(all_features), 
+            "provider": "amap",
+            "parent": keywords
+        }
+
+
+    @tool(registry, name="get_sub_districts_polygons",
+           description="获取指定区域下属所有子单位的边界轮廓。例如『获取锦江区下属所有街道的边界』。适合做街道级空间统计。",
+           param_descriptions={
+               "keywords": "行政区名称，如'锦江区'、'成都市'",
+               "provider": "服务商: 'amap'(默认), 'tianditu'",
+           })
+    async def get_sub_districts_polygons(keywords: str, provider: str = "amap") -> dict:
+        """获取下级行政区的多边形边界"""
+        # 封装 get_child_districts 的 polygon 模式，更方便 AI 发现和调用
+        return await get_child_districts(keywords, return_geometry="polygon", provider=provider)
 
 # ── Provider-specific helper functions ──────────────────────────
 
@@ -800,9 +897,8 @@ async def _route_baidu(origin: list, dest: list, mode: str, city: str) -> dict:
 
 async def _district_amap(keywords: str, level: str, return_geometry: str = "point") -> dict:
     params = {"keywords": keywords, "subdistrict": "1", "extensions": "all" if return_geometry == "polygon" else "base"}
-    level_map = {"country": "0", "province": "1", "city": "2", "district": "3"}
-    if level in level_map:
-        params["subdistrict"] = level_map[level]
+    # subdistrict 参数含义：0:不返回下级, 1:返回下级, 2:返回下级及其下级, 3:返回下级及其下级及其下级
+    # 我们默认设为 1 以便用户能看到下级行政区列表
     data = await _amap_get("/config/district", params)
     if "error" in data:
         return data
@@ -993,75 +1089,75 @@ async def _district_tianditu_v2(keywords: str, child_level: int, return_polygon:
         districts = [districts]
         
     features = []
-    children = []
     
-    for d in districts:
-        props = {
-            "name": d.get("name", ""),
-            "cityCode": d.get("cityCode", ""),
-            "level": d.get("adminType", ""),
-            "bound": d.get("bound", ""),
-        }
-        
-        # 处理边界轮廓 (points 字段)
-        geometry = None
-        points_str = d.get("points", "")
-        if return_polygon and points_str:
-            try:
-                # 天地图格式: "lng1,lat1,lng2,lat2;lng3,lat3..." 
-                # 或多面格式: "p1;p2|p3;p4"
-                polygons = []
-                for poly_str in points_str.split("|"):
-                    coords = []
-                    for pair in poly_str.split(";"):
-                        parts = pair.split(",")
-                        if len(parts) >= 2:
-                            coords.append([float(parts[0]), float(parts[1])])
-                    if len(coords) >= 3:
-                        # 闭合环
-                        if coords[0] != coords[-1]:
-                            coords.append(coords[0])
-                        polygons.append([coords])
-                
-                if len(polygons) == 1:
-                    geometry = {"type": "Polygon", "coordinates": polygons[0]}
-                elif len(polygons) > 1:
-                    geometry = {"type": "MultiPolygon", "coordinates": polygons}
-            except Exception as e:
-                logger.warning(f"Failed to parse Tianditu polygon for {keywords}: {e}")
+    def _parse_points(points_str):
+        if not points_str: return None
+        try:
+            polygons = []
+            for poly_str in points_str.split("|"):
+                coords = []
+                for pair in poly_str.split(";"):
+                    parts = pair.split(",")
+                    if len(parts) >= 2:
+                        coords.append([float(parts[0]), float(parts[1])])
+                if len(coords) >= 3:
+                    if coords[0] != coords[-1]:
+                        coords.append(coords[0])
+                    polygons.append([coords])
+            if not polygons: return None
+            if len(polygons) == 1:
+                return {"type": "Polygon", "coordinates": polygons[0]}
+            return {"type": "MultiPolygon", "coordinates": polygons}
+        except Exception:
+            return None
 
-        # 如果没有面，回退到点
-        if not geometry:
-            lng = float(d.get("lnt", 0))
-            lat = float(d.get("lat", 0))
-            geometry = {"type": "Point", "coordinates": [lng, lat]}
+    for d in districts:
+        # 主项
+        main_geom = _parse_points(d.get("points", ""))
+        if not main_geom:
+            lng, lat = float(d.get("lnt", 0)), float(d.get("lat", 0))
+            main_geom = {"type": "Point", "coordinates": [lng, lat]}
             
         features.append({
             "type": "Feature",
-            "geometry": geometry,
-            "properties": props,
+            "geometry": main_geom,
+            "properties": {
+                "name": d.get("name", ""),
+                "cityCode": d.get("cityCode", ""),
+                "level": d.get("adminType", ""),
+                "is_parent": True
+            },
         })
         
-        # 下级行政区
+        # 下级项 (如果存在且 child_level > 0)
         if child_level > 0:
             child_data = d.get("child", [])
             for c in child_data:
-                children.append({
-                    "name": c.get("name", ""),
-                    "cityCode": c.get("cityCode", ""),
-                    "location": [float(c.get("lnt", 0)), float(c.get("lat", 0))]
+                # 注意：天地图 child 节点通常不带 points，除非 searchType 设为特定值
+                # 这里我们先尝试解析，如果没有则存为点
+                c_geom = _parse_points(c.get("points", ""))
+                if not c_geom:
+                    c_lng, c_lat = float(c.get("lnt", 0)), float(c.get("lat", 0))
+                    c_geom = {"type": "Point", "coordinates": [c_lng, c_lat]}
+                
+                features.append({
+                    "type": "Feature",
+                    "geometry": c_geom,
+                    "properties": {
+                        "name": c.get("name", ""),
+                        "cityCode": c.get("cityCode", ""),
+                        "level": c.get("adminType", ""),
+                        "is_child": True,
+                        "parent_name": d.get("name")
+                    }
                 })
 
-    res = {
+    return {
         "type": "FeatureCollection",
         "features": features,
         "count": len(features),
         "provider": "tianditu",
     }
-    if children:
-        res["children"] = children
-        
-    return res
 
 
 async def _district_tianditu(keywords: str, level: str, return_geometry: str = "point") -> dict:

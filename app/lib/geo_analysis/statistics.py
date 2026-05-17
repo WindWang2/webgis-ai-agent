@@ -363,3 +363,77 @@ def calculate_central_feature(geojson: dict, method: str = "mean_center") -> Geo
         "properties": {"method": method, "summary": summary}
     }
     return GeoAnalysisResult(True, data, summary)
+
+def cluster_narrated(
+    geojson: dict,
+    method: str = "dbscan",
+    n_clusters: int = 5,
+    eps: float = 1000,
+    min_samples: int = 5,
+    value_field: str = ""
+) -> GeoAnalysisResult:
+    """
+    Perform spatial clustering (DBSCAN or K-Means) with narrative summary.
+    """
+    try:
+        from sklearn.cluster import DBSCAN, KMeans
+        from sklearn.preprocessing import StandardScaler
+    except ImportError:
+        return GeoAnalysisResult(False, None, "scikit-learn not installed")
+
+    res = to_utm_gdf(geojson)
+    if not res:
+        return GeoAnalysisResult(False, None, "Invalid input or no features found")
+    
+    gdf, utm_crs = res
+    if len(gdf) < 3:
+        return GeoAnalysisResult(False, None, "At least 3 features required for clustering")
+
+    coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
+
+    if value_field:
+        vals = _extract_numeric_values(gdf, value_field)
+        if vals is None:
+            return GeoAnalysisResult(False, None, f"Field '{value_field}' is not numeric")
+        scaler = StandardScaler()
+        vals_scaled = scaler.fit_transform(vals.reshape(-1, 1))
+        features = np.column_stack([coords, vals_scaled])
+    else:
+        features = coords
+
+    if method == "kmeans":
+        model = KMeans(n_clusters=min(n_clusters, len(gdf)), random_state=42, n_init=10)
+        labels = model.fit_predict(features)
+        summary = f"K-Means clustering identified {len(set(labels))} groups."
+    else:
+        model = DBSCAN(eps=eps, min_samples=min_samples)
+        labels = model.fit_predict(features)
+        n_clusters_found = len(set(labels)) - (1 if -1 in labels else 0)
+        n_noise = list(labels).count(-1)
+        summary = f"DBSCAN identified {n_clusters_found} clusters and {n_noise} noise points."
+
+    out_features = []
+    for i, row in gdf.iterrows():
+        geom_wgs84 = gpd.GeoSeries([row.geometry], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
+        props = {k: v for k, v in row.items() if k != "geometry"}
+        props["cluster_id"] = int(labels[i])
+        out_features.append({
+            "type": "Feature",
+            "geometry": mapping(geom_wgs84),
+            "properties": props,
+        })
+
+    cluster_counts = {}
+    for l in labels:
+        l_str = str(int(l))
+        cluster_counts[l_str] = cluster_counts.get(l_str, 0) + 1
+
+    data_out = {
+        "type": "FeatureCollection",
+        "features": out_features,
+        "cluster_stats": cluster_counts,
+        "method": method,
+        "n_clusters": len(set(labels)) - (1 if -1 in labels else 0),
+    }
+
+    return GeoAnalysisResult(True, data_out, summary)
