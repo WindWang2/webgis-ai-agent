@@ -20,3 +20,9 @@ export interface ThematicStyleDef {
   categories?: Record<string, string>;
   geometry_type?: 'Polygon' | 'Point';
 }
+
+export interface GeoAnalysisResult {
+  success: boolean;
+  data: any;
+  summary: string;
+}

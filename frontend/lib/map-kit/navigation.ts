@@ -1,5 +1,5 @@
 import type { Map, FlyToOptions, FitBoundsOptions } from 'maplibre-gl';
-import type { ViewportParams } from './types';
+import type { ViewportParams, GeoAnalysisResult } from './types';
 
 /**
  * Validates a coordinate pair [lng, lat].
@@ -107,4 +107,63 @@ export function calculateBBox(geojson: any): [number, number, number, number] | 
   });
 
   return bounds as [number, number, number, number];
+}
+
+/**
+ * Calculates the distance between two points in kilometers using Haversine formula.
+ */
+export function haversineDistance(coord1: [number, number], coord2: [number, number]): number {
+  const R = 6371; // Radius of the Earth in km
+  const [lon1, lat1] = coord1;
+  const [lon2, lat2] = coord2;
+
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+/**
+ * Measures distance or area on the map.
+ * Returns a summary of the measurement.
+ */
+export function measure(
+  map: Map,
+  coords: [number, number][],
+  type: 'distance' | 'area' = 'distance'
+): GeoAnalysisResult {
+  if (coords.length < 2) {
+    return {
+      success: false,
+      data: 0,
+      summary: "At least two points are required for measurement."
+    };
+  }
+
+  if (type === 'distance') {
+    let totalDistance = 0;
+    for (let i = 0; i < coords.length - 1; i++) {
+      totalDistance += haversineDistance(coords[i], coords[i + 1]);
+    }
+
+    const summary = `Total distance: ${totalDistance.toFixed(2)} km`;
+    return {
+      success: true,
+      data: totalDistance,
+      summary
+    };
+  }
+
+  // Basic area measurement is not implemented without turf
+  return {
+    success: false,
+    data: 0,
+    summary: `Measurement type '${type}' is not yet supported.`
+  };
 }
