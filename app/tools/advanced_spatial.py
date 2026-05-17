@@ -60,12 +60,70 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            description="计算矢量区域内的栅格数据统计信息（如平均值、总和等）。",
            args_model=ZonalStatsArgs)
     def zonal_stats(geojson: Any, raster_path: str) -> dict:
+        from app.lib.geo_analysis.raster_ops import zonal_statistics
         data = safe_parse_geojson(geojson)
         features = data.get("features", [])
-        # Note: SpatialAnalyzer.zonal_statistics is not fully implemented in the thin wrapper yet, 
-        # but let's keep the tool definition calling it.
-        from app.lib.geo_processor.core import GeoAnalysisResult
-        return GeoAnalysisResult(False, None, "Zonal statistics not yet implemented").to_llm_response()
+        
+        # Ensure we have a valid FeatureCollection for rasterstats
+        fc = {"type": "FeatureCollection", "features": features}
+        stats = zonal_statistics(fc, raster_path)
+        
+        # Merge stats back into features
+        for i, s in enumerate(stats):
+            if i < len(features):
+                features[i]["properties"].update(s)
+        
+        summary = f"Computed zonal statistics for {len(features)} zones against raster {raster_path}."
+        return {
+            "type": "FeatureCollection",
+            "features": features,
+            "summary": summary,
+            "stats_metadata": {"raster": raster_path}
+        }
+
+    @tool(registry, name="idw_interpolation",
+           description="反距离加权插值(IDW)：将离散采样点转换为连续的 H3 六边形网格表面。适用于气象、污染等连续变量建模。",
+           param_descriptions={
+               "geojson": "输入点要素集 GeoJSON 或引用(ref:xxx)",
+               "value_field": "用于插值的数值字段名",
+               "resolution": "H3 分辨率（6-9），默认 8",
+               "power": "距离权重幂次，默认 2",
+           })
+    def idw_interpolation(geojson: Any, value_field: str, resolution: int = 8, power: int = 2) -> dict:
+        from app.lib.geo_analysis.interpolation import idw_interpolation as _idw_interpolation
+        data = safe_parse_geojson(geojson)
+        # Use the H3-based IDW implementation
+        results = _idw_interpolation(data, value_field, resolution, power)
+        
+        # Convert H3 results to GeoJSON Features
+        import h3
+        from shapely.geometry import Polygon, mapping
+        features = []
+        for res in results:
+            cell = res["h3_index"]
+            val = res["value"]
+            boundary = h3.cell_to_boundary(cell) # [(lat, lng), ...]
+            # Shapely expects [(lng, lat), ...]
+            poly_coords = [(lng, lat) for lat, lng in boundary]
+            features.append({
+                "type": "Feature",
+                "geometry": mapping(Polygon(poly_coords)),
+                "properties": {
+                    "h3_index": cell,
+                    value_field: round(val, 4)
+                }
+            })
+            
+        return {
+            "type": "FeatureCollection",
+            "features": features,
+            "summary": f"Generated IDW interpolation surface with {len(features)} H3 cells (res={resolution}).",
+            "metadata": {
+                "method": "IDW",
+                "h3_resolution": resolution,
+                "value_field": value_field
+            }
+        }
 
     @tool(registry, name="overlay_analysis",
            description="对两个几何图层进行空间叠加分析（如求交、合并、擦除等），返回结果及其统计信息",

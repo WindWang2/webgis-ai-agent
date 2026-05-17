@@ -276,3 +276,17 @@ def register_spatial_tools(registry: ToolRegistry):
         if "dense" in error_msg.lower() or "resolution" in error_msg.lower():
             raise ValueError(error_msg)
         raise RuntimeError(error_msg)
+
+    @tool(registry, name="query_map_features",
+           description="地图要素探查：在指定坐标位置查询地图上已有的要素详情。适合用户询问『这个点是什么』或需要获取特定要素属性时使用。",
+           param_descriptions={
+               "location": "查询位置经纬度 [lng, lat]",
+               "buffer_m": "查询半径（米），默认 10",
+           })
+    def query_map_features(location: List[float], buffer_m: float = 10) -> dict:
+        return {
+            "command": "query_features",
+            "location": location,
+            "buffer_m": buffer_m,
+            "summary": f"Initiated feature query at {location} within {buffer_m}m."
+        }
