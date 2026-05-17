@@ -173,3 +173,17 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         data = safe_parse_geojson(geojson)
         res = SpatialAnalyzer.buffer(data.get("features", []), distance=distance_m, unit="m", dissolve=dissolve)
         return res.to_llm_response()
+
+    @tool(registry, name="h3_binning",
+           description="H3网格聚合：将点数据聚合到指定分辨率的H3六边形网格中（代替传统的鱼网格网）。适用于生成高性能的点密度分布数据驱动渲染。",
+           param_descriptions={
+               "geojson": "点要素集 GeoJSON 或引用(ref:xxx)",
+               "resolution": "H3分辨率（通常 6 到 9 之间，越大网格越小），例如 8",
+               "stat_field": "可选：参与统计的字段名",
+               "stat_method": "统计方法，如 'count'（默认）, 'sum', 'mean'",
+           })
+    def h3_binning(geojson: Any, resolution: int = 8, stat_field: str = None, stat_method: str = 'count') -> dict:
+        from app.lib.geo_analysis.aggregation import h3_binning as _h3_binning
+        data = safe_parse_geojson(geojson)
+        res = _h3_binning(data, resolution, stat_field, stat_method)
+        return res.to_llm_response()

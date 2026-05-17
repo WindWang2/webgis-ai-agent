@@ -4,7 +4,8 @@ import {
   addVectorLayer, 
   addNativeHeatmap, 
   removeLayerStack, 
-  updateLayerStyle 
+  updateLayerStyle,
+  addThematicLayer
 } from './renderer';
 
 describe('renderer', () => {
@@ -22,6 +23,74 @@ describe('renderer', () => {
       setPaintProperty: vi.fn(),
       getStyle: vi.fn(() => ({ layers: [] })),
     };
+  });
+
+  describe('addThematicLayer', () => {
+    it('should construct a step expression for choropleth polygons', () => {
+      mapMock.getLayer.mockReturnValue(undefined);
+      addThematicLayer(mapMock, 'thematic-layer', { type: 'FeatureCollection', features: [] }, {
+        type: 'choropleth',
+        field: 'value',
+        breaks: [10, 20],
+        colors: ['#f00', '#0f0', '#00f'],
+        geometry_type: 'Polygon'
+      });
+
+      expect(mapMock.addLayer).toHaveBeenCalledWith({
+        id: 'thematic-layer',
+        type: 'fill',
+        source: 'thematic-layer',
+        layout: {},
+        paint: {
+          'fill-color': ['step', ['get', 'value'], '#f00', 10, '#0f0', 20, '#00f'],
+          'fill-opacity': 0.8
+        }
+      }, undefined);
+    });
+
+    it('should construct a step expression for choropleth points', () => {
+      mapMock.getLayer.mockReturnValue(undefined);
+      addThematicLayer(mapMock, 'thematic-layer-pts', { type: 'FeatureCollection', features: [] }, {
+        type: 'choropleth',
+        field: 'density',
+        breaks: [5],
+        colors: ['#111', '#222'],
+        geometry_type: 'Point'
+      });
+
+      expect(mapMock.addLayer).toHaveBeenCalledWith({
+        id: 'thematic-layer-pts',
+        type: 'circle',
+        source: 'thematic-layer-pts',
+        layout: {},
+        paint: {
+          'circle-color': ['step', ['get', 'density'], '#111', 5, '#222'],
+          'circle-radius': 6,
+          'circle-opacity': 0.8
+        }
+      }, undefined);
+    });
+
+    it('should construct a match expression for lisa polygons', () => {
+      mapMock.getLayer.mockReturnValue(undefined);
+      addThematicLayer(mapMock, 'lisa-layer', { type: 'FeatureCollection', features: [] }, {
+        type: 'lisa',
+        field: 'cluster',
+        categories: { 'HH': '#red', 'LL': '#blue' },
+        geometry_type: 'Polygon'
+      });
+
+      expect(mapMock.addLayer).toHaveBeenCalledWith({
+        id: 'lisa-layer',
+        type: 'fill',
+        source: 'lisa-layer',
+        layout: {},
+        paint: {
+          'fill-color': ['match', ['get', 'cluster'], 'HH', '#red', 'LL', '#blue', '#cccccc'],
+          'fill-opacity': 0.8
+        }
+      }, undefined);
+    });
   });
 
   describe('addGeoJsonSource', () => {

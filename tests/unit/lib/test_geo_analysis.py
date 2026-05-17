@@ -1,6 +1,6 @@
 import pytest
 import json
-from app.lib.geo_analysis.statistics import calculate_sde, moran_i_narrated, hotspot_narrated
+from app.lib.geo_analysis.statistics import calculate_sde, moran_i_narrated, hotspot_narrated, h3_lisa
 from app.lib.geo_analysis.aggregation import spatial_aggregate, generate_fishnet, h3_binning
 from app.lib.geo_analysis.network import calculate_isochrones
 from app.lib.geo_processor.core import GeoAnalysisResult
@@ -97,3 +97,55 @@ def test_h3_binning(sample_points):
     assert result_sum.success is True
     assert "sum" in result_sum.data["features"][0]["properties"]
 
+
+def test_h3_lisa():
+    # Create a grid of hexes via points
+    import h3
+    center = h3.latlng_to_cell(39.9, 116.39, 8)
+    hexes = h3.grid_disk(center, 4)
+    
+    # Give the central hexes high values, outer hexes low values
+    features = []
+    for h in hexes:
+        dist = h3.grid_distance(center, h)
+        boundary = h3.cell_to_boundary(h)
+        if dist <= 1:
+            val = 100 + (int(h, 16) % 5)
+        elif dist == 2:
+            val = 50 + (int(h, 16) % 5)
+        else:
+            val = 10 + (int(h, 16) % 5)
+            
+        # Flip coordinates from lat/lng to lng/lat for GeoJSON
+        coords = [[ [lng, lat] for lat, lng in boundary ]]
+        # Close the polygon
+        coords[0].append(coords[0][0])
+        
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": coords
+            },
+            "properties": {
+                "h3_index": h,
+                "value": val
+            }
+        })
+        
+    fc = {
+        "type": "FeatureCollection",
+        "features": features
+    }
+    
+    result = h3_lisa(fc, "value")
+    
+    assert isinstance(result, GeoAnalysisResult)
+    assert result.success is True
+    
+    # We should have High-High and Low-Low clusters
+    clusters = [f["properties"]["lisa_cluster"] for f in result.data["features"]]
+    
+    assert "HH" in clusters
+    assert "LL" in clusters
+    assert "summary" in result.__dict__ or "summary" in dir(result)
