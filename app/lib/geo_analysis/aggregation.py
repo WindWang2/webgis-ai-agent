@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 from shapely.geometry import box, Polygon, mapping
-from app.lib.geoprocessing.interface import GeoAnalysisResult
+from app.lib.geo_processor.core import GeoAnalysisResult
 from app.lib.geo_processor.core import to_utm_gdf
 
 def generate_fishnet(bounds, cell_size, type='square'):
@@ -130,3 +130,6 @@ def spatial_aggregate(points_geojson, polygons_geojson, stats=['count', 'sum', '
             data=None,
             summary=f"Aggregation failed: {str(e)}"
         )
+
+# Alias for backward compatibility with plan
+aggregate_points_to_polygons = spatial_aggregate

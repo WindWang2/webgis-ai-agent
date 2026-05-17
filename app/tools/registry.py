@@ -6,7 +6,7 @@ from typing import Any, Callable, Optional, Type, Dict, List
 from pydantic import BaseModel, create_model, ValidationError
 
 from app.services.session_data import session_data_manager
-from app.lib.geoprocessing.interface import GeoAnalysisResult
+from app.lib.geo_processor.core import GeoAnalysisResult
 
 logger = logging.getLogger(__name__)
 
