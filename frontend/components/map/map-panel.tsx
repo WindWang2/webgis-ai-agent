@@ -8,6 +8,7 @@ import type { GeoJSONFeatureCollection, HeatmapRasterSource } from "@/lib/types"
 import { MapActionHandler } from "./map-action-handler"
 import { ThematicLegend } from "./thematic-legend"
 import { useHudStore, type HudState } from "@/lib/store/useHudStore"
+import * as renderer from "@/lib/map-kit/renderer"
 
 interface MapPanelProps {
   layers: Layer[]
@@ -173,25 +174,16 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
           const isNewSource = !map.getSource(sourceId)
 
           try {
-            if (isNewSource) {
-              if (layer.type === "raster" || layer.type === "tile") {
+            if (layer.type === "raster" || layer.type === "tile") {
+              if (!map.getSource(sourceId)) {
                 map.addSource(sourceId, { type: "raster", tiles: [layer.source as string], tileSize: 256 })
-              } else if (layer.type === "heatmap" && isHeatmapRasterSource(layer.source)) {
-                const src = layer.source as HeatmapRasterSource
-                const [west, south, east, north] = src.bbox
-                map.addSource(sourceId, {
-                  type: "image",
-                  url: src.image,
-                  coordinates: [[west, north], [east, north], [east, south], [west, south]],
-                })
-              } else {
-                map.addSource(sourceId, { type: "geojson", data: layer.source as any })
               }
+            } else if (layer.type === "heatmap" && isHeatmapRasterSource(layer.source)) {
+              const src = layer.source as HeatmapRasterSource
+              const [west, south, east, north] = src.bbox
+              renderer.addImageSource(map, sourceId, src.image, [[west, north], [east, north], [east, south], [west, south]])
             } else {
-              if (layer.type !== "raster" && layer.type !== "tile" && !(layer.type === "heatmap" && isHeatmapRasterSource(layer.source))) {
-                const src = map.getSource(sourceId) as any
-                if (src && src.setData) src.setData(layer.source)
-              }
+              renderer.addGeoJsonSource(map, sourceId, layer.source as any)
             }
 
             const color = layer.style?.color || "#16a34a"
