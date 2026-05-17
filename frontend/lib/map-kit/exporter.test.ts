@@ -44,8 +44,12 @@ describe('exporter', () => {
         rotate: vi.fn(),
         arcTo: vi.fn(),
         measureText: vi.fn(() => ({ width: 100 })),
-        set font(val: string) {},
-        set fillStyle(val: string) {},
+        _fillStyle: '',
+        set fillStyle(val: string) { this._fillStyle = val; },
+        get fillStyle() { return this._fillStyle; },
+        _font: '',
+        set font(val: string) { this._font = val; },
+        get font() { return this._font; },
         set strokeStyle(val: string) {},
         set lineWidth(val: number) {},
         set textAlign(val: string) {},
@@ -79,17 +83,14 @@ describe('exporter', () => {
       expect(ctx.fillText).toHaveBeenCalledWith('Test Subtitle', expect.any(Number), expect.any(Number));
     });
 
-    it('should draw legend when thematicLayer is provided', () => {
+    it('should draw legend when thematicLayer is provided as a ThematicStyleDef', () => {
       const options = {
         showLegend: true,
         thematicLayer: {
-          source: {
-            metadata: {
-              field: 'population',
-              breaks: [0, 100, 200],
-              palette: 'YlOrRd'
-            }
-          }
+          type: 'choropleth',
+          field: 'population',
+          colors: ['#000', '#fff'],
+          legend_labels: ['0 - 100', '100 - 200']
         },
         dpi: 96,
       };
@@ -97,6 +98,8 @@ describe('exporter', () => {
       composeLayout(canvas, 'Title', undefined, options);
 
       expect(ctx.fillText).toHaveBeenCalledWith(expect.stringContaining('population'), expect.any(Number), expect.any(Number));
+      expect(ctx.fillText).toHaveBeenCalledWith('0 - 100', expect.any(Number), expect.any(Number));
+      expect(ctx.fillText).toHaveBeenCalledWith('100 - 200', expect.any(Number), expect.any(Number));
     });
   });
 
