@@ -35,11 +35,11 @@ def run_buffer_analysis(self, features: List[Dict], distance: float, unit: str =
         return {
             "success": True, 
             "data": result.data, 
-            "stats": result.stats,
-            "status_desc": f"已完成缓冲区分析：距离 {distance} {unit}。"
+            "summary": result.summary,
+            "status_desc": result.summary
         }
     else:
-        return {"success": False, "error": result.error_message}
+        return {"success": False, "error": result.summary}
 
 @celery_app.task(name="app.services.spatial_tasks.run_spatial_stats", bind=True)
 def run_spatial_stats(self, features: List[Dict]):
