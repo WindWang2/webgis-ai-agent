@@ -67,6 +67,13 @@ def test_generate_fishnet():
     assert result.success is True
     assert len(result.data["features"]) > 0
 
+def test_h3_binning_auto_resolution(sample_points):
+    # Test with resolution=None, should auto-select
+    result = h3_binning(sample_points, resolution=None)
+    assert result.success is True
+    assert "resolution" in result.summary.lower()
+    assert len(result.data["features"]) > 0
+
 def test_calculate_isochrones(sample_points):
     # Mock network
     network = {
