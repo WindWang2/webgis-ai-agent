@@ -114,6 +114,17 @@ def _slim_tool_result(result: any, result_str: str, session_geojson_ref: str | N
     """将大型工具结果压缩为 LLM 友好的摘要版本。
     完整 GeoJSON 已通过 SSE 推送给前端，messages 里只保留摘要。
     """
+    # 针对新版 GeoAnalysisResult 的特殊处理：如果包含 summary，优先保留它
+    if isinstance(result, dict) and "summary" in result:
+        slim = {"summary": result["summary"]}
+        if session_geojson_ref:
+            slim["ref_id"] = session_geojson_ref
+        if "error_type" in result and result["error_type"]:
+            slim["error_type"] = result["error_type"]
+        if "correction_hint" in result and result["correction_hint"]:
+            slim["correction_hint"] = result["correction_hint"]
+        return json.dumps(slim, ensure_ascii=False)
+
     if len(result_str) <= _MSG_MAX_CHARS:
         return result_str
 
@@ -1208,18 +1219,28 @@ SYSTEM_PROMPT = """你是一名 WebGIS 空间分析助手。用户与一张 MapL
 
 - **工具优先**：所有空间数据必须来自工具，不要编造坐标、面积、统计数字或图层 ID。
 - **由简入深（核心原则）**：面对用户的宽泛请求（如"分布情况"、"看一看某地"），优先使用搜索/查询工具获取数据并直接可视化点位。**不要在第一轮对话中就堆叠多个重型空间统计工具（如 KDE、Moran's I 等）**，除非用户明确要求"深度分析"或"密度建模"。
-- **数据优先（中国区域）**：对于涉及**中国境内**的行政区划查询、地址定位及 POI 搜索，**必须优先使用 `get_admin_division` (天地图)、`geocode_cn` 及 `search_poi(provider='amap')` 等中文优化工具**。只有在中国境外或需要获取 OSM 独有属性时才考虑使用 OSM/Overpass 工具。
-- **鲁棒执行（边界获取）**：如果 `get_admin_division` (天地图) 失败（如报错 418），**必须立即尝试使用 `get_district(return_geometry='polygon')` (高德) 作为备选**。不要在同一个失败工具上循环调用。
-- **数据游标**：工具产生的数据通过 `ref:xxx` 引用传递。生成新图层后立刻 `alias_layer` 设个语义别名，下一步直接用别名引用。
+- **精准分析（Precision Protocol）**：涉及特定行政区（如"锦江区"）时，必须：
+    1. **获取边界**：使用 `get_admin_division` (天地图) 或 `get_district` (高德) 获取该区 GeoJSON 边界。
+    2. **精准获取数据**：使用 `search_poi_polygon` 在边界内搜索，或获取全城数据后立即调用 `clip_layer` 将结果裁剪至该区范围内。
+    3. **分析与洞察**：对裁剪后的精准数据进行统计或空间分析。
+- **层级化思考（Thinking in Layers）**：
+    - 将分析分解为：原始点层 -> 衍生分析层 (如缓冲区/热力) -> 统计结果层 (图表)。
+    - 完成分析后，及时使用 `set_layer_status` 隐藏中间过渡层。
+- **基于洞察叙述**：工具返回的 `summary` 是你回答的核心。不要只复述"已完成工具调用"，要将 summary 里的关键发现（如"99% 置信度聚集"）融入到给用户的自然语言回复中。
+- **数据优先（中国区域）**：对于涉及**中国境内**的行政区划查询、地址定位及 POI 搜索，**必须优先使用 `get_admin_division` (天地图)、`geocode_cn` 及 `search_poi(provider='amap')` 等中文优化工具**。
 
 ## 分析方法选择
 
 按问题深度与数据类型选择方法：
 
-- **行政区划轮廓**：查询省、市、区/县及其轮廓，首选 `get_admin_division` (天地图)；若失败则换用 `get_district(return_geometry='polygon')` (高德)。
-- **基础分布可视化**：直接搜索要素添加点图层。点数过多（>500）时，改用 `heatmap_data(render_type="raster")` 进行热力图渲染。
-- **空间聚集性检验**：用户询问"是否聚集"、"有没有规律"时，用 `moran_i` 或 `hotspot_analysis`。若由于后端依赖（如 Redis）导致统计工具不可用，**不要反复重试**，应直接告知用户由于系统暂时受限，改用热力图（Heatmap）进行视觉化分析。
-- **单次任务上限**：单轮对话内工具调用尽量控制在 5 次以内。如果已获取足够回答问题的数据，应立即停止调用并给出洞察，不要追求“完美覆盖”。
+- **行政区划轮廓**：首选 `get_admin_division` (天地图)；若失败则换用 `get_district(return_geometry='polygon')` (高德)。
+- **空间分布热度**：
+    - 快速看趋势：用 `heatmap_data(render_type="native")` 原生渲染。
+    - 深入制图/导出：用 `kde_contours` 生成矢量等值面。
+- **区域统计（POI 计数）**：要统计各区内的 POI 数量，使用 `spatial_aggregate(points, polygons)`。
+- **选址/中心分析**：寻找点群的中心位置，使用 `central_feature`。
+- **空间聚集性检验**：用户询问"是否聚集"时，用 `moran_i` 或 `hotspot_analysis`。
+- **单次任务上限**：单轮对话内工具调用尽量控制在 5 次以内。优先给出核心结果和洞察。
 - **密度建模与选址基础**：需要生成连续概率面或为后续叠加分析做准备时，用 `kde_surface`。注意：`kde_surface` 生成的是覆盖全域的格网要素，默认不建议作为首选可视化方式。
 - **缓冲/服务区**：固定半径用 `buffer_analysis`；多环带用 `multi_ring_buffer`；可达性分析用 `service_area`。
 - **属性筛选**：用 `attribute_filter`。
