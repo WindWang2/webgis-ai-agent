@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
 from app.services.spatial_analyzer import SpatialAnalyzer
+from app.lib.geoprocessing.geometry import buffer_smart as _buffer_smart
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ class HeatmapDataArgs(BaseModel):
 
 def _generate_heatmap(features: list, cell_size: int = 500, radius: int = 1000,
                        render_type: str = "raster", palette: str = "classic") -> dict:
+# ... (keeping existing _generate_heatmap)
     """Generate heatmap data without Celery. Supports raster and grid render types."""
     import base64
     import io
@@ -247,25 +249,10 @@ def register_spatial_tools(registry: ToolRegistry):
         data = _safe_parse_geojson(geojson)
         if not data:
             raise ValueError("Invalid GeoJSON input")
-        features = data.get("features", data) if isinstance(data, dict) else data
-
-        try:
-            from app.services.spatial_tasks import run_buffer_analysis
-            task = run_buffer_analysis.apply_async(args=[features, distance, unit])
-            result = task.get(timeout=120)
-        except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
-            if not isinstance(exc, ImportError):
-                logger.warning(f"Celery unavailable for buffer_analysis: {exc}")
-            r = SpatialAnalyzer.buffer(features, distance=distance, unit=unit)
-            result = {"success": r.success, "data": r.data, "stats": r.stats}
-            if not r.success:
-                result["error"] = r.error_message
-
-        if result.get("success"):
-            return {"geojson": result.get("data"), "stats": result.get("stats")}
         
-        error_msg = result.get("error", "Buffer analysis failed")
-        raise RuntimeError(error_msg)
+        # Use the new smart buffer library
+        res = _buffer_smart(data, distance, unit)
+        return res.to_llm_response()
 
     @tool(registry, name="spatial_stats",
            description="计算几何要素的空间统计信息（面积、长度、中心点等）")
@@ -375,6 +362,7 @@ def register_spatial_tools(registry: ToolRegistry):
         # --- 原生热力图模式 ---
         if render_type == "native":
             if isinstance(data, dict):
+                data["command"] = "add_native_heatmap"
                 data["metadata"] = {
                     "render_type": "native",
                     "point_count": len(features),

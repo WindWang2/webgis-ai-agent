@@ -144,6 +144,69 @@ export function MapActionHandler() {
           break;
         }
 
+        case 'add_native_heatmap': {
+          const { geojson, layerId, palette, radius } = action.params || {};
+          if (!geojson) break;
+
+          const id = layerId || 'native-heatmap-' + Date.now();
+          
+          const colorRamps = {
+            classic: [
+              'interpolate', ['linear'], ['heatmap-density'],
+              0, 'rgba(0,0,255,0)',
+              0.2, 'rgb(0,255,255)',
+              0.4, 'rgb(0,255,0)',
+              0.6, 'rgb(255,255,0)',
+              0.8, 'rgb(255,165,0)',
+              1.0, 'rgb(255,0,0)'
+            ],
+            magma: [
+              'interpolate', ['linear'], ['heatmap-density'],
+              0, 'rgba(0,0,0,0)',
+              0.2, 'rgb(50,10,95)',
+              0.5, 'rgb(180,35,115)',
+              0.8, 'rgb(250,140,90)',
+              1.0, 'rgb(250,240,150)'
+            ],
+            viridis: [
+              'interpolate', ['linear'], ['heatmap-density'],
+              0, 'rgba(0,0,0,0)',
+              0.25, 'rgb(70,0,85)',
+              0.5, 'rgb(35,145,140)',
+              0.75, 'rgb(95,200,90)',
+              1.0, 'rgb(255,230,35)'
+            ],
+            thermal: [
+              'interpolate', ['linear'], ['heatmap-density'],
+              0, 'rgba(0,0,0,0)',
+              0.33, 'rgb(0,0,255)',
+              0.66, 'rgb(255,255,0)',
+              1.0, 'rgb(255,0,0)'
+            ]
+          };
+
+          if (!map.getSource(id)) {
+            map.addSource(id, { type: 'geojson', data: geojson as any });
+          }
+
+          if (!map.getLayer(id)) {
+            map.addLayer({
+              id,
+              type: 'heatmap',
+              source: id,
+              maxzoom: 18,
+              paint: {
+                'heatmap-weight': 1,
+                'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 1, 15, 3],
+                'heatmap-color': (colorRamps as any)[palette || 'classic'] || colorRamps.classic,
+                'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 0, 2, 15, radius || 30],
+                'heatmap-opacity': 0.8
+              }
+            });
+          }
+          break;
+        }
+
         case 'BASE_LAYER_CHANGE': {
           const name = action.params?.name as string | undefined;
           if (!name) break;

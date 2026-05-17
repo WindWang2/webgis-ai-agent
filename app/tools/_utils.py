@@ -104,7 +104,7 @@ async def async_db_session():
 from app.utils.path import validate_data_path
 
 
-def std_error_response(message: str, code: str = "TOOL_ERROR", error_type: str = "") -> dict:
+def std_error_response(message: str, code: str = "TOOL_ERROR", error_type: str = "", correction_hint: str = "") -> dict:
     """
     标准化错误响应格式，与全局异常处理器对齐。
 
@@ -112,6 +112,7 @@ def std_error_response(message: str, code: str = "TOOL_ERROR", error_type: str =
         message: 用户可读的错误信息
         code: 错误代码（如 VALIDATION_ERROR, NETWORK_ERROR, TOOL_ERROR）
         error_type: 异常类型名称（可选）
+        correction_hint: 给 LLM 的修复建议（可选）
 
     Returns:
         标准化的错误响应字典
@@ -124,6 +125,8 @@ def std_error_response(message: str, code: str = "TOOL_ERROR", error_type: str =
     }
     if error_type:
         resp["error_type"] = error_type
+    if correction_hint:
+        resp["correction_hint"] = correction_hint
     return resp
 
 
