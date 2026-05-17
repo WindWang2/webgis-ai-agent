@@ -135,12 +135,14 @@ def spatial_aggregate(points_geojson, polygons_geojson, stats=['count', 'sum', '
 # Alias for backward compatibility with plan
 aggregate_points_to_polygons = spatial_aggregate
 
-def h3_binning(geojson, resolution, stat_field=None, stat_method='count'):
+def h3_binning(geojson, resolution=None, stat_field=None, stat_method='count'):
     """
     Bin points into H3 hexagons.
     Supports stats: count, sum, mean.
+    If resolution is None, it is automatically selected based on the extent.
     """
     try:
+        import h3
         if isinstance(geojson, dict) and 'features' in geojson:
             gdf = gpd.GeoDataFrame.from_features(geojson['features'], crs="EPSG:4326")
         else:
@@ -148,6 +150,21 @@ def h3_binning(geojson, resolution, stat_field=None, stat_method='count'):
             
         if gdf.empty:
             return GeoAnalysisResult(success=False, data=None, summary="Empty geojson input.")
+            
+        # Automatic resolution selection
+        if resolution is None:
+            xmin, ymin, xmax, ymax = gdf.total_bounds
+            width = xmax - xmin
+            height = ymax - ymin
+            max_dim = max(width, height)
+            
+            # Simple heuristic: map data extent to H3 resolution (0-15)
+            if max_dim > 50: resolution = 1
+            elif max_dim > 10: resolution = 3
+            elif max_dim > 1: resolution = 5
+            elif max_dim > 0.1: resolution = 7
+            elif max_dim > 0.01: resolution = 9
+            else: resolution = 11
             
         # Ensure point geometry
         if not all(geom.geom_type == 'Point' for geom in gdf.geometry):
