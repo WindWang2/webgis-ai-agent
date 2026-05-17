@@ -32,7 +32,7 @@ def buffer_smart(geojson: Union[dict, str], distance: float, unit: str = 'm') ->
             gdf = gdf.to_crs(utm_crs)
             gdf['geometry'] = gdf.buffer(dist)
             gdf = gdf.to_crs(original_crs)
-            summary_suffix = f" using {utm_crs.to_string()} projection"
+            summary_suffix = f" using UTM projection ({utm_crs.to_string()})"
         else:
             gdf['geometry'] = gdf.buffer(dist)
             

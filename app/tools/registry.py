@@ -6,6 +6,7 @@ from typing import Any, Callable, Optional, Type, Dict, List
 from pydantic import BaseModel, create_model, ValidationError
 
 from app.services.session_data import session_data_manager
+from app.lib.geoprocessing.interface import GeoAnalysisResult
 
 logger = logging.getLogger(__name__)
 
@@ -119,10 +120,13 @@ class ToolRegistry:
                     loc = ".".join(str(i) for i in error["loc"])
                     msg = error["msg"]
                     error_msgs.append(f"参数 '{loc}' 校验失败: {msg}")
+                
+                message = "\n".join(error_msgs)
                 return std_error_response(
-                    "\n".join(error_msgs),
+                    message,
                     code="VALIDATION_ERROR",
                     error_type="ValidationError",
+                    correction_hint=f"Validation Error: {message}. Please check the tool definition and ensure all required parameters are provided with correct types."
                 )
 
         # 执行函数
@@ -135,15 +139,47 @@ class ToolRegistry:
             result = self._tools[name](**arguments)
             if inspect.isawaitable(result):
                 result = await result
+            
+            if isinstance(result, GeoAnalysisResult):
+                return result.to_llm_response()
+                
         except ValueError as e:
-            return std_error_response(str(e), code="VALIDATION_ERROR", error_type="ValueError")
+            return {
+                "success": False,
+                "code": "VALIDATION_ERROR",
+                "message": str(e),
+                "data": None,
+                "error_type": "ValueError",
+                "correction_hint": f"Error: {str(e)} Please check the tool parameters and try again."
+            }
         except KeyError as e:
-            return std_error_response(str(e), code="NOT_FOUND", error_type="KeyError")
+            return {
+                "success": False,
+                "code": "NOT_FOUND",
+                "message": str(e),
+                "data": None,
+                "error_type": "KeyError",
+                "correction_hint": f"Error: Key {str(e)} not found. Please check the tool parameters and the layer attributes."
+            }
         except FileNotFoundError as e:
-            return std_error_response(str(e), code="NOT_FOUND", error_type="FileNotFoundError")
+            return {
+                "success": False,
+                "code": "NOT_FOUND",
+                "message": str(e),
+                "data": None,
+                "error_type": "FileNotFoundError",
+                "correction_hint": f"Error: File {str(e)} not found. Please ensure the path is correct."
+            }
         except Exception as e:
             logger.exception(f"Tool execution failed: {name}")
-            return std_error_response(str(e), code="TOOL_ERROR", error_type=type(e).__name__)
+            return {
+                "success": False,
+                "code": "TOOL_ERROR",
+                "message": str(e),
+                "data": None,
+                "error_type": type(e).__name__,
+                "correction_hint": "An unexpected error occurred during tool execution. Please review the error message and parameters."
+            }
 
         return result
 

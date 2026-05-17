@@ -9,6 +9,11 @@ from scipy.spatial import distance_matrix
 
 from app.tools.registry import ToolRegistry, tool
 from app.tools._geojson_utils import safe_parse_geojson, to_utm_gdf, extract_numeric_values
+from app.lib.geoprocessing.statistics import (
+    calculate_sde as _calculate_sde,
+    moran_i_narrated as _moran_i_narrated,
+    hotspot_narrated as _hotspot_narrated
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,91 +121,26 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             "n_clusters": len(set(labels)) - (1 if -1 in labels else 0),
         }
 
+    @tool(registry, name="standard_deviational_ellipse",
+           description="计算标准离差椭圆（SDE），用于分析地理要素的空间分布趋势和方向性。",
+           param_descriptions={
+               "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
+           })
+    def standard_deviational_ellipse(geojson: Any) -> dict:
+        data = safe_parse_geojson(geojson)
+        res = _calculate_sde(data)
+        return res.to_llm_response()
+
     @tool(registry, name="moran_i",
            description="全局 Moran's I 空间自相关检验，判断空间分布模式（聚集/离散/随机）",
            param_descriptions={
                "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "value_field": "待检验的数值字段名",
-               "permutation_count": "随机置换次数，默认999",
            })
-    def moran_i(geojson: Any, value_field: str, permutation_count: int = 999) -> dict:
-        data = _safe_parse_geojson(geojson)
-        if not data:
-            return {"error": "无效的 GeoJSON 输入"}
-
-        gdf = _to_utm_gdf(data)
-        if gdf is None or len(gdf) < 3:
-            return {"error": "至少需要3个有效要素"}
-
-        values = _extract_numeric_values(gdf, value_field)
-        if values is None:
-            numeric_cols = [c for c in gdf.columns if c != "geometry" and gdf[c].dtype in ("float64", "int64", "float32", "int32")]
-            return {"error": f"字段 '{value_field}' 不是数值类型或不存在。可用字段: {numeric_cols}"}
-
-        n = len(values)
-        w = _build_weights_matrix(gdf, k=min(8, n - 1))
-        w_sum = w.sum()
-
-        if w_sum == 0:
-            return {"error": "空间权重矩阵全为零，无法计算 Moran's I"}
-
-        z = values - values.mean()
-        s0 = w_sum
-        numerator = np.sum(w * np.outer(z, z))
-        denominator = np.sum(z ** 2)
-        moran_i_val = (n / s0) * (numerator / denominator) if denominator > 0 else 0
-
-        expected_i = -1.0 / (n - 1)
-
-        # Permutation test
-        rng = np.random.default_rng(42)
-        perm_i = np.zeros(permutation_count)
-        for p in range(permutation_count):
-            perm_vals = rng.permutation(values)
-            pz = perm_vals - perm_vals.mean()
-            perm_i[p] = (n / s0) * (np.sum(w * np.outer(pz, pz)) / np.sum(pz ** 2)) if np.sum(pz ** 2) > 0 else 0
-
-        std_perm = np.std(perm_i)
-        z_score = (moran_i_val - expected_i) / std_perm if std_perm > 0 else 0
-
-        # Two-sided p-value
-        p_value = float(np.mean(np.abs(perm_i - expected_i) >= np.abs(moran_i_val - expected_i)))
-
-        if p_value < 0.01:
-            confidence = "99%"
-        elif p_value < 0.05:
-            confidence = "95%"
-        elif p_value < 0.1:
-            confidence = "90%"
-        else:
-            confidence = "不显著"
-
-        if p_value >= 0.05:
-            pattern = "随机"
-        elif moran_i_val > expected_i:
-            pattern = "聚集"
-        else:
-            pattern = "离散"
-
-        interp = f"Moran's I = {moran_i_val:.4f}，"
-        if pattern == "随机":
-            interp += "数据呈随机分布，不存在显著的空间自相关。"
-        elif pattern == "聚集":
-            interp += f"数据呈显著空间聚集模式（{confidence}置信度），相似值倾向于在空间上相邻。"
-        else:
-            interp += f"数据呈显著空间离散模式（{confidence}置信度），相似值倾向于相互远离。"
-
-        return {
-            "morans_i": round(float(moran_i_val), 6),
-            "expected_i": round(float(expected_i), 6),
-            "z_score": round(float(z_score), 4),
-            "p_value": round(float(p_value), 6),
-            "pattern": pattern,
-            "confidence": confidence,
-            "n_features": n,
-            "permutation_count": permutation_count,
-            "interpretation": interp,
-        }
+    def moran_i(geojson: Any, value_field: str) -> dict:
+        data = safe_parse_geojson(geojson)
+        res = _moran_i_narrated(data, value_field)
+        return res.to_llm_response()
 
     @tool(registry, name="hotspot_analysis",
            description="Getis-Ord Gi* 热点分析，识别统计显著的高值聚集区（热点）和低值聚集区（冷点）",
@@ -210,83 +150,9 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "distance_band": "空间权重距离阈值（米），0表示自动计算（默认）",
            })
     def hotspot_analysis(geojson: Any, value_field: str, distance_band: float = 0) -> dict:
-        data = _safe_parse_geojson(geojson)
-        if not data:
-            return {"error": "无效的 GeoJSON 输入"}
-
-        gdf = _to_utm_gdf(data)
-        if gdf is None or len(gdf) < 3:
-            return {"error": "至少需要3个有效要素"}
-
-        values = _extract_numeric_values(gdf, value_field)
-        if values is None:
-            numeric_cols = [c for c in gdf.columns if c != "geometry" and gdf[c].dtype in ("float64", "int64", "float32", "int32")]
-            return {"error": f"字段 '{value_field}' 不是数值类型或不存在。可用字段: {numeric_cols}"}
-
-        n = len(values)
-
-        if distance_band <= 0:
-            # Auto-calculate: average nearest neighbor distance
-            coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
-            dist = distance_matrix(coords, coords)
-            np.fill_diagonal(dist, np.inf)
-            distance_band = float(np.mean(np.min(dist, axis=1)))
-
-        w = _build_weights_matrix(gdf, distance_band=distance_band)
-
-        x = values
-        x_bar = x.mean()
-        s = x.std(ddof=0)
-
-        out_features = []
-        for i, row in gdf.iterrows():
-            wi = w[i]
-            sum_wij_xj = np.sum(wi * x)
-            sum_wij = np.sum(wi)
-            sum_wij2 = np.sum(wi ** 2)
-
-            numerator = sum_wij_xj - x_bar * sum_wij
-            denom_inner = (n * sum_wij2 - sum_wij ** 2) / (n - 1)
-            denominator = s * np.sqrt(denom_inner) if denom_inner > 0 and s > 0 else 1
-            gi_star = float(numerator / denominator)
-
-            from scipy.stats import norm
-            p_value = float(2 * (1 - norm.cdf(abs(gi_star))))
-
-            if p_value < 0.01:
-                hotspot_type = "热点" if gi_star > 0 else "冷点"
-                confidence = "99%"
-            elif p_value < 0.05:
-                hotspot_type = "热点" if gi_star > 0 else "冷点"
-                confidence = "95%"
-            elif p_value < 0.1:
-                hotspot_type = "热点" if gi_star > 0 else "冷点"
-                confidence = "90%"
-            else:
-                hotspot_type = "不显著"
-                confidence = "不显著"
-
-            geom_wgs84 = gpd.GeoSeries([row.geometry], crs=gdf.crs).to_crs("EPSG:4326").iloc[0]
-            props = {k: v for k, v in row.items() if k != "geometry"}
-            props.update({
-                "gi_star": round(gi_star, 4),
-                "z_score": round(gi_star, 4),
-                "p_value": round(p_value, 6),
-                "hotspot_type": hotspot_type,
-                "confidence": confidence,
-            })
-            out_features.append({
-                "type": "Feature",
-                "geometry": mapping(geom_wgs84),
-                "properties": props,
-            })
-
-        return {
-            "type": "FeatureCollection",
-            "features": out_features,
-            "count": len(out_features),
-            "distance_band_m": round(distance_band, 1),
-        }
+        data = safe_parse_geojson(geojson)
+        res = _hotspot_narrated(data, value_field, distance_band)
+        return res.to_llm_response()
 
     @tool(registry, name="kde_surface",
            description="高斯核密度估计，生成连续密度面。适用于深度密度建模和选址分析基础。注意：该工具生成的是覆盖分析范围的完整矢量格网，如果不进行阈值过滤，在大范围内会遮挡底图，单纯查看'分布热度'建议优先使用 heatmap_data。",
@@ -405,6 +271,70 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                 "mean_density": round(float(density.mean()), 8),
             },
             "bandwidth_m": round(bw, 1),
+        }
+
+    @tool(registry, name="kde_contours",
+           description="高斯核密度估计（等值面模式）：生成精美的点密度等值线/面。相比网格模式更平滑且易于叠加分析。",
+           param_descriptions={
+               "geojson": "点要素集 GeoJSON 或引用(ref:xxx)",
+               "levels": "等值面级数，默认 8",
+               "bandwidth": "搜索半径（米），0表示自动",
+           })
+    def kde_contours(geojson: Any, levels: int = 8, bandwidth: float = 0) -> dict:
+        try:
+            import matplotlib.pyplot as plt
+            from scipy.stats import gaussian_kde
+        except ImportError:
+            return {"error": "需要 matplotlib 和 scipy"}
+
+        data = _safe_parse_geojson(geojson)
+        gdf = _to_utm_gdf(data)
+        if gdf is None or len(gdf) < 5:
+            return {"error": "至少需要5个有效点要素进行等值面分析"}
+
+        coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
+        kde_data = coords.T
+        
+        # Calculate KDE
+        kde = gaussian_kde(kde_data, bw_method="scott" if bandwidth <= 0 else bandwidth/np.std(kde_data))
+        
+        # Create grid for contour calculation
+        xmin, ymin, xmax, ymax = gdf.total_bounds
+        buf_x, buf_y = (xmax-xmin)*0.2, (ymax-ymin)*0.2
+        X, Y = np.mgrid[xmin-buf_x:xmax+buf_x:100j, ymin-buf_y:ymax+buf_y:100j]
+        positions = np.vstack([X.ravel(), Y.ravel()])
+        Z = np.reshape(kde(positions).T, X.shape)
+
+        # Generate contours using matplotlib
+        fig, ax = plt.subplots()
+        cs = ax.contourf(X, Y, Z, levels=levels)
+        plt.close(fig)
+
+        out_features = []
+        utm_crs = gdf.crs
+        
+        # Convert path collections to GeoJSON
+        for i, collection in enumerate(cs.collections):
+            val = cs.levels[i]
+            for path in collection.get_paths():
+                for poly_coords in path.to_polygons():
+                    if len(poly_coords) < 3: continue
+                    from shapely.geometry import Polygon
+                    poly = Polygon(poly_coords)
+                    if not poly.is_valid: poly = poly.buffer(0)
+                    
+                    poly_wgs84 = gpd.GeoSeries([poly], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
+                    out_features.append({
+                        "type": "Feature",
+                        "geometry": mapping(poly_wgs84),
+                        "properties": {"level": i, "density_value": float(val)}
+                    })
+
+        return {
+            "type": "FeatureCollection",
+            "features": out_features,
+            "count": len(out_features),
+            "levels_count": len(cs.levels)
         }
 
     @tool(registry, name="voronoi_polygons",

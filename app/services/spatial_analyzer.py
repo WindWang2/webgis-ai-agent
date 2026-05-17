@@ -908,6 +908,91 @@ class SpatialAnalyzer:
             return AnalysisResult(success=False, error_message=str(e))
 
     @classmethod
+    def spatial_aggregate(
+        cls,
+        points: List[Dict],
+        polygons: List[Dict],
+        count_field: str = "point_count",
+        callback: Optional[Callable] = None
+    ) -> AnalysisResult:
+        """空间聚合 - 统计落在每个多边形内的点位数量 (Point in Polygon)"""
+        try:
+            if callback: callback(20, "加载空间数据...")
+            
+            pts_gdf = gpd.GeoDataFrame.from_features(points)
+            polys_gdf = gpd.GeoDataFrame.from_features(polygons)
+            
+            if pts_gdf.crs is None: pts_gdf.set_crs("EPSG:4326", inplace=True)
+            if polys_gdf.crs is None: polys_gdf.set_crs("EPSG:4326", inplace=True)
+            
+            if pts_gdf.crs != polys_gdf.crs:
+                pts_gdf = pts_gdf.to_crs(polys_gdf.crs)
+                
+            if callback: callback(50, "执行空间连接统计...")
+            
+            # 使用空间连接统计点位
+            joined = gpd.sjoin(polys_gdf, pts_gdf, how="left", predicate="intersects")
+            counts = joined.groupby(joined.index).size()
+            
+            # 由于 left join，即使没点也会有一行，groupby 后结果为 1。
+            # 我们需要检查 joined 的 index_right 字段，如果为 NaN 说明没点
+            counts = joined.groupby(joined.index)["index_right"].count()
+            
+            polys_gdf[count_field] = counts.values
+            
+            if callback: callback(90, "生成结果...")
+            
+            return AnalysisResult(success=True, data=polys_gdf.__geo_interface__, stats={
+                "polygon_count": len(polygons),
+                "point_count": len(points),
+                "max_points_in_poly": int(counts.max()) if not counts.empty else 0
+            })
+        except Exception as e:
+            logger.error(f"空间聚合失败: {e}")
+            return AnalysisResult(success=False, error_message=str(e))
+
+    @classmethod
+    def central_feature(
+        cls,
+        features: List[Dict],
+        method: str = "mean_center",
+        callback: Optional[Callable] = None
+    ) -> AnalysisResult:
+        """中心分析 - 计算点集的平均中心或寻找中心要素"""
+        try:
+            gdf = gpd.GeoDataFrame.from_features(features)
+            if gdf.empty: return AnalysisResult(False, "要素集为空")
+            
+            if method == "mean_center":
+                center_x = gdf.geometry.centroid.x.mean()
+                center_y = gdf.geometry.centroid.y.mean()
+                from shapely.geometry import Point
+                center_geom = Point(center_x, center_y)
+                res_feat = {
+                    "type": "Feature",
+                    "geometry": mapping(center_geom),
+                    "properties": {"method": "mean_center", "source_count": len(gdf)}
+                }
+                return AnalysisResult(True, {"type": "FeatureCollection", "features": [res_feat]})
+            
+            elif method == "central_feature":
+                # 到所有其他要素距离之和最小的要素
+                coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
+                dist_mat = distance_matrix(coords, coords)
+                sum_dist = dist_mat.sum(axis=1)
+                min_idx = sum_dist.argmin()
+                
+                res_feat = features[min_idx].copy()
+                res_feat["properties"]["method"] = "central_feature"
+                res_feat["properties"]["total_distance"] = float(sum_dist[min_idx])
+                
+                return AnalysisResult(True, {"type": "FeatureCollection", "features": [res_feat]})
+                
+            return AnalysisResult(False, f"未知方法: {method}")
+        except Exception as e:
+            return AnalysisResult(False, str(e))
+
+    @classmethod
     def path_analysis(
         cls,
         network_features: List[Dict],
