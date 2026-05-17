@@ -57,3 +57,8 @@ tiktoken>=0.5.0
 
 # Sub-Agent Web Crawler
 duckduckgo-search>=6.0.0
+
+# H3 and Spatial Analysis
+h3>=3.7.6
+esda>=2.5.1
+libpysal>=4.9.2
