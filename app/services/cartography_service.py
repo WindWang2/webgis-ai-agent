@@ -101,59 +101,102 @@ class CartographyService:
         palette: str = "YlOrRd"
     ) -> Dict[str, Any]:
         """
-        为 GeoJSON 要素添加专题图样式属性
+        [Deprecated] 为 GeoJSON 要素添加专题图样式属性
+        建议使用 build_thematic_style 代替。
         """
         features = geojson.get("features", [])
         if not features:
             return geojson
 
-        # 提取数值
+        style_def = cls.build_thematic_style(geojson, field, method, k, palette)
+        if not style_def:
+            return geojson
+
+        # 为保持兼容性，仍然可以应用颜色（如果需要）
+        # 但是根据需求，我们要重构为不修改geojson，直接返回。
+        # 由于指令提到"Refactor apply_choropleth (or add a new build_thematic_style) to NOT mutate the GeoJSON... Instead return a dictionary"
+        # 这里为了稳妥，我们在新函数里做计算。由于指令明确了不要改变 GeoJSON，我把 apply_choropleth 维持原样，或者也改成返回style？
+        # 指令要求： "Refactor apply_choropleth (or add a new build_thematic_style) to NOT mutate the GeoJSON (i.e. don't add fill_color to every feature). Instead, calculate the breaks and colors, and return a dictionary representing a ThematicStyleDef."
+        # 如果调用者期望拿到 GeoJSON，而我们返回 style，会破坏契约。我们重构 apply_choropleth 或者新增 build_thematic_style。
+        # 最好是直接新增并在 cartography.py 里使用。
+
+    @classmethod
+    def build_thematic_style(
+        cls,
+        geojson: Dict[str, Any],
+        field: str,
+        method: str = "quantiles",
+        k: int = 5,
+        palette: str = "YlOrRd"
+    ) -> Optional[Dict[str, Any]]:
+        """
+        计算专题图样式定义，不修改原 GeoJSON
+        """
+        features = geojson.get("features", [])
+        if not features:
+            return None
+
         values = []
+        lisa_values = []
         for f in features:
             val = f.get("properties", {}).get(field)
-            if isinstance(val, (int, float)):
-                values.append(float(val))
+            if method == "lisa":
+                if val in ["HH", "LL", "HL", "LH", "NS"]:
+                    lisa_values.append(val)
+            else:
+                if isinstance(val, (int, float)):
+                    values.append(float(val))
+
+        if method == "lisa":
+            if not lisa_values:
+                logger.warning(f"字段 {field} 未发现有效的 LISA 分类值")
+                return None
+            
+            # 标准 LISA 颜色
+            lisa_colors = {
+                "HH": "#ff0000",   # 高-高 聚集 (红)
+                "LL": "#0000ff",   # 低-低 聚集 (蓝)
+                "HL": "#ffaaaa",   # 高-低 异常 (浅红)
+                "LH": "#aaaaff",   # 低-高 异常 (浅蓝)
+                "NS": "#cccccc"    # 不显著 (灰)
+            }
+            
+            return {
+                "type": "lisa",
+                "field": field,
+                "categories": ["HH", "LL", "HL", "LH", "NS"],
+                "colors": lisa_colors,
+                "legend_labels": ["High-High", "Low-Low", "High-Low", "Low-High", "Not Significant"]
+            }
 
         if not values:
             logger.warning(f"字段 {field} 未发现数值，无法制作专题图")
-            return geojson
+            return None
 
         # 计算间断点
         breaks = cls.classify(values, method, k)
         min_val, max_val = min(values), max(values)
         val_range = max_val - min_val if max_val > min_val else 1.0
 
-        # 应用颜色
-        new_features = []
-        for f in features:
-            new_f = f.copy()
-            val = f.get("properties", {}).get(field)
-            
-            if isinstance(val, (int, float)):
-                # 计算归一化位置 (0 ~ 1)
-                normalized = (float(val) - min_val) / val_range
-                color = cls.get_color_from_palette(palette, normalized)
-                
-                # 在 properties 中注入制图样式，前端将读取这些属性
-                if "properties" not in new_f:
-                    new_f["properties"] = {}
-                
-                new_f["properties"]["fill_color"] = color
-                new_f["properties"]["stroke_color"] = "#ffffff"
-                new_f["properties"]["stroke_width"] = 1.0
-                new_f["properties"]["opacity"] = 0.8
-            
-            new_features.append(new_f)
+        colors = []
+        legend_labels = []
+        for i in range(len(breaks) - 1):
+            # 获取颜色
+            b_min = breaks[i]
+            b_max = breaks[i+1]
+            # 用区间的中间值来取颜色
+            mid_val = (b_min + b_max) / 2.0
+            normalized = (mid_val - min_val) / val_range
+            color = cls.get_color_from_palette(palette, normalized)
+            colors.append(color)
+            legend_labels.append(f"{b_min:.2f} - {b_max:.2f}")
 
         return {
-            "type": "FeatureCollection",
-            "features": new_features,
-            "metadata": {
-                "thematic_type": "choropleth",
-                "field": field,
-                "breaks": breaks,
-                "palette": palette
-            }
+            "type": "choropleth",
+            "field": field,
+            "breaks": breaks,
+            "colors": colors,
+            "legend_labels": legend_labels
         }
 
 __all__ = ["CartographyService"]
