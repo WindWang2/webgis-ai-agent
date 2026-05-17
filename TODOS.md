@@ -1,3 +1,0 @@
-- [x] Task 1: Scaffolding and Core Engine (geo_processor)
-- [x] Task 2: Intelligence Layer (geo_analysis)
-- [ ] Task 3: Agent Integration and Tool Registry Update
