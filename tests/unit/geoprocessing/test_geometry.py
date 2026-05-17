@@ -49,3 +49,26 @@ def test_clip_smart_basic():
     assert len(result.data["features"]) == 1
     assert result.data["features"][0]["properties"]["id"] == 1
     assert "Clipped" in result.summary
+
+def test_overlay_smart_intersection():
+    poly_a = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]]},
+            "properties": {"name": "A"}
+        }]
+    }
+    poly_b = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [[[1, 1], [3, 1], [3, 3], [1, 3], [1, 1]]]},
+            "properties": {"name": "B"}
+        }]
+    }
+    from app.lib.geoprocessing.geometry import overlay_smart
+    result = overlay_smart(poly_a, poly_b, how='intersection')
+    assert result.success is True
+    assert len(result.data["features"]) > 0
+    assert "Intersection" in result.summary
