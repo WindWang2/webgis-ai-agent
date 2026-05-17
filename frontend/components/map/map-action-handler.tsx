@@ -4,47 +4,15 @@ import { useMapAction } from '@/lib/contexts/map-action-context';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 import maplibregl from 'maplibre-gl';
 
-function calculateBBox(geojson: GeoJSONFeatureCollection): [number, number, number, number] | null {
-  const bounds = [Infinity, Infinity, -Infinity, -Infinity];
-  const coord: number[][] = [];
-
-  function extract(node: any) {
-    if (Array.isArray(node) && typeof node[0] === 'number') {
-      coord.push(node as number[]);
-    } else if (Array.isArray(node)) {
-      node.forEach(extract);
-    } else if (node && typeof node === 'object' && 'type' in node) {
-      const obj = node as any;
-      if (obj.type === 'FeatureCollection' && Array.isArray(obj.features)) {
-        obj.features.forEach((f: any) => {
-          if (f.geometry?.coordinates) extract(f.geometry.coordinates);
-        });
-      } else if (obj.type === 'Feature' && obj.geometry?.coordinates) {
-        extract(obj.geometry.coordinates);
-      } else if ('coordinates' in obj) {
-        extract(obj.coordinates);
-      }
-    }
-  }
-
-  extract(geojson);
-  if (coord.length === 0) return null;
-
-  coord.forEach(c => {
-    if (c[0] < bounds[0]) bounds[0] = c[0];
-    if (c[1] < bounds[1]) bounds[1] = c[1];
-    if (c[0] > bounds[2]) bounds[2] = c[0];
-    if (c[1] > bounds[3]) bounds[3] = c[1];
-  });
-
-  return bounds as [number, number, number, number];
-}
-
 import { useMap } from 'react-map-gl/maplibre';
 
 import { API_BASE } from '@/lib/api/config';
 import { TILE_PROVIDERS } from '@/lib/providers';
 import { useHudStore } from '@/lib/store/useHudStore';
+
+import * as navigation from '@/lib/map-kit/navigation';
+import * as renderer from '@/lib/map-kit/renderer';
+import * as exporter from '@/lib/map-kit/exporter';
 
 export function MapActionHandler() {
   const { actions, popAction, setSelectedBaseLayer } = useMapAction();
@@ -69,25 +37,19 @@ export function MapActionHandler() {
           const { layerId, type, geojson, style, flyTo } = action.params;
           if (!layerId || !geojson) break;
 
-          if (!map.getSource(layerId)) {
-            map.addSource(layerId, { type: 'geojson', data: geojson as any });
-          } else {
-            (map.getSource(layerId) as maplibregl.GeoJSONSource).setData(geojson as any);
-          }
-
-          if (!map.getLayer(layerId)) {
-            map.addLayer({
-              id: layerId,
-              type: type || 'fill',
-              source: layerId as any,
-              paint: style || {}
-            } as any);
-          }
+          const id = `custom-${layerId}`;
+          renderer.addGeoJsonSource(map, id, geojson);
+          renderer.addVectorLayer(map, {
+            id,
+            type: type || 'fill',
+            source: id,
+            paint: style || {}
+          });
 
           if (flyTo) {
-            const bbox = calculateBBox(geojson);
+            const bbox = navigation.calculateBBox(geojson);
             if (bbox) {
-              map.fitBounds(bbox, { padding: 50, duration: 1500 });
+              navigation.fitBounds(map, bbox, 50);
             }
           }
           break;
@@ -95,14 +57,12 @@ export function MapActionHandler() {
 
         case 'fly_to':
           if (action.params?.center) {
-            const flyOptions: maplibregl.FlyToOptions = {
+            navigation.flyTo(map, {
               center: action.params.center,
               zoom: action.params?.zoom || 12,
-              duration: 1500,
-            };
-            if (action.params.bearing !== undefined) flyOptions.bearing = action.params.bearing;
-            if (action.params.pitch !== undefined) flyOptions.pitch = action.params.pitch;
-            map.flyTo(flyOptions);
+              bearing: action.params.bearing,
+              pitch: action.params.pitch,
+            });
           }
           break;
         
@@ -110,37 +70,26 @@ export function MapActionHandler() {
           const { image, bbox, opacity, layerId } = action.params || {};
           if (!image || !bbox) break;
           
-          const id = layerId || 'heatmap-' + Date.now();
+          const id = `custom-${layerId || 'heatmap-' + Date.now()}`;
           
           // bbox is [west, south, east, north]
           // MapLibre image source expects: [top-left, top-right, bottom-right, bottom-left]
-          const coords = [
+          const coords: [[number, number], [number, number], [number, number], [number, number]] = [
             [bbox[0], bbox[3]], // west, north
             [bbox[2], bbox[3]], // east, north
             [bbox[2], bbox[1]], // east, south
             [bbox[0], bbox[1]]  // west, south
-          ] as [[number, number], [number, number], [number, number], [number, number]];
+          ];
 
-          if (!map.getSource(id)) {
-            map.addSource(id, {
-              type: 'image',
-              url: image,
-              coordinates: coords
-            });
-            map.addLayer({
-              id: id,
-              type: 'raster',
-              source: id,
-              paint: { 'raster-opacity': opacity || 0.7 }
-            });
-          } else {
-            const source = map.getSource(id) as maplibregl.ImageSource;
-            if (source.updateImage) {
-              source.updateImage({ url: image, coordinates: coords });
-            }
-          }
+          renderer.addImageSource(map, id, image, coords);
+          renderer.addVectorLayer(map, {
+            id,
+            type: 'raster',
+            source: id,
+            paint: { 'raster-opacity': opacity || 0.7 }
+          });
           
-          map.fitBounds([[bbox[1], bbox[0]], [bbox[2], bbox[3]]], { padding: 50 });
+          navigation.fitBounds(map, bbox, 50);
           break;
         }
 
@@ -148,62 +97,16 @@ export function MapActionHandler() {
           const { geojson, layerId, palette, radius } = action.params || {};
           if (!geojson) break;
 
-          const id = layerId || 'native-heatmap-' + Date.now();
+          const id = `custom-${layerId || 'native-heatmap-' + Date.now()}`;
           
-          const colorRamps = {
-            classic: [
-              'interpolate', ['linear'], ['heatmap-density'],
-              0, 'rgba(0,0,255,0)',
-              0.2, 'rgb(0,255,255)',
-              0.4, 'rgb(0,255,0)',
-              0.6, 'rgb(255,255,0)',
-              0.8, 'rgb(255,165,0)',
-              1.0, 'rgb(255,0,0)'
-            ],
-            magma: [
-              'interpolate', ['linear'], ['heatmap-density'],
-              0, 'rgba(0,0,0,0)',
-              0.2, 'rgb(50,10,95)',
-              0.5, 'rgb(180,35,115)',
-              0.8, 'rgb(250,140,90)',
-              1.0, 'rgb(250,240,150)'
-            ],
-            viridis: [
-              'interpolate', ['linear'], ['heatmap-density'],
-              0, 'rgba(0,0,0,0)',
-              0.25, 'rgb(70,0,85)',
-              0.5, 'rgb(35,145,140)',
-              0.75, 'rgb(95,200,90)',
-              1.0, 'rgb(255,230,35)'
-            ],
-            thermal: [
-              'interpolate', ['linear'], ['heatmap-density'],
-              0, 'rgba(0,0,0,0)',
-              0.33, 'rgb(0,0,255)',
-              0.66, 'rgb(255,255,0)',
-              1.0, 'rgb(255,0,0)'
-            ]
-          };
-
-          if (!map.getSource(id)) {
-            map.addSource(id, { type: 'geojson', data: geojson as any });
-          }
-
-          if (!map.getLayer(id)) {
-            map.addLayer({
-              id,
-              type: 'heatmap',
-              source: id,
-              maxzoom: 18,
-              paint: {
-                'heatmap-weight': 1,
-                'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 1, 15, 3],
-                'heatmap-color': (colorRamps as any)[palette || 'classic'] || colorRamps.classic,
-                'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 0, 2, 15, radius || 30],
-                'heatmap-opacity': 0.8
-              }
-            });
-          }
+          renderer.addGeoJsonSource(map, id, geojson);
+          renderer.addNativeHeatmap(map, {
+            id,
+            source: id,
+            palette: palette as any,
+            radius,
+            opacity: 0.8
+          });
           break;
         }
 
@@ -242,20 +145,13 @@ export function MapActionHandler() {
           const { layer_id, visible, opacity } = action.params || {};
           if (!layer_id) break;
           
-          // Analytical layers in MapPanel are prefixed with 'custom-' and suffixed with sub-layer IDs
-          const layers = map.getStyle().layers || [];
-          layers.forEach(l => {
+          const style = map.getStyle();
+          style.layers?.forEach(l => {
             if (l.id.startsWith(`custom-${layer_id}`)) {
-              if (visible !== undefined) {
-                map.setLayoutProperty(l.id, 'visibility', visible ? 'visible' : 'none');
-              }
-              if (opacity !== undefined) {
-                const prop = l.type === 'raster' ? 'raster-opacity' : 
-                            l.type === 'fill' ? 'fill-opacity' :
-                            l.type === 'line' ? 'line-opacity' :
-                            l.type === 'circle' ? 'circle-opacity' : '';
-                if (prop) map.setPaintProperty(l.id, prop, opacity);
-              }
+              renderer.updateLayerStyle(map, l.id, {
+                visibility: visible !== undefined ? (visible ? 'visible' : 'none') : undefined,
+                opacity
+              });
             }
           });
           break;
@@ -264,19 +160,13 @@ export function MapActionHandler() {
         case 'LAYER_STYLE_UPDATE': {
           const { layer_id, style } = action.params || {};
           if (!layer_id || !style) break;
-          const layers = map.getStyle().layers || [];
-          layers.forEach(l => {
+          const mapStyle = map.getStyle();
+          mapStyle.layers?.forEach(l => {
             if (l.id.startsWith(`custom-${layer_id}`)) {
-              if (style.color) {
-                const prop = l.type === 'fill' ? 'fill-color' :
-                            l.type === 'line' ? 'line-color' :
-                            l.type === 'circle' ? 'circle-color' : '';
-                if (prop) map.setPaintProperty(l.id, prop, style.color);
-              }
-              if (style.strokeWidth) {
-                if (l.type === 'line') map.setPaintProperty(l.id, 'line-width', style.strokeWidth);
-                if (l.type === 'circle') map.setPaintProperty(l.id, 'circle-stroke-width', style.strokeWidth);
-              }
+              renderer.updateLayerStyle(map, l.id, {
+                color: style.color,
+                strokeWidth: style.strokeWidth
+              });
             }
           });
           break;
@@ -287,15 +177,7 @@ export function MapActionHandler() {
           const { layer_id, layerId } = action.params || {};
           const target = layer_id || layerId;
           if (!target) break;
-          const style = map.getStyle();
-          style.layers?.forEach(l => {
-            if (l.id.startsWith(`custom-${target}`)) {
-              map.removeLayer(l.id);
-            }
-          });
-          if (map.getSource(`custom-${target}`)) {
-            map.removeSource(`custom-${target}`);
-          }
+          renderer.removeLayerStack(map, `custom-${target}`, true);
           break;
         }
 
@@ -313,252 +195,35 @@ export function MapActionHandler() {
             dpi = 96
           } = action.params || {};
           
-          const dark_mode = useHudStore.getState().theme === 'dark';
+          const theme = useHudStore.getState().theme;
 
           map.once("render", async () => {
             try {
               const baseCanvas = map.getCanvas();
-              let srcW = baseCanvas.width;
-              let srcH = baseCanvas.height;
-              let srcX = 0;
-              let srcY = 0;
+              const { canvas: exportCanvas, srcW } = exporter.prepareExportCanvas(baseCanvas, {
+                paperSize: paperSize as any,
+                orientation: orientation as any,
+                dpi
+              });
 
-              // 1. Calculate Crop Box if A4
-              if (paperSize === 'A4') {
-                const targetRatio = orientation === 'landscape' ? 1.414 : 1 / 1.414;
-                const canvasRatio = srcW / srcH;
-                
-                if (canvasRatio > targetRatio) {
-                  const newW = srcH * targetRatio;
-                  srcX = (srcW - newW) / 2;
-                  srcW = newW;
-                } else {
-                  const newH = srcW / targetRatio;
-                  srcY = (srcH - newH) / 2;
-                  srcH = newH;
-                }
-              }
+              const storeState = useHudStore.getState();
+              const thematicLayer = storeState.layers.find(
+                (l) => l.visible && (l.source as any)?.metadata?.thematic_type === "choropleth"
+              );
 
-              // 2. High-DPI Upscaling calculation
-              const dpiMultiplier = dpi / 96;
-              const targetW = Math.round(srcW * dpiMultiplier);
-              const targetH = Math.round(srcH * dpiMultiplier);
+              exporter.composeLayout(exportCanvas, title, subtitle, {
+                dpi,
+                theme,
+                showScale,
+                showCompass,
+                showWatermark,
+                showLegend,
+                mapCenter: map.getCenter(),
+                mapZoom: map.getZoom(),
+                mapBearing: map.getBearing(),
+                thematicLayer
+              });
 
-              const exportCanvas = document.createElement("canvas");
-              exportCanvas.width = targetW;
-              exportCanvas.height = targetH;
-              const ctx = exportCanvas.getContext("2d");
-              if (!ctx) return;
-
-              // Draw cropped base map
-              ctx.drawImage(baseCanvas, srcX, srcY, srcW, srcH, 0, 0, targetW, targetH);
-
-              // 3. Draw Overlays (scaled by dpiMultiplier)
-              const scalePx = (val: number) => val * dpiMultiplier;
-
-              // Header gradient
-              const headerH = subtitle ? scalePx(130) : scalePx(100);
-              const headerGrad = ctx.createLinearGradient(0, 0, 0, headerH);
-              headerGrad.addColorStop(0, dark_mode ? "rgba(0,10,20,0.88)" : "rgba(255,255,255,0.96)");
-              headerGrad.addColorStop(0.65, dark_mode ? "rgba(0,10,20,0.45)" : "rgba(255,255,255,0.55)");
-              headerGrad.addColorStop(1, "rgba(0,0,0,0)");
-              ctx.fillStyle = headerGrad;
-              ctx.fillRect(0, 0, targetW, headerH);
-
-              // Title
-              ctx.fillStyle = dark_mode ? "#00f2ff" : "#1e293b";
-              ctx.font = `bold ${scalePx(32)}px sans-serif`;
-              ctx.fillText(title || "WebGIS AI Agent", scalePx(56), scalePx(52));
-
-              if (subtitle) {
-                ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.72)" : "rgba(30,41,59,0.72)";
-                ctx.font = `${scalePx(20)}px sans-serif`;
-                ctx.fillText(subtitle, scalePx(56), scalePx(82));
-              }
-
-              // ── 2. Scale bar ──────────────────────────────────────────────
-              if (showScale) {
-                const center = map.getCenter();
-                const zoom = map.getZoom();
-                const metersPerPx =
-                  (156543.03392 * Math.cos((center.lat * Math.PI) / 180)) /
-                  Math.pow(2, zoom);
-                const targetPx = Math.round(srcW * 0.12);
-                const rawMeters = metersPerPx * targetPx;
-                // Round to a nice number
-                const magnitude = Math.pow(10, Math.floor(Math.log10(rawMeters)));
-                const nice = [1, 2, 5, 10].reduce((prev, n) => {
-                  const candidate = n * magnitude;
-                  return Math.abs(candidate - rawMeters) < Math.abs(prev - rawMeters)
-                    ? candidate
-                    : prev;
-                }, magnitude);
-                const barPx = (nice / metersPerPx) * dpiMultiplier;
-                const barLabel = nice >= 1000 ? `${nice / 1000} km` : `${nice} m`;
-
-                const bx = scalePx(56), by = targetH - scalePx(52), bh = scalePx(8);
-                // Outer frame
-                ctx.strokeStyle = dark_mode ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.8)";
-                ctx.lineWidth = scalePx(1.5);
-                ctx.strokeRect(bx, by, barPx, bh);
-                // Alternating fill segments
-                const segCount = 4;
-                const segW = barPx / segCount;
-                for (let i = 0; i < segCount; i++) {
-                  ctx.fillStyle =
-                    i % 2 === 0
-                      ? dark_mode ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.8)"
-                      : "rgba(0,0,0,0)";
-                  ctx.fillRect(bx + i * segW, by, segW, bh);
-                }
-                // Label
-                ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.95)" : "#1e293b";
-                ctx.font = `bold ${scalePx(13)}px sans-serif`;
-                ctx.textAlign = "left";
-                ctx.fillText("0", bx, by - scalePx(4));
-                ctx.textAlign = "right";
-                ctx.fillText(barLabel, bx + barPx, by - scalePx(4));
-                ctx.textAlign = "left";
-              }
-
-              // ── 3. North arrow (compass) ─────────────────────────────────
-              if (showCompass) {
-                const bearing = map.getBearing();
-                const cx = targetW - scalePx(64), cy = scalePx(64), r = scalePx(28);
-                ctx.save();
-                ctx.translate(cx, cy);
-                ctx.rotate((bearing * Math.PI) / 180);
-
-                // Shadow halo
-                ctx.shadowColor = "rgba(0,0,0,0.4)";
-                ctx.shadowBlur = scalePx(6);
-
-                // North half (red)
-                ctx.beginPath();
-                ctx.moveTo(0, -r);
-                ctx.lineTo(r * 0.35, 0);
-                ctx.lineTo(0, r * 0.2);
-                ctx.lineTo(-r * 0.35, 0);
-                ctx.closePath();
-                ctx.fillStyle = "#e53e3e";
-                ctx.fill();
-
-                // South half (white)
-                ctx.beginPath();
-                ctx.moveTo(0, r);
-                ctx.lineTo(r * 0.35, 0);
-                ctx.lineTo(0, r * 0.2);
-                ctx.lineTo(-r * 0.35, 0);
-                ctx.closePath();
-                ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.9)" : "#f8fafc";
-                ctx.fill();
-
-                // Center dot
-                ctx.shadowBlur = 0;
-                ctx.beginPath();
-                ctx.arc(0, 0, scalePx(4), 0, 2 * Math.PI);
-                ctx.fillStyle = "#1e293b";
-                ctx.fill();
-
-                ctx.restore();
-
-                // "N" label above arrow
-                ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.95)" : "#1e293b";
-                ctx.font = `bold ${scalePx(13)}px sans-serif`;
-                ctx.textAlign = "center";
-                ctx.fillText("N", cx, cy - r - scalePx(6));
-                ctx.textAlign = "left";
-              }
-
-              // ── 4. Legend (choropleth only) ───────────────────────────────
-              if (showLegend) {
-                const COLOR_PALETTES: Record<string, string[]> = {
-                  YlOrRd: ["#ffffb2","#fed976","#feb24c","#fd8d3c","#f03b20","#bd0026"],
-                  Blues:  ["#eff3ff","#bdd7e7","#6baed6","#3182bd","#08519c"],
-                  Greens: ["#edf8e9","#bae4b3","#74c476","#31a354","#006d2c"],
-                  Reds:   ["#fee5d9","#fcae91","#fb6a4a","#de2d26","#a50f15"],
-                  Viridis:["#440154","#3b528b","#21908c","#5dc963","#fde725"],
-                  Magma:  ["#000004","#3b0f70","#8c2981","#de4968","#feb078","#fcfdbf"],
-                };
-                const storeState = useHudStore.getState();
-                const thematicLayer = storeState.layers.find(
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  (l) => l.visible && (l.source as any)?.metadata?.thematic_type === "choropleth"
-                );
-                if (thematicLayer) {
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  const meta = (thematicLayer.source as any).metadata as {
-                    field: string;
-                    breaks: number[];
-                    palette: string;
-                  };
-                  const colors = COLOR_PALETTES[meta.palette] ?? COLOR_PALETTES["YlOrRd"];
-                  const classes = meta.breaks.length - 1;
-                  const itemH = scalePx(22), itemW = scalePx(18), padding = scalePx(10), gapX = scalePx(8);
-                  const legendW = scalePx(180);
-                  const legendH = padding * 2 + scalePx(24) + classes * itemH;
-                  const lx = targetW - legendW - scalePx(56);
-                  const ly = targetH - legendH - scalePx(56);
-
-                  // Background panel
-                  ctx.fillStyle = dark_mode
-                    ? "rgba(0,10,20,0.82)"
-                    : "rgba(255,255,255,0.88)";
-                  ctx.beginPath();
-                  // Rounded rect polyfill
-                  const rad = scalePx(8);
-                  ctx.moveTo(lx + rad, ly);
-                  ctx.lineTo(lx + legendW - rad, ly);
-                  ctx.arcTo(lx + legendW, ly, lx + legendW, ly + rad, rad);
-                  ctx.lineTo(lx + legendW, ly + legendH - rad);
-                  ctx.arcTo(lx + legendW, ly + legendH, lx + legendW - rad, ly + legendH, rad);
-                  ctx.lineTo(lx + rad, ly + legendH);
-                  ctx.arcTo(lx, ly + legendH, lx, ly + legendH - rad, rad);
-                  ctx.lineTo(lx, ly + rad);
-                  ctx.arcTo(lx, ly, lx + rad, ly, rad);
-                  ctx.closePath();
-                  ctx.fill();
-
-                  // Field title
-                  ctx.fillStyle = dark_mode ? "#00f2ff" : "#1e293b";
-                  ctx.font = `bold ${scalePx(12)}px sans-serif`;
-                  ctx.fillText(`字段: ${meta.field}`, lx + padding, ly + padding + scalePx(12));
-
-                  // Color boxes + labels
-                  const formatNum = (n: number) =>
-                    n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` :
-                    n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` :
-                    n.toFixed(1);
-
-                  for (let i = 0; i < classes; i++) {
-                    const iy = ly + padding + scalePx(24) + i * itemH;
-                    const colorIdx = Math.min(i, colors.length - 1);
-                    ctx.fillStyle = colors[colorIdx];
-                    ctx.fillRect(lx + padding, iy, itemW, itemH - scalePx(4));
-                    ctx.strokeStyle = "rgba(128,128,128,0.4)";
-                    ctx.lineWidth = scalePx(0.5);
-                    ctx.strokeRect(lx + padding, iy, itemW, itemH - scalePx(4));
-                    ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.85)" : "#334155";
-                    ctx.font = `${scalePx(11)}px sans-serif`;
-                    ctx.fillText(
-                      `${formatNum(meta.breaks[i])} – ${formatNum(meta.breaks[i + 1])}`,
-                      lx + padding + itemW + gapX,
-                      iy + itemH - scalePx(8)
-                    );
-                  }
-                }
-              }
-
-              // ── 5. Watermark ─────────────────────────────────────────────
-              if (showWatermark) {
-                ctx.fillStyle = dark_mode ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.4)";
-                ctx.textAlign = "right";
-                ctx.font = `bold ${scalePx(16)}px monospace`;
-                ctx.fillText("Generated by WebGIS AI Agent", targetW - scalePx(36), targetH - scalePx(18));
-                ctx.textAlign = "left";
-              }
-
-              // ── 6. Upload / convert ───────────────────────────────────────
               const dataUrl = exportCanvas.toDataURL("image/png");
               const res = await fetch(dataUrl);
               const blob = await res.blob();
@@ -566,7 +231,6 @@ export function MapActionHandler() {
               const fmt = (format ?? "png").toLowerCase();
 
               if (fmt === "pdf") {
-                // Send to backend PDF compositor
                 const pdfForm = new FormData();
                 pdfForm.append("file", blob, "export.png");
                 if (title) pdfForm.append("title", title);
@@ -577,7 +241,6 @@ export function MapActionHandler() {
                   (156543.03392 * Math.cos((centerLat * Math.PI) / 180)) /
                   Math.pow(2, zoom);
                 const mapWidthMeters = mpp * srcW;
-                // Physical distance = pixels * (meters per inch / dpi)
                 const physicalWidthMeters = srcW * (0.0254 / 96);
                 const scaleApprox = Math.round(mapWidthMeters / physicalWidthMeters);
                 pdfForm.append("scale_text", `1:${scaleApprox.toLocaleString()}`);
@@ -595,7 +258,6 @@ export function MapActionHandler() {
                     `请告知用户 PDF 已就绪，可通过以下链接下载：[下载PDF](${API_BASE}${pdfUrl})。注意展示完链接后直接结束。`
                 );
               } else {
-                // PNG path (existing behaviour)
                 const formData = new FormData();
                 formData.append("file", blob, "export.png");
                 if (title) formData.append("title", title);
@@ -628,6 +290,9 @@ export function MapActionHandler() {
           const imageUrl = image || url;
           if (!imageUrl || !bbox || !id) break;
 
+          const sourceId = `custom-${id}`;
+          const layerId = `${sourceId}-layer`;
+
           // bbox should be [west, south, east, north]
           const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
             [bbox[0], bbox[3]], // top-left
@@ -636,29 +301,18 @@ export function MapActionHandler() {
             [bbox[0], bbox[1]]  // bottom-left
           ];
 
-          if (map.getSource(id)) {
-            map.removeLayer(`${id}-layer`);
-            map.removeSource(id);
-          }
-
-          map.addSource(id, {
-            type: 'image',
-            url: imageUrl,
-            coordinates: coordinates
-          });
-
-          map.addLayer({
-            id: `${id}-layer`,
+          renderer.addImageSource(map, sourceId, imageUrl, coordinates);
+          renderer.addVectorLayer(map, {
+            id: layerId,
             type: 'raster',
-            source: id,
+            source: sourceId,
             paint: {
               'raster-opacity': opacity,
               'raster-fade-duration': 500
             }
           });
 
-          // Zoom to the result extent
-          map.fitBounds(bbox, { padding: 80, duration: 1500 });
+          navigation.fitBounds(map, bbox, 80);
           break;
         }
       }

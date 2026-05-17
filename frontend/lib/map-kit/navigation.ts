@@ -68,3 +68,43 @@ export function jumpTo(map: Map, params: ViewportParams): void {
     pitch: params.pitch,
   });
 }
+
+/**
+ * Calculates the bounding box of a GeoJSON object.
+ * Returns [minLng, minLat, maxLng, maxLat] or null.
+ */
+export function calculateBBox(geojson: any): [number, number, number, number] | null {
+  const bounds = [Infinity, Infinity, -Infinity, -Infinity];
+  const coord: number[][] = [];
+
+  function extract(node: any) {
+    if (Array.isArray(node) && typeof node[0] === 'number') {
+      coord.push(node as number[]);
+    } else if (Array.isArray(node)) {
+      node.forEach(extract);
+    } else if (node && typeof node === 'object' && 'type' in node) {
+      const obj = node as any;
+      if (obj.type === 'FeatureCollection' && Array.isArray(obj.features)) {
+        obj.features.forEach((f: any) => {
+          if (f.geometry?.coordinates) extract(f.geometry.coordinates);
+        });
+      } else if (obj.type === 'Feature' && obj.geometry?.coordinates) {
+        extract(obj.geometry.coordinates);
+      } else if ('coordinates' in obj) {
+        extract(obj.coordinates);
+      }
+    }
+  }
+
+  extract(geojson);
+  if (coord.length === 0) return null;
+
+  coord.forEach(c => {
+    if (c[0] < bounds[0]) bounds[0] = c[0];
+    if (c[1] < bounds[1]) bounds[1] = c[1];
+    if (c[0] > bounds[2]) bounds[2] = c[0];
+    if (c[1] > bounds[3]) bounds[3] = c[1];
+  });
+
+  return bounds as [number, number, number, number];
+}
