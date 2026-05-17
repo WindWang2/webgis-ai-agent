@@ -6,44 +6,14 @@ from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
 from app.services.spatial_analyzer import SpatialAnalyzer
-from app.lib.geoprocessing.geometry import buffer_smart as _buffer_smart
+from app.tools._geojson_utils import safe_parse_geojson
 
 logger = logging.getLogger(__name__)
-
-
-def _safe_parse_geojson(geojson: Any) -> dict | None:
-    """安全解析 GeoJSON，支持字符串或字典"""
-    if isinstance(geojson, dict):
-        return geojson
-    if not isinstance(geojson, str):
-        return None
-    geojson = geojson.strip()
-    if not geojson:
-        return None
-    try:
-        return json.loads(geojson)
-    except json.JSONDecodeError:
-        logger.warning(f"GeoJSON parse failed, attempting repair (length={len(geojson)})")
-        try:
-            for end_pos in range(len(geojson) - 1, max(len(geojson) - 100, 0), -1):
-                if geojson[end_pos] == '}':
-                    candidate = geojson[:end_pos + 1] + ']}'
-                    try:
-                        result = json.loads(candidate)
-                        if isinstance(result, dict) and 'features' in result:
-                            return result
-                    except json.JSONDecodeError:
-                        continue
-        except (json.JSONDecodeError, ValueError, TypeError):
-            pass
-        return None
-
 
 class BufferAnalysisArgs(BaseModel):
     geojson: Any = Field(..., description="输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)")
     distance: float = Field(..., gt=0, description="缓冲距离（米），必须大于0")
     unit: str = Field("m", description="单位：m/km，默认m")
-
 
 class HeatmapDataArgs(BaseModel):
     geojson: Any = Field(..., description="输入点要素 GeoJSON 或数据引用(ref:xxx)")
@@ -52,10 +22,8 @@ class HeatmapDataArgs(BaseModel):
     render_type: str = Field("raster", description="渲染模式: raster(栅格), grid(格网), native(原生)")
     palette: str = Field("classic", description="配色方案: classic, magma, viridis, thermal")
 
-
 def _generate_heatmap(features: list, cell_size: int = 500, radius: int = 1000,
                        render_type: str = "raster", palette: str = "classic") -> dict:
-# ... (keeping existing _generate_heatmap)
     """Generate heatmap data without Celery. Supports raster and grid render types."""
     import base64
     import io
@@ -92,7 +60,6 @@ def _generate_heatmap(features: list, cell_size: int = 500, radius: int = 1000,
         xs = [p[0] for p in points]
         ys = [p[1] for p in points]
 
-        # 1 degree ≈ 111000 m
         cell_deg = cell_size / 111000
         margin = cell_deg * 2
         x_min, x_max = min(xs) - margin, max(xs) + margin
@@ -155,7 +122,6 @@ def _generate_heatmap(features: list, cell_size: int = 500, radius: int = 1000,
             sigma = max(1.0, radius / cell_size)
             H_smooth = gaussian_filter(H.T, sigma=sigma)
             
-            # 过滤极低密度区域，避免平滑后的边缘产生淡色底色方块
             v_max_actual = H_smooth.max()
             if v_max_actual > 0:
                 H_smooth[H_smooth < v_max_actual * 0.01] = 0
@@ -238,7 +204,6 @@ def _generate_heatmap(features: list, cell_size: int = 500, radius: int = 1000,
         if fig:
             plt.close(fig)
 
-
 def register_spatial_tools(registry: ToolRegistry):
     """注册空间分析工具"""
 
@@ -246,120 +211,36 @@ def register_spatial_tools(registry: ToolRegistry):
            description="对几何要素进行缓冲区分析，返回缓冲区多边形",
            args_model=BufferAnalysisArgs)
     def buffer_analysis(geojson: Any, distance: float, unit: str = "m") -> dict:
-        data = _safe_parse_geojson(geojson)
-        if not data:
-            raise ValueError("Invalid GeoJSON input")
-        
-        # Use the new smart buffer library
-        res = _buffer_smart(data, distance, unit)
+        data = safe_parse_geojson(geojson)
+        features = data.get("features", [])
+        res = SpatialAnalyzer.buffer(features, distance, unit)
         return res.to_llm_response()
 
     @tool(registry, name="spatial_stats",
            description="计算几何要素的空间统计信息（面积、长度、中心点等）")
     def spatial_stats(geojson: Any) -> dict:
-        data = _safe_parse_geojson(geojson)
-        if not data:
-            raise ValueError("Invalid GeoJSON input")
+        data = safe_parse_geojson(geojson)
         features = data.get("features", [])
-
-        try:
-            from app.services.spatial_tasks import run_spatial_stats
-            task = run_spatial_stats.apply_async(args=[features])
-            result = task.get(timeout=60)
-        except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
-            if not isinstance(exc, ImportError):
-                logger.warning(f"Celery unavailable for spatial_stats: {exc}")
-            from shapely.geometry import shape
-            import geopandas as gpd
-            geometries = [shape(f["geometry"]) for f in features if f.get("geometry")]
-            if not geometries:
-                raise ValueError("No valid geometries found in input")
-            gdf = gpd.GeoSeries(geometries, crs="EPSG:4326")
-            gdf_proj = gdf.to_crs("ESRI:54009")
-            stats = {
-                "feature_count": len(geometries),
-                "total_area_sqkm": round(float(gdf_proj.area.sum()) / 1e6, 4),
-                "total_length_km": round(float(gdf_proj.length.sum()) / 1000, 4),
-                "centroid": {
-                    "lat": round(float(gdf.centroid.y.mean()), 6),
-                    "lon": round(float(gdf.centroid.x.mean()), 6),
-                },
-                "bounds": {
-                    "min_lon": round(float(gdf.bounds.minx.min()), 6),
-                    "min_lat": round(float(gdf.bounds.miny.min()), 6),
-                    "max_lon": round(float(gdf.bounds.maxx.max()), 6),
-                    "max_lat": round(float(gdf.bounds.maxy.max()), 6),
-                },
-            }
-            result = {"success": True, "stats": stats}
-
-        if result.get("success"):
-            return {"stats": result.get("stats")}
-        
-        error_msg = result.get("error", "Spatial stats failed")
-        raise RuntimeError(error_msg)
+        res = SpatialAnalyzer.statistics(features)
+        return res.to_llm_response()
 
     @tool(registry, name="nearest_neighbor",
            description="查找最近的邻近距离和空间分布模式")
     def nearest_neighbor(geojson: Any) -> dict:
-        data = _safe_parse_geojson(geojson)
-        if not data:
-            raise ValueError("Invalid GeoJSON input")
+        data = safe_parse_geojson(geojson)
         features = data.get("features", [])
-
-        try:
-            from app.services.spatial_tasks import run_nearest_neighbor
-            task = run_nearest_neighbor.apply_async(args=[features])
-            result = task.get(timeout=60)
-        except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
-            if not isinstance(exc, ImportError):
-                logger.warning(f"Celery unavailable for nearest_neighbor: {exc}")
-            import numpy as np
-            from scipy.spatial import distance_matrix
-            from shapely.geometry import shape
-            points = []
-            for f in features:
-                geom = f.get("geometry") or {}
-                try:
-                    s = shape(geom)
-                    if not s.is_empty:
-                        c = s.centroid
-                        points.append((c.x, c.y))
-                except (ValueError, TypeError):
-                    continue
-            if len(points) < 2:
-                raise ValueError("Nearest neighbor analysis requires at least 2 points")
-            coords_arr = np.array(points)
-            dist = distance_matrix(coords_arr, coords_arr)
-            np.fill_diagonal(dist, np.inf)
-            nn_distances = dist.min(axis=1)
-            result = {
-                "success": True,
-                "data": {
-                    "point_count": len(points),
-                    "mean_nearest_distance": round(float(nn_distances.mean()), 4),
-                    "std_nearest_distance": round(float(nn_distances.std()), 4),
-                    "min_distance": round(float(nn_distances.min()), 4),
-                    "max_distance": round(float(nn_distances.max()), 4),
-                }
-            }
-
-        if result.get("success"):
-            return result.get("data")
-        
-        error_msg = result.get("error", "Nearest neighbor analysis failed")
-        raise RuntimeError(error_msg)
+        res = SpatialAnalyzer.nearest(features)
+        return res.to_llm_response()
 
     @tool(registry, name="heatmap_data",
            description="根据点要素生成热力图。支持 'raster' (栅格图片)、'grid' (矢量格网) 和 'native' (原生渲染) 模式。支持通过 palette 参数切换配色方案。",
            args_model=HeatmapDataArgs)
     def heatmap_data(geojson: Any, cell_size: int = 500, radius: int = 2000, render_type: str = "raster", palette: str = "classic") -> dict:
-        data = _safe_parse_geojson(geojson)
+        data = safe_parse_geojson(geojson)
         if not data:
             raise ValueError("Invalid GeoJSON input")
         features = data.get("features") or data.get("feature_collection", [])
         
-        # --- 原生热力图模式 ---
         if render_type == "native":
             if isinstance(data, dict):
                 data["command"] = "add_native_heatmap"
@@ -384,7 +265,6 @@ def register_spatial_tools(registry: ToolRegistry):
         
         if result.get("success"):
             res_data = result.get("data")
-            # 注入 render 指令暗示前端
             if isinstance(res_data, dict):
                 if render_type == "raster":
                     res_data["command"] = "add_heatmap_raster"

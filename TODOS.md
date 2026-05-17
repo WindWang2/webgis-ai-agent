@@ -1,7 +1,3 @@
-- [x] Task 1: LLM Tool Interface & Schema Standardization
-- [x] Task 2: Robust Geometric Operations (Precision Focused)
-- [x] Task 3: Spatial Statistics & Pattern Discovery (Insight Ready)
-- [x] Task 4: Aggregation, Binning & Feature Engineering
-- [x] Task 5: Network Analysis & Reachability
-- [x] Task 6: Chat Engine Integration & Prompt Tuning
-- [ ] Task 7: Final Verification & End-to-End Testing
+- [x] Task 1: Scaffolding and Core Engine (geo_processor)
+- [x] Task 2: Intelligence Layer (geo_analysis)
+- [ ] Task 3: Agent Integration and Tool Registry Update
