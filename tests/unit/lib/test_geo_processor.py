@@ -97,3 +97,22 @@ def test_dissolve_smart():
     }
     dissolved = dissolve_smart(geojson, field="group")
     assert len(dissolved["features"]) == 1
+
+def test_overlay_smart():
+    from app.lib.geo_processor.overlay import overlay_smart
+    poly1 = {
+        "type": "FeatureCollection",
+        "features": [{"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[0,0], [2,0], [2,2], [0,2], [0,0]]]}, "properties": {"id": 1}}]
+    }
+    poly2 = {
+        "type": "FeatureCollection",
+        "features": [{"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[1,1], [3,1], [3,3], [1,3], [1,1]]]}, "properties": {"id": 2}}]
+    }
+    
+    # Intersection
+    res_int = overlay_smart(poly1, poly2, how="intersection")
+    assert len(res_int["features"]) > 0
+    
+    # Union
+    res_uni = overlay_smart(poly1, poly2, how="union")
+    assert len(res_uni["features"]) > 0
