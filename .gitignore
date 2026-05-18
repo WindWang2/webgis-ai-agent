@@ -13,9 +13,19 @@ Thumbs.db
 
 # 配置文件
 .env
-.env.local
-.env.prod
-.env.*.local
+.env.*
+.env-2
+**/.env*
+**/.env.local
+**/.env.prod
+**/.env.*.local
+
+# 密钥与证书
+*.key
+*.crt
+*.pem
+*.p12
+*.pub
 
 # Python
 __pycache__/
