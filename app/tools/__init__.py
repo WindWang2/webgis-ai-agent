@@ -21,9 +21,10 @@ _TOOL_MODULES = [
     ("app.tools.upload_tools", "register_upload_tools"),
     ("app.tools.web_crawler", "register_crawler_tools"),
     ("app.tools.chinese_maps", "register_chinese_map_tools"),
+    ("app.tools.local_admin", "register_local_admin_tools"),
     ("app.tools.spatial_stats", "register_spatial_stats_tools"),
     ("app.tools.terrain_analysis", "register_terrain_tools"),
-    ("app.tools.interpolation_network", "register_interpolation_network_tools"),
+    # ("app.tools.interpolation_network", "register_interpolation_network_tools"), # Deleted in v3.4 refactor
     ("app.tools.report", "register_report_tools"),
     ("app.tools.change_detection", "register_change_detection_tools"),
     ("app.tools.monitoring_report", "register_monitoring_report_tools"),

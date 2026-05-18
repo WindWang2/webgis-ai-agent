@@ -63,6 +63,8 @@ class ToolRegistry:
                 }
             }
         }
+        # 移除已存在的同名 schema，确保唯一性
+        self._schemas = [s for s in self._schemas if s["function"]["name"] != name]
         self._schemas.append(schema)
 
     def _generate_model(self, name: str, func: Callable, param_descriptions: Optional[dict[str, str]]) -> Type[BaseModel]:

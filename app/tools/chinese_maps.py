@@ -3,7 +3,7 @@ import asyncio
 import json
 import logging
 import aiohttp
-from typing import Optional
+from typing import Optional, Any, List
 from app.core.config import settings
 from app.core.network import get_ssl_context, get_base_headers, get_shared_client
 from app.services.provider_health import health_tracker as ht

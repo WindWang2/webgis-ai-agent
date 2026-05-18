@@ -187,11 +187,11 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         )
         return res.to_llm_response()
 
-    @tool(registry, name="isochrone_analysis",
-           description="等时线分析：基于路网计算从设施点出发在指定时间内可达的范围。",
+    @tool(registry, name="isochrone_network",
+           description="等时线分析（路网模式）：基于路网计算从设施点出发在指定时间内可达的范围。需要输入路网要素。",
            args_model=IsochroneAnalysisArgs)
-    def isochrone_analysis(network_layer: Any, facilities: Any, travel_time: float = 15, mode: str = "walking") -> dict:
-        from app.lib.geoprocessing.network import calculate_isochrones
+    def isochrone_network(network_layer: Any, facilities: Any, travel_time: float = 15, mode: str = "walking") -> dict:
+        from app.lib.geo_analysis.network import calculate_isochrones
         net = safe_parse_geojson(network_layer)
         facs = safe_parse_geojson(facilities)
         res = calculate_isochrones(net, facs, travel_time, mode)

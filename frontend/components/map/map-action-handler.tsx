@@ -321,6 +321,14 @@ export function MapActionHandler() {
           navigation.fitBounds(map, bbox, 80);
           break;
         }
+
+        case 'APPLY_LAYER_FILTER': {
+          const { layer_id, filter } = action.params || {};
+          if (!layer_id) break;
+          // Apply MapLibre filter
+          map.setFilter(layer_id, filter || null);
+          break;
+        }
       }
     } catch (error) {
       console.error('[MapActionHandler] Error executing action:', error);
