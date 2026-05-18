@@ -1153,6 +1153,15 @@ class ChatEngine:
         event_payload: dict = {"tool": tool_name}
         if geojson_ref:
             event_payload["ref"] = geojson_ref
+            # ─── REAL-TIME MAP UPDATE BROADCAST ───
+            # 立即通过 WebSocket 推送给前端，让地图在对话流还在生成时就开始渲染
+            self._fire_and_forget(
+                broadcast_ws_event, 
+                session_id, 
+                "geojson_update", 
+                {"step_id": tc.get("id"), "geojson": geojson_ref, "tool": tool_name}
+            )
+        
         if isinstance(result, dict):
             for k in ("layer_id", "bbox", "feature_count", "alias"):
                 v = result.get(k)

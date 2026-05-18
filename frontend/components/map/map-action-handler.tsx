@@ -14,6 +14,22 @@ import * as navigation from '@/lib/map-kit/navigation';
 import * as renderer from '@/lib/map-kit/renderer';
 import * as exporter from '@/lib/map-kit/exporter';
 
+/**
+ * Helper to parse filters that might come in as JSON strings from AI commands
+ */
+function parseFilter(filter: any): any[] | null {
+  if (!filter) return null;
+  if (typeof filter === 'string') {
+    try {
+      return JSON.parse(filter);
+    } catch (e) {
+      console.warn('[MapActionHandler] Failed to parse filter string:', filter);
+      return null;
+    }
+  }
+  return filter;
+}
+
 export function MapActionHandler() {
   const { actions, popAction, setSelectedBaseLayer } = useMapAction();
   const mapContext = useMap();
@@ -45,7 +61,7 @@ export function MapActionHandler() {
           } else {
             renderer.addVectorLayer(map, {
               id,
-              type: type || 'fill',
+              type: (type || 'fill') as any,
               source: id,
               paint: style || {}
             });
@@ -169,8 +185,8 @@ export function MapActionHandler() {
           mapStyle.layers?.forEach(l => {
             if (l.id.startsWith(`custom-${layer_id}`)) {
               renderer.updateLayerStyle(map, l.id, {
-                color: style.color,
-                strokeWidth: style.strokeWidth
+                color: (style as any).color,
+                strokeWidth: (style as any).strokeWidth
               });
             }
           });
@@ -217,7 +233,7 @@ export function MapActionHandler() {
               );
               const thematicLayer = (thematicLayerInfo?.style as any)?.type ? thematicLayerInfo?.style : thematicLayerInfo;
 
-              exporter.composeLayout(exportCanvas, title, subtitle, {
+              exporter.composeLayout(exportCanvas, title || '', subtitle || '', {
                 dpi,
                 theme,
                 showScale,
@@ -325,8 +341,8 @@ export function MapActionHandler() {
         case 'APPLY_LAYER_FILTER': {
           const { layer_id, filter } = action.params || {};
           if (!layer_id) break;
-          // Apply MapLibre filter
-          map.setFilter(layer_id, filter || null);
+          // Apply MapLibre filter with fallback parser for simple string filters
+          map.setFilter(layer_id, parseFilter(filter) as any);
           break;
         }
       }

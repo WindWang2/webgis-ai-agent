@@ -157,7 +157,7 @@ describe('useMapBridge', () => {
   });
 
   it('aborts previous stream when send() called again', async () => {
-    let abortResolvers: Array<() => void> = [];
+    const abortResolvers: Array<() => void> = [];
     mockStreamChat.mockImplementation(async function*(_msg, _sid, _snap, signal) {
       await new Promise<void>((resolve) => {
         abortResolvers.push(resolve);

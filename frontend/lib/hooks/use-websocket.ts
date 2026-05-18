@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { useHudStore, type HudState } from '@/lib/store/useHudStore';
-import { WS_BASE } from '@/lib/api/config';
+import { WS_BASE, API_BASE } from '@/lib/api/config';
 
 const WS_URL = `${WS_BASE}/api/v1/ws`;
 
@@ -36,16 +36,41 @@ export function useWebSocket(sessionId?: string) {
     socket.onopen = () => {
       retryCountRef.current = 0;
       setConnected(true);
+      // Start heartbeat
+      const pingInterval = setInterval(() => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ event: 'ping' }));
+        }
+      }, 30000);
+      (socket as any)._pingInterval = pingInterval;
     };
 
-    socket.onmessage = (event) => {
+    socket.onmessage = async (event) => {
       try {
         const payload = JSON.parse(event.data);
         const { event: eventType, data } = payload;
 
+        if (eventType === 'pong') return;
+
         if (eventType === 'STEP_COMPLETED' || eventType === 'geojson_update') {
           if (data.step_id && data.geojson) {
-            addProcessLayer(data.step_id, data.geojson);
+            let geojson = data.geojson;
+            // If it's a reference, fetch the actual data
+            if (typeof geojson === 'string' && geojson.startsWith('ref:')) {
+              try {
+                const resp = await fetch(`${API_BASE}/api/v1/layers/data/${geojson}?session_id=${sessionId}`);
+                if (resp.ok) {
+                  geojson = await resp.json();
+                } else {
+                  console.error('Failed to fetch geojson ref:', geojson);
+                  return;
+                }
+              } catch (e) {
+                console.error('Error fetching geojson ref:', e);
+                return;
+              }
+            }
+            addProcessLayer(data.step_id, geojson);
           }
         } else if (eventType === 'STEP_REMOVED') {
           if (data.step_id) {
@@ -56,6 +81,7 @@ export function useWebSocket(sessionId?: string) {
     };
 
     socket.onclose = () => {
+      if ((socket as any)._pingInterval) clearInterval((socket as any)._pingInterval);
       setConnected(false);
       socketRef.current = null;
       const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 30000);
