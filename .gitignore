@@ -67,3 +67,4 @@ dump.rdb
 *.rdb
 .context/
 .gstack/
+.env-2
