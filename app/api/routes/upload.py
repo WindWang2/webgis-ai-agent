@@ -108,7 +108,8 @@ async def upload_files(
         )
 
     # 创建上传目录
-    upload_id = uuid.uuid4().hex[:12]
+    # 完整 uuid hex (32 字符, 128 位熵) — 旧的 [:12] 仅 48 位，公网静态 mount 下可枚举
+    upload_id = uuid.uuid4().hex
     upload_dir = get_upload_dir(settings.DATA_DIR, upload_id)
 
     # 写入临时文件 — 二次防御：解析后必须仍在 upload_dir 之下

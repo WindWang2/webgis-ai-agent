@@ -9,14 +9,13 @@ load_dotenv()
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.core.config import settings
 from app.core.database import Engine
 from app.core.exception import global_exception_handler
 from app.core.rate_limiter import get_rate_limiter
-from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes
+from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes
 from app.tools.registry import ToolRegistry
 from app.tools import init_tools
 from app.services.chat_engine import ChatEngine
@@ -129,7 +128,8 @@ app.include_router(ws.router, prefix="/api/v1", tags=["WebSocket"])
 app.include_router(config.router, prefix="/api/v1", tags=["系统配置"])
 app.include_router(explorer.router, prefix="/api/v1", tags=["探索引擎"])
 
-# 静态文件服务 - 用于访问导出的地图和分析后的 GeoTIFF
+# 静态文件服务 — 用 FastAPI 路由替代原 StaticFiles mount（A4 修复）：
+# 路径强校验 + 可选 HMAC 签名 + 访问日志 + JWT 鉴权或公共白名单。
 if not os.path.exists(settings.DATA_DIR):
     os.makedirs(settings.DATA_DIR, exist_ok=True)
-app.mount("/api/v1/static", StaticFiles(directory=settings.DATA_DIR), name="static")
+app.include_router(static_routes.router, prefix="/api/v1", tags=["静态文件"])
