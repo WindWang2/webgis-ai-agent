@@ -79,7 +79,7 @@ async def test_chat_completions(client):
 @pytest.mark.asyncio
 async def test_clear_session(client):
     mock_engine = MagicMock()
-    mock_engine.clear_session = AsyncMock(return_value=None)
+    mock_engine.clear_session = AsyncMock(return_value=True)  # A2: clear_session 返回 bool
     with patch.object(_chat_mod, "engine", mock_engine):
         resp = await client.delete("/api/chat/sessions/test-session")
         assert resp.status_code == 200

@@ -4,53 +4,37 @@ import os
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
-# 核心：确保 .env 被注入到 os.environ，供 MCP Adapter 的 os.path.expandvars 消费
 load_dotenv()
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.core.config import settings
 from app.core.database import Engine
 from app.core.exception import global_exception_handler
 from app.core.rate_limiter import get_rate_limiter
-from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer
+from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes
 from app.tools.registry import ToolRegistry
 from app.tools import init_tools
 from app.services.chat_engine import ChatEngine
+from app.services.tool_catalog import ToolCatalog
 
 logger = logging.getLogger(__name__)
-
-mcp_adapter = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期：启动时初始化工具注册和 MCP 连接"""
-    global mcp_adapter
-
-    # 初始化工具注册中心（替代 chat.py 模块级导入）
+    """应用生命周期：启动时初始化工具注册中心。"""
     registry = ToolRegistry()
     init_tools(registry)
     chat.registry = registry
-    chat.engine = ChatEngine(registry)
-
-    # 加载 MCP server 配置（项目根目录下的 mcp_servers.json）
-    mcp_config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "mcp_servers.json")
-    from app.services.mcp_adapter import MCPAdapter
-    mcp_config = MCPAdapter.load_config(mcp_config_path)
-    if mcp_config.get("mcpServers"):
-        logger.info(f"[MCP] loading config from {mcp_config_path}")
-        mcp_adapter = await MCPAdapter.from_config(mcp_config, registry)
-    else:
-        logger.info("[MCP] no mcp_servers.json found or empty, skipping MCP setup")
+    # 分层工具目录：按用户消息 + 会话粘性筛选 schema，cut token & 提升选择准确率
+    catalog = ToolCatalog(registry)
+    chat.engine = ChatEngine(registry, tool_catalog=catalog)
 
     yield
 
-    if mcp_adapter:
-        await mcp_adapter.close()
     from app.core.network import close_shared_client
     await close_shared_client()
     Engine.dispose()
@@ -113,6 +97,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_routes.router, prefix="/api/v1", tags=["认证"])
 app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])
 app.include_router(layer.router, prefix="/api/v1", tags=["图层管理"])
 app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
@@ -125,7 +110,8 @@ app.include_router(ws.router, prefix="/api/v1", tags=["WebSocket"])
 app.include_router(config.router, prefix="/api/v1", tags=["系统配置"])
 app.include_router(explorer.router, prefix="/api/v1", tags=["探索引擎"])
 
-# 静态文件服务 - 用于访问导出的地图和分析后的 GeoTIFF
+# 静态文件服务 — 用 FastAPI 路由替代原 StaticFiles mount（A4 修复）：
+# 路径强校验 + 可选 HMAC 签名 + 访问日志 + JWT 鉴权或公共白名单。
 if not os.path.exists(settings.DATA_DIR):
     os.makedirs(settings.DATA_DIR, exist_ok=True)
-app.mount("/api/v1/static", StaticFiles(directory=settings.DATA_DIR), name="static")
+app.include_router(static_routes.router, prefix="/api/v1", tags=["静态文件"])

@@ -46,15 +46,18 @@ class TestUploadTools:
         assert result["count"] == 1
         assert result["uploads"][0]["original_name"] == "test.geojson"
 
-    def test_get_upload_info_not_found(self, registry):
+    @pytest.mark.asyncio
+    async def test_get_upload_info_not_found(self, registry):
+        """通过 dispatch 调用以走完标准错误包装契约（V3.x "Exception As Thought"）。"""
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = None
         with patch("app.tools.upload_tools.db_session") as mock_ctx:
             mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
             mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
             register_upload_tools(registry)
-            result = registry._tools["get_upload_info"](upload_id=99999)
-        assert "error" in result
+            result = await registry.dispatch("get_upload_info", {"upload_id": 99999})
+        assert result.get("success") is False
+        assert result.get("code") == "NOT_FOUND"
 
     def test_get_upload_info_found(self, registry):
         mock_record = MagicMock()

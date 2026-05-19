@@ -7,6 +7,7 @@ import type { AiStatus } from '@/lib/store/hud-types';
 import MiniMd from '@/components/chat/mini-md';
 import { ToolCallChain } from '@/components/chat/tool-call-card';
 import { CollapsibleThink } from '@/components/chat/collapsible-think';
+import { PlanProposalCard } from '@/components/chat/plan-proposal-card';
 
 /* ─── Thinking dots animation ─── */
 const DOT_ANIMS = ['animate-dot-1', 'animate-dot-2', 'animate-dot-3'];
@@ -73,9 +74,11 @@ interface ChatTabProps {
   aiStatus: AiStatus;
   onSend: (text: string) => void;
   accentColor: string;
+  /** Plan Mode: 用户在卡片上点按钮时回调，由父组件发送对应 chat 消息并更新 plan.status */
+  onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
 }
 
-export function ChatTab({ messages, aiStatus, onSend, accentColor }: ChatTabProps) {
+export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction }: ChatTabProps) {
   const theme = useHudStore((s) => s.theme);
   const isDark = theme === 'dark';
   const [mounted, setMounted] = useState(false);
@@ -232,6 +235,22 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor }: ChatTabProp
                       {msg.content && <MiniMd text={msg.content} />}
                       {msg.toolCalls && msg.toolCalls.length > 0 && (
                         <ToolCallChain calls={msg.toolCalls} />
+                      )}
+                      {msg.plan && (
+                        <PlanProposalCard
+                          planId={msg.plan.plan_id}
+                          title={msg.plan.title}
+                          summary={msg.plan.summary}
+                          stepCount={msg.plan.step_count}
+                          destructiveSteps={msg.plan.destructive_steps}
+                          stepsPreview={msg.plan.steps_preview}
+                          status={msg.plan.status}
+                          isDark={isDark}
+                          accentColor={accentColor}
+                          onApprove={(pid) => onPlanAction?.(pid, 'approve')}
+                          onRevise={(pid) => onPlanAction?.(pid, 'revise')}
+                          onReject={(pid) => onPlanAction?.(pid, 'reject')}
+                        />
                       )}
                     </div>
                   ) : null}

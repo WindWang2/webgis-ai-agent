@@ -27,7 +27,7 @@ export function ExportMask() {
     if (settings.paperSize === 'screen' || containerSize.w === 0) return baseStyle;
     
     // A4 ratio: 1 : 1.414
-    let targetRatio = settings.orientation === 'landscape' ? 1.414 : 1 / 1.414;
+    const targetRatio = settings.orientation === 'landscape' ? 1.414 : 1 / 1.414;
     
     // Calculate the maximum box fitting inside the container
     const containerRatio = containerSize.w / containerSize.h;

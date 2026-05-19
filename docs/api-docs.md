@@ -269,8 +269,6 @@ V3.2 新增的控制面板 API，支持运行时动态配置。
 |------|-----|------|
 | GET | `/api/v1/config/llm` | 获取当前 LLM 配置 |
 | POST | `/api/v1/config/llm` | 更新 LLM 配置 (base_url, model, api_key) |
-| GET | `/api/v1/config/mcp` | 获取 MCP 服务器配置 |
-| POST | `/api/v1/config/mcp` | 更新 MCP 配置并热重载 |
 | GET | `/api/v1/config/skills` | 列出已加载的动态技能 |
 | POST | `/api/v1/config/skills/upload` | 上传新技能脚本 |
 | POST | `/api/v1/config/skills/refresh` | 热重载技能目录 |

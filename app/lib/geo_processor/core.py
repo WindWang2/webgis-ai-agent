@@ -97,15 +97,39 @@ def bd09_to_gcj02(lng: float, lat: float) -> tuple[float, float]:
     theta = math.atan2(lat, lng) - 0.000003 * math.cos(lng * math.pi * 3000.0 / 180.0)
     return z * math.cos(theta), z * math.sin(theta)
 
+def _repair_json(s: str) -> str:
+    """Very simple JSON repair: adds missing closing brackets/braces."""
+    stack = []
+    for char in s:
+        if char == '{':
+            stack.append('}')
+        elif char == '[':
+            stack.append(']')
+        elif char == '}':
+            if stack and stack[-1] == '}':
+                stack.pop()
+        elif char == ']':
+            if stack and stack[-1] == ']':
+                stack.pop()
+    return s + "".join(reversed(stack))
+
 def safe_parse(geojson: Any) -> dict | None:
     """Robust parsing of GeoJSON string or dict."""
     if isinstance(geojson, dict):
         return geojson
     if isinstance(geojson, str):
+        geojson = geojson.strip()
+        if not geojson:
+            return None
         try:
             return json.loads(geojson)
         except (json.JSONDecodeError, TypeError):
-            return None
+            # Try simple repair for truncated strings
+            try:
+                repaired = _repair_json(geojson)
+                return json.loads(repaired)
+            except Exception:
+                return None
     return None
 
 def to_utm_gdf(geojson: dict | str) -> tuple[gpd.GeoDataFrame, str] | None:

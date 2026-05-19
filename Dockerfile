@@ -15,7 +15,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 # Stage 3: Backend Dependencies
-FROM python:3.11-slim AS backend-deps
+FROM python:3.12-slim AS backend-deps
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libexpat1 libgdal-dev gdal-bin libgeos-dev libproj-dev \
@@ -24,20 +24,19 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 
 # Stage 4: Backend Builder (carries deps + app code)
-FROM python:3.11-slim AS backend-builder
+FROM python:3.12-slim AS backend-builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libexpat1 libgdal-dev gdal-bin libgeos-dev libproj-dev \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=backend-deps /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=backend-deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=backend-deps /usr/local/bin /usr/local/bin
 COPY requirements.txt ./
 COPY main.py ./
 COPY app/ ./app/
-COPY mcp_servers.json ./
 
 # Stage 5: Runner
-FROM python:3.11-slim AS runner
+FROM python:3.12-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -56,7 +55,7 @@ COPY --from=frontend-builder /app/frontend/public ./frontend/public
 # Copy backend app code
 COPY --from=backend-builder /app ./
 # Copy installed Python packages and binaries
-COPY --from=backend-builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=backend-builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=backend-builder /usr/local/bin /usr/local/bin
 
 # Create non-root user

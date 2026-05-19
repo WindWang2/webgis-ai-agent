@@ -102,8 +102,9 @@ def test_get_session_detail_not_found(client):
 def test_delete_session(client):
     mod = _get_chat_mod()
     mock_engine = MagicMock()
-    mock_engine.clear_session = AsyncMock(return_value=None)
+    mock_engine.clear_session = AsyncMock(return_value=True)  # A2: 返回 bool
     with patch.object(mod, "engine", mock_engine):
         resp = client.delete(f"{BASE}/sessions/s1")
     assert resp.status_code == 200
-    mock_engine.clear_session.assert_awaited_once_with("s1")
+    # A2: 现在带 user_id kwarg
+    mock_engine.clear_session.assert_awaited_once_with("s1", user_id="anonymous")

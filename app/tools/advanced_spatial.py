@@ -48,7 +48,16 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
     """注册高级空间分析工具"""
 
     @tool(registry, name="path_analysis",
-           description="在给定的路网要素中计算起点和终点之间的最短路径。",
+           description=(
+               "图论最短路径：给定路网 LineString 集合 + 起终点坐标，返回最短路径线 + 距离。"
+               "\n何时用：需要在自定义路网（用户上传 / OSM 抓取）上做最短路径；"
+               "出行规划的可控替代（不依赖第三方路径 API）。"
+               "\n何时不用：(1) 走真实道路的导航 — 用 search_route_cn (Amap，含转向/限行) 或 search_transit_route；"
+               "(2) 要可达范围而非单点路径 — 用 isochrone_network / isochrone_analysis；"
+               "(3) 网络规模 > 1 万边 — 性能会退化，先用 attribute_filter 裁子网。"
+               "\n关键约束：网络必须是连通的 LineString；起终点会就近吸附到最近节点。"
+           ),
+           tier=2, domains=["network"],
            args_model=PathAnalysisArgs)
     def path_analysis(network_features: Any, start_point: List[float], end_point: List[float]) -> dict:
         data = safe_parse_geojson(network_features)
@@ -57,7 +66,16 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="zonal_stats",
-           description="计算矢量区域内的栅格数据统计信息（如平均值、总和等）。",
+           description=(
+               "区域栅格统计：对每个矢量多边形，统计落入其内的栅格像素 (min/max/mean/sum/count) 并回写到 properties。"
+               "\n何时用：『每个区县的平均 NDVI / 平均 DEM 高程 / 累积降雨量』；"
+               "用 NDVI 或高程图层给区县着色；遥感产物 (compute_ndvi/fetch_dem 的输出) 接入到行政统计。"
+               "\n何时不用：(1) 仅做点的栅格采样 — 直接读栅格即可；"
+               "(2) 矢量内的矢量统计 (区内 POI 数) — 用 spatial_aggregate；"
+               "(3) 没有现成栅格 — 先 fetch_dem / compute_ndvi 再 zonal_stats。"
+               "\n关键约束：zones 是 FeatureCollection (面)；raster_path 必须是后端可访问的本地路径或 ref。"
+           ),
+           tier=2, domains=["raster"],
            args_model=ZonalStatsArgs)
     def zonal_stats(geojson: Any, raster_path: str) -> dict:
         from app.lib.geo_analysis.raster_ops import zonal_statistics
@@ -83,6 +101,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
 
     @tool(registry, name="idw_interpolation",
            description="反距离加权插值(IDW)：将离散采样点转换为连续的 H3 六边形网格表面。适用于气象、污染等连续变量建模。",
+           tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "输入点要素集 GeoJSON 或引用(ref:xxx)",
                "value_field": "用于插值的数值字段名",
@@ -143,7 +162,15 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="spatial_join",
-           description="基于空间拓扑关系将两个图层的属性进行联接。",
+           description=(
+               "空间连接：按拓扑关系 (intersects/within/contains 等) 将右图层属性附加到左图层要素。"
+               "\n何时用：『把人口属性挂到行政区上』『把 POI 所属街道写回 POI』『判断每个建筑是否在保护区内』；"
+               "做主题图（按属性着色）前的属性预处理。"
+               "\n何时不用：(1) 只要点数 / 求和 — 用 spatial_aggregate（不返回连接后的全部右属性，更轻量）；"
+               "(2) 要保留左图层全部、空匹配补 NaN — join_type='left'；inner 只保留有匹配的。"
+               "\n关键约束：predicate 取值 intersects/within/contains/touches/crosses；"
+               "左右图层 CRS 必须一致（内部自动按 WGS84 处理）。"
+           ),
            args_model=SpatialJoinArgs)
     def spatial_join(left_layer: Any, right_layer: Any, join_type: str = "inner", predicate: str = "intersects") -> dict:
         data_left = safe_parse_geojson(left_layer)
@@ -187,18 +214,27 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         )
         return res.to_llm_response()
 
-    @tool(registry, name="isochrone_analysis",
-           description="等时线分析：基于路网计算从设施点出发在指定时间内可达的范围。",
+    @tool(registry, name="isochrone_network",
+           description="等时线分析（路网模式）：基于路网计算从设施点出发在指定时间内可达的范围。需要输入路网要素。",
+           tier=2, domains=["network"],
            args_model=IsochroneAnalysisArgs)
-    def isochrone_analysis(network_layer: Any, facilities: Any, travel_time: float = 15, mode: str = "walking") -> dict:
-        from app.lib.geoprocessing.network import calculate_isochrones
+    def isochrone_network(network_layer: Any, facilities: Any, travel_time: float = 15, mode: str = "walking") -> dict:
+        from app.lib.geo_analysis.network import calculate_isochrones
         net = safe_parse_geojson(network_layer)
         facs = safe_parse_geojson(facilities)
         res = calculate_isochrones(net, facs, travel_time, mode)
         return res.to_llm_response()
 
     @tool(registry, name="fishnet_grid",
-           description="生成鱼网格网：在指定范围内创建正方形或六边形网格。",
+           description=(
+               "鱼网格网生成：在 bbox 内生成正方形或六边形覆盖网格 (空 cell，无属性)。"
+               "\n何时用：作为 spatial_aggregate / spatial_join 的底图做空间统计；"
+               "需要规则网格做密度可视化但不想用 H3 索引（如要导出兼容 ArcGIS 的 shp）。"
+               "\n何时不用：(1) 仅需点的网格聚合 — 直接用 h3_binning（自带 H3 索引、性能更好）；"
+               "(2) 要平滑等值面 — 用 kde_contours / idw_interpolation。"
+               "\n关键约束：bounds=[west,south,east,north] WGS84；cell_size 单位米；"
+               "大 bbox + 小 cell_size 会爆内存（>10⁶ 格警告）。"
+           ),
            args_model=FishnetGridArgs)
     def fishnet_grid(bounds: List[float], cell_size: float, type: str = "square") -> dict:
         from app.lib.geo_analysis.aggregation import generate_fishnet
@@ -218,6 +254,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
 
     @tool(registry, name="service_area_simple",
            description="简单服务区分析：根据出行模式和时间生成服务范围。适合分析『某设施 15 分钟步行圈』。",
+           tier=2, domains=["network"],
            param_descriptions={
                "geojson": "设施点要素集 GeoJSON 或引用(ref:xxx)",
                "travel_time_min": "出行时间（分钟），默认 15",
@@ -234,6 +271,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
 
     @tool(registry, name="h3_binning",
            description="H3网格聚合：将点数据聚合到指定分辨率的H3六边形网格中（代替传统的鱼网格网）。适用于生成高性能的点密度分布数据驱动渲染。",
+           tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "点要素集 GeoJSON 或引用(ref:xxx)",
                "resolution": "H3分辨率（通常 6 到 9 之间，越大网格越小），例如 8",
@@ -244,4 +282,45 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         from app.lib.geo_analysis.aggregation import h3_binning as _h3_binning
         data = safe_parse_geojson(geojson)
         res = _h3_binning(data, resolution, stat_field, stat_method)
+        return res.to_llm_response()
+
+    @tool(registry, name="dissolve_layer",
+           description=(
+               "矢量融合 (Dissolve)：把相邻同属性的多边形/线合并为单一几何，可选按字段分组。"
+               "\n何时用：(1) 把街道边界合并为区县轮廓；"
+               "(2) 把同类用地（如『住宅』『商业』）的相邻地块合并；"
+               "(3) overlay/intersect 后清理碎片；"
+               "(4) 生成清洁的母图层用于 clip_layer。"
+               "\n何时不用：(1) 只想统计每个多边形的属性 — 用 spatial_aggregate；"
+               "(2) 要联合两个不同图层 — 用 overlay_analysis(how='union')；"
+               "(3) 单纯按属性筛选 — 用 attribute_filter。"
+               "\n关键约束：未给 field 时会把整个图层融合成 1 个要素；"
+               "给定 field 后会按字段值分组，每组一个融合结果。"
+           ),
+           param_descriptions={
+               "geojson": "输入图层 GeoJSON 或引用(ref:xxx)，几何类型应一致（全部 polygon 或全部 line）",
+               "field": "可选属性字段名。若提供，按该字段的不同值分组分别融合；不提供则整体融合为单一要素",
+           })
+    def dissolve_layer(geojson: Any, field: Optional[str] = None) -> dict:
+        from app.lib.geo_processor.geometry import dissolve_smart
+        res = dissolve_smart(geojson, field=field)
+        return res.to_llm_response()
+
+    @tool(registry, name="nearest_facility",
+           description=(
+               "最近设施匹配：对每个源点找出目标集合中距离最近的目标，并标注距离（米）。"
+               "\n何时用：『每户居民最近的医院/学校』『100 个 POI 最近的地铁站』『每个公交站最近的商圈』 — "
+               "**双集合最近邻匹配的唯一工具**。"
+               "\n何时不用：(1) 同一集合内的最近邻距离/聚集度 — 用 nearest_neighbor (单集合统计)；"
+               "(2) 服务区/可达性 — 用 isochrone_analysis 或 service_area_simple；"
+               "(3) 沿路网最近 — 当前是欧氏距离，沿路网需 path_analysis 逐点算。"
+               "\n返回：每个源点的副本，properties 新增 nearest_target_id 与 distance_m。"
+           ),
+           param_descriptions={
+               "source_points": "源点要素集 (GeoJSON 或 ref:xxx) — 每个点会找一个最近目标",
+               "target_points": "目标点要素集 (GeoJSON 或 ref:xxx) — 候选设施集合",
+           })
+    def nearest_facility(source_points: Any, target_points: Any) -> dict:
+        from app.lib.geo_analysis.network import nearest_neighbor_features
+        res = nearest_neighbor_features(source_points, target_points)
         return res.to_llm_response()

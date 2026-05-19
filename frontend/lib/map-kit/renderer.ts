@@ -293,3 +293,181 @@ export function setLayerFilter(map: any, layerId: string, filterExp: any[]) {
     throw new Error(`Layer '${layerId}' not found.`);
   }
 }
+
+// ─────────────────────────────────────────────────────────────
+// M4 扩展：把 map-panel.tsx 内联的 MapLibre 调用收敛到 renderer
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * 添加（或忽略已存在的）瓦片栅格源。
+ * 主要给底图/外部 tile 服务用，替代 map-panel 里手写的
+ * `map.addSource({type:'raster', tiles:[url], tileSize:256})`。
+ */
+export function addRasterTileSource(map: any, id: string, urls: string | string[], tileSize: number = 256) {
+  if (map.getSource(id)) return;
+  const tiles = Array.isArray(urls) ? urls : [urls];
+  map.addSource(id, { type: 'raster', tiles, tileSize });
+}
+
+/**
+ * 把一组前缀匹配的子图层一次性切换可见性。
+ * 等价于：遍历 style.layers，凡 id.startsWith(prefix) 的就 setLayoutProperty。
+ */
+export function setLayerStackVisibility(map: any, prefix: string, visible: boolean) {
+  const style = map.getStyle();
+  if (!style?.layers) return;
+  const value = visible ? 'visible' : 'none';
+  for (const l of style.layers) {
+    if (l.id.startsWith(prefix)) {
+      try {
+        map.setLayoutProperty(l.id, 'visibility', value);
+      } catch {
+        /* layer 可能在迭代过程中被另一个 effect 移走，吃掉 */
+      }
+    }
+  }
+}
+
+export interface ProcessLayerStyle {
+  /** 主色 — 默认绿色 */
+  color?: string;
+  /** 多边形填充透明度 0~1，默认 0.08 */
+  fillOpacity?: number;
+}
+
+/**
+ * 添加"过程层"三件套（fill + dashed line + point），用来可视化中间步骤。
+ * 每个 stepId 独立 source，前缀 `process-{stepId}-{fill|line|point}`。
+ */
+export function addProcessLayerStack(
+  map: any,
+  stepId: string,
+  geojson: any,
+  style: ProcessLayerStyle = {},
+) {
+  const sourceId = `process-${stepId}`;
+  if (map.getSource(sourceId)) return;
+
+  const color = style.color || '#16a34a';
+  const fillOpacity = style.fillOpacity ?? 0.08;
+
+  map.addSource(sourceId, { type: 'geojson', data: geojson });
+  map.addLayer({
+    id: `process-${stepId}-fill`,
+    type: 'fill',
+    source: sourceId,
+    paint: {
+      'fill-color': `rgba(22, 163, 74, ${fillOpacity})`,
+      'fill-outline-color': 'rgba(22, 163, 74, 0.3)',
+    },
+  });
+  map.addLayer({
+    id: `process-${stepId}-line`,
+    type: 'line',
+    source: sourceId,
+    paint: {
+      'line-color': color,
+      'line-width': 1.5,
+      'line-opacity': 0.4,
+      'line-dasharray': [3, 3],
+    },
+  });
+  map.addLayer({
+    id: `process-${stepId}-point`,
+    type: 'circle',
+    source: sourceId,
+    paint: {
+      'circle-radius': 4,
+      'circle-color': 'rgba(22, 163, 74, 0.3)',
+      'circle-stroke-width': 1,
+      'circle-stroke-color': color,
+    },
+  });
+}
+
+/**
+ * 移除所有"孤儿"自定义图层及其 source：style 中以 prefix 开头但不属于 knownIds 的。
+ *
+ * `extractBaseId` 把 layer.id 切回它所属的"逻辑层 id"（map-panel 用
+ * `custom-{layerId}-{sub}` 形式，stripPrefix 后再去掉最后一段 `-sub`）。
+ * 不传时默认 `id => id`。
+ */
+export function removeOrphanCustomLayers(
+  map: any,
+  knownIds: Set<string>,
+  prefix: string,
+  extractBaseId: (idAfterPrefix: string) => string = (id) => id.replace(/-[^-]*$/, ''),
+) {
+  const style = map.getStyle();
+  if (!style) return;
+
+  // 先删 layer（layer 引用 source；先 source 后 layer 会报错）
+  for (const l of style.layers || []) {
+    if (l.id.startsWith(prefix)) {
+      const base = extractBaseId(l.id.slice(prefix.length));
+      if (!knownIds.has(base)) {
+        try { map.removeLayer(l.id); } catch { /* silent */ }
+      }
+    }
+  }
+  for (const sid of Object.keys(style.sources || {})) {
+    if (sid.startsWith(prefix)) {
+      const base = sid.slice(prefix.length);
+      if (!knownIds.has(base)) {
+        try { map.removeSource(sid); } catch { /* silent */ }
+      }
+    }
+  }
+}
+
+export interface TerrainOptions {
+  /** 等高线/DEM 瓦片 URL — 默认 AWS terrarium */
+  url?: string;
+  /** 立体强度，>1 拔高，<1 压低 */
+  exaggeration?: number;
+  /** sourceId — 默认 'terrain-aws'。换源时记得传不同 id 否则会跟旧源冲突 */
+  sourceId?: string;
+}
+
+/**
+ * 启用 3D 地形 —— 添加 raster-dem source 并调 setTerrain。
+ * 幂等：source 已存在时直接复用，不重复 addSource。
+ */
+export function enable3DTerrain(map: any, options: TerrainOptions = {}) {
+  const sourceId = options.sourceId || 'terrain-aws';
+  const url = options.url || 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
+  if (!map.getSource(sourceId)) {
+    map.addSource(sourceId, {
+      type: 'raster-dem',
+      tiles: [url],
+      tileSize: 256,
+      maxzoom: 14,
+    });
+  }
+  map.setTerrain({ source: sourceId, exaggeration: options.exaggeration ?? 1.5 });
+}
+
+/** 关闭 3D 地形（保留 source 以便快速重启）。 */
+export function disable3DTerrain(map: any) {
+  map.setTerrain(null);
+}
+
+/**
+ * Z 顺序同步：按 orderedBaseIds 的顺序，把所有匹配前缀的子图层"按序 moveLayer"。
+ *
+ * MapLibre `moveLayer(id)` 无 beforeId 时把它移到栈顶。所以**反向迭代**
+ * orderedBaseIds 即可让最后被 move 的（数组首）落在最顶。
+ */
+export function syncLayerZOrder(map: any, prefix: string, orderedBaseIds: string[]) {
+  const style = map.getStyle();
+  if (!style?.layers) return;
+  // 反向：希望数组首的图层最终在最上面
+  for (const baseId of [...orderedBaseIds].reverse()) {
+    const sub = style.layers.filter((sl: any) => sl.id.startsWith(`${prefix}${baseId}`));
+    for (const sl of sub) {
+      try {
+        if (map.getLayer(sl.id)) map.moveLayer(sl.id);
+      } catch { /* silent */ }
+    }
+  }
+}

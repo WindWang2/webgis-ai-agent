@@ -51,6 +51,17 @@ type ToolCallEntry = {
   completedAt?: number;
 };
 
+// Plan Mode：propose_plan 工具的结果摘要，挂到对应消息上由 PlanProposalCard 渲染
+export type PlanProposalPayload = {
+  plan_id: string;
+  title: string;
+  summary?: string;
+  step_count: number;
+  destructive_steps?: string[];
+  steps_preview?: Array<{ id: string; tool: string; purpose?: string; destructive?: boolean }>;
+  status: 'pending' | 'approved' | 'rejected';
+};
+
 export default function Home() {
   const { getMapSnapshot, dispatchAction } = useMapAction();
   const {
@@ -82,7 +93,7 @@ export default function Home() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  const [messages, setMessages] = useState<Array<{ id: string; role: 'user' | 'assistant'; content: string; timestamp: any; isThinking?: boolean; charts?: unknown[]; toolCalls?: ToolCallEntry[] }>>([
+  const [messages, setMessages] = useState<Array<{ id: string; role: 'user' | 'assistant'; content: string; timestamp: any; isThinking?: boolean; charts?: unknown[]; toolCalls?: ToolCallEntry[]; plan?: PlanProposalPayload }>>([
     {
       id: '1',
       role: 'assistant',
@@ -119,11 +130,22 @@ export default function Home() {
       .catch(err => console.error('Fetch sessions failed:', err));
   }, []);
 
+  // F6: 用 ref 持有当前激活的 AbortController；快速连点会话时把上一次取消，
+  // 避免上一会话的 _refId fetch 在新会话里把过期图层 addLayer 进去。
+  const sessionLoadAbortRef = useRef<AbortController | null>(null);
+
   const handleSelectSession = useCallback(async (sid: string) => {
+    // 取消上一次仍在飞的会话恢复请求
+    sessionLoadAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    sessionLoadAbortRef.current = ctrl;
+    const signal = ctrl.signal;
+
     clearLayers();
     try {
-      const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}`);
+      const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}`, { signal });
       const data = await res.json();
+      if (signal.aborted) return;
       if (data.messages && data.messages.length > 0) {
         const restored = data.messages.map((m: any) => ({
           id: m.id,
@@ -142,7 +164,8 @@ export default function Home() {
       setSessionId(sid);
       setHistoryOpen(false);
 
-      const stateRes = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}/map-state`);
+      const stateRes = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}/map-state`, { signal });
+      if (signal.aborted) return;
       if (stateRes.ok) {
         const stateData = await stateRes.json();
         const state = stateData?.map_state;
@@ -154,19 +177,25 @@ export default function Home() {
           if (state.base_layer) store.setBaseLayer(state.base_layer);
           for (const layer of state.layers || []) {
             if (layer._refId && layer._refId.startsWith('ref:')) {
-              fetch(`${API_BASE}/api/v1/layers/data/${layer._refId}?session_id=${sid}`)
+              fetch(`${API_BASE}/api/v1/layers/data/${layer._refId}?session_id=${sid}`, { signal })
                 .then(r => r.ok ? r.json() : null)
                 .then(geojson => {
+                  if (signal.aborted) return;
                   if (geojson && (geojson.type === 'FeatureCollection' || geojson.features)) {
                     store.addLayer({ ...layer, source: geojson });
                   }
                 })
-                .catch(() => {});
+                .catch((err) => {
+                  // AbortError 是预期的，其它错误打日志
+                  if (err?.name !== 'AbortError') console.error('[LayerFetch]', err);
+                });
             }
           }
         }
       }
-    } catch (err) {
+    } catch (err: any) {
+      // F6: 取消是正常的、不报错
+      if (err?.name === 'AbortError') return;
       console.error('Load session failed:', err);
     }
   }, [setHistoryOpen, clearLayers, dispatchAction]);
@@ -279,6 +308,19 @@ export default function Home() {
         setMessages(prev => prev.map(m => m.id === thinkingId ? { ...m, content: parsed.content, think: parsed.thinking || (m as any).think, isThinking: false } : m));
       }
     } else if (event.event === 'step_result') {
+      // Plan Mode：propose_plan 返回的 plan 摘要挂到当前消息，由 PlanProposalCard 渲染
+      if (data.tool === 'propose_plan' && data.result?.success && data.result?.plan_id) {
+        const plan: PlanProposalPayload = {
+          plan_id: data.result.plan_id,
+          title: data.result.title,
+          summary: data.result.summary,
+          step_count: data.result.step_count,
+          destructive_steps: data.result.destructive_steps || [],
+          steps_preview: data.result.steps_preview || [],
+          status: 'pending',
+        };
+        setMessages(prev => prev.map(m => m.id === thinkingId ? { ...m, plan } : m));
+      }
       // Layer auto-mount
       if (data.geojson_ref || data.result?.image) {
         const layerId = `layer-${Date.now()}`;
@@ -334,6 +376,28 @@ export default function Home() {
   const bridge = useMapBridge(sessionId, dispatchAction, onEvent);
   const isLoading = bridge.aiStatus === 'thinking' || bridge.aiStatus === 'acting';
 
+  /* ─── Plan Mode：审批/修改/取消按钮回调 ─── */
+  const handlePlanAction = useCallback(
+    (planId: string, action: 'approve' | 'revise' | 'reject') => {
+      // 1. 锁住对应卡片，避免重复点击
+      setMessages(prev => prev.map(m => (
+        m.plan?.plan_id === planId
+          ? { ...m, plan: { ...m.plan, status: action === 'approve' ? 'approved' : 'rejected' } }
+          : m
+      )));
+      // 2. 触发一条对应意图的 user message 让 LLM 调 execute_plan / 修改 / 放弃
+      const text = action === 'approve'
+        ? `执行计划 ${planId}`
+        : action === 'revise'
+          ? `修改计划 ${planId}（说说哪里需要调整）`
+          : `取消计划 ${planId}`;
+      // handleSend 在下面声明；用 setTimeout 推迟到下个 tick 以避开闭包顺序问题
+      setTimeout(() => handleSendRef.current?.(text), 0);
+    },
+    []
+  );
+  const handleSendRef = useRef<((text: string) => void) | null>(null);
+
   /* ─── Send handler ─── */
   const handleSend = useCallback(
     async (userMsg: string) => {
@@ -379,9 +443,15 @@ export default function Home() {
     [isLoading, bridge.send, getMapSnapshot, userLocation]
   );
 
+  // 把 handleSend 同步到 ref，让 handlePlanAction 在不参与 deps 的前提下调到最新版本
+  useEffect(() => { handleSendRef.current = handleSend; }, [handleSend]);
+
   /* ─── Main render ─── */
   const aiStatus = useHudStore((s) => s.aiStatus);
   const theme = useHudStore((s) => s.theme);
+  // 用响应式 selector 读 accentColor —— 之前在 JSX 里直接 getState() 不订阅 store，
+  // 导致用户改主题色后 LeftSidebar / HistoryDrawer 不重渲染（审计 F8）。
+  const reactiveAccentColor = useHudStore((s) => s.accentColor);
   const fontSize = useHudStore((s) => s.fontSize);
   const sidebarWidth = useHudStore((s) => s.sidebarWidth);
   const colors = getThemeColors(theme);
@@ -423,7 +493,8 @@ export default function Home() {
           messages={messages}
           aiStatus={aiStatus}
           onSend={handleSend}
-          accentColor={useHudStore.getState().accentColor}
+          accentColor={reactiveAccentColor}
+          onPlanAction={handlePlanAction}
         />
 
         {/* Map Toolbar */}
@@ -477,7 +548,7 @@ export default function Home() {
             handleNewSession();
           }
         }}
-        accentColor={useHudStore.getState().accentColor}
+        accentColor={reactiveAccentColor}
       />
 
       {settingsOpen && <SettingsPanel />}

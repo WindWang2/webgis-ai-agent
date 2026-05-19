@@ -364,6 +364,8 @@ def register_what_if_simulate(registry: ToolRegistry):
         registry,
         name="what_if_simulate",
         description="What-if 场景模拟：基于规则库对城市规划、交通、人口等场景进行影响模拟，输出指标变化与模拟 GeoJSON。",
+        tier=3,  # 仅在用户显式触发 what-if / 情景 / 模拟时由 catalog 注入
+        domains=["what_if"],
         args_model=WhatIfArgs,
     )
     def _what_if_simulate_wrapper(

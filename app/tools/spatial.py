@@ -208,7 +208,16 @@ def register_spatial_tools(registry: ToolRegistry):
     """注册空间分析工具"""
 
     @tool(registry, name="buffer_analysis",
-           description="对几何要素进行缓冲区分析，返回缓冲区多边形",
+           description=(
+               "缓冲区分析：对点/线/面要素生成指定距离的缓冲多边形。"
+               "\n何时用：『学校 500m 范围内』『地铁站 1km 缓冲』『高压线两侧 50m 退让』等距离邻近查询的母图层；"
+               "做空间叠加 (overlay_analysis) 前的几何准备。"
+               "\n何时不用：(1) 多个距离环 (如 100/300/500m) — 用 multi_ring_buffer；"
+               "(2) 路网真实通达距离 — 用 isochrone_analysis (按时间) 或 service_area_simple；"
+               "(3) 仅需统计数量而不需缓冲几何 — 用 spatial_aggregate 配合点数据。"
+               "\n关键约束：distance 必须 > 0；单位严格按 unit (默认米)；"
+               "投影会自动转 UTM 做精确缓冲，结果回 WGS84。"
+           ),
            args_model=BufferAnalysisArgs)
     def buffer_analysis(geojson: Any, distance: float, unit: str = "m") -> dict:
         data = safe_parse_geojson(geojson)
@@ -217,7 +226,15 @@ def register_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="spatial_stats",
-           description="计算几何要素的空间统计信息（面积、长度、中心点等）")
+           description=(
+               "几何级聚合统计：对一个 FeatureCollection 计算总面积、总长度、要素数、bbox、平均中心点。"
+               "\n何时用：用户问『这个图层有多大』『总长多少公里』『大致位置在哪』；"
+               "完成分析后给出量纲摘要 (always-on 报告)。"
+               "\n何时不用：(1) 统计每个多边形内的点数 — 用 spatial_aggregate；"
+               "(2) 统计点集的聚集模式 — 用 nearest_neighbor / moran_i；"
+               "(3) 栅格的统计 — 用 zonal_stats。"
+               "\n返回：{total_area_m2, total_length_m, count, bbox, centroid}"
+           ))
     def spatial_stats(geojson: Any) -> dict:
         data = safe_parse_geojson(geojson)
         features = data.get("features", [])
@@ -225,7 +242,15 @@ def register_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="nearest_neighbor",
-           description="查找最近的邻近距离和空间分布模式")
+           description=(
+               "最近邻分析 (NNA)：用平均最近邻距离 + R 比率判断点集是聚集 / 随机 / 均匀分布。"
+               "\n何时用：拿到一组 POI 点 (餐厅、案件、设施) 想判断它们是否扎堆；"
+               "对比两个城市的同类设施分布模式 (R<1 聚集，R≈1 随机，R>1 均匀)。"
+               "\n何时不用：(1) 要找统计显著的热点 — 用 hotspot_analysis (Gi*) 或 moran_i；"
+               "(2) 要画出聚类边界 — 用 spatial_cluster (DBSCAN)；"
+               "(3) 要找密度等值面 — 用 kde_contours。"
+               "\n输入：必须是点要素 (Point)。返回 {mean_nearest_distance, expected, R, pattern}。"
+           ))
     def nearest_neighbor(geojson: Any) -> dict:
         data = safe_parse_geojson(geojson)
         features = data.get("features", [])

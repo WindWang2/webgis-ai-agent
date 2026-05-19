@@ -23,6 +23,8 @@ export interface LeftSidebarProps {
   aiStatus: AiStatus;
   onSend: (text: string) => void;
   accentColor?: string;
+  /** Plan Mode: 由 page.tsx 注入 — 用户在 PlanProposalCard 上点按钮时回调 */
+  onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
 }
 
 interface TabDef {
@@ -40,7 +42,7 @@ const TAB_DEFS: TabDef[] = [
   { key: 'exports', icon: Download, label: '导出' },
 ];
 
-export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#16a34a' }: LeftSidebarProps) {
+export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#16a34a', onPlanAction }: LeftSidebarProps) {
   const activeTab = useHudStore((s) => s.activeLeftTab);
   const setActiveTab = useHudStore((s) => s.setActiveLeftTab);
   const sidebarWidth = useHudStore((s) => s.sidebarWidth);
@@ -111,7 +113,7 @@ export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#
       {/* Tab content */}
       <div className="flex-1 min-h-0 overflow-hidden">
         {activeTab === 'chat' && (
-          <ChatTab messages={messages} aiStatus={aiStatus} onSend={onSend} accentColor={accentColor} />
+          <ChatTab messages={messages} aiStatus={aiStatus} onSend={onSend} accentColor={accentColor} onPlanAction={onPlanAction} />
         )}
         {activeTab === 'layers' && <LayersTab />}
         {activeTab === 'ops' && <OpsLogTab />}

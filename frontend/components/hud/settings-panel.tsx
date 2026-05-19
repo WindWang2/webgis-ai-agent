@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  X, Settings, Cpu, Network, Sparkles, Save, RefreshCw,
+  X, Settings, Cpu, Sparkles, RefreshCw, Save,
   Upload, Download, Globe, Code, Terminal,
-  CheckCircle2, XCircle, Loader2
+  CheckCircle2, Loader2,
 } from 'lucide-react';
 import { API_BASE } from '@/lib/api/config';
 import { useHudStore } from '@/lib/store/useHudStore';
@@ -13,16 +13,14 @@ import { useHudStore } from '@/lib/store/useHudStore';
 export function SettingsPanel() {
   const {
     settingsOpen, setSettingsOpen,
-    setMcpConfig,
     setLlmConfig,
     availableSkills, setAvailableSkills
   } = useHudStore();
 
-  const [activeTab, setActiveTab] = useState<'llm' | 'mcp' | 'skills'>('llm');
+  const [activeTab, setActiveTab] = useState<'llm' | 'skills'>('llm');
   const [isSaving, setIsSaving] = useState(false);
   const [saveFlash, setSaveFlash] = useState<string | null>(null);
   const [localLlm, setLocalLlm] = useState<Record<string, any>>({});
-  const [localMcp, setLocalMcp] = useState("");
 
   useEffect(() => {
     if (settingsOpen) fetchConfig();
@@ -31,9 +29,8 @@ export function SettingsPanel() {
 
   const fetchConfig = async () => {
     try {
-      const [llmResp, mcpResp, skillsResp] = await Promise.all([
+      const [llmResp, skillsResp] = await Promise.all([
         fetch(`${API_BASE}/api/v1/config/llm`),
-        fetch(`${API_BASE}/api/v1/config/mcp`),
         fetch(`${API_BASE}/api/v1/config/skills`)
       ]);
 
@@ -41,11 +38,6 @@ export function SettingsPanel() {
         const data = await llmResp.json();
         setLlmConfig(data);
         setLocalLlm(data);
-      }
-      if (mcpResp.ok) {
-        const data = await mcpResp.json();
-        setMcpConfig(data.config_json);
-        setLocalMcp(data.config_json);
       }
       if (skillsResp.ok) {
         const data = await skillsResp.json();
@@ -78,36 +70,6 @@ export function SettingsPanel() {
       setIsSaving(false);
     }
   };
-
-  const saveMcp = async () => {
-    setIsSaving(true);
-    try {
-      const resp = await fetch(`${API_BASE}/api/v1/config/mcp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config_json: localMcp })
-      });
-      if (resp.ok) {
-        setMcpConfig(localMcp);
-        handleSaveFlash('mcp');
-      } else {
-        const err = await resp.json();
-        alert("MCP 配置保存失败: " + err.detail);
-      }
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const mcpValidation = useMemo(() => {
-    if (!localMcp.trim()) return { valid: true, empty: true };
-    try {
-      JSON.parse(localMcp);
-      return { valid: true, empty: false };
-    } catch {
-      return { valid: false, empty: false };
-    }
-  }, [localMcp]);
 
   if (!settingsOpen) return null;
 
@@ -154,13 +116,6 @@ export function SettingsPanel() {
                 label="语言模型"
                 badge={localLlm.model ? undefined : '!'}
                 statusDot="green"
-              />
-              <NavButton
-                active={activeTab === 'mcp'}
-                onClick={() => setActiveTab('mcp')}
-                icon={<Network className="w-4 h-4" />}
-                label="MCP 连接器"
-                statusDot={mcpValidation.valid ? 'green' : 'red'}
               />
               <NavButton
                 active={activeTab === 'skills'}
@@ -237,58 +192,6 @@ export function SettingsPanel() {
                         onClick={saveLlm}
                         isSaving={isSaving}
                         flash={saveFlash === 'llm'}
-                      />
-                    </div>
-                  </motion.div>
-                )}
-
-                {activeTab === 'mcp' && (
-                  <motion.div
-                    key="mcp"
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -8 }}
-                    transition={{ duration: 0.2 }}
-                    className="h-full flex flex-col space-y-5"
-                  >
-                    <div className="flex items-center justify-between">
-                      <SectionTitle title="MCP 连接器" subtitle="编辑 mcp_servers.json 配置文件" />
-                      {/* JSON validation indicator */}
-                      {!mcpValidation.empty && (
-                        <div className={`flex items-center gap-1.5 text-[10px] font-mono ${mcpValidation.valid ? 'text-emerald-400/70' : 'text-red-400/80'}`}>
-                          {mcpValidation.valid
-                            ? <><CheckCircle2 className="w-3.5 h-3.5" /> JSON 有效</>
-                            : <><XCircle className="w-3.5 h-3.5" /> JSON 格式错误</>
-                          }
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex-1 min-h-[300px] relative">
-                      <textarea
-                        value={localMcp}
-                        onChange={e => setLocalMcp(e.target.value)}
-                        spellCheck={false}
-                        className={`
-                          w-full h-full bg-black/30 rounded-xl p-5 text-[12px] font-mono text-white/60
-                          focus:outline-none transition-all resize-none leading-relaxed
-                          ${mcpValidation.valid || mcpValidation.empty
-                            ? 'border border-white/[0.08] focus:border-hud-cyan/30'
-                            : 'border border-red-500/30 focus:border-red-500/50'
-                          }
-                        `}
-                      />
-                      <div className="absolute top-3 right-4 text-[9px] font-mono text-white/15 uppercase">mcp_servers.json</div>
-                    </div>
-
-                    <div className="flex items-center justify-between pt-3 border-t border-white/[0.04]">
-                      <p className="text-[10px] text-white/20">确保 JSON 结构符合 MCP 标准 (stdio/sse)</p>
-                      <SaveButton
-                        onClick={saveMcp}
-                        isSaving={isSaving}
-                        flash={saveFlash === 'mcp'}
-                        disabled={!mcpValidation.valid || mcpValidation.empty}
-                        label="部署配置"
                       />
                     </div>
                   </motion.div>

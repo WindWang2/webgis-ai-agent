@@ -141,6 +141,8 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id = Column(String(255), primary_key=True)
+    # Nullable：兼容历史匿名会话；新认证会话写入 users.id；查询时按 owner 过滤
+    user_id = Column(String(255), ForeignKey("users.id"), nullable=True, index=True)
     title = Column(String(200), default="新对话")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

@@ -41,7 +41,7 @@ V3.2 is a major stability and security release focusing on the **Agent CNS (Cent
 
 ## 🗺️ Roadmap Update
 
-- [x] Phase 4: 主控中枢与算子 MCP 化 (V3.2)
+- [x] Phase 4: 主控中枢与工具体系增强 (V3.2)
 - [x] Phase 4+: V2 UI 重新设计与稳定化
 - [ ] Phase 5: "超我"演进与星辰大海 (Next: Distributed Multi-Agent Coordination)
 

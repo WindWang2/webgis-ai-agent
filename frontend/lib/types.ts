@@ -69,7 +69,7 @@ export interface ChartData {
 // === Map action types ===
 
 export interface MapActionPayload {
-  command: 'add_layer' | 'remove_layer' | 'fly_to' | 'add_heatmap_raster' | 'add_raster_layer' | 'export_map' | 'BASE_LAYER_CHANGE' | 'LAYER_VISIBILITY_UPDATE' | 'LAYER_STYLE_UPDATE' | 'REMOVE_LAYER';
+  command: 'add_layer' | 'remove_layer' | 'fly_to' | 'add_heatmap_raster' | 'add_raster_layer' | 'add_native_heatmap' | 'APPLY_LAYER_FILTER' | 'export_map' | 'BASE_LAYER_CHANGE' | 'LAYER_VISIBILITY_UPDATE' | 'LAYER_STYLE_UPDATE' | 'REMOVE_LAYER';
   params: {
     id?: string;
     layerId?: string;
@@ -77,6 +77,9 @@ export interface MapActionPayload {
     name?: string;     // For base layer change
     type?: 'fill' | 'line' | 'circle' | 'symbol';
     geojson?: GeoJSONFeatureCollection;
+    filter?: any;      // Filter for APPLY_LAYER_FILTER
+    palette?: string;  // Palette for add_native_heatmap
+    radius?: number;   // Radius for add_native_heatmap
     style?: Record<string, unknown>;
     flyTo?: boolean;
     center?: [number, number];

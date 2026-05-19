@@ -106,6 +106,9 @@ def register_skill_tools(registry: ToolRegistry):
         name="create_new_skill",
         description="【核心进化】为 Agent 开发并部署一个新的技能脚本。你可以根据需要编写 Python 代码来实现复杂的地理分析逻辑。代码将自动部署并立即生效。",
         func=create_new_skill,
+        # 破坏性工具，仅在用户明确请求时由 catalog 注入
+        tier=3,
+        domains=["meta"],
         param_descriptions={
             "module_name": "技能模块名称 (如 hydrology_analysis, change_detection)",
             "code": "完整的 Python 代码块。必须包含 register_skills(registry) 函数来注册在该模块内定义的工具。",

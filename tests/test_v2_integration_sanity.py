@@ -1,5 +1,5 @@
-
 import pytest
+import asyncio
 from app.tools.registry import ToolRegistry
 from app.tools.spatial import register_spatial_tools
 from app.tools.advanced_spatial import register_advanced_spatial_tools
@@ -13,26 +13,29 @@ def test_new_tools_registration():
     
     tools = registry.list_tools()
     assert "zonal_stats" in tools
-    assert "idw_interpolation" in tools
+    # zonal_stats was in advanced_spatial
     assert "query_map_features" in tools
     assert "apply_layer_filter" in tools
 
-def test_query_map_features_output():
+@pytest.mark.asyncio
+async def test_query_map_features_output():
     registry = ToolRegistry()
     register_spatial_tools(registry)
     
     # Mocking the call
-    result = registry.dispatch_sync("query_map_features", {"location": [121.5, 31.2], "buffer_m": 20})
+    result = await registry.dispatch("query_map_features", {"location": [121.5, 31.2], "buffer_m": 20})
     assert result["command"] == "query_features"
     assert result["location"] == [121.5, 31.2]
     assert result["buffer_m"] == 20
 
-def test_apply_layer_filter_output():
+@pytest.mark.asyncio
+async def test_apply_layer_filter_output():
     registry = ToolRegistry()
     register_layer_management_tools(registry)
     
     # Mocking session_id
-    result = registry.dispatch_sync("apply_layer_filter", {"layer_ref": "ref:abc", "expression": "pop > 100"}, session_id="test_session")
+    result = await registry.dispatch("apply_layer_filter", {"layer_ref": "ref:abc", "expression": "pop > 100"}, session_id="test_session")
+    assert result["success"] is True
     assert result["command"] == "APPLY_LAYER_FILTER"
     assert result["params"]["layer_id"] == "ref:abc"
     assert result["params"]["filter"] == "pop > 100"

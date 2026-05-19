@@ -16,6 +16,13 @@ class ToolRegistry:
         self._tools: dict[str, Callable] = {}
         self._models: dict[str, Type[BaseModel]] = {}
         self._schemas: list[dict] = []
+        # 工具分层元数据。无标注的工具默认 tier=1 (always-on)，确保向后兼容。
+        # tier: 1 = 总在 catalog 中 (foundational / high-frequency)
+        #       2 = 仅当本轮用户消息触发或最近 N 轮命中相应 domain 时载入
+        #       3 = 仅在 LLM 显式 list_available_tools 后才看见 (rare / heavy)
+        # domains: tier 2 工具属于哪些主题，用于关键词触发
+        self._metadata: dict[str, dict[str, Any]] = {}
+
     def tool(self, name: str, description: str, **kwargs):
         """装饰器：注册工具到此 registry 实例"""
         def decorator(func: Callable):
@@ -26,7 +33,9 @@ class ToolRegistry:
     def register(self, name: str, description: str, func: Callable,
                  param_descriptions: Optional[dict[str, str]] = None,
                  args_model: Optional[Type[BaseModel]] = None,
-                 parameters: Optional[dict] = None):
+                 parameters: Optional[dict] = None,
+                 tier: int = 1,
+                 domains: Optional[List[str]] = None):
         """注册一个工具函数"""
         self._tools[name] = func
         if parameters:
@@ -63,7 +72,12 @@ class ToolRegistry:
                 }
             }
         }
+        # 移除已存在的同名 schema，确保唯一性
+        self._schemas = [s for s in self._schemas if s["function"]["name"] != name]
         self._schemas.append(schema)
+
+        # 记录分层元数据
+        self._metadata[name] = {"tier": tier, "domains": list(domains or [])}
 
     def _generate_model(self, name: str, func: Callable, param_descriptions: Optional[dict[str, str]]) -> Type[BaseModel]:
         """根据函数签名动态推导 Pydantic Model"""
@@ -86,6 +100,18 @@ class ToolRegistry:
     def get_schemas(self) -> list[dict]:
         return self._schemas
 
+    def get_schemas_subset(self, names: set[str]) -> list[dict]:
+        """按名称白名单返回 schema 子集；用于 ToolCatalog 分层选择。"""
+        return [s for s in self._schemas if s["function"]["name"] in names]
+
+    def metadata(self, name: str) -> dict[str, Any]:
+        """获取单个工具的分层元数据；未注册时返回 tier=1 兜底。"""
+        return self._metadata.get(name, {"tier": 1, "domains": []})
+
+    def all_metadata(self) -> dict[str, dict[str, Any]]:
+        """获取全部工具的元数据快照。"""
+        return dict(self._metadata)
+
     async def dispatch(self, name: str, arguments: dict | str, session_id: Optional[str] = None) -> Any:
         """执行工具，包含 Pydantic 校验与透明解引用"""
         from app.tools._utils import std_error_response
@@ -103,9 +129,14 @@ class ToolRegistry:
                     error_type="JSONDecodeError",
                 )
 
-        # 注意：排除某些特殊字段（如 ref_id, layer_ref, layer_id），这些字段本身就是为了接收引用 ID
+        # 注意：排除某些特殊字段（如 ref_id, layer_ref, layer_id, plan_id），
+        # 这些字段本身就是为了接收引用 ID，绝不应被自动解引用为 GeoJSON 数据。
         if session_id and isinstance(arguments, dict):
-            arguments = self._resolve_references(session_id, arguments, skip_keys={"ref_id", "layer_ref", "layer_id"})
+            arguments = self._resolve_references(
+                session_id,
+                arguments,
+                skip_keys={"ref_id", "layer_ref", "layer_id", "plan_id"},
+            )
 
         # Pydantic 语义校验
         model = self._models.get(name)
@@ -228,9 +259,20 @@ class ToolRegistry:
 
 def tool(registry: ToolRegistry, name: str, description: str,
          param_descriptions: Optional[dict[str, str]] = None,
-         args_model: Optional[Type[BaseModel]] = None):
-    """装饰器：注册工具到 registry"""
+         args_model: Optional[Type[BaseModel]] = None,
+         tier: int = 1,
+         domains: Optional[List[str]] = None):
+    """装饰器：注册工具到 registry.
+
+    tier / domains 见 ToolRegistry.register 文档。未提供时默认 tier=1 always-on。
+    """
     def decorator(func: Callable):
-        registry.register(name, description, func, param_descriptions, args_model)
+        registry.register(
+            name, description, func,
+            param_descriptions=param_descriptions,
+            args_model=args_model,
+            tier=tier,
+            domains=domains,
+        )
         return func
     return decorator

@@ -179,7 +179,16 @@ def register_osm_tools(registry: ToolRegistry):
     """注册 OSM 查询工具"""
 
     @tool(registry, name="query_osm_poi",
-           description="查询 OpenStreetMap 中的兴趣点（POI），如餐厅、学校、医院、公园等。会先用地理编码获取区域边界框，再查询 POI。",
+           description=(
+               "在 OpenStreetMap (Overpass API) 内查询区域内的兴趣点 (POI)，返回 GeoJSON 点要素集。"
+               "\n何时用：用户给的是区域+POI类型 (如『成都的学校』『海淀区的医院』)；"
+               "需要全量 / 大批 POI 而不是周边几条结果；预算允许等待 (Overpass 可能 3-10s)。"
+               "\n何时不用：(1) 用户问『附近 500 米的便利店』 — 用 search_poi_around (按半径搜)；"
+               "(2) 已知一个闭合多边形要查内部 POI — 用 search_poi_polygon (Amap 数据质量更好)；"
+               "(3) 区域明显跨多个国家 — Overpass 会超时，分批或换 chinese_maps 工具。"
+               "\n关键约束：area 必须能被地理编码 (Nominatim)；POI 类别基于 OSM amenity/shop/leisure tag。"
+           ),
+           tier=2, domains=["osm"],
            args_model=QueryOsmPoiArgs)
     async def query_osm_poi(area: str, category: str = "restaurant", limit: int = 50) -> dict:
         # 从 area 中提取距离信息（如 "5公里内"、"3km"）并扩大搜索范围
@@ -297,11 +306,18 @@ def register_osm_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="query_osm_roads",
-           description="查询 OpenStreetMap 中的道路网络数据",
+           description=(
+               "OSM 道路网络查询：按区域+道路等级拉取 LineString 路网 GeoJSON。"
+               "\n何时用：路径规划/可达性分析需要路网底图；按等级筛选 (highway/primary 主干道) 做密度统计。"
+               "\n何时不用：仅需路径规划终端结果 — 用 search_route_cn (高德路径) 或 isochrone_analysis (等时圈)；"
+               "需要实时路况 — 用 get_traffic_status。"
+               "\n关键约束：road_type 是 OSM highway tag 值，常见: motorway/primary/secondary/tertiary/residential/footway。"
+           ),
+           tier=2, domains=["osm"],
            param_descriptions={
-               "area": "区域名称，如'成都'",
-               "road_type": "道路类型，如 highway/residential/primary/secondary/tertiary",
-               "limit": "返回数量上限，默认100"
+               "area": "区域名称，如 '成都' '海淀区'。会先地理编码取 bbox",
+               "road_type": "OSM highway tag 值。常用 primary(主干) / secondary(次干) / residential(支路)",
+               "limit": "返回上限，默认 100。大区域 + 低等级路（如 residential）极易超量",
            })
     async def query_osm_roads(area: str, road_type: str = "primary", limit: int = 100) -> dict:
         bbox = await _geocode_bbox(area)
@@ -325,10 +341,18 @@ def register_osm_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="query_osm_buildings",
-           description="查询 OpenStreetMap 中的建筑物数据",
+           description=(
+               "OSM 建筑物轮廓查询：在指定区域拉取所有带 building=* tag 的多边形 GeoJSON。"
+               "\n何时用：用户要看建筑物轮廓底图；做建筑密度/容积率/建筑年代统计；"
+               "城市肌理可视化（结合 buffer_analysis）。"
+               "\n何时不用：用户问『XX 建筑的信息』(单体查询) — 用 search_poi_around；"
+               "需要建筑高度 — OSM 仅部分城市有 building:levels，可能空。"
+               "\n关键约束：大城市中心 (如北京三环内) 一次拉可能 10k+ 要素，建议先缩小 area。"
+           ),
+           tier=2, domains=["osm"],
            param_descriptions={
-               "area": "区域名称，如'成都春熙路'",
-               "limit": "返回数量上限，默认100"
+               "area": "区域名称（街道/小区/POI 级精度更好），如 '成都春熙路'。会被地理编码为 bbox",
+               "limit": "返回上限，默认 100。Overpass 服务器对超量请求会拒绝",
            })
     async def query_osm_buildings(area: str, limit: int = 100) -> dict:
         bbox = await _geocode_bbox(area)
@@ -351,10 +375,17 @@ def register_osm_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="query_osm_boundary",
-           description="查询 OpenStreetMap 中的行政区划边界",
+           description=(
+               "OSM 行政边界轮廓查询：拉取一个行政区的多边形 GeoJSON。Overpass 失败时自动 fallback 到 Nominatim。"
+               "\n何时用：需要国际通用的行政边界（OSM 数据全球覆盖）；用作 clip_layer 的遮罩；做空间统计的母图层。"
+               "\n何时不用：中国境内 — 优先 get_local_admin_boundary (本地 SHP，更稳更快)，"
+               "或 get_admin_division (天地图官方界线)；要下级单元列表 — 用 get_child_districts。"
+               "\n关键约束：admin_level 是 OSM 体系（4=省级/state, 6=市级/prefecture, 8=区/county, 10=街道）；不同国家约定不同。"
+           ),
+           tier=2, domains=["osm"],
            param_descriptions={
-               "name": "行政区名称，如'海淀区'、'成都市'",
-               "admin_level": "行政级别，默认8（区级），4=省级，6=市级"
+               "name": "行政区名称，需与 OSM 数据一致。如 '海淀区' '成都市' 'California'",
+               "admin_level": "OSM admin_level，中国常用 4(省) / 6(市) / 8(区县)。默认 8",
            })
     async def query_osm_boundary(name: str, admin_level: int = 8) -> dict:
         # 先尝试 Overpass

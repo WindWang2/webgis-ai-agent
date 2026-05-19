@@ -14,6 +14,22 @@ import * as navigation from '@/lib/map-kit/navigation';
 import * as renderer from '@/lib/map-kit/renderer';
 import * as exporter from '@/lib/map-kit/exporter';
 
+/**
+ * Helper to parse filters that might come in as JSON strings from AI commands
+ */
+function parseFilter(filter: any): any[] | null {
+  if (!filter) return null;
+  if (typeof filter === 'string') {
+    try {
+      return JSON.parse(filter);
+    } catch (e) {
+      console.warn('[MapActionHandler] Failed to parse filter string:', filter);
+      return null;
+    }
+  }
+  return filter;
+}
+
 export function MapActionHandler() {
   const { actions, popAction, setSelectedBaseLayer } = useMapAction();
   const mapContext = useMap();
@@ -31,6 +47,10 @@ export function MapActionHandler() {
     const map = mapInstance.getMap();
     if (!map) return;
 
+    // F5: 默认在 finally 同步 popAction；某些 case 走异步 map.once 回调，
+    // 把 deferredPop 设为 true，由 case 自己负责出队。
+    let deferredPop = false;
+
     try {
       switch (action.command) {
         case 'add_layer': {
@@ -45,7 +65,7 @@ export function MapActionHandler() {
           } else {
             renderer.addVectorLayer(map, {
               id,
-              type: type || 'fill',
+              type: (type || 'fill') as any,
               source: id,
               paint: style || {}
             });
@@ -169,8 +189,8 @@ export function MapActionHandler() {
           mapStyle.layers?.forEach(l => {
             if (l.id.startsWith(`custom-${layer_id}`)) {
               renderer.updateLayerStyle(map, l.id, {
-                color: style.color,
-                strokeWidth: style.strokeWidth
+                color: (style as any).color,
+                strokeWidth: (style as any).strokeWidth
               });
             }
           });
@@ -199,8 +219,12 @@ export function MapActionHandler() {
             orientation = "landscape",
             dpi = 96
           } = action.params || {};
-          
+
           const theme = useHudStore.getState().theme;
+          // F5: 异步 export 必须等 map.once('render') 真正回调完再 popAction，
+          // 否则连续触发 export 会让后一次在前一次还没合成完时覆盖 canvas。
+          // 标记该 case 自己负责 popAction，外层 finally 跳过。
+          deferredPop = true;
 
           map.once("render", async () => {
             try {
@@ -217,7 +241,7 @@ export function MapActionHandler() {
               );
               const thematicLayer = (thematicLayerInfo?.style as any)?.type ? thematicLayerInfo?.style : thematicLayerInfo;
 
-              exporter.composeLayout(exportCanvas, title, subtitle, {
+              exporter.composeLayout(exportCanvas, title || '', subtitle || '', {
                 dpi,
                 theme,
                 showScale,
@@ -285,6 +309,9 @@ export function MapActionHandler() {
               useHudStore.getState().setPendingSystemMessage(
                 `[系统通知] 专题地图排版合成失败。错误原因: ${e}。请向用户致歉并结束流程。`
               );
+            } finally {
+              // F5: 真正合成完才出队，杜绝重入
+              popAction();
             }
           });
           map.triggerRepaint();
@@ -321,11 +348,19 @@ export function MapActionHandler() {
           navigation.fitBounds(map, bbox, 80);
           break;
         }
+
+        case 'APPLY_LAYER_FILTER': {
+          const { layer_id, filter } = action.params || {};
+          if (!layer_id) break;
+          // Apply MapLibre filter with fallback parser for simple string filters
+          map.setFilter(layer_id, parseFilter(filter) as any);
+          break;
+        }
       }
     } catch (error) {
       console.error('[MapActionHandler] Error executing action:', error);
     } finally {
-      popAction();
+      if (!deferredPop) popAction();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [action, mapInstance, popAction]);

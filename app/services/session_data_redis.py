@@ -56,8 +56,15 @@ class _AliasesProxy:
 class RedisSessionDataManager:
     """Session-level data store backed by Redis with cursor support (LRU)."""
 
-    def __init__(self, redis_url: str, capacity: int = 200):
-        self._r = redis.Redis.from_url(redis_url, decode_responses=False)
+    def __init__(self, redis_url: str, capacity: int = 200, socket_timeout: float = 1.0):
+        # socket_timeout/socket_connect_timeout 限制 ping/操作的最长阻塞，
+        # 避免 Redis 抖动让应用启动卡几十秒（审计 B3）。
+        self._r = redis.Redis.from_url(
+            redis_url,
+            decode_responses=False,
+            socket_timeout=socket_timeout,
+            socket_connect_timeout=socket_timeout,
+        )
         self.capacity = capacity
         # Expose _aliases as a dict-like proxy for backward compatibility
         self._aliases = _AliasesProxy(self._r)
@@ -109,7 +116,8 @@ class RedisSessionDataManager:
     # ------------------------------------------------------------------
     def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
         """Store data and return a generated cursor ref_id."""
-        ref_id = f"ref:{prefix}-{uuid.uuid4().hex[:8]}"
+        # 16 hex chars = 64 bits entropy. ref_id + session_id 是能力令牌，需难以枚举。
+        ref_id = f"ref:{prefix}-{uuid.uuid4().hex[:16]}"
         data_key = self._data_key(session_id, ref_id)
 
         pipe = self._r.pipeline()

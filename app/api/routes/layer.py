@@ -25,11 +25,18 @@ router = APIRouter()
 # ==================== 数据获取 API ====================
 
 @router.get("/layers/data/{ref_id}", tags=["图层数据"])
-def get_session_layer_data(
+async def get_session_layer_data(
     ref_id: str,
-    session_id: str = Query(..., description="会话 ID"),
+    session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
 ):
-    """通过引用 ID 获取会话缓存中的大数据对象（如分析产生的 GeoJSON）。"""
+    """通过引用 ID 获取会话缓存中的大数据对象（如分析产生的 GeoJSON）。
+
+    安全：ref_id + session_id 双因子作为能力令牌。session_id 强制最小长度，
+    ref_id 由 session_data_manager 生成 (64 位熵)，难以枚举。
+    """
+    # 防御性输入校验：ref_id 只允许 ASCII 安全字符
+    if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
+        raise HTTPException(status_code=400, detail="非法 ref_id")
     data = session_data_manager.get(session_id, ref_id)
     if not data:
         raise HTTPException(status_code=404, detail="数据已过期或不存在")

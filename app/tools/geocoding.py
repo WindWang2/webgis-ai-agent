@@ -9,8 +9,19 @@ from app.tools.registry import ToolRegistry, tool
 def register_geocoding_tools(registry: ToolRegistry):
     """注册地理编码工具到 registry"""
 
-    @tool(registry, name="geocode", description="将地名转换为经纬度坐标",
-           param_descriptions={"query": "地名，如'北京'、'天安门'", "limit": "返回结果数量，默认5"})
+    @tool(registry, name="geocode",
+           description=(
+               "地名 → WGS84 经纬度坐标 (使用 OpenStreetMap Nominatim，国际通用、无 key 限制)。"
+               "\n何时用：用户给的是英文地名、海外地址、或不确定 provider 时的兜底；"
+               "需要 importance 排序选择最权威匹配项。"
+               "\n何时不用：中文行政区/POI/精确街道 — 改用 geocode_cn（高德/百度数据更全更准），"
+               "或 input_tips（处理拼错/不完整）。需要边界轮廓（非点位）则用 get_district。"
+               "\n返回：results=[{name,lat,lon,type,importance}]，按 importance 降序。"
+           ),
+           param_descriptions={
+               "query": "完整地名或地址，如 'Beijing'、'Tiananmen Square'、'1600 Pennsylvania Ave'",
+               "limit": "返回候选数，默认 5。结果按权威度排序，第 1 个通常最准",
+           })
     async def geocode(query: str, limit: int = 5) -> dict:
         """地理编码：地名 → 坐标"""
         params = {
@@ -48,8 +59,19 @@ def register_geocoding_tools(registry: ToolRegistry):
 
         return {"results": geocoded, "count": len(geocoded)}
 
-    @tool(registry, name="reverse_geocode", description="将经纬度坐标转换为地名",
-           param_descriptions={"lat": "纬度", "lon": "经度"})
+    @tool(registry, name="reverse_geocode",
+           description=(
+               "WGS84 经纬度 → 地名 / 行政归属 (Nominatim 反查)。"
+               "\n何时用：用户点击地图后想知道『这是哪里』；分析结果点位需要地名标注；"
+               "国际坐标的反查。"
+               "\n何时不用：地图上已有图层要素的属性查询 — 改用 query_map_features；"
+               "中文区域的精细反查 — 改用 reverse_geocode_cn (Amap/Baidu)。"
+               "\n返回：{name, address={country, state, city, road, ...}}"
+           ),
+           param_descriptions={
+               "lat": "WGS84 纬度（-90..90）",
+               "lon": "WGS84 经度（-180..180）",
+           })
     async def reverse_geocode(lat: float, lon: float) -> dict:
         """反向地理编码：坐标 → 地名"""
         url = settings.NOMINATIM_URL.replace("/search", "/reverse")

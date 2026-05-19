@@ -3,11 +3,26 @@ from app.core.config import Settings
 
 
 def test_default_settings():
-    s = Settings()
+    # 绕过 .env 文件读取真正的代码默认值
+    s = Settings(_env_file=None)
     assert s.PROJECT_NAME == "WebGIS AI Agent"
-    assert s.DEBUG is True
-    assert s.LLM_MODEL == "MiniMax-M2.7"
+    # 安全：默认禁用 DEBUG，避免 .env 缺失时生产端泄漏堆栈
+    assert s.DEBUG is False
+    # LLM_MODEL 默认值会随版本演进；只验证非空即可
+    assert s.LLM_MODEL
     assert s.DATA_DIR == "./data"
+
+
+def test_production_rejects_wildcard_cors():
+    """生产环境严禁 CORS_ORIGINS=['*']"""
+    import pytest
+    with pytest.raises(RuntimeError, match="CORS_ORIGINS"):
+        Settings(
+            _env_file=None,
+            ENV="production",
+            JWT_SECRET_KEY="x" * 32,
+            CORS_ORIGINS=["*"],
+        )
 
 
 def test_llm_settings():

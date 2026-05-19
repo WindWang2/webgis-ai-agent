@@ -1,4 +1,5 @@
 """用户数据上传 API 路由"""
+import asyncio
 import json
 import logging
 import uuid
@@ -75,7 +76,11 @@ async def upload_files(
 
     # 只处理第一个文件（多文件上传可扩展）
     file = files[0]
-    filename = file.filename or "unknown"
+    # —— 文件名清洗：剥离任何路径分隔符与 .. 防穿越 ——
+    raw_name = file.filename or "unknown"
+    filename = Path(raw_name).name
+    if not filename or filename.startswith("."):
+        raise HTTPException(status_code=400, detail="非法文件名")
     ext = Path(filename).suffix.lower()
 
     # 检查格式
@@ -104,23 +109,32 @@ async def upload_files(
         )
 
     # 创建上传目录
-    upload_id = uuid.uuid4().hex[:12]
+    # 完整 uuid hex (32 字符, 128 位熵) — 旧的 [:12] 仅 48 位，公网静态 mount 下可枚举
+    upload_id = uuid.uuid4().hex
     upload_dir = get_upload_dir(settings.DATA_DIR, upload_id)
 
-    # 写入临时文件
+    # 写入临时文件 — 二次防御：解析后必须仍在 upload_dir 之下
     temp_path = upload_dir / filename
     try:
+        resolved = temp_path.resolve()
+        upload_root = Path(upload_dir).resolve()
+        if upload_root not in resolved.parents:
+            raise HTTPException(status_code=400, detail="路径越界")
         with open(temp_path, "wb") as f:
             f.write(content)
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"文件保存失败: {e}")
 
-    # 解析文件
+    # 解析文件 — parse_vector / parse_raster 内含 gpd.read_file / rasterio.open
+    # 这些是同步 CPU+IO 操作，常常需要数秒。直接在 async def 里调用会阻塞整个
+    # uvicorn 事件循环，所有其它请求停滞（审计 B1 / V2.0 计算隔离不变式）。
+    # 走 run_in_executor 把工作扔到默认 threadpool。
+    loop = asyncio.get_running_loop()
     try:
         if ext in RASTER_FORMATS:
-            meta = parse_raster(temp_path, upload_dir, upload_id)
+            meta = await loop.run_in_executor(None, parse_raster, temp_path, upload_dir, upload_id)
         else:
-            meta = parse_vector(temp_path, upload_dir, upload_id)
+            meta = await loop.run_in_executor(None, parse_vector, temp_path, upload_dir, upload_id)
     except ParseError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except (OSError, RuntimeError) as e:
