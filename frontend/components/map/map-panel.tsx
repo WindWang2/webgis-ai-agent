@@ -95,24 +95,16 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
     }))
   }, [])
 
-  // 3D Terrain Toggle Effect
+  // 3D Terrain Toggle Effect — 走 map-kit/renderer 的 enable3DTerrain helper
   useEffect(() => {
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
 
     if (is3D) {
-      if (!map.getSource("terrain-aws")) {
-        map.addSource("terrain-aws", {
-          type: "raster-dem",
-          tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
-          tileSize: 256,
-          maxzoom: 14,
-        })
-      }
-      map.setTerrain({ source: "terrain-aws", exaggeration: 1.5 })
+      renderer.enable3DTerrain(map, { exaggeration: 1.5 })
       map.easeTo({ pitch: 60, bearing: 20, duration: 1000 })
     } else {
-      map.setTerrain(null)
+      renderer.disable3DTerrain(map)
       map.easeTo({ pitch: 0, bearing: 0, duration: 1000 })
     }
   }, [is3D, mapReady])
@@ -138,38 +130,15 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
 
       isUpdatingRef.current = true
       try {
-        // Step 1: Remove stale layers/sources
-        const style = map.getStyle()
-        if (style) {
-          for (const layer of style.layers || []) {
-            if (layer.id.startsWith("custom-")) {
-              const withoutPrefix = layer.id.slice(7)
-              const baseId = withoutPrefix.replace(/-[^-]*$/, "")
-              if (!layers.find((l) => l.id === baseId)) {
-                try { map.removeLayer(layer.id) } catch { /* silent */ }
-              }
-            }
-          }
-          for (const sourceId of Object.keys(style.sources || {})) {
-            if (sourceId.startsWith("custom-")) {
-              const baseId = sourceId.replace("custom-", "")
-              if (!layers.find((l) => l.id === baseId)) {
-                try { map.removeSource(sourceId) } catch { /* silent */ }
-              }
-            }
-          }
-        }
+        // Step 1: Remove stale layers/sources — M4 用 renderer.removeOrphanCustomLayers
+        const knownIds = new Set(layers.map((l) => l.id))
+        renderer.removeOrphanCustomLayers(map, knownIds, "custom-")
 
         // Step 2: Add or Update layers
         for (const layer of layers) {
           if (!layer.visible || !layer.source) {
             if (map.getSource(`custom-${layer.id}`)) {
-              const s = map.getStyle()
-              s?.layers?.forEach((l) => {
-                if (l.id.startsWith(`custom-${layer.id}`)) {
-                  map.setLayoutProperty(l.id, "visibility", "none")
-                }
-              })
+              renderer.setLayerStackVisibility(map, `custom-${layer.id}`, false)
             }
             continue
           }
@@ -179,9 +148,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
 
           try {
             if (layer.type === "raster" || layer.type === "tile") {
-              if (!map.getSource(sourceId)) {
-                map.addSource(sourceId, { type: "raster", tiles: [layer.source as string], tileSize: 256 })
-              }
+              renderer.addRasterTileSource(map, sourceId, layer.source as string)
             } else if (layer.type === "heatmap" && isHeatmapRasterSource(layer.source)) {
               const src = layer.source as HeatmapRasterSource
               const [west, south, east, north] = src.bbox
@@ -349,73 +316,17 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
           }
         }
 
-        // Step 2b: Render process layers (temporary WS layers)
+        // Step 2b: Render process layers — M4 走 renderer.addProcessLayerStack
         for (const [stepId, geojson] of Object.entries(processLayers)) {
-          const sourceId = `process-${stepId}`
-          if (!map.getSource(sourceId)) {
-            map.addSource(sourceId, { type: "geojson", data: geojson as any })
-            map.addLayer({
-              id: `process-${stepId}-fill`,
-              type: "fill",
-              source: sourceId,
-              paint: {
-                "fill-color": "rgba(22, 163, 74, 0.08)",
-                "fill-outline-color": "rgba(22, 163, 74, 0.3)",
-              },
-            })
-            map.addLayer({
-              id: `process-${stepId}-line`,
-              type: "line",
-              source: sourceId,
-              paint: {
-                "line-color": "#16a34a",
-                "line-width": 1.5,
-                "line-opacity": 0.4,
-                "line-dasharray": [3, 3],
-              },
-            })
-            map.addLayer({
-              id: `process-${stepId}-point`,
-              type: "circle",
-              source: sourceId,
-              paint: {
-                "circle-radius": 4,
-                "circle-color": "rgba(22, 163, 74, 0.3)",
-                "circle-stroke-width": 1,
-                "circle-stroke-color": "#16a34a",
-              },
-            })
-          }
+          renderer.addProcessLayerStack(map, stepId, geojson)
         }
-        // Clean up stale process layers
+        // Clean up stale process layers — 走通用 renderer.removeOrphanCustomLayers
         const currentProcessIds = new Set(Object.keys(processLayers))
-        const liveStyle = map.getStyle()
-        for (const sl of liveStyle?.layers || []) {
-          if (sl.id.startsWith("process-")) {
-            const stepId = sl.id.replace("process-", "").replace(/-[^-]*$/, "")
-            if (!currentProcessIds.has(stepId)) {
-              try { map.removeLayer(sl.id) } catch { /* silent */ }
-            }
-          }
-        }
-        for (const sid of Object.keys(liveStyle?.sources || {})) {
-          if (sid.startsWith("process-")) {
-            const stepId = sid.replace("process-", "")
-            if (!currentProcessIds.has(stepId)) {
-              try { map.removeSource(sid) } catch { /* silent */ }
-            }
-          }
-        }
+        renderer.removeOrphanCustomLayers(map, currentProcessIds, "process-")
 
         // Step 3: Z-Index Sync — heatmap layers go below point layers
-        const reversedLayers = [...layers].reverse()
-        const finalStyle = map.getStyle()
-        for (const layer of reversedLayers) {
-          const subLayers = finalStyle?.layers?.filter((sl) => sl.id.startsWith(`custom-${layer.id}`)) || []
-          subLayers.forEach((sl) => {
-            try { if (map.getLayer(sl.id)) map.moveLayer(sl.id) } catch { /* silent */ }
-          })
-        }
+        // 走 renderer.syncLayerZOrder：传 layers 数组顺序，helper 自己反向迭代
+        renderer.syncLayerZOrder(map, "custom-", layers.map((l) => l.id))
       } catch (err) {
         console.error("[MapPanel] renderLayers error:", err)
       } finally {
