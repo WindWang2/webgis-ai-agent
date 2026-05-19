@@ -30,6 +30,7 @@ _TOOL_MODULES = [
     ("app.tools.monitoring_report", "register_monitoring_report_tools"),
     ("app.tools.skills", "register_skill_tools"),
     ("app.tools.explorer_tools", "register_explorer_tools"),
+    ("app.tools.coord_transform", "register_coord_transform_tools"),
 ]
 
 

@@ -283,3 +283,44 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         data = safe_parse_geojson(geojson)
         res = _h3_binning(data, resolution, stat_field, stat_method)
         return res.to_llm_response()
+
+    @tool(registry, name="dissolve_layer",
+           description=(
+               "矢量融合 (Dissolve)：把相邻同属性的多边形/线合并为单一几何，可选按字段分组。"
+               "\n何时用：(1) 把街道边界合并为区县轮廓；"
+               "(2) 把同类用地（如『住宅』『商业』）的相邻地块合并；"
+               "(3) overlay/intersect 后清理碎片；"
+               "(4) 生成清洁的母图层用于 clip_layer。"
+               "\n何时不用：(1) 只想统计每个多边形的属性 — 用 spatial_aggregate；"
+               "(2) 要联合两个不同图层 — 用 overlay_analysis(how='union')；"
+               "(3) 单纯按属性筛选 — 用 attribute_filter。"
+               "\n关键约束：未给 field 时会把整个图层融合成 1 个要素；"
+               "给定 field 后会按字段值分组，每组一个融合结果。"
+           ),
+           param_descriptions={
+               "geojson": "输入图层 GeoJSON 或引用(ref:xxx)，几何类型应一致（全部 polygon 或全部 line）",
+               "field": "可选属性字段名。若提供，按该字段的不同值分组分别融合；不提供则整体融合为单一要素",
+           })
+    def dissolve_layer(geojson: Any, field: Optional[str] = None) -> dict:
+        from app.lib.geo_processor.geometry import dissolve_smart
+        res = dissolve_smart(geojson, field=field)
+        return res.to_llm_response()
+
+    @tool(registry, name="nearest_facility",
+           description=(
+               "最近设施匹配：对每个源点找出目标集合中距离最近的目标，并标注距离（米）。"
+               "\n何时用：『每户居民最近的医院/学校』『100 个 POI 最近的地铁站』『每个公交站最近的商圈』 — "
+               "**双集合最近邻匹配的唯一工具**。"
+               "\n何时不用：(1) 同一集合内的最近邻距离/聚集度 — 用 nearest_neighbor (单集合统计)；"
+               "(2) 服务区/可达性 — 用 isochrone_analysis 或 service_area_simple；"
+               "(3) 沿路网最近 — 当前是欧氏距离，沿路网需 path_analysis 逐点算。"
+               "\n返回：每个源点的副本，properties 新增 nearest_target_id 与 distance_m。"
+           ),
+           param_descriptions={
+               "source_points": "源点要素集 (GeoJSON 或 ref:xxx) — 每个点会找一个最近目标",
+               "target_points": "目标点要素集 (GeoJSON 或 ref:xxx) — 候选设施集合",
+           })
+    def nearest_facility(source_points: Any, target_points: Any) -> dict:
+        from app.lib.geo_analysis.network import nearest_neighbor_features
+        res = nearest_neighbor_features(source_points, target_points)
+        return res.to_llm_response()
