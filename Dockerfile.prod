@@ -21,7 +21,7 @@ ENV NEXT_RUNTIME=nodejs
 RUN npm run build
 
 # Stage 3: Backend Python Dependencies
-FROM python:3.11-slim-bookworm AS backend-deps
+FROM python:3.12-slim-bookworm AS backend-deps
 WORKDIR /app/backend
 
 COPY requirements.txt .
@@ -30,7 +30,7 @@ RUN pip install --no-cache-dir --break-system-packages \
     && uv pip install --system --no-cache -r requirements.txt
 
 # Stage 4: Final Runner
-FROM python:3.11-slim-bookworm AS runner
+FROM python:3.12-slim-bookworm AS runner
 WORKDIR /app/backend
 
 # Install Node.js for frontend standalone server
@@ -43,7 +43,7 @@ COPY --from=frontend-builder /app/frontend/.next/static ./frontend/.next/static
 COPY --from=frontend-builder /app/frontend/public ./frontend/public
 
 # Copy Python packages
-COPY --from=backend-deps /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=backend-deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=backend-deps /usr/local/bin /usr/local/bin
 
 # Copy application code

@@ -56,6 +56,10 @@ build/
 # Runtime data (exports, reports, uploads generated at runtime)
 data/
 
+# Ad-hoc dev scripts / debug artifacts — keep on disk if useful but never commit
+scratch/
+temp_output.txt
+
 # Test / coverage artifacts
 .coverage
 htmlcov/

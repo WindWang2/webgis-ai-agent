@@ -1,0 +1,66 @@
+# —— 密钥 / 凭证 ——
+.env
+.env.*
+.env-2
+**/.env*
+*.key
+*.pem
+*.crt
+*.p12
+
+# —— Python 字节码与缓存 ——
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# —— Node / Next 构建产物 ——
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+out/
+
+# —— Git / IDE ——
+.git/
+.gitignore
+.github/
+.vscode/
+.idea/
+*.swp
+
+# —— 运行时数据与日志 ——
+data/
+logs/
+*.rdb
+*.db
+dump.rdb
+
+# —— 临时与开发脚本 ——
+scratch/
+temp_output.txt
+*.tar.gz
+WebGIS AI Agent v2.html
+
+# —— 测试与文档（生产镜像不需要） ——
+tests/
+docs/
+.context/
+.gstack/
+
+# —— Claude/Plan/Agent 工件 ——
+.claude/
+.playwright-mcp/
+.superpowers/
+.openclaw/
+.clawhub/
+.worktrees/
+
+# —— Coverage / CI 文件 ——
+.coveragerc
+pytest.ini
