@@ -31,6 +31,7 @@ _TOOL_MODULES = [
     ("app.tools.skills", "register_skill_tools"),
     ("app.tools.explorer_tools", "register_explorer_tools"),
     ("app.tools.coord_transform", "register_coord_transform_tools"),
+    ("app.tools.plan_mode", "register_plan_mode_tools"),
 ]
 
 
