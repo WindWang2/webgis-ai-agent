@@ -101,3 +101,45 @@ def test_mark_step_done_matches_by_tool_domain():
 def test_mark_step_done_no_plan_is_noop():
     reg = ToolRegistry()
     mark_step_done("no-plan-sess", "anything", reg)  # 不抛异常即通过
+
+
+from app.services.chat.llm_client import LLMConfig
+from app.services.chat import planner as planner_mod
+
+
+@pytest.fixture
+def cfg():
+    return LLMConfig(base_url="http://x", model="m", api_key="k")
+
+
+@pytest.mark.asyncio
+async def test_make_plan_success_stores_plan(cfg, monkeypatch):
+    async def fake_call_llm(_cfg, _messages, _tools=None):
+        return {"choices": [{"message": {"content":
+            '{"intent":"分析医院","domains":["statistics"],'
+            '"steps":[{"n":1,"goal":"聚合","tool_family":"statistics"}]}'}}]}
+    monkeypatch.setattr(planner_mod, "call_llm", fake_call_llm)
+    plan = await planner_mod.make_plan(cfg, "sess-C", "分析成都医院分布", "[环境感知]")
+    assert plan is not None
+    assert plan.intent == "分析医院"
+    assert planner_mod.get_plan("sess-C") is plan   # 成功即存储
+    planner_mod.clear_plan("sess-C")
+
+
+@pytest.mark.asyncio
+async def test_make_plan_llm_failure_returns_none(cfg, monkeypatch):
+    async def boom(_cfg, _messages, _tools=None):
+        raise RuntimeError("LLM down")
+    monkeypatch.setattr(planner_mod, "call_llm", boom)
+    plan = await planner_mod.make_plan(cfg, "sess-D", "复杂请求", "[环境感知]")
+    assert plan is None
+    assert planner_mod.get_plan("sess-D") is None
+
+
+@pytest.mark.asyncio
+async def test_make_plan_unparseable_returns_none(cfg, monkeypatch):
+    async def fake(_cfg, _messages, _tools=None):
+        return {"choices": [{"message": {"content": "对不起我不会"}}]}
+    monkeypatch.setattr(planner_mod, "call_llm", fake)
+    plan = await planner_mod.make_plan(cfg, "sess-E", "复杂请求", "[环境感知]")
+    assert plan is None

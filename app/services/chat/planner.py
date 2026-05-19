@@ -9,6 +9,7 @@ import json
 import logging
 import re
 
+from app.services.chat.llm_client import LLMConfig, call_llm
 from app.services.tool_catalog import DOMAIN_KEYWORDS
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,41 @@ _SHORT_THRESHOLD = 20  # 字符数
 
 # 合法 domain 取值 = ToolCatalog 的主题键集合 + "core"（基础工具）
 VALID_DOMAINS: set[str] = set(DOMAIN_KEYWORDS) | {"core"}
+
+PLANNER_PROMPT = """你是 WebGIS 空间分析任务的规划器。给定用户请求与当前地图状态，
+输出一个简洁的执行计划。只输出 JSON，不要任何解释文字、不要 Markdown 代码围栏。
+
+JSON 结构：
+{
+  "intent": "一句话概括用户真正想要的结果",
+  "domains": ["涉及的领域，取值见下"],
+  "steps": [
+    {"n": 1, "goal": "这一步要达成什么", "tool_family": "该步所属领域"}
+  ]
+}
+
+合法的领域取值（domains 与 tool_family 都只能用这些）：
+- core      基础空间分析与图层管理（缓冲、裁剪、过滤、制图等）
+- chinese   中国行政区划 / 中文地址 / 国内 POI（高德、天地图、本地矢量库）
+- osm       OpenStreetMap / Overpass 全球数据
+- raster    遥感 / 栅格 / 地形 / 植被指数
+- network   路径 / 可达性 / 服务区 / 等时圈
+- statistics 热点 / 聚类 / 密度 / 插值 / 空间统计
+- report    报告 / 导出 / 制图成果
+- what_if   情景模拟推演
+- meta      创建技能 / 自定义工具
+
+规划原则：
+- 由简入深。宽泛请求（如"分布情况"）优先安排原生热力图等轻量步骤。
+- 步骤控制在 5 步以内，每步聚焦一个明确产出。
+- 简单请求可以只有 1 步。"""
+
+
+def _planning_messages(user_message: str, env_summary: str) -> list[dict]:
+    return [
+        {"role": "system", "content": PLANNER_PROMPT},
+        {"role": "user", "content": f"{env_summary}\n\n用户请求：{user_message}"},
+    ]
 
 
 @dataclasses.dataclass
@@ -124,3 +160,30 @@ def mark_step_done(session_id: str, tool_name: str, registry) -> int | None:
             step.done = True
             return step.n
     return None
+
+
+async def make_plan(
+    cfg: LLMConfig,
+    session_id: str,
+    user_message: str,
+    env_summary: str,
+) -> Plan | None:
+    """跑一次规划 LLM 调用，解析并存储计划。任何失败都返回 None（降级无计划）。"""
+    try:
+        resp = await call_llm(cfg, _planning_messages(user_message, env_summary))
+        choice = resp.get("choices", [{}])[0]
+        msg = choice.get("message", {})
+        raw = msg.get("content") or msg.get("reasoning_content") or ""
+    except Exception as e:  # noqa: BLE001 — 规划失败必须降级，不能拖垮对话
+        logger.warning(f"[planner] make_plan LLM 调用失败: {e}")
+        return None
+    plan = parse_plan(raw)
+    if plan is None:
+        logger.info(f"[planner] session={session_id} 计划解析失败，降级无计划")
+        return None
+    set_plan(session_id, plan)
+    logger.info(
+        f"[planner] session={session_id} 计划已生成: "
+        f"intent={plan.intent!r} domains={plan.domains} steps={len(plan.steps)}"
+    )
+    return plan
