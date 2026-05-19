@@ -154,7 +154,11 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="attribute_filter",
-           description="根据属性条件筛选地理要素。输入 Pandas 风格的查询表达式，返回过滤后的结果。",
+           description=(
+               "属性筛选：按 Pandas 风格查询表达式从要素集中筛出新的要素集。"
+               "✅ 用于：要把筛选结果作为新图层用于后续分析 / 导出。"
+               "\n❌ 不要用于：只想临时改现有图层的可见要素 — 用 apply_layer_filter。"
+           ),
            args_model=AttributeFilterArgs)
     def attribute_filter(geojson: Any, query: str) -> dict:
         data = safe_parse_geojson(geojson)
@@ -197,7 +201,11 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="spatial_aggregate",
-           description="空间聚合分析：统计落在每个多边形（如行政区）内的点位（如POI）数量。返回包含统计结果的多边形图层。",
+           description=(
+               "空间聚合：统计落在每个多边形（如行政区）内的点位（如 POI）数量。"
+               "✅ 用于：矢量点要素的计数聚合，返回带统计结果的多边形图层。"
+               "\n❌ 不要用于：多边形内的栅格统计（人口/降雨/海拔）— 用 zonal_stats。"
+           ),
            param_descriptions={
                "points": "点要素集 GeoJSON 或引用(ref:xxx)",
                "polygons": "多边形要素集（如行政区）GeoJSON 或引用(ref:xxx)",
@@ -253,7 +261,12 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="service_area_simple",
-           description="简单服务区分析：根据出行模式和时间生成服务范围。适合分析『某设施 15 分钟步行圈』。",
+           description=(
+               "简单服务区分析：按出行模式和时间生成可达范围。"
+               "✅ 用于：沿出行速度估算的行程时间/距离可达范围（等时圈），"
+               "如『某设施 15 分钟步行圈』。"
+               "\n❌ 不要用于：简单直线半径缓冲 — 用 buffer_analysis。"
+           ),
            tier=2, domains=["network"],
            param_descriptions={
                "geojson": "设施点要素集 GeoJSON 或引用(ref:xxx)",
@@ -270,7 +283,13 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="h3_binning",
-           description="H3网格聚合：将点数据聚合到指定分辨率的H3六边形网格中（代替传统的鱼网格网）。适用于生成高性能的点密度分布数据驱动渲染。",
+           description=(
+               "H3 六边形网格聚合：把点数据聚合到指定分辨率的 H3 网格（代替传统鱼网）。"
+               "✅ 用于：需要每个网格的统计值（计数/求和/均值）做数据驱动渲染，"
+               "或作为 h3_lisa 空间聚类检验的前置步骤。"
+               "\n❌ 不要用于：(1) 只想快速看分布趋势 — 用 heatmap_data(render_type='native')；"
+               "(2) 需要平滑的连续密度面 — 用 kde_surface。"
+           ),
            tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "点要素集 GeoJSON 或引用(ref:xxx)",

@@ -78,7 +78,12 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="kde_surface",
-           description="高斯核密度估计，生成连续密度面。适用于深度密度建模和选址分析基础。注意：该工具生成的是覆盖分析范围的完整矢量格网，如果不进行阈值过滤，在大范围内会遮挡底图，单纯查看'分布热度'建议优先使用 heatmap_data。",
+           description=(
+               "高斯核密度估计：生成覆盖全域的连续概率密度格网。"
+               "✅ 用于：作为后续叠加分析 / 选址建模的输入数据层。"
+               "\n❌ 不要用于：首选可视化——该格网铺满分析范围、不做阈值过滤会遮挡底图；"
+               "看分布趋势用 heatmap_data，要矢量等值面用 kde_contours。"
+           ),
            tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
@@ -201,7 +206,11 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="kde_contours",
-           description="高斯核密度估计（等值面模式）：生成精美的点密度等值线/面。相比网格模式更平滑且易于叠加分析。",
+           description=(
+               "高斯核密度估计（等值面模式）：生成矢量等值线/面。"
+               "✅ 用于：制图与导出——平滑的等值面成果，便于叠加展示。"
+               "\n❌ 不要用于：快速看分布趋势 — 用 heatmap_data。"
+           ),
            tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "点要素集 GeoJSON 或引用(ref:xxx)",

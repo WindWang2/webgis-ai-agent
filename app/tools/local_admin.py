@@ -17,7 +17,12 @@ LEVEL_MAP = {
 
 def register_local_admin_tools(registry: ToolRegistry):
     @tool(registry, name="get_local_admin_boundary",
-           description="本地行政边界查询：从本地 SHP 数据获取行政区划边界。比在线 API 更稳定、更快。适合『获取成都市轮廓』等场景。",
+           description=(
+               "本地行政边界查询：从本地 SHP 数据获取行政区划边界。"
+               "✅ 用于：中国境内行政区边界的首选——本地矢量库，最快最稳，"
+               "如『获取成都市轮廓』。"
+               "\n❌ 不要用于：非中国境内数据——此时回退在线工具 get_admin_division。"
+           ),
            param_descriptions={
                "name": "行政区名称，如'成都市'、'锦江区'",
                "level": "级别: 'country', 'province', 'city', 'district'",
