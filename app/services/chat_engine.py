@@ -42,6 +42,16 @@ from app.services.chat.prompt import (
     construct_self_healing_message as _construct_self_healing_message,
 )
 from app.services.chat.llm_client import LLMConfig, call_llm, call_llm_stream
+from app.services.chat.context_builder import (
+    build_map_state_summary as _build_map_state_summary,
+    format_layer_lines as _format_layer_lines,
+    build_last_analysis_context as _build_last_analysis_context,
+    compose_request_messages as _compose_request_messages_fn,
+)
+from app.services.chat.dispatcher import (
+    dispatch_tool as _dispatch_tool_fn,
+    is_suspicious_result as _is_suspicious_result_fn,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -175,175 +185,19 @@ class ChatEngine:
 
         return history_messages
 
+    # M1 深水区：上下文组装委托给 chat/context_builder.py（纯函数，方便单测）
     def _get_map_state_summary(self, session_id: str) -> str:
-        """构造一份紧凑的当前地图状态摘要，作为系统消息注入。
-
-        双源策略：优先用后端 inventory 的 ref_id 数据引用；inventory 为空时
-        回退到前端 map_state.layers 上报的活跃图层（页面刷新/新 Session 时）。
-        只输出事实，不在 prompt 里夹杂"应该怎么做"的元指令。
-        """
-        import datetime
-        import json as _json
-
-        state = session_data_manager.get_map_state(session_id)
-        inventory = session_data_manager.list_refs(session_id)
-        viewport = state.get("viewport") or {}
-        center = viewport.get("center")
-        zoom = viewport.get("zoom")
-        bearing = viewport.get("bearing", 0) or 0
-        pitch = viewport.get("pitch", 0) or 0
-        bounds = viewport.get("bounds")
-        base_layer = state.get("base_layer", "OSM 地图")
-        is_3d = state.get("is_3d", False)
-        active_layers = state.get("layers", []) or []
-
-        lines = [
-            "[环境感知 — 当前地图实时状态，必读，不要凭空假设位置]",
-            f"- 时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        ]
-
-        user_location = state.get("user_location")
-        if isinstance(user_location, dict):
-            lines.append(
-                f"- 用户位置: {user_location.get('lng', 0):.6f}, {user_location.get('lat', 0):.6f} "
-                f"(±{user_location.get('accuracy', '?')}m)"
-            )
-        else:
-            lines.append("- 用户位置: 未授权")
-
-        if isinstance(center, (list, tuple)) and len(center) == 2 and zoom is not None:
-            viewport_line = (
-                f"- 视口中心(WGS84 经纬度): lng={center[0]:.4f}, lat={center[1]:.4f}, zoom={zoom:.2f}"
-            )
-            if bearing:
-                viewport_line += f", bearing={bearing:.0f}°"
-            if pitch:
-                viewport_line += f", pitch={pitch:.0f}°"
-            if is_3d:
-                viewport_line += ", 3D"
-            lines.append(viewport_line)
-        else:
-            lines.append("- 视口: 未知（前端尚未上报，回答位置类问题前请先告知用户无法获取地图状态）")
-
-        if isinstance(bounds, (list, tuple)) and len(bounds) == 4:
-            w, s, e, n = bounds
-            lines.append(f"- 可视范围: W{w:.3f} S{s:.3f} E{e:.3f} N{n:.3f}")
-
-        lines.append(f"- 底图: {base_layer}")
-
-        layer_lines = self._format_layer_lines(inventory, active_layers)
-        if layer_lines:
-            lines.append("- 活跃图层:")
-            lines.extend(f"  * {ln}" for ln in layer_lines)
-        else:
-            lines.append("- 活跃图层: 无")
-
-        event_log = session_data_manager.get_event_log(session_id)
-        if event_log:
-            lines.append("- 近期操作:")
-            for evt in event_log[-5:]:
-                lines.append(f"  * {evt['event']}: {_json.dumps(evt['data'], ensure_ascii=False)}")
-
-        return "\n".join(lines)
+        return _build_map_state_summary(session_id)
 
     @staticmethod
     def _format_layer_lines(inventory: dict, active_layers: list[dict]) -> list[str]:
-        """渲染图层一行式描述。inventory 优先，缺失时回退到前端上报。"""
-        visibility_map = {l.get("id"): l for l in active_layers if l.get("id")}
-        out: list[str] = []
-        if inventory:
-            for ref_id, alias in inventory.items():
-                meta = visibility_map.get(ref_id) or next(
-                    (m for aid, m in visibility_map.items() if aid in ref_id or ref_id in aid),
-                    {},
-                )
-                visible = meta.get("visible")
-                status = "可见" if visible is True else "隐藏" if visible is False else "未知"
-                attrs = []
-                if alias:
-                    attrs.append(f"别名={alias}")
-                if meta.get("type"):
-                    attrs.append(f"类型={meta['type']}")
-                if meta.get("featureCount") is not None:
-                    attrs.append(f"要素={meta['featureCount']}")
-                if meta.get("style", {}).get("color"):
-                    attrs.append(f"色={meta['style']['color']}")
-                tail = f" [{', '.join(attrs)}]" if attrs else ""
-                out.append(f"{ref_id}{tail} ({status})")
-            return out
-        for layer in active_layers:
-            lid = layer.get("id", "unknown")
-            name = layer.get("name", lid)
-            attrs = []
-            if layer.get("type"):
-                attrs.append(f"类型={layer['type']}")
-            if layer.get("featureCount") is not None:
-                attrs.append(f"要素={layer['featureCount']}")
-            opacity = layer.get("opacity", 1.0)
-            attrs.append(f"不透明度={opacity:.0%}")
-            status = "可见" if layer.get("visible") else "隐藏"
-            out.append(f"{name} (id={lid}, {', '.join(attrs)}) ({status})")
-        return out
+        return _format_layer_lines(inventory, active_layers)
 
     def _compose_request_messages(self, session_id: str, messages: list[dict]) -> list[dict]:
-        """组装一次 LLM 请求的消息列表：SYSTEM_PROMPT + 实时感知 + (可选)对话上下文摘要 + 历史。
-
-        感知状态只在每次请求前注入一次，不再写进工具结果里——保持历史紧凑。
-        chat() 与 chat_stream() 共享此入口，避免两条路径行为漂移。
-        """
-        env_summary = self._get_map_state_summary(session_id)
-        logger.debug(f"[ENV-INJECT] session={session_id}\n{env_summary}")
-
-        # Merge env summary directly into the system prompt so it is always read.
-        # Injecting it as a separate system message is unreliable — many LLMs
-        # (including MiniMax) silently drop all but the first system entry.
-        sys_msg = dict(messages[0])
-        sys_msg["content"] = sys_msg["content"] + "\n\n" + env_summary
-
-        head = [sys_msg]
-        last_ctx = self._build_last_analysis_context(messages)
-        if last_ctx:
-            head.append({"role": "system", "content": last_ctx})
-        head.extend(messages[1:])
-        return head
+        return _compose_request_messages_fn(session_id, messages)
 
     def _build_last_analysis_context(self, messages: list[dict]) -> str:
-        """从最近的历史消息中提取分析上下文摘要，帮助 LLM 维持追问连贯性。"""
-        # 找到最近的 assistant 文本消息（非 tool_call）
-        last_user_msg = ""
-        last_assistant_msg = ""
-        data_refs: list[str] = []
-
-        for msg in reversed(messages):
-            role = msg.get("role", "")
-            content = msg.get("content", "") or ""
-            if role == "assistant" and content and not last_assistant_msg:
-                # 截取前 300 字作为摘要
-                last_assistant_msg = content[:300]
-            elif role == "user" and content and not last_user_msg:
-                last_user_msg = content[:200]
-            # 收集已有的 ref 数据引用
-            if "ref:" in content:
-                import re
-                refs = re.findall(r'(ref:[\w-]+)', content)
-                data_refs.extend(refs)
-            if last_assistant_msg and last_user_msg:
-                break
-
-        if not last_assistant_msg and not last_user_msg:
-            return ""
-
-        ctx = "[最近对话上下文]\n"
-        if last_user_msg:
-            ctx += f"- 用户上一次请求：{last_user_msg}\n"
-        if last_assistant_msg:
-            ctx += f"- 你上一次回复摘要：{last_assistant_msg}...\n"
-        if data_refs:
-            # 去重保留最后 5 个
-            unique_refs = list(dict.fromkeys(data_refs))[-5:]
-            ctx += f"- 可复用的数据引用：{', '.join(unique_refs)}\n"
-        ctx += "\n如果用户的新消息是简短的追问（如「绘制热力图」「换个颜色」「放大看看」），请基于以上上下文直接执行，不要重新询问区域或数据。"
-        return ctx
+        return _build_last_analysis_context(messages)
 
 
     async def _get_or_create_session(
@@ -741,140 +595,17 @@ class ChatEngine:
         session_id: str,
         executed_tools: set[tuple[str, str]],
     ) -> dict:
-        """统一的工具执行入口，chat 与 chat_stream 共用。
+        """委托给 chat/dispatcher.dispatch_tool — 显式注入 registry 与 WS 广播回调。"""
+        def _broadcast(sid: str, event_type: str, data: dict) -> None:
+            self._fire_and_forget(broadcast_ws_event, sid, event_type, data)
 
-        负责：
-        1. 重复调用拦截（同 session 内同参数同名工具只执行一次）
-        2. 调用 registry.dispatch（含 ref 解析、参数校验、异常包装）
-        3. 错误自愈消息构造（同时识别 std_error_response 字典与异常抛出两条路径）
-        4. 大型结果压缩 + GeoJSON 落入 session_data_manager 形成 ref 游标
-        5. 把工具动作回写到 event_log，让下一轮 [环境感知] 反映最新地图变化
-
-        返回 dict 字段：
-            - result: 原始工具返回（可能是 dict/str/list/error_dict）
-            - llm_payload: 给 LLM 看的字符串（已压缩、已附加自愈提示）
-            - slim_event: 给前端 SSE 用的脱敏版本
-            - geojson_ref: 若工具产出新图层数据则非空
-            - has_geojson: bool
-            - repeated: 是否被重复调用拦截
-            - is_error: 是否是错误（影响前端 step_error 派发）
-            - error_msg: 错误消息字符串（仅 is_error 时有值）
-        """
-        tool_name = tc["function"]["name"]
-        tool_args_raw = tc["function"]["arguments"]
-
-        tool_key = (tool_name, _normalize_tool_args(tool_args_raw))
-        if tool_key in executed_tools:
-            note = (
-                f"[重复调用拦截] {tool_name} 已在本任务中以相同参数成功执行，"
-                f"结果已生效。请直接基于既有结果汇报，不要再次调用。"
-            )
-            return {
-                "result": {"success": True, "note": "Loop blocked"},
-                "llm_payload": note,
-                "slim_event": {"success": True, "note": "Loop blocked"},
-                "geojson_ref": None,
-                "has_geojson": False,
-                "repeated": True,
-                "is_error": False,
-                "error_msg": "",
-            }
-        executed_tools.add(tool_key)
-
-        is_error = False
-        error_msg = ""
-        try:
-            result = await self.registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
-        except Exception as e:
-            # 这里只有 _resolve_references 抛 ValueError 才会走到（其余路径都返回 std_error_response dict）
-            error_type = "参数校验失败" if isinstance(e, ValueError) and "失败" in str(e) else "执行出错"
-            error_msg = str(e)
-            logger.error(f"Tool {tool_name} error: {e}")
-            llm_payload = _construct_self_healing_message(tool_name, error_msg, error_type)
-            return {
-                "result": {"success": False, "code": error_type, "message": error_msg, "data": None},
-                "llm_payload": llm_payload,
-                "slim_event": {"success": False, "code": error_type, "message": error_msg},
-                "geojson_ref": None,
-                "has_geojson": False,
-                "repeated": False,
-                "is_error": True,
-                "error_msg": error_msg,
-            }
-
-        # registry 返回 std_error_response dict 的统一路径
-        if _is_error_dict(result):
-            is_error = True
-            error_msg = result.get("message", "")
-            llm_payload = _wrap_error_dict_for_llm(tool_name, result)
-            session_data_manager.append_event(
-                session_id,
-                "tool_failed",
-                {"tool": tool_name, "code": result.get("code"), "message": error_msg[:200]},
-            )
-            return {
-                "result": result,
-                "llm_payload": llm_payload,
-                "slim_event": _slim_event_result(result),
-                "geojson_ref": None,
-                "has_geojson": False,
-                "repeated": False,
-                "is_error": True,
-                "error_msg": error_msg,
-            }
-
-        # 正常路径：把大型 GeoJSON 存为 ref，热力图等元数据落地
-        geojson_ref: Optional[str] = None
-        target_data = None
-        if isinstance(result, dict):
-            if isinstance(result.get("geojson"), (dict, list)):
-                target_data = result["geojson"]
-            elif result.get("type") == "FeatureCollection" and "features" in result:
-                target_data = result
-            if target_data is not None:
-                geojson_ref = session_data_manager.store(session_id, target_data, prefix="geojson")
-            if result.get("type") == "heatmap_raster":
-                session_data_manager.store(session_id, result, prefix="heatmap")
-
-        result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
-        llm_payload = _slim_tool_result(result, result_str, geojson_ref) or result_str
-
-        if self._detect_suspicious_result(result):
-            llm_payload += (
-                "\n\n(注意: 此操作未返回任何空间要素或有效数据。请检查查询范围、关键词或图层名称，"
-                "并根据需要尝试不同的参数。不要重复完全相同的调用。)"
-            )
-
-        # 把工具动作回写到事件日志：下一轮 [环境感知] 会看到最新地图变化
-        event_payload: dict = {"tool": tool_name}
-        if geojson_ref:
-            event_payload["ref"] = geojson_ref
-            # ─── REAL-TIME MAP UPDATE BROADCAST ───
-            # 立即通过 WebSocket 推送给前端，让地图在对话流还在生成时就开始渲染
-            self._fire_and_forget(
-                broadcast_ws_event, 
-                session_id, 
-                "geojson_update", 
-                {"step_id": tc.get("id"), "geojson": geojson_ref, "tool": tool_name}
-            )
-        
-        if isinstance(result, dict):
-            for k in ("layer_id", "bbox", "feature_count", "alias"):
-                v = result.get(k)
-                if v is not None:
-                    event_payload[k] = v
-        session_data_manager.append_event(session_id, "tool_executed", event_payload)
-
-        return {
-            "result": result,
-            "llm_payload": llm_payload,
-            "slim_event": _slim_event_result(result),
-            "geojson_ref": geojson_ref,
-            "has_geojson": detect_geojson(result),
-            "repeated": False,
-            "is_error": is_error,
-            "error_msg": error_msg,
-        }
+        return await _dispatch_tool_fn(
+            tc,
+            session_id,
+            executed_tools,
+            registry=self.registry,
+            fire_broadcast=_broadcast,
+        )
 
     async def clear_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """删除会话；user_id 用于所有权检查（A2）。
@@ -896,26 +627,6 @@ class ChatEngine:
         return deleted
 
     def _detect_suspicious_result(self, result: Any) -> bool:
-        """检测工具返回的结果是否"可疑"（空数据/错误响应），用于触发自愈提示。"""
-        if not result:
-            return True
-
-        if isinstance(result, dict):
-            # std_error_response 形状
-            if result.get("success") is False:
-                return True
-            # GeoJSON 检查
-            if result.get("type") == "FeatureCollection" and not result.get("features"):
-                return True
-            # 通用结果列表检查
-            if "data" in result and isinstance(result["data"], list) and not result["data"]:
-                return True
-            # OSM POI 检查
-            if "poi_count" in result and result["poi_count"] == 0:
-                return True
-
-        if isinstance(result, list) and not result:
-            return True
-
-        return False
+        """委托给 chat/dispatcher.is_suspicious_result。"""
+        return _is_suspicious_result_fn(result)
 
