@@ -133,12 +133,14 @@ async def _tianditu_get(endpoint: str, params: dict) -> dict:
                 return {"error": f"Tianditu: {msg}"}
             await ht.record_success("tianditu")
             return data
-    except Exception as e:
-        await ht.record_error("tianditu", e)
-        return {"error": f"Tianditu Error: {str(e)}"}
     except (aiohttp.ClientError, json.JSONDecodeError) as e:
+        # 网络/解析异常：上抛，使 geocode_cn fallback 链可尝试下一个 provider
         await ht.record_error("tianditu", e)
         raise
+    except Exception as e:
+        # 其他异常：记录后转为 error dict 返回（避免阻断调用方）
+        await ht.record_error("tianditu", e)
+        return {"error": f"Tianditu Error: {str(e)}"}
 
 
 async def geocode_cn(address: str, city: str = "", provider: str = "amap") -> dict:

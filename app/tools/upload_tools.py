@@ -67,6 +67,8 @@ def register_upload_tools(registry: ToolRegistry):
             record = db.query(UploadRecord).filter(UploadRecord.id == upload_id).first()
 
         if not record:
+            # 抛 KeyError — registry.dispatch 会将其包成
+            # {"success": False, "code": "NOT_FOUND", ...} 标准错误格式（V3.x 不变式）
             raise KeyError(f"未找到 ID 为 {upload_id} 的上传记录")
 
         info = {

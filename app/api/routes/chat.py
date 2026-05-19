@@ -8,7 +8,6 @@ from typing import Optional
 
 from app.core.auth import get_current_user, get_current_user_optional
 from app.services.chat_engine import ChatEngine
-from app.services.history_service import HistoryService
 from app.services.history_service_async import AsyncHistoryService
 from app.tools._utils import async_db_session
 from app.tools.registry import ToolRegistry
@@ -114,7 +113,10 @@ async def get_session_detail(session_id: str, _user: dict = Depends(get_current_
 
 
 @router.get("/sessions/{session_id}/map-state")
-async def get_session_map_state(session_id: str):
+async def get_session_map_state(
+    session_id: str,
+    _user: dict = Depends(get_current_user_optional),
+):
     """Return persisted map state (viewport, layers) for session restoration."""
     from app.services.session_data import session_data_manager
     state = session_data_manager.get_map_state(session_id)
@@ -183,21 +185,3 @@ async def execute_tool_direct(req: ToolExecuteRequest, _user: dict = Depends(get
     except Exception as e:
         logger.error(f"Tool execute error: {e}")
         return {"error": str(e)}
-
-
-@router.get("/tools/results")
-async def get_latest_result(session_id: str = "", tool: str = "", _user: dict = Depends(get_current_user)):
-    """获取指定 session 的工具执行结果（需提供 session_id）"""
-    if not session_id:
-        raise HTTPException(status_code=400, detail="session_id is required")
-    session_results = _tool_results_by_session.get(session_id, {})
-    if tool and tool in session_results:
-        return {tool: session_results[tool]}
-    return session_results
-
-
-# 模块级缓存（会话 -> 工具结果），由工具执行时写入
-try:
-    _tool_results_by_session: dict = {}
-except NameError:
-    _tool_results_by_session = {}

@@ -1,6 +1,6 @@
 """空间统计与聚类分析工具 — DBSCAN/K-Means聚类、Moran's I、Getis-Ord Gi*、核密度估计"""
 import logging
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 import geopandas as gpd
@@ -83,8 +83,12 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "bounds": "可选：分析范围 [xmin, ymin, xmax, ymax]（WGS84），默认数据范围+10%缓冲",
            })
     def kde_surface(geojson: Any, bandwidth: float = 0, cell_size: float = 500,
-                    value_field: str = "", bounds: list = []) -> dict:
+                    value_field: str = "", bounds: Optional[list] = None) -> dict:
         from scipy.stats import gaussian_kde
+
+        # 防止可变默认参数共享状态
+        if bounds is None:
+            bounds = []
 
         data = safe_parse_geojson(geojson)
         if not data:

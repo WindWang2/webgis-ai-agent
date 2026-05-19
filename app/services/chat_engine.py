@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.tools.registry import ToolRegistry
 from app.services.task_tracker import TaskTracker, detect_geojson
 from app.services.session_data import session_data_manager
+from app.services.ws_service import broadcast_ws_event
 from collections import OrderedDict
 from app.tools._utils import async_db_session
 from app.services.history_service_async import AsyncHistoryService
