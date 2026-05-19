@@ -25,7 +25,8 @@ class SessionDataManager:
         if session_id not in self._store:
             self._store[session_id] = OrderedDict()
 
-        ref_id = f"ref:{prefix}-{uuid.uuid4().hex[:8]}"
+        # 16 hex chars = 64 bits entropy. ref_id + session_id 是能力令牌，需难以枚举。
+        ref_id = f"ref:{prefix}-{uuid.uuid4().hex[:16]}"
 
         # 维护容量：按 LRU 淘汰最久未访问的项
         session_cache = self._store[session_id]

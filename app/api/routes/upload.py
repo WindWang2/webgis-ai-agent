@@ -75,7 +75,11 @@ async def upload_files(
 
     # 只处理第一个文件（多文件上传可扩展）
     file = files[0]
-    filename = file.filename or "unknown"
+    # —— 文件名清洗：剥离任何路径分隔符与 .. 防穿越 ——
+    raw_name = file.filename or "unknown"
+    filename = Path(raw_name).name
+    if not filename or filename.startswith("."):
+        raise HTTPException(status_code=400, detail="非法文件名")
     ext = Path(filename).suffix.lower()
 
     # 检查格式
@@ -107,9 +111,13 @@ async def upload_files(
     upload_id = uuid.uuid4().hex[:12]
     upload_dir = get_upload_dir(settings.DATA_DIR, upload_id)
 
-    # 写入临时文件
+    # 写入临时文件 — 二次防御：解析后必须仍在 upload_dir 之下
     temp_path = upload_dir / filename
     try:
+        resolved = temp_path.resolve()
+        upload_root = Path(upload_dir).resolve()
+        if upload_root not in resolved.parents:
+            raise HTTPException(status_code=400, detail="路径越界")
         with open(temp_path, "wb") as f:
             f.write(content)
     except OSError as e:

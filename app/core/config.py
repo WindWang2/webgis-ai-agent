@@ -19,7 +19,9 @@ class Settings(BaseSettings):
     )
 
     PROJECT_NAME: str = "WebGIS AI Agent"
-    DEBUG: bool = True
+    # 默认 False，避免 .env 缺失时生产端泄漏堆栈/凭证。
+    # 本地开发请在 .env 显式设置 DEBUG=true。
+    DEBUG: bool = False
     API_V1_STR: str = "/api"
     ENV: str = "development"
 
@@ -106,6 +108,17 @@ class Settings(BaseSettings):
                 stacklevel=2,
             )
             logger.warning("JWT_SECRET_KEY not set, generated random secret for this session")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_cors_origins(self) -> "Settings":
+        """生产环境禁止 CORS_ORIGINS=['*']：与 allow_credentials=True 组合
+        会把任意来源都视为可信凭证调用方，等同于关闭同源保护。"""
+        if self.is_production() and "*" in self.CORS_ORIGINS:
+            raise RuntimeError(
+                "CORS_ORIGINS=['*'] is not allowed in production. "
+                "Set an explicit allow-list (e.g. CORS_ORIGINS=https://your.app)."
+            )
         return self
 
 

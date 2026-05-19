@@ -37,11 +37,14 @@ async def client(app):
         yield c
 
 
+_VALID_SID = "session-aaaaaaaaaaaaaaaa"  # >= min_length=8
+
+
 @pytest.mark.asyncio
 async def test_get_session_layer_data_not_found(client):
     mod = _get_module()
     with patch.object(mod.session_data_manager, "get", return_value=None):
-        resp = await client.get("/api/v1/layers/data/ref-123", params={"session_id": "sess-1"})
+        resp = await client.get("/api/v1/layers/data/ref-123", params={"session_id": _VALID_SID})
         assert resp.status_code == 404
 
 
@@ -50,9 +53,16 @@ async def test_get_session_layer_data_success(client):
     mod = _get_module()
     mock_data = {"type": "FeatureCollection", "features": []}
     with patch.object(mod.session_data_manager, "get", return_value=mock_data):
-        resp = await client.get("/api/v1/layers/data/ref-123", params={"session_id": "sess-1"})
+        resp = await client.get("/api/v1/layers/data/ref-123", params={"session_id": _VALID_SID})
         assert resp.status_code == 200
         assert resp.json()["type"] == "FeatureCollection"
+
+
+@pytest.mark.asyncio
+async def test_get_session_layer_data_rejects_short_session_id(client):
+    """安全：session_id 过短应被 422 拒绝（能力令牌熵不足）。"""
+    resp = await client.get("/api/v1/layers/data/ref-123", params={"session_id": "abc"})
+    assert resp.status_code == 422
 
 
 @pytest.mark.asyncio

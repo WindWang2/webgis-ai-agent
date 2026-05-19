@@ -109,7 +109,8 @@ class RedisSessionDataManager:
     # ------------------------------------------------------------------
     def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
         """Store data and return a generated cursor ref_id."""
-        ref_id = f"ref:{prefix}-{uuid.uuid4().hex[:8]}"
+        # 16 hex chars = 64 bits entropy. ref_id + session_id 是能力令牌，需难以枚举。
+        ref_id = f"ref:{prefix}-{uuid.uuid4().hex[:16]}"
         data_key = self._data_key(session_id, ref_id)
 
         pipe = self._r.pipeline()
