@@ -75,18 +75,7 @@ export interface CausalEntry {
 }
 
 export type LeftTab = 'chat' | 'layers' | 'ops' | 'exports' | 'assets' | 'export_layout';
-export type SettingsTab = 'llm' | 'mcp' | 'skills' | 'rag' | 'layers' | 'map' | 'system';
-
-export interface McpServer {
-  id: string;
-  name: string;
-  transport: 'stdio' | 'sse';
-  cmd?: string;
-  url?: string;
-  status: 'active' | 'inactive';
-  desc: string;
-  warn?: boolean;
-}
+export type SettingsTab = 'llm' | 'skills' | 'rag' | 'layers' | 'map' | 'system';
 
 export interface SkillEntry {
   id: string;
@@ -216,8 +205,6 @@ export interface HudState {
   /* ─── System Settings ─── */
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
-  mcpConfig: string;
-  setMcpConfig: (config: string) => void;
   llmConfig: any;
   setLlmConfig: (config: any) => void;
   availableSkills: any[];
@@ -274,9 +261,6 @@ export interface HudState {
   setDemoMode: (enabled: boolean) => void;
 
   /* ─── Settings Data ─── */
-  mcpServers: McpServer[];
-  setMcpServers: (servers: McpServer[]) => void;
-  toggleMcpServer: (id: string) => void;
   skills: SkillEntry[];
   setSkills: (skills: SkillEntry[]) => void;
   toggleSkill: (id: string) => void;

@@ -44,13 +44,6 @@ export const DEMO_CAUSAL_CHAIN = [
   { id: '3', tool: 'kde_surface', mapAction: 'add_layer', time: '14:32', toolInput: 'layer_id=poi-schools, bandwidth=500m', mapEffect: '新增热力图图层', mapState: { layer_id: 'heatmap-density', render_type: 'native_heatmap' } },
 ];
 
-export const DEFAULT_MCP_SERVERS = [
-  { id: 'gdal-raster', name: 'gdal-raster', transport: 'stdio' as const, cmd: 'python mcp_servers/gdal_raster.py', status: 'active' as const, desc: '栅格数据处理（重采样、裁切、投影）' },
-  { id: 'spatial-analysis', name: 'spatial-analysis', transport: 'stdio' as const, cmd: 'python mcp_servers/spatial_analysis.py', status: 'active' as const, desc: '空间分析算法库（缓冲区、叠加、统计）' },
-  { id: 'gdal-vector', name: 'gdal-vector', transport: 'stdio' as const, cmd: 'python mcp_servers/gdal_vector.py', status: 'active' as const, desc: '矢量数据读写与格式转换' },
-  { id: 'gdal-dem-source', name: 'gdal-dem-source', transport: 'stdio' as const, cmd: 'python mcp_servers/gdal_dem_source.py', status: 'inactive' as const, desc: '高程数据源接入（需 OpenTopography Key）', warn: true },
-];
-
 export const DEFAULT_SKILLS = [
   { id: 'poi', name: 'POI 查询', desc: '通过 Overpass 查询兴趣点，支持多种分类', enabled: true, calls: 0, category: '数据获取' },
   { id: 'ndvi', name: 'NDVI 植被分析', desc: '基于遥感影像计算归一化植被指数', enabled: true, calls: 0, category: '遥感分析' },

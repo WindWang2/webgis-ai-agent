@@ -1,10 +1,9 @@
-"""System Config API - 管理 LLM, MCP 和 Skills 的运行时配置
+"""System Config API - 管理 LLM 和 Skills 的运行时配置
 
 ⚠️ 安全：本路由的所有写入端点（POST/PUT/DELETE）要求 Bearer JWT 鉴权
 (Depends(get_current_user))。当前系统未提供 /login 端点，因此这些端点
 仅可由运维通过 JWT_SECRET_KEY 手工签发的 token 访问，等同于 admin-only。
 """
-import json
 import logging
 import os
 from pathlib import Path
@@ -19,9 +18,6 @@ from app.core.auth import get_current_user
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/config", tags=["配置管理"])
 
-# MCP 配置文件路径
-MCP_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "mcp_servers.json")
-
 # 允许的技能文件扩展名
 _ALLOWED_SKILL_EXTS = {".py", ".md"}
 
@@ -30,9 +26,6 @@ class LLMConfigRequest(BaseModel):
     model: Optional[str] = None
     api_key: Optional[str] = None
     use_prompt_caching: Optional[bool] = None
-
-class MCPConfigRequest(BaseModel):
-    config_json: str
 
 @router.get("/llm")
 async def get_llm_config(_user: dict = Depends(get_current_user)):
@@ -52,42 +45,6 @@ async def update_llm_config(
         use_prompt_caching=req.use_prompt_caching
     )
     return {"status": "ok", "config": engine.get_config()}
-
-@router.get("/mcp")
-async def get_mcp_config(_user: dict = Depends(get_current_user)):
-    """获取当前 MCP 配置 JSON（admin only）"""
-    if not os.path.exists(MCP_CONFIG_PATH):
-        return {"config_json": "{}"}
-    with open(MCP_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return {"config_json": f.read()}
-
-@router.post("/mcp")
-async def update_mcp_config(
-    req: MCPConfigRequest,
-    _user: dict = Depends(get_current_user),
-):
-    """保存并重载 MCP 配置（admin only）
-
-    SECURITY: 写入 mcp_servers.json 后会触发 mcp_adapter.reload_all，
-    后者会按 JSON 中的 command/args 启动子进程。等同于 RCE，因此严格鉴权。
-    """
-    try:
-        # 校验 JSON 格式
-        json.loads(req.config_json)
-        with open(MCP_CONFIG_PATH, "w", encoding="utf-8") as f:
-            f.write(req.config_json)
-
-        # 触发重连
-        from app.main import mcp_adapter
-        if mcp_adapter:
-            await mcp_adapter.reload_all(MCP_CONFIG_PATH)
-
-        return {"status": "ok"}
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
-    except Exception as e:
-        logger.error(f"Failed to update MCP config: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/skills")
 async def list_skills():

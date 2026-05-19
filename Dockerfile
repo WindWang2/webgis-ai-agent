@@ -34,7 +34,6 @@ COPY --from=backend-deps /usr/local/bin /usr/local/bin
 COPY requirements.txt ./
 COPY main.py ./
 COPY app/ ./app/
-COPY mcp_servers.json ./
 
 # Stage 5: Runner
 FROM python:3.12-slim AS runner

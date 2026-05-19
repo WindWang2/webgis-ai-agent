@@ -1,12 +1,8 @@
 /**
- * Settings slice — 应用级配置：MCP 服务器 / 内置 skill / RAG / 地图样式 / LLM。
- *
- * 关注点：以"持久化的配置"为主（partialize 选中的大部分字段都在这里），
- * 包含一些遗留兼容字段（mcpConfig / llmConfig 字符串版）。
+ * Settings slice — 应用级配置：内置 skill / RAG / 地图样式 / LLM。
  */
 import type { StateCreator } from 'zustand';
 import {
-  DEFAULT_MCP_SERVERS,
   DEFAULT_SKILLS,
   DEFAULT_MAP_STYLES,
 } from '../../constants/demo';
@@ -16,25 +12,12 @@ export const createSettingsSlice: StateCreator<HudState, [], [], Partial<HudStat
   /* ─── Settings UI 旧字段（legacy compat） ─── */
   settingsOpen: false,
   setSettingsOpen: (open: boolean) => set({ settingsOpen: open }),
-  mcpConfig: '{}',
-  setMcpConfig: (config: string) => set({ mcpConfig: config }),
   llmConfig: {},
   setLlmConfig: (config: Record<string, unknown>) => set({ llmConfig: config }),
   availableSkills: [],
   setAvailableSkills: (skills) => set({ availableSkills: skills }),
 
   /* ─── 持久化配置 ─── */
-  mcpServers: DEFAULT_MCP_SERVERS,
-  setMcpServers: (servers) => set({ mcpServers: servers }),
-  toggleMcpServer: (id: string) =>
-    set((s) => ({
-      mcpServers: s.mcpServers.map((srv) =>
-        srv.id === id
-          ? { ...srv, status: srv.status === 'active' ? ('inactive' as const) : ('active' as const) }
-          : srv,
-      ),
-    })),
-
   skills: DEFAULT_SKILLS,
   setSkills: (skills) => set({ skills }),
   toggleSkill: (id: string) =>

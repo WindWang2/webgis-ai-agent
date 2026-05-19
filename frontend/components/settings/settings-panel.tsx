@@ -3,7 +3,6 @@
 import React from 'react';
 import {
   Sparkles,
-  Server,
   Hash,
   Brain,
   Crosshair,
@@ -13,7 +12,6 @@ import {
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { LlmConfig } from './llm-config';
-import { McpServers } from './mcp-servers';
 import { SkillsHub } from './skills-hub';
 import { RagConfig } from './rag-config';
 import { MapConfig } from './map-config';
@@ -24,7 +22,7 @@ import { SystemSettings } from './system-settings';
 /* ------------------------------------------------------------------ */
 
 interface NavItem {
-  key: 'llm' | 'mcp' | 'skills' | 'rag' | 'map' | 'system';
+  key: 'llm' | 'skills' | 'rag' | 'map' | 'system';
   label: string;
   icon: React.ElementType;
   count?: number;
@@ -32,7 +30,6 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { key: 'llm', label: '大模型', icon: Sparkles },
-  { key: 'mcp', label: 'MCP服务', icon: Server, count: 0 },
   { key: 'skills', label: 'Skills', icon: Hash, count: 0 },
   { key: 'rag', label: '知识库', icon: Brain },
   { key: 'map', label: '地图配置', icon: Crosshair },
@@ -47,8 +44,6 @@ function TabContent({ tab }: { tab: string }) {
   switch (tab) {
     case 'llm':
       return <LlmConfig />;
-    case 'mcp':
-      return <McpServers />;
     case 'skills':
       return <SkillsHub />;
     case 'rag':
@@ -72,16 +67,13 @@ export function SettingsPanel() {
   const settingsTab = useHudStore((s) => s.settingsTab);
   const setSettingsTab = useHudStore((s) => s.setSettingsTab);
 
-  const mcpServers = useHudStore((s) => s.mcpServers);
   const skills = useHudStore((s) => s.skills);
 
   if (!settingsOpen) return null;
 
-  const activeMcpCount = mcpServers.filter((s) => s.status === 'active').length;
   const enabledSkillCount = skills.filter((s) => s.enabled).length;
 
   const navWithCounts: NavItem[] = NAV_ITEMS.map((item) => {
-    if (item.key === 'mcp') return { ...item, count: activeMcpCount };
     if (item.key === 'skills') return { ...item, count: enabledSkillCount };
     return item;
   });

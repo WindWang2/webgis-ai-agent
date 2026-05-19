@@ -19,7 +19,7 @@
 | 层级 | 核心技术选型 | 具身智能特性 |
 |------|--------------|-------------|
 | **具身感官 (Sensory)** | Next.js 14 + MapLibre + HUD 2.0 | **Agentic HUD 2.0**：全沉浸式座舱设计，V2 UI 玻璃拟态主题 |
-| **中枢神经 (CNS)** | FastAPI + SSE + MCP Protocol | **主动感知与破网检索**：感官同步协议，支持地图状态全感知 |
+| **中枢神经 (CNS)** | FastAPI + SSE + 分层 ToolCatalog | **主动感知与破网检索**：感官同步协议，支持地图状态全感知 |
 | **执行肌肉 (Execution)** | Celery + Redis + PostGIS | **计算隔离与自愈**：空间算子在隔离区运行，"Exception As Thought" 自愈回路 |
 
 ## 🏗️ 项目核心目录
@@ -49,9 +49,8 @@
 - **AI 专题制图与高清合成 (AI Cartographer)**：Canvas 2D 合成标准专题底图，结合 LLM 动态空间分析结果。
 - **Agent-Map Bridge 稳定性加固**：重构 SSE 解析与会话状态同步，彻底消除生命周期竞态条件，实现无损长文本传输流与毫秒级地图感知回传。
 - **自然资源遥感智能 (Nature Resource AI)**：rasterio 集成，NDVI 指数秒级计算
-- **Agent 主控中枢 (The Mainframe)**：全屏设置面板，LLM 热切换、MCP 配置
+- **Agent 主控中枢 (The Mainframe)**：全屏设置面板，LLM 热切换、技能管理
 - **能力自我进化 (Skill Creator)**：自主编写并部署 Python 技能脚本
-- **空间分析 MCP 服务器**：独立解耦的 spatial-analysis 服务
 
 ### V2 UI (最新重新设计)
 - **玻璃拟态界面**：全系统半透明毛玻璃风格
@@ -110,7 +109,7 @@ cd frontend && npm install && npm run dev
 - ✅ **Phase 1**: 创生、连通与深层筑底
 - ✅ **Phase 2**: 具身智化与 CNS 架构融合
 - ✅ **Phase 3**: 专业制图与遥感分析增强 (V3.0)
-- ✅ **Phase 4**: 主控中枢与算子 MCP 化 (V3.2) - [查看 Release Notes](./docs/release-notes-v3.2.md)
+- ✅ **Phase 4**: 主控中枢与工具体系增强 (V3.2) - [查看 Release Notes](./docs/release-notes-v3.2.md)
 - ✅ **Phase 4+**: V2 UI 重新设计，玻璃拟态体验
 - 🌌 **Phase 5**: "超我"演进与星辰大海 (终极谋划期)
 

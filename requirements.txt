@@ -54,7 +54,6 @@ pytest-cov>=5.0.0
 python-jose[cryptography]>=3.3.0
 celery>=5.3.0
 matplotlib>=3.8.0
-mcp[cli]>=1.0.0
 
 # RAG & Vector Search
 sentence-transformers>=2.2.0

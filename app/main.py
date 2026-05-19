@@ -4,7 +4,6 @@ import os
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
-# 核心：确保 .env 被注入到 os.environ，供 MCP Adapter 的 os.path.expandvars 消费
 load_dotenv()
 
 from fastapi import FastAPI, Request
@@ -23,15 +22,10 @@ from app.services.tool_catalog import ToolCatalog
 
 logger = logging.getLogger(__name__)
 
-mcp_adapter = None
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期：启动时初始化工具注册和 MCP 连接"""
-    global mcp_adapter
-
-    # 初始化工具注册中心（替代 chat.py 模块级导入）
+    """应用生命周期：启动时初始化工具注册中心。"""
     registry = ToolRegistry()
     init_tools(registry)
     chat.registry = registry
@@ -39,20 +33,8 @@ async def lifespan(app: FastAPI):
     catalog = ToolCatalog(registry)
     chat.engine = ChatEngine(registry, tool_catalog=catalog)
 
-    # 加载 MCP server 配置（项目根目录下的 mcp_servers.json）
-    mcp_config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "mcp_servers.json")
-    from app.services.mcp_adapter import MCPAdapter
-    mcp_config = MCPAdapter.load_config(mcp_config_path)
-    if mcp_config.get("mcpServers"):
-        logger.info(f"[MCP] loading config from {mcp_config_path}")
-        mcp_adapter = await MCPAdapter.from_config(mcp_config, registry)
-    else:
-        logger.info("[MCP] no mcp_servers.json found or empty, skipping MCP setup")
-
     yield
 
-    if mcp_adapter:
-        await mcp_adapter.close()
     from app.core.network import close_shared_client
     await close_shared_client()
     Engine.dispose()

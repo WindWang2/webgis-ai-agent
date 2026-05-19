@@ -6,7 +6,7 @@
  * 实现按"slice 模式"拆分（M3 重构）：
  *   - layersSlice    图层 / 编辑 / 过程层 / 分析资产
  *   - taskSlice      当前 chat 任务 / Explorer 任务
- *   - settingsSlice  MCP / Skills / RAG / 地图样式 / LLM 配置
+ *   - settingsSlice  Skills / RAG / 地图样式 / LLM 配置
  *   - uiSlice        viewport / 面板可见性 / 主题色 / 日志 / 感知 / 导出布局
  *
  * 单文件巨型 store 拆为多个 ~80-100 行的 slice 文件后：
@@ -59,7 +59,6 @@ export const useHudStore = create<HudState>()(
     {
       name: 'geoagent-settings',
       partialize: (state) => ({
-        mcpServers: state.mcpServers,
         skills: state.skills,
         ragConfig: state.ragConfig,
         mapStyles: state.mapStyles,

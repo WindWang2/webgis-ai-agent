@@ -55,7 +55,6 @@ graph TD
     subgraph 大脑中枢 ["AI Agent 调度层"]
     D[Orchestrator 编排器] --> |Tool 调用指令| D1(LLM API — 兼容 OpenAI 格式)
     D1 --> |生成 JSON 架子| D
-    D --> |MCP 协议透传| D2(MCP 外网探测器节点)
     end
     C1 --> D
     
@@ -101,8 +100,7 @@ graph TD
    - **双源感知策略 (Strategy 2)**：当后端 Session 数据过期或重置时，Agent 会回退到前端实时上报的图层 ID 进行“具身感知”。这种自愈能力允许 Agent 控制由于页面刷新或 Session 过期遗留的“客场图层”，实现跨 Session 的操控主权。
 3. **闭环稳定性**：AI 被约束在单轮交互中通过“执行-观察-感知”完成逻辑缝合，极大减少了由于视角不匹配导致的盲目重复调用。
 
-### 3.4 MCP 外接超脑与破网抓取 (Sub-Agent)
-系统通过 Model Context Protocol 实现了标准化插件生态。
+### 3.4 破网抓取 (Sub-Agent)
 1. **破网爬行者 (Crawler)**：在 Tool 层嵌入 `duckduckgo-search` 组件。当 AI 在本地数据库寻址失败时，隐秘释放探测器向外网请求当前地理百科或新闻流。
 
 ### 3.4 Operational Stability & State Resilience (操作稳定性与状态自愈)
@@ -131,11 +129,10 @@ graph TD
 2. **分析资产管理 (Asset Management)**：突破了“Session 消失即数据丢失”的限制。分析产生的 GeoTIFF 结果将被永久保存并注册到 `uploads` 数据库。
 3. **高特权指令集**：Agent 获得了对这些数字资产的“自主意志”，能够执行 `manage_analysis_asset`（重命名、永久删除等）指令，成为真正的云端资源管家。
 
-### 3.7 MCP-Centric Spatial Intelligence Hub (算子 MCP 化)
+### 3.7 Spatial Intelligence Hub (工具体系增强)
 **V3.2 创新点**：
-1. **算法解耦 (Decoupling)**：将地理分析算子从 Web 后端解耦，下沉为独立的 `spatial-analysis` MCP Server。
-2. **智能解引用桥接 (Magic Resolving Bridge)**：在 `MCPAdapter` 中实现了自动参数转换。当 Agent 发起 `ref:xxx` ID 调用 MCP 工具时，适配器会自动将其解析为物理路径，实现了 backend-less 的专业算法集成。
-3. **专业算子库**：新增 `analyze_terrain`（地形特征）、`detect_raster_change`（时序对比）和 `calculate_zonal_stats`（区域分区分级统计）等工业级 MCP 算子。
+1. **专业算子库**：新增 `analyze_terrain`（地形特征）、`detect_raster_change`（时序对比）和 `calculate_zonal_stats`（区域分区分级统计）等工业级算子。
+2. **智能解引用桥接 (Magic Resolving Bridge)**：工具注册中心实现自动参数转换。当 Agent 发起 `ref:xxx` ID 调用工具时，会自动解析为物理路径或缓存的 GeoJSON 对象。
 
 
 ---

@@ -79,12 +79,12 @@ describe('task slice', () => {
 
 
 describe('settings slice', () => {
-  it('mcp toggle 翻转 status', () => {
+  it('skill toggle 翻转 enabled', () => {
     const s = useHudStore.getState();
-    const first = useHudStore.getState().mcpServers[0];
-    s.toggleMcpServer(first.id);
-    const next = useHudStore.getState().mcpServers.find(m => m.id === first.id)!;
-    expect(next.status).not.toBe(first.status);
+    const first = useHudStore.getState().skills[0];
+    s.toggleSkill(first.id);
+    const next = useHudStore.getState().skills.find((sk) => sk.id === first.id)!;
+    expect(next.enabled).toBe(!first.enabled);
   });
 
   it('llmConfigFull 合并不丢字段', () => {

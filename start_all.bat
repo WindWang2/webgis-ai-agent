@@ -2,11 +2,11 @@
 chcp 65001 >nul
 echo ==============================================================
 echo  正在启动 WebGIS AI Agent (V2.m) 核心服务模块
-echo  [包含了 MCP超脑、盲区爬行者、3D视界引擎]
+echo  [包含了 盲区爬行者、3D视界引擎]
 echo ==============================================================
 
 echo.
-echo [1/2] 启动中枢总线与模型网络 (FastAPI + MCP)...
+echo [1/2] 启动中枢总线与模型网络 (FastAPI)...
 start "WebGIS - AI Backend" cmd /k "set PYTHONPATH=. && venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8001"
 timeout /t 3 /nobreak >nul
 
