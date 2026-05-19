@@ -18,6 +18,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
 
     @tool(registry, name="spatial_cluster",
            description="空间聚类分析（DBSCAN密度聚类或K-Means分割），返回每个要素的聚类标签",
+           tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "method": "聚类方法: 'dbscan'(密度聚类, 默认) 或 'kmeans'(K均值)",
@@ -39,6 +40,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
 
     @tool(registry, name="standard_deviational_ellipse",
            description="计算标准离差椭圆（SDE），用于分析地理要素的空间分布趋势和方向性。",
+           tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
            })
@@ -50,6 +52,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
 
     @tool(registry, name="moran_i",
            description="全局 Moran's I 空间自相关检验，判断空间分布模式（聚集/离散/随机）",
+           tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "value_field": "待检验的数值字段名",
@@ -62,6 +65,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
 
     @tool(registry, name="hotspot_analysis",
            description="Getis-Ord Gi* 热点分析，识别统计显著的高值聚集区（热点）和低值聚集区（冷点）",
+           tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "value_field": "待分析的数值字段名",
@@ -75,6 +79,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
 
     @tool(registry, name="kde_surface",
            description="高斯核密度估计，生成连续密度面。适用于深度密度建模和选址分析基础。注意：该工具生成的是覆盖分析范围的完整矢量格网，如果不进行阈值过滤，在大范围内会遮挡底图，单纯查看'分布热度'建议优先使用 heatmap_data。",
+           tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "bandwidth": "核函数带宽（米），0表示自动计算（Silverman法则）",
@@ -197,6 +202,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
 
     @tool(registry, name="kde_contours",
            description="高斯核密度估计（等值面模式）：生成精美的点密度等值线/面。相比网格模式更平滑且易于叠加分析。",
+           tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "点要素集 GeoJSON 或引用(ref:xxx)",
                "levels": "等值面级数，默认 8",
@@ -259,6 +265,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
 
     @tool(registry, name="voronoi_polygons",
            description="生成 Voronoi (泰森多边形/Thiessen多边形)，将空间按最近邻原则划分为势力范围",
+           tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "clip_bounds": "可选：裁剪范围 [xmin, ymin, xmax, ymax]（WGS84），默认使用数据范围+10%缓冲",
@@ -456,6 +463,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
 
     @tool(registry, name="h3_lisa",
            description="H3网格LISA空间自相关分析：基于H3网格的Local Moran's I热点和冷点聚类分析（如识别显著的高-高或低-低聚集区）。必须传入带有数值字段的H3网格数据（如通过 h3_binning 得到的数据）。",
+           tier=2, domains=["statistics"],
            param_descriptions={
                "h3_geojson": "带有属性值的H3网格 GeoJSON 数据或引用(ref:xxx)",
                "value_field": "参与LISA分析的数值字段名",

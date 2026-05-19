@@ -256,7 +256,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
                 logger.warning(f"reverse_geocode_cn {p} failed: {e}")
         return {"error": "未配置任何地图 API Key"}
 
-    @tool(registry, name="plan_route",
+    @tool(registry, tier=2, domains=["network"], name="plan_route",
            description="路径规划（驾车/步行/骑行/公交），返回距离、时间和路线坐标",
            param_descriptions={
                "origin": "起点 WGS84 坐标 [经度, 纬度]",
@@ -316,7 +316,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
              "max_concurrency": "最大并发调用数（默认3，防止触发限流）",
          })(batch_geocode_cn)
 
-    @tool(registry, name="distance_matrix_cn",
+    @tool(registry, tier=2, domains=["network"], name="distance_matrix_cn",
            description="OD距离矩阵：计算多个起点到多个终点之间的驾驶/步行/骑行距离和时间，结果为二维矩阵。适合物流选址、通勤可达性分析。",
            param_descriptions={
                "origins": "起点坐标列表 [[lng, lat], ...]，最多10个（WGS84）",
@@ -346,7 +346,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         else:
             return await _distance_matrix_baidu(origins, destinations, mode)
 
-    @tool(registry, name="isochrone_analysis",
+    @tool(registry, tier=2, domains=["network"], name="isochrone_analysis",
            description="等时圈分析：从一个中心点出发，计算并可视化指定时间内可达的范围。支持驾驶/步行/骑行方向。返回 GeoJSON 面数据和半径米数。当前仅支持高德路径规划。",
            param_descriptions={
                "center": "中心点坐标 [lng, lat]（WGS84）",
@@ -504,7 +504,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
                 logger.warning(f"input_tips {p} failed: {e}")
         return {"error": "未配置高德或百度 API Key"}
 
-    @tool(registry, name="search_transit_route",
+    @tool(registry, tier=2, domains=["network"], name="search_transit_route",
            description="公交路径规划：起终点之间的公交/地铁换乘方案，返回多个备选路线（步行段+乘车段），含换乘次数、总耗时、票价。仅支持 Amap。",
            param_descriptions={
                "origin": "起点 WGS84 [lng,lat]",
@@ -528,7 +528,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": "公交查询当前仅支持 amap，请配置 AMAP_API_KEY"}
         return await _transit_amap(origin, destination, city, city_d, strategy)
 
-    @tool(registry, name="get_traffic_status",
+    @tool(registry, tier=2, domains=["network"], name="get_traffic_status",
            description="查询实时路况：指定矩形或圆形范围内的道路拥堵情况。返回道路名+拥堵等级+长度。适合『现在三环堵不堵』『机场高速路况』等问题。仅 Amap。",
            param_descriptions={
                "mode": "查询模式: 'rectangle'(矩形) 或 'circle'(圆形)",

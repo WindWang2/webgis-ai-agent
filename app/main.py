@@ -20,6 +20,7 @@ from app.api.routes import health, map, chat, layer, report, task, upload, knowl
 from app.tools.registry import ToolRegistry
 from app.tools import init_tools
 from app.services.chat_engine import ChatEngine
+from app.services.tool_catalog import ToolCatalog
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,9 @@ async def lifespan(app: FastAPI):
     registry = ToolRegistry()
     init_tools(registry)
     chat.registry = registry
-    chat.engine = ChatEngine(registry)
+    # 分层工具目录：按用户消息 + 会话粘性筛选 schema，cut token & 提升选择准确率
+    catalog = ToolCatalog(registry)
+    chat.engine = ChatEngine(registry, tool_catalog=catalog)
 
     # 加载 MCP server 配置（项目根目录下的 mcp_servers.json）
     mcp_config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "mcp_servers.json")

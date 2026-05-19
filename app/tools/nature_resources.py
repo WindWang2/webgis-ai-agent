@@ -26,7 +26,16 @@ def register_nature_resource_tools(registry: ToolRegistry):
     """注册自然资源监测相关工具"""
 
     @tool(registry, name="analyze_vegetation_index",
-          description="计算影像的归一化植被指数 (NDVI)。该工具能自动识别 4 波段 RGBN 影像或 Sentinel-2 类型数据。计算结果会持久化到资产库并生成预览图。")
+          tier=2, domains=["raster"],
+          description=(
+              "本地 TIFF 的 NDVI 计算 (Celery 异步)：用户上传遥感影像后调用，自动探测 RGBN/Sentinel-2 波段，"
+              "持久化为分析资产并入库。"
+              "\n何时用：用户已通过 /upload 上传 .tif/.tiff 后请求『算下 NDVI』；要把结果保存供后续 zonal_stats。"
+              "\n何时不用：(1) 在线 bbox 计算 — 用 compute_ndvi（无需上传）；"
+              "(2) 双时相变化 — 用 detect_vegetation_change；"
+              "(3) 不知道波段顺序 — 工具会自动探测，但 3 波段 RGB 无 NIR 时会失败。"
+              "\n关键约束：raster_path 必须是 list_uploaded_data 返回过的路径；任务异步，返回 task_id 后需轮询。"
+          ))
     def analyze_vegetation_index(raster_path: str, nir_band: Optional[int] = None, red_band: Optional[int] = None, session_id: Optional[str] = None) -> dict:
         # 触发 Celery 异步任务
         task = run_ndvi_analysis.delay(raster_path, nir_band, red_band, session_id)
@@ -37,6 +46,7 @@ def register_nature_resource_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="list_analysis_assets",
+          tier=2, domains=["raster"],
           description='获取当前系统中保存的所有遥感分析产物（如 NDVI、NDWI 结果文件）列表。用于回答用户"我之前生成了什么"或进行资产回顾。')
     def list_analysis_assets(session_id: Optional[str] = None) -> dict:
         from app.models.upload import UploadRecord
@@ -63,6 +73,7 @@ def register_nature_resource_tools(registry: ToolRegistry):
             }
 
     @tool(registry, name="manage_analysis_asset",
+          tier=2, domains=["raster"],
           description=(
               "维护遥感分析资产：重命名或永久删除 NDVI/NDWI 等分析产物（含物理文件）。"
               "\n何时用：用户明确说『把 XX 资产删掉』『把那个 NDVI 改名为 春季』；"

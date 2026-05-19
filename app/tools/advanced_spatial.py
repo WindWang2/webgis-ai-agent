@@ -57,6 +57,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "(3) 网络规模 > 1 万边 — 性能会退化，先用 attribute_filter 裁子网。"
                "\n关键约束：网络必须是连通的 LineString；起终点会就近吸附到最近节点。"
            ),
+           tier=2, domains=["network"],
            args_model=PathAnalysisArgs)
     def path_analysis(network_features: Any, start_point: List[float], end_point: List[float]) -> dict:
         data = safe_parse_geojson(network_features)
@@ -74,6 +75,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "(3) 没有现成栅格 — 先 fetch_dem / compute_ndvi 再 zonal_stats。"
                "\n关键约束：zones 是 FeatureCollection (面)；raster_path 必须是后端可访问的本地路径或 ref。"
            ),
+           tier=2, domains=["raster"],
            args_model=ZonalStatsArgs)
     def zonal_stats(geojson: Any, raster_path: str) -> dict:
         from app.lib.geo_analysis.raster_ops import zonal_statistics
@@ -99,6 +101,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
 
     @tool(registry, name="idw_interpolation",
            description="反距离加权插值(IDW)：将离散采样点转换为连续的 H3 六边形网格表面。适用于气象、污染等连续变量建模。",
+           tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "输入点要素集 GeoJSON 或引用(ref:xxx)",
                "value_field": "用于插值的数值字段名",
@@ -213,6 +216,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
 
     @tool(registry, name="isochrone_network",
            description="等时线分析（路网模式）：基于路网计算从设施点出发在指定时间内可达的范围。需要输入路网要素。",
+           tier=2, domains=["network"],
            args_model=IsochroneAnalysisArgs)
     def isochrone_network(network_layer: Any, facilities: Any, travel_time: float = 15, mode: str = "walking") -> dict:
         from app.lib.geo_analysis.network import calculate_isochrones
@@ -250,6 +254,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
 
     @tool(registry, name="service_area_simple",
            description="简单服务区分析：根据出行模式和时间生成服务范围。适合分析『某设施 15 分钟步行圈』。",
+           tier=2, domains=["network"],
            param_descriptions={
                "geojson": "设施点要素集 GeoJSON 或引用(ref:xxx)",
                "travel_time_min": "出行时间（分钟），默认 15",
@@ -266,6 +271,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
 
     @tool(registry, name="h3_binning",
            description="H3网格聚合：将点数据聚合到指定分辨率的H3六边形网格中（代替传统的鱼网格网）。适用于生成高性能的点密度分布数据驱动渲染。",
+           tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "点要素集 GeoJSON 或引用(ref:xxx)",
                "resolution": "H3分辨率（通常 6 到 9 之间，越大网格越小），例如 8",

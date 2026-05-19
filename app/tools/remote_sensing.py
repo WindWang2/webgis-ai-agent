@@ -22,6 +22,7 @@ def register_rs_tools(registry: ToolRegistry):
                "(3) bbox 极大 (跨省) — STAC 检索会超时，按区县切分。"
                "\n关键约束：bbox=[west,south,east,north] WGS84；日期窗建议 1–3 个月以提高有云容忍度。"
            ),
+           tier=2, domains=["raster"],
            param_descriptions={
                "bbox": "边界框 [west, south, east, north]，如 [116.2, 39.7, 116.6, 40.1]",
                "date_from": "起始日期 YYYY-MM-DD",
@@ -47,6 +48,7 @@ def register_rs_tools(registry: ToolRegistry):
                "(3) 要 NDWI / NBR / EVI — 用 compute_vegetation_index (统一入口，可选 index_type)。"
                "\n关键约束：bbox 不要过大（>1°× 1° 易触发下采样导致精度损失）；日期窗 1–3 个月以容忍有云。"
            ),
+           tier=2, domains=["raster"],
            param_descriptions={
                "bbox": "边界框 [west, south, east, north] WGS84",
                "date_from": "起始日期 YYYY-MM-DD",
@@ -70,6 +72,7 @@ def register_rs_tools(registry: ToolRegistry):
                "(2) bbox 跨多省 — 数据下载会超时，按市级切分。"
                "\n关键约束：bbox 单位为 WGS84 度；分辨率 30m，对城市精细地形不够（用专题 DEM 替代）。"
            ),
+           tier=2, domains=["raster"],
            param_descriptions={
                "bbox": "边界框 [west, south, east, north] WGS84",
            })

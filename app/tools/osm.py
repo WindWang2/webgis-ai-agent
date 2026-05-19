@@ -188,6 +188,7 @@ def register_osm_tools(registry: ToolRegistry):
                "(3) 区域明显跨多个国家 — Overpass 会超时，分批或换 chinese_maps 工具。"
                "\n关键约束：area 必须能被地理编码 (Nominatim)；POI 类别基于 OSM amenity/shop/leisure tag。"
            ),
+           tier=2, domains=["osm"],
            args_model=QueryOsmPoiArgs)
     async def query_osm_poi(area: str, category: str = "restaurant", limit: int = 50) -> dict:
         # 从 area 中提取距离信息（如 "5公里内"、"3km"）并扩大搜索范围
@@ -312,6 +313,7 @@ def register_osm_tools(registry: ToolRegistry):
                "需要实时路况 — 用 get_traffic_status。"
                "\n关键约束：road_type 是 OSM highway tag 值，常见: motorway/primary/secondary/tertiary/residential/footway。"
            ),
+           tier=2, domains=["osm"],
            param_descriptions={
                "area": "区域名称，如 '成都' '海淀区'。会先地理编码取 bbox",
                "road_type": "OSM highway tag 值。常用 primary(主干) / secondary(次干) / residential(支路)",
@@ -347,6 +349,7 @@ def register_osm_tools(registry: ToolRegistry):
                "需要建筑高度 — OSM 仅部分城市有 building:levels，可能空。"
                "\n关键约束：大城市中心 (如北京三环内) 一次拉可能 10k+ 要素，建议先缩小 area。"
            ),
+           tier=2, domains=["osm"],
            param_descriptions={
                "area": "区域名称（街道/小区/POI 级精度更好），如 '成都春熙路'。会被地理编码为 bbox",
                "limit": "返回上限，默认 100。Overpass 服务器对超量请求会拒绝",
@@ -379,6 +382,7 @@ def register_osm_tools(registry: ToolRegistry):
                "或 get_admin_division (天地图官方界线)；要下级单元列表 — 用 get_child_districts。"
                "\n关键约束：admin_level 是 OSM 体系（4=省级/state, 6=市级/prefecture, 8=区/county, 10=街道）；不同国家约定不同。"
            ),
+           tier=2, domains=["osm"],
            param_descriptions={
                "name": "行政区名称，需与 OSM 数据一致。如 '海淀区' '成都市' 'California'",
                "admin_level": "OSM admin_level，中国常用 4(省) / 6(市) / 8(区县)。默认 8",

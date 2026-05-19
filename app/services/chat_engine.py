@@ -4,7 +4,10 @@ import json
 import logging
 import re
 import uuid
-from typing import AsyncGenerator, Optional, Any
+from typing import AsyncGenerator, Optional, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.services.tool_catalog import ToolCatalog
 
 import httpx
 
@@ -236,8 +239,15 @@ def _slim_event_result(result: Any) -> Any:
 
 
 class ChatEngine:
-    def __init__(self, tool_registry: ToolRegistry):
+    def __init__(
+        self,
+        tool_registry: ToolRegistry,
+        tool_catalog: Optional["ToolCatalog"] = None,
+    ):
         self.registry = tool_registry
+        # 可选的分层工具目录。给定时按 (用户消息 + 会话粘性) 选 schema 子集，
+        # 否则回退到 registry.get_schemas() 全推 (向后兼容)。
+        self.catalog = tool_catalog
         self.base_url = settings.LLM_BASE_URL.rstrip("/")
         self.model = settings.LLM_MODEL
         self.api_key = settings.LLM_API_KEY
@@ -246,6 +256,31 @@ class ChatEngine:
         self.tracker = TaskTracker()
         # 内存对话存储: session_id -> messages list (LRU Cache to bound memory)
         self._sessions: LRUCache = LRUCache(capacity=50)
+
+    def _select_tools(self, session_id: Optional[str], messages: list[dict]) -> Optional[list[dict]]:
+        """选出本轮要推给 LLM 的工具 schema 列表。
+
+        优先用 ToolCatalog（按最近一条用户消息 + 会话粘性筛选）；
+        若未配置 catalog，回退到完整 get_schemas() 保持原行为。
+        """
+        if self.catalog is not None:
+            # 取最近一条 user 消息文本作为触发源；找不到就空串（仅 tier 1）。
+            user_text = ""
+            for m in reversed(messages):
+                if m.get("role") == "user":
+                    content = m.get("content")
+                    if isinstance(content, str):
+                        user_text = content
+                    elif isinstance(content, list):
+                        # OpenAI 多模态格式
+                        user_text = " ".join(
+                            seg.get("text", "") for seg in content if isinstance(seg, dict)
+                        )
+                    break
+            schemas = self.catalog.select_schemas(user_text, session_id=session_id)
+            return schemas or None
+        all_schemas = self.registry.get_schemas()
+        return all_schemas or None
 
     def _build_system_prompt(self) -> str:
         """Build system prompt with dynamically injected skill list."""
@@ -777,7 +812,7 @@ class ChatEngine:
         for _ in range(self.max_rounds):
             messages_with_context = self._compose_request_messages(session_id, messages)
 
-            tools = self.registry.get_schemas() if self.registry.get_schemas() else None
+            tools = self._select_tools(session_id, messages)
             response = await self._call_llm(messages_with_context, tools)
             choice = response.get("choices", [{}])[0]
             assistant_msg = choice.get("message", {})
@@ -874,7 +909,7 @@ class ChatEngine:
                 yield sse_event("task_cancelled", {"task_id": task.id})
                 return
 
-            tools = self.registry.get_schemas() if self.registry.get_schemas() else None
+            tools = self._select_tools(session_id, messages)
 
             # ── Streaming LLM call: yield tokens in real-time ──
             streamed_content_parts: list[str] = []
