@@ -50,13 +50,21 @@ def _to_async_url(url: str) -> str:
 try:
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
-    AsyncEngine = create_async_engine(
-        _to_async_url(settings.DATABASE_URL),
-        pool_size=10,
-        max_overflow=20,
-        pool_timeout=30,
-        pool_recycle=3600,
-    )
+    _async_url = _to_async_url(settings.DATABASE_URL)
+    _async_kwargs: dict = {}
+    if _async_url.startswith("sqlite+aiosqlite"):
+        # aiosqlite 不支持连接池（单文件单连接），pool_size/max_overflow 会被忽略
+        # 但仍会触发 deprecation 警告，且必须给 connect_args 防止跨线程报错。
+        _async_kwargs["connect_args"] = {"check_same_thread": False}
+    else:
+        _async_kwargs.update(
+            pool_size=10,
+            max_overflow=20,
+            pool_timeout=30,
+            pool_recycle=3600,
+        )
+
+    AsyncEngine = create_async_engine(_async_url, **_async_kwargs)
     AsyncSessionLocal = async_sessionmaker(bind=AsyncEngine, expire_on_commit=False)
 except ImportError:
     AsyncEngine = None  # type: ignore[misc,assignment]

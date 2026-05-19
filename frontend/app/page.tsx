@@ -431,6 +431,9 @@ export default function Home() {
   /* ─── Main render ─── */
   const aiStatus = useHudStore((s) => s.aiStatus);
   const theme = useHudStore((s) => s.theme);
+  // 用响应式 selector 读 accentColor —— 之前在 JSX 里直接 getState() 不订阅 store，
+  // 导致用户改主题色后 LeftSidebar / HistoryDrawer 不重渲染（审计 F8）。
+  const reactiveAccentColor = useHudStore((s) => s.accentColor);
   const fontSize = useHudStore((s) => s.fontSize);
   const sidebarWidth = useHudStore((s) => s.sidebarWidth);
   const colors = getThemeColors(theme);
@@ -472,7 +475,7 @@ export default function Home() {
           messages={messages}
           aiStatus={aiStatus}
           onSend={handleSend}
-          accentColor={useHudStore.getState().accentColor}
+          accentColor={reactiveAccentColor}
           onPlanAction={handlePlanAction}
         />
 
@@ -527,7 +530,7 @@ export default function Home() {
             handleNewSession();
           }
         }}
-        accentColor={useHudStore.getState().accentColor}
+        accentColor={reactiveAccentColor}
       />
 
       {settingsOpen && <SettingsPanel />}

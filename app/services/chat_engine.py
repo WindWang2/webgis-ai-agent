@@ -256,6 +256,8 @@ class ChatEngine:
         self.tracker = TaskTracker()
         # 内存对话存储: session_id -> messages list (LRU Cache to bound memory)
         self._sessions: LRUCache = LRUCache(capacity=50)
+        # 每会话锁，覆盖 _get_or_create_session 的检查-赋值竞态
+        self._session_locks: dict[str, asyncio.Lock] = {}
 
     def _select_tools(self, session_id: Optional[str], messages: list[dict]) -> Optional[list[dict]]:
         """选出本轮要推给 LLM 的工具 schema 列表。
@@ -534,10 +536,18 @@ class ChatEngine:
 
 
     async def _get_or_create_session(self, session_id: str) -> list[dict]:
-        if session_id not in self._sessions:
-            history_messages = await self._load_session_from_db(session_id)
-            self._sessions[session_id] = history_messages
+        # 快路径：已缓存直接返回，绝大多数请求走这里，零锁开销。
+        if session_id in self._sessions:
+            return self._sessions[session_id]
 
+        # 慢路径：可能多个 coroutine 同时进入；按 session_id 分粒度加锁，
+        # 防止两个并发请求都触发 _load_session_from_db 造成双倍 DB 读 + 后续写时序错乱
+        # (审计 B2: 原实现是检查-然后-赋值的经典 TOCTOU 竞态)。
+        lock = self._session_locks.setdefault(session_id, asyncio.Lock())
+        async with lock:
+            # 重新检查：第一个进锁的协程加载完，后续协程拿到锁后应直接复用
+            if session_id not in self._sessions:
+                self._sessions[session_id] = await self._load_session_from_db(session_id)
         return self._sessions[session_id]
 
     def _apply_skill(self, messages: list[dict], skill_name: Optional[str]) -> None:
