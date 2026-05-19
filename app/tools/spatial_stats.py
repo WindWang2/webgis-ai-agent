@@ -333,10 +333,18 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="convex_hull",
-           description="计算要素集合的凸包（最小凸多边形），用于确定点群的空间范围",
+           description=(
+               "凸包计算：包住整组要素的最小凸多边形，附 area_km2 与 feature_count。可选 group_by 分组。"
+               "\n何时用：『XX 类设施的服务范围大致是多大』；做点群空间范围的快速包络；"
+               "聚类预处理 (找出几个 group 的大致边界)。"
+               "\n何时不用：(1) 要紧贴形状的边界 — 用 alpha shape (需自定义) 或 concave hull (未实现)；"
+               "(2) 仅需 bbox — 用 spatial_stats 看 bbox 字段；"
+               "(3) 圈出 DBSCAN 聚类的核心 — 用 spatial_cluster 后再 convex_hull 配合 group_by。"
+               "\n关键约束：至少 3 个要素；输出始终 Polygon (即使输入是线/面)。"
+           ),
            param_descriptions={
                "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
-               "group_by": "可选：按属性字段分组，每组生成一个凸包",
+               "group_by": "可选属性字段名。若提供，每个唯一值生成一个独立凸包",
            })
     def convex_hull(geojson: Any, group_by: str = "") -> dict:
         data = safe_parse_geojson(geojson)
@@ -387,11 +395,19 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="multi_ring_buffer",
-           description="多环缓冲区分析：围绕要素生成多个同心缓冲带（环形区域）",
+           description=(
+               "多环缓冲：围绕要素生成多个同心距离环 (含 ring 属性)，适合做距离分级影响圈。"
+               "\n何时用：『学校 500/1000/1500m 三档影响圈』『地铁站 300/800m 步行/接驳圈』『加油站 1/3/5km 服务范围分级』；"
+               "做距离衰减分析的母图层（每环+spatial_aggregate 统计落入数量）。"
+               "\n何时不用：(1) 只要单一距离 — 用 buffer_analysis；"
+               "(2) 时间维而非距离维 — 用 isochrone_analysis (按时间路网计算)；"
+               "(3) 想要叠加而非环带 — merge_rings=False 拿到独立同心圆。"
+               "\n关键约束：distances 升序列表（米）；merge_rings=True 时返回 ring 字段标识第几环。"
+           ),
            param_descriptions={
                "geojson": "输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
-               "distances": "缓冲距离列表（米），例如 [500, 1000, 1500]",
-               "merge_rings": "是否合并为环形区域（默认true），false则生成独立圆",
+               "distances": "缓冲距离列表（米），升序，例如 [500, 1000, 1500]",
+               "merge_rings": "True=同心环带 (默认)；False=独立同心圆（每个完整覆盖到内圈）",
            })
     def multi_ring_buffer(geojson: Any, distances: list = [500, 1000, 1500],
                            merge_rings: bool = True) -> dict:

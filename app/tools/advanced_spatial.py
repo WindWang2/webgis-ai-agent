@@ -48,7 +48,15 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
     """注册高级空间分析工具"""
 
     @tool(registry, name="path_analysis",
-           description="在给定的路网要素中计算起点和终点之间的最短路径。",
+           description=(
+               "图论最短路径：给定路网 LineString 集合 + 起终点坐标，返回最短路径线 + 距离。"
+               "\n何时用：需要在自定义路网（用户上传 / OSM 抓取）上做最短路径；"
+               "出行规划的可控替代（不依赖第三方路径 API）。"
+               "\n何时不用：(1) 走真实道路的导航 — 用 search_route_cn (Amap，含转向/限行) 或 search_transit_route；"
+               "(2) 要可达范围而非单点路径 — 用 isochrone_network / isochrone_analysis；"
+               "(3) 网络规模 > 1 万边 — 性能会退化，先用 attribute_filter 裁子网。"
+               "\n关键约束：网络必须是连通的 LineString；起终点会就近吸附到最近节点。"
+           ),
            args_model=PathAnalysisArgs)
     def path_analysis(network_features: Any, start_point: List[float], end_point: List[float]) -> dict:
         data = safe_parse_geojson(network_features)
@@ -57,7 +65,15 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="zonal_stats",
-           description="计算矢量区域内的栅格数据统计信息（如平均值、总和等）。",
+           description=(
+               "区域栅格统计：对每个矢量多边形，统计落入其内的栅格像素 (min/max/mean/sum/count) 并回写到 properties。"
+               "\n何时用：『每个区县的平均 NDVI / 平均 DEM 高程 / 累积降雨量』；"
+               "用 NDVI 或高程图层给区县着色；遥感产物 (compute_ndvi/fetch_dem 的输出) 接入到行政统计。"
+               "\n何时不用：(1) 仅做点的栅格采样 — 直接读栅格即可；"
+               "(2) 矢量内的矢量统计 (区内 POI 数) — 用 spatial_aggregate；"
+               "(3) 没有现成栅格 — 先 fetch_dem / compute_ndvi 再 zonal_stats。"
+               "\n关键约束：zones 是 FeatureCollection (面)；raster_path 必须是后端可访问的本地路径或 ref。"
+           ),
            args_model=ZonalStatsArgs)
     def zonal_stats(geojson: Any, raster_path: str) -> dict:
         from app.lib.geo_analysis.raster_ops import zonal_statistics
@@ -143,7 +159,15 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="spatial_join",
-           description="基于空间拓扑关系将两个图层的属性进行联接。",
+           description=(
+               "空间连接：按拓扑关系 (intersects/within/contains 等) 将右图层属性附加到左图层要素。"
+               "\n何时用：『把人口属性挂到行政区上』『把 POI 所属街道写回 POI』『判断每个建筑是否在保护区内』；"
+               "做主题图（按属性着色）前的属性预处理。"
+               "\n何时不用：(1) 只要点数 / 求和 — 用 spatial_aggregate（不返回连接后的全部右属性，更轻量）；"
+               "(2) 要保留左图层全部、空匹配补 NaN — join_type='left'；inner 只保留有匹配的。"
+               "\n关键约束：predicate 取值 intersects/within/contains/touches/crosses；"
+               "左右图层 CRS 必须一致（内部自动按 WGS84 处理）。"
+           ),
            args_model=SpatialJoinArgs)
     def spatial_join(left_layer: Any, right_layer: Any, join_type: str = "inner", predicate: str = "intersects") -> dict:
         data_left = safe_parse_geojson(left_layer)
@@ -198,7 +222,15 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="fishnet_grid",
-           description="生成鱼网格网：在指定范围内创建正方形或六边形网格。",
+           description=(
+               "鱼网格网生成：在 bbox 内生成正方形或六边形覆盖网格 (空 cell，无属性)。"
+               "\n何时用：作为 spatial_aggregate / spatial_join 的底图做空间统计；"
+               "需要规则网格做密度可视化但不想用 H3 索引（如要导出兼容 ArcGIS 的 shp）。"
+               "\n何时不用：(1) 仅需点的网格聚合 — 直接用 h3_binning（自带 H3 索引、性能更好）；"
+               "(2) 要平滑等值面 — 用 kde_contours / idw_interpolation。"
+               "\n关键约束：bounds=[west,south,east,north] WGS84；cell_size 单位米；"
+               "大 bbox + 小 cell_size 会爆内存（>10⁶ 格警告）。"
+           ),
            args_model=FishnetGridArgs)
     def fishnet_grid(bounds: List[float], cell_size: float, type: str = "square") -> dict:
         from app.lib.geo_analysis.aggregation import generate_fishnet

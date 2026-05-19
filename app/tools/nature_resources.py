@@ -63,7 +63,15 @@ def register_nature_resource_tools(registry: ToolRegistry):
             }
 
     @tool(registry, name="manage_analysis_asset",
-          description="对已有的分析资产进行重命名或永久删除操作。")
+          description=(
+              "维护遥感分析资产：重命名或永久删除 NDVI/NDWI 等分析产物（含物理文件）。"
+              "\n何时用：用户明确说『把 XX 资产删掉』『把那个 NDVI 改名为 春季』；"
+              "在 list_analysis_assets 列表里发现重复/废弃产物时的清理。"
+              "\n何时不用：(1) 想看资产列表 — 用 list_analysis_assets (只读)；"
+              "(2) 想删除上传文件而非分析资产 — 用 upload 路由 (这个只管 geometry_type='raster_analysis' 的 UploadRecord)；"
+              "(3) 用户未明确授权删除 — 不要主动调，特别是 action='delete' 不可逆。"
+              "\n关键约束：action ∈ {rename, delete}；rename 必须给 new_name；delete 同时移除磁盘 TIFF。"
+          ))
     def manage_analysis_asset(asset_id: int, action: str, new_name: Optional[str] = None) -> dict:
         from app.models.upload import UploadRecord
         import os
