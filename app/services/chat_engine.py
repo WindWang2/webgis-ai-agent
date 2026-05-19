@@ -1,8 +1,13 @@
-"""对话引擎 - 直接 HTTPX 调用（避免 OpenAI SDK 版本问题）"""
+"""对话引擎 - ChatEngine 编排实现。
+
+M1 重构（拆 1287 LOC 单体）：纯函数 / 常量 / SSE helpers / LLM 客户端 / SYSTEM_PROMPT
+均已搬到 app/services/chat/ 子包。本文件只保留 ChatEngine 类本身（会话、工具调度、
+SSE 流序列化、self-healing 闭环）。旧的下划线函数名（如 _slim_tool_result）作为别名
+re-export，保持外部 import 兼容。
+"""
 import asyncio
 import json
 import logging
-import re
 import uuid
 from typing import AsyncGenerator, Optional, Any, TYPE_CHECKING
 
@@ -16,227 +21,29 @@ from app.tools.registry import ToolRegistry
 from app.services.task_tracker import TaskTracker, detect_geojson
 from app.services.session_data import session_data_manager
 from app.services.ws_service import broadcast_ws_event
-from collections import OrderedDict
 from app.tools._utils import async_db_session
 from app.services.history_service_async import AsyncHistoryService
-
-class LRUCache(OrderedDict):
-    """Simple LRU Cache to bound memory usage"""
-    def __init__(self, capacity=100):
-        super().__init__()
-        self.capacity = capacity
-
-    def __getitem__(self, key):
-        value = super().__getitem__(key)
-        self.move_to_end(key)
-        return value
-
-    def __setitem__(self, key, value):
-        super().__setitem__(key, value)
-        if len(self) > self.capacity:
-            oldest = next(iter(self))
-            del self[oldest]
-
-logger = logging.getLogger(__name__)
-
-
-def _parse_minimax_xml_tool_calls(content: str) -> list[dict]:
-    """Parse MiniMax XML-format tool calls from content field.
-
-    Handles: minimax:tool_call <invoke name="tool"> <parameter name="p">v</parameter> </invoke>
-    """
-    tool_calls = []
-    invoke_pat = re.compile(
-        r'minimax:tool_call\s+<invoke\s+name="([^"]+)">(.*?)(?:</invoke>|$)',
-        re.DOTALL,
-    )
-    param_pat = re.compile(r'<parameter\s+name="([^"]+)">(.*?)</parameter>', re.DOTALL)
-
-    for tool_name, body in invoke_pat.findall(content):
-        params: dict = {}
-        for p_name, p_value in param_pat.findall(body):
-            v = p_value.strip()
-            try:
-                params[p_name] = json.loads(v)
-            except (json.JSONDecodeError, ValueError):
-                params[p_name] = v
-        if tool_name.strip():
-            tool_calls.append({
-                "id": f"call_{uuid.uuid4().hex[:8]}",
-                "function": {"name": tool_name.strip(), "arguments": params},
-            })
-    return tool_calls
-
-
-def _construct_self_healing_message(tool_name: str, error_msg: str, error_type: str) -> str:
-    """以工具结果的形式回灌一条简短的失败说明。
-
-    LLM 已经从 SYSTEM_PROMPT 知道遇错该如何反应，这里只给事实和最小提示，
-    避免每次失败都灌入数百字的"诊断流程"。
-    """
-    if "校验" in error_type:
-        hint = "参数不符合 schema：检查类型与必填项后重试。"
-    elif "无法找到引用数据" in error_msg:
-        hint = "引用的 ref/别名不存在或已过期：先重新生成数据引用。"
-    else:
-        hint = "调整参数（关键词、行政区、半径等）或换一个更合适的工具。"
-    return (
-        f"[工具执行失败] {tool_name} | {error_type}: {error_msg}\n"
-        f"提示：{hint} 不要重复失败的相同调用。"
-    )
-
-
 from app.utils.sse import sse_event
 
+# ─── M1: 从拆出的子模块 re-export，保留旧符号兼容 ───────────
+from app.services.chat.sse_helpers import (
+    LRUCache,
+    MSG_MAX_CHARS as _MSG_MAX_CHARS,
+    parse_minimax_xml_tool_calls as _parse_minimax_xml_tool_calls,
+    normalize_tool_args as _normalize_tool_args,
+    is_error_dict as _is_error_dict,
+    wrap_error_dict_for_llm as _wrap_error_dict_for_llm,
+    slim_tool_result as _slim_tool_result,
+    calculate_bbox as _calculate_bbox,
+    slim_event_result as _slim_event_result,
+)
+from app.services.chat.prompt import (
+    SYSTEM_PROMPT,
+    construct_self_healing_message as _construct_self_healing_message,
+)
+from app.services.chat.llm_client import LLMConfig, call_llm, call_llm_stream
 
-_MSG_MAX_CHARS = 3000  # 存入 messages 的工具结果最大字符数
-
-
-def _normalize_tool_args(raw: Any) -> str:
-    """规范化工具参数为稳定 key，避免 LLM 拼 JSON 字段顺序导致重复调用拦截被绕过。"""
-    try:
-        parsed = json.loads(raw) if isinstance(raw, str) else raw
-        return json.dumps(parsed, ensure_ascii=False, sort_keys=True)
-    except (json.JSONDecodeError, TypeError):
-        return str(raw)
-
-
-def _is_error_dict(result: Any) -> bool:
-    """识别 std_error_response 形状的错误返回。"""
-    return isinstance(result, dict) and result.get("success") is False and "code" in result
-
-
-def _wrap_error_dict_for_llm(tool_name: str, result: dict) -> str:
-    """将 std_error_response dict 包装为统一的自愈消息字符串。"""
-    code = result.get("code", "TOOL_ERROR")
-    message = result.get("message", "")
-    error_type = result.get("error_type", code)
-    return _construct_self_healing_message(tool_name, message, error_type)
-
-
-def _slim_tool_result(result: any, result_str: str, session_geojson_ref: str | None) -> str:
-    """将大型工具结果压缩为 LLM 友好的摘要版本。
-    完整 GeoJSON 已通过 SSE 推送给前端，messages 里只保留摘要。
-    """
-    # 针对新版 GeoAnalysisResult 的特殊处理：如果包含 summary，优先保留它
-    if isinstance(result, dict) and "summary" in result:
-        slim = {"summary": result["summary"]}
-        if session_geojson_ref:
-            slim["ref_id"] = session_geojson_ref
-        if "error_type" in result and result["error_type"]:
-            slim["error_type"] = result["error_type"]
-        if "correction_hint" in result and result["correction_hint"]:
-            slim["correction_hint"] = result["correction_hint"]
-        return json.dumps(slim, ensure_ascii=False)
-
-    if len(result_str) <= _MSG_MAX_CHARS:
-        return result_str
-
-    if isinstance(result, dict):
-        # 1. 识别 GeoJSON：可能在 geojson 字段中，也可能本身就是 FeatureCollection
-        geojson = result.get("geojson")
-        is_direct_fc = result.get("type") == "FeatureCollection" and "features" in result
-        if is_direct_fc:
-            geojson = result
-
-        # 2. 保留重要元数据，剔除大体积字段
-        slim = {k: v for k, v in result.items() if k not in ("geojson", "image", "features")}
-        
-        # 3. 如果包含地理要素，提取关键属性摘要
-        if isinstance(geojson, dict) and "features" in geojson:
-            features = geojson["features"]
-            feature_count = len(features)
-            
-            # 提取所有可用的属性字段名，供 LLM 制作专题图或分析参考
-            property_keys = set()
-            for f in features[:10]:
-                if isinstance(f, dict):
-                    property_keys.update(f.get("properties", {}).keys())
-            
-            sample = []
-            for f in features[:3]:
-                if isinstance(f, dict):
-                    sample.append({"properties": f.get("properties", {})})
-            
-            ref_hint = (
-                f"如需进一步空间分析，请调用工具并将 geojson 参数设为 \"{session_geojson_ref}\"。" 
-                if session_geojson_ref else ""
-            )
-            
-            slim["geojson_summary"] = {
-                "feature_count": feature_count,
-                "available_properties": list(property_keys),
-                "sample_properties": sample,
-                "note": f"数据已推送至前端（共 {feature_count} 个要素）。{ref_hint}"
-            }
-            # 如果是直出的 FC，确保 type 和 metadata 被保留（已经在 slim 中了）
-        elif result.get("type") == "heatmap_raster":
-            slim["note"] = "栅格热力图已推送至前端，bbox=" + str(result.get("bbox"))
-            
-        return json.dumps(slim, ensure_ascii=False)
-
-def _calculate_bbox(geojson: Any) -> list | None:
-    """计算 GeoJSON 的 BBox，返回 [west, south, east, north] 数组（与前端期望格式一致）。"""
-    if not isinstance(geojson, dict):
-        return None
-    features = geojson.get("features", [])
-    if not features:
-        return None
-    min_lat, min_lon = float('inf'), float('inf')
-    max_lat, max_lon = float('-inf'), float('-inf')
-    found = False
-    for f in features:
-        geom = f.get("geometry")
-        if not geom: continue
-        coords = geom.get("coordinates")
-        if not coords: continue
-        def process(c):
-            nonlocal min_lat, min_lon, max_lat, max_lon, found
-            if isinstance(c, (list, tuple)) and len(c) >= 2 and isinstance(c[0], (int, float)):
-                lng, lat = float(c[0]), float(c[1])
-                min_lon, max_lon = min(min_lon, lng), max(max_lon, lng)
-                min_lat, max_lat = min(min_lat, lat), max(max_lat, lat)
-                found = True
-            elif isinstance(c, list):
-                for item in c: process(item)
-        process(coords)
-    # Return [west, south, east, north] — matches the frontend bbox array format
-    return [min_lon, min_lat, max_lon, max_lat] if found else None
-
-def _slim_event_result(result: Any) -> Any:
-    """为了 SSE 传输而脱敏工具结果，移除大体积的数据字段，但保留导航和渲染关键点。"""
-    if not isinstance(result, dict):
-        return result
-    
-    # 提取或计算 bbox 用于前端导航，统一转为 [west, south, east, north] 数组
-    bbox = result.get("bbox")
-    if not bbox:
-        if "geojson" in result:
-            bbox = _calculate_bbox(result["geojson"])
-        elif result.get("type") == "FeatureCollection" and "features" in result:
-            # 工具直接返回 FeatureCollection（如 search_poi）
-            bbox = _calculate_bbox(result)
-
-    # 规范化 bbox：OSM 工具返回 "south,west,north,east" 字符串，需转为数组
-    if isinstance(bbox, str) and bbox:
-        parts = [float(x) for x in bbox.split(",") if x.strip()]
-        if len(parts) == 4:
-            south, west, north, east = parts
-            bbox = [west, south, east, north]  # → [west, south, east, north]
-
-    # 移除大数据字段，但保留 image (热力图需要) 和 bbox (导航需要)
-    exclude = {"geojson", "features", "data_list", "grid"}
-    slim = {k: v for k, v in result.items() if k not in exclude}
-
-    if bbox:
-        slim["bbox"] = bbox
-
-    # 增加指引
-    if "geojson" in result or "features" in result:
-        slim["_streaming_note"] = "大体积要素数据已过滤，仅保留元数据。完整图层已自动加载。"
-        
-    return slim
-
+logger = logging.getLogger(__name__)
 
 class ChatEngine:
     def __init__(
@@ -623,187 +430,22 @@ class ChatEngine:
         except Exception as e:
             logger.warning(f"History: title generation failed for {session_id}: {e}")
 
+    def _llm_config(self) -> LLMConfig:
+        """打包当前 ChatEngine 的 LLM 配置成一个不可变 dataclass，传给 chat/llm_client。"""
+        return LLMConfig(
+            base_url=self.base_url,
+            model=self.model,
+            api_key=self.api_key,
+            use_prompt_caching=self.use_prompt_caching,
+        )
+
     async def _call_llm(self, messages: list[dict], tools: Optional[list] = None) -> dict:
-        """直接调用 LLM API"""
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}"
-        }
-        # 针对部分 Provider (如 DeepSeek) 启用 Prompt Caching 提示
-        if self.use_prompt_caching:
-            headers["X-Prompt-Cache"] = "1"  # 通用缓存提示头
-            if "deepseek" in self.base_url.lower():
-                headers["deepseek-caching"] = "true"
+        """委托给 chat/llm_client.call_llm — 历史方法名保留以免外部代码 / 测试断裂。"""
+        return await call_llm(self._llm_config(), messages, tools)
 
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "max_tokens": 16384,
-        }
-        if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
-
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                f"{self.base_url}/chat/completions",
-                headers=headers,
-                json=payload,
-            )
-            response.raise_for_status()
-            return response.json()
-
-    async def _call_llm_stream(self, messages: list[dict], tools: Optional[list] = None) -> AsyncGenerator[tuple[str, dict], None]:
-        """Stream LLM API response. Yields (event_type, data) tuples.
-        event_type: 'token' for content chunks, 'done' when stream ends.
-        """
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}"
-        }
-        if self.use_prompt_caching:
-            headers["X-Prompt-Cache"] = "1"
-            if "deepseek" in self.base_url.lower():
-                headers["deepseek-caching"] = "true"
-
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "max_tokens": 16384,
-            "stream": True,
-        }
-        if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
-
-        # Accumulated content / reasoning / tool_calls from deltas.
-        # 推理 token 与正文 token 分开累积，避免 DeepSeek-R1 / MiniMax-M2.7 把"思考过程"
-        # 拼进 assistant.content 污染下一轮的历史摘要。
-        content_parts: list[str] = []
-        reasoning_parts: list[str] = []
-        tool_calls_accum: dict[int, dict] = {}  # index -> {id, function: {name, arguments}}
-        finish_reason: Optional[str] = None
-        _in_think_block: bool = False  # 跟踪 <think>...</think> 标签状态
-
-        timeout = httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            async with client.stream("POST", f"{self.base_url}/chat/completions", headers=headers, json=payload) as response:
-                if response.status_code != 200:
-                    error_text = await response.aread()
-                    logger.error(f"LLM Stream Error {response.status_code}: {error_text.decode()}")
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    line = line.strip()
-                    if not line:
-                        continue
-                    if not line.startswith("data: "):
-                        continue
-
-                    data_str = line[6:]  # strip "data: " prefix
-                    if data_str == "[DONE]":
-                        break
-
-                    try:
-                        chunk = json.loads(data_str)
-                    except json.JSONDecodeError:
-                        logger.warning(f"Failed to parse SSE chunk: {data_str[:200]}")
-                        continue
-
-                    choices = chunk.get("choices", [])
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta", {})
-                    finish_reason = choices[0].get("finish_reason") or finish_reason
-
-                    # Handle content delta
-                    delta_content = delta.get("content")
-                    delta_reasoning = (
-                        delta.get("reasoning")
-                        or delta.get("reasoning_content")
-                        or delta.get("thinking_content")
-                        or delta.get("thinking")
-                    )
-
-                    if delta_reasoning:
-                        # 兼容 MiniMax-M2.7/DeepSeek-V3 的思考过程：单独累积，不进 content_parts
-                        reasoning_parts.append(delta_reasoning)
-                        yield ("token", {"content": delta_reasoning, "is_reasoning": True})
-                    if delta_content:
-                        # 检测 <think>...</think> 标签（MiniMax-M2.7 在 content 中嵌入思考）
-                        remaining = delta_content
-                        while remaining:
-                            if not _in_think_block:
-                                idx = remaining.find('<think>')
-                                if idx == -1:
-                                    content_parts.append(remaining)
-                                    yield ("token", {"content": remaining})
-                                    remaining = ""
-                                else:
-                                    pre = remaining[:idx]
-                                    if pre:
-                                        content_parts.append(pre)
-                                        yield ("token", {"content": pre})
-                                    _in_think_block = True
-                                    remaining = remaining[idx + 7:]
-                            else:
-                                idx = remaining.find('</think>')
-                                if idx == -1:
-                                    reasoning_parts.append(remaining)
-                                    yield ("token", {"content": remaining, "is_reasoning": True})
-                                    remaining = ""
-                                else:
-                                    think_chunk = remaining[:idx]
-                                    if think_chunk:
-                                        reasoning_parts.append(think_chunk)
-                                        yield ("token", {"content": think_chunk, "is_reasoning": True})
-                                    _in_think_block = False
-                                    remaining = remaining[idx + 8:].lstrip()
-
-                    # Handle tool_calls delta
-                    delta_tool_calls = delta.get("tool_calls")
-                    if delta_tool_calls:
-                        for tc_delta in delta_tool_calls:
-                            idx = tc_delta.get("index", 0)
-                            if idx not in tool_calls_accum:
-                                tool_calls_accum[idx] = {
-                                    "id": "",
-                                    "type": "function",
-                                    "function": {"name": "", "arguments": ""},
-                                }
-                            tc_entry = tool_calls_accum[idx]
-                            if tc_delta.get("id"):
-                                tc_entry["id"] = tc_delta["id"]
-                            if tc_delta.get("type"):
-                                tc_entry["type"] = tc_delta["type"]
-                            fn_delta = tc_delta.get("function", {})
-                            if fn_delta.get("name"):
-                                tc_entry["function"]["name"] += fn_delta["name"]
-                            if fn_delta.get("arguments"):
-                                tc_entry["function"]["arguments"] += fn_delta["arguments"]
-
-        # Assemble the final message from accumulated deltas.
-        # reasoning 单独挂在 `reasoning_content` 字段上，满足 DeepSeek 等模型
-        # 的历史回传要求，避免 400 错误。
-        assembled_content = "".join(content_parts)
-        assembled_reasoning = "".join(reasoning_parts)
-        assembled_message: dict = {"role": "assistant", "content": assembled_content}
-        if assembled_reasoning:
-            assembled_message["reasoning_content"] = assembled_reasoning
-
-        if tool_calls_accum:
-            # Sort by index and build list
-            assembled_tool_calls = []
-            for idx in sorted(tool_calls_accum.keys()):
-                tc = tool_calls_accum[idx]
-                assembled_tool_calls.append({
-                    "id": tc["id"],
-                    "type": tc.get("type", "function"),
-                    "function": {
-                        "name": tc["function"]["name"],
-                        "arguments": tc["function"]["arguments"],
-                    },
-                })
-            assembled_message["tool_calls"] = assembled_tool_calls
+    def _call_llm_stream(self, messages: list[dict], tools: Optional[list] = None):
+        """委托给 chat/llm_client.call_llm_stream — 返回 async generator。"""
+        return call_llm_stream(self._llm_config(), messages, tools)
 
         yield ("done", {"message": assembled_message, "finish_reason": finish_reason})
 
@@ -1277,74 +919,3 @@ class ChatEngine:
 
         return False
 
-
-SYSTEM_PROMPT = """你是一名 WebGIS 空间分析助手。用户与一张 MapLibre 地图实时交互，你通过工具调用读取/修改地图状态并执行空间分析。
-
-## 地图即 Agent（核心约束）
-
-地图本身就是你的一部分：它显示的数据、可见的图层、当前的视口与最近的操作流，都会在每轮对话开始时通过 `[环境感知]` 消息注入给你。
-- 必须先读 `[环境感知]`，再决定本轮行动；不要凭空假设位置、缩放或图层是否存在。
-- `近期操作` 里以 `tool_executed` / `tool_failed` 开头的条目是你上一轮自己执行的工具结果摘要——把它当成"我刚才做了什么"的记忆，而不是用户的新指令。
-- 用户的图层切换、底图切换、上传等动作以 `layer_toggled` / `layer_removed` / `base_layer_changed` / `upload_completed` 等事件出现，是地图当前真实状态的来源。
-
-## 工作方式
-
-- **工具优先**：所有空间数据必须来自工具，不要编造坐标、面积、统计数字或图层 ID。
-- **由简入深（核心原则）**：面对用户的宽泛请求（如"分布情况"、"分布热度"），**优先使用 `heatmap_data(render_type="native")` 原生热力图模式**。这能直接显示分布趋势且不增加数据负担。不要在第一轮对话中就堆叠重型统计工具，除非用户明确要求深度分析。
-- **精准分析协议 (Precision Protocol)**：这是执行高精度地理任务的强制流程：
-    1. **锁定边界 (Boundary)**：涉及特定区域时，**必须优先使用 `get_local_admin_boundary` (本地 矢量库)**，它比任何在线行政区划接口更稳定、更快速。只有在需要查询非中国境内数据时，才回退至在线工具。
-    2. **获取下级（街道级分析）**：若需按街道统计，**优先使用 `get_local_child_districts`** (本地 SHP 库)，备选 `get_child_districts` (在线 API)。
-    3. **精准搜索 (Search)**：使用 `search_poi_polygon` 在边界内搜索。
-    4. **裁剪与对齐 (Clip)**：使用 `clip_layer` 将结果裁剪至行政区范围内。
-    5. **分析与洞察 (Analyze)**：使用 `spatial_aggregate` 等工具执行统计。
-- **层级化思考 (Thinking in Layers)**：
-    - 将分析分解为：原始点层 -> 衍生分析层 (如缓冲区/热力) -> 统计结果层 (图表)。
-    - 完成分析后，及时使用 `set_layer_status` 隐藏中间过渡层。
-- **基于洞察叙述**：工具返回的 `summary` 是你回答的核心。将 summary 里的关键发现（如"99% 置信度聚集"）融入自然语言回复。
-- **中国区域优先**：涉及境内行政区、地址及 POI 搜索，**必须优先使用**天地图 (`get_admin_division`)、高德 (`geocode_cn`, `search_poi`) 等优化工具。
-
-## 分析方法选择
-
-按问题深度与数据类型选择方法：
-
-- **要素探测与交互**：用户询问『这是什么』、『这个点是什么』或需要查看地图上特定位置的详细属性时，使用 `query_map_features`。
-- **动态过滤**：需要快速筛选现有图层数据（如『只看人口>1000的区域』、『只看高价值POI』）而不想生成新图层时，优先使用 `apply_layer_filter`。
-- **栅格与矢量协同 (Raster-Vector Synergy)**：
-    - 需要计算行政区或自定义多边形内的栅格统计数据（如区域内的人口总数、平均降雨量、平均海拔、土地覆盖比例）时，使用 `zonal_stats`。
-    - 需要将离散点数据（如气象站观测值、空气质量传感器读数）插值为连续分布图层时，使用 `idw_interpolation`。它会生成美观且分析友好的 H3 六边形网格表面。
-- **行政区划轮廓**：首选 `get_admin_division` (天地图)；若失败则换用 `get_district(return_geometry='polygon')` (高德)。
-- **空间分布热度**：
-    - 快速看趋势：用 `heatmap_data(render_type="native")` 原生渲染。
-    - 高级密度与网格分析：使用 `h3_binning` 进行 H3 六边形网格聚合（完全代替传统的鱼网格网 fishnet）。
-    - 深入制图/导出：用 `kde_contours` 生成矢量等值面。
-- **区域统计（POI 计数）**：要统计各区内的 POI 数量，使用 `spatial_aggregate(points, polygons)`。
-- **选址/中心分析**：寻找点群的中心位置，使用 `central_feature`。
-- **空间聚集性检验与热点发现**：用户询问"是否聚集"或寻找聚类时，优先使用基于 H3 网格的 `h3_lisa` 来发现空间聚类和显著的热点/冷点（必须先通过 `h3_binning` 处理）。如果不是网格数据，可以用 `moran_i` 或 `hotspot_analysis`。
-- **单次任务上限**：单轮对话内工具调用尽量控制在 5 次以内。优先给出核心结果 and 洞察。
-- **密度建模与选址基础**：需要生成连续概率面或为后续叠加分析做准备时，用 `kde_surface`。注意：`kde_surface` 生成的是覆盖全域的格网要素，默认不建议作为首选可视化方式。
-- **缓冲/服务区**：固定半径用 `buffer_analysis`；多环带用 `multi_ring_buffer`；可达性分析用 `service_area`。
-- **属性筛选**：简单筛选用 `apply_layer_filter` (实时)，需要导出新要素集或进行链式分析时用 `attribute_filter`。
-- **比例尺适配**：分析半径应适配视口：街区级 100–500m，城市级 1–5km，区域级 >5km。建议在调用前先检查当前缩放级别。
-
-## 图层生命周期
-
-中间步骤的原始数据（如搜索出的几千个点）在产出最终分析结果（如热力图、缓冲区）后，应调用 `set_layer_status(visible=false)` 隐藏，避免界面杂乱。最终核心结果保持可见。
-
-## 输出格式
-
-- 数值结果优先调用 `generate_chart` 生成图表；要素列表用 Markdown 表格。
-- **制图与数据驱动可视化**：
-    - 输出主题图 (`create_thematic_map`) 将会自动向前端应用数据驱动的样式 (data-driven style)，从而产生高性能、专业的可视化效果。请充分利用它来渲染带有统计字段的数据（如 `h3_binning` 和 `h3_lisa` 的结果）。
-    - 完成分析后，如果用户需要保存结果或查看精美排版，调用 `export_thematic_map` 并导出 PNG/PDF。
-- **绝对不要**输出 `![alt](url)` 形式的图片 Markdown——系统不托管图片，会 404。
-- 完成分析后给出洞察结论（"哪里聚集、为什么、下一步建议"），不要只罗列数字。
-
-## 上下文延续
-
-简短追问（"换个颜色"、"再放大点"、"画热力图"）默认承接上一轮的区域、数据对象与分析类型。不要反问用户已经在前文说清楚的事情。
-
-## 可用技能 (Skills)
-
-匹配到下列预置技能时，在回复开头声明使用该技能，再按其步骤执行。
-
-{skill_list}"""
