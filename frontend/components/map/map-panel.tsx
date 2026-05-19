@@ -77,7 +77,8 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   const { selectedBaseLayer, registerSnapshotFn } = useMapAction()
   const [viewState, setViewState] = useState(DEFAULT_VIEW_STATE)
   const [mapReady, setMapReady] = useState(false)
-  const [is3D] = useState(false)
+  // is3D 来自 store，与设置面板 setIs3D 联动。原先 useState 死锁在 false。
+  const is3D = useHudStore((s: HudState) => s.is3D)
   const [activeFilters, setActiveFilters] = useState<Record<string, number[][]>>({})
   const mapRef = useRef<MapRef>(null)
   const processLayers = useHudStore((s: HudState) => s.processLayers)
@@ -126,9 +127,12 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
 
     const renderLayers = () => {
       if (isUpdatingRef.current) return
-      // Style not loaded yet — retry after a short delay instead of silently dropping
+      // Style not loaded yet — retry after a short delay instead of silently dropping.
+      // 必须把 timeout id 存进 renderTimeoutRef，让 effect cleanup 清掉，
+      // 否则卸载/重渲染后会调用 stale closure。
       if (!map.isStyleLoaded()) {
-        setTimeout(renderLayers, 100)
+        if (renderTimeoutRef.current) clearTimeout(renderTimeoutRef.current)
+        renderTimeoutRef.current = setTimeout(renderLayers, 100)
         return
       }
 

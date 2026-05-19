@@ -18,11 +18,15 @@ function enrichLayerMeta(l: any) {
   };
 }
 
+const MAX_RECONNECT_ATTEMPTS = 10;
+
 export function useWebSocket(sessionId?: string) {
   const socketRef = useRef<WebSocket | null>(null);
   const retryCountRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [connected, setConnected] = useState(false);
+  const sessionIdRef = useRef<string | undefined>(sessionId);
+  sessionIdRef.current = sessionId;
 
   const connect = useCallback(() => {
     if (!sessionId) return;
@@ -84,6 +88,13 @@ export function useWebSocket(sessionId?: string) {
       if ((socket as any)._pingInterval) clearInterval((socket as any)._pingInterval);
       setConnected(false);
       socketRef.current = null;
+      // 守卫：当前没有可用 session_id 时不应该尝试重连
+      if (!sessionIdRef.current) return;
+      // 守卫：超过最大重试次数则停止（避免无限循环消耗资源）
+      if (retryCountRef.current >= MAX_RECONNECT_ATTEMPTS) {
+        console.warn(`[WS] reached max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}), giving up`);
+        return;
+      }
       const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 30000);
       retryCountRef.current += 1;
       timerRef.current = setTimeout(connect, delay);
