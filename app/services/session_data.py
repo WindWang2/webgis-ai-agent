@@ -142,14 +142,19 @@ class SessionDataManager:
         logger.info(f"Cleaned up {len(to_remove)} idle sessions")
 
 def create_session_data_manager():
-    """Factory: returns Redis-backed or in-memory manager based on config."""
+    """Factory: returns Redis-backed or in-memory manager based on config.
+
+    审计 B3：原实现里 import 时同步 `manager.ping()` 没有超时，Redis 抖动
+    会让模块 import 阻塞几十秒、最终让整个服务起不来。现在 RedisSessionDataManager
+    的 socket 已带 1 秒 timeout（见其 __init__），ping 最坏阻塞 1 秒即抛错并
+    回退到内存版 — 保留"启动期 Redis 不可达就降级"的语义，但不再长阻塞。
+    """
     from app.core.config import settings
     if settings.USE_REDIS:
         try:
             from app.services.session_data_redis import RedisSessionDataManager
             manager = RedisSessionDataManager(settings.REDIS_URL)
-            # Verify Redis is actually reachable
-            manager.ping()
+            manager.ping()  # 短超时下最多阻塞 1s；失败抛异常进入下方 fallback
             logger.info("SessionDataManager: using Redis backend")
             return manager
         except Exception as e:
@@ -158,5 +163,5 @@ def create_session_data_manager():
     return SessionDataManager()
 
 
-# Singleton - created once at import time via factory
+# Singleton — created once at import time via factory.
 session_data_manager = create_session_data_manager()

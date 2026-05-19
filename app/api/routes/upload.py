@@ -1,4 +1,5 @@
 """用户数据上传 API 路由"""
+import asyncio
 import json
 import logging
 import uuid
@@ -124,12 +125,16 @@ async def upload_files(
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"文件保存失败: {e}")
 
-    # 解析文件
+    # 解析文件 — parse_vector / parse_raster 内含 gpd.read_file / rasterio.open
+    # 这些是同步 CPU+IO 操作，常常需要数秒。直接在 async def 里调用会阻塞整个
+    # uvicorn 事件循环，所有其它请求停滞（审计 B1 / V2.0 计算隔离不变式）。
+    # 走 run_in_executor 把工作扔到默认 threadpool。
+    loop = asyncio.get_running_loop()
     try:
         if ext in RASTER_FORMATS:
-            meta = parse_raster(temp_path, upload_dir, upload_id)
+            meta = await loop.run_in_executor(None, parse_raster, temp_path, upload_dir, upload_id)
         else:
-            meta = parse_vector(temp_path, upload_dir, upload_id)
+            meta = await loop.run_in_executor(None, parse_vector, temp_path, upload_dir, upload_id)
     except ParseError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except (OSError, RuntimeError) as e:

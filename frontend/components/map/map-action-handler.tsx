@@ -47,6 +47,10 @@ export function MapActionHandler() {
     const map = mapInstance.getMap();
     if (!map) return;
 
+    // F5: 默认在 finally 同步 popAction；某些 case 走异步 map.once 回调，
+    // 把 deferredPop 设为 true，由 case 自己负责出队。
+    let deferredPop = false;
+
     try {
       switch (action.command) {
         case 'add_layer': {
@@ -215,8 +219,12 @@ export function MapActionHandler() {
             orientation = "landscape",
             dpi = 96
           } = action.params || {};
-          
+
           const theme = useHudStore.getState().theme;
+          // F5: 异步 export 必须等 map.once('render') 真正回调完再 popAction，
+          // 否则连续触发 export 会让后一次在前一次还没合成完时覆盖 canvas。
+          // 标记该 case 自己负责 popAction，外层 finally 跳过。
+          deferredPop = true;
 
           map.once("render", async () => {
             try {
@@ -301,6 +309,9 @@ export function MapActionHandler() {
               useHudStore.getState().setPendingSystemMessage(
                 `[系统通知] 专题地图排版合成失败。错误原因: ${e}。请向用户致歉并结束流程。`
               );
+            } finally {
+              // F5: 真正合成完才出队，杜绝重入
+              popAction();
             }
           });
           map.triggerRepaint();
@@ -349,7 +360,7 @@ export function MapActionHandler() {
     } catch (error) {
       console.error('[MapActionHandler] Error executing action:', error);
     } finally {
-      popAction();
+      if (!deferredPop) popAction();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [action, mapInstance, popAction]);

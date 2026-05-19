@@ -130,11 +130,22 @@ export default function Home() {
       .catch(err => console.error('Fetch sessions failed:', err));
   }, []);
 
+  // F6: 用 ref 持有当前激活的 AbortController；快速连点会话时把上一次取消，
+  // 避免上一会话的 _refId fetch 在新会话里把过期图层 addLayer 进去。
+  const sessionLoadAbortRef = useRef<AbortController | null>(null);
+
   const handleSelectSession = useCallback(async (sid: string) => {
+    // 取消上一次仍在飞的会话恢复请求
+    sessionLoadAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    sessionLoadAbortRef.current = ctrl;
+    const signal = ctrl.signal;
+
     clearLayers();
     try {
-      const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}`);
+      const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}`, { signal });
       const data = await res.json();
+      if (signal.aborted) return;
       if (data.messages && data.messages.length > 0) {
         const restored = data.messages.map((m: any) => ({
           id: m.id,
@@ -153,7 +164,8 @@ export default function Home() {
       setSessionId(sid);
       setHistoryOpen(false);
 
-      const stateRes = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}/map-state`);
+      const stateRes = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}/map-state`, { signal });
+      if (signal.aborted) return;
       if (stateRes.ok) {
         const stateData = await stateRes.json();
         const state = stateData?.map_state;
@@ -165,19 +177,25 @@ export default function Home() {
           if (state.base_layer) store.setBaseLayer(state.base_layer);
           for (const layer of state.layers || []) {
             if (layer._refId && layer._refId.startsWith('ref:')) {
-              fetch(`${API_BASE}/api/v1/layers/data/${layer._refId}?session_id=${sid}`)
+              fetch(`${API_BASE}/api/v1/layers/data/${layer._refId}?session_id=${sid}`, { signal })
                 .then(r => r.ok ? r.json() : null)
                 .then(geojson => {
+                  if (signal.aborted) return;
                   if (geojson && (geojson.type === 'FeatureCollection' || geojson.features)) {
                     store.addLayer({ ...layer, source: geojson });
                   }
                 })
-                .catch(() => {});
+                .catch((err) => {
+                  // AbortError 是预期的，其它错误打日志
+                  if (err?.name !== 'AbortError') console.error('[LayerFetch]', err);
+                });
             }
           }
         }
       }
-    } catch (err) {
+    } catch (err: any) {
+      // F6: 取消是正常的、不报错
+      if (err?.name === 'AbortError') return;
       console.error('Load session failed:', err);
     }
   }, [setHistoryOpen, clearLayers, dispatchAction]);
