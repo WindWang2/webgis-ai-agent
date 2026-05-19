@@ -88,3 +88,39 @@ def should_plan(message: str, messages: list[dict], has_active_plan: bool) -> bo
     if is_short and is_followup and has_active_plan:
         return False
     return True
+
+
+# session_id -> Plan（会话级内存存储，参照 ToolCatalog._sticky）
+_plans: dict[str, Plan] = {}
+
+
+def get_plan(session_id: str) -> Plan | None:
+    return _plans.get(session_id)
+
+
+def set_plan(session_id: str, plan: Plan) -> None:
+    _plans[session_id] = plan
+
+
+def clear_plan(session_id: str) -> None:
+    _plans.pop(session_id, None)
+
+
+def mark_step_done(session_id: str, tool_name: str, registry) -> int | None:
+    """把工具调用匹配到第一个未完成的计划步骤并打勾。
+
+    匹配启发式：取工具在 registry 中标注的 domains，找第一个未完成、
+    tool_family 落在该 domains 内（或 tool_family=="core"）的步骤。
+    返回被打勾的步骤号；无匹配 / 无计划时返回 None。
+    """
+    plan = _plans.get(session_id)
+    if plan is None:
+        return None
+    tool_domains = set(registry.metadata(tool_name).get("domains", []))
+    for step in plan.steps:
+        if step.done:
+            continue
+        if step.tool_family in tool_domains or step.tool_family == "core":
+            step.done = True
+            return step.n
+    return None

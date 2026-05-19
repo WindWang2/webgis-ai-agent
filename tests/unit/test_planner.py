@@ -64,3 +64,40 @@ def test_parse_plan_malformed_json_returns_none():
 def test_parse_plan_missing_fields_returns_none():
     assert parse_plan('{"intent":"x"}') is None          # 缺 domains/steps
     assert parse_plan('{"domains":[],"steps":[]}') is None  # 缺 intent
+
+
+from app.services.chat.planner import (
+    get_plan, set_plan, clear_plan, mark_step_done,
+)
+from app.tools.registry import ToolRegistry
+
+
+def test_plan_store_set_get_clear():
+    plan = Plan(intent="x", domains=["core"], steps=[])
+    set_plan("sess-A", plan)
+    assert get_plan("sess-A") is plan
+    clear_plan("sess-A")
+    assert get_plan("sess-A") is None
+
+
+def test_get_plan_unknown_session_returns_none():
+    assert get_plan("never-seen") is None
+
+
+def test_mark_step_done_matches_by_tool_domain():
+    reg = ToolRegistry()
+    reg.register("h3_binning", "h3", func=lambda **_: {}, tier=2, domains=["statistics"])
+    plan = Plan(intent="x", domains=["statistics"], steps=[
+        PlanStep(n=1, goal="聚合", tool_family="statistics"),
+        PlanStep(n=2, goal="再聚合", tool_family="statistics"),
+    ])
+    set_plan("sess-B", plan)
+    mark_step_done("sess-B", "h3_binning", reg)
+    assert plan.steps[0].done is True
+    assert plan.steps[1].done is False   # 只打勾第一个未完成的匹配步骤
+    clear_plan("sess-B")
+
+
+def test_mark_step_done_no_plan_is_noop():
+    reg = ToolRegistry()
+    mark_step_done("no-plan-sess", "anything", reg)  # 不抛异常即通过
