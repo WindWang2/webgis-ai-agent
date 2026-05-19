@@ -243,3 +243,158 @@ def run_zonal_stats(self, zones: List[Dict], raster_path: str):
     result = SpatialAnalyzer.zonal_statistics(zones, raster_path, callback=cb)
     if result.success: return {"success": True, "data": result.data}
     return {"success": False, "error": result.error_message}
+
+
+# --- 自然资源与遥感任务 ---
+
+@celery_app.task(name="app.services.spatial_tasks.run_ndvi_analysis", bind=True)
+def run_ndvi_analysis(
+    self,
+    raster_path: str,
+    nir_band: Optional[int] = None,
+    red_band: Optional[int] = None,
+    session_id: Optional[str] = None,
+):
+    """从本地 GeoTIFF 计算 NDVI 并持久化为资产。
+
+    薄包装层，所有计算下沉到 NatureResourceAnalyzer.calculate_ndvi。
+    NDVI 是 CPU 密集型操作（大栅格 reproject + 数组运算），
+    严格走 Celery worker 隔离，遵循 V2.0 计算隔离不变式。
+    """
+    try:
+        self.update_state(state='PROGRESS', meta={'progress': 10, 'message': '校验路径并读取影像元信息'})
+        result = NatureResourceAnalyzer.calculate_ndvi(
+            tif_path=raster_path,
+            red_band=red_band,
+            nir_band=nir_band,
+        )
+
+        if not result.get("success"):
+            return {"success": False, "error": result.get("error", "NDVI calculation failed")}
+
+        self.update_state(state='PROGRESS', meta={'progress': 80, 'message': '入库登记分析资产'})
+
+        # 将分析结果落入 UploadRecord 资产表，便于 list_analysis_assets 查询
+        try:
+            with db_session() as db:
+                record = UploadRecord(
+                    filename=result["result_path"],
+                    original_name=result["filename"],
+                    file_type="raster",
+                    format="tif",
+                    crs=result.get("crs", "EPSG:4326"),
+                    geometry_type="raster_analysis",
+                    feature_count=0,
+                    bbox=result.get("bbox"),
+                    file_size=os.path.getsize(result["result_path"]) if os.path.exists(result["result_path"]) else 0,
+                    session_id=session_id,
+                )
+                db.add(record)
+                db.flush()
+                asset_id = record.id
+        except Exception as db_err:
+            logger.warning(f"NDVI asset persist failed (continuing with file-only): {db_err}")
+            asset_id = None
+
+        return {
+            "success": True,
+            "data": {
+                "asset_id": asset_id,
+                "result_path": result["result_path"],
+                "filename": result["filename"],
+                "stats": result.get("stats", {}),
+                "bbox": result.get("bbox"),
+            },
+            "status_desc": "NDVI 分析完成，结果已入库。可通过 list_analysis_assets 查询。",
+        }
+    except Exception as e:
+        logger.error(f"run_ndvi_analysis failed: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+
+@celery_app.task(name="app.services.spatial_tasks.run_change_detection", bind=True)
+def run_change_detection(
+    self,
+    bbox: List[float],
+    t1_from: str,
+    t1_to: str,
+    t2_from: str,
+    t2_to: str,
+    index_type: str = "ndvi",
+    change_threshold: float = 0.1,
+    session_id: Optional[str] = None,
+):
+    """双时相植被/水体/燃烧指数变化检测。
+
+    对同一 bbox 在两个时间窗口分别获取 Sentinel-2 影像并计算指定指数，
+    汇总均值差异并按 ±change_threshold 分类为 5 档。
+
+    实现策略：复用 RemoteSensingService.compute_vegetation_index（异步）
+    通过 asyncio.run 在 Celery worker 进程内顺序执行两次，避免重复实现
+    STAC + 波段读取逻辑。
+    """
+    import asyncio
+    from app.services.rs_service import RemoteSensingService
+
+    try:
+        self.update_state(state='PROGRESS', meta={'progress': 5, 'message': '初始化遥感服务'})
+        svc = RemoteSensingService()
+
+        async def compute_both():
+            t1 = await svc.compute_vegetation_index(bbox, t1_from, t1_to, index_type=index_type)
+            t2 = await svc.compute_vegetation_index(bbox, t2_from, t2_to, index_type=index_type)
+            return t1, t2
+
+        self.update_state(state='PROGRESS', meta={'progress': 20, 'message': f'拉取 T1 ({t1_from}~{t1_to}) Sentinel-2'})
+        t1, t2 = asyncio.run(compute_both())
+
+        if "error" in t1:
+            return {"success": False, "error": f"T1 计算失败: {t1['error']}"}
+        if "error" in t2:
+            return {"success": False, "error": f"T2 计算失败: {t2['error']}"}
+
+        self.update_state(state='PROGRESS', meta={'progress': 80, 'message': '计算变化分类'})
+
+        mean_t1 = t1.get("stats", {}).get("mean")
+        mean_t2 = t2.get("stats", {}).get("mean")
+        delta_mean = None
+        category = "unknown"
+        if mean_t1 is not None and mean_t2 is not None:
+            delta_mean = round(mean_t2 - mean_t1, 4)
+            if delta_mean >= 2 * change_threshold:
+                category = "significant_improvement"  # 显著改善
+            elif delta_mean >= change_threshold:
+                category = "slight_improvement"  # 轻微改善
+            elif delta_mean > -change_threshold:
+                category = "no_change"  # 无变化
+            elif delta_mean > -2 * change_threshold:
+                category = "slight_degradation"  # 轻微退化
+            else:
+                category = "significant_degradation"  # 显著退化
+
+        return {
+            "success": True,
+            "data": {
+                "index_type": index_type.upper(),
+                "bbox": bbox,
+                "t1": {
+                    "period": f"{t1_from} ~ {t1_to}",
+                    "stats": t1.get("stats", {}),
+                    "cloud_cover": t1.get("cloud_cover"),
+                },
+                "t2": {
+                    "period": f"{t2_from} ~ {t2_to}",
+                    "stats": t2.get("stats", {}),
+                    "cloud_cover": t2.get("cloud_cover"),
+                },
+                "change": {
+                    "delta_mean": delta_mean,
+                    "category": category,
+                    "threshold": change_threshold,
+                },
+            },
+            "status_desc": f"{index_type.upper()} 变化检测完成：{category}（Δmean={delta_mean}）",
+        }
+    except Exception as e:
+        logger.error(f"run_change_detection failed: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
