@@ -99,9 +99,20 @@ class ToolCatalog:
 
     # ─── 公共接口 ──────────────────────────────────────────────
 
-    def select_schemas(self, user_message: str, session_id: Optional[str] = None) -> list[dict]:
-        """根据用户消息 + 会话粘性，返回当前轮应推给 LLM 的 schema 子集。"""
+    def select_schemas(
+        self,
+        user_message: str,
+        session_id: Optional[str] = None,
+        declared_domains: Optional[set[str]] = None,
+    ) -> list[dict]:
+        """根据用户消息 + 会话粘性 + 计划声明的 domain，返回本轮 schema 子集。
+
+        declared_domains 来自规划阶段产出的 Plan.domains；与关键词检测、
+        sticky 取并集——关键词检测保留作安全网，不被替换。
+        """
         active_domains = self._activate_domains(user_message, session_id)
+        if declared_domains:
+            active_domains = active_domains | set(declared_domains)
         names: set[str] = set()
         for name, meta in self.registry.all_metadata().items():
             tier = int(meta.get("tier", 1))
