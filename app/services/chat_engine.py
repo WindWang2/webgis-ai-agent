@@ -346,12 +346,16 @@ class ChatEngine:
             d["tool_call_id"] = msg.tool_call_id
         return d
 
-    async def _load_session_from_db(self, session_id: str) -> list[dict]:
-        """Async DB call to load conversation history."""
+    async def _load_session_from_db(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+    ) -> list[dict]:
+        """Async DB call to load conversation history. user_id 用于新建时记录 owner（A2）。"""
         history_messages = []
         try:
             async with async_db_session() as db:
-                conv = await AsyncHistoryService(db).get_or_create_conversation(session_id)
+                conv = await AsyncHistoryService(db).get_or_create_conversation(session_id, user_id=user_id)
                 if conv and conv.messages:
                     sorted_msgs = sorted(conv.messages, key=lambda x: x.id)
                     history_messages = [self._db_msg_to_llm(m) for m in sorted_msgs]
@@ -535,7 +539,11 @@ class ChatEngine:
         return ctx
 
 
-    async def _get_or_create_session(self, session_id: str) -> list[dict]:
+    async def _get_or_create_session(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+    ) -> list[dict]:
         # 快路径：已缓存直接返回，绝大多数请求走这里，零锁开销。
         if session_id in self._sessions:
             return self._sessions[session_id]
@@ -547,7 +555,7 @@ class ChatEngine:
         async with lock:
             # 重新检查：第一个进锁的协程加载完，后续协程拿到锁后应直接复用
             if session_id not in self._sessions:
-                self._sessions[session_id] = await self._load_session_from_db(session_id)
+                self._sessions[session_id] = await self._load_session_from_db(session_id, user_id=user_id)
         return self._sessions[session_id]
 
     def _apply_skill(self, messages: list[dict], skill_name: Optional[str]) -> None:
@@ -799,7 +807,7 @@ class ChatEngine:
 
         yield ("done", {"message": assembled_message, "finish_reason": finish_reason})
 
-    async def chat(self, message: str, session_id: Optional[str] = None, map_state: Optional[dict] = None, skill_name: Optional[str] = None) -> dict:
+    async def chat(self, message: str, session_id: Optional[str] = None, map_state: Optional[dict] = None, skill_name: Optional[str] = None, user_id: Optional[str] = None) -> dict:
         """非流式对话"""
         if not session_id:
             session_id = str(uuid.uuid4())
@@ -809,7 +817,7 @@ class ChatEngine:
             for k, v in map_state.items():
                 session_data_manager.set_map_state(session_id, k, v)
 
-        messages = await self._get_or_create_session(session_id)
+        messages = await self._get_or_create_session(session_id, user_id=user_id)
 
         self._apply_skill(messages, skill_name)
         messages.append({"role": "user", "content": message})
@@ -888,7 +896,7 @@ class ChatEngine:
 
         return {"content": "达到最大工具调用轮数", "session_id": session_id}
 
-    async def chat_stream(self, message: str, session_id: Optional[str] = None, map_state: Optional[dict] = None, skill_name: Optional[str] = None) -> AsyncGenerator[str, None]:
+    async def chat_stream(self, message: str, session_id: Optional[str] = None, map_state: Optional[dict] = None, skill_name: Optional[str] = None, user_id: Optional[str] = None) -> AsyncGenerator[str, None]:
         """流式对话，yield SSE 格式事件含任务跟踪"""
         if not session_id:
             session_id = str(uuid.uuid4())
@@ -898,7 +906,7 @@ class ChatEngine:
             for k, v in map_state.items():
                 session_data_manager.set_map_state(session_id, k, v)
 
-        messages = await self._get_or_create_session(session_id)
+        messages = await self._get_or_create_session(session_id, user_id=user_id)
 
         self._apply_skill(messages, skill_name)
         messages.append({"role": "user", "content": message})
@@ -1226,15 +1234,24 @@ class ChatEngine:
             "error_msg": error_msg,
         }
 
-    async def clear_session(self, session_id: str):
-        if session_id in self._sessions:
-            del self._sessions[session_id]
-        session_data_manager.clear_session(session_id)
+    async def clear_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
+        """删除会话；user_id 用于所有权检查（A2）。
+
+        返回是否真的删除：False = 不存在或越权（让路由层映射成 404）。
+        匿名调用 / NULL owner 仍走旧能力令牌语义。
+        """
+        deleted = False
         try:
             async with async_db_session() as db:
-                await AsyncHistoryService(db).delete_session(session_id)
+                deleted = await AsyncHistoryService(db).delete_session(session_id, user_id=user_id)
         except Exception as e:
             logger.warning(f"History: failed to delete session {session_id}: {e}")
+            return False
+        if deleted:
+            if session_id in self._sessions:
+                del self._sessions[session_id]
+            session_data_manager.clear_session(session_id)
+        return deleted
 
     def _detect_suspicious_result(self, result: Any) -> bool:
         """检测工具返回的结果是否"可疑"（空数据/错误响应），用于触发自愈提示。"""

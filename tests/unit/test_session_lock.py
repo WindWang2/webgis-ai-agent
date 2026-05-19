@@ -13,7 +13,7 @@ async def test_concurrent_get_or_create_loads_db_once():
     engine = ChatEngine(ToolRegistry())
     load_count = 0
 
-    async def fake_load(session_id):
+    async def fake_load(session_id, user_id=None):
         nonlocal load_count
         load_count += 1
         await asyncio.sleep(0.02)  # 模拟 DB I/O
@@ -37,7 +37,7 @@ async def test_different_sessions_load_independently():
     engine = ChatEngine(ToolRegistry())
     load_count = 0
 
-    async def fake_load(session_id):
+    async def fake_load(session_id, user_id=None):
         nonlocal load_count
         load_count += 1
         return [{"role": "system", "content": session_id}]

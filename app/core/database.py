@@ -95,3 +95,34 @@ async def get_async_db():
 
 def init_db():
     Base.metadata.create_all(bind=Engine)
+    _apply_runtime_migrations()
+
+
+def _apply_runtime_migrations() -> None:
+    """运行守卫式增量迁移：仅 SQLite。
+
+    Base.metadata.create_all 只创建缺失的表，对已存在的表不会补字段。
+    本项目还没上 Alembic（M10），所以这里给少量轻量字段做最小幂等迁移。
+    Postgres 部署请用 Alembic，不会走到这里。
+    """
+    import logging
+    from sqlalchemy import text
+    log = logging.getLogger(__name__)
+    if not str(settings.DATABASE_URL).startswith("sqlite"):
+        return
+    try:
+        with Engine.begin() as conn:
+            # conversations.user_id：A2 资源所有权改造，新增的字段
+            cols = conn.execute(text("PRAGMA table_info(conversations)")).fetchall()
+            names = {row[1] for row in cols}
+            if "user_id" not in names:
+                conn.execute(text(
+                    "ALTER TABLE conversations ADD COLUMN user_id VARCHAR(255)"
+                ))
+                log.info("[Migration] added conversations.user_id")
+                # SQLite 不在 ADD COLUMN 时自动建索引，单独建
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_conversations_user_id ON conversations(user_id)"
+                ))
+    except Exception as e:
+        log.warning(f"[Migration] runtime migration skipped: {e}")

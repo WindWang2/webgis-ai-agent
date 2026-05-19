@@ -39,8 +39,15 @@ class ChatResponse(BaseModel):
 @router.post("/completions", response_model=ChatResponse)
 async def chat_completions(req: ChatRequest, _user: dict = Depends(get_current_user_optional)):
     """非流式对话接口"""
+    user_id = _user.get("user_id")
     try:
-        result = await engine.chat(req.message, session_id=req.session_id, map_state=req.map_state, skill_name=req.skill_name)
+        result = await engine.chat(
+            req.message,
+            session_id=req.session_id,
+            map_state=req.map_state,
+            skill_name=req.skill_name,
+            user_id=user_id,
+        )
         return ChatResponse(**result)
     except Exception as e:
         logger.error(f"Chat error: {e}")
@@ -50,9 +57,16 @@ async def chat_completions(req: ChatRequest, _user: dict = Depends(get_current_u
 @router.post("/stream")
 async def chat_stream(req: ChatRequest, _user: dict = Depends(get_current_user_optional)):
     """SSE 流式对话接口"""
+    user_id = _user.get("user_id")
     async def event_generator():
         try:
-            async for event in engine.chat_stream(req.message, session_id=req.session_id, map_state=req.map_state, skill_name=req.skill_name):
+            async for event in engine.chat_stream(
+                req.message,
+                session_id=req.session_id,
+                map_state=req.map_state,
+                skill_name=req.skill_name,
+                user_id=user_id,
+            ):
                 yield event
         except Exception as e:
             logger.error(f"Stream error: {e}")
@@ -71,9 +85,10 @@ async def chat_stream(req: ChatRequest, _user: dict = Depends(get_current_user_o
 
 @router.get("/sessions")
 async def list_sessions(_user: dict = Depends(get_current_user_optional)):
-    """列出所有历史会话（最多1000条，按最近更新排序）"""
+    """列出当前用户的历史会话；匿名调用方返回空列表（A2）。"""
+    user_id = _user.get("user_id")
     async with async_db_session() as db:
-        sessions = await AsyncHistoryService(db).list_sessions()
+        sessions = await AsyncHistoryService(db).list_sessions(user_id=user_id)
         return {
             "sessions": [
                 {
@@ -89,9 +104,10 @@ async def list_sessions(_user: dict = Depends(get_current_user_optional)):
 
 @router.get("/sessions/{session_id}")
 async def get_session_detail(session_id: str, _user: dict = Depends(get_current_user_optional)):
-    """获取会话详情（只读）"""
+    """获取会话详情（只读）— 受所有权检查保护（A2）。"""
+    user_id = _user.get("user_id")
     async with async_db_session() as db:
-        conv = await AsyncHistoryService(db).get_session(session_id)
+        conv = await AsyncHistoryService(db).get_session(session_id, user_id=user_id)
         if not conv:
             raise HTTPException(status_code=404, detail="Session not found")
         return {
@@ -154,8 +170,11 @@ async def list_skills_api():
 
 @router.delete("/sessions/{session_id}")
 async def clear_session(session_id: str, _user: dict = Depends(get_current_user_optional)):
-    """清除会话（内存 + DB）"""
-    await engine.clear_session(session_id)
+    """清除会话（内存 + DB）— 受所有权检查保护（A2）。"""
+    user_id = _user.get("user_id")
+    ok = await engine.clear_session(session_id, user_id=user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Session not found")
     return {"status": "ok"}
 
 
