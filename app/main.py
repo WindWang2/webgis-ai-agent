@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.core.database import Engine
 from app.core.exception import global_exception_handler
 from app.core.rate_limiter import get_rate_limiter
-from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer
+from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes
 from app.tools.registry import ToolRegistry
 from app.tools import init_tools
 from app.services.chat_engine import ChatEngine
@@ -116,6 +116,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_routes.router, prefix="/api/v1", tags=["认证"])
 app.include_router(health.router, prefix="/api/v1", tags=["健康检查"])
 app.include_router(layer.router, prefix="/api/v1", tags=["图层管理"])
 app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])

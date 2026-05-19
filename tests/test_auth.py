@@ -7,7 +7,39 @@ from app.core.auth import (
     verify_token,
     get_current_user,
     get_current_user_optional,
+    hash_password,
+    verify_password,
 )
+
+
+class TestPasswordHashing:
+    def test_round_trip_match(self):
+        h = hash_password("secret-passphrase-1!")
+        assert verify_password("secret-passphrase-1!", h) is True
+
+    def test_wrong_password_fails(self):
+        h = hash_password("a")
+        assert verify_password("b", h) is False
+
+    def test_garbage_stored_returns_false(self):
+        # 不抛异常，只返回 False；时序侧信道安全前提
+        assert verify_password("x", "") is False
+        assert verify_password("x", "garbage-no-dollar") is False
+        assert verify_password("x", "scrypt$bad$format") is False
+
+    def test_empty_plaintext_rejected(self):
+        import pytest
+        with pytest.raises(ValueError):
+            hash_password("")
+
+    def test_two_hashes_of_same_password_differ(self):
+        # 不同 salt → 不同 hash（确认确实在用 salt）
+        assert hash_password("same") != hash_password("same")
+
+    def test_rejects_pathological_scrypt_params(self):
+        # 防御：攻击者构造 N 巨大值想做 CPU DoS
+        bogus = "scrypt$999999999$8$1$" + "00" * 16 + "$" + "00" * 32
+        assert verify_password("x", bogus) is False
 
 
 class TestCreateAccessToken:
