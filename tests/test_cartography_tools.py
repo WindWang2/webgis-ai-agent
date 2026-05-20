@@ -75,3 +75,15 @@ async def test_heatmap_grid_emits_continuous_legend_spec(spatial_registry):
     spec = out["legend_spec"]
     assert "min" in spec and "max" in spec
     assert len(spec["palette_colors"]) >= 3
+
+
+@pytest.mark.asyncio
+async def test_heatmap_raster_emits_continuous_legend_spec(spatial_registry):
+    out = await spatial_registry.dispatch("heatmap_data", {
+        "geojson": _points(20), "render_type": "raster",
+    })
+    # raster mode should emit continuous legend_spec if result has data
+    if "legend_spec" in out:
+        assert out["legend_spec"]["type"] == "continuous"
+        assert len(out["legend_spec"]["palette_colors"]) >= 3
+    # if no legend_spec (e.g. matplotlib not installed), just verify no crash

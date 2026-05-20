@@ -289,9 +289,11 @@ def register_spatial_tools(registry: ToolRegistry):
                 kwargs={"features": features, "cell_size": cell_size, "radius": radius, "render_type": render_type, "palette": palette}
             )
             result = task.get(timeout=120)
-        except Exception as exc:
-            if not isinstance(exc, ImportError):
-                logger.warning(f"Celery unavailable for heatmap: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            # Celery unavailable or task failed — fall back to in-process computation.
+            # Any Celery failure (ImportError, broker down, TimeoutError, WorkerLostError)
+            # degrades gracefully to an in-process fallback.
+            logger.warning(f"[heatmap_data] Celery fallback triggered: {type(exc).__name__}: {exc}")
             result = _generate_heatmap(features, cell_size, radius, render_type, palette)
         
         if result.get("success"):
