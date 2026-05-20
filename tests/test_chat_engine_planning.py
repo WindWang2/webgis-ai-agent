@@ -74,3 +74,35 @@ def test_log_tool_decision_accepts_step_n_parameter(engine, tmp_path, monkeypatc
     )
     assert len(captured) == 1
     assert captured[0].plan_step_matched == 2
+
+
+@pytest.mark.asyncio
+async def test_maybe_plan_returns_plan_on_success(engine, monkeypatch):
+    """_maybe_plan 成功生成计划时必须返回 Plan 对象。"""
+    expected_plan = planner_mod.Plan(intent="test", domains=["core"], steps=[])
+    async def fake_make_plan(cfg, session_id, message, env):
+        planner_mod.set_plan(session_id, expected_plan)
+        return expected_plan
+    monkeypatch.setattr(planner_mod, "make_plan", fake_make_plan)
+    result = await engine._maybe_plan("sess-R1", "复杂请求需要规划的内容", [])
+    assert result is expected_plan
+    planner_mod.clear_plan("sess-R1")
+
+
+@pytest.mark.asyncio
+async def test_maybe_plan_returns_none_when_skipped(engine, monkeypatch):
+    """should_plan 返回 False 时，_maybe_plan 返回 None。"""
+    planner_mod.set_plan("sess-R2", planner_mod.Plan(intent="x", domains=["core"], steps=[]))
+    result = await engine._maybe_plan("sess-R2", "换颜色", [])  # 短追问，应该跳过
+    assert result is None
+    planner_mod.clear_plan("sess-R2")
+
+
+@pytest.mark.asyncio
+async def test_maybe_plan_returns_none_on_llm_failure(engine, monkeypatch):
+    """make_plan 抛异常时，_maybe_plan 返回 None（不传播异常）。"""
+    async def fake_make_plan(*a, **k):
+        raise RuntimeError("LLM down")
+    monkeypatch.setattr(planner_mod, "make_plan", fake_make_plan)
+    result = await engine._maybe_plan("sess-R3", "复杂请求需要规划的内容", [])
+    assert result is None

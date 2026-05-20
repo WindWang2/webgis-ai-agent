@@ -311,17 +311,21 @@ class ChatEngine:
             )
         return cfg
 
-    async def _maybe_plan(self, session_id: str, message: str, messages: list[dict]) -> None:
-        """启发式门控通过则跑规划阶段。规划是增强，失败静默降级。"""
+    async def _maybe_plan(self, session_id: str, message: str, messages: list[dict]):
+        """启发式门控通过则跑规划阶段，返回新生成的 Plan；跳过 / 失败均返回 None。
+
+        规划是增强，失败静默降级——chat_stream 据返回值决定是否发 plan_ready 事件。
+        """
         from app.services.chat import planner
         has_plan = planner.get_plan(session_id) is not None
         if not planner.should_plan(message, messages, has_plan):
-            return
+            return None
         env = self._get_map_state_summary(session_id)
         try:
-            await planner.make_plan(self._planner_llm_config(), session_id, message, env)
+            return await planner.make_plan(self._planner_llm_config(), session_id, message, env)
         except Exception as e:  # noqa: BLE001 — 规划绝不能拖垮对话
             logger.warning(f"[chat_engine] 规划阶段异常，降级无计划: {e}")
+            return None
 
     def _log_tool_decision(
         self,
