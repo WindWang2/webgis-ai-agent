@@ -7,6 +7,7 @@ import type { Layer } from "@/lib/types/layer"
 import type { GeoJSONFeatureCollection, HeatmapRasterSource } from "@/lib/types"
 import { MapActionHandler } from "./map-action-handler"
 import { ThematicLegend } from "./thematic-legend"
+import { MapDecorations } from "./map-decorations"
 import { useHudStore, type HudState } from "@/lib/store/useHudStore"
 import * as renderer from "@/lib/map-kit/renderer"
 
@@ -82,6 +83,8 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   const [activeFilters, setActiveFilters] = useState<Record<string, number[][]>>({})
   const mapRef = useRef<MapRef>(null)
   const processLayers = useHudStore((s: HudState) => s.processLayers)
+  const cartographyTitle = useHudStore((s: HudState) => s.cartographyTitle)
+  const viewport = useHudStore((s: HudState) => s.viewport)
 
   const currentMapStyle = useMemo(
     () => getMapStyle(MAP_STYLES[selectedBaseLayer], selectedBaseLayer),
@@ -433,21 +436,30 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
         <MapActionHandler />
       </Map>
 
-      {/* Legend — floating bottom left */}
-      {layers.find((l) => l.visible && (l.source as any)?.metadata?.thematic_type === "choropleth") && (
-        <div className="absolute bottom-20 left-4 z-10 transition-all duration-500">
-          {(() => {
-            const tl = layers.find((l) => l.visible && (l.source as any)?.metadata?.thematic_type === "choropleth")
-            if (!tl) return null
-            return (
-              <ThematicLegend
-                metadata={(tl.source as any).metadata}
-                onFilterChange={(ranges) => handleFilterChange(tl.id, ranges)}
-              />
-            )
-          })()}
-        </div>
-      )}
+      {/* Live cartography overlays — driven by layer.legend_spec */}
+      {(() => {
+        const thematicLayers = layers.filter((l) => l.visible && l.legend_spec);
+        if (thematicLayers.length === 0) return null;
+        return (
+          <>
+            <div className="absolute bottom-4 left-4 z-30 space-y-3">
+              {thematicLayers.map((l) => (
+                <div key={l.id}>
+                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-1 px-1">{l.name}</div>
+                  <ThematicLegend spec={l.legend_spec!} onFilterChange={(ranges) => handleFilterChange(l.id, ranges)} />
+                </div>
+              ))}
+            </div>
+            <MapDecorations
+              show={true}
+              title={cartographyTitle ?? thematicLayers[0]?.name ?? null}
+              zoom={(viewport as any)?.zoom ?? viewState.zoom ?? 10}
+              centerLat={(viewport as any)?.center?.[1] ?? viewState.latitude ?? 30}
+              bearing={(viewport as any)?.bearing ?? 0}
+            />
+          </>
+        );
+      })()}
 
       {/* Perception Rings — AI activity indicator at map center */}
       {showPerceptionRings && (
