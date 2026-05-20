@@ -137,3 +137,26 @@ describe('DEMO re-exports', () => {
     expect(DEMO_OPS_LOG.length).toBeGreaterThan(0);
   });
 });
+
+
+describe('cartography slice', () => {
+  beforeEach(() => {
+    useHudStore.setState({ cartographyTitle: null, focusLayerId: null });
+  });
+
+  it('setCartographyTitle updates title', () => {
+    useHudStore.getState().setCartographyTitle('成都人口分布');
+    expect(useHudStore.getState().cartographyTitle).toBe('成都人口分布');
+  });
+
+  it('focusLayer sets focusLayerId', () => {
+    useHudStore.getState().focusLayer('layer-1');
+    expect(useHudStore.getState().focusLayerId).toBe('layer-1');
+  });
+
+  it('focusLayer(null) clears focusLayerId', () => {
+    useHudStore.getState().focusLayer('layer-1');
+    useHudStore.getState().focusLayer(null);
+    expect(useHudStore.getState().focusLayerId).toBeNull();
+  });
+});
