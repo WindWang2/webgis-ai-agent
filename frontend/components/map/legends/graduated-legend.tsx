@@ -76,6 +76,9 @@ export function GraduatedLegend({ spec, onFilterChange }: Props) {
                   className="w-3.5 h-3.5 rounded-sm shadow-sm ring-1 ring-black/10 group-hover:scale-110 transition-transform"
                   style={{ backgroundColor: palette_colors[colorIdx] }}
                 />
+                <span className="text-[11px] font-medium text-muted-foreground group-hover:text-foreground transition-colors">
+                  {rangeLabel}
+                </span>
               </div>
               <div className="flex items-center">
                 {isVisible

@@ -14,7 +14,7 @@ describe('GraduatedLegend', () => {
   it('renders all class rows with break ranges', () => {
     render(<GraduatedLegend spec={spec} />);
     expect(screen.getByText(/pop/)).toBeInTheDocument();
-    expect(screen.getByText(/0/)).toBeInTheDocument();
+    expect(screen.getAllByText(/0/)[0]).toBeInTheDocument();
     // 3 classes => 3 rows
     expect(screen.getAllByRole('button').length).toBe(3);
   });
