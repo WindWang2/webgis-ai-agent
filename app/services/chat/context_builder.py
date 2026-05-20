@@ -23,6 +23,106 @@ from app.services.session_data import session_data_manager
 logger = logging.getLogger(__name__)
 
 
+def _infer_field_type(value: object) -> str:
+    """粗略推断字段类型，输出 4 个值之一：number/string/bool/null。"""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, (int, float)):
+        return "number"
+    return "string"
+
+
+def build_layer_schema(session_id: str, ref_id: str, sample_size: int = 5) -> dict | None:
+    """从 session 里取 GeoJSON 数据，抽样推断 properties 字段名+类型 + 几何类型。
+
+    返回形如 {"geom": "Polygon", "count": 123, "fields": {"pop":"number","name":"string"}}。
+    LRU 已经在 manager.get() 内部维护，这里不再额外更新顺序。
+    数据不存在或不是 FeatureCollection 时返回 None。
+    """
+    data = session_data_manager.get(session_id, ref_id)
+    if not isinstance(data, dict):
+        return None
+    features = data.get("features")
+    if not isinstance(features, list) or not features:
+        return None
+
+    geom_types: set[str] = set()
+    field_types: dict[str, set[str]] = {}
+    for feat in features[:sample_size]:
+        if not isinstance(feat, dict):
+            continue
+        geom = feat.get("geometry") or {}
+        gtype = geom.get("type")
+        if isinstance(gtype, str):
+            geom_types.add(gtype)
+        props = feat.get("properties") or {}
+        if isinstance(props, dict):
+            for k, v in props.items():
+                # 跳过样式注入字段（apply_layer_style 写进来的），它们不是业务属性
+                if k in {"fill_color", "opacity", "stroke_width", "__style__"}:
+                    continue
+                field_types.setdefault(str(k), set()).add(_infer_field_type(v))
+
+    # 多型字段合成：bool+null→bool；number+null→number；混合→mixed
+    fields: dict[str, str] = {}
+    for k, types in field_types.items():
+        types.discard("null")
+        if not types:
+            fields[k] = "null"
+        elif len(types) == 1:
+            fields[k] = next(iter(types))
+        else:
+            fields[k] = "mixed"
+
+    return {
+        "geom": "/".join(sorted(geom_types)) if geom_types else None,
+        "count": len(features),
+        "fields": fields,
+    }
+
+
+def format_style_summary(style: dict | None) -> str | None:
+    """把 layer.style 渲染成单行紧凑文本。支持 choropleth / lisa / 普通色。"""
+    if not isinstance(style, dict):
+        return None
+    stype = style.get("type")
+    if stype == "choropleth":
+        breaks = style.get("breaks") or []
+        if isinstance(breaks, list) and len(breaks) >= 2:
+            k = len(breaks) - 1
+            br_str = f"{breaks[0]:.2f}~{breaks[-1]:.2f}"
+        else:
+            k = 0
+            br_str = "?"
+        return f"专题图 field={style.get('field','?')} 分级={k} 范围={br_str}"
+    if stype == "lisa":
+        return f"LISA 空间自相关 field={style.get('field','?')} (HH/LL/HL/LH/NS)"
+    color = style.get("color") or style.get("fill_color")
+    if color:
+        return f"色={color}"
+    return None
+
+
+def format_layer_schema(schema: dict) -> str:
+    """把 build_layer_schema 的输出渲染为单行紧凑文本。"""
+    parts: list[str] = []
+    if schema.get("geom"):
+        parts.append(f"geom={schema['geom']}")
+    if schema.get("count") is not None:
+        parts.append(f"n={schema['count']}")
+    fields = schema.get("fields") or {}
+    if fields:
+        # 限制最多 8 个字段，避免上下文爆
+        items = list(fields.items())[:8]
+        field_str = ", ".join(f"{k}:{t}" for k, t in items)
+        if len(fields) > 8:
+            field_str += f", ...(+{len(fields) - 8})"
+        parts.append(f"fields=[{field_str}]")
+    return " ".join(parts)
+
+
 def build_map_state_summary(session_id: str) -> str:
     """构造一份紧凑的当前地图状态摘要（[环境感知] 系统消息）。
 
@@ -74,9 +174,11 @@ def build_map_state_summary(session_id: str) -> str:
         w, s, e, n = bounds
         lines.append(f"- 可视范围: W{w:.3f} S{s:.3f} E{e:.3f} N{n:.3f}")
 
+    from app.core.base_layers import format_base_layer_catalog
     lines.append(f"- 底图: {base_layer}")
+    lines.append(f"- 可切换底图: {format_base_layer_catalog()}")
 
-    layer_lines = format_layer_lines(inventory, active_layers)
+    layer_lines = format_layer_lines(inventory, active_layers, session_id=session_id)
     if layer_lines:
         lines.append("- 活跃图层:")
         lines.extend(f"  * {ln}" for ln in layer_lines)
@@ -92,8 +194,11 @@ def build_map_state_summary(session_id: str) -> str:
     return "\n".join(lines)
 
 
-def format_layer_lines(inventory: dict, active_layers: list[dict]) -> list[str]:
-    """渲染图层一行式描述。inventory 优先，缺失时回退到前端上报。"""
+def format_layer_lines(inventory: dict, active_layers: list[dict], session_id: str | None = None) -> list[str]:
+    """渲染图层一行式描述。inventory 优先，缺失时回退到前端上报。
+
+    当传入 session_id 时，额外把每个 ref 的属性 schema (字段+类型+几何) 拼到末行。
+    """
     visibility_map = {l.get("id"): l for l in active_layers if l.get("id")}
     out: list[str] = []
     if inventory:
@@ -111,10 +216,19 @@ def format_layer_lines(inventory: dict, active_layers: list[dict]) -> list[str]:
                 attrs.append(f"类型={meta['type']}")
             if meta.get("featureCount") is not None:
                 attrs.append(f"要素={meta['featureCount']}")
-            if meta.get("style", {}).get("color"):
-                attrs.append(f"色={meta['style']['color']}")
+            style_str = format_style_summary(meta.get("style"))
+            if style_str:
+                attrs.append(style_str)
             tail = f" [{', '.join(attrs)}]" if attrs else ""
-            out.append(f"{ref_id}{tail} ({status})")
+            line = f"{ref_id}{tail} ({status})"
+            if session_id:
+                try:
+                    schema = build_layer_schema(session_id, ref_id)
+                    if schema:
+                        line += f" | {format_layer_schema(schema)}"
+                except Exception as e:
+                    logger.debug(f"build_layer_schema failed for {ref_id}: {e}")
+            out.append(line)
         return out
     for layer in active_layers:
         lid = layer.get("id", "unknown")
@@ -126,6 +240,9 @@ def format_layer_lines(inventory: dict, active_layers: list[dict]) -> list[str]:
             attrs.append(f"要素={layer['featureCount']}")
         opacity = layer.get("opacity", 1.0)
         attrs.append(f"不透明度={opacity:.0%}")
+        style_str = format_style_summary(layer.get("style"))
+        if style_str:
+            attrs.append(style_str)
         status = "可见" if layer.get("visible") else "隐藏"
         out.append(f"{name} (id={lid}, {', '.join(attrs)}) ({status})")
     return out

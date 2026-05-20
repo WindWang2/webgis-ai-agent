@@ -73,7 +73,8 @@ def register_layer_management_tools(registry: ToolRegistry):
             return {"error": "Missing session_id context"}
         
         # 汉化/规范化名称映射，确保 AI 即使说“卫星”或“satellite”，我们也存入标准的“ESRI 影像”
-        CANONICAL_NAMES = ["Carto 深色", "OSM 地图", "ESRI 影像", "Carto 浅色", "ESRI 地形", "OpenTopoMap", "高德影像"]
+        from app.core.base_layers import get_base_layer_names
+        CANONICAL_NAMES = get_base_layer_names()
         
         search_name = name.toLowerCase() if hasattr(name, 'toLowerCase') else str(name).lower()
         resolved_name = name # Default to original if no match
