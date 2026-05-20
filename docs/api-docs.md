@@ -43,6 +43,11 @@ V2.1 引入了更加细粒度的任务跟踪事件，用于驱动前端 HUD (Tas
 | `step_result`| `{"result": {...}, "has_geojson": bool}` | 算子执行成功，包含部分脱敏结果 |
 | `step_error` | `{"error": "..."}` | 算子执行失败，反馈给 AI 进行自愈 |
 | `task_complete` | `{"summary": "..."}` | 整个任务链条完成 |
+| `task_cancelled` | `{"task_id": "..."}` | 任务被取消（用户中断或空消息） |
+| `task_error` | `{"task_id": "...", "error": "..."}` | 任务达到最大轮数或内部异常 |
+| `plan_ready` | `{"session_id", "task_id", "intent", "domains", "steps": [{"n", "goal", "tool_family", "done"}]}` | Plan-First 模式生成执行计划后立即推送，前端据此渲染 PlanCard |
+| `plan_step_done` | `{"session_id", "task_id", "step_n": int}` | 每次工具调用命中计划步骤时推送，前端将对应步骤翻转为已完成 |
+| `plan_finalized` | `{"session_id", "task_id", "skipped": [step_n, ...]}` | 终态事件前推送，列出未执行的步骤编号，前端将其标记为 skipped |
 
 #### [注意] SSE 流 Heartbeat 规范
 当 Agent 在后台调用 Celery 进行分钟级别的地理测算时，此时 LLM 端静默不输出文本。为防止云防火墙断开闲置连接，SSE 网关每 15 秒将推送一条隐式心跳：
