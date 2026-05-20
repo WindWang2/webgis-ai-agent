@@ -332,12 +332,16 @@ class ChatEngine:
         tool_args: dict,
         outcome: dict,
         subset_size: int,
+        step_n: int | None = None,
     ) -> None:
         """落一条工具决策记录。可观测性，绝不影响主流程。
 
         subset_size 由调用方传入本轮已算好的工具子集大小——不在此处重算，
         因为 select_schemas 会衰减 ToolCatalog 的 sticky TTL，重复调用会
         让 sticky domain 过早失效。
+
+        step_n 由调用方先调用 planner.mark_step_done 算好，本方法只写入
+        决策日志——与 chat_stream 的 SSE 事件共用一个 step_n 值。
         """
         from app.services.chat import planner
         from app.services.chat.decision_log import ToolDecisionRecord, log_tool_decision
@@ -350,7 +354,6 @@ class ChatEngine:
         else:
             quality = "ok"
         plan = planner.get_plan(session_id)
-        # active_domains 是只读诊断接口，不触发激活/衰减，安全
         active = self.catalog.active_domains(session_id) if self.catalog else set()
         try:
             log_tool_decision(ToolDecisionRecord(
@@ -364,7 +367,7 @@ class ChatEngine:
                 tool_chosen=tool_name,
                 tool_args=tool_args if isinstance(tool_args, dict) else {},
                 result_quality=quality,
-                plan_step_matched=planner.mark_step_done(session_id, tool_name, self.registry),
+                plan_step_matched=step_n,
             ))
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[chat_engine] 决策日志记录失败: {e}")
@@ -582,9 +585,12 @@ class ChatEngine:
                             logger.debug(f"SSE Heartbeat sent for tool: {tool_name}")
                     outcome = await dispatch_task
 
+                    from app.services.chat import planner as _planner
+                    step_n_matched = _planner.mark_step_done(session_id, tool_name, self.registry)
                     self._log_tool_decision(
                         session_id, round_index, message, tool_name,
                         tool_args_dict, outcome, len(tools or []),
+                        step_n=step_n_matched,
                     )
 
                     msg_result_str = outcome["llm_payload"]
