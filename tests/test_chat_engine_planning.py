@@ -106,3 +106,47 @@ async def test_maybe_plan_returns_none_on_llm_failure(engine, monkeypatch):
     monkeypatch.setattr(planner_mod, "make_plan", fake_make_plan)
     result = await engine._maybe_plan("sess-R3", "复杂请求需要规划的内容", [])
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_emits_plan_ready_when_plan_created(engine, monkeypatch):
+    """chat_stream 在 _maybe_plan 成功后必须发 plan_ready SSE 事件。"""
+    test_plan = planner_mod.Plan(
+        intent="测试意图",
+        domains=["core", "chinese"],
+        steps=[
+            planner_mod.PlanStep(n=1, goal="获取边界", tool_family="chinese"),
+            planner_mod.PlanStep(n=2, goal="出热力图", tool_family="core"),
+        ],
+    )
+    async def fake_maybe_plan(self, session_id, message, messages):
+        planner_mod.set_plan(session_id, test_plan)
+        return test_plan
+    monkeypatch.setattr(engine, "_maybe_plan",
+                        fake_maybe_plan.__get__(engine, type(engine)))
+    # 让主 LLM 调用立即结束（不进工具循环），简化测试
+    async def fake_llm_stream(*a, **k):
+        if False: yield
+        # 直接 yield 一个 done event
+        yield ("done", {"message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop"})
+    monkeypatch.setattr(engine, "_call_llm_stream", fake_llm_stream)
+
+    captured = []
+    async for ev in engine.chat_stream("sess-EV1", "复杂请求需要规划的内容"):
+        captured.append(ev)
+
+    joined = "".join(captured)
+    assert "event: plan_ready" in joined
+    assert "测试意图" in joined
+    # 验证 steps 数组与字段
+    import json
+    plan_ready_chunks = [c for c in captured if c.startswith("event: plan_ready")]
+    assert len(plan_ready_chunks) == 1
+    data_line = [l for l in plan_ready_chunks[0].splitlines() if l.startswith("data:")][0]
+    data = json.loads(data_line[len("data:"):].strip())
+    assert data["intent"] == "测试意图"
+    assert data["domains"] == ["core", "chinese"]
+    assert len(data["steps"]) == 2
+    assert data["steps"][0] == {"n": 1, "goal": "获取边界", "tool_family": "chinese", "done": False}
+    planner_mod.clear_plan("sess-EV1")

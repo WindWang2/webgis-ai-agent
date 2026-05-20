@@ -493,11 +493,25 @@ class ChatEngine:
         messages.append({"role": "user", "content": message})
         await self._save_msg_async(session_id, "user", message)
 
-        await self._maybe_plan(session_id, message, messages)
-
         # 创建任务
         task = self.tracker.create(session_id, message)
         yield sse_event("task_start", {"task_id": task.id, "session_id": session_id})
+
+        plan = await self._maybe_plan(session_id, message, messages)
+        try:
+            if plan is not None:
+                yield sse_event("plan_ready", {
+                    "session_id": session_id,
+                    "task_id": task.id,
+                    "intent": plan.intent,
+                    "domains": plan.domains,
+                    "steps": [
+                        {"n": s.n, "goal": s.goal, "tool_family": s.tool_family, "done": False}
+                        for s in plan.steps
+                    ],
+                })
+        except Exception as e:  # noqa: BLE001 — 发事件失败永远不能拖垮工具循环
+            logger.warning(f"[chat_engine] plan_ready 发送失败: {e}")
 
         # 初始化局部哨兵，防止 AI 在单次任务中陷入相同指令的无限循环
         executed_tools = set()
