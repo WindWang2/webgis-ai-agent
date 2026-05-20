@@ -145,6 +145,43 @@ def viewport_layer_relation(viewport_bounds: list[float] | None, layer_bbox: lis
     return "局部相交"
 
 
+def format_selected_feature(sel: dict | None) -> str | None:
+    """把前端推上来的 selected_feature 渲染为单行可读文本。
+
+    LLM 看到这一行就知道"用户刚点了哪个要素"——后续追问"这块面积多大"
+    "查一下它的属性"不再需要反问坐标或图层。
+    """
+    if not isinstance(sel, dict):
+        return None
+    name_or_ref = sel.get("layer_name") or sel.get("ref_id") or sel.get("layer_id") or "?"
+    point = sel.get("point")
+    parts = [f"图层={name_or_ref}"]
+    if isinstance(point, (list, tuple)) and len(point) >= 2:
+        try:
+            parts.append(f"点击@{float(point[0]):.4f},{float(point[1]):.4f}")
+        except (ValueError, TypeError):
+            pass
+    props = sel.get("properties")
+    if isinstance(props, dict) and props:
+        # 优先展示常见标签字段，否则取前 4 个属性
+        label_keys = ("name", "title", "label", "id", "OBJECTID")
+        chosen: list[tuple[str, object]] = []
+        for k in label_keys:
+            if k in props and props[k] is not None:
+                chosen.append((k, props[k]))
+        if not chosen:
+            chosen = [(k, v) for k, v in list(props.items())[:4] if v is not None]
+        if chosen:
+            kvs = ", ".join(f"{k}={_short(v)}" for k, v in chosen[:4])
+            parts.append(f"属性={{{kvs}}}")
+    return " ".join(parts)
+
+
+def _short(v: object, max_len: int = 30) -> str:
+    s = str(v)
+    return s if len(s) <= max_len else s[: max_len - 1] + "…"
+
+
 def format_style_summary(style: dict | None) -> str | None:
     """把 layer.style 渲染成单行紧凑文本。支持 choropleth / lisa / 普通色。"""
     if not isinstance(style, dict):
@@ -257,6 +294,11 @@ def build_map_state_summary(session_id: str) -> str:
     from app.core.base_layers import format_base_layer_catalog
     lines.append(f"- 底图: {base_layer}")
     lines.append(f"- 可切换底图: {format_base_layer_catalog()}")
+
+    selected = state.get("selected_feature")
+    sel_line = format_selected_feature(selected)
+    if sel_line:
+        lines.append(f"- 选中要素: {sel_line}")
 
     layer_lines = format_layer_lines(
         inventory,

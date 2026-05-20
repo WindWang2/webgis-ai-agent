@@ -27,6 +27,10 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   mapLoaded: false,
   setMapLoaded: (v: boolean) => set({ mapLoaded: v }),
 
+  /* ─── Selected Feature ─── */
+  selectedFeature: null,
+  setSelectedFeature: (f) => set({ selectedFeature: f }),
+
   /* ─── Perception Buffer ─── */
   _perceptionQueue: [],
   pushPerception: (event: string, data: Record<string, unknown>) =>

@@ -394,6 +394,50 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   const setViewport = useHudStore((s: HudState) => s.setViewport)
   const aiStatus = useHudStore((s: HudState) => s.aiStatus)
 
+  const setSelectedFeature = useHudStore((s: HudState) => s.setSelectedFeature)
+  const layersRef = useRef(layers)
+  useEffect(() => { layersRef.current = layers }, [layers])
+
+  const handleMapClick = useCallback((evt: any) => {
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    // 只查询我们自己添加的 custom-* 图层；底图瓦片层不应吃 click
+    const styleLayers = map.getStyle()?.layers || []
+    const customLayerIds = styleLayers
+      .map((l: any) => l.id as string)
+      .filter((id) => id.startsWith('custom-'))
+    if (customLayerIds.length === 0) {
+      setSelectedFeature(null)
+      return
+    }
+    const features = map.queryRenderedFeatures(evt.point, { layers: customLayerIds })
+    if (!features || features.length === 0) {
+      setSelectedFeature(null)
+      return
+    }
+    const top = features[0]
+    const sublayerId = top.layer?.id as string | undefined
+    // 还原回 ref:xxx：sublayerId 形如 'custom-ref:geojson-xxx' 或 'custom-ref:geojson-xxx-line'
+    let refId: string | undefined
+    let layerInfo: any
+    if (sublayerId) {
+      const stripped = sublayerId.replace(/^custom-/, '')
+      // 匹配最长 layer.id 前缀
+      layerInfo = layersRef.current.find((l) => stripped.startsWith(l.id))
+      if (layerInfo?.id?.startsWith('ref:')) {
+        refId = layerInfo.id
+      }
+    }
+    setSelectedFeature({
+      layerId: sublayerId || 'unknown',
+      layerName: layerInfo?.name,
+      refId,
+      point: [evt.lngLat.lng, evt.lngLat.lat],
+      properties: (top.properties || {}) as Record<string, unknown>,
+      selectedAt: Date.now(),
+    })
+  }, [setSelectedFeature])
+
   const handleMove = useCallback((evt: ViewStateChangeEvent) => {
     setViewState(evt.viewState)
     const map = mapRef.current?.getMap()
@@ -458,6 +502,8 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
         ref={mapRef}
         {...viewState}
         onMove={handleMove}
+        onClick={handleMapClick}
+        interactiveLayerIds={layers.map((l) => `custom-${l.id}`)}
         onLoad={() => { setMapReady(true); useHudStore.getState().setMapLoaded(true); }}
         style={{ position: "absolute", inset: 0 }}
         mapStyle={currentMapStyle}

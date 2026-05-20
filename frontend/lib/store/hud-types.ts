@@ -2,6 +2,15 @@ import type { Layer } from '@/lib/types/layer';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 import type { ExplorerTask } from '@/lib/types/explorer';
 
+export interface SelectedFeatureInfo {
+  layerId: string;          // 渲染层 id (含 custom- 前缀)
+  layerName?: string;       // 用户可读名 / 别名
+  refId?: string;           // 数据 ref:xxx，方便后端关联 session 数据
+  point: [number, number];  // 鼠标点击的 [lng, lat]
+  properties: Record<string, unknown>;
+  selectedAt: number;       // epoch ms
+}
+
 export interface TaskStep {
   id: string;
   tool: string;
@@ -176,6 +185,10 @@ export interface HudState {
   /* ─── Map Load State ─── */
   mapLoaded: boolean;
   setMapLoaded: (v: boolean) => void;
+
+  /* ─── Selected Feature (set by map click, consumed by chat mapState payload) ─── */
+  selectedFeature: SelectedFeatureInfo | null;
+  setSelectedFeature: (f: SelectedFeatureInfo | null) => void;
 
   /* ─── Perception Buffer (Agent-Everything) ─── */
   _perceptionQueue: Array<{ event: string; data: Record<string, unknown> }>;

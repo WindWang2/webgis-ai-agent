@@ -446,7 +446,7 @@ export default function Home() {
     async (userMsg: string) => {
       if (!userMsg || isLoading) return;
 
-      const { viewport, baseLayer, is3D, layers: hudLayers } = useHudStore.getState();
+      const { viewport, baseLayer, is3D, layers: hudLayers, selectedFeature } = useHudStore.getState();
       const liveSnapshot = getMapSnapshot();
       const mapState = {
         viewport: {
@@ -470,6 +470,14 @@ export default function Home() {
           style: l.style,
         })),
         user_location: userLocation ? { lng: userLocation.lng, lat: userLocation.lat, accuracy: userLocation.accuracy } : null,
+        selected_feature: selectedFeature ? {
+          layer_id: selectedFeature.layerId,
+          layer_name: selectedFeature.layerName ?? null,
+          ref_id: selectedFeature.refId ?? null,
+          point: selectedFeature.point,
+          properties: selectedFeature.properties,
+          selected_at: selectedFeature.selectedAt,
+        } : null,
       };
 
       setMessages(prev => [...prev, { id: Date.now().toString(), role: 'user' as const, content: userMsg, timestamp: new Date() }]);
