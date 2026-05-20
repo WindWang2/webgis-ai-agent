@@ -199,4 +199,43 @@ class CartographyService:
             "legend_labels": legend_labels
         }
 
+    @classmethod
+    def build_legend_spec(
+        cls,
+        style_def,
+        palette: str = "YlOrRd",
+    ):
+        """把 build_thematic_style 的输出映射为对外 legend_spec 契约。
+
+        choropleth → graduated；lisa → categorical。未知 / 空输入返回 None。
+        """
+        if not isinstance(style_def, dict):
+            return None
+        t = style_def.get("type")
+        if t == "choropleth":
+            return {
+                "type": "graduated",
+                "field": style_def.get("field", ""),
+                "breaks": style_def.get("breaks", []),
+                "palette": palette,
+                "palette_colors": style_def.get("colors", []),
+            }
+        if t == "lisa":
+            colors = style_def.get("colors", {}) or {}
+            labels = style_def.get("legend_labels", []) or []
+            keys = style_def.get("categories", []) or []
+            categories = []
+            for i, key in enumerate(keys):
+                categories.append({
+                    "key": key,
+                    "color": colors.get(key, "#999999"),
+                    "label": labels[i] if i < len(labels) else key,
+                })
+            return {
+                "type": "categorical",
+                "field": style_def.get("field", ""),
+                "categories": categories,
+            }
+        return None
+
 __all__ = ["CartographyService"]
