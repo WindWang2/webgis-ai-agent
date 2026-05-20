@@ -17,6 +17,7 @@ _TOOL_MODULES = [
     ("app.tools.remote_sensing", "register_rs_tools"),
     ("app.tools.chart", "register_chart_tools"),
     ("app.tools.cartography", "register_cartography_tools"),
+    ("app.tools.map_view", "register_map_view_tools"),
     ("app.tools.nature_resources", "register_nature_resource_tools"),
     ("app.tools.upload_tools", "register_upload_tools"),
     ("app.tools.web_crawler", "register_crawler_tools"),

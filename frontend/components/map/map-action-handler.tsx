@@ -90,6 +90,31 @@ export function MapActionHandler() {
             });
           }
           break;
+
+        case 'zoom_to_bbox': {
+          const bbox = action.params?.bbox as [number, number, number, number] | undefined;
+          const padding = action.params?.padding ?? 50;
+          if (!bbox || bbox.length < 4) break;
+          try {
+            navigation.fitBounds(map, bbox, padding);
+          } catch (e) {
+            console.warn('[MapActionHandler] zoom_to_bbox failed:', e);
+          }
+          break;
+        }
+
+        case 'set_map_view': {
+          const { zoom, bearing, pitch } = action.params || {};
+          if (zoom === undefined && bearing === undefined && pitch === undefined) break;
+          const center = map.getCenter();
+          navigation.flyTo(map, {
+            center: [center.lng, center.lat],
+            zoom: zoom !== undefined ? zoom : map.getZoom(),
+            bearing: bearing !== undefined ? bearing : map.getBearing(),
+            pitch: pitch !== undefined ? pitch : map.getPitch(),
+          });
+          break;
+        }
         
         case 'add_heatmap_raster': {
           const { image, bbox, opacity, layerId } = action.params || {};

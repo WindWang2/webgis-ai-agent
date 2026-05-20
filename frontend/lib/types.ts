@@ -69,7 +69,7 @@ export interface ChartData {
 // === Map action types ===
 
 export interface MapActionPayload {
-  command: 'add_layer' | 'remove_layer' | 'fly_to' | 'add_heatmap_raster' | 'add_raster_layer' | 'add_native_heatmap' | 'APPLY_LAYER_FILTER' | 'export_map' | 'BASE_LAYER_CHANGE' | 'LAYER_VISIBILITY_UPDATE' | 'LAYER_STYLE_UPDATE' | 'REMOVE_LAYER';
+  command: 'add_layer' | 'remove_layer' | 'fly_to' | 'add_heatmap_raster' | 'add_raster_layer' | 'add_native_heatmap' | 'APPLY_LAYER_FILTER' | 'export_map' | 'BASE_LAYER_CHANGE' | 'LAYER_VISIBILITY_UPDATE' | 'LAYER_STYLE_UPDATE' | 'REMOVE_LAYER' | 'zoom_to_bbox' | 'set_map_view';
   params: {
     id?: string;
     layerId?: string;
@@ -105,6 +105,7 @@ export interface MapActionPayload {
     paperSize?: 'screen' | 'A4';
     orientation?: 'landscape' | 'portrait';
     dpi?: number;
+    padding?: number;  // For zoom_to_bbox
   };
 }
 
