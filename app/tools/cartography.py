@@ -104,11 +104,18 @@ def register_cartography_tools(registry: ToolRegistry):
                 palette=palette
             )
             
-            return {
+            return_dict = {
                 "geojson": data,  # return unmodified geojson
                 "group": group,
-                "style": style_def
+                "style": style_def,
             }
+            legend_spec = CartographyService.build_legend_spec(style_def, palette=palette)
+            if legend_spec is not None:
+                return_dict["legend_spec"] = legend_spec
+                return_dict["layer_meta"] = {
+                    "title": f"{field} 专题图",
+                }
+            return return_dict
         except (ValueError, TypeError, KeyError) as e:
             logger.error(f"Error creating thematic map: {e}")
             return {"error": str(e)}
