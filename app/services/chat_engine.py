@@ -513,6 +513,22 @@ class ChatEngine:
         except Exception as e:  # noqa: BLE001 — 发事件失败永远不能拖垮工具循环
             logger.warning(f"[chat_engine] plan_ready 发送失败: {e}")
 
+        def _maybe_plan_finalized_event():
+            try:
+                from app.services.chat import planner as _planner
+                plan_obj = _planner.get_plan(session_id)
+                if plan_obj is None:
+                    return None
+                skipped = [s.n for s in plan_obj.steps if not s.done]
+                return sse_event("plan_finalized", {
+                    "session_id": session_id,
+                    "task_id": task.id,
+                    "skipped": skipped,
+                })
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[chat_engine] plan_finalized 构造失败: {e}")
+                return None
+
         # 初始化局部哨兵，防止 AI 在单次任务中陷入相同指令的无限循环
         executed_tools = set()
 
@@ -521,6 +537,8 @@ class ChatEngine:
 
             # 检查取消
             if self.tracker.is_cancelled(task.id):
+                pf = _maybe_plan_finalized_event()
+                if pf: yield pf
                 yield sse_event("task_cancelled", {"task_id": task.id})
                 return
 
@@ -667,6 +685,8 @@ class ChatEngine:
 
                     # 检查取消（每步执行后）
                     if self.tracker.is_cancelled(task.id):
+                        pf = _maybe_plan_finalized_event()
+                        if pf: yield pf
                         yield sse_event("task_cancelled", {"task_id": task.id})
                         return
 
@@ -692,6 +712,8 @@ class ChatEngine:
                 yield sse_event("content", {"content": "", "session_id": session_id, "streaming_done": True})
 
                 # task_complete
+                pf = _maybe_plan_finalized_event()
+                if pf: yield pf
                 self.tracker.complete_task(task.id)
                 yield sse_event("task_complete", {
                     "task_id": task.id,
@@ -703,6 +725,8 @@ class ChatEngine:
                 return
 
         self.tracker.fail_task(task.id, "达到最大工具调用轮数")
+        pf = _maybe_plan_finalized_event()
+        if pf: yield pf
         yield sse_event("task_error", {"task_id": task.id, "error": "达到最大轮数"})
         yield sse_event("content", {"content": "达到最大工具调用轮数", "session_id": session_id})
         yield sse_event("done", {"session_id": session_id})

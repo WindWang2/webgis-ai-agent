@@ -204,3 +204,61 @@ async def test_chat_stream_emits_plan_step_done_after_tool(engine, monkeypatch):
     data = json.loads([l for l in chunks[0].splitlines() if l.startswith("data:")][0][len("data:"):])
     assert data["step_n"] == 1
     planner_mod.clear_plan("sess-EV2")
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_emits_plan_finalized_with_skipped(engine, monkeypatch):
+    """task_complete 前必须发 plan_finalized，未打勾步骤进 skipped。"""
+    test_plan = planner_mod.Plan(
+        intent="x", domains=["core"],
+        steps=[
+            planner_mod.PlanStep(n=1, goal="a", tool_family="core", done=True),
+            planner_mod.PlanStep(n=2, goal="b", tool_family="core", done=True),
+            planner_mod.PlanStep(n=3, goal="c", tool_family="core", done=False),
+        ],
+    )
+    planner_mod.set_plan("sess-EV3", test_plan)
+    async def fake_maybe_plan(self, *a, **k): return None
+    monkeypatch.setattr(engine, "_maybe_plan",
+                        fake_maybe_plan.__get__(engine, type(engine)))
+    async def fake_llm_stream(*a, **k):
+        yield ("done", {"message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop"})
+    monkeypatch.setattr(engine, "_call_llm_stream", fake_llm_stream)
+
+    captured = []
+    async for ev in engine.chat_stream("anything", session_id="sess-EV3"):
+        captured.append(ev)
+
+    joined = "".join(captured)
+    assert "event: plan_finalized" in joined
+    # plan_finalized 必须出现在 task_complete 之前
+    pf_idx = joined.find("event: plan_finalized")
+    tc_idx = joined.find("event: task_complete")
+    assert pf_idx >= 0 and tc_idx >= 0 and pf_idx < tc_idx
+    import json
+    chunks = [c for c in captured if c.startswith("event: plan_finalized")]
+    data = json.loads([l for l in chunks[0].splitlines() if l.startswith("data:")][0][len("data:"):])
+    assert data["skipped"] == [3]
+    planner_mod.clear_plan("sess-EV3")
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_no_plan_events_when_plan_skipped(engine, monkeypatch):
+    """_maybe_plan 返回 None 且无已有 plan 时，SSE 流不能出现任何 plan_* 事件。"""
+    planner_mod.clear_plan("sess-EV4")  # 确保无残留
+    async def fake_maybe_plan(self, *a, **k): return None
+    monkeypatch.setattr(engine, "_maybe_plan",
+                        fake_maybe_plan.__get__(engine, type(engine)))
+    async def fake_llm_stream(*a, **k):
+        yield ("done", {"message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop"})
+    monkeypatch.setattr(engine, "_call_llm_stream", fake_llm_stream)
+
+    captured = []
+    async for ev in engine.chat_stream("x", session_id="sess-EV4"):
+        captured.append(ev)
+    joined = "".join(captured)
+    assert "event: plan_ready" not in joined
+    assert "event: plan_step_done" not in joined
+    assert "event: plan_finalized" not in joined

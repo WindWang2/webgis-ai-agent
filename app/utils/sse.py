@@ -1,3 +1,16 @@
+"""SSE 事件封装。
+
+新增于 plan-in-chat 设计（2026-05-20）的事件契约：
+
+  - plan_ready      由 chat_engine.chat_stream 在 _maybe_plan 成功后发出
+                    data: {session_id, task_id, intent, domains, steps[]}
+  - plan_step_done  每次 planner.mark_step_done 返回非空时发出
+                    data: {session_id, task_id, step_n}
+  - plan_finalized  task_complete / task_cancelled / task_error 之前发出
+                    data: {session_id, task_id, skipped: [step_n, ...]}
+
+前端类型定义见 frontend/lib/types/agent-plan.ts::AgentPlanState
+"""
 import json
 import logging
 from typing import Any
