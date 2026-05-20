@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import { ChevronRight, ChevronDown, CheckCircle2, AlertCircle, Loader2, Clock, Wrench } from 'lucide-react';
+import { CartographyResultCard } from './cartography-result-card';
+import { useHudStore } from '@/lib/store/useHudStore';
 
 export interface ToolCallEntry {
   id: string;
@@ -100,6 +102,12 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
       : null;
   const parsedArgs = parseArgs(call.arguments);
 
+  const CARTO_TOOLS = new Set(['create_thematic_map', 'h3_binning', 'kde_contours', 'heatmap_data']);
+  const isCarto = CARTO_TOOLS.has(call.tool);
+  const focusLayer = useHudStore((s) => s.focusLayer);
+  const layers = useHudStore((s) => s.layers);
+  const latestCartoLayerId = isCarto ? (layers.find((l) => l.legend_spec)?.id ?? '') : '';
+
   const statusIcon =
     call.status === 'running' ? (
       <Loader2 size={11} className="animate-spin text-blue-500" />
@@ -136,6 +144,14 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
           </span>
         )}
       </button>
+
+      {isCarto && call.result && (
+        <CartographyResultCard
+          result={call.result}
+          layerId={latestCartoLayerId}
+          onFocus={(id) => id && focusLayer(id)}
+        />
+      )}
 
       {open && (
         <div className="border-t border-slate-100 px-2.5 py-1.5 space-y-1.5 bg-slate-50/30">
