@@ -34,3 +34,44 @@ async def test_create_thematic_map_returns_legend_spec(registry):
     assert "layer_meta" in out
     assert "title" in out["layer_meta"]
     assert "pop" in out["layer_meta"]["title"]  # title contains field name
+
+
+from app.tools.spatial import register_spatial_tools
+
+
+@pytest.fixture
+def spatial_registry():
+    r = ToolRegistry()
+    register_spatial_tools(r)
+    return r
+
+
+def _points(n: int):
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature",
+             "geometry": {"type": "Point", "coordinates": [i * 0.001, i * 0.001]},
+             "properties": {}}
+            for i in range(n)
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_heatmap_native_no_legend_spec(spatial_registry):
+    out = await spatial_registry.dispatch("heatmap_data", {
+        "geojson": _points(20), "render_type": "native",
+    })
+    assert "legend_spec" not in out  # native rendering produces no discrete legend
+
+
+@pytest.mark.asyncio
+async def test_heatmap_grid_emits_continuous_legend_spec(spatial_registry):
+    out = await spatial_registry.dispatch("heatmap_data", {
+        "geojson": _points(20), "render_type": "grid",
+    })
+    assert out.get("legend_spec", {}).get("type") == "continuous"
+    spec = out["legend_spec"]
+    assert "min" in spec and "max" in spec
+    assert len(spec["palette_colors"]) >= 3

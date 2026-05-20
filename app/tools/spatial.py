@@ -289,7 +289,7 @@ def register_spatial_tools(registry: ToolRegistry):
                 kwargs={"features": features, "cell_size": cell_size, "radius": radius, "render_type": render_type, "palette": palette}
             )
             result = task.get(timeout=120)
-        except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
+        except Exception as exc:
             if not isinstance(exc, ImportError):
                 logger.warning(f"Celery unavailable for heatmap: {exc}")
             result = _generate_heatmap(features, cell_size, radius, render_type, palette)
@@ -301,6 +301,30 @@ def register_spatial_tools(registry: ToolRegistry):
                     res_data["command"] = "add_heatmap_raster"
                 else:
                     res_data["command"] = "add_layer"
+                # non-native modes emit continuous legend_spec
+                if render_type != "native":
+                    try:
+                        from app.services.cartography_service import COLOR_PALETTES
+                        # Map heatmap palette names to COLOR_PALETTES keys
+                        palette_map = {
+                            "classic": "YlOrRd",
+                            "magma": "Magma",
+                            "viridis": "Viridis",
+                            "thermal": "Reds",
+                        }
+                        palette_key = palette_map.get(palette, "YlOrRd")
+                        palette_colors = COLOR_PALETTES.get(palette_key) \
+                            or COLOR_PALETTES.get("YlOrRd", ["#ffffb2", "#feb24c", "#bd0026"])
+                        metadata = res_data.get("metadata", {})
+                        res_data["legend_spec"] = {
+                            "type": "continuous",
+                            "min": float(metadata.get("min_value", 0.0)),
+                            "max": float(metadata.get("max_value", 1.0)),
+                            "palette": palette_key,
+                            "palette_colors": list(palette_colors),
+                        }
+                    except Exception:
+                        pass  # legend failure never blocks tool result
             return res_data
         
         error_msg = result.get("error", "Heatmap generation failed")
