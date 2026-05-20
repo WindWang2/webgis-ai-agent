@@ -236,6 +236,17 @@ def build_map_state_summary(session_id: str) -> str:
         if is_3d:
             viewport_line += ", 3D"
         lines.append(viewport_line)
+        # Round 3: 异步预热的反查地名，命中才打印（未命中绝不阻塞）
+        try:
+            from app.services.viewport_naming import lookup as _vp_lookup, schedule_populate as _vp_schedule
+            name = _vp_lookup(float(center[0]), float(center[1]))
+            if name:
+                lines.append(f"- 视口所在区域: {name}")
+            else:
+                # 缓存未命中：再触发一次预热（首轮兜底，下一轮就有了）
+                _vp_schedule(float(center[0]), float(center[1]))
+        except Exception as e:
+            logger.debug(f"viewport_naming lookup skipped: {e}")
     else:
         lines.append("- 视口: 未知（前端尚未上报，回答位置类问题前请先告知用户无法获取地图状态）")
 

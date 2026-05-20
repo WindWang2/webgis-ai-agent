@@ -395,6 +395,8 @@ class ChatEngine:
         if map_state:
             for k, v in map_state.items():
                 session_data_manager.set_map_state(session_id, k, v)
+            from app.services.viewport_naming import schedule_populate_from_map_state
+            schedule_populate_from_map_state(map_state)
 
         messages = await self._get_or_create_session(session_id, user_id=user_id)
 
@@ -486,6 +488,8 @@ class ChatEngine:
         if map_state:
             for k, v in map_state.items():
                 session_data_manager.set_map_state(session_id, k, v)
+            from app.services.viewport_naming import schedule_populate_from_map_state
+            schedule_populate_from_map_state(map_state)
 
         messages = await self._get_or_create_session(session_id, user_id=user_id)
 

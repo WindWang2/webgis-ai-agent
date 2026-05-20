@@ -59,6 +59,14 @@ def handle_viewport_change(session_id: str, data: dict):
         "pitch": data.get("pitch", 0),
     }
     session_data_manager.set_map_state(session_id, "viewport", viewport)
+    # Round 3: 后台预热视口地名，下一轮 [环境感知] 同步读 cache 即可
+    from app.services.viewport_naming import schedule_populate
+    center = viewport.get("center") or [0, 0]
+    if isinstance(center, (list, tuple)) and len(center) >= 2:
+        try:
+            schedule_populate(float(center[0]), float(center[1]))
+        except (ValueError, TypeError):
+            pass
 
 
 def handle_layer_toggled(session_id: str, data: dict):
