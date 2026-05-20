@@ -8,6 +8,7 @@ import { useMapBridge } from '@/lib/hooks/useMapBridge';
 import { useWebSocket } from '@/lib/hooks/use-websocket';
 import { useGeolocation } from '@/lib/hooks/use-geolocation';
 import type { ChatSession } from '@/lib/types/chat';
+import type { AgentPlanState } from '@/lib/types/agent-plan';
 import { API_BASE } from '@/lib/api/config';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 
@@ -93,7 +94,7 @@ export default function Home() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  const [messages, setMessages] = useState<Array<{ id: string; role: 'user' | 'assistant'; content: string; timestamp: any; isThinking?: boolean; charts?: unknown[]; toolCalls?: ToolCallEntry[]; plan?: PlanProposalPayload }>>([
+  const [messages, setMessages] = useState<Array<{ id: string; role: 'user' | 'assistant'; content: string; timestamp: any; isThinking?: boolean; charts?: unknown[]; toolCalls?: ToolCallEntry[]; plan?: PlanProposalPayload; agentPlan?: AgentPlanState }>>([
     {
       id: '1',
       role: 'assistant',
@@ -361,6 +362,42 @@ export default function Home() {
         setMessages(prev => prev.map(m => m.id === thinkingId ? { ...m, layerAdded: layerName } : m));
       }
       // NOTE: command dispatch + bbox flyTo are handled by the bridge
+    } else if (event.event === 'plan_ready') {
+      try {
+        const incoming = data;
+        setMessages(prev => prev.map(m => m.id === thinkingId ? { ...m,
+          agentPlan: {
+            intent: incoming.intent,
+            domains: incoming.domains ?? [],
+            steps: (incoming.steps ?? []).map((s: any) => ({
+              n: s.n, goal: s.goal, tool_family: s.tool_family, status: 'pending' as const,
+            })),
+            finalized: false,
+          },
+        } : m));
+      } catch (err) { console.warn('[plan_ready] parse failed', err); }
+    } else if (event.event === 'plan_step_done') {
+      try {
+        const stepN = data.step_n;
+        setMessages(prev => prev.map(m => {
+          if (m.id !== thinkingId || !m.agentPlan) return m;
+          return { ...m, agentPlan: { ...m.agentPlan,
+            steps: m.agentPlan.steps.map(s => s.n === stepN ? { ...s, status: 'done' as const } : s),
+          }};
+        }));
+      } catch (err) { console.warn('[plan_step_done] parse failed', err); }
+    } else if (event.event === 'plan_finalized') {
+      try {
+        const skipped = new Set<number>(data.skipped ?? []);
+        setMessages(prev => prev.map(m => {
+          if (m.id !== thinkingId || !m.agentPlan) return m;
+          return { ...m, agentPlan: { ...m.agentPlan,
+            finalized: true,
+            steps: m.agentPlan.steps.map(s =>
+              skipped.has(s.n) ? { ...s, status: 'skipped' as const } : s),
+          }};
+        }));
+      } catch (err) { console.warn('[plan_finalized] parse failed', err); }
     } else if (event.event === 'error' || event.event === 'step_error' || event.event === 'task_error') {
       setMessages(prev => prev.map(m => m.id === thinkingId ? { ...m, content: '请求失败，请重试。', isThinking: false } : m));
     } else if (event.event === 'explorer_progress') {

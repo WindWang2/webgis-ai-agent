@@ -41,7 +41,10 @@ export type SSEEventType =
   | 'task_plan'
   | 'token'
   | 'error'
-  | 'explorer_progress';
+  | 'explorer_progress'
+  | 'plan_ready'
+  | 'plan_step_done'
+  | 'plan_finalized';
 
 export interface SSEEvent {
   event: SSEEventType;
