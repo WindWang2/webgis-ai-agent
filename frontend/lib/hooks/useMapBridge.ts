@@ -98,11 +98,24 @@ export function useMapBridge(
           if (event.event === 'step_result') {
             const stepData = data as unknown as StepResultEvent;
             const commandFired = !!stepData.result?.command;
+            const batchCommands = (stepData.result as any)?.commands as
+              | Array<{ command: string; params?: Record<string, unknown> }>
+              | undefined;
             if (commandFired) {
               dispatchAction({
                 command: stepData.result!.command as MapActionPayload['command'],
                 params: (stepData.result!.params || {}) as MapActionPayload['params'],
               });
+            } else if (Array.isArray(batchCommands) && batchCommands.length > 0) {
+              // Batch tool emits a sequence of commands (e.g. export_batch_maps).
+              // The MapActionHandler queue processes one-at-a-time via popAction.
+              for (const cmd of batchCommands) {
+                if (!cmd?.command) continue;
+                dispatchAction({
+                  command: cmd.command as MapActionPayload['command'],
+                  params: (cmd.params || {}) as MapActionPayload['params'],
+                });
+              }
             } else {
               const bbox = stepData.result?.bbox ?? stepData.bbox;
               if (isValidBbox(bbox)) {

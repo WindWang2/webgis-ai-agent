@@ -339,7 +339,29 @@ export function MapActionHandler() {
 
               const fmt = (format ?? "png").toLowerCase();
 
-              if (fmt === "pdf") {
+              if (fmt === "svg") {
+                // Wrap the rendered PNG inside an SVG container.
+                // Downstream vector tools (Illustrator/Inkscape) can open this and
+                // layer additional vector annotations on top of the raster basemap.
+                const w = exportCanvas.width;
+                const h = exportCanvas.height;
+                const svg = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><title>${(title || "map").replace(/[<>&]/g, "")}</title><image width="${w}" height="${h}" xlink:href="${dataUrl}"/></svg>`;
+                const svgBlob = new Blob([svg], { type: "image/svg+xml" });
+                const svgForm = new FormData();
+                svgForm.append("file", svgBlob, "export.svg");
+                if (title) svgForm.append("title", title);
+                const svgRes = await fetch(`${API_BASE}/api/v1/export`, {
+                  method: "POST",
+                  body: svgForm,
+                });
+                if (!svgRes.ok) throw new Error("SVG export upload failed");
+                const svgData = await svgRes.json();
+                const svgUrl: string = svgData.url;
+                useHudStore.getState().setPendingSystemMessage(
+                  `[系统通知] 专题地图 SVG \`${title || "未命名"}\` 已成功生成 (含嵌入位图)，` +
+                    `文件已落盘并分配URL：${svgUrl}。可通过以下链接下载：[下载SVG](${API_BASE}${svgUrl})。注意展示完链接后直接结束。`
+                );
+              } else if (fmt === "pdf") {
                 const pdfForm = new FormData();
                 pdfForm.append("file", blob, "export.png");
                 if (title) pdfForm.append("title", title);

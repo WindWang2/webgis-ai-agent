@@ -43,7 +43,7 @@ async def upload_map_export(
         raise HTTPException(status_code=400, detail="未提供文件名")
 
     ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in [".png", ".jpg", ".jpeg"]:
+    if ext not in [".png", ".jpg", ".jpeg", ".svg"]:
         ext = ".png"
 
     filename = f"map_export_{int(time.time())}_{uuid.uuid4().hex[:6]}{ext}"
