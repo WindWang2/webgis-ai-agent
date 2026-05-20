@@ -258,6 +258,10 @@ export function MapActionHandler() {
 
           if (idx !== -1) {
             setSelectedBaseLayer(idx);
+            // QA-2026-05-20 ISSUE-002 fix: keep useHudStore.baseLayer in sync so
+            // the dropdown button label, HUD panel, and status bar all show the
+            // canonical name after an AI-driven switch_base_layer call.
+            useHudStore.getState().setBaseLayer(TILE_PROVIDERS[idx].name);
           } else {
             console.warn('[MapActionHandler] Could not match base layer name:', name);
           }

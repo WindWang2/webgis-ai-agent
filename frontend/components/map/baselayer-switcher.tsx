@@ -2,25 +2,28 @@
 
 import { useState } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useMapAction } from '@/lib/contexts/map-action-context';
+import { TILE_PROVIDERS } from '@/lib/providers';
 
 interface BaselayerSwitcherProps {
   className?: string;
 }
 
-const BASELAYERS = [
-  { id: 'osm', label: 'OpenStreetMap' },
-  { id: 'amap', label: '高德地图' },
-  { id: 'satellite', label: '卫星影像' },
-  { id: 'dark', label: '暗色底图' },
-  { id: 'tianditu', label: '天地图' },
-];
-
+/**
+ * Baselayer dropdown — single source of truth is TILE_PROVIDERS (lib/providers.ts).
+ * Each provider's canonical Chinese name (e.g. "Carto 深色") is what the AI's
+ * env summary uses too. Clicking an item dual-writes to BOTH state stores:
+ *   - useMapAction.setSelectedBaseLayer(index)  — drives actual MAP_STYLES[index]
+ *   - useHudStore.setBaseLayer(canonicalName)    — drives status bar / HUD panel label
+ * If either is skipped, dropdown click silently no-ops or labels drift out of sync.
+ */
 export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
   const [open, setOpen] = useState(false);
   const baseLayer = useHudStore((s) => s.baseLayer);
   const setBaseLayer = useHudStore((s) => s.setBaseLayer);
+  const { selectedBaseLayer, setSelectedBaseLayer } = useMapAction();
 
-  const currentLabel = BASELAYERS.find((l) => l.id === baseLayer)?.label || baseLayer;
+  const currentLabel = TILE_PROVIDERS[selectedBaseLayer]?.name || baseLayer || 'Carto 浅色';
 
   return (
     <div style={{ position: 'relative' }} className={className}>
@@ -67,43 +70,51 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
             boxShadow: '0 4px 24px rgba(15,23,42,0.09)',
             borderRadius: 10,
             overflow: 'hidden',
-            minWidth: 140,
+            minWidth: 160,
+            maxHeight: 340,
+            overflowY: 'auto',
           }}
         >
-          {BASELAYERS.map((layer) => (
-            <button
-              key={layer.id}
-              onClick={() => {
-                setBaseLayer(layer.id);
-                setOpen(false);
-              }}
-              style={{
-                display: 'block',
-                width: '100%',
-                padding: '7px 12px',
-                border: 'none',
-                background: layer.id === baseLayer ? 'rgba(22,163,74,0.07)' : 'transparent',
-                color: layer.id === baseLayer ? '#15803d' : '#475569',
-                fontSize: 11,
-                cursor: 'pointer',
-                textAlign: 'left',
-                fontFamily: "'DM Sans', system-ui, sans-serif",
-                fontWeight: layer.id === baseLayer ? 500 : 400,
-              }}
-              onMouseEnter={(e) => {
-                if (layer.id !== baseLayer) {
-                  e.currentTarget.style.background = 'rgba(15,23,42,0.04)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (layer.id !== baseLayer) {
-                  e.currentTarget.style.background = 'transparent';
-                }
-              }}
-            >
-              {layer.label}
-            </button>
-          ))}
+          {TILE_PROVIDERS.map((provider, idx) => {
+            const isActive = idx === selectedBaseLayer;
+            return (
+              <button
+                key={provider.name}
+                onClick={() => {
+                  // Dual-write: both stores must agree or we end up with the bug
+                  // QA-2026-05-20 ISSUE-001/002/003 fixed
+                  setSelectedBaseLayer(idx);
+                  setBaseLayer(provider.name);
+                  setOpen(false);
+                }}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  padding: '7px 12px',
+                  border: 'none',
+                  background: isActive ? 'rgba(22,163,74,0.07)' : 'transparent',
+                  color: isActive ? '#15803d' : '#475569',
+                  fontSize: 11,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  fontFamily: "'DM Sans', system-ui, sans-serif",
+                  fontWeight: isActive ? 500 : 400,
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.background = 'rgba(15,23,42,0.04)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.background = 'transparent';
+                  }
+                }}
+              >
+                {provider.name}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
