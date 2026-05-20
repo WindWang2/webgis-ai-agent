@@ -78,7 +78,10 @@ class TestSlimToolResult:
         # 摘要存在
         gs = out["geojson_summary"]
         assert gs["feature_count"] == 200
-        assert set(gs["available_properties"]) == {"name", "area"}
+        # Round 7: available_properties → typed_properties (字段 + 类型)
+        assert set(gs["typed_properties"].keys()) == {"name", "area"}
+        assert gs["typed_properties"]["area"] == "number"
+        assert gs["typed_properties"]["name"] == "string"
 
 
 class TestSlimEventResult:

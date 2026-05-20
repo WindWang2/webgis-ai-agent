@@ -46,6 +46,57 @@ class LRUCache(OrderedDict):
 
 
 MSG_MAX_CHARS = 3000  # 存入 messages 的工具结果最大字符数
+VALUE_MAX_CHARS = 120  # 单个属性值在 slim 后允许的最大字符数 (描述、长 URL 会被截断)
+SAMPLE_FEATURES = 3    # slim 出来的 sample_properties 留几条
+PROPERTY_KEYS_MAX = 20 # available_properties / typed_properties 最多列几个字段
+
+
+# 保留进 LLM payload 的元数据键（来自工具显式产出，体积小但语义重）
+_PRESERVED_META_KEYS = (
+    "bbox",
+    "layer_id",
+    "feature_count",
+    "alias",
+    "command",
+    "status",
+    "ref_id",
+    "resolved_layer_id",
+    "message",
+)
+
+
+def _infer_simple_type(v: Any) -> str:
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "bool"
+    if isinstance(v, (int, float)):
+        return "number"
+    if isinstance(v, (list, tuple)):
+        return "array"
+    if isinstance(v, dict):
+        return "object"
+    return "string"
+
+
+def _truncate_value(v: Any, limit: int = VALUE_MAX_CHARS) -> Any:
+    """长字符串值压成 'foo bar baz…(+N more)' 形式，其他类型原样返回。"""
+    if isinstance(v, str) and len(v) > limit:
+        return v[: limit - 1] + "…"
+    return v
+
+
+def _truncate_properties(props: dict, value_limit: int = VALUE_MAX_CHARS, max_keys: int = PROPERTY_KEYS_MAX) -> dict:
+    """逐字段截断属性值，并限制总字段数。保持 dict 形态便于 LLM 阅读。"""
+    if not isinstance(props, dict):
+        return props
+    out: dict = {}
+    for i, (k, v) in enumerate(props.items()):
+        if i >= max_keys:
+            out["__more_keys__"] = len(props) - max_keys
+            break
+        out[k] = _truncate_value(v, value_limit)
+    return out
 
 
 def normalize_tool_args(raw: Any) -> str:
@@ -101,12 +152,21 @@ def slim_tool_result(result: Any, result_str: str, session_geojson_ref: Optional
     """将大型工具结果压缩为 LLM 友好的摘要版本。
 
     完整 GeoJSON 已通过 SSE 推送给前端，messages 里只保留摘要。
+
+    Round 7 升级:
+    - summary 短路时也带上 bbox/layer_id/feature_count/alias 这类小而有用的元数据
+    - geojson_summary.typed_properties 给出 {field: type} 而非裸 key 列表
+    - sample_properties 单值 >120 字截断，且字段数限到 PROPERTY_KEYS_MAX
     """
     # 新版 GeoAnalysisResult：summary 优先
     if isinstance(result, dict) and "summary" in result:
         slim = {"summary": result["summary"]}
         if session_geojson_ref:
             slim["ref_id"] = session_geojson_ref
+        for k in _PRESERVED_META_KEYS:
+            v = result.get(k)
+            if v is not None and k not in slim:
+                slim[k] = v
         if "error_type" in result and result["error_type"]:
             slim["error_type"] = result["error_type"]
         if "correction_hint" in result and result["correction_hint"]:
@@ -123,21 +183,39 @@ def slim_tool_result(result: Any, result_str: str, session_geojson_ref: Optional
         if is_direct_fc:
             geojson = result
 
-        # 2. 保留重要元数据
+        # 2. 保留重要元数据（剔除大字段，但 _PRESERVED_META_KEYS 在 dict 自然就在里面）
         slim = {k: v for k, v in result.items() if k not in ("geojson", "image", "features")}
 
         # 3. 地理要素摘要
         if isinstance(geojson, dict) and "features" in geojson:
             features = geojson["features"]
             feature_count = len(features)
-            property_keys: set[str] = set()
-            for f in features[:10]:
-                if isinstance(f, dict):
-                    property_keys.update(f.get("properties", {}).keys())
-            sample = []
-            for f in features[:3]:
-                if isinstance(f, dict):
-                    sample.append({"properties": f.get("properties", {})})
+            # 抽样推断字段类型（先采集，再合并）
+            field_types: dict[str, set[str]] = {}
+            sample: list[dict] = []
+            for idx, f in enumerate(features[:max(SAMPLE_FEATURES, 10)]):
+                if not isinstance(f, dict):
+                    continue
+                props = f.get("properties") or {}
+                if isinstance(props, dict):
+                    for k, v in props.items():
+                        field_types.setdefault(str(k), set()).add(_infer_simple_type(v))
+                if idx < SAMPLE_FEATURES:
+                    sample.append({"properties": _truncate_properties(props)})
+
+            # 类型合并：discard null 后取多元，>1 算 mixed
+            typed_properties: dict[str, str] = {}
+            for i, (k, types) in enumerate(field_types.items()):
+                if i >= PROPERTY_KEYS_MAX:
+                    break
+                types.discard("null")
+                if not types:
+                    typed_properties[k] = "null"
+                elif len(types) == 1:
+                    typed_properties[k] = next(iter(types))
+                else:
+                    typed_properties[k] = "mixed"
+
             ref_hint = (
                 f"如需进一步空间分析，请调用工具并将 geojson 参数设为 \"{session_geojson_ref}\"。"
                 if session_geojson_ref
@@ -145,7 +223,7 @@ def slim_tool_result(result: Any, result_str: str, session_geojson_ref: Optional
             )
             slim["geojson_summary"] = {
                 "feature_count": feature_count,
-                "available_properties": list(property_keys),
+                "typed_properties": typed_properties,
                 "sample_properties": sample,
                 "note": f"数据已推送至前端（共 {feature_count} 个要素）。{ref_hint}",
             }
