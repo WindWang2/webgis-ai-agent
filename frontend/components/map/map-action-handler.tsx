@@ -231,6 +231,60 @@ export function MapActionHandler() {
           break;
         }
 
+        case 'REORDER_LAYER': {
+          const { layer_id, position, before_id } = action.params || {};
+          if (!layer_id || !position) break;
+          const style = map.getStyle();
+          const allLayers = style.layers || [];
+          const subIds = allLayers
+            .map((l: any) => l.id as string)
+            .filter((id) => id.startsWith(`custom-${layer_id}`));
+          if (subIds.length === 0) break;
+
+          // Snapshot custom layer IDs only (we ignore base style layers)
+          const customIds = allLayers
+            .map((l: any) => l.id as string)
+            .filter((id) => id.startsWith('custom-'));
+
+          const firstSubIdx = customIds.indexOf(subIds[0]);
+          let beforeAnchor: string | undefined;
+
+          if (position === 'top') {
+            beforeAnchor = undefined; // moveLayer with no anchor -> top
+          } else if (position === 'bottom') {
+            const bottomCandidate = customIds.find((id) => !subIds.includes(id));
+            beforeAnchor = bottomCandidate;
+          } else if (position === 'up') {
+            // Find next custom group above
+            for (let i = firstSubIdx - 1; i >= 0; i--) {
+              if (!subIds.includes(customIds[i])) {
+                // Place subIds before the layer that sits above customIds[i]
+                beforeAnchor = customIds[i];
+                break;
+              }
+            }
+          } else if (position === 'down') {
+            for (let i = firstSubIdx + subIds.length; i < customIds.length; i++) {
+              if (!subIds.includes(customIds[i])) {
+                beforeAnchor = customIds[i + 1];
+                break;
+              }
+            }
+          } else if (position === 'before' && before_id) {
+            const targetGroup = customIds.find((id) => id.startsWith(`custom-${before_id}`));
+            beforeAnchor = targetGroup;
+          }
+
+          try {
+            for (const id of subIds) {
+              map.moveLayer(id, beforeAnchor);
+            }
+          } catch (e) {
+            console.warn('[MapActionHandler] REORDER_LAYER failed:', e);
+          }
+          break;
+        }
+
         case 'export_map': {
           const {
             title,

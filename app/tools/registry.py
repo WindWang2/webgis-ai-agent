@@ -135,7 +135,7 @@ class ToolRegistry:
             arguments = self._resolve_references(
                 session_id,
                 arguments,
-                skip_keys={"ref_id", "layer_ref", "layer_id", "plan_id"},
+                skip_keys={"ref_id", "layer_ref", "layer_id", "plan_id", "before_ref"},
             )
 
         # Pydantic 语义校验

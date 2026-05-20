@@ -12,6 +12,19 @@ class AliasLayerArgs(BaseModel):
     ref_id: str = Field(..., description="数据的引用 ID，例如 'ref:data-xxxx'")
     alias: str = Field(..., description="想要赋予的易读名称或别名，例如 '核心保护区'")
 
+
+class ReorderLayerArgs(BaseModel):
+    layer_ref: str = Field(..., description="图层引用 (ref:xxx) / 别名 / 名称")
+    position: str = Field(
+        "top",
+        description="目标层级：top(置顶) / bottom(置底) / up(上移一层) / down(下移一层) / before(置于 before_ref 之下)",
+    )
+    before_ref: Optional[str] = Field(None, description="仅当 position=before 时使用：要插入到哪个图层之下")
+
+
+class RemoveLayerArgs(BaseModel):
+    layer_ref: str = Field(..., description="图层引用 (ref:xxx) / 别名 / 名称")
+
 def register_layer_management_tools(registry: ToolRegistry):
     """注册会话图层管理工具"""
 
@@ -178,6 +191,74 @@ def register_layer_management_tools(registry: ToolRegistry):
                 }
             },
             "message": f"已向地图发送指令：更新图层 {layer_ref} (目标 ID: {id_to_use}) 的外观样式。"
+        }
+
+    @tool(registry, name="reorder_layer",
+           description=(
+               "调整图层在地图上的 Z 顺序 (上下叠放层级)。"
+               "\n何时用：用户说『把分析结果放到最上面』『底图盖住了热力图』『让这个图层置顶』。"
+               "\n何时不用：仅想改可见性 — 用 set_layer_status；仅想改颜色 — 用 update_layer_appearance。"
+               "\n关键约束：position 支持 top/bottom/up/down/before；before 时必须提供 before_ref。"
+           ),
+           args_model=ReorderLayerArgs)
+    def reorder_layer(layer_ref: str, position: str = "top", before_ref: Optional[str] = None, session_id: Optional[str] = None) -> dict:
+        if not session_id:
+            return {"error": "Missing session_id context"}
+
+        pos = (position or "top").lower().strip()
+        if pos not in {"top", "bottom", "up", "down", "before"}:
+            return {"error": f"Invalid position '{position}', must be one of: top/bottom/up/down/before"}
+        if pos == "before" and not before_ref:
+            return {"error": "position=before 时必须提供 before_ref"}
+
+        ref_id = session_data_manager._aliases.get(session_id, {}).get(layer_ref, layer_ref)
+        before_id = None
+        if before_ref:
+            before_id = session_data_manager._aliases.get(session_id, {}).get(before_ref, before_ref)
+
+        return {
+            "success": True,
+            "command": "REORDER_LAYER",
+            "params": {
+                "layer_id": ref_id,
+                "position": pos,
+                "before_id": before_id,
+            },
+            "message": f"已向地图发送指令：调整图层 {layer_ref} 的 Z 顺序 -> {pos}",
+        }
+
+    @tool(registry, name="remove_layer",
+           description=(
+               "从地图上移除指定图层 (同时释放其 source)。"
+               "\n何时用：用户说『把 XX 删掉』『关掉这个图层』『清掉分析结果』，且确实不再需要该数据。"
+               "\n何时不用：只是临时隐藏 — 用 set_layer_status visible=false；想换样式 — 用 update_layer_appearance。"
+               "\n关键约束：删除是不可逆操作；ref_id 来自 session 数据存储，删除画布上的图层不会清掉 session 数据本身。"
+           ),
+           args_model=RemoveLayerArgs)
+    def remove_layer(layer_ref: str, session_id: Optional[str] = None) -> dict:
+        if not session_id:
+            return {"error": "Missing session_id context"}
+
+        ref_id = session_data_manager._aliases.get(session_id, {}).get(layer_ref, layer_ref)
+        map_state = session_data_manager.get_map_state(session_id)
+        layers = map_state.get("layers", [])
+        found_id = None
+        for l in layers:
+            if l.get("id") == ref_id or l.get("id") == layer_ref:
+                found_id = l.get("id")
+                break
+        if not found_id:
+            for l in layers:
+                if l.get("name") == layer_ref or (layer_ref and layer_ref in (l.get("name") or "")):
+                    found_id = l.get("id")
+                    break
+
+        target = found_id or ref_id
+        return {
+            "success": True,
+            "command": "REMOVE_LAYER",
+            "params": {"layer_id": target},
+            "message": f"已向地图发送指令：移除图层 {layer_ref} (目标 ID: {target})",
         }
 
     @tool(registry, name="apply_layer_filter",
