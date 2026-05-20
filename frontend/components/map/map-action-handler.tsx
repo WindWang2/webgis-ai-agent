@@ -14,6 +14,79 @@ import * as navigation from '@/lib/map-kit/navigation';
 import * as renderer from '@/lib/map-kit/renderer';
 import * as exporter from '@/lib/map-kit/exporter';
 
+// R8 annotation source: 单一 FeatureCollection 收纳 add_marker / draw_measurement 输出。
+// 模块级状态：跨 useEffect 重运行保持累计，clear_annotations 一次清空。
+const ANNOTATION_SOURCE_ID = 'claude-annotations';
+const annotationFeatures: any[] = [];
+
+function annotationFC() {
+  return { type: 'FeatureCollection', features: annotationFeatures.slice() };
+}
+
+function ensureAnnotationLayers(map: any) {
+  if (!map.getSource(ANNOTATION_SOURCE_ID)) {
+    map.addSource(ANNOTATION_SOURCE_ID, { type: 'geojson', data: annotationFC() });
+  }
+  if (!map.getLayer(`${ANNOTATION_SOURCE_ID}-fill`)) {
+    map.addLayer({
+      id: `${ANNOTATION_SOURCE_ID}-fill`,
+      source: ANNOTATION_SOURCE_ID,
+      type: 'fill',
+      filter: ['==', ['geometry-type'], 'Polygon'],
+      paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.25 },
+    });
+  }
+  if (!map.getLayer(`${ANNOTATION_SOURCE_ID}-line`)) {
+    map.addLayer({
+      id: `${ANNOTATION_SOURCE_ID}-line`,
+      source: ANNOTATION_SOURCE_ID,
+      type: 'line',
+      filter: ['any', ['==', ['geometry-type'], 'LineString'], ['==', ['geometry-type'], 'Polygon']],
+      paint: { 'line-color': '#2563eb', 'line-width': 2 },
+    });
+  }
+  if (!map.getLayer(`${ANNOTATION_SOURCE_ID}-circle`)) {
+    map.addLayer({
+      id: `${ANNOTATION_SOURCE_ID}-circle`,
+      source: ANNOTATION_SOURCE_ID,
+      type: 'circle',
+      filter: ['==', ['geometry-type'], 'Point'],
+      paint: {
+        'circle-radius': 7,
+        'circle-color': ['coalesce', ['get', 'color'], '#ef4444'],
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 2,
+      },
+    });
+  }
+  if (!map.getLayer(`${ANNOTATION_SOURCE_ID}-label`)) {
+    map.addLayer({
+      id: `${ANNOTATION_SOURCE_ID}-label`,
+      source: ANNOTATION_SOURCE_ID,
+      type: 'symbol',
+      layout: {
+        'text-field': ['get', 'label'],
+        'text-size': 12,
+        'text-anchor': 'top',
+        'text-offset': [0, 0.8],
+        'text-allow-overlap': false,
+      },
+      paint: {
+        'text-color': '#0f172a',
+        'text-halo-color': '#ffffff',
+        'text-halo-width': 1.5,
+      },
+    });
+  }
+}
+
+function refreshAnnotations(map: any) {
+  const src = map.getSource(ANNOTATION_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+  if (src && typeof (src as any).setData === 'function') {
+    src.setData(annotationFC() as any);
+  }
+}
+
 /**
  * Helper to parse filters that might come in as JSON strings from AI commands
  */
@@ -447,6 +520,72 @@ export function MapActionHandler() {
           });
 
           navigation.fitBounds(map, bbox, 80);
+          break;
+        }
+
+        case 'add_marker': {
+          const { longitude, latitude, label, color } = action.params || {};
+          if (typeof longitude !== 'number' || typeof latitude !== 'number') break;
+          ensureAnnotationLayers(map);
+          annotationFeatures.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [longitude, latitude] },
+            properties: { label: label || null, color: color || '#ef4444', kind: 'marker' },
+          });
+          refreshAnnotations(map);
+          break;
+        }
+
+        case 'draw_measurement': {
+          const { shape, coordinates, label } = action.params || {};
+          if (!Array.isArray(coordinates) || coordinates.length < 2) break;
+          ensureAnnotationLayers(map);
+          if (shape === 'polygon') {
+            const ring = coordinates.slice();
+            // 闭合环
+            if (ring.length > 0) {
+              const first = ring[0];
+              const last = ring[ring.length - 1];
+              if (first[0] !== last[0] || first[1] !== last[1]) ring.push([first[0], first[1]]);
+            }
+            annotationFeatures.push({
+              type: 'Feature',
+              geometry: { type: 'Polygon', coordinates: [ring] },
+              properties: { label: label || null, kind: 'measure_polygon' },
+            });
+            // 也撒一个 label 点在质心，便于地图上看到数值
+            const cx = ring.reduce((s, p) => s + p[0], 0) / ring.length;
+            const cy = ring.reduce((s, p) => s + p[1], 0) / ring.length;
+            if (label) {
+              annotationFeatures.push({
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [cx, cy] },
+                properties: { label, color: 'transparent', kind: 'measure_label' },
+              });
+            }
+          } else {
+            // 默认 polyline
+            annotationFeatures.push({
+              type: 'Feature',
+              geometry: { type: 'LineString', coordinates: coordinates.slice() },
+              properties: { label: label || null, kind: 'measure_line' },
+            });
+            if (label) {
+              const end = coordinates[coordinates.length - 1];
+              annotationFeatures.push({
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: end.slice() },
+                properties: { label, color: 'transparent', kind: 'measure_label' },
+              });
+            }
+          }
+          refreshAnnotations(map);
+          break;
+        }
+
+        case 'clear_annotations': {
+          annotationFeatures.length = 0;
+          refreshAnnotations(map);
           break;
         }
 
