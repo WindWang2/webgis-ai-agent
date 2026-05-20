@@ -514,6 +514,111 @@ def build_plan_block(plan) -> str:
     return "\n".join(lines)
 
 
+# 单次请求里给"历史对话"留的 token 预算（粗估）。
+# 不含 system prompt / 环境感知 / plan / 工具 schema / 当前 user 消息。
+# 模型自身的 context 极限通常 32k-128k，留 ~6k 给历史，剩下给其他部分。
+# 真要调，把它移到 settings 即可。
+HISTORY_TOKEN_BUDGET = 6000
+HISTORY_MIN_TURNS = 2  # 至少保留最近 N 轮 user/assistant，绝不为节省 token 砍掉刚刚的对话
+
+
+def _estimate_tokens(content: object) -> int:
+    """超粗 token 估算：CJK 1 char ≈ 1.5 tokens，ASCII 4 char ≈ 1 token。
+
+    精度只要不长期偏离 30% 就行——这里宁可高估也别低估，防止侥幸压线还是爆 context。
+    """
+    if content is None:
+        return 0
+    if isinstance(content, (list, dict)):
+        import json as _json
+        content = _json.dumps(content, ensure_ascii=False)
+    if not isinstance(content, str):
+        content = str(content)
+    if not content:
+        return 0
+    cjk = sum(1 for c in content if "一" <= c <= "鿿")
+    other = len(content) - cjk
+    return int(cjk * 1.5 + other / 4) + 1
+
+
+def _message_tokens(msg: dict) -> int:
+    """估算单条消息总开销（content + tool_calls + tool_call_id 元数据）。"""
+    total = _estimate_tokens(msg.get("content"))
+    tool_calls = msg.get("tool_calls")
+    if tool_calls:
+        total += _estimate_tokens(tool_calls)
+    # 角色+少量结构开销
+    return total + 4
+
+
+def _group_into_turns(messages: list[dict]) -> list[list[dict]]:
+    """把消息序列按 user 开头切成"轮次"。
+
+    一轮 = 一个 user 消息 + 后面紧跟的所有 assistant/tool 消息，直到下一个 user。
+    历史里没 user 开头的散落片段也作为独立轮（向后兼容）。
+    """
+    turns: list[list[dict]] = []
+    current: list[dict] = []
+    for msg in messages:
+        role = msg.get("role")
+        if role == "user" and current:
+            turns.append(current)
+            current = [msg]
+        else:
+            current.append(msg)
+    if current:
+        turns.append(current)
+    return turns
+
+
+def truncate_history_by_budget(
+    history: list[dict],
+    budget: int = HISTORY_TOKEN_BUDGET,
+    min_turns: int = HISTORY_MIN_TURNS,
+) -> tuple[list[dict], int]:
+    """按 token 预算截断历史，返回 (保留下来的消息序列, 被丢弃的轮次数)。
+
+    规则：
+    - 把消息切成"轮次"（user 开头的连续段）
+    - 从最新轮反向纳入，累计 token 不超预算
+    - 永远至少保留最近 min_turns 轮，即使总和已超预算（最近的对话是最重要的）
+    """
+    if not history:
+        return history, 0
+
+    turns = _group_into_turns(history)
+    if len(turns) <= min_turns:
+        return history, 0
+
+    kept_rev: list[list[dict]] = []
+    used = 0
+    for turn in reversed(turns):
+        turn_cost = sum(_message_tokens(m) for m in turn)
+        # 至少保留 min_turns，即使超预算也得收下
+        if len(kept_rev) < min_turns:
+            kept_rev.append(turn)
+            used += turn_cost
+            continue
+        if used + turn_cost > budget:
+            break
+        kept_rev.append(turn)
+        used += turn_cost
+
+    kept = list(reversed(kept_rev))
+    dropped = len(turns) - len(kept)
+    if dropped <= 0:
+        return history, 0
+    flat = [m for turn in kept for m in turn]
+    return flat, dropped
+
+
+def _build_truncation_notice(dropped_turns: int) -> str:
+    return (
+        f"[历史折叠] 已省略最早 {dropped_turns} 轮对话以控制上下文长度。"
+        f"完整历史仍保存在数据库中（如需引用旧分析结果，可通过 ref:xxx 直接调用）。"
+    )
+
+
 def compose_request_messages(session_id: str, messages: list[dict]) -> list[dict]:
     """组装一次 LLM 请求的消息列表：SYSTEM_PROMPT + 实时感知 + (可选)对话上下文摘要 + 历史。
 
@@ -543,5 +648,11 @@ def compose_request_messages(session_id: str, messages: list[dict]) -> list[dict
     last_ctx = build_last_analysis_context(messages)
     if last_ctx:
         head.append({"role": "system", "content": last_ctx})
-    head.extend(messages[1:])
+
+    # Round 5: 历史压缩 — 超预算时丢弃最早的轮次并注入折叠说明
+    history, dropped = truncate_history_by_budget(messages[1:])
+    if dropped > 0:
+        head.append({"role": "system", "content": _build_truncation_notice(dropped)})
+        logger.info(f"[HISTORY-TRUNC] session={session_id} dropped {dropped} turns")
+    head.extend(history)
     return head
