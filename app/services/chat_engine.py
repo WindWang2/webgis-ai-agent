@@ -610,6 +610,15 @@ class ChatEngine:
                         tool_args_dict, outcome, len(tools or []),
                         step_n=step_n_matched,
                     )
+                    try:
+                        if step_n_matched is not None:
+                            yield sse_event("plan_step_done", {
+                                "session_id": session_id,
+                                "task_id": task.id,
+                                "step_n": step_n_matched,
+                            })
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(f"[chat_engine] plan_step_done 发送失败: {e}")
 
                     msg_result_str = outcome["llm_payload"]
 

@@ -150,3 +150,57 @@ async def test_chat_stream_emits_plan_ready_when_plan_created(engine, monkeypatc
     assert len(data["steps"]) == 2
     assert data["steps"][0] == {"n": 1, "goal": "获取边界", "tool_family": "chinese", "done": False}
     planner_mod.clear_plan("sess-EV1")
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_emits_plan_step_done_after_tool(engine, monkeypatch):
+    """工具执行命中计划步骤后必须发 plan_step_done。"""
+    # 预置一个 Plan，标 buffer_analysis 工具 domain 是 core，匹配 step 1
+    test_plan = planner_mod.Plan(
+        intent="x", domains=["core"],
+        steps=[planner_mod.PlanStep(n=1, goal="缓冲", tool_family="core")],
+    )
+    planner_mod.set_plan("sess-EV2", test_plan)
+    # 让 _maybe_plan 不再二次规划
+    async def fake_maybe_plan(self, *a, **k): return None
+    monkeypatch.setattr(engine, "_maybe_plan",
+                        fake_maybe_plan.__get__(engine, type(engine)))
+    # 让 registry.metadata 返回 domains=["core"]，使 mark_step_done 能匹配
+    monkeypatch.setattr(engine.registry, "metadata",
+                        lambda name: {"domains": ["core"]})
+
+    # 让主 LLM 第一轮返回一个 tool_call，第二轮立刻 done
+    call_count = {"n": 0}
+    async def fake_llm_stream(*a, **k):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            yield ("done", {"message": {
+                "role": "assistant", "content": None,
+                "tool_calls": [{"id": "tc1", "type": "function",
+                                "function": {"name": "buffer_analysis",
+                                             "arguments": "{}"}}],
+            }, "finish_reason": "tool_calls"})
+        else:
+            yield ("done", {"message": {"role": "assistant", "content": "done"},
+                            "finish_reason": "stop"})
+    monkeypatch.setattr(engine, "_call_llm_stream", fake_llm_stream)
+    # 让 dispatch 不实际跑工具
+    async def fake_dispatch(self, *a, **k):
+        return {"is_error": False, "repeated": False,
+                "result": {"ok": True}, "llm_payload": "{}",
+                "slim_event": {"ok": True}, "geojson_ref": None, "has_geojson": False}
+    monkeypatch.setattr(engine, "_dispatch_tool",
+                        fake_dispatch.__get__(engine, type(engine)))
+
+    captured = []
+    async for ev in engine.chat_stream("缓冲分析", session_id="sess-EV2"):
+        captured.append(ev)
+
+    joined = "".join(captured)
+    assert "event: plan_step_done" in joined
+    import json
+    chunks = [c for c in captured if c.startswith("event: plan_step_done")]
+    assert len(chunks) == 1
+    data = json.loads([l for l in chunks[0].splitlines() if l.startswith("data:")][0][len("data:"):])
+    assert data["step_n"] == 1
+    planner_mod.clear_plan("sess-EV2")
