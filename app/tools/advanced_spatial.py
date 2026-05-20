@@ -301,7 +301,39 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         from app.lib.geo_analysis.aggregation import h3_binning as _h3_binning
         data = safe_parse_geojson(geojson)
         res = _h3_binning(data, resolution, stat_field, stat_method)
-        return res.to_llm_response()
+        payload = res.to_llm_response()
+
+        try:
+            out_geojson = payload.get("data") if isinstance(payload, dict) else None
+            # Determine the actual stat field name written into feature properties
+            if stat_field and stat_method in ("sum", "mean"):
+                stat_field_name = stat_method
+            else:
+                stat_field_name = "count"
+            if isinstance(out_geojson, dict):
+                values = [
+                    float(f.get("properties", {}).get(stat_field_name))
+                    for f in out_geojson.get("features", [])
+                    if isinstance(f.get("properties", {}).get(stat_field_name), (int, float))
+                ]
+                if len(values) >= 2:
+                    from app.services.cartography_service import CartographyService, COLOR_PALETTES
+                    breaks = CartographyService.classify(values, "quantiles", 5)
+                    palette = "YlOrRd"
+                    palette_colors = list(COLOR_PALETTES.get(palette, []))[:5]
+                    if isinstance(payload, dict):
+                        payload["legend_spec"] = {
+                            "type": "graduated",
+                            "field": stat_field_name,
+                            "breaks": breaks,
+                            "palette": palette,
+                            "palette_colors": palette_colors,
+                        }
+        except Exception as e:  # noqa: BLE001 — legend failure never blocks tool result
+            import logging
+            logging.getLogger(__name__).warning(f"[h3_binning] legend_spec construction failed: {e}")
+
+        return payload
 
     @tool(registry, name="dissolve_layer",
            description=(

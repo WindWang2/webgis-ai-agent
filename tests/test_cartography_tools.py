@@ -87,3 +87,34 @@ async def test_heatmap_raster_emits_continuous_legend_spec(spatial_registry):
         assert out["legend_spec"]["type"] == "continuous"
         assert len(out["legend_spec"]["palette_colors"]) >= 3
     # if no legend_spec (e.g. matplotlib not installed), just verify no crash
+
+
+from app.tools.advanced_spatial import register_advanced_spatial_tools
+
+
+@pytest.fixture
+def advanced_registry():
+    r = ToolRegistry()
+    register_advanced_spatial_tools(r)
+    return r
+
+
+@pytest.mark.asyncio
+async def test_h3_binning_emits_graduated_legend_spec(advanced_registry):
+    pts = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature",
+             "geometry": {"type": "Point", "coordinates": [104.0 + i*0.01, 30.0 + i*0.01]},
+             "properties": {}}
+            for i in range(40)
+        ],
+    }
+    out = await advanced_registry.dispatch("h3_binning", {
+        "geojson": pts, "resolution": 7, "stat_method": "count",
+    })
+    spec = out.get("legend_spec")
+    assert spec is not None
+    assert spec["type"] == "graduated"
+    assert len(spec["breaks"]) >= 2
+    assert len(spec["palette_colors"]) >= 2
