@@ -8,6 +8,7 @@ import MiniMd from '@/components/chat/mini-md';
 import { ToolCallChain } from '@/components/chat/tool-call-card';
 import { CollapsibleThink } from '@/components/chat/collapsible-think';
 import { PlanProposalCard } from '@/components/chat/plan-proposal-card';
+import { PlanCard } from '@/components/chat/plan-card';
 
 /* ─── Thinking dots animation ─── */
 const DOT_ANIMS = ['animate-dot-1', 'animate-dot-2', 'animate-dot-3'];
@@ -226,11 +227,14 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
                       padding: '8px 12px'
                     }}>
                       {msg.think && (
-                        <CollapsibleThink 
-                          content={msg.think} 
-                          isDark={isDark} 
-                          accentColor={accentColor} 
+                        <CollapsibleThink
+                          content={msg.think}
+                          isDark={isDark}
+                          accentColor={accentColor}
                         />
+                      )}
+                      {(msg as any).agentPlan && (
+                        <PlanCard plan={(msg as any).agentPlan} />
                       )}
                       {msg.content && <MiniMd text={msg.content} />}
                       {msg.toolCalls && msg.toolCalls.length > 0 && (
