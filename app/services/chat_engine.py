@@ -381,10 +381,13 @@ class ChatEngine:
         return await call_llm(self._llm_config(), messages, tools)
 
     def _call_llm_stream(self, messages: list[dict], tools: Optional[list] = None):
-        """委托给 chat/llm_client.call_llm_stream — 返回 async generator。"""
-        return call_llm_stream(self._llm_config(), messages, tools)
+        """委托给 chat/llm_client.call_llm_stream — 返回 async generator。
 
-        yield ("done", {"message": assembled_message, "finish_reason": finish_reason})
+        历史上这里曾经有一行死掉的 `yield (...)` 跟在 return 后面。即便不可达，
+        Python 解析时也会把整个函数标记为 sync generator —— 结果 `async for` 时
+        会拿到 sync generator 抛 "requires __aiter__, got generator"。删掉就好。
+        """
+        return call_llm_stream(self._llm_config(), messages, tools)
 
     async def chat(self, message: str, session_id: Optional[str] = None, map_state: Optional[dict] = None, skill_name: Optional[str] = None, user_id: Optional[str] = None) -> dict:
         """非流式对话"""

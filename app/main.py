@@ -25,7 +25,16 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期：启动时初始化工具注册中心。"""
+    """应用生命周期：启动时初始化工具注册中心 + DB schema 守卫迁移。"""
+    # 守卫式 SQLite 迁移（_apply_runtime_migrations 内部已做 SQLite 检测）；
+    # 没这一行新增/重命名字段就只能靠手动 ALTER，跑久了必出 "no such column"。
+    try:
+        from app.core.database import init_db
+        init_db()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"[lifespan] init_db skipped: {e}")
+
     registry = ToolRegistry()
     init_tools(registry)
     chat.registry = registry
