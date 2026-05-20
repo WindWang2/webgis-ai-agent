@@ -78,7 +78,12 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="kde_surface",
-           description="高斯核密度估计，生成连续密度面。适用于深度密度建模和选址分析基础。注意：该工具生成的是覆盖分析范围的完整矢量格网，如果不进行阈值过滤，在大范围内会遮挡底图，单纯查看'分布热度'建议优先使用 heatmap_data。",
+           description=(
+               "高斯核密度估计：生成覆盖全域的连续概率密度格网。"
+               "✅ 用于：作为后续叠加分析 / 选址建模的输入数据层。"
+               "\n❌ 不要用于：首选可视化——该格网铺满分析范围、不做阈值过滤会遮挡底图；"
+               "看分布趋势用 heatmap_data，要矢量等值面用 kde_contours。"
+           ),
            tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
@@ -201,7 +206,11 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="kde_contours",
-           description="高斯核密度估计（等值面模式）：生成精美的点密度等值线/面。相比网格模式更平滑且易于叠加分析。",
+           description=(
+               "高斯核密度估计（等值面模式）：生成矢量等值线/面。"
+               "✅ 用于：制图与导出——平滑的等值面成果，便于叠加展示。"
+               "\n❌ 不要用于：快速看分布趋势 — 用 heatmap_data。"
+           ),
            tier=2, domains=["statistics"],
            param_descriptions={
                "geojson": "点要素集 GeoJSON 或引用(ref:xxx)",
@@ -240,28 +249,55 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         plt.close(fig)
 
         out_features = []
-        for i, collection in enumerate(cs.collections):
-            val = cs.levels[i]
-            for path in collection.get_paths():
-                for poly_coords in path.to_polygons():
-                    if len(poly_coords) < 3: continue
-                    from shapely.geometry import Polygon
-                    poly = Polygon(poly_coords)
-                    if not poly.is_valid: poly = poly.buffer(0)
-                    
-                    poly_wgs84 = gpd.GeoSeries([poly], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
-                    out_features.append({
-                        "type": "Feature",
-                        "geometry": mapping(poly_wgs84),
-                        "properties": {"level": i, "density_value": float(val)}
-                    })
+        from shapely.geometry import Polygon
+        for i, segs in enumerate(cs.allsegs):
+            val = float(cs.levels[i])
+            for poly_coords in segs:
+                if len(poly_coords) < 3:
+                    continue
+                poly = Polygon(poly_coords)
+                if not poly.is_valid:
+                    poly = poly.buffer(0)
 
-        return {
+                poly_wgs84 = gpd.GeoSeries([poly], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
+                out_features.append({
+                    "type": "Feature",
+                    "geometry": mapping(poly_wgs84),
+                    "properties": {"level": i, "density_value": val}
+                })
+
+        # compute continuous legend_spec from contour level values
+        legend_spec = None
+        if out_features:
+            level_vals = [
+                float(f.get("properties", {}).get("density_value", 0.0))
+                for f in out_features
+            ]
+            level_vals = [v for v in level_vals if v is not None]
+            if level_vals:
+                try:
+                    from app.services.cartography_service import COLOR_PALETTES
+                    palette = "Viridis"
+                    palette_colors = list(COLOR_PALETTES.get(palette, []))
+                    legend_spec = {
+                        "type": "continuous",
+                        "min": min(level_vals),
+                        "max": max(level_vals),
+                        "palette": palette,
+                        "palette_colors": palette_colors[:5] if palette_colors else ["#440154", "#21908c", "#fde725"],
+                    }
+                except Exception:  # noqa: BLE001
+                    legend_spec = None
+
+        result_dict = {
             "type": "FeatureCollection",
             "features": out_features,
             "count": len(out_features),
             "levels_count": len(cs.levels)
         }
+        if legend_spec is not None:
+            result_dict["legend_spec"] = legend_spec
+        return result_dict
 
     @tool(registry, name="voronoi_polygons",
            description="生成 Voronoi (泰森多边形/Thiessen多边形)，将空间按最近邻原则划分为势力范围",

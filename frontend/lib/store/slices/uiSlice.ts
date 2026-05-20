@@ -92,6 +92,12 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   demoMode: false,
   setDemoMode: (enabled) => set({ demoMode: enabled }),
 
+  /* ─── Cartography Live Context ─── */
+  cartographyTitle: null,
+  setCartographyTitle: (title) => set({ cartographyTitle: title }),
+  focusLayerId: null,
+  focusLayer: (layerId) => set({ focusLayerId: layerId }),
+
   /* ─── Export Layout ─── */
   exportSettings: {
     isExportMode: false,

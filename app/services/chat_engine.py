@@ -96,7 +96,13 @@ class ChatEngine:
                             seg.get("text", "") for seg in content if isinstance(seg, dict)
                         )
                     break
-            schemas = self.catalog.select_schemas(user_text, session_id=session_id)
+            # 计划声明的 domain 驱动工具子集选择（与关键词检测取并集）
+            from app.services.chat import planner
+            plan = planner.get_plan(session_id) if session_id else None
+            declared = set(plan.domains) if plan and plan.domains else None
+            schemas = self.catalog.select_schemas(
+                user_text, session_id=session_id, declared_domains=declared,
+            )
             return schemas or None
         all_schemas = self.registry.get_schemas()
         return all_schemas or None
@@ -293,6 +299,76 @@ class ChatEngine:
             use_prompt_caching=self.use_prompt_caching,
         )
 
+    def _planner_llm_config(self) -> LLMConfig:
+        """规划阶段的 LLM 配置：LLM_PLANNER_MODEL 非空时覆盖 model。"""
+        cfg = self._llm_config()
+        if settings.LLM_PLANNER_MODEL:
+            return LLMConfig(
+                base_url=cfg.base_url,
+                model=settings.LLM_PLANNER_MODEL,
+                api_key=cfg.api_key,
+                use_prompt_caching=cfg.use_prompt_caching,
+            )
+        return cfg
+
+    async def _maybe_plan(self, session_id: str, message: str, messages: list[dict]) -> None:
+        """启发式门控通过则跑规划阶段。规划是增强，失败静默降级。"""
+        from app.services.chat import planner
+        has_plan = planner.get_plan(session_id) is not None
+        if not planner.should_plan(message, messages, has_plan):
+            return
+        env = self._get_map_state_summary(session_id)
+        try:
+            await planner.make_plan(self._planner_llm_config(), session_id, message, env)
+        except Exception as e:  # noqa: BLE001 — 规划绝不能拖垮对话
+            logger.warning(f"[chat_engine] 规划阶段异常，降级无计划: {e}")
+
+    def _log_tool_decision(
+        self,
+        session_id: str,
+        round_index: int,
+        message: str,
+        tool_name: str,
+        tool_args: dict,
+        outcome: dict,
+        subset_size: int,
+    ) -> None:
+        """落一条工具决策记录。可观测性，绝不影响主流程。
+
+        subset_size 由调用方传入本轮已算好的工具子集大小——不在此处重算，
+        因为 select_schemas 会衰减 ToolCatalog 的 sticky TTL，重复调用会
+        让 sticky domain 过早失效。
+        """
+        from app.services.chat import planner
+        from app.services.chat.decision_log import ToolDecisionRecord, log_tool_decision
+        from app.services.chat.dispatcher import is_suspicious_result
+
+        if outcome.get("is_error"):
+            quality = "error"
+        elif is_suspicious_result(outcome.get("result")):
+            quality = "empty"
+        else:
+            quality = "ok"
+        plan = planner.get_plan(session_id)
+        # active_domains 是只读诊断接口，不触发激活/衰减，安全
+        active = self.catalog.active_domains(session_id) if self.catalog else set()
+        try:
+            log_tool_decision(ToolDecisionRecord(
+                session_id=session_id,
+                round=round_index,
+                user_message=message,
+                active_domains=sorted(active),
+                from_plan=plan is not None,
+                subset_size=subset_size,
+                total_tools=len(self.registry.get_schemas()),
+                tool_chosen=tool_name,
+                tool_args=tool_args if isinstance(tool_args, dict) else {},
+                result_quality=quality,
+                plan_step_matched=planner.mark_step_done(session_id, tool_name, self.registry),
+            ))
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[chat_engine] 决策日志记录失败: {e}")
+
     async def _call_llm(self, messages: list[dict], tools: Optional[list] = None) -> dict:
         """委托给 chat/llm_client.call_llm — 历史方法名保留以免外部代码 / 测试断裂。"""
         return await call_llm(self._llm_config(), messages, tools)
@@ -318,6 +394,8 @@ class ChatEngine:
         self._apply_skill(messages, skill_name)
         messages.append({"role": "user", "content": message})
         await self._save_msg_async(session_id, "user", message)
+
+        await self._maybe_plan(session_id, message, messages)
 
         # 非流式路径也需要重复调用拦截，避免 LLM 在同一任务里循环刷同一工具
         executed_tools: set[tuple[str, str]] = set()
@@ -408,6 +486,8 @@ class ChatEngine:
         messages.append({"role": "user", "content": message})
         await self._save_msg_async(session_id, "user", message)
 
+        await self._maybe_plan(session_id, message, messages)
+
         # 创建任务
         task = self.tracker.create(session_id, message)
         yield sse_event("task_start", {"task_id": task.id, "session_id": session_id})
@@ -415,7 +495,7 @@ class ChatEngine:
         # 初始化局部哨兵，防止 AI 在单次任务中陷入相同指令的无限循环
         executed_tools = set()
 
-        for _ in range(self.max_rounds):
+        for round_index in range(self.max_rounds):
             messages_with_context = self._compose_request_messages(session_id, messages)
 
             # 检查取消
@@ -501,6 +581,11 @@ class ChatEngine:
                             yield ": keep-alive\n\n"
                             logger.debug(f"SSE Heartbeat sent for tool: {tool_name}")
                     outcome = await dispatch_task
+
+                    self._log_tool_decision(
+                        session_id, round_index, message, tool_name,
+                        tool_args_dict, outcome, len(tools or []),
+                    )
 
                     msg_result_str = outcome["llm_payload"]
 
@@ -624,6 +709,10 @@ class ChatEngine:
             if session_id in self._sessions:
                 del self._sessions[session_id]
             session_data_manager.clear_session(session_id)
+            from app.services.chat import planner
+            planner.clear_plan(session_id)
+            if self.catalog is not None:
+                self.catalog.reset_session(session_id)
         return deleted
 
     def _detect_suspicious_result(self, result: Any) -> bool:

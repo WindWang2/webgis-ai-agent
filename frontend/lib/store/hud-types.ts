@@ -275,6 +275,12 @@ export interface HudState {
   llmConfigFull: LlmConfig;
   setLlmConfigFull: (config: Partial<LlmConfig>) => void;
 
+  /* ─── Cartography Live Context ─── */
+  cartographyTitle: string | null;
+  setCartographyTitle: (title: string | null) => void;
+  focusLayerId: string | null;
+  focusLayer: (layerId: string | null) => void;
+
   /* --- Explorer Tasks --- */
   explorerTasks: ExplorerTask[];
   addExplorerTask: (task: ExplorerTask) => void;

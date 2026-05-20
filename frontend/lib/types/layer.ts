@@ -1,4 +1,5 @@
 import type { GeoJSONFeatureCollection, HeatmapRasterSource } from '../types';
+import type { LegendSpec } from '@/lib/map-kit/types';
 
 export interface LayerStyle {
   color?: string;
@@ -29,6 +30,7 @@ export interface Layer {
   _refId?: string;
   created_at?: string;
   updated_at?: string;
+  legend_spec?: LegendSpec;
 }
 
 export type SortField = 'name' | 'created_at' | 'updated_at';

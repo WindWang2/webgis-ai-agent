@@ -327,6 +327,8 @@ export default function Home() {
         const layerName = data.tool === 'search_poi' ? `搜索结果: ${data.name || 'POI'}` :
                          data.tool === 'heatmap_data' ? '热力图分析' : `分析结果: ${data.tool}`;
         const accentColor = useHudStore.getState().accentColor;
+        const legendSpec = data.result?.legend_spec ?? undefined;
+        const layerMetaTitle: string | null = data.result?.layer_meta?.title ?? null;
         useHudStore.getState().addLayer({
           id: layerId,
           name: layerName,
@@ -337,7 +339,11 @@ export default function Home() {
           source: data.geojson_ref ? { type: 'FeatureCollection', features: [], metadata: { ref_id: data.geojson_ref } } as any : data.result,
           style: { color: accentColor },
           _refId: data.geojson_ref,
+          legend_spec: legendSpec,
         });
+        if (layerMetaTitle) {
+          useHudStore.getState().setCartographyTitle(layerMetaTitle);
+        }
 
         // Asynchronously fetch the actual GeoJSON data for the reference
         if (data.geojson_ref) {

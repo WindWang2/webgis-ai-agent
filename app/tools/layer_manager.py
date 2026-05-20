@@ -181,7 +181,11 @@ def register_layer_management_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="apply_layer_filter",
-           description="实时数据过滤：根据属性条件动态隐藏/显示地图上的地理要素。适合快速筛选数据（如『只看人口>1000的区域』）而无需重新计算新图层。",
+           description=(
+               "实时图层过滤：按属性条件动态隐藏/显示现有图层的要素。"
+               "✅ 用于：快速筛选可见要素（如『只看人口>1000的区域』），不产生新图层。"
+               "\n❌ 不要用于：需要导出新要素集或做链式分析 — 用 attribute_filter。"
+           ),
            param_descriptions={
                "layer_ref": "图层引用 (ref:xxx) 或名称",
                "expression": "过滤表达式，例如 'pop > 1000' 或 MapLibre/Mapbox GL 风格表达式。设为 null 或空字符串可清除过滤。",

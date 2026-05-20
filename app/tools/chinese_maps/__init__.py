@@ -199,7 +199,11 @@ def register_chinese_map_tools(registry: ToolRegistry):
         return {"error": "未配置高德或百度 API Key，路径规划需要 API Key"}
 
     @tool(registry, name="get_district",
-           description="查询行政区划边界及下级单元列表。适合获取省、市、区/县的范围轮廓或下级列表。支持高德/百度/天地图。",
+           description=(
+               "高德行政区划查询：获取省、市、区/县的范围轮廓或下级单元列表。"
+               "✅ 用于：作为 get_admin_division 失败时的备选在线数据源。"
+               "\n❌ 不要用于：中国境内首选本地库 get_local_admin_boundary（更快更稳）。"
+           ),
            param_descriptions={
                "keywords": "行政区划名称，如'海淀区'、'成都市'",
                "level": "级别: 'province', 'city', 'district'",
@@ -472,7 +476,12 @@ def register_chinese_map_tools(registry: ToolRegistry):
         return await _traffic_amap(mode, rectangle, center, radius_m, level)
 
     @tool(registry, name="get_admin_division",
-           description="查询行政区划：获取省、市、区/县的行政边界（GeoJSON）及下级行政单元列表。适合『成都市的轮廓』『查询锦江区下属街道』等场景。支持 Tianditu。",
+           description=(
+               "在线行政区划查询（天地图）：获取省、市、区/县的行政边界（GeoJSON）"
+               "及下级行政单元列表。"
+               "✅ 用于：本地库未覆盖或非中国区域，如『成都市的轮廓』『查询锦江区下属街道』。"
+               "\n❌ 不要用于：中国境内优先 get_local_admin_boundary（本地矢量库更快更稳）。"
+           ),
            param_descriptions={
                "keywords": "行政区名称，如'成都市'、'锦江区'",
                "child_level": "是否查询下一级行政单元: 0=不查询(默认), 1=查询一级, 2=查询二级",

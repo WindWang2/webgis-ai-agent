@@ -53,9 +53,8 @@ def register_cartography_tools(registry: ToolRegistry):
                "为图层注入统一显示样式 (单色 / 描边 / 透明度) 并返回带样式 hint 的 GeoJSON。"
                "\n何时用：分析输出后给图层定型 (一次性单色覆盖整个图层)；"
                "区分主分析结果 vs 辅助底图 (用 group 字段)。"
-               "\n何时不用：(1) 按属性值分级着色 (主题图) — 用 apply_thematic_style；"
-               "(2) 修改已加载图层的样式 — 用 update_layer_appearance；"
-               "(3) 想做交互过滤 — 用 apply_layer_filter。"
+               "\n何时不用：(1) 按属性值分级着色 (主题图) — 用 create_thematic_map；"
+               "(2) 想做交互过滤 — 用 apply_layer_filter。"
                "\n关键约束：color 必须是 hex (#RRGGBB)；opacity 0-1；输出回写 properties.__style__。"
            ),
            args_model=ApplyStyleArgs)
@@ -104,11 +103,18 @@ def register_cartography_tools(registry: ToolRegistry):
                 palette=palette
             )
             
-            return {
+            return_dict = {
                 "geojson": data,  # return unmodified geojson
                 "group": group,
-                "style": style_def
+                "style": style_def,
             }
+            legend_spec = CartographyService.build_legend_spec(style_def, palette=palette)
+            if legend_spec is not None:
+                return_dict["legend_spec"] = legend_spec
+                return_dict["layer_meta"] = {
+                    "title": f"{field} 专题图",
+                }
+            return return_dict
         except (ValueError, TypeError, KeyError) as e:
             logger.error(f"Error creating thematic map: {e}")
             return {"error": str(e)}

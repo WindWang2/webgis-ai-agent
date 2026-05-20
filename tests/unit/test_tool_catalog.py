@@ -137,3 +137,27 @@ def test_unannotated_tools_default_tier1():
     cat = ToolCatalog(r)
     schemas = cat.select_schemas("anything")
     assert "legacy_tool" in _names(schemas)
+
+
+def test_declared_domains_activates_tier2_without_keyword(catalog):
+    """计划声明的 domain 即使关键词没命中也激活对应 tier 2 工具。"""
+    schemas = catalog.select_schemas("随便一句话", session_id="d1",
+                                     declared_domains={"raster"})
+    names = _names(schemas)
+    assert "compute_ndvi" in names   # raster 工具被纳入
+    assert "fetch_dem" in names
+
+
+def test_declared_domains_union_with_keywords(catalog):
+    """计划 domain 与关键词检测取并集，关键词仍生效。"""
+    schemas = catalog.select_schemas("规划一条驾车路线", session_id="d2",
+                                     declared_domains={"raster"})
+    names = _names(schemas)
+    assert "compute_ndvi" in names   # 来自 declared_domains
+    assert "plan_route" in names     # 来自关键词"路线/驾车"
+
+
+def test_declared_domains_none_preserves_old_behavior(catalog):
+    """不传 declared_domains 时行为与旧版一致（纯关键词）。"""
+    schemas = catalog.select_schemas("计算 NDVI", session_id="d3")
+    assert "compute_ndvi" in _names(schemas)

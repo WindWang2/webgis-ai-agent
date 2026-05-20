@@ -258,7 +258,13 @@ def register_spatial_tools(registry: ToolRegistry):
         return res.to_llm_response()
 
     @tool(registry, name="heatmap_data",
-           description="根据点要素生成热力图。支持 'raster' (栅格图片)、'grid' (矢量格网) 和 'native' (原生渲染) 模式。支持通过 palette 参数切换配色方案。",
+           description=(
+               "点要素热力图。✅ 用于：用户宽泛询问『分布』『热度』『密度趋势』时"
+               "的首选——优先 render_type='native' 原生渲染，轻量、不增加数据负担。"
+               "\n❌ 不要用于：(1) 需要网格统计值（每格计数/求和）— 用 h3_binning；"
+               "(2) 需要矢量等值面用于导出/制图 — 用 kde_contours；"
+               "(3) 需要连续概率面做后续叠加分析 — 用 kde_surface。"
+           ),
            args_model=HeatmapDataArgs)
     def heatmap_data(geojson: Any, cell_size: int = 500, radius: int = 2000, render_type: str = "raster", palette: str = "classic") -> dict:
         data = safe_parse_geojson(geojson)
@@ -283,9 +289,11 @@ def register_spatial_tools(registry: ToolRegistry):
                 kwargs={"features": features, "cell_size": cell_size, "radius": radius, "render_type": render_type, "palette": palette}
             )
             result = task.get(timeout=120)
-        except (ImportError, RuntimeError, TimeoutError, OSError) as exc:
-            if not isinstance(exc, ImportError):
-                logger.warning(f"Celery unavailable for heatmap: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            # Celery unavailable or task failed — fall back to in-process computation.
+            # Any Celery failure (ImportError, broker down, TimeoutError, WorkerLostError)
+            # degrades gracefully to an in-process fallback.
+            logger.warning(f"[heatmap_data] Celery fallback triggered: {type(exc).__name__}: {exc}")
             result = _generate_heatmap(features, cell_size, radius, render_type, palette)
         
         if result.get("success"):
@@ -295,6 +303,30 @@ def register_spatial_tools(registry: ToolRegistry):
                     res_data["command"] = "add_heatmap_raster"
                 else:
                     res_data["command"] = "add_layer"
+                # non-native modes emit continuous legend_spec
+                if render_type != "native":
+                    try:
+                        from app.services.cartography_service import COLOR_PALETTES
+                        # Map heatmap palette names to COLOR_PALETTES keys
+                        palette_map = {
+                            "classic": "YlOrRd",
+                            "magma": "Magma",
+                            "viridis": "Viridis",
+                            "thermal": "Reds",
+                        }
+                        palette_key = palette_map.get(palette, "YlOrRd")
+                        palette_colors = COLOR_PALETTES.get(palette_key) \
+                            or COLOR_PALETTES.get("YlOrRd", ["#ffffb2", "#feb24c", "#bd0026"])
+                        metadata = res_data.get("metadata", {})
+                        res_data["legend_spec"] = {
+                            "type": "continuous",
+                            "min": float(metadata.get("min_value", 0.0)),
+                            "max": float(metadata.get("max_value", 1.0)),
+                            "palette": palette_key,
+                            "palette_colors": list(palette_colors),
+                        }
+                    except Exception:
+                        pass  # legend failure never blocks tool result
             return res_data
         
         error_msg = result.get("error", "Heatmap generation failed")

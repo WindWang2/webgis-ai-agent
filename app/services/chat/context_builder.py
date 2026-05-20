@@ -174,6 +174,29 @@ def build_last_analysis_context(messages: list[dict]) -> str:
     return ctx
 
 
+def build_plan_block(plan) -> str:
+    """把 Plan 渲染成 [执行计划] 系统块，步骤带 ✅/⬜ 完成标记。
+
+    存在未完成步骤时追加一行提醒——这就是 Checkpoint 式的「末尾校验」：
+    每轮都注入，LLM 在决定最终回复那一轮自然看到，不硬拦截。
+    """
+    lines = [
+        "[执行计划] — 你为本任务制定的步骤，按此推进，完成一步即视为打勾",
+        f"- 意图: {plan.intent}",
+    ]
+    if plan.steps:
+        lines.append("- 步骤:")
+        for step in plan.steps:
+            mark = "✅" if step.done else "⬜"
+            lines.append(f"  {mark} {step.n}. {step.goal}")
+        if any(not s.done for s in plan.steps):
+            lines.append(
+                "⚠️ 仍有未完成步骤。若要给出最终回复，请先确认这些步骤是否"
+                "已无必要，或在回复中向用户说明未完成的原因。"
+            )
+    return "\n".join(lines)
+
+
 def compose_request_messages(session_id: str, messages: list[dict]) -> list[dict]:
     """组装一次 LLM 请求的消息列表：SYSTEM_PROMPT + 实时感知 + (可选)对话上下文摘要 + 历史。
 
@@ -193,6 +216,13 @@ def compose_request_messages(session_id: str, messages: list[dict]) -> list[dict
     sys_msg["content"] = sys_msg.get("content", "") + "\n\n" + env_summary
 
     head = [sys_msg]
+
+    # 注入 [执行计划] 块（若本会话存在活跃计划）
+    from app.services.chat.planner import get_plan
+    plan = get_plan(session_id)
+    if plan is not None:
+        head.append({"role": "system", "content": build_plan_block(plan)})
+
     last_ctx = build_last_analysis_context(messages)
     if last_ctx:
         head.append({"role": "system", "content": last_ctx})

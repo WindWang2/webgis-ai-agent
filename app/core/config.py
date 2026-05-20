@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = "https://api.deepseek.com"
     LLM_API_KEY: str = "your-api-key-here"
     LLM_MODEL: str = "deepseek-v4-flash"
+    # 规划阶段专用模型；留空时回退 LLM_MODEL（便于以后单独配更便宜的模型）
+    LLM_PLANNER_MODEL: str = ""
     LLM_PROMPT_CACHING_ENABLED: bool = True
 
     # OSM
