@@ -1,13 +1,14 @@
 'use client';
 
+import type { ReactElement } from 'react';
 import { ClipboardList, Check, Circle, MinusCircle } from 'lucide-react';
-import type { AgentPlanState } from '@/lib/types/agent-plan';
+import type { AgentPlanState, AgentPlanStepStatus } from '@/lib/types/agent-plan';
 
 interface Props {
   plan: AgentPlanState;
 }
 
-const STATUS_ICON = {
+const STATUS_ICON: Record<AgentPlanStepStatus, ReactElement> = {
   done: <Check className="h-3 w-3 text-emerald-500" />,
   pending: <Circle className="h-3 w-3 text-muted-foreground/50 animate-pulse" />,
   skipped: <MinusCircle className="h-3 w-3 text-muted-foreground/40" />,
