@@ -34,10 +34,24 @@ def _infer_field_type(value: object) -> str:
     return "string"
 
 
-def build_layer_schema(session_id: str, ref_id: str, sample_size: int = 5) -> dict | None:
-    """从 session 里取 GeoJSON 数据，抽样推断 properties 字段名+类型 + 几何类型。
+def _walk_coords_for_bbox(node: object, bounds: list[float]) -> None:
+    """递归遍历 GeoJSON 几何坐标，原地更新 bounds=[w,s,e,n]。"""
+    if isinstance(node, list):
+        if node and isinstance(node[0], (int, float)) and len(node) >= 2:
+            lng, lat = float(node[0]), float(node[1])
+            if lng < bounds[0]: bounds[0] = lng
+            if lat < bounds[1]: bounds[1] = lat
+            if lng > bounds[2]: bounds[2] = lng
+            if lat > bounds[3]: bounds[3] = lat
+            return
+        for child in node:
+            _walk_coords_for_bbox(child, bounds)
 
-    返回形如 {"geom": "Polygon", "count": 123, "fields": {"pop":"number","name":"string"}}。
+
+def build_layer_schema(session_id: str, ref_id: str, sample_size: int = 5) -> dict | None:
+    """从 session 里取 GeoJSON 数据，抽样推断 properties 字段名+类型 + 几何类型 + bbox。
+
+    返回形如 {"geom":"Polygon", "count":123, "fields":{...}, "bbox":[w,s,e,n]}。
     LRU 已经在 manager.get() 内部维护，这里不再额外更新顺序。
     数据不存在或不是 FeatureCollection 时返回 None。
     """
@@ -50,20 +64,33 @@ def build_layer_schema(session_id: str, ref_id: str, sample_size: int = 5) -> di
 
     geom_types: set[str] = set()
     field_types: dict[str, set[str]] = {}
-    for feat in features[:sample_size]:
+    bounds = [float("inf"), float("inf"), float("-inf"), float("-inf")]
+    has_coords = False
+
+    # 字段/几何类型只抽样，bbox 必须扫全量否则会偏小
+    for idx, feat in enumerate(features):
         if not isinstance(feat, dict):
             continue
         geom = feat.get("geometry") or {}
         gtype = geom.get("type")
         if isinstance(gtype, str):
             geom_types.add(gtype)
-        props = feat.get("properties") or {}
-        if isinstance(props, dict):
-            for k, v in props.items():
-                # 跳过样式注入字段（apply_layer_style 写进来的），它们不是业务属性
-                if k in {"fill_color", "opacity", "stroke_width", "__style__"}:
-                    continue
-                field_types.setdefault(str(k), set()).add(_infer_field_type(v))
+        coords = geom.get("coordinates")
+        if coords is not None:
+            before = bounds[0]
+            _walk_coords_for_bbox(coords, bounds)
+            if bounds[0] != before or has_coords:
+                has_coords = True
+            elif bounds[0] != float("inf"):
+                has_coords = True
+        if idx < sample_size:
+            props = feat.get("properties") or {}
+            if isinstance(props, dict):
+                for k, v in props.items():
+                    # 跳过样式注入字段（apply_layer_style 写进来的），它们不是业务属性
+                    if k in {"fill_color", "opacity", "stroke_width", "__style__"}:
+                        continue
+                    field_types.setdefault(str(k), set()).add(_infer_field_type(v))
 
     # 多型字段合成：bool+null→bool；number+null→number；混合→mixed
     fields: dict[str, str] = {}
@@ -76,11 +103,46 @@ def build_layer_schema(session_id: str, ref_id: str, sample_size: int = 5) -> di
         else:
             fields[k] = "mixed"
 
+    bbox = bounds if has_coords and bounds[0] != float("inf") else None
+
     return {
         "geom": "/".join(sorted(geom_types)) if geom_types else None,
         "count": len(features),
         "fields": fields,
+        "bbox": bbox,
     }
+
+
+def _bbox_intersects(a: list[float], b: list[float]) -> bool:
+    """两个 [w,s,e,n] 是否相交（含边界接触）。"""
+    return not (a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1])
+
+
+def _bbox_contains(outer: list[float], inner: list[float]) -> bool:
+    """outer 是否完全包住 inner。"""
+    return outer[0] <= inner[0] and outer[1] <= inner[1] and outer[2] >= inner[2] and outer[3] >= inner[3]
+
+
+def viewport_layer_relation(viewport_bounds: list[float] | None, layer_bbox: list[float] | None) -> str | None:
+    """判断图层 bbox 相对当前视口的位置关系。
+
+    返回 4 种之一：
+    - "在视口内"  — 视口完全包住图层
+    - "局部相交"  — 有交集但视口未完全包住
+    - "在视口外"  — 无交集
+    - None       — 任一边界缺失，无法判断
+    """
+    if not (isinstance(viewport_bounds, list) and len(viewport_bounds) >= 4):
+        return None
+    if not (isinstance(layer_bbox, list) and len(layer_bbox) >= 4):
+        return None
+    v = [float(x) for x in viewport_bounds[:4]]
+    l = [float(x) for x in layer_bbox[:4]]
+    if not _bbox_intersects(v, l):
+        return "在视口外"
+    if _bbox_contains(v, l):
+        return "在视口内"
+    return "局部相交"
 
 
 def format_style_summary(style: dict | None) -> str | None:
@@ -105,8 +167,8 @@ def format_style_summary(style: dict | None) -> str | None:
     return None
 
 
-def format_layer_schema(schema: dict) -> str:
-    """把 build_layer_schema 的输出渲染为单行紧凑文本。"""
+def format_layer_schema(schema: dict, viewport_bounds: list[float] | None = None) -> str:
+    """把 build_layer_schema 的输出渲染为单行紧凑文本，可选附加视口关系。"""
     parts: list[str] = []
     if schema.get("geom"):
         parts.append(f"geom={schema['geom']}")
@@ -120,6 +182,13 @@ def format_layer_schema(schema: dict) -> str:
         if len(fields) > 8:
             field_str += f", ...(+{len(fields) - 8})"
         parts.append(f"fields=[{field_str}]")
+
+    bbox = schema.get("bbox")
+    if isinstance(bbox, list) and len(bbox) == 4:
+        parts.append(f"bbox=[{bbox[0]:.3f},{bbox[1]:.3f},{bbox[2]:.3f},{bbox[3]:.3f}]")
+        relation = viewport_layer_relation(viewport_bounds, bbox)
+        if relation:
+            parts.append(relation)
     return " ".join(parts)
 
 
@@ -178,7 +247,12 @@ def build_map_state_summary(session_id: str) -> str:
     lines.append(f"- 底图: {base_layer}")
     lines.append(f"- 可切换底图: {format_base_layer_catalog()}")
 
-    layer_lines = format_layer_lines(inventory, active_layers, session_id=session_id)
+    layer_lines = format_layer_lines(
+        inventory,
+        active_layers,
+        session_id=session_id,
+        viewport_bounds=bounds if isinstance(bounds, (list, tuple)) and len(bounds) == 4 else None,
+    )
     if layer_lines:
         lines.append("- 活跃图层:")
         lines.extend(f"  * {ln}" for ln in layer_lines)
@@ -186,18 +260,91 @@ def build_map_state_summary(session_id: str) -> str:
         lines.append("- 活跃图层: 无")
 
     event_log = session_data_manager.get_event_log(session_id)
-    if event_log:
-        lines.append("- 近期操作:")
-        for evt in event_log[-5:]:
+    tool_calls, user_actions, pending = _split_events(event_log)
+    if pending:
+        lines.append("- 进行中后台任务 (前端尚未回报完成):")
+        for pe in pending:
+            lines.append(f"  * {_format_pending_event(pe)}")
+    if tool_calls:
+        lines.append("- 近期工具调用:")
+        for evt in tool_calls[-5:]:
+            lines.append(f"  * {_format_tool_event(evt)}")
+    if user_actions:
+        lines.append("- 近期用户操作:")
+        for evt in user_actions[-3:]:
             lines.append(f"  * {evt['event']}: {json.dumps(evt['data'], ensure_ascii=False)}")
 
     return "\n".join(lines)
 
 
-def format_layer_lines(inventory: dict, active_layers: list[dict], session_id: str | None = None) -> list[str]:
+# 哪些工具结果的 status 字段代表"后台异步任务，前端正在跑"
+_PENDING_STATUSES = {
+    "export_task_created",
+    "export_batch_task_created",
+    "change_detection_task_started",
+    "analysis_task_started",
+    "started",
+}
+
+
+def _split_events(event_log: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
+    """把 event_log 拆成 (工具调用, 用户操作, 进行中任务)。
+
+    进行中任务：最近 N 条工具调用里，status ∈ _PENDING_STATUSES 且尚未被后续同会话
+    系统通知冲销的条目。这里我们不做对账（前端的 setPendingSystemMessage 不回写
+    event_log），只用"最近 N 条里出现过 pending status"作为近似信号。
+    """
+    tool_calls: list[dict] = []
+    user_actions: list[dict] = []
+    pending: list[dict] = []
+    for evt in event_log:
+        if evt.get("event") == "tool_executed":
+            tool_calls.append(evt)
+            data = evt.get("data") or {}
+            if data.get("status") in _PENDING_STATUSES:
+                pending.append(evt)
+        else:
+            user_actions.append(evt)
+    # 只看最近 3 个 pending（更早的多半已结束）
+    return tool_calls, user_actions, pending[-3:]
+
+
+def _format_tool_event(evt: dict) -> str:
+    """格式化一条 tool_executed 事件，把关键字段拼到一行。"""
+    data = evt.get("data") or {}
+    tool = data.get("tool", "?")
+    parts = [tool]
+    if data.get("is_error"):
+        err = data.get("error_msg") or ""
+        parts.append(f"❌ {err}" if err else "❌")
+    else:
+        for k in ("command", "status", "ref", "layer_id", "feature_count", "alias"):
+            v = data.get(k)
+            if v is not None:
+                parts.append(f"{k}={v}")
+    return " ".join(parts)
+
+
+def _format_pending_event(evt: dict) -> str:
+    """格式化一条进行中后台任务事件，提示 LLM 不要重复触发。"""
+    data = evt.get("data") or {}
+    tool = data.get("tool", "?")
+    status = data.get("status", "pending")
+    cmd = data.get("command") or ""
+    tail = f" → {cmd}" if cmd else ""
+    return f"{tool} ({status}){tail} —— 等待前端完成后会通过 [系统通知] 回传，不要重复触发"
+
+
+def format_layer_lines(
+    inventory: dict,
+    active_layers: list[dict],
+    session_id: str | None = None,
+    viewport_bounds: list[float] | None = None,
+) -> list[str]:
     """渲染图层一行式描述。inventory 优先，缺失时回退到前端上报。
 
-    当传入 session_id 时，额外把每个 ref 的属性 schema (字段+类型+几何) 拼到末行。
+    当传入 session_id 时，额外把每个 ref 的属性 schema (字段+类型+几何+bbox) 拼到末行；
+    传 viewport_bounds 时再附加"在视口内/外/局部相交"。
     """
     visibility_map = {l.get("id"): l for l in active_layers if l.get("id")}
     out: list[str] = []
@@ -225,7 +372,7 @@ def format_layer_lines(inventory: dict, active_layers: list[dict], session_id: s
                 try:
                     schema = build_layer_schema(session_id, ref_id)
                     if schema:
-                        line += f" | {format_layer_schema(schema)}"
+                        line += f" | {format_layer_schema(schema, viewport_bounds)}"
                 except Exception as e:
                     logger.debug(f"build_layer_schema failed for {ref_id}: {e}")
             out.append(line)

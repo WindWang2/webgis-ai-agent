@@ -147,8 +147,9 @@ class TestMapStateSummary:
     def test_event_log_renders(self, clean_session):
         session_data_manager.append_event(clean_session, "tool_executed", {"tool": "geocode_cn", "ref": "ref:data-x"})
         out = build_map_state_summary(clean_session)
-        assert "近期操作:" in out
-        assert "tool_executed" in out
+        # Round 2 split: 工具调用 vs 用户操作 各有独立段
+        assert "近期工具调用:" in out
+        assert "geocode_cn" in out
 
 
 # ─── compose_request_messages ─────────────────────────────────

@@ -174,10 +174,14 @@ async def dispatch_tool(
             )
 
     if isinstance(result, dict):
-        for k in ("layer_id", "bbox", "feature_count", "alias"):
+        for k in ("layer_id", "bbox", "feature_count", "alias", "command", "status"):
             v = result.get(k)
             if v is not None:
                 event_payload[k] = v
+    if is_error:
+        event_payload["is_error"] = True
+        if error_msg:
+            event_payload["error_msg"] = str(error_msg)[:200]
     session_data_manager.append_event(session_id, "tool_executed", event_payload)
 
     return {
