@@ -249,28 +249,55 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         plt.close(fig)
 
         out_features = []
-        for i, collection in enumerate(cs.collections):
-            val = cs.levels[i]
-            for path in collection.get_paths():
-                for poly_coords in path.to_polygons():
-                    if len(poly_coords) < 3: continue
-                    from shapely.geometry import Polygon
-                    poly = Polygon(poly_coords)
-                    if not poly.is_valid: poly = poly.buffer(0)
-                    
-                    poly_wgs84 = gpd.GeoSeries([poly], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
-                    out_features.append({
-                        "type": "Feature",
-                        "geometry": mapping(poly_wgs84),
-                        "properties": {"level": i, "density_value": float(val)}
-                    })
+        from shapely.geometry import Polygon
+        for i, segs in enumerate(cs.allsegs):
+            val = float(cs.levels[i])
+            for poly_coords in segs:
+                if len(poly_coords) < 3:
+                    continue
+                poly = Polygon(poly_coords)
+                if not poly.is_valid:
+                    poly = poly.buffer(0)
 
-        return {
+                poly_wgs84 = gpd.GeoSeries([poly], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
+                out_features.append({
+                    "type": "Feature",
+                    "geometry": mapping(poly_wgs84),
+                    "properties": {"level": i, "density_value": val}
+                })
+
+        # compute continuous legend_spec from contour level values
+        legend_spec = None
+        if out_features:
+            level_vals = [
+                float(f.get("properties", {}).get("density_value", 0.0))
+                for f in out_features
+            ]
+            level_vals = [v for v in level_vals if v is not None]
+            if level_vals:
+                try:
+                    from app.services.cartography_service import COLOR_PALETTES
+                    palette = "Viridis"
+                    palette_colors = list(COLOR_PALETTES.get(palette, []))
+                    legend_spec = {
+                        "type": "continuous",
+                        "min": min(level_vals),
+                        "max": max(level_vals),
+                        "palette": palette,
+                        "palette_colors": palette_colors[:5] if palette_colors else ["#440154", "#21908c", "#fde725"],
+                    }
+                except Exception:  # noqa: BLE001
+                    legend_spec = None
+
+        result_dict = {
             "type": "FeatureCollection",
             "features": out_features,
             "count": len(out_features),
             "levels_count": len(cs.levels)
         }
+        if legend_spec is not None:
+            result_dict["legend_spec"] = legend_spec
+        return result_dict
 
     @tool(registry, name="voronoi_polygons",
            description="生成 Voronoi (泰森多边形/Thiessen多边形)，将空间按最近邻原则划分为势力范围",

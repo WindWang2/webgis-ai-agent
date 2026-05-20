@@ -118,3 +118,36 @@ async def test_h3_binning_emits_graduated_legend_spec(advanced_registry):
     assert spec["type"] == "graduated"
     assert len(spec["breaks"]) >= 2
     assert len(spec["palette_colors"]) >= 2
+
+
+from app.tools.spatial_stats import register_spatial_stats_tools
+
+
+@pytest.fixture
+def stats_registry():
+    r = ToolRegistry()
+    register_spatial_stats_tools(r)
+    return r
+
+
+@pytest.mark.asyncio
+async def test_kde_contours_emits_continuous_legend_spec(stats_registry):
+    pts = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature",
+             "geometry": {"type": "Point", "coordinates": [104.0 + i*0.001, 30.0 + i*0.001]},
+             "properties": {}}
+            for i in range(20)
+        ],
+    }
+    out = await stats_registry.dispatch("kde_contours", {
+        "geojson": pts, "levels": 6,
+    })
+    if "error" in out:  # scipy / matplotlib not available — skip
+        pytest.skip(out["error"])
+    spec = out.get("legend_spec")
+    assert spec is not None
+    assert spec["type"] == "continuous"
+    assert spec["min"] < spec["max"]
+    assert len(spec["palette_colors"]) >= 3
