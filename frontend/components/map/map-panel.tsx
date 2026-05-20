@@ -10,6 +10,7 @@ import { ThematicLegend } from "./thematic-legend"
 import { MapDecorations } from "./map-decorations"
 import { useHudStore, type HudState } from "@/lib/store/useHudStore"
 import * as renderer from "@/lib/map-kit/renderer"
+import { fitBounds as navFitBounds, calculateBBox } from "@/lib/map-kit/navigation"
 
 interface MapPanelProps {
   layers: Layer[]
@@ -85,6 +86,8 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   const processLayers = useHudStore((s: HudState) => s.processLayers)
   const cartographyTitle = useHudStore((s: HudState) => s.cartographyTitle)
   const viewport = useHudStore((s: HudState) => s.viewport)
+  const focusLayerId = useHudStore((s: HudState) => s.focusLayerId)
+  const focusLayerSetter = useHudStore((s: HudState) => s.focusLayer)
 
   const currentMapStyle = useMemo(
     () => getMapStyle(MAP_STYLES[selectedBaseLayer], selectedBaseLayer),
@@ -97,6 +100,34 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
       [layerId]: ranges,
     }))
   }, [])
+
+  // Focus Layer Effect — fit map to layer bbox when focusLayerId is set,
+  // then clear it back to null so the same layer can be re-focused later.
+  useEffect(() => {
+    if (!focusLayerId) return
+    const map = mapRef.current?.getMap()
+    if (!map || !mapReady) return
+    const target = layers.find((l) => l.id === focusLayerId)
+    if (!target) {
+      focusLayerSetter(null)
+      return
+    }
+    const src = target.source as any
+    let bbox: [number, number, number, number] | null = null
+    if (src && Array.isArray(src.bbox) && src.bbox.length === 4) {
+      bbox = src.bbox as [number, number, number, number]
+    } else if (src && (src.type === "FeatureCollection" || src.type === "Feature")) {
+      bbox = calculateBBox(src)
+    }
+    if (bbox) {
+      try { navFitBounds(map, bbox, 80) } catch (err) {
+        console.warn("[map-panel] focusLayer fitBounds failed:", err)
+      }
+    }
+    // Clear after a short delay so the legend flash animation has time to fire.
+    const t = window.setTimeout(() => focusLayerSetter(null), 800)
+    return () => window.clearTimeout(t)
+  }, [focusLayerId, mapReady, layers, focusLayerSetter])
 
   // 3D Terrain Toggle Effect — 走 map-kit/renderer 的 enable3DTerrain helper
   useEffect(() => {
@@ -443,12 +474,18 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
         return (
           <>
             <div className="absolute bottom-4 left-4 z-30 space-y-3">
-              {thematicLayers.map((l) => (
-                <div key={l.id}>
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-1 px-1">{l.name}</div>
-                  <ThematicLegend spec={l.legend_spec!} onFilterChange={(ranges) => handleFilterChange(l.id, ranges)} />
-                </div>
-              ))}
+              {thematicLayers.map((l) => {
+                const flashing = focusLayerId === l.id;
+                return (
+                  <div
+                    key={l.id}
+                    className={`rounded-xl transition-all ${flashing ? "ring-2 ring-primary/80 ring-offset-2 ring-offset-background animate-pulse" : ""}`}
+                  >
+                    <div className="text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-1 px-1">{l.name}</div>
+                    <ThematicLegend spec={l.legend_spec!} onFilterChange={(ranges) => handleFilterChange(l.id, ranges)} />
+                  </div>
+                );
+              })}
             </div>
             <MapDecorations
               show={true}
