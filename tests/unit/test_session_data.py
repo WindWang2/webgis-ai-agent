@@ -95,7 +95,10 @@ class TestMapState:
         mgr.set_map_state("s1", "base_layer", "dark")
         mgr.set_map_state("s1", "zoom", 12)
         state = mgr.get_map_state("s1")
-        assert state == {"base_layer": "dark", "zoom": 12}
+        # R6 引入了内部 _started_at 字段，断言改成 superset 比较
+        assert state["base_layer"] == "dark"
+        assert state["zoom"] == 12
+        assert "_started_at" in state
 
     def test_get_map_state_empty(self, mgr):
         assert mgr.get_map_state("missing") == {}

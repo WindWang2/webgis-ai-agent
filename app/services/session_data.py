@@ -24,6 +24,9 @@ class SessionDataManager:
         """存储数据并返回生成的游标 ID"""
         if session_id not in self._store:
             self._store[session_id] = OrderedDict()
+        # 同步起点：若此 session 还没碰过 map_state，这里也算它的起点
+        if session_id not in self._map_state:
+            self._map_state[session_id] = {"_started_at": datetime.now().isoformat()}
 
         # 16 hex chars = 64 bits entropy. ref_id + session_id 是能力令牌，需难以枚举。
         ref_id = f"ref:{prefix}-{uuid.uuid4().hex[:16]}"
@@ -88,7 +91,14 @@ class SessionDataManager:
         """设置地图状态元数据"""
         if session_id not in self._map_state:
             self._map_state[session_id] = {}
+            # 首次写入即视为 session 起点（避免单独维护"创建"路径）
+            self._map_state[session_id].setdefault("_started_at", datetime.now().isoformat())
         self._map_state[session_id][key] = value
+
+    def get_started_at(self, session_id: str) -> Optional[str]:
+        """返回 session 首次接触时间 (ISO 字符串)，未存在则 None。"""
+        state = self._map_state.get(session_id, {})
+        return state.get("_started_at")
 
     def get_map_state(self, session_id: str) -> dict[str, Any]:
         """获取当前地图所有状态"""

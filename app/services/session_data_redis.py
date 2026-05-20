@@ -3,7 +3,7 @@ import json
 import time
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import redis
@@ -203,11 +203,23 @@ class RedisSessionDataManager:
     def set_map_state(self, session_id: str, key: str, value: Any):
         """Set a map state metadata field."""
         pipe = self._r.pipeline()
+        # 首次写入即认作 session 起点
+        pipe.hsetnx(
+            self._state_key(session_id),
+            "_started_at",
+            json.dumps(datetime.now(timezone.utc).isoformat(), ensure_ascii=False),
+        )
         pipe.hset(self._state_key(session_id), key, json.dumps(value, ensure_ascii=False))
         pipe.expire(self._state_key(session_id), STATE_TTL)
         pipe.sadd(self._active_key(), session_id)
         self._refresh_session_ttl(pipe, session_id)
         pipe.execute()
+
+    def get_started_at(self, session_id: str) -> Optional[str]:
+        raw = self._r.hget(self._state_key(session_id), "_started_at")
+        if not raw:
+            return None
+        return json.loads(raw)
 
     def get_map_state(self, session_id: str) -> dict[str, Any]:
         """Return all map state as a Python dict."""
