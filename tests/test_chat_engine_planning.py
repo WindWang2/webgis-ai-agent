@@ -133,7 +133,7 @@ async def test_chat_stream_emits_plan_ready_when_plan_created(engine, monkeypatc
     monkeypatch.setattr(engine, "_call_llm_stream", fake_llm_stream)
 
     captured = []
-    async for ev in engine.chat_stream("sess-EV1", "复杂请求需要规划的内容"):
+    async for ev in engine.chat_stream("复杂请求需要规划的内容", session_id="sess-EV1"):
         captured.append(ev)
 
     joined = "".join(captured)
