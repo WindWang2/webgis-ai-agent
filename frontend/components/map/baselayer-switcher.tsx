@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 import { TILE_PROVIDERS } from '@/lib/providers';
@@ -22,12 +22,36 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
   const baseLayer = useHudStore((s) => s.baseLayer);
   const setBaseLayer = useHudStore((s) => s.setBaseLayer);
   const { selectedBaseLayer, setSelectedBaseLayer } = useMapAction();
+  const rootRef = useRef<HTMLDivElement>(null);
 
   const currentLabel = TILE_PROVIDERS[selectedBaseLayer]?.name || baseLayer || 'Carto 浅色';
 
+  // Close on Escape + click-outside (a11y from /review)
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    const onMouseDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onMouseDown);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onMouseDown);
+    };
+  }, [open]);
+
   return (
-    <div style={{ position: 'relative' }} className={className}>
+    <div ref={rootRef} style={{ position: 'relative' }} className={className}>
       <button
+        type='button'
+        aria-haspopup='listbox'
+        aria-expanded={open}
+        aria-label={`Base layer: ${currentLabel}`}
         onClick={() => setOpen(!open)}
         style={{
           padding: '5px 10px',
@@ -58,6 +82,8 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
 
       {open && (
         <div
+          role='listbox'
+          aria-label='Base layer options'
           style={{
             position: 'absolute',
             top: '100%',
@@ -80,6 +106,9 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
             return (
               <button
                 key={provider.name}
+                type='button'
+                role='option'
+                aria-selected={isActive}
                 onClick={() => {
                   // Dual-write: both stores must agree or we end up with the bug
                   // QA-2026-05-20 ISSUE-001/002/003 fixed

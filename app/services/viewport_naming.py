@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import OrderedDict
+import time
+from collections import OrderedDict, deque
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,64 @@ _LOOKUP_TIMEOUT_SEC = 3.0
 # 多 worker 各自跑一次完全够用，不值得引入 Redis 复杂度。
 _cache: "OrderedDict[tuple[float, float], str]" = OrderedDict()
 _in_flight: set[tuple[float, float]] = set()
+
+# ─── Rate limiting (/review P1-3) ──────────────────────────────────────
+# Pre-existing unauth WS + new schedule_populate on every viewport_change =
+# amplification: an attacker walking lng/lat by 0.05° defeats the LRU cache
+# and forces unbounded outbound Nominatim calls. Nominatim's official ToS is
+# 1 req/sec per IP; sustained traffic risks IP-ban. We cap at 30 calls/min
+# globally (= 0.5 req/sec) which leaves headroom for legitimate panning.
+_RATE_LIMIT_MAX_PER_MINUTE = 30
+_RATE_WINDOW_SECONDS = 60.0
+_rate_window: "deque[float]" = deque()
+
+# Shared aiohttp.ClientSession (/review P2-3). The original code created a
+# fresh ClientSession per call (~200–500ms TLS handshake every time). Reuse
+# one process-level session: lazily created, never explicitly closed (Python
+# process exit reclaims fd's). If you wire app lifespan, call _close_session()
+# on shutdown.
+_aiohttp_session: Optional["aiohttp.ClientSession"] = None  # noqa: F821 (string-only forward ref)
+_aiohttp_session_lock: Optional[asyncio.Lock] = None
+
+
+def _rate_limit_check() -> bool:
+    """Return True if the current call is allowed under the token bucket.
+
+    Sliding 60-second window. Purges expired timestamps lazily on each check.
+    """
+    now = time.monotonic()
+    cutoff = now - _RATE_WINDOW_SECONDS
+    while _rate_window and _rate_window[0] < cutoff:
+        _rate_window.popleft()
+    if len(_rate_window) >= _RATE_LIMIT_MAX_PER_MINUTE:
+        return False
+    _rate_window.append(now)
+    return True
+
+
+async def _get_aiohttp_session():
+    """Lazily create or return the shared aiohttp.ClientSession."""
+    global _aiohttp_session, _aiohttp_session_lock
+    import aiohttp
+    from app.core.network import get_base_headers
+    if _aiohttp_session_lock is None:
+        _aiohttp_session_lock = asyncio.Lock()
+    async with _aiohttp_session_lock:
+        if _aiohttp_session is None or _aiohttp_session.closed:
+            timeout = aiohttp.ClientTimeout(total=_LOOKUP_TIMEOUT_SEC)
+            _aiohttp_session = aiohttp.ClientSession(
+                headers=get_base_headers(),
+                timeout=timeout,
+            )
+    return _aiohttp_session
+
+
+async def _close_session() -> None:
+    """Close the shared session. Call from FastAPI lifespan shutdown if wired."""
+    global _aiohttp_session
+    if _aiohttp_session is not None and not _aiohttp_session.closed:
+        await _aiohttp_session.close()
+    _aiohttp_session = None
 
 
 def _quantize(lng: float, lat: float) -> tuple[float, float]:
@@ -72,10 +131,13 @@ def _format_address(address: dict) -> str:
 
 
 async def _fetch_nominatim(lng: float, lat: float) -> Optional[str]:
-    """实际调用 Nominatim 反查；失败返回 None。"""
-    import aiohttp
+    """实际调用 Nominatim 反查；失败返回 None。
+
+    /review P2-3: uses a shared ClientSession (reused across calls) to avoid
+    a fresh TCP/TLS handshake per lookup.
+    """
     from app.core.config import settings
-    from app.core.network import get_ssl_context, get_base_headers
+    from app.core.network import get_ssl_context
 
     url = settings.NOMINATIM_URL.replace("/search", "/reverse")
     params = {
@@ -85,18 +147,17 @@ async def _fetch_nominatim(lng: float, lat: float) -> Optional[str]:
         "accept-language": "zh",
         "zoom": 10,  # 城市/区县级精度足矣，不要返回门牌号
     }
-    timeout = aiohttp.ClientTimeout(total=_LOOKUP_TIMEOUT_SEC)
     try:
-        async with aiohttp.ClientSession(headers=get_base_headers(), timeout=timeout) as session:
-            async with session.get(
-                url,
-                params=params,
-                ssl=get_ssl_context(),
-                proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY,
-            ) as resp:
-                if resp.status != 200:
-                    return None
-                data = await resp.json()
+        session = await _get_aiohttp_session()
+        async with session.get(
+            url,
+            params=params,
+            ssl=get_ssl_context(),
+            proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY,
+        ) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json()
         if "error" in data:
             return None
         address = data.get("address") or {}
@@ -115,6 +176,14 @@ async def _fetch_nominatim(lng: float, lat: float) -> Optional[str]:
 async def _populate(lng: float, lat: float) -> None:
     key = _quantize(lng, lat)
     if key in _cache or key in _in_flight:
+        return
+    # /review P1-3: global token bucket. If we've already burned this minute's
+    # Nominatim budget, skip — better to lose region naming than get IP-banned.
+    if not _rate_limit_check():
+        logger.debug(
+            f"viewport_naming: rate-limit ({_RATE_LIMIT_MAX_PER_MINUTE}/min) exhausted, "
+            f"skipping ({lng:.4f},{lat:.4f})"
+        )
         return
     _in_flight.add(key)
     try:
@@ -141,9 +210,10 @@ def schedule_populate(lng: float, lat: float) -> None:
 
 
 def clear_cache() -> None:
-    """测试钩子。"""
+    """测试钩子。Also resets the /review P1-3 rate-limit window so tests start clean."""
     _cache.clear()
     _in_flight.clear()
+    _rate_window.clear()
 
 
 def schedule_populate_from_map_state(map_state: dict | None) -> None:

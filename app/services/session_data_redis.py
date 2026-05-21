@@ -157,6 +157,17 @@ class RedisSessionDataManager:
         self._refresh_session_ttl(pipe, session_id)
         pipe.execute()
 
+    def resolve_alias(self, session_id: str, ref_or_alias: str) -> str:
+        """Resolve a ref or alias to its canonical ref_id (Redis variant).
+
+        /review P3-5: public accessor matching the in-memory backend's API.
+        Returns the input unchanged if no alias is registered.
+        """
+        ref_id = self._r.hget(self._aliases_key(session_id), ref_or_alias)
+        if ref_id is None:
+            return ref_or_alias
+        return ref_id.decode() if isinstance(ref_id, bytes) else ref_id
+
     def get(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]:
         """Retrieve data by cursor ref_id or alias."""
         # Try alias lookup first

@@ -76,7 +76,7 @@ def register_layer_management_tools(registry: ToolRegistry):
         from app.core.base_layers import get_base_layer_names
         CANONICAL_NAMES = get_base_layer_names()
         
-        search_name = name.toLowerCase() if hasattr(name, 'toLowerCase') else str(name).lower()
+        search_name = str(name).lower()
         resolved_name = name # Default to original if no match
         
         # 1. 精确匹配
@@ -123,7 +123,7 @@ def register_layer_management_tools(registry: ToolRegistry):
             return {"error": "Missing session_id context"}
         
         # 1. 尝试从当前 Session 别名查找
-        ref_id = session_data_manager._aliases.get(session_id, {}).get(layer_ref, layer_ref)
+        ref_id = session_data_manager.resolve_alias(session_id, layer_ref)
         
         # 2. 如果没找到（或者是 legacy 图层），尝试从地图实时状态中模糊查找
         map_state = session_data_manager.get_map_state(session_id)
@@ -164,7 +164,7 @@ def register_layer_management_tools(registry: ToolRegistry):
             return {"error": "Missing session_id context"}
             
         # 逻辑同上
-        ref_id = session_data_manager._aliases.get(session_id, {}).get(layer_ref, layer_ref)
+        ref_id = session_data_manager.resolve_alias(session_id, layer_ref)
         map_state = session_data_manager.get_map_state(session_id)
         layers = map_state.get("layers", [])
         
@@ -206,16 +206,38 @@ def register_layer_management_tools(registry: ToolRegistry):
         if not session_id:
             return {"error": "Missing session_id context"}
 
+        # /review P1-6: empty layer_ref would resolve to the empty string and
+        # the frontend's prefix-match handler (`id.startsWith('custom-' + layer_id)`)
+        # would match ALL custom layers in one shot. The existence check below
+        # catches any layer_ref that doesn't resolve to a session-owned id —
+        # including '', 'ref:', and any other unspecific value.
+        if not layer_ref:
+            return {"error": "layer_ref 不能为空"}
+
         pos = (position or "top").lower().strip()
         if pos not in {"top", "bottom", "up", "down", "before"}:
             return {"error": f"Invalid position '{position}', must be one of: top/bottom/up/down/before"}
         if pos == "before" and not before_ref:
             return {"error": "position=before 时必须提供 before_ref"}
 
-        ref_id = session_data_manager._aliases.get(session_id, {}).get(layer_ref, layer_ref)
+        ref_id = session_data_manager.resolve_alias(session_id, layer_ref)
+
+        # /review P1-6: verify the resolved id is session-owned. Accept either
+        # source (the session's data store OR the frontend-echoed active layers)
+        # since legitimate flow can have the ref registered before the frontend
+        # echoes it back. The point is to refuse a free-form LLM ref that wasn't
+        # registered by THIS session.
+        map_state = session_data_manager.get_map_state(session_id) or {}
+        active_layers = map_state.get("layers", []) or []
+        session_refs = session_data_manager.list_refs(session_id) or {}
+        if ref_id not in session_refs and not any(l.get("id") == ref_id for l in active_layers):
+            return {"error": f"layer_ref {layer_ref!r} 未在当前会话的图层 / 数据引用中找到对应的 id"}
+
         before_id = None
         if before_ref:
-            before_id = session_data_manager._aliases.get(session_id, {}).get(before_ref, before_ref)
+            before_id = session_data_manager.resolve_alias(session_id, before_ref)
+            if before_id not in session_refs and not any(l.get("id") == before_id for l in active_layers):
+                return {"error": f"before_ref {before_ref!r} 未在当前会话的图层 / 数据引用中找到对应的 id"}
 
         return {
             "success": True,
@@ -240,7 +262,12 @@ def register_layer_management_tools(registry: ToolRegistry):
         if not session_id:
             return {"error": "Missing session_id context"}
 
-        ref_id = session_data_manager._aliases.get(session_id, {}).get(layer_ref, layer_ref)
+        # /review P1-6: empty layer_ref prefix-matches everything on the
+        # frontend. The existence check below catches all other unresolved refs.
+        if not layer_ref:
+            return {"error": "layer_ref 不能为空"}
+
+        ref_id = session_data_manager.resolve_alias(session_id, layer_ref)
         map_state = session_data_manager.get_map_state(session_id)
         layers = map_state.get("layers", [])
         found_id = None
@@ -253,6 +280,14 @@ def register_layer_management_tools(registry: ToolRegistry):
                 if l.get("name") == layer_ref or (layer_ref and layer_ref in (l.get("name") or "")):
                     found_id = l.get("id")
                     break
+
+        # /review P1-6: if neither the active-layers loop above NOR the
+        # session's ref store knows this ref, refuse the command. Otherwise an
+        # LLM-emitted unknown ref passes through to the frontend's prefix-match
+        # handler and wipes whatever matches.
+        session_refs = session_data_manager.list_refs(session_id) or {}
+        if not found_id and ref_id not in session_refs:
+            return {"error": f"layer_ref {layer_ref!r} 未在当前会话的图层 / 数据引用中找到对应的 id"}
 
         target = found_id or ref_id
         return {
@@ -278,7 +313,7 @@ def register_layer_management_tools(registry: ToolRegistry):
             return {"error": "Missing session_id context"}
         
         # Resolve ref/alias
-        ref_id = session_data_manager._aliases.get(session_id, {}).get(layer_ref, layer_ref)
+        ref_id = session_data_manager.resolve_alias(session_id, layer_ref)
         
         # Find canonical ID if it exists in state
         map_state = session_data_manager.get_map_state(session_id)

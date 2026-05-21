@@ -93,6 +93,10 @@ export function useMapBridge(
           else if (event.event === 'acting' || event.event === 'step_start') setAiStatus('acting');
           else if (event.event === 'done' || event.event === 'task_complete') setAiStatus('done');
           else if (event.event === 'error' || event.event === 'step_error' || event.event === 'task_error') setAiStatus('error');
+          // /review P2-7: backend emits task_cancelled when the user aborts a
+          // streaming response (commit 2b978de). Without this branch, aiStatus
+          // stays stuck in 'thinking' / 'acting' and the composer never frees.
+          else if (event.event === 'task_cancelled') setAiStatus('idle');
 
           // step_result: command-wins-over-bbox priority; dispatch before forwarding to onEvent
           if (event.event === 'step_result') {

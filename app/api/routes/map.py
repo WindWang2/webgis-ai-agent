@@ -33,6 +33,71 @@ _MEDIA_TYPES = {
 }
 
 
+# ─── SVG sanitization (/review P1-5) ─────────────────────────────────────
+# SVG content can contain <script>, <foreignObject>, on* event attributes,
+# and javascript: href references — i.e. arbitrary code execution if a
+# browser ever renders it as image/svg+xml + inline. The download endpoint
+# currently serves SVGs as application/octet-stream + attachment, but any
+# future code change that flips the disposition would activate stored XSS.
+# We sanitize at the gate (upload) so the on-disk file is always safe.
+_SVG_DANGEROUS_TAGS = {"script", "foreignObject", "iframe", "embed", "object", "use"}
+_SVG_HREF_ATTRS = {"href", "{http://www.w3.org/1999/xlink}href"}
+
+
+def _sanitize_svg(content: bytes) -> bytes:
+    """Parse + sanitize SVG content. Returns sanitized bytes.
+
+    Raises HTTPException(400) if content is not well-formed XML, root is not
+    <svg>, or the document uses XML entities (DTD / ENTITY — billion-laughs
+    / XXE protection).
+    """
+    from defusedxml import ElementTree as DET
+    from xml.etree import ElementTree as ET  # for serialization (defused parser, stdlib writer)
+
+    try:
+        root = DET.fromstring(content)  # forbid_dtd / forbid_entities default True
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"SVG 解析失败: {e}")
+
+    # Root must be <svg> (allow namespace prefix)
+    tag = root.tag.split("}", 1)[-1] if "}" in root.tag else root.tag
+    if tag.lower() != "svg":
+        raise HTTPException(status_code=400, detail=f"SVG 根元素必须是 svg, 实际是 {tag}")
+
+    # Walk the tree, strip dangerous elements + attributes in place.
+    # We do a two-pass walk to safely mutate.
+    def _walk(elem):
+        # Strip on* attributes and javascript:/data:text href values
+        for attr in list(elem.attrib.keys()):
+            local = attr.split("}", 1)[-1] if "}" in attr else attr
+            if local.lower().startswith("on"):
+                del elem.attrib[attr]
+                continue
+            if attr in _SVG_HREF_ATTRS or local.lower() == "href":
+                val = elem.attrib.get(attr, "").strip().lower()
+                # Allow only data:image/... and same-doc fragments. Reject everything else.
+                if val.startswith("javascript:") or val.startswith("data:text") or val.startswith("data:application"):
+                    del elem.attrib[attr]
+                elif val.startswith("data:") and not val.startswith("data:image"):
+                    del elem.attrib[attr]
+        # Recurse, then remove children with dangerous tags
+        for child in list(elem):
+            child_tag = child.tag.split("}", 1)[-1] if "}" in child.tag else child.tag
+            if child_tag in _SVG_DANGEROUS_TAGS:
+                elem.remove(child)
+                continue
+            _walk(child)
+
+    _walk(root)
+
+    # Re-serialize. ElementTree's default emits xmlns properly.
+    try:
+        return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    except TypeError:
+        # Older Python: xml_declaration kw not on tostring; fall back
+        return b'<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(root, encoding="utf-8")
+
+
 @router.post("/export", tags=["地图制图"])
 async def upload_map_export(
     file: UploadFile = File(...),
@@ -52,6 +117,11 @@ async def upload_map_export(
         content = await file.read(MAX_EXPORT_SIZE + 1)
         if len(content) > MAX_EXPORT_SIZE:
             raise HTTPException(status_code=413, detail="文件过大，上限 50MB")
+
+        # /review P1-5: SVGs can carry <script>/event-handlers/javascript: hrefs.
+        # Parse with defusedxml (XXE-safe), strip dangerous elements/attrs.
+        if ext == ".svg":
+            content = _sanitize_svg(content)
 
         # 写入临时文件再原子移动，防止进程崩溃留下残缺文件
         with tempfile.NamedTemporaryFile(dir=EXPORT_DIR, delete=False, suffix=ext) as tmp:

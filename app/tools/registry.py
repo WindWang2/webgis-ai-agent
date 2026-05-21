@@ -219,8 +219,11 @@ class ToolRegistry:
         if skip_keys is None: skip_keys = set()
 
         if isinstance(arguments, str):
-            # 尝试解引用（可能是 ref:xxx 或是 用户设置的别名）
-            if arguments.startswith("ref:") or (session_id in session_data_manager._aliases and arguments in session_data_manager._aliases[session_id]):
+            # /review P3-5: detect "is this a ref or a known alias?" via the public
+            # resolve_alias accessor — when it returns something different from the
+            # input, the input was a registered alias for this session.
+            _resolved = session_data_manager.resolve_alias(session_id, arguments) if session_id else arguments
+            if arguments.startswith("ref:") or _resolved != arguments:
                 data = session_data_manager.get(session_id, arguments)
                 if data is not None:
                     return data

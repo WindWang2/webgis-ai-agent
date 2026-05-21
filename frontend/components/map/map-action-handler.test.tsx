@@ -24,13 +24,14 @@ const mockGetMap = vi.fn(() => mapMockInstance);
 let popAction: ReturnType<typeof vi.fn>;
 let dispatchActionFn: ReturnType<typeof vi.fn>;
 let actions: Array<{ command: string; params: Record<string, unknown> }>;
+const mockSetSelectedBaseLayer = vi.fn();
 
 vi.mock('@/lib/contexts/map-action-context', () => ({
   useMapAction: () => ({
     get actions() { return actions; },
     dispatchAction: dispatchActionFn,
     popAction,
-    setSelectedBaseLayer: vi.fn(),
+    setSelectedBaseLayer: mockSetSelectedBaseLayer,
   }),
 }));
 
@@ -45,14 +46,23 @@ vi.mock('@/lib/api/config', () => ({
 }));
 
 vi.mock('@/lib/providers', () => ({
-  TILE_PROVIDERS: [{ name: 'Carto Light', keywords: ['carto'] }],
+  TILE_PROVIDERS: [
+    { name: 'Carto Light', keywords: ['carto', 'light', '浅色'] },
+    { name: 'Carto Dark', keywords: ['dark', '深色'] },
+    { name: 'ESRI 影像', keywords: ['satellite', '卫星', 'esri'] },
+  ],
 }));
 
+// Module-level spies — clearAllMocks() in beforeEach resets them.
+// These must be module-level (not in factory body) so the test can assert calls.
+const mockSetBaseLayer = vi.fn();
+const mockSetPendingSystemMessage = vi.fn();
 vi.mock('@/lib/store/useHudStore', () => ({
   useHudStore: {
     getState: () => ({
       layers: [],
-      setPendingSystemMessage: vi.fn(),
+      setBaseLayer: mockSetBaseLayer,
+      setPendingSystemMessage: mockSetPendingSystemMessage,
     }),
   },
 }));
@@ -106,6 +116,60 @@ describe('MapActionHandler', () => {
     });
 
     expect(popAction).toHaveBeenCalled();
+  });
+
+  // ─── Regressions for ISSUE-001/002/003 (commit 9766389) ────────────────
+  // The original bug: clicking the baselayer dropdown updated only one of two
+  // stores (useMapAction.selectedBaseLayer XOR useHudStore.baseLayer), so the
+  // dropdown label, HUD panel, and AI env summary could disagree. The fix
+  // dual-writes from BOTH the user click path (baselayer-switcher.tsx) and the
+  // AI-driven path (BASE_LAYER_CHANGE handler in map-action-handler.tsx).
+  // These tests pin the AI-driven half.
+
+  it('regression ISSUE-002: BASE_LAYER_CHANGE dual-writes to both stores (exact name match)', async () => {
+    actions = [{
+      command: 'BASE_LAYER_CHANGE',
+      params: { name: 'Carto Dark' },
+    }];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    // useMapAction writes index
+    expect(mockSetSelectedBaseLayer).toHaveBeenCalledWith(1);
+    // useHudStore writes canonical name — this is the half that was missing pre-9766389
+    expect(mockSetBaseLayer).toHaveBeenCalledWith('Carto Dark');
+  });
+
+  it('regression ISSUE-002: BASE_LAYER_CHANGE dual-writes when matched by keyword (e.g. AI says "卫星")', async () => {
+    actions = [{
+      command: 'BASE_LAYER_CHANGE',
+      params: { name: '卫星' },
+    }];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    // matches TILE_PROVIDERS[2] = 'ESRI 影像' via keyword '卫星'
+    expect(mockSetSelectedBaseLayer).toHaveBeenCalledWith(2);
+    // canonical name written to HUD, not the AI's casual phrasing
+    expect(mockSetBaseLayer).toHaveBeenCalledWith('ESRI 影像');
+  });
+
+  it('regression ISSUE-002: BASE_LAYER_CHANGE no-match does NOT write either store', async () => {
+    actions = [{
+      command: 'BASE_LAYER_CHANGE',
+      params: { name: 'NonExistentLayer' },
+    }];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(mockSetSelectedBaseLayer).not.toHaveBeenCalled();
+    expect(mockSetBaseLayer).not.toHaveBeenCalled();
   });
 
   it('adds custom- prefix to layer and source IDs for add_layer', async () => {

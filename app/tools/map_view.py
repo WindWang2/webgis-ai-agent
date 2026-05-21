@@ -86,8 +86,9 @@ class SetMapViewArgs(BaseModel):
 
 def _resolve_layer_id(session_id: str, layer_ref: str) -> Optional[str]:
     """根据 ref/别名/名称 解析到画布上的 layer_id"""
-    aliases = session_data_manager._aliases.get(session_id, {}) if hasattr(session_data_manager, "_aliases") else {}
-    candidate = aliases.get(layer_ref, layer_ref)
+    # /review P3-5: replaced session_data_manager._aliases.get(...).get(...) with
+    # the public resolve_alias accessor (in-memory + Redis backends both implement).
+    candidate = session_data_manager.resolve_alias(session_id, layer_ref)
 
     map_state = session_data_manager.get_map_state(session_id) or {}
     layers = map_state.get("layers", []) or []
@@ -188,9 +189,8 @@ def register_map_view_tools(registry: ToolRegistry):
         if not session_id:
             return {"error": "Missing session_id context"}
 
-        # 1) 解析到 ref_id（如果是别名）
-        aliases = session_data_manager._aliases.get(session_id, {}) if hasattr(session_data_manager, "_aliases") else {}
-        ref_id = aliases.get(layer_ref, layer_ref)
+        # 1) 解析到 ref_id（如果是别名） — /review P3-5: public accessor.
+        ref_id = session_data_manager.resolve_alias(session_id, layer_ref)
 
         # 2) 尝试拉数据并算 bbox
         bbox: Optional[List[float]] = None

@@ -47,6 +47,16 @@ class SessionDataManager:
             self._aliases[session_id] = {}
         self._aliases[session_id][alias] = ref_id
 
+    def resolve_alias(self, session_id: str, ref_or_alias: str) -> str:
+        """Resolve a ref or alias to its canonical ref_id.
+
+        /review P3-5: public accessor replacing six call sites that previously
+        reached into `_aliases` directly. If `ref_or_alias` matches an alias
+        registered in this session, returns the underlying ref_id. Otherwise
+        returns the input unchanged (caller can decide whether that's an error).
+        """
+        return self._aliases.get(session_id, {}).get(ref_or_alias, ref_or_alias)
+
     def get(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]:
         """根据游标 ID 或别名获取原始数据"""
         session_cache = self._store.get(session_id)

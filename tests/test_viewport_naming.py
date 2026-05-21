@@ -148,3 +148,74 @@ def test_schedule_populate_from_map_state_extracts_center():
     schedule_populate_from_map_state(None)
     schedule_populate_from_map_state({})
     schedule_populate_from_map_state({"viewport": {}})
+
+
+# ─── /review P1-3 regression: rate limit on Nominatim calls ─────────────
+
+
+@pytest.mark.asyncio
+async def test_populate_respects_rate_limit(monkeypatch):
+    """When the token bucket is exhausted, _populate must skip the fetch.
+
+    Otherwise an attacker walking lng/lat by 0.05° defeats the LRU cache
+    and forces unbounded outbound Nominatim calls.
+    """
+    from app.services import viewport_naming as vn
+
+    vn.clear_cache()
+    call_count = {"n": 0}
+
+    async def fake_fetch(lng, lat):
+        call_count["n"] += 1
+        return f"name-{call_count['n']}"
+
+    monkeypatch.setattr(vn, "_fetch_nominatim", fake_fetch)
+    # Tighten the limit so the test doesn't have to spam.
+    monkeypatch.setattr(vn, "_RATE_LIMIT_MAX_PER_MINUTE", 3)
+
+    # 5 unique cells; only first 3 should hit Nominatim.
+    for i in range(5):
+        await vn._populate(116.0 + i * 0.1, 39.0 + i * 0.1)
+
+    assert call_count["n"] == 3, f"expected 3 fetches under rate limit, got {call_count['n']}"
+    # And the budget should remain at 3 entries
+    assert len(vn._rate_window) == 3
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_window_purges_old_entries(monkeypatch):
+    """Sliding window: timestamps older than 60s should be purged on next check."""
+    from app.services import viewport_naming as vn
+    import time as time_mod
+
+    vn.clear_cache()
+    monkeypatch.setattr(vn, "_RATE_LIMIT_MAX_PER_MINUTE", 2)
+
+    # Manually inject two stale timestamps (older than the window)
+    now = time_mod.monotonic()
+    vn._rate_window.append(now - 120.0)
+    vn._rate_window.append(now - 90.0)
+
+    # Even though the deque has 2 entries, both are stale → next check allowed
+    assert vn._rate_limit_check() is True
+    # The stale ones should have been purged
+    assert len(vn._rate_window) == 1, "stale timestamps should have been purged"
+
+
+@pytest.mark.asyncio
+async def test_shared_aiohttp_session_reused(monkeypatch):
+    """/review P2-3: _get_aiohttp_session must return the SAME instance across calls
+    (not a fresh ClientSession per Nominatim lookup)."""
+    from app.services import viewport_naming as vn
+
+    vn.clear_cache()
+    # Reset shared session so we're testing a clean state
+    if vn._aiohttp_session is not None and not vn._aiohttp_session.closed:
+        await vn._close_session()
+
+    s1 = await vn._get_aiohttp_session()
+    s2 = await vn._get_aiohttp_session()
+    assert s1 is s2, "shared session should be the same instance"
+
+    # Cleanup so we don't leak the connection between test files
+    await vn._close_session()

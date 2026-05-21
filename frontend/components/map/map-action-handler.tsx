@@ -376,6 +376,16 @@ export function MapActionHandler() {
             dpi = 96
           } = action.params || {};
 
+          // /review C11: surface a loading message — export upload can take seconds
+          // (SVG/PDF over slow network) and currently the user sees nothing happen.
+          try {
+            useHudStore.getState().setPendingSystemMessage(
+              `[系统通知] 正在生成 ${String(format).toUpperCase()} 导出文件…`
+            );
+          } catch {
+            /* defensive */
+          }
+
           const theme = useHudStore.getState().theme;
           // F5: 异步 export 必须等 map.once('render') 真正回调完再 popAction，
           // 否则连续触发 export 会让后一次在前一次还没合成完时覆盖 canvas。
@@ -602,7 +612,18 @@ export function MapActionHandler() {
         }
       }
     } catch (error) {
+      // /review C10: surface AI command failures to the user via system message
+      // instead of swallowing in console — otherwise user sees nothing and
+      // assumes the AI lied about what it was doing.
+      const msg = error instanceof Error ? error.message : String(error);
       console.error('[MapActionHandler] Error executing action:', error);
+      try {
+        useHudStore.getState().setPendingSystemMessage(
+          `[系统通知] 地图命令 ${action.command} 执行失败: ${msg}`
+        );
+      } catch {
+        /* defensive: store unavailable */
+      }
     } finally {
       if (!deferredPop) popAction();
     }

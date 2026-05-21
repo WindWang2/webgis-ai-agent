@@ -398,6 +398,23 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   const layersRef = useRef(layers)
   useEffect(() => { layersRef.current = layers }, [layers])
 
+  // /review C8: derive interactiveLayerIds from actual style sublayers.
+  // The renderer adds sublayer ids like `custom-${id}-fill` / `-line` / `-circle`,
+  // not the bare `custom-${id}` — without enumerating sublayers, MapLibre never
+  // toggles pointer-cursor on hover and clickable features have no affordance.
+  const [interactiveIds, setInteractiveIds] = useState<string[]>([])
+  useEffect(() => {
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    const recompute = () => {
+      const all = (map.getStyle()?.layers || []) as Array<{ id: string }>
+      setInteractiveIds(all.map((l) => l.id).filter((id) => id.startsWith('custom-')))
+    }
+    recompute()
+    map.on('styledata', recompute)
+    return () => { map.off('styledata', recompute) }
+  }, [layers])
+
   const handleMapClick = useCallback((evt: any) => {
     const map = mapRef.current?.getMap()
     if (!map) return
@@ -503,7 +520,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
         {...viewState}
         onMove={handleMove}
         onClick={handleMapClick}
-        interactiveLayerIds={layers.map((l) => `custom-${l.id}`)}
+        interactiveLayerIds={interactiveIds}
         onLoad={() => { setMapReady(true); useHudStore.getState().setMapLoaded(true); }}
         style={{ position: "absolute", inset: 0 }}
         mapStyle={currentMapStyle}
