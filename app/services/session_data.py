@@ -144,6 +144,15 @@ class SessionDataManager:
         """获取近期用户操作日志"""
         return list(self._event_log.get(session_id, []))
 
+    def get_session_metadata(self, session_id: str) -> dict[str, Any]:
+        """获取会话元数据（聚合查询以减少 Redis 等后端往返）"""
+        return {
+            "map_state": self.get_map_state(session_id),
+            "list_refs": self.list_refs(session_id),
+            "event_log": self.get_event_log(session_id),
+            "started_at": self.get_started_at(session_id),
+        }
+
     def clear_session(self, session_id: str):
         """清理会话数据"""
         self._store.pop(session_id, None)

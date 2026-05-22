@@ -240,22 +240,31 @@ def _format_duration(started_at_iso: str | None) -> str | None:
     return f"{days} 天"
 
 
-def build_session_overview(session_id: str, messages: list[dict] | None = None) -> str | None:
+def build_session_overview(
+    session_id: str,
+    messages: list[dict] | None = None,
+    started_at: str | None = None,
+    event_log: list[dict] | None = None,
+    inventory: dict | None = None,
+    _fetched: bool = False,
+) -> str | None:
     """组装一行『会话概览』：持续时长 / 对话轮数 / 工具调用 / 失败 / 数据引用 / 导出。
 
     LLM 拿这一行可以快速判断"用户处于探索初期还是已深入分析"——回答风格、
     建议详略都会跟着调整（早期多解释，深入后简洁直给）。
     """
-    started_at = session_data_manager.get_started_at(session_id) if hasattr(session_data_manager, "get_started_at") else None
+    if not _fetched:
+        started_at = session_data_manager.get_started_at(session_id) if hasattr(session_data_manager, "get_started_at") else None
+        event_log = session_data_manager.get_event_log(session_id) or []
+        inventory = session_data_manager.list_refs(session_id) or {}
+
     duration = _format_duration(started_at)
 
-    event_log = session_data_manager.get_event_log(session_id) or []
-    tool_calls = [e for e in event_log if e.get("event") == "tool_executed"]
+    tool_calls = [e for e in (event_log or []) if e.get("event") == "tool_executed"]
     errors = [e for e in tool_calls if (e.get("data") or {}).get("is_error")]
     exports = [e for e in tool_calls if (e.get("data") or {}).get("command") == "export_map"]
 
-    inventory = session_data_manager.list_refs(session_id) or {}
-    refs_count = len(inventory)
+    refs_count = len(inventory or {})
 
     turn_count = 0
     if messages:
@@ -367,15 +376,28 @@ def format_layer_schema(schema: dict, viewport_bounds: list[float] | None = None
     return " ".join(parts)
 
 
-def build_map_state_summary(session_id: str) -> str:
+def build_map_state_summary(
+    session_id: str,
+    state: dict | None = None,
+    inventory: dict | None = None,
+    event_log: list[dict] | None = None,
+    _fetched: bool = False,
+) -> str:
     """构造一份紧凑的当前地图状态摘要（[环境感知] 系统消息）。
 
     双源策略：优先用后端 inventory 的 ref_id 数据引用；inventory 为空时
     回退到前端 map_state.layers 上报的活跃图层（页面刷新/新 Session 时）。
     只输出事实，不在 prompt 里夹杂"应该怎么做"的元指令。
     """
-    state = session_data_manager.get_map_state(session_id)
-    inventory = session_data_manager.list_refs(session_id)
+    if not _fetched:
+        state = session_data_manager.get_map_state(session_id)
+        inventory = session_data_manager.list_refs(session_id)
+    else:
+        if state is None:
+            state = {}
+        if inventory is None:
+            inventory = {}
+
     viewport = state.get("viewport") or {}
     center = viewport.get("center")
     zoom = viewport.get("zoom")
@@ -776,8 +798,31 @@ def compose_request_messages(session_id: str, messages: list[dict]) -> list[dict
     if not messages:
         return []
 
-    env_summary = build_map_state_summary(session_id)
-    overview = build_session_overview(session_id, messages)
+    if hasattr(session_data_manager, "get_session_metadata"):
+        metadata = session_data_manager.get_session_metadata(session_id)
+        map_state = metadata.get("map_state") or {}
+        list_refs = metadata.get("list_refs") or {}
+        event_log = metadata.get("event_log") or []
+        started_at = metadata.get("started_at")
+
+        env_summary = build_map_state_summary(
+            session_id,
+            state=map_state,
+            inventory=list_refs,
+            _fetched=True
+        )
+        overview = build_session_overview(
+            session_id,
+            messages,
+            started_at=started_at,
+            event_log=event_log,
+            inventory=list_refs,
+            _fetched=True
+        )
+    else:
+        env_summary = build_map_state_summary(session_id)
+        overview = build_session_overview(session_id, messages)
+
     if overview:
         env_summary += f"\n- 会话概览: {overview}"
     logger.debug(f"[ENV-INJECT] session={session_id}\n{env_summary}")

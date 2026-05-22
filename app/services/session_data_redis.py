@@ -294,6 +294,68 @@ class RedisSessionDataManager:
             events.append(json.loads(text))
         return events
 
+    def get_session_metadata(self, session_id: str) -> dict[str, Any]:
+        """Fetch session metadata (map_state, list_refs, event_log, started_at) in a single pipeline."""
+        pipe = self._r.pipeline()
+        pipe.hgetall(self._state_key(session_id))
+        pipe.zrange(self._refs_order_key(session_id), 0, -1)
+        pipe.hgetall(self._refs_key(session_id))
+        pipe.lrange(self._events_key(session_id), 0, -1)
+
+        try:
+            state_raw, ref_ids_bytes, raw_refs, events_raw = pipe.execute()
+        except redis.RedisError as e:
+            logger.error(f"Failed to fetch session metadata via pipeline for session {session_id}: {e}")
+            # Fallback to individual safe calls to ensure maximum robustness
+            return {
+                "map_state": self.get_map_state(session_id),
+                "list_refs": self.list_refs(session_id),
+                "event_log": self.get_event_log(session_id),
+                "started_at": self.get_started_at(session_id),
+            }
+
+        # 1. Parse map_state and started_at
+        map_state = {}
+        started_at = None
+        if state_raw:
+            for k, v in state_raw.items():
+                key = k.decode() if isinstance(k, bytes) else k
+                try:
+                    val = json.loads(v)
+                    map_state[key] = val
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            started_at = map_state.get("_started_at")
+
+        # 2. Parse list_refs
+        ref_ids = [
+            r.decode() if isinstance(r, bytes) else r for r in (ref_ids_bytes or [])
+        ]
+        ref_to_alias = {}
+        if raw_refs:
+            for k, v in raw_refs.items():
+                key = k.decode() if isinstance(k, bytes) else k
+                val = v.decode() if isinstance(v, bytes) else v
+                ref_to_alias[key] = val
+        list_refs = {rid: ref_to_alias.get(rid, "") for rid in ref_ids}
+
+        # 3. Parse event_log
+        event_log = []
+        if events_raw:
+            for item in events_raw:
+                text = item.decode() if isinstance(item, bytes) else item
+                try:
+                    event_log.append(json.loads(text))
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+        return {
+            "map_state": map_state,
+            "list_refs": list_refs,
+            "event_log": event_log,
+            "started_at": started_at,
+        }
+
     def clear_session(self, session_id: str):
         """Remove all data for a session."""
         pipe = self._r.pipeline()
