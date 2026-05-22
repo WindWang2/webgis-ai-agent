@@ -11,12 +11,19 @@ const mapMockInstance = {
   getLayer: vi.fn(() => null),
   fitBounds: vi.fn(),
   getStyle: vi.fn(() => ({ layers: [] })),
-  getCenter: vi.fn(() => ({ lat: 39.9 })),
+  getCenter: vi.fn(() => ({ lat: 39.9, lng: 116.4 })),
   getZoom: vi.fn(() => 10),
   getCanvas: vi.fn(() => ({ width: 800, height: 600 })),
   getBearing: vi.fn(() => 0),
+  getPitch: vi.fn(() => 0),
   once: vi.fn((_e: string, cb: () => void) => cb()),
   triggerRepaint: vi.fn(),
+  removeLayer: vi.fn(),
+  removeSource: vi.fn(),
+  moveLayer: vi.fn(),
+  setFilter: vi.fn(),
+  setLayoutProperty: vi.fn(),
+  setPaintProperty: vi.fn(),
 };
 
 const mockGetMap = vi.fn(() => mapMockInstance);
@@ -223,5 +230,263 @@ describe('MapActionHandler', () => {
       }),
       undefined
     );
+  });
+
+  it('calls navigation.fitBounds with correct arguments for zoom_to_bbox', async () => {
+    actions = [{
+      command: 'zoom_to_bbox',
+      params: { bbox: [116.0, 39.0, 117.0, 40.0], padding: 40 },
+    }];
+
+    const map = mockGetMap();
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(map.fitBounds).toHaveBeenCalledWith([116.0, 39.0, 117.0, 40.0], { duration: 1500, padding: 40 });
+  });
+
+  it('calls navigation.flyTo with correct arguments for set_map_view', async () => {
+    actions = [{
+      command: 'set_map_view',
+      params: { zoom: 11, bearing: 20, pitch: 15 },
+    }];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(mockFlyTo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        center: [116.4, 39.9],
+        zoom: 11,
+        bearing: 20,
+        pitch: 15
+      })
+    );
+  });
+
+  it('calls removeLayerStack when executing remove_layer', async () => {
+    actions = [{
+      command: 'remove_layer',
+      params: { layerId: 'target-layer' },
+    }];
+
+    const map = mockGetMap();
+    (map.getStyle as any).mockReturnValue({
+      layers: [{ id: 'custom-target-layer' }]
+    });
+    (map.getSource as any).mockReturnValue(true);
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(map.removeLayer).toHaveBeenCalledWith('custom-target-layer');
+    expect(map.removeSource).toHaveBeenCalledWith('custom-target-layer');
+  });
+
+  it('calls map.moveLayer correctly when executing REORDER_LAYER to top', async () => {
+    actions = [{
+      command: 'REORDER_LAYER',
+      params: { layer_id: 'reorder-layer', position: 'top' },
+    }];
+
+    const map = mockGetMap();
+    (map.getStyle as any).mockReturnValue({
+      layers: [
+        { id: 'custom-other-layer' },
+        { id: 'custom-reorder-layer' }
+      ]
+    });
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(map.moveLayer).toHaveBeenCalledWith('custom-reorder-layer', undefined);
+  });
+
+  it('calls map.moveLayer correctly for REORDER_LAYER position bottom', async () => {
+    actions = [{
+      command: 'REORDER_LAYER',
+      params: { layer_id: 'reorder-layer', position: 'bottom' },
+    }];
+
+    const map = mockGetMap();
+    (map.getStyle as any).mockReturnValue({
+      layers: [
+        { id: 'custom-other-layer' },
+        { id: 'custom-reorder-layer' }
+      ]
+    });
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(map.moveLayer).toHaveBeenCalledWith('custom-reorder-layer', 'custom-other-layer');
+  });
+
+  it('handles add_marker and updates annotation layer', async () => {
+    actions = [{
+      command: 'add_marker',
+      params: { longitude: 116.4, latitude: 39.9, label: 'Test Marker', color: '#ff0000' },
+    }];
+
+    const map = mockGetMap();
+    const mockSetData = vi.fn();
+    let sourceExists = false;
+    (map.getSource as any).mockImplementation((id: string) => {
+      if (id === 'claude-annotations' && sourceExists) {
+        return { setData: mockSetData };
+      }
+      return null;
+    });
+    (map.addSource as any).mockImplementation((id: string) => {
+      if (id === 'claude-annotations') {
+        sourceExists = true;
+      }
+    });
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(map.addSource).toHaveBeenCalledWith('claude-annotations', expect.any(Object));
+    expect(map.addLayer).toHaveBeenCalled();
+    expect(mockSetData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'FeatureCollection',
+        features: expect.arrayContaining([
+          expect.objectContaining({
+            properties: expect.objectContaining({ label: 'Test Marker', color: '#ff0000', kind: 'marker' })
+          })
+        ])
+      })
+    );
+  });
+
+  it('handles draw_measurement for polyline shape', async () => {
+    actions = [{
+      command: 'draw_measurement',
+      params: { shape: 'polyline', coordinates: [[116.4, 39.9], [116.5, 40.0]], label: '10km' },
+    }];
+
+    const map = mockGetMap();
+    const mockSetData = vi.fn();
+    let sourceExists = false;
+    (map.getSource as any).mockImplementation((id: string) => {
+      if (id === 'claude-annotations' && sourceExists) {
+        return { setData: mockSetData };
+      }
+      return null;
+    });
+    (map.addSource as any).mockImplementation((id: string) => {
+      if (id === 'claude-annotations') {
+        sourceExists = true;
+      }
+    });
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(mockSetData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        features: expect.arrayContaining([
+          expect.objectContaining({
+            geometry: expect.objectContaining({ type: 'LineString' }),
+            properties: expect.objectContaining({ label: '10km', kind: 'measure_line' })
+          })
+        ])
+      })
+    );
+  });
+
+  it('handles draw_measurement for polygon shape', async () => {
+    actions = [{
+      command: 'draw_measurement',
+      params: { shape: 'polygon', coordinates: [[116.4, 39.9], [116.5, 39.9], [116.5, 40.0], [116.4, 39.9]], label: '100sqkm' },
+    }];
+
+    const map = mockGetMap();
+    const mockSetData = vi.fn();
+    let sourceExists = false;
+    (map.getSource as any).mockImplementation((id: string) => {
+      if (id === 'claude-annotations' && sourceExists) {
+        return { setData: mockSetData };
+      }
+      return null;
+    });
+    (map.addSource as any).mockImplementation((id: string) => {
+      if (id === 'claude-annotations') {
+        sourceExists = true;
+      }
+    });
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(mockSetData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        features: expect.arrayContaining([
+          expect.objectContaining({
+            geometry: expect.objectContaining({ type: 'Polygon' }),
+            properties: expect.objectContaining({ label: '100sqkm', kind: 'measure_polygon' })
+          })
+        ])
+      })
+    );
+  });
+
+  it('handles clear_annotations correctly', async () => {
+    actions = [{
+      command: 'clear_annotations',
+      params: {},
+    }];
+
+    const map = mockGetMap();
+    const mockSetData = vi.fn();
+    let sourceExists = true;
+    (map.getSource as any).mockImplementation((id: string) => {
+      if (id === 'claude-annotations' && sourceExists) {
+        return { setData: mockSetData };
+      }
+      return null;
+    });
+    (map.addSource as any).mockImplementation((id: string) => {
+      if (id === 'claude-annotations') {
+        sourceExists = true;
+      }
+    });
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(mockSetData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'FeatureCollection',
+        features: []
+      })
+    );
+  });
+
+  it('handles APPLY_LAYER_FILTER correctly with parsed filter array', async () => {
+    actions = [{
+      command: 'APPLY_LAYER_FILTER',
+      params: { layer_id: 'custom-layer', filter: '["==", "density", 10]' },
+    }];
+
+    const map = mockGetMap();
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(map.setFilter).toHaveBeenCalledWith('custom-layer', ['==', 'density', 10]);
   });
 });

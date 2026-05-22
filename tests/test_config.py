@@ -2,7 +2,10 @@
 from app.core.config import Settings
 
 
-def test_default_settings():
+def test_default_settings(monkeypatch):
+    # Clear DEBUG and ENV env vars to test default settings in isolation
+    monkeypatch.delenv("DEBUG", raising=False)
+    monkeypatch.delenv("ENV", raising=False)
     # 绕过 .env 文件读取真正的代码默认值
     s = Settings(_env_file=None)
     assert s.PROJECT_NAME == "WebGIS AI Agent"

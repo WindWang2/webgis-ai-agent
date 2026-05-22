@@ -19,6 +19,16 @@ class GeoAnalysisResult:
     error_type: Optional[str] = None
     correction_hint: Optional[str] = None
 
+    @property
+    def error_message(self) -> Optional[str]:
+        return self.summary if not self.success else None
+
+    @property
+    def stats(self) -> Optional[dict]:
+        if isinstance(self.data, dict) and "stats" in self.data:
+            return self.data["stats"]
+        return None
+
     def to_llm_response(self) -> dict:
         """
         Converts the result into a format the ChatEngine can easily digest.
@@ -132,7 +142,7 @@ def safe_parse(geojson: Any) -> dict | None:
                 return None
     return None
 
-def to_utm_gdf(geojson: dict | str) -> tuple[gpd.GeoDataFrame, str] | None:
+def to_utm_gdf(geojson: dict | str, source_crs: Optional[str] = None) -> tuple[gpd.GeoDataFrame, str] | None:
     """Convert GeoJSON to UTM GeoDataFrame with automatic zone detection.
     
     Returns:
@@ -171,8 +181,11 @@ def to_utm_gdf(geojson: dict | str) -> tuple[gpd.GeoDataFrame, str] | None:
     if not rows:
         return None, None
         
-    gdf = gpd.GeoDataFrame(rows, crs="EPSG:4326")
+    gdf = gpd.GeoDataFrame(rows, crs=source_crs or "EPSG:4326")
     
+    if gdf.crs and gdf.crs.is_projected:
+        return gdf, str(gdf.crs)
+        
     # Calculate UTM zone from centroid
     centroid = gdf.geometry.unary_union.centroid
     zone_number = int((centroid.x + 180) / 6) + 1

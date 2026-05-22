@@ -23,15 +23,15 @@ logger = logging.getLogger(__name__)
 
 class AnalysisResult(GeoAnalysisResult):
     """Backward compatibility wrapper for GeoAnalysisResult."""
-    @property
-    def error_message(self):
-        return self.summary if not self.success else None
-    
-    @property
-    def stats(self):
-        if isinstance(self.data, dict) and "stats" in self.data:
-            return self.data["stats"]
-        return None
+    @classmethod
+    def from_geo(cls, r: GeoAnalysisResult) -> "AnalysisResult":
+        return cls(
+            success=r.success,
+            data=r.data,
+            summary=r.summary,
+            error_type=r.error_type,
+            correction_hint=r.correction_hint
+        )
 
 class SpatialAnalyzer:
     """
@@ -64,10 +64,17 @@ class SpatialAnalyzer:
         dissolve: bool = False,
         callback: Optional[Callable] = None,
         source_crs: Optional[str] = None
-    ) -> GeoAnalysisResult:
+    ) -> "AnalysisResult":
         if callback: callback(20, "Executing buffer analysis...")
         data = {"type": "FeatureCollection", "features": features}
-        return buffer_smart(data, distance, unit)
+        res = buffer_smart(
+            geojson=data,
+            distance=distance,
+            unit=unit,
+            dissolve=dissolve,
+            source_crs=source_crs
+        )
+        return AnalysisResult.from_geo(res)
 
     @classmethod
     def clip(
