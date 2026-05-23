@@ -290,7 +290,7 @@ export function EmbodiedHud() {
               </div>
 
               {/* Detailed perception reads */}
-              <div style={{ flex: 1, display: 'flex', flexHorizontal: 'column', flexDirection: 'column', gap: 3, fontFamily: "'JetBrains Mono', monospace", fontSize: '10px' }}>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 3, fontFamily: "'JetBrains Mono', monospace", fontSize: '10px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: '#64748b' }}>CENTER:</span>
                   <span style={{ color: colors.textSecondary }}>[{lng.toFixed(4)}, {lat.toFixed(4)}]</span>

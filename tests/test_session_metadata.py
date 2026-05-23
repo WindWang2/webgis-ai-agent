@@ -37,14 +37,16 @@ def test_redis_session_metadata():
     # Mock the pipeline execution result: [state_raw, ref_ids_bytes, raw_refs, events_raw]
     state_raw = {
         b"base_layer": b'"Satellite"',
-        b"_started_at": b'"2026-05-22T22:00:00"'
+        b"_started_at": b'"2026-05-22T22:00:00"',
+        b"bad_json": b'invalid_json_here{'
     }
     ref_ids_bytes = [b"ref:layer1-abc12345"]
     raw_refs = {
         b"ref:layer1-abc12345": b"my-layer-alias"
     }
     events_raw = [
-        b'{"event": "tool_executed", "data": {"tool": "buffer"}, "timestamp": "2026-05-22T22:01:00"}'
+        b'{"event": "tool_executed", "data": {"tool": "buffer"}, "timestamp": "2026-05-22T22:01:00"}',
+        b'invalid_json_here{'
     ]
 
     mock_pipe.execute.return_value = [state_raw, ref_ids_bytes, raw_refs, events_raw]

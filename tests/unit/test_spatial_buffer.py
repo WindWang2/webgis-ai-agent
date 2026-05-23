@@ -121,5 +121,60 @@ def test_buffer_empty_features():
     assert "empty" in result.error_message.lower()
 
 
+def test_buffer_smart_invalid_geojson():
+    from app.lib.geo_processor.geometry import buffer_smart
+    res = buffer_smart("invalid json", 10)
+    assert res.success is False
+    assert "invalid" in res.summary.lower()
+
+
+def test_buffer_smart_single_feature():
+    from app.lib.geo_processor.geometry import buffer_smart
+    feature = {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [121.47, 31.23]},
+        "properties": {}
+    }
+    res = buffer_smart(feature, 10)
+    assert res.success is True
+
+
+def test_buffer_smart_km_unit():
+    from app.lib.geo_processor.geometry import buffer_smart
+    point = {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [121.47, 31.23]}
+    }
+    res = buffer_smart(point, 1, unit="km")
+    assert res.success is True
+
+
+def test_buffer_smart_invalid_geometry():
+    from app.lib.geo_processor.geometry import buffer_smart
+    feature = {
+        "type": "Feature",
+        "geometry": None,
+        "properties": {}
+    }
+    res = buffer_smart(feature, 10)
+    assert res.success is False
+    assert "failed to project" in res.summary.lower()
+
+
+def test_buffer_smart_exception():
+    from app.lib.geo_processor.geometry import buffer_smart
+    class BadDict(dict):
+        def __bool__(self):
+            return True
+        def get(self, *args, **kwargs):
+            raise RuntimeError("Mock exception")
+            
+    res = buffer_smart(BadDict(), 10)
+    assert res.success is False
+    assert res.error_type == "RuntimeError"
+
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+

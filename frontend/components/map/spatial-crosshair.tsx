@@ -133,8 +133,8 @@ export function SpatialCrosshair() {
             cursor: 'pointer',
             pointerEvents: 'auto',
           }}
-          title={copied ? "已复制！" : "点击复制当前中心坐标"}
         >
+          <title>{copied ? "已复制！" : "点击复制当前中心坐标"}</title>
           <circle cx="12" cy="12" r="3" fill={copied ? accentColor : (isThinking ? accentColor : '#cbd5e1')} style={{ transition: 'fill 0.3s ease' }} />
           <path d="M12 2v6M12 16v6M2 12h6M16 12h6" stroke={copied ? accentColor : (isThinking ? accentColor : '#64748b')} strokeWidth="1.5" strokeLinecap="round" style={{ transition: 'stroke 0.3s ease' }} />
         </svg>
