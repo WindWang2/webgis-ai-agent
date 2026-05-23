@@ -18,7 +18,7 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   viewport: { center: [116.4074, 39.9042], zoom: 4, bearing: 0, pitch: 0, bounds: undefined },
   setViewport: (center, zoom, bearing, pitch, bounds) =>
     set({ viewport: { center, zoom, bearing: bearing ?? 0, pitch: pitch ?? 0, bounds } }),
-  baseLayer: 'Carto Light',
+  baseLayer: 'Carto 深色',
   setBaseLayer: (name) => set({ baseLayer: name }),
   is3D: false,
   setIs3D: (v: boolean) => set({ is3D: v }),
@@ -69,7 +69,7 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   /* ─── v2 UI Tweaks ─── */
   accentColor: '#16a34a',
   setAccentColor: (color) => set({ accentColor: color }),
-  theme: 'light' as const,
+  theme: 'dark' as const,
   setTheme: (theme) => set({ theme }),
   fontSize: 13,
   setFontSize: (size) => set({ fontSize: size }),

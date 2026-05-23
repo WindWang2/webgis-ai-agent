@@ -22,6 +22,8 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
   const baseLayer = useHudStore((s) => s.baseLayer);
   const setBaseLayer = useHudStore((s) => s.setBaseLayer);
   const { selectedBaseLayer, setSelectedBaseLayer } = useMapAction();
+  const theme = useHudStore((s) => s.theme);
+  const isDark = theme === 'dark';
   const rootRef = useRef<HTMLDivElement>(null);
 
   const currentLabel = TILE_PROVIDERS[selectedBaseLayer]?.name || baseLayer || 'Carto 浅色';
@@ -56,13 +58,13 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
         style={{
           padding: '5px 10px',
           borderRadius: 8,
-          background: 'rgba(255,255,255,0.88)',
+          background: isDark ? 'rgba(15, 23, 42, 0.72)' : 'rgba(255,255,255,0.88)',
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',
-          border: '1px solid rgba(255,255,255,0.92)',
-          boxShadow: '0 2px 12px rgba(15,23,42,0.08)',
+          border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(255,255,255,0.92)',
+          boxShadow: isDark ? '0 2px 12px rgba(0,0,0,0.3)' : '0 2px 12px rgba(15,23,42,0.08)',
           fontSize: '10.5px',
-          color: '#475569',
+          color: isDark ? '#cbd5e1' : '#475569',
           cursor: 'pointer',
           fontFamily: "'JetBrains Mono', monospace",
           display: 'flex',
@@ -71,12 +73,12 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
         }}
       >
         <svg width='11' height='11' viewBox='0 0 11 11' fill='none' style={{ display: 'block' }}>
-          <path d='M5.5 1L1 4l4.5 2.5L10 4 5.5 1z' stroke='#94a3b8' strokeWidth='1'/>
-          <path d='M1 7l4.5 2.5L10 7' stroke='#94a3b8' strokeWidth='1' strokeLinecap='round'/>
+          <path d='M5.5 1L1 4l4.5 2.5L10 4 5.5 1z' stroke={isDark ? '#475569' : '#94a3b8'} strokeWidth='1'/>
+          <path d='M1 7l4.5 2.5L10 7' stroke={isDark ? '#475569' : '#94a3b8'} strokeWidth='1' strokeLinecap='round'/>
         </svg>
         {currentLabel}
         <svg width='8' height='8' viewBox='0 0 8 8' fill='none' style={{ display: 'block', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>
-          <path d='M1 2.5l3 3 3-3' stroke='#94a3b8' strokeWidth='1.2' strokeLinecap='round'/>
+          <path d='M1 2.5l3 3 3-3' stroke={isDark ? '#475569' : '#94a3b8'} strokeWidth='1.2' strokeLinecap='round'/>
         </svg>
       </button>
 
@@ -89,11 +91,11 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
             top: '100%',
             right: 0,
             marginTop: 4,
-            background: 'rgba(252,253,254,0.96)',
+            background: isDark ? 'rgba(15, 23, 42, 0.95)' : 'rgba(252,253,254,0.96)',
             backdropFilter: 'blur(20px)',
             WebkitBackdropFilter: 'blur(20px)',
-            border: '1px solid rgba(255,255,255,0.92)',
-            boxShadow: '0 4px 24px rgba(15,23,42,0.09)',
+            border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(255,255,255,0.92)',
+            boxShadow: isDark ? '0 4px 24px rgba(0,0,0,0.5)' : '0 4px 24px rgba(15,23,42,0.09)',
             borderRadius: 10,
             overflow: 'hidden',
             minWidth: 160,
@@ -121,8 +123,8 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
                   width: '100%',
                   padding: '7px 12px',
                   border: 'none',
-                  background: isActive ? 'rgba(22,163,74,0.07)' : 'transparent',
-                  color: isActive ? '#15803d' : '#475569',
+                  background: isActive ? (isDark ? 'rgba(22,163,74,0.15)' : 'rgba(22,163,74,0.07)') : 'transparent',
+                  color: isActive ? (isDark ? '#4ade80' : '#15803d') : (isDark ? '#94a3b8' : '#475569'),
                   fontSize: 11,
                   cursor: 'pointer',
                   textAlign: 'left',
@@ -131,7 +133,7 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
                 }}
                 onMouseEnter={(e) => {
                   if (!isActive) {
-                    e.currentTarget.style.background = 'rgba(15,23,42,0.04)';
+                    e.currentTarget.style.background = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(15,23,42,0.04)';
                   }
                 }}
                 onMouseLeave={(e) => {

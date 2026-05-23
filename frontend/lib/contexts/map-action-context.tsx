@@ -27,7 +27,7 @@ export const MapActionContext = createContext<MapActionContextType | undefined>(
 
 export function MapActionProvider({ children }: { children: React.ReactNode }) {
   const [actions, setActions] = useState<MapActionPayload[]>([]);
-  const [selectedBaseLayer, setSelectedBaseLayer] = useState(0);
+  const [selectedBaseLayer, setSelectedBaseLayer] = useState(1);
   const snapshotFnRef = useRef<(() => MapSnapshot) | null>(null);
 
   // Last action tracking for physical throttling

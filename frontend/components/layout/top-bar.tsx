@@ -25,6 +25,8 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
   const setHistoryOpen = useHudStore((s) => s.setHistoryOpen);
   const theme = useHudStore((s) => s.theme);
   const accentColor = useHudStore((s) => s.accentColor);
+  const is3D = useHudStore((s) => s.is3D);
+  const setIs3D = useHudStore((s) => s.setIs3D);
   const isDark = theme === 'dark';
 
   const isActive = aiStatus === 'thinking' || aiStatus === 'acting';
@@ -62,12 +64,12 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
     <div
       style={{
         position: 'fixed', top: 0, left: 0, right: 0, zIndex: 50,
-        display: 'flex', alignItems: 'center', height: 42, paddingLeft: 8, paddingRight: 8, gap: 8,
-        backgroundColor: isDark ? 'rgba(15,23,42,0.75)' : 'rgba(255,255,255,0.75)',
-        backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+        display: 'flex', alignItems: 'center', height: 42, paddingLeft: 12, paddingRight: 12, gap: 10,
+        backgroundColor: isDark ? 'rgba(9, 9, 11, 0.8)' : 'rgba(255,255,255,0.8)',
+        backdropFilter: 'blur(28px)', WebkitBackdropFilter: 'blur(28px)',
         borderBottomWidth: isActive ? 2 : 1,
         borderBottomStyle: 'solid',
-        borderBottomColor: isActive ? `${accentColor}55` : isDark ? 'rgba(148,163,184,0.2)' : 'rgba(0,0,0,0.06)'
+        borderBottomColor: isActive ? `${accentColor}55` : isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'
       }}
     >
       {/* heartbeat scan line */}
@@ -183,6 +185,47 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
         <span style={{ marginLeft: 4, marginRight: 4, width: 1, height: 16, backgroundColor: isDark ? 'rgba(148,163,184,0.2)' : 'rgba(226,232,240,0.8)' }} />
 
         <BaselayerSwitcher />
+
+        <button
+          type='button'
+          onClick={() => setIs3D(!is3D)}
+          aria-label={is3D ? '切换至 2D 视图' : '切换至 3D 视角'}
+          title={is3D ? '视角: 3D (点击切换 2D)' : '视角: 2D (点击切换 3D)'}
+          style={{
+            padding: '5px 10px',
+            borderRadius: 8,
+            background: isDark ? 'rgba(15, 23, 42, 0.72)' : 'rgba(255,255,255,0.88)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(255,255,255,0.92)',
+            boxShadow: isDark ? '0 2px 12px rgba(0,0,0,0.3)' : '0 2px 12px rgba(15,23,42,0.08)',
+            fontSize: '10.5px',
+            color: isDark ? '#cbd5e1' : '#475569',
+            cursor: 'pointer',
+            fontFamily: "'JetBrains Mono', monospace",
+            display: 'flex',
+            alignItems: 'center',
+            gap: 5,
+            transition: 'all 0.2s ease',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.04)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = isDark ? 'rgba(15, 23, 42, 0.72)' : 'rgba(255,255,255,0.88)';
+          }}
+        >
+          <svg width='11' height='11' viewBox='0 0 11 11' fill='none' style={{ display: 'block' }}>
+            {is3D ? (
+              <path d='M5.5 1.5L2 3.5l3.5 2L9 3.5 5.5 1.5z M2 6l3.5 2L9 6 M2 8.5l3.5 2 3.5-2' stroke={isDark ? '#4ade80' : '#16a34a'} strokeWidth='1' strokeLinecap='round' strokeLinejoin='round'/>
+            ) : (
+              <path d='M5.5 2.5L2 4.5l3.5 2 3.5-2-3.5-2z' stroke={isDark ? '#cbd5e1' : '#475569'} strokeWidth='1' strokeLinecap='round' strokeLinejoin='round'/>
+            )}
+          </svg>
+          <span style={{ color: is3D ? (isDark ? '#4ade80' : '#16a34a') : (isDark ? '#cbd5e1' : '#475569'), fontWeight: is3D ? 600 : 400 }}>
+            {is3D ? '3D' : '2D'}
+          </span>
+        </button>
 
         <span style={{ marginLeft: 4, marginRight: 4, width: 1, height: 16, backgroundColor: isDark ? 'rgba(148,163,184,0.2)' : 'rgba(226,232,240,0.8)' }} />
 

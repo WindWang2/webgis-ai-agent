@@ -14,12 +14,10 @@ import { useMapAction } from '@/lib/contexts/map-action-context';
 
 // New layout components
 import TopBar from '@/components/layout/top-bar';
-import StatusBar from '@/components/layout/status-bar';
 import { LeftSidebar } from '@/components/sidebar/left-sidebar';
-import MapToolbar from '@/components/map/map-toolbar';
-import AITracker from '@/components/map/ai-tracker';
 import FloatingLegend from '@/components/map/floating-legend';
-import AgentEnvHud from '@/components/hud/agent-env-hud';
+import { SpatialCrosshair } from '@/components/map/spatial-crosshair';
+import { EmbodiedHud } from '@/components/hud/embodied-hud';
 import RagIndependentPanel from '@/components/panel/rag-independent-panel';
 import TweaksPanel from '@/components/tweaks-panel';
 import { HistoryDrawer } from '@/components/drawers/history-drawer';
@@ -529,11 +527,18 @@ export default function Home() {
             onViewportChange={bridge.onViewportChange}
           />
           <ExportMask />
+          <SpatialCrosshair />
         </div>
 
         {/* Floating Legend */}
         {layers.find(l => l.visible && l.type === 'heatmap') && (
-          <div style={{ position: 'absolute', bottom: 34, left: leftPanelOpen ? sidebarWidth + 14 : 10, transition: 'left 0.22s cubic-bezier(0.4,0,0.2,1)', zIndex: 10 }}>
+          <div style={{
+            position: 'absolute',
+            bottom: hudOpen ? 220 : 34,
+            left: leftPanelOpen ? sidebarWidth + 14 : 10,
+            transition: 'left 0.22s cubic-bezier(0.4,0,0.2,1), bottom 0.3s cubic-bezier(0.4,0,0.2,1)',
+            zIndex: 10
+          }}>
             <FloatingLegend />
           </div>
         )}
@@ -547,23 +552,6 @@ export default function Home() {
           accentColor={reactiveAccentColor}
           onPlanAction={handlePlanAction}
         />
-
-        {/* Map Toolbar */}
-        <MapToolbar
-          hudOpen={hudOpen}
-          onToggleHud={() => setHudOpen(!hudOpen)}
-          onZoomIn={handleZoomIn}
-          onZoomOut={handleZoomOut}
-          onHome={handleHome}
-          onLocate={handleLocate}
-          onExport={handleExport}
-        />
-
-        {/* AI Tracker */}
-        <AITracker />
-
-        {/* Agent HUD */}
-        <AgentEnvHud open={hudOpen} onClose={() => setHudOpen(false)} />
 
         {/* RAG Independent Panel */}
         <RagIndependentPanel open={ragPanelOpen} onClose={() => setRagPanelOpen(false)} />
@@ -587,7 +575,7 @@ export default function Home() {
         </div>
       </div>
 
-      <StatusBar />
+      <EmbodiedHud />
 
       <HistoryDrawer
         open={historyOpen}
@@ -606,28 +594,6 @@ export default function Home() {
 
       {/* Tweaks Panel Wrapper */}
       <TweaksPanel />
-
-      {/* Tweaks Toggle Button */}
-      <button
-        onClick={() => setTweaksOpen(!tweaksOpen)}
-        style={{
-          position: 'fixed',
-          bottom: 40,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 99,
-          opacity: 0.3,
-          border: 'none',
-          background: 'transparent',
-          cursor: 'pointer',
-          padding: 4,
-          fontSize: '16px',
-        }}
-        title='Toggle UI adjustments'
-      >
-        ⚙
-      </button>
-
     </div>
   );
 }
