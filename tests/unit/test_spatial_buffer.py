@@ -2,8 +2,7 @@
 单元测试：缓冲区分析 CRS 投影转换测试
 """
 import pytest
-import json
-import pytest
+from shapely.geometry import shape
 
 pytestmark = pytest.mark.heavy
 
@@ -90,22 +89,35 @@ def test_buffer_dissolve():
     assert len(features) == 1
 
 
-def test_buffer_invalid_distance():
-    """测试异常情况：距离应该还是能处理，绝对值"""
-    point = {
+def test_buffer_negative_distance_shrinks_polygon():
+    """负距离 buffer 应保留 GIS 语义：多边形向内收缩，而不是静默取绝对值向外扩张。"""
+    polygon = {
         "type": "Feature",
-        "geometry": {"type": "Point", "coordinates": [121.47, 31.23]}
+        "properties": {"name": "test square"},
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[
+                [121.4700, 31.2300],
+                [121.4800, 31.2300],
+                [121.4800, 31.2400],
+                [121.4700, 31.2400],
+                [121.4700, 31.2300],
+            ]]
+        }
     }
-    
+
+    original_area = shape(polygon["geometry"]).area
     result: AnalysisResult = SpatialAnalyzer.buffer(
-        features=[point],
-        distance=-100,  # 负距离
+        features=[polygon],
+        distance=-100,
         unit="m",
         source_crs="EPSG:4326"
     )
-    
-    # 应该能处理，代码里已经取绝对值了
+
     assert result.success is True
+    assert result.data is not None
+    buffered_geometry = result.data["features"][0]["geometry"]
+    assert shape(buffered_geometry).area < original_area
 
 
 def test_buffer_empty_features():

@@ -31,8 +31,10 @@ def buffer_smart(
         if not features:
             return GeoAnalysisResult(False, None, "Input features list is empty")
 
-        # Handle unit conversion
-        dist = abs(distance)  # Use absolute distance as expected by tests
+        # Handle unit conversion while preserving the sign of distance.
+        # In GIS/Shapely semantics, negative polygon buffers shrink/erode
+        # the geometry; silently taking abs(distance) reverses that meaning.
+        dist = distance
         if unit == 'km':
             dist = dist * 1000
         
