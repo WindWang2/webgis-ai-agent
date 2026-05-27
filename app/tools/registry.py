@@ -113,6 +113,55 @@ class ToolRegistry:
         return dict(self._metadata)
 
     async def dispatch(self, name: str, arguments: dict | str, session_id: Optional[str] = None) -> Any:
+        """执行工具，包含 Pydantic 校验与透明解引用。
+
+        外层装饰：自动落 tool_metrics 一行 JSONL（含 cache_hit、错误类、时延）。
+        cache_hit 通过 ContextVar 从 @cached_tool 装饰器传上来——同一 asyncio.Task
+        内 ContextVar 自动跨 await 边界传播，无需 copy_context()。
+        """
+        import time as _time
+        import json as _json
+
+        from app.services import tool_metrics
+        from app.lib.tool_cache import cache_hit_var
+
+        token = cache_hit_var.set(False)  # 重置 — 每次 dispatch 都从未命中开始
+        start = _time.perf_counter()
+        error_cls: Optional[str] = None
+        result: Any = None
+        try:
+            arg_bytes = len(_json.dumps(arguments, default=str))
+        except Exception:
+            arg_bytes = 0
+
+        try:
+            result = await self._dispatch_impl(name, arguments, session_id)
+        except Exception as e:  # noqa: BLE001
+            error_cls = type(e).__name__
+            raise
+        finally:
+            duration_ms = int((_time.perf_counter() - start) * 1000)
+            if isinstance(result, dict) and result.get("success") is False:
+                error_cls = error_cls or result.get("error_type") or result.get("code")
+            try:
+                result_bytes = len(_json.dumps(result, default=str)) if result is not None else 0
+            except Exception:
+                result_bytes = 0
+            cache_hit = cache_hit_var.get()
+            tool_metrics.record_tool_call(
+                tool=name,
+                arg_bytes=arg_bytes,
+                result_bytes=result_bytes,
+                duration_ms=duration_ms,
+                cache_hit=cache_hit,
+                error=error_cls,
+                session_id=session_id,
+            )
+            cache_hit_var.reset(token)
+
+        return result
+
+    async def _dispatch_impl(self, name: str, arguments: dict | str, session_id: Optional[str] = None) -> Any:
         """执行工具，包含 Pydantic 校验与透明解引用"""
         from app.tools._utils import std_error_response
 
