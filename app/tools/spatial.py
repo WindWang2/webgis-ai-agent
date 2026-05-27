@@ -5,6 +5,7 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
+from app.tools._utils import cached_tool, trim_features
 from app.services.spatial_analyzer import SpatialAnalyzer
 from app.lib.geo_processor.core import safe_parse as safe_parse_geojson
 
@@ -219,11 +220,18 @@ def register_spatial_tools(registry: ToolRegistry):
                "投影会自动转 UTM 做精确缓冲，结果回 WGS84。"
            ),
            args_model=BufferAnalysisArgs)
+    @cached_tool(ttl=86400)
     def buffer_analysis(geojson: Any, distance: float, unit: str = "m") -> dict:
         data = safe_parse_geojson(geojson)
         features = data.get("features", [])
         res = SpatialAnalyzer.buffer(features, distance, unit)
-        return res.to_llm_response()
+        out = res.to_llm_response()
+        # 裁剪可能很大的缓冲结果载荷
+        if isinstance(out, dict) and out.get("type") == "FeatureCollection":
+            out = trim_features(out)
+        elif isinstance(out, dict) and isinstance(out.get("data"), dict) and out["data"].get("type") == "FeatureCollection":
+            out["data"] = trim_features(out["data"])
+        return out
 
     @tool(registry, name="spatial_stats",
            description=(
