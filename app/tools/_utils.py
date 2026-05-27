@@ -162,3 +162,64 @@ def asset_href(assets: dict, key: str) -> str:
                 return asset.get("href", "")
 
     return ""
+
+
+# ============================================================================
+# Payload trim — 重 GeoJSON 返回的统一裁剪
+# ============================================================================
+
+def trim_features(fc: dict, max_features: int = 5000, precision: int = 6) -> dict:
+    """裁剪 FeatureCollection 的载荷：保留前 N 条 + 几何坐标四舍五入。
+
+    Args:
+        fc: 输入字典。非 FeatureCollection 时原样返回 + warning。
+        max_features: 超过则截断保留前 N。默认 5000。
+        precision: 坐标小数位。默认 6（赤道 ≈ 10cm，肉眼无差）。
+
+    Returns:
+        裁剪后的 FeatureCollection。仅在实际发生裁剪时多一个顶层 "_trim" 键。
+    """
+    if not isinstance(fc, dict) or fc.get("type") != "FeatureCollection":
+        logger.warning(
+            f"[trim_features] non-FeatureCollection input (type={fc.get('type') if isinstance(fc, dict) else type(fc).__name__}); returning unchanged"
+        )
+        return fc
+
+    features = fc.get("features", []) or []
+    original_count = len(features)
+    trimmed = original_count > max_features
+    kept = features[:max_features] if trimmed else features
+
+    # 几何坐标四舍五入到 precision 位。pure-data 转换，不改 type/properties。
+    rounded = [_round_feature(f, precision) for f in kept]
+
+    out = dict(fc)
+    out["features"] = rounded
+    if trimmed:
+        out["_trim"] = {
+            "original_count": original_count,
+            "kept_count": len(rounded),
+            "precision": precision,
+            "reason": "max_features",
+        }
+    return out
+
+
+def _round_feature(feature: dict, precision: int) -> dict:
+    geom = feature.get("geometry")
+    if not isinstance(geom, dict):
+        return feature
+    new_geom = dict(geom)
+    new_geom["coordinates"] = _round_coords(geom.get("coordinates"), precision)
+    new_feat = dict(feature)
+    new_feat["geometry"] = new_geom
+    return new_feat
+
+
+def _round_coords(coords, precision: int):
+    """递归 round。Point→[x,y]，LineString→[[x,y],...]，Polygon→[[[x,y],...]] 等。"""
+    if isinstance(coords, (int, float)):
+        return round(coords, precision)
+    if isinstance(coords, list):
+        return [_round_coords(c, precision) for c in coords]
+    return coords
