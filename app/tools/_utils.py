@@ -6,6 +6,9 @@ import logging
 from contextlib import contextmanager, asynccontextmanager
 from typing import Optional, List
 
+# 缓存装饰器从 lib 单点导出。新工具 from app.tools._utils import cached_tool, trim_features
+from app.lib.tool_cache import cached_tool  # noqa: F401
+
 logger = logging.getLogger(__name__)
 
 
