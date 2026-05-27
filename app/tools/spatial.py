@@ -274,6 +274,7 @@ def register_spatial_tools(registry: ToolRegistry):
                "(3) 需要连续概率面做后续叠加分析 — 用 kde_surface。"
            ),
            args_model=HeatmapDataArgs)
+    @cached_tool(ttl=3600)
     def heatmap_data(geojson: Any, cell_size: int = 500, radius: int = 2000, render_type: str = "raster", palette: str = "classic") -> dict:
         data = safe_parse_geojson(geojson)
         if not data:
@@ -289,6 +290,8 @@ def register_spatial_tools(registry: ToolRegistry):
                     "radius": radius,
                     "palette": palette
                 }
+            if isinstance(data, dict) and data.get("type") == "FeatureCollection":
+                data = trim_features(data)
             return data
 
         try:
@@ -335,6 +338,8 @@ def register_spatial_tools(registry: ToolRegistry):
                         }
                     except Exception:
                         pass  # legend failure never blocks tool result
+            if isinstance(res_data, dict) and res_data.get("type") == "FeatureCollection":
+                res_data = trim_features(res_data)
             return res_data
         
         error_msg = result.get("error", "Heatmap generation failed")
