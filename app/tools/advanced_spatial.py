@@ -4,6 +4,7 @@ from typing import Any, List, Dict, Optional
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
+from app.tools._utils import cached_tool, trim_features
 from app.services.spatial_analyzer import SpatialAnalyzer
 from app.lib.geo_processor.core import safe_parse as safe_parse_geojson
 
@@ -297,6 +298,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "stat_field": "可选：参与统计的字段名",
                "stat_method": "统计方法，如 'count'（默认）, 'sum', 'mean'",
            })
+    @cached_tool(ttl=3600)
     def h3_binning(geojson: Any, resolution: int = 8, stat_field: str = None, stat_method: str = 'count') -> dict:
         from app.lib.geo_analysis.aggregation import h3_binning as _h3_binning
         data = safe_parse_geojson(geojson)
@@ -333,6 +335,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             import logging
             logging.getLogger(__name__).warning(f"[h3_binning] legend_spec construction failed: {e}")
 
+        if isinstance(payload, dict) and isinstance(payload.get("data"), dict) and payload["data"].get("type") == "FeatureCollection":
+            payload["data"] = trim_features(payload["data"])
         return payload
 
     @tool(registry, name="dissolve_layer",
