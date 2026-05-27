@@ -44,6 +44,13 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # 输出工具调用 digest（top 累计 / top p99 / 错误），便于运维定位最慢工具
+    try:
+        from app.services.tool_metrics import emit_digest
+        emit_digest()
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).warning(f"[lifespan] emit_digest failed: {e}")
+
     from app.core.network import close_shared_client
     await close_shared_client()
     Engine.dispose()
