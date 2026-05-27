@@ -68,3 +68,70 @@ def test_record_tool_call_disk_failure_does_not_raise(monkeypatch, _isolated_met
         tool="x", arg_bytes=0, result_bytes=0, duration_ms=0,
         cache_hit=False, error=None, session_id=None,
     )
+
+
+def test_aggregator_counts_after_synthetic_calls(_isolated_metrics):
+    for _ in range(3):
+        tool_metrics.record_tool_call(
+            tool="A", arg_bytes=0, result_bytes=0, duration_ms=100,
+            cache_hit=False, error=None, session_id=None,
+        )
+    for _ in range(2):
+        tool_metrics.record_tool_call(
+            tool="A", arg_bytes=0, result_bytes=0, duration_ms=50,
+            cache_hit=True, error=None, session_id=None,
+        )
+    tool_metrics.record_tool_call(
+        tool="A", arg_bytes=0, result_bytes=0, duration_ms=200,
+        cache_hit=False, error="ValueError", session_id=None,
+    )
+    snap = tool_metrics.aggregator_snapshot()
+    assert snap["A"]["count"] == 6
+    assert snap["A"]["total_ms"] == 3 * 100 + 2 * 50 + 200
+    assert snap["A"]["max_ms"] == 200
+    assert snap["A"]["hit_count"] == 2
+    assert snap["A"]["error_count"] == 1
+
+
+def test_emit_digest_writes_log_line(caplog, _isolated_metrics):
+    for _ in range(5):
+        tool_metrics.record_tool_call(
+            tool="heatmap_data", arg_bytes=0, result_bytes=0, duration_ms=120,
+            cache_hit=False, error=None, session_id=None,
+        )
+    with caplog.at_level("INFO", logger="app.services.tool_metrics"):
+        tool_metrics.emit_digest()
+    matching = [r for r in caplog.records if "TOOL_METRICS_DIGEST" in r.getMessage()]
+    assert len(matching) == 1
+    msg = matching[0].getMessage()
+    assert "n=5" in msg
+    assert "heatmap_data" in msg
+
+
+def test_emit_digest_empty_aggregator_emits_nothing(caplog, _isolated_metrics):
+    with caplog.at_level("INFO", logger="app.services.tool_metrics"):
+        tool_metrics.emit_digest()
+    matching = [r for r in caplog.records if "TOOL_METRICS_DIGEST" in r.getMessage()]
+    assert len(matching) == 0
+
+
+def test_auto_digest_at_100_calls(caplog, _isolated_metrics):
+    with caplog.at_level("INFO", logger="app.services.tool_metrics"):
+        for _ in range(100):
+            tool_metrics.record_tool_call(
+                tool="A", arg_bytes=0, result_bytes=0, duration_ms=1,
+                cache_hit=False, error=None, session_id=None,
+            )
+    matching = [r for r in caplog.records if "TOOL_METRICS_DIGEST" in r.getMessage()]
+    assert len(matching) == 1
+
+
+def test_no_digest_at_99_calls(caplog, _isolated_metrics):
+    with caplog.at_level("INFO", logger="app.services.tool_metrics"):
+        for _ in range(99):
+            tool_metrics.record_tool_call(
+                tool="A", arg_bytes=0, result_bytes=0, duration_ms=1,
+                cache_hit=False, error=None, session_id=None,
+            )
+    matching = [r for r in caplog.records if "TOOL_METRICS_DIGEST" in r.getMessage()]
+    assert len(matching) == 0

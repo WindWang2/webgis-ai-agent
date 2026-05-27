@@ -73,4 +73,62 @@ def record_tool_call(
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[tool_metrics] write failed (dropping row): {type(e).__name__}: {e}")
 
-    # 聚合器更新留到 Task 6
+    _update_aggregator(tool, duration_ms, cache_hit, error)
+
+
+def _update_aggregator(tool: str, duration_ms: int, cache_hit: bool, error: Optional[str]) -> None:
+    global _call_counter
+    with _lock:
+        slot = _aggregator.setdefault(tool, [0, 0, 0, 0, 0])
+        # [count, total_ms, max_ms, hit_count, error_count]
+        slot[0] += 1
+        slot[1] += duration_ms
+        if duration_ms > slot[2]:
+            slot[2] = duration_ms
+        if cache_hit:
+            slot[3] += 1
+        if error:
+            slot[4] += 1
+        _call_counter += 1
+        should_digest = (_call_counter % _DIGEST_EVERY_N == 0)
+    if should_digest:
+        emit_digest()
+
+
+def aggregator_snapshot() -> dict:
+    """聚合器只读快照，便于测试 / dashboard."""
+    with _lock:
+        return {
+            t: {
+                "count": v[0],
+                "total_ms": v[1],
+                "max_ms": v[2],
+                "hit_count": v[3],
+                "error_count": v[4],
+            }
+            for t, v in _aggregator.items()
+        }
+
+
+def emit_digest() -> None:
+    """输出 TOOL_METRICS_DIGEST 一行总结。空聚合器时不输出。"""
+    with _lock:
+        if not _aggregator:
+            return
+        n = _call_counter
+        # top 5 by cumulative ms
+        top_cum = sorted(
+            _aggregator.items(), key=lambda kv: kv[1][1], reverse=True
+        )[:5]
+        # top 5 by max_ms (p99 proxy)
+        top_max = sorted(
+            _aggregator.items(), key=lambda kv: kv[1][2], reverse=True
+        )[:5]
+        errors = [(t, v[4]) for t, v in _aggregator.items() if v[4] > 0]
+
+    cum_str = ",".join(f'("{t}",{v[1]},{v[0]},{v[3]})' for t, v in top_cum)
+    max_str = ",".join(f'("{t}",{v[2]})' for t, v in top_max)
+    err_str = ",".join(f'("{t}",{n})' for t, n in errors)
+    logger.info(
+        f"TOOL_METRICS_DIGEST n={n} top_cumulative=[{cum_str}] top_p99=[{max_str}] errors=[{err_str}]"
+    )
