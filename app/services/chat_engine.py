@@ -69,7 +69,7 @@ class ChatEngine:
         self.model = settings.LLM_MODEL
         self.api_key = settings.LLM_API_KEY
         self.use_prompt_caching = settings.LLM_PROMPT_CACHING_ENABLED
-        self.max_rounds = 30
+        self.max_rounds = 60
         self.tracker = TaskTracker()
         # 内存对话存储: session_id -> messages list (LRU Cache to bound memory)
         self._sessions: LRUCache = LRUCache(capacity=50)
@@ -558,7 +558,7 @@ class ChatEngine:
                 if event_type == "token":
                     # Forward each token chunk to the frontend for real-time display
                     streamed_content_parts.append(event_data["content"])
-                    yield sse_event("token", {"content": event_data["content"], "session_id": session_id})
+                    yield sse_event("token", {"content": event_data["content"], "is_reasoning": event_data.get("is_reasoning", False), "session_id": session_id})
                 elif event_type == "done":
                     assistant_msg = event_data["message"]
 

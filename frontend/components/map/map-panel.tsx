@@ -343,6 +343,12 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
                     "circle-opacity": layer.opacity || 1,
                   },
                 })
+              } else {
+                // Hide stale point sublayer when layer no longer has point features
+                const stalePointId = `custom-${layer.id}-point`
+                if (map.getLayer(stalePointId)) {
+                  map.setLayoutProperty(stalePointId, "visibility", "none")
+                }
               }
             }
           } catch (_e) {

@@ -36,7 +36,8 @@ def _overpass_to_geojson(data: str) -> dict:
         props["osm_type"] = el.get("type")
 
         geometry = None
-        if el.get("type") == "node" and "lat" in el and "lon" in el:
+        if el.get("type") == "node" and "lat" in el and "lon" in el and el.get("tags"):
+            # Skip topology-only nodes (polygon vertices with no meaningful tags)
             geometry = {"type": "Point", "coordinates": [el["lon"], el["lat"]]}
         elif el.get("type") == "way" and "geometry" in el:
             coords = [[p["lon"], p["lat"]] for p in el["geometry"]]

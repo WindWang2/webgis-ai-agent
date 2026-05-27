@@ -9,6 +9,7 @@ import { ToolCallChain } from '@/components/chat/tool-call-card';
 import { CollapsibleThink } from '@/components/chat/collapsible-think';
 import { PlanProposalCard } from '@/components/chat/plan-proposal-card';
 import { PlanCard } from '@/components/chat/plan-card';
+import { ChartRenderer, adaptChartData } from '@/components/chat/chart-renderer';
 
 /* ─── Thinking dots animation ─── */
 const DOT_ANIMS = ['animate-dot-1', 'animate-dot-2', 'animate-dot-3'];
@@ -256,6 +257,15 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
                           onReject={(pid) => onPlanAction?.(pid, 'reject')}
                         />
                       )}
+                      {(msg as any).charts?.map((raw: unknown, idx: number) => {
+                        const chart = adaptChartData(raw);
+                        if (!chart) return null;
+                        return (
+                          <div key={`chart-${idx}`} style={{ marginTop: 8, borderRadius: 8, overflow: 'hidden', border: `1px solid ${accentColor}22`, backgroundColor: isDark ? 'rgba(15,23,42,0.6)' : 'rgba(248,250,252,0.8)' }}>
+                            <ChartRenderer chart={chart} />
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : null}
                 </div>

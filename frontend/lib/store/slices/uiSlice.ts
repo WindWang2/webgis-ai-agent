@@ -69,7 +69,7 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   /* ─── v2 UI Tweaks ─── */
   accentColor: '#16a34a',
   setAccentColor: (color) => set({ accentColor: color }),
-  theme: 'dark' as const,
+  theme: 'light' as const,
   setTheme: (theme) => set({ theme }),
   fontSize: 13,
   setFontSize: (size) => set({ fontSize: size }),

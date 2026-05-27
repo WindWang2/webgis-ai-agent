@@ -118,10 +118,11 @@ Marked priority by ship risk vs cleanup value.
 ### P2-6. Documentation drift
 
 **What:**
-- `docs/api-docs.md` — add the 11 new LLM tools (measure_distance/area, add_marker, clear_annotations, fly_to_location, zoom_to_bbox, zoom_to_layer, reset_map_view, set_map_view, reorder_layer, remove_layer, export_batch_maps).
+- `docs/api-docs.md` — add the 11 new LLM tools (measure_distance/area, add_marker, clear_annotations, fly_to_location, zoom_to_bbox, zoom_to_layer, reset_map_view, set_map_view, reorder_layer, remove_layer, export_batch_maps) and the `display_layer` tool added in the layer-lifecycle redesign.
 - Add the 6 new map commands (zoom_to_bbox, set_map_view, REORDER_LAYER, draw_measurement, add_marker, clear_annotations) to the T003 Map Interaction Protocol table.
 - Fix the casing of `FLY_TO` in docs to `fly_to` (code uses lowercase).
 - Document the dual envelope `{commands: [...]}` from `export_batch_maps`.
+- Document the layer lifecycle model: all GeoJSON tool results load as hidden layers (`visible: false`, ID = `ref_id`); agent must call `display_layer` to show final results.
 
 **Effort:** human ~1.5h / CC ~15 min.
 

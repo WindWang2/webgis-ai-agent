@@ -325,7 +325,7 @@ def register_layer_management_tools(registry: ToolRegistry):
                 break
         
         id_to_use = found_id or ref_id
-        
+
         return {
             "success": True,
             "command": "APPLY_LAYER_FILTER",
@@ -334,4 +334,32 @@ def register_layer_management_tools(registry: ToolRegistry):
                 "filter": expression
             },
             "summary": f"Applied instant filter to layer {layer_ref} with expression: {expression}"
+        }
+
+    @tool(registry, name="display_layer",
+           description=(
+               "将已加载但隐藏的数据图层显示到地图上，并赋予有意义的名称。"
+               "✅ 必须在任务结束前调用：只显示与任务目标直接相关的最终结果图层。"
+               "✅ 同一个 ref_id 只需调用一次。"
+               "\n❌ 不要用于：展示中间过渡数据（边界查询、原始 POI 点、缓冲区辅助层等）。"
+           ),
+           param_descriptions={
+               "ref_id": "工具返回的 ref_id，如 'geojson-abc123'",
+               "name": "显示在图层面板的名称，应简洁描述分析内容，如'锦江区大学分布'",
+               "color": "（可选）图层颜色，16进制如 '#e11d48'",
+           })
+    def display_layer(ref_id: str, name: str, color: Optional[str] = None, session_id: Optional[str] = None) -> dict:
+        """显示隐藏的结果图层"""
+        if not session_id:
+            return {"error": "Missing session_id context"}
+
+        params: dict = {"layer_id": ref_id, "visible": True, "name": name}
+        if color:
+            params["color"] = color
+
+        return {
+            "success": True,
+            "command": "LAYER_VISIBILITY_UPDATE",
+            "params": params,
+            "summary": f"图层 {ref_id} 已显示，名称：{name}",
         }

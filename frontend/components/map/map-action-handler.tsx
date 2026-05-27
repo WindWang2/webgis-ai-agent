@@ -269,18 +269,28 @@ export function MapActionHandler() {
         }
 
         case 'LAYER_VISIBILITY_UPDATE': {
-          const { layer_id, visible, opacity } = action.params || {};
+          const { layer_id, visible, opacity, name, color } = action.params || {};
           if (!layer_id) break;
-          
+
           const style = map.getStyle();
           style.layers?.forEach(l => {
             if (l.id.startsWith(`custom-${layer_id}`)) {
               renderer.updateLayerStyle(map, l.id, {
                 visibility: visible !== undefined ? (visible ? 'visible' : 'none') : undefined,
-                opacity
+                opacity,
+                color: color as string | undefined,
               });
             }
           });
+          // Sync visibility/opacity/name/color back to store so LayersTab stays in sync
+          const storeUpdates: Record<string, unknown> = {};
+          if (visible !== undefined) storeUpdates.visible = visible;
+          if (opacity !== undefined) storeUpdates.opacity = opacity;
+          if (name !== undefined) storeUpdates.name = name;
+          if (color !== undefined) storeUpdates.style = { ...(useHudStore.getState().layers.find(l => l.id === layer_id)?.style ?? {}), color };
+          if (Object.keys(storeUpdates).length > 0) {
+            useHudStore.getState().updateLayer(layer_id, storeUpdates);
+          }
           break;
         }
 
@@ -305,6 +315,8 @@ export function MapActionHandler() {
           const target = layer_id || layerId;
           if (!target) break;
           renderer.removeLayerStack(map, `custom-${target}`, true);
+          // Sync removal to store so LayersTab stays in sync
+          useHudStore.getState().removeLayer(target);
           break;
         }
 

@@ -320,9 +320,10 @@ export default function Home() {
         };
         setMessages(prev => prev.map(m => m.id === thinkingId ? { ...m, plan } : m));
       }
-      // Layer auto-mount
+      // Layer auto-mount — hidden by default; AI calls display_layer to show final results
       if (data.geojson_ref || data.result?.image) {
-        const layerId = `layer-${Date.now()}`;
+        // Use geojson_ref as layer ID so AI can reference layers by their ref_id directly
+        const layerId = data.geojson_ref ?? `layer-${Date.now()}`;
         const layerName = data.tool === 'search_poi' ? `搜索结果: ${data.name || 'POI'}` :
                          data.tool === 'heatmap_data' ? '热力图分析' : `分析结果: ${data.tool}`;
         const accentColor = useHudStore.getState().accentColor;
@@ -332,7 +333,7 @@ export default function Home() {
           id: layerId,
           name: layerName,
           type: data.result?.image ? 'heatmap' : 'vector',
-          visible: true,
+          visible: false,
           opacity: 1,
           group: 'analysis',
           source: data.geojson_ref ? { type: 'FeatureCollection', features: [], metadata: { ref_id: data.geojson_ref } } as any : data.result,
@@ -358,6 +359,12 @@ export default function Home() {
         }
 
         setMessages(prev => prev.map(m => m.id === thinkingId ? { ...m, layerAdded: layerName } : m));
+      }
+      // Chart data from generate_chart tool — attach to message for rendering in chat
+      if (data.result?.chart) {
+        setMessages(prev => prev.map(m => m.id === thinkingId
+          ? { ...m, charts: [...((m.charts as any[]) ?? []), data.result.chart] }
+          : m));
       }
       // NOTE: command dispatch + bbox flyTo are handled by the bridge
     } else if (event.event === 'plan_ready') {

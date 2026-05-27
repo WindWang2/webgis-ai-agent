@@ -376,6 +376,7 @@ export function addProcessLayerStack(
     id: `process-${stepId}-point`,
     type: 'circle',
     source: sourceId,
+    filter: ['==', '$type', 'Point'],
     paint: {
       'circle-radius': 4,
       'circle-color': 'rgba(22, 163, 74, 0.3)',
