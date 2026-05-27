@@ -11,6 +11,7 @@ from app.tools.registry import ToolRegistry, tool
 from app.lib.geo_processor.core import safe_parse as safe_parse_geojson, to_utm_gdf
 from app.lib.geo_analysis.statistics import _extract_numeric_values as extract_numeric_values
 from app.services.spatial_analyzer import SpatialAnalyzer
+from app.tools._utils import cached_tool, trim_features
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +218,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "levels": "等值面级数，默认 8",
                "bandwidth": "搜索半径（米），0表示自动",
            })
+    @cached_tool(ttl=86400)
     def kde_contours(geojson: Any, levels: int = 8, bandwidth: float = 0) -> dict:
         try:
             import matplotlib.pyplot as plt
@@ -297,6 +299,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         }
         if legend_spec is not None:
             result_dict["legend_spec"] = legend_spec
+        if isinstance(result_dict, dict) and result_dict.get("type") == "FeatureCollection":
+            result_dict = trim_features(result_dict)
         return result_dict
 
     @tool(registry, name="voronoi_polygons",
