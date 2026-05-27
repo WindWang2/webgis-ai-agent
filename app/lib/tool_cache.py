@@ -5,9 +5,12 @@
 """
 import hashlib
 import json
-from typing import Optional, Any
+from typing import Optional, Any, Callable
 import logging
 import time
+import functools
+import inspect
+from contextvars import ContextVar
 
 import redis as _redis
 
@@ -96,3 +99,56 @@ def set_cached(key: str, value: Any, ttl: int) -> None:
         _get_redis_client().setex(key, ttl, payload)
     except (_redis.RedisError, TypeError, ValueError) as e:
         _warn_throttled(f"[tool_cache] Redis SET failed, dropping cache write: {type(e).__name__}: {e}")
+
+
+# Registry 的 timing wrapper 读此变量判断当前 dispatch 是否命中缓存。
+cache_hit_var: ContextVar[bool] = ContextVar("tool_cache_hit", default=False)
+
+
+def cached_tool(ttl: int = 3600, skip_if: Optional[Callable[[dict], bool]] = None):
+    """工具函数装饰器：Redis 命中即返回，未命中调内层 + 写回。
+
+    Args:
+        ttl: 缓存生存时间（秒）。默认 1 小时。
+        skip_if: 谓词函数 (kwargs_dict) -> bool。返回真值时双向旁路缓存。
+
+    内层函数可以是 sync 也可以是 async；通过 inspect.iscoroutinefunction 分支。
+    """
+    def decorator(func: Callable) -> Callable:
+        is_async = inspect.iscoroutinefunction(func)
+        tool_name = getattr(func, "__name__", "anonymous_tool")
+
+        if is_async:
+            @functools.wraps(func)
+            async def async_wrapper(**kwargs):
+                if skip_if is not None and skip_if(kwargs):
+                    return await func(**kwargs)
+                key = make_cache_key(tool_name, kwargs)
+                if key is None:
+                    return await func(**kwargs)
+                cached = get_cached(key)
+                if cached is not None:
+                    cache_hit_var.set(True)
+                    return cached
+                result = await func(**kwargs)
+                set_cached(key, result, ttl)
+                return result
+            return async_wrapper
+
+        @functools.wraps(func)
+        def sync_wrapper(**kwargs):
+            if skip_if is not None and skip_if(kwargs):
+                return func(**kwargs)
+            key = make_cache_key(tool_name, kwargs)
+            if key is None:
+                return func(**kwargs)
+            cached = get_cached(key)
+            if cached is not None:
+                cache_hit_var.set(True)
+                return cached
+            result = func(**kwargs)
+            set_cached(key, result, ttl)
+            return result
+        return sync_wrapper
+
+    return decorator

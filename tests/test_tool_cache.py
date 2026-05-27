@@ -112,3 +112,111 @@ def test_set_cached_redis_down_swallows_error():
         mock_client.return_value = mock_redis
         # MUST NOT raise
         set_cached("tool_cache:v1:k", {"a": 1}, ttl=3600)
+
+
+import asyncio
+from app.lib.tool_cache import cached_tool
+
+
+def test_cached_tool_sync_second_call_skips_inner():
+    """第二次相同参数：内层函数不再被调用，结果来自 Redis。"""
+    inner = MagicMock(return_value={"success": True, "data": "computed"})
+    inner.__name__ = "fake_tool"
+
+    storage = {}
+
+    def fake_get(key):
+        return storage.get(key)
+
+    def fake_setex(key, ttl, value):
+        storage[key] = value
+
+    with patch("app.lib.tool_cache._get_redis_client") as mock_client:
+        mock_redis = MagicMock()
+        mock_redis.get.side_effect = fake_get
+        mock_redis.setex.side_effect = fake_setex
+        mock_client.return_value = mock_redis
+
+        wrapped = cached_tool(ttl=3600)(inner)
+        r1 = wrapped(geojson="x", distance=10)
+        r2 = wrapped(geojson="x", distance=10)
+
+    assert r1 == r2 == {"success": True, "data": "computed"}
+    assert inner.call_count == 1  # 第二次没调用内层
+
+
+def test_cached_tool_sync_different_args_both_compute():
+    inner = MagicMock(return_value={"r": 1})
+    inner.__name__ = "fake_tool"
+
+    storage = {}
+    with patch("app.lib.tool_cache._get_redis_client") as mock_client:
+        mock_redis = MagicMock()
+        mock_redis.get.side_effect = lambda k: storage.get(k)
+        mock_redis.setex.side_effect = lambda k, ttl, v: storage.__setitem__(k, v)
+        mock_client.return_value = mock_redis
+
+        wrapped = cached_tool(ttl=3600)(inner)
+        wrapped(x=1)
+        wrapped(x=2)
+
+    assert inner.call_count == 2
+
+
+def test_cached_tool_async_second_call_skips_inner():
+    inner = MagicMock()
+    inner.__name__ = "fake_async_tool"
+
+    async def async_impl(**kwargs):
+        inner(**kwargs)
+        return {"r": "async"}
+
+    storage = {}
+    with patch("app.lib.tool_cache._get_redis_client") as mock_client:
+        mock_redis = MagicMock()
+        mock_redis.get.side_effect = lambda k: storage.get(k)
+        mock_redis.setex.side_effect = lambda k, ttl, v: storage.__setitem__(k, v)
+        mock_client.return_value = mock_redis
+
+        wrapped = cached_tool(ttl=3600)(async_impl)
+        r1 = asyncio.run(wrapped(x=1))
+        r2 = asyncio.run(wrapped(x=1))
+
+    assert r1 == r2 == {"r": "async"}
+    assert inner.call_count == 1
+
+
+def test_cached_tool_skip_if_predicate_bypasses_cache():
+    inner = MagicMock(return_value={"r": 1})
+    inner.__name__ = "fake_tool"
+
+    with patch("app.lib.tool_cache._get_redis_client") as mock_client:
+        mock_redis = MagicMock()
+        mock_client.return_value = mock_redis
+
+        wrapped = cached_tool(ttl=3600, skip_if=lambda kw: kw.get("realtime"))(inner)
+        wrapped(x=1, realtime=True)
+        wrapped(x=1, realtime=True)
+
+    assert inner.call_count == 2
+    # 缓存层完全未介入
+    mock_redis.get.assert_not_called()
+    mock_redis.setex.assert_not_called()
+
+
+def test_cached_tool_ref_args_bypass_cache():
+    """args 含 ref:xxx 时跳过缓存层。"""
+    inner = MagicMock(return_value={"r": 1})
+    inner.__name__ = "fake_tool"
+
+    with patch("app.lib.tool_cache._get_redis_client") as mock_client:
+        mock_redis = MagicMock()
+        mock_client.return_value = mock_redis
+
+        wrapped = cached_tool(ttl=3600)(inner)
+        wrapped(geojson="ref:abc")
+        wrapped(geojson="ref:abc")
+
+    assert inner.call_count == 2
+    mock_redis.get.assert_not_called()
+    mock_redis.setex.assert_not_called()
