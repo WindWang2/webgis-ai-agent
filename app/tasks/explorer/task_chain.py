@@ -14,14 +14,14 @@ logger = logging.getLogger(__name__)
 def _store_ref(data: dict, prefix: str = "explorer") -> str:
     """存储数据到 session manager，返回 ref_id"""
     from app.services.session_data import session_data_manager
-    ref_id = session_data_manager.store("explorer", data, prefix=prefix)
+    ref_id = asyncio.run(session_data_manager.store("explorer", data, prefix=prefix))
     return ref_id
 
 
 def _load_ref(ref_id: str):
     """从 session manager 加载数据"""
     from app.services.session_data import session_data_manager
-    return session_data_manager.get("explorer", ref_id)
+    return asyncio.run(session_data_manager.get("explorer", ref_id))
 
 
 @celery_app.task(bind=True, max_retries=2, soft_time_limit=30, time_limit=30)

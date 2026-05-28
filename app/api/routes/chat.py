@@ -135,7 +135,7 @@ async def get_session_map_state(
 ):
     """Return persisted map state (viewport, layers) for session restoration."""
     from app.services.session_data import session_data_manager
-    state = session_data_manager.get_map_state(session_id)
+    state = await session_data_manager.get_map_state(session_id)
     return {"session_id": session_id, "map_state": state}
 
 
@@ -154,11 +154,11 @@ async def push_session_map_state(
     """Persist live map state pushed by the frontend during agent execution."""
     from app.services.session_data import session_data_manager
     if req.viewport:
-        session_data_manager.set_map_state(session_id, "viewport", req.viewport)
+        await session_data_manager.set_map_state(session_id, "viewport", req.viewport)
     if req.layers is not None:
-        session_data_manager.set_map_state(session_id, "layers", req.layers)
+        await session_data_manager.set_map_state(session_id, "layers", req.layers)
     if req.base_layer:
-        session_data_manager.set_map_state(session_id, "base_layer", req.base_layer)
+        await session_data_manager.set_map_state(session_id, "base_layer", req.base_layer)
 
 
 @router.get("/skills")

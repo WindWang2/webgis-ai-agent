@@ -56,7 +56,7 @@ def register_plan_mode_tools(registry: ToolRegistry):
         if err:
             return {"success": False, "code": "VALIDATION_ERROR", "message": err}
 
-        plan_id = plan_svc.store_plan(session_id, plan)
+        plan_id = await plan_svc.store_plan(session_id, plan)
 
         # 标记包含破坏性工具的步骤，便于 UI / LLM 提示用户
         meta_all = registry.all_metadata()
@@ -118,14 +118,14 @@ def register_plan_mode_tools(registry: ToolRegistry):
         ),
         param_descriptions={"plan_id": "propose_plan 返回的 plan_id"},
     )
-    def get_plan_status(plan_id: str, session_id: Optional[str] = None) -> dict:
+    async def get_plan_status(plan_id: str, session_id: Optional[str] = None) -> dict:
         if not session_id:
             return {
                 "success": False,
                 "code": "VALIDATION_ERROR",
                 "message": "get_plan_status 必须在会话上下文中调用",
             }
-        plan_data = plan_svc.load_plan(session_id, plan_id)
+        plan_data = await plan_svc.load_plan(session_id, plan_id)
         if plan_data is None:
             return {"success": False, "code": "NOT_FOUND", "message": f"plan {plan_id} 不存在或已过期"}
         return {

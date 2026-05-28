@@ -196,26 +196,26 @@ def resolve_refs(value: Any, step_results: dict[str, Any]) -> Any:
 # ─────────────────────── 计划存储：session_data 后端 ───────────────────────
 
 
-def store_plan(session_id: str, plan: PlanProposal) -> str:
+async def store_plan(session_id: str, plan: PlanProposal) -> str:
     """把计划落进 session_data_manager，返回 plan_id (即 ref:plan-xxxxxx)。"""
     payload = plan.model_dump()
     payload["__kind__"] = "plan_proposal"
     payload["__status__"] = "pending"  # pending | running | completed | failed | cancelled
-    return session_data_manager.store(session_id, payload, prefix="plan")
+    return await session_data_manager.store(session_id, payload, prefix="plan")
 
 
-def load_plan(session_id: str, plan_id: str) -> Optional[dict]:
+async def load_plan(session_id: str, plan_id: str) -> Optional[dict]:
     """根据 plan_id 取出（含执行状态字段）。"""
-    return session_data_manager.get(session_id, plan_id)
+    return await session_data_manager.get(session_id, plan_id)
 
 
-def update_plan_status(session_id: str, plan_id: str, **updates: Any) -> None:
+async def update_plan_status(session_id: str, plan_id: str, **updates: Any) -> None:
     """原地更新计划的状态字段（status、results、failed_step 等）。
 
     注意：session_data_manager.get 会移动到 LRU 末尾。本函数仅在已加载的 dict 上
     更新（in-place），因为同对象被持续引用。
     """
-    plan_data = load_plan(session_id, plan_id)
+    plan_data = await load_plan(session_id, plan_id)
     if plan_data is None:
         logger.warning(f"update_plan_status: plan {plan_id} 不存在")
         return
@@ -234,7 +234,7 @@ async def execute_plan_async(
 
     返回汇总 {plan_id, status, executed, results, failed_step, error}。
     """
-    plan_data = load_plan(session_id, plan_id)
+    plan_data = await load_plan(session_id, plan_id)
     if plan_data is None:
         return {"success": False, "error": f"找不到 plan_id={plan_id}"}
     if plan_data.get("__status__") == "running":
@@ -245,19 +245,19 @@ async def execute_plan_async(
 
     order = _topological_order(plan)
     if order is None:
-        update_plan_status(session_id, plan_id, __status__="failed", __error__="cycle")
+        await update_plan_status(session_id, plan_id, __status__="failed", __error__="cycle")
         return {"success": False, "error": "依赖图含环"}
 
     step_by_id = {s.id: s for s in plan.steps}
     step_results: dict[str, Any] = {}
-    update_plan_status(session_id, plan_id, __status__="running")
+    await update_plan_status(session_id, plan_id, __status__="running")
 
     for sid in order:
         step = step_by_id[sid]
         try:
             resolved_args = resolve_refs(step.args, step_results)
             if not isinstance(resolved_args, dict):
-                update_plan_status(
+                await update_plan_status(
                     session_id, plan_id,
                     __status__="failed",
                     __failed_step__=sid,
@@ -277,7 +277,7 @@ async def execute_plan_async(
 
             # 工具返回 success=False（V3.x Exception As Thought 包装）也视为失败
             if isinstance(result, dict) and result.get("success") is False:
-                update_plan_status(
+                await update_plan_status(
                     session_id, plan_id,
                     __status__="failed",
                     __failed_step__=sid,
@@ -297,7 +297,7 @@ async def execute_plan_async(
             step_results[sid] = result
         except Exception as e:
             logger.exception(f"[PlanMode] step {sid} raised")
-            update_plan_status(
+            await update_plan_status(
                 session_id, plan_id,
                 __status__="failed",
                 __failed_step__=sid,
@@ -313,7 +313,7 @@ async def execute_plan_async(
                 "results": step_results,
             }
 
-    update_plan_status(
+    await update_plan_status(
         session_id, plan_id,
         __status__="completed",
         __step_results__=step_results,

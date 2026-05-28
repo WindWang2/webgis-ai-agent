@@ -37,7 +37,7 @@ async def get_session_layer_data(
     # 防御性输入校验：ref_id 只允许 ASCII 安全字符
     if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
         raise HTTPException(status_code=400, detail="非法 ref_id")
-    data = session_data_manager.get(session_id, ref_id)
+    data = await session_data_manager.get(session_id, ref_id)
     if not data:
         raise HTTPException(status_code=404, detail="数据已过期或不存在")
     return data

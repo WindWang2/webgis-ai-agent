@@ -199,8 +199,8 @@ class ChatEngine:
     def _format_layer_lines(inventory: dict, active_layers: list[dict]) -> list[str]:
         return _format_layer_lines(inventory, active_layers)
 
-    def _compose_request_messages(self, session_id: str, messages: list[dict]) -> list[dict]:
-        return _compose_request_messages_fn(session_id, messages)
+    async def _compose_request_messages(self, session_id: str, messages: list[dict]) -> list[dict]:
+        return await _compose_request_messages_fn(session_id, messages)
 
     def _build_last_analysis_context(self, messages: list[dict]) -> str:
         return _build_last_analysis_context(messages)
@@ -397,7 +397,7 @@ class ChatEngine:
         # 同步前端实时状态到 Session
         if map_state:
             for k, v in map_state.items():
-                session_data_manager.set_map_state(session_id, k, v)
+                await session_data_manager.set_map_state(session_id, k, v)
             from app.services.viewport_naming import schedule_populate_from_map_state
             schedule_populate_from_map_state(map_state)
 
@@ -414,7 +414,7 @@ class ChatEngine:
 
         # FC 循环
         for _ in range(self.max_rounds):
-            messages_with_context = self._compose_request_messages(session_id, messages)
+            messages_with_context = await self._compose_request_messages(session_id, messages)
 
             tools = self._select_tools(session_id, messages)
             response = await self._call_llm(messages_with_context, tools)
@@ -490,7 +490,7 @@ class ChatEngine:
         # 把前端上报的实时地图状态同步进 session_data_manager，下一轮注入感知用
         if map_state:
             for k, v in map_state.items():
-                session_data_manager.set_map_state(session_id, k, v)
+                await session_data_manager.set_map_state(session_id, k, v)
             from app.services.viewport_naming import schedule_populate_from_map_state
             schedule_populate_from_map_state(map_state)
 
@@ -540,7 +540,7 @@ class ChatEngine:
         executed_tools = set()
 
         for round_index in range(self.max_rounds):
-            messages_with_context = self._compose_request_messages(session_id, messages)
+            messages_with_context = await self._compose_request_messages(session_id, messages)
 
             # 检查取消
             if self.tracker.is_cancelled(task.id):
@@ -772,7 +772,7 @@ class ChatEngine:
         if deleted:
             if session_id in self._sessions:
                 del self._sessions[session_id]
-            session_data_manager.clear_session(session_id)
+            await session_data_manager.clear_session(session_id)
             from app.services.chat import planner
             planner.clear_plan(session_id)
             if self.catalog is not None:

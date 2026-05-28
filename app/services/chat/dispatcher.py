@@ -123,7 +123,7 @@ async def dispatch_tool(
         is_error = True
         error_msg = result.get("message", "")
         llm_payload = wrap_error_dict_for_llm(tool_name, result)
-        session_data_manager.append_event(
+        await session_data_manager.append_event(
             session_id,
             "tool_failed",
             {"tool": tool_name, "code": result.get("code"), "message": error_msg[:200]},
@@ -148,9 +148,9 @@ async def dispatch_tool(
         elif result.get("type") == "FeatureCollection" and "features" in result:
             target_data = result
         if target_data is not None:
-            geojson_ref = session_data_manager.store(session_id, target_data, prefix="geojson")
+            geojson_ref = await session_data_manager.store(session_id, target_data, prefix="geojson")
         if result.get("type") == "heatmap_raster":
-            session_data_manager.store(session_id, result, prefix="heatmap")
+            await session_data_manager.store(session_id, result, prefix="heatmap")
 
     result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
     llm_payload = slim_tool_result(result, result_str, geojson_ref) or result_str
@@ -182,7 +182,7 @@ async def dispatch_tool(
         event_payload["is_error"] = True
         if error_msg:
             event_payload["error_msg"] = str(error_msg)[:200]
-    session_data_manager.append_event(session_id, "tool_executed", event_payload)
+    await session_data_manager.append_event(session_id, "tool_executed", event_payload)
 
     return {
         "result": result,
