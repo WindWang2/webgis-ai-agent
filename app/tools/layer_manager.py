@@ -31,12 +31,12 @@ def register_layer_management_tools(registry: ToolRegistry):
     @tool(registry, name="alias_layer",
            description="为当前会话中的数据引用（ref:xxx）设置一个语义化的别名。设置后，后续可以直呼其名（如：'核心保护区'）来引用该数据。",
            args_model=AliasLayerArgs)
-    def alias_layer(ref_id: str, alias: str, session_id: Optional[str] = None) -> dict:
+    async def alias_layer(ref_id: str, alias: str, session_id: Optional[str] = None) -> dict:
         """为引用的数据设置别名"""
         if not session_id:
             return {"error": "Missing session_id context"}
-            
-        session_data_manager.set_alias(session_id, ref_id, alias)
+
+        await session_data_manager.set_alias(session_id, ref_id, alias)
         return {
             "success": True, 
             "ref_id": ref_id, 
@@ -46,12 +46,12 @@ def register_layer_management_tools(registry: ToolRegistry):
 
     @tool(registry, name="inventory_layers",
            description="展示当前会话中所有的地理数据图层（包含系统生成的引用 ID 和您设置的别名）。")
-    def inventory_layers(session_id: Optional[str] = None) -> dict:
+    async def inventory_layers(session_id: Optional[str] = None) -> dict:
         """列出所有图层"""
         if not session_id:
             return {"error": "Missing session_id context"}
-            
-        layers = session_data_manager.list_refs(session_id)
+
+        layers = await session_data_manager.list_refs(session_id)
         inventory = []
         for ref_id, alias in layers.items():
             inventory.append({
@@ -67,7 +67,7 @@ def register_layer_management_tools(registry: ToolRegistry):
 
     @tool(registry, name="switch_base_layer",
            description="切换当前地图的底图图源。支持：'Carto 深色'、'OSM 地图'、'ESRI 影像'、'OpenTopoMap'、'高德影像'。")
-    def switch_base_layer(name: str, session_id: Optional[str] = None) -> dict:
+    async def switch_base_layer(name: str, session_id: Optional[str] = None) -> dict:
         """切换底图"""
         if not session_id:
             return {"error": "Missing session_id context"}
@@ -105,7 +105,7 @@ def register_layer_management_tools(registry: ToolRegistry):
             elif any(k in search_name for k in ["地图", "osm", "street"]):
                 resolved_name = "OSM 地图"
 
-        session_data_manager.set_map_state(session_id, "base_layer", resolved_name)
+        await session_data_manager.set_map_state(session_id, "base_layer", resolved_name)
         return {
             "success": True,
             "command": "BASE_LAYER_CHANGE",
@@ -117,16 +117,16 @@ def register_layer_management_tools(registry: ToolRegistry):
 
     @tool(registry, name="set_layer_status",
            description="修改图层的显示状态（如可见性和透明度）。可以通过 ID (ref:xxx)、别名或图层名称引用图层。")
-    def set_layer_status(layer_ref: str, visible: Optional[bool] = None, opacity: Optional[float] = None, session_id: Optional[str] = None) -> dict:
+    async def set_layer_status(layer_ref: str, visible: Optional[bool] = None, opacity: Optional[float] = None, session_id: Optional[str] = None) -> dict:
         """修改图层状态"""
         if not session_id:
             return {"error": "Missing session_id context"}
-        
+
         # 1. 尝试从当前 Session 别名查找
-        ref_id = session_data_manager.resolve_alias(session_id, layer_ref)
-        
+        ref_id = await session_data_manager.resolve_alias(session_id, layer_ref)
+
         # 2. 如果没找到（或者是 legacy 图层），尝试从地图实时状态中模糊查找
-        map_state = session_data_manager.get_map_state(session_id)
+        map_state = await session_data_manager.get_map_state(session_id)
         layers = map_state.get("layers", [])
         
         # 精确 ID 匹配优先
@@ -158,14 +158,14 @@ def register_layer_management_tools(registry: ToolRegistry):
 
     @tool(registry, name="update_layer_appearance",
            description="修改图层的视觉样式（如颜色、线宽）。可以通过 ID (ref:xxx)、别名或图层名称引用图层。")
-    def update_layer_appearance(layer_ref: str, color: Optional[str] = None, stroke_width: Optional[float] = None, session_id: Optional[str] = None) -> dict:
+    async def update_layer_appearance(layer_ref: str, color: Optional[str] = None, stroke_width: Optional[float] = None, session_id: Optional[str] = None) -> dict:
         """修改图层外观"""
         if not session_id:
             return {"error": "Missing session_id context"}
-            
+
         # 逻辑同上
-        ref_id = session_data_manager.resolve_alias(session_id, layer_ref)
-        map_state = session_data_manager.get_map_state(session_id)
+        ref_id = await session_data_manager.resolve_alias(session_id, layer_ref)
+        map_state = await session_data_manager.get_map_state(session_id)
         layers = map_state.get("layers", [])
         
         found_id = None
@@ -202,7 +202,7 @@ def register_layer_management_tools(registry: ToolRegistry):
                "\n关键约束：position 支持 top/bottom/up/down/before；before 时必须提供 before_ref。"
            ),
            args_model=ReorderLayerArgs)
-    def reorder_layer(layer_ref: str, position: str = "top", before_ref: Optional[str] = None, session_id: Optional[str] = None) -> dict:
+    async def reorder_layer(layer_ref: str, position: str = "top", before_ref: Optional[str] = None, session_id: Optional[str] = None) -> dict:
         if not session_id:
             return {"error": "Missing session_id context"}
 
@@ -220,22 +220,22 @@ def register_layer_management_tools(registry: ToolRegistry):
         if pos == "before" and not before_ref:
             return {"error": "position=before 时必须提供 before_ref"}
 
-        ref_id = session_data_manager.resolve_alias(session_id, layer_ref)
+        ref_id = await session_data_manager.resolve_alias(session_id, layer_ref)
 
         # /review P1-6: verify the resolved id is session-owned. Accept either
         # source (the session's data store OR the frontend-echoed active layers)
         # since legitimate flow can have the ref registered before the frontend
         # echoes it back. The point is to refuse a free-form LLM ref that wasn't
         # registered by THIS session.
-        map_state = session_data_manager.get_map_state(session_id) or {}
+        map_state = await session_data_manager.get_map_state(session_id) or {}
         active_layers = map_state.get("layers", []) or []
-        session_refs = session_data_manager.list_refs(session_id) or {}
+        session_refs = await session_data_manager.list_refs(session_id) or {}
         if ref_id not in session_refs and not any(l.get("id") == ref_id for l in active_layers):
             return {"error": f"layer_ref {layer_ref!r} 未在当前会话的图层 / 数据引用中找到对应的 id"}
 
         before_id = None
         if before_ref:
-            before_id = session_data_manager.resolve_alias(session_id, before_ref)
+            before_id = await session_data_manager.resolve_alias(session_id, before_ref)
             if before_id not in session_refs and not any(l.get("id") == before_id for l in active_layers):
                 return {"error": f"before_ref {before_ref!r} 未在当前会话的图层 / 数据引用中找到对应的 id"}
 
@@ -258,7 +258,7 @@ def register_layer_management_tools(registry: ToolRegistry):
                "\n关键约束：删除是不可逆操作；ref_id 来自 session 数据存储，删除画布上的图层不会清掉 session 数据本身。"
            ),
            args_model=RemoveLayerArgs)
-    def remove_layer(layer_ref: str, session_id: Optional[str] = None) -> dict:
+    async def remove_layer(layer_ref: str, session_id: Optional[str] = None) -> dict:
         if not session_id:
             return {"error": "Missing session_id context"}
 
@@ -267,8 +267,8 @@ def register_layer_management_tools(registry: ToolRegistry):
         if not layer_ref:
             return {"error": "layer_ref 不能为空"}
 
-        ref_id = session_data_manager.resolve_alias(session_id, layer_ref)
-        map_state = session_data_manager.get_map_state(session_id)
+        ref_id = await session_data_manager.resolve_alias(session_id, layer_ref)
+        map_state = await session_data_manager.get_map_state(session_id)
         layers = map_state.get("layers", [])
         found_id = None
         for l in layers:
@@ -285,7 +285,7 @@ def register_layer_management_tools(registry: ToolRegistry):
         # session's ref store knows this ref, refuse the command. Otherwise an
         # LLM-emitted unknown ref passes through to the frontend's prefix-match
         # handler and wipes whatever matches.
-        session_refs = session_data_manager.list_refs(session_id) or {}
+        session_refs = await session_data_manager.list_refs(session_id) or {}
         if not found_id and ref_id not in session_refs:
             return {"error": f"layer_ref {layer_ref!r} 未在当前会话的图层 / 数据引用中找到对应的 id"}
 
@@ -307,16 +307,16 @@ def register_layer_management_tools(registry: ToolRegistry):
                "layer_ref": "图层引用 (ref:xxx) 或名称",
                "expression": "过滤表达式，例如 'pop > 1000' 或 MapLibre/Mapbox GL 风格表达式。设为 null 或空字符串可清除过滤。",
            })
-    def apply_layer_filter(layer_ref: str, expression: Any, session_id: Optional[str] = None) -> dict:
+    async def apply_layer_filter(layer_ref: str, expression: Any, session_id: Optional[str] = None) -> dict:
         """应用实时图层过滤"""
         if not session_id:
             return {"error": "Missing session_id context"}
-        
+
         # Resolve ref/alias
-        ref_id = session_data_manager.resolve_alias(session_id, layer_ref)
-        
+        ref_id = await session_data_manager.resolve_alias(session_id, layer_ref)
+
         # Find canonical ID if it exists in state
-        map_state = session_data_manager.get_map_state(session_id)
+        map_state = await session_data_manager.get_map_state(session_id)
         layers = map_state.get("layers", [])
         found_id = None
         for l in layers:
