@@ -54,18 +54,23 @@ async def test_broadcast_nonexistent_session_no_error(manager):
     await manager.broadcast("nonexistent", {"event": "test"})
 
 
-def test_handle_viewport_change():
+@pytest.mark.asyncio
+async def test_handle_viewport_change():
     mock_manager = MagicMock()
+    mock_manager.set_map_state = AsyncMock()
     with patch("app.services.ws_service.session_data_manager", mock_manager):
-        handle_viewport_change("sess-1", {"center": [116.4, 39.9], "zoom": 12, "bearing": 0, "pitch": 0})
+        await handle_viewport_change("sess-1", {"center": [116.4, 39.9], "zoom": 12, "bearing": 0, "pitch": 0})
         mock_manager.set_map_state.assert_called_once_with("sess-1", "viewport", {
             "center": [116.4, 39.9], "zoom": 12, "bearing": 0, "pitch": 0
         })
 
 
-def test_handle_layer_toggled():
+@pytest.mark.asyncio
+async def test_handle_layer_toggled():
     mock_manager = MagicMock()
+    mock_manager.update_layer_in_state = AsyncMock()
+    mock_manager.append_event = AsyncMock()
     with patch("app.services.ws_service.session_data_manager", mock_manager):
-        handle_layer_toggled("sess-1", {"layer_id": "layer-1", "visible": True})
+        await handle_layer_toggled("sess-1", {"layer_id": "layer-1", "visible": True})
         mock_manager.update_layer_in_state.assert_called_once_with("sess-1", "layer-1", {"visible": True})
         mock_manager.append_event.assert_called_once()

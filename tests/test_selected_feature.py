@@ -72,27 +72,27 @@ def test_format_selected_feature_no_properties_ok():
     assert "属性" not in out
 
 
-def test_summary_renders_selected_feature():
+async def test_summary_renders_selected_feature():
     sid = "r4-sel-summary"
-    session_data_manager.set_map_state(sid, "viewport", {"center": [0, 0], "zoom": 5})
-    session_data_manager.set_map_state(sid, "base_layer", "OSM 地图")
-    session_data_manager.set_map_state(sid, "selected_feature", {
+    await session_data_manager.set_map_state(sid, "viewport", {"center": [0, 0], "zoom": 5})
+    await session_data_manager.set_map_state(sid, "base_layer", "OSM 地图")
+    await session_data_manager.set_map_state(sid, "selected_feature", {
         "layer_id": "custom-ref:x",
         "layer_name": "测试层",
         "point": [10, 20],
         "properties": {"name": "AAA"},
     })
-    out = build_map_state_summary(sid)
+    out = await build_map_state_summary(sid)
     assert "选中要素" in out
     assert "测试层" in out
     assert "AAA" in out
-    session_data_manager.clear_session(sid)
+    await session_data_manager.clear_session(sid)
 
 
-def test_summary_omits_selected_feature_when_absent():
+async def test_summary_omits_selected_feature_when_absent():
     sid = "r4-sel-none"
-    session_data_manager.set_map_state(sid, "viewport", {"center": [0, 0], "zoom": 5})
-    session_data_manager.set_map_state(sid, "base_layer", "OSM 地图")
-    out = build_map_state_summary(sid)
+    await session_data_manager.set_map_state(sid, "viewport", {"center": [0, 0], "zoom": 5})
+    await session_data_manager.set_map_state(sid, "base_layer", "OSM 地图")
+    out = await build_map_state_summary(sid)
     assert "选中要素" not in out
-    session_data_manager.clear_session(sid)
+    await session_data_manager.clear_session(sid)

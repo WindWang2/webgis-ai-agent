@@ -85,15 +85,15 @@ async def test_zoom_to_layer_resolves_alias(registry):
             {"type": "Feature", "geometry": {"type": "Point", "coordinates": [101.0, 31.0]}},
         ],
     }
-    ref = session_data_manager.store(sid, gj, prefix="t")
-    session_data_manager.set_alias(sid, ref, "测试层")
+    ref = await session_data_manager.store(sid, gj, prefix="t")
+    await session_data_manager.set_alias(sid, ref, "测试层")
 
     out = await registry.dispatch("zoom_to_layer", {"layer_ref": "测试层"}, session_id=sid)
     assert out["success"] is True
     assert out["command"] == "zoom_to_bbox"
     assert out["params"]["bbox"] == [100.0, 30.0, 101.0, 31.0]
 
-    session_data_manager.clear_session(sid)
+    await session_data_manager.clear_session(sid)
 
 
 @pytest.mark.asyncio

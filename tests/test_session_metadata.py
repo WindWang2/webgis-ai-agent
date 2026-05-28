@@ -1,5 +1,5 @@
 """Unit tests for coalesced session metadata retrieval"""
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock
 import pytest
 import redis
 
@@ -7,17 +7,17 @@ from app.services.session_data import SessionDataManager
 from app.services.session_data_redis import RedisSessionDataManager
 
 
-def test_in_memory_session_metadata():
+async def test_in_memory_session_metadata():
     manager = SessionDataManager()
     sid = "test-mem-sid"
 
     # Set up some state
-    manager.set_map_state(sid, "base_layer", "Google Satellite")
-    manager.store(sid, {"type": "FeatureCollection"}, prefix="layer1")
-    manager.append_event(sid, "tool_executed", {"tool": "buffer"})
+    await manager.set_map_state(sid, "base_layer", "Google Satellite")
+    await manager.store(sid, {"type": "FeatureCollection"}, prefix="layer1")
+    await manager.append_event(sid, "tool_executed", {"tool": "buffer"})
 
     # Get metadata
-    metadata = manager.get_session_metadata(sid)
+    metadata = await manager.get_session_metadata(sid)
 
     assert metadata["started_at"] is not None
     assert metadata["map_state"]["base_layer"] == "Google Satellite"
@@ -26,13 +26,8 @@ def test_in_memory_session_metadata():
     assert metadata["event_log"][0]["event"] == "tool_executed"
 
 
-def test_redis_session_metadata():
+async def test_redis_session_metadata():
     manager = RedisSessionDataManager("redis://localhost:6379")
-    mock_redis = MagicMock()
-    manager._r = mock_redis
-
-    mock_pipe = MagicMock()
-    mock_redis.pipeline.return_value = mock_pipe
 
     # Mock the pipeline execution result: [state_raw, ref_ids_bytes, raw_refs, events_raw]
     state_raw = {
@@ -49,9 +44,19 @@ def test_redis_session_metadata():
         b'invalid_json_here{'
     ]
 
-    mock_pipe.execute.return_value = [state_raw, ref_ids_bytes, raw_refs, events_raw]
+    mock_pipe = MagicMock()
+    mock_pipe.execute = AsyncMock(return_value=[state_raw, ref_ids_bytes, raw_refs, events_raw])
 
-    metadata = manager.get_session_metadata("session-xyz")
+    # async context manager: `async with redis.pipeline() as pipe`
+    mock_ctx = AsyncMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_pipe)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    mock_redis = MagicMock()
+    mock_redis.pipeline.return_value = mock_ctx
+    manager._r = mock_redis
+
+    metadata = await manager.get_session_metadata("session-xyz")
 
     # Verify pipeline calls
     mock_redis.pipeline.assert_called_once()
@@ -71,23 +76,29 @@ def test_redis_session_metadata():
     assert metadata["event_log"] == [{"event": "tool_executed", "data": {"tool": "buffer"}, "timestamp": "2026-05-22T22:01:00"}]
 
 
-def test_redis_session_metadata_error_fallback():
+async def test_redis_session_metadata_error_fallback():
+    import redis.asyncio as aioredis
     manager = RedisSessionDataManager("redis://localhost:6379")
-    mock_redis = MagicMock()
-    manager._r = mock_redis
 
     mock_pipe = MagicMock()
-    mock_redis.pipeline.return_value = mock_pipe
+    mock_pipe.execute = AsyncMock(side_effect=aioredis.RedisError("Connection timed out"))
 
-    mock_pipe.execute.side_effect = redis.RedisError("Connection timed out")
+    # async context manager
+    mock_ctx = AsyncMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_pipe)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    mock_redis = MagicMock()
+    mock_redis.pipeline.return_value = mock_ctx
+    manager._r = mock_redis
 
     # Stub the individual fallback methods on the manager
-    manager.get_map_state = MagicMock(return_value={"base_layer": "FallbackMap"})
-    manager.list_refs = MagicMock(return_value={"ref:layer-fallback": "alias123"})
-    manager.get_event_log = MagicMock(return_value=[])
-    manager.get_started_at = MagicMock(return_value="2026-05-22T22:00:00")
+    manager.get_map_state = AsyncMock(return_value={"base_layer": "FallbackMap"})
+    manager.list_refs = AsyncMock(return_value={"ref:layer-fallback": "alias123"})
+    manager.get_event_log = AsyncMock(return_value=[])
+    manager.get_started_at = AsyncMock(return_value="2026-05-22T22:00:00")
 
-    metadata = manager.get_session_metadata("session-xyz")
+    metadata = await manager.get_session_metadata("session-xyz")
 
     # Should fallback successfully to individual direct calls
     assert metadata["map_state"] == {"base_layer": "FallbackMap"}

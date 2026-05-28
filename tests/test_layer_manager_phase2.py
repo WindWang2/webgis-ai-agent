@@ -14,12 +14,12 @@ def registry():
 
 
 @pytest.fixture
-def session_with_layer():
+async def session_with_layer():
     sid = "test-phase2-session"
-    ref = session_data_manager.store(sid, {"type": "FeatureCollection", "features": []}, prefix="t")
-    session_data_manager.set_alias(sid, ref, "我的层")
+    ref = await session_data_manager.store(sid, {"type": "FeatureCollection", "features": []}, prefix="t")
+    await session_data_manager.set_alias(sid, ref, "我的层")
     yield sid, ref
-    session_data_manager.clear_session(sid)
+    await session_data_manager.clear_session(sid)
 
 
 @pytest.mark.asyncio
@@ -51,8 +51,8 @@ async def test_reorder_before_requires_before_ref(registry, session_with_layer):
 @pytest.mark.asyncio
 async def test_reorder_before_resolves_alias(registry, session_with_layer):
     sid, ref = session_with_layer
-    other = session_data_manager.store(sid, {"features": []}, prefix="o")
-    session_data_manager.set_alias(sid, other, "底图")
+    other = await session_data_manager.store(sid, {"features": []}, prefix="o")
+    await session_data_manager.set_alias(sid, other, "底图")
     out = await registry.dispatch(
         "reorder_layer",
         {"layer_ref": "我的层", "position": "before", "before_ref": "底图"},

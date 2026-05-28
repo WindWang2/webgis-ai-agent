@@ -158,7 +158,7 @@ async def test_execute_simple_chain(registry):
                          args={"points": "${s2.data.points}"}),
         ],
     )
-    plan_id = svc.store_plan(sid, plan)
+    plan_id = await svc.store_plan(sid, plan)
     result = await svc.execute_plan_async(sid, plan_id, registry)
     assert result["success"] is True
     assert result["executed"] == ["s1", "s2", "s3"]
@@ -201,12 +201,12 @@ async def test_execute_halts_on_first_failure(registry):
                          args={"points": [1, 2, 3]}),
         ],
     )
-    plan_id = svc.store_plan(sid, plan)
+    plan_id = await svc.store_plan(sid, plan)
     result = await svc.execute_plan_async(sid, plan_id, registry)
     assert result["success"] is False
     assert result["failed_step"] == "s2"
     assert result["executed"] == ["s1"]  # s1 跑完，s2 失败，s3 没跑
-    plan_data = svc.load_plan(sid, plan_id)
+    plan_data = await svc.load_plan(sid, plan_id)
     assert plan_data["__status__"] == "failed"
     assert plan_data["__failed_step__"] == "s2"
 

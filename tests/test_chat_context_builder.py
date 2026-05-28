@@ -29,26 +29,26 @@ def test_build_plan_block_all_done_no_warning():
     assert "未完成" not in build_plan_block(plan)
 
 
-def test_compose_request_messages_injects_plan_when_present():
+async def test_compose_request_messages_injects_plan_when_present():
     msgs = [
         {"role": "system", "content": "SYS"},
         {"role": "user", "content": "你好"},
     ]
     set_plan("ctx-sess", Plan(intent="测试意图", domains=["core"], steps=[]))
     try:
-        out = compose_request_messages("ctx-sess", msgs)
+        out = await compose_request_messages("ctx-sess", msgs)
         joined = " ".join(m["content"] for m in out if m.get("role") == "system")
         assert "测试意图" in joined
     finally:
         clear_plan("ctx-sess")
 
 
-def test_compose_request_messages_no_plan_no_block():
+async def test_compose_request_messages_no_plan_no_block():
     msgs = [
         {"role": "system", "content": "SYS"},
         {"role": "user", "content": "你好"},
     ]
     clear_plan("ctx-sess-2")
-    out = compose_request_messages("ctx-sess-2", msgs)
+    out = await compose_request_messages("ctx-sess-2", msgs)
     joined = " ".join(m["content"] for m in out if m.get("role") == "system")
     assert "[执行计划]" not in joined

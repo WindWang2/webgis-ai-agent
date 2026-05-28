@@ -40,11 +40,11 @@ class TestSuspicious:
 
 
 @pytest.fixture
-def clean_session():
+async def clean_session():
     sid = "test-dispatcher-session"
-    session_data_manager.clear_session(sid)
+    await session_data_manager.clear_session(sid)
     yield sid
-    session_data_manager.clear_session(sid)
+    await session_data_manager.clear_session(sid)
 
 
 @pytest.fixture
@@ -95,7 +95,7 @@ async def test_std_error_dict_response(clean_session, fake_registry):
     assert out["is_error"] is True
     assert "区域不存在" in out["error_msg"]
     # tool_failed 写进了 event_log
-    log = session_data_manager.get_event_log(clean_session)
+    log = await session_data_manager.get_event_log(clean_session)
     assert any(e["event"] == "tool_failed" for e in log)
 
 
@@ -124,7 +124,7 @@ async def test_success_with_geojson_creates_ref_and_broadcasts(clean_session, fa
     assert bcast[2]["step_id"] == "call_42"
     assert bcast[2]["geojson"] == out["geojson_ref"]
     # event_log 记录
-    log = session_data_manager.get_event_log(clean_session)
+    log = await session_data_manager.get_event_log(clean_session)
     assert any(e["event"] == "tool_executed" for e in log)
 
 

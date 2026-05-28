@@ -1,6 +1,6 @@
 """Integration tests for session map-state API endpoint."""
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 import importlib.util
 import os
 from fastapi.testclient import TestClient
@@ -29,10 +29,10 @@ def client():
 class TestSessionMapStateAPI:
     @patch("app.services.session_data.session_data_manager")
     def test_get_map_state_returns_state(self, mock_sdm, client):
-        mock_sdm.get_map_state.return_value = {
+        mock_sdm.get_map_state = AsyncMock(return_value={
             "base_layer": "dark",
             "layers": [{"id": "l1", "type": "geojson"}],
-        }
+        })
         resp = client.get("/api/v1/chat/sessions/sess-123/map-state")
         assert resp.status_code == 200
         data = resp.json()
@@ -41,7 +41,7 @@ class TestSessionMapStateAPI:
 
     @patch("app.services.session_data.session_data_manager")
     def test_get_map_state_empty(self, mock_sdm, client):
-        mock_sdm.get_map_state.return_value = {}
+        mock_sdm.get_map_state = AsyncMock(return_value={})
         resp = client.get("/api/v1/chat/sessions/sess-404/map-state")
         assert resp.status_code == 200
         assert resp.json()["map_state"] == {}

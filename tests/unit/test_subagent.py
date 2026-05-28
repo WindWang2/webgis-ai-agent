@@ -128,7 +128,7 @@ async def test_dispatcher_captures_new_refs(registry):
     parent_sid = "test-parent-session-2"
     # 模拟：chat 内部假装做了一次 session_data_manager.store
     async def fake_chat(self, message, session_id=None, **kwargs):
-        ref = session_data_manager.store(session_id, {"fake": "data"}, prefix="data")
+        ref = await session_data_manager.store(session_id, {"fake": "data"}, prefix="data")
         return {"session_id": session_id, "content": f"已生成 {ref}", "reasoning": ""}
 
     with patch("app.services.chat_engine.ChatEngine.chat", fake_chat):
@@ -139,7 +139,7 @@ async def test_dispatcher_captures_new_refs(registry):
     assert len(result.refs) == 1
     assert result.refs[0].startswith("ref:data-")
     # 父侧也能查到
-    fetched = session_data_manager.get(parent_sid, result.refs[0])
+    fetched = await session_data_manager.get(parent_sid, result.refs[0])
     assert fetched == {"fake": "data"}
 
 

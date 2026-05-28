@@ -125,20 +125,20 @@ async def test_env_summary_renders_cached_region(monkeypatch):
     monkeypatch.setattr(viewport_naming, "_fetch_nominatim", fake_fetch)
 
     sid = "vp-summary"
-    session_data_manager.set_map_state(sid, "viewport",
+    await session_data_manager.set_map_state(sid, "viewport",
                                        {"center": [116.4, 39.9], "zoom": 10})
-    session_data_manager.set_map_state(sid, "base_layer", "OSM 地图")
+    await session_data_manager.set_map_state(sid, "base_layer", "OSM 地图")
 
     # 第一轮 summary：缓存还没填充，应该没有"视口所在区域"行
-    summary1 = build_map_state_summary(sid)
+    summary1 = await build_map_state_summary(sid)
     assert "视口所在区域" not in summary1
     # 但 schedule_populate 已经被触发，给一点时间让 task 跑完
     await asyncio.sleep(0.05)
 
-    summary2 = build_map_state_summary(sid)
+    summary2 = await build_map_state_summary(sid)
     assert "视口所在区域" in summary2
     assert "朝阳区" in summary2
-    session_data_manager.clear_session(sid)
+    await session_data_manager.clear_session(sid)
 
 
 def test_schedule_populate_from_map_state_extracts_center():
@@ -209,9 +209,14 @@ async def test_shared_aiohttp_session_reused(monkeypatch):
     from app.services import viewport_naming as vn
 
     vn.clear_cache()
-    # Reset shared session so we're testing a clean state
+    # Reset shared session so we're testing a clean state.
+    # Guard against a stale session from a previous event loop (closed loop raises RuntimeError).
     if vn._aiohttp_session is not None and not vn._aiohttp_session.closed:
-        await vn._close_session()
+        try:
+            await vn._close_session()
+        except RuntimeError:
+            # Event loop from a previous test was closed; just reset the global.
+            vn._aiohttp_session = None
 
     s1 = await vn._get_aiohttp_session()
     s2 = await vn._get_aiohttp_session()

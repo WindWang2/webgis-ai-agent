@@ -13,7 +13,7 @@ from app.services.chat.context_builder import (
 )
 
 
-def test_build_layer_schema_extracts_bbox():
+async def test_build_layer_schema_extracts_bbox():
     sid = "r2-bbox-1"
     gj = {
         "type": "FeatureCollection",
@@ -26,23 +26,23 @@ def test_build_layer_schema_extracts_bbox():
              "properties": {}},
         ],
     }
-    ref = session_data_manager.store(sid, gj, prefix="t")
-    schema = build_layer_schema(sid, ref)
+    ref = await session_data_manager.store(sid, gj, prefix="t")
+    schema = await build_layer_schema(sid, ref)
     assert schema["bbox"] == [100.0, 30.0, 101.0, 31.0]
-    session_data_manager.clear_session(sid)
+    await session_data_manager.clear_session(sid)
 
 
-def test_build_layer_schema_bbox_handles_polygon():
+async def test_build_layer_schema_bbox_handles_polygon():
     sid = "r2-bbox-poly"
     gj = {"type": "FeatureCollection", "features": [
         {"type": "Feature",
          "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [10, 0], [10, 5], [0, 5], [0, 0]]]},
          "properties": {}}
     ]}
-    ref = session_data_manager.store(sid, gj, prefix="t")
-    schema = build_layer_schema(sid, ref)
+    ref = await session_data_manager.store(sid, gj, prefix="t")
+    schema = await build_layer_schema(sid, ref)
     assert schema["bbox"] == [0.0, 0.0, 10.0, 5.0]
-    session_data_manager.clear_session(sid)
+    await session_data_manager.clear_session(sid)
 
 
 def test_viewport_layer_relation_contains():
@@ -109,18 +109,18 @@ def test_format_pending_event_warns_against_retrigger():
     assert "不要重复触发" in out
 
 
-def test_summary_renders_pending_and_tools_separately():
+async def test_summary_renders_pending_and_tools_separately():
     sid = "r2-render"
-    session_data_manager.set_map_state(sid, "viewport", {"center": [0, 0], "zoom": 5})
-    session_data_manager.set_map_state(sid, "base_layer", "OSM 地图")
-    session_data_manager.append_event(sid, "tool_executed", {"tool": "osm_search", "ref": "ref:x"})
-    session_data_manager.append_event(sid, "tool_executed", {"tool": "export_thematic_map",
+    await session_data_manager.set_map_state(sid, "viewport", {"center": [0, 0], "zoom": 5})
+    await session_data_manager.set_map_state(sid, "base_layer", "OSM 地图")
+    await session_data_manager.append_event(sid, "tool_executed", {"tool": "osm_search", "ref": "ref:x"})
+    await session_data_manager.append_event(sid, "tool_executed", {"tool": "export_thematic_map",
                                                               "status": "export_task_created",
                                                               "command": "export_map"})
-    session_data_manager.append_event(sid, "map_state_push", {"zoom": 5})
-    summary = build_map_state_summary(sid)
+    await session_data_manager.append_event(sid, "map_state_push", {"zoom": 5})
+    summary = await build_map_state_summary(sid)
     assert "进行中后台任务" in summary
     assert "近期工具调用" in summary
     assert "近期用户操作" in summary
     assert "export_thematic_map" in summary
-    session_data_manager.clear_session(sid)
+    await session_data_manager.clear_session(sid)

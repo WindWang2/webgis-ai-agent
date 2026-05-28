@@ -95,34 +95,34 @@ def test_truncate_handles_empty_history():
     assert dropped == 0
 
 
-def test_compose_injects_truncation_notice_when_dropping():
+async def test_compose_injects_truncation_notice_when_dropping():
     sid = "comp-trunc"
-    session_data_manager.set_map_state(sid, "viewport", {"center": [0, 0], "zoom": 5})
-    session_data_manager.set_map_state(sid, "base_layer", "OSM 地图")
+    await session_data_manager.set_map_state(sid, "viewport", {"center": [0, 0], "zoom": 5})
+    await session_data_manager.set_map_state(sid, "base_layer", "OSM 地图")
 
     msgs = [{"role": "system", "content": "BASE"}]
     for _ in range(20):
         msgs.append({"role": "user", "content": "Q" * 2000})
         msgs.append({"role": "assistant", "content": "A" * 2000})
 
-    out = compose_request_messages(sid, msgs)
+    out = await compose_request_messages(sid, msgs)
     notice_msgs = [m for m in out if m.get("role") == "system" and "历史折叠" in m.get("content", "")]
     assert len(notice_msgs) == 1
     # 折叠说明里有具体丢弃轮次数
     assert "轮对话" in notice_msgs[0]["content"]
-    session_data_manager.clear_session(sid)
+    await session_data_manager.clear_session(sid)
 
 
-def test_compose_no_notice_when_under_budget():
+async def test_compose_no_notice_when_under_budget():
     sid = "comp-ok"
-    session_data_manager.set_map_state(sid, "viewport", {"center": [0, 0], "zoom": 5})
-    session_data_manager.set_map_state(sid, "base_layer", "OSM 地图")
+    await session_data_manager.set_map_state(sid, "viewport", {"center": [0, 0], "zoom": 5})
+    await session_data_manager.set_map_state(sid, "base_layer", "OSM 地图")
 
     msgs = [
         {"role": "system", "content": "BASE"},
         {"role": "user", "content": "你好"},
         {"role": "assistant", "content": "你好，有什么可以帮你？"},
     ]
-    out = compose_request_messages(sid, msgs)
+    out = await compose_request_messages(sid, msgs)
     assert not any("历史折叠" in m.get("content", "") for m in out if m.get("role") == "system")
-    session_data_manager.clear_session(sid)
+    await session_data_manager.clear_session(sid)
