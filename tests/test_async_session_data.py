@@ -49,3 +49,54 @@ async def test_memory_clear_session():
     await sdm.clear_session("s6")
     refs = await sdm.list_refs("s6")
     assert refs == {}
+
+
+import fakeredis.aioredis
+
+
+@pytest.fixture
+def fake_redis_sdm():
+    """RedisSessionDataManager backed by fakeredis (async)."""
+    server = fakeredis.FakeServer()
+    from app.services.session_data_redis import RedisSessionDataManager
+    sdm = RedisSessionDataManager.__new__(RedisSessionDataManager)
+    sdm._r = fakeredis.aioredis.FakeRedis(server=server)
+    sdm.capacity = 200
+    return sdm
+
+
+async def test_redis_store_returns_ref(fake_redis_sdm):
+    ref = await fake_redis_sdm.store("rs1", {"val": 42})
+    assert ref.startswith("ref:")
+
+
+async def test_redis_get_returns_stored_data(fake_redis_sdm):
+    ref = await fake_redis_sdm.store("rs2", {"hello": "redis"})
+    data = await fake_redis_sdm.get("rs2", ref)
+    assert data == {"hello": "redis"}
+
+
+async def test_redis_set_alias_and_resolve(fake_redis_sdm):
+    ref = await fake_redis_sdm.store("rs3", {})
+    await fake_redis_sdm.set_alias("rs3", ref, "城区")
+    resolved = await fake_redis_sdm.resolve_alias("rs3", "城区")
+    assert resolved == ref
+
+
+async def test_redis_get_session_metadata_pipeline(fake_redis_sdm):
+    await fake_redis_sdm.store("rs4", {"a": 1})
+    await fake_redis_sdm.set_map_state("rs4", "zoom", 10)
+    await fake_redis_sdm.append_event("rs4", "click", {})
+    meta = await fake_redis_sdm.get_session_metadata("rs4")
+    assert "map_state" in meta
+    assert "list_refs" in meta
+    assert "event_log" in meta
+    assert meta["map_state"].get("zoom") == 10
+    assert len(meta["event_log"]) == 1
+
+
+async def test_redis_clear_session(fake_redis_sdm):
+    await fake_redis_sdm.store("rs5", {})
+    await fake_redis_sdm.clear_session("rs5")
+    refs = await fake_redis_sdm.list_refs("rs5")
+    assert refs == {}
