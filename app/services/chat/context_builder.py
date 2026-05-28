@@ -398,6 +398,8 @@ async def build_map_state_summary(
             state = {}
         if inventory is None:
             inventory = {}
+        if event_log is None:
+            event_log = []
 
     viewport = state.get("viewport") or {}
     center = viewport.get("center")
@@ -579,6 +581,9 @@ async def format_layer_lines(
                 rid: (s if isinstance(s, dict) else None)
                 for rid, s in zip(ref_ids_list, schemas)
             }
+            for rid, s in zip(ref_ids_list, schemas):
+                if isinstance(s, BaseException):
+                    logger.warning("build_layer_schema failed for ref=%s: %s", rid, s)
 
         visibility_map = {l.get("id"): l for l in active_layers if l.get("id")}
         for ref_id, alias in inventory.items():

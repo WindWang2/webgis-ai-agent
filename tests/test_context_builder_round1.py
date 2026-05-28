@@ -195,3 +195,34 @@ async def test_event_log_not_fetched_again_when_prefetched(monkeypatch):
         _fetched=True,
     )
     assert call_count == 0, f"get_event_log was called {call_count} time(s) even though event_log was prefetched"
+
+
+async def test_event_log_not_fetched_when_supplied_with_fetched_false(monkeypatch):
+    """When event_log is explicitly supplied, it should not be re-fetched even with _fetched=False."""
+    from app.services.chat.context_builder import build_map_state_summary
+    from app.services import session_data as sdm_module
+
+    event_log_call_count = 0
+    original_get_event_log = sdm_module.session_data_manager.get_event_log
+    async def counting_get_event_log(session_id):
+        nonlocal event_log_call_count
+        event_log_call_count += 1
+        return await original_get_event_log(session_id)
+    monkeypatch.setattr(sdm_module.session_data_manager, "get_event_log", counting_get_event_log)
+
+    # Patch get_map_state and list_refs to return empty (to avoid real SDM setup)
+    async def noop_map_state(session_id):
+        return {}
+    async def noop_list_refs(session_id):
+        return {}
+    monkeypatch.setattr(sdm_module.session_data_manager, "get_map_state", noop_map_state)
+    monkeypatch.setattr(sdm_module.session_data_manager, "list_refs", noop_list_refs)
+
+    await build_map_state_summary(
+        "fetched-false-test",
+        state=None,
+        inventory=None,
+        event_log=[{"event": "supplied", "data": {}}],
+        _fetched=False,  # will fetch state and inventory but NOT event_log
+    )
+    assert event_log_call_count == 0, "get_event_log was called even though event_log was explicitly supplied"
