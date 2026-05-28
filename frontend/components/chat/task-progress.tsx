@@ -82,7 +82,7 @@ export function TaskProgress({ task }: TaskProgressProps) {
             <Compass className={`h-4.5 w-4.5 ${currentStatus.color} ${task.status === 'running' ? 'animate-[spin_4s_linear_infinite]' : ''}`} />
           </div>
           <div className="flex flex-col min-w-0">
-            <span className={`text-[10px] uppercase tracking-widest font-bold ${currentStatus.color}`}>
+            <span className={`text-[14px] uppercase tracking-widest font-bold ${currentStatus.color}`}>
               {currentStatus.label}
             </span>
             <span className="text-sm text-foreground/90 truncate font-medium">
@@ -92,7 +92,7 @@ export function TaskProgress({ task }: TaskProgressProps) {
         </div>
         <div className="flex items-center gap-2">
             {task.status === 'running' && (
-               <span className="text-[10px] font-mono text-primary/70 bg-primary/10 px-1.5 py-0.5 rounded border border-primary/20">
+               <span className="text-[14px] font-mono text-primary/70 bg-primary/10 px-1.5 py-0.5 rounded border border-primary/20">
                  {progressPercent.toFixed(0)}%
                </span>
             )}
@@ -143,11 +143,11 @@ export function TaskProgress({ task }: TaskProgressProps) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex justify-between items-center bg-card/30 rounded px-2 py-1 border border-border/30 hover:border-primary/20 transition-all">
-                    <span className="font-mono text-[11px] text-foreground/80 tracking-tight">[{step.tool}]</span>
-                    {step.status === 'completed' && <span className="text-[10px] text-success/70 font-mono">完毕</span>}
+                    <span className="font-mono text-[15px] text-foreground/80 tracking-tight">[{step.tool}]</span>
+                    {step.status === 'completed' && <span className="text-[14px] text-success/70 font-mono">完毕</span>}
                   </div>
                   {step.error && (
-                    <div className="mt-1.5 p-2 bg-error/10 border border-error/20 rounded text-error text-[11px] leading-relaxed animate-in fade-in slide-in-from-top-1">
+                    <div className="mt-1.5 p-2 bg-error/10 border border-error/20 rounded text-error text-[15px] leading-relaxed animate-in fade-in slide-in-from-top-1">
                       <div className="flex items-center gap-1.5 font-bold mb-0.5">
                         <AlertCircle className="h-3 w-3" /> 观测异常
                       </div>
@@ -170,7 +170,7 @@ export function TaskProgress({ task }: TaskProgressProps) {
               <button
                 onClick={handleCancel}
                 disabled={cancelling}
-                className="group flex items-center gap-2 px-3 py-1.5 rounded-md text-[11px] font-bold tracking-wider uppercase
+                className="group flex items-center gap-2 px-3 py-1.5 rounded-md text-[15px] font-bold tracking-wider uppercase
                            bg-error/5 text-error border border-error/20 hover:bg-error hover:text-white transition-all shadow-sm active:scale-95"
               >
                 <Ban className={`h-3.5 w-3.5 ${cancelling ? 'animate-spin' : 'group-hover:rotate-90 transition-transform'}`} />

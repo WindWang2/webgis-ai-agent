@@ -550,7 +550,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
                     key={l.id}
                     className={`rounded-xl transition-all ${flashing ? "ring-2 ring-primary/80 ring-offset-2 ring-offset-background animate-pulse" : ""}`}
                   >
-                    <div className="text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-1 px-1">{l.name}</div>
+                    <div className="text-[14px] uppercase tracking-widest text-muted-foreground/60 mb-1 px-1">{l.name}</div>
                     <ThematicLegend spec={l.legend_spec!} onFilterChange={(ranges) => handleFilterChange(l.id, ranges)} />
                   </div>
                 );

@@ -25,7 +25,7 @@ export function FloatingLegend({ className }: FloatingLegendProps) {
         boxShadow: isDark ? '0 4px 24px rgba(0,0,0,0.4)' : '0 4px 24px rgba(15,23,42,0.09)',
         borderRadius: 10,
         padding: '8px 12px',
-        fontSize: '10.5px',
+        fontSize: '12.5px',
         fontFamily: "'DM Sans', system-ui, sans-serif",
         minWidth: 140,
         transform: visibleHeatLayer ? 'translateY(0)' : 'translateY(20px)',
@@ -35,7 +35,7 @@ export function FloatingLegend({ className }: FloatingLegendProps) {
       }}
       className={className}
     >
-      <div style={{ fontSize: 10, color: isDark ? '#64748b' : '#94a3b8', fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
+      <div style={{ fontSize: 12, color: isDark ? '#64748b' : '#94a3b8', fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
         {visibleHeatLayer?.name || ''}
       </div>
       <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', marginBottom: 5 }}>
@@ -43,7 +43,7 @@ export function FloatingLegend({ className }: FloatingLegendProps) {
           <div key={idx} style={{ flex: 1, backgroundColor: color }} />
         ))}
       </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', color: isDark ? '#94a3b8' : '#64748b', fontSize: 9 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', color: isDark ? '#94a3b8' : '#64748b', fontSize: 11 }}>
         {LABELS.map((label, idx) => (
           <span key={idx}>{label}</span>
         ))}

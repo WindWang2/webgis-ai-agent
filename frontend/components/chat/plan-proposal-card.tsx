@@ -73,7 +73,7 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
         border: `1px solid ${border}`,
         backgroundColor: bg,
         padding: 12,
-        fontSize: 12,
+        fontSize: 14,
       }}
     >
       {/* Header */}
@@ -86,12 +86,12 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span style={{ color: titleColor, fontWeight: 600, fontSize: 13 }}>{title}</span>
+            <span style={{ color: titleColor, fontWeight: 600, fontSize: 15 }}>{title}</span>
             <span
               style={{
                 padding: '1px 8px',
                 borderRadius: 999,
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: 500,
                 color: accentColor,
                 backgroundColor: `${accentColor}1f`,
@@ -107,7 +107,7 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
                   gap: 4,
                   padding: '1px 8px',
                   borderRadius: 999,
-                  fontSize: 10,
+                  fontSize: 12,
                   color: '#22c55e',
                   backgroundColor: 'rgba(34,197,94,0.15)',
                 }}
@@ -123,7 +123,7 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
                   gap: 4,
                   padding: '1px 8px',
                   borderRadius: 999,
-                  fontSize: 10,
+                  fontSize: 12,
                   color: '#ef4444',
                   backgroundColor: 'rgba(239,68,68,0.15)',
                 }}
@@ -151,7 +151,7 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
             display: 'flex',
             gap: 6,
             alignItems: 'flex-start',
-            fontSize: 11,
+            fontSize: 13,
             lineHeight: 1.5,
           }}
         >
@@ -171,7 +171,7 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
             onClick={() => setExpanded((v) => !v)}
             style={{
               color: subText,
-              fontSize: 10,
+              fontSize: 12,
               padding: 0,
               background: 'transparent',
               border: 'none',
@@ -204,22 +204,22 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
                       : isDark
                       ? 'rgba(30,41,59,0.4)'
                       : 'rgba(241,245,249,0.6)',
-                    fontSize: 11,
+                    fontSize: 13,
                     lineHeight: 1.5,
                   }}
                 >
                   <span style={{ color: subText, fontWeight: 600, minWidth: 18 }}>{i + 1}.</span>
                   <div className="flex-1 min-w-0">
                     <div style={{ color: titleColor }}>
-                      <code style={{ fontSize: 10, color: accentColor }}>{step.tool}</code>
+                      <code style={{ fontSize: 12, color: accentColor }}>{step.tool}</code>
                       {step.destructive && (
-                        <span style={{ marginLeft: 6, color: '#f59e0b', fontSize: 10 }}>
+                        <span style={{ marginLeft: 6, color: '#f59e0b', fontSize: 12 }}>
                           ⚠ 破坏性
                         </span>
                       )}
                     </div>
                     {step.purpose && (
-                      <div style={{ color: subText, fontSize: 10.5 }}>{step.purpose}</div>
+                      <div style={{ color: subText, fontSize: 12.5 }}>{step.purpose}</div>
                     )}
                   </div>
                 </li>
@@ -242,7 +242,7 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
             border: 'none',
             backgroundColor: locked ? 'rgba(100,116,139,0.3)' : accentColor,
             color: locked ? subText : '#fff',
-            fontSize: 12,
+            fontSize: 14,
             fontWeight: 500,
             cursor: locked ? 'not-allowed' : 'pointer',
             display: 'inline-flex',
@@ -264,7 +264,7 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
             border: `1px solid ${border}`,
             backgroundColor: 'transparent',
             color: locked ? subText : titleColor,
-            fontSize: 12,
+            fontSize: 14,
             cursor: locked ? 'not-allowed' : 'pointer',
             display: 'inline-flex',
             alignItems: 'center',
@@ -283,7 +283,7 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
             border: `1px solid ${border}`,
             backgroundColor: 'transparent',
             color: locked ? subText : '#ef4444',
-            fontSize: 12,
+            fontSize: 14,
             cursor: locked ? 'not-allowed' : 'pointer',
             display: 'inline-flex',
             alignItems: 'center',

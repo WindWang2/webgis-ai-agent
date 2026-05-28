@@ -100,7 +100,7 @@ export function SettingsPanel() {
           <div className="px-4 mb-4">
             <div className="flex items-center gap-1.5">
               <ShieldCheck size={14} className="text-green-600" />
-              <span className="text-[11px] font-semibold text-slate-700">
+              <span className="text-[15px] font-semibold text-slate-700">
                 控制中心
               </span>
             </div>
@@ -130,14 +130,14 @@ export function SettingsPanel() {
                     }}
                   />
                   <span
-                    className="text-[12px] font-medium truncate flex-1"
+                    className="text-[14px] font-medium truncate flex-1"
                     style={{ color: isActive ? '#16a34a' : '#475569' }}
                   >
                     {item.label}
                   </span>
                   {item.count !== undefined && item.count > 0 && (
                     <span
-                      className="text-[10px] font-bold rounded-full px-1.5 leading-tight"
+                      className="text-[14px] font-bold rounded-full px-1.5 leading-tight"
                       style={{
                         backgroundColor: isActive
                           ? 'rgba(22,163,74,0.12)'
@@ -181,12 +181,12 @@ export function SettingsPanel() {
                 <div className="text-[15px] font-bold text-slate-800 leading-tight">
                   Agent 控制中心
                 </div>
-                <div className="text-[11px] text-slate-400 leading-tight">
+                <div className="text-[15px] text-slate-400 leading-tight">
                   Agent Command Center
                 </div>
               </div>
               <span
-                className="ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                className="ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[14px] font-medium"
                 style={{
                   backgroundColor: 'rgba(22,163,74,0.08)',
                   color: '#16a34a',

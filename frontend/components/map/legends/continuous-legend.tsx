@@ -23,7 +23,7 @@ export function ContinuousLegend({ spec }: Props) {
           <Info className="h-3.5 w-3.5 text-primary" />
         </div>
         <div className="flex flex-col">
-          <span className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground/80">图例说明</span>
+          <span className="text-[14px] uppercase font-bold tracking-widest text-muted-foreground/80">图例说明</span>
           {field && (
             <span className="text-xs font-semibold text-foreground truncate max-w-[140px]" title={field}>
               字段: {field}
@@ -33,12 +33,12 @@ export function ContinuousLegend({ spec }: Props) {
       </div>
       <div className="space-y-2">
         <div className="h-3 rounded-sm shadow-inner" style={{ background: gradient }} />
-        <div className="flex justify-between text-[11px] text-muted-foreground">
+        <div className="flex justify-between text-[15px] text-muted-foreground">
           <span>{fmt(min)}</span>
           <span>{fmt(max)}</span>
         </div>
       </div>
-      <div className="mt-4 pt-2 border-t border-border/40 text-[9px] text-muted-foreground/60 italic text-center">
+      <div className="mt-4 pt-2 border-t border-border/40 text-[15px] text-muted-foreground/60 italic text-center">
         连续密度渲染
       </div>
     </div>

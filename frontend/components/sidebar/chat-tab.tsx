@@ -29,7 +29,7 @@ function ThinkingDots({ text, accentColor, isDark }: { text: string; accentColor
           />
         ))}
       </div>
-      <span className="text-[11px]" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>{text}</span>
+      <span className="text-[15px]" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>{text}</span>
     </div>
   );
 }
@@ -45,14 +45,14 @@ const SUGGESTED_PROMPTS = [
 function SuggestedPromptButtons({ onSend, accentColor, isDark }: { onSend: (text: string) => void; accentColor: string; isDark: boolean }) {
   return (
     <div className="px-3 pt-3 pb-2">
-      <p className="text-[10px] uppercase tracking-wider mb-2" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>快捷指令</p>
+      <p className="text-[14px] uppercase tracking-wider mb-2" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>快捷指令</p>
       <div className="flex flex-wrap gap-1.5">
         {SUGGESTED_PROMPTS.map((prompt) => (
           <button
             key={prompt}
             onClick={() => onSend(prompt)}
             style={{
-              padding: '6px 10px', borderRadius: 8, fontSize: 11,
+              padding: '6px 10px', borderRadius: 8, fontSize: 13,
               color: isDark ? '#e2e8f0' : '#475569',
               borderWidth: 1, borderStyle: 'solid',
               borderColor: `${accentColor}22`,
@@ -147,8 +147,8 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
             >
               <Sparkles size={22} style={{ color: accentColor }} />
             </div>
-            <h3 className="text-[13px] font-semibold mb-1" style={{ color: isDark ? '#e2e8f0' : '#1e293b' }}>GeoAgent</h3>
-            <p className="text-[11.5px] leading-relaxed" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>
+            <h3 className="text-[15px] font-semibold mb-1" style={{ color: isDark ? '#e2e8f0' : '#1e293b' }}>GeoAgent</h3>
+            <p className="text-[13.5px] leading-relaxed" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>
               输入空间分析指令，开始智能 GIS 分析
             </p>
           </div>
@@ -170,14 +170,14 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
               <div key={msg.id ?? idx} className="flex justify-end">
                 <div className="max-w-[85%]">
                   <div className="flex items-center justify-end gap-1.5 mb-0.5">
-                    {time && <span className="text-[9px]" style={{ color: isDark ? '#475569' : '#cbd5e1' }}>{time}</span>}
-                    <span className="text-[10px] font-semibold" style={{ color: accentColor }}>You</span>
+                    {time && <span className="text-[15px]" style={{ color: isDark ? '#475569' : '#cbd5e1' }}>{time}</span>}
+                    <span className="text-[14px] font-semibold" style={{ color: accentColor }}>You</span>
                   </div>
                   <div
                     style={{
                       borderTopRightRadius: 4, borderTopLeftRadius: 16,
                       borderBottomLeftRadius: 16, borderBottomRightRadius: 16,
-                      padding: '8px 12px', fontSize: 12.5, lineHeight: 1.6, color: '#fff',
+                      padding: '8px 12px', fontSize: 14.5, lineHeight: 1.6, color: '#fff',
                       backgroundColor: accentColor
                     }}
                   >
@@ -199,15 +199,15 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-[10px] font-semibold" style={{ color: accentColor }}>GeoAgent</span>
-                    {time && <span className="text-[9px]" style={{ color: isDark ? '#475569' : '#cbd5e1' }}>{time}</span>}
+                    <span className="text-[14px] font-semibold" style={{ color: accentColor }}>GeoAgent</span>
+                    {time && <span className="text-[15px]" style={{ color: isDark ? '#475569' : '#cbd5e1' }}>{time}</span>}
                   </div>
 
                   {msg.layerAdded && (
                     <div
                       style={{
                         display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px',
-                        borderRadius: 999, fontSize: 10, fontWeight: 500, color: '#fff',
+                        borderRadius: 999, fontSize: 12, fontWeight: 500, color: '#fff',
                         backgroundColor: accentColor, marginBottom: 6
                       }}
                     >
@@ -317,7 +317,7 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
             rows={1}
             style={{
               flex: 1, resize: 'none', backgroundColor: 'transparent',
-              fontSize: 12.5, color: isDark ? '#e2e8f0' : '#1e293b',
+              fontSize: 14.5, color: isDark ? '#e2e8f0' : '#1e293b',
               outline: 'none', lineHeight: 1.5, maxHeight: 80, paddingTop: 4, paddingBottom: 4
             }}
           />

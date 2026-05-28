@@ -26,13 +26,13 @@ export function OpsLogTab() {
     <div className='flex flex-col h-full'>
       {/* Header */}
       <div className='flex items-center justify-between px-3 py-2 border-b border-slate-200/60'>
-        <span className='text-[10px] font-semibold text-slate-400 uppercase tracking-wider'>
+        <span className='text-[14px] font-semibold text-slate-400 uppercase tracking-wider'>
           操作日志
         </span>
         {opsLog.length > 0 && (
           <button
             onClick={clearOpsLog}
-            className='text-[10px] text-slate-400 hover:text-red-500 px-2 py-1 rounded hover:bg-red-50'
+            className='text-[14px] text-slate-400 hover:text-red-500 px-2 py-1 rounded hover:bg-red-50'
             title='清空日志'
           >
             清空
@@ -66,12 +66,12 @@ export function OpsLogTab() {
                     {entry.label}
                   </div>
                   {entry.detail && (
-                    <div className='text-[10px] text-slate-400 mt-0.5 font-mono'>
+                    <div className='text-[14px] text-slate-400 mt-0.5 font-mono'>
                       {entry.detail}
                     </div>
                   )}
                 </div>
-                <div className='text-[10px] text-slate-300 font-mono flex-shrink-0'>
+                <div className='text-[14px] text-slate-300 font-mono flex-shrink-0'>
                   {entry.time}
                 </div>
               </div>

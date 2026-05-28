@@ -94,7 +94,7 @@ export function LayerManagement() {
       <STitle title="图层管理" sub="Layer Management" />
 
       {layers.length === 0 ? (
-        <div className="text-[12px] text-slate-400 italic py-6 text-center">
+        <div className="text-[14px] text-slate-400 italic py-6 text-center">
           No layers loaded
         </div>
       ) : (
@@ -145,11 +145,11 @@ export function LayerManagement() {
 
                 {/* Name + type */}
                 <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                  <span className="text-[12px] font-medium text-slate-700 truncate">
+                  <span className="text-[14px] font-medium text-slate-700 truncate">
                     {layer.name}
                   </span>
                   <span
-                    className="text-[10px] font-medium rounded-full px-1.5 py-0.5"
+                    className="text-[14px] font-medium rounded-full px-1.5 py-0.5"
                     style={{
                       backgroundColor: badge.bg,
                       color: badge.color,
@@ -158,7 +158,7 @@ export function LayerManagement() {
                     {layer.type}
                   </span>
                   {featureCount !== null && (
-                    <span className="text-[10px] text-slate-400">
+                    <span className="text-[14px] text-slate-400">
                       {featureCount} features
                     </span>
                   )}

@@ -63,7 +63,7 @@ export function SkillsHub() {
 
       {sortedCategories.map((category) => (
         <div key={category}>
-          <div className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold mb-2">
+          <div className="text-[15px] uppercase tracking-wider text-slate-400 font-semibold mb-2">
             {category}
           </div>
           <div className="flex flex-col gap-1.5">
@@ -77,12 +77,12 @@ export function SkillsHub() {
               >
                 {/* Name + badge */}
                 <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <span className="text-[12px] font-medium text-slate-700 truncate">
+                  <span className="text-[14px] font-medium text-slate-700 truncate">
                     {sk.name}
                   </span>
                   {sk.calls > 0 && (
                     <span
-                      className="text-[10px] font-bold rounded-full px-1.5 py-0.5 leading-none"
+                      className="text-[14px] font-bold rounded-full px-1.5 py-0.5 leading-none"
                       style={{
                         backgroundColor: 'rgba(22,163,74,0.08)',
                         color: '#16a34a',
@@ -94,7 +94,7 @@ export function SkillsHub() {
                 </div>
 
                 {/* Description */}
-                <div className="text-[11px] text-slate-400 truncate flex-1">
+                <div className="text-[15px] text-slate-400 truncate flex-1">
                   {sk.desc}
                 </div>
 
@@ -110,7 +110,7 @@ export function SkillsHub() {
       ))}
 
       {/* Upload custom skill */}
-      <button className="flex items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200/80 bg-white/30 py-3 text-[12px] font-medium text-slate-400 hover:text-slate-500 hover:border-slate-300 transition-all">
+      <button className="flex items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200/80 bg-white/30 py-3 text-[14px] font-medium text-slate-400 hover:text-slate-500 hover:border-slate-300 transition-all">
         <svg
           width="14"
           height="14"

@@ -67,7 +67,7 @@ export function MapStudioTab() {
             <h2 className="text-xs font-bold tracking-wide uppercase" style={{ color: isDark ? '#e2e8f0' : '#1e293b' }}>
               制图工坊
             </h2>
-            <p className="text-[10px]" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>
+            <p className="text-[14px]" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>
               地图排版设计与历史文件导出
             </p>
           </div>
@@ -133,7 +133,7 @@ export function MapStudioTab() {
             {/* Titles */}
             <div className="space-y-3.5">
               <div>
-                <label className="block text-[11px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: isDark ? '#94a3b8' : '#64748b' }}>
+                <label className="block text-[15px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: isDark ? '#94a3b8' : '#64748b' }}>
                   主标题
                 </label>
                 <input 
@@ -151,7 +151,7 @@ export function MapStudioTab() {
               </div>
               
               <div>
-                <label className="block text-[11px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: isDark ? '#94a3b8' : '#64748b' }}>
+                <label className="block text-[15px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: isDark ? '#94a3b8' : '#64748b' }}>
                   副标题
                 </label>
                 <input 
@@ -171,7 +171,7 @@ export function MapStudioTab() {
 
             {/* Map Decorations / Elements */}
             <div className="space-y-2 border-t pt-4" style={{ borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }}>
-              <label className="block text-[11px] font-semibold uppercase tracking-wider mb-2.5" style={{ color: isDark ? '#94a3b8' : '#64748b' }}>
+              <label className="block text-[15px] font-semibold uppercase tracking-wider mb-2.5" style={{ color: isDark ? '#94a3b8' : '#64748b' }}>
                 地图辅助元素
               </label>
               <div className="grid grid-cols-2 gap-3">
@@ -211,7 +211,7 @@ export function MapStudioTab() {
 
             {/* Paper & Quality Settings */}
             <div className="space-y-3.5 border-t pt-4 font-medium text-xs" style={{ borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }}>
-              <label className="block text-[11px] font-semibold uppercase tracking-wider" style={{ color: isDark ? '#94a3b8' : '#64748b' }}>
+              <label className="block text-[15px] font-semibold uppercase tracking-wider" style={{ color: isDark ? '#94a3b8' : '#64748b' }}>
                 排版与品质输出
               </label>
 
@@ -291,13 +291,13 @@ export function MapStudioTab() {
         ) : (
           <div className="p-2 space-y-1 h-full">
             <div className="flex items-center justify-between px-2 py-1">
-              <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>
+              <span className="text-[14px] font-semibold uppercase tracking-wider" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>
                 历史生成文件 ({exports.length})
               </span>
               {exports.length > 0 && (
                 <button
                   onClick={() => setExports([])}
-                  className="text-[10px] px-2 py-1 rounded transition-colors"
+                  className="text-[14px] px-2 py-1 rounded transition-colors"
                   style={{ color: isDark ? '#fca5a5' : '#ef4444' }}
                   onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(248,113,113,0.15)' : 'rgba(254,226,226,0.6)'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
@@ -312,7 +312,7 @@ export function MapStudioTab() {
                 <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-2.5" style={{ backgroundColor: isDark ? 'rgba(148,163,184,0.08)' : 'rgba(226,232,240,0.5)' }}>
                   <Download size={16} style={{ color: isDark ? '#475569' : '#cbd5e1' }} />
                 </div>
-                <p className="text-[11px] font-medium" style={{ color: isDark ? '#475569' : '#94a3b8' }}>暂无已导出的文件</p>
+                <p className="text-[15px] font-medium" style={{ color: isDark ? '#475569' : '#94a3b8' }}>暂无已导出的文件</p>
               </div>
             ) : (
               <div className="space-y-1 overflow-y-auto">
@@ -335,7 +335,7 @@ export function MapStudioTab() {
                       <div className="text-xs font-semibold truncate" style={{ color: isDark ? '#e2e8f0' : '#334155' }}>
                         {item.name}
                       </div>
-                      <div className="flex items-center gap-1.5 mt-0.5 text-[9px] font-medium">
+                      <div className="flex items-center gap-1.5 mt-0.5 text-[15px] font-medium">
                         <span className="uppercase px-1 rounded font-mono" style={{ backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', color: isDark ? '#94a3b8' : '#64748b' }}>
                           {item.type}
                         </span>

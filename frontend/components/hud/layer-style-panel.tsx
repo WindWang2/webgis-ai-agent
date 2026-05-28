@@ -72,7 +72,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
         >
           <X size={16} />
         </button>
-        <span className="text-[11px] font-display font-semibold text-white/50 uppercase tracking-wider">
+        <span className="text-[15px] font-display font-semibold text-white/50 uppercase tracking-wider">
           图层样式
         </span>
       </div>
@@ -80,14 +80,14 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
         {/* Name */}
         <div>
-          <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block">名称</label>
+          <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">名称</label>
           {isRenaming ? (
             <div className="flex items-center gap-1">
               <input
                 ref={nameRef}
                 value={tempName}
                 onChange={(e) => setTempName(e.target.value)}
-                className="flex-1 text-[11px] bg-white/[0.06] border border-hud-cyan/30 rounded px-2 py-1 text-white/90 focus:outline-none focus:border-hud-cyan/60"
+                className="flex-1 text-[15px] bg-white/[0.06] border border-hud-cyan/30 rounded px-2 py-1 text-white/90 focus:outline-none focus:border-hud-cyan/60"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     if (tempName.trim()) updateLayer(layer.id, { name: tempName.trim() });
@@ -99,11 +99,11 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
             </div>
           ) : (
             <div
-              className="text-[11px] text-white/70 cursor-pointer hover:text-white/90 transition-colors"
+              className="text-[15px] text-white/70 cursor-pointer hover:text-white/90 transition-colors"
               onDoubleClick={() => { setTempName(layer.name); setIsRenaming(true); }}
             >
               {layer.name}
-              <span className="text-white/15 ml-2 text-[9px]">双击编辑</span>
+              <span className="text-white/15 ml-2 text-[15px]">双击编辑</span>
             </div>
           )}
         </div>
@@ -125,33 +125,33 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
           <>
             {/* Fill Color */}
             <div>
-              <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block">填充颜色</label>
+              <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">填充颜色</label>
               <div className="flex items-center gap-2">
                 <div className="relative w-7 h-7 rounded-lg overflow-hidden border border-white/10">
                   <input type="color" value={color}
                     onChange={(e) => updateStyle({ color: e.target.value })}
                     className="absolute inset-0 w-full h-full cursor-pointer" />
                 </div>
-                <span className="text-[10px] text-white/30 font-mono">{color}</span>
+                <span className="text-[14px] text-white/30 font-mono">{color}</span>
               </div>
             </div>
 
             {/* Stroke Color */}
             <div>
-              <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block">描边颜色</label>
+              <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">描边颜色</label>
               <div className="flex items-center gap-2">
                 <div className="relative w-7 h-7 rounded-lg overflow-hidden border border-white/10">
                   <input type="color" value={strokeColor}
                     onChange={(e) => updateStyle({ strokeColor: e.target.value })}
                     className="absolute inset-0 w-full h-full cursor-pointer" />
                 </div>
-                <span className="text-[10px] text-white/30 font-mono">{strokeColor}</span>
+                <span className="text-[14px] text-white/30 font-mono">{strokeColor}</span>
               </div>
             </div>
 
             {/* Stroke Width */}
             <div>
-              <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block">
+              <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">
                 描边宽度 <span className="text-white/15 font-mono">{strokeWidth}px</span>
               </label>
               <input type="range" min={0} max={10} step={0.5} value={strokeWidth}
@@ -161,7 +161,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
 
             {/* Point Size */}
             <div>
-              <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block">
+              <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">
                 点大小 <span className="text-white/15 font-mono">{pointSize}px</span>
               </label>
               <input type="range" min={1} max={20} step={0.5} value={pointSize}
@@ -171,7 +171,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
 
             {/* Line Dash */}
             <div>
-              <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block">线型</label>
+              <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">线型</label>
               <div className="flex gap-1">
                 {([
                   { value: 'solid', label: '实线', dash: '' },
@@ -182,7 +182,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
                   <button
                     key={d.value}
                     onClick={() => updateStyle({ dashArray: d.value })}
-                    className={`flex-1 px-2 py-1.5 text-[9px] rounded-lg font-semibold transition-colors ${
+                    className={`flex-1 px-2 py-1.5 text-[15px] rounded-lg font-semibold transition-colors ${
                       dashArray === d.value
                         ? 'bg-hud-cyan/20 text-hud-cyan'
                         : 'text-white/20 hover:text-white/40 hover:bg-white/[0.03]'
@@ -196,7 +196,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
 
             {/* Fill Toggle */}
             <div className="flex items-center justify-between">
-              <label className="text-[9px] text-white/25 uppercase tracking-wider">填充开关</label>
+              <label className="text-[15px] text-white/25 uppercase tracking-wider">填充开关</label>
               <button
                 onClick={() => updateStyle({ fill: !fillEnabled })}
                 className={`w-8 h-4 rounded-full transition-colors relative ${fillEnabled ? 'bg-hud-cyan/40' : 'bg-white/10'}`}
@@ -209,13 +209,13 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
 
             {/* Render Mode Switch */}
             <div>
-              <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block">渲染模式</label>
+              <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">渲染模式</label>
               <div className="flex gap-1">
                 {(['vector', 'heatmap', 'grid'] as const).map((mode) => (
                   <button
                     key={mode}
                     onClick={() => updateStyle({ renderType: mode })}
-                    className={`flex-1 px-2 py-1.5 text-[9px] rounded-lg font-semibold transition-colors ${
+                    className={`flex-1 px-2 py-1.5 text-[15px] rounded-lg font-semibold transition-colors ${
                       renderType === mode
                         ? 'bg-hud-cyan/20 text-hud-cyan'
                         : 'text-white/20 hover:text-white/40 hover:bg-white/[0.03]'
@@ -234,7 +234,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
           <>
             {/* Palette */}
             <div>
-              <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block flex items-center gap-1">
+              <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block flex items-center gap-1">
                 <Palette size={10} /> 色带
               </label>
               <div className="space-y-1">
@@ -251,7 +251,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
                         <div key={i} className="flex-1" style={{ backgroundColor: c }} />
                       ))}
                     </div>
-                    <span className={`text-[9px] ${palette === key ? 'text-hud-cyan' : 'text-white/25'}`}>
+                    <span className={`text-[15px] ${palette === key ? 'text-hud-cyan' : 'text-white/25'}`}>
                       {p.label}
                     </span>
                   </button>
@@ -261,7 +261,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
 
             {/* Radius */}
             <div>
-              <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block">
+              <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">
                 热力半径 <span className="text-white/15 font-mono">{radius}px</span>
               </label>
               <input type="range" min={5} max={100} step={1} value={radius}
@@ -271,7 +271,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
 
             {/* Intensity */}
             <div>
-              <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block">
+              <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">
                 热力强度 <span className="text-white/15 font-mono">{intensity.toFixed(1)}</span>
               </label>
               <input type="range" min={0.1} max={3} step={0.1} value={intensity}
@@ -285,7 +285,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
         {(layer.type === 'raster' || layer.type === 'tile') && (
           <>
             <div>
-              <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block">
+              <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">
                 亮度 <span className="text-white/15 font-mono">{brightness.toFixed(1)}</span>
               </label>
               <input type="range" min={0.5} max={2} step={0.1} value={brightness}
@@ -293,7 +293,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
                 className="w-full accent-hud-cyan" />
             </div>
             <div>
-              <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block">
+              <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">
                 对比度 <span className="text-white/15 font-mono">{contrast.toFixed(1)}</span>
               </label>
               <input type="range" min={0.5} max={2} step={0.1} value={contrast}
@@ -301,7 +301,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
                 className="w-full accent-hud-cyan" />
             </div>
             <div>
-              <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block">
+              <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">
                 饱和度 <span className="text-white/15 font-mono">{saturation.toFixed(1)}</span>
               </label>
               <input type="range" min={0} max={2} step={0.1} value={saturation}
@@ -313,7 +313,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
 
         {/* === OPACITY (ALL TYPES) === */}
         <div>
-          <label className="text-[9px] text-white/25 uppercase tracking-wider mb-1.5 block">
+          <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">
             透明度 <span className="text-white/15 font-mono">{Math.round(layer.opacity * 100)}%</span>
           </label>
           <input type="range" min={0} max={1} step={0.05} value={layer.opacity}
@@ -326,7 +326,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
           onClick={() => {
             updateLayer(layer.id, { opacity: 0.8, style: {} });
           }}
-          className="flex items-center justify-center gap-1.5 w-full py-2 text-[9px] text-white/25 hover:text-white/50 border border-white/[0.06] rounded-lg hover:border-white/[0.12] transition-all"
+          className="flex items-center justify-center gap-1.5 w-full py-2 text-[15px] text-white/25 hover:text-white/50 border border-white/[0.06] rounded-lg hover:border-white/[0.12] transition-all"
         >
           <RotateCcw size={10} /> 重置样式
         </button>

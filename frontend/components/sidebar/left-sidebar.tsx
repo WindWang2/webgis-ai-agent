@@ -78,7 +78,7 @@ export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#
             <button
               key={key}
               onClick={() => setActiveTab(key)}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-3 text-[11.5px] font-medium transition-colors relative ${isDark ? 'hover:bg-zinc-800/20' : 'hover:bg-slate-50/50'}`}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-3 text-[13.5px] font-medium transition-colors relative ${isDark ? 'hover:bg-zinc-800/20' : 'hover:bg-slate-50/50'}`}
               style={{
                 color: isActive ? accentColor : (isDark ? '#94a3b8' : '#64748b'),
               }}

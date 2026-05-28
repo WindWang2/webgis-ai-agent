@@ -23,7 +23,7 @@ export function PlanCard({ plan }: Props) {
       <div className="flex items-center gap-2 mb-2">
         <ClipboardList className="h-4 w-4 text-primary" />
         <span className="text-sm font-semibold text-foreground truncate">{plan.intent}</span>
-        <span className="text-[10px] ml-auto text-muted-foreground tabular-nums">
+        <span className="text-[14px] ml-auto text-muted-foreground tabular-nums">
           {doneCount} / {total}
         </span>
       </div>
@@ -31,7 +31,7 @@ export function PlanCard({ plan }: Props) {
         {plan.steps.map(s => (
           <li
             key={s.n}
-            className={`flex items-center gap-2 text-[11px] ${
+            className={`flex items-center gap-2 text-[15px] ${
               s.status === 'skipped' ? 'opacity-50' : ''
             }`}
           >

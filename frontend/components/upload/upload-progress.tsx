@@ -37,14 +37,14 @@ export function UploadProgress({ uploads, onRemove }: UploadProgressProps) {
           className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border/50 bg-card/60 group"
         >
           {/* 格式标签 */}
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-primary/10 text-[10px] font-bold text-primary">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-primary/10 text-[14px] font-bold text-primary">
             {getFormatIcon(u.format)}
           </div>
 
           {/* 文件信息 */}
           <div className="flex-1 min-w-0">
             <p className="text-xs font-medium text-foreground truncate">{u.original_name}</p>
-            <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+            <div className="flex items-center gap-2 text-[14px] text-muted-foreground">
               <span>{u.file_type === "raster" ? "栅格" : "矢量"}</span>
               {u.feature_count > 0 && <span>{u.feature_count.toLocaleString()} 要素</span>}
               <span>{formatSize(u.file_size)}</span>

@@ -88,8 +88,8 @@ export function AssetsTab() {
         <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center mb-2">
           <FileText size={16} className="text-slate-300" />
         </div>
-        <p className="text-[11.5px] text-slate-400">暂无分析资产</p>
-        <p className="text-[10px] text-slate-300 mt-0.5">
+        <p className="text-[13.5px] text-slate-400">暂无分析资产</p>
+        <p className="text-[14px] text-slate-300 mt-0.5">
           上传数据或完成分析后将显示在此处
         </p>
       </div>
@@ -129,7 +129,7 @@ export function AssetsTab() {
                   {/* Filename */}
                   <div className="flex items-center gap-1.5">
                     <Icon size={11} className="text-slate-400 shrink-0" />
-                    <span className="text-[11.5px] font-mono text-slate-700 truncate">
+                    <span className="text-[13.5px] font-mono text-slate-700 truncate">
                       {asset.filename || asset.original_name || asset.name || 'unnamed'}
                     </span>
                   </div>

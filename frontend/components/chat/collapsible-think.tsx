@@ -23,12 +23,12 @@ export function CollapsibleThink({ content, isDark, accentColor }: CollapsibleTh
       >
         {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         <Brain size={14} style={{ color: accentColor }} />
-        <span className="text-[11px] font-medium uppercase tracking-wider">思考过程</span>
+        <span className="text-[15px] font-medium uppercase tracking-wider">思考过程</span>
       </button>
 
       {isExpanded && (
         <div 
-          className="mt-1 px-3 py-2 rounded-lg text-[11.5px] leading-relaxed border-l-2 italic"
+          className="mt-1 px-3 py-2 rounded-lg text-[13.5px] leading-relaxed border-l-2 italic"
           style={{ 
             backgroundColor: isDark ? 'rgba(30,41,59,0.4)' : 'rgba(241,245,249,0.6)',
             borderColor: accentColor,

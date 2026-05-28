@@ -71,7 +71,7 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   setAccentColor: (color) => set({ accentColor: color }),
   theme: 'light' as const,
   setTheme: (theme) => set({ theme }),
-  fontSize: 13,
+  fontSize: 15,
   setFontSize: (size) => set({ fontSize: size }),
   density: 'compact' as const,
   setDensity: (density) => set({ density }),

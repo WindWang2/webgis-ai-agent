@@ -27,13 +27,13 @@ export function SystemSettings() {
 
       {/* Language selection */}
       <div>
-        <div className="text-[10px] uppercase tracking-wide text-slate-400 font-medium mb-2">
+        <div className="text-[14px] uppercase tracking-wide text-slate-400 font-medium mb-2">
           Language / 语言
         </div>
         <div className="flex gap-2">
           <button
             onClick={() => setLanguage('zh')}
-            className="flex-1 rounded-lg border-2 py-2 text-[12px] font-medium transition-all"
+            className="flex-1 rounded-lg border-2 py-2 text-[14px] font-medium transition-all"
             style={{
               borderColor:
                 language === 'zh' ? '#16a34a' : 'rgba(15,23,42,0.08)',
@@ -48,7 +48,7 @@ export function SystemSettings() {
           </button>
           <button
             onClick={() => setLanguage('en')}
-            className="flex-1 rounded-lg border-2 py-2 text-[12px] font-medium transition-all"
+            className="flex-1 rounded-lg border-2 py-2 text-[14px] font-medium transition-all"
             style={{
               borderColor:
                 language === 'en' ? '#16a34a' : 'rgba(15,23,42,0.08)',
@@ -91,15 +91,15 @@ export function SystemSettings() {
             </svg>
           </div>
           <div>
-            <div className="text-[13px] font-bold text-slate-800">
+            <div className="text-[15px] font-bold text-slate-800">
               GeoAgent
             </div>
-            <div className="text-[10px] text-slate-400 font-mono">
+            <div className="text-[14px] text-slate-400 font-mono">
               v0.1.0
             </div>
           </div>
         </div>
-        <div className="text-[11px] text-slate-400 italic">
+        <div className="text-[15px] text-slate-400 italic">
           &quot;All is Agent&quot;
         </div>
       </div>

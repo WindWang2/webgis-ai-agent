@@ -100,7 +100,7 @@ export function ChatHud({
 
               {/* Bubble */}
               <div
-                className={`max-w-[88%] rounded-xl px-3.5 py-2.5 text-[13px] leading-relaxed ${
+                className={`max-w-[88%] rounded-xl px-3.5 py-2.5 text-[15px] leading-relaxed ${
                   message.role === "user"
                     ? "bg-hud-cyan/10 border border-hud-cyan/20 text-white/90"
                     : "bg-white/[0.03] border border-white/[0.05] text-white/75"
@@ -112,7 +112,7 @@ export function ChatHud({
                       <Loader2 className="h-3.5 w-3.5 animate-spin text-hud-cyan" />
                       <div className="absolute inset-0 bg-hud-cyan/20 rounded-full blur animate-pulse" />
                     </div>
-                    <span className="text-[10px] font-mono uppercase tracking-[0.15em] text-white/30">
+                    <span className="text-[14px] font-mono uppercase tracking-[0.15em] text-white/30">
                       processing...
                     </span>
                   </div>
@@ -163,7 +163,7 @@ export function ChatHud({
                         ),
                         table: ({ children }) => (
                           <div className="overflow-x-auto my-2 rounded-lg border border-white/[0.06]">
-                            <table className="w-full text-[11px]">{children}</table>
+                            <table className="w-full text-[15px]">{children}</table>
                           </div>
                         ),
                         th: ({ children }) => (
@@ -177,9 +177,9 @@ export function ChatHud({
                         code: ({ children, className }) => {
                           const inline = !className?.includes("language-")
                           return inline ? (
-                            <code className="bg-white/10 px-1 rounded text-hud-cyan text-[12px]">{children}</code>
+                            <code className="bg-white/10 px-1 rounded text-hud-cyan text-[14px]">{children}</code>
                           ) : (
-                            <pre className="p-3 bg-black/30 rounded-lg overflow-x-auto my-3 border border-white/5 font-mono text-[11px] text-white/90">
+                            <pre className="p-3 bg-black/30 rounded-lg overflow-x-auto my-3 border border-white/5 font-mono text-[15px] text-white/90">
                               <code>{children}</code>
                             </pre>
                           )

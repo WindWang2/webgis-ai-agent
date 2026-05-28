@@ -116,7 +116,7 @@ export function DraggableLayerList({
           {layers.length === 0 && (
             <div className="text-center py-8 text-muted-foreground bg-muted/20 rounded-lg border border-dashed border-border/50">
               <p className="text-sm">暂无激活图层</p>
-              <p className="text-[10px] mt-1">分析产生的结果将自动出现在此处</p>
+              <p className="text-[14px] mt-1">分析产生的结果将自动出现在此处</p>
             </div>
           )}
         </div>

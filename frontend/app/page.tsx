@@ -571,7 +571,7 @@ export default function Home() {
           position: 'absolute',
           bottom: 30,
           right: 12,
-          fontSize: '9.5px',
+          fontSize: '11.5px',
           color: theme === 'dark' ? 'rgba(148,163,184,0.6)' : 'rgba(15,23,42,0.35)',
           fontFamily: "'JetBrains Mono', monospace",
           background: theme === 'dark' ? 'rgba(30,41,59,0.72)' : 'rgba(255,255,255,0.72)',

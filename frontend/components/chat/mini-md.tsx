@@ -36,13 +36,13 @@ export default function MiniMd({ text }: MiniMdProps) {
             const isBlock = className?.includes('language-');
             if (isBlock) {
               return (
-                <pre className="my-2 p-3 bg-slate-50 border border-slate-200/80 rounded-lg overflow-x-auto text-[11.5px] leading-relaxed">
+                <pre className="my-2 p-3 bg-slate-50 border border-slate-200/80 rounded-lg overflow-x-auto text-[13.5px] leading-relaxed">
                   <code>{children}</code>
                 </pre>
               );
             }
             return (
-              <code className="rounded bg-green-50 px-1 py-0.5 font-mono text-[11.5px] text-green-700">
+              <code className="rounded bg-green-50 px-1 py-0.5 font-mono text-[13.5px] text-green-700">
                 {children}
               </code>
             );
@@ -54,7 +54,7 @@ export default function MiniMd({ text }: MiniMdProps) {
           ),
           table: ({ children }) => (
             <div className="overflow-x-auto my-2 rounded-lg border border-slate-200/80">
-              <table className="w-full text-[12px]">{children}</table>
+              <table className="w-full text-[14px]">{children}</table>
             </div>
           ),
           th: ({ children }) => (

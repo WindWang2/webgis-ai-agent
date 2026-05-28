@@ -88,7 +88,7 @@ const TOOLTIP_STYLE = {
     border: "1px solid rgba(6,182,212,0.3)",
     borderRadius: "6px",
     color: "#e2e8f0",
-    fontSize: "12px",
+    fontSize: "14px",
   },
 }
 
@@ -97,8 +97,8 @@ function RenderBarChart({ chart }: { chart: ChartData }) {
     <ResponsiveContainer width="100%" height={200}>
       <BarChart data={chart.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
-        <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} />
-        <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", fill: "#94a3b8", fontSize: 11 } : undefined} />
+        <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 13 }} />
+        <YAxis tick={{ fill: "#94a3b8", fontSize: 13 }} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", fill: "#94a3b8", fontSize: 13 } : undefined} />
         <Tooltip {...TOOLTIP_STYLE} />
         <Bar dataKey="value" fill="#06b6d4" radius={[2, 2, 0, 0]} />
       </BarChart>
@@ -111,8 +111,8 @@ function RenderLineChart({ chart }: { chart: ChartData }) {
     <ResponsiveContainer width="100%" height={200}>
       <LineChart data={chart.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
-        <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} />
-        <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", fill: "#94a3b8", fontSize: 11 } : undefined} />
+        <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 13 }} />
+        <YAxis tick={{ fill: "#94a3b8", fontSize: 13 }} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", fill: "#94a3b8", fontSize: 13 } : undefined} />
         <Tooltip {...TOOLTIP_STYLE} />
         <Line type="monotone" dataKey="value" stroke="#06b6d4" strokeWidth={2} dot={{ fill: "#06b6d4", r: 3 }} />
       </LineChart>
@@ -133,14 +133,14 @@ function RenderPieChart({ chart }: { chart: ChartData }) {
           outerRadius={70}
           label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
           labelLine={{ stroke: "#94a3b8" }}
-          fontSize={11}
+          fontSize={13}
         >
           {chart.data.map((_, index) => (
             <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
           ))}
         </Pie>
         <Tooltip {...TOOLTIP_STYLE} />
-        <Legend wrapperStyle={{ fontSize: "11px", color: "#94a3b8" }} />
+        <Legend wrapperStyle={{ fontSize: "13px", color: "#94a3b8" }} />
       </PieChart>
     </ResponsiveContainer>
   )
@@ -151,8 +151,8 @@ function RenderScatterChart({ chart }: { chart: ChartData }) {
     <ResponsiveContainer width="100%" height={200}>
       <ScatterChart margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
-        <XAxis dataKey="x" type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} label={chart.x_label ? { value: chart.x_label, position: "insideBottom", offset: -5, fill: "#94a3b8", fontSize: 11 } : undefined} />
-        <YAxis dataKey="y" type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", fill: "#94a3b8", fontSize: 11 } : undefined} />
+        <XAxis dataKey="x" type="number" tick={{ fill: "#94a3b8", fontSize: 13 }} label={chart.x_label ? { value: chart.x_label, position: "insideBottom", offset: -5, fill: "#94a3b8", fontSize: 13 } : undefined} />
+        <YAxis dataKey="y" type="number" tick={{ fill: "#94a3b8", fontSize: 13 }} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", fill: "#94a3b8", fontSize: 13 } : undefined} />
         <Tooltip {...TOOLTIP_STYLE} />
         <Scatter data={chart.data} fill="#06b6d4" />
       </ScatterChart>

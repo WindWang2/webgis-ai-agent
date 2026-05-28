@@ -56,7 +56,7 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
           <div className='text-xs font-semibold text-slate-800'>UI 调整</div>
           <button
             onClick={() => setTweaksOpen(false)}
-            className='text-[10px] text-slate-400 hover:text-slate-600'
+            className='text-[14px] text-slate-400 hover:text-slate-600'
           >
             关闭
           </button>
@@ -64,7 +64,7 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
 
         {/* Accent color */}
         <div className='mb-4'>
-          <div className='text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2'>
+          <div className='text-[14px] font-semibold text-slate-400 uppercase tracking-wider mb-2'>
             主题色
           </div>
           <div className='flex gap-2'>
@@ -88,10 +88,10 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
         {/* Font size */}
         <div className='mb-4'>
           <div className='flex items-center justify-between mb-2'>
-            <div className='text-[10px] font-semibold text-slate-400 uppercase tracking-wider'>
+            <div className='text-[14px] font-semibold text-slate-400 uppercase tracking-wider'>
               字体大小
             </div>
-            <span className='text-[10px] text-slate-500 font-mono'>{fontSize}px</span>
+            <span className='text-[14px] text-slate-500 font-mono'>{fontSize}px</span>
           </div>
           <input
             type='range'
@@ -106,7 +106,7 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
 
         {/* Theme */}
         <div className='mb-4'>
-          <div className='text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2'>
+          <div className='text-[14px] font-semibold text-slate-400 uppercase tracking-wider mb-2'>
             主题
           </div>
           <div className='flex gap-1'>
@@ -120,7 +120,7 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
                   borderRadius: 8,
                   border: 'none',
                   cursor: 'pointer',
-                  fontSize: 11,
+                  fontSize: 13,
                   background: theme === t ? 'rgba(15,23,42,0.06)' : 'transparent',
                   color: theme === t ? '#0f172a' : '#64748b',
                 }}
@@ -133,7 +133,7 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
 
         {/* Density */}
         <div className='mb-4'>
-          <div className='text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2'>
+          <div className='text-[14px] font-semibold text-slate-400 uppercase tracking-wider mb-2'>
             信息密度
           </div>
           <div className='flex gap-1'>
@@ -147,7 +147,7 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
                   borderRadius: 8,
                   border: 'none',
                   cursor: 'pointer',
-                  fontSize: 11,
+                  fontSize: 13,
                   background: density === d ? 'rgba(15,23,42,0.06)' : 'transparent',
                   color: density === d ? '#0f172a' : '#64748b',
                 }}
@@ -161,10 +161,10 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
         {/* Sidebar width */}
         <div className='mb-4'>
           <div className='flex items-center justify-between mb-2'>
-            <div className='text-[10px] font-semibold text-slate-400 uppercase tracking-wider'>
+            <div className='text-[14px] font-semibold text-slate-400 uppercase tracking-wider'>
               侧边栏宽度
             </div>
-            <span className='text-[10px] text-slate-500 font-mono'>{sidebarWidth}px</span>
+            <span className='text-[14px] text-slate-500 font-mono'>{sidebarWidth}px</span>
           </div>
           <input
             type='range'
@@ -179,7 +179,7 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
 
         {/* Toggles */}
         <div className='space-y-2'>
-          <div className='text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2'>
+          <div className='text-[14px] font-semibold text-slate-400 uppercase tracking-wider mb-2'>
             面板
           </div>
 

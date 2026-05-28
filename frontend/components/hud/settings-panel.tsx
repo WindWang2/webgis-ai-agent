@@ -95,7 +95,7 @@ export function SettingsPanel() {
               </div>
               <div>
                 <h2 className="text-lg font-medium tracking-tight text-white/90">系统控制中心</h2>
-                <p className="text-[10px] font-mono text-white/25 uppercase tracking-[0.2em]">Agent Command Center</p>
+                <p className="text-[14px] font-mono text-white/25 uppercase tracking-[0.2em]">Agent Command Center</p>
               </div>
             </div>
             <button
@@ -129,7 +129,7 @@ export function SettingsPanel() {
               <div className="mt-auto pt-4 border-t border-white/[0.04]">
                 <div className="flex items-center gap-2 px-3 py-2.5 bg-emerald-500/[0.04] border border-emerald-500/10 rounded-xl">
                   <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
-                  <span className="text-[10px] font-mono text-emerald-400/70 uppercase tracking-widest">系统在线</span>
+                  <span className="text-[14px] font-mono text-emerald-400/70 uppercase tracking-widest">系统在线</span>
                 </div>
               </div>
             </div>
@@ -150,7 +150,7 @@ export function SettingsPanel() {
 
                     {/* Endpoint Section */}
                     <div className="space-y-4">
-                      <div className="flex items-center gap-2 text-[10px] font-mono text-white/20 uppercase tracking-wider">
+                      <div className="flex items-center gap-2 text-[14px] font-mono text-white/20 uppercase tracking-wider">
                         <Globe className="h-3 w-3" /> 接入端点
                       </div>
                       <div className="ml-1 pl-3 border-l border-white/[0.06] space-y-4">
@@ -161,13 +161,13 @@ export function SettingsPanel() {
 
                     {/* Model Section */}
                     <div className="space-y-4">
-                      <div className="flex items-center gap-2 text-[10px] font-mono text-white/20 uppercase tracking-wider">
+                      <div className="flex items-center gap-2 text-[14px] font-mono text-white/20 uppercase tracking-wider">
                         <Cpu className="h-3 w-3" /> 模型参数
                       </div>
                       <div className="ml-1 pl-3 border-l border-white/[0.06] space-y-4">
                         <Field label="Model Name" value={localLlm.model} onChange={v => setLocalLlm({ ...localLlm, model: v })} placeholder="gpt-4o" icon={<Cpu className="w-4 h-4" />} />
                         {localLlm.model && (
-                          <p className="text-[10px] text-white/15 font-mono -mt-2">
+                          <p className="text-[14px] text-white/15 font-mono -mt-2">
                             当前模型: {localLlm.model} {localLlm.model.includes('gpt-4') ? '(OpenAI GPT-4 系列)' : localLlm.model.includes('claude') ? '(Anthropic Claude 系列)' : ''}
                           </p>
                         )}
@@ -178,14 +178,14 @@ export function SettingsPanel() {
                             onChange={e => setLocalLlm({ ...localLlm, use_prompt_caching: e.target.checked })}
                             className="mr-3 accent-hud-cyan"
                           />
-                          <span className="text-[12px] text-white/50">启用 Prompt Caching 加速</span>
+                          <span className="text-[14px] text-white/50">启用 Prompt Caching 加速</span>
                         </div>
                       </div>
                     </div>
 
                     {/* Save Row */}
                     <div className="flex items-center justify-end gap-3 pt-4 border-t border-white/[0.04]">
-                      <button className="flex items-center gap-2 px-4 py-2 bg-white/[0.03] hover:bg-white/[0.06] text-white/40 text-[12px] font-medium rounded-xl transition-all border border-white/[0.06]">
+                      <button className="flex items-center gap-2 px-4 py-2 bg-white/[0.03] hover:bg-white/[0.06] text-white/40 text-[14px] font-medium rounded-xl transition-all border border-white/[0.06]">
                         <RefreshCw className="w-3.5 h-3.5" /> 连通性测试
                       </button>
                       <SaveButton
@@ -212,14 +212,14 @@ export function SettingsPanel() {
                       {/* Local Skills */}
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-mono text-white/25 uppercase tracking-widest">已安装</span>
-                          <span className="text-[9px] font-mono text-white/15 px-1.5 py-0.5 bg-white/[0.03] rounded-full">{availableSkills.length} 个技能</span>
+                          <span className="text-[14px] font-mono text-white/25 uppercase tracking-widest">已安装</span>
+                          <span className="text-[15px] font-mono text-white/15 px-1.5 py-0.5 bg-white/[0.03] rounded-full">{availableSkills.length} 个技能</span>
                         </div>
                         <div className="space-y-1.5">
                           {availableSkills.length === 0 ? (
                             <div className="p-6 text-center rounded-xl border border-dashed border-white/[0.06]">
                               <Code className="h-6 w-6 text-white/[0.06] mx-auto mb-2" />
-                              <p className="text-[11px] text-white/15">暂无已安装技能</p>
+                              <p className="text-[15px] text-white/15">暂无已安装技能</p>
                             </div>
                           ) : availableSkills.map((skill: any, i: number) => (
                             <div key={i} className="flex items-center justify-between p-3 bg-white/[0.02] border border-white/[0.04] rounded-xl hover:bg-white/[0.04] hover:border-white/[0.08] transition-all group">
@@ -228,8 +228,8 @@ export function SettingsPanel() {
                                   <Code className="w-3.5 h-3.5 text-hud-cyan/50" />
                                 </div>
                                 <div>
-                                  <div className="text-[11px] text-white/70 font-medium">{skill.name}</div>
-                                  <div className="text-[9px] text-white/20 font-mono">
+                                  <div className="text-[15px] text-white/70 font-medium">{skill.name}</div>
+                                  <div className="text-[15px] text-white/20 font-mono">
                                     {(skill.size / 1024).toFixed(1)} KB{skill.modified ? ` · ${new Date(skill.modified).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}` : ''}
                                   </div>
                                 </div>
@@ -244,15 +244,15 @@ export function SettingsPanel() {
 
                       {/* Upload / Hub */}
                       <div className="space-y-3">
-                        <span className="text-[10px] font-mono text-white/25 uppercase tracking-widest">扩展</span>
+                        <span className="text-[14px] font-mono text-white/25 uppercase tracking-widest">扩展</span>
 
                         <div className="p-5 border border-dashed border-white/[0.08] rounded-xl flex flex-col items-center justify-center gap-3 hover:border-hud-cyan/20 hover:bg-hud-cyan/[0.02] transition-all cursor-pointer group">
                           <div className="p-3 bg-white/[0.03] rounded-xl group-hover:scale-105 transition-transform">
                             <Upload className="w-5 h-5 text-white/25 group-hover:text-hud-cyan/60" />
                           </div>
                           <div className="text-center">
-                            <div className="text-[11px] text-white/50 font-medium">上传技能脚本</div>
-                            <div className="text-[10px] text-white/15 mt-0.5">.py 或 .md 格式</div>
+                            <div className="text-[15px] text-white/50 font-medium">上传技能脚本</div>
+                            <div className="text-[14px] text-white/15 mt-0.5">.py 或 .md 格式</div>
                           </div>
                         </div>
 
@@ -262,8 +262,8 @@ export function SettingsPanel() {
                               <Globe className="w-4 h-4 text-hud-cyan/60" />
                             </div>
                             <div>
-                              <div className="text-[11px] text-white/70 font-medium">Skills Hub</div>
-                              <div className="text-[10px] text-hud-cyan/40">在线浏览全球开发者共享算子</div>
+                              <div className="text-[15px] text-white/70 font-medium">Skills Hub</div>
+                              <div className="text-[14px] text-hud-cyan/40">在线浏览全球开发者共享算子</div>
                             </div>
                           </div>
                           <Download className="w-4 h-4 text-hud-cyan/40" />
@@ -308,14 +308,14 @@ function NavButton({ active, onClick, icon, label, count, badge, statusDot }: {
       `}
     >
       {icon}
-      <span className="text-[12px] font-medium flex-1">{label}</span>
+      <span className="text-[14px] font-medium flex-1">{label}</span>
       {count !== undefined && count > 0 && (
-        <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-mono ${active ? 'bg-hud-cyan/20 text-hud-cyan' : 'bg-white/[0.04] text-white/25'}`}>
+        <span className={`text-[15px] px-1.5 py-0.5 rounded-full font-mono ${active ? 'bg-hud-cyan/20 text-hud-cyan' : 'bg-white/[0.04] text-white/25'}`}>
           {count}
         </span>
       )}
       {badge && (
-        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-mono bg-amber-500/20 text-amber-400">{badge}</span>
+        <span className="text-[15px] px-1.5 py-0.5 rounded-full font-mono bg-amber-500/20 text-amber-400">{badge}</span>
       )}
       {statusDot && <div className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />}
     </button>
@@ -326,7 +326,7 @@ function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) 
   return (
     <div>
       <h3 className="text-[15px] font-medium text-white/85">{title}</h3>
-      <p className="text-[11px] text-white/30 mt-0.5">{subtitle}</p>
+      <p className="text-[15px] text-white/30 mt-0.5">{subtitle}</p>
     </div>
   );
 }
@@ -334,14 +334,14 @@ function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) 
 function Field({ label, icon, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { label?: string; icon?: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <label className="text-[10px] font-mono text-white/30 uppercase tracking-wider">{label}</label>
+      <label className="text-[14px] font-mono text-white/30 uppercase tracking-wider">{label}</label>
       <div className="relative group">
         <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/15 group-focus-within:text-hud-cyan/50 transition-colors">
           {icon}
         </div>
         <input
           autoComplete="off"
-          className="w-full h-10 bg-white/[0.02] border border-white/[0.06] rounded-xl pl-10 pr-4 text-[12px] text-white/70 placeholder:text-white/10 focus:outline-none focus:border-hud-cyan/25 transition-all"
+          className="w-full h-10 bg-white/[0.02] border border-white/[0.06] rounded-xl pl-10 pr-4 text-[14px] text-white/70 placeholder:text-white/10 focus:outline-none focus:border-hud-cyan/25 transition-all"
           {...props}
         />
       </div>
@@ -361,7 +361,7 @@ function SaveButton({ onClick, isSaving, flash, disabled, label = '保存设置'
       onClick={onClick}
       disabled={isSaving || disabled}
       className={`
-        flex items-center gap-2 px-6 py-2 text-[12px] font-medium rounded-xl transition-all duration-300
+        flex items-center gap-2 px-6 py-2 text-[14px] font-medium rounded-xl transition-all duration-300
         ${flash
           ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.15)]'
           : disabled

@@ -44,7 +44,7 @@ export function RagIndependentPanel({ open, onClose }: RagIndependentPanelProps)
           </div>
           <div>
             <div className='text-xs font-semibold text-slate-800'>RAG 检索</div>
-            <div className='text-[10px] text-slate-400'>{ragResults.length} 个结果</div>
+            <div className='text-[14px] text-slate-400'>{ragResults.length} 个结果</div>
           </div>
         </div>
         <button
@@ -74,10 +74,10 @@ export function RagIndependentPanel({ open, onClose }: RagIndependentPanelProps)
                     {result.source}
                   </div>
                   <div className='flex items-center gap-2 ml-2'>
-                    <span className='text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-mono font-semibold'>
+                    <span className='text-[14px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-mono font-semibold'>
                       {result.score}
                     </span>
-                    <span className='text-[10px] text-slate-400 font-mono'>
+                    <span className='text-[14px] text-slate-400 font-mono'>
                       {result.chunks} 块
                     </span>
                   </div>
@@ -88,7 +88,7 @@ export function RagIndependentPanel({ open, onClose }: RagIndependentPanelProps)
                   {result.excerpts.map((excerpt, idx) => (
                     <div
                       key={idx}
-                      className='text-[11px] text-slate-500 leading-relaxed'
+                      className='text-[15px] text-slate-500 leading-relaxed'
                     >
                       &quot;{excerpt}&quot;
                     </div>

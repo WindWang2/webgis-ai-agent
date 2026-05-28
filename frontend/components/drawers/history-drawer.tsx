@@ -61,7 +61,7 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
         {/* Header */}
         <div className="shrink-0 flex items-center gap-2 px-4 py-3 border-b border-slate-200/60">
           <History size={16} style={{ color: accentColor }} />
-          <h2 className="flex-1 text-[13px] font-semibold text-slate-800">历史会话</h2>
+          <h2 className="flex-1 text-[15px] font-semibold text-slate-800">历史会话</h2>
           <button
             onClick={() => { onSelect(null); onClose(); }}
             className="flex items-center gap-1 px-2 py-1 rounded-md text-[10.5px] font-medium text-white transition-opacity hover:opacity-90"
@@ -86,7 +86,7 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="搜索会话..."
-              className="flex-1 bg-transparent text-[12px] text-slate-700 placeholder:text-slate-300 outline-none"
+              className="flex-1 bg-transparent text-[14px] text-slate-700 placeholder:text-slate-300 outline-none"
             />
           </div>
         </div>
@@ -96,7 +96,7 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
           {filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center px-6">
               <History size={20} className="text-slate-200 mb-2" />
-              <p className="text-[11.5px] text-slate-400">
+              <p className="text-[13.5px] text-slate-400">
                 {search ? '没有匹配的会话' : '暂无历史会话'}
               </p>
             </div>
@@ -129,7 +129,7 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
                       {session.tags.map((tag: string) => (
                         <span
                           key={tag}
-                          className="inline-flex px-1.5 py-0.5 rounded-full text-[9px] font-medium"
+                          className="inline-flex px-1.5 py-0.5 rounded-full text-[15px] font-medium"
                           style={{
                             backgroundColor: `${accentColor}12`,
                             color: accentColor,
@@ -148,7 +148,7 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
 
         {/* Footer */}
         <div className="shrink-0 px-4 py-2.5 border-t border-slate-200/60 bg-white/30">
-          <span className="text-[10px] text-slate-400">
+          <span className="text-[14px] text-slate-400">
             共 {filtered.length} 条历史会话
           </span>
         </div>

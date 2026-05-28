@@ -23,7 +23,7 @@ export function SuggestedPrompts({ onSend }: SuggestedPromptsProps) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: i * 0.05, duration: 0.2 }}
           onClick={() => onSend(s.text)}
-          className="flex items-center gap-2 px-3 py-2 rounded-xl border border-white/[0.06] bg-white/[0.02] text-white/50 text-[11px] whitespace-nowrap hover:bg-hud-cyan/[0.06] hover:border-hud-cyan/20 hover:text-hud-cyan transition-all shrink-0"
+          className="flex items-center gap-2 px-3 py-2 rounded-xl border border-white/[0.06] bg-white/[0.02] text-white/50 text-[15px] whitespace-nowrap hover:bg-hud-cyan/[0.06] hover:border-hud-cyan/20 hover:text-hud-cyan transition-all shrink-0"
         >
           {s.icon}
           {s.text}

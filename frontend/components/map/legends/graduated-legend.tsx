@@ -45,13 +45,13 @@ export function GraduatedLegend({ spec, onFilterChange }: Props) {
           <Info className="h-3.5 w-3.5 text-primary" />
         </div>
         <div className="flex flex-col">
-          <span className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground/80">图例说明</span>
+          <span className="text-[14px] uppercase font-bold tracking-widest text-muted-foreground/80">图例说明</span>
           <span className="text-xs font-semibold text-foreground truncate max-w-[140px]" title={field}>
             字段: {field}
           </span>
         </div>
       </div>
-      <div className="flex justify-between text-[9px] text-muted-foreground/70 mb-1 px-1">
+      <div className="flex justify-between text-[15px] text-muted-foreground/70 mb-1 px-1">
         <span>{formatNum(breaks[0])}</span>
         <span>{formatNum(breaks[breaks.length - 1])}</span>
       </div>
@@ -76,7 +76,7 @@ export function GraduatedLegend({ spec, onFilterChange }: Props) {
                   className="w-3.5 h-3.5 rounded-sm shadow-sm ring-1 ring-black/10 group-hover:scale-110 transition-transform"
                   style={{ backgroundColor: palette_colors[colorIdx] }}
                 />
-                <span className="text-[11px] font-medium text-muted-foreground group-hover:text-foreground transition-colors">
+                <span className="text-[15px] font-medium text-muted-foreground group-hover:text-foreground transition-colors">
                   {rangeLabel}
                 </span>
               </div>
@@ -89,7 +89,7 @@ export function GraduatedLegend({ spec, onFilterChange }: Props) {
           );
         })}
       </div>
-      <div className="mt-4 pt-2 border-t border-border/40 text-[9px] text-muted-foreground/60 italic text-center">
+      <div className="mt-4 pt-2 border-t border-border/40 text-[15px] text-muted-foreground/60 italic text-center">
         数据驱动专题渲染
       </div>
     </div>

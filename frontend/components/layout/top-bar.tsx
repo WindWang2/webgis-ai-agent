@@ -113,10 +113,10 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
           <Compass size={13} style={{ color: '#fff' }} />
         </span>
         <div style={{ lineHeight: 1 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: isDark ? '#e2e8f0' : '#1e293b' }}>
+          <span style={{ fontSize: 15, fontWeight: 600, color: isDark ? '#e2e8f0' : '#1e293b' }}>
             GeoAgent
           </span>
-          <span style={{ fontSize: 9, marginLeft: 4, color: isDark ? '#64748b' : '#94a3b8' }}>All is Agent</span>
+          <span style={{ fontSize: 11, marginLeft: 4, color: isDark ? '#64748b' : '#94a3b8' }}>All is Agent</span>
         </div>
       </div>
 
@@ -125,7 +125,7 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
         style={{
           marginLeft: 4, padding: '2px 8px', borderRadius: 999,
           backgroundColor: isDark ? 'rgba(30,41,59,0.6)' : 'rgba(226,232,240,0.6)',
-          fontSize: 10, color: isDark ? '#94a3b8' : '#64748b',
+          fontSize: 12, color: isDark ? '#94a3b8' : '#64748b',
           borderWidth: 1, borderStyle: 'solid',
           borderColor: isDark ? 'rgba(148,163,184,0.2)' : 'rgba(226,232,240,0.8)',
           maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
@@ -141,7 +141,7 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
       <span
         style={{
           display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px',
-          borderRadius: 999, backgroundColor: status.bg, fontSize: 10, fontWeight: 500
+          borderRadius: 999, backgroundColor: status.bg, fontSize: 12, fontWeight: 500
         }}
       >
         <span
@@ -199,7 +199,7 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
             WebkitBackdropFilter: 'blur(12px)',
             border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(255,255,255,0.92)',
             boxShadow: isDark ? '0 2px 12px rgba(0,0,0,0.3)' : '0 2px 12px rgba(15,23,42,0.08)',
-            fontSize: '10.5px',
+            fontSize: '12.5px',
             color: isDark ? '#cbd5e1' : '#475569',
             cursor: 'pointer',
             fontFamily: "'JetBrains Mono', monospace",

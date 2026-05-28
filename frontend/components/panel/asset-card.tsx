@@ -91,7 +91,7 @@ export function AssetCard({ asset, onLoad, onDelete, onRename }: AssetCardProps)
                   type="text"
                   value={tempName}
                   onChange={(e) => setTempName(e.target.value)}
-                  className="w-full text-[11px] bg-white/[0.06] border border-hud-cyan/30 rounded px-1.5 py-0.5 text-white/90 focus:outline-none focus:border-hud-cyan/60 transition-colors"
+                  className="w-full text-[15px] bg-white/[0.06] border border-hud-cyan/30 rounded px-1.5 py-0.5 text-white/90 focus:outline-none focus:border-hud-cyan/60 transition-colors"
                   autoFocus
                   onKeyDown={(e) => e.key === "Enter" && handleSaveRename()}
                 />
@@ -100,7 +100,7 @@ export function AssetCard({ asset, onLoad, onDelete, onRename }: AssetCardProps)
               </div>
             ) : (
               <h4
-                className="text-[11px] font-medium text-white/70 truncate cursor-pointer hover:text-hud-cyan transition-colors"
+                className="text-[15px] font-medium text-white/70 truncate cursor-pointer hover:text-hud-cyan transition-colors"
                 onDoubleClick={() => { setTempName(asset.original_name); setIsEditing(true); }}
                 title={asset.original_name}
               >
@@ -109,7 +109,7 @@ export function AssetCard({ asset, onLoad, onDelete, onRename }: AssetCardProps)
             )}
           </div>
 
-          <div className="flex items-center gap-3 text-[9px] text-white/25">
+          <div className="flex items-center gap-3 text-[15px] text-white/25">
             <span className="flex items-center gap-1">
               <Calendar className="h-2.5 w-2.5" />
               {new Date(asset.upload_time || Date.now()).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
@@ -124,7 +124,7 @@ export function AssetCard({ asset, onLoad, onDelete, onRename }: AssetCardProps)
           <div className="flex items-center gap-1 mt-2.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
             <button
               onClick={() => onLoad(asset)}
-              className="px-2 py-1 rounded-md bg-hud-cyan/[0.08] text-hud-cyan/80 text-[9px] font-semibold uppercase tracking-wider hover:bg-hud-cyan/15 hover:text-hud-cyan transition-all flex items-center gap-1"
+              className="px-2 py-1 rounded-md bg-hud-cyan/[0.08] text-hud-cyan/80 text-[15px] font-semibold uppercase tracking-wider hover:bg-hud-cyan/15 hover:text-hud-cyan transition-all flex items-center gap-1"
             >
               <MapIcon size={10} /> 加载
             </button>

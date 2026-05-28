@@ -49,7 +49,7 @@ export function AgentEnvHud({ open, onClose }: AgentEnvHudProps) {
           </div>
           <div>
             <div className='text-xs font-semibold text-slate-800'>Agent 环境感知</div>
-            <div className='text-[10px] text-slate-400'>实时地图状态</div>
+            <div className='text-[14px] text-slate-400'>实时地图状态</div>
           </div>
         </div>
         <button
@@ -64,34 +64,34 @@ export function AgentEnvHud({ open, onClose }: AgentEnvHudProps) {
       <div className='overflow-y-auto max-h-[calc(100vh-180px)]'>
         {/* Current viewport state */}
         <div className='p-4 border-b border-slate-200/60'>
-          <div className='text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-3'>
+          <div className='text-[14px] font-semibold text-slate-400 uppercase tracking-wider mb-3'>
             视口状态
           </div>
           <div className='grid grid-cols-2 gap-2'>
             <div className='bg-slate-100/60 rounded-lg p-2'>
-              <div className='text-[9px] text-slate-400 uppercase tracking-wide mb-0.5'>经纬度</div>
-              <div className='text-[11px] text-slate-700 font-mono'>
+              <div className='text-[15px] text-slate-400 uppercase tracking-wide mb-0.5'>经纬度</div>
+              <div className='text-[15px] text-slate-700 font-mono'>
                 {viewport.center[0].toFixed(5)}, {viewport.center[1].toFixed(5)}
               </div>
             </div>
             <div className='bg-slate-100/60 rounded-lg p-2'>
-              <div className='text-[9px] text-slate-400 uppercase tracking-wide mb-0.5'>缩放</div>
-              <div className='text-[11px] text-slate-700 font-mono'>{viewport.zoom.toFixed(1)}</div>
+              <div className='text-[15px] text-slate-400 uppercase tracking-wide mb-0.5'>缩放</div>
+              <div className='text-[15px] text-slate-700 font-mono'>{viewport.zoom.toFixed(1)}</div>
             </div>
             <div className='bg-slate-100/60 rounded-lg p-2'>
-              <div className='text-[9px] text-slate-400 uppercase tracking-wide mb-0.5'>底图</div>
-              <div className='text-[11px] text-slate-700 font-mono'>{baseLayer}</div>
+              <div className='text-[15px] text-slate-400 uppercase tracking-wide mb-0.5'>底图</div>
+              <div className='text-[15px] text-slate-700 font-mono'>{baseLayer}</div>
             </div>
             <div className='bg-slate-100/60 rounded-lg p-2'>
-              <div className='text-[9px] text-slate-400 uppercase tracking-wide mb-0.5'>模式</div>
-              <div className='text-[11px] text-slate-700 font-mono'>{is3D ? '3D' : '2D'}</div>
+              <div className='text-[15px] text-slate-400 uppercase tracking-wide mb-0.5'>模式</div>
+              <div className='text-[15px] text-slate-700 font-mono'>{is3D ? '3D' : '2D'}</div>
             </div>
           </div>
         </div>
 
         {/* Layers summary */}
         <div className='p-4 border-b border-slate-200/60'>
-          <div className='text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-3'>
+          <div className='text-[14px] font-semibold text-slate-400 uppercase tracking-wider mb-3'>
             图层 ({layers.length})
           </div>
           <div className='space-y-1'>
@@ -116,7 +116,7 @@ export function AgentEnvHud({ open, onClose }: AgentEnvHudProps) {
 
         {/* Causal trace */}
         <div className='p-4'>
-          <div className='text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-3'>
+          <div className='text-[14px] font-semibold text-slate-400 uppercase tracking-wider mb-3'>
             因果链
           </div>
           <CausalTrace />

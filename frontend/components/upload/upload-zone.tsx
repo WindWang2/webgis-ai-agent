@@ -144,7 +144,7 @@ export function UploadZone({ sessionId, onUploadSuccess, compact }: UploadZonePr
               <p className="text-xs font-medium text-foreground">
                 拖放或点击上传 GIS 数据
               </p>
-              <p className="text-[10px] text-muted-foreground mt-0.5">
+              <p className="text-[14px] text-muted-foreground mt-0.5">
                 GeoJSON / Shapefile / KML / GeoPackage / GeoTIFF / CSV
               </p>
             </div>

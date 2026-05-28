@@ -46,7 +46,7 @@ export function MapConfig() {
 
       {/* Basemap style cards */}
       <div>
-        <div className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold mb-3">
+        <div className="text-[15px] uppercase tracking-wider text-slate-400 font-semibold mb-3">
           Basemap Style
         </div>
         <div className="grid grid-cols-3 gap-2">
@@ -85,14 +85,14 @@ export function MapConfig() {
                   )}
                 </div>
                 <span
-                  className="text-[11px] font-medium leading-tight"
+                  className="text-[15px] font-medium leading-tight"
                   style={{
                     color: isActive ? '#16a34a' : '#475569',
                   }}
                 >
                   {style.name}
                 </span>
-                <span className="text-[10px] text-slate-400 leading-tight">
+                <span className="text-[14px] text-slate-400 leading-tight">
                   {style.desc}
                 </span>
               </button>
@@ -103,7 +103,7 @@ export function MapConfig() {
 
       {/* Add custom basemap */}
       <div>
-        <div className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold mb-3">
+        <div className="text-[15px] uppercase tracking-wider text-slate-400 font-semibold mb-3">
           Add Custom Basemap
         </div>
         <div className="flex flex-col gap-2.5 rounded-xl border border-slate-900/8 bg-white/50 px-4 py-3">
@@ -135,7 +135,7 @@ export function MapConfig() {
 
       {/* CRS selection */}
       <div>
-        <div className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold mb-3">
+        <div className="text-[15px] uppercase tracking-wider text-slate-400 font-semibold mb-3">
           Coordinate Reference System
         </div>
         <div className="flex gap-2">
@@ -156,7 +156,7 @@ export function MapConfig() {
                 }}
               >
                 <span
-                  className="text-[12px] font-mono font-semibold"
+                  className="text-[14px] font-mono font-semibold"
                   style={{
                     color: isActive ? '#16a34a' : '#475569',
                   }}
@@ -164,7 +164,7 @@ export function MapConfig() {
                   {opt.code}
                 </span>
                 <span
-                  className="text-[10px]"
+                  className="text-[14px]"
                   style={{
                     color: isActive ? '#16a34a' : '#94a3b8',
                   }}

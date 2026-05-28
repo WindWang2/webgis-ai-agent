@@ -57,12 +57,12 @@ export function ChartRenderer({ chart }: ChartRendererProps) {
               dataKey="name" 
               axisLine={false} 
               tickLine={false} 
-              tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }}
+              tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }}
             />
             <YAxis 
                axisLine={false} 
                tickLine={false} 
-               tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} 
+               tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }} 
             />
             <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.05)' }} />
             <Bar 
@@ -84,8 +84,8 @@ export function ChartRenderer({ chart }: ChartRendererProps) {
         return (
           <LineChart data={data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
-            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} />
-            <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} />
+            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }} />
+            <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }} />
             <Tooltip content={<CustomTooltip />} />
             <Line 
               type="monotone" 
@@ -119,7 +119,7 @@ export function ChartRenderer({ chart }: ChartRendererProps) {
               verticalAlign="bottom" 
               align="center" 
               iconType="circle"
-              wrapperStyle={{ fontSize: '10px', paddingTop: '10px' }} 
+              wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }}
             />
           </PieChart>
         );
@@ -128,8 +128,8 @@ export function ChartRenderer({ chart }: ChartRendererProps) {
         return (
           <ScatterChart margin={{ top: 10, right: 10, left: -20, bottom: 10 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
-            <XAxis type="number" dataKey="x" name={x_label || 'X'} axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} />
-            <YAxis type="number" dataKey="y" name={y_label || 'Y'} axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: 'var(--muted-foreground)' }} />
+            <XAxis type="number" dataKey="x" name={x_label || 'X'} axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }} />
+            <YAxis type="number" dataKey="y" name={y_label || 'Y'} axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'var(--muted-foreground)' }} />
             <ZAxis type="number" range={[60, 400]} />
             <Tooltip content={<CustomTooltip />} cursor={{ strokeDasharray: '3 3' }} />
             <Scatter name={title} data={data} fill="var(--primary)" animationDuration={1500} />
@@ -144,10 +144,10 @@ export function ChartRenderer({ chart }: ChartRendererProps) {
   return (
     <div className="w-full h-full min-h-[220px] flex flex-col gap-3 p-1">
       <div className="flex items-center justify-between">
-        <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">
+        <h4 className="text-[15px] font-bold uppercase tracking-wider text-muted-foreground/80">
           {title}
         </h4>
-        <div className="text-[10px] bg-muted/30 px-1.5 py-0.5 rounded border border-border/30 font-mono text-muted-foreground">
+        <div className="text-[14px] bg-muted/30 px-1.5 py-0.5 rounded border border-border/30 font-mono text-muted-foreground">
           {type.toUpperCase()}
         </div>
       </div>

@@ -102,7 +102,7 @@ export const LayerCard = memo(function LayerCard({
                   type="text"
                   value={tempName}
                   onChange={(e) => setTempName(e.target.value)}
-                  className="w-full text-[11px] bg-white/[0.06] border border-hud-cyan/30 rounded px-1.5 py-0.5 text-white/90 focus:outline-none focus:border-hud-cyan/60 transition-colors"
+                  className="w-full text-[15px] bg-white/[0.06] border border-hud-cyan/30 rounded px-1.5 py-0.5 text-white/90 focus:outline-none focus:border-hud-cyan/60 transition-colors"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleSaveRename();
                     if (e.key === 'Escape') setIsEditing(false);
@@ -113,7 +113,7 @@ export const LayerCard = memo(function LayerCard({
               </div>
             ) : (
               <span
-                className="text-[11px] font-medium text-white/70 truncate flex-1 cursor-pointer hover:text-white/90 transition-colors"
+                className="text-[15px] font-medium text-white/70 truncate flex-1 cursor-pointer hover:text-white/90 transition-colors"
                 onDoubleClick={handleStartRename}
                 title={layer.name}
               >
@@ -147,7 +147,7 @@ export const LayerCard = memo(function LayerCard({
                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
               />
             </div>
-            <span className="text-[9px] text-white/20 w-7 text-right font-mono tabular-nums">
+            <span className="text-[15px] text-white/20 w-7 text-right font-mono tabular-nums">
               {opacityPct}%
             </span>
           </div>

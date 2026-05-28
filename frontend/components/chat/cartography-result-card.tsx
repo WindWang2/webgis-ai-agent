@@ -55,11 +55,11 @@ export function CartographyResultCard({ result, layerId, onFocus }: Props) {
         ))}
       </div>
       <div className="flex items-center justify-between">
-        <span className="text-[11px] text-muted-foreground">{summarize(spec)}</span>
+        <span className="text-[15px] text-muted-foreground">{summarize(spec)}</span>
         <button
           type="button"
           onClick={() => onFocus?.(layerId)}
-          className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+          className="inline-flex items-center gap-1 text-[15px] font-medium text-primary hover:underline"
         >
           <Target className="h-3 w-3" />
           高亮此图层

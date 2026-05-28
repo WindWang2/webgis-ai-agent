@@ -28,14 +28,14 @@ export function ExportsTab() {
     <div className='flex flex-col h-full'>
       {/* Header */}
       <div className='flex items-center justify-between px-3 py-2' style={{ borderBottomColor: isDark ? 'rgba(148,163,184,0.2)' : 'rgba(226,232,240,0.6)', borderBottomWidth: 1, borderBottomStyle: 'solid' }}>
-        <span className='text-[10px] font-semibold uppercase tracking-wider' style={{ color: isDark ? '#64748b' : '#94a3b8' }}>
+        <span className='text-[14px] font-semibold uppercase tracking-wider' style={{ color: isDark ? '#64748b' : '#94a3b8' }}>
           导出文件
         </span>
         <div className='flex items-center gap-1'>
           {exports.length > 0 && (
             <button
               onClick={() => setExports([])}
-              className='text-[10px] px-2 py-1 rounded hover:bg-opacity-50'
+              className='text-[14px] px-2 py-1 rounded hover:bg-opacity-50'
               style={{ color: isDark ? '#fca5a5' : '#ef4444', backgroundColor: 'transparent' }}
               onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(248,113,113,0.15)' : 'rgba(254,226,226,0.6)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
@@ -53,7 +53,7 @@ export function ExportsTab() {
             <div className='w-10 h-10 rounded-xl flex items-center justify-center mb-2' style={{ backgroundColor: isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)' }}>
               <Download size={16} style={{ color: isDark ? '#475569' : '#cbd5e1' }} />
             </div>
-            <p className='text-[11.5px]' style={{ color: isDark ? '#64748b' : '#94a3b8' }}>暂无导出文件</p>
+            <p className='text-[13.5px]' style={{ color: isDark ? '#64748b' : '#94a3b8' }}>暂无导出文件</p>
           </div>
         ) : (
           <div className='space-y-1'>
@@ -73,16 +73,16 @@ export function ExportsTab() {
                     {item.name}
                   </div>
                   <div className='flex items-center gap-2 mt-0.5'>
-                    <span className='text-[10px] font-mono uppercase' style={{ color: isDark ? '#64748b' : '#94a3b8' }}>
+                    <span className='text-[14px] font-mono uppercase' style={{ color: isDark ? '#64748b' : '#94a3b8' }}>
                       {item.type}
                     </span>
-                    <span className='text-[10px]' style={{ color: isDark ? '#475569' : '#cbd5e1' }}>•</span>
-                    <span className='text-[10px] font-mono' style={{ color: isDark ? '#64748b' : '#94a3b8' }}>
+                    <span className='text-[14px]' style={{ color: isDark ? '#475569' : '#cbd5e1' }}>•</span>
+                    <span className='text-[14px] font-mono' style={{ color: isDark ? '#64748b' : '#94a3b8' }}>
                       {item.size}
                     </span>
                   </div>
                 </div>
-                <div className='text-[10px] flex-shrink-0' style={{ color: isDark ? '#475569' : '#cbd5e1' }}>
+                <div className='text-[14px] flex-shrink-0' style={{ color: isDark ? '#475569' : '#cbd5e1' }}>
                   {item.date}
                 </div>
                 <div className='flex items-center gap-0.5 flex-shrink-0'>

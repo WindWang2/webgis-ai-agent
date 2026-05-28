@@ -98,15 +98,15 @@ export function LayersTab() {
       <div className="shrink-0 grid grid-cols-3 gap-px" style={{ backgroundColor: isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)', borderBottomColor: isDark ? 'rgba(148,163,184,0.2)' : 'rgba(226,232,240,0.6)' }}>
         <div className="px-2.5 py-2 text-center" style={{ backgroundColor: isDark ? 'rgba(30,41,59,0.6)' : 'rgba(255,255,255,0.6)' }}>
           <div className="text-[14px] font-semibold" style={{ color: isDark ? '#e2e8f0' : '#1e293b' }}>{layers.length}</div>
-          <div className="text-[9px] uppercase tracking-wider" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>总图层</div>
+          <div className="text-[15px] uppercase tracking-wider" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>总图层</div>
         </div>
         <div className="px-2.5 py-2 text-center" style={{ backgroundColor: isDark ? 'rgba(30,41,59,0.6)' : 'rgba(255,255,255,0.6)' }}>
           <div className="text-[14px] font-semibold" style={{ color: isDark ? '#4ade80' : '#059669' }}>{visibleCount}</div>
-          <div className="text-[9px] uppercase tracking-wider" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>可见</div>
+          <div className="text-[15px] uppercase tracking-wider" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>可见</div>
         </div>
         <div className="px-2.5 py-2 text-center" style={{ backgroundColor: isDark ? 'rgba(30,41,59,0.6)' : 'rgba(255,255,255,0.6)' }}>
           <div className="text-[14px] font-semibold" style={{ color: isDark ? '#e2e8f0' : '#1e293b' }}>{totalFeatures}</div>
-          <div className="text-[9px] uppercase tracking-wider" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>要素</div>
+          <div className="text-[15px] uppercase tracking-wider" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>要素</div>
         </div>
       </div>
 
@@ -117,8 +117,8 @@ export function LayersTab() {
             <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-2" style={{ backgroundColor: isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)' }}>
               <Eye size={16} style={{ color: isDark ? '#475569' : '#cbd5e1' }} />
             </div>
-            <p className="text-[11.5px]" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>暂无图层</p>
-            <p className="text-[10px] mt-0.5" style={{ color: isDark ? '#475569' : '#cbd5e1' }}>开始分析后图层将自动添加</p>
+            <p className="text-[13.5px]" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>暂无图层</p>
+            <p className="text-[14px] mt-0.5" style={{ color: isDark ? '#475569' : '#cbd5e1' }}>开始分析后图层将自动添加</p>
           </div>
         ) : (
           <div className="px-2 py-2 space-y-3">
@@ -129,7 +129,7 @@ export function LayersTab() {
                   <span className="text-[9.5px] font-medium text-slate-400 uppercase tracking-wider">
                     {GROUP_NAMES[group.name] || group.name}
                   </span>
-                  <span className="text-[9px] text-slate-300">({group.layers.length})</span>
+                  <span className="text-[15px] text-slate-300">({group.layers.length})</span>
                 </div>
 
                 <div className="space-y-1">
@@ -202,13 +202,13 @@ export function LayersTab() {
                           )}
 
                           {/* Layer name */}
-                          <span style={{ flex: 1, fontSize: 11, color: isDark ? '#e2e8f0' : '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+                          <span style={{ flex: 1, fontSize: 13, color: isDark ? '#e2e8f0' : '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
                             {layer.name}
                           </span>
 
                           {/* Feature count */}
                           {featureCount > 0 && (
-                            <span style={{ flexShrink: 0, fontSize: 9, color: isDark ? '#475569' : '#cbd5e1' }}>
+                            <span style={{ flexShrink: 0, fontSize: 11, color: isDark ? '#475569' : '#cbd5e1' }}>
                               {featureCount}
                             </span>
                           )}
@@ -253,7 +253,7 @@ export function LayersTab() {
                               WebkitAppearance: 'none'
                             }}
                           />
-                          <span style={{ fontSize: 9, color: isDark ? '#64748b' : '#94a3b8', width: 28, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          <span style={{ fontSize: 11, color: isDark ? '#64748b' : '#94a3b8', width: 28, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                             {Math.round((layer.opacity ?? 1) * 100)}%
                           </span>
                         </div>

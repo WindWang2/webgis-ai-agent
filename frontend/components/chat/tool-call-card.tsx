@@ -118,7 +118,7 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
     );
 
   return (
-    <div className={`rounded-md border text-[11px] overflow-hidden ${expanded ? 'border-slate-200/80 bg-white/50' : 'border-transparent'}`}>
+    <div className={`rounded-md border text-[15px] overflow-hidden ${expanded ? 'border-slate-200/80 bg-white/50' : 'border-transparent'}`}>
       <button
         onClick={() => setOpen(!open)}
         className="w-full flex items-center gap-1.5 px-2 py-1 text-left hover:bg-slate-50/60 transition-colors"
@@ -138,7 +138,7 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
         )}
         <span className="flex-1" />
         {duration && (
-          <span className="flex items-center gap-0.5 text-[9px] text-slate-400">
+          <span className="flex items-center gap-0.5 text-[15px] text-slate-400">
             <Clock size={9} />
             {duration}
           </span>
@@ -157,8 +157,8 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
         <div className="border-t border-slate-100 px-2.5 py-1.5 space-y-1.5 bg-slate-50/30">
           {parsedArgs && (
             <div>
-              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider mb-0.5">参数</p>
-              <pre className="p-1.5 rounded bg-white/80 border border-slate-100 text-[10px] leading-relaxed text-slate-600 font-mono overflow-x-auto max-h-[100px] overflow-y-auto">
+              <p className="text-[15px] font-semibold text-slate-400 uppercase tracking-wider mb-0.5">参数</p>
+              <pre className="p-1.5 rounded bg-white/80 border border-slate-100 text-[14px] leading-relaxed text-slate-600 font-mono overflow-x-auto max-h-[100px] overflow-y-auto">
                 {Object.entries(parsedArgs)
                   .map(([k, v]) => {
                     const val = typeof v === 'string' ? `"${v}"` : JSON.stringify(v);
@@ -170,8 +170,8 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
           )}
           {call.result && (
             <div>
-              <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider mb-0.5">结果</p>
-              <pre className="p-1.5 rounded bg-white/80 border border-slate-100 text-[10px] leading-relaxed text-slate-600 font-mono overflow-x-auto max-h-[150px] overflow-y-auto">
+              <p className="text-[15px] font-semibold text-slate-400 uppercase tracking-wider mb-0.5">结果</p>
+              <pre className="p-1.5 rounded bg-white/80 border border-slate-100 text-[14px] leading-relaxed text-slate-600 font-mono overflow-x-auto max-h-[150px] overflow-y-auto">
                 {formatJson(call.result).slice(0, 1500)}
                 {formatJson(call.result).length > 1500 ? '\n...' : ''}
               </pre>
@@ -179,8 +179,8 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
           )}
           {call.error && (
             <div>
-              <p className="text-[9px] font-semibold text-red-400 uppercase tracking-wider mb-0.5">错误</p>
-              <pre className="p-1.5 rounded bg-red-50/50 border border-red-100 text-[10px] text-red-600 font-mono">{call.error}</pre>
+              <p className="text-[15px] font-semibold text-red-400 uppercase tracking-wider mb-0.5">错误</p>
+              <pre className="p-1.5 rounded bg-red-50/50 border border-red-100 text-[14px] text-red-600 font-mono">{call.error}</pre>
             </div>
           )}
         </div>
@@ -209,7 +209,7 @@ export function ToolCallChain({ calls }: { calls: ToolCallEntry[] }) {
       {/* Chain header — click to expand */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-slate-50/60 transition-colors text-[11px]"
+        className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-slate-50/60 transition-colors text-[15px]"
       >
         {expanded ? (
           <ChevronDown size={12} className="shrink-0 text-slate-400" />
