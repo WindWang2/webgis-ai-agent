@@ -20,7 +20,7 @@ class SessionDataManager:
         self._event_log: dict[str, deque] = {}
         self.capacity = capacity
 
-    def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
+    async def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
         """存储数据并返回生成的游标 ID"""
         if session_id not in self._store:
             self._store[session_id] = OrderedDict()
@@ -41,13 +41,13 @@ class SessionDataManager:
         session_cache[ref_id] = data
         return ref_id
 
-    def set_alias(self, session_id: str, ref_id: str, alias: str):
+    async def set_alias(self, session_id: str, ref_id: str, alias: str):
         """为引用 ID 设置别名"""
         if session_id not in self._aliases:
             self._aliases[session_id] = {}
         self._aliases[session_id][alias] = ref_id
 
-    def resolve_alias(self, session_id: str, ref_or_alias: str) -> str:
+    async def resolve_alias(self, session_id: str, ref_or_alias: str) -> str:
         """Resolve a ref or alias to its canonical ref_id.
 
         /review P3-5: public accessor replacing six call sites that previously
@@ -57,7 +57,7 @@ class SessionDataManager:
         """
         return self._aliases.get(session_id, {}).get(ref_or_alias, ref_or_alias)
 
-    def get(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]:
+    async def get(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]:
         """根据游标 ID 或别名获取原始数据"""
         session_cache = self._store.get(session_id)
         if not session_cache:
@@ -77,7 +77,7 @@ class SessionDataManager:
         session_cache[ref_id] = data
         return data
 
-    def list_refs(self, session_id: str) -> dict[str, str]:
+    async def list_refs(self, session_id: str) -> dict[str, str]:
         """列出所有引用及其别名"""
         aliases = self._aliases.get(session_id, {})
         # 反转别名映射以便查找
@@ -97,7 +97,7 @@ class SessionDataManager:
             for k in to_delete:
                 del aliases[k]
 
-    def set_map_state(self, session_id: str, key: str, value: Any):
+    async def set_map_state(self, session_id: str, key: str, value: Any):
         """设置地图状态元数据"""
         if session_id not in self._map_state:
             self._map_state[session_id] = {}
@@ -105,16 +105,16 @@ class SessionDataManager:
             self._map_state[session_id].setdefault("_started_at", datetime.now().isoformat())
         self._map_state[session_id][key] = value
 
-    def get_started_at(self, session_id: str) -> Optional[str]:
+    async def get_started_at(self, session_id: str) -> Optional[str]:
         """返回 session 首次接触时间 (ISO 字符串)，未存在则 None。"""
         state = self._map_state.get(session_id, {})
         return state.get("_started_at")
 
-    def get_map_state(self, session_id: str) -> dict[str, Any]:
+    async def get_map_state(self, session_id: str) -> dict[str, Any]:
         """获取当前地图所有状态"""
         return self._map_state.get(session_id, {})
 
-    def update_layer_in_state(self, session_id: str, layer_id: str, updates: dict):
+    async def update_layer_in_state(self, session_id: str, layer_id: str, updates: dict):
         """更新地图状态中单个图层的属性"""
         layers = list(self._map_state.get(session_id, {}).get("layers", []))
         for layer in layers:
@@ -123,14 +123,14 @@ class SessionDataManager:
                 break
         else:
             layers.append({"id": layer_id, **updates})
-        self.set_map_state(session_id, "layers", layers)
+        await self.set_map_state(session_id, "layers", layers)
 
-    def remove_layer_from_state(self, session_id: str, layer_id: str):
+    async def remove_layer_from_state(self, session_id: str, layer_id: str):
         """从地图状态中移除指定图层"""
         layers = self._map_state.get(session_id, {}).get("layers", [])
-        self.set_map_state(session_id, "layers", [l for l in layers if l.get("id") != layer_id])
+        await self.set_map_state(session_id, "layers", [l for l in layers if l.get("id") != layer_id])
 
-    def append_event(self, session_id: str, event: str, data: dict):
+    async def append_event(self, session_id: str, event: str, data: dict):
         """追加用户操作到事件日志"""
         if session_id not in self._event_log:
             self._event_log[session_id] = deque(maxlen=20)
@@ -140,34 +140,34 @@ class SessionDataManager:
             "timestamp": datetime.now().isoformat(),
         })
 
-    def get_event_log(self, session_id: str) -> list[dict]:
+    async def get_event_log(self, session_id: str) -> list[dict]:
         """获取近期用户操作日志"""
         return list(self._event_log.get(session_id, []))
 
-    def get_session_metadata(self, session_id: str) -> dict[str, Any]:
+    async def get_session_metadata(self, session_id: str) -> dict[str, Any]:
         """获取会话元数据（聚合查询以减少 Redis 等后端往返）"""
         return {
-            "map_state": self.get_map_state(session_id),
-            "list_refs": self.list_refs(session_id),
-            "event_log": self.get_event_log(session_id),
-            "started_at": self.get_started_at(session_id),
+            "map_state": await self.get_map_state(session_id),
+            "list_refs": await self.list_refs(session_id),
+            "event_log": await self.get_event_log(session_id),
+            "started_at": await self.get_started_at(session_id),
         }
 
-    def clear_session(self, session_id: str):
+    async def clear_session(self, session_id: str):
         """清理会话数据"""
         self._store.pop(session_id, None)
         self._aliases.pop(session_id, None)
         self._map_state.pop(session_id, None)
         self._event_log.pop(session_id, None)
 
-    def cleanup_idle_sessions(self, max_sessions: int = 100):
+    async def cleanup_idle_sessions(self, max_sessions: int = 100):
         """Evict oldest sessions when total exceeds max_sessions."""
         if len(self._store) <= max_sessions:
             return
         # Remove oldest sessions (first inserted in OrderedDict-like fashion)
         to_remove = list(self._store.keys())[:len(self._store) - max_sessions + 10]
         for sid in to_remove:
-            self.clear_session(sid)
+            await self.clear_session(sid)
         logger.info(f"Cleaned up {len(to_remove)} idle sessions")
 
 def create_session_data_manager():
