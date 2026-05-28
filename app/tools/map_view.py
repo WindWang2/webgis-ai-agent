@@ -84,13 +84,13 @@ class SetMapViewArgs(BaseModel):
     pitch: Optional[float] = Field(None, ge=0, le=85, description="俯仰角 0-85")
 
 
-def _resolve_layer_id(session_id: str, layer_ref: str) -> Optional[str]:
+async def _resolve_layer_id(session_id: str, layer_ref: str) -> Optional[str]:
     """根据 ref/别名/名称 解析到画布上的 layer_id"""
     # /review P3-5: replaced session_data_manager._aliases.get(...).get(...) with
     # the public resolve_alias accessor (in-memory + Redis backends both implement).
-    candidate = session_data_manager.resolve_alias(session_id, layer_ref)
+    candidate = await session_data_manager.resolve_alias(session_id, layer_ref)
 
-    map_state = session_data_manager.get_map_state(session_id) or {}
+    map_state = await session_data_manager.get_map_state(session_id) or {}
     layers = map_state.get("layers", []) or []
 
     for l in layers:
@@ -185,23 +185,23 @@ def register_map_view_tools(registry: ToolRegistry):
         ),
         args_model=ZoomToLayerArgs,
     )
-    def zoom_to_layer(layer_ref: str, padding: int = 60, session_id: Optional[str] = None) -> dict:
+    async def zoom_to_layer(layer_ref: str, padding: int = 60, session_id: Optional[str] = None) -> dict:
         if not session_id:
             return {"error": "Missing session_id context"}
 
         # 1) 解析到 ref_id（如果是别名） — /review P3-5: public accessor.
-        ref_id = session_data_manager.resolve_alias(session_id, layer_ref)
+        ref_id = await session_data_manager.resolve_alias(session_id, layer_ref)
 
         # 2) 尝试拉数据并算 bbox
         bbox: Optional[List[float]] = None
-        data = session_data_manager.get(session_id, ref_id)
+        data = await session_data_manager.get(session_id, ref_id)
         if data is not None:
             payload = data.get("data") if isinstance(data, dict) and "data" in data else data
             bbox = _extract_bbox_from_geojson(payload)
 
         # 3) 兜底：看一下 map_state 是否记录了该图层的 extent
         if bbox is None:
-            map_state = session_data_manager.get_map_state(session_id) or {}
+            map_state = await session_data_manager.get_map_state(session_id) or {}
             for l in (map_state.get("layers", []) or []):
                 if l.get("id") in (ref_id, layer_ref) or l.get("name") == layer_ref:
                     cand = l.get("bbox") or l.get("extent")
@@ -219,7 +219,7 @@ def register_map_view_tools(registry: ToolRegistry):
                 "bbox": bbox,
                 "padding": padding,
             },
-            "resolved_layer_id": _resolve_layer_id(session_id, layer_ref),
+            "resolved_layer_id": await _resolve_layer_id(session_id, layer_ref),
             "message": f"已缩放到图层 {layer_ref} 的范围",
         }
 
