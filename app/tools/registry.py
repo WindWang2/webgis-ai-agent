@@ -181,7 +181,7 @@ class ToolRegistry:
         # 注意：排除某些特殊字段（如 ref_id, layer_ref, layer_id, plan_id），
         # 这些字段本身就是为了接收引用 ID，绝不应被自动解引用为 GeoJSON 数据。
         if session_id and isinstance(arguments, dict):
-            arguments = self._resolve_references(
+            arguments = await self._resolve_references(
                 session_id,
                 arguments,
                 skip_keys={"ref_id", "layer_ref", "layer_id", "plan_id", "before_ref"},
@@ -263,7 +263,7 @@ class ToolRegistry:
 
         return result
 
-    def _resolve_references(self, session_id: str, arguments: Any, skip_keys: Optional[set[str]] = None) -> Any:
+    async def _resolve_references(self, session_id: str, arguments: Any, skip_keys: Optional[set[str]] = None) -> Any:
         """递归解析参数中的数据引用 ref:xxx 或 别名"""
         if skip_keys is None: skip_keys = set()
 
@@ -271,14 +271,14 @@ class ToolRegistry:
             # /review P3-5: detect "is this a ref or a known alias?" via the public
             # resolve_alias accessor — when it returns something different from the
             # input, the input was a registered alias for this session.
-            _resolved = session_data_manager.resolve_alias(session_id, arguments) if session_id else arguments
+            _resolved = await session_data_manager.resolve_alias(session_id, arguments) if session_id else arguments
             if arguments.startswith("ref:") or _resolved != arguments:
-                data = session_data_manager.get(session_id, arguments)
+                data = await session_data_manager.get(session_id, arguments)
                 if data is not None:
                     return data
 
                 # 解引用失败：构造详细错误信息引导 AI 自愈
-                available_refs = session_data_manager.list_refs(session_id)
+                available_refs = await session_data_manager.list_refs(session_id)
                 ref_info = "\n".join([f"- {rid} ({alias})" if alias else f"- {rid}" for rid, alias in available_refs.items()])
                 error_msg = f"无法找到引用数据或别名: '{arguments}'。"
                 if available_refs:
@@ -297,11 +297,14 @@ class ToolRegistry:
                 if k in skip_keys:
                     new_args[k] = v
                 else:
-                    new_args[k] = self._resolve_references(session_id, v, skip_keys)
+                    new_args[k] = await self._resolve_references(session_id, v, skip_keys)
             return new_args
 
         if isinstance(arguments, list):
-            return [self._resolve_references(session_id, v, skip_keys) for v in arguments]
+            result = []
+            for v in arguments:
+                result.append(await self._resolve_references(session_id, v, skip_keys))
+            return result
 
         return arguments
 
