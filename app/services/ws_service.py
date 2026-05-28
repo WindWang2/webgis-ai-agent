@@ -51,15 +51,14 @@ async def broadcast_ws_event(session_id: str, event_type: str, data: Any):
 from app.services.session_data import session_data_manager
 
 
-def handle_viewport_change(session_id: str, data: dict):
+async def handle_viewport_change(session_id: str, data: dict):
     viewport = {
         "center": data.get("center", [0, 0]),
         "zoom": data.get("zoom", 0),
         "bearing": data.get("bearing", 0),
         "pitch": data.get("pitch", 0),
     }
-    import asyncio
-    asyncio.run(session_data_manager.set_map_state(session_id, "viewport", viewport))
+    await session_data_manager.set_map_state(session_id, "viewport", viewport)
     # Round 3: 后台预热视口地名，下一轮 [环境感知] 同步读 cache 即可
     from app.services.viewport_naming import schedule_populate
     center = viewport.get("center") or [0, 0]
@@ -70,71 +69,62 @@ def handle_viewport_change(session_id: str, data: dict):
             pass
 
 
-def handle_layer_toggled(session_id: str, data: dict):
+async def handle_layer_toggled(session_id: str, data: dict):
     layer_id = data.get("layer_id")
     visible = data.get("visible")
     if layer_id is not None:
-        import asyncio
-        asyncio.run(session_data_manager.update_layer_in_state(session_id, layer_id, {"visible": visible}))
-        asyncio.run(session_data_manager.append_event(session_id, "layer_toggled", data))
+        await session_data_manager.update_layer_in_state(session_id, layer_id, {"visible": visible})
+        await session_data_manager.append_event(session_id, "layer_toggled", data)
 
 
-def handle_layer_opacity(session_id: str, data: dict):
+async def handle_layer_opacity(session_id: str, data: dict):
     layer_id = data.get("layer_id")
     opacity = data.get("opacity")
     if layer_id is not None and opacity is not None:
-        import asyncio
-        asyncio.run(session_data_manager.update_layer_in_state(session_id, layer_id, {"opacity": opacity}))
+        await session_data_manager.update_layer_in_state(session_id, layer_id, {"opacity": opacity})
 
 
-def handle_layer_removed(session_id: str, data: dict):
+async def handle_layer_removed(session_id: str, data: dict):
     layer_id = data.get("layer_id")
     if layer_id:
-        import asyncio
-        asyncio.run(session_data_manager.remove_layer_from_state(session_id, layer_id))
-        asyncio.run(session_data_manager.append_event(session_id, "layer_removed", data))
+        await session_data_manager.remove_layer_from_state(session_id, layer_id)
+        await session_data_manager.append_event(session_id, "layer_removed", data)
 
 
-def handle_base_layer_changed(session_id: str, data: dict):
+async def handle_base_layer_changed(session_id: str, data: dict):
     name = data.get("name")
     if name:
-        import asyncio
-        asyncio.run(session_data_manager.set_map_state(session_id, "base_layer", name))
-        asyncio.run(session_data_manager.append_event(session_id, "base_layer_changed", data))
+        await session_data_manager.set_map_state(session_id, "base_layer", name)
+        await session_data_manager.append_event(session_id, "base_layer_changed", data)
 
 
-def handle_mode_changed(session_id: str, data: dict):
+async def handle_mode_changed(session_id: str, data: dict):
     is_3d = data.get("is_3d")
     if is_3d is not None:
-        import asyncio
-        asyncio.run(session_data_manager.set_map_state(session_id, "is_3d", is_3d))
-        asyncio.run(session_data_manager.append_event(session_id, "mode_changed", data))
+        await session_data_manager.set_map_state(session_id, "is_3d", is_3d)
+        await session_data_manager.append_event(session_id, "mode_changed", data)
 
 
-def handle_upload(session_id: str, data: dict):
-    import asyncio
-    asyncio.run(session_data_manager.append_event(session_id, "upload_completed", data))
+async def handle_upload(session_id: str, data: dict):
+    await session_data_manager.append_event(session_id, "upload_completed", data)
 
 
-def handle_state_snapshot(session_id: str, data: dict):
-    import asyncio
+async def handle_state_snapshot(session_id: str, data: dict):
     for k, v in data.items():
-        asyncio.run(session_data_manager.set_map_state(session_id, k, v))
+        await session_data_manager.set_map_state(session_id, k, v)
 
 
-def handle_layers_changed(session_id: str, data: dict):
+async def handle_layers_changed(session_id: str, data: dict):
     layers = data.get("layers")
     if layers is not None:
-        import asyncio
-        asyncio.run(session_data_manager.set_map_state(session_id, "layers", layers))
+        await session_data_manager.set_map_state(session_id, "layers", layers)
 
 
-def handle_layers_reordered(session_id: str, data: dict):
+async def handle_layers_reordered(session_id: str, data: dict):
     order = data.get("order")
     if order:
-        import asyncio
-        asyncio.run(session_data_manager.set_map_state(session_id, "layer_order", order))
-        asyncio.run(session_data_manager.append_event(session_id, "layers_reordered", data))
+        await session_data_manager.set_map_state(session_id, "layer_order", order)
+        await session_data_manager.append_event(session_id, "layers_reordered", data)
 
 
 PERCEPTION_HANDLERS = {

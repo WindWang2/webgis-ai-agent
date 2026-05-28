@@ -1,5 +1,4 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -28,9 +27,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, token: str =
                 await websocket.send_json({"event": "pong"})
             elif event_type in PERCEPTION_HANDLERS:
                 handler = PERCEPTION_HANDLERS[event_type]
-                await asyncio.get_running_loop().run_in_executor(
-                    None, handler, session_id, data.get("data", {})
-                )
+                await handler(session_id, data.get("data", {}))
     except WebSocketDisconnect:
         manager.disconnect(websocket, session_id)
     except Exception as e:
