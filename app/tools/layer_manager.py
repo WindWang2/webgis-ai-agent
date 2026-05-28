@@ -354,7 +354,7 @@ def register_layer_management_tools(registry: ToolRegistry):
             return {"error": "Missing session_id context"}
 
         params: dict = {"layer_id": ref_id, "visible": True, "name": name}
-        if color:
+        if color is not None:
             params["color"] = color
 
         return {

@@ -274,7 +274,7 @@ export function MapActionHandler() {
 
           const style = map.getStyle();
           style.layers?.forEach(l => {
-            if (l.id.startsWith(`custom-${layer_id}`)) {
+            if (l.id.startsWith(`custom-${layer_id}-`)) {
               renderer.updateLayerStyle(map, l.id, {
                 visibility: visible !== undefined ? (visible ? 'visible' : 'none') : undefined,
                 opacity,
@@ -299,13 +299,21 @@ export function MapActionHandler() {
           if (!layer_id || !style) break;
           const mapStyle = map.getStyle();
           mapStyle.layers?.forEach(l => {
-            if (l.id.startsWith(`custom-${layer_id}`)) {
+            if (l.id.startsWith(`custom-${layer_id}-`)) {
               renderer.updateLayerStyle(map, l.id, {
                 color: (style as any).color,
                 strokeWidth: (style as any).strokeWidth
               });
             }
           });
+          // Sync style changes back to store so LayersTab swatch stays in sync
+          const styleColor = (style as any).color;
+          if (styleColor !== undefined) {
+            const existing = useHudStore.getState().layers.find(l => l.id === layer_id);
+            useHudStore.getState().updateLayer(layer_id, {
+              style: { ...(existing?.style ?? {}), color: styleColor },
+            });
+          }
           break;
         }
 

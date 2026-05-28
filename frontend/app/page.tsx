@@ -333,7 +333,7 @@ export default function Home() {
           id: layerId,
           name: layerName,
           type: data.result?.image ? 'heatmap' : 'vector',
-          visible: false,
+          visible: !data.geojson_ref,  // image-only layers have no ref_id so display_layer can't show them
           opacity: 1,
           group: 'analysis',
           source: data.geojson_ref ? { type: 'FeatureCollection', features: [], metadata: { ref_id: data.geojson_ref } } as any : data.result,
@@ -348,11 +348,14 @@ export default function Home() {
         // Asynchronously fetch the actual GeoJSON data for the reference
         if (data.geojson_ref) {
           const sid = sessionIdRef.current;
-          fetch(`${API_BASE}/api/v1/layers/data/${data.geojson_ref}?session_id=${sid}`)
+          const fetchRef = data.geojson_ref;
+          fetch(`${API_BASE}/api/v1/layers/data/${fetchRef}?session_id=${sid}`)
             .then(r => r.ok ? r.json() : null)
             .then(geojson => {
               if (geojson && (geojson.type === 'FeatureCollection' || geojson.features)) {
-                useHudStore.getState().updateLayer(layerId, { source: geojson });
+                // Guard: only write if the layer still exists with this ref (not removed and re-added with different data)
+                const current = useHudStore.getState().layers.find(l => l.id === fetchRef);
+                if (current) useHudStore.getState().updateLayer(fetchRef, { source: geojson });
               }
             })
             .catch(err => console.error('[LiveLayerFetch] Failed to fetch geojson_ref:', err));

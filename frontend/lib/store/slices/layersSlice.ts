@@ -10,7 +10,9 @@ import type { HudState } from '../hud-types';
 export const createLayersSlice: StateCreator<HudState, [], [], Partial<HudState>> = (set, get) => ({
   /* ─── Layers ─── */
   layers: [],
-  addLayer: (layer) => set((s) => ({ layers: [layer, ...s.layers] })),
+  addLayer: (layer) => set((s) => ({
+    layers: s.layers.some(l => l.id === layer.id) ? s.layers : [layer, ...s.layers],
+  })),
   removeLayer: (id) => set((s) => ({ layers: s.layers.filter((l) => l.id !== id) })),
   toggleLayer: (id) =>
     set((s) => ({
