@@ -24,6 +24,7 @@ from app.services.viewport_naming import (
     schedule_populate as _viewport_name_schedule,
 )
 from app.core.base_layers import format_base_layer_catalog
+import asyncio
 
 
 # ─── Prompt-injection defense (/review P1-4) ──────────────────────────────
@@ -98,7 +99,7 @@ def clear_layer_schema_cache(session_id: str | None = None) -> None:
         _layer_schema_cache.pop(key, None)
 
 
-def build_layer_schema(session_id: str, ref_id: str, sample_size: int = 5) -> dict | None:
+async def build_layer_schema(session_id: str, ref_id: str, sample_size: int = 5) -> dict | None:
     """从 session 里取 GeoJSON 数据，抽样推断 properties 字段名+类型 + 几何类型 + bbox。
 
     返回形如 {"geom":"Polygon", "count":123, "fields":{...}, "bbox":[w,s,e,n]}。
@@ -112,7 +113,7 @@ def build_layer_schema(session_id: str, ref_id: str, sample_size: int = 5) -> di
     if cached is not None:
         return cached
 
-    data = session_data_manager.get(session_id, ref_id)
+    data = await session_data_manager.get(session_id, ref_id)
     if not isinstance(data, dict):
         return None
     features = data.get("features")
@@ -240,7 +241,7 @@ def _format_duration(started_at_iso: str | None) -> str | None:
     return f"{days} 天"
 
 
-def build_session_overview(
+async def build_session_overview(
     session_id: str,
     messages: list[dict] | None = None,
     started_at: str | None = None,
@@ -254,9 +255,9 @@ def build_session_overview(
     建议详略都会跟着调整（早期多解释，深入后简洁直给）。
     """
     if not _fetched:
-        started_at = session_data_manager.get_started_at(session_id) if hasattr(session_data_manager, "get_started_at") else None
-        event_log = session_data_manager.get_event_log(session_id) or []
-        inventory = session_data_manager.list_refs(session_id) or {}
+        started_at = await session_data_manager.get_started_at(session_id) if hasattr(session_data_manager, "get_started_at") else None
+        event_log = await session_data_manager.get_event_log(session_id) or []
+        inventory = await session_data_manager.list_refs(session_id) or {}
 
     duration = _format_duration(started_at)
 
@@ -376,7 +377,7 @@ def format_layer_schema(schema: dict, viewport_bounds: list[float] | None = None
     return " ".join(parts)
 
 
-def build_map_state_summary(
+async def build_map_state_summary(
     session_id: str,
     state: dict | None = None,
     inventory: dict | None = None,
@@ -390,8 +391,8 @@ def build_map_state_summary(
     只输出事实，不在 prompt 里夹杂"应该怎么做"的元指令。
     """
     if not _fetched:
-        state = session_data_manager.get_map_state(session_id)
-        inventory = session_data_manager.list_refs(session_id)
+        state = await session_data_manager.get_map_state(session_id)
+        inventory = await session_data_manager.list_refs(session_id)
     else:
         if state is None:
             state = {}
@@ -459,7 +460,7 @@ def build_map_state_summary(
     if sel_line:
         lines.append(f"- 选中要素: {sel_line}")
 
-    layer_lines = format_layer_lines(
+    layer_lines = await format_layer_lines(
         inventory,
         active_layers,
         session_id=session_id,
@@ -471,7 +472,8 @@ def build_map_state_summary(
     else:
         lines.append("- 活跃图层: 无")
 
-    event_log = session_data_manager.get_event_log(session_id)
+    if event_log is None:
+        event_log = await session_data_manager.get_event_log(session_id)
     tool_calls, user_actions, pending = _split_events(event_log)
     if pending:
         lines.append("- 进行中后台任务 (前端尚未回报完成):")
@@ -552,7 +554,7 @@ def _format_pending_event(evt: dict) -> str:
     return f"{tool} ({status}){tail} —— 等待前端完成后会通过 [系统通知] 回传，不要重复触发"
 
 
-def format_layer_lines(
+async def format_layer_lines(
     inventory: dict,
     active_layers: list[dict],
     session_id: str | None = None,
@@ -563,9 +565,22 @@ def format_layer_lines(
     当传入 session_id 时，额外把每个 ref 的属性 schema (字段+类型+几何+bbox) 拼到末行；
     传 viewport_bounds 时再附加"在视口内/外/局部相交"。
     """
-    visibility_map = {l.get("id"): l for l in active_layers if l.get("id")}
     out: list[str] = []
     if inventory:
+        # Gather all schemas in parallel before the main loop
+        schema_map: dict[str, dict | None] = {}
+        if session_id:
+            ref_ids_list = list(inventory.keys())
+            schemas = await asyncio.gather(
+                *[build_layer_schema(session_id, rid) for rid in ref_ids_list],
+                return_exceptions=True,
+            )
+            schema_map = {
+                rid: (s if isinstance(s, dict) else None)
+                for rid, s in zip(ref_ids_list, schemas)
+            }
+
+        visibility_map = {l.get("id"): l for l in active_layers if l.get("id")}
         for ref_id, alias in inventory.items():
             meta = visibility_map.get(ref_id) or next(
                 (m for aid, m in visibility_map.items() if aid in ref_id or ref_id in aid),
@@ -589,13 +604,9 @@ def format_layer_lines(
             tail = f" [{', '.join(attrs)}]" if attrs else ""
             # ref_id is server-generated (`ref:geojson-<uuid>`) so no escape needed
             line = f"{ref_id}{tail} ({status})"
-            if session_id:
-                try:
-                    schema = build_layer_schema(session_id, ref_id)
-                    if schema:
-                        line += f" | {format_layer_schema(schema, viewport_bounds)}"
-                except Exception as e:
-                    logger.debug(f"build_layer_schema failed for {ref_id}: {e}")
+            schema = schema_map.get(ref_id)
+            if schema:
+                line += f" | {format_layer_schema(schema, viewport_bounds)}"
             out.append(line)
         return out
     for layer in active_layers:
@@ -789,7 +800,7 @@ def _build_truncation_notice(dropped_turns: int) -> str:
     )
 
 
-def compose_request_messages(session_id: str, messages: list[dict]) -> list[dict]:
+async def compose_request_messages(session_id: str, messages: list[dict]) -> list[dict]:
     """组装一次 LLM 请求的消息列表：SYSTEM_PROMPT + 实时感知 + (可选)对话上下文摘要 + 历史。
 
     感知状态只在每次请求前注入一次，不再写进工具结果里——保持历史紧凑。
@@ -799,19 +810,20 @@ def compose_request_messages(session_id: str, messages: list[dict]) -> list[dict
         return []
 
     if hasattr(session_data_manager, "get_session_metadata"):
-        metadata = session_data_manager.get_session_metadata(session_id)
+        metadata = await session_data_manager.get_session_metadata(session_id)
         map_state = metadata.get("map_state") or {}
         list_refs = metadata.get("list_refs") or {}
         event_log = metadata.get("event_log") or []
         started_at = metadata.get("started_at")
 
-        env_summary = build_map_state_summary(
+        env_summary = await build_map_state_summary(
             session_id,
             state=map_state,
             inventory=list_refs,
+            event_log=event_log,
             _fetched=True
         )
-        overview = build_session_overview(
+        overview = await build_session_overview(
             session_id,
             messages,
             started_at=started_at,
@@ -820,8 +832,8 @@ def compose_request_messages(session_id: str, messages: list[dict]) -> list[dict
             _fetched=True
         )
     else:
-        env_summary = build_map_state_summary(session_id)
-        overview = build_session_overview(session_id, messages)
+        env_summary = await build_map_state_summary(session_id)
+        overview = await build_session_overview(session_id, messages)
 
     if overview:
         env_summary += f"\n- 会话概览: {overview}"
