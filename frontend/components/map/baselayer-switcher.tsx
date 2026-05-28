@@ -28,6 +28,15 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
 
   const currentLabel = TILE_PROVIDERS[selectedBaseLayer]?.name || baseLayer || 'Carto 浅色';
 
+  // Sync index from session-loaded baseLayer name (async SDM sets the name; index defaults to 1)
+  useEffect(() => {
+    if (!baseLayer) return;
+    const idx = TILE_PROVIDERS.findIndex((p) => p.name === baseLayer);
+    if (idx !== -1 && idx !== selectedBaseLayer) {
+      setSelectedBaseLayer(idx);
+    }
+  }, [baseLayer]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Close on Escape + click-outside (a11y from /review)
   useEffect(() => {
     if (!open) return;

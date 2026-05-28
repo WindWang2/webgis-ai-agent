@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   Sparkles,
   Hash,
@@ -68,6 +68,15 @@ export function SettingsPanel() {
   const setSettingsTab = useHudStore((s) => s.setSettingsTab);
 
   const skills = useHudStore((s) => s.skills);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSettingsOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [settingsOpen, setSettingsOpen]);
 
   if (!settingsOpen) return null;
 
