@@ -31,8 +31,12 @@ class RedisSessionDataManager:
         self.capacity = capacity
 
     def ping(self):
-        """Sync health check for startup. asyncio.run() is safe here — no event loop exists at import time."""
-        asyncio.run(self._r.ping())
+        """Sync health check for startup. Creates an isolated event loop to avoid conflicts."""
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(self._r.ping())
+        finally:
+            loop.close()
 
     @staticmethod
     def _data_key(session_id: str, ref_id: str) -> str:
