@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 import { Download, Trash2, Printer, History } from 'lucide-react';
+import { API_BASE } from '@/lib/api/config';
 
 const iconForType: Record<string, string> = {
   png: '🖼',
@@ -45,7 +46,10 @@ export function MapStudioTab() {
   }, [activeSubTab, updateExportSettings]);
 
   const handleDownload = (item: any) => {
-    alert(`下载 ${item.name}`);
+    const a = document.createElement('a');
+    a.href = `${API_BASE}/api/v1/export/download/${item.name}`;
+    a.download = item.name;
+    a.click();
   };
 
   const handleDelete = (id: string) => {
@@ -230,6 +234,7 @@ export function MapStudioTab() {
                   >
                     <option value="png">PNG 高清图片</option>
                     <option value="pdf">PDF 印刷文档</option>
+                    <option value="svg">SVG 矢量图</option>
                   </select>
                 </div>
 

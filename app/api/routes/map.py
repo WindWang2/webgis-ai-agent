@@ -6,8 +6,10 @@
 """
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
-from typing import Optional
+from pydantic import BaseModel
+from typing import Optional, Any
 import io
+import json
 import logging
 import os
 import uuid
@@ -276,3 +278,41 @@ def download_map_export(filename: str):
         media_type=media_type,
         headers={"Content-Disposition": f'{disposition}; filename="{safe_filename}"'},
     )
+
+
+class GeoJSONExportRequest(BaseModel):
+    geojson: Any
+    filename: str = "export"
+
+
+@router.post("/export/geojson", tags=["地图制图"])
+async def export_geojson(req: GeoJSONExportRequest):
+    """接收 GeoJSON 数据并持久化为可下载文件。"""
+    data = req.geojson
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="GeoJSON 必须是 JSON 对象")
+
+    # Validate basic GeoJSON structure
+    geo_type = data.get("type")
+    if not geo_type:
+        raise HTTPException(status_code=400, detail="GeoJSON 缺少 type 字段")
+
+    try:
+        content = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"GeoJSON 序列化失败: {e}")
+
+    safe_name = os.path.basename(req.filename).replace(" ", "_")
+    filename = f"{safe_name}_{uuid.uuid4().hex[:6]}.geojson"
+    filepath = os.path.join(EXPORT_DIR, filename)
+
+    os.makedirs(EXPORT_DIR, exist_ok=True)
+    with open(filepath, "wb") as f:
+        f.write(content)
+
+    return {
+        "filename": filename,
+        "url": f"/api/v1/export/download/{filename}",
+        "format": "geojson",
+        "message": f"GeoJSON 导出成功 ({len(content)} bytes)",
+    }
