@@ -33,6 +33,7 @@ _TOOL_MODULES = [
     ("app.tools.skills", "register_skill_tools"),
     ("app.tools.explorer_tools", "register_explorer_tools"),
     ("app.tools.coord_transform", "register_coord_transform_tools"),
+    ("app.tools.coord_transform", "register_epsg_transform_tools"),
     ("app.tools.plan_mode", "register_plan_mode_tools"),
     ("app.tools.subagent", "register_subagent_tools"),
     ("app.tools.meta_tools", "register_meta_tools"),
