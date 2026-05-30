@@ -70,7 +70,7 @@ export interface ExportSettings {
   paperSize: 'screen' | 'A4';
   orientation: 'landscape' | 'portrait';
   dpi: number;
-  format: 'png' | 'pdf';
+  format: 'png' | 'pdf' | 'svg' | 'geojson';
 }
 
 export interface CausalEntry {

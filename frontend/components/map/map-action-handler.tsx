@@ -464,6 +464,13 @@ export function MapActionHandler() {
                 if (!svgRes.ok) throw new Error("SVG export upload failed");
                 const svgData = await svgRes.json();
                 const svgUrl: string = svgData.url;
+                useHudStore.getState().addExport({
+                  id: `export-${Date.now()}`,
+                  name: title || '未命名',
+                  type: 'svg',
+                  size: `${(svgBlob.size / 1024).toFixed(0)}KB`,
+                  date: new Date().toLocaleString(),
+                });
                 useHudStore.getState().setPendingSystemMessage(
                   `[系统通知] 专题地图 SVG \`${title || "未命名"}\` 已成功生成 (含嵌入位图)，` +
                     `文件已落盘并分配URL：${svgUrl}。可通过以下链接下载：[下载SVG](${API_BASE}${svgUrl})。注意展示完链接后直接结束。`
@@ -490,6 +497,13 @@ export function MapActionHandler() {
                 if (!pdfRes.ok) throw new Error(`PDF endpoint returned ${pdfRes.status}`);
                 const pdfData = await pdfRes.json();
                 const pdfUrl: string = pdfData.url;
+                useHudStore.getState().addExport({
+                  id: `export-${Date.now()}`,
+                  name: title || '未命名',
+                  type: 'pdf',
+                  size: `${(blob.size / 1024).toFixed(0)}KB`,
+                  date: new Date().toLocaleString(),
+                });
                 useHudStore.getState().setPendingSystemMessage(
                   `[系统通知] 专题底图 PDF \`${title || "未命名"}\` 已成功生成，` +
                     `文件已落盘并分配URL：${pdfUrl}。` +
@@ -507,6 +521,13 @@ export function MapActionHandler() {
                 if (!uploadRes.ok) throw new Error("Export URL generation failed");
                 const data = await uploadRes.json();
                 const url: string = data.url;
+                useHudStore.getState().addExport({
+                  id: `export-${Date.now()}`,
+                  name: title || '未命名',
+                  type: 'png',
+                  size: `${(blob.size / 1024).toFixed(0)}KB`,
+                  date: new Date().toLocaleString(),
+                });
                 useHudStore.getState().setPendingSystemMessage(
                   `[系统通知] 专题地图 \`${title || "未命名"}\` 已成功排版合成，` +
                     `文件已落盘并分配URL：${url}。 请利用Markdown的图片语法 \`![地图](${API_BASE}${url})\` 将该成品展示给用户，并祝其研究顺利！注意展示完图片后直接结束。`
