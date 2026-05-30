@@ -14,13 +14,13 @@ import logging
 from typing import Any, Optional
 
 from app.tools.registry import ToolRegistry, tool
-from app.lib.geo_processor.core import (
+from app.utils.coord_transform import (
     wgs84_to_gcj02,
     gcj02_to_wgs84,
     gcj02_to_bd09,
     bd09_to_gcj02,
-    safe_parse,
 )
+from app.lib.geo_processor.core import safe_parse
 
 logger = logging.getLogger(__name__)
 
@@ -131,3 +131,88 @@ def register_coord_transform_tools(registry: ToolRegistry):
             "summary": f"已将图层从 {src} 转换为 {dst}",
             "metadata": {"from_crs": src, "to_crs": dst},
         }
+
+
+def register_epsg_transform_tools(registry: ToolRegistry):
+    """Register general-purpose EPSG-to-EPSG reprojection tool."""
+
+    @tool(registry, name="reproject_coordinates",
+          tier=2,
+          description=(
+              "通用坐标参考系 (CRS) 转换：将 GeoJSON 图层从一种 EPSG 坐标系重投影到另一种。"
+              "\n何时用：(1) 上传的 Shapefile/GPKG 使用了地方坐标系（如 CGCS2000 / EPSG:4490），"
+              "需要转为 WGS84 (EPSG:4326) 以叠加底图；"
+              "(2) 分析结果需要转到 UTM 投影以计算精确面积/距离；"
+              "(3) 客户要求输出特定坐标系的成果。"
+              "\n何时不用：(1) 中国坐标偏移 (WGS84↔GCJ-02↔BD-09) — 用 transform_coordinates；"
+              "(2) 数据已经在目标 CRS — 不要重复投影。"
+              "\n参数格式：EPSG 代码，如 'EPSG:4326'、'EPSG:32650'。"
+          ),
+          param_descriptions={
+              "geojson": "输入图层 GeoJSON 或引用(ref:xxx)",
+              "from_epsg": "源坐标系 EPSG 代码，如 'EPSG:4326'",
+              "to_epsg": "目标坐标系 EPSG 代码，如 'EPSG:32650'",
+          })
+    def reproject_coordinates(geojson: Any, from_epsg: str, to_epsg: str) -> dict:
+        if from_epsg == to_epsg:
+            data = safe_parse(geojson)
+            return {
+                "success": True,
+                "data": data or geojson,
+                "summary": f"源 = 目标 CRS ({from_epsg})，原样返回。",
+            }
+
+        try:
+            import pyproj
+            from shapely.geometry import shape as to_shape
+            transformer = pyproj.Transformer.from_crs(
+                pyproj.CRS(from_epsg), pyproj.CRS(to_epsg), always_xy=True
+            )
+
+            data = safe_parse(geojson)
+            if not data:
+                return {"success": False, "error": "无法解析输入 GeoJSON"}
+
+            def reproject_coords(coords):
+                if not isinstance(coords, list) or not coords:
+                    return coords
+                if isinstance(coords[0], (int, float)) and len(coords) >= 2:
+                    x, y = transformer.transform(float(coords[0]), float(coords[1]))
+                    return [x, y, *coords[2:]]
+                return [reproject_coords(c) for c in coords]
+
+            def reproject_geom(geom):
+                if not isinstance(geom, dict):
+                    return geom
+                new = dict(geom)
+                if "coordinates" in new:
+                    new["coordinates"] = reproject_coords(new["coordinates"])
+                if "geometries" in new:
+                    new["geometries"] = [reproject_geom(g) for g in new["geometries"]]
+                return new
+
+            geo_type = data.get("type")
+            if geo_type == "FeatureCollection":
+                new_features = []
+                for feat in data.get("features", []) or []:
+                    nf = dict(feat)
+                    nf["geometry"] = reproject_geom(feat.get("geometry") or {})
+                    new_features.append(nf)
+                out = {"type": "FeatureCollection", "features": new_features}
+            elif geo_type == "Feature":
+                out = dict(data)
+                out["geometry"] = reproject_geom(data.get("geometry") or {})
+            else:
+                out = reproject_geom(data)
+
+            return {
+                "success": True,
+                "data": out,
+                "summary": f"已将图层从 {from_epsg} 重投影到 {to_epsg}",
+                "metadata": {"from_epsg": from_epsg, "to_epsg": to_epsg},
+            }
+        except Exception as e:
+            err = str(e).lower()
+            if "crs" in err or "epsg" in err or "proj" in err:
+                return {"success": False, "error": f"不支持的 CRS: {from_epsg} → {to_epsg} ({e})"}
+            return {"success": False, "error": f"重投影失败: {e}"}

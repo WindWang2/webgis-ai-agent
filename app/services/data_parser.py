@@ -124,8 +124,10 @@ def parse_vector(
     if gdf.empty:
         raise ParseError("文件中没有要素数据")
 
-    # 统一转 EPSG:4326
+    # 统一转 EPSG:4326，保存原始 CRS
+    original_crs = None
     if gdf.crs is not None:
+        original_crs = str(gdf.crs)
         try:
             gdf = gdf.to_crs(epsg=4326)
         except Exception as e:
@@ -156,6 +158,7 @@ def parse_vector(
         "file_type": "vector",
         "format": _get_format(ext)[1],
         "crs": crs_str,
+        "original_crs": original_crs if original_crs and original_crs != "EPSG:4326" else None,
         "geometry_type": geometry_type,
         "feature_count": feature_count,
         "bbox": bbox,
