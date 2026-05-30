@@ -15,7 +15,7 @@ import rasterio
 logger = logging.getLogger(__name__)
 
 # 支持的格式
-VECTOR_FORMATS = {".geojson", ".json", ".shp", ".kml", ".gpkg", ".csv"}
+VECTOR_FORMATS = {".geojson", ".json", ".shp", ".zip", ".kml", ".gpkg", ".csv"}
 RASTER_FORMATS = {".tif", ".tiff"}
 VECTOR_EXTENSIONS = {".shp", ".shx", ".dbf", ".prj", ".cpg", ".sbn", ".sbx"}
 
@@ -31,6 +31,36 @@ LAT_COLUMNS = {"lat", "latitude", "y", "纬度"}
 class ParseError(Exception):
     """数据解析错误"""
     pass
+
+
+def _validate_shapefile_zip(file_path: Path) -> None:
+    """Validate a zip archive contains a valid shapefile and is safe to process."""
+    try:
+        with zipfile.ZipFile(file_path, "r") as zf:
+            names = zf.namelist()
+
+            # Reject path traversal
+            for name in names:
+                if name.startswith("/") or ".." in name:
+                    raise ParseError(f"Zip 包含不安全路径: {name}")
+
+            # Check required components
+            extensions = {Path(n).suffix.lower() for n in names if not n.endswith("/")}
+            required = {".shp", ".dbf"}
+            missing = required - extensions
+            if missing:
+                raise ParseError(f"Shapefile zip 缺少必要组件: {', '.join(sorted(missing))}")
+
+            # Check uncompressed size (zip bomb protection)
+            total_uncompressed = sum(info.file_size for info in zf.infolist())
+            if total_uncompressed > MAX_VECTOR_SIZE:
+                raise ParseError(
+                    f"Zip 解压后大小 ({total_uncompressed / 1024 / 1024:.1f}MB) 超过限制 ({MAX_VECTOR_SIZE / 1024 / 1024:.0f}MB)"
+                )
+    except ParseError:
+        raise
+    except zipfile.BadZipFile:
+        raise ParseError("无效的 Zip 文件")
 
 
 def _detect_csv_columns(df) -> Tuple[Optional[str], Optional[str]]:
@@ -51,7 +81,7 @@ def _get_format(ext: str) -> Tuple[str, str]:
     ext = ext.lower()
     if ext in {".tif", ".tiff"}:
         return "raster", "geotiff"
-    if ext in {".shp"}:
+    if ext in {".shp", ".zip"}:
         return "vector", "shapefile"
     if ext in {".kml"}:
         return "vector", "kml"
@@ -75,10 +105,14 @@ def parse_vector(
     if ext == ".csv":
         return _parse_csv(file_path, upload_dir, upload_id)
 
+    if ext == ".zip":
+        _validate_shapefile_zip(file_path)
+
     # 读取矢量数据
     try:
-        if ext == ".shp":
-            # shapefile: 解压 zip 后读取 .shp
+        if ext == ".zip":
+            gdf = gpd.read_file(file_path, engine="pyogrio")
+        elif ext == ".shp":
             gdf = gpd.read_file(file_path, engine="pyogrio")
         elif ext == ".kml":
             gdf = gpd.read_file(file_path, driver="KML", engine="pyogrio")
