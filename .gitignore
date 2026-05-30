@@ -83,3 +83,9 @@ dump.rdb
 .gstack/
 .env-2
 data/admin_division/
+
+# Planning scratch files
+findings.md
+progress.md
+task_plan.md
+.planning/

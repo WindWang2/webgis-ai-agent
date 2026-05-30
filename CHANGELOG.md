@@ -7,7 +7,7 @@
 ### Added
 
 - **Security & Sanitization**: Added `app/utils/security.py` for masking database passwords, key-value secrets, and OpenAI keys in tool execution logs and SSE payloads.
-- **WebSocket Auth tightening**: WebSocket connections now require strict token validation to prevent unauthenticated access.
+- **WebSocket optional auth**: WebSocket connections support optional JWT token validation; anonymous connections allowed for compatibility until frontend implements login flow.
 - **Robust test suite**: Added unit tests for WebSocket auth validation, error sanitization, viewport naming task tracking, and context builder component integration.
 - **`display_layer` AI tool**: lets the agent explicitly show a hidden data
   layer on the map with a meaningful name. All GeoJSON tool results are now

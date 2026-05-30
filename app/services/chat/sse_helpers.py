@@ -155,7 +155,7 @@ def slim_tool_result(result: Any, result_str: str, session_geojson_ref: Optional
         for k in _PRESERVED_META_KEYS:
             v = result.get(k)
             if v is not None and k not in slim:
-                slim[k] = v
+                slim[k] = _truncate_value(v) if isinstance(v, str) else v
         if "error_type" in result and result["error_type"]:
             slim["error_type"] = result["error_type"]
         if "correction_hint" in result and result["correction_hint"]:
