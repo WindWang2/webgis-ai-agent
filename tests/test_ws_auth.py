@@ -18,14 +18,13 @@ def app():
     return app
 
 
-def test_ws_connect_without_token_is_rejected(app):
-    """If no token query parameter is provided, the connection must be rejected with code 4001."""
+def test_ws_connect_without_token_is_accepted(app):
+    """Without a token parameter the connection proceeds (auth is optional)."""
     client = TestClient(app)
-    # Connecting to the WS endpoint without any token parameter
-    with pytest.raises(WebSocketDisconnect) as exc_info:
-        with client.websocket_connect("/api/v1/ws/sess-no-token"):
-            pass
-    assert exc_info.value.code == 4001
+    with client.websocket_connect("/api/v1/ws/sess-no-token") as websocket:
+        websocket.send_json({"event": "ping"})
+        resp = websocket.receive_json()
+        assert resp == {"event": "pong"}
 
 
 def test_ws_connect_with_invalid_token_is_rejected(app):

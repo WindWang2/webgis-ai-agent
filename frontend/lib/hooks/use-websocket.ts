@@ -81,7 +81,9 @@ export function useWebSocket(sessionId?: string) {
             removeProcessLayer(data.step_id);
           }
         }
-      } catch {}
+      } catch (e) {
+        console.error('[WS] failed to parse message:', e, event.data);
+      }
     };
 
     socket.onclose = () => {

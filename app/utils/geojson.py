@@ -29,8 +29,10 @@ def geojson_bbox(data: Any) -> Optional[List[float]]:
     bounds = [float("inf"), float("inf"), float("-inf"), float("-inf")]
     found = False
 
-    def walk(node: Any):
+    def walk(node: Any, depth: int = 0):
         nonlocal found
+        if depth > 50:
+            return
         if isinstance(node, list) and node and isinstance(node[0], (int, float)) and len(node) >= 2:
             lng, lat = float(node[0]), float(node[1])
             bounds[0] = min(bounds[0], lng)
@@ -41,17 +43,17 @@ def geojson_bbox(data: Any) -> Optional[List[float]]:
             return
         if isinstance(node, list):
             for child in node:
-                walk(child)
+                walk(child, depth + 1)
         elif isinstance(node, dict):
             if "coordinates" in node:
-                walk(node["coordinates"])
+                walk(node["coordinates"], depth + 1)
             if node.get("type") == "FeatureCollection":
                 for f in node.get("features", []) or []:
-                    walk(f)
+                    walk(f, depth + 1)
             elif node.get("type") == "Feature":
                 geom = node.get("geometry")
                 if geom:
-                    walk(geom)
+                    walk(geom, depth + 1)
 
     walk(data)
     return bounds if found else None

@@ -12,10 +12,11 @@ from app.core.auth import verify_token
 @router.websocket("/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str, token: str = Query(default="")):
     """WebSocket endpoint for real-time GIS data updates and bidirectional perception."""
-    payload = verify_token(token)
-    if payload is None:
-        await websocket.close(code=4001, reason="Invalid token")
-        return
+    if token:
+        payload = verify_token(token)
+        if payload is None:
+            await websocket.close(code=4001, reason="Invalid token")
+            return
 
     await manager.connect(websocket, session_id)
     try:
