@@ -167,3 +167,49 @@ async def test_build_summary_escapes_user_action_data():
         assert "&lt;/环境感知&gt;" in summary
     finally:
         await session_data_manager.clear_session(sid)
+
+
+# ─── XML Fence Isolation P1-4 Phase-2 (Red Phase Tests) ──────────────────
+
+
+def test_format_selected_feature_wraps_in_xml_fences():
+    """图层名、属性字段的 key 和 value 均应被相应的 untrusted XML 标签隔离。"""
+    sel = {
+        "layer_name": "HospitalLayer",
+        "properties": {"name": "杭州第一医院"},
+    }
+    out = format_selected_feature(sel)
+    assert out is not None
+    assert "图层=<untrusted_layer_name>HospitalLayer</untrusted_layer_name>" in out
+    assert "<untrusted_feature_property>name=杭州第一医院</untrusted_feature_property>" in out
+
+
+async def test_format_layer_lines_wraps_alias_in_xml_fence():
+    """inventory 模式下的别名和活跃图层名应被 XML 标签包裹。"""
+    inventory = {"ref:geojson-abc123": "西湖公园"}
+    active_layers = [{"id": "ref:geojson-abc123", "visible": True, "type": "vector"}]
+    out = await format_layer_lines(inventory, active_layers)
+    assert out
+    joined = "\n".join(out)
+    assert "别名=<untrusted_layer_alias>西湖公园</untrusted_layer_alias>" in joined
+    assert "类型=<untrusted_layer_type>vector</untrusted_layer_type>" in joined
+
+
+async def test_build_summary_wraps_base_layer_and_user_action_in_xml_fence():
+    """底图名称及用户操作事件的 JSON 内容应被 XML 标签隔离。"""
+    sid = "ctx-xml-fence-summary"
+    await session_data_manager.set_map_state(sid, "viewport", {"center": [116.4, 39.9], "zoom": 10})
+    await session_data_manager.set_map_state(sid, "base_layer", "高德卫星图")
+    await session_data_manager.append_event(
+        sid,
+        "draw_polygon",
+        {"shape": "circle"},
+    )
+    try:
+        summary = await build_map_state_summary(sid)
+        assert "- 底图: <untrusted_base_layer>高德卫星图</untrusted_base_layer>" in summary
+        assert "<untrusted_user_action>" in summary
+        assert '{"shape": "circle"}' in summary
+    finally:
+        await session_data_manager.clear_session(sid)
+

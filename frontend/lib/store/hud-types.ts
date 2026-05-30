@@ -153,6 +153,11 @@ export interface HudState {
   setLayers: (layers: Layer[]) => void;
   clearLayers: () => void;
 
+  /* ─── Annotations ─── */
+  annotations: any[];
+  addAnnotation: (feature: any) => void;
+  clearAnnotations: () => void;
+
   /* ─── Layer Editing ─── */
   editingLayerId: string | null;
   setEditingLayerId: (id: string | null) => void;

@@ -22,42 +22,7 @@ DEFAULT_VIEW = {
 }
 
 
-def _extract_bbox_from_geojson(data: Any) -> Optional[List[float]]:
-    """从 GeoJSON 中粗略提取 bbox: [west, south, east, north]"""
-    if not isinstance(data, dict):
-        return None
-    if isinstance(data.get("bbox"), list) and len(data["bbox"]) >= 4:
-        return [float(x) for x in data["bbox"][:4]]
-
-    bounds = [float("inf"), float("inf"), float("-inf"), float("-inf")]
-    found = False
-
-    def walk(node: Any):
-        nonlocal found
-        if isinstance(node, list) and node and isinstance(node[0], (int, float)) and len(node) >= 2:
-            lng, lat = float(node[0]), float(node[1])
-            bounds[0] = min(bounds[0], lng)
-            bounds[1] = min(bounds[1], lat)
-            bounds[2] = max(bounds[2], lng)
-            bounds[3] = max(bounds[3], lat)
-            found = True
-            return
-        if isinstance(node, list):
-            for child in node:
-                walk(child)
-        elif isinstance(node, dict):
-            if "coordinates" in node:
-                walk(node["coordinates"])
-            if node.get("type") == "FeatureCollection":
-                for f in node.get("features", []) or []:
-                    walk(f)
-            elif node.get("type") == "Feature":
-                geom = node.get("geometry")
-                if geom:
-                    walk(geom)
-
-    walk(data)
-    return bounds if found else None
+from app.utils.geojson import geojson_bbox as _extract_bbox_from_geojson
 
 
 class FlyToLocationArgs(BaseModel):

@@ -24,7 +24,7 @@ def test_format_selected_feature_prefers_layer_name():
 
 def test_format_selected_feature_falls_back_to_ref_then_layer_id():
     out = format_selected_feature({"layer_id": "custom-x", "point": [0, 0], "properties": {}})
-    assert "图层=custom-x" in out
+    assert "图层=<untrusted_layer_name>custom-x</untrusted_layer_name>" in out
     out2 = format_selected_feature({"ref_id": "ref:x", "point": [0, 0], "properties": {}})
     assert "ref:x" in out2
 
@@ -68,7 +68,7 @@ def test_format_selected_feature_invalid_input_returns_none():
 
 def test_format_selected_feature_no_properties_ok():
     out = format_selected_feature({"layer_id": "L", "point": [1, 2], "properties": {}})
-    assert "图层=L" in out
+    assert "图层=<untrusted_layer_name>L</untrusted_layer_name>" in out
     assert "属性" not in out
 
 

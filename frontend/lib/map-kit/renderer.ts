@@ -208,7 +208,7 @@ export function removeLayerStack(map: any, id: string, prefix: boolean = false) 
     const style = map.getStyle();
     if (style && style.layers) {
       style.layers.forEach((l: any) => {
-        if (l.id.startsWith(id)) {
+        if (l.id === id || l.id.startsWith(id + '-')) {
           map.removeLayer(l.id);
         }
       });

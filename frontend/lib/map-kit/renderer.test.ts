@@ -194,6 +194,25 @@ describe('renderer', () => {
       expect(mapMock.removeLayer).not.toHaveBeenCalled();
       expect(mapMock.removeSource).not.toHaveBeenCalled();
     });
+
+    it('should remove all matching sub-layers when prefix is true', () => {
+      mapMock.getStyle.mockReturnValue({
+        layers: [
+          { id: 'custom-foo' },
+          { id: 'custom-foo-fill' },
+          { id: 'custom-foo-stroke' },
+          { id: 'custom-foobar-fill' }
+        ]
+      });
+      mapMock.getSource.mockReturnValue({});
+
+      removeLayerStack(mapMock, 'custom-foo', true);
+
+      expect(mapMock.removeLayer).toHaveBeenCalledWith('custom-foo');
+      expect(mapMock.removeLayer).toHaveBeenCalledWith('custom-foo-fill');
+      expect(mapMock.removeLayer).toHaveBeenCalledWith('custom-foo-stroke');
+      expect(mapMock.removeLayer).not.toHaveBeenCalledWith('custom-foobar-fill');
+    });
   });
 
   describe('updateLayerStyle', () => {

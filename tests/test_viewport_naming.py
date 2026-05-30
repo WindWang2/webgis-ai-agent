@@ -11,6 +11,7 @@ from app.services.viewport_naming import (
     lookup,
     schedule_populate,
     schedule_populate_from_map_state,
+    wait_all_tasks,
 )
 
 
@@ -79,7 +80,7 @@ async def test_schedule_populate_writes_cache(monkeypatch):
 
     schedule_populate(116.4, 39.9)
     # 等待 fire-and-forget 任务跑完
-    await asyncio.sleep(0.05)
+    await wait_all_tasks()
     assert lookup(116.4, 39.9) == "测试区域"
 
 
@@ -97,7 +98,7 @@ async def test_schedule_populate_dedupes_in_flight(monkeypatch):
     schedule_populate(116.4, 39.9)
     schedule_populate(116.4, 39.9)
     schedule_populate(116.41, 39.91)  # 同量化键
-    await asyncio.sleep(0.1)
+    await wait_all_tasks()
     # 三次调用应只触发一次实际 fetch
     assert len(calls) == 1
 
@@ -110,7 +111,7 @@ async def test_schedule_populate_swallows_fetch_failure(monkeypatch):
     monkeypatch.setattr(viewport_naming, "_fetch_nominatim", boom)
 
     schedule_populate(116.4, 39.9)
-    await asyncio.sleep(0.05)
+    await wait_all_tasks()
     # 失败不应缓存空字符串
     assert lookup(116.4, 39.9) is None
 
@@ -132,8 +133,8 @@ async def test_env_summary_renders_cached_region(monkeypatch):
     # 第一轮 summary：缓存还没填充，应该没有"视口所在区域"行
     summary1 = await build_map_state_summary(sid)
     assert "视口所在区域" not in summary1
-    # 但 schedule_populate 已经被触发，给一点时间让 task 跑完
-    await asyncio.sleep(0.05)
+    # 但 schedule_populate 已经被触发，等待后台反查任务跑完
+    await wait_all_tasks()
 
     summary2 = await build_map_state_summary(sid)
     assert "视口所在区域" in summary2

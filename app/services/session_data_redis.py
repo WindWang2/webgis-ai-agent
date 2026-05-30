@@ -86,6 +86,12 @@ class RedisSessionDataManager:
                 await evict_pipe.execute()
 
         async with self._r.pipeline() as pipe:
+            pipe.hsetnx(
+                self._state_key(session_id),
+                "_started_at",
+                json.dumps(datetime.now(timezone.utc).isoformat(), ensure_ascii=False),
+            )
+            pipe.expire(self._state_key(session_id), STATE_TTL)
             pipe.sadd(self._active_key(), session_id)
             pipe.set(data_key, json.dumps(data, ensure_ascii=False), ex=DATA_TTL)
             pipe.zadd(order_key, {ref_id: time.time()})
