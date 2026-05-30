@@ -2,8 +2,13 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-05-31
+
 ### Added
 
+- **Security & Sanitization**: Added `app/utils/security.py` for masking database passwords, key-value secrets, and OpenAI keys in tool execution logs and SSE payloads.
+- **WebSocket Auth tightening**: WebSocket connections now require strict token validation to prevent unauthenticated access.
+- **Robust test suite**: Added unit tests for WebSocket auth validation, error sanitization, viewport naming task tracking, and context builder component integration.
 - **`display_layer` AI tool**: lets the agent explicitly show a hidden data
   layer on the map with a meaningful name. All GeoJSON tool results are now
   loaded as hidden layers by default (layer ID = `ref_id`); the agent must
@@ -16,6 +21,9 @@
 
 ### Fixed
 
+- **Modular context builder refactor**: Split `context_builder.py` into decoupled sub-modules: `geometry.py`, `layer_schema.py`, `session_overview.py`, `history_compression.py`, and `formatters.py`.
+- **Bounding Box walker DRY consolidation**: Consolidated coordinate walkers into `app/utils/geojson.py::geojson_bbox` and refactored `sse_helpers.py` and `map_view.py` to use it.
+- **Flaky Viewport Naming Tests Fix**: Replaced fragile `asyncio.sleep` calls with deterministic background task tracking (`_active_tasks`) and a `wait_all_tasks()` wait utility.
 - **Vertex circles on polygon/line vector layers** removed. Overpass API was
   returning untagged topology nodes (polygon boundary vertices with no
   attributes) as Point features; these are now skipped at parse time
