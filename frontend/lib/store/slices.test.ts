@@ -22,6 +22,7 @@ beforeEach(() => {
   s.clearProcessLayers();
   s.clearOpsLog();
   s.clearCausalChain();
+  s.clearAnnotations();
 });
 
 
@@ -45,6 +46,14 @@ describe('layers slice', () => {
     expect(useHudStore.getState().layers).toHaveLength(0);
     s.removeProcessLayer('step-1');
     expect(useHudStore.getState().processLayers['step-1']).toBeUndefined();
+  });
+
+  it('annotations state updates correctly', () => {
+    const s = useHudStore.getState();
+    s.addAnnotation({ id: 'A1', type: 'Feature' });
+    expect(useHudStore.getState().annotations).toHaveLength(1);
+    s.clearAnnotations();
+    expect(useHudStore.getState().annotations).toHaveLength(0);
   });
 });
 

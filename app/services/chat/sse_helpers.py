@@ -65,18 +65,7 @@ _PRESERVED_META_KEYS = (
 )
 
 
-def _infer_simple_type(v: Any) -> str:
-    if v is None:
-        return "null"
-    if isinstance(v, bool):
-        return "bool"
-    if isinstance(v, (int, float)):
-        return "number"
-    if isinstance(v, (list, tuple)):
-        return "array"
-    if isinstance(v, dict):
-        return "object"
-    return "string"
+from app.utils.geojson import infer_field_type as _infer_simple_type
 
 
 def _truncate_value(v: Any, limit: int = VALUE_MAX_CHARS) -> Any:
@@ -191,30 +180,16 @@ def slim_tool_result(result: Any, result_str: str, session_geojson_ref: Optional
             features = geojson["features"]
             feature_count = len(features)
             # 抽样推断字段类型（先采集，再合并）
-            field_types: dict[str, set[str]] = {}
-            sample: list[dict] = []
-            for idx, f in enumerate(features[:max(SAMPLE_FEATURES, 10)]):
-                if not isinstance(f, dict):
-                    continue
-                props = f.get("properties") or {}
-                if isinstance(props, dict):
-                    for k, v in props.items():
-                        field_types.setdefault(str(k), set()).add(_infer_simple_type(v))
-                if idx < SAMPLE_FEATURES:
-                    sample.append({"properties": _truncate_properties(props)})
-
-            # 类型合并：discard null 后取多元，>1 算 mixed
-            typed_properties: dict[str, str] = {}
-            for i, (k, types) in enumerate(field_types.items()):
-                if i >= PROPERTY_KEYS_MAX:
-                    break
-                types.discard("null")
-                if not types:
-                    typed_properties[k] = "null"
-                elif len(types) == 1:
-                    typed_properties[k] = next(iter(types))
-                else:
-                    typed_properties[k] = "mixed"
+            from app.utils.geojson import summarize_feature_properties
+            typed_properties, raw_samples = summarize_feature_properties(
+                features,
+                sample_size=max(SAMPLE_FEATURES, 10),
+                max_keys=PROPERTY_KEYS_MAX,
+                ignored_keys=set()  # Don't ignore styles here
+            )
+            sample = []
+            for props in raw_samples[:SAMPLE_FEATURES]:
+                sample.append({"properties": _truncate_properties(props)})
 
             ref_hint = (
                 f"如需进一步空间分析，请调用工具并将 geojson 参数设为 \"{session_geojson_ref}\"。"

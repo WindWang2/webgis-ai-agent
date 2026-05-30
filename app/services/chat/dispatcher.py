@@ -32,6 +32,7 @@ from app.services.chat.sse_helpers import (
     wrap_error_dict_for_llm,
 )
 from app.tools.registry import ToolRegistry
+from app.utils.security import sanitize_error_msg
 
 logger = logging.getLogger(__name__)
 
@@ -104,8 +105,8 @@ async def dispatch_tool(
     except Exception as e:
         # 这里只有 _resolve_references 抛 ValueError 才会走到（其余路径都返回 std_error_response dict）
         error_type = "参数校验失败" if isinstance(e, ValueError) and "失败" in str(e) else "执行出错"
-        error_msg = str(e)
-        logger.error(f"Tool {tool_name} error: {e}")
+        error_msg = sanitize_error_msg(str(e))
+        logger.error(f"Tool {tool_name} error: {error_msg}")
         llm_payload = construct_self_healing_message(tool_name, error_msg, error_type)
         return {
             "result": {"success": False, "code": error_type, "message": error_msg, "data": None},
@@ -121,7 +122,8 @@ async def dispatch_tool(
     # registry 返回 std_error_response dict 的统一路径
     if is_error_dict(result):
         is_error = True
-        error_msg = result.get("message", "")
+        error_msg = sanitize_error_msg(result.get("message", ""))
+        result["message"] = error_msg
         llm_payload = wrap_error_dict_for_llm(tool_name, result)
         await session_data_manager.append_event(
             session_id,

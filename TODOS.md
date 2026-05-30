@@ -138,40 +138,20 @@ Marked priority by ship risk vs cleanup value.
 
 ## P3 — maintainability cleanups (do as you touch)
 
-### P3-1. Split `context_builder.py` (520+ LOC, 7 concerns)
-
-Split into `app/services/chat/context/{layer_schema.py, geometry.py, history_compression.py, session_overview.py, formatters.py}`. Keep `context_builder.py` as the thin orchestrator.
-
-### P3-2. DRY: bbox walkers + feature-property summarizer
-
-- Two bbox walkers (`_walk_coords_for_bbox` in context_builder vs `_extract_bbox_from_geojson` in map_view). Extract to `app/utils/geojson.py::geojson_bbox()`.
-- Feature-property summary loop duplicated almost verbatim between `context_builder.build_layer_schema` and `sse_helpers.slim_tool_result`. Extract `summarize_feature_properties()`.
-- Two `_infer_*_type` helpers — consolidate.
-
-### P3-3. `_PENDING_STATUSES` test coverage
-
-Only `export_task_created` is tested. Parameterize the test across all 5 statuses (`export_batch_task_created`, `change_detection_task_started`, `analysis_task_started`, `started`).
-
-### P3-4. Redis variant `get_started_at` parity test
-
-`RedisSessionDataManager.get_started_at` is new and untested — only the in-memory variant has coverage. Add a `fakeredis`-backed test.
-
 ### P3-5. Annotation state in module-level mutable array
 
 `frontend/components/map/map-action-handler.tsx:17` — move `annotationFeatures: any[]` into a Zustand slice (or at minimum a `useRef`). Currently survives unmount + can't surface a "N annotations" UI chip.
-
-### P3-6. `error_msg[:200]` could leak secrets
-
-`app/services/chat/dispatcher.py:182` — truncating an arbitrary exception to 200 chars could persist DB DSNs, JWT tails, API keys into session events that flow back into the LLM prompt. Add an allowlist or strip patterns matching `(sk-|Bearer |postgres:\/\/|@.*:)`.
-
-### P3-7. Flaky test timing
-
-`tests/test_viewport_naming.py` uses `asyncio.sleep(0.05)` to wait for fire-and-forget tasks. Replace with explicit task tracking — return the Task from `schedule_populate` and await it in tests.
 
 ---
 
 ## Closed / fixed in this `/review` session
 
+- ✅ **P3-1 closed** — Split `context_builder.py` into decoupled sub-modules (`geometry.py`, `layer_schema.py`, `session_overview.py`, `history_compression.py`, `formatters.py`) in `app/services/chat/context/`.
+- ✅ **P3-2 closed** — Consolidated coordinate walkers into `app/utils/geojson.py::geojson_bbox` and extracted feature-property summary loop into `summarize_feature_properties()`.
+- ✅ **P3-3 closed** — Added parameterized tests for all `_PENDING_STATUSES` in `tests/test_pending_statuses.py`.
+- ✅ **P3-4 closed** — Added coverage for `RedisSessionDataManager` async operations in `tests/test_async_session_data.py`.
+- ✅ **P3-6 closed** — Added error message credentials sanitization in `app/utils/security.py` and integrated it into tool dispatch errors.
+- ✅ **P3-7 closed** — Refactored viewport naming fire-and-forget background executions to track tasks via `_active_tasks` and await them cleanly in tests using `wait_all_tasks()`.
 - ✅ Dead `name.toLowerCase()` branch at `app/tools/layer_manager.py:76` — removed.
 - ✅ Inline imports at `app/services/chat/context_builder.py:345, 361` — hoisted to module top.
 - ✅ Baselayer dropdown a11y (`baselayer-switcher.tsx`) — added `aria-haspopup`, `aria-expanded`, `role='listbox'`, `role='option'`, `aria-selected`, Escape-to-close, click-outside-to-close, `type='button'`.

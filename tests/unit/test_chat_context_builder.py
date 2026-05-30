@@ -30,8 +30,8 @@ class TestFormatLayerLines:
         assert len(out) == 1
         line = out[0]
         assert "ref:abc" in line
-        assert "别名=POI 学校" in line
-        assert "类型=vector" in line
+        assert "别名=<untrusted_layer_alias>POI 学校</untrusted_layer_alias>" in line
+        assert "类型=<untrusted_layer_type>vector</untrusted_layer_type>" in line
         assert "要素=12" in line
         assert "可见" in line
 
@@ -42,9 +42,9 @@ class TestFormatLayerLines:
                 {"id": "layer-1", "name": "热力图", "type": "heatmap", "visible": False, "opacity": 0.5},
             ],
         )
-        assert "热力图" in out[0]
-        assert "id=layer-1" in out[0]
-        assert "类型=heatmap" in out[0]
+        assert "<untrusted_layer_name>热力图</untrusted_layer_name>" in out[0]
+        assert "id=<untrusted_layer_name>layer-1</untrusted_layer_name>" in out[0]
+        assert "类型=<untrusted_layer_type>heatmap</untrusted_layer_type>" in out[0]
         assert "隐藏" in out[0]
         assert "不透明度=50%" in out[0]
 

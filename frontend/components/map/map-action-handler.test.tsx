@@ -64,12 +64,28 @@ vi.mock('@/lib/providers', () => ({
 // These must be module-level (not in factory body) so the test can assert calls.
 const mockSetBaseLayer = vi.fn();
 const mockSetPendingSystemMessage = vi.fn();
+const mockRemoveLayer = vi.fn();
+const mockUpdateLayer = vi.fn();
+const mockAddAnnotation = vi.fn((feature) => {
+  mockAnnotationsStore.push(feature);
+});
+const mockClearAnnotations = vi.fn(() => {
+  mockAnnotationsStore = [];
+});
+let mockLayersStore: Array<{ id: string; name?: string; style?: any }> = [];
+let mockAnnotationsStore: any[] = [];
+
 vi.mock('@/lib/store/useHudStore', () => ({
   useHudStore: {
     getState: () => ({
-      layers: [],
+      get layers() { return mockLayersStore; },
       setBaseLayer: mockSetBaseLayer,
       setPendingSystemMessage: mockSetPendingSystemMessage,
+      removeLayer: mockRemoveLayer,
+      updateLayer: mockUpdateLayer,
+      get annotations() { return mockAnnotationsStore; },
+      addAnnotation: mockAddAnnotation,
+      clearAnnotations: mockClearAnnotations,
     }),
   },
 }));
@@ -80,6 +96,8 @@ describe('MapActionHandler', () => {
     actions = [];
     popAction = vi.fn();
     dispatchActionFn = vi.fn((action) => { actions = [action]; });
+    mockLayersStore = [];
+    mockAnnotationsStore = [];
   });
 
   it('forwards bearing and pitch to map.flyTo()', async () => {
@@ -285,6 +303,7 @@ describe('MapActionHandler', () => {
 
     expect(map.removeLayer).toHaveBeenCalledWith('custom-target-layer');
     expect(map.removeSource).toHaveBeenCalledWith('custom-target-layer');
+    expect(mockRemoveLayer).toHaveBeenCalledWith('target-layer');
   });
 
   it('calls map.moveLayer correctly when executing REORDER_LAYER to top', async () => {
@@ -327,6 +346,110 @@ describe('MapActionHandler', () => {
     });
 
     expect(map.moveLayer).toHaveBeenCalledWith('custom-reorder-layer', 'custom-other-layer');
+  });
+
+  it('calls map.moveLayer correctly for REORDER_LAYER position up', async () => {
+    actions = [{
+      command: 'REORDER_LAYER',
+      params: { layer_id: 'layer2', position: 'up' },
+    }];
+
+    const map = mockGetMap();
+    (map.getStyle as any).mockReturnValue({
+      layers: [
+        { id: 'custom-layer1' },
+        { id: 'custom-layer2' },
+        { id: 'custom-layer3' }
+      ]
+    });
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(map.moveLayer).toHaveBeenCalledWith('custom-layer2', 'custom-layer1');
+  });
+
+  it('calls map.moveLayer correctly for REORDER_LAYER position down', async () => {
+    actions = [{
+      command: 'REORDER_LAYER',
+      params: { layer_id: 'layer2', position: 'down' },
+    }];
+
+    const map = mockGetMap();
+    (map.getStyle as any).mockReturnValue({
+      layers: [
+        { id: 'custom-layer1' },
+        { id: 'custom-layer2' },
+        { id: 'custom-layer3' }
+      ]
+    });
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(map.moveLayer).toHaveBeenCalledWith('custom-layer2', undefined);
+  });
+
+  it('calls map.moveLayer correctly for REORDER_LAYER position before', async () => {
+    actions = [{
+      command: 'REORDER_LAYER',
+      params: { layer_id: 'layer3', position: 'before', before_id: 'layer1' },
+    }];
+
+    const map = mockGetMap();
+    (map.getStyle as any).mockReturnValue({
+      layers: [
+        { id: 'custom-layer1' },
+        { id: 'custom-layer2' },
+        { id: 'custom-layer3' }
+      ]
+    });
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(map.moveLayer).toHaveBeenCalledWith('custom-layer3', 'custom-layer1');
+  });
+
+  it('handles LAYER_VISIBILITY_UPDATE correctly', async () => {
+    actions = [{
+      command: 'LAYER_VISIBILITY_UPDATE',
+      params: { layer_id: 'vis-layer', visible: false, opacity: 0.5 },
+    }];
+
+    mockLayersStore = [{ id: 'vis-layer', name: 'Visibility Layer' }];
+    const map = mockGetMap();
+    (map.getStyle as any).mockReturnValue({
+      layers: [{ id: 'custom-vis-layer-fill' }]
+    });
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(mockUpdateLayer).toHaveBeenCalledWith('vis-layer', { visible: false, opacity: 0.5 });
+  });
+
+  it('handles LAYER_STYLE_UPDATE correctly', async () => {
+    actions = [{
+      command: 'LAYER_STYLE_UPDATE',
+      params: { layer_id: 'style-layer', style: { color: '#00ff00', strokeWidth: 2 } },
+    }];
+
+    mockLayersStore = [{ id: 'style-layer', name: 'Style Layer', style: { color: '#ff0000' } }];
+    const map = mockGetMap();
+    (map.getStyle as any).mockReturnValue({
+      layers: [{ id: 'custom-style-layer-fill' }]
+    });
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(mockUpdateLayer).toHaveBeenCalledWith('style-layer', { style: { color: '#00ff00' } });
   });
 
   it('handles add_marker and updates annotation layer', async () => {

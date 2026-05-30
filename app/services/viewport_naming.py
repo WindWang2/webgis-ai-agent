@@ -27,6 +27,7 @@ _LOOKUP_TIMEOUT_SEC = 3.0
 # 多 worker 各自跑一次完全够用，不值得引入 Redis 复杂度。
 _cache: "OrderedDict[tuple[float, float], str]" = OrderedDict()
 _in_flight: set[tuple[float, float]] = set()
+_active_tasks: set[asyncio.Task] = set()
 
 # ─── Rate limiting (/review P1-3) ──────────────────────────────────────
 # Pre-existing unauth WS + new schedule_populate on every viewport_change =
@@ -206,7 +207,15 @@ def schedule_populate(lng: float, lat: float) -> None:
     except RuntimeError:
         # 没有运行中的 loop（例如纯同步路径），跳过；下次有 loop 时会再触发
         return
-    loop.create_task(_populate(lng, lat))
+    task = loop.create_task(_populate(lng, lat))
+    _active_tasks.add(task)
+    task.add_done_callback(_active_tasks.discard)
+
+
+async def wait_all_tasks() -> None:
+    """异步等待当前所有在途的 Nominatim 反查后台任务完成（主要用于单元测试去抖）。"""
+    if _active_tasks:
+        await asyncio.gather(*_active_tasks, return_exceptions=True)
 
 
 def clear_cache() -> None:
@@ -214,6 +223,13 @@ def clear_cache() -> None:
     _cache.clear()
     _in_flight.clear()
     _rate_window.clear()
+    for task in list(_active_tasks):
+        if not task.done():
+            try:
+                task.cancel()
+            except RuntimeError:
+                pass
+    _active_tasks.clear()
 
 
 def schedule_populate_from_map_state(map_state: dict | None) -> None:

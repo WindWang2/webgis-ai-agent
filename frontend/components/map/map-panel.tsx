@@ -1,7 +1,7 @@
 "use client"
 import { useState, useRef, useCallback, useEffect, useMemo } from "react"
 import { MAP_STYLES, MapStyleOption } from "@/lib/constants"
-import Map, { MapRef, ViewStateChangeEvent } from "react-map-gl/maplibre"
+import Map, { MapRef, ViewStateChangeEvent, Popup } from "react-map-gl/maplibre"
 import maplibregl from "maplibre-gl"
 import type { Layer } from "@/lib/types/layer"
 import type { GeoJSONFeatureCollection, HeatmapRasterSource } from "@/lib/types"
@@ -401,6 +401,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   const aiStatus = useHudStore((s: HudState) => s.aiStatus)
 
   const setSelectedFeature = useHudStore((s: HudState) => s.setSelectedFeature)
+  const selectedFeature = useHudStore((s: HudState) => s.selectedFeature)
   const layersRef = useRef(layers)
   useEffect(() => { layersRef.current = layers }, [layers])
 
@@ -534,6 +535,34 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
         {...({ preserveDrawingBuffer: true } as any)}
       >
         <MapActionHandler />
+        {selectedFeature && (
+          <Popup
+            longitude={selectedFeature.point[0]}
+            latitude={selectedFeature.point[1]}
+            anchor="bottom"
+            onClose={() => setSelectedFeature(null)}
+            closeOnClick={false}
+          >
+            <div className="text-xs p-1 font-sans">
+              <div className="font-semibold border-b pb-1 mb-1 border-white/20 text-primary">
+                {selectedFeature.layerName || '未命名图层'}
+              </div>
+              <div className="max-h-32 overflow-y-auto space-y-0.5 min-w-[150px]">
+                {Object.entries(selectedFeature.properties).slice(0, 5).map(([k, v]) => (
+                  <div key={k} className="flex justify-between gap-4">
+                    <span className="text-gray-400 font-mono">{k}:</span>
+                    <span className="font-mono break-all">{String(v)}</span>
+                  </div>
+                ))}
+                {Object.keys(selectedFeature.properties).length > 5 && (
+                  <div className="text-gray-500 text-[10px] italic">
+                    ...以及其他 {Object.keys(selectedFeature.properties).length - 5} 个属性
+                  </div>
+                )}
+              </div>
+            </div>
+          </Popup>
+        )}
       </Map>
 
       {/* Live cartography overlays — driven by layer.legend_spec */}

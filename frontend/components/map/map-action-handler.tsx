@@ -15,12 +15,12 @@ import * as renderer from '@/lib/map-kit/renderer';
 import * as exporter from '@/lib/map-kit/exporter';
 
 // R8 annotation source: 单一 FeatureCollection 收纳 add_marker / draw_measurement 输出。
-// 模块级状态：跨 useEffect 重运行保持累计，clear_annotations 一次清空。
+// Zustand 状态迁移：将原本模块级的 mutable array 迁移至 Zustand，支持多组件共享、响应式更新和一致的生命周期管理。
 const ANNOTATION_SOURCE_ID = 'claude-annotations';
-const annotationFeatures: any[] = [];
 
 function annotationFC() {
-  return { type: 'FeatureCollection', features: annotationFeatures.slice() };
+  const annotations = useHudStore.getState().annotations;
+  return { type: 'FeatureCollection', features: annotations.slice() };
 }
 
 function ensureAnnotationLayers(map: any) {
@@ -335,7 +335,7 @@ export function MapActionHandler() {
           const allLayers = style.layers || [];
           const subIds = allLayers
             .map((l: any) => l.id as string)
-            .filter((id) => id.startsWith(`custom-${layer_id}`));
+            .filter((id) => id === `custom-${layer_id}` || id.startsWith(`custom-${layer_id}-`));
           if (subIds.length === 0) break;
 
           // Snapshot custom layer IDs only (we ignore base style layers)
@@ -368,7 +368,7 @@ export function MapActionHandler() {
               }
             }
           } else if (position === 'before' && before_id) {
-            const targetGroup = customIds.find((id) => id.startsWith(`custom-${before_id}`));
+            const targetGroup = customIds.find((id) => id === `custom-${before_id}` || id.startsWith(`custom-${before_id}-`));
             beforeAnchor = targetGroup;
           }
 
@@ -561,7 +561,7 @@ export function MapActionHandler() {
           const { longitude, latitude, label, color } = action.params || {};
           if (typeof longitude !== 'number' || typeof latitude !== 'number') break;
           ensureAnnotationLayers(map);
-          annotationFeatures.push({
+          useHudStore.getState().addAnnotation({
             type: 'Feature',
             geometry: { type: 'Point', coordinates: [longitude, latitude] },
             properties: { label: label || null, color: color || '#ef4444', kind: 'marker' },
@@ -574,6 +574,7 @@ export function MapActionHandler() {
           const { shape, coordinates, label } = action.params || {};
           if (!Array.isArray(coordinates) || coordinates.length < 2) break;
           ensureAnnotationLayers(map);
+          const store = useHudStore.getState();
           if (shape === 'polygon') {
             const ring = coordinates.slice();
             // 闭合环
@@ -582,7 +583,7 @@ export function MapActionHandler() {
               const last = ring[ring.length - 1];
               if (first[0] !== last[0] || first[1] !== last[1]) ring.push([first[0], first[1]]);
             }
-            annotationFeatures.push({
+            store.addAnnotation({
               type: 'Feature',
               geometry: { type: 'Polygon', coordinates: [ring] },
               properties: { label: label || null, kind: 'measure_polygon' },
@@ -591,7 +592,7 @@ export function MapActionHandler() {
             const cx = ring.reduce((s, p) => s + p[0], 0) / ring.length;
             const cy = ring.reduce((s, p) => s + p[1], 0) / ring.length;
             if (label) {
-              annotationFeatures.push({
+              store.addAnnotation({
                 type: 'Feature',
                 geometry: { type: 'Point', coordinates: [cx, cy] },
                 properties: { label, color: 'transparent', kind: 'measure_label' },
@@ -599,14 +600,14 @@ export function MapActionHandler() {
             }
           } else {
             // 默认 polyline
-            annotationFeatures.push({
+            store.addAnnotation({
               type: 'Feature',
               geometry: { type: 'LineString', coordinates: coordinates.slice() },
               properties: { label: label || null, kind: 'measure_line' },
             });
             if (label) {
               const end = coordinates[coordinates.length - 1];
-              annotationFeatures.push({
+              store.addAnnotation({
                 type: 'Feature',
                 geometry: { type: 'Point', coordinates: end.slice() },
                 properties: { label, color: 'transparent', kind: 'measure_label' },
@@ -618,7 +619,7 @@ export function MapActionHandler() {
         }
 
         case 'clear_annotations': {
-          annotationFeatures.length = 0;
+          useHudStore.getState().clearAnnotations();
           refreshAnnotations(map);
           break;
         }

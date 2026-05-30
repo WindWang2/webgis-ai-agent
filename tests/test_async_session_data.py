@@ -91,8 +91,10 @@ async def test_redis_get_session_metadata_pipeline(fake_redis_sdm):
     assert "map_state" in meta
     assert "list_refs" in meta
     assert "event_log" in meta
+    assert "started_at" in meta
     assert meta["map_state"].get("zoom") == 10
     assert len(meta["event_log"]) == 1
+    assert meta["started_at"] is not None
 
 
 async def test_redis_clear_session(fake_redis_sdm):
@@ -100,3 +102,24 @@ async def test_redis_clear_session(fake_redis_sdm):
     await fake_redis_sdm.clear_session("rs5")
     refs = await fake_redis_sdm.list_refs("rs5")
     assert refs == {}
+
+
+async def test_redis_get_started_at_records_started_at(fake_redis_sdm):
+    sid = "rs_start"
+    assert await fake_redis_sdm.get_started_at(sid) is None
+    await fake_redis_sdm.set_map_state(sid, "base_layer", "OSM 地图")
+    started = await fake_redis_sdm.get_started_at(sid)
+    assert started is not None
+    # 不会被后续写入覆盖
+    original = started
+    await fake_redis_sdm.set_map_state(sid, "viewport", {"center": [0, 0], "zoom": 5})
+    assert await fake_redis_sdm.get_started_at(sid) == original
+    await fake_redis_sdm.clear_session(sid)
+
+
+async def test_redis_started_at_set_by_store(fake_redis_sdm):
+    sid = "rs_store_only"
+    assert await fake_redis_sdm.get_started_at(sid) is None
+    await fake_redis_sdm.store(sid, {"type": "FeatureCollection", "features": []}, prefix="t")
+    assert await fake_redis_sdm.get_started_at(sid) is not None
+    await fake_redis_sdm.clear_session(sid)

@@ -26,6 +26,11 @@ export const createLayersSlice: StateCreator<HudState, [], [], Partial<HudState>
   setLayers: (layers) => set({ layers }),
   clearLayers: () => set({ layers: [] }),
 
+  /* ─── Annotations ─── */
+  annotations: [],
+  addAnnotation: (feature) => set((s) => ({ annotations: [...s.annotations, feature] })),
+  clearAnnotations: () => set({ annotations: [] }),
+
   /* ─── Layer Editing ─── */
   editingLayerId: null,
   setEditingLayerId: (id) => set({ editingLayerId: id }),
