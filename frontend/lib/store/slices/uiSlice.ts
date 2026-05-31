@@ -5,7 +5,7 @@
  * 因为用户的底图偏好需要重启保留 — 由 useHudStore 的 partialize 决定）。
  */
 import type { StateCreator } from 'zustand';
-import type { HudState, AiStatus, LeftTab, SettingsTab } from '../hud-types';
+import type { HudState, AiStatus, LeftTab, SettingsTab, ExportItem } from '../hud-types';
 
 export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = (set, get) => ({
   /* ─── HUD Panels (legacy compat) ─── */
@@ -88,7 +88,7 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   setRagResults: (results) => set({ ragResults: results }),
   exports: [],
   setExports: (items) => set({ exports: items }),
-  addExport: (item: import('@/lib/store/hud-types').ExportItem) => set((s) => ({ exports: [item, ...s.exports] })),
+  addExport: (item: ExportItem) => set((s) => ({ exports: [item, ...s.exports] })),
   causalChain: [],
   pushCausalEntry: (entry) => set((s) => ({ causalChain: [entry, ...s.causalChain] })),
   clearCausalChain: () => set({ causalChain: [] }),
