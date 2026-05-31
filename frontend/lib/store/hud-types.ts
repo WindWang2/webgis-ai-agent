@@ -54,9 +54,10 @@ export interface RagResult {
 export interface ExportItem {
   id: string;
   name: string;
-  type: 'png' | 'pdf' | 'geojson';
+  type: 'png' | 'pdf' | 'svg' | 'geojson';
   size: string;
   date: string;
+  filename?: string;
 }
 
 export interface ExportSettings {
@@ -283,6 +284,7 @@ export interface HudState {
   setRagResults: (results: RagResult[]) => void;
   exports: ExportItem[];
   setExports: (items: ExportItem[]) => void;
+  addExport: (item: ExportItem) => void;
   causalChain: CausalEntry[];
   pushCausalEntry: (entry: CausalEntry) => void;
   clearCausalChain: () => void;

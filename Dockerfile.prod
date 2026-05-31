@@ -24,6 +24,11 @@ RUN npm run build
 FROM python:3.12-slim-bookworm AS backend-deps
 WORKDIR /app/backend
 
+# Install GDAL/GEOS/PROJ system libraries required by rasterio, pyogrio, geopandas
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libexpat1 libgdal-dev gdal-bin libgeos-dev libproj-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir --break-system-packages \
     uv==0.5.11 \
@@ -33,8 +38,8 @@ RUN pip install --no-cache-dir --break-system-packages \
 FROM python:3.12-slim-bookworm AS runner
 WORKDIR /app/backend
 
-# Install Node.js for frontend standalone server
-RUN apt-get update && apt-get install -y --no-install-recommends nodejs \
+# Install Node.js and tini (proper PID 1 process manager)
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs tini \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy frontend standalone output
@@ -61,4 +66,5 @@ EXPOSE 3000 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8000/api/v1/health/live || exit 1
 
+ENTRYPOINT ["tini", "--"]
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 & node frontend/.next/standalone/server.js -p 3000"]

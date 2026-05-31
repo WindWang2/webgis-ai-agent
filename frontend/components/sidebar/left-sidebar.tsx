@@ -15,7 +15,7 @@ export interface LeftSidebarProps {
     id: string;
     role: 'user' | 'assistant';
     content: string;
-    timestamp: Date;
+    timestamp: Date | number | null;
     isThinking?: boolean;
     charts?: unknown[];
   }>;

@@ -6,10 +6,8 @@
 # - 适合部署到拥有公网 IP 的服务器
 # - 可配合 Nginx 反向代理使用 HTTPS
 #
-# 使用: docker-compose -f docker-compose.secure.ym prod.yml up -d
+# 使用: docker-compose -f docker-compose.prod.secure.yml up -d
 # ============================================================
-
-version: "3.8"
 
 services:
   db:
@@ -18,7 +16,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-webgis_prod}
-      POSTGRES_PASSWORD: ${DB_PWD:-ChangeMeStrong!}
+      POSTGRES_PASSWORD: ${DB_PWD:?Set DB_PWD in .env.Priv}
       POSTGRES_DB: ${DB_NAME:-webgis_prod}
     volumes:
       - pg_data_secure:/var/lib/postgresql/data
@@ -36,12 +34,12 @@ services:
     container_name: webgis-prod-redis
     restart: unless-stopped
     command: >
-      redis-server 
-      --appendonly 
-      --maxmemory 256mb 
+      redis-server
+      --appendonly
+      --maxmemory 256mb
       --maxmemory-policy allkeys-lru
       --bind 0.0.0.0
-      --protected-mode no
+      --requirepass ${REDIS_PASSWORD:-changeme_redis_password}
     volumes:
       - redis_data_secure:/data
     healthcheck:
@@ -63,7 +61,7 @@ services:
       - DEBUG=false
       - DATABASE_URL=postgresql://${DB_USER:-webgis_prod}:${DB_PWD}@db:5432/${DB_NAME:-webgis_prod}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?Please set JWT_SECRET_KEY}
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme_redis_password}@redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - CORS_ORIGINS=${CORS_ORIGINS}
@@ -96,10 +94,10 @@ services:
       - ENV=production
       - DATABASE_URL=postgresql://${DB_USER:-webgis_prod}:${DB_PWD}@db:5432/${DB_NAME:-webgis_prod}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme_redis_password}@redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
     env_file:
-      - .env.production
+      - .env.Priv
     command: celery -A app.services.celery_worker worker --loglevel=info --concurrency=2
     depends_on:
       db:

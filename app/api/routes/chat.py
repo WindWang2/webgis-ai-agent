@@ -22,6 +22,20 @@ registry: ToolRegistry = None  # type: ignore[assignment]
 engine: ChatEngine = None  # type: ignore[assignment]
 
 
+def get_engine() -> ChatEngine:
+    """Return the ChatEngine instance, raising if not yet initialized by lifespan."""
+    if engine is None:
+        raise RuntimeError("ChatEngine 尚未初始化 — 请确认 lifespan 已启动")
+    return engine
+
+
+def get_registry() -> ToolRegistry:
+    """Return the ToolRegistry instance, raising if not yet initialized by lifespan."""
+    if registry is None:
+        raise RuntimeError("ToolRegistry 尚未初始化 — 请确认 lifespan 已启动")
+    return registry
+
+
 class ChatRequest(BaseModel):
     """聊天请求"""
     message: str = Field(..., min_length=1, max_length=5000)

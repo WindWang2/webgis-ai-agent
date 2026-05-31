@@ -2,8 +2,6 @@
 # WebGIS AI Agent 生产环境 Docker Compose
 # 使用: docker-compose -f docker-compose.prod.yml up -d
 # ============================================================
-version: "3.8"
-
 services:
   # PostgreSQL 数据库（含 PostGIS）
   db:
@@ -12,7 +10,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-webgis_prod}
-      POSTGRES_PASSWORD: ${DB_PWD:-ChangeMeStrongPwd123!}
+      POSTGRES_PASSWORD: ${DB_PWD:?Set DB_PWD in .env.production}
       POSTGRES_DB: ${DB_NAME:-webgis_prod}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
@@ -72,7 +70,7 @@ services:
       - LOG_LEVEL=INFO
       - PYTHONUNBUFFERED=1
     env_file:
-      - .env
+      - .env.production
     depends_on:
       db:
         condition: service_healthy
@@ -108,7 +106,7 @@ services:
       - LOG_LEVEL=INFO
       - PYTHONUNBUFFERED=1
     env_file:
-      - .env
+      - .env.production
     depends_on:
       db:
         condition: service_healthy
@@ -162,7 +160,7 @@ services:
       - "13001:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PWD:-admin123}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PWD:?Set GRAFANA_PWD}
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana_data:/var/lib/grafana

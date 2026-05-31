@@ -7,6 +7,7 @@ import { API_BASE } from '@/lib/api/config';
 import type { SSEEvent } from '@/lib/api/chat';
 import type { ToolCallEntry, PlanProposalPayload } from '@/lib/store/hud-types';
 import type { AgentPlanState } from '@/lib/types/agent-plan';
+import { createMessageIdGenerator } from './use-message-id';
 
 export function useSSEStream(
   sessionId: string | undefined,
@@ -21,7 +22,7 @@ export function useSSEStream(
       id: string;
       role: 'user' | 'assistant';
       content: string;
-      timestamp: any;
+      timestamp: Date | number | null;
       isThinking?: boolean;
       charts?: unknown[];
       toolCalls?: ToolCallEntry[];
@@ -41,6 +42,7 @@ export function useSSEStream(
 
   const thinkingMsgIdRef = useRef<string>('');
   const rawContentRef = useRef<string>('');
+  const msgIdGen = useRef(createMessageIdGenerator());
 
   const parseThink = useCallback((raw: string) => {
     const start = raw.indexOf('<think>');
@@ -351,10 +353,10 @@ export function useSSEStream(
 
       setMessages((prev) => [
         ...prev,
-        { id: Date.now().toString(), role: 'user' as const, content: userMsg, timestamp: new Date() },
+        { id: msgIdGen.current.next(), role: 'user' as const, content: userMsg, timestamp: new Date() },
       ]);
 
-      const thinkingMsgId = (Date.now() + 1).toString();
+      const thinkingMsgId = msgIdGen.current.next();
       thinkingMsgIdRef.current = thinkingMsgId;
       rawContentRef.current = '';
       setMessages((prev) => [

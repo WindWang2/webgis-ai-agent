@@ -18,6 +18,27 @@ from app.core.auth import get_current_user
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/config", tags=["配置管理"])
 
+
+def _validate_or_reject_skill_code(code: str) -> None:
+    """Validate skill code via AST deny-list. Raises HTTPException on failure.
+
+    If the validator module cannot be imported, the upload is REJECTED (not skipped)
+    to prevent unvalidated code execution.
+    """
+    try:
+        from app.tools.skills import _validate_skill_code  # type: ignore
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="安全校验模块不可用，拒绝上传以防止未校验代码执行",
+        )
+    validation_errors = _validate_skill_code(code)
+    if validation_errors:
+        raise HTTPException(
+            status_code=400,
+            detail=f"技能代码未通过安全检查: {'; '.join(validation_errors)}",
+        )
+
 # 允许的技能文件扩展名
 _ALLOWED_SKILL_EXTS = {".py", ".md"}
 
@@ -117,16 +138,7 @@ async def upload_skill(
         file_path = os.path.join(skills_dir, safe_name)
 
     # —— AST 沙箱校验：复用 create_new_skill 的 deny-list ——
-    try:
-        from app.tools.skills import _validate_skill_code  # type: ignore
-        validation_errors = _validate_skill_code(code_to_write)
-        if validation_errors:
-            raise HTTPException(
-                status_code=400,
-                detail=f"技能代码未通过安全检查: {'; '.join(validation_errors)}",
-            )
-    except ImportError:
-        logger.warning("_validate_skill_code unavailable; skipping AST check")
+    _validate_or_reject_skill_code(code_to_write)
 
     # 最终路径必须落在 skills_dir 之内（防御 symlink/绝对路径残留）
     resolved = Path(file_path).resolve()

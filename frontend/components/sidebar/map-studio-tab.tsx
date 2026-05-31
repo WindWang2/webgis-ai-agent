@@ -9,6 +9,7 @@ import { API_BASE } from '@/lib/api/config';
 const iconForType: Record<string, string> = {
   png: '🖼',
   pdf: '📄',
+  svg: '✏️',
   geojson: '📍',
 };
 

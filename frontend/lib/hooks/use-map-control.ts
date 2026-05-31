@@ -4,7 +4,7 @@ import { useCallback } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 
 export function useMapControl(mounted: boolean) {
-  const { setViewport, pushOpLog, setExports, exports } = useHudStore();
+  const { setViewport, pushOpLog } = useHudStore();
 
   const handleZoomIn = useCallback(() => {
     const { viewport } = useHudStore.getState();
@@ -40,25 +40,10 @@ export function useMapControl(mounted: boolean) {
     }
   }, [setViewport, pushOpLog, mounted]);
 
-  const handleExport = useCallback(() => {
-    pushOpLog({
-      id: Date.now().toString(),
-      type: 'add',
-      label: '导出 — 地图快照',
-      time: mounted ? new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '',
-      detail: '保存为 PNG',
-    });
-    setExports([
-      { id: Date.now().toString(), name: '地图快照', type: 'png', size: '1.2 MB', date: '刚刚' },
-      ...exports,
-    ]);
-  }, [pushOpLog, setExports, exports, mounted]);
-
   return {
     handleZoomIn,
     handleZoomOut,
     handleHome,
     handleLocate,
-    handleExport,
   };
 }

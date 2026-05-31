@@ -88,7 +88,7 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   setRagResults: (results) => set({ ragResults: results }),
   exports: [],
   setExports: (items) => set({ exports: items }),
-  addExport: (item) => set((s) => ({ exports: [item, ...s.exports] })),
+  addExport: (item: import('@/lib/store/hud-types').ExportItem) => set((s) => ({ exports: [item, ...s.exports] })),
   causalChain: [],
   pushCausalEntry: (entry) => set((s) => ({ causalChain: [entry, ...s.causalChain] })),
   clearCausalChain: () => set({ causalChain: [] }),

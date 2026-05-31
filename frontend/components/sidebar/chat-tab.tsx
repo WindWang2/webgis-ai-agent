@@ -72,7 +72,18 @@ function SuggestedPromptButtons({ onSend, accentColor, isDark }: { onSend: (text
 
 /* ─── Props ─── */
 interface ChatTabProps {
-  messages: any[];
+  messages: Array<{
+    id: string;
+    role: 'user' | 'assistant';
+    content: string;
+    timestamp: Date | number | null;
+    isThinking?: boolean;
+    charts?: unknown[];
+    toolCalls?: import('@/lib/store/hud-types').ToolCallEntry[];
+    plan?: import('@/lib/store/hud-types').PlanProposalPayload;
+    agentPlan?: import('@/lib/types/agent-plan').AgentPlanState;
+    layerAdded?: string;
+  }>;
   aiStatus: AiStatus;
   onSend: (text: string) => void;
   accentColor: string;
@@ -234,8 +245,8 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
                           accentColor={accentColor}
                         />
                       )}
-                      {(msg as any).agentPlan && (
-                        <PlanCard plan={(msg as any).agentPlan} />
+                      {msg.agentPlan && (
+                        <PlanCard plan={msg.agentPlan} />
                       )}
                       {msg.content && <MiniMd text={msg.content} />}
                       {msg.toolCalls && msg.toolCalls.length > 0 && (
@@ -257,7 +268,7 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
                           onReject={(pid) => onPlanAction?.(pid, 'reject')}
                         />
                       )}
-                      {(msg as any).charts?.map((raw: unknown, idx: number) => {
+                      {msg.charts?.map((raw: unknown, idx: number) => {
                         const chart = adaptChartData(raw);
                         if (!chart) return null;
                         return (

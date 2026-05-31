@@ -84,7 +84,6 @@ dump.rdb
 *.rdb
 .context/
 .gstack/
-.env-2
 data/admin_division/
 
 # Planning scratch files

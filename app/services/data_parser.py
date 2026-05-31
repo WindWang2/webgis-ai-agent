@@ -130,8 +130,7 @@ def parse_vector(
         try:
             gdf = gdf.to_crs(epsg=4326)
         except Exception as e:
-            logger.warning(f"坐标转换失败，保留原始 CRS: {e}")
-            crs_str = str(gdf.crs)
+            raise ParseError(f"坐标转换失败 (原始 CRS: {gdf.crs}): {e}")
         else:
             crs_str = "EPSG:4326"
     else:
