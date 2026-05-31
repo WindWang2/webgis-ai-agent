@@ -157,17 +157,26 @@ def register_layer_management_tools(registry: ToolRegistry):
         }
 
     @tool(registry, name="update_layer_appearance",
-           description="修改图层的视觉样式（如颜色、线宽）。可以通过 ID (ref:xxx)、别名或图层名称引用图层。")
-    async def update_layer_appearance(layer_ref: str, color: Optional[str] = None, stroke_width: Optional[float] = None, session_id: Optional[str] = None) -> dict:
+           description="修改图层的视觉样式（如颜色、线宽、描边色、点大小、虚线样式等）。可以通过 ID (ref:xxx)、别名或图层名称引用图层。")
+    async def update_layer_appearance(
+        layer_ref: str,
+        color: Optional[str] = None,
+        stroke_width: Optional[float] = None,
+        stroke_color: Optional[str] = None,
+        point_size: Optional[float] = None,
+        dash_array: Optional[str] = None,
+        fill: Optional[bool] = None,
+        render_type: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> dict:
         """修改图层外观"""
         if not session_id:
             return {"error": "Missing session_id context"}
 
-        # 逻辑同上
         ref_id = await session_data_manager.resolve_alias(session_id, layer_ref)
         map_state = await session_data_manager.get_map_state(session_id)
         layers = map_state.get("layers", [])
-        
+
         found_id = None
         for l in layers:
             if l.get("id") == ref_id or l.get("id") == layer_ref:
@@ -178,18 +187,31 @@ def register_layer_management_tools(registry: ToolRegistry):
                 if l.get("name") == layer_ref or layer_ref in l.get("name", ""):
                     found_id = l.get("id")
                     break
-        
+
         id_to_use = found_id or ref_id
-        
+
+        style: dict = {}
+        if color is not None:
+            style["color"] = color
+        if stroke_width is not None:
+            style["strokeWidth"] = stroke_width
+        if stroke_color is not None:
+            style["strokeColor"] = stroke_color
+        if point_size is not None:
+            style["pointSize"] = point_size
+        if dash_array is not None:
+            style["dashArray"] = dash_array
+        if fill is not None:
+            style["fill"] = fill
+        if render_type is not None:
+            style["renderType"] = render_type
+
         return {
             "success": True,
             "command": "LAYER_STYLE_UPDATE",
             "params": {
                 "layer_id": id_to_use,
-                "style": {
-                    "color": color,
-                    "strokeWidth": stroke_width
-                }
+                "style": style,
             },
             "message": f"已向地图发送指令：更新图层 {layer_ref} (目标 ID: {id_to_use}) 的外观样式。"
         }

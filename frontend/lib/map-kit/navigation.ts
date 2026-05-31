@@ -160,10 +160,48 @@ export function measure(
     };
   }
 
-  // Basic area measurement is not implemented without turf
+  if (coords.length < 3) {
+    return {
+      success: false,
+      data: 0,
+      summary: "At least three points are required for area measurement."
+    };
+  }
+
+  const area = polygonAreaKm2(coords);
   return {
-    success: false,
-    data: 0,
-    summary: `Measurement type '${type}' is not yet supported.`
+    success: true,
+    data: area,
+    summary: `Area: ${formatDistance(area)}²`
   };
+}
+
+/**
+ * Computes polygon area in km² using spherical excess on a unit-sphere
+ * (Girard's theorem via the shoelace-like signed-angle approach).
+ */
+export function polygonAreaKm2(coords: [number, number][]): number {
+  const R = 6371;
+  const n = coords.length;
+  if (n < 3) return 0;
+
+  let total = 0;
+  for (let i = 0; i < n - 1; i++) {
+    const [lon1, lat1] = coords[i];
+    const [lon2, lat2] = coords[i + 1];
+    total += (lon2 - lon1) * (Math.PI / 180) *
+      (2 + Math.sin(lat1 * Math.PI / 180) + Math.sin(lat2 * Math.PI / 180));
+  }
+  return Math.abs(total * R * R / 2);
+}
+
+/**
+ * Formats a distance value (in km) into a human-readable string.
+ * Values < 1 km are shown in meters; >= 1 km in kilometers.
+ */
+export function formatDistance(km: number): string {
+  if (km < 1) {
+    return `${(km * 1000).toFixed(0)}m`;
+  }
+  return `${km.toFixed(2)}km`;
 }
