@@ -298,20 +298,28 @@ export function MapActionHandler() {
           const { layer_id, style } = action.params || {};
           if (!layer_id || !style) break;
           const mapStyle = map.getStyle();
+          const s = style as any;
           mapStyle.layers?.forEach(l => {
             if (l.id.startsWith(`custom-${layer_id}-`)) {
               renderer.updateLayerStyle(map, l.id, {
-                color: (style as any).color,
-                strokeWidth: (style as any).strokeWidth
+                color: s.color,
+                strokeColor: s.strokeColor,
+                strokeWidth: s.strokeWidth,
+                pointSize: s.pointSize,
+                dashArray: s.dashArray,
+                fill: s.fill,
               });
             }
           });
           // Sync style changes back to store so LayersTab swatch stays in sync
-          const styleColor = (style as any).color;
-          if (styleColor !== undefined) {
+          const styleUpdates: Record<string, any> = {};
+          for (const key of ['color', 'strokeColor', 'strokeWidth', 'pointSize', 'dashArray', 'fill']) {
+            if (s[key] !== undefined && s[key] !== null) styleUpdates[key] = s[key];
+          }
+          if (Object.keys(styleUpdates).length > 0) {
             const existing = useHudStore.getState().layers.find(l => l.id === layer_id);
             useHudStore.getState().updateLayer(layer_id, {
-              style: { ...(existing?.style ?? {}), color: styleColor },
+              style: { ...(existing?.style ?? {}), ...styleUpdates },
             });
           }
           break;

@@ -230,12 +230,16 @@ export interface StyleUpdateOptions {
   visibility?: 'visible' | 'none';
   opacity?: number;
   color?: string;
+  strokeColor?: string;
   strokeWidth?: number;
+  pointSize?: number;
+  dashArray?: string;
+  fill?: boolean;
 }
 
 /**
  * Updates a layer's style properties.
- * Supports visibility, opacity, color, and stroke width.
+ * Supports visibility, opacity, color, strokeColor, strokeWidth, pointSize, dashArray, fill.
  */
 export function updateLayerStyle(map: any, id: string, style: StyleUpdateOptions) {
   if (!map.getLayer(id)) return;
@@ -273,11 +277,37 @@ export function updateLayerStyle(map: any, id: string, style: StyleUpdateOptions
     }
   }
 
+  if (style.strokeColor) {
+    if (layer.type === 'fill') {
+      map.setPaintProperty(id, 'fill-outline-color', style.strokeColor);
+    } else if (layer.type === 'circle') {
+      map.setPaintProperty(id, 'circle-stroke-color', style.strokeColor);
+    } else if (layer.type === 'line') {
+      map.setPaintProperty(id, 'line-color', style.strokeColor);
+    }
+  }
+
   if (style.strokeWidth !== undefined) {
     if (layer.type === 'line') {
       map.setPaintProperty(id, 'line-width', style.strokeWidth);
     } else if (layer.type === 'circle') {
       map.setPaintProperty(id, 'circle-stroke-width', style.strokeWidth);
+    }
+  }
+
+  if (style.pointSize !== undefined && layer.type === 'circle') {
+    map.setPaintProperty(id, 'circle-radius', style.pointSize);
+  }
+
+  if (style.dashArray && layer.type === 'line') {
+    const patterns: Record<string, [number, number]> = {
+      dashed: [4, 2],
+      dotted: [1, 2],
+      dashdot: [4, 2, 1, 2],
+    };
+    const pattern = patterns[style.dashArray];
+    if (pattern) {
+      map.setPaintProperty(id, 'line-dasharray', style.dashArray === 'dashdot' ? [4, 2, 1, 2] : pattern);
     }
   }
 }
