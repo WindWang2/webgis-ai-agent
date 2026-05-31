@@ -18,7 +18,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-webgis_prod}
-      POSTGRES_PWD: ${DB_PWD:-ChangeMeStrong!}
+      POSTGRES_PASSWORD: ${DB_PWD:-ChangeMeStrong!}
       POSTGRES_DB: ${DB_NAME:-webgis_prod}
     volumes:
       - pg_data_secure:/var/lib/postgresql/data
@@ -48,14 +48,14 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
-      retry: 5
+      retries: 5
     networks:
       - webgis-internal
 
   api:
     build:
       context: .
-      dockerfile: Dockerfile.Prod
+      dockerfile: Dockerfile.prod
     container_name: webgis-prod-api
     restart: unless-stopped
     environment:
@@ -89,7 +89,7 @@ services:
   celery-worker:
     build:
       context: .
-      dockerfile: Dockerfile.production
+      dockerfile: Dockerfile.prod
     container_name: webgis-prod-celery
     restart: unless-stopped
     environment:

@@ -196,4 +196,57 @@ describe('useMapBridge', () => {
     rerender({ sid: 's2' });
     expect(result.current.onViewportChange).not.toBe(first);
   });
+
+  // ─── Heatmap command dispatch (RC1 regression tests) ───
+  // Heatmap tools put data at the top level of result, not under result.params.
+  // The bridge must destructure result → {command, ...rest} and pass rest as params.
+
+  it('heatmap raster: dispatches image + bbox as params (not result.params)', async () => {
+    mockStreamChat.mockReturnValue(makeAsyncGen([{
+      event: 'step_result',
+      data: {
+        result: {
+          command: 'add_heatmap_raster',
+          image: 'data:image/png;base64,ABC123',
+          bbox: [116.0, 39.0, 117.0, 40.0],
+          legend_spec: { type: 'continuous', min: 0, max: 1 },
+        },
+      },
+    }]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent)
+    );
+    await act(async () => { await result.current.send('q', {}); });
+    expect(dispatchAction).toHaveBeenCalledWith({
+      command: 'add_heatmap_raster',
+      params: expect.objectContaining({
+        image: 'data:image/png;base64,ABC123',
+        bbox: [116.0, 39.0, 117.0, 40.0],
+        legend_spec: { type: 'continuous', min: 0, max: 1 },
+      }),
+    });
+  });
+
+  it('native heatmap: dispatches metadata + palette as params', async () => {
+    mockStreamChat.mockReturnValue(makeAsyncGen([{
+      event: 'step_result',
+      data: {
+        result: {
+          command: 'add_native_heatmap',
+          metadata: { render_type: 'native', point_count: 50, radius: 2000, palette: 'classic' },
+          type: 'FeatureCollection',
+        },
+      },
+    }]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent)
+    );
+    await act(async () => { await result.current.send('q', {}); });
+    expect(dispatchAction).toHaveBeenCalledWith({
+      command: 'add_native_heatmap',
+      params: expect.objectContaining({
+        metadata: { render_type: 'native', point_count: 50, radius: 2000, palette: 'classic' },
+      }),
+    });
+  });
 });

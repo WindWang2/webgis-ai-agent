@@ -20,7 +20,7 @@ Marked priority by ship risk vs cleanup value.
 
 **Effort:** human ~2h / CC ~20 min.
 
-### P1-2. Frontend tests for new command branches in MapActionHandler
+### ~~P1-2. Frontend tests for new command branches in MapActionHandler~~ ✅ CLOSED 2026-05-21
 
 **What:** Add vitest cases for REORDER_LAYER, REMOVE_LAYER, `zoom_to_bbox`, `set_map_view`, `add_marker`, `draw_measurement`, `clear_annotations`.
 
@@ -79,7 +79,7 @@ Marked priority by ship risk vs cleanup value.
 
 **Effort:** human ~3h / CC ~20 min.
 
-### P2-2. Coalesce Redis round-trips in env summary
+### ~~P2-2. Coalesce Redis round-trips in env summary~~ ✅ CLOSED
 
 **What:** Batch the per-ref `session_data_manager.get()` + `get_started_at()` + `get_event_log()` + `list_refs()` calls into Redis pipelines. Or cache the env-summary string keyed on event_log length + refs count.
 
@@ -87,7 +87,7 @@ Marked priority by ship risk vs cleanup value.
 
 **Effort:** human ~4h / CC ~30 min.
 
-### P2-3. Reuse aiohttp.ClientSession for Nominatim
+### ~~P2-3. Reuse aiohttp.ClientSession for Nominatim~~ ✅ CLOSED 2026-05-21
 
 **What:** Create one shared `aiohttp.ClientSession` at app lifespan startup; close on shutdown. Drop the per-call construction.
 
@@ -99,7 +99,7 @@ Marked priority by ship risk vs cleanup value.
 
 ## P2 — design polish (UX gaps from review)
 
-### P2-4. Visual selection feedback on map click
+### ~~P2-4. Visual selection feedback on map click~~ ✅ CLOSED
 
 **What:** When the user clicks a feature, show a maplibre Popup with the layer name + 2–3 key properties, OR maintain a "selected" GeoJSON source/layer that outlines the picked feature.
 
@@ -115,7 +115,7 @@ Marked priority by ship risk vs cleanup value.
 
 **Effort:** human ~1h / CC ~10 min.
 
-### P2-6. Documentation drift
+### ~~P2-6. Documentation drift~~ ✅ CLOSED
 
 **What:**
 - `docs/api-docs.md` — add the 11 new LLM tools (measure_distance/area, add_marker, clear_annotations, fly_to_location, zoom_to_bbox, zoom_to_layer, reset_map_view, set_map_view, reorder_layer, remove_layer, export_batch_maps) and the `display_layer` tool added in the layer-lifecycle redesign.
@@ -138,7 +138,7 @@ Marked priority by ship risk vs cleanup value.
 
 ## P3 — maintainability cleanups (do as you touch)
 
-### P3-5. Annotation state in module-level mutable array
+### ~~P3-5. Annotation state in module-level mutable array~~ ✅ CLOSED
 
 `frontend/components/map/map-action-handler.tsx:17` — move `annotationFeatures: any[]` into a Zustand slice (or at minimum a `useRef`). Currently survives unmount + can't surface a "N annotations" UI chip.
 

@@ -127,6 +127,19 @@ export interface MapStyleEntry {
   url?: string;
 }
 
+export interface AnalysisAsset {
+  id: number | string;
+  filename?: string;
+  original_name?: string;
+  name?: string;
+  geometry_type?: string | null;
+  type?: string;
+  created_at?: string | null;
+  uploaded_at?: string | null;
+  file_size?: number | string | null;
+  size?: number | string | null;
+}
+
 export interface LlmConfig {
   baseUrl: string;
   apiKey: string;
@@ -154,8 +167,8 @@ export interface HudState {
   clearLayers: () => void;
 
   /* ─── Annotations ─── */
-  annotations: any[];
-  addAnnotation: (feature: any) => void;
+  annotations: Record<string, unknown>[];
+  addAnnotation: (feature: Record<string, unknown>) => void;
   clearAnnotations: () => void;
 
   /* ─── Layer Editing ─── */
@@ -215,18 +228,18 @@ export interface HudState {
   setPendingSystemMessage: (msg: string | null) => void;
 
   /* ─── Analysis Assets ─── */
-  analysisAssets: any[];
+  analysisAssets: AnalysisAsset[];
   fetchAnalysisAssets: (sessionId?: string) => Promise<void>;
-  updateAsset: (assetId: number | string, updates: any) => void;
+  updateAsset: (assetId: number | string, updates: Partial<AnalysisAsset>) => void;
   deleteAsset: (assetId: number | string) => void;
 
   /* ─── System Settings ─── */
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
-  llmConfig: any;
-  setLlmConfig: (config: any) => void;
-  availableSkills: any[];
-  setAvailableSkills: (skills: any[]) => void;
+  llmConfig: Record<string, unknown>;
+  setLlmConfig: (config: Record<string, unknown>) => void;
+  availableSkills: SkillEntry[];
+  setAvailableSkills: (skills: SkillEntry[]) => void;
 
   /* ─── Agent UI State ─── */
   aiStatus: AiStatus;
@@ -308,4 +321,26 @@ export interface HudState {
   /* ─── Export Layout ─── */
   exportSettings: ExportSettings;
   updateExportSettings: (updates: Partial<ExportSettings>) => void;
+}
+
+export interface ToolCallEntry {
+  id: string;
+  tool: string;
+  arguments?: string;
+  status: 'running' | 'completed' | 'failed';
+  result?: any;
+  hasGeojson?: boolean;
+  error?: string;
+  startedAt?: number;
+  completedAt?: number;
+}
+
+export interface PlanProposalPayload {
+  plan_id: string;
+  title: string;
+  summary?: string;
+  step_count: number;
+  destructive_steps?: string[];
+  steps_preview?: Array<{ id: string; tool: string; purpose?: string; destructive?: boolean }>;
+  status: 'pending' | 'approved' | 'rejected';
 }

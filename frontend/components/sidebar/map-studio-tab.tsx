@@ -47,8 +47,9 @@ export function MapStudioTab() {
 
   const handleDownload = (item: any) => {
     const a = document.createElement('a');
-    a.href = `${API_BASE}/api/v1/export/download/${item.name}`;
-    a.download = item.name;
+    const downloadName = item.filename || item.name;
+    a.href = `${API_BASE}/api/v1/export/download/${downloadName}`;
+    a.download = downloadName;
     a.click();
   };
 

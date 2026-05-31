@@ -73,7 +73,7 @@ def health_check():
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "service": "WebGIS AI Agent",
-        "version": "0.1.0"
+        "version": "0.1.2"
     }
 
 

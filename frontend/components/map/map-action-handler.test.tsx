@@ -449,7 +449,7 @@ describe('MapActionHandler', () => {
       render(<MapActionHandler />);
     });
 
-    expect(mockUpdateLayer).toHaveBeenCalledWith('style-layer', { style: { color: '#00ff00' } });
+    expect(mockUpdateLayer).toHaveBeenCalledWith('style-layer', { style: { color: '#00ff00', strokeWidth: 2 } });
   });
 
   it('handles add_marker and updates annotation layer', async () => {

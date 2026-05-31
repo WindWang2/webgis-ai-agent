@@ -475,6 +475,7 @@ export function MapActionHandler() {
                 useHudStore.getState().addExport({
                   id: `export-${Date.now()}`,
                   name: title || '未命名',
+                  filename: svgData.filename,
                   type: 'svg',
                   size: `${(svgBlob.size / 1024).toFixed(0)}KB`,
                   date: new Date().toLocaleString(),
@@ -508,6 +509,7 @@ export function MapActionHandler() {
                 useHudStore.getState().addExport({
                   id: `export-${Date.now()}`,
                   name: title || '未命名',
+                  filename: pdfData.filename,
                   type: 'pdf',
                   size: `${(blob.size / 1024).toFixed(0)}KB`,
                   date: new Date().toLocaleString(),
@@ -532,6 +534,7 @@ export function MapActionHandler() {
                 useHudStore.getState().addExport({
                   id: `export-${Date.now()}`,
                   name: title || '未命名',
+                  filename: data.filename,
                   type: 'png',
                   size: `${(blob.size / 1024).toFixed(0)}KB`,
                   date: new Date().toLocaleString(),

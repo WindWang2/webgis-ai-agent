@@ -54,7 +54,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.prod
-      target: backend-builder
+      target: runner
     container_name: webgis-prod-api
     restart: unless-stopped
     ports:
@@ -94,7 +94,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.prod
-      target: backend-builder
+      target: runner
     container_name: webgis-prod-celery
     restart: unless-stopped
     environment:
@@ -159,7 +159,7 @@ services:
     container_name: webgis-prod-grafana
     restart: unless-stopped
     ports:
-      - "13000:3000"
+      - "13001:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PWD:-admin123}

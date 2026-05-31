@@ -59,11 +59,12 @@ def _points(n: int):
 
 
 @pytest.mark.asyncio
-async def test_heatmap_native_no_legend_spec(spatial_registry):
+async def test_heatmap_native_emits_continuous_legend_spec(spatial_registry):
     out = await spatial_registry.dispatch("heatmap_data", {
         "geojson": _points(20), "render_type": "native",
     })
-    assert "legend_spec" not in out  # native rendering produces no discrete legend
+    assert "legend_spec" in out  # native rendering now produces continuous legend_spec for frontend legend
+    assert out["legend_spec"]["type"] == "continuous"
 
 
 @pytest.mark.asyncio

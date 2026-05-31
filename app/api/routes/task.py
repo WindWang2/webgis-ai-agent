@@ -68,7 +68,7 @@ async def list_tasks(session_id: Optional[str] = None) -> TaskListResponse:
         task_infos = engine.tracker.list_by_session(session_id)
     else:
         # 返回所有任务
-        task_infos = list(engine.tracker._tasks.values())
+        task_infos = engine.tracker.list_all()
 
     tasks = []
     for task_info in task_infos:

@@ -60,14 +60,14 @@ export const TILE_PROVIDERS: TileProvider[] = [
   {
     id: "esri-img",
     name: "ESRI 影像",
-    url: "https://server.arcgisonline.com/ArcGIS/Rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    url: "https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     type: "raster",
     keywords: ["影像", "卫星", "satellite", "航拍", "鸟瞰"],
   },
   {
     id: "esri-topo",
     name: "ESRI 地形",
-    url: "https://server.arcgisonline.com/ArcGIS/Rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
+    url: "https://services.arcgisonline.com/arcgis/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
     type: "raster",
     keywords: ["地形", "topo", "晕渲", "terrain"],
   },

@@ -2,14 +2,11 @@
 知识库管理 API - RAG 向量检索增强
 支持文档上传、分块、向量化、语义搜索
 """
-import os
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
-from app.core.database import get_db
 from app.models.api_response import ApiResponse, ErrCode
 from app.services import rag_service
 
@@ -38,7 +35,7 @@ class DeleteRequest(BaseModel):
 
 
 @router.post("/documents", response_model=ApiResponse)
-async def add_document(request: AddDocumentRequest, db: Session = Depends(get_db)):
+async def add_document(request: AddDocumentRequest):
     """上传文档到知识库，执行向量嵌入"""
     if not request.content.strip():
         return ApiResponse.fail(
@@ -72,7 +69,6 @@ async def add_document(request: AddDocumentRequest, db: Session = Depends(get_db
 async def list_documents(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db),
 ):
     """列出知识库中的文档"""
     result = await rag_service.list_documents(limit=limit, offset=offset)
@@ -102,7 +98,7 @@ async def semantic_search(
 
 
 @router.delete("/document/{document_id}", response_model=ApiResponse)
-async def delete_document(document_id: str, db: Session = Depends(get_db)):
+async def delete_document(document_id: str):
     """删除指定文档"""
     success = await rag_service.delete_document(document_id)
 

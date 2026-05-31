@@ -96,6 +96,10 @@ class TaskTracker:
 
         return task
 
+    def list_all(self) -> list[TaskInfo]:
+        """Return all tracked tasks."""
+        return list(self._tasks.values())
+
     def _evict_if_needed(self):
         """Evict oldest finished tasks if total exceeds limit."""
         if len(self._tasks) <= self.MAX_TOTAL_TASKS:

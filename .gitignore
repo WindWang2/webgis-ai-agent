@@ -59,6 +59,9 @@ data/
 # Ad-hoc dev scripts / debug artifacts — keep on disk if useful but never commit
 scratch/
 temp_output.txt
+current-state
+initial_snapshot.png
+screenshot.png
 
 # Test / coverage artifacts
 .coverage

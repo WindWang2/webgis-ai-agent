@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import geopandas as gpd
-import numpy as np
 import rasterio
 
 logger = logging.getLogger(__name__)

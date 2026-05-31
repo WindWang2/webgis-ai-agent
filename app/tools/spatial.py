@@ -290,6 +290,28 @@ def register_spatial_tools(registry: ToolRegistry):
                     "radius": radius,
                     "palette": palette
                 }
+                # Generate legend_spec for native mode so the frontend can
+                # show a color gradient legend alongside the heatmap layer.
+                try:
+                    from app.services.cartography_service import COLOR_PALETTES
+                    palette_map = {
+                        "classic": "YlOrRd",
+                        "magma": "Magma",
+                        "viridis": "Viridis",
+                        "thermal": "Reds",
+                    }
+                    palette_key = palette_map.get(palette, "YlOrRd")
+                    palette_colors = COLOR_PALETTES.get(palette_key) \
+                        or COLOR_PALETTES.get("YlOrRd", ["#ffffb2", "#feb24c", "#bd0026"])
+                    data["legend_spec"] = {
+                        "type": "continuous",
+                        "min": 0.0,
+                        "max": 1.0,
+                        "palette": palette_key,
+                        "palette_colors": list(palette_colors),
+                    }
+                except Exception:
+                    pass
             if isinstance(data, dict) and data.get("type") == "FeatureCollection":
                 data = trim_features(data)
             return data

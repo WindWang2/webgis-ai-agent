@@ -106,9 +106,17 @@ export function useMapBridge(
               | Array<{ command: string; params?: Record<string, unknown> }>
               | undefined;
             if (commandFired) {
+              // Heatmap tools put data (image, bbox, geojson, palette…) at the
+              // top level of the result — NOT under a `params` sub-key.
+              // Destructure to separate the command from the rest, then pass
+              // the rest as params so map-action-handler can use them.
+              const { command: _cmd, params: _explicitParams, ...rest } = stepData.result!;
+              const actionParams = (_explicitParams && Object.keys(_explicitParams).length > 0)
+                ? _explicitParams
+                : rest;
               dispatchAction({
                 command: stepData.result!.command as MapActionPayload['command'],
-                params: (stepData.result!.params || {}) as MapActionPayload['params'],
+                params: actionParams as MapActionPayload['params'],
               });
             } else if (Array.isArray(batchCommands) && batchCommands.length > 0) {
               // Batch tool emits a sequence of commands (e.g. export_batch_maps).
