@@ -55,7 +55,7 @@ async def chat_completions(req: ChatRequest, _user: dict = Depends(get_current_u
     """非流式对话接口"""
     user_id = _user.get("user_id")
     try:
-        result = await engine.chat(
+        result = await get_engine().chat(
             req.message,
             session_id=req.session_id,
             map_state=req.map_state,
@@ -74,7 +74,7 @@ async def chat_stream(req: ChatRequest, _user: dict = Depends(get_current_user_o
     user_id = _user.get("user_id")
     async def event_generator():
         try:
-            async for event in engine.chat_stream(
+            async for event in get_engine().chat_stream(
                 req.message,
                 session_id=req.session_id,
                 map_state=req.map_state,
@@ -186,7 +186,7 @@ async def list_skills_api():
 async def clear_session(session_id: str, _user: dict = Depends(get_current_user_optional)):
     """清除会话（内存 + DB）— 受所有权检查保护（A2）。"""
     user_id = _user.get("user_id")
-    ok = await engine.clear_session(session_id, user_id=user_id)
+    ok = await get_engine().clear_session(session_id, user_id=user_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"status": "ok"}
@@ -195,7 +195,7 @@ async def clear_session(session_id: str, _user: dict = Depends(get_current_user_
 @router.get("/tools")
 async def list_tools():
     """列出可用工具"""
-    return {"tools": registry.get_schemas()}
+    return {"tools": get_registry().get_schemas()}
 
 
 class ToolExecuteRequest(BaseModel):
@@ -213,7 +213,7 @@ async def execute_tool_direct(req: ToolExecuteRequest, _user: dict = Depends(get
         return {"error": "missing tool name"}
 
     try:
-        result = await registry.dispatch(tool_name, args, session_id=req.session_id)
+        result = await get_registry().dispatch(tool_name, args, session_id=req.session_id)
         return result
     except Exception as e:
         logger.error(f"Tool execute error: {e}")

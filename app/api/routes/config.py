@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from typing import Optional
 
-from app.api.routes.chat import engine, registry
+from app.api.routes.chat import get_engine, get_registry
 from app.tools.skills import load_skills
 from app.core.auth import get_current_user
 
@@ -51,7 +51,7 @@ class LLMConfigRequest(BaseModel):
 @router.get("/llm")
 async def get_llm_config(_user: dict = Depends(get_current_user)):
     """获取当前 LLM 配置（admin only）"""
-    return engine.get_config()
+    return get_engine().get_config()
 
 @router.post("/llm")
 async def update_llm_config(
@@ -59,13 +59,13 @@ async def update_llm_config(
     _user: dict = Depends(get_current_user),
 ):
     """更新 LLM 配置（admin only）"""
-    engine.update_config(
+    get_engine().update_config(
         base_url=req.base_url,
         model=req.model,
         api_key=req.api_key,
         use_prompt_caching=req.use_prompt_caching
     )
-    return {"status": "ok", "config": engine.get_config()}
+    return {"status": "ok", "config": get_engine().get_config()}
 
 @router.get("/skills")
 async def list_skills():
@@ -154,11 +154,11 @@ async def upload_skill(
             f.write(content)
 
     # 重新加载
-    load_skills(registry, skills_dir)
+    load_skills(get_registry(), skills_dir)
     return {"status": "ok", "filename": os.path.basename(file_path)}
 
 @router.post("/skills/refresh")
 async def refresh_skills(_user: dict = Depends(get_current_user)):
     """手动触发技能刷新（admin only）"""
-    load_skills(registry)
+    load_skills(get_registry())
     return {"status": "ok"}

@@ -5,53 +5,32 @@ Run with: python -m pytest tests/test_task_api.py -v
 import pytest
 from httpx import AsyncClient, ASGITransport
 from fastapi import FastAPI
-import importlib.util
-import sys
-import os
-
-# 使用项目根目录
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, PROJECT_ROOT)
 
 from app.services.chat_engine import ChatEngine
 from app.tools.registry import ToolRegistry
+from app.api.routes import chat as chat_mod
+from app.api.routes.task import router as task_router
 
 # Create a real ChatEngine instance for tests
 _engine = ChatEngine(ToolRegistry())
+router = chat_mod.router
 
-# Load chat module directly to get engine instance
-chat_path = os.path.join(PROJECT_ROOT, "app", "api", "routes", "chat.py")
-_spec = importlib.util.spec_from_file_location(
-    "app.api.routes.chat",
-    chat_path,
-    submodule_search_locations=[]
-)
-_chat_mod = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_chat_mod)
-router = _chat_mod.router
 
-# 加载 task 模块
-task_path = os.path.join(PROJECT_ROOT, "app", "api", "routes", "task.py")
-_task_spec = importlib.util.spec_from_file_location(
-    "app.api.routes.task",
-    task_path,
-    submodule_search_locations=[]
-)
-_task_mod = importlib.util.module_from_spec(_task_spec)
-_task_spec.loader.exec_module(_task_mod)
-
-# 关键：用测试的 engine 替换 task 模块中的 engine
-_task_mod.engine = _engine
-
-task_router = _task_mod.router
+@pytest.fixture(autouse=True)
+def _inject_engine():
+    """Ensure chat module engine is set for every test in this module."""
+    original = chat_mod.engine
+    chat_mod.engine = _engine
+    yield
+    chat_mod.engine = original
 
 
 @pytest.fixture
 def app():
-    app = FastAPI()
-    app.include_router(router, prefix="/api/v1")
-    app.include_router(task_router, prefix="/api/v1")
-    return app
+    _app = FastAPI()
+    _app.include_router(router, prefix="/api/v1")
+    _app.include_router(task_router, prefix="/api/v1")
+    return _app
 
 
 @pytest.fixture

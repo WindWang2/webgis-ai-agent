@@ -39,11 +39,11 @@ services:
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru
       --bind 0.0.0.0
-      --requirepass ${REDIS_PASSWORD:-changeme_redis_password}
+      --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}
     volumes:
       - redis_data_secure:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -62,8 +62,8 @@ services:
       - DATABASE_URL=postgresql://${DB_USER:-webgis_prod}:${DB_PWD}@db:5432/${DB_NAME:-webgis_prod}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?Please set JWT_SECRET_KEY}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme_redis_password}@redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}@redis:6379/1
       - CORS_ORIGINS=${CORS_ORIGINS}
       - LOG_LEVEL=INFO
     env_file:
@@ -95,7 +95,7 @@ services:
       - DATABASE_URL=postgresql://${DB_USER:-webgis_prod}:${DB_PWD}@db:5432/${DB_NAME:-webgis_prod}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme_redis_password}@redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}@redis:6379/0
     env_file:
       - .env.Priv
     command: celery -A app.services.celery_worker worker --loglevel=info --concurrency=2

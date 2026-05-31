@@ -38,8 +38,9 @@ RUN pip install --no-cache-dir --break-system-packages \
 FROM python:3.12-slim-bookworm AS runner
 WORKDIR /app/backend
 
-# Install Node.js and tini (proper PID 1 process manager)
-RUN apt-get update && apt-get install -y --no-install-recommends nodejs tini \
+# Install Node.js, tini, and GDAL/GEOS/PROJ runtime libraries
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nodejs tini libgdal32t64 libgeos3.11.1t64 libproj25 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy frontend standalone output

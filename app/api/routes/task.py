@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
-from app.api.routes.chat import engine
+from app.api.routes.chat import get_engine
 
 router = APIRouter(prefix="/tasks", tags=["任务管理"])
 
@@ -38,7 +38,7 @@ class TaskCancelResponse(BaseModel):
 @router.get("/{task_id}", response_model=TaskStatusResponse)
 async def get_task(task_id: str) -> TaskStatusResponse:
     """查询任务状态和步骤详情"""
-    task_info = engine.tracker.get(task_id)
+    task_info = get_engine().tracker.get(task_id)
     if not task_info:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
@@ -65,10 +65,10 @@ async def get_task(task_id: str) -> TaskStatusResponse:
 async def list_tasks(session_id: Optional[str] = None) -> TaskListResponse:
     """列出任务，可按 session 过滤"""
     if session_id:
-        task_infos = engine.tracker.list_by_session(session_id)
+        task_infos = get_engine().tracker.list_by_session(session_id)
     else:
         # 返回所有任务
-        task_infos = engine.tracker.list_all()
+        task_infos = get_engine().tracker.list_all()
 
     tasks = []
     for task_info in task_infos:
@@ -97,7 +97,7 @@ async def list_tasks(session_id: Optional[str] = None) -> TaskListResponse:
 @router.delete("/{task_id}", response_model=TaskCancelResponse)
 async def cancel_task(task_id: str) -> TaskCancelResponse:
     """取消正在执行的任务"""
-    cancelled = engine.tracker.cancel(task_id)
+    cancelled = get_engine().tracker.cancel(task_id)
     return TaskCancelResponse(cancelled=cancelled)
 
 
