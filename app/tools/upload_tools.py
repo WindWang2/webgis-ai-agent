@@ -8,6 +8,7 @@ from app.tools.registry import ToolRegistry, tool
 from app.core.config import settings
 from app.tools._utils import db_session
 from app.models.upload import UploadRecord
+from app.utils.path import validate_data_path
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,11 @@ def register_upload_tools(registry: ToolRegistry):
 
         # 矢量数据：读取属性字段和 meta.json
         if record.file_type == "vector":
-            geojson_path = Path(record.filename)
+            try:
+                safe_path = validate_data_path(record.filename, settings.DATA_DIR)
+            except ValueError as e:
+                raise KeyError(f"文件路径校验失败: {e}")
+            geojson_path = Path(safe_path)
             meta_path = geojson_path.parent / "meta.json"
 
             if meta_path.exists():
@@ -109,7 +114,11 @@ def register_upload_tools(registry: ToolRegistry):
 
         # 栅格数据：读取 meta.json
         elif record.file_type == "raster":
-            meta_path = Path(record.filename).parent / "meta.json"
+            try:
+                safe_path = validate_data_path(record.filename, settings.DATA_DIR)
+            except ValueError as e:
+                raise KeyError(f"文件路径校验失败: {e}")
+            meta_path = Path(safe_path).parent / "meta.json"
             if meta_path.exists():
                 with open(meta_path, "r", encoding="utf-8") as f:
                     meta = json.load(f)

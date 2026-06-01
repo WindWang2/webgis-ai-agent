@@ -130,7 +130,7 @@ services:
     container_name: webgis-prod-prometheus
     restart: unless-stopped
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./deploy/prometheus.secure.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data_secure:/prometheus

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import get_current_user
 from app.core.database import get_async_db
 from app.models.api_response import ApiResponse, ErrCode
 from app.models.report import Report
@@ -34,6 +35,13 @@ ALLOWED_FORMATS = {"pdf", "html", "markdown", "md"}
 class GenerateReportRequest(BaseModel):
     session_id: str
     format: str = "pdf"
+
+
+def _validate_file_path(file_path: str, allowed_dir: str) -> bool:
+    """Ensure file_path resolves within allowed_dir (prevents traversal)."""
+    resolved = os.path.realpath(file_path)
+    root = os.path.realpath(allowed_dir)
+    return resolved == root or resolved.startswith(root + os.sep)
     title: Optional[str] = None
 
 
@@ -88,6 +96,7 @@ def _file_ext(fmt: str) -> str:
 async def create_report(
     request: GenerateReportRequest,
     db: AsyncSession = Depends(get_async_db),
+    _user: dict = Depends(get_current_user),
 ):
     """从会话历史生成报告"""
     fmt = request.format.lower()
@@ -176,6 +185,7 @@ async def create_report(
 async def list_reports(
     session_id: Optional[str] = Query(None, description="按会话 ID 筛选"),
     db: AsyncSession = Depends(get_async_db),
+    _user: dict = Depends(get_current_user),
 ):
     """列出报告"""
     stmt = select(Report).order_by(Report.created_at.desc())
@@ -218,6 +228,9 @@ async def view_shared_report(share_code: str, db: AsyncSession = Depends(get_asy
     if report.status != "completed" or not report.file_path or not os.path.exists(report.file_path):
         raise HTTPException(status_code=404, detail="报告文件不可用")
 
+    if not _validate_file_path(report.file_path, REPORT_DIR):
+        raise HTTPException(status_code=400, detail="非法文件路径")
+
     if report.format == "html":
         with open(report.file_path, "r", encoding="utf-8") as f:
             return Response(content=f.read(), media_type="text/html")
@@ -230,7 +243,7 @@ async def view_shared_report(share_code: str, db: AsyncSession = Depends(get_asy
 
 
 @router.get("/{report_id}", response_model=ApiResponse)
-async def get_report(report_id: str, db: AsyncSession = Depends(get_async_db)):
+async def get_report(report_id: str, db: AsyncSession = Depends(get_async_db), _user: dict = Depends(get_current_user)):
     """获取报告详情"""
     report = await db.get(Report, report_id)
     if not report:
@@ -239,7 +252,7 @@ async def get_report(report_id: str, db: AsyncSession = Depends(get_async_db)):
 
 
 @router.get("/{report_id}/download")
-async def download_report(report_id: str, db: AsyncSession = Depends(get_async_db)):
+async def download_report(report_id: str, db: AsyncSession = Depends(get_async_db), _user: dict = Depends(get_current_user)):
     """下载报告文件"""
     report = await db.get(Report, report_id)
     if not report:
@@ -248,6 +261,9 @@ async def download_report(report_id: str, db: AsyncSession = Depends(get_async_d
         raise HTTPException(status_code=400, detail="报告未生成完成")
     if not report.file_path or not os.path.exists(report.file_path):
         raise HTTPException(status_code=404, detail="报告文件不存在")
+
+    if not _validate_file_path(report.file_path, REPORT_DIR):
+        raise HTTPException(status_code=400, detail="非法文件路径")
 
     return FileResponse(
         report.file_path,
@@ -261,6 +277,7 @@ async def create_share_link(
     report_id: str,
     body: ShareRequest = ShareRequest(),
     db: AsyncSession = Depends(get_async_db),
+    _user: dict = Depends(get_current_user),
 ):
     """生成分享链接"""
     report = await db.get(Report, report_id)

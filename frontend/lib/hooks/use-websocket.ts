@@ -113,6 +113,9 @@ export function useWebSocket(sessionId?: string) {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
       if (socketRef.current) {
+        if ((socketRef.current as any)._pingInterval) {
+          clearInterval((socketRef.current as any)._pingInterval);
+        }
         socketRef.current.onclose = null;
         socketRef.current.close();
         socketRef.current = null;

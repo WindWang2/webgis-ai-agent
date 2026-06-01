@@ -62,8 +62,8 @@ app = FastAPI(
     description="WebGIS AI Agent - 智能地图分析与处理服务",
     version="0.1.0",
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if not settings.is_production() else None,
+    redoc_url="/redoc" if not settings.is_production() else None,
 )
 
 app.add_exception_handler(Exception, global_exception_handler)

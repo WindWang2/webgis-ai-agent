@@ -2,6 +2,7 @@
 报告生成服务 - 从会话历史生成 PDF/HTML/Markdown 报告
 使用 Jinja2 模板渲染 HTML，WeasyPrint 转换为 PDF
 """
+import html as html_mod
 import json
 import os
 import re
@@ -150,22 +151,23 @@ class ReportService:
 
     def _fallback_html(self, data: dict[str, Any]) -> str:
         """Minimal inline fallback when template file is missing."""
+        esc = html_mod.escape
         parts = [
-            f"<h1>{data['title']}</h1>",
-            f"<p>Generated: {data['generated_at']}</p>",
+            f"<h1>{esc(data['title'])}</h1>",
+            f"<p>Generated: {esc(data['generated_at'])}</p>",
             f"<p>Messages: {data['message_count']}</p>",
         ]
         for msg in data.get("messages", []):
             parts.append(
-                f"<div><b>{msg['role_label']}</b><pre>{msg['content']}</pre></div>"
+                f"<div><b>{esc(msg['role_label'])}</b><pre>{esc(msg['content'])}</pre></div>"
             )
         for tr in data.get("tool_results", []):
             parts.append(
-                f"<div><b>{tr['name']}</b><pre>{tr['result']}</pre></div>"
+                f"<div><b>{esc(tr['name'])}</b><pre>{esc(str(tr['result']))}</pre></div>"
             )
         return (
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-            f"<title>{data['title']}</title></head><body>"
+            f"<title>{esc(data['title'])}</title></head><body>"
             + "\n".join(parts)
             + "</body></html>"
         )
@@ -230,7 +232,6 @@ class ReportService:
         text = re.sub(r"\n{3,}", "\n\n", text.strip())
         return text
 
-    @staticmethod
     @staticmethod
     def _extract_tool_name(msg: dict[str, Any]) -> str:
         tool_calls = msg.get("tool_calls")

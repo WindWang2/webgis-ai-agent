@@ -10,9 +10,19 @@ from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-_BLOCKED_IMPORTS = {"os", "subprocess", "multiprocessing", "ctypes", "socket", "http", "urllib", "ftplib", "smtplib", "telnetlib", "xmlrpc", "shutil", "pathlib", "signal"}
-_BLOCKED_BUILTINS = {"eval", "exec", "compile", "__import__", "open", "input", "getattr", "setattr", "delattr", "globals", "locals", "vars", "dir"}
-_BLOCKED_ATTRS = {"system", "popen", "call", "run", "Popen"}
+_BLOCKED_IMPORTS = {
+    "os", "subprocess", "multiprocessing", "ctypes", "socket", "http",
+    "urllib", "ftplib", "smtplib", "telnetlib", "xmlrpc", "shutil",
+    "pathlib", "signal", "importlib", "builtins", "sys", "types",
+    "code", "io", "pickle", "marshal", "shelve", "tempfile",
+    "webbrowser", "antigravity", "asyncio",
+}
+_BLOCKED_BUILTINS = {
+    "eval", "exec", "compile", "__import__", "open", "input",
+    "getattr", "setattr", "delattr", "globals", "locals", "vars",
+    "dir", "breakpoint", "memoryview", "type",
+}
+_BLOCKED_ATTRS = {"system", "popen", "call", "run", "Popen", "exec_module"}
 
 # In-memory store for .md skill files: {name: {description, body, filename}}
 _md_skills: dict[str, dict] = {}

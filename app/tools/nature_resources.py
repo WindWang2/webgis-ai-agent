@@ -100,7 +100,11 @@ def register_nature_resource_tools(registry: ToolRegistry):
 
             elif action == "delete":
                 # 删除物理文件
-                full_path = os.path.join(settings.DATA_DIR, record.filename)
+                try:
+                    from app.utils.path import validate_data_path
+                    full_path = validate_data_path(record.filename, settings.DATA_DIR)
+                except ValueError as e:
+                    return {"error": f"文件路径校验失败: {e}"}
                 if os.path.exists(full_path):
                     os.remove(full_path)
 

@@ -2,6 +2,7 @@
 RAG 检索增强生成服务 - 基于 FAISS 的本地向量搜索
 支持: 文档嵌入、分块、相似度检索、与对话引擎集成
 """
+import asyncio
 import io
 import json
 import math
@@ -205,10 +206,13 @@ async def add_document(
                 )
                 db.add(chunk)
 
-            # 生成 embeddings 并建立向量索引
+            # 生成 embeddings 并建立向量索引 (offload to thread pool — CPU-heavy)
             embed_model = _get_embedding_model()
             texts = [ch["content"] for ch in chunk_list]
-            vectors = embed_model.encode(texts, normalize_embeddings=True)
+            loop = asyncio.get_running_loop()
+            vectors = await loop.run_in_executor(
+                None, lambda: embed_model.encode(texts, normalize_embeddings=True)
+            )
 
             # L2归一化转为一维数组
             vectors = np.array(vectors, dtype=np.float32)

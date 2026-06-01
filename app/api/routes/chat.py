@@ -64,8 +64,8 @@ async def chat_completions(req: ChatRequest, _user: dict = Depends(get_current_u
         )
         return ChatResponse(**result)
     except Exception as e:
-        logger.error(f"Chat error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Chat error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/stream")
@@ -83,8 +83,8 @@ async def chat_stream(req: ChatRequest, _user: dict = Depends(get_current_user_o
             ):
                 yield event
         except Exception as e:
-            logger.error(f"Stream error: {e}")
-            yield sse_event("error", {"error": str(e)})
+            logger.error(f"Stream error: {e}", exc_info=True)
+            yield sse_event("error", {"error": "Internal server error"})
 
     return StreamingResponse(
         event_generator(),

@@ -456,13 +456,16 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "distances": "缓冲距离列表（米），升序，例如 [500, 1000, 1500]",
                "merge_rings": "True=同心环带 (默认)；False=独立同心圆（每个完整覆盖到内圈）",
            })
-    def multi_ring_buffer(geojson: Any, distances: list = [500, 1000, 1500],
+    def multi_ring_buffer(geojson: Any, distances: list = None,
                            merge_rings: bool = True) -> dict:
         data = safe_parse_geojson(geojson)
         result = to_utm_gdf(data)
         if result is None:
             return {"error": "无法解析矢量数据"}
         gdf, utm_crs = result
+
+        if distances is None:
+            distances = [500, 1000, 1500]
 
         if not distances:
             return {"error": "需要至少一个缓冲距离"}

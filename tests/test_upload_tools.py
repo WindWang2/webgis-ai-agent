@@ -72,7 +72,7 @@ class TestUploadTools:
         mock_record.file_size = 1024
         mock_record.upload_time = MagicMock()
         mock_record.upload_time.isoformat.return_value = "2026-01-01T00:00:00"
-        mock_record.filename = "/data/test.geojson"
+        mock_record.filename = "uploads/1/test.geojson"
 
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = mock_record

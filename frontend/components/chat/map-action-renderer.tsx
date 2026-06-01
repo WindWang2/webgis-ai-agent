@@ -3,6 +3,16 @@ import { useEffect, useState } from 'react';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 import { MapIcon, CheckCircle2 } from 'lucide-react';
 
+const ALLOWED_COMMANDS = new Set([
+  'add_layer', 'fly_to', 'zoom_to_bbox', 'set_map_view',
+  'add_heatmap_raster', 'add_native_heatmap',
+  'base_layer_change', 'layer_visibility_update', 'layer_style_update',
+  'remove_layer', 'reorder_layer',
+  'export_map', 'add_raster_layer',
+  'add_marker', 'draw_measurement', 'clear_annotations',
+  'apply_layer_filter',
+]);
+
 interface MapActionRendererProps {
   content: string;
 }
@@ -40,7 +50,7 @@ export function MapActionRenderer({ content }: MapActionRendererProps) {
       jsonBlocks.forEach(block => {
         try {
           const action = JSON.parse(block);
-          if (action && action.command) {
+          if (action && action.command && ALLOWED_COMMANDS.has(action.command)) {
             dispatchAction(action);
             successCount++;
           }

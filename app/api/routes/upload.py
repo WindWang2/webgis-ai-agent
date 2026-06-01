@@ -257,6 +257,11 @@ async def get_upload_geojson(upload_id: int):
     if not geojson_path.exists():
         raise HTTPException(status_code=404, detail="GeoJSON 文件不存在")
 
+    resolved = geojson_path.resolve()
+    data_root = Path(settings.DATA_DIR).resolve()
+    if data_root not in resolved.parents and resolved != data_root:
+        raise HTTPException(status_code=400, detail="非法文件路径")
+
     with open(geojson_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -270,13 +275,13 @@ async def delete_upload(upload_id: int):
         if not record:
             raise HTTPException(status_code=404, detail="上传记录不存在")
 
-        # 删除文件目录
         file_path = Path(record.filename)
-        upload_dir = file_path.parent
-        if upload_dir.exists():
-            import shutil
-            shutil.rmtree(upload_dir, ignore_errors=True)
-
         await db.delete(record)
+
+    # File cleanup AFTER DB commit succeeds
+    upload_dir = file_path.parent
+    if upload_dir.exists():
+        import shutil
+        shutil.rmtree(upload_dir, ignore_errors=True)
 
     return {"success": True, "message": "已删除"}

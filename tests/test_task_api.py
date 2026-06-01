@@ -4,16 +4,19 @@ Run with: python -m pytest tests/test_task_api.py -v
 """
 import pytest
 from httpx import AsyncClient, ASGITransport
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 
 from app.services.chat_engine import ChatEngine
 from app.tools.registry import ToolRegistry
 from app.api.routes import chat as chat_mod
 from app.api.routes.task import router as task_router
+from app.core.auth import get_current_user
 
 # Create a real ChatEngine instance for tests
 _engine = ChatEngine(ToolRegistry())
 router = chat_mod.router
+
+_mock_user = {"user_id": "test-user"}
 
 
 @pytest.fixture(autouse=True)
@@ -28,6 +31,7 @@ def _inject_engine():
 @pytest.fixture
 def app():
     _app = FastAPI()
+    _app.dependency_overrides[get_current_user] = lambda: _mock_user
     _app.include_router(router, prefix="/api/v1")
     _app.include_router(task_router, prefix="/api/v1")
     return _app

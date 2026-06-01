@@ -8,6 +8,7 @@ re-export，保持外部 import 兼容。
 import asyncio
 import json
 import logging
+import re
 import uuid
 from typing import AsyncGenerator, Optional, Any, TYPE_CHECKING
 
@@ -772,6 +773,7 @@ class ChatEngine:
         if deleted:
             if session_id in self._sessions:
                 del self._sessions[session_id]
+            self._session_locks.pop(session_id, None)
             await session_data_manager.clear_session(session_id)
             from app.services.chat import planner
             planner.clear_plan(session_id)

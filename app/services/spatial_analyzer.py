@@ -3,6 +3,7 @@ SpatialAnalyzer Refactored: Thin wrapper delegating to new geoprocessing and geo
 Supports the standardized GeoAnalysisResult.
 """
 import logging
+import re
 from typing import Dict, List, Any, Optional, Callable
 from app.lib.geo_processor.core import GeoAnalysisResult
 from app.lib.geo_processor.geometry import buffer_smart, clip_smart
@@ -100,6 +101,27 @@ class SpatialAnalyzer:
         layer_b = {"type": "FeatureCollection", "features": features_b}
         return overlay_smart(layer_a, layer_b, how)
 
+    # Whitelist: identifiers, numbers, strings, comparison/logical operators, parens, brackets
+    _SAFE_QUERY_RE = re.compile(
+        r"^[\w\s.\'\":<>=!(),\[\]-]+$"
+    )
+    _BLOCKED_KEYWORDS = frozenset({
+        "import", "exec", "eval", "compile", "open", "breakpoint",
+        "globals", "locals", "getattr", "setattr", "delattr",
+        "__import__", "__builtins__", "__name__",
+    })
+
+    @classmethod
+    def _validate_query(cls, query: str) -> Optional[str]:
+        """Return error message if query is unsafe, None if safe."""
+        if not cls._SAFE_QUERY_RE.match(query):
+            return f"Unsafe query: disallowed characters in '{query}'"
+        lowered = query.lower()
+        for kw in cls._BLOCKED_KEYWORDS:
+            if kw in lowered:
+                return f"Unsafe query: disallowed keyword '{kw}'"
+        return None
+
     @classmethod
     def attribute_filter(
         cls,
@@ -107,6 +129,9 @@ class SpatialAnalyzer:
         query: str,
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
+        validation_error = cls._validate_query(query)
+        if validation_error:
+            return GeoAnalysisResult(False, None, validation_error)
         try:
             import geopandas as gpd
             gdf = gpd.GeoDataFrame.from_features(features)

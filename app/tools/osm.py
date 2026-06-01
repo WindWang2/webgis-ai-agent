@@ -147,7 +147,7 @@ async def _nominatim_search_poi(category: str, bbox: str, limit: int) -> dict:
     }
     features = []
     async with aiohttp.ClientSession(headers={"User-Agent": "WebGIS-AI-Agent/1.0"}) as session:
-        async with session.get(settings.NOMINATIM_URL, params=params, ssl=_get_ssl_context(),
+        async with session.get(settings.NOMINATIM_URL, params=params, ssl=get_ssl_context(),
             ) as resp:
             if resp.status != 200:
                 return {"type": "FeatureCollection", "features": []}

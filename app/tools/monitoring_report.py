@@ -2,6 +2,7 @@
 自然资源监测报告生成系统
 将多个分析资产（NDVI、变化检测、地形分析等）整合为标准化监测报告
 """
+import html as html_mod
 import logging
 import os
 import uuid
@@ -111,9 +112,10 @@ def _fallback_monitoring_html(
     conclusions: Optional[str],
 ) -> str:
     """当模板文件缺失时的极简 fallback HTML"""
+    esc = html_mod.escape
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     parts = [
-        f"<!DOCTYPE html><html lang='zh-CN'><head><meta charset='UTF-8'><title>{title}</title>",
+        f"<!DOCTYPE html><html lang='zh-CN'><head><meta charset='UTF-8'><title>{esc(title)}</title>",
         "<style>body{font-family:sans-serif;max-width:900px;margin:40px auto;padding:20px;line-height:1.6;color:#333}",
         "h1{color:#1e40af;border-bottom:3px solid #3b82f6;padding-bottom:10px}",
         "h2{color:#1e40af;margin-top:30px;border-left:4px solid #3b82f6;padding-left:12px}",
@@ -124,26 +126,26 @@ def _fallback_monitoring_html(
         ".summary{background:#ecfdf5;border-left:4px solid #059669;padding:16px;margin:16px 0}",
         ".conclusions{background:#eff6ff;border-left:4px solid #3b82f6;padding:16px;margin:16px 0}",
         "</style></head><body>",
-        f"<h1>{title}</h1>",
-        f"<div class='meta'>监测区域：{region_name} | 监测时期：{period} | 生成时间：{now}</div>",
+        f"<h1>{esc(title)}</h1>",
+        f"<div class='meta'>监测区域：{esc(region_name)} | 监测时期：{esc(period)} | 生成时间：{now}</div>",
     ]
 
     if summary_text:
-        parts.append(f"<h2>执行摘要</h2><div class='summary'>{summary_text}</div>")
+        parts.append(f"<h2>执行摘要</h2><div class='summary'>{esc(summary_text)}</div>")
 
     if assets:
         parts.append(f"<h2>分析资产 ({len(assets)} 项)</h2>")
         for a in assets:
             parts.append(
                 f"<div class='asset-card'>"
-                f"<div class='asset-name'>{a.get('name', '未命名')}</div>"
+                f"<div class='asset-name'>{esc(a.get('name', '未命名'))}</div>"
                 f"<div class='asset-meta'>ID: {a.get('id')} | 格式: {a.get('format')} | "
                 f"大小: {a.get('file_size_kb', 0)} KB | 时间: {a.get('time', 'N/A')}</div>"
                 f"</div>"
             )
 
     if conclusions:
-        parts.append(f"<h2>结论与建议</h2><div class='conclusions'>{conclusions}</div>")
+        parts.append(f"<h2>结论与建议</h2><div class='conclusions'>{esc(conclusions)}</div>")
 
     parts.append(f"<hr><p style='text-align:center;color:#94a3b8;font-size:12px'>由 WebGIS AI Agent 自动生成 · {now}</p>")
     parts.append("</body></html>")

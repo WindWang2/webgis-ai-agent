@@ -119,9 +119,17 @@ spec:
         - "1gb"
         - "--maxmemory-policy"
         - "allkeys-lru"
+        - "--requirepass"
+        - "$(REDIS_PASSWORD)"
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: webgis-secret
+              key: REDIS_PASSWORD
         livenessProbe:
           exec:
-            command: ["redis-cli", "ping"]
+            command: ["redis-cli", "-a", "$(REDIS_PASSWORD)", "ping"]
           initialDelaySeconds: 10
           periodSeconds: 5
         volumeMounts:

@@ -43,6 +43,18 @@ export function useSSEStream(
   const thinkingMsgIdRef = useRef<string>('');
   const rawContentRef = useRef<string>('');
   const msgIdGen = useRef(createMessageIdGenerator());
+  const layerFetchAbortRef = useRef<AbortController | null>(null);
+
+  // Reset abort controller on session change to cancel in-flight layer fetches
+  useEffect(() => {
+    if (layerFetchAbortRef.current) {
+      layerFetchAbortRef.current.abort();
+    }
+    layerFetchAbortRef.current = new AbortController();
+    return () => {
+      layerFetchAbortRef.current?.abort();
+    };
+  }, [sessionId]);
 
   const parseThink = useCallback((raw: string) => {
     const start = raw.indexOf('<think>');
@@ -155,7 +167,9 @@ export function useSSEStream(
           if (data.geojson_ref) {
             const sid = sessionIdRef.current;
             const fetchRef = data.geojson_ref;
-            fetch(`${API_BASE}/api/v1/layers/data/${fetchRef}?session_id=${sid}`)
+            fetch(`${API_BASE}/api/v1/layers/data/${fetchRef}?session_id=${sid}`, {
+              signal: layerFetchAbortRef.current?.signal,
+            })
               .then((r) => (r.ok ? r.json() : null))
               .then((geojson) => {
                 if (geojson && (geojson.type === 'FeatureCollection' || geojson.features)) {
@@ -306,10 +320,12 @@ export function useSSEStream(
   }, []);
 
   const handleSendRef = useRef<((text: string) => void) | null>(null);
+  const isLoadingRef = useRef(isLoading);
+  isLoadingRef.current = isLoading;
 
   const handleSend = useCallback(
     async (userMsg: string) => {
-      if (!userMsg || isLoading) return;
+      if (!userMsg || isLoadingRef.current) return;
 
       const { viewport, baseLayer, is3D, layers: hudLayers, selectedFeature } = useHudStore.getState();
       const liveSnapshot = getMapSnapshot();

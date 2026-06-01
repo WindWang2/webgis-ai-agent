@@ -210,16 +210,17 @@ async def load_plan(session_id: str, plan_id: str) -> Optional[dict]:
 
 
 async def update_plan_status(session_id: str, plan_id: str, **updates: Any) -> None:
-    """原地更新计划的状态字段（status、results、failed_step 等）。
+    """更新计划的状态字段并写回存储。
 
-    注意：session_data_manager.get 会移动到 LRU 末尾。本函数仅在已加载的 dict 上
-    更新（in-place），因为同对象被持续引用。
+    Redis 后端 get() 返回反序列化副本，原地 update 不会持久化，
+    因此必须显式 store 写回。
     """
     plan_data = await load_plan(session_id, plan_id)
     if plan_data is None:
         logger.warning(f"update_plan_status: plan {plan_id} 不存在")
         return
     plan_data.update(updates)
+    await session_data_manager.store(session_id, plan_data, prefix="plan")
 
 
 # ─────────────────────────────── 执行引擎 ───────────────────────────────

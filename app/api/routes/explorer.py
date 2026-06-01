@@ -46,8 +46,8 @@ async def start_exploration(req: StartExploreRequest) -> dict:
         )
         return {"task_id": task_id, "status": "started"}
     except Exception as e:
-        logger.error(f"Failed to start exploration: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Failed to start exploration: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/status/{task_id}")
@@ -62,7 +62,8 @@ async def get_task_status(task_id: str) -> ExploreStatusResponse:
             result=status.get("result"),
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Explorer status error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/abort/{task_id}")

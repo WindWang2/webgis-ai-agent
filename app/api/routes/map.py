@@ -133,7 +133,8 @@ async def upload_map_export(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"保存导出图失败: {str(e)}")
+        logger.error(f"Export failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="保存导出图失败")
 
     download_url = f"/api/v1/export/download/{filename}"
     return {
@@ -250,7 +251,8 @@ async def export_map_as_pdf(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"PDF 生成失败: {str(e)}")
+        logger.error(f"PDF export failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="PDF 生成失败")
 
     return {
         "success": True,
