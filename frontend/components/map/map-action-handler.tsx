@@ -394,10 +394,14 @@ export function MapActionHandler() {
           const {
             title,
             subtitle,
+            author = '',
+            dataSource = '',
             showWatermark = true,
             showLegend = action.params?.showLegend ?? action.params?.include_legend ?? true,
             showCompass = action.params?.showCompass ?? action.params?.include_compass ?? true,
             showScale = action.params?.showScale ?? action.params?.include_scale ?? true,
+            showMetadata = true,
+            showGraticules = false,
             format = "png",
             paperSize = "screen",
             orientation = "landscape",
@@ -421,19 +425,43 @@ export function MapActionHandler() {
           deferredPop = true;
 
           map.once("render", async () => {
+            // High-DPI: set MapLibre pixel ratio for true resolution capture
+            const origPixelRatio = map.getPixelRatio();
+            const targetPixelRatio = dpi / 96;
             try {
+              if (targetPixelRatio > 1) {
+                map.setPixelRatio(targetPixelRatio);
+                // Wait for MapLibre to re-render at new resolution
+                await new Promise<void>(resolve => map.once("idle", () => resolve()));
+              }
+
               const baseCanvas = map.getCanvas();
+              // Canvas is now at target DPI, so pass dpi=96 to avoid double-scaling
               const { canvas: exportCanvas, srcW } = exporter.prepareExportCanvas(baseCanvas, {
                 paperSize: paperSize as any,
                 orientation: orientation as any,
-                dpi
+                dpi: 96
               });
 
               const storeState = useHudStore.getState();
+
+              // Find legend_spec from any visible layer that has one
+              const legendLayer = storeState.layers.find(
+                (l) => l.visible && l.legend_spec
+              );
+              const legendSpec = legendLayer?.legend_spec;
+
+              // Find thematic layer (choropleth/lisa) for legacy path
               const thematicLayerInfo = storeState.layers.find(
                 (l) => l.visible && ((l.style as any)?.type === "choropleth" || (l.style as any)?.type === "lisa" || (l.source as any)?.metadata?.thematic_type === "choropleth")
               );
               const thematicLayer = (thematicLayerInfo?.style as any)?.type ? thematicLayerInfo?.style : thematicLayerInfo;
+
+              // Find heatmap layer for gradient legend
+              const heatmapLayer = storeState.layers.find(
+                (l) => l.visible && l.type === 'heatmap'
+              );
+              const heatmapLegend = heatmapLayer ? { name: heatmapLayer.name } : undefined;
 
               exporter.composeLayout(exportCanvas, title || '', subtitle || '', {
                 dpi,
@@ -442,10 +470,15 @@ export function MapActionHandler() {
                 showCompass,
                 showWatermark,
                 showLegend,
+                showMetadata,
+                author,
+                dataSource,
                 mapCenter: map.getCenter(),
                 mapZoom: map.getZoom(),
                 mapBearing: map.getBearing(),
-                thematicLayer
+                thematicLayer,
+                legendSpec,
+                heatmapLegend,
               });
 
               const dataUrl = exportCanvas.toDataURL("image/png");
@@ -485,25 +518,23 @@ export function MapActionHandler() {
                     `文件已落盘并分配URL：${svgUrl}。可通过以下链接下载：[下载SVG](${API_BASE}${svgUrl})。注意展示完链接后直接结束。`
                 );
               } else if (fmt === "pdf") {
-                const pdfForm = new FormData();
-                pdfForm.append("file", blob, "export.png");
-                if (title) pdfForm.append("title", title);
-                if (subtitle) pdfForm.append("subtitle", subtitle);
-                const centerLat = map.getCenter().lat;
-                const zoom = map.getZoom();
-                const mpp =
-                  (156543.03392 * Math.cos((centerLat * Math.PI) / 180)) /
-                  Math.pow(2, zoom);
-                const mapWidthMeters = mpp * srcW;
-                const physicalWidthMeters = srcW * (0.0254 / 96);
-                const scaleApprox = Math.round(mapWidthMeters / physicalWidthMeters);
-                pdfForm.append("scale_text", `1:${scaleApprox.toLocaleString()}`);
+                // Client-side PDF generation with jsPDF (vector text/lines)
+                const pdfBlob = await exporter.exportToPDF(exportCanvas, title || '', subtitle, {
+                  paperSize: (paperSize === 'A3' ? 'A3' : 'A4') as 'A4' | 'A3',
+                  orientation: orientation as 'landscape' | 'portrait',
+                  author,
+                  dataSource,
+                });
 
-                const pdfRes = await fetch(`${API_BASE}/api/v1/export/pdf`, {
+                const pdfForm = new FormData();
+                pdfForm.append("file", pdfBlob, "export.pdf");
+                if (title) pdfForm.append("title", title);
+
+                const pdfRes = await fetch(`${API_BASE}/api/v1/export`, {
                   method: "POST",
                   body: pdfForm,
                 });
-                if (!pdfRes.ok) throw new Error(`PDF endpoint returned ${pdfRes.status}`);
+                if (!pdfRes.ok) throw new Error(`PDF upload failed: ${pdfRes.status}`);
                 const pdfData = await pdfRes.json();
                 const pdfUrl: string = pdfData.url;
                 useHudStore.getState().addExport({
@@ -511,11 +542,11 @@ export function MapActionHandler() {
                   name: title || '未命名',
                   filename: pdfData.filename,
                   type: 'pdf',
-                  size: `${(blob.size / 1024).toFixed(0)}KB`,
+                  size: `${(pdfBlob.size / 1024).toFixed(0)}KB`,
                   date: new Date().toLocaleString(),
                 });
                 useHudStore.getState().setPendingSystemMessage(
-                  `[系统通知] 专题底图 PDF \`${title || "未命名"}\` 已成功生成，` +
+                  `[系统通知] 专题底图 PDF \`${title || "未命名"}\` 已成功生成 (jsPDF 向量版)，` +
                     `文件已落盘并分配URL：${pdfUrl}。` +
                     `请告知用户 PDF 已就绪，可通过以下链接下载：[下载PDF](${API_BASE}${pdfUrl})。注意展示完链接后直接结束。`
                 );
@@ -550,6 +581,10 @@ export function MapActionHandler() {
                 `[系统通知] 专题地图排版合成失败。错误原因: ${e}。请向用户致歉并结束流程。`
               );
             } finally {
+              // Restore original pixel ratio (even on error)
+              if (targetPixelRatio > 1) {
+                map.setPixelRatio(origPixelRatio);
+              }
               // F5: 真正合成完才出队，杜绝重入
               popAction();
             }

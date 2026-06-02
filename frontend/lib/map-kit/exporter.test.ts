@@ -101,6 +101,44 @@ describe('exporter', () => {
       expect(ctx.fillText).toHaveBeenCalledWith('0 - 100', expect.any(Number), expect.any(Number));
       expect(ctx.fillText).toHaveBeenCalledWith('100 - 200', expect.any(Number), expect.any(Number));
     });
+
+    it('should draw heatmap gradient legend', () => {
+      const options = {
+        showLegend: true,
+        heatmapLegend: { name: 'Density Heatmap' },
+        dpi: 96,
+      };
+
+      composeLayout(canvas, 'Title', undefined, options);
+
+      // Should draw the layer name
+      expect(ctx.fillText).toHaveBeenCalledWith('DENSITY HEATMAP', expect.any(Number), expect.any(Number));
+      // Should draw gradient labels
+      expect(ctx.fillText).toHaveBeenCalledWith('极低', expect.any(Number), expect.any(Number));
+      expect(ctx.fillText).toHaveBeenCalledWith('极高', expect.any(Number), expect.any(Number));
+    });
+
+    it('should draw multiple legends when legendSpec and heatmapLegend are both provided', () => {
+      const options = {
+        showLegend: true,
+        legendSpec: {
+          type: 'graduated',
+          field: 'income',
+          breaks: [1000, 5000, 10000],
+          palette: 'YlOrRd',
+          palette_colors: ['#ffffb2', '#fed976', '#fd8d3c'],
+        },
+        heatmapLegend: { name: 'Crime Density' },
+        dpi: 96,
+      };
+
+      composeLayout(canvas, 'Title', undefined, options);
+
+      // Should draw legend spec field name
+      expect(ctx.fillText).toHaveBeenCalledWith(expect.stringContaining('income'), expect.any(Number), expect.any(Number));
+      // Should draw heatmap name
+      expect(ctx.fillText).toHaveBeenCalledWith('CRIME DENSITY', expect.any(Number), expect.any(Number));
+    });
   });
 
   describe('downloadBlob', () => {
