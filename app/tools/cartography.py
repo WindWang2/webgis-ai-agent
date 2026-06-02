@@ -18,7 +18,7 @@ def _safe_parse_geojson(geojson: Any) -> dict | None:
         return None
     try:
         return json.loads(geojson)
-    except:
+    except (json.JSONDecodeError, ValueError, TypeError):
         return None
 
 class ApplyStyleArgs(BaseModel):

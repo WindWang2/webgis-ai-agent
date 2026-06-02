@@ -223,27 +223,12 @@ def run_attribute_filter(self, features: List[Dict], query: str):
     if result.success: return {"success": True, "data": result.data}
     return {"success": False, "error": result.error_message}
 
-@celery_app.task(name="app.services.spatial_tasks.run_spatial_join", bind=True)
-def run_spatial_join(self, left: List[Dict], right: List[Dict], join_type: str = "inner", predicate: str = "intersects"):
-    def cb(curr, msg): self.update_state(state='PROGRESS', meta={'progress': curr, 'message': msg})
-    result = SpatialAnalyzer.spatial_join(left, right, join_type=join_type, predicate=predicate, callback=cb)
-    if result.success: return {"success": True, "data": result.data}
-    return {"success": False, "error": result.error_message}
-
 @celery_app.task(name="app.services.spatial_tasks.run_path_analysis", bind=True)
 def run_path_analysis(self, network_features: List[Dict], start_point: List[float], end_point: List[float]):
     def cb(curr, msg): self.update_state(state='PROGRESS', meta={'progress': curr, 'message': msg})
     result = SpatialAnalyzer.path_analysis(network_features, start_point, end_point, callback=cb)
     if result.success: return {"success": True, "data": result.data}
     return {"success": False, "error": result.error_message}
-
-@celery_app.task(name="app.services.spatial_tasks.run_zonal_stats", bind=True)
-def run_zonal_stats(self, zones: List[Dict], raster_path: str):
-    def cb(curr, msg): self.update_state(state='PROGRESS', meta={'progress': curr, 'message': msg})
-    result = SpatialAnalyzer.zonal_statistics(zones, raster_path, callback=cb)
-    if result.success: return {"success": True, "data": result.data}
-    return {"success": False, "error": result.error_message}
-
 
 # --- 自然资源与遥感任务 ---
 
