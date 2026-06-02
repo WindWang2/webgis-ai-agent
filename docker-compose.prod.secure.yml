@@ -61,7 +61,7 @@ services:
       - DEBUG=false
       - DATABASE_URL=postgresql://${DB_USER:-webgis_prod}:${DB_PWD}@db:5432/${DB_NAME:-webgis_prod}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?Please set JWT_SECRET_KEY}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme_redis_password}@redis:6379/0
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}@redis:6379/0
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}@redis:6379/0
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}@redis:6379/1
       - CORS_ORIGINS=${CORS_ORIGINS}
@@ -94,8 +94,9 @@ services:
       - ENV=production
       - DATABASE_URL=postgresql://${DB_USER:-webgis_prod}:${DB_PWD}@db:5432/${DB_NAME:-webgis_prod}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme_redis_password}@redis:6379/0
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}@redis:6379/0
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}@redis:6379/1
     env_file:
       - .env.Priv
     command: celery -A app.services.celery_worker worker --loglevel=info --concurrency=2
@@ -109,7 +110,7 @@ services:
 
   # Nginx 反向代理（HTTPS 终止）
   nginx:
-    image: nginx:latest-alpine
+    image: nginx:1.27-alpine
     container_name: webgis-prod-nginx
     restart: unless-stopped
     ports:
@@ -117,7 +118,7 @@ services:
       - "443:443"
     volumes:
       - ./deploy/nginx/ssl:/etc/nginx/ssl:ro
-      - ./deploy/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - nginx_logs_secure:/var/log/nginx
     depends_on:
       - api
