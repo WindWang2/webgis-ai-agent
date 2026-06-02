@@ -123,7 +123,8 @@ async def upload_files(
         with open(temp_path, "wb") as f:
             f.write(content)
     except OSError as e:
-        raise HTTPException(status_code=500, detail=f"文件保存失败: {e}")
+        logger.error(f"文件保存失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="文件保存失败")
 
     # 解析文件 — parse_vector / parse_raster 内含 gpd.read_file / rasterio.open
     # 这些是同步 CPU+IO 操作，常常需要数秒。直接在 async def 里调用会阻塞整个
@@ -139,7 +140,7 @@ async def upload_files(
         raise HTTPException(status_code=400, detail=str(e))
     except (OSError, RuntimeError) as e:
         logger.error(f"文件解析异常: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"文件解析失败: {e}")
+        raise HTTPException(status_code=500, detail="文件解析失败")
 
     # 保存元信息
     save_meta(upload_dir, meta)
