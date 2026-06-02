@@ -7,6 +7,9 @@ import json
 import pytest
 
 from app.main import app
+from app.core.auth import get_current_user
+
+_mock_user = {"user_id": "test-user"}
 
 
 class TestGeoJSONExportEndpoint:
@@ -14,6 +17,7 @@ class TestGeoJSONExportEndpoint:
 
     def test_geojson_export_returns_download_url(self):
         from fastapi.testclient import TestClient
+        app.dependency_overrides[get_current_user] = lambda: _mock_user
         client = TestClient(app)
 
         geojson = {
@@ -35,6 +39,7 @@ class TestGeoJSONExportEndpoint:
 
     def test_geojson_export_rejects_invalid_data(self):
         from fastapi.testclient import TestClient
+        app.dependency_overrides[get_current_user] = lambda: _mock_user
         client = TestClient(app)
 
         resp = client.post(
@@ -45,6 +50,7 @@ class TestGeoJSONExportEndpoint:
 
     def test_geojson_export_validates_feature_collection(self):
         from fastapi.testclient import TestClient
+        app.dependency_overrides[get_current_user] = lambda: _mock_user
         client = TestClient(app)
 
         resp = client.post(

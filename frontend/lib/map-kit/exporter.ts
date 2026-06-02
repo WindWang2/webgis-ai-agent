@@ -256,7 +256,7 @@ export function composeLayout(
     const parts: string[] = [];
     if (author) parts.push(`作者: ${author}`);
     parts.push(`日期: ${new Date().toISOString().slice(0, 10)}`);
-    if (mapCenter) parts.push(`CRS: EPSG:4326`);
+    if (mapCenter) parts.push(`CRS: EPSG:4326 (display)`);
     if (dataSource) parts.push(`数据: ${dataSource}`);
 
     if (parts.length > 0) {

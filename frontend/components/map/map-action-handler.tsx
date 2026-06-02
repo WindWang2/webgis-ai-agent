@@ -471,6 +471,7 @@ export function MapActionHandler() {
                 showWatermark,
                 showLegend,
                 showMetadata,
+                showGraticules,
                 author,
                 dataSource,
                 mapCenter: map.getCenter(),

@@ -52,7 +52,7 @@ async def start_exploration(req: StartExploreRequest, _user: dict = Depends(get_
 
 
 @router.get("/status/{task_id}")
-async def get_task_status(task_id: str) -> ExploreStatusResponse:
+async def get_task_status(task_id: str, _user: dict = Depends(get_current_user)) -> ExploreStatusResponse:
     """查询任务状态"""
     try:
         status = await orchestrator.get_task_status(task_id)
@@ -75,7 +75,7 @@ async def abort_task(task_id: str, _user: dict = Depends(get_current_user)) -> d
 
 
 @router.get("/stream/{task_id}")
-async def stream_progress(task_id: str):
+async def stream_progress(task_id: str, _user: dict = Depends(get_current_user)):
     """SSE 实时进度流"""
     async def event_generator():
         async for event in orchestrator.stream_progress(task_id):

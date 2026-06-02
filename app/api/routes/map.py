@@ -5,7 +5,7 @@
 接收前端 Canvas 合成结果并持久化。支持 PNG 和标准 PDF 制图输出。
 """
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import Optional, Any
 import io
@@ -17,6 +17,7 @@ import time
 import tempfile
 from fastapi.responses import FileResponse
 from app.core.config import settings
+from app.core.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,7 @@ def _sanitize_svg(content: bytes) -> bytes:
 async def upload_map_export(
     file: UploadFile = File(...),
     title: Optional[str] = Form(default=None),
+    _user: dict = Depends(get_current_user),
 ):
     """接收来自前端的 Canvas 合成结果并持久化，返回可供下载访问的链接。"""
     if not file.filename:
@@ -152,6 +154,7 @@ async def export_map_as_pdf(
     subtitle: Optional[str] = Form(default=None),
     author: Optional[str] = Form(default="WebGIS AI Agent"),
     scale_text: Optional[str] = Form(default=None),
+    _user: dict = Depends(get_current_user),
 ):
     """
     将前端合成的地图图片嵌入标准 A4 横向专题底图 PDF。
@@ -264,7 +267,7 @@ async def export_map_as_pdf(
 
 
 @router.get("/export/download/{filename}", tags=["地图制图"])
-def download_map_export(filename: str):
+def download_map_export(filename: str, _user: dict = Depends(get_current_user)):
     """下载生成的专题地图成果（PNG / PDF）"""
     safe_filename = os.path.basename(filename)
     filepath = os.path.join(EXPORT_DIR, safe_filename)
@@ -288,7 +291,7 @@ class GeoJSONExportRequest(BaseModel):
 
 
 @router.post("/export/geojson", tags=["地图制图"])
-async def export_geojson(req: GeoJSONExportRequest):
+async def export_geojson(req: GeoJSONExportRequest, _user: dict = Depends(get_current_user)):
     """接收 GeoJSON 数据并持久化为可下载文件。"""
     data = req.geojson
     if not isinstance(data, dict):
