@@ -7,13 +7,14 @@ import { API_BASE } from '@/lib/api/config';
 import type { SSEEvent } from '@/lib/api/chat';
 import type { ToolCallEntry, PlanProposalPayload } from '@/lib/store/hud-types';
 import type { AgentPlanState } from '@/lib/types/agent-plan';
+import type { MapActionPayload } from '@/lib/types';
 import { createMessageIdGenerator } from './use-message-id';
 
 export function useSSEStream(
   sessionId: string | undefined,
   setSessionId: (sid: string) => void,
   sessionIdRef: React.MutableRefObject<string | undefined>,
-  dispatchAction: (act: any) => void,
+  dispatchAction: (act: MapActionPayload) => void,
   getMapSnapshot: () => any,
   userLocation: { lng: number; lat: number; accuracy?: number } | null
 ) {
@@ -24,6 +25,7 @@ export function useSSEStream(
       content: string;
       timestamp: Date | number | null;
       isThinking?: boolean;
+      think?: string;
       charts?: unknown[];
       toolCalls?: ToolCallEntry[];
       plan?: PlanProposalPayload;
@@ -89,7 +91,7 @@ export function useSSEStream(
           setMessages((prev) =>
             prev.map((m) =>
               m.id === thinkingId
-                ? { ...m, think: ((m as any).think || '') + chunk, isThinking: false }
+                ? { ...m, think: (m.think || '') + chunk, isThinking: false }
                 : m
             )
           );
@@ -102,7 +104,7 @@ export function useSSEStream(
                 ? {
                     ...m,
                     content: parsed.content,
-                    think: parsed.thinking || (m as any).think,
+                    think: parsed.thinking || m.think,
                     isThinking: false,
                   }
                 : m

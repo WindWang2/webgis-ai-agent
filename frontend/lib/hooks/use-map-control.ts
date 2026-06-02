@@ -35,7 +35,8 @@ export function useMapControl(mounted: boolean) {
         },
         () => {
           setViewport([116.4074, 39.9042], 10.0, 0, 0);
-        }
+        },
+        { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
       );
     }
   }, [setViewport, pushOpLog, mounted]);
