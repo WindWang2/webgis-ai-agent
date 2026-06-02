@@ -64,11 +64,15 @@ export interface ExportSettings {
   isExportMode: boolean;
   title: string;
   subtitle: string;
+  author: string;
+  dataSource: string;
   showWatermark: boolean;
   showCompass: boolean;
   showScale: boolean;
   showLegend: boolean;
-  paperSize: 'screen' | 'A4';
+  showMetadata: boolean;
+  showGraticules: boolean;
+  paperSize: 'screen' | 'A4' | 'A3';
   orientation: 'landscape' | 'portrait';
   dpi: number;
   format: 'png' | 'pdf' | 'svg' | 'geojson';

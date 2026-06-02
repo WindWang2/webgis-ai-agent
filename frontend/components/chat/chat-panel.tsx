@@ -225,7 +225,7 @@ export function ChatHud({
             exit={{ height: 0, opacity: 0 }}
           >
             <div className="pt-3">
-              <UploadZone sessionId={sessionId} onUploadSuccess={onUploadSuccess!} compact={true} />
+              <UploadZone sessionId={sessionId} onUploadSuccess={onUploadSuccess ?? (() => {})} compact={true} />
             </div>
           </motion.div>
         )}

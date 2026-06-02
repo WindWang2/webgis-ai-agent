@@ -216,5 +216,5 @@ async def execute_tool_direct(req: ToolExecuteRequest, _user: dict = Depends(get
         result = await get_registry().dispatch(tool_name, args, session_id=req.session_id)
         return result
     except Exception as e:
-        logger.error(f"Tool execute error: {e}")
-        return {"error": str(e)}
+        logger.error(f"Tool execute error: {e}", exc_info=True)
+        return {"error": "Tool execution failed"}

@@ -35,6 +35,7 @@ ALLOWED_FORMATS = {"pdf", "html", "markdown", "md"}
 class GenerateReportRequest(BaseModel):
     session_id: str
     format: str = "pdf"
+    title: Optional[str] = None
 
 
 def _validate_file_path(file_path: str, allowed_dir: str) -> bool:
@@ -42,7 +43,6 @@ def _validate_file_path(file_path: str, allowed_dir: str) -> bool:
     resolved = os.path.realpath(file_path)
     root = os.path.realpath(allowed_dir)
     return resolved == root or resolved.startswith(root + os.sep)
-    title: Optional[str] = None
 
 
 class ReportListResponse(BaseModel):
@@ -166,7 +166,7 @@ async def create_report(
     except Exception as e:
         logger.error(f"Report generation error: {e}", exc_info=True)
         report.status = "failed"
-        report.error_message = str(e)
+        report.error_message = "报告生成失败"
 
     await db.commit()
     await db.refresh(report)
@@ -174,7 +174,7 @@ async def create_report(
     if report.status == "failed":
         return ApiResponse.fail(
             code=ErrCode.SERVER_ERROR,
-            message=f"报告生成失败: {report.error_message}",
+            message="报告生成失败",
             data=_serialize_report(report),
         )
 

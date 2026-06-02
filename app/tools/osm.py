@@ -92,8 +92,9 @@ async def _geocode_bbox(query: str, expand_km: float = 0) -> Optional[str]:
     }
     async with aiohttp.ClientSession(headers=get_base_headers()) as session:
         async with session.get(
-            settings.NOMINATIM_URL, 
-            params=params, 
+            settings.NOMINATIM_URL,
+            params=params,
+            timeout=aiohttp.ClientTimeout(total=30),
             ssl=get_ssl_context(),
             proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY
             ) as resp:

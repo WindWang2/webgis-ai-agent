@@ -22,7 +22,15 @@ _BLOCKED_BUILTINS = {
     "getattr", "setattr", "delattr", "globals", "locals", "vars",
     "dir", "breakpoint", "memoryview", "type",
 }
-_BLOCKED_ATTRS = {"system", "popen", "call", "run", "Popen", "exec_module"}
+_BLOCKED_ATTRS = {
+    "system", "popen", "call", "run", "Popen", "exec_module",
+    "execl", "execle", "execlp", "execv", "execve", "execvp",
+    "spawn", "fork", "startfile",
+    # Dunder attributes that enable MRO chain / sandbox escape
+    "__subclasses__", "__globals__", "__init__", "__bases__",
+    "__mro__", "__class__", "__import__", "__builtins__",
+    "__loader__", "__spec__", "__getattribute__",
+}
 
 # In-memory store for .md skill files: {name: {description, body, filename}}
 _md_skills: dict[str, dict] = {}
@@ -98,6 +106,10 @@ def _validate_skill_code(code: str) -> list[str]:
                 root_mod = node.module.split(".")[0]
                 if root_mod in _BLOCKED_IMPORTS:
                     errors.append(f"Blocked import: {node.module}")
+
+        # Block dunder attribute access on any node (MRO chain / sandbox escape)
+        if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+            errors.append(f"Blocked dunder attribute: {node.attr}")
 
         if isinstance(node, ast.Call):
             func = node.func

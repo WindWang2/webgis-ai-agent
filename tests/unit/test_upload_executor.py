@@ -12,6 +12,10 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from app.core.auth import get_current_user
+
+_mock_user = {"user_id": "test-user"}
+
 
 @pytest_asyncio.fixture
 async def app_and_signals(tmp_path, monkeypatch):
@@ -22,6 +26,7 @@ async def app_and_signals(tmp_path, monkeypatch):
     from app.api.routes import upload as upload_routes
 
     app = FastAPI()
+    app.dependency_overrides[get_current_user] = lambda: _mock_user
     app.include_router(upload_routes.router, prefix="/api/v1")
 
     # 记录调用 parse_vector 时所在的线程 id

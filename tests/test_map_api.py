@@ -8,6 +8,10 @@ import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
+from app.core.auth import get_current_user
+
+_mock_user = {"user_id": "test-user"}
+
 
 def _load_module():
     spec = importlib.util.spec_from_file_location(
@@ -24,6 +28,7 @@ def _load_module():
 def app():
     mod = _load_module()
     app = FastAPI()
+    app.dependency_overrides[get_current_user] = lambda: _mock_user
     app.include_router(mod.router, prefix="/api/v1")
     return app
 
@@ -131,6 +136,7 @@ async def test_download_pdf_media_type(tmp_path):
 
     with patch.object(mod, "EXPORT_DIR", str(tmp_path)):
         app = FastAPI()
+        app.dependency_overrides[get_current_user] = lambda: _mock_user
         app.include_router(mod.router, prefix="/api/v1")
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:

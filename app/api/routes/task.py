@@ -105,14 +105,14 @@ async def cancel_task(task_id: str, _user: dict = Depends(get_current_user)) -> 
 # ── Celery Task Status API ──────────────────────────────────────────
 
 @router.get("/status/{task_id}")
-async def get_celery_task_status(task_id: str):
+async def get_celery_task_status(task_id: str, _user: dict = Depends(get_current_user)):
     """查询 Celery 异步任务状态"""
     from app.services.task_queue import TaskQueueService
     return TaskQueueService.get_task_status(task_id)
 
 
 @router.delete("/status/{task_id}")
-async def revoke_celery_task(task_id: str):
+async def revoke_celery_task(task_id: str, _user: dict = Depends(get_current_user)):
     """撤销 Celery 异步任务"""
     from app.services.task_queue import TaskQueueService
     revoked = TaskQueueService.revoke_task(task_id)

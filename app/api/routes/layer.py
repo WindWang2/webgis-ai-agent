@@ -7,9 +7,10 @@
 - 空间分析任务端点已移除 — Agent 通过 tool calling 驱动分析，不再走 REST CRUD。
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.services.session_data import session_data_manager
+from app.core.auth import get_current_user_optional
 
 router = APIRouter()
 
@@ -18,6 +19,7 @@ router = APIRouter()
 async def get_session_layer_data(
     ref_id: str,
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
+    _user: dict = Depends(get_current_user_optional),
 ):
     """通过引用 ID 获取会话缓存中的大数据对象（如分析产生的 GeoJSON）。"""
     if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):

@@ -116,6 +116,9 @@ class SpatialAnalyzer:
         """Return error message if query is unsafe, None if safe."""
         if not cls._SAFE_QUERY_RE.match(query):
             return f"Unsafe query: disallowed characters in '{query}'"
+        # Block any double-underscore attribute access (MRO chain bypass)
+        if "__" in query:
+            return f"Unsafe query: double-underscore attribute access forbidden in '{query}'"
         lowered = query.lower()
         for kw in cls._BLOCKED_KEYWORDS:
             if kw in lowered:

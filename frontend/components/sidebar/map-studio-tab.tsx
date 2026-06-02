@@ -173,6 +173,42 @@ export function MapStudioTab() {
                   className="w-full text-xs border rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium" 
                 />
               </div>
+
+              <div>
+                <label className="block text-[15px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: isDark ? '#94a3b8' : '#64748b' }}>
+                  作者
+                </label>
+                <input
+                  type="text"
+                  value={exportSettings.author}
+                  onChange={(e) => handleChange('author', e.target.value)}
+                  placeholder="制图者名称"
+                  style={{
+                    backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#fff',
+                    borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
+                    color: isDark ? '#f8fafc' : '#0f172a'
+                  }}
+                  className="w-full text-xs border rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[15px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: isDark ? '#94a3b8' : '#64748b' }}>
+                  数据来源
+                </label>
+                <input
+                  type="text"
+                  value={exportSettings.dataSource}
+                  onChange={(e) => handleChange('dataSource', e.target.value)}
+                  placeholder="如：OSM, 天地图"
+                  style={{
+                    backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#fff',
+                    borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
+                    color: isDark ? '#f8fafc' : '#0f172a'
+                  }}
+                  className="w-full text-xs border rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+                />
+              </div>
             </div>
 
             {/* Map Decorations / Elements */}
@@ -184,8 +220,10 @@ export function MapStudioTab() {
                 {[
                   { id: 'compass', key: 'showCompass', label: '指北针' },
                   { id: 'scale', key: 'showScale', label: '比例尺' },
-                  { id: 'legend', key: 'showLegend', label: '图图例' },
+                  { id: 'legend', key: 'showLegend', label: '图例' },
                   { id: 'watermark', key: 'showWatermark', label: 'AI 水印' },
+                  { id: 'metadata', key: 'showMetadata', label: '元数据' },
+                  { id: 'graticules', key: 'showGraticules', label: '坐标格网' },
                 ].map((el) => (
                   <label 
                     key={el.id}
@@ -254,6 +292,7 @@ export function MapStudioTab() {
                   >
                     <option value="screen">当前屏幕比例 (Screen)</option>
                     <option value="A4">A4 标准纸张尺寸</option>
+                    <option value="A3">A3 大幅面纸张</option>
                   </select>
                 </div>
 

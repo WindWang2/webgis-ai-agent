@@ -6,6 +6,9 @@ from fastapi import FastAPI
 import importlib.util
 import os
 
+from app.core.auth import get_current_user
+
+_mock_user = {"user_id": "test-user"}
 
 _mod = None
 
@@ -27,6 +30,7 @@ def _get_module():
 def app():
     mod = _get_module()
     app = FastAPI()
+    app.dependency_overrides[get_current_user] = lambda: _mock_user
     app.include_router(mod.router, prefix="/api/v1")
     return app
 

@@ -4,8 +4,9 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { API_BASE } from '@/lib/api/config';
 import type { ChatSession } from '@/lib/types/chat';
+import type { MapActionPayload } from '@/lib/types';
 
-export function useWorkspaceSession(dispatchAction: (action: any) => void) {
+export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) => void) {
   const [sessionId, setSessionId] = useState<string>();
   const sessionIdRef = useRef<string | undefined>(undefined);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -35,6 +36,7 @@ export function useWorkspaceSession(dispatchAction: (action: any) => void) {
   const refreshSessions = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/api/v1/chat/sessions`);
+      if (!res.ok) return;
       const data = await res.json();
       if (data.sessions) setSessions(data.sessions);
     } catch (err) {

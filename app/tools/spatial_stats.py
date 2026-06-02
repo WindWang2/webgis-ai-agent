@@ -121,8 +121,11 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                 numeric_cols = [c for c in gdf.columns if c != "geometry" and gdf[c].dtype in ("float64", "int64", "float32", "int32")]
                 return {"error": f"字段 '{value_field}' 不是数值类型。可用字段: {numeric_cols}"}
             weights = np.abs(weights)
-            # Weighted: repeat points by weight
-            repeat_factors = np.maximum((weights / weights.min()).astype(int), 1)
+            # Weighted: repeat points by weight (clamped to avoid OOM)
+            min_w = float(weights.min())
+            if min_w == 0:
+                min_w = 1e-10
+            repeat_factors = np.clip(np.maximum((weights / min_w).astype(int), 1), 1, 100)
             weighted_coords = np.repeat(coords, repeat_factors, axis=0)
             kde_data = weighted_coords.T
         else:
@@ -221,6 +224,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
     @cached_tool(ttl=86400)
     def kde_contours(geojson: Any, levels: int = 8, bandwidth: float = 0) -> dict:
         try:
+            import matplotlib
+            matplotlib.use("Agg")
             import matplotlib.pyplot as plt
             from scipy.stats import gaussian_kde
         except ImportError:
@@ -310,8 +315,10 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "geojson": "输入点要素 GeoJSON FeatureCollection 或数据引用(ref:xxx)",
                "clip_bounds": "可选：裁剪范围 [xmin, ymin, xmax, ymax]（WGS84），默认使用数据范围+10%缓冲",
            })
-    def voronoi_polygons(geojson: Any, clip_bounds: list = []) -> dict:
+    def voronoi_polygons(geojson: Any, clip_bounds: list = None) -> dict:
         from scipy.spatial import Voronoi
+        if clip_bounds is None:
+            clip_bounds = []
 
         data = safe_parse_geojson(geojson)
         result = to_utm_gdf(data)

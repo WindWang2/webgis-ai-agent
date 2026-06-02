@@ -68,7 +68,7 @@ async def update_llm_config(
     return {"status": "ok", "config": get_engine().get_config()}
 
 @router.get("/skills")
-async def list_skills():
+async def list_skills(_user: dict = Depends(get_current_user)):
     """列出当前已加载的技能（.py + .md）"""
     skills_dir = "app/skills"
     if not os.path.exists(skills_dir):

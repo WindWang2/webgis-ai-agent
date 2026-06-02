@@ -1,12 +1,13 @@
 """Explorer API Route"""
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 
 from app.services.explorer.orchestrator import ExplorerOrchestrator
 from app.services.explorer.models import SearchContext
+from app.core.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/explorer", tags=["探索引擎"])
@@ -30,7 +31,7 @@ class ExploreStatusResponse(BaseModel):
 
 
 @router.post("/start")
-async def start_exploration(req: StartExploreRequest) -> dict:
+async def start_exploration(req: StartExploreRequest, _user: dict = Depends(get_current_user)) -> dict:
     """启动深度探索任务"""
     try:
         context = SearchContext(
@@ -51,7 +52,7 @@ async def start_exploration(req: StartExploreRequest) -> dict:
 
 
 @router.get("/status/{task_id}")
-async def get_task_status(task_id: str) -> ExploreStatusResponse:
+async def get_task_status(task_id: str, _user: dict = Depends(get_current_user)) -> ExploreStatusResponse:
     """查询任务状态"""
     try:
         status = await orchestrator.get_task_status(task_id)
@@ -67,14 +68,14 @@ async def get_task_status(task_id: str) -> ExploreStatusResponse:
 
 
 @router.post("/abort/{task_id}")
-async def abort_task(task_id: str) -> dict:
+async def abort_task(task_id: str, _user: dict = Depends(get_current_user)) -> dict:
     """中止任务"""
     success = await orchestrator.abort_task(task_id)
     return {"task_id": task_id, "aborted": success}
 
 
 @router.get("/stream/{task_id}")
-async def stream_progress(task_id: str):
+async def stream_progress(task_id: str, _user: dict = Depends(get_current_user)):
     """SSE 实时进度流"""
     async def event_generator():
         async for event in orchestrator.stream_progress(task_id):

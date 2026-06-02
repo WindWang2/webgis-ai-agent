@@ -97,12 +97,16 @@ export interface MapActionPayload {
     showLegend?: boolean;
     showCompass?: boolean;
     showScale?: boolean;
+    showMetadata?: boolean;
+    showGraticules?: boolean;
+    author?: string;
+    dataSource?: string;
     include_legend?: boolean;
     include_compass?: boolean;
     include_scale?: boolean;
     dark_mode?: boolean;
     format?: string;
-    paperSize?: 'screen' | 'A4';
+    paperSize?: 'screen' | 'A4' | 'A3';
     orientation?: 'landscape' | 'portrait';
     dpi?: number;
     padding?: number;  // For zoom_to_bbox

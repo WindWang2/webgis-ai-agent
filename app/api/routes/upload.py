@@ -6,11 +6,12 @@ import uuid
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select, func
 
 from app.core.config import settings
+from app.core.auth import get_current_user
 from app.tools._utils import db_session, async_db_session
 from app.models.upload import UploadRecord
 from app.services.data_parser import (
@@ -61,6 +62,7 @@ class ErrorResponse(BaseModel):
 async def upload_files(
     files: List[UploadFile] = File(..., description="GIS 数据文件（支持多文件上传）"),
     session_id: Optional[str] = Form(None, description="关联的会话 ID"),
+    _user: dict = Depends(get_current_user),
 ):
     """
     上传 GIS 数据文件
@@ -123,7 +125,8 @@ async def upload_files(
         with open(temp_path, "wb") as f:
             f.write(content)
     except OSError as e:
-        raise HTTPException(status_code=500, detail=f"文件保存失败: {e}")
+        logger.error(f"文件保存失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="文件保存失败")
 
     # 解析文件 — parse_vector / parse_raster 内含 gpd.read_file / rasterio.open
     # 这些是同步 CPU+IO 操作，常常需要数秒。直接在 async def 里调用会阻塞整个
@@ -139,7 +142,7 @@ async def upload_files(
         raise HTTPException(status_code=400, detail=str(e))
     except (OSError, RuntimeError) as e:
         logger.error(f"文件解析异常: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"文件解析失败: {e}")
+        raise HTTPException(status_code=500, detail="文件解析失败")
 
     # 保存元信息
     save_meta(upload_dir, meta)
@@ -182,7 +185,7 @@ async def upload_files(
 # ==================== 查询接口 ====================
 
 @router.get("/uploads", response_model=UploadListResponse)
-async def list_uploads(
+async def list_uploads(_user: dict = Depends(get_current_user),
     session_id: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
@@ -218,7 +221,7 @@ async def list_uploads(
 
 
 @router.get("/uploads/{upload_id}", response_model=UploadResponse)
-async def get_upload(upload_id: int):
+async def get_upload(upload_id: int, _user: dict = Depends(get_current_user)):
     """获取单个上传文件的详情"""
     async with async_db_session() as db:
         result = await db.execute(select(UploadRecord).where(UploadRecord.id == upload_id))
@@ -241,7 +244,7 @@ async def get_upload(upload_id: int):
 
 
 @router.get("/uploads/{upload_id}/geojson")
-async def get_upload_geojson(upload_id: int):
+async def get_upload_geojson(upload_id: int, _user: dict = Depends(get_current_user)):
     """获取上传文件的 GeoJSON 数据（用于地图渲染）"""
     async with async_db_session() as db:
         result = await db.execute(select(UploadRecord).where(UploadRecord.id == upload_id))
@@ -267,7 +270,7 @@ async def get_upload_geojson(upload_id: int):
 
 
 @router.delete("/uploads/{upload_id}")
-async def delete_upload(upload_id: int):
+async def delete_upload(upload_id: int, _user: dict = Depends(get_current_user)):
     """删除上传记录及文件"""
     async with async_db_session() as db:
         result = await db.execute(select(UploadRecord).where(UploadRecord.id == upload_id))
