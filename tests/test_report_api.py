@@ -94,3 +94,34 @@ def test_file_ext():
     assert mod._file_ext("html") == "html"
     assert mod._file_ext("markdown") == "md"
     assert mod._file_ext("md") == "md"
+
+
+# ── Bug fixes: title field + dead code ─────────────────────────────
+
+
+def test_generate_report_request_accepts_title():
+    """GenerateReportRequest must accept an optional title field."""
+    mod = _load_module()
+    req = mod.GenerateReportRequest(session_id="s1", title="My Report")
+    assert req.title == "My Report"
+
+
+def test_generate_report_request_title_defaults_none():
+    """GenerateReportRequest.title defaults to None when not provided."""
+    mod = _load_module()
+    req = mod.GenerateReportRequest(session_id="s1")
+    assert req.title is None
+
+
+def test_validate_file_path_no_dead_code():
+    """_validate_file_path returns a bool, no unreachable code after return."""
+    import inspect
+    mod = _load_module()
+    source = inspect.getsource(mod._validate_file_path)
+    lines = [l.strip() for l in source.splitlines()]
+    # Find the return statement
+    return_idx = next(i for i, l in enumerate(lines) if l.startswith("return "))
+    # No executable statements after return (only docstring/blank allowed)
+    for line in lines[return_idx + 1:]:
+        assert line == "" or line.startswith("#") or line == '"""', \
+            f"Unreachable code after return: {line}"

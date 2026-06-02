@@ -78,3 +78,22 @@ class TestAttributeFilterQueryValidation:
         assert not result.success
         # Must be rejected by our validator, not by a pandas exception
         assert "unsafe" in result.summary.lower() or "disallowed" in result.summary.lower()
+
+    # --- Dunder attribute bypass must also be rejected ---
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            '"col".__class__.__bases__',
+            '().__class__.__subclasses__()',
+            '"col".__class__.__mro__',
+            '"col".__init__()',
+            '"col".__init__.__globals__',
+            '"x".__class__.__bases__[0].__subclasses__()',
+        ],
+    )
+    def test_rejects_dunder_attribute_bypass(self, query):
+        """MRO chain and dunder attributes must be blocked."""
+        result = SpatialAnalyzer.attribute_filter(FEATURES, query)
+        assert not result.success
+        assert "unsafe" in result.summary.lower() or "disallowed" in result.summary.lower()

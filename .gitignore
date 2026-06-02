@@ -84,6 +84,7 @@ dump.rdb
 *.rdb
 .context/
 .gstack/
+.gbrain-source
 data/admin_division/
 
 # Planning scratch files
