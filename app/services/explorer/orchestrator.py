@@ -90,7 +90,7 @@ class ExplorerOrchestrator:
                 meta = info.get("meta", {}) if isinstance(info, dict) else {}
 
                 event = ExplorerPerceptionEvent(
-                    stage=meta.get("stage", "unknown"),
+                    stage=meta.get("stage", "pending"),
                     task_id=task_id,
                     status="progress" if current_state == "PROGRESS" else (
                         "completed" if current_state == "SUCCESS" else (

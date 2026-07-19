@@ -11,19 +11,27 @@ from app.adapters.base import DataSource
 logger = logging.getLogger(__name__)
 
 
-def _store_ref(data: dict, prefix: str = "explorer") -> str:
-    """存储数据到 session manager，返回 ref_id"""
+def _store_ref(data: dict, task_id: str, prefix: str = "explorer") -> str:
+    """存储数据到 session manager，返回 ref_id。
+
+    审计 C2/S45：之前所有 explorer 任务共享硬编码 session_id="explorer"，
+    导致 (1) 并发任务互相覆盖 ref；(2) cleanup_idle_sessions 或 LRU 淘汰
+    会丢弃在飞任务的数据；(3) 任何 GET /layers/data/{ref}?session_id=
+    explorer 都能读到所有 explorer 任务的中间结果。改用 task_id 作命名空间。
+    """
     from app.services.session_data import session_data_manager
     # asyncio.run() is safe here for Celery prefork workers; breaks with gevent/eventlet concurrency
-    ref_id = asyncio.run(session_data_manager.store("explorer", data, prefix=prefix))
+    session_namespace = f"explorer:{task_id}"
+    ref_id = asyncio.run(session_data_manager.store(session_namespace, data, prefix=prefix))
     return ref_id
 
 
-def _load_ref(ref_id: str):
-    """从 session manager 加载数据"""
+def _load_ref(ref_id: str, task_id: str):
+    """从 session manager 加载数据（按 task_id 命名空间）。"""
     from app.services.session_data import session_data_manager
     # asyncio.run() is safe here for Celery prefork workers; breaks with gevent/eventlet concurrency
-    return asyncio.run(session_data_manager.get("explorer", ref_id))
+    session_namespace = f"explorer:{task_id}"
+    return asyncio.run(session_data_manager.get(session_namespace, ref_id))
 
 
 @celery_app.task(bind=True, max_retries=2, soft_time_limit=30, time_limit=30)
@@ -84,7 +92,7 @@ def explorer_fetch_task(self, prev_result: dict):
                 "data": raw.data.hex(),
                 "content_type": raw.content_type,
                 "encoding": raw.encoding,
-            }, prefix="fetch")
+            }, task_id=task_id, prefix="fetch")
 
             results.append({
                 "source_id": source.id,
@@ -124,7 +132,7 @@ def explorer_parse_task(self, prev_result: dict):
     parsed_all = []
     for result in fetch_results:
         ref_id = result["ref_id"]
-        stored = _load_ref(ref_id)
+        stored = _load_ref(ref_id, task_id=task_id)
 
         if not stored:
             logger.warning(f"[Explorer:{task_id}] Ref {ref_id} not found")
@@ -147,7 +155,7 @@ def explorer_parse_task(self, prev_result: dict):
             "rows": structured.rows,
             "fields": [f.model_dump() for f in structured.fields],
             "mapping": mapping,
-        }, prefix="parsed")
+        }, task_id=task_id, prefix="parsed")
 
         parsed_all.append({
             "source_id": result["source_id"],
@@ -186,7 +194,7 @@ def explorer_geocode_task(self, prev_result: dict):
     multi_provider = False
 
     for parsed in parsed_results:
-        data = _load_ref(parsed["ref_id"])
+        data = _load_ref(parsed["ref_id"], task_id=task_id)
         if not data:
             processed += parsed["row_count"]
             continue
@@ -333,7 +341,7 @@ def explorer_geocode_task(self, prev_result: dict):
             "success_rate": success_rate,
             "multi_provider": multi_provider,
         }
-    }, prefix="geocoded")
+    }, task_id=task_id, prefix="geocoded")
 
     self.update_state(state="PROGRESS", meta={"stage": "geocode", "progress": 100})
 

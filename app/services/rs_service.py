@@ -401,11 +401,33 @@ class RemoteSensingService:
                                     resampling=Resampling.average).astype(float)
 
             index_type = index_type.lower()
+            # 安全除法：分母 <=0 的像素（水面/阴影/Sentinel-2 L2A 负反射率）必须
+            # 被 mask 为 0，而不是用 1 当假分母 —— 否则会得到成千的伪值。
+            # 之前的 np.where(cond, a, 1) 写法只在分母位置替换，分子仍是 (nir-r)
+            # 原值，结果是 (nir-r)/1 = nir-r（在反射率 0-10000 标度下是几千）。
+            # 修复：用 np.divide + out + where，分母<=0 的位置直接取 out 数组（=0）。
+            # 与同文件 compute_ndvi (行 130-134) 的 mask=0 语义一致。
             formulas = {
-                "ndvi": (["red", "nir"], lambda r, nir: (nir - r) / np.where((nir + r) > 0, nir + r, 1)),
-                "ndwi": (["green", "nir"], lambda g, nir: (g - nir) / np.where((g + nir) > 0, g + nir, 1)),
-                "nbr": (["nir", "swir12"], lambda nir, swir: (nir - swir) / np.where((nir + swir) > 0, nir + swir, 1)),
-                "evi": (["blue", "red", "nir"], lambda b, r, nir: 2.5 * (nir - r) / np.where((nir + 6 * r - 7.5 * b + 1) > 0, nir + 6 * r - 7.5 * b + 1, 1)),
+                "ndvi": (["red", "nir"], lambda r, nir: np.divide(
+                    nir - r, nir + r,
+                    out=np.zeros_like(nir - r, dtype=float),
+                    where=(nir + r) > 0,
+                )),
+                "ndwi": (["green", "nir"], lambda g, nir: np.divide(
+                    g - nir, g + nir,
+                    out=np.zeros_like(g - nir, dtype=float),
+                    where=(g + nir) > 0,
+                )),
+                "nbr": (["nir", "swir12"], lambda nir, swir: np.divide(
+                    nir - swir, nir + swir,
+                    out=np.zeros_like(nir - swir, dtype=float),
+                    where=(nir + swir) > 0,
+                )),
+                "evi": (["blue", "red", "nir"], lambda b, r, nir: 2.5 * np.divide(
+                    nir - r, nir + 6 * r - 7.5 * b + 1,
+                    out=np.zeros_like(nir - r, dtype=float),
+                    where=(nir + 6 * r - 7.5 * b + 1) > 0,
+                )),
             }
 
             if index_type not in formulas:

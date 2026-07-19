@@ -17,7 +17,9 @@ class DataSourceQualityScore(BaseModel):
 
 class ExplorerPerceptionEvent(BaseModel):
     """Explorer 感知事件协议"""
-    stage: Literal["discover", "fetch", "parse", "geocode", "validate"]
+    # stage 加 "pending"：Celery PENDING 状态时 meta 为空，默认值不能是非法 Literal
+    # （审计 C4：之前默认 "unknown" 会让 pydantic 抛 ValidationError 整条 SSE 流崩溃）
+    stage: Literal["pending", "discover", "fetch", "parse", "geocode", "validate"]
     task_id: str
     status: Literal["started", "progress", "decision_point", "completed", "failed"]
     context: dict = Field(default_factory=dict)
