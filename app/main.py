@@ -69,6 +69,19 @@ app = FastAPI(
 app.add_exception_handler(Exception, global_exception_handler)
 
 
+# Prometheus metrics — 审计 I11：之前 prometheus.yml 抓 /api/v1/metrics 但 app
+# 从未暴露任何 metrics 端点 → 监控全是 up==0 / No data。instrumentator 在 /metrics
+# 暴露 http_requests_total / http_request_duration_seconds 等，与 alerts-rules.json
+# 对齐。
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+    # 不传 should_group_status_codes 等参数 —— 不同版本 API 不一致，使用默认最稳。
+    # 健康检查端点产生的噪声由 Prometheus 端的 metric relabel 过滤即可。
+    Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+except ImportError:
+    logger.warning("prometheus-fastapi-instrumentator not installed — /metrics endpoint disabled")
+
+
 # Rate limiting middleware (Redis with in-memory fallback)
 class RateLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, max_requests: int = 60, window_seconds: int = 60):

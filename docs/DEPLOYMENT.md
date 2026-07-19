@@ -69,3 +69,67 @@ npm run dev
 ## 排障雷达 (Troubleshooting)
 - **前端白屏/不显示建筑物**：按下 F12 查看网络。如果 `/api/v1/layer/xxxx/data` 报 404，极大概率是您的 Redis 没有启动或容积超标。
 - **对话框没反应**：去终端看看是不是 `celery worker` 压根没开，大模型把计算扔给后台后一直处于 Pending 等待中。
+
+## 🔐 Secret Management (审计 I4 + I6)
+
+`deploy/k8s/01-configmap.yaml` **不再** 内嵌 Secret 资源 —— 明文凭证不应
+进 git。部署前必须用以下方式创建：
+
+### K8s
+
+```bash
+kubectl create secret generic webgis-secret --namespace=webgis-prod \
+  --from-literal=DATABASE_URL='postgresql://USER:PWD@postgres:5432/DB' \
+  --from-literal=JWT_SECRET_KEY="$(openssl rand -hex 32)" \
+  --from-literal=REDIS_URL='redis://:PWD@redis:6379/0' \
+  --from-literal=CELERY_BROKER_URL='redis://:PWD@redis:6379/0' \
+  --from-literal=CELERY_RESULT_BACKEND='redis://:PWD@redis:6379/1'
+```
+
+更安全：SealedSecrets / External Secrets / Vault。
+
+### Docker Compose
+
+把凭证写进 `.env.production`（gitignored），compose 的 `${VAR:?...}` 语法
+会在缺失时强制 fail。
+
+### 初始 admin 账号
+
+公开注册默认关闭（审计 S28）。运维通过 CLI 创建初始 admin：
+
+```bash
+python manage.py create-admin <username> <email> <password>
+```
+
+然后用 `POST /api/v1/auth/login` 拿 JWT。
+
+## 🗃️ Database Migration (审计 I6)
+
+Alembic 现在可用 —— `migrations/env.py` 从 `DATABASE_URL` 读连接，
+`migrations/versions/` 含 initial schema。
+
+### 首次部署
+
+```bash
+# 在已运行的容器里跑（或本地 export DATABASE_URL=... 后跑）
+alembic upgrade head
+```
+
+### 已存在 init_db() 建过 schema 的环境
+
+`init_db()` 走 `Base.metadata.create_all`（只创建缺失的表），alembic
+不知道这些表已存在。需要先 "stamp" 当前状态再 upgrade：
+
+```bash
+# 1. 把当前 schema 标记为 head（不执行任何 SQL）
+alembic stamp head
+# 2. 之后任何新 revision 都能正常 upgrade
+```
+
+### 生成新 revision
+
+```bash
+# 改完 app/models/db_model.py 后：
+DATABASE_URL=sqlite:///tmp.db alembic revision --autogenerate -m "add foo column"
+# 复查生成的 .py，然后 commit
+```
