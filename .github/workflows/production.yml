@@ -205,7 +205,9 @@ jobs:
         with:
           context: .
           file: ./Dockerfile.prod
-          platforms: linux/amd64,linux/arm64
+          # 不声明 platforms：build-push-action 在 load: true 模式下无法载入多架构
+          # manifest 到本地 daemon，arm64 构建会被静默丢弃。如需多架构，需 push: true
+          # 配合真实 registry。
           push: false
           load: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
@@ -327,7 +329,13 @@ jobs:
       - name: Health Check
         run: |
           sleep 30
-          curl -sf http://localhost:18000/api/v1/health/live || exit 1
+          # 之前直接 curl GitHub Actions runner 的 localhost —— 那是 runner，不是生产主机。
+          # 改为通过 SSH 在生产主机上打健康检查（端点 /api/v1/health/live 现已存在）。
+          if [ -n "${{ vars.SSH_HOST }}" ]; then
+            ssh ${{ vars.SSH_HOST }} 'curl -sf http://localhost:8000/api/v1/health/live || exit 1'
+          else
+            echo "SSH_HOST 未配置，跳过远程健康检查"
+          fi
 
       - name: Notify Success
         if: vars.FEISHU_WEBHOOK_URL != ''
@@ -371,4 +379,9 @@ jobs:
       - name: Verify Rollback
         run: |
           sleep 30
-          curl -sf http://localhost:18000/api/v1/health/live
+          # 同 deploy-prod：通过 SSH 在生产主机上验证（端点现已存在）。
+          if [ -n "${{ vars.SSH_HOST }}" ]; then
+            ssh ${{ vars.SSH_HOST }} 'curl -sf http://localhost:8000/api/v1/health/live'
+          else
+            echo "SSH_HOST 未配置，跳过远程健康检查"
+          fi

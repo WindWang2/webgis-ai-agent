@@ -64,12 +64,24 @@ async def test_readiness_check_healthy(client):
 
 @pytest.mark.asyncio
 async def test_readiness_check_unhealthy(client):
+    """依赖不可用时 /ready 必须返回 503 —— k8s readinessProbe 只看状态码，
+    若返回 200 即使 body.ready=false 也会被当作就绪把流量打过来。"""
     mod = _get_module()
     with patch.object(mod, "_check_db", return_value=False), \
          patch.object(mod, "_check_llm", return_value=False):
         resp = await client.get("/api/v1/ready")
-        assert resp.status_code == 200
+        assert resp.status_code == 503
         data = resp.json()
         assert data["ready"] is False
         assert data["database"] == "disconnected"
         assert data["llm"] == "unreachable"
+
+
+@pytest.mark.asyncio
+async def test_liveness_check(client):
+    """/api/v1/health/live 是 livenessProbe 专用的轻量端点，
+    必须无条件返回 200，不做 DB/Redis/Celery 检查（否则依赖抖动会被杀进程）。"""
+    resp = await client.get("/api/v1/health/live")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "alive"

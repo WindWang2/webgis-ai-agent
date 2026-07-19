@@ -39,13 +39,13 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # 启动 Worker（注意必须配置正确的 REDIS_URL）
-celery -A main.celery_app worker --loglevel=info &
+celery -A app.services.task_queue worker --loglevel=info &
 ```
 
 ### 3. 启动大模型流式总网关 (FastAPI)
 ```bash
 # 开启非阻塞主 API
-python -m uvicorn main:app --reload --host 0.0.0.0 --port 8001
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 ```
 
 ### 4. 启动 GPU 绘图前端台 (Next.js)

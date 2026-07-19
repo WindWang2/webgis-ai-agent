@@ -5,6 +5,7 @@ import time
 from datetime import datetime, timezone
 from sqlalchemy import text
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 
@@ -77,9 +78,23 @@ def health_check():
     }
 
 
+@router.get("/health/live")
+def liveness_check():
+    """轻量存活检查 — 仅确认进程可响应，不做依赖检查。
+
+    专供 k8s livenessProbe / Docker HEALTHCHECK 使用：失败应直接杀进程，
+    所以这里不能因 DB/Redis/Celery 抖动而失败。
+    """
+    return {"status": "alive"}
+
+
 @router.get("/ready")
 def readiness_check():
-    """就绪检查：数据库 + LLM + Redis + Celery 连通性"""
+    """就绪检查：数据库 + LLM + Redis + Celery 连通性。
+
+    任一依赖不可达时返回 HTTP 503，让 k8s readinessProbe 暂停把流量打过来；
+    全部就绪时返回 HTTP 200。
+    """
     db_ready = _check_db()
     llm_ready = _check_llm()
     redis_ready = _check_redis()
@@ -87,7 +102,7 @@ def readiness_check():
 
     all_ready = db_ready and llm_ready and redis_ready and celery_ready
 
-    return {
+    body = {
         "ready": all_ready,
         "database": "connected" if db_ready else "disconnected",
         "llm": "reachable" if llm_ready else "unreachable",
@@ -95,3 +110,5 @@ def readiness_check():
         "celery": "active" if celery_ready else "inactive",
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+    # k8s readinessProbe 只看 HTTP 状态码；body.ready=false 但 200 会被当作就绪。
+    return JSONResponse(status_code=200 if all_ready else 503, content=body)

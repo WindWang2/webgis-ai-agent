@@ -11,7 +11,10 @@ data:
   PYTHONUNBUFFERED: "1"
   API_PORT: "8000"
   FRONTEND_PORT: "3000"
-  CORS_ORIGINS: "*"
+  # 必须替换为真实的前端域名。设为 "*" 会触发 app/core/config.py 启动校验崩溃
+  # （is_production() 且 CORS 含通配符 → 拒绝启动），或一旦校验放宽则变成
+  # 配合 allow_credentials=True 的 CSRF 攻击面。
+  CORS_ORIGINS: "https://webgis.example.com"
   CELERY_CONCURRENCY: "2"
 ---
 # WebGIS AI Agent Secrets (Base64 encoded - replace with your actual values)
