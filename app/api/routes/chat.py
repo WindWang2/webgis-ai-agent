@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 
-from app.core.auth import get_current_user, get_current_user_optional
+from app.core.auth import get_current_user, get_current_user_optional, require_admin
 from app.services.chat_engine import ChatEngine
 from app.services.history_service_async import AsyncHistoryService
 from app.tools._utils import async_db_session
@@ -147,7 +147,16 @@ async def get_session_map_state(
     session_id: str,
     _user: dict = Depends(get_current_user_optional),
 ):
-    """Return persisted map state (viewport, layers) for session restoration."""
+    """Return persisted map state (viewport, layers) for session restoration.
+
+    审计 S31：之前 _user 注入但未做所有权校验 —— 任何认证用户知道 session_id
+    就能读取他人的 viewport/layers。复用 get_session_detail 的同款检查。
+    """
+    user_id = _user.get("user_id")
+    async with async_db_session() as db:
+        conv = await AsyncHistoryService(db).get_session(session_id, user_id=user_id)
+        if not conv:
+            raise HTTPException(status_code=404, detail="Session not found")
     from app.services.session_data import session_data_manager
     state = await session_data_manager.get_map_state(session_id)
     return {"session_id": session_id, "map_state": state}
@@ -165,7 +174,15 @@ async def push_session_map_state(
     req: MapStatePushRequest,
     _user: dict = Depends(get_current_user_optional),
 ):
-    """Persist live map state pushed by the frontend during agent execution."""
+    """Persist live map state pushed by the frontend during agent execution.
+
+    审计 S31：同 get_session_map_state，跨租户写入必须拒绝。
+    """
+    user_id = _user.get("user_id")
+    async with async_db_session() as db:
+        conv = await AsyncHistoryService(db).get_session(session_id, user_id=user_id)
+        if not conv:
+            raise HTTPException(status_code=404, detail="Session not found")
     from app.services.session_data import session_data_manager
     if req.viewport:
         await session_data_manager.set_map_state(session_id, "viewport", req.viewport)
@@ -202,18 +219,35 @@ class ToolExecuteRequest(BaseModel):
     tool: str
     arguments: dict = {}
     session_id: Optional[str] = None
+    # tier-3 工具（如 create_new_skill —— 写盘 + importlib.exec_module 等同 RCE）
+    # 必须显式确认才执行（审计 S30）。
+    confirm_destructive: bool = False
 
 
 @router.post("/tools/execute")
-async def execute_tool_direct(req: ToolExecuteRequest, _user: dict = Depends(get_current_user)):
-    """直接执行单个工具（非流式通过 chat）"""
+async def execute_tool_direct(req: ToolExecuteRequest, _user: dict = Depends(require_admin)):
+    """直接执行单个工具（非流式通过 chat）
+
+    审计 S30：原本任何登录用户都能 dispatch 任意工具，包括 tier-3 的
+    `create_new_skill`（写盘 + importlib.exec_module 等同 RCE）和
+    `what_if_simulate`。改为 admin-only + tier-3 必须显式 confirm_destructive。
+    """
     tool_name = req.tool
     args = req.arguments
     if not tool_name:
         return {"error": "missing tool name"}
 
+    # tier 校验：catalog 把工具分为 1/2/3 层，3 = rare / heavy / destructive
+    registry = get_registry()
+    tier = registry.metadata(tool_name).get("tier", 1)
+    if tier >= 3 and not req.confirm_destructive:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Tier-{tier} 工具 {tool_name} 需要显式 confirm_destructive=true",
+        )
+
     try:
-        result = await get_registry().dispatch(tool_name, args, session_id=req.session_id)
+        result = await registry.dispatch(tool_name, args, session_id=req.session_id)
         return result
     except Exception as e:
         logger.error(f"Tool execute error: {e}", exc_info=True)

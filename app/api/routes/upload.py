@@ -14,6 +14,8 @@ from app.core.config import settings
 from app.core.auth import get_current_user
 from app.tools._utils import db_session, async_db_session
 from app.models.upload import UploadRecord
+from app.models.db_model import Conversation
+from app.services.history_service_async import AsyncHistoryService
 from app.services.data_parser import (
     MAX_RASTER_SIZE,
     MAX_VECTOR_SIZE,
@@ -28,6 +30,19 @@ from app.services.data_parser import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+async def _verify_session_owner(db, session_id: Optional[str], user_id) -> None:
+    """跨租户守卫：若 upload 关联了 session_id，会话必须属于调用方（审计 S42）。
+
+    UploadRecord 无 user_id 列；通过 session_id → Conversation.user_id 解析归属。
+    session_id 为 None 时（旧匿名上传）允许 —— 与历史匿名会话语义一致。
+    """
+    if not session_id:
+        return
+    conv = await AsyncHistoryService(db).get_session(session_id, user_id=user_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Session not found")
 
 
 # ==================== 响应模型 ====================
@@ -190,11 +205,19 @@ async def list_uploads(_user: dict = Depends(get_current_user),
     limit: int = 100,
     offset: int = 0,
 ):
-    """获取上传文件列表"""
+    """获取上传文件列表
+
+    审计 S42：session_id 缺省时之前返回全局最近 100 条 —— 任何登录用户能拉到
+    他人上传文件名、bbox（常含真实位置 PII）。现在要求 session_id 必填且校验归属。
+    """
+    if not session_id:
+        raise HTTPException(
+            status_code=400,
+            detail="session_id 为必填，避免跨租户泄漏",
+        )
     async with async_db_session() as db:
-        stmt = select(UploadRecord).order_by(UploadRecord.upload_time.desc())
-        if session_id:
-            stmt = stmt.where(UploadRecord.session_id == session_id)
+        await _verify_session_owner(db, session_id, _user.get("user_id"))
+        stmt = select(UploadRecord).where(UploadRecord.session_id == session_id).order_by(UploadRecord.upload_time.desc())
         count_stmt = select(func.count()).select_from(stmt.subquery())
         total_result = await db.execute(count_stmt)
         total = total_result.scalar_one()
@@ -222,13 +245,16 @@ async def list_uploads(_user: dict = Depends(get_current_user),
 
 @router.get("/uploads/{upload_id}", response_model=UploadResponse)
 async def get_upload(upload_id: int, _user: dict = Depends(get_current_user)):
-    """获取单个上传文件的详情"""
+    """获取单个上传文件的详情
+
+    审计 S42：upload_id 是顺序整数易枚举；通过 record.session_id 解析归属。
+    """
     async with async_db_session() as db:
         result = await db.execute(select(UploadRecord).where(UploadRecord.id == upload_id))
         record = result.scalar_one_or_none()
-
-    if not record:
-        raise HTTPException(status_code=404, detail="上传记录不存在")
+        if not record:
+            raise HTTPException(status_code=404, detail="上传记录不存在")
+        await _verify_session_owner(db, record.session_id, _user.get("user_id"))
 
     return UploadResponse(
         id=record.id,
@@ -249,9 +275,9 @@ async def get_upload_geojson(upload_id: int, _user: dict = Depends(get_current_u
     async with async_db_session() as db:
         result = await db.execute(select(UploadRecord).where(UploadRecord.id == upload_id))
         record = result.scalar_one_or_none()
-
-    if not record:
-        raise HTTPException(status_code=404, detail="上传记录不存在")
+        if not record:
+            raise HTTPException(status_code=404, detail="上传记录不存在")
+        await _verify_session_owner(db, record.session_id, _user.get("user_id"))
 
     if record.file_type != "vector":
         raise HTTPException(status_code=400, detail="该文件不是矢量数据")
@@ -277,6 +303,8 @@ async def delete_upload(upload_id: int, _user: dict = Depends(get_current_user))
         record = result.scalar_one_or_none()
         if not record:
             raise HTTPException(status_code=404, detail="上传记录不存在")
+        # 审计 S42：删除前必须确认归属 —— 否则任何用户可枚举整数 id 删除他人数据。
+        await _verify_session_owner(db, record.session_id, _user.get("user_id"))
 
         file_path = Path(record.filename)
         await db.delete(record)

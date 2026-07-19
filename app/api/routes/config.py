@@ -1,8 +1,10 @@
 """System Config API - 管理 LLM 和 Skills 的运行时配置
 
-⚠️ 安全：本路由的所有写入端点（POST/PUT/DELETE）要求 Bearer JWT 鉴权
-(Depends(get_current_user))。当前系统未提供 /login 端点，因此这些端点
-仅可由运维通过 JWT_SECRET_KEY 手工签发的 token 访问，等同于 admin-only。
+⚠️ 安全：本路由的所有端点要求 admin 角色（Depends(require_admin)）。
+审计 S29：之前仅 Depends(get_current_user) —— 这只验证 JWT 合法性，
+不验证角色；任何登录用户（包括通过公开注册的）都能改 LLM 配置（把
+流量重定向到攻击者日志端点窃取所有 prompt）或上传 Python 技能文件
+（写盘 + importlib.exec_module 等同 RCE）。
 """
 import logging
 import os
@@ -13,7 +15,7 @@ from typing import Optional
 
 from app.api.routes.chat import get_engine, get_registry
 from app.tools.skills import load_skills
-from app.core.auth import get_current_user
+from app.core.auth import require_admin
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/config", tags=["配置管理"])
@@ -49,14 +51,14 @@ class LLMConfigRequest(BaseModel):
     use_prompt_caching: Optional[bool] = None
 
 @router.get("/llm")
-async def get_llm_config(_user: dict = Depends(get_current_user)):
+async def get_llm_config(_user: dict = Depends(require_admin)):
     """获取当前 LLM 配置（admin only）"""
     return get_engine().get_config()
 
 @router.post("/llm")
 async def update_llm_config(
     req: LLMConfigRequest,
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_admin),
 ):
     """更新 LLM 配置（admin only）"""
     get_engine().update_config(
@@ -68,7 +70,7 @@ async def update_llm_config(
     return {"status": "ok", "config": get_engine().get_config()}
 
 @router.get("/skills")
-async def list_skills(_user: dict = Depends(get_current_user)):
+async def list_skills(_user: dict = Depends(require_admin)):
     """列出当前已加载的技能（.py + .md）"""
     skills_dir = "app/skills"
     if not os.path.exists(skills_dir):
@@ -96,7 +98,7 @@ async def list_skills(_user: dict = Depends(get_current_user)):
 @router.post("/skills/upload")
 async def upload_skill(
     file: UploadFile = File(...),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(require_admin),
 ):
     """上传并热加载技能脚本（admin only）
 
@@ -158,7 +160,7 @@ async def upload_skill(
     return {"status": "ok", "filename": os.path.basename(file_path)}
 
 @router.post("/skills/refresh")
-async def refresh_skills(_user: dict = Depends(get_current_user)):
+async def refresh_skills(_user: dict = Depends(require_admin)):
     """手动触发技能刷新（admin only）"""
     load_skills(get_registry())
     return {"status": "ok"}

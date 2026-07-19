@@ -9,12 +9,13 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import uuid
 from datetime import timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +27,9 @@ from app.core.auth import (
     hash_password,
     verify_password,
 )
+from app.core.config import settings
 from app.core.database import get_async_db
+from app.core.rate_limiter import get_rate_limiter
 from app.models.db_model import User
 
 logger = logging.getLogger(__name__)
@@ -34,6 +37,15 @@ router = APIRouter(prefix="/auth", tags=["认证"])
 
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9_\-\.]{3,40}$")
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+# 注册端点默认关闭 —— 防止任何匿名用户铸造合法 JWT 后访问所有 admin 端点
+# （审计 S28：原本完全开放，加上 require_admin 后所有 admin 端点仍可被注册账号访问，
+# 关闭公开注册是真正切断攻击面的方式）。运维如需自助注册，设置环境变量
+# ALLOW_PUBLIC_REGISTER=true，但生产环境强烈推荐通过 manage.py create_admin
+# CLI 显式创建账号而非开放注册。
+# 注意：lazy 读取，便于测试在每个 case 重置环境变量。
+def _allow_public_register() -> bool:
+    return os.getenv("ALLOW_PUBLIC_REGISTER", "").lower() == "true"
 
 
 class RegisterRequest(BaseModel):
@@ -67,8 +79,29 @@ def _user_to_dict(u: User) -> dict:
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(req: RegisterRequest, db: AsyncSession = Depends(get_async_db)) -> TokenResponse:
-    """新建用户并返回 JWT。"""
+async def register(
+    req: RegisterRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_async_db),
+) -> TokenResponse:
+    """新建用户并返回 JWT。
+
+    默认关闭（ALLOW_PUBLIC_REGISTER 未设为 true 时返回 503）——
+    防止任何匿名用户铸造合法 JWT 后访问所有 admin 端点（审计 S28）。
+    生产环境用 `manage.py create_admin` CLI 创建账号。
+    """
+    if not _allow_public_register():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="公开注册已禁用；联系运维创建账号（manage.py create_admin）",
+        )
+
+    # 限速：每 IP 每小时最多 5 次注册（防账号农场 + 减少攻击面）
+    client_ip = request.client.host if request.client else "unknown"
+    limiter = await get_rate_limiter()
+    if not await limiter.is_allowed(f"auth_register:{client_ip}", max_requests=5, window_seconds=3600):
+        raise HTTPException(status_code=429, detail="注册过于频繁，请稍后再试")
+
     if not _USERNAME_RE.match(req.username):
         raise HTTPException(
             status_code=400,
@@ -109,8 +142,24 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_async_db
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(req: LoginRequest, db: AsyncSession = Depends(get_async_db)) -> TokenResponse:
+async def login(
+    req: LoginRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_async_db),
+) -> TokenResponse:
     """用户名或邮箱 + 密码登录，返回 JWT。"""
+    # 限速：每 (IP, identifier) 5 分钟最多 5 次失败 —— 防 password spraying。
+    # 用 (ip, identifier) 组合 key 是为了让单账号被多 IP 撞库时仍能限速，
+    # 同时不误伤单 IP 下多个正常用户。
+    client_ip = request.client.host if request.client else "unknown"
+    limiter = await get_rate_limiter()
+    if not await limiter.is_allowed(
+        f"auth_login:{client_ip}:{req.identifier}",
+        max_requests=5,
+        window_seconds=300,
+    ):
+        raise HTTPException(status_code=429, detail="登录尝试过于频繁，请 5 分钟后再试")
+
     result = await db.execute(
         select(User).where((User.username == req.identifier) | (User.email == req.identifier))
     )

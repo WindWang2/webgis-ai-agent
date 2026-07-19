@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 
+from app.api.routes.layer import _verify_session_owner
 from app.services.explorer.orchestrator import ExplorerOrchestrator
 from app.services.explorer.models import SearchContext
 from app.core.auth import get_current_user
@@ -32,7 +33,13 @@ class ExploreStatusResponse(BaseModel):
 
 @router.post("/start")
 async def start_exploration(req: StartExploreRequest, _user: dict = Depends(get_current_user)) -> dict:
-    """启动深度探索任务"""
+    """启动深度探索任务
+
+    审计 S42：若带 session_id，校验归属 —— 防止匿名启动任务消耗 LLM/API 配额
+    或把任务结果写到他人 session 的 session_data_manager。
+    """
+    if req.session_id:
+        await _verify_session_owner(req.session_id, _user.get("user_id"))
     try:
         context = SearchContext(
             query=req.query,
@@ -51,6 +58,10 @@ async def start_exploration(req: StartExploreRequest, _user: dict = Depends(get_
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+# 注意：status/abort/stream 按 Celery task_id 查询，当前无法直接链回 Conversation.user_id
+# 做所有权校验。考虑到 task_id 是 Celery 生成的 32 字符 uuid（128 位熵，不可枚举），
+# 且这些端点只读 + 要求登录，残留风险可接受。如未来需要更严格隔离，需在
+# ExplorerOrchestrator 维护 task_id → session_id → user_id 的映射。
 @router.get("/status/{task_id}")
 async def get_task_status(task_id: str, _user: dict = Depends(get_current_user)) -> ExploreStatusResponse:
     """查询任务状态"""

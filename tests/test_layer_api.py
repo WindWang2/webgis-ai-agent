@@ -23,8 +23,14 @@ def _get_module():
 
 
 @pytest.fixture
-def app():
+def app(monkeypatch):
+    """跨租户守卫 _verify_session_owner 在隔离测试里依赖真 DB；
+    stub 成 always-pass（跨租户隔离由 test_cross_tenant_isolation 覆盖）。"""
+    async def _noop_verify(session_id, user_id):
+        return None
     mod = _get_module()
+    monkeypatch.setattr(mod, "_verify_session_owner", _noop_verify)
+
     app = FastAPI()
     app.include_router(mod.router, prefix="/api/v1")
     return app

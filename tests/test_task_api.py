@@ -10,6 +10,7 @@ from app.services.chat_engine import ChatEngine
 from app.tools.registry import ToolRegistry
 from app.api.routes import chat as chat_mod
 from app.api.routes.task import router as task_router
+from app.api.routes.layer import _verify_session_owner
 from app.core.auth import get_current_user
 
 # Create a real ChatEngine instance for tests
@@ -29,7 +30,16 @@ def _inject_engine():
 
 
 @pytest.fixture
-def app():
+def app(monkeypatch):
+    """跨租户守卫 _verify_session_owner 依赖 Conversation.user_id 校验。
+    单测不连真 DB，stub 成 always-pass 即可（隔离由 test_cross_tenant_isolation
+    单独覆盖）。"""
+    async def _noop_verify(session_id, user_id):
+        return None
+    monkeypatch.setattr("app.api.routes.layer._verify_session_owner", _noop_verify)
+    # task.py 通过 from app.api.routes.layer import _verify_session_owner 拷贝名字
+    monkeypatch.setattr("app.api.routes.task._verify_session_owner", _noop_verify)
+
     _app = FastAPI()
     _app.dependency_overrides[get_current_user] = lambda: _mock_user
     _app.include_router(router, prefix="/api/v1")
@@ -79,9 +89,13 @@ async def test_get_task_not_found(client):
 
 @pytest.mark.asyncio
 async def test_list_tasks(client):
-    """测试列出任务列表"""
+    """测试列出任务列表 —— 必须带 session_id（审计 S33：防止跨租户泄漏）"""
     _seed_tracker()
+    # 缺 session_id：422（必填）
     resp = await client.get("/api/v1/tasks")
+    assert resp.status_code == 422
+    # 带 session_id：返回该 session 下的任务
+    resp = await client.get("/api/v1/tasks?session_id=test-session")
     assert resp.status_code == 200
     data = resp.json()
     assert "tasks" in data
@@ -117,8 +131,6 @@ async def test_cancel_task(client):
 
 @pytest.mark.asyncio
 async def test_cancel_task_not_found(client):
-    """测试取消不存在的任务"""
+    """测试取消不存在的任务（跨租户守卫先于 cancel 命中）"""
     resp = await client.delete("/api/v1/tasks/task-nonexistent")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["cancelled"] is False
+    assert resp.status_code == 404
