@@ -213,10 +213,7 @@ export interface HudState {
   selectedFeature: SelectedFeatureInfo | null;
   setSelectedFeature: (f: SelectedFeatureInfo | null) => void;
 
-  /* ─── Perception Buffer (Agent-Everything) ─── */
-  _perceptionQueue: Array<{ event: string; data: Record<string, unknown> }>;
-  pushPerception: (event: string, data: Record<string, unknown>) => void;
-  drainPerception: () => Array<{ event: string; data: Record<string, unknown> }>;
+  /* ─── Perception Buffer ── 已废弃（useWebSocket hook 删除后无生产消费者）── */
 
   /* ─── HUD Panel Visibility (legacy compat during migration) ─── */
   leftPanelOpen: boolean;

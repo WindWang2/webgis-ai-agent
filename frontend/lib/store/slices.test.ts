@@ -121,13 +121,14 @@ describe('ui slice', () => {
     expect(useHudStore.getState().viewport.pitch).toBe(45);
   });
 
-  it('perception 队列 push + drain 是 FIFO', () => {
-    const s = useHudStore.getState();
-    s.pushPerception('a', { i: 1 });
-    s.pushPerception('b', { i: 2 });
-    const drained = s.drainPerception();
-    expect(drained.map((e) => e.event)).toEqual(['a', 'b']);
-    expect(useHudStore.getState()._perceptionQueue).toHaveLength(0);
+  it('perception 队列 push + drain 是 FIFO（审计 PR 4 已废弃）', () => {
+    // useWebSocket hook 被删除（从未挂载，整条 perception 通道一直是死代码）。
+    // _perceptionQueue / pushPerception / drainPerception 同步移除。
+    // 测试改为 sanity-check 字段不存在，防止未来误恢复。
+    const s = useHudStore.getState() as any;
+    expect(s._perceptionQueue).toBeUndefined();
+    expect(typeof s.pushPerception).toBe('undefined');
+    expect(typeof s.drainPerception).toBe('undefined');
   });
 
   it('opsLog 新条目在前', () => {
