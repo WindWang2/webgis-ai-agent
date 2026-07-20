@@ -145,6 +145,9 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
 
   const renderTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const isUpdatingRef = useRef(false)
+  // 审计 F26：styledata 监听器用此 ref 调最新版 renderLayers，
+  // 防止 effect 重跑时旧闭包用 stale layers 触发渲染。
+  const renderLayersRef = useRef<() => void>(() => {})
 
   // Dynamic layer rendering with debounce optimization
   useEffect(() => {
@@ -152,6 +155,9 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
     if (!map || !mapReady) return
 
     const renderLayers = () => {
+      // 审计 F26：每次 effect 重跑都把最新版存入 ref，让 styledata 监听
+      // 始终调当前闭包（避免 stale layers）。
+      renderLayersRef.current = renderLayers
       if (isUpdatingRef.current) return
       // Style not loaded yet — retry after a short delay instead of silently dropping.
       // 必须把 timeout id 存进 renderTimeoutRef，让 effect cleanup 清掉，
@@ -379,12 +385,13 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
     renderTimeoutRef.current = setTimeout(renderLayers, 50)
 
     // Re-apply layers after basemap style changes (MapLibre destroys custom layers on style change)
+    // 审计 F26：用 renderLayersRef 而非闭包内的 renderLayers，确保调最新版。
     const onStyleData = () => {
       if (isUpdatingRef.current) {
         isUpdatingRef.current = false
       }
       if (renderTimeoutRef.current) clearTimeout(renderTimeoutRef.current)
-      renderTimeoutRef.current = setTimeout(renderLayers, 100)
+      renderTimeoutRef.current = setTimeout(() => renderLayersRef.current(), 100)
     }
     map.on('styledata', onStyleData)
 
