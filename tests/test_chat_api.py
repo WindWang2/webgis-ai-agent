@@ -1,38 +1,21 @@
 """Chat API 测试
 
-Uses importlib to bypass broken __init__.py (health.py issue).
-Run with: python -m pytest tests/test_chat_api.py -v --noconftest
+审计 T1：之前用 importlib bypass broken __init__.py。__init__.py 现在已健康
+（循环 import 已修），改为直接 import。
 """
 import pytest
 from httpx import AsyncClient, ASGITransport
 from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi import FastAPI
-import importlib.util
-import os
 
-_chat_mod = None
-_router = None
-
-
-def _load_chat_module():
-    global _chat_mod, _router
-    if _chat_mod is None:
-        spec = importlib.util.spec_from_file_location(
-            "app.api.routes.chat",
-            os.path.join(os.path.dirname(__file__), "..", "app", "api", "routes", "chat.py"),
-            submodule_search_locations=[]
-        )
-        _chat_mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(_chat_mod)
-        _router = _chat_mod.router
-    return _chat_mod, _router
+from app.api.routes import chat as _chat_mod
+from app.api.routes.chat import router as _router
 
 
 @pytest.fixture
 def app():
-    _chat_mod, router = _load_chat_module()
     app = FastAPI()
-    app.include_router(router, prefix="/api")
+    app.include_router(_router, prefix="/api")
     return app
 
 
