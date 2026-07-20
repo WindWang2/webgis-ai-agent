@@ -79,3 +79,6 @@ duckduckgo-search>=6.0.0
 h3>=4.0.0,<5.0.0
 esda>=2.5.1
 libpysal>=4.9.2
+
+# Prometheus metrics (审计 I11: exposes /metrics for prometheus scrape)
+prometheus-fastapi-instrumentator>=6.1.0,<7.0.0

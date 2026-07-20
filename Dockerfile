@@ -65,4 +65,4 @@ USER appuser
 
 EXPOSE 3000 8000
 
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 & node frontend/.next/standalone/server.js -p 3000"]
+CMD ["sh", "-c", "trap 'kill 0' TERM INT; uvicorn app.main:app --host 0.0.0.0 --port 8000 & node frontend/.next/standalone/server.js -p 3000 & wait"]

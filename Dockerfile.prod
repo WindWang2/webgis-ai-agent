@@ -52,8 +52,12 @@ COPY --from=frontend-builder /app/frontend/public ./frontend/public
 COPY --from=backend-deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=backend-deps /usr/local/bin /usr/local/bin
 
-# Copy application code
-COPY . .
+# Copy application code (审计 I7：之前 COPY . . 会把 screenshots / 进度文档 /
+# 测试 / planning artifacts 全带进 runner 镜像，bloat + 内部信息泄漏)。
+COPY main.py ./
+COPY app/ ./app/
+COPY alembic.ini ./
+COPY migrations/ ./migrations/
 
 # Create non root user
 RUN groupadd --system --gid 1001 appgroup && \
@@ -68,4 +72,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8000/api/v1/health/live || exit 1
 
 ENTRYPOINT ["tini", "--"]
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 & node frontend/.next/standalone/server.js -p 3000"]
+# 审计 I9：trap-kill-wait 模式让 SIGTERM 正确传播给两个子进程。
+# 之前 sh -c "A & B" 在 tini 下：sh 不 wait 任何子进程，uvicorn OOM 后
+# 容器仍"健康"（node 还活），SIGTERM 也不传播 → 滚动更新脏退出。
+CMD ["sh", "-c", "trap 'kill 0' TERM INT; uvicorn app.main:app --host 0.0.0.0 --port 8000 & node frontend/.next/standalone/server.js -p 3000 & wait"]

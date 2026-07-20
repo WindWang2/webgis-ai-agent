@@ -60,7 +60,25 @@ docs/
 .openclaw/
 .clawhub/
 .worktrees/
+.zcode/
 
 # —— Coverage / CI 文件 ——
 .coveragerc
 pytest.ini
+
+# —— 审计 PR 5：补充此前被 COPY . . 带进镜像的杂物 ——
+# 截图（几百 KB ~ MB）
+screenshot*.png
+initial_snapshot.png
+# 内部规划/审计文档（含未发布决策、安全审计细节）
+findings.md
+progress.md
+task_plan.md
+MEMORY.md
+TODOS.md
+CODE_REVIEW.md
+current-state
+# Windows 批处理（与 Linux 镜像无关）
+*.bat
+# planning skill 工件
+.planning/
