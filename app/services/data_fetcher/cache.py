@@ -25,9 +25,13 @@ class CacheManager:
         return cls._instance
 
     def _generate_cache_key(self, query: Any) -> str:
-        """Generate a unique cache key from query object"""
+        """Generate a unique cache key from query object.
+
+        md5 在此用于缓存键生成（非安全用途）-- usedforsecurity=False 明确声明
+        这一意图，同时让 bandit B324 不再告警。
+        """
         query_json = json.dumps(query.dict(), sort_keys=True)
-        return f"data_fetcher:{hashlib.md5(query_json.encode()).hexdigest()}"
+        return f"data_fetcher:{hashlib.md5(query_json.encode(), usedforsecurity=False).hexdigest()}"
 
     def get(self, query: Any) -> Optional[Any]:
         """Get data from cache, check memory first then Redis"""
