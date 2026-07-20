@@ -10,14 +10,21 @@ from httpx import ASGITransport, AsyncClient
 
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-for-auth-routes-32chars-ok")
 os.environ.setdefault("ENV", "development")
+# 多数测试需要公开注册；个别测试在 fixture 里覆盖此值
+os.environ.setdefault("ALLOW_PUBLIC_REGISTER", "true")
 
 
 @pytest_asyncio.fixture
-async def app_and_db(tmp_path):
-    """每个 test 用一个独立的 sqlite 文件 + 干净 schema，via dep override。"""
+async def app_and_db(tmp_path, monkeypatch):
+    """每个 test 用一个独立的 sqlite 文件 + 干净 schema，via dep override。
+
+    同时把 rate limiter 替换为永远放行的 stub —— register/login 限速本身由
+    test_auth_rate_limit.py 单独覆盖，这里只测业务逻辑，不应被 5/hour 限制干扰。
+    """
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
     from app.models.db_model import Base
     from app.core.database import get_async_db
+    from app.core import rate_limiter as rl_mod
     from fastapi import FastAPI
     from app.api.routes import auth as auth_routes
 
@@ -31,6 +38,17 @@ async def app_and_db(tmp_path):
     async def override_get_async_db():
         async with test_session() as s:
             yield s
+
+    class _NoOpLimiter:
+        async def is_allowed(self, key, max_requests, window_seconds):
+            return True
+
+    async def _stub_get_rate_limiter():
+        return _NoOpLimiter()
+
+    # auth.py 用 from X import get_rate_limiter 拷贝了名字 —— 必须改它本身的引用
+    monkeypatch.setattr(rl_mod, "get_rate_limiter", _stub_get_rate_limiter)
+    monkeypatch.setattr("app.api.routes.auth.get_rate_limiter", _stub_get_rate_limiter)
 
     app = FastAPI()
     app.include_router(auth_routes.router, prefix="/api/v1")
@@ -180,3 +198,16 @@ async def test_me_with_valid_token_returns_user(client):
     resp = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
     assert resp.json()["user_id"]
+
+
+@pytest.mark.asyncio
+async def test_register_disabled_by_default(client, monkeypatch):
+    """审计 S28：默认关闭公开注册 —— 防止匿名铸造合法 JWT 后访问所有 admin 端点。"""
+    monkeypatch.delenv("ALLOW_PUBLIC_REGISTER", raising=False)
+    resp = await client.post("/api/v1/auth/register", json={
+        "username": "attacker",
+        "email": "attacker@example.com",
+        "password": "super-secret-1!",
+    })
+    assert resp.status_code == 503
+    assert "禁用" in resp.json()["detail"]

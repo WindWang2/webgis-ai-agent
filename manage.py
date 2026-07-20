@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-WebGIS AI Agent 管理命令行工具 (V3.2 DevEx Enhanced)
+WebGIS AI Agent 管理命令行工具 (V3.2 DevX Enhanced)
 
 Usage:
-    python manage.py init-db       初始化数据库
-    python manage.py check         基础设施诊断 (Agent CNS Health Check)
-    python manage.py dev           一键拉起全栈开发环境 (Backend + Worker + Frontend)
-    python manage.py server        启动 FastAPI 后端
-    python manage.py worker        启动 Celery Worker
+    python manage.py init-db                  初始化数据库
+    python manage.py create-admin <user> <email> <password>
+                                             创建 admin 账号（公开注册关闭后的入口）
+    python manage.py check                    基础设施诊断 (Agent CNS Health Check)
+    python manage.py dev                      一键拉起全栈开发环境 (Backend + Worker + Frontend)
+    python manage.py server                   启动 FastAPI 后端
+    python manage.py worker                   启动 Celery Worker
 """
 import sys
 import os
@@ -15,6 +17,7 @@ import argparse
 import asyncio
 import subprocess
 import time
+import uuid
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -28,6 +31,52 @@ def cmd_init_db():
         from app.core.database import init_db
         init_db()
     console.print("[bold green]✓[/bold green] Database initialized successfully.")
+
+
+def cmd_create_admin(username: str, email: str, password: str):
+    """创建 admin 账号 —— 公开注册关闭后，运维用此命令创建初始 admin。
+
+    会先 init_db 确保 users 表存在，再插入一条 role='admin' 的记录。
+    密码用 scrypt 哈希；密码不打印到日志。
+    """
+    import re
+    if not re.match(r"^[A-Za-z0-9_\-\.]{3,40}$", username):
+        console.print(f"[red]非法 username：长度 3-40，允许字母/数字/_-. [/red]")
+        sys.exit(2)
+    if not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
+        console.print(f"[red]非法 email 格式[/red]")
+        sys.exit(2)
+    if len(password) < 8:
+        console.print(f"[red]password 至少 8 位[/red]")
+        sys.exit(2)
+
+    from app.core.database import init_db, Engine
+    from app.models.db_model import User, Base
+    from app.core.auth import hash_password
+    from sqlalchemy import select, or_
+
+    init_db()  # 幂等；确保表存在
+
+    with Engine.begin() as conn:
+        # 检查唯一性
+        existing = conn.execute(
+            select(User).where(or_(User.username == username, User.email == email))
+        ).scalar_one_or_none()
+        if existing is not None:
+            console.print(f"[red]username 或 email 已存在 (id={existing.id})[/red]")
+            sys.exit(2)
+        user = User(
+            id=str(uuid.uuid4()),
+            username=username,
+            email=email,
+            password_hash=hash_password(password),
+            role="admin",
+            is_active=True,
+        )
+        conn.add(user)
+        conn.commit()
+    console.print(f"[bold green]✓[/bold green] Admin 创建成功: username={username} email={email} id={user.id}")
+    console.print("[dim]使用 POST /api/v1/auth/login 获取 JWT。[/dim]")
 
 async def check_infrastructure():
     """基础设施诊断"""
@@ -106,7 +155,7 @@ def run_dev():
 
         # 2. Start Backend
         console.print("[dim]Launch: Backend Server (Port 18000)...[/dim]")
-        p_server = subprocess.Popen([sys.executable, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "18000", "--reload"])
+        p_server = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "18000", "--reload"])
         processes.append(p_server)
 
         # 3. Start Worker
@@ -151,10 +200,16 @@ def main():
 
     # init-db
     subparsers.add_parser("init-db", help="Initialize database (create all tables)")
-    
+
+    # create-admin
+    p_ca = subparsers.add_parser("create-admin", help="Create an admin account (entry point when public register is disabled)")
+    p_ca.add_argument("username")
+    p_ca.add_argument("email")
+    p_ca.add_argument("password")
+
     # check
     subparsers.add_parser("check", help="Infrastructure diagnostic (Agent CNS Health Check)")
-    
+
     # dev
     subparsers.add_parser("dev", help="Start full dev stack (Backend + Worker + Frontend)")
 
@@ -168,12 +223,14 @@ def main():
 
     if args.command == "init-db":
         cmd_init_db()
+    elif args.command == "create-admin":
+        cmd_create_admin(args.username, args.email, args.password)
     elif args.command == "check":
         asyncio.run(check_infrastructure())
     elif args.command == "dev":
         run_dev()
     elif args.command == "server":
-        subprocess.run([sys.executable, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "18000", "--reload"])
+        subprocess.run([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "18000", "--reload"])
     elif args.command == "worker":
         subprocess.run(["celery", "-A", "app.services.task_queue.celery_app", "worker", "--loglevel=info"])
     else:

@@ -19,6 +19,7 @@ from app.core.database import get_async_db
 from app.models.api_response import ApiResponse, ErrCode
 from app.models.report import Report
 from app.models.db_model import Conversation, Message
+from app.services.history_service_async import AsyncHistoryService
 from app.services.report_service import ReportService, REPORT_DIR
 
 import logging
@@ -27,6 +28,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/reports", tags=["报告生成"])
 
 ALLOWED_FORMATS = {"pdf", "html", "markdown", "md"}
+
+
+async def _check_session_owner(db: AsyncSession, session_id: str, user_id) -> None:
+    """跨租户守卫：会话必须属于调用方（审计 S35）。
+
+    Report 表无 user_id 字段，但通过 session_id → Conversation.user_id 解析归属。
+    匿名会话（user_id IS NULL）允许 —— 与 history_service_async 的语义一致。
+    """
+    conv = await AsyncHistoryService(db).get_session(session_id, user_id=user_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Session not found")
 
 
 # ── Schemas ──────────────────────────────────────────────────────────
@@ -102,6 +114,10 @@ async def create_report(
     fmt = request.format.lower()
     if fmt not in ALLOWED_FORMATS:
         return ApiResponse.fail(code=ErrCode.VALIDATE_ERROR, message=f"不支持的格式: {fmt}，可选: {', '.join(sorted(ALLOWED_FORMATS))}")
+
+    # 审计 S35：先校验会话归属，再做后续操作。
+    user_id = _user.get("user_id")
+    await _check_session_owner(db, request.session_id, user_id)
 
     # 验证会话存在
     conversation = await db.get(Conversation, request.session_id)
@@ -183,15 +199,25 @@ async def create_report(
 
 @router.get("", response_model=ApiResponse)
 async def list_reports(
-    session_id: Optional[str] = Query(None, description="按会话 ID 筛选"),
+    session_id: Optional[str] = Query(None, description="按会话 ID 筛选（必填，否则跨租户泄漏）"),
     db: AsyncSession = Depends(get_async_db),
     _user: dict = Depends(get_current_user),
 ):
-    """列出报告"""
-    stmt = select(Report).order_by(Report.created_at.desc())
-    if session_id:
-        stmt = stmt.where(Report.session_id == session_id)
+    """列出报告
 
+    审计 S35：之前无 session_id 时返回最近 100 条全局报告 —— 任何认证用户
+    都能拉到他人的报告列表（含 session_id、标题等）。改为强制 session_id 必填，
+    并校验归属。
+    """
+    if not session_id:
+        return ApiResponse.fail(
+            code=ErrCode.VALIDATE_ERROR,
+            message="session_id 为必填，避免跨租户泄漏",
+        )
+    user_id = _user.get("user_id")
+    await _check_session_owner(db, session_id, user_id)
+
+    stmt = select(Report).where(Report.session_id == session_id).order_by(Report.created_at.desc())
     result = await db.execute(stmt.limit(100))
     items = result.scalars().all()
     return ApiResponse.ok(data={
@@ -242,21 +268,30 @@ async def view_shared_report(share_code: str, db: AsyncSession = Depends(get_asy
     )
 
 
+async def _check_report_owner(db: AsyncSession, report_id: str, user_id) -> Report:
+    """跨租户守卫：report 必须属于调用方（审计 S35）。
+
+    Report 表通过 session_id 关联到会话；通过 conversation.user_id 解析归属。
+    不存在或越权均 404（避免存在性泄露）。
+    """
+    report = await db.get(Report, report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    await _check_session_owner(db, report.session_id, user_id)
+    return report
+
+
 @router.get("/{report_id}", response_model=ApiResponse)
 async def get_report(report_id: str, db: AsyncSession = Depends(get_async_db), _user: dict = Depends(get_current_user)):
     """获取报告详情"""
-    report = await db.get(Report, report_id)
-    if not report:
-        return ApiResponse.fail(code=ErrCode.NOT_FOUND, message="报告不存在")
+    report = await _check_report_owner(db, report_id, _user.get("user_id"))
     return ApiResponse.ok(data=_serialize_report(report))
 
 
 @router.get("/{report_id}/download")
 async def download_report(report_id: str, db: AsyncSession = Depends(get_async_db), _user: dict = Depends(get_current_user)):
     """下载报告文件"""
-    report = await db.get(Report, report_id)
-    if not report:
-        raise HTTPException(status_code=404, detail="报告不存在")
+    report = await _check_report_owner(db, report_id, _user.get("user_id"))
     if report.status != "completed":
         raise HTTPException(status_code=400, detail="报告未生成完成")
     if not report.file_path or not os.path.exists(report.file_path):
@@ -280,9 +315,7 @@ async def create_share_link(
     _user: dict = Depends(get_current_user),
 ):
     """生成分享链接"""
-    report = await db.get(Report, report_id)
-    if not report:
-        return ApiResponse.fail(code=ErrCode.NOT_FOUND, message="报告不存在")
+    report = await _check_report_owner(db, report_id, _user.get("user_id"))
     if report.status != "completed":
         return ApiResponse.fail(code=ErrCode.VALIDATE_ERROR, message="报告未生成完成，无法分享")
 

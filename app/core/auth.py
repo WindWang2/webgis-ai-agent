@@ -91,24 +91,28 @@ def verify_token(token: str) -> Optional[dict]:
 
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """获取当前用户 - 需要 Bearer token"""
+    """获取当前用户 - 需要 Bearer token
+
+    返回 dict 含 user_id 和（如 JWT 中有）role。下游如需 admin 校验，
+    使用 `require_admin` 依赖；不要直接在本函数返回值上做 role 判断。
+    """
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     token = credentials.credentials
     payload = verify_token(token)
-    
+
     if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     user_id = payload.get("sub")
     if user_id is None:
         raise HTTPException(
@@ -116,20 +120,39 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
             detail="Invalid token payload",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    return {"user_id": user_id}
+
+    # role 来自 register/login 时写入的 JWT claim；未带 role 的旧 token 视为 viewer
+    return {"user_id": user_id, "role": payload.get("role") or "viewer"}
 
 
 async def get_current_user_optional(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """获取当前用户 - 可选认证 (用于公开接口)"""
     if credentials is None:
-        return {"user_id": "anonymous"}
-    
+        return {"user_id": "anonymous", "role": "anonymous"}
+
     token = credentials.credentials
     payload = verify_token(token)
-    
+
     if payload is None:
-        return {"user_id": "anonymous"}
-    
+        return {"user_id": "anonymous", "role": "anonymous"}
+
     user_id = payload.get("sub")
-    return {"user_id": user_id or "anonymous"}
+    return {
+        "user_id": user_id or "anonymous",
+        "role": payload.get("role") or "viewer" if user_id else "anonymous",
+    }
+
+
+async def require_admin(_user: dict = Depends(get_current_user)) -> dict:
+    """要求当前用户具有 admin 角色。
+
+    注意：role 直接来自 JWT claim（在 register/login 时由后端写入，签名保护）。
+    若未来允许 viewer 升级 admin，token 7 天生命周期内仍是旧 role —— 升级
+    后用户需重登或后端实现 token 黑名单。
+    """
+    if _user.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required",
+        )
+    return _user
