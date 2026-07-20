@@ -46,7 +46,7 @@ defusedxml>=0.7.1
 # Testing
 pytest>=7.4.4
 pytest-asyncio>=0.23.3
-pytest-cov>=5.0.0
+pytest-cov>=7.1.0
 
 # 注意：python-jose 自 2024 起维护放缓，存在 JWT bomb (CVE-2024-33664)
 # 与算法混淆 (CVE-2024-33663) 风险。本项目通过 algorithms=["HS256"]
