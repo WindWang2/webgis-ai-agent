@@ -1,12 +1,12 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 import logging
 
+from app.services.ws_service import manager, PERCEPTION_HANDLERS
+from app.core.auth import verify_token
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ws", tags=["WebSocket"])
-
-from app.services.ws_service import manager, PERCEPTION_HANDLERS
-from app.core.auth import verify_token
 
 
 @router.websocket("/{session_id}")
