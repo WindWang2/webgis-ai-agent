@@ -123,6 +123,15 @@ export function MapActionHandler() {
     // F5: 默认在 finally 同步 popAction；某些 case 走异步 map.once 回调，
     // 把 deferredPop 设为 true，由 case 自己负责出队。
     let deferredPop = false;
+    // 审计 F24：export_map 的 deferred pop 在 map.once('render') 回调里，
+    // 期间若 mapInstance 因 base layer 切换而变化，effect 会重跑 + cleanup
+    // 不取消 once 监听 -> 两次 popAction（队列下溢）。用 poppedRef 保证只 pop 一次。
+    let poppedRef = false;
+    const safePop = () => {
+      if (poppedRef) return;
+      poppedRef = true;
+      popAction();
+    };
 
     try {
       switch (action.command) {
@@ -587,7 +596,8 @@ export function MapActionHandler() {
                 map.setPixelRatio(origPixelRatio);
               }
               // F5: 真正合成完才出队，杜绝重入
-              popAction();
+              // 审计 F24：用 safePop 防止 base layer 切换重入导致 double-pop
+              safePop();
             }
           });
           map.triggerRepaint();
@@ -714,7 +724,7 @@ export function MapActionHandler() {
         /* defensive: store unavailable */
       }
     } finally {
-      if (!deferredPop) popAction();
+      if (!deferredPop) safePop();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [action, mapInstance, popAction]);

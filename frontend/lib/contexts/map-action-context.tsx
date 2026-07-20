@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import type { MapActionPayload } from '@/lib/types';
+import { useHudStore } from '@/lib/store/useHudStore';
 
 export type { MapActionPayload };
 
@@ -27,7 +28,21 @@ export const MapActionContext = createContext<MapActionContextType | undefined>(
 
 export function MapActionProvider({ children }: { children: React.ReactNode }) {
   const [actions, setActions] = useState<MapActionPayload[]>([]);
-  const [selectedBaseLayer, setSelectedBaseLayer] = useState(1);
+  // 审计 F34：lazy init 从持久化的 useHudStore.baseLayer name 反查 index，
+  // 防刷新后 index 重置为 1 与持久化 name 不一致 -> 底图闪烁。
+  const [selectedBaseLayer, setSelectedBaseLayer] = useState<number>(() => {
+    try {
+      const persistedName = useHudStore.getState().baseLayer;
+      // 动态 import 避免 circular dep；TILE_PROVIDERS 在 providers.ts
+      const { TILE_PROVIDERS } = require('@/lib/providers');
+      const idx = TILE_PROVIDERS.findIndex(
+        (p: any) => p.name === persistedName || p.name === 'Carto 深色'
+      );
+      return idx >= 0 ? idx : 1;
+    } catch {
+      return 1;
+    }
+  });
   const snapshotFnRef = useRef<(() => MapSnapshot) | null>(null);
 
   // Last fly_to tracking for physical throttling.
