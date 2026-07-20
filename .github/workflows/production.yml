@@ -174,9 +174,11 @@ jobs:
         # 之前用 axel-op/github-action-bandit@v1，但该 action 仓库已被删除/重命名
         # (Unable to resolve action ... repository not found)。直接 pip install
         # bandit 跑，等效。
+        # -ll = MEDIUM severity 及以上；-ii = MEDIUM confidence 及以上。
+        # exit code 0 = 无 MEDIUM+ 告警；CI 不被 LOW 噪声阻断。
         run: |
           pip install bandit
-          bandit -r app/ -ll -ii -ii
+          bandit -r app/ -ll -ii
 
       - name: Dependency Audit (Backend)
         run: pip install pip-audit && pip-audit -r requirements.txt --desc --progress-spinner off
