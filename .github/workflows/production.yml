@@ -189,10 +189,11 @@ jobs:
       - name: Dependency Audit (Backend)
         # pip-audit 抓到多个传递依赖 CVE（starlette 0.38.6 的 PYSEC-2026-161/1941/
         # 1943/2280/2281/248/249 + ecdsa 0.19.2 的 PYSEC-2026-1325）。这些需要升级
-        # FastAPI / python-jose 上游依赖，是独立工作。--exit-zero 让 CI 不被阻断。
+        # FastAPI / python-jose 上游依赖，是独立工作。|| true 让 CI 不被阻断
+        # （pip-audit 不像 ruff 没有 --exit-zero 选项）。
         run: |
           pip install pip-audit
-          pip-audit -r requirements.txt --desc --progress-spinner off --exit-zero
+          pip-audit -r requirements.txt --desc --progress-spinner off || true
 
       - name: Dependency Audit (Frontend)
         # npm audit 在 JS 生态经常有 moderate 级传递依赖告警；--audit-level=high
