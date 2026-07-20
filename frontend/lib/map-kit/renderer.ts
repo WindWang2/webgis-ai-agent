@@ -300,14 +300,17 @@ export function updateLayerStyle(map: any, id: string, style: StyleUpdateOptions
   }
 
   if (style.dashArray && layer.type === 'line') {
-    const patterns: Record<string, [number, number]> = {
+    // MapLibre line-dasharray 接受任意长度的 number 数组（odd-length 会被
+    // 自动重复），所以类型用 number[] 而非 tuple —— 之前 tuple 阻止了
+    // dashdot 的 4 段 pattern，导致 TS2322 + Docker 构建失败。
+    const patterns: Record<string, number[]> = {
       dashed: [4, 2],
       dotted: [1, 2],
       dashdot: [4, 2, 1, 2],
     };
     const pattern = patterns[style.dashArray];
     if (pattern) {
-      map.setPaintProperty(id, 'line-dasharray', style.dashArray === 'dashdot' ? [4, 2, 1, 2] : pattern);
+      map.setPaintProperty(id, 'line-dasharray', pattern);
     }
   }
 }
