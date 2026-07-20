@@ -3,12 +3,9 @@ PostgreSQL + PostGIS 数据库模型
 B011 Fix: 使用统一的 Base 单例，避免重复定义冲突
 """
 from datetime import datetime, timezone
-from typing import Optional
 from sqlalchemy import (
-    Column, Integer, String, Text, DateTime, Boolean, Float,
-    BigInteger, ForeignKey, Index, UniqueConstraint, JSON
+    Column, Integer, String, Text, DateTime, Boolean, BigInteger, ForeignKey, Index, UniqueConstraint, JSON
 )
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 
@@ -40,6 +37,10 @@ class User(Base):
     email_verified = Column(Boolean, default=False)
     last_login = Column(DateTime)
     login_count = Column(Integer, default=0)
+    # S41 token refresh + logout: bumping this integer invalidates all outstanding
+    # access AND refresh tokens that carry the old `ver` claim. Defaults to 0
+    # (also the implicit ver of pre-S41 tokens that omit the claim).
+    token_version = Column(Integer, nullable=False, default=0, server_default="0")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
