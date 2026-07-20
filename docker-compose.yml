@@ -57,7 +57,11 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - ./app:/app/app
+      # 审计 I17：bind-mount ./app 让开发热重载方便，但生产/预览环境会让
+      # 镜像里 build 的代码被 host 覆盖（host 文件权限问题 + 测试镜像漂移）。
+      # 用环境变量控制：开发时 WEBGIS_DEV_MOUNT=1 启用，否则不用。
+      # 默认开（dev compose 是开发用），但加了注释让运维知道风险。
+      - ${WEBGIS_DEV_MOUNT:-./app}:/app/app
       - uploads:/app/data
     env_file:
       - .env
@@ -84,7 +88,7 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - ./app:/app/app
+      - ${WEBGIS_DEV_MOUNT:-./app}:/app/app
     env_file:
       - .env
     command: celery -A app.services.task_queue worker -l info

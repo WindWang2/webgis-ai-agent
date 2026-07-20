@@ -10,6 +10,8 @@ resources:
 - 02-api-deployment.yaml
 - 03-celery-deployment.yaml
 - 04-ingress.yaml
+# 审计 PR H: PDB + ServiceAccount + RBAC
+- 06-hpa-pdb-rbac.yaml
 
 # 可选依赖（生产环境建议使用外部托管的数据库和Redis，注释掉以下行）
 # - 05-deps-optional.yaml

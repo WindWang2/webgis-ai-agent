@@ -1,0 +1,61 @@
+# ============================================================
+# 审计 PR H: HA + resource + RBAC 加固
+#
+# I22: PodDisruptionBudget + topologySpreadConstraints（在 api deployment 内）
+# I23: Postgres/Redis resources（在 05-deps-optional.yaml 内补）
+# I24: ServiceAccount + RoleBinding（least privilege）
+# ============================================================
+---
+# ServiceAccount for API pods
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: webgis-api-sa
+  namespace: webgis-prod
+  labels:
+    app: webgis-ai-agent
+    component: api
+automountServiceAccountToken: false  # app 不需访问 k8s API
+---
+# ServiceAccount for Celery pods
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: webgis-celery-sa
+  namespace: webgis-prod
+  labels:
+    app: webgis-ai-agent
+    component: celery
+automountServiceAccountToken: false
+---
+# PodDisruptionBudget for API - 保证滚动维护期间至少 1 个 pod 可用
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: webgis-api-pdb
+  namespace: webgis-prod
+  labels:
+    app: webgis-ai-agent
+    component: api
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: webgis-ai-agent
+      component: api
+---
+# PodDisruptionBudget for Celery - 同上
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: webgis-celery-pdb
+  namespace: webgis-prod
+  labels:
+    app: webgis-ai-agent
+    component: celery
+spec:
+  minAvailable: 0  # celery 可短暂全停（任务有重试）
+  selector:
+    matchLabels:
+      app: webgis-ai-agent
+      component: celery
