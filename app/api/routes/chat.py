@@ -1,5 +1,4 @@
 """Chat API Route - SSE 流式对话"""
-import json
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
