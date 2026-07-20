@@ -98,14 +98,14 @@ jobs:
 
       - name: Install Dependencies
         # 测试专用依赖（fakeredis 等）不进 requirements.txt（生产镜像不需要）。
-        run: pip install -r requirements.txt pytest pytest-asyncio httpx fakeredis
+        # psycopg2-binary：CI 的 Postgres service 需要（asyncpg 是 async 驱动，
+        # 但某些测试可能用 sync SQLAlchemy 路径）。
+        run: pip install -r requirements.txt pytest pytest-asyncio httpx fakeredis psycopg2-binary
 
       - name: Set Environment Variables
         run: |
-          # CI 不起 Postgres / Redis service（成本与稳定性都差）。tests 用
-          # SQLite 内存/临时文件跑（与本地 dev 一致），REDIS_URL 指向不存在的
-          # 实例 -- rate_limiter / session_data 会自动 fallback 到 in-memory。
-          echo "DATABASE_URL=sqlite:///ci_test.db" >> $GITHUB_ENV
+          # CI 已配 Postgres + Redis service container。这里指向它们。
+          echo "DATABASE_URL=postgresql://test_user:test_pass@localhost:5432/test_db" >> $GITHUB_ENV
           echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV
           echo "JWT_SECRET_KEY=ci-test-secret-key-32-chars-ok" >> $GITHUB_ENV
           echo "ENV=development" >> $GITHUB_ENV
