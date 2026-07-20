@@ -36,7 +36,7 @@ spec:
         image: webgis-prod:latest
         imagePullPolicy: IfNotPresent
         command: ["celery"]
-        args: ["-A", "app.services.celery_worker", "worker", "--loglevel=info", "--concurrency=$(CELERY_CONCURRENCY)"]
+        args: ["-A", "app.services.task_queue", "worker", "--loglevel=info", "--concurrency=$(CELERY_CONCURRENCY)"]
         envFrom:
         - configMapRef:
             name: webgis-config
@@ -47,7 +47,7 @@ spec:
             command:
               - celery
               - -A
-              - app.services.celery_worker
+              - app.services.task_queue
               - inspect
               - ping
           initialDelaySeconds: 30

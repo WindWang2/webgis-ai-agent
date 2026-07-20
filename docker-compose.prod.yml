@@ -113,7 +113,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: celery -A app.services.celery_worker worker --loglevel=info --concurrency=2
+    command: celery -A app.services.task_queue worker --loglevel=info --concurrency=2
     networks:
       - webgis-net
 

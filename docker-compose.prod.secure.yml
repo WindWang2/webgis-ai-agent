@@ -99,7 +99,7 @@ services:
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}@redis:6379/1
     env_file:
       - .env.Priv
-    command: celery -A app.services.celery_worker worker --loglevel=info --concurrency=2
+    command: celery -A app.services.task_queue worker --loglevel=info --concurrency=2
     depends_on:
       db:
         condition: service_healthy

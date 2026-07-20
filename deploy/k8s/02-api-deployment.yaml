@@ -39,8 +39,11 @@ spec:
       - name: webgis-api
         image: webgis-prod:latest
         imagePullPolicy: IfNotPresent
+        # 与 Dockerfile.prod 的 CMD 保持一致：使用 standalone server 而非 npx serve。
+        # 之前的 `cd /app/frontend/out && npx serve` 引用了 Dockerfile.prod 不产出的目录，
+        # 导致 k8s 部署下前端永久 502。
         command: ["sh", "-c"]
-        args: ["cd /app/frontend/out && npx serve@latest -s . -l 3000 & uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+        args: ["uvicorn app.main:app --host 0.0.0.0 --port 8000 & node frontend/.next/standalone/server.js -p 3000"]
         ports:
         - containerPort: 8000
           name: api
@@ -61,7 +64,8 @@ spec:
           failureThreshold: 3
         readinessProbe:
           httpGet:
-            path: /api/v1/health/ready
+            # /api/v1/ready 在依赖不可达时返回 503，触发 pod 摘出流量
+            path: /api/v1/ready
             port: 8000
           initialDelaySeconds: 15
           periodSeconds: 10
