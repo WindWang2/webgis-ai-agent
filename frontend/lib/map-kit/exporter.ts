@@ -1,4 +1,5 @@
 import maplibregl from 'maplibre-gl';
+import type { LegendSpec } from './types';
 
 /**
  * Captures the current map canvas and returns it as a Blob.
@@ -23,6 +24,35 @@ export interface ExportOptions {
   paperSize?: 'screen' | 'A4' | 'A3';
   orientation?: 'landscape' | 'portrait';
   dpi?: number;
+}
+
+/**
+ * 审计 F33：composeLayout 的完整 options 类型。之前用 any，让未来 caller
+ * 传部分字段时静默产生 NaN 渲染（如 mapCenter undefined -> NaN scale bar）。
+ *
+ * 审计 follow-up（CI Docker build）：初版漏了 legendSpec / heatmapLegend ——
+ * map-action-handler.tsx 调用方传这两个字段，TS 报 "Object literal may only
+ * specify known properties"。补全字段类型。
+ */
+export interface ComposeLayoutOptions {
+  dpi?: number;
+  theme?: 'light' | 'dark';
+  showScale?: boolean;
+  showCompass?: boolean;
+  showWatermark?: boolean;
+  showLegend?: boolean;
+  showMetadata?: boolean;
+  showGraticules?: boolean;
+  author?: string;
+  dataSource?: string;
+  mapCenter?: { lat: number; lng: number };
+  mapZoom?: number;
+  mapBearing?: number;
+  thematicLayer?: unknown;
+  /** Structured legend spec from layer.legend_spec (graduated/continuous/categorical/divergent). */
+  legendSpec?: LegendSpec;
+  /** Heatmap gradient legend metadata; consumed when type === 'heatmap' layers are visible. */
+  heatmapLegend?: { name?: string };
 }
 
 /**
@@ -91,7 +121,7 @@ export function composeLayout(
   canvas: HTMLCanvasElement,
   title: string,
   subtitle?: string,
-  options: any = {}
+  options: ComposeLayoutOptions = {}
 ) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;

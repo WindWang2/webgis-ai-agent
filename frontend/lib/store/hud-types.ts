@@ -226,8 +226,12 @@ export interface HudState {
   setRagInsight: (insight: { title: string; content: string; source?: string } | null) => void;
 
   /* ─── System Callback ─── */
+  // 审计 F35：pendingSystemMessage 现在是队列 -- rapid back-to-back 调用
+  // 不再互相覆盖。consumer 调 drainSystemMessage 取下一条。
   pendingSystemMessage: string | null;
+  _systemMessageQueue: string[];
   setPendingSystemMessage: (msg: string | null) => void;
+  drainSystemMessage: () => void;
 
   /* ─── Analysis Assets ─── */
   analysisAssets: AnalysisAsset[];

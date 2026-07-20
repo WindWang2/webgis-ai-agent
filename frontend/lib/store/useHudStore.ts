@@ -63,12 +63,14 @@ export const useHudStore = create<HudState>()(
         ragConfig: state.ragConfig,
         mapStyles: state.mapStyles,
         baseLayer: state.baseLayer,
+        // 审计 F29：accentColor 之前未持久化 -> 用户选的颜色刷新后丢失。
+        accentColor: state.accentColor,
         // SECURITY: 去除 apiKey 后再持久化，避免明文写入 localStorage
         // （XSS / 浏览器扩展 / DevTools 可读）。
         llmConfigFull: state.llmConfigFull
           ? { ...state.llmConfigFull, apiKey: '' }
           : state.llmConfigFull,
-        // 注意：刻意 *不* 持久化 layers — 单个分析结果可能数百 MB GeoJSON，
+        // 注意：刻意 *不* 持久化 layers - 单个分析结果可能数百 MB GeoJSON，
         // 会爆掉 localStorage 5–10 MB 配额并连带破坏 setItem (静默丢失其它字段)。
       }),
     },
