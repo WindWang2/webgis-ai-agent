@@ -183,7 +183,14 @@ class TaskTracker:
         # 可选：记录失败原因到任务中
 
     def cancel(self, task_id: str) -> bool:
-        """取消任务"""
+        """取消任务（cooperative - 不会打断正在执行的 tool）。
+
+        审计 M7：cancel 仅设置 _cancelled 标志，由 chat_engine 在每轮/每步
+        之间轮询 is_cancelled 决定是否退出。正在执行的单个 tool（如 NDVI 计算、
+        LLM 流式调用）会跑到自然完成才检查标志。完整 preemptive cancel 需要把
+        asyncio.Event 透传到每个 tool 的 dispatch 路径，是独立重构工作。
+        用户感知：长任务点 cancel 后可能等 30-60s 才真正停。
+        """
         task = self._tasks.get(task_id)
         if not task:
             return False

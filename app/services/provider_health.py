@@ -107,18 +107,24 @@ class ProviderHealthTracker:
 
     # ── 诊断用 ────────────────────────────────────────────────────────────────
 
-    def snapshot(self) -> dict[str, dict]:
-        """返回不含锁的可读快照（仅供监控/日志）。"""
+    async def snapshot(self) -> dict[str, dict]:
+        """返回可读快照（仅供监控/日志）。
+
+        审计 M3：之前 snapshot 不加锁，并发 record_attempt 可能修改 self._state
+        导致 RuntimeError 'dictionary changed size during iteration' 或重复/缺失。
+        snapshot 现在加锁（与 record_* 一致），用 copy 防 release 后 mutate。
+        """
         now = time.time()
-        return {
-            p: {
-                "consecutive_errors": s.consecutive_errors,
-                "last_failure_ts": s.last_failure_ts,
-                "circuit_open": s.circuit_open,
-                "calls_last_minute": sum(1 for ts in s.call_timestamps if now - ts < 60),
+        async with self._lock:
+            return {
+                p: {
+                    "consecutive_errors": s.consecutive_errors,
+                    "last_failure_ts": s.last_failure_ts,
+                    "circuit_open": s.circuit_open,
+                    "calls_last_minute": sum(1 for ts in s.call_timestamps if now - ts < 60),
+                }
+                for p, s in list(self._state.items())  # list() copy 防迭代中 mutate
             }
-            for p, s in self._state.items()
-        }
 
 
 # 全局单例，chinese_maps.py 直接 import 使用

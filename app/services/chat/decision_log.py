@@ -36,8 +36,36 @@ class ToolDecisionRecord:
     def to_dict(self) -> dict:
         d = dataclasses.asdict(self)
         d["ts"] = datetime.datetime.now().isoformat(timespec="seconds")
+        # 审计 S44：user_message 截断到 200 字符（已有），tool_args 也截断。
+        # tool_args 常含完整 GeoJSON（可达 MB 级）+ 可能含路径/坐标 PII，
+        # 全量写日志会撑爆磁盘 + 泄漏敏感数据。整体 args JSON 截到 2000 字符。
         d["user_message"] = (self.user_message or "")[:200]
+        d["tool_args"] = _redact_and_truncate_args(d.get("tool_args"))
         return d
+
+
+def _redact_and_truncate_args(args: Any, max_len: int = 2000) -> Any:
+    """审计 S44：tool_args 截断 + 敏感 key 脱敏。
+
+    - 整体 JSON 字符串超 max_len 的，截断并加标记
+    - 含 'api_key'/'token'/'password'/'secret' 的 key 值替换为 '<redacted>'
+    """
+    if not isinstance(args, dict):
+        return args
+    REDACT_KEYS = {"api_key", "token", "password", "secret", "apikey", "Authorization"}
+    redacted = {}
+    for k, v in args.items():
+        if isinstance(k, str) and k.lower() in REDACT_KEYS:
+            redacted[k] = "<redacted>"
+        else:
+            redacted[k] = v
+    try:
+        s = json.dumps(redacted, ensure_ascii=False, default=str)
+        if len(s) > max_len:
+            return s[:max_len] + "...[truncated]"
+        return redacted
+    except (TypeError, ValueError):
+        return str(redacted)[:max_len]
 
 
 def _append_line(line: str) -> None:
