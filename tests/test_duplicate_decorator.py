@@ -1,4 +1,12 @@
-"""Test: no duplicate decorators in report_service."""
+"""Test: no duplicate decorators in report_service.
+
+审计 T3 注释：这是源码结构检查（AST），不是行为测试。保留是因为：
+(1) 它防御的 bug（@staticmethod 重复）会让函数在 import 时就崩，
+    行为测试和 AST 检查效果相同；
+(2) 转行为测试需要枚举 report_service 的每个函数并调用，但其中
+    PDF 生成依赖外部库（reportlab），调用成本高且不稳定。
+AST 检查在这里是更务实的选择。
+"""
 import ast
 
 
