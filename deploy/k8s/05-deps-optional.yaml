@@ -42,6 +42,14 @@ spec:
               key: DB_NAME
         - name: PGDATA
           value: /var/lib/postgresql/data/pgdata
+        # 审计 I23：之前 Postgres 无 resources 限制 -> 可 OOM 整节点
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
         volumeMounts:
         - name: postgres-data
           mountPath: /var/lib/postgresql/data
@@ -111,6 +119,14 @@ spec:
         image: redis:7-alpine
         ports:
         - containerPort: 6379
+        # 审计 I23：Redis 也加 resources（与 maxmemory 1gb 对齐）
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "2Gi"
         command:
         - redis-server
         - "--appendonly"
@@ -118,7 +134,7 @@ spec:
         - "--maxmemory"
         - "1gb"
         - "--maxmemory-policy"
-        - "allkeys-lru"
+        - "noeviction"
         - "--requirepass"
         - "$(REDIS_PASSWORD)"
         env:

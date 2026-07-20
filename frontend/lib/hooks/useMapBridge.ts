@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { streamChat } from '@/lib/api/chat';
 import type { SSEEvent } from '@/lib/api/chat';
 import { useHudStore } from '@/lib/store/useHudStore';
@@ -180,5 +180,7 @@ export function useMapBridge(
     [sessionId]
   );
 
-  return { aiStatus, send, onViewportChange };
+  // 审计 F25：返回对象用 useMemo 包裹，避免每次 render 都创建新对象引用
+  // -> 下游 useCallback/useMemo 依赖 bridge 的不会每次都失效。
+  return useMemo(() => ({ aiStatus, send, onViewportChange }), [aiStatus, send, onViewportChange]);
 }

@@ -132,6 +132,14 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
             }
           }
         }
+
+        // 审计 F39：切换会话后必须刷新分析资产列表，否则 session A 的资产
+        // 残留在 session B 的 AnalysisTab 里。之前 fetchAnalysisAssets 从未被调用。
+        try {
+          await useHudStore.getState().fetchAnalysisAssets(sid);
+        } catch (e) {
+          console.warn('[fetchAnalysisAssets] failed on session switch:', e);
+        }
       } catch (err: any) {
         if (err?.name !== 'AbortError') {
           console.error('Load session failed:', err);

@@ -414,15 +414,23 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
 
   // /review C8: derive interactiveLayerIds from actual style sublayers.
   // The renderer adds sublayer ids like `custom-${id}-fill` / `-line` / `-circle`,
-  // not the bare `custom-${id}` — without enumerating sublayers, MapLibre never
+  // not the bare `custom-${id}` - without enumerating sublayers, MapLibre never
   // toggles pointer-cursor on hover and clickable features have no affordance.
   const [interactiveIds, setInteractiveIds] = useState<string[]>([])
+  // 审计 F32：缓存上次计算的 IDs joined 字符串，相同则跳过 setInteractiveIds
+  // -> 防止 styledata 频繁触发时产生 re-render 风暴。
+  const lastInteractiveIdsRef = useRef<string>('')
   useEffect(() => {
     const map = mapRef.current?.getMap()
     if (!map) return
     const recompute = () => {
       const all = (map.getStyle()?.layers || []) as Array<{ id: string }>
-      setInteractiveIds(all.map((l) => l.id).filter((id) => id.startsWith('custom-')))
+      const ids = all.map((l) => l.id).filter((id) => id.startsWith('custom-'))
+      const joined = ids.join(',')
+      if (joined !== lastInteractiveIdsRef.current) {
+        lastInteractiveIdsRef.current = joined
+        setInteractiveIds(ids)
+      }
     }
     recompute()
     map.on('styledata', recompute)

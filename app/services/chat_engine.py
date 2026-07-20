@@ -73,9 +73,18 @@ class ChatEngine:
         self.max_rounds = 60
         self.tracker = TaskTracker()
         # 内存对话存储: session_id -> messages list (LRU Cache to bound memory)
-        self._sessions: LRUCache = LRUCache(capacity=50)
+        # 审计 M2：之前 capacity=50，>50 并发会话会 evict 最老的 -> 后续请求
+        # 需从 DB 重载 + in-flight 持有旧 list 引用的请求可能与新请求分歧。
+        # 提到 200（与 _MAX_LOCKS 对齐），生产环境可通过环境变量进一步调。
+        import os as _os
+        _SESSION_CACHE_SIZE = int(_os.getenv("SESSION_CACHE_SIZE", "200"))
+        self._sessions: LRUCache = LRUCache(capacity=_SESSION_CACHE_SIZE)
         # 每会话锁，覆盖 _get_or_create_session 的检查-赋值竞态
+        # 审计 M1：之前 _session_locks 无界增长 -- clear_session 只 pop 一个，
+        # 但被遗弃的 session（从未 clear）的 Lock 永久泄漏。加 _MAX_LOCKS 上限，
+        # 超限时清理最旧的（按 dict 插入顺序，Python 3.7+ 保证有序）。
         self._session_locks: dict[str, asyncio.Lock] = {}
+        self._MAX_LOCKS = 200
 
     def _select_tools(self, session_id: Optional[str], messages: list[dict]) -> Optional[list[dict]]:
         """选出本轮要推给 LLM 的工具 schema 列表。
@@ -219,6 +228,16 @@ class ChatEngine:
         # 慢路径：可能多个 coroutine 同时进入；按 session_id 分粒度加锁，
         # 防止两个并发请求都触发 _load_session_from_db 造成双倍 DB 读 + 后续写时序错乱
         # (审计 B2: 原实现是检查-然后-赋值的经典 TOCTOU 竞态)。
+        # 审计 M1：_session_locks 上限保护 -- 超过 _MAX_LOCKS 时清理最旧的，
+        # 防止被遗弃 session 的 Lock 永久泄漏。
+        if len(self._session_locks) > self._MAX_LOCKS:
+            # 删除最旧的 25%（dict 插入顺序，Python 3.7+ 保证）
+            evict_count = self._MAX_LOCKS // 4
+            for sid in list(self._session_locks.keys())[:evict_count]:
+                # 只删当前没被持有的锁（避免打断在途请求）
+                lock_to_evict = self._session_locks[sid]
+                if not lock_to_evict.locked():
+                    self._session_locks.pop(sid, None)
         lock = self._session_locks.setdefault(session_id, asyncio.Lock())
         async with lock:
             # 重新检查：第一个进锁的协程加载完，后续协程拿到锁后应直接复用
@@ -247,8 +266,18 @@ class ChatEngine:
         messages.append({"role": "system", "content": f"{marker}\n\n{skill['body']}"})
 
     async def _save_msg_async(self, session_id: str, role: str, content: str, tool_calls=None, tool_result=None, tool_call_id=None, reasoning_content=None):
-        """异步保存消息到数据库，带重试机制。"""
+        """异步保存消息到数据库，带重试机制。
+
+        审计 M8：之前 _save_msg_async 对 tool_result content 不截断，但 streaming
+        路径（chat_stream）截断到 100000 字符。非流式 chat() 路径用 _save_msg_async
+        保存 tool result 时不截断 -> 超大 GeoJSON tool result 可能撑爆 SQLite 行。
+        统一截断到 100000（与 streaming 一致）。
+        """
         try:
+            # 审计 M8：tool_result 可能是 MB 级 GeoJSON；截断到 100000 字符
+            # （与 chat_stream 的 db_save_content[:100000] 一致）。
+            if tool_result is not None and isinstance(tool_result, str) and len(tool_result) > 100000:
+                tool_result = tool_result[:100000] + "...[truncated]"
             async with async_db_session() as db:
                 await AsyncHistoryService(db).save_message(session_id, role, content, tool_calls, tool_result, tool_call_id, reasoning_content)
         except Exception as e:
@@ -413,75 +442,99 @@ class ChatEngine:
         # 非流式路径也需要重复调用拦截，避免 LLM 在同一任务里循环刷同一工具
         executed_tools: set[tuple[str, str]] = set()
 
+        # 审计 M4：非流式 chat() 之前不注册 TaskTracker -> 通过 /chat/completions
+        # 发起的任务在 /tasks 端点不可见，也无法 cancel。注册一个 task 让它可见。
+        task = self.tracker.create(session_id, message)
+
         # FC 循环
-        for _ in range(self.max_rounds):
-            messages_with_context = await self._compose_request_messages(session_id, messages)
+        try:
+            for _ in range(self.max_rounds):
+                # 审计 M4：cooperative cancel 检查（与 chat_stream 一致）
+                if self.tracker.is_cancelled(task.id):
+                    return {"session_id": session_id, "content": "任务已取消"}
 
-            tools = self._select_tools(session_id, messages)
-            response = await self._call_llm(messages_with_context, tools)
-            choice = response.get("choices", [{}])[0]
-            assistant_msg = choice.get("message", {})
+                messages_with_context = await self._compose_request_messages(session_id, messages)
 
-            # 提取文本内容，优先 content，次之 reasoning
-            raw_content = assistant_msg.get("content") or ""
-            reasoning = assistant_msg.get("reasoning") or assistant_msg.get("reasoning_content") or ""
+                tools = self._select_tools(session_id, messages)
+                response = await self._call_llm(messages_with_context, tools)
+                choice = response.get("choices", [{}])[0]
+                assistant_msg = choice.get("message", {})
 
-            # 检查是否有 tool_calls（OpenAI 标准格式或 MiniMax XML 格式）
-            standard_calls = assistant_msg.get("tool_calls") or []
-            xml_calls: list[dict] = []
-            if not standard_calls:
-                if "minimax:tool_call" in raw_content:
-                    xml_calls = _parse_minimax_xml_tool_calls(raw_content)
+                # 提取文本内容，优先 content，次之 reasoning
+                raw_content = assistant_msg.get("content") or ""
+                reasoning = assistant_msg.get("reasoning") or assistant_msg.get("reasoning_content") or ""
 
-            tc_list = standard_calls or xml_calls
+                # 检查是否有 tool_calls（OpenAI 标准格式或 MiniMax XML 格式）
+                standard_calls = assistant_msg.get("tool_calls") or []
+                xml_calls: list[dict] = []
+                if not standard_calls:
+                    if "minimax:tool_call" in raw_content:
+                        xml_calls = _parse_minimax_xml_tool_calls(raw_content)
 
-            if tc_list:
-                content_text = raw_content
-                if xml_calls:
-                    # Strip XML artifact from content before storing
-                    content_text = re.sub(r'\s*minimax:tool_call[\s\S]*', '', content_text).strip()
+                tc_list = standard_calls or xml_calls
 
-                entry: dict = {"role": "assistant", "content": content_text}
-                if reasoning:
-                    entry["reasoning_content"] = reasoning
-                if standard_calls:
-                    entry["tool_calls"] = standard_calls
-                messages.append(entry)
-                await self._save_msg_async(session_id, "assistant", content_text, tc_list, reasoning_content=reasoning)
+                if tc_list:
+                    content_text = raw_content
+                    if xml_calls:
+                        # Strip XML artifact from content before storing
+                        content_text = re.sub(r'\s*minimax:tool_call[\s\S]*', '', content_text).strip()
 
-                tool_result_msgs: list[str] = []
-                for tc in tc_list:
-                    outcome = await self._dispatch_tool(tc, session_id, executed_tools)
-                    llm_payload = outcome["llm_payload"]
-
+                    entry: dict = {"role": "assistant", "content": content_text}
+                    if reasoning:
+                        entry["reasoning_content"] = reasoning
                     if standard_calls:
+                        entry["tool_calls"] = standard_calls
+                    messages.append(entry)
+                    await self._save_msg_async(session_id, "assistant", content_text, tc_list, reasoning_content=reasoning)
+
+                    tool_result_msgs: list[str] = []
+                    for tc in tc_list:
+                        # 审计 M4：注册 step（与 chat_stream 一致），让进度可查
+                        tool_name = tc["function"]["name"]
+                        tool_args_dict = tc["function"]["arguments"]
+                        if isinstance(tool_args_dict, str):
+                            try:
+                                tool_args_dict = json.loads(tool_args_dict)
+                            except Exception:
+                                tool_args_dict = {}
+                        step = self.tracker.start_step(task.id, tool_name, tool_args_dict if isinstance(tool_args_dict, dict) else {})
+                        outcome = await self._dispatch_tool(tc, session_id, executed_tools)
+                        self.tracker.complete_step(task.id, step.id, outcome["result"])
+                        llm_payload = outcome["llm_payload"]
+
+                        if standard_calls:
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": llm_payload,
+                            })
+                            await self._save_msg_async(session_id, "tool", "", None, llm_payload, tc["id"])
+                        else:
+                            tool_result_msgs.append(f"{tc['function']['name']}: {llm_payload}")
+
+                    if xml_calls and tool_result_msgs:
                         messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc["id"],
-                            "content": llm_payload,
+                            "role": "user",
+                            "content": "[工具执行结果]\n" + "\n".join(tool_result_msgs),
                         })
-                        await self._save_msg_async(session_id, "tool", "", None, llm_payload, tc["id"])
-                    else:
-                        tool_result_msgs.append(f"{tc['function']['name']}: {llm_payload}")
+                    continue  # 继续循环让 LLM 处理工具结果
+                else:
+                    # 无 tool_calls，最终回复
+                    content = raw_content
 
-                if xml_calls and tool_result_msgs:
-                    messages.append({
-                        "role": "user",
-                        "content": "[工具执行结果]\n" + "\n".join(tool_result_msgs),
-                    })
-                continue  # 继续循环让 LLM 处理工具结果
-            else:
-                # 无 tool_calls，最终回复
-                content = raw_content
+                    entry = {"role": "assistant", "content": content}
+                    if reasoning:
+                        entry["reasoning_content"] = reasoning
+                    messages.append(entry)
+                    await self._save_msg_async(session_id, "assistant", content, reasoning_content=reasoning)
+                    self.tracker.complete_task(task.id)
+                    return {"session_id": session_id, "content": content, "reasoning": reasoning}
 
-                entry = {"role": "assistant", "content": content}
-                if reasoning:
-                    entry["reasoning_content"] = reasoning
-                messages.append(entry)
-                await self._save_msg_async(session_id, "assistant", content, reasoning_content=reasoning)
-                return {"session_id": session_id, "content": content, "reasoning": reasoning}
-
-        return {"content": "达到最大工具调用轮数", "session_id": session_id}
+            self.tracker.complete_task(task.id)
+            return {"content": "达到最大工具调用轮数", "session_id": session_id}
+        except Exception:
+            self.tracker.fail_task(task.id, "non-streaming chat exception")
+            raise
 
     async def chat_stream(self, message: str, session_id: Optional[str] = None, map_state: Optional[dict] = None, skill_name: Optional[str] = None, user_id: Optional[str] = None) -> AsyncGenerator[str, None]:
         """流式对话，yield SSE 格式事件含任务跟踪"""
@@ -785,6 +838,12 @@ class ChatEngine:
             await session_data_manager.clear_session(session_id)
             from app.services.chat import planner
             planner.clear_plan(session_id)
+            # 审计 M9：清 layer_schema_cache，否则清空后重建同 session_id 会读到旧 schema
+            try:
+                from app.services.chat.context.layer_schema import clear_layer_schema_cache
+                clear_layer_schema_cache(session_id)
+            except ImportError:
+                pass
             if self.catalog is not None:
                 self.catalog.reset_session(session_id)
         return deleted

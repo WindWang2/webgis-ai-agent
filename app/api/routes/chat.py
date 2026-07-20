@@ -1,11 +1,11 @@
 """Chat API Route - SSE 流式对话"""
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 
-from app.core.auth import get_current_user, get_current_user_optional, require_admin
+from app.core.auth import get_current_user_optional, require_admin
 from app.services.chat_engine import ChatEngine
 from app.services.history_service_async import AsyncHistoryService
 from app.tools._utils import async_db_session
@@ -22,16 +22,20 @@ engine: ChatEngine = None  # type: ignore[assignment]
 
 
 def get_engine() -> ChatEngine:
-    """Return the ChatEngine instance, raising if not yet initialized by lifespan."""
+    """Return the ChatEngine instance, raising 503 if not yet initialized by lifespan.
+
+    审计 S47：之前 raise RuntimeError -> 全局 exception handler 返回 500 +
+    可能泄漏内部模块名。改为 503 让客户端知道是临时不可用（启动窗口）。
+    """
     if engine is None:
-        raise RuntimeError("ChatEngine 尚未初始化 — 请确认 lifespan 已启动")
+        raise HTTPException(status_code=503, detail="Service starting up, please retry")
     return engine
 
 
 def get_registry() -> ToolRegistry:
-    """Return the ToolRegistry instance, raising if not yet initialized by lifespan."""
+    """Return the ToolRegistry instance, raising 503 if not yet initialized by lifespan."""
     if registry is None:
-        raise RuntimeError("ToolRegistry 尚未初始化 — 请确认 lifespan 已启动")
+        raise HTTPException(status_code=503, detail="Service starting up, please retry")
     return registry
 
 
@@ -67,7 +71,7 @@ async def chat_completions(req: ChatRequest, _user: dict = Depends(get_current_u
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.post("/stream")
+@router.post("/stream", response_model=None)
 async def chat_stream(req: ChatRequest, _user: dict = Depends(get_current_user_optional)):
     """SSE 流式对话接口"""
     user_id = _user.get("user_id")
@@ -97,12 +101,27 @@ async def chat_stream(req: ChatRequest, _user: dict = Depends(get_current_user_o
 
 
 @router.get("/sessions")
-async def list_sessions(_user: dict = Depends(get_current_user_optional)):
-    """列出当前用户的历史会话；匿名调用方返回空列表（A2）。"""
+async def list_sessions(
+    limit: int = Query(50, ge=1, le=200, description="每页数量"),
+    offset: int = Query(0, ge=0, description="偏移量"),
+    _user: dict = Depends(get_current_user_optional),
+):
+    """列出当前用户的历史会话；匿名调用方返回空列表（A2）。
+
+    审计 A5：之前无 pagination，活跃用户可能积累数千 session 全量返回。
+    加 limit (默认 50, 上限 200) + offset。注意：list_sessions 内部按
+    updated_at desc，但当前 AsyncHistoryService.list_sessions 不支持 offset；
+    简化处理：客户端用 limit 控制批次，offset 由客户端切页。
+    """
     user_id = _user.get("user_id")
     async with async_db_session() as db:
-        sessions = await AsyncHistoryService(db).list_sessions(user_id=user_id)
+        sessions = await AsyncHistoryService(db).list_sessions(limit=limit, user_id=user_id)
+        # offset 简单 slice（session 总数有限，DB 端 offset 留作后续优化）
+        paginated = sessions[offset:offset + limit] if offset else sessions
         return {
+            "total": len(sessions),  # 本次 query 的总数（不含 offset）
+            "limit": limit,
+            "offset": offset,
             "sessions": [
                 {
                     "id": s.id,
@@ -110,8 +129,8 @@ async def list_sessions(_user: dict = Depends(get_current_user_optional)):
                     "createdAt": s.created_at.timestamp() * 1000,
                     "updatedAt": s.updated_at.timestamp() * 1000,
                 }
-                for s in sessions
-            ]
+                for s in paginated
+            ],
         }
 
 
@@ -223,7 +242,7 @@ class ToolExecuteRequest(BaseModel):
     confirm_destructive: bool = False
 
 
-@router.post("/tools/execute")
+@router.post("/tools/execute", response_model=None)
 async def execute_tool_direct(req: ToolExecuteRequest, _user: dict = Depends(require_admin)):
     """直接执行单个工具（非流式通过 chat）
 

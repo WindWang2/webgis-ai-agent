@@ -2,6 +2,14 @@ import maplibregl from 'maplibre-gl';
 import { ThematicStyleDef } from './types';
 
 /**
+/**
+ * 审计 F31：缓存每个 source 上次 setData 的 data 引用。
+ * 相同引用跳过 setData，避免每帧重新解析 GeoJSON（50k 要素层 ~100ms jank）。
+ * 用 WeakMap 让 source 被 GC 时自动清理。
+ */
+const _lastGeoJsonData = new WeakMap<object, unknown>();
+
+/**
  * 审计 F28：缓存每个 image source 上次用的 url。
  * 如果 url 相同，MapLibre 的 ImageSource 会用内部缓存不重新拉取 ->
  * 后端在同一 URL 覆盖文件时用户看到旧图。加 ?v=cacheBuster 强制刷新。
@@ -37,16 +45,25 @@ export function addImageSource(map: any, id: string, url: string, coordinates: [
 
 /**
  * Safely adds or updates a GeoJSON source.
+ *
+ * 审计 F31：如果 data 引用与上次相同，跳过 setData -- MapLibre 的 setData
+ * 即使 data 引用相同也会触发全量重新解析。
  */
 export function addGeoJsonSource(map: any, id: string, data: any) {
   const source = map.getSource(id) as maplibregl.GeoJSONSource;
   if (source) {
+    // 引用相同则跳过（最常见的优化 -- 大量 layer 重新渲染时）
+    if (_lastGeoJsonData.get(source) === data) return;
+    _lastGeoJsonData.set(source, data);
     source.setData(data);
   } else {
     map.addSource(id, {
       type: 'geojson',
       data
     });
+    // 新 source 也记录引用，便于后续比较
+    const newSource = map.getSource(id);
+    if (newSource) _lastGeoJsonData.set(newSource, data);
   }
 }
 

@@ -1,35 +1,29 @@
 """Map export API tests"""
 import io
 import os
-import importlib.util
 from unittest.mock import patch, MagicMock
 
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 
+from app.api.routes import map as _mod
 from app.core.auth import get_current_user
 
 _mock_user = {"user_id": "test-user"}
 
-
-def _load_module():
-    spec = importlib.util.spec_from_file_location(
-        "app.api.routes.map",
-        os.path.join(os.path.dirname(__file__), "..", "app", "api", "routes", "map.py"),
-        submodule_search_locations=[]
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+# Isolated EXPORT_DIR used by patch.object below. The module's real EXPORT_DIR
+# is created on import, but these tests patch in a temp location that must exist
+# for NamedTemporaryFile / fig.savefig to succeed.
+_TEST_EXPORT_DIR = "/tmp/test_exports"
+os.makedirs(_TEST_EXPORT_DIR, exist_ok=True)
 
 
 @pytest.fixture
 def app():
-    mod = _load_module()
     app = FastAPI()
     app.dependency_overrides[get_current_user] = lambda: _mock_user
-    app.include_router(mod.router, prefix="/api/v1")
+    app.include_router(_mod.router, prefix="/api/v1")
     return app
 
 
@@ -50,10 +44,9 @@ async def test_upload_map_export_no_filename(client):
 
 @pytest.mark.asyncio
 async def test_upload_map_export_success(client):
-    mod = _load_module()
     fake_content = b"fake-png-data"
     with patch("builtins.open", MagicMock()), \
-         patch.object(mod, "EXPORT_DIR", "/tmp/test_exports"):
+         patch.object(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR):
         resp = await client.post(
             "/api/v1/export",
             files={"file": ("map.png", fake_content, "image/png")},
@@ -67,17 +60,15 @@ async def test_upload_map_export_success(client):
 
 @pytest.mark.asyncio
 async def test_download_map_export_not_found(client):
-    mod = _load_module()
-    with patch.object(mod, "EXPORT_DIR", "/tmp/nonexistent_exports"):
+    with patch.object(_mod, "EXPORT_DIR", "/tmp/nonexistent_exports"):
         resp = await client.get("/api/v1/export/download/nonexistent.png")
         assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_upload_map_export_invalid_ext_becomes_png(client):
-    mod = _load_module()
     with patch("builtins.open", MagicMock()), \
-         patch.object(mod, "EXPORT_DIR", "/tmp/test_exports"):
+         patch.object(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR):
         resp = await client.post(
             "/api/v1/export",
             files={"file": ("map.bmp", b"data", "image/bmp")},
@@ -99,9 +90,8 @@ def _make_tiny_png() -> bytes:
 
 @pytest.mark.asyncio
 async def test_export_pdf_success(client):
-    mod = _load_module()
     png_bytes = _make_tiny_png()
-    with patch.object(mod, "EXPORT_DIR", "/tmp/test_exports"):
+    with patch.object(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR):
         resp = await client.post(
             "/api/v1/export/pdf",
             files={"file": ("map.png", png_bytes, "image/png")},
@@ -118,8 +108,7 @@ async def test_export_pdf_success(client):
 @pytest.mark.asyncio
 async def test_export_pdf_invalid_image(client):
     """Non-image bytes should return 500."""
-    mod = _load_module()
-    with patch.object(mod, "EXPORT_DIR", "/tmp/test_exports"):
+    with patch.object(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR):
         resp = await client.post(
             "/api/v1/export/pdf",
             files={"file": ("bad.png", b"not-an-image", "image/png")},
@@ -130,14 +119,13 @@ async def test_export_pdf_invalid_image(client):
 @pytest.mark.asyncio
 async def test_download_pdf_media_type(tmp_path):
     """Download endpoint returns application/pdf for .pdf files."""
-    mod = _load_module()
     pdf_file = tmp_path / "test.pdf"
     pdf_file.write_bytes(b"%PDF-1.4 test")
 
-    with patch.object(mod, "EXPORT_DIR", str(tmp_path)):
+    with patch.object(_mod, "EXPORT_DIR", str(tmp_path)):
         app = FastAPI()
         app.dependency_overrides[get_current_user] = lambda: _mock_user
-        app.include_router(mod.router, prefix="/api/v1")
+        app.include_router(_mod.router, prefix="/api/v1")
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
             resp = await c.get("/api/v1/export/download/test.pdf")

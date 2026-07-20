@@ -395,20 +395,40 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     environment: production
     steps:
-      - name: Get Previous Tag
-        id: previous-tag
+      # 审计 I27：之前 rollback checkout 旧 tag + docker build from source --
+      # 慢（10+ 分钟）+ 不可重现（依赖可能 drift）+ 可能因依赖变化 build 失败。
+      # 改为：列出最近 N 个已 push 的 image tag，让 operator 选一个 redeploy。
+      # 真正的不可变 artifact 回滚需要 image registry（当前 push:false 模式下，
+      # 退化为 rebuild 但用之前 commit 的 source -- 至少 source 是 pinned 的）。
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 20  # 拿足够 history 找上一个稳定 commit
+
+      - name: Find Previous Stable Commit
+        id: prev-commit
         run: |
-          TAG=$(git describe --abbrev=0 --tags HEAD^)
-          echo "TAG=$TAG" >> $GITHUB_ENV
+          # 跳过当前 HEAD，找上一个 merge commit（通常是稳定 PR 合并点）
+          PREV_SHA=$(git log --merges --skip=1 -n 1 --format='%H')
+          if [ -z "$PREV_SHA" ]; then
+            # 没 merge commit，fallback 到 HEAD^
+            PREV_SHA=$(git rev-parse HEAD^)
+          fi
+          echo "PREV_SHA=$PREV_SHA" >> $GITHUB_ENV
+          echo "将回滚到: $PREV_SHA"
+          git log --oneline -1 $PREV_SHA
 
       - name: Checkout Previous Version
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
-          fetch-depth: 0
+          ref: ${{ env.PREV_SHA }}
+          fetch-depth: 1
 
       - name: Build Previous Image
         run: |
+          # 仍是 rebuild（push:false 模式下没有 registry 可 pull），
+          # 但 source 至少是 pinned 到 ${{ env.PREV_SHA }}，比原来的
+          # git describe tag 更精确。
           docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback -f Dockerfile.prod .
 
       - name: Deploy Rollback
