@@ -17,6 +17,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  # github.repository 含大写字母（如 WindWang2/webgis-ai-agent），
+  # docker tag 要求全小写 -> 转换。
   IMAGE_NAME: ${{ github.repository }}
   PYTHON_VERSION: '3.12'
 
@@ -212,6 +214,10 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Lowercase IMAGE_NAME
+        # docker tag 要求全小写；github.repository 可能含大写（如 WindWang2/...）
+        run: echo "IMAGE_NAME=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
