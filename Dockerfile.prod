@@ -40,7 +40,7 @@ WORKDIR /app/backend
 
 # Install Node.js, tini, and GDAL/GEOS/PROJ runtime libraries
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    nodejs tini libgdal32t64 libgeos3.11.1t64 libproj25 \
+    nodejs tini libgdal32 libgeos-c1v5 libproj25 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy frontend standalone output
