@@ -76,7 +76,7 @@ duckduckgo-search>=6.0.0
 
 # H3 and Spatial Analysis
 # 代码使用 v4 API（latlng_to_cell / cell_to_boundary）— 严禁回退到 v3。
-h3>=4.0.0,<5.0.0
+h3>=4.5.0,<5.0.0
 esda>=2.5.1
 libpysal>=4.9.2
 
