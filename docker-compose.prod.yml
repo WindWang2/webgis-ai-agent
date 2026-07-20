@@ -36,7 +36,7 @@ services:
       redis-server
       --appendonly
       --maxmemory 256mb
-      --maxmemory-policy allkeys-lru
+      --maxmemory-policy noeviction
       --requirepass ${REDIS_PASSWORD:-changeme_redis_password}
     volumes:
       - redis_prod_data:/data

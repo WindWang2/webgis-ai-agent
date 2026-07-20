@@ -35,6 +35,17 @@ spec:
         runAsUser: 1001
         runAsGroup: 1001
         fsGroup: 1001
+      # 审计 I24：专用 ServiceAccount，不继承 namespace default SA
+      serviceAccountName: webgis-api-sa
+      # 审计 I22：topologySpread 防 2 个 api pod 落同一节点 -> 单节点故障全 API 宕
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway  # 不强制（单节点测试集群也能跑）
+        labelSelector:
+          matchLabels:
+            app: webgis-ai-agent
+            component: api
       containers:
       - name: webgis-api
         image: webgis-prod:latest

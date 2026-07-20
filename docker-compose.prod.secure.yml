@@ -18,6 +18,9 @@ services:
       POSTGRES_USER: ${DB_USER:-webgis_prod}
       POSTGRES_PASSWORD: ${DB_PWD:?Set DB_PWD in .env.Priv}
       POSTGRES_DB: ${DB_NAME:-webgis_prod}
+      # 审计 I20：之前缺 PGDATA，Postgres 直接初始化在 mount 根 ->
+      # lost+found 冲突 / 权限问题。与 prod.yml 一致加 PGDATA 子目录。
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - pg_data_secure:/var/lib/postgresql/data
     healthcheck:
