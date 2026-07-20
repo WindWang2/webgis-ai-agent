@@ -80,18 +80,49 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            args_model=ZonalStatsArgs)
     def zonal_stats(geojson: Any, raster_path: str) -> dict:
         from app.lib.geo_analysis.raster_ops import zonal_statistics
+        from app.utils.path import validate_data_path
+
         data = safe_parse_geojson(geojson)
         features = data.get("features", [])
-        
+
+        # 审计 S37：raster_path 之前完全未校验，直接喂给 rasterstats/rasterio。
+        # 风险：(1) 路径穿越读任意文件；(2) GDAL 虚拟文件系统（/vsicurl/、/vsizip/、/vsis3/）
+        # 让攻击者通过 LLM 提示注入或 /chat/tools/execute 发起 SSRF / 读云存储。
+        # 修复：用 validate_data_path（realpath 解析）锁死在 data_dir 内；用 rasterio.Env
+        # 关闭 VFS 相关选项。
+        try:
+            raster_path = validate_data_path(raster_path)
+        except ValueError as e:
+            return {
+                "success": False,
+                "code": "路径校验失败",
+                "message": f"raster_path {raster_path} 不在允许的 data_dir 范围内",
+                "data": None,
+            }
+
         # Ensure we have a valid FeatureCollection for rasterstats
         fc = {"type": "FeatureCollection", "features": features}
-        stats = zonal_statistics(fc, raster_path)
-        
+        try:
+            import rasterio
+            with rasterio.Env(
+                GDAL_DISABLE_READDIR_ON_OPEN="TRUE",
+                GDAL_HTTP_TIMEOUT=5,
+                GDAL_HTTP_MAX_RETRY=0,
+            ):
+                stats = zonal_statistics(fc, raster_path)
+        except Exception as e:
+            return {
+                "success": False,
+                "code": "栅格读取失败",
+                "message": f"raster_path {raster_path} 无法打开：{e}",
+                "data": None,
+            }
+
         # Merge stats back into features
         for i, s in enumerate(stats):
             if i < len(features):
                 features[i]["properties"].update(s)
-        
+
         summary = f"Computed zonal statistics for {len(features)} zones against raster {raster_path}."
         return {
             "type": "FeatureCollection",

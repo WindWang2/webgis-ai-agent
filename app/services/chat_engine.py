@@ -622,12 +622,20 @@ class ChatEngine:
                     dispatch_task = asyncio.create_task(
                         self._dispatch_tool(tc, session_id, executed_tools)
                     )
-                    while not dispatch_task.done():
-                        done, _pending = await asyncio.wait([dispatch_task], timeout=5.0)
-                        if not done:
-                            yield ": keep-alive\n\n"
-                            logger.debug(f"SSE Heartbeat sent for tool: {tool_name}")
-                    outcome = await dispatch_task
+                    try:
+                        while not dispatch_task.done():
+                            done, _pending = await asyncio.wait([dispatch_task], timeout=5.0)
+                            if not done:
+                                yield ": keep-alive\n\n"
+                                logger.debug(f"SSE Heartbeat sent for tool: {tool_name}")
+                        outcome = await dispatch_task
+                    except (asyncio.CancelledError, GeneratorExit):
+                        # 审计 C5：SSE 客户端断开时 FastAPI 会 cancel 生成器，
+                        # 但之前 dispatch_task 没被显式 cancel/await → 它在后台继续
+                        # 跑（Celery 派发、GeoJSON 序列化、DB 写入）直到自然完成，
+                        # 浪费资源且无界增长。这里显式 cancel 并让上层重抛。
+                        dispatch_task.cancel()
+                        raise
 
                     from app.services.chat import planner as _planner
                     step_n_matched = _planner.mark_step_done(session_id, tool_name, self.registry)

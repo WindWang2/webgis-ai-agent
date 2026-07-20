@@ -17,6 +17,19 @@ PRODUCTION_ERROR_MESSAGE = "服务器内部错误，请稍后重试"
 # 项目根目录用于清理敏感信息
 PROJECT_ROOT = str(Path(__file__).parent.parent.parent)
 
+# 审计 M5：HTTP 状态码 → 业务 code 字符串映射。之前 format_error_response
+# 永远返回 code=SERVER_ERROR，导致前端无法按 code 区分 404/401/403 等。
+_STATUS_CODE_TO_CODE: Dict[int, str] = {
+    400: "VALIDATION_ERROR",
+    401: "UNAUTHORIZED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+    405: "METHOD_NOT_ALLOWED",
+    409: "CONFLICT",
+    422: "VALIDATION_ERROR",
+    429: "RATE_LIMITED",
+}
+
 def sanitize_traceback(tb_str: str) -> str:
     """
     清理traceback中的敏感信息包括项目路径、文件路径、行号
@@ -65,9 +78,16 @@ def format_error_response(
     """
     error_type = type(exc).__name__
     error_message = str(exc)[:200]
-    
+
+    # 审计 M5：按 HTTP 状态码映射 code —— 之前永远是 SERVER_ERROR，前端无法
+    # 区分 404 vs 401 vs 403。HTTPException 自带 status_code；其他异常保持
+    # SERVER_ERROR 兜底（global_exception_handler 默认 500）。
+    code = "SERVER_ERROR"
+    if hasattr(exc, "status_code"):
+        code = _STATUS_CODE_TO_CODE.get(getattr(exc, "status_code"), "SERVER_ERROR")
+
     response_data = {
-        "code": "SERVER_ERROR",
+        "code": code,
         "success": False,
         "message": PRODUCTION_ERROR_MESSAGE,
         "data": None,

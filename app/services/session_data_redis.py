@@ -71,33 +71,46 @@ class RedisSessionDataManager:
         return "sessions:active"
 
     async def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
+        """存数据；Redis 不可达时降级返回伪 ref_id 而非抛错。
+
+        审计 C3：socket_timeout=1s 的 Redis 必然会偶发超时，若不隔离会让
+        dispatcher.dispatch_tool 直接 raise → 整个 chat turn 崩溃 + tracker
+        卡死。降级返回 ref:redis-unavailable-xxx 让上层 chat_engine 把它当
+        普通失败工具结果处理（_untrusted + 自愈消息）。
+        """
         ref_id = f"ref:{prefix}-{uuid.uuid4().hex[:16]}"
         data_key = self._data_key(session_id, ref_id)
         order_key = self._refs_order_key(session_id)
+        try:
+            current_count = await self._r.zcard(order_key)
+            if current_count >= self.capacity:
+                overflow = current_count - self.capacity + 1
+                oldest = await self._r.zrange(order_key, 0, overflow - 1)
+                async with self._r.pipeline() as evict_pipe:
+                    for old_ref_bytes in oldest:
+                        old_ref = old_ref_bytes.decode() if isinstance(old_ref_bytes, bytes) else old_ref_bytes
+                        await self._evict_ref(evict_pipe, session_id, old_ref)
+                    await evict_pipe.execute()
 
-        current_count = await self._r.zcard(order_key)
-        if current_count >= self.capacity:
-            overflow = current_count - self.capacity + 1
-            oldest = await self._r.zrange(order_key, 0, overflow - 1)
-            async with self._r.pipeline() as evict_pipe:
-                for old_ref_bytes in oldest:
-                    old_ref = old_ref_bytes.decode() if isinstance(old_ref_bytes, bytes) else old_ref_bytes
-                    await self._evict_ref(evict_pipe, session_id, old_ref)
-                await evict_pipe.execute()
-
-        async with self._r.pipeline() as pipe:
-            pipe.hsetnx(
-                self._state_key(session_id),
-                "_started_at",
-                json.dumps(datetime.now(timezone.utc).isoformat(), ensure_ascii=False),
+            async with self._r.pipeline() as pipe:
+                pipe.hsetnx(
+                    self._state_key(session_id),
+                    "_started_at",
+                    json.dumps(datetime.now(timezone.utc).isoformat(), ensure_ascii=False),
+                )
+                pipe.expire(self._state_key(session_id), STATE_TTL)
+                pipe.sadd(self._active_key(), session_id)
+                pipe.set(data_key, json.dumps(data, ensure_ascii=False), ex=DATA_TTL)
+                pipe.zadd(order_key, {ref_id: time.time()})
+                pipe.sadd(self._index_key(session_id), ref_id)
+                self._refresh_session_ttl(pipe, session_id)
+                await pipe.execute()
+        except aioredis.RedisError as e:
+            logger.error(
+                "Redis store failed for session %s (prefix=%s): %s — returning unavailable ref",
+                session_id, prefix, e,
             )
-            pipe.expire(self._state_key(session_id), STATE_TTL)
-            pipe.sadd(self._active_key(), session_id)
-            pipe.set(data_key, json.dumps(data, ensure_ascii=False), ex=DATA_TTL)
-            pipe.zadd(order_key, {ref_id: time.time()})
-            pipe.sadd(self._index_key(session_id), ref_id)
-            self._refresh_session_ttl(pipe, session_id)
-            await pipe.execute()
+            return f"ref:redis-unavailable-{uuid.uuid4().hex[:16]}"
         return ref_id
 
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
@@ -114,22 +127,33 @@ class RedisSessionDataManager:
         return ref_id.decode() if isinstance(ref_id, bytes) else ref_id
 
     async def get(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]:
-        ref_id = await self._r.hget(self._aliases_key(session_id), ref_id_or_alias)
-        if ref_id is not None:
-            ref_id = ref_id.decode() if isinstance(ref_id, bytes) else ref_id
-        else:
-            ref_id = ref_id_or_alias
+        """读数据；Redis 不可达时返回 None（cache-miss 语义），让上层工具走自愈路径。
 
-        data_key = self._data_key(session_id, ref_id)
-        raw = await self._r.get(data_key)
-        if raw is None:
+        审计 C3：同 store —— Redis 抖动不能杀死整个 chat turn。
+        """
+        try:
+            ref_id = await self._r.hget(self._aliases_key(session_id), ref_id_or_alias)
+            if ref_id is not None:
+                ref_id = ref_id.decode() if isinstance(ref_id, bytes) else ref_id
+            else:
+                ref_id = ref_id_or_alias
+
+            data_key = self._data_key(session_id, ref_id)
+            raw = await self._r.get(data_key)
+            if raw is None:
+                return None
+
+            async with self._r.pipeline() as pipe:
+                pipe.expire(data_key, DATA_TTL)
+                pipe.zadd(self._refs_order_key(session_id), {ref_id: time.time()})
+                await pipe.execute()
+            return json.loads(raw)
+        except aioredis.RedisError as e:
+            logger.error(
+                "Redis get failed for session %s ref %s: %s — returning None",
+                session_id, ref_id_or_alias, e,
+            )
             return None
-
-        async with self._r.pipeline() as pipe:
-            pipe.expire(data_key, DATA_TTL)
-            pipe.zadd(self._refs_order_key(session_id), {ref_id: time.time()})
-            await pipe.execute()
-        return json.loads(raw)
 
     async def list_refs(self, session_id: str) -> dict[str, str]:
         ref_ids_bytes = await self._r.zrange(self._refs_order_key(session_id), 0, -1)
@@ -191,18 +215,29 @@ class RedisSessionDataManager:
         )
 
     async def append_event(self, session_id: str, event: str, data: dict) -> None:
+        """追加事件日志；Redis 不可达时降级为 no-op（log 一条警告）。
+
+        审计 C3：append_event 失败不应阻断主流程 —— 事件日志仅用于 [环境感知]
+        的上下文注入和前端 SSE 回放，缺一条不会破坏正确性。
+        """
         entry = json.dumps(
             {"event": event, "data": data, "timestamp": datetime.now().isoformat()},
             ensure_ascii=False,
         )
-        async with self._r.pipeline() as pipe:
-            key = self._events_key(session_id)
-            pipe.lpush(key, entry)
-            pipe.ltrim(key, 0, MAX_EVENTS - 1)
-            pipe.expire(key, EVENTS_TTL)
-            pipe.sadd(self._active_key(), session_id)
-            self._refresh_session_ttl(pipe, session_id)
-            await pipe.execute()
+        try:
+            async with self._r.pipeline() as pipe:
+                key = self._events_key(session_id)
+                pipe.lpush(key, entry)
+                pipe.ltrim(key, 0, MAX_EVENTS - 1)
+                pipe.expire(key, EVENTS_TTL)
+                pipe.sadd(self._active_key(), session_id)
+                self._refresh_session_ttl(pipe, session_id)
+                await pipe.execute()
+        except aioredis.RedisError as e:
+            logger.warning(
+                "Redis append_event failed for session %s event %s: %s — event dropped",
+                session_id, event, e,
+            )
 
     async def get_event_log(self, session_id: str) -> list[dict]:
         raw_list = await self._r.lrange(self._events_key(session_id), 0, -1)
