@@ -247,8 +247,18 @@ class ChatEngine:
         messages.append({"role": "system", "content": f"{marker}\n\n{skill['body']}"})
 
     async def _save_msg_async(self, session_id: str, role: str, content: str, tool_calls=None, tool_result=None, tool_call_id=None, reasoning_content=None):
-        """异步保存消息到数据库，带重试机制。"""
+        """异步保存消息到数据库，带重试机制。
+
+        审计 M8：之前 _save_msg_async 对 tool_result content 不截断，但 streaming
+        路径（chat_stream）截断到 100000 字符。非流式 chat() 路径用 _save_msg_async
+        保存 tool result 时不截断 -> 超大 GeoJSON tool result 可能撑爆 SQLite 行。
+        统一截断到 100000（与 streaming 一致）。
+        """
         try:
+            # 审计 M8：tool_result 可能是 MB 级 GeoJSON；截断到 100000 字符
+            # （与 chat_stream 的 db_save_content[:100000] 一致）。
+            if tool_result is not None and isinstance(tool_result, str) and len(tool_result) > 100000:
+                tool_result = tool_result[:100000] + "...[truncated]"
             async with async_db_session() as db:
                 await AsyncHistoryService(db).save_message(session_id, role, content, tool_calls, tool_result, tool_call_id, reasoning_content)
         except Exception as e:

@@ -196,22 +196,85 @@ class RedisSessionDataManager:
         }
 
     async def update_layer_in_state(self, session_id: str, layer_id: str, updates: dict) -> None:
-        state = await self.get_map_state(session_id)
-        layers = list(state.get("layers", []))
-        for layer in layers:
-            if layer.get("id") == layer_id:
-                layer.update(updates)
-                break
-        else:
-            layers.append({"id": layer_id, **updates})
-        await self.set_map_state(session_id, "layers", layers)
+        """审计 M11：read-modify-write 必须用 WATCH/MULTI 防并发覆盖。
+
+        之前两个并发 update_layer_in_state 都读旧 layers list，后写的覆盖先写的。
+        WATCH state key + retry 3 次；超出则放弃（log warning，不抛）。
+        """
+        state_key = self._state_key(session_id)
+        for attempt in range(3):
+            try:
+                async with self._r.pipeline(transaction=True) as pipe:
+                    await pipe.watch(state_key)
+                    # 读当前 layers
+                    raw_layers = await pipe.hget(state_key, "layers")
+                    if raw_layers is not None:
+                        layers = json.loads(raw_layers) if isinstance(raw_layers, (str, bytes)) else raw_layers
+                        if isinstance(raw_layers, bytes):
+                            layers = json.loads(raw_layers.decode())
+                    else:
+                        layers = []
+                    layers = list(layers)
+                    # mutate
+                    for layer in layers:
+                        if layer.get("id") == layer_id:
+                            layer.update(updates)
+                            break
+                    else:
+                        layers.append({"id": layer_id, **updates})
+                    # 写回
+                    pipe.multi()
+                    pipe.hset(state_key, "layers", json.dumps(layers, ensure_ascii=False))
+                    pipe.expire(state_key, STATE_TTL)
+                    pipe.sadd(self._active_key(), session_id)
+                    await pipe.execute()
+                    return  # 成功
+            except aioredis.WatchError:
+                continue  # 重试
+            except aioredis.RedisError as e:
+                logger.warning(
+                    "update_layer_in_state Redis failed for %s layer %s: %s",
+                    session_id, layer_id, e,
+                )
+                return  # 降级，不抛
+        logger.warning(
+            "update_layer_in_state gave up after 3 retries for %s layer %s (concurrent contention)",
+            session_id, layer_id,
+        )
 
     async def remove_layer_from_state(self, session_id: str, layer_id: str) -> None:
-        state = await self.get_map_state(session_id)
-        layers = state.get("layers", [])
-        await self.set_map_state(
-            session_id, "layers",
-            [l for l in layers if l.get("id") != layer_id],
+        """审计 M11：同 update_layer_in_state，用 WATCH/MULTI 防并发覆盖。"""
+        state_key = self._state_key(session_id)
+        for attempt in range(3):
+            try:
+                async with self._r.pipeline(transaction=True) as pipe:
+                    await pipe.watch(state_key)
+                    raw_layers = await pipe.hget(state_key, "layers")
+                    if raw_layers is not None:
+                        if isinstance(raw_layers, bytes):
+                            layers = json.loads(raw_layers.decode())
+                        else:
+                            layers = json.loads(raw_layers)
+                    else:
+                        layers = []
+                    new_layers = [l for l in layers if l.get("id") != layer_id]
+                    pipe.multi()
+                    pipe.hset(state_key, "layers", json.dumps(new_layers, ensure_ascii=False))
+                    pipe.expire(state_key, STATE_TTL)
+                    pipe.sadd(self._active_key(), session_id)
+                    await pipe.execute()
+                    return
+            except aioredis.WatchError:
+                continue
+            except aioredis.RedisError as e:
+                logger.warning(
+                    "remove_layer_from_state Redis failed for %s layer %s: %s",
+                    session_id, layer_id, e,
+                )
+                return
+        logger.warning(
+            "remove_layer_from_state gave up after 3 retries for %s layer %s",
+            session_id, layer_id,
         )
 
     async def append_event(self, session_id: str, event: str, data: dict) -> None:
