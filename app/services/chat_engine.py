@@ -75,7 +75,11 @@ class ChatEngine:
         # 内存对话存储: session_id -> messages list (LRU Cache to bound memory)
         self._sessions: LRUCache = LRUCache(capacity=50)
         # 每会话锁，覆盖 _get_or_create_session 的检查-赋值竞态
+        # 审计 M1：之前 _session_locks 无界增长 -- clear_session 只 pop 一个，
+        # 但被遗弃的 session（从未 clear）的 Lock 永久泄漏。加 _MAX_LOCKS 上限，
+        # 超限时清理最旧的（按 dict 插入顺序，Python 3.7+ 保证有序）。
         self._session_locks: dict[str, asyncio.Lock] = {}
+        self._MAX_LOCKS = 200
 
     def _select_tools(self, session_id: Optional[str], messages: list[dict]) -> Optional[list[dict]]:
         """选出本轮要推给 LLM 的工具 schema 列表。
@@ -219,6 +223,16 @@ class ChatEngine:
         # 慢路径：可能多个 coroutine 同时进入；按 session_id 分粒度加锁，
         # 防止两个并发请求都触发 _load_session_from_db 造成双倍 DB 读 + 后续写时序错乱
         # (审计 B2: 原实现是检查-然后-赋值的经典 TOCTOU 竞态)。
+        # 审计 M1：_session_locks 上限保护 -- 超过 _MAX_LOCKS 时清理最旧的，
+        # 防止被遗弃 session 的 Lock 永久泄漏。
+        if len(self._session_locks) > self._MAX_LOCKS:
+            # 删除最旧的 25%（dict 插入顺序，Python 3.7+ 保证）
+            evict_count = self._MAX_LOCKS // 4
+            for sid in list(self._session_locks.keys())[:evict_count]:
+                # 只删当前没被持有的锁（避免打断在途请求）
+                lock_to_evict = self._session_locks[sid]
+                if not lock_to_evict.locked():
+                    self._session_locks.pop(sid, None)
         lock = self._session_locks.setdefault(session_id, asyncio.Lock())
         async with lock:
             # 重新检查：第一个进锁的协程加载完，后续协程拿到锁后应直接复用
@@ -785,6 +799,12 @@ class ChatEngine:
             await session_data_manager.clear_session(session_id)
             from app.services.chat import planner
             planner.clear_plan(session_id)
+            # 审计 M9：清 layer_schema_cache，否则清空后重建同 session_id 会读到旧 schema
+            try:
+                from app.services.chat.context.layer_schema import clear_layer_schema_cache
+                clear_layer_schema_cache(session_id)
+            except ImportError:
+                pass
             if self.catalog is not None:
                 self.catalog.reset_session(session_id)
         return deleted
