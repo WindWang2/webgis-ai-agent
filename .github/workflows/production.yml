@@ -117,7 +117,7 @@ jobs:
           fail_ci_if_error: false
 
       - name: Upload Coverage XML
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: coverage.xml
@@ -226,7 +226,7 @@ jobs:
             > webgis-image.tar
 
       - name: Upload Image Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: webgis-image
           path: webgis-image.tar
