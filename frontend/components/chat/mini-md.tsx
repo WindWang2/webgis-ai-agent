@@ -1,18 +1,39 @@
 'use client';
 
 import React from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type UrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 interface MiniMdProps {
   text: string;
 }
 
+// 审计 F36：默认 urlTransform 已经过滤 javascript:，但 data: 在某些浏览器
+// 仍可执行（image/svg+xml）。显式白名单只允许 http/https/mailto/相对路径。
+const safeUrlTransform: UrlTransform = (url) => {
+  if (!url) return url;
+  const trimmed = url.trim();
+  // 相对路径 / 同源锚点 / 标准协议放行
+  if (
+    trimmed.startsWith('/') ||
+    trimmed.startsWith('#') ||
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('mailto:') ||
+    trimmed.startsWith('tel:')
+  ) {
+    return trimmed;
+  }
+  // 其他（javascript:, data:, file:, vbscript: 等）一律拒绝
+  return '';
+};
+
 export default function MiniMd({ text }: MiniMdProps) {
   return (
     <div className="prose-agent text-[12.5px] leading-[1.7] text-slate-600 max-w-none break-words">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        urlTransform={safeUrlTransform}
         components={{
           p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
           h1: ({ children }) => (
