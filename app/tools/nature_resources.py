@@ -3,7 +3,7 @@
 提供 NDVI 植被分析及资产管理功能
 """
 import logging
-from typing import Optional, Any
+from typing import Optional
 from pydantic import BaseModel, Field
 from app.tools.registry import ToolRegistry, tool
 from app.services.spatial_tasks import run_ndvi_analysis
@@ -73,17 +73,24 @@ def register_nature_resource_tools(registry: ToolRegistry):
             }
 
     @tool(registry, name="manage_analysis_asset",
-          tier=2, domains=["raster"],
+          tier=3, domains=["raster"],
           description=(
               "维护遥感分析资产：重命名或永久删除 NDVI/NDWI 等分析产物（含物理文件）。"
               "\n何时用：用户明确说『把 XX 资产删掉』『把那个 NDVI 改名为 春季』；"
               "在 list_analysis_assets 列表里发现重复/废弃产物时的清理。"
-              "\n何时不用：(1) 想看资产列表 — 用 list_analysis_assets (只读)；"
-              "(2) 想删除上传文件而非分析资产 — 用 upload 路由 (这个只管 geometry_type='raster_analysis' 的 UploadRecord)；"
-              "(3) 用户未明确授权删除 — 不要主动调，特别是 action='delete' 不可逆。"
+              "\n何时不用：(1) 想看资产列表 - 用 list_analysis_assets (只读)；"
+              "(2) 想删除上传文件而非分析资产 - 用 upload 路由 (这个只管 geometry_type='raster_analysis' 的 UploadRecord)；"
+              "(3) 用户未明确授权删除 - 不要主动调，特别是 action='delete' 不可逆。"
               "\n关键约束：action ∈ {rename, delete}；rename 必须给 new_name；delete 同时移除磁盘 TIFF。"
+              "\n安全：tier=3（destructive）-- 仅在用户明确要求时调用。asset 必须属于当前 session。"
           ))
-    def manage_analysis_asset(asset_id: int, action: str, new_name: Optional[str] = None) -> dict:
+    def manage_analysis_asset(asset_id: int, action: str, new_name: Optional[str] = None, session_id: Optional[str] = None) -> dict:
+        """审计 S43：之前任何 LLM 上下文都能按顺序整数 asset_id 删除/重命名他人资产。
+
+        修法：(1) 升到 tier=3，PR 2 的 /chat/tools/execute 已要求 confirm_destructive；
+        (2) 加 session_id 参数（registry 自动注入），校验 record.session_id 匹配，
+        防 LLM 跨 session 操作他人资产。完整 user_id 校验需要 tool dispatch 重构。
+        """
         from app.models.upload import UploadRecord
         import os
         from app.core.config import settings
@@ -92,6 +99,10 @@ def register_nature_resource_tools(registry: ToolRegistry):
             record = db.query(UploadRecord).filter(UploadRecord.id == asset_id).first()
             if not record:
                 return {"error": "未找到对应的分析资产记录"}
+
+            # 审计 S43：asset 必须属于当前 session（防跨 session IDOR）
+            if session_id and record.session_id and record.session_id != session_id:
+                return {"error": "该资产不属于当前会话，无权操作"}
 
             if action == "rename" and new_name:
                 old_name = record.original_name

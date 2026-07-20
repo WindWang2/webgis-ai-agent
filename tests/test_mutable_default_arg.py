@@ -1,4 +1,9 @@
-"""Test: multi_ring_buffer must not use mutable default argument."""
+"""Test: multi_ring_buffer must not use mutable default argument.
+
+审计 T3 注释：这是源码结构检查（AST）。保留是因为 mutable default arg
+是 Python 语言层面的陷阱 -- AST 检查比行为测试更直接（行为测试需要
+"恰好触发 mutation 才能发现"）。AST 检查在这里更可靠。
+"""
 import ast
 
 

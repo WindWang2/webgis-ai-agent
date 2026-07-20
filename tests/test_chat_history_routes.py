@@ -1,32 +1,11 @@
 """Tests for chat history API routes."""
-import os
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, patch, AsyncMock
 from datetime import datetime
-import importlib.util
 
-
-def _load_chat_module():
-    spec = importlib.util.spec_from_file_location(
-        "app.api.routes.chat",
-        os.path.join(os.path.dirname(__file__), "..", "app", "api", "routes", "chat.py"),
-        submodule_search_locations=[]
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_chat_mod = None
-
-
-def _get_chat_mod():
-    global _chat_mod
-    if _chat_mod is None:
-        _chat_mod = _load_chat_module()
-    return _chat_mod
+from app.api.routes import chat as _chat_mod
 
 
 def make_conv(id_, title, updated):
@@ -41,9 +20,8 @@ def make_conv(id_, title, updated):
 
 @pytest.fixture
 def client():
-    mod = _get_chat_mod()
     app = FastAPI()
-    app.include_router(mod.router, prefix="/api/v1")
+    app.include_router(_chat_mod.router, prefix="/api/v1")
     return TestClient(app)
 
 
@@ -52,8 +30,7 @@ BASE = "/api/v1/chat"
 
 def test_list_sessions_returns_json(client):
     conv = make_conv("s1", "Test", datetime(2026, 4, 10))
-    mod = _get_chat_mod()
-    with patch.object(mod, "AsyncHistoryService") as MockHS:
+    with patch.object(_chat_mod, "AsyncHistoryService") as MockHS:
         mock_svc = MagicMock()
         MockHS.return_value = mock_svc
         mock_svc.list_sessions = AsyncMock(return_value=[conv])
@@ -76,8 +53,7 @@ def test_get_session_detail(client):
     msg.tool_result = None
     msg.created_at = datetime(2026, 4, 10)
     conv.messages = [msg]
-    mod = _get_chat_mod()
-    with patch.object(mod, "AsyncHistoryService") as MockHS:
+    with patch.object(_chat_mod, "AsyncHistoryService") as MockHS:
         mock_svc = MagicMock()
         MockHS.return_value = mock_svc
         mock_svc.get_session = AsyncMock(return_value=conv)
@@ -90,8 +66,7 @@ def test_get_session_detail(client):
 
 
 def test_get_session_detail_not_found(client):
-    mod = _get_chat_mod()
-    with patch.object(mod, "AsyncHistoryService") as MockHS:
+    with patch.object(_chat_mod, "AsyncHistoryService") as MockHS:
         mock_svc = MagicMock()
         MockHS.return_value = mock_svc
         mock_svc.get_session = AsyncMock(return_value=None)
@@ -100,10 +75,9 @@ def test_get_session_detail_not_found(client):
 
 
 def test_delete_session(client):
-    mod = _get_chat_mod()
     mock_engine = MagicMock()
     mock_engine.clear_session = AsyncMock(return_value=True)  # A2: 返回 bool
-    with patch.object(mod, "engine", mock_engine):
+    with patch.object(_chat_mod, "engine", mock_engine):
         resp = client.delete(f"{BASE}/sessions/s1")
     assert resp.status_code == 200
     # A2: 现在带 user_id kwarg
