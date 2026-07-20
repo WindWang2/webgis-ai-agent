@@ -12,7 +12,16 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const sessionLoadAbortRef = useRef<AbortController | null>(null);
 
-  const { clearLayers, clearOpsLog, clearCausalChain, setSessions: setStoreSessions } = useHudStore();
+  const {
+    clearLayers,
+    clearOpsLog,
+    clearCausalChain,
+    clearAnnotations,
+    setSessions: setStoreSessions,
+    setSelectedFeature,
+    setAiStatus,
+    clearTask,
+  } = useHudStore();
 
   // Sync sessionId state to ref
   useEffect(() => {
@@ -56,7 +65,14 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       sessionLoadAbortRef.current = ctrl;
       const signal = ctrl.signal;
 
+      // 审计 F20：切换会话必须清空跨会话残留状态，否则 session B 第一条消息
+      // 会把 session A 的 selectedFeature 当作 map_state 发给 AI（产生 hallucinated
+      // 推理），旧 task 卡片/annotation 也会残留在新会话 UI 上。
       clearLayers();
+      clearAnnotations();
+      setSelectedFeature(null);
+      setAiStatus('idle');
+      clearTask();
       try {
         const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}`, { signal });
         const data = await res.json();
@@ -128,13 +144,18 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
   const startNewSession = useCallback(
     (onClearMessages: () => void) => {
       setSessionId(undefined);
+      // 审计 F20：同 selectSession，新会话必须重置跨会话状态。
       clearLayers();
+      clearAnnotations();
       clearOpsLog();
       clearCausalChain();
+      setSelectedFeature(null);
+      setAiStatus('idle');
+      clearTask();
       localStorage.removeItem('webgis_session_id');
       onClearMessages();
     },
-    [clearLayers, clearOpsLog, clearCausalChain]
+    [clearLayers, clearAnnotations, clearOpsLog, clearCausalChain, setSelectedFeature, setAiStatus, clearTask]
   );
 
   return {

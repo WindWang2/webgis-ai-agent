@@ -78,18 +78,18 @@ describe('Chat API', () => {
   });
 
   describe('clearSessionMessages', () => {
-    it('sends DELETE to clear endpoint', async () => {
+    it('sends DELETE to session endpoint (审计契约: 后端是 /sessions/{id} 无 /clear)', async () => {
       mockFetch.mockResolvedValueOnce({ ok: true });
       await clearSessionMessages('s1');
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('/api/v1/chat/sessions/s1/clear'),
+        expect.stringMatching(/\/api\/v1\/chat\/sessions\/s1\/?$/),  // 不应有 /clear 后缀
         { method: 'DELETE' }
       );
     });
   });
 
   describe('executeToolDirect', () => {
-    it('sends POST with tool and argument', async () => {
+    it('sends POST with tool and arguments (复数，匹配后端 ToolExecuteRequest)', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ type: 'result' }),
@@ -103,7 +103,10 @@ describe('Chat API', () => {
         })
       );
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.argument).toEqual({ query: 'school' });
+      // 审计：字段名必须是 arguments（复数）—— 之前发 argument（单数）会被
+      // pydantic 默认值 {} 覆盖，工具收到空参数。
+      expect(body.arguments).toEqual({ query: 'school' });
+      expect(body.argument).toBeUndefined();
       expect(result).toEqual({ type: 'result' });
     });
 

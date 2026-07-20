@@ -166,23 +166,33 @@ export async function deleteSession(sessionId: string): Promise<void> {
 }
 
 /**
- * 清空会话消息（保留会话）
+ * 清空会话消息（保留会话）。
+ *
+ * 审计契约断裂：前端之前调 /chat/sessions/{id}/clear，但后端实际路由是
+ * DELETE /chat/sessions/{id}（无 /clear 后缀）→ 一直 404。改为匹配后端。
  */
 export async function clearSessionMessages(sessionId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sessionId}/clear`, {
+  const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sessionId}`, {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(`API Error: ${res.status}`);
 }
 
 /**
- * 直接执行单个工具（REST API，不依赖SSE）
+ * 直接执行单个工具（REST API，不依赖SSE）。
+ *
+ * 审计契约断裂：前端之前发 { tool, argument }（单数），后端 ToolExecuteRequest
+ * 期望 { tool, arguments }（复数）→ 参数被 pydantic 默认值 {} 覆盖，工具收到
+ * 空参数。改为匹配后端字段名。
  */
-export async function executeToolDirect(tool: string, argument: Record<string, unknown>): Promise<ToolResult> {
+export async function executeToolDirect(
+  tool: string,
+  arguments_: Record<string, unknown>,
+): Promise<ToolResult> {
   const res = await fetch(`${API_BASE}/api/v1/chat/tools/execute`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tool, argument }),
+    body: JSON.stringify({ tool, arguments: arguments_ }),
   });
   if (!res.ok) throw new Error(`Tool execute error: ${res.status}`);
   return res.json();

@@ -31,16 +31,12 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   selectedFeature: null,
   setSelectedFeature: (f) => set({ selectedFeature: f }),
 
-  /* ─── Perception Buffer ─── */
-  _perceptionQueue: [],
-  pushPerception: (event: string, data: Record<string, unknown>) =>
-    set((s) => ({ _perceptionQueue: [...s._perceptionQueue, { event, data }] })),
-  drainPerception: () => {
-    const queue = get()._perceptionQueue;
-    if (queue.length === 0) return [];
-    set({ _perceptionQueue: [] });
-    return queue;
-  },
+  /* ─── Perception Buffer（已废弃）───
+   * 原本由 use-websocket.ts 推送实时感知事件，但该 hook 从未在任何组件挂载，
+   * 整个 perception 通道一直处于"安静失效"状态。useWebSocket hook 在审计
+   * PR 4 中被删除，这里同步删除残留 state。如未来恢复实时感知，应改走
+   * SSE 单一通道（与 chat 流统一），不再单独维护 WS perception 队列。
+   */
 
   /* ─── System Callback ─── */
   pendingSystemMessage: null,

@@ -48,7 +48,7 @@ export function createMockStoreState(overrides?: Partial<HudState>): Record<stri
     baseLayer: 'Carto Light',
     is3D: false,
     mapLoaded: false,
-    _perceptionQueue: [],
+    // _perceptionQueue 已移除（useWebSocket hook 死代码删除）
     leftPanelOpen: true,
     rightPanelOpen: true,
     ragInsight: null,
@@ -79,8 +79,7 @@ export function createMockStoreState(overrides?: Partial<HudState>): Record<stri
     setViewport: vi.fn(),
     setBaseLayer: vi.fn(),
     setIs3D: vi.fn(),
-    pushPerception: vi.fn(),
-    drainPerception: vi.fn(() => []),
+    // pushPerception / drainPerception 已移除（useWebSocket hook 死代码删除）
     toggleLeftPanel: vi.fn(),
     toggleRightPanel: vi.fn(),
     setRagInsight: vi.fn(),
@@ -114,6 +113,12 @@ export function createMockStoreState(overrides?: Partial<HudState>): Record<stri
     setMapStyles: vi.fn(),
     llmConfigFull: { baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-4o', caching: true },
     setLlmConfigFull: vi.fn(),
+    // 审计 PR 4: session 切换状态清理用到这些 setter —— mock 必须暴露
+    selectedFeature: null,
+    setSelectedFeature: vi.fn(),
+    annotations: [],
+    addAnnotation: vi.fn(),
+    clearAnnotations: vi.fn(),
     ...overrides,
   }
 }
