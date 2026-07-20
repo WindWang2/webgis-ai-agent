@@ -73,6 +73,10 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       setSelectedFeature(null);
       setAiStatus('idle');
       clearTask();
+      // 审计 F38：之前 setSessionId(sid) 在 fetch 完成后才调，期间 sessionIdRef
+      // 仍是旧值 -> 若用户在窗口内点 send，消息会发到旧 session。改为同步先 set。
+      setSessionId(sid);
+      sessionIdRef.current = sid;
       try {
         const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}`, { signal });
         const data = await res.json();
@@ -94,7 +98,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
           onRestoreMessages(restored);
         }
 
-        setSessionId(sid);
+        // setSessionId 已在函数开头同步调用（审计 F38），这里不再重复
 
         const stateRes = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}/map-state`, { signal });
         if (signal.aborted) return;

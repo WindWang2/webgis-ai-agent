@@ -26,6 +26,27 @@ export interface ExportOptions {
 }
 
 /**
+ * 审计 F33：composeLayout 的完整 options 类型。之前用 any，让未来 caller
+ * 传部分字段时静默产生 NaN 渲染（如 mapCenter undefined -> NaN scale bar）。
+ */
+export interface ComposeLayoutOptions {
+  dpi?: number;
+  theme?: 'light' | 'dark';
+  showScale?: boolean;
+  showCompass?: boolean;
+  showWatermark?: boolean;
+  showLegend?: boolean;
+  showMetadata?: boolean;
+  showGraticules?: boolean;
+  author?: string;
+  dataSource?: string;
+  mapCenter?: { lat: number; lng: number };
+  mapZoom?: number;
+  mapBearing?: number;
+  thematicLayer?: unknown;
+}
+
+/**
  * Prepares a new canvas for export, handling cropping and high-DPI upscaling.
  */
 export function prepareExportCanvas(
@@ -91,7 +112,7 @@ export function composeLayout(
   canvas: HTMLCanvasElement,
   title: string,
   subtitle?: string,
-  options: any = {}
+  options: ComposeLayoutOptions = {}
 ) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;

@@ -16,8 +16,19 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
 
   /* ─── Viewport / Base / 3D ─── */
   viewport: { center: [116.4074, 39.9042], zoom: 4, bearing: 0, pitch: 0, bounds: undefined },
+  // 审计 F30：之前 setViewport 替换整个 viewport 对象 -- 当调用方只传 4 个参数
+  // （不传 bounds）时，bounds 会被设为 undefined，依赖 bounds 的代码（如 chat
+  // map_state payload）会读到 undefined。改为 merge，保留未传字段的旧值。
   setViewport: (center, zoom, bearing, pitch, bounds) =>
-    set({ viewport: { center, zoom, bearing: bearing ?? 0, pitch: pitch ?? 0, bounds } }),
+    set((s) => ({
+      viewport: {
+        center,
+        zoom,
+        bearing: bearing ?? s.viewport.bearing ?? 0,
+        pitch: pitch ?? s.viewport.pitch ?? 0,
+        bounds: bounds ?? s.viewport.bounds,
+      },
+    })),
   baseLayer: 'Carto 深色',
   setBaseLayer: (name) => set({ baseLayer: name }),
   is3D: false,
@@ -39,8 +50,32 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
    */
 
   /* ─── System Callback ─── */
-  pendingSystemMessage: null,
-  setPendingSystemMessage: (msg: string | null) => set({ pendingSystemMessage: msg }),
+  // 审计 F35：之前 pendingSystemMessage 是单字符串，rapid back-to-back 调用
+  // 互相覆盖。改为队列：setPendingSystemMessage 入队，consumer 调用
+  // clearPendingSystemMessage 取出最早的。
+  pendingSystemMessage: null as string | null,
+  _systemMessageQueue: [] as string[],
+  setPendingSystemMessage: (msg: string | null) =>
+    set((s) => {
+      if (msg === null) {
+        // null = 清空信号（向后兼容）
+        return { pendingSystemMessage: null, _systemMessageQueue: [] };
+      }
+      // 入队；如果当前 pendingSystemMessage 为空则立即激活
+      if (s.pendingSystemMessage === null) {
+        return { pendingSystemMessage: msg, _systemMessageQueue: [] };
+      }
+      return { _systemMessageQueue: [...s._systemMessageQueue, msg] };
+    }),
+  // consumer 调用：取出并激活下一条（无下一条则置 null）
+  drainSystemMessage: () =>
+    set((s) => {
+      if (s._systemMessageQueue.length > 0) {
+        const [next, ...rest] = s._systemMessageQueue;
+        return { pendingSystemMessage: next, _systemMessageQueue: rest };
+      }
+      return { pendingSystemMessage: null, _systemMessageQueue: [] };
+    }),
 
   /* ─── Agent UI ─── */
   aiStatus: 'idle' as AiStatus,

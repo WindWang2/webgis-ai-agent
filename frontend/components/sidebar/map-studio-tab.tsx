@@ -47,9 +47,15 @@ export function MapStudioTab() {
   }, [activeSubTab, updateExportSettings]);
 
   const handleDownload = (item: any) => {
-    const a = document.createElement('a');
+    // 审计 F37：downloadName 来自后端响应，但防御性校验路径穿越/特殊字符。
+    // 只允许字母数字 + . _ -，拒绝 ../ ? # 等。
     const downloadName = item.filename || item.name;
-    a.href = `${API_BASE}/api/v1/export/download/${downloadName}`;
+    if (!downloadName || !/^[a-zA-Z0-9._-]+$/.test(downloadName)) {
+      console.warn('[MapStudioTab] 拒绝非法 download filename:', downloadName);
+      return;
+    }
+    const a = document.createElement('a');
+    a.href = `${API_BASE}/api/v1/export/download/${encodeURIComponent(downloadName)}`;
     a.download = downloadName;
     a.click();
   };
