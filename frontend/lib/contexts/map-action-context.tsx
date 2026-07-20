@@ -3,6 +3,10 @@
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import type { MapActionPayload } from '@/lib/types';
 import { useHudStore } from '@/lib/store/useHudStore';
+// 审计 follow-up：原 PR 用 require() 是为了避免 "circular dep"，但 providers.ts
+// 是叶子模块（零 import）—— 不存在循环。改为正常 ESM import，避免触发
+// @typescript-eslint/no-require-imports（CI Docker 内 next build 严格模式）。
+import { TILE_PROVIDERS } from '@/lib/providers';
 
 export type { MapActionPayload };
 
@@ -33,8 +37,7 @@ export function MapActionProvider({ children }: { children: React.ReactNode }) {
   const [selectedBaseLayer, setSelectedBaseLayer] = useState<number>(() => {
     try {
       const persistedName = useHudStore.getState().baseLayer;
-      // 动态 import 避免 circular dep；TILE_PROVIDERS 在 providers.ts
-      const { TILE_PROVIDERS } = require('@/lib/providers');
+      // TILE_PROVIDERS 通过顶部 ESM import 引入；providers.ts 是叶子模块无循环依赖。
       const idx = TILE_PROVIDERS.findIndex(
         (p: any) => p.name === persistedName || p.name === 'Carto 深色'
       );
