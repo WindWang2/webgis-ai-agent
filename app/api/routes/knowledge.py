@@ -4,7 +4,7 @@
 """
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.core.auth import get_current_user

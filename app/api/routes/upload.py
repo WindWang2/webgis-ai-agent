@@ -12,7 +12,7 @@ from sqlalchemy import select, func
 
 from app.core.config import settings
 from app.core.auth import get_current_user
-from app.tools._utils import db_session, async_db_session
+from app.tools._utils import async_db_session
 from app.models.upload import UploadRecord
 from app.services.data_parser import (
     MAX_RASTER_SIZE,

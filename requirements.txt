@@ -54,6 +54,16 @@ pytest-cov>=5.0.0
 # 后续应迁移到 PyJWT>=2.8。
 python-jose[cryptography]>=3.3.0
 celery>=5.3.0
+# redis: 任务队列 broker + session_data 后端 + tool_cache。
+# 之前 requirements.txt 漏列此项，CI 干净环境跑 pytest 时直接
+# ModuleNotFoundError: No module named 'redis'（app/lib/tool_cache.py:15 等
+# 3 处直接 import redis）。本地能跑只是因为 dev env 凑巧装过。
+redis>=5.0.0,<6.0.0
+# 异步 DB 驱动：aiosqlite 用于 SQLite（本地 dev / CI），asyncpg 用于生产
+# Postgres。两者都是 app/core/database.py:42-46 在 _async_url 转换后用的。
+# 之前漏列导致 CI 装 sqlalchemy 但没有 driver -> ModuleNotFoundError。
+aiosqlite>=0.19.0
+asyncpg>=0.29.0
 matplotlib>=3.8.0
 
 # RAG & Vector Search
