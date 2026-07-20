@@ -1,20 +1,10 @@
 """Integration tests for skill API endpoints using FastAPI TestClient."""
 import pytest
-import importlib.util
-import os
 from fastapi.testclient import TestClient
 
 from app.tools.skills import _md_skills
-
-# Load chat module directly without triggering __init__.py
-_spec = importlib.util.spec_from_file_location(
-    "app.api.routes.chat",
-    os.path.join(os.path.dirname(__file__), "..", "..", "app", "api", "routes", "chat.py"),
-    submodule_search_locations=[]
-)
-_chat_mod = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_chat_mod)
-router = _chat_mod.router
+from app.api.routes import chat as _chat_mod
+from app.api.routes.chat import router
 
 
 @pytest.fixture(autouse=True)

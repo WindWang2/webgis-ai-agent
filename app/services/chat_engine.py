@@ -80,7 +80,11 @@ class ChatEngine:
         _SESSION_CACHE_SIZE = int(_os.getenv("SESSION_CACHE_SIZE", "200"))
         self._sessions: LRUCache = LRUCache(capacity=_SESSION_CACHE_SIZE)
         # 每会话锁，覆盖 _get_or_create_session 的检查-赋值竞态
+        # 审计 M1：之前 _session_locks 无界增长 -- clear_session 只 pop 一个，
+        # 但被遗弃的 session（从未 clear）的 Lock 永久泄漏。加 _MAX_LOCKS 上限，
+        # 超限时清理最旧的（按 dict 插入顺序，Python 3.7+ 保证有序）。
         self._session_locks: dict[str, asyncio.Lock] = {}
+        self._MAX_LOCKS = 200
 
     def _select_tools(self, session_id: Optional[str], messages: list[dict]) -> Optional[list[dict]]:
         """选出本轮要推给 LLM 的工具 schema 列表。
@@ -224,6 +228,16 @@ class ChatEngine:
         # 慢路径：可能多个 coroutine 同时进入；按 session_id 分粒度加锁，
         # 防止两个并发请求都触发 _load_session_from_db 造成双倍 DB 读 + 后续写时序错乱
         # (审计 B2: 原实现是检查-然后-赋值的经典 TOCTOU 竞态)。
+        # 审计 M1：_session_locks 上限保护 -- 超过 _MAX_LOCKS 时清理最旧的，
+        # 防止被遗弃 session 的 Lock 永久泄漏。
+        if len(self._session_locks) > self._MAX_LOCKS:
+            # 删除最旧的 25%（dict 插入顺序，Python 3.7+ 保证）
+            evict_count = self._MAX_LOCKS // 4
+            for sid in list(self._session_locks.keys())[:evict_count]:
+                # 只删当前没被持有的锁（避免打断在途请求）
+                lock_to_evict = self._session_locks[sid]
+                if not lock_to_evict.locked():
+                    self._session_locks.pop(sid, None)
         lock = self._session_locks.setdefault(session_id, asyncio.Lock())
         async with lock:
             # 重新检查：第一个进锁的协程加载完，后续协程拿到锁后应直接复用
@@ -252,8 +266,18 @@ class ChatEngine:
         messages.append({"role": "system", "content": f"{marker}\n\n{skill['body']}"})
 
     async def _save_msg_async(self, session_id: str, role: str, content: str, tool_calls=None, tool_result=None, tool_call_id=None, reasoning_content=None):
-        """异步保存消息到数据库，带重试机制。"""
+        """异步保存消息到数据库，带重试机制。
+
+        审计 M8：之前 _save_msg_async 对 tool_result content 不截断，但 streaming
+        路径（chat_stream）截断到 100000 字符。非流式 chat() 路径用 _save_msg_async
+        保存 tool result 时不截断 -> 超大 GeoJSON tool result 可能撑爆 SQLite 行。
+        统一截断到 100000（与 streaming 一致）。
+        """
         try:
+            # 审计 M8：tool_result 可能是 MB 级 GeoJSON；截断到 100000 字符
+            # （与 chat_stream 的 db_save_content[:100000] 一致）。
+            if tool_result is not None and isinstance(tool_result, str) and len(tool_result) > 100000:
+                tool_result = tool_result[:100000] + "...[truncated]"
             async with async_db_session() as db:
                 await AsyncHistoryService(db).save_message(session_id, role, content, tool_calls, tool_result, tool_call_id, reasoning_content)
         except Exception as e:
@@ -814,6 +838,12 @@ class ChatEngine:
             await session_data_manager.clear_session(session_id)
             from app.services.chat import planner
             planner.clear_plan(session_id)
+            # 审计 M9：清 layer_schema_cache，否则清空后重建同 session_id 会读到旧 schema
+            try:
+                from app.services.chat.context.layer_schema import clear_layer_schema_cache
+                clear_layer_schema_cache(session_id)
+            except ImportError:
+                pass
             if self.catalog is not None:
                 self.catalog.reset_session(session_id)
         return deleted

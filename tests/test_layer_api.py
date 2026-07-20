@@ -3,23 +3,8 @@ import pytest
 from httpx import AsyncClient, ASGITransport
 from unittest.mock import patch, MagicMock
 from fastapi import FastAPI
-import importlib.util
-import os
 
-_mod = None
-
-
-def _get_module():
-    global _mod
-    if _mod is None:
-        spec = importlib.util.spec_from_file_location(
-            "app.api.routes.layer",
-            os.path.join(os.path.dirname(__file__), "..", "app", "api", "routes", "layer.py"),
-            submodule_search_locations=[]
-        )
-        _mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(_mod)
-    return _mod
+from app.api.routes import layer as _mod
 
 
 @pytest.fixture
@@ -28,11 +13,10 @@ def app(monkeypatch):
     stub 成 always-pass（跨租户隔离由 test_cross_tenant_isolation 覆盖）。"""
     async def _noop_verify(session_id, user_id):
         return None
-    mod = _get_module()
-    monkeypatch.setattr(mod, "_verify_session_owner", _noop_verify)
+    monkeypatch.setattr(_mod, "_verify_session_owner", _noop_verify)
 
     app = FastAPI()
-    app.include_router(mod.router, prefix="/api/v1")
+    app.include_router(_mod.router, prefix="/api/v1")
     return app
 
 
@@ -48,17 +32,15 @@ _VALID_SID = "session-aaaaaaaaaaaaaaaa"  # >= min_length=8
 
 @pytest.mark.asyncio
 async def test_get_session_layer_data_not_found(client):
-    mod = _get_module()
-    with patch.object(mod.session_data_manager, "get", return_value=None):
+    with patch.object(_mod.session_data_manager, "get", return_value=None):
         resp = await client.get("/api/v1/layers/data/ref-123", params={"session_id": _VALID_SID})
         assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_get_session_layer_data_success(client):
-    mod = _get_module()
     mock_data = {"type": "FeatureCollection", "features": []}
-    with patch.object(mod.session_data_manager, "get", return_value=mock_data):
+    with patch.object(_mod.session_data_manager, "get", return_value=mock_data):
         resp = await client.get("/api/v1/layers/data/ref-123", params={"session_id": _VALID_SID})
         assert resp.status_code == 200
         assert resp.json()["type"] == "FeatureCollection"
