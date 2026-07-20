@@ -5,7 +5,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 
-from app.core.auth import get_current_user, get_current_user_optional, require_admin
+from app.core.auth import get_current_user_optional, require_admin
 from app.services.chat_engine import ChatEngine
 from app.services.history_service_async import AsyncHistoryService
 from app.tools._utils import async_db_session
@@ -22,16 +22,20 @@ engine: ChatEngine = None  # type: ignore[assignment]
 
 
 def get_engine() -> ChatEngine:
-    """Return the ChatEngine instance, raising if not yet initialized by lifespan."""
+    """Return the ChatEngine instance, raising 503 if not yet initialized by lifespan.
+
+    审计 S47：之前 raise RuntimeError -> 全局 exception handler 返回 500 +
+    可能泄漏内部模块名。改为 503 让客户端知道是临时不可用（启动窗口）。
+    """
     if engine is None:
-        raise RuntimeError("ChatEngine 尚未初始化 — 请确认 lifespan 已启动")
+        raise HTTPException(status_code=503, detail="Service starting up, please retry")
     return engine
 
 
 def get_registry() -> ToolRegistry:
-    """Return the ToolRegistry instance, raising if not yet initialized by lifespan."""
+    """Return the ToolRegistry instance, raising 503 if not yet initialized by lifespan."""
     if registry is None:
-        raise RuntimeError("ToolRegistry 尚未初始化 — 请确认 lifespan 已启动")
+        raise HTTPException(status_code=503, detail="Service starting up, please retry")
     return registry
 
 
