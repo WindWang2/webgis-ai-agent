@@ -152,8 +152,17 @@ async def create_report(
     await db.commit()
     await db.refresh(report)
 
-    # 异步生成报告
+    # 审计 M6：之前在 generate_report（可能 30s）期间持有同一个 AsyncSession，
+    # 导致连接池耗尽 + 第二次 commit 之间崩溃报告卡在 'generating' 永久状态。
+    # 修法：expunge report 对象（detach），generate_report 用纯本地数据，
+    # 最后开新 session 写最终 status。
+    db.expunge(report)
+
+    # 异步生成报告（不再持有 DB session）
     svc = ReportService()
+    final_status = "failed"
+    final_error = "报告生成失败"
+    final_size = None
     try:
         msg_dicts = [
             {
@@ -167,25 +176,42 @@ async def create_report(
 
         success = await svc.generate_report(
             session_id=request.session_id,
-            session_title=conversation.title,
+            session_title=title,
             messages=msg_dicts,
             output_path=file_path,
             format=fmt,
         )
 
         if success and os.path.exists(file_path):
-            report.status = "completed"
-            report.file_size = os.path.getsize(file_path)
-        else:
-            report.status = "failed"
-            report.error_message = "报告生成失败"
+            final_status = "completed"
+            final_size = os.path.getsize(file_path)
+            final_error = None
     except Exception as e:
         logger.error(f"Report generation error: {e}", exc_info=True)
-        report.status = "failed"
-        report.error_message = "报告生成失败"
 
-    await db.commit()
-    await db.refresh(report)
+    # 用新 session 写最终 status（不阻塞原 session）
+    from app.core.database import AsyncSessionLocal
+    if AsyncSessionLocal is not None:
+        async with AsyncSessionLocal() as db2:
+            db2_report = await db2.get(Report, report_id)
+            if db2_report is not None:
+                db2_report.status = final_status
+                db2_report.error_message = final_error
+                if final_size is not None:
+                    db2_report.file_size = final_size
+                await db2.commit()
+                report.status = final_status
+                report.error_message = final_error
+                if final_size is not None:
+                    report.file_size = final_size
+    else:
+        # fallback：async DB 不可用（SQLite-only 老路径），用原 session
+        report.status = final_status
+        report.error_message = final_error
+        if final_size is not None:
+            report.file_size = final_size
+        await db.commit()
+        await db.refresh(report)
 
     if report.status == "failed":
         return ApiResponse.fail(

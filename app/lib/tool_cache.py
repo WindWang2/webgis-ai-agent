@@ -130,6 +130,9 @@ def cached_tool(ttl: int = 3600, skip_if: Optional[Callable[[dict], bool]] = Non
                 if cached is not None:
                     cache_hit_var.set(True)
                     return cached
+                # 审计 M10：cache miss 必须显式 set(False)，否则 ContextVar
+                # 会保留前一次 hit 的 True 值 -> registry timing 误报 cache_hit。
+                cache_hit_var.set(False)
                 result = await func(**kwargs)
                 set_cached(key, result, ttl)
                 return result
@@ -146,6 +149,8 @@ def cached_tool(ttl: int = 3600, skip_if: Optional[Callable[[dict], bool]] = Non
             if cached is not None:
                 cache_hit_var.set(True)
                 return cached
+            # 审计 M10：同 async_wrapper，miss 时显式 set(False)
+            cache_hit_var.set(False)
             result = func(**kwargs)
             set_cached(key, result, ttl)
             return result

@@ -1,4 +1,5 @@
 """FastAPI 应用入口"""
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -42,7 +43,20 @@ async def lifespan(app: FastAPI):
     catalog = ToolCatalog(registry)
     chat.engine = ChatEngine(registry, tool_catalog=catalog)
 
+    # 审计 S46：cleanup_idle_sessions 之前是死代码（定义在 session_data_manager
+    # 但没人调）-> idle session 的 ref/event/state 永久堆积，Redis 内存缓慢增长。
+    # 起一个后台任务每 10 分钟清理一次。被遗弃的匿名 session（无后续 chat 请求）
+    # 通过 session_data 的 TTL 兜底，但 active 列表 + in-memory 单例需要主动扫。
+    cleanup_task = asyncio.create_task(_periodic_session_cleanup())
+
     yield
+
+    # 关闭后台清理任务
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
 
     # 输出工具调用 digest（top 累计 / top p99 / 错误），便于运维定位最慢工具
     try:
@@ -54,6 +68,28 @@ async def lifespan(app: FastAPI):
     from app.core.network import close_shared_client
     await close_shared_client()
     Engine.dispose()
+
+
+async def _periodic_session_cleanup(interval_seconds: int = 600) -> None:
+    """审计 S46：定期清理 idle session 数据，防内存/Redis 缓慢增长。
+
+    session_data_manager.cleanup_idle_sessions 已存在但从未被调用。
+    此任务每 interval_seconds 秒跑一次；失败仅 warning 不抛（不能让后台任务
+    崩了影响主服务）。
+    """
+    import asyncio
+    import logging
+    from app.services.session_data import session_data_manager
+
+    logger = logging.getLogger(__name__)
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            await session_data_manager.cleanup_idle_sessions()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[lifespan] session cleanup tick failed: {e}")
 
 
 

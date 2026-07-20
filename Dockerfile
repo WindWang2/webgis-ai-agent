@@ -43,8 +43,11 @@ ENV NODE_ENV=production
 ENV PYTHONPATH=/app
 
 # Install system libs + Node.js
+# 审计 I18：runner 只装 GDAL runtime libs（不带编译头），
+# dev 头只存在于 backend-deps / backend-builder 阶段。
+# 镜像减小 + 攻击面缩小。
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libexpat1 libgdal-dev gdal-bin libgeos-dev libproj-dev \
+    libexpat1 libgdal32t64 libgeos3.11.1t64 libproj25 \
     nodejs npm && rm -rf /var/lib/apt/lists/*
 
 # Copy frontend standalone output

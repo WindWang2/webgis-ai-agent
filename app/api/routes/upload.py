@@ -14,7 +14,6 @@ from app.core.config import settings
 from app.core.auth import get_current_user
 from app.tools._utils import async_db_session
 from app.models.upload import UploadRecord
-from app.models.db_model import Conversation
 from app.services.history_service_async import AsyncHistoryService
 from app.services.data_parser import (
     MAX_RASTER_SIZE,
@@ -271,7 +270,11 @@ async def get_upload(upload_id: int, _user: dict = Depends(get_current_user)):
 
 @router.get("/uploads/{upload_id}/geojson")
 async def get_upload_geojson(upload_id: int, _user: dict = Depends(get_current_user)):
-    """获取上传文件的 GeoJSON 数据（用于地图渲染）"""
+    """获取上传文件的 GeoJSON 数据（用于地图渲染）。
+
+    审计 S49：之前无大小限制 -- 任意大的 GeoJSON 被 json.load 一次性读入内存
+    并流式返回，超大文件可导致内存爆。加 50MB 上限（与 MAX_VECTOR_SIZE 一致）。
+    """
     async with async_db_session() as db:
         result = await db.execute(select(UploadRecord).where(UploadRecord.id == upload_id))
         record = result.scalar_one_or_none()
@@ -290,6 +293,14 @@ async def get_upload_geojson(upload_id: int, _user: dict = Depends(get_current_u
     data_root = Path(settings.DATA_DIR).resolve()
     if data_root not in resolved.parents and resolved != data_root:
         raise HTTPException(status_code=400, detail="非法文件路径")
+
+    # 审计 S49：文件大小检查 -- 防 OOM
+    file_size = geojson_path.stat().st_size
+    if file_size > MAX_VECTOR_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"GeoJSON 文件过大（{file_size / 1024 / 1024:.1f}MB > {MAX_VECTOR_SIZE / 1024 / 1024:.0f}MB 限制），请通过 /layers/data/{{ref_id}} 分片读取",
+        )
 
     with open(geojson_path, "r", encoding="utf-8") as f:
         return json.load(f)
