@@ -69,7 +69,7 @@ def db_session():
     try:
         yield db
         db.commit()
-    except Exception:
+    except Exception as e:
         db.rollback()
         raise
     finally:
@@ -93,7 +93,7 @@ async def async_db_session():
     try:
         yield db
         await db.commit()
-    except Exception:
+    except Exception as e:
         await db.rollback()
         raise
     finally:

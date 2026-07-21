@@ -92,7 +92,7 @@ async def _district_tianditu_v2(keywords: str, child_level: int, return_polygon:
             if len(polygons) == 1:
                 return {"type": "Polygon", "coordinates": polygons[0]}
             return {"type": "MultiPolygon", "coordinates": polygons}
-        except Exception:
+        except Exception as e:
             return None
 
     for d in districts:

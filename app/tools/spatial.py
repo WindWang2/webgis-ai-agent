@@ -310,7 +310,7 @@ def register_spatial_tools(registry: ToolRegistry):
                         "palette": palette_key,
                         "palette_colors": list(palette_colors),
                     }
-                except Exception:
+                except Exception as e:
                     pass
             if isinstance(data, dict) and data.get("type") == "FeatureCollection":
                 data = trim_features(data)
@@ -358,7 +358,7 @@ def register_spatial_tools(registry: ToolRegistry):
                             "palette": palette_key,
                             "palette_colors": list(palette_colors),
                         }
-                    except Exception:
+                    except Exception as e:
                         pass  # legend failure never blocks tool result
             if isinstance(res_data, dict) and res_data.get("type") == "FeatureCollection":
                 res_data = trim_features(res_data)

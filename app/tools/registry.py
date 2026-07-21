@@ -131,7 +131,7 @@ class ToolRegistry:
         result: Any = None
         try:
             arg_bytes = len(_json.dumps(arguments, default=str))
-        except Exception:
+        except Exception as e:
             arg_bytes = 0
 
         try:
@@ -145,7 +145,7 @@ class ToolRegistry:
                 error_cls = error_cls or result.get("error_type") or result.get("code")
             try:
                 result_bytes = len(_json.dumps(result, default=str)) if result is not None else 0
-            except Exception:
+            except Exception as e:
                 result_bytes = 0
             cache_hit = cache_hit_var.get()
             tool_metrics.record_tool_call(
