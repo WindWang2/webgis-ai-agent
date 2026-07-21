@@ -1,10 +1,13 @@
 import json
+import logging
 from typing import Any, Dict
 import oss2
 from app.core.config import settings
 from .base import DataSourceAdapter
 import fiona
 import io
+
+logger = logging.getLogger(__name__)
 
 class OSSAdapter(DataSourceAdapter):
     _instance = None
@@ -19,7 +22,7 @@ class OSSAdapter(DataSourceAdapter):
                     auth = oss2.Auth(settings.OSS_ACCESS_KEY_ID, settings.OSS_ACCESS_KEY_SECRET)
                     cls._instance._bucket = oss2.Bucket(auth, settings.OSS_ENDPOINT, settings.OSS_BUCKET_NAME)
                 except Exception as e:
-                    print(f"OSS initialization failed: {e}")
+                    logger.warning("OSS initialization failed: %s", e)
         return cls._instance
 
     def query(self, query_params: Dict[str, Any]) -> Any:
