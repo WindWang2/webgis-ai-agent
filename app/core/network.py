@@ -14,9 +14,18 @@ def get_ssl_context(verify: bool = True) -> ssl.SSLContext:
     获取跨平台 SSL 上下文。
     
     Args:
-        verify: 是否验证 SSL 证书
+        verify: 是否验证 SSL 证书。生产环境必须为 True；仅允许在显式配置
+                ALLOW_INSECURE_SSL=true 时使用 verify=False。
     """
     if not verify:
+        import os
+        if os.environ.get("ALLOW_INSECURE_SSL", "").lower() not in ("1", "true", "yes"):
+            raise ValueError(
+                "SSL verification is disabled but ALLOW_INSECURE_SSL is not set. "
+                "Refusing to create insecure SSL context. "
+                "Set ALLOW_INSECURE_SSL=true explicitly if you really want this."
+            )
+        logger.warning("SSL verification DISABLED — ALLOW_INSECURE_SSL is set. This is insecure.")
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE

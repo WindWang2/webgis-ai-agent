@@ -24,6 +24,14 @@ services:
       retries: 5
     networks:
       - webgis-net
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+          cpus: "2.0"
+        reservations:
+          memory: 2g
+          cpus: "1.0"
 
   # Redis 缓存/消息队列
   redis:
@@ -47,6 +55,14 @@ services:
       retries: 5
     networks:
       - webgis-net
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
+        reservations:
+          memory: 512m
+          cpus: "0.25"
 
   # 后端 API 服务
   api:
@@ -83,13 +99,21 @@ services:
     volumes:
       - uploads:/app/uploads
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/api/v1/health/live"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/live', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
     networks:
       - webgis-net
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "2.0"
+        reservations:
+          memory: 1g
+          cpus: "0.5"
 
   # Celery Worker（异步任务处理）
   celery-worker:
@@ -119,6 +143,14 @@ services:
     command: celery -A app.services.task_queue worker --loglevel=info --concurrency=2
     networks:
       - webgis-net
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "2.0"
+        reservations:
+          memory: 1g
+          cpus: "0.5"
 
   # Nginx 反向代理（可选，用于生产环境）
   nginx:
@@ -136,6 +168,14 @@ services:
       - api
     networks:
       - webgis-net
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+        reservations:
+          memory: 128m
+          cpus: "0.1"
 
   # Prometheus 指标收集（可选）
   prometheus:
@@ -154,6 +194,14 @@ services:
       - '--web.console.templates=/etc/prometheus/consoles'
     networks:
       - webgis-net
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
+        reservations:
+          memory: 512m
+          cpus: "0.25"
 
   # Grafana 可视化面板（可选）
   grafana:
@@ -173,6 +221,14 @@ services:
       - prometheus
     networks:
       - webgis-net
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+        reservations:
+          memory: 128m
+          cpus: "0.1"
 
 volumes:
   pg_prod_data:

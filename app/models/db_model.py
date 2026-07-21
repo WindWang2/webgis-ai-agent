@@ -114,6 +114,7 @@ class AnalysisTask(Base):
     __table_args__ = (
         Index("idx_task_status", "status"),
         CheckConstraint("status IN ('pending', 'queued', 'running', 'completed', 'failed', 'cancelled')", name="ck_task_status"),
+        CheckConstraint("progress >= 0 AND progress <= 100", name="ck_task_progress"),
     )
 
 class LayerPermission(Base):

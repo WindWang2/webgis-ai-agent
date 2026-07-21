@@ -21,7 +21,7 @@ MAX_EVENTS = 20
 class RedisSessionDataManager:
     """Session-level data store backed by Redis with cursor support (LRU)."""
 
-    def __init__(self, redis_url: str, capacity: int = 200, socket_timeout: float = 1.0):
+    def __init__(self, redis_url: str, capacity: int = 200, socket_timeout: float = 5.0):
         self._r = aioredis.Redis.from_url(
             redis_url,
             decode_responses=False,
