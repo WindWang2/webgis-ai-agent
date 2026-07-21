@@ -32,14 +32,19 @@ class GeoAnalysisResult:
     def to_llm_response(self) -> dict:
         """
         Converts the result into a format the ChatEngine can easily digest.
+        Includes stats when available so the LLM can reference numeric
+        summaries without re-parsing the full data payload.
         """
-        return {
+        result = {
             "success": self.success,
             "summary": self.summary,
             "data": self.data,
             "error_type": self.error_type,
             "correction_hint": self.correction_hint
         }
+        if self.stats is not None:
+            result["stats"] = self.stats
+        return result
 
 _A = 6378245.0
 _EE = 0.00669342162296594323
