@@ -37,11 +37,11 @@ services:
       --appendonly
       --maxmemory 256mb
       --maxmemory-policy noeviction
-      --requirepass ${REDIS_PASSWORD:-changeme_redis_password}
+      --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.production}
     volumes:
       - redis_prod_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme_redis_password}", "--raw", "incr", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.production}", "--raw", "incr", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -70,6 +70,9 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS}
       - LOG_LEVEL=INFO
       - PYTHONUNBUFFERED=1
+      # 审计 P1：统一上传路径为 /app/uploads（与 Dockerfile.prod 创建的一致）。
+      # 之前 mount /app/frontend/out/uploads 但应用写 ./data/uploads/，导致上传丢失。
+      - DATA_DIR=/app
     env_file:
       - .env.production
     depends_on:
@@ -78,7 +81,7 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - uploads:/app/frontend/out/uploads
+      - uploads:/app/uploads
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/api/v1/health/live"]
       interval: 30s

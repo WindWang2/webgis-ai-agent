@@ -15,7 +15,10 @@ def _build_weights(gdf, k=8):
     w = np.zeros((n, n))
     for i in range(n):
         # Find indices of k nearest neighbors (excluding self)
-        idx = np.argsort(dist[i])[1:k+1]
+        if n <= k:
+            idx = np.argsort(dist[i])[1:]
+        else:
+            idx = np.argsort(dist[i])[1:k+1]
         w[i, idx] = 1.0
     return w
 

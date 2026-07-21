@@ -7,6 +7,8 @@
 # - 可配合 Nginx 反向代理使用 HTTPS
 #
 # 使用: docker-compose -f docker-compose.prod.secure.yml up -d
+#
+# ⚠️ 部署前必须创建 .env.Priv 文件（见 .env.Priv.example 模板）。
 # ============================================================
 
 services:
@@ -16,7 +18,8 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-webgis_prod}
-      POSTGRES_PASSWORD: ${DB_PWD:?Set DB_PWD in .env.Priv}
+      # 审计 P0：明确提示从 .env.Priv 读取，不存在时拒绝启动而非使用弱默认值。
+      POSTGRES_PASSWORD: "${DB_PWD:?ERROR: DB_PWD not set. Copy .env.Priv.example to .env.Priv and set DB_PWD.}"
       POSTGRES_DB: ${DB_NAME:-webgis_prod}
       # 审计 I20：之前缺 PGDATA，Postgres 直接初始化在 mount 根 ->
       # lost+found 冲突 / 权限问题。与 prod.yml 一致加 PGDATA 子目录。
@@ -42,11 +45,11 @@ services:
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru
       --bind 0.0.0.0
-      --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}
+      --requirepass "${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv and set REDIS_PASSWORD.}"
     volumes:
       - redis_data_secure:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -63,12 +66,14 @@ services:
       - ENV=production
       - DEBUG=false
       - DATABASE_URL=postgresql://${DB_USER:-webgis_prod}:${DB_PWD}@db:5432/${DB_NAME:-webgis_prod}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?Please set JWT_SECRET_KEY}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}@redis:6379/0
-      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}@redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}@redis:6379/1
+      - JWT_SECRET_KEY="${JWT_SECRET_KEY:?ERROR: JWT_SECRET_KEY not set. Set it in .env.Priv.}"
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/1
       - CORS_ORIGINS=${CORS_ORIGINS}
       - LOG_LEVEL=INFO
+      # 审计 P1：统一上传路径为 /app/uploads（与 Dockerfile.prod 创建的一致）。
+      - DATA_DIR=/app
     env_file:
       - .env.Priv
     expose:
@@ -78,8 +83,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - uploads:/app/uploads
+    # 审计 P0：api healthcheck 使用 wget，但 Dockerfile.prod runner 不装 wget。
+    # 改用 python3 urllib（已修复 Dockerfile.prod HEALTHCHECK，此处同步）。
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/api/v1/health/live"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/live', timeout=5)\" || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -97,9 +106,9 @@ services:
       - ENV=production
       - DATABASE_URL=postgresql://${DB_USER:-webgis_prod}:${DB_PWD}@db:5432/${DB_NAME:-webgis_prod}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}@redis:6379/0
-      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}@redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.Priv}@redis:6379/1
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/1
     env_file:
       - .env.Priv
     command: celery -A app.services.task_queue worker --loglevel=info --concurrency=2

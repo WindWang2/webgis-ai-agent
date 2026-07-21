@@ -93,7 +93,7 @@ spec:
             memory: "4Gi"
         volumeMounts:
         - name: uploads-volume
-          mountPath: /app/frontend/out/uploads
+          mountPath: /app/uploads
       volumes:
       - name: uploads-volume
         persistentVolumeClaim:
