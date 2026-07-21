@@ -1,9 +1,12 @@
+import logging
 import networkx as nx
 import geopandas as gpd
 import numpy as np
 from shapely.geometry import Point, LineString, mapping, MultiPoint
 from app.lib.geo_processor.core import GeoAnalysisResult
 from app.lib.geo_processor.core import to_utm_gdf
+
+logger = logging.getLogger(__name__)
 
 def calculate_isochrones(network_geojson, facility_points, travel_time_min, mode='walking'):
     """
@@ -23,8 +26,8 @@ def calculate_isochrones(network_geojson, facility_points, travel_time_min, mode
         if utm_crs != fac_crs:
             gdf_facilities = gdf_facilities.to_crs(utm_crs)
         
-        # Build NetworkX graph
-        G = nx.Graph()
+        # Build NetworkX graph (MultiGraph to preserve parallel edges)
+        G = nx.MultiGraph()
         
         for idx, row in gdf_network.iterrows():
             geom = row.geometry
@@ -34,8 +37,16 @@ def calculate_isochrones(network_geojson, facility_points, travel_time_min, mode
                 end_node = coords[-1]
                 
                 # Weight by length (meters in UTM)
-                weight = row.get("length", geom.length)
-                G.add_edge(start_node, end_node, weight=weight)
+                if "length" in row and row["length"] is not None:
+                    weight = float(row["length"])
+                else:
+                    weight = geom.length
+                    logger.warning(
+                        "Edge at index %d has no 'length' property; using geometry.length (%fm). "
+                        "Accuracy depends on input CRS being projected (meters).",
+                        idx, weight,
+                    )
+                G.add_edge(start_node, end_node, weight=weight, geometry=geom)
         
         isochrone_features = []
         # Assumption: travel_time_min is converted to meters using a default speed if not provided
@@ -49,12 +60,15 @@ def calculate_isochrones(network_geojson, facility_points, travel_time_min, mode
              
         nodes_arr = np.array(nodes)
         
+        # cKDTree for nearest-node search (O(n log n), audit S40)
+        from scipy.spatial import cKDTree
+        node_tree = cKDTree(nodes_arr)
+        
         for idx, facility in gdf_facilities.iterrows():
-            start_point = (facility.geometry.x, facility.geometry.y)
+            start_point = np.array([facility.geometry.x, facility.geometry.y])
             
-            # Find nearest node
-            dist_sq = np.sum((nodes_arr - np.array(start_point))**2, axis=1)
-            nearest_node_idx = np.argmin(dist_sq)
+            # Find nearest node via cKDTree
+            _, nearest_node_idx = node_tree.query(start_point, k=1)
             nearest_node = nodes[nearest_node_idx]
             
             lengths = nx.single_source_dijkstra_path_length(G, nearest_node, cutoff=max_dist, weight='weight')

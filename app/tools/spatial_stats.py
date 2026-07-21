@@ -115,6 +115,9 @@ def register_spatial_stats_tools(registry: ToolRegistry):
 
         coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
 
+        # 审计：权重重复上限，防止大动态范围权重导致 OOM
+        _MAX_REPEAT_FACTOR = 100
+
         if value_field:
             weights = extract_numeric_values(gdf, value_field)
             if weights is None:
@@ -125,7 +128,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             min_w = float(weights.min())
             if min_w == 0:
                 min_w = 1e-10
-            repeat_factors = np.clip(np.maximum((weights / min_w).astype(int), 1), 1, 100)
+            repeat_factors = np.clip(np.maximum((weights / min_w).astype(int), 1), 1, _MAX_REPEAT_FACTOR)
             weighted_coords = np.repeat(coords, repeat_factors, axis=0)
             kde_data = weighted_coords.T
         else:
@@ -179,22 +182,32 @@ def register_spatial_stats_tools(registry: ToolRegistry):
 
         max_d = density.max()
         threshold = max_d * 0.1
-        out_features = []
+        
+        # 批量构建格网几何体并一次性 reproject 到 WGS84（审计：避免 O(n) 逐单元格 CRS 转换）
+        cell_geoms = []
+        cell_data = []  # (i, j, d_val) tuples
         for i in range(ny):
             for j in range(nx):
                 d_val = float(density[i, j])
                 if d_val < threshold:
                     continue
-                    
                 x0, x1 = grid_x[j] - cell_size / 2, grid_x[j] + cell_size / 2
                 y0, y1 = grid_y[i] - cell_size / 2, grid_y[i] + cell_size / 2
-                cell_geom = box(x0, y0, x1, y1)
-                cell_wgs84 = gpd.GeoSeries([cell_geom], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
-                out_features.append({
+                cell_geoms.append(box(x0, y0, x1, y1))
+                cell_data.append((i, j, d_val))
+        
+        if cell_geoms:
+            cells_gdf = gpd.GeoSeries(cell_geoms, crs=utm_crs).to_crs("EPSG:4326")
+            out_features = [
+                {
                     "type": "Feature",
-                    "geometry": mapping(cell_wgs84),
-                    "properties": {"density": round(d_val, 8)},
-                })
+                    "geometry": mapping(cells_gdf.iloc[k]),
+                    "properties": {"density": round(cell_data[k][2], 8)},
+                }
+                for k in range(len(cell_geoms))
+            ]
+        else:
+            out_features = []
 
         return {
             "type": "FeatureCollection",

@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import geopandas as gpd
+from scipy import sparse
 from shapely.geometry import Point, Polygon, mapping
 from scipy.spatial import distance_matrix
 from scipy.stats import norm
@@ -8,18 +9,25 @@ from app.lib.geo_processor.core import GeoAnalysisResult
 from app.lib.geo_processor.core import to_utm_gdf, safe_parse
 
 def _build_weights(gdf, k=8):
-    """Build spatial weights matrix using KNN via cKDTree (O(n log n), keeps full n×n shape for compatibility)."""
+    """Build spatial weights matrix using KNN via cKDTree.
+    
+    Returns a sparse COO matrix (n×n) with 1.0 for K-nearest neighbors.
+    Uses O(n log n) cKDTree query instead of O(n²) distance_matrix.
+    """
     from scipy.spatial import cKDTree
     coords = np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values))
     n = len(coords)
-    k_actual = min(k, n - 1)
+    if n == 0:
+        return sparse.coo_matrix((0, 0))
+    k_actual = min(k, n - 1) if n > 1 else 1
     tree = cKDTree(coords)
     # query returns k+1 neighbors including self at index 0
     _, idx = tree.query(coords, k=k_actual + 1)
-    w = np.zeros((n, n))
-    for i in range(n):
-        w[i, idx[i, 1:]] = 1.0  # skip self (column 0), neighbors are already 0-based
-    return w
+    # Build sparse matrix: skip self (column 0)
+    rows = np.repeat(np.arange(n), k_actual)
+    cols = idx[:, 1:].ravel()
+    data = np.ones(len(rows), dtype=float)
+    return sparse.coo_matrix((data, (rows, cols)), shape=(n, n))
 
 def _extract_numeric_values(gdf, value_field):
     """Helper to extract numeric values from a GDF field."""
@@ -138,13 +146,16 @@ def moran_i_narrated(geojson: dict, value_field: str) -> GeoAnalysisResult:
         return GeoAnalysisResult(False, None, "At least 3 features required for Moran's I")
     
     w = _build_weights(gdf, k=min(8, n-1))
-    w_sum = w.sum()
+    w_sum = float(w.sum())
     if w_sum == 0:
         return GeoAnalysisResult(False, None, "Spatial weights matrix is empty")
     
     z = values - values.mean()
     s0 = w_sum
-    numerator = np.sum(w * np.outer(z, z))
+    # _build_weights returns a sparse COO matrix; convert to dense for
+    # element-wise multiplication with the outer product (Moran's I formula).
+    w_dense = w.toarray() if sparse.issparse(w) else w
+    numerator = float(np.sum(w_dense * np.outer(z, z)))
     denominator = np.sum(z**2)
     
     moran_i_val = (n / s0) * (numerator / denominator) if denominator > 0 else 0
@@ -349,12 +360,28 @@ def calculate_central_feature(geojson: dict, method: str = "mean_center") -> Geo
         summary = f"Mean Center: The average geographic center is at {mc[0]:.2f}, {mc[1]:.2f} (UTM)."
     else:
         # Central Feature: point with minimum total distance to all other points
+        # Use batched cKDTree queries to avoid O(n²) memory allocation.
         from scipy.spatial import cKDTree
-        # Use cKDTree to find approximate central feature (mean of pairwise distances minimized)
+        n = len(coords)
+        # Guard: central_feature requires all-pairs distances; cap at 5000 features
+        if n > 5000:
+            return GeoAnalysisResult(
+                False, None,
+                f"Too many features ({n}) for central_feature analysis (max 5000). Use mean_center instead.",
+                error_type="InsufficientData",
+            )
         tree = cKDTree(coords)
-        # Sum of distances to all other points = minimize mean distance
-        dists = tree.query(coords, k=len(coords))[0].sum(axis=1)
-        idx = np.argmin(dists)
+        # Batch query: avoid allocating full n×n distance matrix at once
+        batch_size = 500
+        dist_sums = np.zeros(n)
+        for start in range(0, n, batch_size):
+            end = min(start + batch_size, n)
+            dists, _ = tree.query(coords[start:end], k=n)
+            # Zero self-distances (first column per row)
+            for offset, i in enumerate(range(start, end)):
+                dists[offset, i] = 0.0
+            dist_sums[start:end] = dists.sum(axis=1)
+        idx = int(np.argmin(dist_sums))
         center_pt = gdf.geometry.iloc[idx]
         summary = f"Central Feature: The feature at index {idx} is identified as the central feature (minimum total distance to others)."
         

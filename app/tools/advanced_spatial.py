@@ -80,6 +80,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            args_model=ZonalStatsArgs)
     def zonal_stats(geojson: Any, raster_path: str) -> dict:
         from app.lib.geo_analysis.raster_ops import zonal_statistics
+        from app.lib.geo_processor.core import GeoAnalysisResult
         from app.utils.path import validate_data_path
 
         data = safe_parse_geojson(geojson)
@@ -93,12 +94,11 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         try:
             raster_path = validate_data_path(raster_path)
         except ValueError as e:
-            return {
-                "success": False,
-                "code": "路径校验失败",
-                "message": f"raster_path {raster_path} 不在允许的 data_dir 范围内",
-                "data": None,
-            }
+            return GeoAnalysisResult(
+                False, None,
+                f"raster_path {raster_path} 不在允许的 data_dir 范围内",
+                error_type="ValidationError",
+            ).to_llm_response()
 
         # Ensure we have a valid FeatureCollection for rasterstats
         fc = {"type": "FeatureCollection", "features": features}
@@ -111,12 +111,11 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             ):
                 stats = zonal_statistics(fc, raster_path)
         except Exception as e:
-            return {
-                "success": False,
-                "code": "栅格读取失败",
-                "message": f"raster_path {raster_path} 无法打开：{e}",
-                "data": None,
-            }
+            return GeoAnalysisResult(
+                False, None,
+                f"raster_path {raster_path} 无法打开：{e}",
+                error_type="RasterError",
+            ).to_llm_response()
 
         # Merge stats back into features
         for i, s in enumerate(stats):
@@ -124,12 +123,11 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                 features[i]["properties"].update(s)
 
         summary = f"Computed zonal statistics for {len(features)} zones against raster {raster_path}."
-        return {
-            "type": "FeatureCollection",
-            "features": features,
-            "summary": summary,
-            "stats_metadata": {"raster": raster_path}
-        }
+        return GeoAnalysisResult(
+            success=True,
+            data={"type": "FeatureCollection", "features": features},
+            summary=summary,
+        ).to_llm_response()
 
     @tool(registry, name="idw_interpolation",
            description="反距离加权插值(IDW)：将离散采样点转换为连续的 H3 六边形网格表面。适用于气象、污染等连续变量建模。",
@@ -142,39 +140,15 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            })
     def idw_interpolation(geojson: Any, value_field: str, resolution: int = 8, power: int = 2) -> dict:
         from app.lib.geo_analysis.interpolation import idw_interpolation as _idw_interpolation
+        from app.lib.geo_analysis.interpolation import h3_to_geojson
         data = safe_parse_geojson(geojson)
         # Use the H3-based IDW implementation
         results = _idw_interpolation(data, value_field, resolution, power)
         
-        # Convert H3 results to GeoJSON Features
-        import h3
-        from shapely.geometry import Polygon, mapping
-        features = []
-        for res in results:
-            cell = res["h3_index"]
-            val = res["value"]
-            boundary = h3.cell_to_boundary(cell) # [(lat, lng), ...]
-            # Shapely expects [(lng, lat), ...]
-            poly_coords = [(lng, lat) for lat, lng in boundary]
-            features.append({
-                "type": "Feature",
-                "geometry": mapping(Polygon(poly_coords)),
-                "properties": {
-                    "h3_index": cell,
-                    value_field: round(val, 4)
-                }
-            })
-            
-        return {
-            "type": "FeatureCollection",
-            "features": features,
-            "summary": f"Generated IDW interpolation surface with {len(features)} H3 cells (res={resolution}).",
-            "metadata": {
-                "method": "IDW",
-                "h3_resolution": resolution,
-                "value_field": value_field
-            }
-        }
+        # Convert H3 results to GeoJSON Features (审计：消除重复的 H3-to-GeoJSON 转换)
+        geojson_result = h3_to_geojson(results, value_field)
+        geojson_result["summary"] = f"Generated IDW interpolation surface with {len(geojson_result['features'])} H3 cells (res={resolution})."
+        return geojson_result
 
     @tool(registry, name="overlay_analysis",
            description="对两个几何图层进行空间叠加分析（如求交、合并、擦除等），返回结果及其统计信息",

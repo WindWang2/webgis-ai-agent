@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import pandas as pd
 import geopandas as gpd
@@ -5,6 +6,8 @@ import h3
 from shapely.geometry import box, Polygon, mapping
 from app.lib.geo_processor.core import GeoAnalysisResult
 from app.lib.geo_processor.core import to_utm_gdf
+
+logger = logging.getLogger(__name__)
 
 def generate_fishnet(bounds, cell_size, type='square'):
     """
@@ -66,11 +69,16 @@ def generate_fishnet(bounds, cell_size, type='square'):
         summary=f"Generated {len(polygons)} {type} cells. {warning}".strip()
     )
 
-def spatial_aggregate(points_geojson, polygons_geojson, stats=['count', 'sum', 'mean'], value_field=None):
+def spatial_aggregate(points_geojson, polygons_geojson, stats=None, value_field=None, output_crs="EPSG:4326"):
     """
     Aggregate points to polygons using spatial join.
     Supports stats: count, sum, mean, max, min.
+    
+    Args:
+        output_crs: Output CRS (default EPSG:4326). Set to None to keep input CRS.
     """
+    if stats is None:
+        stats = ['count', 'sum', 'mean']
     try:
         # Use geo_processor for pre-processing (alignment)
         res_points = to_utm_gdf(points_geojson)
@@ -113,8 +121,13 @@ def spatial_aggregate(points_geojson, polygons_geojson, stats=['count', 'sum', '
             if s in final_gdf.columns:
                 final_gdf[s] = final_gdf[s].fillna(0)
         
-        # Convert back to 4326 for output
-        final_gdf = final_gdf.to_crs("EPSG:4326")
+        # Convert to output CRS (audit: warn when silently reprojecting)
+        if output_crs and str(final_gdf.crs) != str(output_crs):
+            logger.warning(
+                "spatial_aggregate: input CRS %s differs from output_crs %s; reprojecting.",
+                final_gdf.crs, output_crs,
+            )
+            final_gdf = final_gdf.to_crs(output_crs)
             
         summary = f"Successfully aggregated points to {len(polygons)} polygons."
         if value_field:
@@ -143,6 +156,7 @@ def h3_binning(geojson, resolution=None, stat_field=None, stat_method='count'):
     """
     try:
         import h3
+        import math
         if isinstance(geojson, dict) and 'features' in geojson:
             gdf = gpd.GeoDataFrame.from_features(geojson['features'], crs="EPSG:4326")
         else:
@@ -151,19 +165,23 @@ def h3_binning(geojson, resolution=None, stat_field=None, stat_method='count'):
         if gdf.empty:
             return GeoAnalysisResult(success=False, data=None, summary="Empty geojson input.")
             
-        # Automatic resolution selection
+        # Automatic resolution selection (审计：从度数阈值改为米制阈值)
         if resolution is None:
             xmin, ymin, xmax, ymax = gdf.total_bounds
-            width = xmax - xmin
-            height = ymax - ymin
-            max_dim = max(width, height)
-            
-            # Simple heuristic: map data extent to H3 resolution (0-15)
-            if max_dim > 50: resolution = 1
-            elif max_dim > 10: resolution = 3
-            elif max_dim > 1: resolution = 5
-            elif max_dim > 0.1: resolution = 7
-            elif max_dim > 0.01: resolution = 9
+            # 用 centroid 纬度近似转换度数为米（仍受纬度偏差影响，但比纯度数更直观）
+            lat = (ymin + ymax) / 2
+            m_per_deg_lat = 111_320
+            m_per_deg_lon = 111_320 * math.cos(math.radians(lat))
+            max_dim_m = max(
+                (xmax - xmin) * m_per_deg_lon,
+                (ymax - ymin) * m_per_deg_lat,
+            )
+            # 阈值对应原度数阈值的等价米数（赤道近似）
+            if max_dim_m > 5_566_000: resolution = 1   # > ~50°
+            elif max_dim_m > 1_113_000: resolution = 3  # > ~10°
+            elif max_dim_m > 111_300: resolution = 5    # > ~1°
+            elif max_dim_m > 11_130: resolution = 7     # > ~0.1°
+            elif max_dim_m > 1_113: resolution = 9      # > ~0.01°
             else: resolution = 11
             
         # Ensure point geometry
@@ -173,9 +191,10 @@ def h3_binning(geojson, resolution=None, stat_field=None, stat_method='count'):
         if gdf.crs != "EPSG:4326":
             gdf = gdf.to_crs("EPSG:4326")
             
-        # Assign H3 index
-        # gdf.geometry.y is lat, gdf.geometry.x is lng
-        gdf['h3_index'] = gdf.apply(lambda row: h3.latlng_to_cell(row.geometry.y, row.geometry.x, resolution), axis=1)
+        # Assign H3 index (向量化：避免 O(n) apply lambda)
+        lats = gdf.geometry.y.values
+        lngs = gdf.geometry.x.values
+        gdf['h3_index'] = [h3.latlng_to_cell(lat, lng, resolution) for lat, lng in zip(lats, lngs)]
         
         # Group by H3 index
         if stat_method == 'count':

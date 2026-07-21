@@ -154,7 +154,12 @@ def _build_user_prompt(query: str, context: dict, depth: str) -> str:
 
 
 async def _call_llm(system_prompt: str, user_prompt: str) -> dict:
-    """LLM 调用占位符。生产环境集成真实 LLM 服务。"""
+    """LLM 调用占位符（生产环境接入真实 LLM 服务前使用 mock 响应）。
+    
+    审计：保留 async 签名以兼容即将接入的真实 LLM 调用（如 OpenAI /
+    DeepSeek API）。当前返回结构化 mock 响应，用于前端演示和测试。
+    接入真实 LLM 时，替换此函数体为实际的 API 调用即可。
+    """
     logger.debug("_call_llm placeholder invoked")
     # Mock structured response for placeholder
     return {
