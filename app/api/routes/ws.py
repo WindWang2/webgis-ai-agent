@@ -3,6 +3,7 @@ import logging
 
 from app.services.ws_service import manager, PERCEPTION_HANDLERS
 from app.core.auth import verify_token
+from app.core.rate_limiter import get_rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +13,10 @@ router = APIRouter(prefix="/ws", tags=["WebSocket"])
 # 之前 `if token:` 对空字符串也为 falsy，导致 `?token=` 完全绕过认证。
 # 使用 sentinel 区分「未提供 token」（允许匿名）和「提供了空 token」（拒绝）。
 _UNSET = object()
+
+# WebSocket 连接频率限制：每 session 每 60 秒最多 5 次连接尝试
+_WS_RATE_LIMIT_MAX = 5
+_WS_RATE_LIMIT_WINDOW = 60
 
 
 @router.websocket("/{session_id}")
@@ -24,7 +29,15 @@ async def websocket_endpoint(
 
     Auth 是 optional：带合法 token 时验证放行；不带 token 参数允许匿名连接。
     但显式传递空 token（?token=）会被拒绝，防止绕过认证守卫。
+    匿名连接受 rate limit 保护（每 session 每 60 秒最多 5 次连接）。
     """
+    # 审计 P1：WebSocket 连接频率限制，防止匿名连接被滥用
+    limiter = await get_rate_limiter()
+    rate_key = f"ws_connect:{session_id}"
+    if not await limiter.is_allowed(rate_key, _WS_RATE_LIMIT_MAX, _WS_RATE_LIMIT_WINDOW):
+        await websocket.close(code=4029, reason="Rate limit exceeded")
+        return
+
     # 审计 P0：用 sentinel 区分「参数不存在」和「显式空字符串」
     raw_token = token if token else _UNSET
 
