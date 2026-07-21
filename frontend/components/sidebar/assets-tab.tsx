@@ -6,6 +6,8 @@ import { useToastStore } from '@/components/ui/toast';
 import { getUploadGeojson } from '@/lib/api/upload';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 
+
+import { devOnly } from "@/lib/utils/logger";
 // The /uploads endpoint returns more fields than UploadResponse declares,
 // and the store keeps them as-is. This shape captures what AssetsTab reads.
 interface AnalysisAsset {
@@ -77,7 +79,7 @@ export function AssetsTab() {
       });
       addToast('资产已加载到地图', 'success');
     } catch (e) {
-      console.error('加载资产到地图失败:', e);
+      devOnly.error('加载资产到地图失败:', e);
       addToast(e instanceof Error ? e.message : '加载资产失败', 'error');
     }
   };

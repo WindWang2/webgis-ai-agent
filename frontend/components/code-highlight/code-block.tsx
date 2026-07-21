@@ -2,6 +2,8 @@
 import React, { memo, useState, useCallback } from 'react';
 import { Copy, Check } from 'lucide-react';
 
+
+import { devOnly } from "@/lib/utils/logger";
 interface CodeBlockProps {
   /** 代码语言 */
   language?: string;
@@ -25,7 +27,7 @@ export const CodeBlock = memo(function CodeBlock({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
-      console.error('Failed to copy:', err);
+      devOnly.error('Failed to copy:', err);
     }
   }, [code]);
 

@@ -6,6 +6,8 @@ import { API_BASE } from '@/lib/api/config';
 import type { ChatSession } from '@/lib/types/chat';
 import type { MapActionPayload } from '@/lib/types';
 
+
+import { devOnly } from "@/lib/utils/logger";
 export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) => void) {
   const [sessionId, setSessionId] = useState<string>();
   const sessionIdRef = useRef<string | undefined>(undefined);
@@ -49,7 +51,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       const data = await res.json();
       if (data.sessions) setSessions(data.sessions);
     } catch (err) {
-      console.error('Fetch sessions failed:', err);
+      devOnly.error('Fetch sessions failed:', err);
     }
   }, []);
 
@@ -130,7 +132,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
                     }
                   })
                   .catch((err) => {
-                    if (err?.name !== 'AbortError') console.error('[LayerFetch]', err);
+                    if (err?.name !== 'AbortError') devOnly.error('[LayerFetch]', err);
                   });
               }
             }
@@ -142,11 +144,11 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         try {
           await useHudStore.getState().fetchAnalysisAssets(sid);
         } catch (e) {
-          console.warn('[fetchAnalysisAssets] failed on session switch:', e);
+          devOnly.warn('[fetchAnalysisAssets] failed on session switch:', e);
         }
       } catch (err: any) {
         if (err?.name !== 'AbortError') {
-          console.error('Load session failed:', err);
+          devOnly.error('Load session failed:', err);
         }
       }
     },

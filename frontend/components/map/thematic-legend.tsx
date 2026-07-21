@@ -6,6 +6,8 @@ import { ContinuousLegend } from './legends/continuous-legend';
 import { CategoricalLegend } from './legends/categorical-legend';
 import { DivergentLegend } from './legends/divergent-legend';
 
+
+import { devOnly } from "@/lib/utils/logger";
 interface Props {
   spec: LegendSpec | null | undefined;
   onFilterChange?: (visibleBreaks: number[][]) => void;
@@ -25,7 +27,7 @@ export function ThematicLegend({ spec, onFilterChange }: Props) {
     default: {
       const _exhaustive: never = spec;
       void _exhaustive;
-      console.warn('[ThematicLegend] unknown legend_spec type', spec);
+      devOnly.warn('[ThematicLegend] unknown legend_spec type', spec);
       return null;
     }
   }

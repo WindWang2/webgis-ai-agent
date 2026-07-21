@@ -5,6 +5,8 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { MapPanel } from "@/components/map/map-panel"
 import { API_BASE } from '@/lib/api/config';
+
+import { devOnly } from "@/lib/utils/logger";
 import { useHudStore } from "@/lib/store/useHudStore"
 import { Play, SkipBack, Share2 } from "lucide-react"
 
@@ -35,7 +37,7 @@ function StoryPageInner() {
             setMessages(data.messages)
           }
         })
-        .catch((err) => console.error("Restore session history failed:", err))
+        .catch((err) => devOnly.error("Restore session history failed:", err))
         .finally(() => setLoading(false))
     } else {
       setLoading(false)

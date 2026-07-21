@@ -14,6 +14,8 @@ import * as navigation from '@/lib/map-kit/navigation';
 import * as renderer from '@/lib/map-kit/renderer';
 import * as exporter from '@/lib/map-kit/exporter';
 
+
+import { devOnly } from "@/lib/utils/logger";
 // R8 annotation source: 单一 FeatureCollection 收纳 add_marker / draw_measurement 输出。
 // Zustand 状态迁移：将原本模块级的 mutable array 迁移至 Zustand，支持多组件共享、响应式更新和一致的生命周期管理。
 const ANNOTATION_SOURCE_ID = 'claude-annotations';
@@ -96,7 +98,7 @@ function parseFilter(filter: any): any[] | null {
     try {
       return JSON.parse(filter);
     } catch (e) {
-      console.warn('[MapActionHandler] Failed to parse filter string:', filter);
+      devOnly.warn('[MapActionHandler] Failed to parse filter string:', filter);
       return null;
     }
   }
@@ -113,7 +115,7 @@ export function MapActionHandler() {
     if (!action) return;
     
     if (!mapInstance) {
-      console.warn('[MapActionHandler] No map instance found! (Is MapProvider missing or Map ID mismatch?)');
+      devOnly.warn('[MapActionHandler] No map instance found! (Is MapProvider missing or Map ID mismatch?)');
       return;
     }
 
@@ -180,7 +182,7 @@ export function MapActionHandler() {
           try {
             navigation.fitBounds(map, bbox, padding);
           } catch (e) {
-            console.warn('[MapActionHandler] zoom_to_bbox failed:', e);
+            devOnly.warn('[MapActionHandler] zoom_to_bbox failed:', e);
           }
           break;
         }
@@ -272,7 +274,7 @@ export function MapActionHandler() {
             // canonical name after an AI-driven switch_base_layer call.
             useHudStore.getState().setBaseLayer(TILE_PROVIDERS[idx].name);
           } else {
-            console.warn('[MapActionHandler] Could not match base layer name:', name);
+            devOnly.warn('[MapActionHandler] Could not match base layer name:', name);
           }
           break;
         }
@@ -394,7 +396,7 @@ export function MapActionHandler() {
               map.moveLayer(id, beforeAnchor);
             }
           } catch (e) {
-            console.warn('[MapActionHandler] REORDER_LAYER failed:', e);
+            devOnly.warn('[MapActionHandler] REORDER_LAYER failed:', e);
           }
           break;
         }
@@ -586,7 +588,7 @@ export function MapActionHandler() {
                 );
               }
             } catch (e) {
-              console.error("[MapActionHandler] Canvas extraction/export failed", e);
+              devOnly.error("[MapActionHandler] Canvas extraction/export failed", e);
               useHudStore.getState().setPendingSystemMessage(
                 `[系统通知] 专题地图排版合成失败。错误原因: ${e}。请向用户致歉并结束流程。`
               );
@@ -715,7 +717,7 @@ export function MapActionHandler() {
       // instead of swallowing in console — otherwise user sees nothing and
       // assumes the AI lied about what it was doing.
       const msg = error instanceof Error ? error.message : String(error);
-      console.error('[MapActionHandler] Error executing action:', error);
+      devOnly.error('[MapActionHandler] Error executing action:', error);
       try {
         useHudStore.getState().setPendingSystemMessage(
           `[系统通知] 地图命令 ${action.command} 执行失败: ${msg}`

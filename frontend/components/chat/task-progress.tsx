@@ -5,6 +5,8 @@ import { Loader2, Check, X, ChevronDown, ChevronUp, Ban, Compass, AlertCircle } 
 import { cancelTask } from '@/lib/api/task';
 import { TaskState } from '@/lib/store/useHudStore';
 
+
+import { devOnly } from "@/lib/utils/logger";
 interface TaskProgressProps {
   task: TaskState;
   originalRequest?: string;
@@ -53,7 +55,7 @@ export function TaskProgress({ task }: TaskProgressProps) {
     try {
       await cancelTask(task.id);
     } catch (error) {
-      console.error('[TaskProgress] Cancel failed:', error);
+      devOnly.error('[TaskProgress] Cancel failed:', error);
     } finally {
       setCancelling(false);
     }
