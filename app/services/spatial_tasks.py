@@ -4,10 +4,21 @@ import math
 import os
 import io
 import base64
+import asyncio
 from typing import List, Dict, Any, Optional, Callable
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.spatial import cKDTree
+from scipy.ndimage import gaussian_filter
+from shapely.geometry import box, mapping
+
 from app.services.task_queue import celery_app
 from app.services.spatial_analyzer import SpatialAnalyzer
 from app.services.nature_resource_analyzer import NatureResourceAnalyzer
+from app.services.rs_service import RemoteSensingService
 from app.core.config import settings
 from app.models.upload import UploadRecord
 from app.tools._utils import db_session
@@ -73,14 +84,6 @@ def _do_spatial_stats(features: List[Dict], callback: Optional[Callable] = None)
         return {"success": False, "error": str(e)}
 
 def _do_heatmap_generation(features: List[Dict], cell_size: int = 500, radius: int = 1000, render_type: str = "raster", palette: str = "classic", callback: Optional[Callable] = None):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    import numpy as np
-    from matplotlib.colors import LinearSegmentedColormap
-    from scipy.ndimage import gaussian_filter
-    from shapely.geometry import box, mapping
-
     fig = None
     try:
         points = []
@@ -120,20 +123,21 @@ def _do_heatmap_generation(features: List[Dict], cell_size: int = 500, radius: i
             grid_features = []
             max_val = float(H.max()) if H.max() > 0 else 1.0
             MAX_GRID_FEATURES = 500_000
-            total_cells = H[H > 0].size
+            total_cells = int(H[H > 0].size)
             if total_cells > MAX_GRID_FEATURES:
                 return {"success": False, "error": f"Grid too dense ({total_cells} cells)."}
             
-            for i in range(len(xedges) - 1):
-                for j in range(len(yedges) - 1):
-                    count = H[i, j]
-                    if count > 0:
-                        rect = box(xedges[i], yedges[j], xedges[i+1], yedges[j+1])
-                        grid_features.append({
-                            "type": "Feature",
-                            "geometry": mapping(rect),
-                            "properties": {"count": int(count), "weight": round(float(count / max_val), 4)}
-                        })
+            # 向量化：仅迭代非空格网单元，避免 O(n²) 全量扫描
+            nonzero_idx = np.argwhere(H > 0)
+            for idx in nonzero_idx:
+                i, j = int(idx[0]), int(idx[1])
+                count = int(H[i, j])
+                rect = box(xedges[i], yedges[j], xedges[i+1], yedges[j+1])
+                grid_features.append({
+                    "type": "Feature",
+                    "geometry": mapping(rect),
+                    "properties": {"count": count, "weight": round(float(count / max_val), 4)}
+                })
             return {
                 "success": True,
                 "data": {"type": "FeatureCollection", "features": grid_features},
@@ -182,11 +186,8 @@ def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, rad
     def cb(curr, msg): self.update_state(state='PROGRESS', meta={'progress': curr, 'message': msg})
     return _do_heatmap_generation(features, cell_size, radius, render_type, palette, callback=cb)
 
-# ... nearest_neighbor and others can follow the same pattern ...
 @celery_app.task(name="app.services.spatial_tasks.run_nearest_neighbor", bind=True)
 def run_nearest_neighbor(self, features: List[Dict]):
-    import numpy as np
-    from scipy.spatial import distance_matrix
     try:
         points = []
         for f in features:
@@ -196,9 +197,12 @@ def run_nearest_neighbor(self, features: List[Dict]):
                 points.append((coords[0], coords[1]))
         if len(points) < 2: return {"success": False, "error": "Need at least 2 points"}
         coords_arr = np.array(points)
-        dist = distance_matrix(coords_arr, coords_arr)
-        np.fill_diagonal(dist, np.inf)
-        nn_distances = dist.min(axis=1)
+        
+        # cKDTree O(n log n) 替代 O(n²) distance_matrix
+        tree = cKDTree(coords_arr)
+        dist, _ = tree.query(coords_arr, k=2)
+        nn_distances = dist[:, 1]
+        
         return {
             "success": True,
             "data": {
@@ -206,7 +210,9 @@ def run_nearest_neighbor(self, features: List[Dict]):
                 "mean_nearest_distance": round(float(nn_distances.mean()), 4),
             }
         }
-    except Exception as e: return {"success": False, "error": str(e)}
+    except Exception as e:
+        logger.error(f"run_nearest_neighbor failed: {e}")
+        return {"success": False, "error": str(e)}
 
 @celery_app.task(name="app.services.spatial_tasks.run_overlay_analysis", bind=True)
 def run_overlay_analysis(self, features_a: List[Dict], features_b: List[Dict], how: str = "intersection"):
@@ -315,23 +321,28 @@ def run_change_detection(
     汇总均值差异并按 ±change_threshold 分类为 5 档。
 
     实现策略：复用 RemoteSensingService.compute_vegetation_index（异步）
-    通过 asyncio.run 在 Celery worker 进程内顺序执行两次，避免重复实现
+    通过新建事件循环在 Celery worker 进程内顺序执行两次，避免重复实现
     STAC + 波段读取逻辑。
     """
-    import asyncio
-    from app.services.rs_service import RemoteSensingService
+    svc = RemoteSensingService()
+
+    async def compute_both():
+        t1 = await svc.compute_vegetation_index(bbox, t1_from, t1_to, index_type=index_type)
+        t2 = await svc.compute_vegetation_index(bbox, t2_from, t2_to, index_type=index_type)
+        return t1, t2
 
     try:
         self.update_state(state='PROGRESS', meta={'progress': 5, 'message': '初始化遥感服务'})
-        svc = RemoteSensingService()
-
-        async def compute_both():
-            t1 = await svc.compute_vegetation_index(bbox, t1_from, t1_to, index_type=index_type)
-            t2 = await svc.compute_vegetation_index(bbox, t2_from, t2_to, index_type=index_type)
-            return t1, t2
-
         self.update_state(state='PROGRESS', meta={'progress': 20, 'message': f'拉取 T1 ({t1_from}~{t1_to}) Sentinel-2'})
-        t1, t2 = asyncio.run(compute_both())
+
+        # 使用新事件循环执行 async 代码，兼容 prefork / gevent 池
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            t1, t2 = loop.run_until_complete(compute_both())
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)
 
         if "error" in t1:
             return {"success": False, "error": f"T1 计算失败: {t1['error']}"}

@@ -127,10 +127,13 @@ class RemoteSensingService:
                                    resampling=Resampling.average)
             
             # NDVI = (NIR - Red) / (NIR + Red)
-            ndvi = np.where(
-                (nir + red) > 0,
-                (nir.astype(float) - red.astype(float)) / (nir.astype(float) + red.astype(float)),
-                0,
+            # 先转 float 避免多次 astype 产生冗余拷贝，再用 np.divide + out/where 安全除零
+            red_f = red.astype(float)
+            nir_f = nir.astype(float)
+            ndvi = np.divide(
+                nir_f - red_f, nir_f + red_f,
+                out=np.zeros_like(nir_f - red_f, dtype=float),
+                where=(nir_f + red_f) > 0,
             )
             
             return {
