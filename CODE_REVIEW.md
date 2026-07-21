@@ -41,15 +41,15 @@ This document establishes the **V3.x Engineering Invariants**. All future Pull R
 
 ## 📜 Historical Patch Records (V1.0)
 
-*(The following are historical audits & vulnerability patches applied during transitioning from V1.0 to V1.1)*
+*(The following are historical audits & vulnerability patches applied during transitioning from V1.0 to V1.1. **Note**: File paths and line numbers may not match the current codebase due to subsequent refactoring.)*
 
 ### CRITICAL (5) — Fixed
 | ID | File:Line | Description | Status |
 |----|-----------|-------------|--------|
-| C-1 | `history_service.py:48` | `save_message` references undefined `tool_calls` variable — `NameError` on every DB write | **FIXED** |
+| C-1 | `history_service.py:48` → `history_service_async.py` | `save_message` references undefined `tool_calls` variable — `NameError` on every DB write | **FIXED** |
 | C-2 | `chat.py:85,102` | Both session endpoints call `engine._history` which doesn't exist on `ChatEngine` — `AttributeError` crashes | **FIXED** |
-| C-3 | `spatial_analyzer.py:389` | `gdf.query(query)` with user-controlled input — Pandas eval RCE risk | **FIXED** |
-| C-4 | `spatial_tasks.py:341` | `raster_path` from LLM tool args passed directly to `rasterio.open()` — path traversal | **FIXED** |
+| C-3 | `spatial_analyzer.py:141` | `gdf.query(query)` with user-controlled input — Pandas eval RCE risk | **FIXED** |
+| C-4 | `spatial_tasks.py:238` | `raster_path` from LLM tool args passed directly to `rasterio.open()` — path traversal | **FIXED** |
 
 ### HIGH (7) — Fixed
 | ID | File:Line | Description | Status |
@@ -57,16 +57,16 @@ This document establishes the **V3.x Engineering Invariants**. All future Pull R
 | H-1 | `chat_engine.py:259,346` | Fire-and-forget `run_in_executor` futures silently drop exceptions | **FIXED** |
 | H-2 | `chat.py:88,105` | Session retrieval used `engine._history` instead of creating `HistoryService` instances | **FIXED** |
 | H-3 | `chat.py:168` | `GET /chat/tools/results` leaks all recent tool results unauthenticated | **FIXED** |
-| H-4 | `map-panel.tsx:133` | Layer ID hyphen-split bug leaves orphaned MapLibre GL sources | **FIXED** |
-| H-5 | `page.tsx:67` | Lat/lon swap in bbox center calculation → map flies to wrong location | **FIXED** |
+| H-4 | `map-panel.tsx` | Layer ID hyphen-split bug leaves orphaned MapLibre GL sources | **FIXED** |
+| H-5 | `page.tsx:508` | Lat/lon swap in bbox center calculation → map flies to wrong location | **FIXED** |
 | H-6 | `spatial_analyzer.py` | Nearest-neighbor distances in geographic degrees, not meters | **FIXED** |
 | H-7 | `chat_engine.py:155` | Synchronous DB call in `_get_or_create_session` blocks event loop | **FIXED** |
 
 ### MEDIUM / LOW — Fixed
-- Silent map error suppression (`map-panel.tsx:135`)
+- Silent map error suppression (`map-panel.tsx`)
 - Stale legend state on prop change (`thematic-legend.tsx`)
 - Heatmap OOM risk for large feature sets
 - Multi-geometry centering gap
-- Hardcoded external CDN texture URL (`page.tsx:131`)
+- Hardcoded external CDN texture URL (`page.tsx`)
 
 *(Historical log ends here)*

@@ -1,4 +1,4 @@
-# WebGIS AI Agent 技术架构设计文档 (V3.2 + V2 UI)
+# WebGIS AI Agent 技术架构设计文档 (v0.1.2 + V2 UI)
 > 版本：v3.2 + V2 UI | 日期：2026-05 | 状态：正式版
 
 ## 0. V2 UI 更新速览 (2026-05)
@@ -82,13 +82,13 @@ graph TD
 1. **Tool 层封箱**：当后端 Python 函数运行完毕获得大尺寸 `FeatureCollection` 时，生成一个唯一随机签名，如 `ref_id: ref:geojson-a1b2c3d4`。数据本体被存入内存 `SessionDataManager`（LRU 淘汰策略，每 session 最多 200 条）。
 2. **LLM 传输层**：大模型仅看到 `{"layer_id": "geojson_09a8b7c", "render_type": "heatmap"}` 这样的虚壳签名，立刻返回给主路由。
 3. **SSE 极简下发**：网关实时推送提货码，前端 HUD 同步展示任务进度。
-4. **前端提货**：客户端 React 拦截器拼装出 `layer_id` 后，通过 `/api/v1/layer/{id}/data` 发起独立的 HTTP 拉取任务。
+4. **前端提货**：客户端 React 拦截器拼装出 `ref_id` 后，通过 `/api/v1/layers/data/{ref_id}?session_id=xxx` 发起独立的 HTTP 拉取任务。
 5. **挂载**：获取的巨量点位直接绕过 React State，注入 `mapRef` 实例底层源生绘制。
 
 ### 3.2 SSE Keep-Alive 心跳保活阵列
 在进行动辄数分钟的全国级道路网相交测算时，前端与 FastAPI 极易因为长时间无响应而发生 `ERR_CONNECTION_RESET`。
 **V2.0 解决方案**：
-在 `chat_engine.py` 的主异步生成器中，植入了一组独立看门狗循环。当测算被丢给 Celery 且进入阻塞等待时，看门狗每隔 15 秒向传输层丢弃一个透明的注释型数据框（如 `data: [HEARTBEAT]\n\n` 或空字段）。此机制从硬件网关（Nginx等）层面维系了通道常开。
+在 `chat_engine.py` 的主异步生成器中，植入了一组独立看门狗循环。当测算被丢给 Celery 且进入阻塞等待时，看门狗每隔 **5 秒**向传输层丢弃一个透明的注释型数据框（如 `data: [HEARTBEAT]\n\n` 或空字段）。此机制从硬件网关（Nginx等）层面维系了通道常开。
 
 3.3 Map State & Sensory Integration (感官与状态同步)
 为了实现“一切皆 Agent”，我们构建了双向的感官反馈闭环：

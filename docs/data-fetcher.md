@@ -15,10 +15,10 @@
 | 阶段 | 动作节点 | 原理描述 |
 |---|---|---|
 | **Step 1: 沙盒生成** | 后端 (Tools / Celery) | 当地理工具抓取或计算得到全量空间数据（GeoJSON 或 GeoDataFrame）时，不向函数外抛出明文实体。 |
-| **Step 2: 压缩落床** | 缓存层 (`session_data.py`) | 调用 `SessionDataManager.store()` 方法，将巨型负载存入内存 LRU 缓存，生成一个全局唯一签名（例如：`ref_id: "ref:geojson-a1b2c3d4"`）。 |
+| **Step 2: 压缩落床** | 缓存层 (`app/services/session_data.py`) | 调用 `SessionDataManager.store()` 方法，将巨型负载存入内存 LRU 缓存，生成一个全局唯一签名（例如：`ref_id: "ref:geojson-a1b2c3d4"`）。 |
 | **Step 3: 轻量通信** | 大模型 (LLM) & SSE 通道 | 工具仅向大模型返回摘要与签名壳：`{"layer_id": "ref:geojson-a1b2c3d4", "count": 50000}`。大模型以此组装回复流，瞬间推至前端。 |
-| **Step 4: 前端取件** | 前端 (`page.tsx` handleToolResult) | React 层识别 `geojson_ref` 字段后，通过 `GET /api/v1/layers/data/{ref_id}?session_id=xxx` 发起独立 HTTP 请求获取完整数据。 |
-| **Step 5: 原生注入** | MapLibre (GPU) | 获取到真实的实体 Payload 后，通过 `MapActionHandler` dispatch `add_layer` 指令，直接注入 MapLibre GL 原生绘制。 |
+| **Step 4: 前端取件** | 前端 (`use-sse-stream.ts / map-action-renderer.tsx`) | React 层识别 `geojson_ref` 字段后，通过 `GET /api/v1/layers/data/{ref_id}?session_id=xxx` 发起独立 HTTP 请求获取完整数据。 |
+| **Step 5: 原生注入** | MapLibre (GPU) | 获取到真实的实体 Payload 后，通过 `map-action-handler.tsx` dispatch `add_layer` 指令，直接注入 MapLibre GL 原生绘制。 |
 
 ## API 交互范式
 

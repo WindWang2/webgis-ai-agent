@@ -13,26 +13,60 @@
 ### 重构的组件架构
 ```
 frontend/components/
-├── layout/
-│   ├── top-bar.tsx          # 顶部导航栏（主题切换、AI 状态）
-│   └── status-bar.tsx       # 底部状态栏（坐标、缩放、底图、图层数）
-├── sidebar/
-│   ├── left-sidebar.tsx     # 左侧边栏容器
-│   ├── chat-tab.tsx         # 聊天标签页
-│   ├── layers-tab.tsx       # 图层管理标签页
-│   ├── ops-log-tab.tsx      # 操作日志标签页
-│   └── exports-tab.tsx      # 导出文件标签页
-├── map/
-│   ├── map-toolbar.tsx      # 地图工具栏
-│   ├── map-canvas.tsx       # 演示用地图画布
-│   ├── baselayer-switcher.tsx
-│   └── floating-legend.tsx
-├── hud/
-│   └── agent-env-hud.tsx    # Agent 环境感知 HUD
-├── panel/
+├── chat/                    # 对话组件
+│   ├── chat-panel.tsx       # 主聊天面板
+│   ├── collapsible-think.tsx # 可折叠思考链
+│   ├── map-action-renderer.tsx # AI 地图指令渲染器
+│   ├── plan-card.tsx        # 执行计划卡片
+│   ├── suggested-prompts.tsx # 建议提示词
+│   ├── task-progress.tsx    # 任务进度条
+│   └── tool-call-card.tsx   # 工具调用卡片
+├── map/                     # 地图核心
+│   ├── map-panel.tsx        # 主地图面板 (MapLibre)
+│   ├── map-action-handler.tsx # AI 指令分发器
+│   ├── map-canvas.tsx       # 演示画布
+│   ├── baselayer-switcher.tsx # 底图切换器
+│   ├── floating-legend.tsx  # 浮动图例
+│   ├── map-decorations.tsx  # 地图饰件 (指北针/比例尺)
+│   ├── export-mask.tsx      # 导出遮罩
+│   └── legends/             # 分级/分类/连续图例
+├── hud/                     # Agentic HUD 2.0
+│   ├── embodied-hud.tsx     # 主 HUD 座舱
+│   ├── agent-env-hud.tsx    # Agent 环境感知面板
+│   ├── layer-style-panel.tsx # 图层样式面板
+│   ├── settings-panel.tsx   # 设置面板
+│   └── causal-trace.tsx     # 因果追踪
+├── sidebar/                 # 多标签侧边栏
+│   ├── left-sidebar.tsx     # 侧边栏容器
+│   ├── chat-tab.tsx         # 聊天标签
+│   ├── layers-tab.tsx       # 图层管理标签
+│   ├── ops-log-tab.tsx      # 操作日志标签
+│   ├── exports-tab.tsx      # 导出文件标签
+│   ├── analysis-tab.tsx     # 分析标签
+│   └── assets-tab.tsx       # 资产管理标签
+├── drawers/                 # 抽屉面板
+│   └── history-drawer.tsx   # 历史记录抽屉
+├── explorer/                # 空间探索器
+│   ├── explorer-progress-panel.tsx
+│   ├── reasoning-panel.tsx
+│   └── what-if-panel.tsx
+├── report/                  # 报告生成器
+│   ├── report-generator.tsx
+│   └── report-preview.tsx
+├── layout/                  # 布局组件
+│   └── top-bar.tsx          # 顶部导航栏
+├── overlays/                # 覆盖层
+│   └── perception-rings.tsx # 感知环动画
+├── panel/                   # 功能面板
 │   └── rag-independent-panel.tsx
-├── overlays/
-│   └── perception-rings.tsx  # 感知环动画
+├── providers/               # Context Providers
+├── settings/                # 设置页面
+├── shared/                  # 共享组件
+├── ui/                      # 基础 UI 组件
+├── upload/                  # 上传组件
+├── code-highlight/          # 代码高亮
+├── layer-card.tsx           # 图层卡片
+├── sort-controls.tsx        # 排序控制
 └── tweaks-panel.tsx         # UI 调整面板
 ```
 

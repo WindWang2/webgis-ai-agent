@@ -1,4 +1,4 @@
-# WebGIS AI Agent: 具身空间智能引擎 (Embodied Spatial Intelligence) - V3.2 / V2 UI
+# WebGIS AI Agent: 具身空间智能引擎 (Embodied Spatial Intelligence) - v0.1.2 / V2 UI
 
 不再仅仅是一个 GIS 展示工具，而是一个拥有**中枢神经系统 (Agent CNS)** 的具身智能代理。通过实时感官同步与全称异步计算矩阵，它能像专业数据科学家一样感知地图、决策逻辑并执行复杂的地理推演。
 
@@ -33,9 +33,23 @@
 │   ├── tools/              # LLM 函数武库 (空间分析、矢量爬提、渲染)
 │   └── main.py             # Server Entry
 ├── frontend/               # V2 渲染引擎与操控主控台 (Next.js 14)
-│   ├── app/                # App Router 后端式页面渲染
-│   ├── components/         # 玻璃拟态 UI / Agentic HUD / MapPanel
-│   └── lib/                # Zustand Store / Theme System / Fetch-on-Demand
+│   ├── app/                # App Router 页面 (含 StoryMap)
+│   ├── components/         # 玻璃拟态 UI / Agentic HUD / MapPanel / 制图饰件
+│   │   ├── chat/           # 对话组件 (SuggestedPrompts, TaskProgress)
+│   │   ├── map/            # MapPanel, map-action-handler, legends
+│   │   ├── hud/            # Agentic HUD 2.0 (Dynamic Island)
+│   │   ├── sidebar/        # 多标签侧边栏
+│   │   ├── drawers/        # 历史记录 / 设置抽屉
+│   │   ├── explorer/       # 空间探索器
+│   │   └── report/         # 报告生成器
+│   ├── lib/                # Zustand Store / Theme System / Fetch-on-Demand
+│   │   ├── hooks/          # 自定义 React Hooks
+│   │   ├── store/          # Zustand 状态管理
+│   │   ├── providers/      # Context Providers
+│   │   ├── utils/          # 工具函数
+│   │   ├── types/          # TypeScript 类型定义
+│   │   └── map-kit/        # 地图工具包
+│   └── public/             # 静态资源
 ├── docs/                   # 规划书与架构深潜
 ├── tests/                  # 智能边界突围测试、防死锁断言
 ├── Dockerfile              # 分阶段企业级部署映像
@@ -44,7 +58,7 @@
 
 ## 🚀 进阶与旗舰级功能群
 
-### V3.2 (当前)
+### V0.1.2 (当前)
 - **专业化地图导出面板 (Professional Map Export)**：支持所见即所得的 WYSIWYG 遮罩预览，配置 A4/屏幕画幅，最高支持 300 DPI 矢量重采样的高清图件导出（包含动态适配的指北针、比例尺、图例及自定义标题水印），一键导出 PNG / PDF。
 - **AI 专题制图与高清合成 (AI Cartographer)**：Canvas 2D 合成标准专题底图，结合 LLM 动态空间分析结果。
 - **Agent-Map Bridge 稳定性加固**：重构 SSE 解析与会话状态同步，彻底消除生命周期竞态条件，实现无损长文本传输流与毫秒级地图感知回传。
@@ -73,13 +87,11 @@ docker-compose up -d --build
 ```bash
 # 后端 (需预先安装并启动 Redis)
 pip install -r requirements.txt
-celery -A main.celery_app worker --loglevel=info &
-uvicorn main:app --reload --host 0.0.0.0 --port 8001
-
-# 前端
-cd frontend && npm install && npm run dev
-# 浏览器访问 http://localhost:3000
+celery -A app.services.task_queue worker --loglevel=info &
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+> **注意**: 运行前需确保 `.env` 文件已配置 `DATABASE_URL`、`REDIS_URL`、`JWT_SECRET_KEY` 等必需环境变量。开发环境还需设置 `REDIS_PASSWORD` 和 `DB_PASSWORD`。
 
 ## 🎮 快速体验
 
@@ -97,7 +109,7 @@ cd frontend && npm install && npm run dev
 ## 📚 开发极客指导
 
 全案项目架构图与防崩坏代码纪律，强烈建议所有共建者入职前通读：
-- 📈 [技术方案说明书 V3.2](docs/技术方案说明书.md) (宏观顶层)
+- 📈 [技术方案说明书](docs/技术方案说明书.md) (宏观顶层)
 - ⚙️ [整体架构深潜](docs/architecture.md) (数据流与 Celery 拓扑)
 - 📡 [API 数据流与心跳规范](docs/api-docs.md) (流式连接底线)
 - 🗃️ [分片拉取与取件流](docs/data-fetcher.md) (Fetch-On-Demand 机制)
@@ -108,10 +120,11 @@ cd frontend && npm install && npm run dev
 
 - ✅ **Phase 1**: 创生、连通与深层筑底
 - ✅ **Phase 2**: 具身智化与 CNS 架构融合
-- ✅ **Phase 3**: 专业制图与遥感分析增强 (V3.0)
-- ✅ **Phase 4**: 主控中枢与工具体系增强 (V3.2) - [查看 Release Notes](./docs/release-notes-v3.2.md)
+- ✅ **Phase 3**: 专业制图与遥感分析增强
+- ✅ **Phase 4**: 主控中枢与工具体系增强
 - ✅ **Phase 4+**: V2 UI 重新设计，玻璃拟态体验
-- 🌌 **Phase 5**: "超我"演进与星辰大海 (终极谋划期)
+- ✅ **Phase 5**: 安全硬化、多租户隔离、流式稳定性加固
+- 🌌 **Phase 6**: 用户认证与动态栅格图层 (规划中)
 
 
 ## License

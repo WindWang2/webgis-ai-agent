@@ -1,10 +1,10 @@
-# WebGIS AI Agent 后端 API 接口文档 (V3.2)
+# WebGIS AI Agent 后端 API 接口文档 (v0.1.2)
 
 ## T001 后端基础架构
 ### FastAPI 入口与承载流
 ```python
 from app.main import app
-# 默认服务端口: 8001
+# 默认服务端口: 8000
 # 运行环境拦截: Uvicorn Asyncio
 ```
 
@@ -12,368 +12,209 @@ from app.main import app
 | 方法 | 路径 | 说明 |
 |------|-----|-----|
 | GET | / | 根路径，网关在线状态 |
-| GET | /api/v1/health | 详细健康状态与底层依赖 (Redis/PostGIS) |
+| GET | /api/v1/health/live | 存活探针 (K8s liveness) |
+| GET | /api/v1/health/ready | 就绪探针 (K8s readiness, 检查依赖可达) |
 | GET | /docs | Swagger OpenAPI 动态文档 |
 
 ---
 
-## T002 核心 AI 编排层 (SSE 流式)
-V2.1 在聊天网关注入了抵抗 `ERR_CONNECTION_RESET` 的长连接保活架构。
+## T002 认证 API (JWT + token_version)
 
+| 方法 | 路径 | 说明 |
+|------|-----|-----|
+| POST | /api/v1/auth/register | 注册 (默认关闭，需运维创建) |
+| POST | /api/v1/auth/login | 登录，返回 access token (30min) + refresh token (7d) |
+| POST | /api/v1/auth/refresh | 用 refresh token 换取新的 access token |
+| POST | /api/v1/auth/logout | Bump token_version，使所有旧 token 失效 |
+| GET | /api/v1/auth/me | 获取当前用户信息 |
+
+- Access token 携带 `ver` claim，与 `User.token_version` 绑定。
+- Logout 时 bump `token_version`，旧 token 立即 401。
+- Refresh token 用于换取新 access token，不能直接访问受保护资源。
+
+---
+
+## T003 核心 AI 编排层 (SSE 流式)
 
 ### 会话与记忆管理
-| 方法 | 路径 | 说明 |
-|------|-----|-----|
-| GET | /api/v1/chat/sessions | 获取长短期记忆会话列表 |
-| GET | /api/v1/chat/sessions/{session_id} | 恢复上下文及工具调用帧 |
-| DELETE| /api/v1/chat/sessions/{session_id} | 删除会话与级联缓存数据 |
+| 方法 | 路径 | 认证 | 说明 |
+|------|-----|------|-----|
+| GET | /api/v1/chat/sessions | optional | 获取当前用户的历史会话列表 (匿名返回空) |
+| GET | /api/v1/chat/sessions/{session_id} | optional | 恢复上下文及工具调用帧 (校验所有权) |
+| DELETE | /api/v1/chat/sessions/{session_id} | optional | 删除会话与级联缓存数据 (校验所有权) |
+| GET | /api/v1/chat/sessions/{session_id}/map-state | optional | 获取会话持久化地图状态 |
+| POST | /api/v1/chat/sessions/{session_id}/map-state | optional | 推送地图状态 (viewport/layers/base_layer) |
 
 ### 流式大模型网关 (关键交互)
-| 方法 | 路径 | 说明 |
-|------|-----|-----|
-| POST | /api/v1/chat/stream | 发送分析请求 (SSE 协议分发) |
+| 方法 | 路径 | 认证 | 说明 |
+|------|-----|------|-----|
+| POST | /api/v1/chat/stream | optional | 发送分析请求 (SSE 协议分发) |
+| POST | /api/v1/chat/completions | optional | 非流式对话接口 |
 
-#### [重要] SSE 事件类型扩展 (HUD 指令型)
-V2.1 引入了更加细粒度的任务跟踪事件，用于驱动前端 HUD (Task Timeline & Dynamic Island)：
+### SSE 事件类型
 
 | 事件名 | 载荷数据 (Data) | 描述 |
-|--------|----------------|------|
-| `token` | `{"content": "...", "is_reasoning": false, "session_id": "..."}` | 流式文本 token；`is_reasoning: true` 时内容属于思考链（渲染为折叠的 CollapsibleThink 块） |
+|--------|----------------|-----|
+| `token` | `{"content": "...", "is_reasoning": false, "session_id": "..."}` | 流式文本 token |
 | `task_start` | `{"task_id": "..."}` | 任务总线开启 |
 | `step_start` | `{"step_id": "...", "tool": "..."}` | 具体算子开始执行 |
-| `step_result`| `{"result": {...}, "has_geojson": bool}` | 算子执行成功，包含部分脱敏结果 |
-| `step_error` | `{"error": "..."}` | 算子执行失败，反馈给 AI 进行自愈 |
-| `task_complete` | `{"summary": "..."}` | 整个任务链条完成 |
-| `task_cancelled` | `{"task_id": "..."}` | 任务被取消（用户中断或空消息） |
-| `task_error` | `{"task_id": "...", "error": "..."}` | 任务达到最大轮数或内部异常 |
-| `plan_ready` | `{"session_id", "task_id", "intent", "domains", "steps": [{"n", "goal", "tool_family", "done"}]}` | Plan-First 模式生成执行计划后立即推送，前端据此渲染 PlanCard |
-| `plan_step_done` | `{"session_id", "task_id", "step_n": int}` | 每次工具调用命中计划步骤时推送，前端将对应步骤翻转为已完成 |
-| `plan_finalized` | `{"session_id", "task_id", "skipped": [step_n, ...]}` | 终态事件前推送，列出未执行的步骤编号，前端将其标记为 skipped |
+| `step_result` | `{"result": {...}, "has_geojson": bool}` | 算子执行成功 |
+| `step_error` | `{"error": "..."}` | 算子执行失败 |
+| `task_complete` | `{"summary": "..."}` | 任务链条完成 |
+| `task_cancelled` | `{"task_id": "..."}` | 任务被取消 |
+| `task_error` | `{"task_id": "...", "error": "..."}` | 任务异常 |
+| `tool_call` | `{"name": "...", "arguments": {...}}` | Agent 发起工具调用 |
+| `plan_ready` | `{session_id, task_id, intent, domains, steps}` | Plan-First 模式生成计划 |
+| `plan_step_done` | `{session_id, task_id, step_n}` | 计划步骤完成 |
+| `plan_finalized` | `{session_id, task_id, skipped}` | 计划终态 |
 
-#### [注意] SSE 流 Heartbeat 规范
-当 Agent 在后台调用 Celery 进行分钟级别的地理测算时，此时 LLM 端静默不输出文本。为防止云防火墙断开闲置连接，SSE 网关每 15 秒将推送一条隐式心跳：
+#### SSE 流 Heartbeat 规范
+当 Agent 在后台调用 Celery 进行长耗时计算时，SSE 网关每 **5 秒**推送一条隐式心跳：
 ```text
 : keep-alive
 
 ```
-前端解析流时需自动跳过此类占位符，保证长链接稳固不断。
+前端解析流时需自动跳过此类占位符。
 
 ---
 
-## T003 地图控制协议 (Map Interaction Protocol)
-AI Agent 通过在流式回复中嵌入特定的 JSON 指令，直接驱动前端 MapLibre 实例。
+## T004 零拷贝提取层 (Fetch-on-Demand)
 
-### 核心指令集
-| 指令 (Command) | 参数 (Params) | 说明 |
-|---------------|--------------|------|
-| `BASE_LAYER_CHANGE` | `{"name": "高德影像"}` | 切换底图样式 |
-| `LAYER_VISIBILITY_UPDATE` | `{"layer_id": "...", "visible": true, "opacity": 0.5, "name": "新名称", "color": "#e11d48"}` | 修改图层状态（`name`、`color` 为可选，分别重命名图层和覆盖颜色） |
-| `FLY_TO` / `fly_to` | `{"center": [lng, lat], "zoom": 12, "bearing": 45, "pitch": 30}` | 视场平滑飞越 (支持大小写) |
-| `LAYER_STYLE_UPDATE` | `{"layer_id": "...", "color": "#ff0000"}` | 实时修改图层渲染色 |
-| `zoom_to_bbox` | `{"bbox": [w,s,e,n], "padding": 40}` | 缩放地图视口至指定的 GeoJSON 边界包围盒 |
-| `set_map_view` | `{"zoom": 11, "bearing": 20, "pitch": 15}` | 调整地图的缩放、旋转角与倾斜度 |
-| `REORDER_LAYER` | `{"layer_id": "...", "position": "top/bottom/up/down/before", "before_id": "..."}` | 动态重排逻辑图层的前后叠加顺序 |
-| `draw_measurement` | `{"shape": "polyline/polygon", "coordinates": [...], "label": "..."}` | 在地图上绘制距离/面积测量图形及标注 |
-| `add_marker` | `{"longitude": 116.4, "latitude": 39.9, "label": "...", "color": "#ff0000"}` | 在地图指定位置添加空间注记图钉 |
-| `clear_annotations` | `{}` | 清除所有用户绘制的测量图形与注记图标 |
-
-### 图层生命周期模型 (Layer Lifecycle Model)
-所有由 GeoJSON 空间计算工具产生的结果默认以**隐藏图层**的形式加载到地图中（`visible: false`，ID 为生成的 `ref_id`）。
-- **隐式加载**：工具计算完毕后，数据会自动挂载，但不会直接呈现在地图上。
-- **显式呈现**：Agent 必须显式调用 `display_layer` 工具或下发 `LAYER_VISIBILITY_UPDATE` 指令，才能在前端展示最终的分析结果。这极大避免了中间层数据对地图视觉的过度干扰。
-
-#### 回复格式要求
-AI 会在 Markdown 回复的末尾或逻辑断点处插入以下原生 JSON 块，前端 `MapActionHandler` 将捕获并执行：
-```json
-{
-  "command": "BASE_LAYER_CHANGE",
-  "params": { "name": "ESRI 影像" }
-}
-```
-
----
-
-## T004 零拷贝提取层 (Fetch-on-Demand) 
-为了保障大模型的流式文本绝不被庞杂的地理坐标卡死，大模型输出的 Layer 结果只包含 `ref_id`。实际数据拉取依靠以下接口：
-
-| 方法 | 路径 | 说明 |
-|------|-----|-----|
-| GET | `/api/v1/layers/data/{ref_id}?session_id=xxx` | 获取原始空间 Payload (从 SessionDataManager 中提取) |
-
-#### 提件返回格
-- **Content-Type**: `application/json` (GeoJSON FeatureCollection)
-- **404 状态**: 表示缓存令牌已失效或 session_id 不匹配，前端需提示用户重试。
-
----
-
-## T004 传统图层管控API (重装存储)
-用户主动上传的基建底座。
-
-### 文件载入
-```
-POST /api/v1/layers/upload
-Content-Type: multipart/form-data
-
-入参:
-- file: (GeoJSON/Shapefile/KML 支持多重压缩)
-- name: 图层标识名
-
-机制: 强制切网格进 PostGIS 建空间索引
-```
-
-### 空间元数据探测
-| 方法 | 路径 | 说明 |
-|------|-----|-----|
-| GET | /api/v1/layers | PostGIS 图层目录清单 |
-| GET | /api/v1/layers/{id} | 图层元属性与几何中心 |
-| DELETE | /api/v1/layers/{id} | 层级销毁 |
+| 方法 | 路径 | 认证 | 说明 |
+|------|-----|------|-----|
+| GET | /api/v1/layers/data/{ref_id} | optional | 获取原始空间 Payload (校验 session 所有权) |
 
 ---
 
 ## T005 异步任务队列监控 (Celery Cluster)
-被下发的空间切割重度任务监管。
 
-| 方法 | 路径 | 说明 |
-|------|-----|-----|
-| GET | /api/v1/tasks/{id} | 读取 Celery 后台挂载状态 |
-| POST| /api/v1/tasks/{id}/cancel | 终止后台进程（释放 CPU） |
+| 方法 | 路径 | 认证 | 说明 |
+|------|-----|------|-----|
+| GET | /api/v1/tasks/{task_id} | required | 读取任务状态 (校验所有权) |
+| GET | /api/v1/tasks | required | 按 session_id 列任务 (必填参数) |
+| DELETE | /api/v1/tasks/{task_id} | required | 取消任务 (校验所有权) |
+| GET | /api/v1/tasks/status/{task_id} | required | Celery 原生任务状态 |
+| DELETE | /api/v1/tasks/status/{task_id} | required | 撤销 Celery 任务 |
 
-### 核心计算列队
+### 核心计算队列
 - **Queue: `default`**: API 快速搬运
-- **Queue: `spatial_heavy`**: 大于十万网格叠加运算、多点缓冲区裁剪
-- **Backend Cache**: Redis `localhost:6379`
+- **Queue: `spatial_heavy`**: 大于十万网格叠加运算
+- **Backend Cache**: Redis
 
 ---
 
-## T006 统一响应格盾与异常
+## T006 统一响应格式
+
 ```json
 {
-  "code": "SUCCESS",         // 操作结果锁 (SUCCESS/ERROR)
-  "success": true,           // BOOLEAN 快判
-  "message": "执行通过",      // 异常阻挡或告警通报
-  "data": {...}              // Payload
+  "success": true,
+  "message": "执行通过",
+  "data": {...}
 }
 ```
-
-### 错误捕获池 (Exception Throwings)
-| 错误码 | 机制与应对层 |
-|--------|-----|
-| `VALIDATE_ERROR` | FastAPI Pydantic 参数校验溃败，需拦截。 |
-| `SPATIAL_TOPOLOGY_ERR` | GIS自交或环路错误，需通过 "Exception As Thought" 抛回给大模型启动清理指令。 |
-| `CELERY_TIMEOUT` | 分布式节点队列拥堵，要求延后补录。 |
-| `CACHE_MISS` | Fetch-On-Demand 提货码超期被清理，下发指令要求大模型从零原算。 |
 
 ---
 
 ## T007 专题制图与高清导出 (Cartography Export)
-V3.0 引入了由 Agent 编排的高清 Canvas 合成导出链路；V3.3 新增标准化 PDF 制图输出与完整地图饰件（指北针、比例尺、图例）。
 
-### 导出任务接口
-| 方法 | 路径 | 说明 |
-|------|-----|-----|
-| POST | `/api/v1/export` | 接收前端合成的 Canvas PNG 图像并持久化 |
-| POST | `/api/v1/export/pdf` | 将地图图像合成为标准 A4 横向专题底图 PDF |
-| GET | `/api/v1/export/download/{filename}` | 下载生成的成果（PNG 支持内联预览，PDF 强制下载） |
-
-#### PNG 导出（`POST /api/v1/export`）
-前端通过 Canvas 2D 合成包含标题、指北针、比例尺、图例等制图饰件的 PNG，随后以 `multipart/form-data` 上传。
-
-| 字段 | 类型 | 说明 |
-|-----|------|------|
-| `file` | File | PNG/JPG 图像（上限 50 MB） |
-| `title` | string (可选) | 制图标题，用于后台日志记录 |
-
-#### PDF 导出（`POST /api/v1/export/pdf`）
-将前端生成的 PNG 嵌入标准 A4 横向 PDF，后端使用 matplotlib 添加页眉（标题 / 副标题）和页脚（日期 / 制图者 / 比例说明）。
-
-| 字段 | 类型 | 说明 |
-|-----|------|------|
-| `file` | File | 基础地图 PNG（上限 50 MB） |
-| `title` | string (可选) | 制图主标题 |
-| `subtitle` | string (可选) | 制图副标题 |
-| `author` | string (可选, 默认 `WebGIS AI Agent`) | 制图者 |
-| `scale_text` | string (可选) | 比例尺文本，如 `1:50,000` |
-
-**响应示例：**
-```json
-{
-  "success": true,
-  "filename": "map_export_1714396800_a1b2c3.pdf",
-  "url": "/api/v1/export/download/map_export_1714396800_a1b2c3.pdf",
-  "format": "pdf",
-  "message": "专题底图 PDF 已成功生成"
-}
-```
+| 方法 | 路径 | 认证 | 说明 |
+|------|-----|------|-----|
+| POST | /api/v1/export | required | 接收前端 Canvas PNG 并持久化 |
+| POST | /api/v1/export/pdf | required | 合成为 A4 横向 PDF |
+| POST | /api/v1/export/geojson | required | 持久化 GeoJSON 为可下载文件 |
+| GET | /api/v1/export/download/{filename} | required | 下载 (校验文件所有权) |
 
 ### AI 工具：`export_thematic_map`
-Agent 通过此工具触发前端制图排版流程，支持 PNG 和 PDF 两种输出格式。
-
 | 参数 | 类型 | 默认 | 说明 |
-|-----|------|------|------|
+|-----|------|------|-----|
 | `title` | string | 必填 | 制图主标题 |
 | `subtitle` | string | `""` | 制图副标题 |
-| `include_legend` | bool | `true` | 是否叠加图例（自动读取 choropleth 图层元数据） |
-| `include_compass` | bool | `true` | 是否叠加指北针（旋转角随地图 bearing 同步） |
-| `include_scale` | bool | `true` | 是否叠加比例尺（根据当前 zoom 与纬度动态计算） |
-| `dark_mode` | bool | `true` | 是否使用暗色模式底纹 |
-| `format` | string | `"png"` | 导出格式：`png` 或 `pdf`（PDF 在后端进一步排版） |
-
-### AI 工具：`export_batch_maps` (批量地图导出)
-用于批量生成并导出多张专题地图（如按行政区划分张图、按指标分张图）。
-- **双重信封机制 (Dual Envelope)**：后端此工具并不直接返回单一地图文件，而是通过一个专用的双重包装信封向前端下发一组嵌套指令。
-- **返回数据结构示例**：
-```json
-{
-  "status": "export_batch_task_created",
-  "commands": [
-    {
-      "command": "export_map",
-      "params": {
-        "title": "A区域人口密度图",
-        "subtitle": "2026年数据",
-        "format": "png"
-      }
-    },
-    {
-      "command": "export_map",
-      "params": {
-        "title": "B区域人口密度图",
-        "subtitle": "2026年数据",
-        "format": "png"
-      }
-    }
-  ],
-  "message": "批量地图导出任务已启动，包含 2 张地图"
-}
-```
-前端接收该响应后，将在后台任务队列中，以**串行管道 (Sequential Pipeline)** 的形式逐一拉起并运行指令集中的 `export_map` 动作，保证 WebGL 画布渲染不冲突。
-
-### 前端制图饰件渲染（Canvas 2D）
-当 Agent 调用 `export_thematic_map` 或批量下发 `export_map` 时，前端 `MapActionHandler` 在地图 `render` 事件后执行以下叠加：
-1. **地图截图** — `preserveDrawingBuffer: true` 保证 WebGL 画布可读
-2. **标题区** — 顶部渐变底纹 + 主/副标题文字
-3. **比例尺** — 4 段交替黑白刻度尺，标注 0 与实际距离（单位自适应 m/km）
-4. **指北针** — 红/白双色箭头，随地图旋转角（bearing）同步偏转，附 "N" 标签
-5. **图例** — 自动读取当前可见 choropleth 图层的 `metadata`，渲染圆角面板与色块 + 数值区间
-6. **水印** — 右下角半透明 "Generated by WebGIS AI Agent"
-
-### 关联指令 (Map Command)
-| 指令 (Command) | 参数 (Params) | 说明 |
-|---------------|--------------|------|
-| `export_map` | `{"title": "...", "subtitle": "...", "dark_mode": bool}` | 驱动前端执行可视化合成提取 |
+| `include_legend` | bool | `true` | 是否叠加图例 |
+| `include_compass` | bool | `true` | 是否叠加指北针 |
+| `include_scale` | bool | `true` | 是否叠加比例尺 |
+| `dark_mode` | bool | `true` | 暗色模式底纹 |
+| `format` | string | `"png"` | 导出格式: `png` 或 `pdf` |
 
 ---
 
 ## T008 遥感分析资产管理 (Analysis Assets)
-针对持久化分析成果（如 NDVI GeoTIFF）的管理接口。
 
-### 资产管控
-| 方法 | 路径 | 说明 |
-|------|-----|-----|
-| GET | `/api/v1/uploads` | 获取包含 `raster_analysis` 类型的分析产物清单 |
-| GET | `/api/v1/static/analysis_results/{file}` | 静态资源访问链路（由 FastAPI 挂载） |
+| 方法 | 路径 | 认证 | 说明 |
+|------|-----|------|-----|
+| GET | /api/v1/uploads | required | 获取分析产物清单 |
+| GET | /api/v1/static/analysis_results/{file} | required | 静态资源访问 |
 
 ### 遥感分析算子 (Agent Tools)
 | 工具名 | 描述 |
 |--------|-----|
-| `analyze_vegetation_index` | 计算归一化植被指数并启动持久化流程 |
+| `analyze_vegetation_index` | 计算归一化植被指数 |
 | `list_analysis_assets` | 检索历史分析产物 |
-| `manage_analysis_asset` | 执行重命名或逻辑/物理删除 |
+| `manage_analysis_asset` | 重命名或删除 |
 
 ---
 
 ## T009 实时感知 WebSocket (Bidirectional Perception)
-WebSocket 通道用于实时双向感知，独立于 SSE 流式对话。
 
-| 方法 | 路径 | 说明 |
-|------|-----|------|
-| WS | `/api/v1/ws/{session_id}` | 建立双向实时连接 |
+| 方法 | 路径 | 认证 | 说明 |
+|------|-----|------|-----|
+| WS | /ws/{session_id} | optional | 建立双向实时连接 (空 token 被拒绝) |
 
 ### 感知事件类型 (Client → Server)
 | 事件名 | 数据 | 描述 |
 |--------|------|------|
-| `viewport_change` | `{center, zoom, bearing, pitch}` | 用户拖拽/缩放地图 |
-| `layer_toggled` | `{layer_id, visible}` | 图层显隐切换 |
-| `layer_opacity_changed` | `{layer_id, opacity}` | 图层透明度调整 |
-| `layer_removed` | `{layer_id}` | 图层移除 |
+| `viewport_change` | `{center, zoom, bearing, pitch}` | 用户拖拽/缩放 |
+| `layer_toggled` | `{layer_id, visible}` | 图层显隐 |
+| `layer_opacity_changed` | `{layer_id, opacity}` | 透明度 |
+| `layer_removed` | `{layer_id}` | 移除图层 |
 | `base_layer_changed` | `{name}` | 底图切换 |
-| `layers_changed` | `{layers: [...]}` | 图层列表批量更新 |
-| `layers_reordered` | `{order: [...]}` | 图层排序变更 |
-| `state_snapshot` | `{...full state}` | 前端主动推送完整状态快照 |
-| `upload_completed` | `{original_name, feature_count, ...}` | 文件上传完成通知 |
-
-### 协议细节
-- 客户端需定期发送 `ping` 事件，服务端回复 `pong`
-- 感知数据写入 `SessionDataManager` 供 Agent 在下一轮推理时消费
-- 连接断开后自动清理，不影响 SSE 对话通道
+| `layers_changed` | `{layers: [...]}` | 图层列表更新 |
+| `layers_reordered` | `{order: [...]}` | 图层排序 |
+| `state_snapshot` | `{...full state}` | 完整状态快照 |
+| `upload_completed` | `{original_name, feature_count, ...}` | 上传完成 |
+| `ping` | `{}` | 心跳 (服务端回复 pong) |
 
 ---
 
 ## T010 系统配置接口 (Agent Mainframe)
-V3.2 新增的控制面板 API，支持运行时动态配置。
 
-| 方法 | 路径 | 说明 |
-|------|-----|------|
-| GET | `/api/v1/config/llm` | 获取当前 LLM 配置 |
-| POST | `/api/v1/config/llm` | 更新 LLM 配置 (base_url, model, api_key) |
-| GET | `/api/v1/config/skills` | 列出已加载的动态技能 |
-| POST | `/api/v1/config/skills/upload` | 上传新技能脚本 |
-| POST | `/api/v1/config/skills/refresh` | 热重载技能目录 |
+| 方法 | 路径 | 认证 | 说明 |
+|------|-----|------|-----|
+| GET | /api/v1/config/llm | admin | 获取 LLM 配置 |
+| POST | /api/v1/config/llm | admin | 更新 LLM 配置 |
+| GET | /api/v1/config/skills | admin | 列出已加载技能 |
+| POST | /api/v1/config/skills/upload | admin | 上传技能脚本 (AST 校验) |
+| POST | /api/v1/config/skills/refresh | admin | 热重载技能 |
 
 ---
 
-## T011 扩展工具清单 (V3.0-V3.2 新增)
+## T011 扩展工具清单 (部分)
 
-### 中文地图服务 (Chinese Map Services)
+### 空间统计分析
 | 工具名 | 描述 |
 |--------|-----|
-| `search_poi` | 中文 POI 搜索（支持高德/百度/天地图三服务商） |
-| `geocode_cn` | 中文地址转坐标 |
-| `reverse_geocode_cn` | 坐标转中文地址 |
-| `plan_route` | 路径规划（驾车/步行/骑行/公交） |
-| `get_district` | 行政区划查询 |
-
-### 空间统计分析 (Spatial Statistics)
-| 工具名 | 描述 |
-|--------|-----|
-| `spatial_cluster` | 空间聚类（DBSCAN / K-Means） |
-| `moran_i` | 空间自相关检验 (Moran's I) |
+| `spatial_cluster` | 空间聚类 (DBSCAN / K-Means) |
+| `moran_i` | 空间自相关检验 |
 | `hotspot_analysis` | 热点分析 (Getis-Ord Gi*) |
 | `kde_surface` | 核密度估计 |
 | `idw_interpolation` | 反距离加权插值 |
 | `kriging_interpolation` | 普通克里金插值 |
-| `service_area` | 服务区分析 |
-| `od_matrix` | 起讫点距离矩阵 |
+| `calculate_sde` | 标准差椭圆 |
+| `calculate_nearest` | 最近邻分析 |
+| `cluster_narrated` | 聚类叙事分析 |
+| `h3_lisa` | H3 六边形局部空间自相关 |
 
-### 地形分析 (Terrain Analysis)
+### 地图交互工具
 | 工具名 | 描述 |
 |--------|-----|
-| `compute_terrain` | 地形分析（坡度/坡向/山体阴影），基于 Copernicus DEM 30m |
-| `compute_vegetation_index` | 多源遥感指数（NDVI/NDWI/NBR/EVI） |
-
-### 报告生成 (Report)
-| 工具名 | 描述 |
-|--------|-----|
-| `generate_analysis_report` | 生成 PDF/HTML 分析报告 |
-
-### 技能系统 (Dynamic Skills)
-| 工具名 | 描述 |
-|--------|-----|
-| `execute_skill` | 执行动态加载的 Python 技能脚本 |
-
-### 地图交互与控制工具 (Map Interaction & Navigation Tools)
-| 工具名 | 描述 |
-|--------|-----|
-| `measure_distance` | 测量两点或多点之间的实际地面大圆线距离 |
-| `measure_area` | 计算多边形闭合区域的实际投影地面面积 |
-| `add_marker` | 在地图的指定经纬度位置投放自定义颜色和标签的标记图钉 |
-| `clear_annotations` | 一键移除地图上所有绘制的测距、测面多边形及注记图钉 |
-| `fly_to_location` | 通过地理编码将地名/地址转化为坐标，并以顺滑飞越动画定位视口 |
-| `zoom_to_bbox` | 调整视口至指定边界包围盒，确保对应的要素空间范围完整可见 |
-| `zoom_to_layer` | 查询图层在服务端的真实 BBox 范围，平滑移动地图视口以完美包络该图层 |
-| `reset_map_view` | 快速重置视口到系统设定的初始经纬度中心点、默认缩放及零旋转/零俯仰角 |
-| `set_map_view` | 精确设定视口的缩放层级、中心点坐标、旋转方向（bearing）与俯仰角（pitch） |
-| `reorder_layer` | 控制逻辑图层在地图底图上的前后层叠顺序（支持 top/bottom/up/down/before 位置参数） |
-| `remove_layer` | 彻底移除指定的地图层，清理其关联的 GeoJSON 数据源及 Session 仓库引用 |
-| `display_layer` | **图层生命周期核心**：将计算生成并隐藏的空间层切换为显式可见状态 |
-| `export_batch_maps` | 批量生成多张专题地图，返回 Dual Envelope 指令包以驱动前端管道化导出 |
+| `measure_distance` | 测量大圆线距离 |
+| `measure_area` | 计算投影面积 |
+| `add_marker` | 投放标记图钉 |
+| `clear_annotations` | 清除测量图形 |
+| `fly_to_location` | 地名飞越定位 |
+| `zoom_to_bbox` | 缩放至包围盒 |
+| `zoom_to_layer` | 缩放至图层范围 |
+| `reset_map_view` | 重置视口 |
+| `set_map_view` | 精确设定视口 |
+| `reorder_layer` | 图层排序 |
+| `remove_layer` | 移除图层 |
+| `display_layer` | 显示隐藏图层 |

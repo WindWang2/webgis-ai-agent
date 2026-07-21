@@ -20,7 +20,7 @@
 ### Fixed
 
 - **Modular context builder refactor**: Split `context_builder.py` into decoupled sub-modules: `geometry.py`, `layer_schema.py`, `session_overview.py`, `history_compression.py`, and `formatters.py`.
-- **Bounding Box walker DRY consolidation**: Consolidated coordinate walkers into `app/utils/geojson.py::geojson_bbox` and refactored `sse_helpers.py` and `map_view.py` to use it.
+- **Bounding Box walker DRY consolidation**: Consolidated coordinate walkers into `app/utils/geojson.py::geojson_bbox` and refactored `map_view.py` to use it.
 - **Flaky Viewport Naming Tests Fix**: Replaced fragile `asyncio.sleep` calls with deterministic background task tracking (`_active_tasks`) and a `wait_all_tasks()` wait utility.
 - **Vertex circles on polygon/line vector layers** removed. Overpass API was
   returning untagged topology nodes (polygon boundary vertices with no
