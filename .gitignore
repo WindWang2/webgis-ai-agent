@@ -92,3 +92,8 @@ findings.md
 progress.md
 task_plan.md
 .planning/
+
+# Development artifacts
+.zcode/
+screenshot-*.png
+
