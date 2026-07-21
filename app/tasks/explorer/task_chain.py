@@ -10,28 +10,37 @@ from app.adapters.base import DataSource
 
 logger = logging.getLogger(__name__)
 
+# 为 Celery prefork worker 提供持久事件循环，避免每次 asyncio.run() 创建新 loop
+_celery_loop: asyncio.AbstractEventLoop | None = None
+
+def _get_celery_loop() -> asyncio.AbstractEventLoop:
+    """获取或创建当前 worker 进程的持久事件循环。"""
+    global _celery_loop
+    if _celery_loop is None or _celery_loop.is_closed():
+        _celery_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_celery_loop)
+    return _celery_loop
+
+
+def _run_async(coro):
+    """在 Celery worker 的持久事件循环中执行 async coroutine。"""
+    loop = _get_celery_loop()
+    return loop.run_until_complete(coro)
+
 
 def _store_ref(data: dict, task_id: str, prefix: str = "explorer") -> str:
-    """存储数据到 session manager，返回 ref_id。
-
-    审计 C2/S45：之前所有 explorer 任务共享硬编码 session_id="explorer"，
-    导致 (1) 并发任务互相覆盖 ref；(2) cleanup_idle_sessions 或 LRU 淘汰
-    会丢弃在飞任务的数据；(3) 任何 GET /layers/data/{ref}?session_id=
-    explorer 都能读到所有 explorer 任务的中间结果。改用 task_id 作命名空间。
-    """
+    """存储数据到 session manager，返回 ref_id。"""
     from app.services.session_data import session_data_manager
-    # asyncio.run() is safe here for Celery prefork workers; breaks with gevent/eventlet concurrency
     session_namespace = f"explorer:{task_id}"
-    ref_id = asyncio.run(session_data_manager.store(session_namespace, data, prefix=prefix))
+    ref_id = _run_async(session_data_manager.store(session_namespace, data, prefix=prefix))
     return ref_id
 
 
 def _load_ref(ref_id: str, task_id: str):
     """从 session manager 加载数据（按 task_id 命名空间）。"""
     from app.services.session_data import session_data_manager
-    # asyncio.run() is safe here for Celery prefork workers; breaks with gevent/eventlet concurrency
     session_namespace = f"explorer:{task_id}"
-    return asyncio.run(session_data_manager.get(session_namespace, ref_id))
+    return _run_async(session_data_manager.get(session_namespace, ref_id))
 
 
 @celery_app.task(bind=True, max_retries=2, soft_time_limit=30, time_limit=30)
@@ -45,12 +54,12 @@ def explorer_discover_task(self, task_id: str, query: str, context: dict):
         adapter = GovDataAdapter()
 
         # 发现数据源
-        sources = asyncio.run(adapter.discover(query, ctx))
+        sources = _run_async(adapter.discover(query, ctx))
 
         # 质量预评估
         scored = []
         for source in sources[:3]:  # top-3
-            score = asyncio.run(adapter.quick_assess(query, source))
+            score = _run_async(adapter.quick_assess(query, source))
             scored.append({
                 "source": source.model_dump(),
                 "score": score.model_dump(),
@@ -86,7 +95,7 @@ def explorer_fetch_task(self, prev_result: dict):
         source = DataSource(**source_dict)
 
         try:
-            raw = asyncio.run(adapter.fetch(source))
+            raw = _run_async(adapter.fetch(source))
             # 存储原始数据 (hex encode bytes for JSON serialization)
             ref_id = _store_ref({
                 "data": raw.data.hex(),
@@ -145,7 +154,7 @@ def explorer_parse_task(self, prev_result: dict):
             encoding=stored["encoding"],
         )
 
-        structured = asyncio.run(adapter.parse(raw))
+        structured = _run_async(adapter.parse(raw))
 
         # 字段映射（简化：自动匹配常见字段名）
         mapping = _auto_field_mapping(structured.fields)
@@ -238,7 +247,7 @@ def explorer_geocode_task(self, prev_result: dict):
                 provider = providers[provider_idx]
                 addresses = [batch[i][1] for i in pending]
 
-                result = asyncio.run(batch_geocode_cn(addresses, provider=provider, max_concurrency=3))
+                result = _run_async(batch_geocode_cn(addresses, provider=provider, max_concurrency=3))
 
                 # Handle complete provider failure
                 if "error" in result and not result.get("results") and not result.get("errors"):

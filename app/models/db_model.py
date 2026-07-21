@@ -78,6 +78,8 @@ class Layer(Base):
         UniqueConstraint("org_id", "name", name="uq_layer_org_name"),
         Index("idx_layer_status", "status"),
         Index("idx_layer_created", "created_at"),
+        Index("idx_layer_org_status", "org_id", "status"),
+        Index("idx_layer_org_category_status", "org_id", "category", "status"),
         CheckConstraint("layer_type IN ('vector', 'raster', 'tile')", name="ck_layer_type"),
         CheckConstraint("visibility IN ('org', 'public', 'private')", name="ck_layer_visibility"),
         CheckConstraint("status IN ('pending', 'processing', 'ready', 'error')", name="ck_layer_status"),
@@ -113,7 +115,10 @@ class AnalysisTask(Base):
     
     __table_args__ = (
         Index("idx_task_status", "status"),
+        Index("idx_task_org_status", "org_id", "status"),
+        Index("idx_task_org_type_status", "org_id", "task_type", "status"),
         CheckConstraint("status IN ('pending', 'queued', 'running', 'completed', 'failed', 'cancelled')", name="ck_task_status"),
+        CheckConstraint("progress >= 0 AND progress <= 100", name="ck_task_progress"),
     )
 
 class LayerPermission(Base):

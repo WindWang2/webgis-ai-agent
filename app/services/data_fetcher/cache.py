@@ -1,9 +1,12 @@
 import hashlib
 import json
 from typing import Any, Optional
+import logging
 import redis
-from cachetools import TTLCache, cached
+from cachetools import TTLCache
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 class CacheManager:
     _instance = None
@@ -21,7 +24,7 @@ class CacheManager:
                     cls._instance._redis_client = redis.from_url(settings.REDIS_URL)
                     cls._instance._redis_client.ping()
                 except Exception as e:
-                    print(f"Redis connection failed, falling back to memory cache only: {e}")
+                    logger.warning("Redis connection failed, falling back to memory cache only: %s", e)
         return cls._instance
 
     def _generate_cache_key(self, query: Any) -> str:
@@ -48,7 +51,7 @@ class CacheManager:
                     # Store in memory cache for faster access next time
                     self._memory_cache[key] = data
                     return data
-                except:
+                except (json.JSONDecodeError, TypeError):
                     pass
         return None
 
@@ -67,7 +70,7 @@ class CacheManager:
                     json.dumps(data, default=str)
                 )
             except Exception as e:
-                print(f"Failed to write to Redis cache: {e}")
+                logger.warning("Failed to write to Redis cache: %s", e)
 
     def invalidate(self, query: Any) -> None:
         """Invalidate cache for a specific query"""

@@ -137,14 +137,14 @@
         },
         {
           "alert": "Celery_Task_Backlog",
-          "expr": "rabbitmq_queue_messages_ready > 1000",
+          "expr": "celery_queue_length > 1000 or redis_list_length{key=\"celery:*,queue\"} > 1000",
           "for": "15m",
           "labels": {
             "severity": "warning"
           },
           "annotations": {
             "summary": "Celery 任务积压",
-            "description": "等待处理的任务超过 1000 个，可能导致延迟"
+            "description": "等待处理的任务超过 1000 个，可能导致延迟。注意：本项目使用 Redis 而非 RabbitMQ 作为 broker，请通过 celery_exporter 或自定义指标暴露队列深度。"
           }
         },
         {

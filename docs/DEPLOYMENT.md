@@ -45,7 +45,7 @@ celery -A app.services.task_queue worker --loglevel=info &
 ### 3. 启动大模型流式总网关 (FastAPI)
 ```bash
 # 开启非阻塞主 API
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### 4. 启动 GPU 绘图前端台 (Next.js)
@@ -62,12 +62,13 @@ npm run dev
 | 变量键值 | 功能解释 | 必须 |
 |----------|-------------|----------|
 | `DATABASE_URL` | PostGIS 或 SQLite 地址 | 是 |
-| `REDIS_URL` | V2.0 数据枢纽 (Celery与缓存流使用) | 是 |
-| `CLAUDE_API_KEY` | 必须支持 Tool Use (工具装载) 的大模型密钥 | 是 |
-| `MAPLIBRE_STYLE` | 矢量栅格叠加套壳风格 | 否 |
+| `REDIS_URL` | 数据枢纽 (Celery 与缓存流使用) | 是 |
+| `JWT_SECRET_KEY` | JWT 签名密钥（留空则自动生成，重启后失效） | 是 |
+| `LLM_API_KEY` | 支持工具调用的 LLM 密钥 | 是 |
+| `LLM_MODEL` | 默认模型（如 deepseek-v4-flash） | 否 |
 
 ## 排障雷达 (Troubleshooting)
-- **前端白屏/不显示建筑物**：按下 F12 查看网络。如果 `/api/v1/layer/xxxx/data` 报 404，极大概率是您的 Redis 没有启动或容积超标。
+- **前端白屏/不显示建筑物**：按下 F12 查看网络。如果 `/api/v1/layers/data/{ref_id}?session_id=xxx` 报 404，极大概率是您的 Redis 没有启动或容积超标。
 - **对话框没反应**：去终端看看是不是 `celery worker` 压根没开，大模型把计算扔给后台后一直处于 Pending 等待中。
 
 ## 🔐 Secret Management (审计 I4 + I6)

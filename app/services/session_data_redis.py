@@ -21,7 +21,7 @@ MAX_EVENTS = 20
 class RedisSessionDataManager:
     """Session-level data store backed by Redis with cursor support (LRU)."""
 
-    def __init__(self, redis_url: str, capacity: int = 200, socket_timeout: float = 1.0):
+    def __init__(self, redis_url: str, capacity: int = 200, socket_timeout: float = 5.0):
         self._r = aioredis.Redis.from_url(
             redis_url,
             decode_responses=False,
@@ -284,7 +284,7 @@ class RedisSessionDataManager:
         的上下文注入和前端 SSE 回放，缺一条不会破坏正确性。
         """
         entry = json.dumps(
-            {"event": event, "data": data, "timestamp": datetime.now().isoformat()},
+            {"event": event, "data": data, "timestamp": datetime.now(timezone.utc).isoformat()},
             ensure_ascii=False,
         )
         try:

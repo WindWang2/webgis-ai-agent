@@ -24,7 +24,9 @@ import { useMapAction } from "@/lib/contexts/map-action-context"
 function getMapStyle(option: MapStyleOption, index: number): maplibregl.StyleSpecification {
   if (option.type === "raster") {
     const sourceId = `raster-tiles-${index}`;
-    const layerId = `raster-tiles-layer-${index}`;
+    
+import { devOnly } from "@/lib/utils/logger";
+const layerId = `raster-tiles-layer-${index}`;
     return {
       version: 8,
       sources: {
@@ -121,7 +123,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
     }
     if (bbox) {
       try { navFitBounds(map, bbox, 80) } catch (err) {
-        console.warn("[map-panel] focusLayer fitBounds failed:", err)
+        devOnly.warn("[map-panel] focusLayer fitBounds failed:", err)
       }
     }
     // Clear after a short delay so the legend flash animation has time to fire.
@@ -358,7 +360,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
               }
             }
           } catch (_e) {
-            console.error("[MapPanel] incremental update error for:", layer.id, _e)
+            devOnly.error("[MapPanel] incremental update error for:", layer.id, _e)
           }
         }
 
@@ -374,7 +376,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
         // 走 renderer.syncLayerZOrder：传 layers 数组顺序，helper 自己反向迭代
         renderer.syncLayerZOrder(map, "custom-", layers.map((l) => l.id))
       } catch (err) {
-        console.error("[MapPanel] renderLayers error:", err)
+        devOnly.error("[MapPanel] renderLayers error:", err)
       } finally {
         isUpdatingRef.current = false
       }

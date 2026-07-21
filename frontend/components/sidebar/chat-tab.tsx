@@ -306,6 +306,7 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
         <div className="flex items-end gap-2 px-3 pt-2.5 pb-1.5">
           {/* Upload button */}
           <button
+            aria-label="上传文件"
             style={{
               flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
               width: 24, height: 24, borderRadius: 6, color: isDark ? '#64748b' : '#94a3b8',
@@ -337,6 +338,7 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
           <button
             onClick={handleSend}
             disabled={!input.trim() || isBusy}
+            aria-label="发送消息"
             style={{
               flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
               width: 26, height: 26, borderRadius: 8, transition: 'opacity 0.15s',

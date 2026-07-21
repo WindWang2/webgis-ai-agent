@@ -10,6 +10,8 @@ import { bboxToFlyTo, isValidBbox } from '@/lib/utils/geo';
 import { API_BASE } from '@/lib/api/config';
 import type { StepResultEvent } from '@/lib/types/agent-events';
 
+
+import { devOnly } from "@/lib/utils/logger";
 const MAP_STATE_THROTTLE_MS = 2000;
 
 /**
@@ -36,7 +38,7 @@ export function useMapBridge(
   onViewportChange: (center: [number, number], zoom: number, bearing: number, pitch: number) => void;
 } {
   if (process.env.NODE_ENV === 'development' && !onEvent) {
-    console.error('[useMapBridge] onEvent prop is required');
+    devOnly.error('[useMapBridge] onEvent prop is required');
   }
 
   const [aiStatus, setAiStatusLocal] = useState<AiStatus>('idle');
@@ -81,7 +83,7 @@ export function useMapBridge(
 
           // Skip unparseable data — streamChat yields raw string on JSON.parse failure
           if (typeof event.data === 'string') {
-            console.warn('[useMapBridge] SSE parse failure, skipping:', event.event);
+            devOnly.warn('[useMapBridge] SSE parse failure, skipping:', event.event);
             onEvent(event);
             continue;
           }
@@ -145,7 +147,7 @@ export function useMapBridge(
       } catch (err: unknown) {
         if (err instanceof DOMException && err.name === 'AbortError') return;
         setAiStatus('error');
-        console.error('[useMapBridge] SSE stream error:', err);
+        devOnly.error('[useMapBridge] SSE stream error:', err);
         onEvent({ event: 'error', data: { error: err instanceof Error ? err.message : String(err) } as unknown as Record<string, unknown> });
       } finally {
         if (abortControllerRef.current === controller) {
@@ -175,7 +177,7 @@ export function useMapBridge(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ viewport: { center, zoom, bearing, pitch } }),
-      }).catch((e) => console.warn('[useMapBridge] map-state POST failed:', e));
+      }).catch((e) => devOnly.warn('[useMapBridge] map-state POST failed:', e));
     },
     [sessionId]
   );

@@ -33,12 +33,17 @@ class RedisRateLimiter:
 
 
 class MemoryRateLimiter:
-    """Sliding-window rate limiter backed by an in-memory deque."""
+    """Sliding-window rate limiter backed by an in-memory deque with TTL eviction."""
+
+    _EVICT_INTERVAL = 300  # purge empty keys every 5 minutes
+    _MAX_KEYS = 10000       # hard cap to prevent memory growth
 
     def __init__(self):
         self._requests: dict[str, deque[float]] = defaultdict(deque)
+        self._last_evict: float = 0.0
 
     async def is_allowed(self, key: str, max_requests: int, window_seconds: int) -> bool:
+        self._maybe_evict()
         now = time.time()
         timestamps = self._requests[key]
         while timestamps and now - timestamps[0] >= window_seconds:
@@ -47,6 +52,22 @@ class MemoryRateLimiter:
             return False
         timestamps.append(now)
         return True
+
+    def _maybe_evict(self) -> None:
+        """Periodically remove empty keys and enforce a hard key cap."""
+        now = time.time()
+        if now - self._last_evict < self._EVICT_INTERVAL and len(self._requests) < self._MAX_KEYS:
+            return
+        self._last_evict = now
+        empty = [k for k, v in self._requests.items() if not v]
+        for k in empty:
+            del self._requests[k]
+        # If still over cap, drop oldest keys entirely
+        if len(self._requests) > self._MAX_KEYS:
+            excess = len(self._requests) - self._MAX_KEYS
+            oldest = sorted(self._requests.keys(), key=lambda k: self._requests[k][0] if self._requests[k] else 0)
+            for k in oldest[:excess]:
+                del self._requests[k]
 
 
 _rate_limiter: RateLimiter | None = None

@@ -10,6 +10,8 @@ import type { AgentPlanState } from '@/lib/types/agent-plan';
 import type { MapActionPayload } from '@/lib/types';
 import { createMessageIdGenerator } from './use-message-id';
 
+
+import { devOnly } from "@/lib/utils/logger";
 export function useSSEStream(
   sessionId: string | undefined,
   setSessionId: (sid: string) => void,
@@ -181,7 +183,7 @@ export function useSSEStream(
                 }
               })
               .catch((err) =>
-                console.error('[LiveLayerFetch] Failed to fetch geojson_ref:', err)
+                devOnly.error('[LiveLayerFetch] Failed to fetch geojson_ref:', err)
               );
           }
 
@@ -223,7 +225,7 @@ export function useSSEStream(
             )
           );
         } catch (err) {
-          console.warn('[plan_ready] parse failed', err);
+          devOnly.warn('[plan_ready] parse failed', err);
         }
       } else if (event.event === 'plan_step_done') {
         try {
@@ -243,7 +245,7 @@ export function useSSEStream(
             })
           );
         } catch (err) {
-          console.warn('[plan_step_done] parse failed', err);
+          devOnly.warn('[plan_step_done] parse failed', err);
         }
       } else if (event.event === 'plan_finalized') {
         try {
@@ -264,7 +266,7 @@ export function useSSEStream(
             })
           );
         } catch (err) {
-          console.warn('[plan_finalized] parse failed', err);
+          devOnly.warn('[plan_finalized] parse failed', err);
         }
       } else if (
         event.event === 'error' ||

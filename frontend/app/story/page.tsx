@@ -5,6 +5,8 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { MapPanel } from "@/components/map/map-panel"
 import { API_BASE } from '@/lib/api/config';
+
+import { devOnly } from "@/lib/utils/logger";
 import { useHudStore } from "@/lib/store/useHudStore"
 import { Play, SkipBack, Share2 } from "lucide-react"
 
@@ -35,7 +37,7 @@ function StoryPageInner() {
             setMessages(data.messages)
           }
         })
-        .catch((err) => console.error("Restore session history failed:", err))
+        .catch((err) => devOnly.error("Restore session history failed:", err))
         .finally(() => setLoading(false))
     } else {
       setLoading(false)
@@ -75,9 +77,9 @@ function StoryPageInner() {
             STORY<span className="text-white/50">MAP</span>
           </h1>
           <div className="flex gap-2">
-            <button className="hud-btn p-2 rounded-lg text-white/50 hover:text-hud-cyan"><SkipBack className="h-4 w-4" /></button>
-            <button className="hud-btn p-2 rounded-lg text-white/50 hover:text-hud-cyan"><Play className="h-4 w-4" /></button>
-            <button className="hud-btn p-2 rounded-lg text-white/50 hover:text-hud-cyan"><Share2 className="h-4 w-4" /></button>
+            <button aria-label="上一个" className="hud-btn p-2 rounded-lg text-white/50 hover:text-hud-cyan"><SkipBack className="h-4 w-4" /></button>
+            <button aria-label="播放" className="hud-btn p-2 rounded-lg text-white/50 hover:text-hud-cyan"><Play className="h-4 w-4" /></button>
+            <button aria-label="分享" className="hud-btn p-2 rounded-lg text-white/50 hover:text-hud-cyan"><Share2 className="h-4 w-4" /></button>
           </div>
         </div>
 

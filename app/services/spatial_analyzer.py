@@ -11,7 +11,6 @@ from app.lib.geo_processor.overlay import overlay_smart
 from app.lib.geo_analysis.statistics import (
     calculate_sde, 
     moran_i_narrated, 
-    hotspot_narrated, 
     cluster_narrated,
     calculate_central_feature,
     calculate_nearest

@@ -1,7 +1,10 @@
-import requests
+import logging
+import httpx
 from typing import Any, Dict
 from app.core.config import settings
 from .base import DataSourceAdapter
+
+logger = logging.getLogger(__name__)
 
 class ThirdPartyAPIAdapter(DataSourceAdapter):
     def query(self, query_params: Dict[str, Any]) -> Any:
@@ -38,8 +41,10 @@ class ThirdPartyAPIAdapter(DataSourceAdapter):
                 "page": params.get("page", 1),
                 "extensions": "all"
             })
-            response = requests.get(f"{base_url}/place/text", params=request_params)
-            data = response.json()
+            with httpx.Client() as client:
+                response = client.get(f"{base_url}/place/text", params=request_params)
+                response.raise_for_status()
+                data = response.json()
             # Convert Gaode POI response to GeoJSON
             features = []
             for poi in data.get("pois", []):

@@ -25,11 +25,14 @@ class Document(Base):
     chunk_count = Column(Integer, default=0)
     status = Column(String(20), default="pending")  # pending/indexing/completed/failed
     error_message = Column(Text, nullable=True)
+    org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)
+    creator_id = Column(String(255), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     indexed_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
         Index("idx_document_status", "status"),
+        Index("idx_document_org", "org_id"),
     )
 
 

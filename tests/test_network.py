@@ -18,11 +18,25 @@ class TestGetSSLContext:
         assert ctx.check_hostname is True
         assert ctx.verify_mode == ssl.CERT_REQUIRED
 
-    def test_no_verify_returns_insecure_context(self):
-        ctx = get_ssl_context(verify=False)
-        assert isinstance(ctx, ssl.SSLContext)
-        assert ctx.check_hostname is False
-        assert ctx.verify_mode == ssl.CERT_NONE
+    def test_no_verify_requires_explicit_env_flag(self):
+        """Refuse to create insecure SSL context unless ALLOW_INSECURE_SSL is set."""
+        import os
+        # Ensure env is clean
+        os.environ.pop("ALLOW_INSECURE_SSL", None)
+        with pytest.raises(ValueError, match="ALLOW_INSECURE_SSL"):
+            get_ssl_context(verify=False)
+
+    def test_no_verify_with_env_flag_returns_insecure_context(self):
+        """ALLOW_INSECURE_SSL=true permits insecure context (for dev/testing only)."""
+        import os
+        os.environ["ALLOW_INSECURE_SSL"] = "true"
+        try:
+            ctx = get_ssl_context(verify=False)
+            assert isinstance(ctx, ssl.SSLContext)
+            assert ctx.check_hostname is False
+            assert ctx.verify_mode == ssl.CERT_NONE
+        finally:
+            os.environ.pop("ALLOW_INSECURE_SSL", None)
 
 
 class TestGetBaseHeaders:

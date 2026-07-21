@@ -48,13 +48,21 @@ spec:
             component: api
       containers:
       - name: webgis-api
-        image: webgis-prod:latest
-        imagePullPolicy: IfNotPresent
+        image: webgis-prod:v0.1.2
+        imagePullPolicy: Always
+        # 审计 I25：容器安全上下文 — 禁止权限提升，丢弃所有 capabilities
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
         # 与 Dockerfile.prod 的 CMD 保持一致：使用 standalone server 而非 npx serve。
         # 之前的 `cd /app/frontend/out && npx serve` 引用了 Dockerfile.prod 不产出的目录，
         # 导致 k8s 部署下前端永久 502。
         command: ["sh", "-c"]
-        args: ["uvicorn app.main:app --host 0.0.0.0 --port 8000 & node frontend/.next/standalone/server.js -p 3000"]
+        # 审计 P0：trap + wait 确保 SIGTERM 正确传播给 uvicorn + node 子进程，
+        # 否则滚动更新时 pod 会脏退出（tini 在 k8s 侧不在 pid 1）。
+        args: ["trap 'kill 0' TERM INT; uvicorn app.main:app --host 0.0.0.0 --port 8000 & node frontend/.next/standalone/server.js -p 3000 & wait"]
         ports:
         - containerPort: 8000
           name: api
@@ -91,7 +99,7 @@ spec:
             memory: "4Gi"
         volumeMounts:
         - name: uploads-volume
-          mountPath: /app/frontend/out/uploads
+          mountPath: /app/uploads
       volumes:
       - name: uploads-volume
         persistentVolumeClaim:

@@ -115,3 +115,162 @@ async def test_spatial_reasoning_tool_output_format():
     assert "uncertainty" in result
     assert "recommendations" in result
     assert isinstance(result["recommendations"], list)
+
+
+# ─── _call_llm real integration tests ────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_call_llm_returns_valid_result():
+    """When LLM returns valid JSON, _call_llm should return it validated."""
+    from app.tools.spatial_reasoning import _call_llm
+    from app.services.chat.llm_client import LLMConfig
+
+    mock_response = {
+        "choices": [{
+            "message": {
+                "content": '{"type": "spatial_reasoning", "conclusion": "适合选址", '
+                           '"reasoning_chain": [{"step": 1, "fact": "规则", "source": "commercial"}], '
+                           '"confidence": 0.8, "uncertainty": "有限", "recommendations": ["建议"]}'
+            }
+        }]
+    }
+
+    with patch("app.tools.spatial_reasoning.call_llm", return_value=mock_response):
+        result = await _call_llm("system", "user")
+
+    assert result["type"] == "spatial_reasoning"
+    assert result["confidence"] == 0.8
+    assert len(result["reasoning_chain"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_call_llm_handles_empty_content():
+    """When LLM returns empty content, _call_llm should return error result."""
+    from app.tools.spatial_reasoning import _call_llm
+
+    mock_response = {"choices": [{"message": {"content": ""}}]}
+
+    with patch("app.tools.spatial_reasoning.call_llm", return_value=mock_response):
+        result = await _call_llm("system", "user")
+
+    assert result["confidence"] == 0.0
+    assert "LLM 返回空响应" in result["uncertainty"]
+
+
+@pytest.mark.asyncio
+async def test_call_llm_handles_invalid_json():
+    """When LLM returns non-JSON text, _call_llm should return error result."""
+    from app.tools.spatial_reasoning import _call_llm
+
+    mock_response = {"choices": [{"message": {"content": "This is not JSON at all."}}]}
+
+    with patch("app.tools.spatial_reasoning.call_llm", return_value=mock_response):
+        result = await _call_llm("system", "user")
+
+    assert result["confidence"] == 0.0
+    assert "无法解析" in result["uncertainty"]
+
+
+@pytest.mark.asyncio
+async def test_call_llm_handles_truncated_json():
+    """When LLM returns truncated JSON, _repair_json should fix it."""
+    from app.tools.spatial_reasoning import _call_llm
+
+    truncated = '{"type": "spatial_reasoning", "conclusion": "适合", "reasoning_chain": [{"step": 1, "fact": "x", "source": "c"}], "confidence": 0.8, "uncertainty": "有限", "recommendations": ["建议"]'
+
+    mock_response = {"choices": [{"message": {"content": truncated}}]}
+
+    with patch("app.tools.spatial_reasoning.call_llm", return_value=mock_response):
+        result = await _call_llm("system", "user")
+
+    assert result["type"] == "spatial_reasoning"
+    assert result["confidence"] == 0.8
+
+
+@pytest.mark.asyncio
+async def test_call_llm_handles_markdown_fences():
+    """When LLM wraps JSON in markdown code fences, they should be stripped."""
+    from app.tools.spatial_reasoning import _call_llm
+
+    fenced = """```json
+{"type": "spatial_reasoning", "conclusion": "适合", "reasoning_chain": [{"step": 1, "fact": "x", "source": "c"}], "confidence": 0.8, "uncertainty": "有限", "recommendations": ["建议"]}
+```"""
+
+    mock_response = {"choices": [{"message": {"content": fenced}}]}
+
+    with patch("app.tools.spatial_reasoning.call_llm", return_value=mock_response):
+        result = await _call_llm("system", "user")
+
+    assert result["type"] == "spatial_reasoning"
+    assert result["confidence"] == 0.8
+
+
+@pytest.mark.asyncio
+async def test_call_llm_handles_validation_error():
+    """When LLM returns structurally invalid JSON, _call_llm should return error."""
+    from app.tools.spatial_reasoning import _call_llm
+
+    # Missing required fields
+    invalid = '{"type": "spatial_reasoning"}'
+
+    mock_response = {"choices": [{"message": {"content": invalid}}]}
+
+    with patch("app.tools.spatial_reasoning.call_llm", return_value=mock_response):
+        result = await _call_llm("system", "user")
+
+    assert result["confidence"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_call_llm_handles_http_error():
+    """When LLM API raises an exception, _call_llm should return error result."""
+    from app.tools.spatial_reasoning import _call_llm
+
+    with patch("app.tools.spatial_reasoning.call_llm", side_effect=RuntimeError("API down")):
+        result = await _call_llm("system", "user")
+
+    assert result["confidence"] == 0.0
+    assert "失败" in result["uncertainty"] or "调用失败" in result["uncertainty"]
+
+
+# ─── _parse_llm_json helper tests ────────────────────────────────
+
+
+def test_parse_llm_json_valid():
+    from app.tools.spatial_reasoning import _parse_llm_json
+    assert _parse_llm_json('{"a": 1}') == {"a": 1}
+
+
+def test_parse_llm_json_with_markdown_fences():
+    from app.tools.spatial_reasoning import _parse_llm_json
+    fenced = "```json\n{\"a\": 1}\n```"
+    assert _parse_llm_json(fenced) == {"a": 1}
+
+
+def test_parse_llm_json_truncated():
+    from app.tools.spatial_reasoning import _parse_llm_json
+    # _repair_json only adds closing brackets/braces, not incomplete values
+    truncated = '{"a": 1'
+    result = _parse_llm_json(truncated)
+    # repair adds the missing closing brace
+    assert result is not None
+    assert result.get("a") == 1
+
+
+def test_parse_llm_json_invalid():
+    from app.tools.spatial_reasoning import _parse_llm_json
+    assert _parse_llm_json("not json at all") is None
+
+
+# ─── _error_result helper tests ──────────────────────────────────
+
+
+def test_error_result_structure():
+    from app.tools.spatial_reasoning import _error_result
+    result = _error_result("test error")
+    assert result["type"] == "spatial_reasoning"
+    assert result["confidence"] == 0.0
+    assert "test error" in result["uncertainty"]
+    assert isinstance(result["recommendations"], list)
+    assert len(result["recommendations"]) > 0

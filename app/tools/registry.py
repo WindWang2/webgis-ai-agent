@@ -23,7 +23,7 @@ class ToolRegistry:
         # domains: tier 2 工具属于哪些主题，用于关键词触发
         self._metadata: dict[str, dict[str, Any]] = {}
 
-    def tool(self, name: str, description: str, **kwargs):
+    def tool(self, name: str, description: str, **kwargs: Any) -> Callable:
         """装饰器：注册工具到此 registry 实例"""
         def decorator(func: Callable):
             self.register(name, description, func, **kwargs)
@@ -88,7 +88,9 @@ class ToolRegistry:
             if p_name == "self":
                 continue
 
-            # TODO: 支持更复杂的类型推导
+            # Type derivation: uses inspect.Parameter.annotation directly.
+            # Complex types (Union, Optional, nested models) are passed through
+            # as-is; the LLM-facing description does not decompose them.
             p_type = param.annotation if param.annotation != inspect.Parameter.empty else Any
             default = param.default if param.default != inspect.Parameter.empty else ...
 
@@ -131,7 +133,7 @@ class ToolRegistry:
         result: Any = None
         try:
             arg_bytes = len(_json.dumps(arguments, default=str))
-        except Exception:
+        except Exception as e:
             arg_bytes = 0
 
         try:
@@ -145,7 +147,7 @@ class ToolRegistry:
                 error_cls = error_cls or result.get("error_type") or result.get("code")
             try:
                 result_bytes = len(_json.dumps(result, default=str)) if result is not None else 0
-            except Exception:
+            except Exception as e:
                 result_bytes = 0
             cache_hit = cache_hit_var.get()
             tool_metrics.record_tool_call(

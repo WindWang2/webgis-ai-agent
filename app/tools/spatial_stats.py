@@ -115,6 +115,9 @@ def register_spatial_stats_tools(registry: ToolRegistry):
 
         coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
 
+        # 审计：权重重复上限，防止大动态范围权重导致 OOM
+        _MAX_REPEAT_FACTOR = 100
+
         if value_field:
             weights = extract_numeric_values(gdf, value_field)
             if weights is None:
@@ -125,7 +128,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             min_w = float(weights.min())
             if min_w == 0:
                 min_w = 1e-10
-            repeat_factors = np.clip(np.maximum((weights / min_w).astype(int), 1), 1, 100)
+            repeat_factors = np.clip(np.maximum((weights / min_w).astype(int), 1), 1, _MAX_REPEAT_FACTOR)
             weighted_coords = np.repeat(coords, repeat_factors, axis=0)
             kde_data = weighted_coords.T
         else:
@@ -179,22 +182,32 @@ def register_spatial_stats_tools(registry: ToolRegistry):
 
         max_d = density.max()
         threshold = max_d * 0.1
-        out_features = []
+        
+        # 批量构建格网几何体并一次性 reproject 到 WGS84（审计：避免 O(n) 逐单元格 CRS 转换）
+        cell_geoms = []
+        cell_data = []  # (i, j, d_val) tuples
         for i in range(ny):
             for j in range(nx):
                 d_val = float(density[i, j])
                 if d_val < threshold:
                     continue
-                    
                 x0, x1 = grid_x[j] - cell_size / 2, grid_x[j] + cell_size / 2
                 y0, y1 = grid_y[i] - cell_size / 2, grid_y[i] + cell_size / 2
-                cell_geom = box(x0, y0, x1, y1)
-                cell_wgs84 = gpd.GeoSeries([cell_geom], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
-                out_features.append({
+                cell_geoms.append(box(x0, y0, x1, y1))
+                cell_data.append((i, j, d_val))
+        
+        if cell_geoms:
+            cells_gdf = gpd.GeoSeries(cell_geoms, crs=utm_crs).to_crs("EPSG:4326")
+            out_features = [
+                {
                     "type": "Feature",
-                    "geometry": mapping(cell_wgs84),
-                    "properties": {"density": round(d_val, 8)},
-                })
+                    "geometry": mapping(cells_gdf.iloc[k]),
+                    "properties": {"density": round(cell_data[k][2], 8)},
+                }
+                for k in range(len(cell_geoms))
+            ]
+        else:
+            out_features = []
 
         return {
             "type": "FeatureCollection",
@@ -257,6 +270,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
 
         out_features = []
         from shapely.geometry import Polygon
+        raw_polys = []  # (poly, val) — batch CRS transform after loop
         for i, segs in enumerate(cs.allsegs):
             val = float(cs.levels[i])
             for poly_coords in segs:
@@ -265,8 +279,12 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                 poly = Polygon(poly_coords)
                 if not poly.is_valid:
                     poly = poly.buffer(0)
+                raw_polys.append((poly, val))
 
-                poly_wgs84 = gpd.GeoSeries([poly], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
+        # Batch CRS transform: one GeoSeries instead of N per-polygon calls
+        if raw_polys:
+            gs = gpd.GeoSeries([p for p, _ in raw_polys], crs=utm_crs).to_crs("EPSG:4326")
+            for (poly, val), poly_wgs84 in zip(raw_polys, gs):
                 out_features.append({
                     "type": "Feature",
                     "geometry": mapping(poly_wgs84),
@@ -354,6 +372,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
 
         out_features = []
         clip_box = box(xmin - margin, ymin - margin, xmax + margin, ymax + margin)
+        raw_polys = []  # (poly, props) — batch CRS after loop
 
         for i in range(len(coords)):
             region_idx = vor.point_region[i]
@@ -369,16 +388,21 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                 poly = poly.intersection(clip_box)
                 if poly.is_empty:
                     continue
-                poly_wgs84 = gpd.GeoSeries([poly], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
                 props = {k: v for k, v in gdf.iloc[i].items() if k != "geometry"}
                 props["area_km2"] = round(float(poly.area) / 1e6, 4)
+                raw_polys.append((poly, props))
+            except (ValueError, TypeError):
+                continue
+
+        # Batch CRS transform: one GeoSeries instead of N per-polygon calls
+        if raw_polys:
+            gs = gpd.GeoSeries([p for p, _ in raw_polys], crs=utm_crs).to_crs("EPSG:4326")
+            for (poly, props), poly_wgs84 in zip(raw_polys, gs):
                 out_features.append({
                     "type": "Feature",
                     "geometry": mapping(poly_wgs84),
                     "properties": props,
                 })
-            except (ValueError, TypeError):
-                continue
 
         return {
             "type": "FeatureCollection",

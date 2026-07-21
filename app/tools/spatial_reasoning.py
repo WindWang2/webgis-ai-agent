@@ -1,10 +1,14 @@
 """Spatial reasoning rule library and LLM tool."""
 import logging
-from typing import Literal
+import json
+from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from app.tools.registry import ToolRegistry, tool
+from app.services.chat.llm_client import LLMConfig, call_llm
+from app.core.config import settings
+from app.lib.geo_processor.core import _repair_json
 
 logger = logging.getLogger(__name__)
 
@@ -154,19 +158,84 @@ def _build_user_prompt(query: str, context: dict, depth: str) -> str:
 
 
 async def _call_llm(system_prompt: str, user_prompt: str) -> dict:
-    """LLM 调用占位符。生产环境集成真实 LLM 服务。"""
-    logger.debug("_call_llm placeholder invoked")
-    # Mock structured response for placeholder
+    """调用真实 LLM 服务进行空间推理。
+
+    使用 app.services.chat.llm_client.call_llm 发送 OpenAI 兼容请求，
+    解析 LLM 返回的 JSON 并验证为 SpatialReasoningResult 结构。
+    失败时返回结构化错误响应（不抛异常，由调用方处理）。
+    """
+    logger.debug("_call_llm invoking real LLM service")
+
+    cfg = LLMConfig(
+        base_url=settings.LLM_BASE_URL,
+        model=settings.LLM_MODEL or "deepseek-v4-flash",
+        api_key=settings.LLM_API_KEY,
+        use_prompt_caching=settings.LLM_PROMPT_CACHING_ENABLED,
+        max_tokens=4096,
+    )
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    try:
+        response = await call_llm(cfg, messages)
+        content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+        if not content:
+            logger.warning("[SpatialReasoning] LLM returned empty content")
+            return _error_result("LLM 返回空响应")
+
+        # Parse JSON from LLM response (with repair for truncated output)
+        parsed = _parse_llm_json(content)
+        if parsed is None:
+            return _error_result("LLM 响应无法解析为有效 JSON")
+
+        # Validate structure
+        result = SpatialReasoningResult.model_validate(parsed)
+        return result.model_dump()
+
+    except ValidationError as e:
+        logger.warning(f"[SpatialReasoning] LLM response validation failed: {e}")
+        # Attempt partial parse — extract what we can
+        return _error_result(f"LLM 响应结构不符合预期: {e}")
+    except Exception as e:
+        logger.error(f"[SpatialReasoning] LLM call failed: {type(e).__name__}: {e}")
+        return _error_result(f"LLM 调用失败: {type(e).__name__}")
+
+
+def _parse_llm_json(content: str) -> Optional[dict]:
+    """Parse JSON from LLM content, with repair fallback."""
+    content = content.strip()
+    # Remove common markdown code fences
+    if content.startswith("```"):
+        lines = content.split("\n")
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        content = "\n".join(lines).strip()
+
+    try:
+        return json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        repaired = _repair_json(content)
+        try:
+            return json.loads(repaired)
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+
+def _error_result(message: str) -> dict:
+    """Return a structured error response matching SpatialReasoningResult schema."""
     return {
         "type": "spatial_reasoning",
-        "conclusion": "基于现有规则库，该位置适合商业选址，但需考虑竞争饱和度。",
-        "reasoning_chain": [
-            {"step": 1, "fact": "社区店辐射半径 500-800m", "source": "commercial"},
-            {"step": 2, "fact": "便利店竞争饱和度超过 3 家后盈利能力下降", "source": "commercial"},
-        ],
-        "confidence": 0.75,
-        "uncertainty": "缺乏具体人流量数据，竞争饱和度基于周边POI估算",
-        "recommendations": ["进一步获取周边 exact 人流量数据", "分析工作日午餐客流与办公人口比例"],
+        "conclusion": "推演过程中发生错误",
+        "reasoning_chain": [],
+        "confidence": 0.0,
+        "uncertainty": message,
+        "recommendations": ["请检查 LLM 服务配置 (LLM_API_KEY, LLM_BASE_URL)", "或稍后重试"],
     }
 
 

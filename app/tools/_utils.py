@@ -69,7 +69,7 @@ def db_session():
     try:
         yield db
         db.commit()
-    except Exception:
+    except Exception as e:
         db.rollback()
         raise
     finally:
@@ -93,7 +93,7 @@ async def async_db_session():
     try:
         yield db
         await db.commit()
-    except Exception:
+    except Exception as e:
         await db.rollback()
         raise
     finally:
@@ -219,7 +219,7 @@ def _round_feature(feature: dict, precision: int) -> dict:
     return new_feat
 
 
-def _round_coords(coords, precision: int):
+def _round_coords(coords: list, precision: int) -> list:
     """递归 round。Point→[x,y]，LineString→[[x,y],...]，Polygon→[[[x,y],...]] 等。"""
     if isinstance(coords, (int, float)):
         return round(coords, precision)

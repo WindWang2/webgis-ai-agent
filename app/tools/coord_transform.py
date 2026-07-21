@@ -173,7 +173,7 @@ def register_epsg_transform_tools(registry: ToolRegistry):
             if not data:
                 return {"success": False, "error": "无法解析输入 GeoJSON"}
 
-            def reproject_coords(coords):
+            def reproject_coords(coords: list) -> list:
                 if not isinstance(coords, list) or not coords:
                     return coords
                 if isinstance(coords[0], (int, float)) and len(coords) >= 2:
@@ -181,7 +181,7 @@ def register_epsg_transform_tools(registry: ToolRegistry):
                     return [x, y, *coords[2:]]
                 return [reproject_coords(c) for c in coords]
 
-            def reproject_geom(geom):
+            def reproject_geom(geom: dict) -> dict:
                 if not isinstance(geom, dict):
                     return geom
                 new = dict(geom)

@@ -24,7 +24,8 @@ def _check_db():
         with Engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         return True
-    except Exception:
+    except Exception as e:
+        logger.warning("Health check failed: database unreachable: %s", e)
         return False
 
 
@@ -39,8 +40,9 @@ def _check_llm():
         base_url = settings.LLM_BASE_URL.rstrip("/")
         resp = httpx.head(f"{base_url}/models", timeout=3.0)
         _llm_last_result = resp.status_code < 500
-    except Exception:
+    except Exception as e:
         _llm_last_result = False
+        logger.warning("Health check failed: LLM unreachable: %s", e)
     _llm_last_check = now
     return _llm_last_result
 
@@ -51,7 +53,8 @@ def _check_redis():
         import redis
         r = redis.from_url(settings.REDIS_URL, socket_connect_timeout=2)
         return r.ping()
-    except Exception:
+    except Exception as e:
+        logger.warning("Health check failed: Redis unreachable: %s", e)
         return False
 
 
@@ -63,7 +66,8 @@ def _check_celery():
         inspect = app.control.inspect(timeout=2.0)
         active = inspect.active()
         return active is not None
-    except Exception:
+    except Exception as e:
+        logger.warning("Health check failed: Celery unreachable: %s", e)
         return False
 
 

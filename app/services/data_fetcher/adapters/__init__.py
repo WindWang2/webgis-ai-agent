@@ -1,3 +1,6 @@
+# Public API re-exports — intended for external package consumers.
+# No internal code imports from this __init__; direct imports from
+# individual adapter modules are used instead.
 from .postgis_adapter import PostGISAdapter
 from .oss_adapter import OSSAdapter
 from .third_party_api_adapter import ThirdPartyAPIAdapter

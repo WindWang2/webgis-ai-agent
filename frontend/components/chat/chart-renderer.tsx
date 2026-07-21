@@ -1,3 +1,4 @@
+import { devOnly } from "@/lib/utils/logger";
 "use client"
 
 import {
@@ -32,19 +33,19 @@ export function adaptChartData(raw: unknown): ChartData | null {
 
     // Validate type
     if (!type || !VALID_CHART_TYPES.has(type)) {
-      console.warn("Invalid chart type:", type)
+      devOnly.warn("Invalid chart type:", type)
       return null
     }
 
     // Validate title (sanitized by backend, but double-check)
     if (!title || typeof title !== "string" || title.length === 0) {
-      console.warn("Invalid chart title")
+      devOnly.warn("Invalid chart title")
       return null
     }
 
     // Validate data array
     if (!Array.isArray(data) || data.length === 0) {
-      console.warn("Invalid chart data")
+      devOnly.warn("Invalid chart data")
       return null
     }
 
@@ -72,7 +73,7 @@ export function adaptChartData(raw: unknown): ChartData | null {
       ...(y_label !== undefined && { y_label: String(y_label).slice(0, 200) }),
     }
   } catch (e) {
-    console.error("Failed to validate chart data:", e)
+    devOnly.error("Failed to validate chart data:", e)
     return null
   }
 }

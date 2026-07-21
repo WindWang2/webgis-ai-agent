@@ -156,7 +156,7 @@ export function UploadZone({ sessionId, onUploadSuccess, compact }: UploadZonePr
         <div className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/50 rounded-lg">
           <X className="h-3 w-3 text-red-500 shrink-0" />
           <span className="text-xs text-red-600 dark:text-red-400">{error}</span>
-          <button onClick={() => setError(null)} className="ml-auto">
+          <button onClick={() => setError(null)} aria-label="关闭错误提示" className="ml-auto">
             <X className="h-3 w-3 text-red-400 hover:text-red-600" />
           </button>
         </div>

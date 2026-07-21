@@ -16,3 +16,11 @@ services:
       - NODE_ENV=development
       - NEXT_TELEMETRY_DISABLED=1
     command: npm run dev
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
+        reservations:
+          memory: 512m
+          cpus: "0.25"

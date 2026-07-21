@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import dataclasses
-import datetime
+from datetime import datetime, timezone
 import json
 import logging
 from pathlib import Path
@@ -35,7 +35,7 @@ class ToolDecisionRecord:
 
     def to_dict(self) -> dict:
         d = dataclasses.asdict(self)
-        d["ts"] = datetime.datetime.now().isoformat(timespec="seconds")
+        d["ts"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         # 审计 S44：user_message 截断到 200 字符（已有），tool_args 也截断。
         # tool_args 常含完整 GeoJSON（可达 MB 级）+ 可能含路径/坐标 PII，
         # 全量写日志会撑爆磁盘 + 泄漏敏感数据。整体 args JSON 截到 2000 字符。

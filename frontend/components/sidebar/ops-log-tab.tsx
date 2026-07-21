@@ -32,6 +32,7 @@ export function OpsLogTab() {
         {opsLog.length > 0 && (
           <button
             onClick={clearOpsLog}
+            aria-label='清空日志'
             className='text-[14px] text-slate-400 hover:text-red-500 px-2 py-1 rounded hover:bg-red-50'
             title='清空日志'
           >

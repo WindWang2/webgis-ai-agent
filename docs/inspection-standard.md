@@ -2,11 +2,11 @@
 ## 🎯 核心定位
 巡检核心目标从"状态统计+全量文档检查"升级为**问题驱动、价值导向**的子任务全生命周期异常监控，彻底杜绝无意义的虚假工作。所有巡检动作必须有明确产出（解决异常/更新状态/生成待办），没有产出的巡检直接判定为无效工作禁止执行。
 
-*(前文 270 行 Coder 代理监控逻辑与执行器框架已隐式继承。以下为 V3.1 针对 WebGIS V2.1 架构特别增加的生产力探针约束。)*
+*(前文 270 行 Coder 代理监控逻辑与执行器框架已隐式继承。以下为 V3.1 针对 WebGIS v0.1.2 架构特别增加的生产力探针约束。)*
 
 ---
 
-## 🚀 WebGIS V2.1 专项探针 (Health Check in V2.1)
+## 🚀 WebGIS V3.x 专项探针 (Health Check in V3.x)
 
 针对 V3.2 重构的混合架构，巡检脚本必须增加以下基建设施监控环节，一旦发现服务掉线，立即触发 🔴 Critical 级告警：
 
@@ -20,7 +20,7 @@ if [ "$REDIS_STATUS" != "PONG" ]; then
 fi
 
 # 验证计算节点存活
-CELERY_WORKERS=$(celery -A main.celery_app status 2>/dev/null | grep "OK" | wc -l)
+	CELERY_WORKERS=$(celery -A app.services.task_queue status 2>/dev/null | grep "OK" | wc -l)
 if [ "$CELERY_WORKERS" -eq 0 ]; then
     echo "🔴 Critical: Celery 空间计算集群下线，所有重型 Tool Call 将被阻塞挂起！"
 fi
@@ -30,7 +30,8 @@ fi
 严禁 Agent 将过大的 GeoJSON 原文暴露在会话缓存内：
 ```bash
 # 巡检数据库中 tools_result 是否存有越界字符串
-OVERSIZED_PAYLOADS=$(sqlite3 data/webgis.db "SELECT count(id) FROM messages WHERE length(tool_result) > 50000;" 2>/dev/null)
+# 使用绝对路径避免 cwd 漂移导致找不到数据库
+OVERSIZED_PAYLOADS=$(sqlite3 ${PROJECT_ROOT}/data/webgis.db "SELECT count(id) FROM messages WHERE length(tool_result) > 50000;" 2>/dev/null)
 if [ "$OVERSIZED_PAYLOADS" -gt 0 ]; then
     echo "🟠 Major: 发现异常宏大的 JSON 上下文！未严格执行 Fetch-on-Demand 剥离机制！"
 fi

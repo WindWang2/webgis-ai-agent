@@ -6,6 +6,8 @@ import { useMapAction } from '@/lib/contexts/map-action-context';
 import { Download, Trash2, Printer, History } from 'lucide-react';
 import { API_BASE } from '@/lib/api/config';
 
+
+import { devOnly } from "@/lib/utils/logger";
 const iconForType: Record<string, string> = {
   png: '🖼',
   pdf: '📄',
@@ -51,7 +53,7 @@ export function MapStudioTab() {
     // 只允许字母数字 + . _ -，拒绝 ../ ? # 等。
     const downloadName = item.filename || item.name;
     if (!downloadName || !/^[a-zA-Z0-9._-]+$/.test(downloadName)) {
-      console.warn('[MapStudioTab] 拒绝非法 download filename:', downloadName);
+      devOnly.warn('[MapStudioTab] 拒绝非法 download filename:', downloadName);
       return;
     }
     const a = document.createElement('a');
@@ -401,6 +403,7 @@ export function MapStudioTab() {
                     <div className="flex items-center gap-0.5 flex-shrink-0">
                       <button
                         onClick={() => handleDownload(item)}
+                        aria-label="下载"
                         className="p-1.5 rounded-md transition-colors"
                         style={{ color: isDark ? '#94a3b8' : '#64748b' }}
                         onMouseEnter={(e) => { 
@@ -417,6 +420,7 @@ export function MapStudioTab() {
                       </button>
                       <button
                         onClick={() => handleDelete(item.id)}
+                        aria-label="删除"
                         className="p-1.5 rounded-md transition-colors"
                         style={{ color: isDark ? '#94a3b8' : '#64748b' }}
                         onMouseEnter={(e) => { 

@@ -42,7 +42,7 @@ class LayerUpdate(BaseModel):
 class LayerResponse(LayerBase):
     """图层响应模型"""
     id: int
-    owner_id: Optional[int] = None
+    owner_id: Optional[str] = None  # DB: users.id is String(255) (UUID)
     is_active: bool = True
     created_at: datetime
     updated_at: datetime
@@ -103,7 +103,7 @@ class TaskListResponse(BaseModel):
 
 class PermissionCheck(BaseModel):
     """权限检查请求"""
-    user_id: int
+    user_id: str  # DB: users.id is String(255) (UUID)
     resource_type: str
     resource_id: int
     required_permission: str

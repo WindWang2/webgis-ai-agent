@@ -84,23 +84,23 @@ def _generate_heatmap(features: list, cell_size: int = 500, radius: int = 1000,
             max_val = float(H.max()) if H.max() > 0 else 1.0
 
             MAX_GRID_FEATURES = 500_000
-            total_cells = H[H > 0].size
+            total_cells = int(np.sum(H > 0))
             if total_cells > MAX_GRID_FEATURES:
                 return {"error": f"Grid too dense ({total_cells} cells). Increase cell_size or reduce data extent. Max allowed: {MAX_GRID_FEATURES}"}
 
-            for i in range(len(xedges) - 1):
-                for j in range(len(yedges) - 1):
-                    count = H[i, j]
-                    if count > 0:
-                        rect = box(xedges[i], yedges[j], xedges[i + 1], yedges[j + 1])
-                        grid_features.append({
-                            "type": "Feature",
-                            "geometry": mapping(rect),
-                            "properties": {
-                                "count": int(count),
-                                "weight": round(float(count / max_val), 4)
-                            }
-                        })
+            # Only iterate over non-zero bins (audit: avoid O(n²) empty-bin walk)
+            nonzero = np.argwhere(H > 0)
+            for i, j in nonzero:
+                count = int(H[i, j])
+                rect = box(xedges[i], yedges[j], xedges[i + 1], yedges[j + 1])
+                grid_features.append({
+                    "type": "Feature",
+                    "geometry": mapping(rect),
+                    "properties": {
+                        "count": count,
+                        "weight": round(float(count / max_val), 4)
+                    }
+                })
 
             return {
                 "success": True,
@@ -310,8 +310,8 @@ def register_spatial_tools(registry: ToolRegistry):
                         "palette": palette_key,
                         "palette_colors": list(palette_colors),
                     }
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"[heatmap_data] legend_spec generation failed: {e}")
             if isinstance(data, dict) and data.get("type") == "FeatureCollection":
                 data = trim_features(data)
             return data
@@ -358,8 +358,8 @@ def register_spatial_tools(registry: ToolRegistry):
                             "palette": palette_key,
                             "palette_colors": list(palette_colors),
                         }
-                    except Exception:
-                        pass  # legend failure never blocks tool result
+                    except Exception as e:
+                        logger.warning(f"[heatmap_data] legend_spec generation failed (result path): {e}")
             if isinstance(res_data, dict) and res_data.get("type") == "FeatureCollection":
                 res_data = trim_features(res_data)
             return res_data

@@ -116,8 +116,9 @@ async def list_sessions(
     user_id = _user.get("user_id")
     async with async_db_session() as db:
         sessions = await AsyncHistoryService(db).list_sessions(limit=limit, user_id=user_id)
-        # offset 简单 slice（session 总数有限，DB 端 offset 留作后续优化）
-        paginated = sessions[offset:offset + limit] if offset else sessions
+        # 审计 P1：offset=0 是合法的分页请求，不应跳过切片。
+        # 之前 `if offset` 把 0 当 falsy 处理，导致第一页返回全量数据。
+        paginated = sessions[offset:offset + limit]
         return {
             "total": len(sessions),  # 本次 query 的总数（不含 offset）
             "limit": limit,
@@ -211,8 +212,8 @@ async def push_session_map_state(
 
 
 @router.get("/skills")
-async def list_skills_api():
-    """列出可用的 .md 技能"""
+async def list_skills_api(_user: dict = Depends(get_current_user_optional)):
+    """列出可用的 .md 技能 — 需要认证（技能列表属于内部元数据）。"""
     from app.tools.skills import list_md_skills
     return {"skills": list_md_skills()}
 
@@ -228,8 +229,8 @@ async def clear_session(session_id: str, _user: dict = Depends(get_current_user_
 
 
 @router.get("/tools")
-async def list_tools():
-    """列出可用工具"""
+async def list_tools(_user: dict = Depends(get_current_user_optional)):
+    """列出可用工具 — 需要认证（工具 schema 含 tier-3 危险工具）。"""
     return {"tools": get_registry().get_schemas()}
 
 

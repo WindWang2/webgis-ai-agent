@@ -10,6 +10,8 @@ import {
 import { API_BASE } from '@/lib/api/config';
 import { useHudStore } from '@/lib/store/useHudStore';
 
+
+import { devOnly } from "@/lib/utils/logger";
 export function SettingsPanel() {
   const {
     settingsOpen, setSettingsOpen,
@@ -44,7 +46,7 @@ export function SettingsPanel() {
         setAvailableSkills(data.skills);
       }
     } catch (e) {
-      console.error("Failed to fetch settings:", e);
+      devOnly.error("Failed to fetch settings:", e);
     }
   };
 

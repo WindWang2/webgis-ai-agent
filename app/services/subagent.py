@@ -153,7 +153,7 @@ class SubagentDispatcher:
         # 记下父 session 启动前已有的 refs，结束后用差集得到子任务新增的 refs
         try:
             refs_before = set((await session_data_manager.list_refs(self.parent_session_id)).keys())
-        except Exception:
+        except Exception as e:
             refs_before = set()
 
         sub_engine = self._build_sub_engine(tool_subset, max_rounds)
@@ -179,7 +179,7 @@ class SubagentDispatcher:
         # 子任务结束后新增的 refs
         try:
             refs_after = set((await session_data_manager.list_refs(self.parent_session_id)).keys())
-        except Exception:
+        except Exception as e:
             refs_after = set()
         new_refs = sorted(refs_after - refs_before)
 

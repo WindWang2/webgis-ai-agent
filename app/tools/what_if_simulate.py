@@ -4,6 +4,8 @@ import math
 import uuid
 from typing import Literal
 
+import numpy as np
+
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
@@ -97,18 +99,15 @@ def _calculate_impact(scenario_type: str, parameters: dict) -> dict:
 
 # --- GeoJSON generation ---
 
-def _generate_circle_polygon(center_lng, center_lat, radius_m, num_points=32):
-    """Generate approximate circle polygon in GeoJSON coordinates."""
-    coords = []
+def _generate_circle_polygon(center_lng: float, center_lat: float, radius_m: float, num_points: int = 32) -> list:
+    """Generate approximate circle polygon in GeoJSON coordinates using numpy."""
+    angles = np.linspace(0, 2 * np.pi, num_points + 1)
     lat_rad = math.radians(center_lat)
     lat_factor = 111000.0
     lng_factor = 111000.0 * math.cos(lat_rad)
-    for i in range(num_points + 1):
-        angle = 2 * math.pi * i / num_points
-        dx = radius_m * math.cos(angle) / lng_factor
-        dy = radius_m * math.sin(angle) / lat_factor
-        coords.append([center_lng + dx, center_lat + dy])
-    return coords
+    dx = radius_m * np.cos(angles) / lng_factor
+    dy = radius_m * np.sin(angles) / lat_factor
+    return np.column_stack([center_lng + dx, center_lat + dy]).tolist()
 
 
 def _impact_level_from_deltas(deltas: dict) -> str:
@@ -129,7 +128,7 @@ def _impact_level_from_deltas(deltas: dict) -> str:
     return "low"
 
 
-def _generate_simulation_geojson(scenario_type, target_center, impact):
+def _generate_simulation_geojson(scenario_type: str, target_center: tuple, impact: dict) -> dict:
     """Generate FeatureCollection with direct zone and indirect zone (ring with hole)."""
     rule = get_rule(scenario_type)
     direct_radius = rule.get("direct_radius_m")
@@ -162,15 +161,11 @@ def _generate_simulation_geojson(scenario_type, target_center, impact):
             "properties": direct_props,
         })
 
-        # Indirect zone: ring with hole
+        # Indirect zone: ring with hole (reuse direct_ring as inner boundary, reversed)
         outer_ring = _generate_circle_polygon(
             target_center[0], target_center[1], indirect_radius
         )
-        inner_ring = _generate_circle_polygon(
-            target_center[0], target_center[1], direct_radius
-        )
-        # Reverse inner ring for hole (clockwise)
-        inner_ring_reversed = list(reversed(inner_ring))
+        inner_ring_reversed = list(reversed(direct_ring))
         indirect_props = {
             "zone": "indirect",
             "impact_level": _impact_level_from_deltas({
@@ -262,6 +257,28 @@ def _build_impact_summary(
     }
 
 
+def _empty_result(scenario: str, target_area: str, scenario_type: str = "error",
+                   scenario_name: str = "执行错误", uncertainty: str = "无法计算影响") -> dict:
+    """构建统一的空/错误结果，避免重复构造 WhatIfSimulationResult。"""
+    return WhatIfSimulationResult(
+        type="what_if_simulation",
+        scenario=scenario,
+        target_area=target_area,
+        simulation_ref_id=uuid.uuid4().hex[:12],
+        impact_summary={
+            "scenario_type": scenario_type,
+            "scenario_name": scenario_name,
+            "direct_area_km2": 0.0,
+            "indirect_area_km2": 0.0,
+            "affected_metrics": [],
+        },
+        metrics={},
+        uncertainty=uncertainty,
+        rules_applied=[],
+        simulation_geojson={"type": "FeatureCollection", "features": []},
+    ).model_dump()
+
+
 def what_if_simulate(
     scenario: str,
     target_area: str,
@@ -276,43 +293,15 @@ def what_if_simulate(
     try:
         scenario_type = _detect_scenario_type(scenario)
         if scenario_type is None:
-            return WhatIfSimulationResult(
-                type="what_if_simulation",
-                scenario=scenario,
-                target_area=target_area,
-                simulation_ref_id=uuid.uuid4().hex[:12],
-                impact_summary={
-                    "scenario_type": "unknown",
-                    "scenario_name": "未知场景",
-                    "direct_area_km2": 0.0,
-                    "indirect_area_km2": 0.0,
-                    "affected_metrics": [],
-                },
-                metrics={},
-                uncertainty="无法计算影响：未识别的场景类型",
-                rules_applied=[],
-                simulation_geojson={"type": "FeatureCollection", "features": []},
-            ).model_dump()
+            return _empty_result(scenario, target_area, scenario_type="unknown",
+                                  scenario_name="未知场景",
+                                  uncertainty="无法计算影响：未识别的场景类型")
 
         rule = get_rule(scenario_type)
         if not rule:
-            return WhatIfSimulationResult(
-                type="what_if_simulation",
-                scenario=scenario,
-                target_area=target_area,
-                simulation_ref_id=uuid.uuid4().hex[:12],
-                impact_summary={
-                    "scenario_type": scenario_type,
-                    "scenario_name": "规则缺失",
-                    "direct_area_km2": 0.0,
-                    "indirect_area_km2": 0.0,
-                    "affected_metrics": [],
-                },
-                metrics={},
-                uncertainty="无法计算影响：规则不存在",
-                rules_applied=[],
-                simulation_geojson={"type": "FeatureCollection", "features": []},
-            ).model_dump()
+            return _empty_result(scenario, target_area, scenario_type=scenario_type,
+                                  scenario_name="规则缺失",
+                                  uncertainty="无法计算影响：规则不存在")
 
         impact = _calculate_impact(scenario_type, parameters)
         metrics = _build_metrics(impact)
@@ -338,23 +327,7 @@ def what_if_simulate(
         return result.model_dump()
     except (ValueError, TypeError, KeyError, RuntimeError) as e:
         logger.error(f"[WhatIfSimulate] Failed: {e}")
-        return WhatIfSimulationResult(
-            type="what_if_simulation",
-            scenario=scenario,
-            target_area=target_area,
-            simulation_ref_id=uuid.uuid4().hex[:12],
-            impact_summary={
-                "scenario_type": "error",
-                "scenario_name": "执行错误",
-                "direct_area_km2": 0.0,
-                "indirect_area_km2": 0.0,
-                "affected_metrics": [],
-            },
-            metrics={},
-            uncertainty=f"错误: {str(e)}",
-            rules_applied=[],
-            simulation_geojson={"type": "FeatureCollection", "features": []},
-        ).model_dump()
+        return _empty_result(scenario, target_area, uncertainty=f"错误: {str(e)}").model_dump()
 
 
 def register_what_if_simulate(registry: ToolRegistry):

@@ -24,6 +24,14 @@ services:
       retries: 5
     networks:
       - webgis-net
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+          cpus: "2.0"
+        reservations:
+          memory: 2g
+          cpus: "1.0"
 
   # Redis 缓存/消息队列
   redis:
@@ -37,16 +45,24 @@ services:
       --appendonly
       --maxmemory 256mb
       --maxmemory-policy noeviction
-      --requirepass ${REDIS_PASSWORD:-changeme_redis_password}
+      --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.production}
     volumes:
       - redis_prod_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme_redis_password}", "--raw", "incr", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.production}", "--raw", "incr", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
     networks:
       - webgis-net
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
+        reservations:
+          memory: 512m
+          cpus: "0.25"
 
   # 后端 API 服务
   api:
@@ -70,6 +86,9 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS}
       - LOG_LEVEL=INFO
       - PYTHONUNBUFFERED=1
+      # 审计 P1：统一上传路径为 /app/uploads（与 Dockerfile.prod 创建的一致）。
+      # 之前 mount /app/frontend/out/uploads 但应用写 ./data/uploads/，导致上传丢失。
+      - DATA_DIR=/app
     env_file:
       - .env.production
     depends_on:
@@ -78,15 +97,23 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - uploads:/app/frontend/out/uploads
+      - uploads:/app/uploads
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/api/v1/health/live"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/live', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
     networks:
       - webgis-net
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "2.0"
+        reservations:
+          memory: 1g
+          cpus: "0.5"
 
   # Celery Worker（异步任务处理）
   celery-worker:
@@ -116,6 +143,20 @@ services:
     command: celery -A app.services.task_queue worker --loglevel=info --concurrency=2
     networks:
       - webgis-net
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "2.0"
+        reservations:
+          memory: 1g
+          cpus: "0.5"
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.services.task_queue inspect ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # Nginx 反向代理（可选，用于生产环境）
   nginx:
@@ -133,6 +174,14 @@ services:
       - api
     networks:
       - webgis-net
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+        reservations:
+          memory: 128m
+          cpus: "0.1"
 
   # Prometheus 指标收集（可选）
   prometheus:
@@ -151,6 +200,14 @@ services:
       - '--web.console.templates=/etc/prometheus/consoles'
     networks:
       - webgis-net
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
+        reservations:
+          memory: 512m
+          cpus: "0.25"
 
   # Grafana 可视化面板（可选）
   grafana:
@@ -170,6 +227,14 @@ services:
       - prometheus
     networks:
       - webgis-net
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+        reservations:
+          memory: 128m
+          cpus: "0.1"
 
 volumes:
   pg_prod_data:

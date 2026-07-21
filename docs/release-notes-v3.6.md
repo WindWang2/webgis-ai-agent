@@ -23,7 +23,7 @@ Following a critical security alert, the entire Git history has been sanitized:
 ## ⚡ Real-Time Intelligence (Streaming Flow)
 
 ### 1. "Streaming Map" Architecture
-- **Parallel Rendering**: Integrated WebSocket broadcasting directly into the `ChatEngine`. Map layers now update the moment a spatial tool completes, allowing users to see data visualizations while the LLM is still generating its textual response.
+- **Parallel Rendering**: SSE streaming in `ChatEngine` delivers map layer updates the moment a spatial tool completes, allowing users to see data visualizations while the LLM is still generating its textual response. The separate WebSocket perception channel (`/ws/{session_id}`) handles bidirectional real-time map state sync.
 - **Fetch-on-Demand (v2)**: Optimized large dataset transmission using a "Reference-then-Fetch" strategy. Large GeoJSON payloads are cached on the backend and retrieved by the frontend via authenticated REST calls, preventing WebSocket congestion.
 - **Persistent Heartbeat**: Introduced a 30s WebSocket heartbeat mechanism to maintain stable connections through enterprise proxies and load balancers.
 

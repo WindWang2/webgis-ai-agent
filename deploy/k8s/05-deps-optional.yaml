@@ -24,6 +24,13 @@ spec:
         image: postgis/postgis:15-3.4
         ports:
         - containerPort: 5432
+        # 审计 I25：容器安全上下文
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false  # Postgres 需写入数据目录（由 PVC 提供）
+          capabilities:
+            drop:
+              - ALL
         env:
         - name: POSTGRES_USER
           valueFrom:
@@ -119,6 +126,13 @@ spec:
         image: redis:7-alpine
         ports:
         - containerPort: 6379
+        # 审计 I25：容器安全上下文 — 禁止权限提升，丢弃所有 capabilities
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
         # 审计 I23：Redis 也加 resources（与 maxmemory 1gb 对齐）
         resources:
           requests:

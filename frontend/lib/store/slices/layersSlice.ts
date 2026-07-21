@@ -7,6 +7,8 @@ import type { StateCreator } from 'zustand';
 import { API_BASE } from '../../api/config';
 import type { HudState } from '../hud-types';
 
+
+import { devOnly } from "@/lib/utils/logger";
 export const createLayersSlice: StateCreator<HudState, [], [], Partial<HudState>> = (set, get) => ({
   /* ─── Layers ─── */
   layers: [],
@@ -58,7 +60,7 @@ export const createLayersSlice: StateCreator<HudState, [], [], Partial<HudState>
         set({ analysisAssets: assets });
       }
     } catch (e) {
-      console.error('Failed to fetch assets:', e);
+      devOnly.error('Failed to fetch assets:', e);
     }
     void get;
   },
