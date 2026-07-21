@@ -1,6 +1,6 @@
 """数据源质量评估引擎"""
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from app.services.explorer.models import DataSourceQualityScore, FieldInfo
 
@@ -31,7 +31,7 @@ class QualityEngine:
     def calc_temporal_score(self, data_type: str, published_at: datetime) -> float:
         """计算时效性分数"""
         lambda_val = self.TEMPORAL_LAMBDA.get(data_type, self.TEMPORAL_LAMBDA["default"])
-        delta_months = (datetime.now() - published_at).days / 30.0
+        delta_months = (datetime.now(timezone.utc) - published_at).days / 30.0
         score = math.exp(-lambda_val * delta_months)
         return round(score, 4)
 

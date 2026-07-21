@@ -6,7 +6,7 @@ import html as html_mod
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import jinja2
@@ -95,7 +95,7 @@ class ReportService:
         format: str,
     ) -> dict[str, Any]:
         """将原始消息转换为模板可用的结构化数据。"""
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
         # 提取用户和助手消息
         conversation_msgs = []

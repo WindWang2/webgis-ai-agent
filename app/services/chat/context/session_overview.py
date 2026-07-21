@@ -1,7 +1,7 @@
 """Session overview and duration calculation for chat context."""
 from __future__ import annotations
 
-import datetime
+from datetime import datetime, timezone
 from app.services.session_data import session_data_manager
 
 def _format_duration(started_at_iso: str | None) -> str | None:
@@ -9,13 +9,15 @@ def _format_duration(started_at_iso: str | None) -> str | None:
     if not started_at_iso:
         return None
     try:
-        started = datetime.datetime.fromisoformat(started_at_iso)
+        started = datetime.fromisoformat(started_at_iso)
     except (ValueError, TypeError):
         return None
+    # 若输入是 naive datetime（如旧测试数据），用 naive now 保证减法合法；
+    # 若输入带时区，则用对应时区的 now。
     if started.tzinfo is None:
-        now = datetime.datetime.now()
+        now = datetime.now()
     else:
-        now = datetime.datetime.now(started.tzinfo)
+        now = datetime.now(started.tzinfo)
     delta = now - started
     total_min = int(delta.total_seconds() // 60)
     if total_min < 1:

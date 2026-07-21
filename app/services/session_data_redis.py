@@ -284,7 +284,7 @@ class RedisSessionDataManager:
         的上下文注入和前端 SSE 回放，缺一条不会破坏正确性。
         """
         entry = json.dumps(
-            {"event": event, "data": data, "timestamp": datetime.now().isoformat()},
+            {"event": event, "data": data, "timestamp": datetime.now(timezone.utc).isoformat()},
             ensure_ascii=False,
         )
         try:

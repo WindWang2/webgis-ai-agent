@@ -3,7 +3,7 @@ import uuid
 import logging
 from typing import Any, Optional
 from collections import OrderedDict, deque
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class SessionDataManager:
             self._store[session_id] = OrderedDict()
         # 同步起点：若此 session 还没碰过 map_state，这里也算它的起点
         if session_id not in self._map_state:
-            self._map_state[session_id] = {"_started_at": datetime.now().isoformat()}
+            self._map_state[session_id] = {"_started_at": datetime.now(timezone.utc).isoformat()}
 
         # 16 hex chars = 64 bits entropy. ref_id + session_id 是能力令牌，需难以枚举。
         ref_id = f"ref:{prefix}-{uuid.uuid4().hex[:16]}"
@@ -102,7 +102,7 @@ class SessionDataManager:
         if session_id not in self._map_state:
             self._map_state[session_id] = {}
             # 首次写入即视为 session 起点（避免单独维护"创建"路径）
-            self._map_state[session_id].setdefault("_started_at", datetime.now().isoformat())
+            self._map_state[session_id].setdefault("_started_at", datetime.now(timezone.utc).isoformat())
         self._map_state[session_id][key] = value
 
     async def get_started_at(self, session_id: str) -> Optional[str]:
@@ -137,7 +137,7 @@ class SessionDataManager:
         self._event_log[session_id].append({
             "event": event,
             "data": data,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
     async def get_event_log(self, session_id: str) -> list[dict]:

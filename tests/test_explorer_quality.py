@@ -1,13 +1,13 @@
 """Explorer quality engine tests"""
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.services.explorer.quality_engine import QualityEngine
 
 
 def test_temporal_score_education():
     engine = QualityEngine()
     # Data from 14 months ago, education type (lambda=0.03)
-    published = datetime.now() - timedelta(days=14 * 30)
+    published = datetime.now(timezone.utc) - timedelta(days=14 * 30)
     score = engine.calc_temporal_score("education", published)
     # exp(-0.03 * 14) ≈ 0.657
     assert 0.65 <= score <= 0.67
@@ -15,7 +15,7 @@ def test_temporal_score_education():
 
 def test_temporal_score_poi():
     engine = QualityEngine()
-    published = datetime.now() - timedelta(days=14 * 30)
+    published = datetime.now(timezone.utc) - timedelta(days=14 * 30)
     score = engine.calc_temporal_score("poi", published)
     # exp(-0.30 * 14) ≈ 0.015
     assert score < 0.05
@@ -24,7 +24,7 @@ def test_temporal_score_poi():
 def test_temporal_score_default():
     """Unknown data type falls back to default lambda (0.10)"""
     engine = QualityEngine()
-    published = datetime.now() - timedelta(days=14 * 30)
+    published = datetime.now(timezone.utc) - timedelta(days=14 * 30)
     score = engine.calc_temporal_score("restaurant", published)
     # exp(-0.10 * 14) ≈ 0.247
     assert 0.20 <= score <= 0.30

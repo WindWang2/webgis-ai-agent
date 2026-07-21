@@ -6,7 +6,7 @@ import html as html_mod
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from pydantic import BaseModel, Field
 from app.tools.registry import ToolRegistry, tool
@@ -82,7 +82,7 @@ def _render_monitoring_report_html(
         # 使用内联 fallback 模板
         return _fallback_monitoring_html(title, region_name, period, assets, summary_text, conclusions)
 
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     # 按类型分组资产
     asset_groups = {}
@@ -113,7 +113,7 @@ def _fallback_monitoring_html(
 ) -> str:
     """当模板文件缺失时的极简 fallback HTML"""
     esc = html_mod.escape
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     parts = [
         f"<!DOCTYPE html><html lang='zh-CN'><head><meta charset='UTF-8'><title>{esc(title)}</title>",
         "<style>body{font-family:sans-serif;max-width:900px;margin:40px auto;padding:20px;line-height:1.6;color:#333}",
@@ -211,7 +211,7 @@ def register_monitoring_report_tools(registry: ToolRegistry):
 
             if format.lower() in ("markdown", "md"):
                 # Markdown 格式
-                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
                 lines = [
                     f"# {title}",
                     "",
