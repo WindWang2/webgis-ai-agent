@@ -87,7 +87,9 @@ class Settings(BaseSettings):
     TMP_DIR: str = "./tmp"
 
     # CORS
-    CORS_ORIGINS: List[str] = ["*"]
+    # 审计 P2：默认改为 localhost:3000（Next.js dev server），而非 ["*"]。
+    # 生产环境 validator 会强制要求显式 allow-list。
+    CORS_ORIGINS: List[str] = ["http://localhost:3000"]
 
     # Celery & Redis
     REDIS_URL: str = "redis://localhost:16379/0"
