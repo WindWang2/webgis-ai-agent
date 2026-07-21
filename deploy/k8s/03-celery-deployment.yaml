@@ -35,8 +35,10 @@ spec:
       - name: webgis-celery
         image: webgis-prod:latest
         imagePullPolicy: IfNotPresent
-        command: ["celery"]
-        args: ["-A", "app.services.task_queue", "worker", "--loglevel=info", "--concurrency=$(CELERY_CONCURRENCY)"]
+        # 审计 P0：exec-form args 不经过 shell，$(VAR) 不会被展开。
+        # 改用 sh -c 让 ${CELERY_CONCURRENCY} 正确展开；exec 确保信号直达 celery 进程。
+        command: ["/bin/sh", "-c"]
+        args: ["exec celery -A app.services.task_queue worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-2}"]
         envFrom:
         - configMapRef:
             name: webgis-config

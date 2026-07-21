@@ -1,8 +1,12 @@
 """核心配置模块"""
-import secrets
+import ipaddress
 import logging
+import re
+import secrets
 import warnings
 from typing import List, Optional
+from urllib.parse import urlparse
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, model_validator
 
@@ -122,6 +126,94 @@ class Settings(BaseSettings):
                 "Set an explicit allow-list (e.g. CORS_ORIGINS=https://your.app)."
             )
         return self
+
+    @model_validator(mode="after")
+    def _validate_external_urls(self) -> "Settings":
+        """验证外部 URL 配置，防止 SSRF 攻击。
+
+        审计 P0：LLM_BASE_URL 等外部接口地址以前接受任意 URL，包括：
+        - 内网地址（http://localhost:8080/admin）
+        - 云元数据端点（http://169.254.169.254/）
+        - 非 HTTP 协议（file:///etc/passwd）
+
+        这里只对 *非默认值* 做严格校验，保留开发默认值不受影响。
+        """
+        _DEFAULTS = {
+            "https://api.deepseek.com",
+            "https://overpass.openstreetmap.fr/api/interpreter",
+            "https://nominatim.openstreetmap.org/search",
+        }
+
+        for attr in ("LLM_BASE_URL", "OVERPASS_API_URL", "NOMINATIM_URL"):
+            url = getattr(self, attr)
+            # 跳过默认值（开发时硬编码的安全 URL）
+            if url in _DEFAULTS:
+                continue
+            self._validate_no_ssrf(url, field=attr)
+        return self
+
+    @staticmethod
+    def _validate_no_ssrf(url: str, field: str = "URL") -> None:
+        """校验单个 URL 不允许指向内网/元数据/非 HTTP 协议。"""
+        parsed = urlparse(url)
+
+        # 只允许 http / https 协议
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(
+                f"{field}='{url}' uses disallowed scheme '{parsed.scheme}'. "
+                f"Only http:// and https:// are allowed."
+            )
+
+        hostname = parsed.hostname
+        if not hostname:
+            raise ValueError(f"{field}='{url}' has no hostname.")
+
+        # 阻止本地回环
+        if hostname in ("localhost", "127.0.0.1", "::1"):
+            raise ValueError(
+                f"{field}='{url}' points to localhost. "
+                f"Localhost URLs are blocked to prevent SSRF."
+            )
+
+        # 阻止云元数据端点（AWS / GCP / Azure）
+        _METADATA_IPS = {
+            "169.254.169.254",  # AWS / GCP
+            "metadata.google.internal.",  # GCP（尾部点保留 FQDN 习惯）
+            "169.254.169.254.",   # 带尾点的变体
+        }
+        if hostname.lower() in _METADATA_IPS:
+            raise ValueError(
+                f"{field}='{url}' points to a cloud metadata endpoint. Blocked."
+            )
+
+        # 尝试解析 hostname → IP，检查是否为私有地址
+        try:
+            addr = ipaddress.ip_address(hostname)
+            if addr.is_private or addr.is_loopback or addr.is_link_local:
+                raise ValueError(
+                    f"{field}='{url}' resolves to private/loopback IP {addr}. "
+                    f"Only public IPs are allowed."
+                )
+        except ValueError as exc:
+            # 不是纯 IP 地址（可能是域名如 api.openai.com）— 尝试 DNS 解析
+            if "is not allowed" in str(exc):
+                raise
+            # 域名：做基本黑名单检查
+            _BLOCKED_DOMAIN_PATTERNS = [
+                r"^169\.254",        # link-local
+                r"^10\.",            # 10.0.0.0/8
+                r"^172\.(1[6-9]|2\d|3[01])\.",  # 172.16.0.0/12
+                r"^192\.168\.",      # 192.168.0.0/16
+                r"^127\.",           # loopback
+                r"metadata",         # 元数据服务
+                r"internal$",        # k8s internal
+            ]
+            host_lower = hostname.lower()
+            for pat in _BLOCKED_DOMAIN_PATTERNS:
+                if re.match(pat, host_lower):
+                    raise ValueError(
+                        f"{field}='{url}' uses blocked domain pattern '{pat}'."
+                    )
 
 
 settings = Settings()

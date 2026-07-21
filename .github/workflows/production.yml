@@ -191,11 +191,12 @@ jobs:
       - name: Dependency Audit (Backend)
         # pip-audit 抓到多个传递依赖 CVE（starlette 0.38.6 的 PYSEC-2026-161/1941/
         # 1943/2280/2281/248/249 + ecdsa 0.19.2 的 PYSEC-2026-1325）。这些需要升级
-        # FastAPI / python-jose 上游依赖，是独立工作。|| true 让 CI 不被阻断
-        # （pip-audit 不像 ruff 没有 --exit-zero 选项）。
+        # FastAPI / python-jose 上游依赖，是独立工作。
+        # 审计 P1：去掉 --fix 防止 CI 自动修改依赖版本（未经 review 的变更可能引入回归）。
+        # || true 兜底因为 pip-audit 不像 ruff 没有 --exit-zero 选项。
         run: |
           pip install pip-audit
-          pip-audit -r requirements.txt --desc --progress-spinner off --fix || true
+          pip-audit -r requirements.txt --desc --progress-spinner off || true
 
       - name: Dependency Audit (Frontend)
         # npm audit 在 JS 生态经常有 moderate 级传递依赖告警。
@@ -284,15 +285,18 @@ jobs:
 
       - name: Start Preview Stack
         run: |
-          cp .env.prod.example .env.preview
-          sed -i 's|/webgis_prod|/webgis_preview|g' .env.preview
+          # 审计 P0：docker-compose.preview.yml 不存在，改用 docker-compose.prod.secure.yml
+          # （它也支持通过环境变量定制预览实例，无需额外 overlay 文件）。
+          if [ -f .env.prod.example ]; then
+            cp .env.prod.example .env.preview
+            sed -i 's|/webgis_prod|/webgis_preview|g' .env.preview
+          fi
           
           # 修改端口避免冲突
           export API_PORT=$((9000 + $RANDOM % 1000))
           export FRONTEND_PORT=$((13000 + $RANDOM % 1000))
           
-          docker-compose -f docker-compose.prod.yml \
-            -f docker-compose.preview.yml up -d
+          docker-compose -f docker-compose.prod.secure.yml up -d
         env:
           IMAGE_TAG: ${{ github.sha }}
 
@@ -433,7 +437,8 @@ jobs:
 
       - name: Deploy Rollback
         run: |
-          docker-compose -f docker-compose.prod.yml up -d
+          # 审计 P0：rollback 使用 docker-compose.prod.secure.yml 与生产部署一致。
+          docker-compose -f docker-compose.prod.secure.yml up -d
 
       - name: Verify Rollback
         run: |

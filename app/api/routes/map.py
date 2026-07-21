@@ -35,6 +35,11 @@ _MEDIA_TYPES = {
     ".pdf": "application/pdf",
 }
 
+# 审计 P0：导出文件所有权追踪（防止 IDOR — 任意认证用户通过猜文件名下载他人导出）
+# key = filename, value = user_id。
+# 生产环境应替换为数据库表（exports 表含 user_id 外键）。
+_EXPORT_OWNERS: dict[str, str] = {}
+
 
 # ─── SVG sanitization (/review P1-5) ─────────────────────────────────────
 # SVG content can contain <script>, <foreignObject>, on* event attributes,
@@ -137,6 +142,9 @@ async def upload_map_export(
     except Exception as e:
         logger.error(f"Export failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="保存导出图失败")
+
+    # 审计 P0：记录文件所有权，防止 IDOR
+    _EXPORT_OWNERS[filename] = _user.get("user_id", "unknown")
 
     download_url = f"/api/v1/export/download/{filename}"
     return {
@@ -257,6 +265,9 @@ async def export_map_as_pdf(
         logger.error(f"PDF export failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="PDF 生成失败")
 
+    # 审计 P0：记录文件所有权
+    _EXPORT_OWNERS[pdf_filename] = _user.get("user_id", "unknown")
+
     return {
         "success": True,
         "filename": pdf_filename,
@@ -268,11 +279,16 @@ async def export_map_as_pdf(
 
 @router.get("/export/download/{filename}", tags=["地图制图"])
 def download_map_export(filename: str, _user: dict = Depends(get_current_user)):
-    """下载生成的专题地图成果（PNG / PDF）"""
+    """下载生成的专题地图成果（PNG / PDF）— 需验证文件所有权。"""
     safe_filename = os.path.basename(filename)
     filepath = os.path.join(EXPORT_DIR, safe_filename)
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="地图文件不存在或已过期失效")
+
+    # 审计 P0：防止 IDOR — 验证请求用户是文件所有者
+    owner = _EXPORT_OWNERS.get(safe_filename)
+    if owner is not None and owner != _user.get("user_id"):
+        raise HTTPException(status_code=403, detail="无权下载此文件")
 
     ext = os.path.splitext(safe_filename)[1].lower()
     media_type = _MEDIA_TYPES.get(ext, "application/octet-stream")
@@ -314,6 +330,9 @@ async def export_geojson(req: GeoJSONExportRequest, _user: dict = Depends(get_cu
     os.makedirs(EXPORT_DIR, exist_ok=True)
     with open(filepath, "wb") as f:
         f.write(content)
+
+    # 审计 P0：记录文件所有权
+    _EXPORT_OWNERS[filename] = _user.get("user_id", "unknown")
 
     return {
         "filename": filename,
