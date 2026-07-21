@@ -52,6 +52,18 @@ _SCRYPT_R = 8
 _SCRYPT_P = 1
 _SCRYPT_KEY_LEN = 32
 
+# 审计 P1：登录时序侧信道防护。模块加载时生成一个随机 dummy hash，
+# 使 "用户不存在" 和 "密码错误" 两条路径都走完整 scrypt (N=2^14)，
+# 消除固定 dummy（n=1）导致的时序差异。
+_DUMMY_SALT = os.urandom(16)
+_DUMMY_HASH = hashlib.scrypt(
+    b"dummy-password-for-timing",
+    salt=_DUMMY_SALT,
+    n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P,
+    dklen=_SCRYPT_KEY_LEN,
+).hex()
+_DUMMY_STORED = f"scrypt${_SCRYPT_N}${_SCRYPT_R}${_SCRYPT_P}${_DUMMY_SALT.hex()}${_DUMMY_HASH}"
+
 
 def hash_password(plain: str) -> str:
     """生成密码哈希。格式：scrypt$N$r$p$salt_hex$hash_hex。

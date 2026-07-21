@@ -23,6 +23,7 @@ from app.core.auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     REFRESH_TOKEN_EXPIRE_MINUTES,
     TOKEN_TYPE_REFRESH,
+    _DUMMY_STORED,
     create_access_token,
     create_refresh_token,
     get_current_user,
@@ -174,13 +175,13 @@ async def login(
     db: AsyncSession = Depends(get_async_db),
 ) -> TokenResponse:
     """用户名或邮箱 + 密码登录，返回 access + refresh token。"""
-    # 限速：每 (IP, identifier) 5 分钟最多 5 次失败 -- 防 password spraying。
-    # 用 (ip, identifier) 组合 key 是为了让单账号被多 IP 撞库时仍能限速，
-    # 同时不误伤单 IP 下多个正常用户。
+    # 限速：每 IP 5 分钟最多 5 次失败 -- 防 password spraying + 避免 NAT 下锁正常用户。
+    # 审计 P1：之前 key 包含 identifier（用户名），攻击者可在同一 NAT 下用
+    # 受害者的用户名发起失败登录，导致受害者被锁。改为纯 IP 限速。
     client_ip = request.client.host if request.client else "unknown"
     limiter = await get_rate_limiter()
     if not await limiter.is_allowed(
-        f"auth_login:{client_ip}:{req.identifier}",
+        f"auth_login:{client_ip}",
         max_requests=5,
         window_seconds=300,
     ):
@@ -191,7 +192,8 @@ async def login(
     )
     user = result.scalar_one_or_none()
     # 即使用户不存在也跑一遍假 verify 以防止时序侧信道泄漏用户存在性
-    valid = verify_password(req.password, user.password_hash if user else "scrypt$1$1$1$00$00")
+    # 审计 P1：使用模块级随机 dummy hash，避免固定 dummy 导致的时序差异。
+    valid = verify_password(req.password, user.password_hash if user else _DUMMY_STORED)
     if not user or not valid:
         raise HTTPException(status_code=401, detail="用户名或密码错误")
     if not user.is_active:
