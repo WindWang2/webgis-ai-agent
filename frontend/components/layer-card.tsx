@@ -108,8 +108,8 @@ export const LayerCard = memo(function LayerCard({
                     if (e.key === 'Escape') setIsEditing(false);
                   }}
                 />
-                <button onClick={handleSaveRename} className="text-hud-cyan hover:scale-110 transition-transform"><Check size={12} /></button>
-                <button onClick={() => setIsEditing(false)} className="text-white/20 hover:text-white/50"><X size={12} /></button>
+                <button onClick={handleSaveRename} aria-label="保存重命名" className="text-hud-cyan hover:scale-110 transition-transform"><Check size={12} /></button>
+                <button onClick={() => setIsEditing(false)} aria-label="取消" className="text-white/20 hover:text-white/50"><X size={12} /></button>
               </div>
             ) : (
               <span

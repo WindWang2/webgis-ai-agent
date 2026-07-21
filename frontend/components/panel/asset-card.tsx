@@ -95,8 +95,8 @@ export function AssetCard({ asset, onLoad, onDelete, onRename }: AssetCardProps)
                   autoFocus
                   onKeyDown={(e) => e.key === "Enter" && handleSaveRename()}
                 />
-                <button onClick={handleSaveRename} className="text-hud-cyan hover:scale-110 transition-transform"><Check size={14} /></button>
-                <button onClick={() => setIsEditing(false)} className="text-white/20 hover:text-white/50"><X size={14} /></button>
+                <button onClick={handleSaveRename} aria-label="保存重命名" className="text-hud-cyan hover:scale-110 transition-transform"><Check size={14} /></button>
+                <button onClick={() => setIsEditing(false)} aria-label="取消" className="text-white/20 hover:text-white/50"><X size={14} /></button>
               </div>
             ) : (
               <h4

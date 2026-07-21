@@ -217,6 +217,7 @@ export function LayersTab() {
                           <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
                             <button
                               onClick={() => toggleLayer(layer.id)}
+                              aria-label={layer.visible ? '隐藏图层' : '显示图层'}
                               style={{ padding: 4, borderRadius: 4, border: 'none', backgroundColor: 'transparent', cursor: 'pointer', color: isDark ? '#64748b' : '#94a3b8' }}
                               onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)'; e.currentTarget.style.color = isDark ? '#e2e8f0' : '#475569'; }}
                               onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = isDark ? '#64748b' : '#94a3b8'; }}
@@ -226,6 +227,7 @@ export function LayersTab() {
                             </button>
                             <button
                               onClick={() => removeLayer(layer.id)}
+                              aria-label="删除图层"
                               style={{ padding: 4, borderRadius: 4, border: 'none', backgroundColor: 'transparent', cursor: 'pointer', color: isDark ? '#64748b' : '#94a3b8' }}
                               onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(248,113,113,0.15)' : 'rgba(254,226,226,0.6)'; e.currentTarget.style.color = isDark ? '#fca5a5' : '#ef4444'; }}
                               onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = isDark ? '#64748b' : '#94a3b8'; }}

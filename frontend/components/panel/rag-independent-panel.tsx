@@ -49,6 +49,7 @@ export function RagIndependentPanel({ open, onClose }: RagIndependentPanelProps)
         </div>
         <button
           onClick={onClose}
+          aria-label="关闭"
           className='w-6 h-6 flex items-center justify-center rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600'
         >
           <X size={14} />

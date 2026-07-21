@@ -215,6 +215,7 @@ export function SettingsPanel() {
 
             <button
               onClick={() => setSettingsOpen(false)}
+              aria-label="关闭设置"
               className="flex items-center justify-center rounded-lg w-8 h-8 text-slate-400 hover:text-slate-600 hover:bg-slate-100/80 transition-colors"
             >
               <X size={18} />

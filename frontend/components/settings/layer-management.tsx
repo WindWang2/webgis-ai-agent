@@ -193,6 +193,7 @@ export function LayerManagement() {
                 {/* Delete */}
                 <button
                   onClick={() => removeLayer(layer.id)}
+                  aria-label="删除图层"
                   className="text-slate-300 hover:text-red-400 transition-colors p-0.5"
                   title="Remove layer"
                 >

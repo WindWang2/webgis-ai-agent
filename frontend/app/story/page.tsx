@@ -75,9 +75,9 @@ function StoryPageInner() {
             STORY<span className="text-white/50">MAP</span>
           </h1>
           <div className="flex gap-2">
-            <button className="hud-btn p-2 rounded-lg text-white/50 hover:text-hud-cyan"><SkipBack className="h-4 w-4" /></button>
-            <button className="hud-btn p-2 rounded-lg text-white/50 hover:text-hud-cyan"><Play className="h-4 w-4" /></button>
-            <button className="hud-btn p-2 rounded-lg text-white/50 hover:text-hud-cyan"><Share2 className="h-4 w-4" /></button>
+            <button aria-label="上一个" className="hud-btn p-2 rounded-lg text-white/50 hover:text-hud-cyan"><SkipBack className="h-4 w-4" /></button>
+            <button aria-label="播放" className="hud-btn p-2 rounded-lg text-white/50 hover:text-hud-cyan"><Play className="h-4 w-4" /></button>
+            <button aria-label="分享" className="hud-btn p-2 rounded-lg text-white/50 hover:text-hud-cyan"><Share2 className="h-4 w-4" /></button>
           </div>
         </div>
 

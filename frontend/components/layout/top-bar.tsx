@@ -89,6 +89,7 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
       {/* sidebar toggle */}
       <button
         onClick={toggleLeftPanel}
+        aria-label={leftPanelOpen ? '收起侧栏' : '展开侧栏'}
         style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           width: 28, height: 28, borderRadius: 6, cursor: 'pointer',
@@ -156,6 +157,7 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
       <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
         <button
           onClick={onNewSession}
+          aria-label="新建会话"
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             width: 28, height: 28, borderRadius: 6, cursor: 'pointer',
