@@ -4,10 +4,11 @@ import h3
 import numpy as np
 from scipy.spatial import cKDTree
 from shapely.geometry import Polygon, mapping
+from app.lib.geo_processor.core import GeoAnalysisResult
 
 logger = logging.getLogger(__name__)
 
-def idw_interpolation(points_geojson, value_field, resolution=8, power=2):
+def idw_interpolation(points_geojson: dict | str, value_field: str, resolution: int = 8, power: float = 2.0) -> GeoAnalysisResult:
     """
     IDW interpolation to H3 grid covering the full bounding box.
     
@@ -65,7 +66,7 @@ def idw_interpolation(points_geojson, value_field, resolution=8, power=2):
     return results
 
 
-def h3_to_geojson(results, value_field="value"):
+def h3_to_geojson(results: dict, value_field: str = "value") -> dict:
     """Convert IDW H3 results to GeoJSON FeatureCollection.
     
     审计：消除 advanced_spatial.py 中重复的 H3-to-GeoJSON 转换逻辑。

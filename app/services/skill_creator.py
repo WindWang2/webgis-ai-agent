@@ -39,8 +39,9 @@ class SkillCreator:
         if not resolved.startswith(skills_root + os.sep) and resolved != skills_root:
             raise ValueError(f"路径越界：{file_path}")
 
-        # 基础校验：代码不能包含危险操作 (简单过滤)
-        # TODO: 接入更高级的代码审计
+        # Code audit: basic path-traversal guard above.
+        # Future: integrate AST-based static analysis to reject dangerous
+        # patterns (subprocess, eval, exec, network calls) before write.
 
         # 确保目录存在
         os.makedirs(os.path.dirname(file_path), exist_ok=True)

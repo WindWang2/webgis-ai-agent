@@ -311,7 +311,7 @@ def register_spatial_tools(registry: ToolRegistry):
                         "palette_colors": list(palette_colors),
                     }
                 except Exception as e:
-                    pass
+                    logger.warning(f"[heatmap_data] legend_spec generation failed: {e}")
             if isinstance(data, dict) and data.get("type") == "FeatureCollection":
                 data = trim_features(data)
             return data
@@ -359,7 +359,7 @@ def register_spatial_tools(registry: ToolRegistry):
                             "palette_colors": list(palette_colors),
                         }
                     except Exception as e:
-                        pass  # legend failure never blocks tool result
+                        logger.warning(f"[heatmap_data] legend_spec generation failed (result path): {e}")
             if isinstance(res_data, dict) and res_data.get("type") == "FeatureCollection":
                 res_data = trim_features(res_data)
             return res_data

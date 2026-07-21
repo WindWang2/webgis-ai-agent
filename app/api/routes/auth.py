@@ -199,7 +199,6 @@ async def login(
     if not user.is_active:
         raise HTTPException(status_code=403, detail="账号已停用")
 
-    # S41 bonus: 维护 last_login / login_count (审计中标记为 TODO)
     user.last_login = datetime.now(timezone.utc)
     user.login_count = (user.login_count or 0) + 1
     await db.commit()

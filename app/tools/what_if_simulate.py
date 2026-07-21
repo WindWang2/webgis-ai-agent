@@ -99,7 +99,7 @@ def _calculate_impact(scenario_type: str, parameters: dict) -> dict:
 
 # --- GeoJSON generation ---
 
-def _generate_circle_polygon(center_lng, center_lat, radius_m, num_points=32):
+def _generate_circle_polygon(center_lng: float, center_lat: float, radius_m: float, num_points: int = 32) -> list:
     """Generate approximate circle polygon in GeoJSON coordinates using numpy."""
     angles = np.linspace(0, 2 * np.pi, num_points + 1)
     lat_rad = math.radians(center_lat)
@@ -128,7 +128,7 @@ def _impact_level_from_deltas(deltas: dict) -> str:
     return "low"
 
 
-def _generate_simulation_geojson(scenario_type, target_center, impact):
+def _generate_simulation_geojson(scenario_type: str, target_center: tuple, impact: dict) -> dict:
     """Generate FeatureCollection with direct zone and indirect zone (ring with hole)."""
     rule = get_rule(scenario_type)
     direct_radius = rule.get("direct_radius_m")

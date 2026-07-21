@@ -74,7 +74,7 @@ def _sanitize_svg(content: bytes) -> bytes:
 
     # Walk the tree, strip dangerous elements + attributes in place.
     # We do a two-pass walk to safely mutate.
-    def _walk(elem):
+    def _walk(elem: Any) -> None:
         # Strip on* attributes and javascript:/data:text href values
         for attr in list(elem.attrib.keys()):
             local = attr.split("}", 1)[-1] if "}" in attr else attr

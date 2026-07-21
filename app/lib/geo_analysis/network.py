@@ -8,7 +8,7 @@ from app.lib.geo_processor.core import to_utm_gdf
 
 logger = logging.getLogger(__name__)
 
-def calculate_isochrones(network_geojson, facility_points, travel_time_min, mode='walking'):
+def calculate_isochrones(network_geojson: dict | str, facility_points: dict | str, travel_time_min: float, mode: str = 'walking') -> GeoAnalysisResult:
     """
     Build a true network graph and generate service areas (polygons) based on travel time.
     """
@@ -114,7 +114,7 @@ def calculate_isochrones(network_geojson, facility_points, travel_time_min, mode
             error_type="ProcessingError"
         )
 
-def nearest_neighbor_features(source_points, target_points):
+def nearest_neighbor_features(source_points: dict | str, target_points: dict | str) -> GeoAnalysisResult:
     """
     For each source point, find the closest target point (O(n log n) via cKDTree).
     """

@@ -3,12 +3,11 @@ import pandas as pd
 import geopandas as gpd
 from scipy import sparse
 from shapely.geometry import Point, Polygon, mapping
-from scipy.spatial import distance_matrix
 from scipy.stats import norm
 from app.lib.geo_processor.core import GeoAnalysisResult
-from app.lib.geo_processor.core import to_utm_gdf, safe_parse
+from app.lib.geo_processor.core import to_utm_gdf
 
-def _build_weights(gdf, k=8):
+def _build_weights(gdf: gpd.GeoDataFrame, k: int = 8) -> sparse.coo_matrix:
     """Build spatial weights matrix using KNN via cKDTree.
     
     Returns a sparse COO matrix (n×n) with 1.0 for K-nearest neighbors.
@@ -29,7 +28,7 @@ def _build_weights(gdf, k=8):
     data = np.ones(len(rows), dtype=float)
     return sparse.coo_matrix((data, (rows, cols)), shape=(n, n))
 
-def _extract_numeric_values(gdf, value_field):
+def _extract_numeric_values(gdf: gpd.GeoDataFrame, value_field: str) -> np.ndarray | None:
     """Helper to extract numeric values from a GDF field."""
     if value_field not in gdf.columns:
         return None

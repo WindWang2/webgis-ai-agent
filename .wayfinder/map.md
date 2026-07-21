@@ -4,6 +4,8 @@
 
 All P0-P2 issues in webgis-ai-agent identified and fixed. The project reaches production hardening: no security vulnerabilities, no infrastructure misconfigurations, no code quality issues that would cause runtime failures, and documentation that matches reality.
 
+Additionally, the spatial analysis package has been systematically reviewed and optimized through a grilling session, addressing performance anti-patterns (O(n²) algorithms, per-cell CRS transforms, code duplication) and consistency issues across 7 core files.
+
 ## Notes
 
 Domain: webgis-ai-agent (FastAPI + Celery + Next.js + PostGIS)
@@ -28,12 +30,14 @@ Standing preferences: fail-fast on missing env vars, async-first patterns, timez
 - [Fix CORS defaults and add explicit configuration](ticket-014-cors-config.md) — Default changed from `["*"]` to `["http://localhost:3000"]`; explicit `allow_methods` and `allow_headers` lists in `main.py`
 - [Add composite DB indexes for common query patterns](ticket-016-composite-indexes.md) — Added `idx_layer_org_status`, `idx_layer_org_category_status`, `idx_task_org_status`, `idx_task_org_type_status` with Alembic migration
 - [Update documentation for current requirements](ticket-017-documentation.md) — README updated with explicit env var requirements list
+- [Grilling: spatial analysis package optimizations](grilling-spatial-analysis.md) — 6 issues fixed across 7 files: `_build_weights` → sparse COO, `calculate_central_feature` batched cKDTree + n>5000 guard, `kde_surface` batch CRS, `calculate_isochrones` MultiGraph + cKDTree, IDW full bounding box + deduplicated `h3_to_geojson`, H3 resolution meter-based thresholds, `zonal_stats` unified to `.to_llm_response()`, `_call_llm` docstring clarified
 
 ## Not yet specified
 
 - P3 low-priority items (type annotation consistency, TODOs, import style, error boundaries) — out of scope for this hardening pass
-- Test coverage improvement beyond existing 1,104 tests — separate effort
+- Test coverage improvement beyond existing 1,104 backend + 267 frontend tests — separate effort
 - Performance profiling beyond identified anti-patterns — separate effort
+- Real LLM integration for `spatial_reasoning._call_llm` — planned, mock in place
 
 ## Out of scope
 

@@ -496,6 +496,7 @@ class ChatEngine:
                             try:
                                 tool_args_dict = json.loads(tool_args_dict)
                             except Exception as e:
+                                logger.warning(f"[chat_engine] tool_args JSON parse failed for {tool_name}: {e}")
                                 tool_args_dict = {}
                         step = self.tracker.start_step(task.id, tool_name, tool_args_dict if isinstance(tool_args_dict, dict) else {})
                         outcome = await self._dispatch_tool(tc, session_id, executed_tools)

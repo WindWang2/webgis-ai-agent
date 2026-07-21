@@ -9,7 +9,7 @@ from app.lib.geo_processor.core import to_utm_gdf
 
 logger = logging.getLogger(__name__)
 
-def generate_fishnet(bounds, cell_size, type='square'):
+def generate_fishnet(bounds: tuple[float, float, float, float], cell_size: float, type: str = 'square') -> GeoAnalysisResult:
     """
     Generate a square or hexagonal grid over specified bounds.
     Includes OOM protection.
@@ -69,7 +69,13 @@ def generate_fishnet(bounds, cell_size, type='square'):
         summary=f"Generated {len(polygons)} {type} cells. {warning}".strip()
     )
 
-def spatial_aggregate(points_geojson, polygons_geojson, stats=None, value_field=None, output_crs="EPSG:4326"):
+def spatial_aggregate(
+    points_geojson: dict | str,
+    polygons_geojson: dict | str,
+    stats: list[str] | None = None,
+    value_field: str | None = None,
+    output_crs: str | None = "EPSG:4326",
+) -> GeoAnalysisResult:
     """
     Aggregate points to polygons using spatial join.
     Supports stats: count, sum, mean, max, min.
@@ -148,7 +154,7 @@ def spatial_aggregate(points_geojson, polygons_geojson, stats=None, value_field=
 # Alias for backward compatibility with plan
 aggregate_points_to_polygons = spatial_aggregate
 
-def h3_binning(geojson, resolution=None, stat_field=None, stat_method='count'):
+def h3_binning(geojson: dict | str, resolution: int | None = None, stat_field: str | None = None, stat_method: str = 'count') -> GeoAnalysisResult:
     """
     Bin points into H3 hexagons.
     Supports stats: count, sum, mean.

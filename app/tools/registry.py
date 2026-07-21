@@ -23,7 +23,7 @@ class ToolRegistry:
         # domains: tier 2 工具属于哪些主题，用于关键词触发
         self._metadata: dict[str, dict[str, Any]] = {}
 
-    def tool(self, name: str, description: str, **kwargs):
+    def tool(self, name: str, description: str, **kwargs: Any) -> Callable:
         """装饰器：注册工具到此 registry 实例"""
         def decorator(func: Callable):
             self.register(name, description, func, **kwargs)
@@ -88,7 +88,9 @@ class ToolRegistry:
             if p_name == "self":
                 continue
 
-            # TODO: 支持更复杂的类型推导
+            # Type derivation: uses inspect.Parameter.annotation directly.
+            # Complex types (Union, Optional, nested models) are passed through
+            # as-is; the LLM-facing description does not decompose them.
             p_type = param.annotation if param.annotation != inspect.Parameter.empty else Any
             default = param.default if param.default != inspect.Parameter.empty else ...
 
