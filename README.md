@@ -91,7 +91,12 @@ celery -A app.services.task_queue worker --loglevel=info &
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-> **注意**: 运行前需确保 `.env` 文件已配置 `DATABASE_URL`、`REDIS_URL`、`JWT_SECRET_KEY` 等必需环境变量。开发环境还需设置 `REDIS_PASSWORD` 和 `DB_PASSWORD`。
+> **注意**: 运行前需确保 `.env` 文件已配置。以下变量为必填项：
+> - `JWT_SECRET_KEY`：JWT 签名密钥（生产模式必填；开发模式自动生成随机密钥）
+> - `LLM_API_KEY`：LLM API 密钥（占位符 `your-api-key-here` 会被检测并警告）
+> - `DATABASE_URL`：数据库连接 URL（默认 SQLite）
+> - `REDIS_PASSWORD`：Redis 密码（docker-compose 必填）
+> - `DB_PASSWORD`：PostgreSQL 密码（docker-compose 必填）
 
 ## 🎮 快速体验
 
