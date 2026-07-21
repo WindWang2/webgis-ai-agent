@@ -1,6 +1,6 @@
 """用户上传数据模型"""
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, JSON
+from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, JSON, CheckConstraint
 from app.core.database import Base
 
 
@@ -20,6 +20,11 @@ class UploadRecord(Base):
     file_size = Column(BigInteger, nullable=False)        # 字节
     upload_time = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     session_id = Column(String(255), nullable=True)       # 关联的会话 ID
+
+    __table_args__ = (
+        CheckConstraint("file_type IN ('vector', 'raster')", name="ck_upload_file_type"),
+        CheckConstraint("format IN ('geojson', 'shapefile', 'geotiff', 'csv', 'gpkg', 'kml')", name="ck_upload_format"),
+    )
 
 
 __all__ = ["UploadRecord"]

@@ -1,11 +1,11 @@
 """用户数据上传 API 路由"""
 import asyncio
-import json
 import logging
 import uuid
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
+import ijson
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select, func
@@ -302,8 +302,9 @@ async def get_upload_geojson(upload_id: int, _user: dict = Depends(get_current_u
             detail=f"GeoJSON 文件过大（{file_size / 1024 / 1024:.1f}MB > {MAX_VECTOR_SIZE / 1024 / 1024:.0f}MB 限制），请通过 /layers/data/{{ref_id}} 分片读取",
         )
 
-    with open(geojson_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    with open(geojson_path, "rb") as f:
+        features = list(ijson.items(f, "features.item"))
+    return {"type": "FeatureCollection", "features": features}
 
 
 @router.delete("/uploads/{upload_id}")

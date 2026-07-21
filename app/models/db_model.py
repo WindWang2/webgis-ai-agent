@@ -4,7 +4,7 @@ B011 Fix: 使用统一的 Base 单例，避免重复定义冲突
 """
 from datetime import datetime, timezone
 from sqlalchemy import (
-    Column, Integer, String, Text, DateTime, Boolean, BigInteger, ForeignKey, Index, UniqueConstraint, JSON
+    Column, Integer, String, Text, DateTime, Boolean, BigInteger, ForeignKey, Index, UniqueConstraint, JSON, CheckConstraint
 )
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -26,7 +26,7 @@ class User(Base):
     __tablename__ = "users"
     
     id = Column(String(255), primary_key=True)
-    org_id = Column(Integer, ForeignKey("organizations.id"))
+    org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"))
     username = Column(String(100), nullable=False, unique=True)
     email = Column(String(255), unique=True, nullable=False)
     password_hash = Column(String(255))
@@ -37,22 +37,23 @@ class User(Base):
     email_verified = Column(Boolean, default=False)
     last_login = Column(DateTime)
     login_count = Column(Integer, default=0)
-    # S41 token refresh + logout: bumping this integer invalidates all outstanding
-    # access AND refresh tokens that carry the old `ver` claim. Defaults to 0
-    # (also the implicit ver of pre-S41 tokens that omit the claim).
     token_version = Column(Integer, nullable=False, default=0, server_default="0")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
-    organization = relationship("Organization", backref="users")
+    organization = relationship("Organization", backref="users", lazy="selectin")
+
+    __table_args__ = (
+        CheckConstraint("role IN ('viewer', 'editor', 'admin')", name="ck_user_role"),
+    )
 
 class Layer(Base):
     """图层表 - 支持 Vector/Raster/Tile 三种类型"""
     __tablename__ = "layers"
     
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    org_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
-    creator_id = Column(String(255), ForeignKey("users.id"), nullable=False)
+    org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    creator_id = Column(String(255), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text)
     category = Column(String(50), index=True)
@@ -77,23 +78,26 @@ class Layer(Base):
         UniqueConstraint("org_id", "name", name="uq_layer_org_name"),
         Index("idx_layer_status", "status"),
         Index("idx_layer_created", "created_at"),
+        CheckConstraint("layer_type IN ('vector', 'raster', 'tile')", name="ck_layer_type"),
+        CheckConstraint("visibility IN ('org', 'public', 'private')", name="ck_layer_visibility"),
+        CheckConstraint("status IN ('pending', 'processing', 'ready', 'error')", name="ck_layer_status"),
     )
     
-    organization = relationship("Organization", backref="layers")
-    creator = relationship("User", backref="layers")
+    organization = relationship("Organization", backref="layers", lazy="selectin")
+    creator = relationship("User", backref="layers", lazy="selectin")
 
 class AnalysisTask(Base):
     """空间分析任务表"""
     __tablename__ = "analysis_tasks"
     
     id = Column(BigInteger, primary_key=True)
-    org_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
-    creator_id = Column(String(255), ForeignKey("users.id"), nullable=False)
-    layer_id = Column(BigInteger, ForeignKey("layers.id"))
-    result_layer_id = Column(BigInteger, ForeignKey("layers.id"))
+    org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    creator_id = Column(String(255), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    layer_id = Column(BigInteger, ForeignKey("layers.id", ondelete="SET NULL"), nullable=True)
+    result_layer_id = Column(BigInteger, ForeignKey("layers.id", ondelete="SET NULL"), nullable=True)
     task_type = Column(String(50), nullable=False)
     parameters = Column(JSON, nullable=False)
-    celery_task_id = Column(String(100), unique=True, index=True)
+    celery_task_id = Column(String(100), unique=True)
     status = Column(String(20), default="pending", index=True)
     progress = Column(Integer, default=0)
     progress_message = Column(String(255))
@@ -109,7 +113,7 @@ class AnalysisTask(Base):
     
     __table_args__ = (
         Index("idx_task_status", "status"),
-        Index("idx_task_celery", "celery_task_id"),
+        CheckConstraint("status IN ('pending', 'queued', 'running', 'completed', 'failed', 'cancelled')", name="ck_task_status"),
     )
 
 class LayerPermission(Base):
@@ -117,19 +121,20 @@ class LayerPermission(Base):
     __tablename__ = "layer_permissions"
     
     id = Column(Integer, primary_key=True)
-    layer_id = Column(BigInteger, ForeignKey("layers.id"), nullable=False)
-    user_id = Column(String(255), ForeignKey("users.id"), nullable=False)
+    layer_id = Column(BigInteger, ForeignKey("layers.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(String(255), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     permission = Column(String(20), nullable=False)
-    granted_by = Column(String(255), ForeignKey("users.id"))
+    granted_by = Column(String(255), ForeignKey("users.id", ondelete="SET NULL"))
     granted_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     expires_at = Column(DateTime)
     
     __table_args__ = (
         UniqueConstraint("layer_id", "user_id", name="uq_permission"),
+        CheckConstraint("permission IN ('read', 'write', 'admin')", name="ck_permission"),
     )
     
-    layer = relationship("Layer", backref="permissions")
-    user = relationship("User", foreign_keys=[user_id])
+    layer = relationship("Layer", backref="permissions", lazy="selectin")
+    user = relationship("User", foreign_keys=[user_id], lazy="selectin")
 
 def get_init_sql():
     """获取 PostGIS 初始化 SQL"""
@@ -154,7 +159,7 @@ class Message(Base):
     __tablename__ = "messages"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    conversation_id = Column(String(255), ForeignKey("conversations.id"))
+    conversation_id = Column(String(255), ForeignKey("conversations.id", ondelete="CASCADE"))
     role = Column(String(20), nullable=False)  # user / assistant / tool
     content = Column(Text, default="")
     reasoning_content = Column(Text, nullable=True)  # reasoning/thinking process
@@ -164,5 +169,9 @@ class Message(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     conversation = relationship("Conversation", back_populates="messages")
+
+    __table_args__ = (
+        CheckConstraint("role IN ('user', 'assistant', 'tool')", name="ck_message_role"),
+    )
 
 __all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "get_init_sql"]

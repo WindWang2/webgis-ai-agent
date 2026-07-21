@@ -19,6 +19,9 @@ Thumbs.db
 **/.env.local
 **/.env.prod
 **/.env.*.local
+# Frontend test artifacts
+frontend/test-results.xml
+frontend/coverage/
 
 # 密钥与证书
 *.key

@@ -42,6 +42,8 @@ pystac-client>=0.8.0
 # Report Generation
 Jinja2>=3.1.4
 defusedxml>=0.7.1
+# Streaming JSON parser for large file uploads (OOM prevention)
+ijson>=3.2.0
 
 # Testing
 pytest>=7.4.4

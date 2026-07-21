@@ -3,7 +3,7 @@
 """
 from datetime import datetime, timezone
 from sqlalchemy import (
-    Column, String, Integer, Text, DateTime, Index
+    Column, String, Integer, Text, DateTime, Index, CheckConstraint
 )
 from sqlalchemy.dialects.postgresql import UUID
 from app.core.database import Base
@@ -28,7 +28,8 @@ class Report(Base):
     __table_args__ = (
         Index("idx_report_session", "session_id"),
         Index("idx_report_status", "status"),
-        Index("idx_report_share", "share_code"),
+        CheckConstraint("format IN ('pdf', 'html', 'markdown')", name="ck_report_format"),
+        CheckConstraint("status IN ('pending', 'processing', 'completed', 'failed')", name="ck_report_status"),
     )
 
 

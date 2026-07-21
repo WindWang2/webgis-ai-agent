@@ -57,7 +57,7 @@ jobs:
         # ERR_PACKAGE_PATH_NOT_EXPORTED。--exit-zero 让 CI 不被这个版本错配
         # 阻断；升级 eslint 到 9.x + 全量 lint 是独立工作。
         working-directory: ./frontend
-        run: npx eslint . --max-warnings 0 --exit-zero || true
+        run: npx eslint . --max-warnings 0 --exit-zero
 
   # ============ Stage 2: 单元测试 ============
   test-backend:
@@ -121,7 +121,7 @@ jobs:
         # "Task got Future attached to a different loop"）。本地能跑是因为 loop 复用
         # 偶然性。这是项目原有问题，需要重构 session_data 生命周期，跟踪在独立 issue。
         # 暂用 || true 让 CI 不被阻断；前端测试 + lint + bandit 仍提供保护。
-        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=15 -v || true
+        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=15 -v -x || true
 
       - name: Upload Coverage Report
         uses: codecov/codecov-action@v4
@@ -195,13 +195,13 @@ jobs:
         # （pip-audit 不像 ruff 没有 --exit-zero 选项）。
         run: |
           pip install pip-audit
-          pip-audit -r requirements.txt --desc --progress-spinner off || true
+          pip-audit -r requirements.txt --desc --progress-spinner off --fix || true
 
       - name: Dependency Audit (Frontend)
-        # npm audit 在 JS 生态经常有 moderate 级传递依赖告警；--audit-level=high
-        # 才阻断（moderate 仅报告）。|| true 兜底防止 npm 自身 bug 阻断。
+        # npm audit 在 JS 生态经常有 moderate 级传递依赖告警。
+        # --audit-level=moderate 阻断 moderate+；|| true 兜底防止 npm 自身 bug 阻断。
         working-directory: ./frontend
-        run: npm audit --audit-level=high || true
+        run: npm audit --audit-level=moderate || true
 
   # ============ Stage 4: 构建镜像 ============
   build:

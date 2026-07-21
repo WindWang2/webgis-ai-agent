@@ -35,11 +35,11 @@ export async function abortExploration(taskId: string): Promise<{ task_id: strin
   return res.json();
 }
 
-export async function* streamExplorerProgress(taskId: string): AsyncGenerator<{
+export async function* streamExplorerProgress(taskId: string, signal?: AbortSignal): AsyncGenerator<{
   event: string;
   data: Record<string, unknown>;
 }> {
-  const response = await fetch(`${API_BASE}/api/v1/explorer/stream/${taskId}`);
+  const response = await fetch(`${API_BASE}/api/v1/explorer/stream/${taskId}`, { signal });
   if (!response.ok) throw new Error(`Explorer stream error: ${response.status}`);
 
   const reader = response.body?.getReader();
@@ -51,17 +51,19 @@ export async function* streamExplorerProgress(taskId: string): AsyncGenerator<{
   let currentData = "";
 
   while (true) {
+    if (signal?.aborted) break;
     const { done, value } = await reader.read();
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
+    const lines = buffer.split(/\r?\n/);
     buffer = lines.pop() || "";
 
     for (const line of lines) {
       if (line.startsWith("event: ")) {
         currentEvent = line.slice(7).trim();
       } else if (line.startsWith("data: ")) {
+        if (currentData) currentData += "\n";
         currentData += line.slice(6);
       } else if (line === "" && currentEvent && currentData) {
         try {

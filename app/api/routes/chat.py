@@ -253,7 +253,7 @@ async def execute_tool_direct(req: ToolExecuteRequest, _user: dict = Depends(req
     tool_name = req.tool
     args = req.arguments
     if not tool_name:
-        return {"error": "missing tool name"}
+        raise HTTPException(status_code=400, detail="missing tool name")
 
     # tier 校验：catalog 把工具分为 1/2/3 层，3 = rare / heavy / destructive
     registry = get_registry()
@@ -269,4 +269,4 @@ async def execute_tool_direct(req: ToolExecuteRequest, _user: dict = Depends(req
         return result
     except Exception as e:
         logger.error(f"Tool execute error: {e}", exc_info=True)
-        return {"error": "Tool execution failed"}
+        raise HTTPException(status_code=500, detail="Tool execution failed")
