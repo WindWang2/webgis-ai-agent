@@ -131,20 +131,18 @@ async def cancel_task(task_id: str, _user: dict = Depends(get_current_user)) -> 
 
 @router.get("/status/{task_id}")
 async def get_celery_task_status(task_id: str, _user: dict = Depends(get_current_user)):
-    """查询 Celery 异步任务状态
-
-    注意：Celery task_id 与 tracker task_id 是不同命名空间（Celery 用 uuid，
-    tracker 用 task-{hex}）。此处无法直接链到 session —— 这一组端点的所有权
-    校验依赖 admin-only（如运维需要可后续收紧到 viewer 但需带 session_id）。
-    暂保持 get_current_user 鉴权，未来如发现泄漏再加 session 关联。
-    """
+    """查询 Celery 异步任务状态（审计 S34：校验任务所有权）"""
+    if not TaskQueueService.verify_owner(task_id, _user.get("user_id", "")):
+        raise HTTPException(status_code=404, detail="Task not found")
     from app.services.task_queue import TaskQueueService
     return TaskQueueService.get_task_status(task_id)
 
 
 @router.delete("/status/{task_id}")
 async def revoke_celery_task(task_id: str, _user: dict = Depends(get_current_user)):
-    """撤销 Celery 异步任务"""
+    """撤销 Celery 异步任务（审计 S34：校验任务所有权）"""
+    if not TaskQueueService.verify_owner(task_id, _user.get("user_id", "")):
+        raise HTTPException(status_code=404, detail="Task not found")
     from app.services.task_queue import TaskQueueService
     revoked = TaskQueueService.revoke_task(task_id)
     return {"revoked": revoked, "task_id": task_id}

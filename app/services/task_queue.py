@@ -42,6 +42,23 @@ class TaskQueueService:
         'interval_max': 60,
     }
 
+    # 审计 S34：celery task_id → user_id 映射，用于状态/撤销端点的所有权校验
+    _task_owners: dict[str, str] = {}
+
+    @classmethod
+    def register_owner(cls, task_id: str, user_id: str) -> None:
+        """记录 celery task_id 所属用户。仅在已知归属时调用。"""
+        if user_id:
+            cls._task_owners[task_id] = user_id
+
+    @classmethod
+    def verify_owner(cls, task_id: str, user_id: str) -> bool:
+        """验证用户是否拥有该 task_id。不存在或不属于该用户均返回 False。"""
+        owner = cls._task_owners.get(task_id)
+        if owner is None:
+            return False
+        return owner == user_id
+
     @staticmethod
     def submit_task(
         task_name: str,
@@ -49,6 +66,7 @@ class TaskQueueService:
         retry: bool = False,
         retry_policy: dict = None,
         callback: str = None,
+        user_id: str = None,
         **kwargs
     ) -> str:
         """提交任务到队列"""
@@ -61,6 +79,8 @@ class TaskQueueService:
             if callback:
                 send_kwargs['link'] = celery_app.signature(callback)
             result = celery_app.send_task(task_name, args=args, kwargs=kwargs, **send_kwargs)
+            if user_id:
+                TaskQueueService.register_owner(result.id, user_id)
             return result.id
         except Exception as e:
             logger.error(f"Failed to submit task {task_name}: {e}")
@@ -68,16 +88,14 @@ class TaskQueueService:
 
     @staticmethod
     def get_task_status(task_id: str) -> dict:
-        """查询任务状态"""
+        """查询任务状态（审计 S34：不返回 traceback 给客户端）"""
         result = celery_app.AsyncResult(task_id)
         info = result.info
-        traceback = result.traceback if result.failed() else None
         return {
             "task_id": task_id,
             "status": result.status,
             "result": result.result if result.ready() else None,
             "progress": info.get("progress", 0) if isinstance(info, dict) else 0,
-            "traceback": traceback,
         }
 
     @staticmethod

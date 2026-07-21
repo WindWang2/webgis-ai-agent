@@ -151,6 +151,12 @@ services:
         reservations:
           memory: 1g
           cpus: "0.5"
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.services.task_queue inspect ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # Nginx 反向代理（HTTPS 终止）
   nginx:

@@ -9,6 +9,7 @@ import math
 import os
 import re
 import uuid
+import fcntl
 from pathlib import Path
 from typing import Any, Optional
 
@@ -140,7 +141,9 @@ def split_into_chunks(
 async def add_document(
     title: str,
     content: str,
-    file_type: str = "text"
+    file_type: str = "text",
+    user_id: Optional[str] = None,
+    org_id: Optional[int] = None,
 ) -> dict[str, Any]:
     """
     添加文档到知识库，执行全文嵌入。
@@ -192,6 +195,8 @@ async def add_document(
                 file_type=file_type,
                 chunk_count=len(chunk_list),
                 status="indexing",
+                creator_id=user_id,
+                org_id=org_id,
             )
             db.add(doc)
 
@@ -220,8 +225,18 @@ async def add_document(
             faiss_idx = _get_faiss_index(vectors.shape[1])
             faiss_idx.add(vectors)
 
-            # 元数据保存
-            _save_metadata(doc_id, title, len(chunk_list), texts)
+            # 元数据保存（审计 C3：加锁防止并发写入）
+            meta = _load_metadata()
+            base_idx = len(meta.get("chunks", []))
+            for i, text in enumerate(texts):
+                meta.setdefault("chunks", []).append({
+                    "index": base_idx + i,
+                    "document_id": doc_id,
+                    "chunk_id": f"{doc_id}_chunk_{i}",
+                    "title": title,
+                    "content": text,
+                })
+            _save_metadata(meta)
             _save_index()
 
             doc.status = "completed"
@@ -248,7 +263,9 @@ def _split_markdown_section(text: str) -> list[str]:
 async def semantic_search(
     query: str,
     top_k: int = 5,
-    document_id: Optional[str] = None
+    document_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    org_id: Optional[int] = None,
 ) -> list[dict[str, Any]]:
     """
     语义向量相似度搜索。
@@ -269,8 +286,21 @@ async def semantic_search(
         faiss_idx = _get_faiss_index()
         scores, indices = faiss_idx.search(query_vec, top_k * 2)  # 多搜一些后面过滤
         
-        # 读取元数据
+        # 读取元数据 — 按 org_id 过滤（审计 S41）
         meta = _load_metadata()
+        allowed_doc_ids: set[str] = set()
+        if org_id is not None:
+            try:
+                from sqlalchemy import select
+                from app.tools._utils import async_db_session
+                from app.models.knowledge_base import Document
+                async with async_db_session() as db:
+                    rows = await db.execute(
+                        select(Document.id).where(Document.org_id == org_id)
+                    )
+                    allowed_doc_ids = {r[0] for r in rows.all()}
+            except Exception as exc:
+                logger.warning("[RAG] Failed to filter by org_id: %s", exc)
         results = []
         
         for score, idx in zip(scores[0], indices[0]):
@@ -298,7 +328,7 @@ async def semantic_search(
         return []
 
 
-async def delete_document(document_id: str) -> bool:
+async def delete_document(document_id: str, user_id: Optional[str] = None, org_id: Optional[int] = None) -> bool:
     """
     删除指定文档的所有chunk和相关向量。
     
@@ -311,6 +341,16 @@ async def delete_document(document_id: str) -> bool:
 
     try:
         async with async_db_session() as db:
+            # 审计 S41：所有权校验
+            owner_check = select(Document).where(Document.id == document_id)
+            if org_id is not None:
+                owner_check = owner_check.where(Document.org_id == org_id)
+            elif user_id is not None:
+                owner_check = owner_check.where(Document.creator_id == user_id)
+            existing = (await db.execute(owner_check)).scalar_one_or_none()
+            if existing is None:
+                logger.warning("[RAG] delete denied: doc %s not owned by user %s org %s", document_id, user_id, org_id)
+                return False
             await db.execute(delete(Chunk).where(Chunk.document_id == document_id))
             await db.execute(delete(Document).where(Document.id == document_id))
 
@@ -325,7 +365,9 @@ async def delete_document(document_id: str) -> bool:
 
 async def list_documents(
     limit: int = 50,
-    offset: int = 0
+    offset: int = 0,
+    user_id: Optional[str] = None,
+    org_id: Optional[int] = None,
 ) -> dict[str, Any]:
     """列出知识库文档"""
     from sqlalchemy import select, func
@@ -337,12 +379,12 @@ async def list_documents(
         total_result = await db.execute(count_stmt)
         total = total_result.scalar_one()
 
-        stmt = (
-            select(Document)
-            .order_by(Document.created_at.desc())
-            .offset(offset)
-            .limit(limit)
-        )
+        stmt = select(Document).order_by(Document.created_at.desc()).offset(offset).limit(limit)
+        # 审计 S41：隔离不同租户的文档
+        if org_id is not None:
+            stmt = stmt.where(Document.org_id == org_id)
+        elif user_id is not None:
+            stmt = stmt.where(Document.creator_id == user_id)
         result = await db.execute(stmt)
         items = result.scalars().all()
         return {
@@ -370,34 +412,43 @@ def _get_meta_path() -> str:
     return os.path.join(INDEX_DIR, "metadata.json")
 
 
-def _save_metadata(doc_id: str, title: str, chunk_count: int, texts: list[str]):
-    """保存向量对应元数据"""
-    meta_path = _get_meta_path()
-    meta = _load_metadata()
-    
-    base_idx = len(meta.get("chunks", []))
-    for i, text in enumerate(texts):
-        meta.setdefault("chunks", []).append({
-            "index": base_idx + i,
-            "document_id": doc_id,
-            "chunk_id": f"{doc_id}_chunk_{i}",
-            "title": title,
-            "content": text,
-        })
-    
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
+def _get_lock_path(meta_path: str) -> str:
+    """审计 C3：元数据文件锁，防止并发读写导致 torn writes / lost updates。"""
+    return meta_path + ".lock"
 
 
 def _load_metadata() -> dict:
+    """审计 C3：加共享锁读取 metadata.json，防止读取到 torn write。"""
     meta_path = _get_meta_path()
-    if os.path.exists(meta_path):
-        try:
-            with open(meta_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
+    if not os.path.exists(meta_path):
+        return {}
+    lock_path = _get_lock_path(meta_path)
+    try:
+        with open(lock_path, "w") as lock_f:
+            fcntl.flock(lock_f.fileno(), fcntl.LOCK_SH)
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            finally:
+                fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_metadata(meta: dict) -> None:
+    """审计 C3：加独占锁写入 metadata.json，防止并发写入覆盖。"""
+    meta_path = _get_meta_path()
+    lock_path = _get_lock_path(meta_path)
+    try:
+        with open(lock_path, "w") as lock_f:
+            fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
+            try:
+                with open(meta_path, "w", encoding="utf-8") as f:
+                    json.dump(meta, f, ensure_ascii=False, indent=2)
+            finally:
+                fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
+    except OSError as e:
+        logger.error("[RAG] Failed to save metadata: %s", e)
 
 
 def _mark_deleted(doc_id: str):
@@ -407,21 +458,19 @@ def _mark_deleted(doc_id: str):
         meta["deleted"].append(doc_id)
     else:
         meta["deleted"] = [doc_id]
-    
-    with open(_get_meta_path(), "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False)
+    _save_metadata(meta)
 
 
 # ----------------------------------------------------------------------
 # 对话引擎集成钩子
 # ----------------------------------------------------------------------
 
-async def retrieve_context(query: str, top_k: int = 3) -> str:
+async def retrieve_context(query: str, top_k: int = 3, user_id: Optional[str] = None, org_id: Optional[int] = None) -> str:
     """
     为对话引擎提供的上下文检索接口。
     返回拼接的上下文字符串供LLM使用。
     """
-    results = await semantic_search(query, top_k=top_k)
+    results = await semantic_search(query, top_k=top_k, user_id=user_id, org_id=org_id)
     if not results:
         return ""
     

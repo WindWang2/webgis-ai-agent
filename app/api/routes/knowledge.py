@@ -2,6 +2,7 @@
 知识库管理 API - RAG 向量检索增强
 支持文档上传、分块、向量化、语义搜索
 """
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -11,6 +12,7 @@ from app.core.auth import get_current_user
 from app.models.api_response import ApiResponse, ErrCode
 from app.services import rag_service
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/knowledge", tags=["知识库管理"])
 
 # ── Schemas ──────────────────────────────────────────────────────────
@@ -48,6 +50,8 @@ async def add_document(request: AddDocumentRequest, _user: dict = Depends(get_cu
         title=request.title,
         content=request.content,
         file_type=request.file_type,
+        user_id=_user.get("user_id"),
+        org_id=_user.get("org_id"),
     )
 
     if "error" in result:
@@ -72,8 +76,12 @@ async def list_documents(
     offset: int = Query(0, ge=0),
     _user: dict = Depends(get_current_user),
 ):
-    """列出知识库中的文档"""
-    result = await rag_service.list_documents(limit=limit, offset=offset)
+    """列出当前用户/组织的知识库文档（审计 S41：隔离不同租户的文档）"""
+    result = await rag_service.list_documents(
+        limit=limit, offset=offset,
+        user_id=_user.get("user_id"),
+        org_id=_user.get("org_id"),
+    )
     return ApiResponse.ok(data=result)
 
 
@@ -84,7 +92,7 @@ async def semantic_search(
     document_id: Optional[str] = Query(None, description="限定文档ID"),
     _user: dict = Depends(get_current_user),
 ):
-    """向量语义搜索"""
+    """向量语义搜索（仅搜索当前用户/组织有权访问的文档）"""
     if not q.strip():
         return ApiResponse.fail(
             code=ErrCode.VALIDATE_ERROR,
@@ -95,6 +103,8 @@ async def semantic_search(
         query=q,
         top_k=top_k,
         document_id=document_id,
+        user_id=_user.get("user_id"),
+        org_id=_user.get("org_id"),
     )
 
     return ApiResponse.ok(data={"results": results})
@@ -102,13 +112,17 @@ async def semantic_search(
 
 @router.delete("/document/{document_id}", response_model=ApiResponse)
 async def delete_document(document_id: str, _user: dict = Depends(get_current_user)):
-    """删除指定文档"""
-    success = await rag_service.delete_document(document_id)
+    """删除指定文档（审计 S41：仅删除属于自己的文档）"""
+    success = await rag_service.delete_document(
+        document_id,
+        user_id=_user.get("user_id"),
+        org_id=_user.get("org_id"),
+    )
 
     if not success:
         return ApiResponse.fail(
             code=ErrCode.SERVER_ERROR,
-            message="删除失败"
+            message="删除失败或无权访问该文档"
         )
 
     return ApiResponse.ok(message="文档已删除")
@@ -120,6 +134,8 @@ async def retrieve_context(request: SearchRequest, _user: dict = Depends(get_cur
     context = await rag_service.retrieve_context(
         query=request.query,
         top_k=request.top_k or 3,
+        user_id=_user.get("user_id"),
+        org_id=_user.get("org_id"),
     )
     return ApiResponse.ok(data={"context": context})
 

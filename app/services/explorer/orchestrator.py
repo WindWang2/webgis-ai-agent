@@ -32,9 +32,10 @@ class ExplorerOrchestrator:
         query: str,
         context: SearchContext,
         session_id: str = "",
+        user_id: str = "",
     ) -> str:
-        """启动探索任务，返回 task_id"""
-        task_id = f"exp_{session_id}_{asyncio.get_event_loop().time():.0f}"
+        """启动探索任务，返回 celery task_id"""
+        task_id = f"exp_{session_id}_{asyncio.get_running_loop().time():.0f}"
 
         # 构建 Celery 任务链
         from app.tasks.explorer.task_chain import (
@@ -57,7 +58,11 @@ class ExplorerOrchestrator:
         result = task_chain.apply_async()
         celery_task_id = result.id
 
-        logger.info(f"[Explorer] Started task {task_id} (celery_id={celery_task_id})")
+        # 审计 S42：记录任务所有权
+        if user_id:
+            TaskQueueService.register_owner(celery_task_id, user_id)
+
+        logger.info(f"[Explorer] Started task {task_id} (celery_id={celery_task_id}) for user {user_id}")
 
         return celery_task_id
 
