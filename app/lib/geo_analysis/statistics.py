@@ -8,18 +8,17 @@ from app.lib.geo_processor.core import GeoAnalysisResult
 from app.lib.geo_processor.core import to_utm_gdf, safe_parse
 
 def _build_weights(gdf, k=8):
-    """Build spatial weights matrix using KNN."""
-    coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
+    """Build spatial weights matrix using KNN via cKDTree (O(n log n), keeps full n×n shape for compatibility)."""
+    from scipy.spatial import cKDTree
+    coords = np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values))
     n = len(coords)
-    dist = distance_matrix(coords, coords)
+    k_actual = min(k, n - 1)
+    tree = cKDTree(coords)
+    # query returns k+1 neighbors including self at index 0
+    _, idx = tree.query(coords, k=k_actual + 1)
     w = np.zeros((n, n))
     for i in range(n):
-        # Find indices of k nearest neighbors (excluding self)
-        if n <= k:
-            idx = np.argsort(dist[i])[1:]
-        else:
-            idx = np.argsort(dist[i])[1:k+1]
-        w[i, idx] = 1.0
+        w[i, idx[i, 1:]] = 1.0  # skip self (column 0), neighbors are already 0-based
     return w
 
 def _extract_numeric_values(gdf, value_field):
@@ -130,7 +129,6 @@ def moran_i_narrated(geojson: dict, value_field: str) -> GeoAnalysisResult:
         return GeoAnalysisResult(False, None, "Invalid GeoJSON or no features found")
     
     gdf, _ = res
-    import pandas as pd
     values = _extract_numeric_values(gdf, value_field)
     if values is None or len(values) == 0:
         return GeoAnalysisResult(False, None, f"Field '{value_field}' missing or non-numeric")
@@ -196,7 +194,6 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
         return GeoAnalysisResult(False, None, "Invalid GeoJSON or no features found")
     
     gdf, utm_crs = res
-    import pandas as pd
     values = _extract_numeric_values(gdf, value_field)
     if values is None or len(values) == 0:
         return GeoAnalysisResult(False, None, f"Field '{value_field}' missing or non-numeric")
@@ -205,69 +202,68 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
     if n < 3:
         return GeoAnalysisResult(False, None, "At least 3 features required for hotspot analysis")
     
-    coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
-    dist = distance_matrix(coords, coords)
+    coords = np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values))
     
     if distance_band <= 0:
-        # Auto-calculate distance band: average nearest neighbor distance
-        temp_dist = dist.copy()
-        np.fill_diagonal(temp_dist, np.inf)
-        bw = float(np.mean(np.min(temp_dist, axis=1)))
+        # Auto-calculate distance band using cKDTree (O(n log n) instead of O(n²))
+        from scipy.spatial import cKDTree
+        tree = cKDTree(coords)
+        nn_dist, _ = tree.query(coords, k=2)
+        bw = float(nn_dist[:, 1].mean())
         if bw <= 0:
             bw = 1.0
     else:
         bw = distance_band
-        
-    w = (dist <= bw).astype(float)
+    
+    # Build binary weights matrix using cKDTree sparse distance matrix
+    from scipy.spatial import cKDTree
+    tree = cKDTree(coords)
+    w_sparse = tree.sparse_distance_matrix(tree, max_distance=bw, output_type="coo_matrix")
+    w = np.zeros((n, n))
+    w[w_sparse.row, w_sparse.col] = 1.0
+    np.fill_diagonal(w, 0)
     
     x_bar = values.mean()
     s = values.std(ddof=0)
     if s == 0:
         return GeoAnalysisResult(False, None, "All values are identical, cannot perform hotspot analysis")
     
-    hot_count = 0
-    cold_count = 0
-    features = []
+    # Vectorized Gi* computation (audit S40: O(n) instead of O(n) Python loop)
+    sum_wi = w.sum(axis=1)
+    sum_wi2 = (w ** 2).sum(axis=1)
+    numerators = w @ values - x_bar * sum_wi
+    denom_inners = (n * sum_wi2 - sum_wi**2) / (n - 1)
+    denominators = np.where(denom_inners > 0, s * np.sqrt(denom_inners), 0)
+    gi_stars = np.where(denominators != 0, numerators / denominators, 0)
+    p_vals = 2 * (1 - norm.cdf(np.abs(gi_stars)))
     
+    hot_count = int(np.sum((p_vals < 0.05) & (gi_stars > 0)))
+    cold_count = int(np.sum((p_vals < 0.05) & (gi_stars < 0)))
+    
+    # Batch reproject once (audit S40: O(1) instead of O(n) CRS transforms)
+    gdf_wgs84 = gdf.to_crs("EPSG:4326")
+    
+    features = []
     for i in range(len(gdf)):
-        row = gdf.iloc[i]
-        wi = w[i]
-        sum_wi = np.sum(wi)
-        sum_wi2 = np.sum(wi**2)
-        
-        # Getis-Ord Gi* formula
-        numerator = np.sum(wi * values) - x_bar * sum_wi
-        # Standard error term
-        denom_inner = (n * sum_wi2 - sum_wi**2) / (n - 1)
-        denominator = s * np.sqrt(denom_inner) if denom_inner > 0 else 0
-        
-        gi_star = float(numerator / denominator) if denominator != 0 else 0
-        p_val = 2 * (1 - norm.cdf(abs(gi_star)))
+        gi_star = float(gi_stars[i])
+        p_val = float(p_vals[i])
         
         h_type = "Not Significant"
         confidence = "Not Significant"
         
         if p_val < 0.05:
             h_type = "Hot Spot" if gi_star > 0 else "Cold Spot"
-            if p_val < 0.01:
-                confidence = "99%"
-            else:
-                confidence = "95%"
+            confidence = "99%" if p_val < 0.01 else "95%"
         elif p_val < 0.1:
             h_type = "Hot Spot" if gi_star > 0 else "Cold Spot"
             confidence = "90%"
             
-        if h_type == "Hot Spot":
-            hot_count += 1
-        elif h_type == "Cold Spot":
-            cold_count += 1
-            
-        geom_wgs84 = gpd.GeoSeries([row.geometry], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
-        
+        geom_wgs84 = gdf_wgs84.geometry.iloc[i]
+        row = gdf.iloc[i]
         props = {k: v for k, v in row.items() if k != "geometry"}
         props.update({
             "gi_star": round(gi_star, 4),
-            "p_value": round(float(p_val), 6),
+            "p_value": round(p_val, 6),
             "hotspot_type": h_type,
             "confidence": confidence
         })
@@ -295,8 +291,8 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
     return GeoAnalysisResult(True, data_out, summary)
 
 def calculate_nearest(geojson: dict) -> GeoAnalysisResult:
-    """Nearest neighbor analysis with narrative summary."""
-    from scipy.spatial import distance_matrix
+    """Nearest neighbor analysis with narrative summary (O(n log n) via cKDTree)."""
+    from scipy.spatial import cKDTree
     res = to_utm_gdf(geojson)
     if not res:
         return GeoAnalysisResult(False, None, "Invalid input or no features found")
@@ -305,10 +301,10 @@ def calculate_nearest(geojson: dict) -> GeoAnalysisResult:
     if len(gdf) < 2:
         return GeoAnalysisResult(False, None, "At least 2 points required for nearest neighbor analysis")
     
-    coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
-    dist = distance_matrix(coords, coords)
-    np.fill_diagonal(dist, np.inf)
-    nn_dist = dist.min(axis=1)
+    coords = np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values))
+    tree = cKDTree(coords)
+    nn_dist, _ = tree.query(coords, k=2)  # k=1 is self (dist=0), k=2 is true nearest neighbor
+    nn_dist = nn_dist[:, 1]
     
     mean_dist = float(nn_dist.mean())
     std_dist = float(nn_dist.std())
@@ -353,8 +349,11 @@ def calculate_central_feature(geojson: dict, method: str = "mean_center") -> Geo
         summary = f"Mean Center: The average geographic center is at {mc[0]:.2f}, {mc[1]:.2f} (UTM)."
     else:
         # Central Feature: point with minimum total distance to all other points
-        from scipy.spatial.distance import cdist
-        dists = cdist(coords, coords).sum(axis=1)
+        from scipy.spatial import cKDTree
+        # Use cKDTree to find approximate central feature (mean of pairwise distances minimized)
+        tree = cKDTree(coords)
+        # Sum of distances to all other points = minimize mean distance
+        dists = tree.query(coords, k=len(coords))[0].sum(axis=1)
         idx = np.argmin(dists)
         center_pt = gdf.geometry.iloc[idx]
         summary = f"Central Feature: The feature at index {idx} is identified as the central feature (minimum total distance to others)."
@@ -415,9 +414,13 @@ def cluster_narrated(
         n_noise = list(labels).count(-1)
         summary = f"DBSCAN identified {n_clusters_found} clusters and {n_noise} noise points."
 
+    # Batch reproject once (audit S40)
+    gdf_wgs84 = gdf.to_crs("EPSG:4326")
+    
     out_features = []
-    for i, row in gdf.iterrows():
-        geom_wgs84 = gpd.GeoSeries([row.geometry], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
+    for i in range(len(gdf)):
+        geom_wgs84 = gdf_wgs84.geometry.iloc[i]
+        row = gdf.iloc[i]
         props = {k: v for k, v in row.items() if k != "geometry"}
         props["cluster_id"] = int(labels[i])
         out_features.append({
@@ -426,10 +429,7 @@ def cluster_narrated(
             "properties": props,
         })
 
-    cluster_counts = {}
-    for l in labels:
-        l_str = str(int(l))
-        cluster_counts[l_str] = cluster_counts.get(l_str, 0) + 1
+    cluster_counts = dict(zip(*np.unique(labels, return_counts=True)))
 
     data_out = {
         "type": "FeatureCollection",
@@ -456,7 +456,6 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
         return GeoAnalysisResult(False, None, "Invalid GeoJSON or no features found", error_type="ValueError")
     
     gdf, utm_crs = res
-    import pandas as pd
     values = _extract_numeric_values(gdf, value_field)
     if values is None or len(values) == 0:
         return GeoAnalysisResult(False, None, f"Field '{value_field}' missing or non-numeric", error_type="ValueError")
@@ -494,10 +493,13 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
         clusters.append(c)
         cluster_counts[c] += 1
         
+    # Batch reproject once (audit S40)
+    gdf_wgs84 = gdf.to_crs("EPSG:4326")
+    
     out_features = []
-    for i, row in gdf.iterrows():
-        # Project back to WGS84 for output
-        geom_wgs84 = gpd.GeoSeries([row.geometry], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
+    for i in range(len(gdf)):
+        geom_wgs84 = gdf_wgs84.geometry.iloc[i]
+        row = gdf.iloc[i]
         props = {k: v for k, v in row.items() if k != "geometry"}
         props["lisa_cluster"] = clusters[i]
         out_features.append({

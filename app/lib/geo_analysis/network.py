@@ -102,10 +102,10 @@ def calculate_isochrones(network_geojson, facility_points, travel_time_min, mode
 
 def nearest_neighbor_features(source_points, target_points):
     """
-    For each source point, find the closest target point.
+    For each source point, find the closest target point (O(n log n) via cKDTree).
     """
     try:
-        from scipy.spatial import distance_matrix
+        from scipy.spatial import cKDTree
         from app.lib.geo_processor.core import to_utm_gdf
         
         res_src = to_utm_gdf(source_points)
@@ -120,28 +120,30 @@ def nearest_neighbor_features(source_points, target_points):
         if utm_crs != tgt_crs:
             gdf_tgt = gdf_tgt.to_crs(utm_crs)
             
-        src_coords = np.array([(g.x, g.y) for g in gdf_src.geometry])
-        tgt_coords = np.array([(g.x, g.y) for g in gdf_tgt.geometry])
+        src_coords = np.column_stack((gdf_src.geometry.x.values, gdf_src.geometry.y.values))
+        tgt_coords = np.column_stack((gdf_tgt.geometry.x.values, gdf_tgt.geometry.y.values))
         
-        dist_mat = distance_matrix(src_coords, tgt_coords)
-        min_indices = dist_mat.argmin(axis=1)
-        min_distances = dist_mat.min(axis=1)
+        # cKDTree: O(n log n) time, O(n) memory (audit S40: was O(n²) distance_matrix)
+        tree = cKDTree(tgt_coords)
+        min_distances, min_indices = tree.query(src_coords, k=1)
         
-        # Build result
-        out_features = []
-        for i, idx in enumerate(min_indices):
-            feat = gdf_src.iloc[i].to_dict()
-            feat.pop("geometry", None)
-            
-            out_features.append({
+        # Pre-compute properties and geometries outside loop (audit S40)
+        props = gdf_src.drop(columns='geometry').to_dict('records')
+        geom_maps = [mapping(g) for g in gdf_src.geometry]
+        tgt_ids = gdf_tgt.index
+        
+        out_features = [
+            {
                 "type": "Feature",
-                "geometry": mapping(gdf_src.geometry.iloc[i]),
+                "geometry": geom_maps[i],
                 "properties": {
-                    **feat,
-                    "nearest_target_id": gdf_tgt.index[idx],
+                    **props[i],
+                    "nearest_target_id": tgt_ids[min_indices[i]],
                     "distance_m": float(min_distances[i])
                 }
-            })
+            }
+            for i in range(len(src_coords))
+        ]
             
         avg_dist = float(min_distances.mean())
         
