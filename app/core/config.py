@@ -117,6 +117,40 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _validate_required_env_vars(self) -> "Settings":
+        """Fail fast if critical env vars are missing or set to placeholder values.
+
+        审计 P0：LLM_API_KEY 默认值为 "your-api-key-here"，若环境变量未设置，
+        应用会以占位符密钥启动，导致 LLM 调用时返回 401 而非在启动时报错。
+        生产模式下必须显式配置；开发模式下仅警告。
+        """
+        _PLACEHOLDER = "your-api-key-here"
+        _PROD_REQUIRED: dict[str, str] = {
+            "LLM_API_KEY": _PLACEHOLDER,
+        }
+
+        if self.is_production():
+            for var_name, placeholder in _PROD_REQUIRED.items():
+                value = getattr(self, var_name)
+                if not value or value == placeholder:
+                    raise RuntimeError(
+                        f"{var_name} must be set to a real value in production. "
+                        f"Current value: '{value}'. "
+                        f"Set it via the {var_name} environment variable."
+                    )
+        else:
+            # 开发模式：检查占位符并警告
+            for var_name, placeholder in _PROD_REQUIRED.items():
+                value = getattr(self, var_name)
+                if value == placeholder:
+                    logger.warning(
+                        "%s is set to placeholder value '%s'. "
+                        "LLM calls will fail. Set %s in .env for full functionality.",
+                        var_name, placeholder, var_name,
+                    )
+        return self
+
+    @model_validator(mode="after")
     def _validate_cors_origins(self) -> "Settings":
         """生产环境禁止 CORS_ORIGINS=['*']：与 allow_credentials=True 组合
         会把任意来源都视为可信凭证调用方，等同于关闭同源保护。"""
@@ -131,24 +165,12 @@ class Settings(BaseSettings):
     def _validate_external_urls(self) -> "Settings":
         """验证外部 URL 配置，防止 SSRF 攻击。
 
-        审计 P0：LLM_BASE_URL 等外部接口地址以前接受任意 URL，包括：
-        - 内网地址（http://localhost:8080/admin）
-        - 云元数据端点（http://169.254.169.254/）
-        - 非 HTTP 协议（file:///etc/passwd）
-
-        这里只对 *非默认值* 做严格校验，保留开发默认值不受影响。
+        审计 P1：之前只对 *非默认值* 做校验，若攻击者通过环境变量注入
+        覆盖默认 URL（如 LLM_BASE_URL=https://evil.com），SSRF 校验被完全绕过。
+        现在对所有 URL 统一校验，默认值也不例外。
         """
-        _DEFAULTS = {
-            "https://api.deepseek.com",
-            "https://overpass.openstreetmap.fr/api/interpreter",
-            "https://nominatim.openstreetmap.org/search",
-        }
-
         for attr in ("LLM_BASE_URL", "OVERPASS_API_URL", "NOMINATIM_URL"):
             url = getattr(self, attr)
-            # 跳过默认值（开发时硬编码的安全 URL）
-            if url in _DEFAULTS:
-                continue
             self._validate_no_ssrf(url, field=attr)
         return self
 
