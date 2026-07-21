@@ -32,10 +32,14 @@ services:
       - "127.0.0.1:${REDIS_PORT:-16379}:6379"
     # 审计 P1：开发环境也拒绝弱默认密码。之前 dev_redis_pass 硬编码且多处重复。
     command: redis-server --appendonly --maxmemory 256mb --maxmemory-policy allkeys-lru --bind 0.0.0.0 --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+    environment:
+      # 审计 P0：healthcheck 不直接暴露密码。通过 REDISCLI_AUTH 环境变量传递，
+      # 避免密码出现在 docker inspect 的 healthcheck 命令中。
+      - REDISCLI_AUTH=${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}", "ping"]
+      test: ["CMD", "redis-cli", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -74,11 +78,9 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      # 审计 I17：bind-mount ./app 让开发热重载方便，但生产/预览环境会让
-      # 镜像里 build 的代码被 host 覆盖（host 文件权限问题 + 测试镜像漂移）。
-      # 用环境变量控制：开发时 WEBGIS_DEV_MOUNT=1 启用，否则不用。
-      # 默认开（dev compose 是开发用），但加了注释让运维知道风险。
-      - ${WEBGIS_DEV_MOUNT:-./app}:/app/app
+      # 审计 I17 / INF-001：bind-mount ./app 让开发热重载方便，但会覆盖镜像代码。
+      # 改为显式 opt-in：设置 WEBGIS_DEV_MOUNT=./app 启用，默认不挂载。
+      ${WEBGIS_DEV_MOUNT:+- ${WEBGIS_DEV_MOUNT}:/app/app}
       - uploads:/app/data
     env_file:
       - .env
@@ -113,10 +115,18 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - ${WEBGIS_DEV_MOUNT:-./app}:/app/app
+      # 审计 INF-003：bind-mount 改为显式 opt-in，与 api 服务一致。
+      ${WEBGIS_DEV_MOUNT:+- ${WEBGIS_DEV_MOUNT}:/app/app}
     env_file:
       - .env
     command: celery -A app.services.task_queue worker -l info
+    healthcheck:
+      # 审计 INF-003：celery-worker 缺少 healthcheck，depends_on 无法等待就绪。
+      test: ["CMD-SHELL", "celery -A app.services.task_queue inspect ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     deploy:
       resources:
         limits:
