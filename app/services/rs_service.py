@@ -1,18 +1,34 @@
 """遥感数据服务 - Sentinel Hub + NASA EarthData"""
+import asyncio
 import json
 import logging
 import os
-from typing import Optional
 from datetime import date, datetime
+from functools import lru_cache
+from typing import Optional
+
 import aiohttp
 from app.core.config import settings
 from app.tools._utils import asset_href
 
 logger = logging.getLogger(__name__)
 
+_STAC_CATALOG_URL = "https://earth-search.aws.element84.com/v1"
+
 
 class RemoteSensingService:
     """遥感数据服务"""
+
+    @lru_cache(maxsize=1)
+    def _get_catalog(self):
+        """Synchronous catalog open — cached, called via asyncio.to_thread."""
+        import pystac_client
+        return pystac_client.Client.open(_STAC_CATALOG_URL)
+
+    async def _open_catalog(self):
+        """Async wrapper: offload blocking Client.open to thread pool."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._get_catalog)
 
     async def fetch_sentinel_thumbnail(
         self,
@@ -39,9 +55,7 @@ class RemoteSensingService:
         try:
             import pystac_client
             
-            catalog = pystac_client.Client.open(
-                "https://earth-search.aws.element84.com/v1"
-            )
+            catalog = await self._open_catalog()
             
             search = catalog.search(
                 collections=["sentinel-2-l2a"],
@@ -96,9 +110,7 @@ class RemoteSensingService:
             import numpy as np
             from rasterio.enums import Resampling
             
-            catalog = pystac_client.Client.open(
-                "https://earth-search.aws.element84.com/v1"
-            )
+            catalog = await self._open_catalog()
             
             search = catalog.search(
                 collections=["sentinel-2-l2a"],
@@ -161,9 +173,7 @@ class RemoteSensingService:
         try:
             import pystac_client
             
-            catalog = pystac_client.Client.open(
-                "https://earth-search.aws.element84.com/v1"
-            )
+            catalog = await self._open_catalog()
             
             # 搜索 Copernicus DEM（如果可用）
             search = catalog.search(
@@ -208,9 +218,7 @@ class RemoteSensingService:
             from rasterio.enums import Resampling
             from rasterio.warp import transform_bounds
 
-            catalog = pystac_client.Client.open(
-                "https://earth-search.aws.element84.com/v1"
-            )
+            catalog = await self._open_catalog()
             search = catalog.search(
                 collections=["cop-dem-glo-30"],
                 bbox=bbox,
@@ -363,9 +371,7 @@ class RemoteSensingService:
             import numpy as np
             from rasterio.enums import Resampling
 
-            catalog = pystac_client.Client.open(
-                "https://earth-search.aws.element84.com/v1"
-            )
+            catalog = await self._open_catalog()
             search = catalog.search(
                 collections=["sentinel-2-l2a"],
                 bbox=bbox,

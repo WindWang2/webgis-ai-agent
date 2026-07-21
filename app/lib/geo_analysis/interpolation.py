@@ -49,18 +49,21 @@ def idw_interpolation(points_geojson: dict | str, value_field: str, resolution: 
     
     # cKDTree for fast nearest-neighbor queries (O(n log n))
     tree = cKDTree(coords)
+    k = min(5, len(coords))
+
+    # Batch query all H3 cells at once instead of per-cell Python loop
+    cell_coords = np.array([h3.cell_to_latlng(cell) for cell in target_cells])
+    dist, idx = tree.query(cell_coords, k=k)
+
     results = []
-    for cell in target_cells:
-        c_lat, c_lon = h3.cell_to_latlng(cell)
-        dist, idx = tree.query([c_lat, c_lon], k=min(5, len(coords)))
-        
-        # Handle cases with very small distance to avoid division by zero
-        if np.any(dist < 1e-10):
-            val = values[idx[dist < 1e-10][0]]
+    for i, cell in enumerate(target_cells):
+        d = dist[i]
+        j = idx[i]
+        if np.any(d < 1e-10):
+            val = float(values[j[d < 1e-10][0]])
         else:
-            weights = 1.0 / (dist ** power)
-            val = float(np.sum(weights * values[idx]) / np.sum(weights))
-            
+            weights = 1.0 / (d ** power)
+            val = float(np.sum(weights * values[j]) / np.sum(weights))
         results.append({"h3_index": cell, "value": val})
     
     return results
