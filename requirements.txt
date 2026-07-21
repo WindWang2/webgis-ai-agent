@@ -23,7 +23,7 @@ httpx>=0.26.0
 pyyaml>=6.0.1
 
 # Logging & Monitoring
-structlog>=24.1.0
+structlog>=26.1.0
 
 # LLM & AI
 openai>=1.0.0
