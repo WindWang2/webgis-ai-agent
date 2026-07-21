@@ -15,7 +15,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 # Stage 3: Backend Dependencies
-FROM python:3.12-slim AS backend-deps
+FROM python:3.14-slim AS backend-deps
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libexpat1 libgdal-dev gdal-bin libgeos-dev libproj-dev \
@@ -24,7 +24,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 
 # Stage 4: Backend Builder (carries deps + app code)
-FROM python:3.12-slim AS backend-builder
+FROM python:3.14-slim AS backend-builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libexpat1 libgdal-dev gdal-bin libgeos-dev libproj-dev \
@@ -36,7 +36,7 @@ COPY main.py ./
 COPY app/ ./app/
 
 # Stage 5: Runner
-FROM python:3.12-slim AS runner
+FROM python:3.14-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
