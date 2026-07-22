@@ -267,12 +267,12 @@ async def clear_session(session_id: str, _user: dict = Depends(get_current_user_
     """清除会话（内存 + DB）— 受所有权检查保护（A2）。"""
     user_id = _user.get("user_id")
 
-    # Feature flag: 使用 Pi agent
-    if USE_NEW_AGENT and pi_bridge is not None:
-        # TODO: implement session clearing via Pi RPC
-        pass
+    # Note: Pi agent session state is managed by Pi's own session lifecycle
+    # (file-based in .pi/sessions/ with TTL cleanup).
+    # The legacy engine path below clears DB + memory state for this session_id.
+    # A full Pi session clear would require calling the agent bridge's abort()
+    # and deleting Pi's session files — deferred until abort() semantics are verified.
 
-    # Legacy path
     ok = await get_engine().clear_session(session_id, user_id=user_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Session not found")

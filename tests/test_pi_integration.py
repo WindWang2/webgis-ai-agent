@@ -511,3 +511,22 @@ class TestPiToolsEndpoint:
         assert not resp.isError
         assert captured == ["my-session-1"]
         assert "sid=my-session-1" in resp.content[0]["text"]
+
+
+class TestClearSessionRoute:
+    """Test clear_session route no longer has dead Pi branch."""
+
+    def test_clear_session_has_no_pi_branch(self):
+        """After Ticket 3 fix, clear_session should not have a dead Pi conditional branch."""
+        source = open("/home/kevin/projects/webgis-ai-agent/app/api/routes/chat.py").read()
+
+        # Find the clear_session function body
+        start = source.find("async def clear_session(")
+        end = source.find("\n@router", start + 1)
+        if end == -1:
+            end = len(source)
+        func_body = source[start:end]
+
+        # No conditional Pi branch should remain
+        assert "if USE_NEW_AGENT" not in func_body, "clear_session should not contain USE_NEW_AGENT conditional"
+        assert "if USE_NEW_AGENT and pi_bridge" not in func_body, "clear_session should not contain dead Pi branch"
