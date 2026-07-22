@@ -283,7 +283,7 @@ class PiBridge:
         if timed_out:
             yield sse_event("error", {
                 "session_id": self._session_id,
-                "error": "Pi agent response timed out (30s). The agent may be processing or stalled.",
+                "error": f"Pi agent response timed out ({int(PI_EVENT_STREAM_TIMEOUT)}s). The agent may be processing or stalled.",
             })
 
         yield sse_event("done", {"session_id": self._session_id})
@@ -306,16 +306,6 @@ class PiBridge:
             result = await self._send_request("set_model", {"provider": provider, "modelId": model_id})
             return result or {}
 
-    async def get_messages(self) -> list[dict]:
-        """Get conversation messages.
-
-        TODO: wire to /api/v1/chat/sessions/{session_id}/messages route
-        so the frontend can display Pi-backed session history.
-        """
-        async with self._lock:
-            result = await self._send_request("get_messages")
-            return result.get("messages", []) if result else []
-
     async def abort(self) -> dict:
         """Abort current operation."""
         async with self._lock:
@@ -324,87 +314,95 @@ class PiBridge:
 
     # ── Event mapping ───────────────────────────────────────────
 
+    # Dispatch table: Pi event type → PiBridge handler method name
+    _EVENT_HANDLERS: dict[str, str] = {
+        "message_update": "_handle_message_update",
+        "tool_execution_start": "_handle_tool_execution_start",
+        "tool_execution_end": "_handle_tool_execution_end",
+        "agent_end": "_handle_agent_end",
+        "compaction_start": "_handle_compaction",
+        "compaction_end": "_handle_compaction",
+    }
+
     def _map_event_to_sse(self, event: dict) -> Optional[str]:
-        """Map Pi AgentSessionEvent to SSE format."""
+        """Map Pi AgentSessionEvent to SSE format via dispatch table."""
         event_type = event.get("type", "")
+        method_name = self._EVENT_HANDLERS.get(event_type)
+        if method_name is None:
+            return None
+        return getattr(self, method_name)(event)
 
-        if event_type == "message_update":
-            msg = event.get("message", {})
-            assistant_event = event.get("assistantMessageEvent", {})
-            event_kind = assistant_event.get("type", "")
+    def _handle_message_update(self, event: dict) -> Optional[str]:
+        assistant_event = event.get("assistantMessageEvent", {})
+        event_kind = assistant_event.get("type", "")
 
-            if "text" in event_kind or "thinking" in event_kind:
-                content = assistant_event.get("content", "")
-                is_reasoning = "thinking" in event_kind
-                if content:
-                    return sse_event("token", {
-                        "content": content,
-                        "is_reasoning": is_reasoning,
-                        "session_id": self._session_id,
-                    })
-            elif "tool_call" in event_kind or "toolcall" in event_kind:
-                return sse_event("tool_call", {
-                    "name": assistant_event.get("name", ""),
-                    "arguments": assistant_event.get("arguments", ""),
-                })
-
-        elif event_type == "tool_execution_start":
-            return sse_event("step_start", {
-                "task_id": self._session_id,
-                "step_id": event.get("toolCallId", ""),
-                "step_index": 0,
-                "tool": event.get("toolName", ""),
-                "session_id": self._session_id,
-            })
-
-        elif event_type == "tool_execution_end":
-            result = event.get("result", {})
-            is_error = event.get("isError", False)
-            tool_name = event.get("toolName", "")
-            tool_call_id = event.get("toolCallId", "")
-
-            if is_error:
-                error_msg = self._extract_error_text(result)
-                return sse_event("step_error", {
-                    "task_id": self._session_id,
-                    "step_id": tool_call_id,
-                    "tool": tool_name,
-                    "error": error_msg,
-                })
-            else:
-                try:
-                    from app.services.chat.sse_helpers import slim_event_result
-                    slim = slim_event_result(result)
-                except Exception:
-                    slim = result
-                return sse_event("step_result", {
-                    "task_id": self._session_id,
-                    "step_id": tool_call_id,
-                    "tool": tool_name,
-                    "result": slim,
+        if "text" in event_kind or "thinking" in event_kind:
+            content = assistant_event.get("content", "")
+            is_reasoning = "thinking" in event_kind
+            if content:
+                return sse_event("token", {
+                    "content": content,
+                    "is_reasoning": is_reasoning,
                     "session_id": self._session_id,
                 })
-
-        elif event_type == "agent_end":
-            return sse_event("task_complete", {
-                "task_id": self._session_id,
-                "step_count": 0,
-                "summary": "",
+        elif "tool_call" in event_kind or "toolcall" in event_kind:
+            return sse_event("tool_call", {
+                "name": assistant_event.get("name", ""),
+                "arguments": assistant_event.get("arguments", ""),
             })
-
-        elif event_type == "compaction_start":
-            return sse_event("content", {
-                "content": COMPACTION_START_MSG,
-                "session_id": self._session_id,
-            })
-
-        elif event_type == "compaction_end":
-            return sse_event("content", {
-                "content": COMPACTION_END_MSG,
-                "session_id": self._session_id,
-            })
-
         return None
+
+    def _handle_tool_execution_start(self, event: dict) -> Optional[str]:
+        return sse_event("step_start", self._base_step_payload(event, {
+            "step_index": 0,  # TODO: derive from actual step metadata when available
+            "tool": event.get("toolName", ""),
+        }))
+
+    def _handle_tool_execution_end(self, event: dict) -> Optional[str]:
+        result = event.get("result", {})
+        is_error = event.get("isError", False)
+        tool_name = event.get("toolName", "")
+        tool_call_id = event.get("toolCallId", "")
+
+        if is_error:
+            error_msg = self._extract_error_text(result)
+            return sse_event("step_error", self._base_step_payload(event, {
+                "tool": tool_name,
+                "error": error_msg,
+            }))
+        else:
+            try:
+                from app.services.chat.sse_helpers import slim_event_result
+                slim = slim_event_result(result)
+            except Exception:
+                slim = result
+            return sse_event("step_result", self._base_step_payload(event, {
+                "tool": tool_name,
+                "result": slim,
+            }))
+
+    def _handle_agent_end(self, event: dict) -> Optional[str]:
+        return sse_event("task_complete", self._base_step_payload(event, {
+            "step_count": 0,
+            "summary": "",
+        }))
+
+    def _handle_compaction(self, event: dict) -> Optional[str]:
+        is_start = event.get("type") == "compaction_start"
+        return sse_event("content", {
+            "content": COMPACTION_START_MSG if is_start else COMPACTION_END_MSG,
+            "session_id": self._session_id,
+        })
+
+    def _base_step_payload(self, event: dict, extra: dict) -> dict:
+        """Build base SSE payload with common fields shared across step events."""
+        base = {
+            "task_id": self._session_id,
+            "step_id": event.get("toolCallId", ""),
+            "session_id": self._session_id,
+        }
+        base.update(extra)
+        return base
 
     def _extract_text_from_event(self, event: dict) -> str:
         """Extract text content from an AgentSessionEvent."""

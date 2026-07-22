@@ -23,6 +23,13 @@ router = APIRouter(prefix="/chat", tags=["对话"])
 registry: ToolRegistry = None  # type: ignore[assignment]
 engine: ChatEngine = None  # type: ignore[assignment]
 
+# SSE 流式响应头（Pi 和 legacy 路径共用）
+SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
+
 # Feature flag: 通过环境变量切换新旧 Agent 系统
 # true/1/yes 时使用 Pi 开源 agent (vendor/pi) 通过 RPC 调用
 USE_NEW_AGENT = os.getenv("USE_NEW_AGENT", "").lower() in ("true", "1", "yes")
@@ -114,11 +121,7 @@ async def chat_stream(req: ChatRequest, _user: dict = Depends(get_current_user_o
         return StreamingResponse(
             pi_event_generator(),
             media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            }
+            headers=SSE_HEADERS,
         )
 
     # Legacy path: 使用 ChatEngine
@@ -139,11 +142,7 @@ async def chat_stream(req: ChatRequest, _user: dict = Depends(get_current_user_o
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        }
+        headers=SSE_HEADERS,
     )
 
 
