@@ -97,10 +97,8 @@ async def chat_stream(req: ChatRequest, _user: dict = Depends(get_current_user_o
     if USE_NEW_AGENT and pi_bridge is not None:
         async def pi_event_generator():
             try:
-                # TODO: implement streaming via Pi RPC
-                result = await pi_bridge.prompt(req.message, session_id=req.session_id)
-                yield sse_event("content", {"content": result.get("content", ""), "session_id": result.get("sessionId", req.session_id or "")})
-                yield sse_event("done", {"session_id": result.get("sessionId", req.session_id or "")})
+                async for event in pi_bridge.stream_prompt(req.message, session_id=req.session_id):
+                    yield event
             except Exception as e:
                 logger.error(f"Pi bridge stream error: {e}", exc_info=True)
                 yield sse_event("error", {"error": "Internal server error"})

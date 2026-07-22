@@ -1,6 +1,7 @@
 """Python bridge to Pi (earendil-works/pi) RPC mode.
 
 Spawns Pi as a subprocess and communicates via JSON-RPC over stdin/stdout.
+Supports both request/response and streaming event patterns.
 """
 from __future__ import annotations
 
@@ -9,16 +10,17 @@ import json
 import logging
 import os
 import subprocess
-import time
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
+
+from app.utils.sse import sse_event
 
 logger = logging.getLogger(__name__)
 
 # Pi RPC entry point
 PI_RPC_ENTRY = Path(__file__).parent.parent.parent / "vendor" / "pi" / "packages" / "coding-agent" / "dist" / "rpc-entry.js"
 
-# Default session directory (use project-local .pi/sessions)
+# Default session directory
 DEFAULT_SESSION_DIR = Path(__file__).parent.parent.parent / ".pi" / "sessions"
 
 
@@ -31,6 +33,9 @@ class PiBridge:
     """Bridge to Pi agent via RPC mode.
 
     Spawns Pi as a subprocess and communicates via JSON-RPC protocol.
+    Supports:
+    - Request/response: get_state, set_model, get_available_models, get_messages
+    - Streaming: prompt (yields SSE events as Pi processes)
     """
 
     def __init__(
@@ -44,9 +49,11 @@ class PiBridge:
         self._cwd = cwd or Path.cwd()
         self._process: Optional[subprocess.Popen] = None
         self._pending_requests: dict[str, asyncio.Future] = {}
+        self._event_queue: asyncio.Queue = asyncio.Queue()
         self._request_counter = 0
         self._reader_task: Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()
+        self._session_id: str = ""
 
     async def start(self) -> None:
         """Start the Pi subprocess."""
@@ -57,7 +64,7 @@ class PiBridge:
 
         env = os.environ.copy()
         env["PI_SESSION_DIR"] = str(self._session_dir)
-        env["PI_OFFLINE"] = "1"  # Disable version checks for now
+        env["PI_OFFLINE"] = "1"
         env["PI_SKIP_VERSION_CHECK"] = "1"
 
         self._process = subprocess.Popen(
@@ -68,13 +75,13 @@ class PiBridge:
             env=env,
             cwd=str(self._cwd),
             text=True,
-            bufsize=0,  # Unbuffered
+            bufsize=0,
         )
 
         # Start reader task
         self._reader_task = asyncio.create_task(self._read_responses())
 
-        # Wait for ready signal
+        # Wait for Pi to initialize
         await asyncio.sleep(1)
 
     async def stop(self) -> None:
@@ -99,32 +106,37 @@ class PiBridge:
             self._reader_task = None
 
     async def _read_responses(self) -> None:
-        """Read responses from Pi stdout."""
+        """Read responses and events from Pi stdout."""
+        loop = asyncio.get_event_loop()
         while self._process and self._process.stdout:
-            line = await asyncio.get_event_loop().run_in_executor(None, self._process.stdout.readline)
+            line = await loop.run_in_executor(None, self._process.stdout.readline)
             if not line:
                 break
             line = line.strip()
             if not line:
                 continue
             try:
-                response = json.loads(line)
-                await self._handle_response(response)
+                obj = json.loads(line)
+                # Request response: has "type": "response" and "id"
+                if obj.get("type") == "response" and obj.get("id"):
+                    await self._handle_response(obj)
+                # AgentSessionEvent: has "type" but no "id"
+                elif "type" in obj and "id" not in obj:
+                    await self._event_queue.put(obj)
             except json.JSONDecodeError:
                 logger.warning(f"[PiBridge] Invalid JSON: {line[:200]}")
 
     async def _handle_response(self, response: dict) -> None:
-        """Handle a response from Pi."""
-        response_type = response.get("type")
+        """Handle a request response from Pi."""
         request_id = response.get("id")
-
-        if response_type == "response" and request_id:
-            future = self._pending_requests.pop(request_id, None)
-            if future and not future.done():
-                if response.get("success"):
-                    future.set_result(response.get("data"))
-                else:
-                    future.set_exception(PiRpcError(response.get("error", "Unknown error")))
+        if not request_id:
+            return
+        future = self._pending_requests.pop(request_id, None)
+        if future and not future.done():
+            if response.get("success"):
+                future.set_result(response.get("data"))
+            else:
+                future.set_exception(PiRpcError(response.get("error", "Unknown error")))
 
     async def _send_request(self, command: str, data: Optional[dict] = None) -> Any:
         """Send a request to Pi and wait for response."""
@@ -151,23 +163,78 @@ class PiBridge:
             self._pending_requests.pop(request_id, None)
             raise PiRpcError(f"Pi request timeout: {command}")
 
+    # ── Public API ──────────────────────────────────────────────
+
     async def prompt(self, message: str, session_id: Optional[str] = None) -> dict:
-        """Send a prompt to Pi agent.
+        """Send a prompt to Pi agent (non-streaming).
 
         Args:
             message: User message
-            session_id: Optional session ID for context
+            session_id: Optional session ID
 
         Returns:
             Response dict with session_id and content
         """
-        data = {"message": message}
+        data: dict[str, Any] = {"message": message}
         if session_id:
             data["sessionId"] = session_id
+            self._session_id = session_id
 
         async with self._lock:
-            result = await self._send_request("prompt", data)
-            return result or {}
+            await self._send_request("prompt", data)
+
+        # Drain events from the queue (non-streaming mode)
+        content_parts: list[str] = []
+        while True:
+            try:
+                event = await asyncio.wait_for(self._event_queue.get(), timeout=2.0)
+                text = self._extract_text_from_event(event)
+                if text:
+                    content_parts.append(text)
+            except asyncio.TimeoutError:
+                break
+
+        return {
+            "sessionId": self._session_id,
+            "content": "".join(content_parts),
+        }
+
+    async def stream_prompt(
+        self, message: str, session_id: Optional[str] = None
+    ) -> AsyncGenerator[str, None]:
+        """Stream a prompt to Pi agent, yielding SSE events.
+
+        Args:
+            message: User message
+            session_id: Optional session ID
+
+        Yields:
+            SSE-formatted event strings
+        """
+        data: dict[str, Any] = {"message": message}
+        if session_id:
+            data["sessionId"] = session_id
+            self._session_id = session_id
+
+        # Send prompt command
+        async with self._lock:
+            await self._send_request("prompt", data)
+
+        # Stream events from Pi
+        yield sse_event("task_start", {"task_id": session_id or "", "session_id": self._session_id})
+
+        while True:
+            try:
+                event = await asyncio.wait_for(self._event_queue.get(), timeout=30.0)
+                sse = self._map_event_to_sse(event)
+                if sse:
+                    yield sse
+                if event.get("type") == "agent_end":
+                    break
+            except asyncio.TimeoutError:
+                break
+
+        yield sse_event("done", {"session_id": self._session_id})
 
     async def get_state(self) -> dict:
         """Get current Pi agent state."""
@@ -192,6 +259,127 @@ class PiBridge:
         async with self._lock:
             result = await self._send_request("get_messages")
             return result.get("messages", []) if result else []
+
+    async def abort(self) -> dict:
+        """Abort current operation."""
+        async with self._lock:
+            result = await self._send_request("abort")
+            return result or {}
+
+    # ── Event mapping ───────────────────────────────────────────
+
+    def _map_event_to_sse(self, event: dict) -> Optional[str]:
+        """Map Pi AgentSessionEvent to SSE format."""
+        event_type = event.get("type", "")
+
+        if event_type == "message_update":
+            msg = event.get("message", {})
+            assistant_event = event.get("assistantMessageEvent", {})
+            event_kind = assistant_event.get("type", "")
+
+            if "text" in event_kind or "thinking" in event_kind:
+                content = assistant_event.get("content", "")
+                is_reasoning = "thinking" in event_kind
+                if content:
+                    return sse_event("token", {
+                        "content": content,
+                        "is_reasoning": is_reasoning,
+                        "session_id": self._session_id,
+                    })
+            elif "toolcall" in event_kind:
+                return sse_event("tool_call", {
+                    "name": assistant_event.get("name", ""),
+                    "arguments": assistant_event.get("arguments", ""),
+                })
+
+        elif event_type == "tool_execution_start":
+            return sse_event("step_start", {
+                "task_id": self._session_id,
+                "step_id": event.get("toolCallId", ""),
+                "step_index": 0,
+                "tool": event.get("toolName", ""),
+                "session_id": self._session_id,
+            })
+
+        elif event_type == "tool_execution_end":
+            result = event.get("result", {})
+            is_error = event.get("isError", False)
+            tool_name = event.get("toolName", "")
+            tool_call_id = event.get("toolCallId", "")
+
+            if is_error:
+                error_msg = self._extract_error_text(result)
+                return sse_event("step_error", {
+                    "task_id": self._session_id,
+                    "step_id": tool_call_id,
+                    "tool": tool_name,
+                    "error": error_msg,
+                })
+            else:
+                try:
+                    from app.services.chat.sse_helpers import slim_event_result
+                    slim = slim_event_result(result)
+                except Exception:
+                    slim = result
+                return sse_event("step_result", {
+                    "task_id": self._session_id,
+                    "step_id": tool_call_id,
+                    "tool": tool_name,
+                    "result": slim,
+                    "session_id": self._session_id,
+                })
+
+        elif event_type == "agent_end":
+            return sse_event("task_complete", {
+                "task_id": self._session_id,
+                "step_count": 0,
+                "summary": "",
+            })
+
+        elif event_type == "compaction_start":
+            return sse_event("content", {
+                "content": "[压缩上下文...]\n",
+                "session_id": self._session_id,
+            })
+
+        elif event_type == "compaction_end":
+            return sse_event("content", {
+                "content": "[上下文压缩完成]\n",
+                "session_id": self._session_id,
+            })
+
+        return None
+
+    def _extract_text_from_event(self, event: dict) -> str:
+        """Extract text content from an AgentSessionEvent."""
+        event_type = event.get("type", "")
+
+        if event_type == "message_update":
+            msg = event.get("message", {})
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                return content
+            elif isinstance(content, list):
+                return "".join(
+                    seg.get("text", "") for seg in content if isinstance(seg, dict)
+                )
+
+        elif event_type == "agent_end":
+            msg = event.get("message", {})
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                return content
+
+        return ""
+
+    def _extract_error_text(self, result: Any) -> str:
+        """Extract error text from a tool result."""
+        if isinstance(result, dict):
+            content = result.get("content", [])
+            if isinstance(content, list) and content:
+                return content[0].get("text", str(result))
+            return result.get("message", str(result))
+        return str(result)
 
 
 # Global bridge instance
