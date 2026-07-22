@@ -123,7 +123,7 @@ app/agent/
 ├── _types.py                # 类型定义（AgentEvent, AgentContext, AgentLoopConfig, ...）
 ├── _stream.py               # StreamFn 适配器（将 LLMClient 包装为 StreamFn）
 ├── _event.py                # 事件系统（EventBus, AgentEventSink, EventListenerFn）
-├── _context.py              # 上下文管理（ContextBuilder, PerceptionInjector）
+├── _context_manager.py      # 上下文管理（AgentContext 构建、PerceptionInjector）
 ├── _runtime.py              # AgentRuntime（管理 Agent 实例生命周期）
 │
 ├── chat/                    # ChatAgent 子类（对话 Agent）
