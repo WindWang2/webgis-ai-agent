@@ -179,7 +179,7 @@ class ChatAgent(Agent):
 
     # ── Override Agent lifecycle hooks ─────────────────────────
 
-    async def _build_system_prompt(self) -> str:
+    def _build_system_prompt(self) -> str:
         """Build system prompt with dynamically injected skill list (same as ChatEngine)."""
         skills = list_md_skills()
         if skills:
