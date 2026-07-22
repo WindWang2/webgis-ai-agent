@@ -1,5 +1,6 @@
 """Chat API Route - SSE 流式对话"""
 import logging
+import os
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -20,6 +21,10 @@ router = APIRouter(prefix="/chat", tags=["对话"])
 registry: ToolRegistry = None  # type: ignore[assignment]
 engine: ChatEngine = None  # type: ignore[assignment]
 
+# Feature flag: 通过环境变量切换新旧 Agent 系统
+USE_NEW_AGENT = os.getenv("USE_NEW_AGENT", "").lower() in ("true", "1", "yes")
+agent_runtime = None  # type: ignore[assignment]  # 由 lifespan 初始化
+
 
 def get_engine() -> ChatEngine:
     """Return the ChatEngine instance, raising 503 if not yet initialized by lifespan.
@@ -33,7 +38,7 @@ def get_engine() -> ChatEngine:
 
 
 def get_registry() -> ToolRegistry:
-    """Return the ToolRegistry instance, raising 503 if not yet initialized by lifespan."""
+    """Return the ToolRegistry instance, raising 503 if not yet initialized."""
     if registry is None:
         raise HTTPException(status_code=503, detail="Service starting up, please retry")
     return registry
@@ -57,6 +62,19 @@ class ChatResponse(BaseModel):
 async def chat_completions(req: ChatRequest, _user: dict = Depends(get_current_user_optional)):
     """非流式对话接口"""
     user_id = _user.get("user_id")
+
+    # Feature flag: 使用新 Agent 系统
+    if USE_NEW_AGENT and agent_runtime is not None:
+        result = await agent_runtime.handle_request(
+            req.message,
+            session_id=req.session_id,
+            map_state=req.map_state,
+            skill_name=req.skill_name,
+            user_id=user_id,
+        )
+        return ChatResponse(**result)
+
+    # Legacy path: 使用 ChatEngine
     try:
         result = await get_engine().chat(
             req.message,
@@ -75,6 +93,34 @@ async def chat_completions(req: ChatRequest, _user: dict = Depends(get_current_u
 async def chat_stream(req: ChatRequest, _user: dict = Depends(get_current_user_optional)):
     """SSE 流式对话接口"""
     user_id = _user.get("user_id")
+
+    # Feature flag: 使用新 Agent 系统
+    if USE_NEW_AGENT and agent_runtime is not None:
+        async def new_agent_event_generator():
+            try:
+                async for event in agent_runtime.handle_stream_request(
+                    req.message,
+                    session_id=req.session_id,
+                    map_state=req.map_state,
+                    skill_name=req.skill_name,
+                    user_id=user_id,
+                ):
+                    yield event
+            except Exception as e:
+                logger.error(f"New Agent stream error: {e}", exc_info=True)
+                yield sse_event("error", {"error": "Internal server error"})
+
+        return StreamingResponse(
+            new_agent_event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            }
+        )
+
+    # Legacy path: 使用 ChatEngine
     async def event_generator():
         try:
             async for event in get_engine().chat_stream(
@@ -222,6 +268,15 @@ async def list_skills_api(_user: dict = Depends(get_current_user_optional)):
 async def clear_session(session_id: str, _user: dict = Depends(get_current_user_optional)):
     """清除会话（内存 + DB）— 受所有权检查保护（A2）。"""
     user_id = _user.get("user_id")
+
+    # Feature flag: 使用新 Agent 系统
+    if USE_NEW_AGENT and agent_runtime is not None:
+        ok = await agent_runtime.clear_session(session_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {"status": "ok"}
+
+    # Legacy path
     ok = await get_engine().clear_session(session_id, user_id=user_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Session not found")
