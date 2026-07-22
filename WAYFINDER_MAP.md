@@ -1,0 +1,60 @@
+# Wayfinder Map: Agent System Rewrite
+
+## Destination
+
+将 webgis-ai-agent 的 agent 系统从隐式散落在 `ChatEngine` 中的逻辑，重构成具有明确第一类抽象（Agent 类、事件循环、内存管理、工具协议）的现代 code agent 架构，参考 Pi (earendil-works/pi) / OpenDevin / Claude Code 的设计模式，同时保留已验证的 GIS 专属模式（ref-based 数据流、环境感知、工具分层）。
+
+完成标志：新 `Agent` 类体系可独立运行、可通过 feature flag 切换、全部 1154+ 测试通过。
+
+## Notes
+
+- **参考实现**: 
+  - **Pi** (earendil-works/pi, TypeScript, 75k stars) — `Agent` 类 + `AgentLoop` 纯函数 + 事件流 + ToolExecution + Compaction
+    - `Agent`: 有状态，持有 mutable state (tools/messages/model)，生命周期钩子 (beforeToolCall/afterToolCall/prepareNextTurn/shouldStopAfterTurn)，steering/follow-up 队列
+    - `AgentLoop`: 纯函数，接收 context+config+emit+streamFn，产生事件流 (agent_start/turn_start/tool_execution_*/agent_end)
+    - Tool 协议: `AgentTool` 接口，`execute(toolCallId, params, signal, onUpdate)` → `AgentToolResult{content, details, terminate}`
+    - 上下文压缩: token-aware Compaction (LLM summarization + file ops tracking + retained tail)
+    - Session: JSONL-based storage (memory-repo, jsonl-repo)
+  - **OpenCode** (anomalyco/opencode, TypeScript, 188k stars) — Effect-TS 函数式架构
+    - Tool 定义: `Definition<Input, Output>` Schema-first，`execute(input, context)` → Effect
+    - Tool 注册: `make()` + `withPermission()` + `settle()` 函数式注册
+    - Tool 输出: `Content` union (text/file)，`toModelOutput` 映射到 LLM 显示
+    - Agent: Service pattern (Effect-TS context)，CRUD for agent configurations
+    - 权限系统: `withPermission` 装饰器 (permission-based tool access control)
+  - **OpenHands** (All-Hands-AI/OpenHands, Python) — 平台级 agent 框架，MCP 集成，agent profiles 配置
+- **用户决策摘要**:
+  - Q1 Agent 抽象: **B** — 多态 Agent 类型 (基类 `Agent` + 子类 `ChatAgent` / `PlanAgent` / `Subagent`)
+  - Q2 执行模型: **B** — Agent 步骤模型 (每个 LLM 响应是一个 `Step`: think → act → observe)
+  - Q3 上下文管理: **B** — 保持现状 (messages 列表 + session_data_manager refs)，但规范化接口
+  - Q4 Subagent 隔离: **C** — 混合 (默认进程内独立 Agent 实例，可选进程外 worker)
+  - Q5 工具协议: **A** — 保持 Python 装饰器 (`@tool(registry, ...)`)，只改 Agent 侧调用方式
+  - Q6 回退兼容: **A** — 渐进替换 (新 Agent 与旧 ChatEngine 并存，feature flag 切换)
+- **必须保留的模式**: ref-based 数据流、三层工具目录 (tier 1/2/3)、自愈错误循环、SSE 保活流、具身感知注入、plan-first 优雅降级
+- **关键约束**: GIS 生产数据在跑，不能中断服务；Python 后端，FastAPI + asyncio
+
+## Decisions so far
+
+<!-- 每关闭一个 ticket，在这里追加一行 -->
+
+## Open Tickets (Frontier)
+
+- [001: Agent 基类接口契约设计](./tickets/001-agent-base-interface.md) — 基类状态管理、生命周期钩子、队列机制、StreamFn 抽象
+- [002: Step/Turn 模型定义](./tickets/002-step-turn-model.md) — Step/Turn 数据结构、与消息列表的关系、可中断语义
+- [003: AgentLoop 职责边界与执行模型](./tickets/003-agentloop-boundary.md) — Loop 纯函数化、Planning 位置、Tool 执行策略、Self-healing
+- [004: 事件系统设计](./tickets/004-event-system.md) — 事件类型集合、EventBus vs 回调、SSE 映射、持久化
+- [005: 新文件结构与模块划分](./tickets/005-file-structure.md) — 顶层包设计、模块依赖、Harness 层、测试结构
+
+## Not yet specified
+
+- Agent 事件系统的具体事件类型集合 (需与前端 SSE contract 对齐)
+- 新 Memory 接口与现有 `SessionDataManager` 的适配层细节
+- Step 模型的持久化格式 (如何序列化到 DB/Redis)
+- 进程外 Subagent Worker 的通信协议 (未来扩展)
+- 上下文压缩策略的具体阈值和算法
+
+## Out of scope
+
+- 前端 UI 重写 (仅 backend agent 系统)
+- 新的 LLM provider 接入 (保持现有 OpenAI-compatible 接口)
+- GIS 算法库重写 (仅 agent 调度层)
+- 容器化/沙箱执行 (Pi 的 Gondolin/Docker 模式，当前不需要)
