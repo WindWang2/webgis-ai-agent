@@ -14,6 +14,8 @@ from app.tools.registry import ToolRegistry
 
 from app.utils.sse import sse_event
 
+from app.agent_pi_bridge import PiRpcError
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["对话"])
 
@@ -69,9 +71,12 @@ async def chat_completions(req: ChatRequest, _user: dict = Depends(get_current_u
         try:
             result = await pi_bridge.prompt(req.message, session_id=req.session_id)
             return ChatResponse(session_id=result.get("sessionId", req.session_id or ""), content=result.get("content", ""))
-        except Exception as e:
+        except PiRpcError as e:
             logger.error(f"Pi bridge error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Agent error")
+            raise HTTPException(status_code=502, detail=f"Agent error: {str(e)}")
+        except Exception as e:
+            logger.error(f"Pi bridge unexpected error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     # Legacy path: 使用 ChatEngine
     try:

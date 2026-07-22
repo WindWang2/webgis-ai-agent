@@ -179,38 +179,33 @@ class PiBridge:
 
         Returns:
             Response dict with session_id and content
+
+        Raises:
+            PiRpcError: If the Pi agent returns an error or the request fails.
         """
         data: dict[str, Any] = {"message": message}
         if session_id:
             data["sessionId"] = session_id
             self._session_id = session_id
 
-        try:
-            async with self._lock:
-                await self._send_request("prompt", data)
+        async with self._lock:
+            await self._send_request("prompt", data)
 
-            # Drain events from the queue (non-streaming mode)
-            content_parts: list[str] = []
-            while True:
-                try:
-                    event = await asyncio.wait_for(self._event_queue.get(), timeout=2.0)
-                    text = self._extract_text_from_event(event)
-                    if text:
-                        content_parts.append(text)
-                except asyncio.TimeoutError:
-                    break
+        # Drain events from the queue (non-streaming mode)
+        content_parts: list[str] = []
+        while True:
+            try:
+                event = await asyncio.wait_for(self._event_queue.get(), timeout=2.0)
+                text = self._extract_text_from_event(event)
+                if text:
+                    content_parts.append(text)
+            except asyncio.TimeoutError:
+                break
 
-            return {
-                "sessionId": self._session_id,
-                "content": "".join(content_parts),
-            }
-        except PiRpcError as e:
-            logger.error(f"[PiBridge] prompt failed: {e}")
-            return {
-                "sessionId": self._session_id,
-                "content": "",
-                "error": str(e),
-            }
+        return {
+            "sessionId": self._session_id,
+            "content": "".join(content_parts),
+        }
 
     async def stream_prompt(
         self, message: str, session_id: Optional[str] = None
