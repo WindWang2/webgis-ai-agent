@@ -23,6 +23,13 @@ PI_RPC_ENTRY = Path(__file__).parent.parent.parent / "vendor" / "pi" / "packages
 # Default session directory
 DEFAULT_SESSION_DIR = Path(__file__).parent.parent.parent / ".pi" / "sessions"
 
+# Timeout constants (seconds)
+# 审计: 之前硬编码在代码中，提取为常量便于运维调参。
+PI_RPC_TIMEOUT = 300.0        # _send_request 等待 Pi 响应的上限
+PI_EVENT_DRAIN_TIMEOUT = 2.0  # prompt() 非流式模式下 drain event queue 的单次超时
+PI_EVENT_STREAM_TIMEOUT = 30.0  # stream_prompt 等待下一个 event 的超时
+PI_STARTUP_READY_TIMEOUT = 10.0  # start()  readiness check 的总超时
+
 
 class PiRpcError(Exception):
     """Error from Pi RPC."""
@@ -87,8 +94,20 @@ class PiBridge:
         # Start reader task
         self._reader_task = asyncio.create_task(self._read_responses())
 
-        # Wait for Pi to initialize
-        await asyncio.sleep(1)
+        # Wait for Pi to initialize by polling get_state until it responds
+        try:
+            await asyncio.wait_for(self._wait_for_ready(), timeout=PI_STARTUP_READY_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.warning(f"[PiBridge] Pi did not become ready within {PI_STARTUP_READY_TIMEOUT}s, continuing anyway")
+
+    async def _wait_for_ready(self) -> None:
+        """Poll get_state until Pi responds or the reader task ends."""
+        while True:
+            try:
+                await self._send_request("get_state", {})
+                return  # Pi is ready
+            except PiRpcError:
+                await asyncio.sleep(0.2)
 
     async def stop(self) -> None:
         """Stop the Pi subprocess."""
@@ -162,7 +181,7 @@ class PiBridge:
             line = json.dumps(request) + "\n"
             self._process.stdin.write(line)
             self._process.stdin.flush()
-            result = await asyncio.wait_for(future, timeout=300.0)
+            result = await asyncio.wait_for(future, timeout=PI_RPC_TIMEOUT)
             return result
         except asyncio.TimeoutError:
             self._pending_requests.pop(request_id, None)
@@ -195,7 +214,7 @@ class PiBridge:
         content_parts: list[str] = []
         while True:
             try:
-                event = await asyncio.wait_for(self._event_queue.get(), timeout=2.0)
+                event = await asyncio.wait_for(self._event_queue.get(), timeout=PI_EVENT_DRAIN_TIMEOUT)
                 text = self._extract_text_from_event(event)
                 if text:
                     content_parts.append(text)
@@ -244,7 +263,7 @@ class PiBridge:
         timed_out = False
         while True:
             try:
-                event = await asyncio.wait_for(self._event_queue.get(), timeout=30.0)
+                event = await asyncio.wait_for(self._event_queue.get(), timeout=PI_EVENT_STREAM_TIMEOUT)
                 sse = self._map_event_to_sse(event)
                 if sse:
                     yield sse

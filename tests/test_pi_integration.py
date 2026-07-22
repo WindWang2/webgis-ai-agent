@@ -262,7 +262,8 @@ class TestPiBridgeSubprocessFlow:
 
         with patch("subprocess.Popen", return_value=mock_proc):
             with patch("asyncio.sleep", return_value=None):
-                await bridge.start()
+                with patch.object(bridge, "_send_request", new_callable=AsyncMock, return_value=None):
+                    await bridge.start()
 
         try:
             result = await bridge.prompt("Say hi")
@@ -286,7 +287,8 @@ class TestPiBridgeSubprocessFlow:
 
         with patch("subprocess.Popen", return_value=mock_proc):
             with patch("asyncio.sleep", return_value=None):
-                await bridge.start()
+                with patch.object(bridge, "_send_request", new_callable=AsyncMock, return_value=None):
+                    await bridge.start()
 
         try:
             with pytest.raises(PiRpcError, match="No provider configured"):
@@ -312,7 +314,8 @@ class TestPiBridgeSubprocessFlow:
 
         with patch("subprocess.Popen", return_value=mock_proc):
             with patch("asyncio.sleep", return_value=None):
-                await bridge.start()
+                with patch.object(bridge, "_send_request", new_callable=AsyncMock, return_value=None):
+                    await bridge.start()
 
         try:
             events = []
@@ -342,7 +345,8 @@ class TestPiBridgeSubprocessFlow:
 
         with patch("subprocess.Popen", return_value=mock_proc):
             with patch("asyncio.sleep", return_value=None):
-                await bridge.start()
+                with patch.object(bridge, "_send_request", new_callable=AsyncMock, return_value=None):
+                    await bridge.start()
 
         try:
             events = []
@@ -369,7 +373,8 @@ class TestPiBridgeSubprocessFlow:
 
         with patch("subprocess.Popen", return_value=mock_proc):
             with patch("asyncio.sleep", return_value=None):
-                await bridge.start()
+                with patch.object(bridge, "_send_request", new_callable=AsyncMock, return_value=None):
+                    await bridge.start()
 
         try:
             # Patch _send_request to raise PiRpcError
