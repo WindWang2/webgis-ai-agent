@@ -47,6 +47,11 @@ def get_registry() -> ToolRegistry:
     return registry
 
 
+def _use_pi_bridge() -> bool:
+    """Return True when the Pi agent path is enabled and ready."""
+    return USE_NEW_AGENT and pi_bridge is not None
+
+
 class ChatRequest(BaseModel):
     """聊天请求"""
     message: str = Field(..., min_length=1, max_length=5000)
@@ -66,8 +71,7 @@ async def chat_completions(req: ChatRequest, _user: dict = Depends(get_current_u
     """非流式对话接口"""
     user_id = _user.get("user_id")
 
-    # Feature flag: 使用 Pi agent (vendor/pi) 通过 RPC 调用
-    if USE_NEW_AGENT and pi_bridge is not None:
+    if _use_pi_bridge():
         try:
             result = await pi_bridge.prompt(req.message, session_id=req.session_id)
             return ChatResponse(session_id=result.get("sessionId", req.session_id or ""), content=result.get("content", ""))
@@ -98,8 +102,7 @@ async def chat_stream(req: ChatRequest, _user: dict = Depends(get_current_user_o
     """SSE 流式对话接口"""
     user_id = _user.get("user_id")
 
-    # Feature flag: 使用 Pi agent (vendor/pi) 通过 RPC 调用
-    if USE_NEW_AGENT and pi_bridge is not None:
+    if _use_pi_bridge():
         async def pi_event_generator():
             try:
                 async for event in pi_bridge.stream_prompt(req.message, session_id=req.session_id):
