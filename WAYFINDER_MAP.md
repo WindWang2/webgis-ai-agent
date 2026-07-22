@@ -35,19 +35,23 @@
 ## Decisions so far
 
 <!-- 每关闭一个 ticket，在这里追加一行 -->
+- [001] Agent 基类接口契约：状态化 Agent 类 + 4 生命周期钩子 + PendingMessageQueue + StreamFn 抽象 ✅
+- [002] Step/Turn 模型定义：无显式 Step 类型，Turn 隐式，10 个 AgentEvent dataclass ✅
+- [003] AgentLoop 边界设计：纯函数 Loop + parallel/sequential 工具执行 + MiniMax XML fallback + max_rounds=60 ✅
+- [004] 事件系统设计：EventBus 中间层 + 10 核心事件类型 + GIS 扩展 via details + SSEMapper ✅
+- [005] 文件结构设计：app/agent/ 顶层包 + 单向依赖 + harness 层 + feature flag 渐进迁移 ✅
+- [006] ChatAgent 桥接：ChatAgent(Agent) 子类 + ToolCatalog/ToolRegistry 双层工具选择 + SSE 事件映射 ✅
+- [007] AgentRuntime + Feature Flag：AgentRuntime 管理会话生命周期 + USE_NEW_AGENT 环境变量切换 ✅
+- [008] Harness 模块：skills, system_prompt, session, compaction 薄封装层 ✅
+- [009] Subagent 支持：Subagent(Agent) 子类 + 工厂方法 + SubagentResult 回传 ✅
+- [010] 完整迁移：公共 API 导出 + 集成测试 + 1186 测试全通过 ✅
 
 ## Open Tickets (Frontier)
 
-- [001: Agent 基类接口契约设计](./tickets/001-agent-base-interface.md) — 基类状态管理、生命周期钩子、队列机制、StreamFn 抽象
-- [002: Step/Turn 模型定义](./tickets/002-step-turn-model.md) — Step/Turn 数据结构、与消息列表的关系、可中断语义
-- [003: AgentLoop 职责边界与执行模型](./tickets/003-agentloop-boundary.md) — Loop 纯函数化、Planning 位置、Tool 执行策略、Self-healing
-- [004: 事件系统设计](./tickets/004-event-system.md) — 事件类型集合、EventBus vs 回调、SSE 映射、持久化
-- [005: 新文件结构与模块划分](./tickets/005-file-structure.md) — 顶层包设计、模块依赖、Harness 层、测试结构
-
-## Not yet specified
-
-- Agent 事件系统的具体事件类型集合 (需与前端 SSE contract 对齐)
-- 新 Memory 接口与现有 `SessionDataManager` 的适配层细节
+所有 10 个 tickets 已完成。后续工作：
+- [ ] 端到端测试：用真实 LLM 验证新 Agent 系统在测试环境中的完整对话流程
+- [ ] 性能基准：对比新旧系统的 token 消耗和响应时间
+- [ ] 文档：更新 ARCHITECTURE.md 描述新 Agent 系统架构
 - Step 模型的持久化格式 (如何序列化到 DB/Redis)
 - 进程外 Subagent Worker 的通信协议 (未来扩展)
 - 上下文压缩策略的具体阈值和算法
