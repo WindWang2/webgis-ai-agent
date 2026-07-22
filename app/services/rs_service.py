@@ -453,23 +453,21 @@ class RemoteSensingService:
             index_vals = formula(**bands)
             index_name = index_type.upper()
 
-            # Classification thresholds
-            if index_type == "ndvi":
-                coverage = round(float((index_vals > 0.3).sum() / index_vals.size * 100), 1)
-                classification = {"vegetation_coverage_pct": coverage}
-            elif index_type == "ndwi":
-                coverage = round(float((index_vals > 0).sum() / index_vals.size * 100), 1)
-                classification = {"water_coverage_pct": coverage}
-            elif index_type == "nbr":
-                severity = {
-                    "unburned": round(float((index_vals > 0.1).sum() / index_vals.size * 100), 1),
-                    "low_severity": round(float(((index_vals >= -0.1) & (index_vals <= 0.1)).sum() / index_vals.size * 100), 1),
-                    "moderate_severity": round(float(((index_vals >= -0.27) & (index_vals < -0.1)).sum() / index_vals.size * 100), 1),
-                    "high_severity": round(float((index_vals < -0.27).sum() / index_vals.size * 100), 1),
-                }
-                classification = {"burn_severity": severity}
-            else:
-                classification = {}
+            # Classification thresholds: strategy map replaces if/elif cascade
+            _CLASSIFIERS = {
+                "ndvi": lambda vals: {"vegetation_coverage_pct": round(float((vals > 0.3).sum() / vals.size * 100), 1)},
+                "ndwi": lambda vals: {"water_coverage_pct": round(float((vals > 0).sum() / vals.size * 100), 1)},
+                "nbr": lambda vals: {
+                    "burn_severity": {
+                        "unburned": round(float((vals > 0.1).sum() / vals.size * 100), 1),
+                        "low_severity": round(float(((vals >= -0.1) & (vals <= 0.1)).sum() / vals.size * 100), 1),
+                        "moderate_severity": round(float(((vals >= -0.27) & (vals < -0.1)).sum() / vals.size * 100), 1),
+                        "high_severity": round(float((vals < -0.27).sum() / vals.size * 100), 1),
+                    }
+                },
+            }
+            classify = _CLASSIFIERS.get(index_type)
+            classification = classify(index_vals) if classify else {}
 
             return {
                 "status": "ok",

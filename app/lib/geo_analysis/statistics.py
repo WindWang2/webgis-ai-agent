@@ -151,10 +151,16 @@ def moran_i_narrated(geojson: dict, value_field: str) -> GeoAnalysisResult:
     
     z = values - values.mean()
     s0 = w_sum
-    # _build_weights returns a sparse COO matrix; convert to dense for
-    # element-wise multiplication with the outer product (Moran's I formula).
-    w_dense = w.toarray() if sparse.issparse(w) else w
-    numerator = float(np.sum(w_dense * np.outer(z, z)))
+    # Keep sparse: compute numerator only over non-zero weight pairs
+    # (avoids O(n²) dense outer product that would negate cKDTree benefit)
+    if sparse.issparse(w):
+        # COO matrix: directly access non-zero entries
+        w_vals = w.data
+        i_idx = w.row
+        j_idx = w.col
+        numerator = float(np.sum(w_vals * z[i_idx] * z[j_idx]))
+    else:
+        numerator = float(np.sum(w * np.outer(z, z)))
     denominator = np.sum(z**2)
     
     moran_i_val = (n / s0) * (numerator / denominator) if denominator > 0 else 0
@@ -167,7 +173,10 @@ def moran_i_narrated(geojson: dict, value_field: str) -> GeoAnalysisResult:
     for _ in range(perms):
         pv = rng.permutation(values)
         pz = pv - pv.mean()
-        p_num = np.sum(w * np.outer(pz, pz))
+        if sparse.issparse(w):
+            p_num = np.sum(w.data * pz[w.row] * pz[w.col])
+        else:
+            p_num = np.sum(w * np.outer(pz, pz))
         p_den = np.sum(pz**2)
         perm_is.append((n / s0) * (p_num / p_den) if p_den > 0 else 0)
     
@@ -228,9 +237,9 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
     # Build binary weights matrix using cKDTree sparse distance matrix
     from scipy.spatial import cKDTree
     tree = cKDTree(coords)
-    w_sparse = tree.sparse_distance_matrix(tree, max_distance=bw, output_type="coo_matrix")
+    binary_weights_coo = tree.sparse_distance_matrix(tree, max_distance=bw, output_type="coo_matrix")
     w = np.zeros((n, n))
-    w[w_sparse.row, w_sparse.col] = 1.0
+    w[binary_weights_coo.row, binary_weights_coo.col] = 1.0
     np.fill_diagonal(w, 0)
     
     x_bar = values.mean()

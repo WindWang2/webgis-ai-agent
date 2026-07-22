@@ -29,12 +29,12 @@ def idw_interpolation(points_geojson: dict | str, value_field: str, resolution: 
     # Get bounding box with small buffer
     min_lat, min_lon = np.min(coords, axis=0)
     max_lat, max_lon = np.max(coords, axis=0)
-    # Add ~1km buffer (≈0.009 degrees) to avoid edge effects
-    buf = 0.009
-    min_lat = max(min_lat - buf, -90)
-    max_lat = min(max_lat + buf, 90)
-    min_lon = max(min_lon - buf, -180)
-    max_lon = min(max_lon + buf, 180)
+    # Get bounding box with ~1km buffer (≈0.009 degrees) to avoid edge effects
+    BUF_DEG = 0.009
+    min_lat = max(min_lat - BUF_DEG, -90)
+    max_lat = min(max_lat + BUF_DEG, 90)
+    min_lon = max(min_lon - BUF_DEG, -180)
+    max_lon = min(max_lon + BUF_DEG, 180)
     
     # Get ALL H3 cells in bounding box (complete surface coverage)
     # h3 v4: use geo_to_cells (polyfill was removed in v4)

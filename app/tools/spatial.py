@@ -7,9 +7,33 @@ from pydantic import BaseModel, Field
 from app.tools.registry import ToolRegistry, tool
 from app.tools._utils import cached_tool, trim_features
 from app.services.spatial_analyzer import SpatialAnalyzer
+from app.services.spatial_tasks import _extract_heatmap_points, _build_heatmap_grid, _build_grid_features
 from app.lib.geo_processor.core import safe_parse as safe_parse_geojson
 
 logger = logging.getLogger(__name__)
+
+_PALETTE_MAP = {
+    "classic": "YlOrRd",
+    "magma": "Magma",
+    "viridis": "Viridis",
+    "thermal": "Reds",
+}
+
+
+def _build_legend_spec(palette: str, min_val: float = 0.0, max_val: float = 1.0) -> dict:
+    """Build a continuous legend spec for heatmap rendering."""
+    from app.services.cartography_service import COLOR_PALETTES
+    palette_key = _PALETTE_MAP.get(palette, "YlOrRd")
+    palette_colors = COLOR_PALETTES.get(palette_key) \
+        or COLOR_PALETTES.get("YlOrRd", ["#ffffb2", "#feb24c", "#bd0026"])
+    return {
+        "type": "continuous",
+        "min": min_val,
+        "max": max_val,
+        "palette": palette_key,
+        "palette_colors": list(palette_colors),
+    }
+
 
 class BufferAnalysisArgs(BaseModel):
     geojson: Any = Field(..., description="输入 GeoJSON FeatureCollection 或数据引用(ref:xxx)")
@@ -28,80 +52,24 @@ def _generate_heatmap(features: list, cell_size: int = 500, radius: int = 1000,
     """Generate heatmap data without Celery. Supports raster and grid render types."""
     import base64
     import io
-    import math
 
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import numpy as np
     from matplotlib.colors import LinearSegmentedColormap
     from scipy.ndimage import gaussian_filter
-    from shapely.geometry import box, mapping
 
     fig = None
     try:
-        points = []
-        for f in features or []:
-            if not isinstance(f, dict):
-                continue
-            geom = f.get("geometry") or {}
-            if geom.get("type") == "Point":
-                coords = geom.get("coordinates")
-                if coords and len(coords) >= 2:
-                    try:
-                        lon, lat = float(coords[0]), float(coords[1])
-                        if not math.isnan(lon) and not math.isnan(lat):
-                            points.append((lon, lat))
-                    except (ValueError, TypeError):
-                        continue
-
-        if not points:
+        xs, ys = _extract_heatmap_points(features)
+        if not xs:
             return {"error": "No valid point features found"}
 
-        xs = [p[0] for p in points]
-        ys = [p[1] for p in points]
-
-        cell_deg = cell_size / 111000
-        margin = cell_deg * 2
-        x_min, x_max = min(xs) - margin, max(xs) + margin
-        y_min, y_max = min(ys) - margin, max(ys) + margin
-
-        if x_min == x_max:
-            x_max += cell_deg
-        if y_min == y_max:
-            y_max += cell_deg
-
-        x_bins = np.arange(x_min, x_max + cell_deg, cell_deg)
-        y_bins = np.arange(y_min, y_max + cell_deg, cell_deg)
-
-        if len(x_bins) > 5000 or len(y_bins) > 5000:
-            return {"error": "Resolution too high for the data extent"}
-
-        H, xedges, yedges = np.histogram2d(xs, ys, bins=[x_bins, y_bins])
+        H, xedges, yedges, _ = _build_heatmap_grid(xs, ys, cell_size)
 
         if render_type == "grid":
-            grid_features = []
             max_val = float(H.max()) if H.max() > 0 else 1.0
-
-            MAX_GRID_FEATURES = 500_000
-            total_cells = int(np.sum(H > 0))
-            if total_cells > MAX_GRID_FEATURES:
-                return {"error": f"Grid too dense ({total_cells} cells). Increase cell_size or reduce data extent. Max allowed: {MAX_GRID_FEATURES}"}
-
-            # Only iterate over non-zero bins (audit: avoid O(n²) empty-bin walk)
-            nonzero = np.argwhere(H > 0)
-            for i, j in nonzero:
-                count = int(H[i, j])
-                rect = box(xedges[i], yedges[j], xedges[i + 1], yedges[j + 1])
-                grid_features.append({
-                    "type": "Feature",
-                    "geometry": mapping(rect),
-                    "properties": {
-                        "count": count,
-                        "weight": round(float(count / max_val), 4)
-                    }
-                })
-
+            grid_features = _build_grid_features(H, xedges, yedges, max_val)
             return {
                 "success": True,
                 "data": {
@@ -293,23 +261,7 @@ def register_spatial_tools(registry: ToolRegistry):
                 # Generate legend_spec for native mode so the frontend can
                 # show a color gradient legend alongside the heatmap layer.
                 try:
-                    from app.services.cartography_service import COLOR_PALETTES
-                    palette_map = {
-                        "classic": "YlOrRd",
-                        "magma": "Magma",
-                        "viridis": "Viridis",
-                        "thermal": "Reds",
-                    }
-                    palette_key = palette_map.get(palette, "YlOrRd")
-                    palette_colors = COLOR_PALETTES.get(palette_key) \
-                        or COLOR_PALETTES.get("YlOrRd", ["#ffffb2", "#feb24c", "#bd0026"])
-                    data["legend_spec"] = {
-                        "type": "continuous",
-                        "min": 0.0,
-                        "max": 1.0,
-                        "palette": palette_key,
-                        "palette_colors": list(palette_colors),
-                    }
+                    data["legend_spec"] = _build_legend_spec(palette)
                 except Exception as e:
                     logger.warning(f"[heatmap_data] legend_spec generation failed: {e}")
             if isinstance(data, dict) and data.get("type") == "FeatureCollection":
@@ -339,25 +291,12 @@ def register_spatial_tools(registry: ToolRegistry):
                 # non-native modes emit continuous legend_spec
                 if render_type != "native":
                     try:
-                        from app.services.cartography_service import COLOR_PALETTES
-                        # Map heatmap palette names to COLOR_PALETTES keys
-                        palette_map = {
-                            "classic": "YlOrRd",
-                            "magma": "Magma",
-                            "viridis": "Viridis",
-                            "thermal": "Reds",
-                        }
-                        palette_key = palette_map.get(palette, "YlOrRd")
-                        palette_colors = COLOR_PALETTES.get(palette_key) \
-                            or COLOR_PALETTES.get("YlOrRd", ["#ffffb2", "#feb24c", "#bd0026"])
                         metadata = res_data.get("metadata", {})
-                        res_data["legend_spec"] = {
-                            "type": "continuous",
-                            "min": float(metadata.get("min_value", 0.0)),
-                            "max": float(metadata.get("max_value", 1.0)),
-                            "palette": palette_key,
-                            "palette_colors": list(palette_colors),
-                        }
+                        res_data["legend_spec"] = _build_legend_spec(
+                            palette,
+                            min_val=float(metadata.get("min_value", 0.0)),
+                            max_val=float(metadata.get("max_value", 1.0)),
+                        )
                     except Exception as e:
                         logger.warning(f"[heatmap_data] legend_spec generation failed (result path): {e}")
             if isinstance(res_data, dict) and res_data.get("type") == "FeatureCollection":

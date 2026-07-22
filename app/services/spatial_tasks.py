@@ -83,61 +83,82 @@ def _do_spatial_stats(features: List[Dict], callback: Optional[Callable] = None)
         logger.error(f"Spatial stats failed: {e}")
         return {"success": False, "error": str(e)}
 
+# --- 共享热力图核心逻辑 (expand-contract: 消除 spatial.py 重复) ---
+
+
+def _extract_heatmap_points(features: List[Dict]) -> tuple[list, list]:
+    """Extract valid (lon, lat) points from GeoJSON features."""
+    points = []
+    for f in features or []:
+        if not isinstance(f, dict):
+            continue
+        geom = f.get("geometry") or {}
+        if geom.get("type") != "Point":
+            continue
+        coords = geom.get("coordinates")
+        if not coords or len(coords) < 2:
+            continue
+        try:
+            lon, lat = float(coords[0]), float(coords[1])
+            if not math.isnan(lon) and not math.isnan(lat):
+                points.append((lon, lat))
+        except (ValueError, TypeError):
+            continue
+    return [p[0] for p in points], [p[1] for p in points]
+
+
+def _build_heatmap_grid(xs, ys, cell_size: int):
+    """Build histogram grid from point coordinates. Returns (H, xedges, yedges, cell_deg)."""
+    cell_deg = cell_size / 111000
+    margin = cell_deg * 2
+    x_min, x_max = min(xs) - margin, max(xs) + margin
+    y_min, y_max = min(ys) - margin, max(ys) + margin
+    if x_min == x_max:
+        x_max += cell_deg
+    if y_min == y_max:
+        y_max += cell_deg
+    x_bins = np.arange(x_min, x_max + cell_deg, cell_deg)
+    y_bins = np.arange(y_min, y_max + cell_deg, cell_deg)
+    if len(x_bins) > 5000 or len(y_bins) > 5000:
+        raise ValueError("Resolution too high for the data extent")
+    H, xedges, yedges = np.histogram2d(xs, ys, bins=[x_bins, y_bins])
+    return H, xedges, yedges, cell_deg
+
+
+def _build_grid_features(H, xedges, yedges, max_val: float) -> list[dict]:
+    """Build GeoJSON features for non-zero histogram cells."""
+    grid_features = []
+    MAX_GRID_FEATURES = 500_000
+    total_cells = int(np.sum(H > 0))
+    if total_cells > MAX_GRID_FEATURES:
+        raise ValueError(f"Grid too dense ({total_cells} cells). Increase cell_size or reduce data extent. Max allowed: {MAX_GRID_FEATURES}")
+    nonzero = np.argwhere(H > 0)
+    for i, j in nonzero:
+        count = int(H[i, j])
+        rect = box(xedges[i], yedges[j], xedges[i + 1], yedges[j + 1])
+        grid_features.append({
+            "type": "Feature",
+            "geometry": mapping(rect),
+            "properties": {
+                "count": count,
+                "weight": round(float(count / max_val), 4)
+            }
+        })
+    return grid_features
+
+
 def _do_heatmap_generation(features: List[Dict], cell_size: int = 500, radius: int = 1000, render_type: str = "raster", palette: str = "classic", callback: Optional[Callable] = None):
     fig = None
     try:
-        points = []
-        for f in features or []:
-            if not isinstance(f, dict): continue
-            geom = f.get("geometry") or {}
-            if geom.get("type") == "Point":
-                coords = geom.get("coordinates")
-                if coords and len(coords) >= 2:
-                    try:
-                        lon, lat = float(coords[0]), float(coords[1])
-                        if not math.isnan(lon) and not math.isnan(lat):
-                            points.append((lon, lat))
-                    except (ValueError, TypeError):
-                        continue
-
-        if not points:
+        xs, ys = _extract_heatmap_points(features)
+        if not xs:
             return {"success": False, "error": "No valid point features found"}
 
-        xs = [p[0] for p in points]
-        ys = [p[1] for p in points]
-        cell_deg = cell_size / 111000
-        margin = cell_deg * 2
-        x_min, x_max = min(xs) - margin, max(xs) + margin
-        y_min, y_max = min(ys) - margin, max(ys) + margin
-        if x_min == x_max: x_max += cell_deg
-        if y_min == y_max: y_max += cell_deg
-        x_bins = np.arange(x_min, x_max + cell_deg, cell_deg)
-        y_bins = np.arange(y_min, y_max + cell_deg, cell_deg)
-        
-        if len(x_bins) > 5000 or len(y_bins) > 5000:
-             return {"success": False, "error": "Resolution too high for the data extent"}
-
-        H, xedges, yedges = np.histogram2d(xs, ys, bins=[x_bins, y_bins])
+        H, xedges, yedges, _ = _build_heatmap_grid(xs, ys, cell_size)
 
         if render_type == "grid":
-            grid_features = []
             max_val = float(H.max()) if H.max() > 0 else 1.0
-            MAX_GRID_FEATURES = 500_000
-            total_cells = int(H[H > 0].size)
-            if total_cells > MAX_GRID_FEATURES:
-                return {"success": False, "error": f"Grid too dense ({total_cells} cells)."}
-            
-            # 向量化：仅迭代非空格网单元，避免 O(n²) 全量扫描
-            nonzero_idx = np.argwhere(H > 0)
-            for idx in nonzero_idx:
-                i, j = int(idx[0]), int(idx[1])
-                count = int(H[i, j])
-                rect = box(xedges[i], yedges[j], xedges[i+1], yedges[j+1])
-                grid_features.append({
-                    "type": "Feature",
-                    "geometry": mapping(rect),
-                    "properties": {"count": count, "weight": round(float(count / max_val), 4)}
-                })
+            grid_features = _build_grid_features(H, xedges, yedges, max_val)
             return {
                 "success": True,
                 "data": {"type": "FeatureCollection", "features": grid_features},
@@ -162,7 +183,7 @@ def _do_heatmap_generation(features: List[Dict], cell_size: int = 500, radius: i
                 "data": {
                     "type": "heatmap_raster", "image": img_b64, 
                     "bbox": [float(xedges[0]), float(yedges[0]), float(xedges[-1]), float(yedges[-1])],
-                    "total_points": len(points)
+                    "total_points": len(xs)
                 }
             }
     except Exception as e:

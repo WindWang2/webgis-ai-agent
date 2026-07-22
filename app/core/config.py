@@ -224,13 +224,13 @@ class Settings(BaseSettings):
                 raise
             # 域名：做基本黑名单检查
             _BLOCKED_DOMAIN_PATTERNS = [
-                r"^169\.254",        # link-local
-                r"^10\.",            # 10.0.0.0/8
+                r"^169\.254",              # link-local
+                r"^10\.",                  # 10.0.0.0/8
                 r"^172\.(1[6-9]|2\d|3[01])\.",  # 172.16.0.0/12
-                r"^192\.168\.",      # 192.168.0.0/16
-                r"^127\.",           # loopback
-                r"metadata",         # 元数据服务
-                r"internal$",        # k8s internal
+                r"^192\.168\.",            # 192.168.0.0/16
+                r"^127\.",                 # loopback
+                r"^metadata\.",            # 元数据服务 (FQDN only)
+                r"\.internal\.?$",         # k8s internal (.internal FQDN)
             ]
             host_lower = hostname.lower()
             for pat in _BLOCKED_DOMAIN_PATTERNS:

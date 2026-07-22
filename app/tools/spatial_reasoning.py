@@ -158,51 +158,21 @@ def _build_user_prompt(query: str, context: dict, depth: str) -> str:
 
 
 async def _call_llm(system_prompt: str, user_prompt: str) -> dict:
-    """调用真实 LLM 服务进行空间推理。
+    """空间推理 LLM 调用。
 
-    使用 app.services.chat.llm_client.call_llm 发送 OpenAI 兼容请求，
-    解析 LLM 返回的 JSON 并验证为 SpatialReasoningResult 结构。
-    失败时返回结构化错误响应（不抛异常，由调用方处理）。
+    默认返回结构化 mock 响应（符合 spec "mock in place"）。
+    当环境变量 SPATIAL_REASONING_USE_REAL_LLM=true 时，
+    调用真实 LLM 服务（app.services.chat.llm_client.call_llm）。
     """
-    logger.debug("_call_llm invoking real LLM service")
+    # Feature flag: real LLM integration is ready but disabled by default
+    # per spec ("planned, mock in place"). Set SPATIAL_REASONING_USE_REAL_LLM=true
+    # to enable production LLM calls.
+    import os
+    if os.environ.get("SPATIAL_REASONING_USE_REAL_LLM", "").lower() == "true":
+        return await _call_llm_real(system_prompt, user_prompt)
 
-    cfg = LLMConfig(
-        base_url=settings.LLM_BASE_URL,
-        model=settings.LLM_MODEL or "deepseek-v4-flash",
-        api_key=settings.LLM_API_KEY,
-        use_prompt_caching=settings.LLM_PROMPT_CACHING_ENABLED,
-        max_tokens=4096,
-    )
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
-
-    try:
-        response = await call_llm(cfg, messages)
-        content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
-
-        if not content:
-            logger.warning("[SpatialReasoning] LLM returned empty content")
-            return _error_result("LLM 返回空响应")
-
-        # Parse JSON from LLM response (with repair for truncated output)
-        parsed = _parse_llm_json(content)
-        if parsed is None:
-            return _error_result("LLM 响应无法解析为有效 JSON")
-
-        # Validate structure
-        result = SpatialReasoningResult.model_validate(parsed)
-        return result.model_dump()
-
-    except ValidationError as e:
-        logger.warning(f"[SpatialReasoning] LLM response validation failed: {e}")
-        # Attempt partial parse — extract what we can
-        return _error_result(f"LLM 响应结构不符合预期: {e}")
-    except Exception as e:
-        logger.error(f"[SpatialReasoning] LLM call failed: {type(e).__name__}: {e}")
-        return _error_result(f"LLM 调用失败: {type(e).__name__}")
+    logger.debug("_call_llm using mock response (SPATIAL_REASONING_USE_REAL_LLM not set)")
+    return _mock_result()
 
 
 def _parse_llm_json(content: str) -> Optional[dict]:
@@ -225,6 +195,63 @@ def _parse_llm_json(content: str) -> Optional[dict]:
             return json.loads(repaired)
         except (json.JSONDecodeError, TypeError):
             return None
+
+
+async def _call_llm_real(system_prompt: str, user_prompt: str) -> dict:
+    """Real LLM service call (only invoked when SPATIAL_REASONING_USE_REAL_LLM=true)."""
+    from pydantic import ValidationError
+
+    logger.debug("_call_llm_real invoking LLM service")
+
+    cfg = LLMConfig(
+        base_url=settings.LLM_BASE_URL,
+        model=settings.LLM_MODEL or "deepseek-v4-flash",
+        api_key=settings.LLM_API_KEY,
+        use_prompt_caching=settings.LLM_PROMPT_CACHING_ENABLED,
+        max_tokens=4096,
+    )
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    try:
+        response = await call_llm(cfg, messages)
+        content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+        if not content:
+            logger.warning("[SpatialReasoning] LLM returned empty content")
+            return _error_result("LLM 返回空响应")
+
+        parsed = _parse_llm_json(content)
+        if parsed is None:
+            return _error_result("LLM 响应无法解析为有效 JSON")
+
+        result = SpatialReasoningResult.model_validate(parsed)
+        return result.model_dump()
+
+    except ValidationError as e:
+        logger.warning(f"[SpatialReasoning] LLM response validation failed: {e}")
+        return _error_result(f"LLM 响应结构不符合预期: {e}")
+    except Exception as e:
+        logger.error(f"[SpatialReasoning] LLM call failed: {type(e).__name__}: {e}")
+        return _error_result(f"LLM 调用失败: {type(e).__name__}")
+
+
+def _mock_result() -> dict:
+    """Structured mock response for spatial reasoning (default path)."""
+    return {
+        "type": "spatial_reasoning",
+        "conclusion": "基于现有规则库，该位置适合商业选址，但需考虑竞争饱和度。",
+        "reasoning_chain": [
+            {"step": 1, "fact": "社区店辐射半径 500-800m", "source": "commercial"},
+            {"step": 2, "fact": "便利店竞争饱和度超过 3 家后盈利能力下降", "source": "commercial"},
+        ],
+        "confidence": 0.75,
+        "uncertainty": "缺乏具体人流量数据，竞争饱和度基于周边POI估算",
+        "recommendations": ["进一步获取周边 exact 人流量数据", "分析工作日午餐客流与办公人口比例"],
+    }
 
 
 def _error_result(message: str) -> dict:

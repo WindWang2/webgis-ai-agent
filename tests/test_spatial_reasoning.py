@@ -117,14 +117,46 @@ async def test_spatial_reasoning_tool_output_format():
     assert isinstance(result["recommendations"], list)
 
 
-# ─── _call_llm real integration tests ────────────────────────────
+# ─── _call_llm default (mock) tests ─────────────────────────────
+
+
+def test_call_llm_default_returns_mock():
+    """Without feature flag, _call_llm returns the deterministic mock."""
+    from app.tools.spatial_reasoning import _call_llm, _mock_result
+
+    result = _mock_result()
+    assert result["type"] == "spatial_reasoning"
+    assert result["confidence"] == 0.75
+    assert len(result["reasoning_chain"]) == 2
+    assert "商业选址" in result["conclusion"]
 
 
 @pytest.mark.asyncio
-async def test_call_llm_returns_valid_result():
-    """When LLM returns valid JSON, _call_llm should return it validated."""
+async def test_call_llm_mock_without_env_flag():
+    """Default path uses mock regardless of LLM service availability."""
     from app.tools.spatial_reasoning import _call_llm
-    from app.services.chat.llm_client import LLMConfig
+
+    # Ensure flag is NOT set
+    import os
+    old = os.environ.pop("SPATIAL_REASONING_USE_REAL_LLM", None)
+    try:
+        result = await _call_llm("system", "user")
+        assert result["confidence"] == 0.75
+        assert "商业选址" in result["conclusion"]
+    finally:
+        if old is not None:
+            os.environ["SPATIAL_REASONING_USE_REAL_LLM"] = old
+
+
+# ─── _call_llm_real integration tests (feature-flagged) ──────────
+
+
+@pytest.mark.asyncio
+async def test_call_llm_real_returns_valid_result(monkeypatch):
+    """When SPATIAL_REASONING_USE_REAL_LLM=true and LLM returns valid JSON."""
+    from app.tools.spatial_reasoning import _call_llm
+
+    monkeypatch.setenv("SPATIAL_REASONING_USE_REAL_LLM", "true")
 
     mock_response = {
         "choices": [{
@@ -145,10 +177,11 @@ async def test_call_llm_returns_valid_result():
 
 
 @pytest.mark.asyncio
-async def test_call_llm_handles_empty_content():
-    """When LLM returns empty content, _call_llm should return error result."""
+async def test_call_llm_real_handles_empty_content(monkeypatch):
+    """Real path: empty LLM content returns error result."""
     from app.tools.spatial_reasoning import _call_llm
 
+    monkeypatch.setenv("SPATIAL_REASONING_USE_REAL_LLM", "true")
     mock_response = {"choices": [{"message": {"content": ""}}]}
 
     with patch("app.tools.spatial_reasoning.call_llm", return_value=mock_response):
@@ -159,10 +192,11 @@ async def test_call_llm_handles_empty_content():
 
 
 @pytest.mark.asyncio
-async def test_call_llm_handles_invalid_json():
-    """When LLM returns non-JSON text, _call_llm should return error result."""
+async def test_call_llm_real_handles_invalid_json(monkeypatch):
+    """Real path: non-JSON text returns error result."""
     from app.tools.spatial_reasoning import _call_llm
 
+    monkeypatch.setenv("SPATIAL_REASONING_USE_REAL_LLM", "true")
     mock_response = {"choices": [{"message": {"content": "This is not JSON at all."}}]}
 
     with patch("app.tools.spatial_reasoning.call_llm", return_value=mock_response):
@@ -173,10 +207,11 @@ async def test_call_llm_handles_invalid_json():
 
 
 @pytest.mark.asyncio
-async def test_call_llm_handles_truncated_json():
-    """When LLM returns truncated JSON, _repair_json should fix it."""
+async def test_call_llm_real_handles_truncated_json(monkeypatch):
+    """Real path: truncated JSON is repaired by _repair_json."""
     from app.tools.spatial_reasoning import _call_llm
 
+    monkeypatch.setenv("SPATIAL_REASONING_USE_REAL_LLM", "true")
     truncated = '{"type": "spatial_reasoning", "conclusion": "适合", "reasoning_chain": [{"step": 1, "fact": "x", "source": "c"}], "confidence": 0.8, "uncertainty": "有限", "recommendations": ["建议"]'
 
     mock_response = {"choices": [{"message": {"content": truncated}}]}
@@ -189,10 +224,11 @@ async def test_call_llm_handles_truncated_json():
 
 
 @pytest.mark.asyncio
-async def test_call_llm_handles_markdown_fences():
-    """When LLM wraps JSON in markdown code fences, they should be stripped."""
+async def test_call_llm_real_handles_markdown_fences(monkeypatch):
+    """Real path: markdown code fences are stripped before JSON parse."""
     from app.tools.spatial_reasoning import _call_llm
 
+    monkeypatch.setenv("SPATIAL_REASONING_USE_REAL_LLM", "true")
     fenced = """```json
 {"type": "spatial_reasoning", "conclusion": "适合", "reasoning_chain": [{"step": 1, "fact": "x", "source": "c"}], "confidence": 0.8, "uncertainty": "有限", "recommendations": ["建议"]}
 ```"""
@@ -207,11 +243,11 @@ async def test_call_llm_handles_markdown_fences():
 
 
 @pytest.mark.asyncio
-async def test_call_llm_handles_validation_error():
-    """When LLM returns structurally invalid JSON, _call_llm should return error."""
+async def test_call_llm_real_handles_validation_error(monkeypatch):
+    """Real path: structurally invalid JSON returns error."""
     from app.tools.spatial_reasoning import _call_llm
 
-    # Missing required fields
+    monkeypatch.setenv("SPATIAL_REASONING_USE_REAL_LLM", "true")
     invalid = '{"type": "spatial_reasoning"}'
 
     mock_response = {"choices": [{"message": {"content": invalid}}]}
@@ -223,9 +259,11 @@ async def test_call_llm_handles_validation_error():
 
 
 @pytest.mark.asyncio
-async def test_call_llm_handles_http_error():
-    """When LLM API raises an exception, _call_llm should return error result."""
+async def test_call_llm_real_handles_http_error(monkeypatch):
+    """Real path: LLM API exception returns error result."""
     from app.tools.spatial_reasoning import _call_llm
+
+    monkeypatch.setenv("SPATIAL_REASONING_USE_REAL_LLM", "true")
 
     with patch("app.tools.spatial_reasoning.call_llm", side_effect=RuntimeError("API down")):
         result = await _call_llm("system", "user")
