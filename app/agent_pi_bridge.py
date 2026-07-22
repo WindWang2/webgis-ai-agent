@@ -30,6 +30,13 @@ PI_EVENT_DRAIN_TIMEOUT = 2.0  # prompt() 非流式模式下 drain event queue �
 PI_EVENT_STREAM_TIMEOUT = 30.0  # stream_prompt 等待下一个 event 的超时
 PI_STARTUP_READY_TIMEOUT = 10.0  # start()  readiness check 的总超时
 
+# SSE content strings for compaction events.
+# TODO: Replace with i18n-aware strings when the frontend supports localized SSE events.
+# 当前硬编码中文，因为 compaction 事件仅用于 backend 日志 + 前端 content SSE，
+# 不暴露给最终用户（前端会以 content 事件渲染）。
+COMPACTION_START_MSG = "[压缩上下文...]\n"
+COMPACTION_END_MSG = "[上下文压缩完成]\n"
+
 
 class PiRpcError(Exception):
     """Error from Pi RPC."""
@@ -300,7 +307,11 @@ class PiBridge:
             return result or {}
 
     async def get_messages(self) -> list[dict]:
-        """Get conversation messages."""
+        """Get conversation messages.
+
+        TODO: wire to /api/v1/chat/sessions/{session_id}/messages route
+        so the frontend can display Pi-backed session history.
+        """
         async with self._lock:
             result = await self._send_request("get_messages")
             return result.get("messages", []) if result else []
@@ -383,13 +394,13 @@ class PiBridge:
 
         elif event_type == "compaction_start":
             return sse_event("content", {
-                "content": "[压缩上下文...]\n",
+                "content": COMPACTION_START_MSG,
                 "session_id": self._session_id,
             })
 
         elif event_type == "compaction_end":
             return sse_event("content", {
-                "content": "[上下文压缩完成]\n",
+                "content": COMPACTION_END_MSG,
                 "session_id": self._session_id,
             })
 
@@ -432,7 +443,12 @@ _pi_bridge: Optional[PiBridge] = None
 
 
 async def get_pi_bridge(extension_paths: Optional[list[str]] = None) -> PiBridge:
-    """Get or create the global Pi bridge instance."""
+    """Get or create the global Pi bridge instance.
+
+    Note: extension_paths is only honored on the first call. Subsequent calls
+    ignore the parameter because the bridge singleton is already initialized.
+    If you need to change extensions, call shutdown_pi_bridge() first.
+    """
     global _pi_bridge
     if _pi_bridge is None:
         _pi_bridge = PiBridge(extension_paths=extension_paths or [])
