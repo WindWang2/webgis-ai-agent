@@ -69,15 +69,19 @@ class PiBridge:
         env["PI_OFFLINE"] = "1"
         env["PI_SKIP_VERSION_CHECK"] = "1"
 
+        # Build CLI args with --extension flags for each extension path
+        args = ["node", str(self._pi_rpc_entry), "--mode", "rpc", "--no-session"]
+        for ext_path in self._extension_paths:
+            args.extend(["--extension", str(ext_path)])
+
         self._process = subprocess.Popen(
-            ["node", str(self._pi_rpc_entry), "--mode", "rpc", "--no-session", "--extension", str(Path(__file__).parent.parent.parent / "vendor" / "pi" / "extensions" / "webgis-tools")],
+            args,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
             cwd=str(self._cwd),
             text=True,
-            bufsize=0,
         )
 
         # Start reader task
@@ -109,9 +113,8 @@ class PiBridge:
 
     async def _read_responses(self) -> None:
         """Read responses and events from Pi stdout."""
-        loop = asyncio.get_event_loop()
         while self._process and self._process.stdout:
-            line = await loop.run_in_executor(None, self._process.stdout.readline)
+            line = await asyncio.get_running_loop().run_in_executor(None, self._process.stdout.readline)
             if not line:
                 break
             line = line.strip()
@@ -152,7 +155,7 @@ class PiBridge:
         if data is not None:
             request["data"] = data
 
-        future = asyncio.get_event_loop().create_future()
+        future = asyncio.get_running_loop().create_future()
         self._pending_requests[request_id] = future
 
         try:
@@ -182,24 +185,32 @@ class PiBridge:
             data["sessionId"] = session_id
             self._session_id = session_id
 
-        async with self._lock:
-            await self._send_request("prompt", data)
+        try:
+            async with self._lock:
+                await self._send_request("prompt", data)
 
-        # Drain events from the queue (non-streaming mode)
-        content_parts: list[str] = []
-        while True:
-            try:
-                event = await asyncio.wait_for(self._event_queue.get(), timeout=2.0)
-                text = self._extract_text_from_event(event)
-                if text:
-                    content_parts.append(text)
-            except asyncio.TimeoutError:
-                break
+            # Drain events from the queue (non-streaming mode)
+            content_parts: list[str] = []
+            while True:
+                try:
+                    event = await asyncio.wait_for(self._event_queue.get(), timeout=2.0)
+                    text = self._extract_text_from_event(event)
+                    if text:
+                        content_parts.append(text)
+                except asyncio.TimeoutError:
+                    break
 
-        return {
-            "sessionId": self._session_id,
-            "content": "".join(content_parts),
-        }
+            return {
+                "sessionId": self._session_id,
+                "content": "".join(content_parts),
+            }
+        except PiRpcError as e:
+            logger.error(f"[PiBridge] prompt failed: {e}")
+            return {
+                "sessionId": self._session_id,
+                "content": "",
+                "error": str(e),
+            }
 
     async def stream_prompt(
         self, message: str, session_id: Optional[str] = None
@@ -219,12 +230,23 @@ class PiBridge:
             self._session_id = session_id
 
         # Send prompt command
-        async with self._lock:
-            await self._send_request("prompt", data)
+        try:
+            async with self._lock:
+                await self._send_request("prompt", data)
+        except PiRpcError as e:
+            logger.error(f"[PiBridge] stream_prompt send failed: {e}")
+            yield sse_event("task_error", {
+                "task_id": session_id or "",
+                "session_id": self._session_id,
+                "error": str(e),
+            })
+            yield sse_event("done", {"session_id": self._session_id})
+            return
 
         # Stream events from Pi
         yield sse_event("task_start", {"task_id": session_id or "", "session_id": self._session_id})
 
+        timed_out = False
         while True:
             try:
                 event = await asyncio.wait_for(self._event_queue.get(), timeout=30.0)
@@ -234,7 +256,14 @@ class PiBridge:
                 if event.get("type") == "agent_end":
                     break
             except asyncio.TimeoutError:
+                timed_out = True
                 break
+
+        if timed_out:
+            yield sse_event("error", {
+                "session_id": self._session_id,
+                "error": "Pi agent response timed out (30s). The agent may be processing or stalled.",
+            })
 
         yield sse_event("done", {"session_id": self._session_id})
 
@@ -288,7 +317,7 @@ class PiBridge:
                         "is_reasoning": is_reasoning,
                         "session_id": self._session_id,
                     })
-            elif "toolcall" in event_kind:
+            elif "tool_call" in event_kind or "toolcall" in event_kind:
                 return sse_event("tool_call", {
                     "name": assistant_event.get("name", ""),
                     "arguments": assistant_event.get("arguments", ""),
@@ -388,11 +417,11 @@ class PiBridge:
 _pi_bridge: Optional[PiBridge] = None
 
 
-async def get_pi_bridge() -> PiBridge:
+async def get_pi_bridge(extension_paths: Optional[list[str]] = None) -> PiBridge:
     """Get or create the global Pi bridge instance."""
     global _pi_bridge
     if _pi_bridge is None:
-        _pi_bridge = PiBridge()
+        _pi_bridge = PiBridge(extension_paths=extension_paths or [])
         await _pi_bridge.start()
     return _pi_bridge
 
