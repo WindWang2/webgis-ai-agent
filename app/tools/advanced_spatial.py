@@ -10,6 +10,38 @@ from app.lib.geo_processor.core import safe_parse as safe_parse_geojson, GeoAnal
 
 logger = logging.getLogger(__name__)
 
+# ─── Shared raster tool runner ──────────────────────────────────
+
+
+def _run_raster_tool(
+    paths: list[str],
+    fn: callable,
+    *args,
+    summary: str,
+    error_label: str = "RasterError",
+) -> dict:
+    """Shared runner: validate paths, open rasterio.Env, call lib fn, wrap result.
+
+    Eliminates duplicated try/except skeleton across raster tools.
+    """
+    import rasterio
+    from app.utils.path import validate_data_path
+
+    validated = []
+    for p in paths:
+        try:
+            validated.append(validate_data_path(p))
+        except ValueError as e:
+            return GeoAnalysisResult(False, None, f"路径校验失败: {e}", error_type="ValidationError").to_llm_response()
+
+    try:
+        with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="TRUE", GDAL_HTTP_TIMEOUT=5, GDAL_HTTP_MAX_RETRY=0):
+            result = fn(*validated, *args)
+    except Exception as e:
+        return GeoAnalysisResult(False, None, f"{error_label}: {e}", error_type=error_label).to_llm_response()
+    return GeoAnalysisResult(success=True, data=result, summary=summary).to_llm_response()
+
+
 class PathAnalysisArgs(BaseModel):
     network_features: Any = Field(..., description="路网要素集 (GeoJSON 或 ref:xxx)")
     start_point: List[float] = Field(..., description="起点坐标 [lon, lat]")
@@ -415,19 +447,13 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            tier=2, domains=["raster"],
            args_model=RasterReclassifyArgs)
     def raster_reclassify(raster_path: str, scheme: List[dict], nodata: Optional[float] = None) -> dict:
-        from app.utils.path import validate_data_path
         from app.lib.geo_analysis.raster_math import reclassify
-        try:
-            raster_path = validate_data_path(raster_path)
-        except ValueError as e:
-            return GeoAnalysisResult(False, None, f"路径校验失败: {e}", error_type="ValidationError").to_llm_response()
-        try:
-            import rasterio
-            with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="TRUE", GDAL_HTTP_TIMEOUT=5, GDAL_HTTP_MAX_RETRY=0):
-                result = reclassify(raster_path, scheme, nodata)
-        except Exception as e:
-            return GeoAnalysisResult(False, None, f"重分类失败: {e}", error_type="RasterError").to_llm_response()
-        return GeoAnalysisResult(success=True, data=result, summary=f"Reclassified raster to {len(scheme)} classes.").to_llm_response()
+        return _run_raster_tool(
+            [raster_path],
+            lambda p: reclassify(p, scheme, nodata),
+            summary=f"Reclassified raster to {len(scheme)} classes.",
+            error_label="重分类失败",
+        )
 
     @tool(registry, name="raster_calculator",
            description=(
@@ -441,21 +467,14 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            tier=2, domains=["raster"],
            args_model=RasterCalculatorArgs)
     def raster_calculator(raster_a: str, raster_b: Optional[str] = None, expression: str = "A + B", constant: Optional[float] = None, nodata: Optional[float] = None) -> dict:
-        from app.utils.path import validate_data_path
         from app.lib.geo_analysis.raster_math import raster_calculator
-        try:
-            raster_a = validate_data_path(raster_a)
-            if raster_b:
-                raster_b = validate_data_path(raster_b)
-        except ValueError as e:
-            return GeoAnalysisResult(False, None, f"路径校验失败: {e}", error_type="ValidationError").to_llm_response()
-        try:
-            import rasterio
-            with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="TRUE", GDAL_HTTP_TIMEOUT=5, GDAL_HTTP_MAX_RETRY=0):
-                result = raster_calculator(raster_a, raster_b, expression, constant, nodata)
-        except Exception as e:
-            return GeoAnalysisResult(False, None, f"栅格计算失败: {e}", error_type="RasterError").to_llm_response()
-        return GeoAnalysisResult(success=True, data=result, summary=f"Raster calculator: {expression}").to_llm_response()
+        paths = [raster_a] + ([raster_b] if raster_b else [])
+        return _run_raster_tool(
+            paths,
+            lambda *p: raster_calculator(p[0], p[1] if len(p) > 1 else None, expression, constant, nodata),
+            summary=f"Raster calculator: {expression}",
+            error_label="栅格计算失败",
+        )
 
     @tool(registry, name="raster_resample",
            description=(
@@ -469,16 +488,10 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            tier=2, domains=["raster"],
            args_model=RasterResampleArgs)
     def raster_resample(raster_path: str, target_resolution: float, target_crs: Optional[str] = None, resampling: str = "bilinear") -> dict:
-        from app.utils.path import validate_data_path
         from app.lib.geo_analysis.raster_math import resample_raster
-        try:
-            raster_path = validate_data_path(raster_path)
-        except ValueError as e:
-            return GeoAnalysisResult(False, None, f"路径校验失败: {e}", error_type="ValidationError").to_llm_response()
-        try:
-            import rasterio
-            with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="TRUE", GDAL_HTTP_TIMEOUT=5, GDAL_HTTP_MAX_RETRY=0):
-                result = resample_raster(raster_path, target_resolution, target_crs, resampling)
-        except Exception as e:
-            return GeoAnalysisResult(False, None, f"重采样失败: {e}", error_type="RasterError").to_llm_response()
-        return GeoAnalysisResult(success=True, data=result, summary=f"Resampled raster to {target_resolution} ({resampling}).").to_llm_response()
+        return _run_raster_tool(
+            [raster_path],
+            lambda p: resample_raster(p, target_resolution, target_crs, resampling),
+            summary=f"Resampled raster to {target_resolution} ({resampling}).",
+            error_label="重采样失败",
+        )
