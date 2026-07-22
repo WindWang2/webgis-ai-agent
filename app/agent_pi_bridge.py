@@ -43,10 +43,12 @@ class PiBridge:
         pi_rpc_entry: Optional[Path] = None,
         session_dir: Optional[Path] = None,
         cwd: Optional[Path] = None,
+        extension_paths: Optional[list[str]] = None,
     ):
         self._pi_rpc_entry = pi_rpc_entry or PI_RPC_ENTRY
         self._session_dir = session_dir or DEFAULT_SESSION_DIR
         self._cwd = cwd or Path.cwd()
+        self._extension_paths = extension_paths or []
         self._process: Optional[subprocess.Popen] = None
         self._pending_requests: dict[str, asyncio.Future] = {}
         self._event_queue: asyncio.Queue = asyncio.Queue()
@@ -68,7 +70,7 @@ class PiBridge:
         env["PI_SKIP_VERSION_CHECK"] = "1"
 
         self._process = subprocess.Popen(
-            ["node", str(self._pi_rpc_entry), "--mode", "rpc", "--no-session"],
+            ["node", str(self._pi_rpc_entry), "--mode", "rpc", "--no-session", "--extension", str(Path(__file__).parent.parent.parent / "vendor" / "pi" / "extensions" / "webgis-tools")],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

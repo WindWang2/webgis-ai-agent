@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -49,7 +50,8 @@ async def lifespan(app: FastAPI):
     if use_new_agent:
         try:
             from app.agent_pi_bridge import get_pi_bridge
-            chat.pi_bridge = await get_pi_bridge()
+            extension_path = str(Path(__file__).parent.parent / "app" / "extensions" / "webgis-tools")
+            chat.pi_bridge = await get_pi_bridge(extension_paths=[extension_path])
             logger.info("[lifespan] Pi agent system enabled (USE_NEW_AGENT=true)")
         except Exception as e:
             logger.warning(f"[lifespan] Failed to initialize Pi bridge: {e}, falling back to ChatEngine")
