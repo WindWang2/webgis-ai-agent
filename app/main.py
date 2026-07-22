@@ -44,18 +44,18 @@ async def lifespan(app: FastAPI):
     chat_engine = ChatEngine(registry, tool_catalog=catalog)
     chat.engine = chat_engine
 
-    # Feature flag: 初始化新 Agent 系统（USE_NEW_AGENT=true 时启用）
+    # Feature flag: 初始化 Pi agent (vendor/pi) 通过 RPC 调用
     use_new_agent = os.getenv("USE_NEW_AGENT", "").lower() in ("true", "1", "yes")
     if use_new_agent:
         try:
-            from app.agent._runtime import AgentRuntime
-            chat.agent_runtime = AgentRuntime(chat_engine=chat_engine)
-            logger.info("[lifespan] New Agent system enabled (USE_NEW_AGENT=true)")
+            from app.agent_pi_bridge import get_pi_bridge
+            chat.pi_bridge = await get_pi_bridge()
+            logger.info("[lifespan] Pi agent system enabled (USE_NEW_AGENT=true)")
         except Exception as e:
-            logger.warning(f"[lifespan] Failed to initialize AgentRuntime: {e}, falling back to ChatEngine")
-            chat.agent_runtime = None
+            logger.warning(f"[lifespan] Failed to initialize Pi bridge: {e}, falling back to ChatEngine")
+            chat.pi_bridge = None
     else:
-        chat.agent_runtime = None
+        chat.pi_bridge = None
 
     # 审计 S46：cleanup_idle_sessions 之前是死代码（定义在 session_data_manager
     # 但没人调）-> idle session 的 ref/event/state 永久堆积，Redis 内存缓慢增长。

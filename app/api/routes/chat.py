@@ -22,8 +22,9 @@ registry: ToolRegistry = None  # type: ignore[assignment]
 engine: ChatEngine = None  # type: ignore[assignment]
 
 # Feature flag: 通过环境变量切换新旧 Agent 系统
+# true/1/yes 时使用 Pi 开源 agent (vendor/pi) 通过 RPC 调用
 USE_NEW_AGENT = os.getenv("USE_NEW_AGENT", "").lower() in ("true", "1", "yes")
-agent_runtime = None  # type: ignore[assignment]  # 由 lifespan 初始化
+pi_bridge = None  # type: ignore[assignment]  # 由 lifespan 初始化
 
 
 def get_engine() -> ChatEngine:
@@ -63,16 +64,14 @@ async def chat_completions(req: ChatRequest, _user: dict = Depends(get_current_u
     """非流式对话接口"""
     user_id = _user.get("user_id")
 
-    # Feature flag: 使用新 Agent 系统
-    if USE_NEW_AGENT and agent_runtime is not None:
-        result = await agent_runtime.handle_request(
-            req.message,
-            session_id=req.session_id,
-            map_state=req.map_state,
-            skill_name=req.skill_name,
-            user_id=user_id,
-        )
-        return ChatResponse(**result)
+    # Feature flag: 使用 Pi agent (vendor/pi) 通过 RPC 调用
+    if USE_NEW_AGENT and pi_bridge is not None:
+        try:
+            result = await pi_bridge.prompt(req.message, session_id=req.session_id)
+            return ChatResponse(session_id=result.get("sessionId", req.session_id or ""), content=result.get("content", ""))
+        except Exception as e:
+            logger.error(f"Pi bridge error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Agent error")
 
     # Legacy path: 使用 ChatEngine
     try:
@@ -94,24 +93,20 @@ async def chat_stream(req: ChatRequest, _user: dict = Depends(get_current_user_o
     """SSE 流式对话接口"""
     user_id = _user.get("user_id")
 
-    # Feature flag: 使用新 Agent 系统
-    if USE_NEW_AGENT and agent_runtime is not None:
-        async def new_agent_event_generator():
+    # Feature flag: 使用 Pi agent (vendor/pi) 通过 RPC 调用
+    if USE_NEW_AGENT and pi_bridge is not None:
+        async def pi_event_generator():
             try:
-                async for event in agent_runtime.handle_stream_request(
-                    req.message,
-                    session_id=req.session_id,
-                    map_state=req.map_state,
-                    skill_name=req.skill_name,
-                    user_id=user_id,
-                ):
-                    yield event
+                # TODO: implement streaming via Pi RPC
+                result = await pi_bridge.prompt(req.message, session_id=req.session_id)
+                yield sse_event("content", {"content": result.get("content", ""), "session_id": result.get("sessionId", req.session_id or "")})
+                yield sse_event("done", {"session_id": result.get("sessionId", req.session_id or "")})
             except Exception as e:
-                logger.error(f"New Agent stream error: {e}", exc_info=True)
+                logger.error(f"Pi bridge stream error: {e}", exc_info=True)
                 yield sse_event("error", {"error": "Internal server error"})
 
         return StreamingResponse(
-            new_agent_event_generator(),
+            pi_event_generator(),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -269,12 +264,10 @@ async def clear_session(session_id: str, _user: dict = Depends(get_current_user_
     """清除会话（内存 + DB）— 受所有权检查保护（A2）。"""
     user_id = _user.get("user_id")
 
-    # Feature flag: 使用新 Agent 系统
-    if USE_NEW_AGENT and agent_runtime is not None:
-        ok = await agent_runtime.clear_session(session_id)
-        if not ok:
-            raise HTTPException(status_code=404, detail="Session not found")
-        return {"status": "ok"}
+    # Feature flag: 使用 Pi agent
+    if USE_NEW_AGENT and pi_bridge is not None:
+        # TODO: implement session clearing via Pi RPC
+        pass
 
     # Legacy path
     ok = await get_engine().clear_session(session_id, user_id=user_id)
