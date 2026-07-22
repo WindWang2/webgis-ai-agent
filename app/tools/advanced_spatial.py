@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from app.tools.registry import ToolRegistry, tool
 from app.tools._utils import cached_tool, trim_features
 from app.services.spatial_analyzer import SpatialAnalyzer
-from app.lib.geo_processor.core import safe_parse as safe_parse_geojson
+from app.lib.geo_processor.core import safe_parse as safe_parse_geojson, GeoAnalysisResult
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,24 @@ class FishnetGridArgs(BaseModel):
     bounds: List[float] = Field(..., description="网格范围 [xmin, ymin, xmax, ymax]")
     cell_size: float = Field(..., description="网格大小（米）")
     type: str = Field("square", description="网格类型: square(正方形), hexagon(六边形)")
+
+class RasterReclassifyArgs(BaseModel):
+    raster_path: str = Field(..., description="输入栅格文件路径（data/ 内）")
+    scheme: List[dict] = Field(..., description="重分类方案，每项含 min/max/value/label，如 [{\"min\":0,\"max\":0.2,\"value\":1,\"label\":\"低\"},...]")
+    nodata: Optional[float] = Field(None, description="输出 NoData 值（默认继承输入栅格）")
+
+class RasterCalculatorArgs(BaseModel):
+    raster_a: str = Field(..., description="主栅格文件路径（data/ 内）")
+    raster_b: Optional[str] = Field(None, description="副栅格文件路径（data/ 内）；留空则用 constant")
+    expression: str = Field("A + B", description="运算表达式，用 A/B 指代栅格，如 A+B, (A-B)/(A+B), where(A>0,A,0)")
+    constant: Optional[float] = Field(None, description="当 raster_b 留空时的常数")
+    nodata: Optional[float] = Field(None, description="输出 NoData 值")
+
+class RasterResampleArgs(BaseModel):
+    raster_path: str = Field(..., description="输入栅格文件路径（data/ 内）")
+    target_resolution: float = Field(..., description="目标像元大小（米或度，取决于 CRS）")
+    target_crs: Optional[str] = Field(None, description="目标 CRS（如 EPSG:3857），留空则保持原 CRS")
+    resampling: str = Field("bilinear", description="重采样方法: bilinear(默认), nearest, cubic, mode, average")
 
 def register_advanced_spatial_tools(registry: ToolRegistry):
     """注册高级空间分析工具"""
@@ -384,3 +402,83 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
         from app.lib.geo_analysis.network import nearest_neighbor_features
         res = nearest_neighbor_features(source_points, target_points)
         return res.to_llm_response()
+
+    @tool(registry, name="raster_reclassify",
+           description=(
+               "栅格重分类：将连续栅格值按方案映射为离散类别。"
+               "\n何时用：『把 NDVI 连续值分成低/中/高植被覆盖等级』；"
+               "把高程分成平原/丘陵/山地；把坡度分成安全/中等/危险等级。"
+               "\n何时不用：(1) 只是查看统计值 — 用 zonal_stats；"
+               "(2) 两个栅格做运算 — 用 raster_calculator。"
+               "\n关键约束：scheme 按 min→max 排序，首个匹配 wins；未匹配像素变 nodata。"
+           ),
+           tier=2, domains=["raster"],
+           args_model=RasterReclassifyArgs)
+    def raster_reclassify(raster_path: str, scheme: List[dict], nodata: Optional[float] = None) -> dict:
+        from app.utils.path import validate_data_path
+        from app.lib.geo_analysis.raster_math import reclassify
+        try:
+            raster_path = validate_data_path(raster_path)
+        except ValueError as e:
+            return GeoAnalysisResult(False, None, f"路径校验失败: {e}", error_type="ValidationError").to_llm_response()
+        try:
+            import rasterio
+            with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="TRUE", GDAL_HTTP_TIMEOUT=5, GDAL_HTTP_MAX_RETRY=0):
+                result = reclassify(raster_path, scheme, nodata)
+        except Exception as e:
+            return GeoAnalysisResult(False, None, f"重分类失败: {e}", error_type="RasterError").to_llm_response()
+        return GeoAnalysisResult(success=True, data=result, summary=f"Reclassified raster to {len(scheme)} classes.").to_llm_response()
+
+    @tool(registry, name="raster_calculator",
+           description=(
+               "栅格计算器：对两个栅格做像素级数学运算（A+B, A-B, (A-B)/(A+B) 等）。"
+               "\n何时用：『NDVI = (NIR-Red)/(NIR+Red)』『DEM 差值 = A-B』『比值指数』；"
+               "任意两个同范围栅格的逐像素运算。"
+               "\n何时不用：(1) 单栅格重分类 — 用 raster_reclassify；"
+               "(2) 需要地理加权（如 focal）— 未实现，先用 focal_stats。"
+               "\n关键约束：expression 用 A/B 指代栅格；支持 numexpr 语法；自动 nodata 掩膜。"
+           ),
+           tier=2, domains=["raster"],
+           args_model=RasterCalculatorArgs)
+    def raster_calculator(raster_a: str, raster_b: Optional[str] = None, expression: str = "A + B", constant: Optional[float] = None, nodata: Optional[float] = None) -> dict:
+        from app.utils.path import validate_data_path
+        from app.lib.geo_analysis.raster_math import raster_calculator
+        try:
+            raster_a = validate_data_path(raster_a)
+            if raster_b:
+                raster_b = validate_data_path(raster_b)
+        except ValueError as e:
+            return GeoAnalysisResult(False, None, f"路径校验失败: {e}", error_type="ValidationError").to_llm_response()
+        try:
+            import rasterio
+            with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="TRUE", GDAL_HTTP_TIMEOUT=5, GDAL_HTTP_MAX_RETRY=0):
+                result = raster_calculator(raster_a, raster_b, expression, constant, nodata)
+        except Exception as e:
+            return GeoAnalysisResult(False, None, f"栅格计算失败: {e}", error_type="RasterError").to_llm_response()
+        return GeoAnalysisResult(success=True, data=result, summary=f"Raster calculator: {expression}").to_llm_response()
+
+    @tool(registry, name="raster_resample",
+           description=(
+               "栅格重采样：改变像元大小和/或 CRS。"
+               "\n何时用：『把 30m DEM 重采样到 90m 做概览』『把 WGS84 栅格转到 UTM 做面积计算』；"
+               "不同分辨率/投影的栅格对齐前预处理。"
+               "\n何时不用：(1) 只改元数据 — 用 gdal_translate 更快；"
+               "(2) 已经同分辨率同 CRS — 不需要重采样。"
+               "\n关键约束：resampling 可选 bilinear/nearest/cubic/mode/average。"
+           ),
+           tier=2, domains=["raster"],
+           args_model=RasterResampleArgs)
+    def raster_resample(raster_path: str, target_resolution: float, target_crs: Optional[str] = None, resampling: str = "bilinear") -> dict:
+        from app.utils.path import validate_data_path
+        from app.lib.geo_analysis.raster_math import resample_raster
+        try:
+            raster_path = validate_data_path(raster_path)
+        except ValueError as e:
+            return GeoAnalysisResult(False, None, f"路径校验失败: {e}", error_type="ValidationError").to_llm_response()
+        try:
+            import rasterio
+            with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="TRUE", GDAL_HTTP_TIMEOUT=5, GDAL_HTTP_MAX_RETRY=0):
+                result = resample_raster(raster_path, target_resolution, target_crs, resampling)
+        except Exception as e:
+            return GeoAnalysisResult(False, None, f"重采样失败: {e}", error_type="RasterError").to_llm_response()
+        return GeoAnalysisResult(success=True, data=result, summary=f"Resampled raster to {target_resolution} ({resampling}).").to_llm_response()
