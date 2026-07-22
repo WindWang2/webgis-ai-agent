@@ -236,10 +236,18 @@ class AfterToolCallContext:
     context: AgentContext
 
 @dataclass
+class AgentToolCall:
+    id: str
+    name: str
+    arguments: dict
+
+@dataclass
 class ToolResult:
     content: list[dict]  # [{"type": "text", "text": "..."}]
     details: Any = None
-    terminate: bool = False
+    usage: Optional[dict] = None  # token usage from tool execution
+    addedToolNames: list[str] = field(default_factory=list)  # tools introduced by this result
+    terminate: bool = False  # hint to stop after current tool batch
 ```
 
 ---
@@ -253,8 +261,8 @@ class ToolResult:
 | `TaskTracker._cancelled` | `AbortSignal` | 移到 Loop 事件边界检查 |
 | `step_start` / `step_result` | `tool_execution_start` / `tool_execution_end` | 对齐 Pi 事件类型 |
 | `step_error` | `tool_execution_end` (isError=True) | 合并 |
-| `task_start` / `task_complete` | `agent_start` / `agent_end` | 对齐 Pi 事件类型 |
-| `plan_ready` / `plan_finalized` | 自定义事件或 `message_start` | 保留 GIS 专属事件 |
+| `task_start` / `task_complete` | `agent_start` / `agent_end` | 一个用户请求 = 一个 Agent run；task 级事件映射到 run 级事件 |
+| `plan_ready` / `plan_finalized` | 保留为自定义 SSE 事件 | 不映射到 AgentEvent，由 ChatAgent.prepareNextTurn 直接 yield |
 
 ---
 
