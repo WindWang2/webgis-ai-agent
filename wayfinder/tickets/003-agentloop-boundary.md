@@ -95,6 +95,7 @@ async def run_agent_loop(
     )
     current_config = config
     first_turn = True
+    turn_count = 0
     pending_messages = await config.get_steering_messages() or []
 
     # ── Outer loop: follow-up messages ──────────────────────
@@ -181,6 +182,12 @@ async def run_agent_loop(
                 await emit({"type": "agent_end", "messages": new_messages})
                 return new_messages
 
+            # Safety: max_rounds cap (Pi 无此限制，但我们保留兜底)
+            turn_count += 1
+            if turn_count >= current_config.max_rounds:
+                await emit({"type": "agent_end", "messages": new_messages, "truncated": True})
+                return new_messages
+
             # Check for steering messages
             pending_messages = await config.get_steering_messages() or []
 
@@ -198,6 +205,39 @@ async def run_agent_loop(
 ### Tool 执行子函数
 
 ```python
+from dataclasses import dataclass
+from typing import Callable
+
+@dataclass
+class _DeferredToolCall:
+    """延迟执行的工具调用（parallel 模式用）。"""
+    preparation: PreparedOutcome
+    assistant_message: AgentMessage
+    config: AgentLoopConfig
+    signal: Optional[asyncio.Event]
+    context: AgentContext
+
+async def _execute_deferred(entry: _DeferredToolCall, emit: AgentEventSink) -> FinalizedToolCallOutcome:
+    executed = await execute_prepared_tool_call(entry.preparation, entry.signal, emit)
+    return await finalize_executed_tool_call(
+        entry.context, entry.assistant_message, entry.preparation, executed, entry.config, entry.signal
+    )
+
+
+def extract_tool_calls(message: AgentMessage) -> list[AgentToolCall]:
+    """提取标准 tool_calls，MiniMax XML fallback。"""
+    content = message.get("content", [])
+    # OpenAI 标准格式: content 是 list[dict]，toolCall 类型
+    standard = [tc for tc in content if isinstance(tc, dict) and tc.get("type") == "toolCall"]
+    if standard:
+        return standard
+    # MiniMax XML fallback: content 是 str，包含 <minimax:tool_call>
+    raw = message.get("content", "")
+    if isinstance(raw, str) and "minimax:tool_call" in raw:
+        return parse_minimax_xml_tool_calls(raw)
+    return []
+
+
 async def execute_tool_calls(
     context: AgentContext,
     assistant_message: AgentMessage,
@@ -274,13 +314,19 @@ async def execute_parallel(
             continue
         
         # 延迟执行：先收集所有 preparation，然后并行执行
-        finalized_calls.append(lambda p=preparation: execute_and_finalize(p, context, assistant_message, config, signal, emit))
+        finalized_calls.append(_DeferredToolCall(
+            preparation=preparation,
+            assistant_message=assistant_message,
+            config=config,
+            signal=signal,
+            context=context,
+        ))
         if signal and signal.is_set():
             break
     
-    # 并行执行所有延迟的工具
+    # 并行执行所有延迟的工具（保持源顺序）
     ordered_results = await asyncio.gather(*[
-        entry() if callable(entry) else asyncio.create_task(asyncio.sleep(0, result=entry))
+        _execute_deferred(entry, emit) if isinstance(entry, _DeferredToolCall) else asyncio.create_task(asyncio.sleep(0, result=entry))
         for entry in finalized_calls
     ])
     
@@ -378,6 +424,7 @@ async def finalize_executed_tool_call(context, assistant_message, preparation, e
 | Planning | 无 | loop 前预处理 | loop 前 + prepareNextTurn | 🟡 扩展 Pi 模式 |
 | Self-healing | 无 | 构造提示注入 | afterToolCall hook | 🟡 扩展 Pi 模式 |
 | SSE 输出 | 事件回调 | SSE yield | emit → Agent → SSE | ✅ 解耦 |
+| SSE keep-alive | 无 | FastAPI route 层（每5秒 heartbeat） | FastAPI route 层（Loop 不感知） | ✅ 保留现有机制 |
 | Steering | 有 | 无 | 有 | ✅ 对齐 Pi |
 | Context | 快照 + 可变 | 直接修改 list | 快照 + 副本 | ✅ 对齐 Pi |
 
@@ -393,6 +440,7 @@ async def finalize_executed_tool_call(context, assistant_message, preparation, e
 - ✅ **Self-healing**：在 `afterToolCall` 钩子中实现
 - ✅ **GIS 工具执行**：`Agent._dispatch_tool()` 子类实现，保留现有 dispatcher 逻辑
 - ✅ **前向兼容**：emit 事件序列与现有 SSE 事件一一对应
+- ✅ **SSE keep-alive**：由 FastAPI route 层处理（每 5 秒 heartbeat），Loop 不感知
 
 ## Reference
 
