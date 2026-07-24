@@ -32,8 +32,11 @@ aiohttp>=3.10.0
 
 # Science
 scipy>=1.12.0
-numpy>=1.26.0
-scikit-learn>=1.9.0
+# numpy<2.0.0：esda / libpysal 等空间统计库尚未适配 numpy 2.x ABI，
+# 放开 2.x 会触发 ImportError / 段错误。
+numpy>=1.26.0,<2.0.0
+# scikit-learn 最高稳定版为 1.x（1.9.0 不存在，会导致 pip 解析失败）。
+scikit-learn>=1.4.0
 Pillow>=10.0.0
 
 # STAC

@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user_with_version
 from app.models.api_response import ApiResponse, ErrCode
 from app.services import rag_service
 
@@ -38,7 +38,7 @@ class DeleteRequest(BaseModel):
 
 
 @router.post("/documents", response_model=ApiResponse)
-async def add_document(request: AddDocumentRequest, _user: dict = Depends(get_current_user)):
+async def add_document(request: AddDocumentRequest, _user: dict = Depends(get_current_user_with_version)):
     """上传文档到知识库，执行向量嵌入"""
     if not request.content.strip():
         return ApiResponse.fail(
@@ -74,7 +74,7 @@ async def add_document(request: AddDocumentRequest, _user: dict = Depends(get_cu
 async def list_documents(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(get_current_user_with_version),
 ):
     """列出当前用户/组织的知识库文档（审计 S41：隔离不同租户的文档）"""
     result = await rag_service.list_documents(
@@ -90,7 +90,7 @@ async def semantic_search(
     q: str = Query(..., description="查询文本"),
     top_k: int = Query(5, ge=1, le=20),
     document_id: Optional[str] = Query(None, description="限定文档ID"),
-    _user: dict = Depends(get_current_user),
+    _user: dict = Depends(get_current_user_with_version),
 ):
     """向量语义搜索（仅搜索当前用户/组织有权访问的文档）"""
     if not q.strip():
@@ -111,7 +111,7 @@ async def semantic_search(
 
 
 @router.delete("/document/{document_id}", response_model=ApiResponse)
-async def delete_document(document_id: str, _user: dict = Depends(get_current_user)):
+async def delete_document(document_id: str, _user: dict = Depends(get_current_user_with_version)):
     """删除指定文档（审计 S41：仅删除属于自己的文档）"""
     success = await rag_service.delete_document(
         document_id,
@@ -129,7 +129,7 @@ async def delete_document(document_id: str, _user: dict = Depends(get_current_us
 
 
 @router.post("/retrieve-context", response_model=ApiResponse)
-async def retrieve_context(request: SearchRequest, _user: dict = Depends(get_current_user)):
+async def retrieve_context(request: SearchRequest, _user: dict = Depends(get_current_user_with_version)):
     """为对话引擎提供的上下文检索接口"""
     context = await rag_service.retrieve_context(
         query=request.query,

@@ -30,11 +30,10 @@ images:
   newName: your-registry.com/webgis-prod
   newTag: v1.0.0
 
-# 名称前缀
-namePrefix: webgis-
-nameSuffix: -prod
-
 # 标签生成器
+# 注意：不使用 namePrefix/nameSuffix —— Kustomize 不会改写
+# envFrom/configMapRef/secretRef/serviceAccountName/volumeClaimTemplates
+# 以及 HPA scaleTargetRef 等跨资源引用，加前缀/后缀会导致这些引用失效。
 commonLabels:
   app: webgis-ai-agent
   environment: production

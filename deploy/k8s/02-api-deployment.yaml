@@ -53,6 +53,7 @@ spec:
         # 审计 I25：容器安全上下文 — 禁止权限提升，丢弃所有 capabilities
         securityContext:
           allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
           capabilities:
             drop:
               - ALL
@@ -100,10 +101,24 @@ spec:
         volumeMounts:
         - name: uploads-volume
           mountPath: /app/uploads
+        # readOnlyRootFilesystem: true 需要显式挂载可写路径为 emptyDir
+        - name: tmp
+          mountPath: /tmp
+        - name: app-data
+          mountPath: /app/data
+        - name: app-pi
+          mountPath: /app/.pi
       volumes:
       - name: uploads-volume
         persistentVolumeClaim:
           claimName: webgis-uploads-pvc
+      # 可写路径 emptyDir（rootfs 只读）
+      - name: tmp
+        emptyDir: {}
+      - name: app-data
+        emptyDir: {}
+      - name: app-pi
+        emptyDir: {}
 ---
 # WebGIS API Service
 apiVersion: v1

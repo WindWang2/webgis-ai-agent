@@ -57,7 +57,9 @@ services:
     volumes:
       - redis_data_secure:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}", "ping"]
+      # 用 REDISCLI_AUTH 传密码，避免 -a 把密码暴露在进程列表 / shell history。
+      # $$ 转义让 compose 不展开，运行时由容器 shell 解析 $REDIS_PASSWORD。
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$REDIS_PASSWORD redis-cli ping"]
       interval: 10s
       timeout: 3s
       retries: 5

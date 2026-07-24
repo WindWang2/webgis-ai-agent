@@ -37,7 +37,8 @@ _MEDIA_TYPES = {
 
 # 审计 P0：导出文件所有权追踪（防止 IDOR — 任意认证用户通过猜文件名下载他人导出）
 # key = filename, value = user_id。
-# 生产环境应替换为数据库表（exports 表含 user_id 外键）。
+# ⚠️ SEC-10: 这是进程内 dict，进程重启后丢失。生产环境应替换为数据库表
+# （exports 表含 user_id 外键），届时 owner 为 None 的分支可移除。
 _EXPORT_OWNERS: dict[str, str] = {}
 
 
@@ -120,7 +121,7 @@ async def upload_map_export(
     if ext not in [".png", ".jpg", ".jpeg", ".svg"]:
         ext = ".png"
 
-    filename = f"map_export_{int(time.time())}_{uuid.uuid4().hex[:6]}{ext}"
+    filename = f"map_export_{int(time.time())}_{uuid.uuid4().hex[:12]}{ext}"
 
     try:
         content = await file.read(MAX_EXPORT_SIZE + 1)
@@ -248,7 +249,7 @@ async def export_map_as_pdf(
         )
 
         # ── 保存 PDF ──
-        pdf_filename = f"map_export_{int(time.time())}_{uuid.uuid4().hex[:6]}.pdf"
+        pdf_filename = f"map_export_{int(time.time())}_{uuid.uuid4().hex[:12]}.pdf"
         pdf_path = os.path.join(EXPORT_DIR, pdf_filename)
         fig.savefig(pdf_path, format="pdf", dpi=150, bbox_inches="tight",
                     metadata={
@@ -285,7 +286,11 @@ def download_map_export(filename: str, _user: dict = Depends(get_current_user)):
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="地图文件不存在或已过期失效")
 
-    # 审计 P0：防止 IDOR — 验证请求用户是文件所有者
+    # 审计 P0：防止 IDOR — 验证请求用户是文件所有者。
+    # SEC-10: _EXPORT_OWNERS 是进程内 dict，重启后 owner 为 None。
+    # 此时无法证明归属，但端点已要求认证 (get_current_user)，因此允许
+    # 任意 *已认证* 用户下载，并依赖文件名高熵（48 位）阻止枚举。
+    # TODO: 迁移到 DB-backed 所有权 (exports.user_id)，届时移除此兜底。
     owner = _EXPORT_OWNERS.get(safe_filename)
     if owner is not None and owner != _user.get("user_id"):
         raise HTTPException(status_code=403, detail="无权下载此文件")
@@ -324,7 +329,7 @@ async def export_geojson(req: GeoJSONExportRequest, _user: dict = Depends(get_cu
         raise HTTPException(status_code=400, detail=f"GeoJSON 序列化失败: {e}")
 
     safe_name = os.path.basename(req.filename).replace(" ", "_")
-    filename = f"{safe_name}_{uuid.uuid4().hex[:6]}.geojson"
+    filename = f"{safe_name}_{uuid.uuid4().hex[:12]}.geojson"
     filepath = os.path.join(EXPORT_DIR, filename)
 
     os.makedirs(EXPORT_DIR, exist_ok=True)

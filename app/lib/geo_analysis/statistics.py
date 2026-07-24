@@ -38,6 +38,29 @@ def _extract_numeric_values(gdf: gpd.GeoDataFrame, value_field: str) -> np.ndarr
         values = pd.to_numeric(values, errors='coerce')
     return values.dropna().values
 
+
+def _filter_numeric_gdf(
+    gdf: gpd.GeoDataFrame, value_field: str
+) -> tuple[gpd.GeoDataFrame, np.ndarray] | None:
+    """Return (gdf_filtered, values) aligned by row.
+
+    Keeps only rows where ``value_field`` is a valid numeric value, applying the
+    same coercion logic as :func:`_extract_numeric_values`. The returned gdf and
+    values array are guaranteed to share the same length and row order, so they
+    can be safely indexed together when building spatial weights.
+
+    Returns None when the field is missing entirely.
+    """
+    if value_field not in gdf.columns:
+        return None
+    series = gdf[value_field]
+    if not np.issubdtype(series.dtype, np.number):
+        series = pd.to_numeric(series, errors="coerce")
+    valid_mask = series.notna()
+    gdf_valid = gdf[valid_mask].reset_index(drop=True)
+    values = series[valid_mask].values
+    return gdf_valid, values
+
 def calculate_sde(geojson: dict) -> GeoAnalysisResult:
     """
     Calculate the Standard Deviational Ellipse (SDE) for a set of points.
@@ -134,16 +157,21 @@ def moran_i_narrated(geojson: dict, value_field: str) -> GeoAnalysisResult:
     res = to_utm_gdf(geojson)
     if not res:
         return GeoAnalysisResult(False, None, "Invalid GeoJSON or no features found")
-    
+
     gdf, _ = res
-    values = _extract_numeric_values(gdf, value_field)
-    if values is None or len(values) == 0:
+    # BUG-01: drop non-numeric rows BEFORE building weights so the n×n weights
+    # matrix is aligned with the (possibly shorter) values array.
+    aligned = _filter_numeric_gdf(gdf, value_field)
+    if aligned is None:
         return GeoAnalysisResult(False, None, f"Field '{value_field}' missing or non-numeric")
-    
+    gdf, values = aligned
+    if len(values) == 0:
+        return GeoAnalysisResult(False, None, f"Field '{value_field}' missing or non-numeric")
+
     n = len(values)
     if n < 3:
         return GeoAnalysisResult(False, None, "At least 3 features required for Moran's I")
-    
+
     w = _build_weights(gdf, k=min(8, n-1))
     w_sum = float(w.sum())
     if w_sum == 0:
@@ -211,12 +239,17 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
     res = to_utm_gdf(geojson)
     if not res:
         return GeoAnalysisResult(False, None, "Invalid GeoJSON or no features found")
-    
+
     gdf, utm_crs = res
-    values = _extract_numeric_values(gdf, value_field)
-    if values is None or len(values) == 0:
+    # BUG-01: drop non-numeric rows BEFORE deriving coords/values so the gdf,
+    # coords, and values arrays are all aligned (no IndexError / wrong results).
+    aligned = _filter_numeric_gdf(gdf, value_field)
+    if aligned is None:
         return GeoAnalysisResult(False, None, f"Field '{value_field}' missing or non-numeric")
-    
+    gdf, values = aligned
+    if len(values) == 0:
+        return GeoAnalysisResult(False, None, f"Field '{value_field}' missing or non-numeric")
+
     n = len(values)
     if n < 3:
         return GeoAnalysisResult(False, None, "At least 3 features required for hotspot analysis")

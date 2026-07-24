@@ -11,6 +11,7 @@ import { MapDecorations } from "./map-decorations"
 import { useHudStore, type HudState } from "@/lib/store/useHudStore"
 import * as renderer from "@/lib/map-kit/renderer"
 import { fitBounds as navFitBounds, calculateBBox } from "@/lib/map-kit/navigation"
+import { devOnly } from "@/lib/utils/logger"
 
 interface MapPanelProps {
   layers: Layer[]
@@ -24,8 +25,7 @@ import { useMapAction } from "@/lib/contexts/map-action-context"
 function getMapStyle(option: MapStyleOption, index: number): maplibregl.StyleSpecification {
   if (option.type === "raster") {
     const sourceId = `raster-tiles-${index}`;
-    
-import { devOnly } from "@/lib/utils/logger";
+
 const layerId = `raster-tiles-layer-${index}`;
     return {
       version: 8,

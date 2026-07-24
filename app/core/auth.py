@@ -328,19 +328,29 @@ async def get_current_user_with_version(
     return {
         "user_id": user_id,
         "role": payload.get("role") or user.role or "viewer",
+        "org_id": user.org_id,
         "user": user,
     }
 
 
-async def require_admin(_user: dict = Depends(get_current_user)) -> dict:
-    """要求当前用户具有 admin 角色。
+async def require_admin(_user: dict = Depends(get_current_user_with_version)) -> dict:
+    """要求当前用户具有 admin 角色（且 token_version 与 DB 一致）。
 
-    注意：role 直接来自 JWT claim（在 register/login 时由后端写入，签名保护）。
-    若未来允许 viewer 升级 admin，token 30min 生命周期内仍是旧 role；
-    可改用 `Depends(get_current_user_with_version)` 后从 `user.role` 取实时值
-    (代价是每请求一次 DB lookup)。
+    审计 SEC-05：原先依赖 `get_current_user`（不查 DB），logout 后
+    `User.token_version` bump，但旧 admin token 在 30min TTL 内仍能访问
+    所有 admin 端点。现改为 `get_current_user_with_version`，使 logout
+    对 admin 端点也立即生效。
+
+    role 取值优先读 DB 中的 user 对象（实时），fallback 到 JWT claim。
+    这样即使管理员被降级 (admin→viewer) 也能在下一次请求时生效，而非
+    等 token 过期。
     """
-    if _user.get("role") != "admin":
+    user_obj = _user.get("user")
+    if user_obj is not None and getattr(user_obj, "role", None):
+        role = user_obj.role
+    else:
+        role = _user.get("role")
+    if role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin privileges required",

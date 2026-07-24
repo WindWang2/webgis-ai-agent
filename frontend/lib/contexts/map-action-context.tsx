@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, useMemo } from 'react';
 import type { MapActionPayload } from '@/lib/types';
 import { useHudStore } from '@/lib/store/useHudStore';
 // 审计 follow-up：原 PR 用 require() 是为了避免 "circular dep"，但 providers.ts
@@ -94,8 +94,9 @@ export function MapActionProvider({ children }: { children: React.ReactNode }) {
     return snapshotFnRef.current?.() ?? null;
   }, []);
 
-  return (
-    <MapActionContext.Provider value={{
+  // 审计 FE-05：useMemo 包裹 value 避免每次 render 创建新对象引用
+  // -> 消费 useMapAction() 的组件不会因 provider re-render 而无谓重渲染。
+  const value = useMemo(() => ({
       actions,
       dispatchAction,
       popAction,
@@ -103,7 +104,10 @@ export function MapActionProvider({ children }: { children: React.ReactNode }) {
       setSelectedBaseLayer,
       registerSnapshotFn,
       getMapSnapshot,
-    }}>
+    }), [actions, dispatchAction, popAction, selectedBaseLayer, setSelectedBaseLayer, registerSnapshotFn, getMapSnapshot]);
+
+  return (
+    <MapActionContext.Provider value={value}>
       {children}
     </MapActionContext.Provider>
   );

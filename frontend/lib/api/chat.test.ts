@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { sendChat, getSessionList, deleteSession, clearSessionMessages, executeToolDirect, streamChat } from './chat';
+import { sendChat, getSessionList, deleteSession, executeToolDirect, streamChat } from './chat';
 import type { SSEEvent } from './chat';
 
 const mockFetch = vi.fn();
@@ -77,16 +77,8 @@ describe('Chat API', () => {
     });
   });
 
-  describe('clearSessionMessages', () => {
-    it('sends DELETE to session endpoint (审计契约: 后端是 /sessions/{id} 无 /clear)', async () => {
-      mockFetch.mockResolvedValueOnce({ ok: true });
-      await clearSessionMessages('s1');
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringMatching(/\/api\/v1\/chat\/sessions\/s1\/?$/),  // 不应有 /clear 后缀
-        { method: 'DELETE' }
-      );
-    });
-  });
+  // FE-14: clearSessionMessages removed (was identical to deleteSession, backend has no /clear route)
+  // Tests for deleteSession already cover the DELETE /sessions/{id} contract.
 
   describe('executeToolDirect', () => {
     it('sends POST with tool and arguments (复数，匹配后端 ToolExecuteRequest)', async () => {

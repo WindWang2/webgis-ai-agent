@@ -124,7 +124,9 @@ export function composeLayout(
   options: ComposeLayoutOptions = {}
 ) {
   const ctx = canvas.getContext('2d');
-  if (!ctx) return;
+  // FE-21：之前 !ctx 时静默 return，调用方不检查返回值直接 toDataURL →
+  // 上传空白画布然后报"导出成功"。改为抛异常让调用方的 catch 处理。
+  if (!ctx) throw new Error('Failed to get 2d context for export canvas');
 
   const {
     dpi = 96,

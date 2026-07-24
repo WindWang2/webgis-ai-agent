@@ -8,6 +8,7 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { ChartRenderer } from "@/components/chat/chart-renderer"
 import { MapActionRenderer } from "@/components/chat/map-action-renderer"
+import { safeUrlTransform } from "@/components/chat/mini-md"  // FE-06: 复用 F36 XSS 防护
 import { TaskProgress } from "./task-progress"
 import { useHudStore } from "@/lib/store/useHudStore"
 import { SuggestedPrompts } from "./suggested-prompts"
@@ -120,6 +121,7 @@ export function ChatHud({
                   <div className="prose prose-sm prose-hud max-w-none break-words">
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm]}
+                      urlTransform={safeUrlTransform}
                       components={{
                         // Use div instead of p to avoid "div inside p" hydration errors if content is complex
                         p: ({ children }) => <div className="mb-4 last:mb-0 leading-relaxed text-white/85">{children}</div>,

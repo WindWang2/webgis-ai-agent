@@ -166,7 +166,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       setSelectedFeature(null);
       setAiStatus('idle');
       clearTask();
-      localStorage.removeItem('webgis_session_id');
+      // FE-15：移除死代码 localStorage.removeItem('webgis_session_id')
+      // (session ID 从未写入 localStorage，此 removeItem 是 no-op)
       onClearMessages();
     },
     [clearLayers, clearAnnotations, clearOpsLog, clearCausalChain, setSelectedFeature, setAiStatus, clearTask]

@@ -34,17 +34,19 @@ def upgrade() -> None:
             batch_op.create_index("idx_task_org_type_status", ["org_id", "task_type", "status"])
     else:
         # PostgreSQL
+        # IF NOT EXISTS: Base.metadata.create_all() 在启动时已按模型定义建好同名索引，
+        # alembic upgrade 会与此碰撞 -> "relation already exists"。幂等化以共存。
         op.execute("""
-            CREATE INDEX idx_layer_org_status ON layers (org_id, status)
+            CREATE INDEX IF NOT EXISTS idx_layer_org_status ON layers (org_id, status)
         """)
         op.execute("""
-            CREATE INDEX idx_layer_org_category_status ON layers (org_id, category, status)
+            CREATE INDEX IF NOT EXISTS idx_layer_org_category_status ON layers (org_id, category, status)
         """)
         op.execute("""
-            CREATE INDEX idx_task_org_status ON analysis_tasks (org_id, status)
+            CREATE INDEX IF NOT EXISTS idx_task_org_status ON analysis_tasks (org_id, status)
         """)
         op.execute("""
-            CREATE INDEX idx_task_org_type_status ON analysis_tasks (org_id, task_type, status)
+            CREATE INDEX IF NOT EXISTS idx_task_org_type_status ON analysis_tasks (org_id, task_type, status)
         """)
 
 

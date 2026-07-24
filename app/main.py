@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.core.database import Engine
 from app.core.exception import global_exception_handler
 from app.core.rate_limiter import get_rate_limiter
-from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes
+from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools
 from app.tools.registry import ToolRegistry
 from app.tools import init_tools
 from app.services.chat_engine import ChatEngine
@@ -40,14 +40,18 @@ async def lifespan(app: FastAPI):
     registry = ToolRegistry()
     init_tools(registry)
     chat.registry = registry
+    # Inject the registry into the Pi bridge so tool dispatch
+    # (called by the Pi extension via /pi-tools/execute) uses real GIS tools.
+    from app.agent_pi_bridge import set_tool_registry as _set_pi_tool_registry
+    _set_pi_tool_registry(registry)
     # 分层工具目录：按用户消息 + 会话粘性筛选 schema，cut token & 提升选择准确率
     catalog = ToolCatalog(registry)
     chat_engine = ChatEngine(registry, tool_catalog=catalog)
     chat.engine = chat_engine
 
     # Feature flag: 初始化 Pi agent (vendor/pi) 通过 RPC 调用
-    use_new_agent = os.getenv("USE_NEW_AGENT", "").lower() in ("true", "1", "yes")
-    if use_new_agent:
+    from app.agent_pi_bridge import USE_NEW_AGENT, get_pi_bridge
+    if USE_NEW_AGENT:
         try:
             from app.agent_pi_bridge import get_pi_bridge
             extension_path = str(Path(__file__).parent.parent / "app" / "extensions" / "webgis-tools")
@@ -83,6 +87,16 @@ async def lifespan(app: FastAPI):
 
     from app.core.network import close_shared_client
     await close_shared_client()
+
+    # 审计 BUG-03/AGENT-04：Pi bridge subprocess 之前从未在 shutdown 时关闭
+    # → 每次重启泄漏一个 node 进程 + reader task。现在显式关闭。
+    if USE_NEW_AGENT:
+        try:
+            from app.agent_pi_bridge import shutdown_pi_bridge
+            await shutdown_pi_bridge()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[lifespan] Pi bridge shutdown failed: {e}")
+
     Engine.dispose()
 
 
@@ -112,7 +126,7 @@ async def _periodic_session_cleanup(interval_seconds: int = 600) -> None:
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="WebGIS AI Agent - 智能地图分析与处理服务",
-    version="0.1.0",
+    version="0.1.2",
     lifespan=lifespan,
     docs_url="/docs" if not settings.is_production() else None,
     redoc_url="/redoc" if not settings.is_production() else None,
@@ -191,6 +205,7 @@ app.include_router(knowledge.router, prefix="/api/v1", tags=["知识库管理"])
 app.include_router(ws.router, prefix="/api/v1", tags=["WebSocket"])
 app.include_router(config.router, prefix="/api/v1", tags=["系统配置"])
 app.include_router(explorer.router, prefix="/api/v1", tags=["探索引擎"])
+app.include_router(pi_tools.router, tags=["PI工具"])
 
 # 静态文件服务 — 用 FastAPI 路由替代原 StaticFiles mount（A4 修复）：
 # 路径强校验 + 可选 HMAC 签名 + 访问日志 + JWT 鉴权或公共白名单。

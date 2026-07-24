@@ -4,6 +4,7 @@ import React, { Component } from "react"
 import { MapProvider } from "react-map-gl/maplibre"
 import { MapActionProvider } from "@/lib/contexts/map-action-context"
 import { ToastContainer } from "@/components/ui/toast"
+import { SystemMessageBridge } from "@/components/providers/system-message-bridge"
 
 interface ErrorBoundaryState {
   hasError: boolean
@@ -46,6 +47,7 @@ export function ClientProviders({ children }: { children: React.ReactNode }) {
       <MapProvider>
         <MapActionProvider>
           {children}
+          <SystemMessageBridge />  {/* FE-01: 消费 pendingSystemMessage 队列 */}
           <ToastContainer />
         </MapActionProvider>
       </MapProvider>

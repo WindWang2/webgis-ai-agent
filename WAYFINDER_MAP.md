@@ -23,11 +23,18 @@ LLM API
 - [桥接] `app/agent_pi_bridge.py` 封装 Pi RPC 通信 ✅
 - [Feature flag] `USE_NEW_AGENT=true` 启用 Pi，否则走 legacy ChatEngine ✅
 - [构建] Pi monorepo 已构建成功（coding-agent, agent-core, ai, server） ✅
+- [错误处理] `prompt()` 抛出 `PiRpcError`，`chat.py` 返回 HTTP 502 ✅
+- [清理] 移除 `clear_session` 中的死代码 Pi 分支 ✅
+- [重构] 提取 `_use_pi_bridge()` 辅助函数 ✅
+- [就绪信号] 用 `get_state` 轮询替换 `sleep(1)` ✅
+- [常量] 提取 4 个超时常量 + 编译字符串常量 ✅
+- [事件映射] 用调度表 + `_handle_*` 方法重构 `_map_event_to_sse` ✅
+- [清理] 移除未使用的 `get_messages()` 公共 API ✅
 
 ## Open Tickets
 
-- [ ] 完善 Pi RPC bridge（streaming prompt、abort、state 查询）
-- [ ] 将 GIS 工具注入 Pi 的 customTools 机制
+- [x] 完善 Pi RPC bridge（streaming prompt、abort、state 查询）
+- [x] 将 GIS 工具注入 Pi 的 customTools 机制
 - [ ] 端到端测试：用真实 LLM 验证 Pi bridge
 - [ ] 性能基准：对比 Pi vs ChatEngine
 

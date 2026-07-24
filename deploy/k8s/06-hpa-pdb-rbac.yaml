@@ -54,7 +54,7 @@ metadata:
     app: webgis-ai-agent
     component: celery
 spec:
-  minAvailable: 0  # celery 可短暂全停（任务有重试）
+  minAvailable: 1  # 至少保留 1 个 celery pod，防止维护期间全停
   selector:
     matchLabels:
       app: webgis-ai-agent

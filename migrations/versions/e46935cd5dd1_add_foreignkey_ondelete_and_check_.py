@@ -127,6 +127,7 @@ def _upgrade_postgres() -> None:
 
     op.execute("""
         ALTER TABLE conversations
+            DROP CONSTRAINT IF EXISTS conversations_user_id_fkey,
             ADD CONSTRAINT conversations_user_id_fkey
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     """)

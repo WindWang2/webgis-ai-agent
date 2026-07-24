@@ -46,8 +46,10 @@ ENV PYTHONPATH=/app
 # 审计 I18：runner 只装 GDAL runtime libs（不带编译头），
 # dev 头只存在于 backend-deps / backend-builder 阶段。
 # 镜像减小 + 攻击面缩小。
+# 注：使用 bookworm 包名（libgdal32 libgeos-c1v5 libproj25），与 Dockerfile.prod 一致；
+# 之前误用 trixie 的 t64 后缀包名（libgdal32t64 libgeos3.11.1t64）在 bookworm 上不存在。
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libexpat1 libgdal32t64 libgeos3.11.1t64 libproj25 \
+    libexpat1 libgdal32 libgeos-c1v5 libproj25 \
     nodejs npm && rm -rf /var/lib/apt/lists/*
 
 # Copy frontend standalone output

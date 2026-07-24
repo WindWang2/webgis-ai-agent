@@ -5,7 +5,7 @@ from unittest.mock import patch, AsyncMock, MagicMock
 from fastapi import FastAPI
 
 from app.api.routes import knowledge as _mod
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, get_current_user_with_version
 
 _mock_user = {"user_id": "test-user"}
 
@@ -14,6 +14,9 @@ _mock_user = {"user_id": "test-user"}
 def app():
     app = FastAPI()
     app.dependency_overrides[get_current_user] = lambda: _mock_user
+    # knowledge routes now use get_current_user_with_version (which queries the
+    # DB); override it with the same mock so these tests stay DB-free.
+    app.dependency_overrides[get_current_user_with_version] = lambda: _mock_user
     app.include_router(_mod.router, prefix="/api/v1")
     return app
 

@@ -191,15 +191,10 @@ export async function deleteSession(sessionId: string): Promise<void> {
 /**
  * 清空会话消息（保留会话）。
  *
- * 审计契约断裂：前端之前调 /chat/sessions/{id}/clear，但后端实际路由是
- * DELETE /chat/sessions/{id}（无 /clear 后缀）→ 一直 404。改为匹配后端。
+ * FE-14：之前此函数与 deleteSession 完全相同（后端无 /clear 路由），且无调用方。
+ * 后端不支持"仅清消息保留 session"——删除此误导性函数。如需此功能，后端需先实现。
+ * 保留 deleteSession 作为唯一的 session 删除入口。
  */
-export async function clearSessionMessages(sessionId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sessionId}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) throw new Error(`API Error: ${res.status}`);
-}
 
 /**
  * 直接执行单个工具（REST API，不依赖SSE）。

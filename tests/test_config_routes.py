@@ -21,6 +21,7 @@ async def app_and_client():
     from app.api.routes import chat as chat_routes
     from app.services.chat_engine import ChatEngine
     from app.tools.registry import ToolRegistry
+    from app.core.auth import get_current_user, get_current_user_with_version
 
     # 给 chat 模块注入 engine + registry（config 路由会用）
     registry = ToolRegistry()
@@ -28,6 +29,11 @@ async def app_and_client():
     chat_routes.engine = ChatEngine(registry)
 
     app = FastAPI()
+    # require_admin 现在依赖 get_current_user_with_version（会查 DB）。
+    # 本测试套不建 DB，复用不查库的 get_current_user 作为 override，
+    # 让 role 仍从 JWT claim 中读取（require_admin 在缺 user 对象时
+    # 会回退到 _user["role"]）。
+    app.dependency_overrides[get_current_user_with_version] = get_current_user
     app.include_router(config_routes.router, prefix="/api/v1")
     try:
         transport = ASGITransport(app=app)
