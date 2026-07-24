@@ -278,12 +278,20 @@ def _make_manager_with_failing_redis(monkeypatch, fail_method: str):
 
     绕过 __init__ 的 from_url（需要真 URL）—— 直接 setattr 替换 _r。
     """
+    import asyncio
     import redis.asyncio as aioredis
     from app.services.session_data_redis import RedisSessionDataManager
 
     # 不调用 __init__（避免 from_url），仅设置必要属性
     manager = RedisSessionDataManager.__new__(RedisSessionDataManager)
     manager.capacity = 100
+    # 审计 TEST-13：_ensure_connected() 引用 _bound_loop（用 __new__ 跳过 __init__
+    # 时不会设置）。本 helper 只在 async 测试里调用，把 _bound_loop 指向当前运行
+    # loop 让 _ensure_connected 的复用条件成立，从而保留注入的 _FakeRedis。
+    try:
+        manager._bound_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        manager._bound_loop = None
 
     class _FakePipeline:
         def __getattr__(self, name):

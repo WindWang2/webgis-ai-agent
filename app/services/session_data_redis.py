@@ -157,6 +157,32 @@ class RedisSessionDataManager:
             return f"ref:redis-unavailable-{uuid.uuid4().hex[:16]}"
         return ref_id
 
+    async def overwrite(self, session_id: str, ref_id: str, data: Any) -> bool:
+        """Overwrite the data stored at an existing ``ref_id`` (same key).
+
+        ``store`` always mints a new ref_id, which breaks callers like plan_mode's
+        ``update_plan_status``: they hold the original plan_id and would keep reading
+        the stale payload. Redis ``get`` also returns a deserialized copy, so in-place
+        mutation of that copy is never persisted. This method writes back to the SAME
+        ``data`` key so subsequent ``get(ref_id)`` returns the updated payload.
+
+        Returns True on success, False if Redis is unavailable (caller degrades).
+        """
+        await self._ensure_connected()
+        data_key = self._data_key(session_id, ref_id)
+        try:
+            async with self._r.pipeline() as pipe:
+                pipe.set(data_key, json.dumps(data, ensure_ascii=False), ex=DATA_TTL)
+                self._refresh_session_ttl(pipe, session_id)
+                await pipe.execute()
+        except aioredis.RedisError as e:
+            logger.error(
+                "Redis overwrite failed for session %s ref %s: %s",
+                session_id, ref_id, e,
+            )
+            return False
+        return True
+
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
         await self._ensure_connected()
         async with self._r.pipeline() as pipe:

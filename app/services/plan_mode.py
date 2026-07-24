@@ -212,15 +212,25 @@ async def load_plan(session_id: str, plan_id: str) -> Optional[dict]:
 async def update_plan_status(session_id: str, plan_id: str, **updates: Any) -> None:
     """更新计划的状态字段并写回存储。
 
-    Redis 后端 get() 返回反序列化副本，原地 update 不会持久化，
-    因此必须显式 store 写回。
+    必须写回到 SAME plan_id（即原始 ref_id），否则持有 plan_id 的调用方
+    （get_plan_status / load_plan）仍会读到旧 payload。
+
+    Redis 后端 get() 返回反序列化副本，原地 update 不会持久化；且 store() 会
+    生成新的 ref_id 而非原地覆盖。所以这里用 overwrite() 把更新后的 dict 写回
+    原始 key。内存后端虽然返回的是同一个对象（mutation 会“偶然”可见），但同样
+    走 overwrite 以保持两个后端行为一致。
     """
     plan_data = await load_plan(session_id, plan_id)
     if plan_data is None:
         logger.warning(f"update_plan_status: plan {plan_id} 不存在")
         return
     plan_data.update(updates)
-    await session_data_manager.store(session_id, plan_data, prefix="plan")
+    overwrite = getattr(session_data_manager, "overwrite", None)
+    if overwrite is not None:
+        await overwrite(session_id, plan_id, plan_data)
+    else:
+        # Backends without overwrite(): fall back to store (in-memory only path).
+        await session_data_manager.store(session_id, plan_data, prefix="plan")
 
 
 # ─────────────────────────────── 执行引擎 ───────────────────────────────

@@ -516,7 +516,9 @@ class TestClearSessionRoute:
 
     def test_clear_session_has_no_pi_branch(self):
         """After Ticket 3 fix, clear_session should not have a dead Pi conditional branch."""
-        source = open("/home/kevin/projects/webgis-ai-agent/app/api/routes/chat.py").read()
+        import inspect
+        import app.api.routes.chat as chat_module
+        source = inspect.getsource(chat_module)
 
         # Find the clear_session function body
         start = source.find("async def clear_session(")

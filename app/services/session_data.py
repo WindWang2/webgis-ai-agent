@@ -47,6 +47,21 @@ class SessionDataManager:
         session_cache[ref_id] = data
         return ref_id
 
+    async def overwrite(self, session_id: str, ref_id: str, data: Any) -> bool:
+        """Overwrite the data stored at an existing ``ref_id``.
+
+        Unlike ``store`` (which always mints a new ref_id), this writes back to the
+        SAME key so callers that hold the original ref_id (e.g. plan_mode's
+        ``update_plan_status``) read the updated payload on the next ``get``.
+
+        Returns True if the ref_id existed and was updated, False otherwise.
+        """
+        session_cache = self._store.get(session_id)
+        if not session_cache or ref_id not in session_cache:
+            return False
+        session_cache[ref_id] = data
+        return True
+
     async def set_alias(self, session_id: str, ref_id: str, alias: str):
         """为引用 ID 设置别名"""
         if session_id not in self._aliases:
