@@ -104,6 +104,13 @@ def set_cached(key: str, value: Any, ttl: int) -> None:
 # Registry 的 timing wrapper 读此变量判断当前 dispatch 是否命中缓存。
 cache_hit_var: ContextVar[bool] = ContextVar("tool_cache_hit", default=False)
 
+# BUG-08: 嵌套深度计数。当某个 cached_tool 在另一个 cached_tool 的函数体内被
+# 调用时（嵌套 dispatch），内层 set 会覆盖外层 cache_hit_var 的值，导致外层
+# registry timing 误报。用深度计数区分：最外层（depth==0）的 cached_tool 不
+# reset —— 它的值留给 registry 读；嵌套层（depth>0）在 finally 里 reset 回外层
+# 值，保证内层状态不泄漏到外层。
+_cache_depth_var: ContextVar[int] = ContextVar("tool_cache_depth", default=0)
+
 
 def cached_tool(ttl: int = 3600, skip_if: Optional[Callable[[dict], bool]] = None):
     """工具函数装饰器：Redis 命中即返回，未命中调内层 + 写回。
@@ -126,16 +133,35 @@ def cached_tool(ttl: int = 3600, skip_if: Optional[Callable[[dict], bool]] = Non
                 key = make_cache_key(tool_name, kwargs)
                 if key is None:
                     return await func(**kwargs)
-                cached = get_cached(key)
-                if cached is not None:
-                    cache_hit_var.set(True)
-                    return cached
-                # 审计 M10：cache miss 必须显式 set(False)，否则 ContextVar
-                # 会保留前一次 hit 的 True 值 -> registry timing 误报 cache_hit。
-                cache_hit_var.set(False)
-                result = await func(**kwargs)
-                set_cached(key, result, ttl)
-                return result
+                # BUG-08: 进入嵌套层。最外层 is_outermost=True（depth 进入前为 0）。
+                # 注意：不能用 token.old_value 判定——ContextVar 的 default 值不算
+                # "已 set"，old_value 会是 Token.MISSING 而非 0。先 get() 再 set。
+                prev_depth = _cache_depth_var.get()
+                depth_token = _cache_depth_var.set(prev_depth + 1)
+                is_outermost = prev_depth == 0
+                try:
+                    cached = get_cached(key)
+                    if cached is not None:
+                        # 审计 M10：cache hit 显式 set(True)。
+                        hit_token = cache_hit_var.set(True)
+                        if is_outermost:
+                            return cached  # 最外层：留给 registry 读，不 reset
+                        try:
+                            return cached
+                        finally:
+                            cache_hit_var.reset(hit_token)
+                    # 审计 M10：cache miss 必须显式 set(False)，否则 ContextVar
+                    # 会保留前一次 hit 的 True 值 -> registry timing 误报 cache_hit。
+                    hit_token = cache_hit_var.set(False)
+                    try:
+                        result = await func(**kwargs)
+                        set_cached(key, result, ttl)
+                        return result
+                    finally:
+                        if not is_outermost:
+                            cache_hit_var.reset(hit_token)
+                finally:
+                    _cache_depth_var.reset(depth_token)
             return async_wrapper
 
         @functools.wraps(func)
@@ -145,15 +171,32 @@ def cached_tool(ttl: int = 3600, skip_if: Optional[Callable[[dict], bool]] = Non
             key = make_cache_key(tool_name, kwargs)
             if key is None:
                 return func(**kwargs)
-            cached = get_cached(key)
-            if cached is not None:
-                cache_hit_var.set(True)
-                return cached
-            # 审计 M10：同 async_wrapper，miss 时显式 set(False)
-            cache_hit_var.set(False)
-            result = func(**kwargs)
-            set_cached(key, result, ttl)
-            return result
+            # BUG-08: 同 async_wrapper，用深度计数区分最外层与嵌套层。
+            prev_depth = _cache_depth_var.get()
+            depth_token = _cache_depth_var.set(prev_depth + 1)
+            is_outermost = prev_depth == 0
+            try:
+                cached = get_cached(key)
+                if cached is not None:
+                    # 审计 M10：cache hit 显式 set(True)。
+                    hit_token = cache_hit_var.set(True)
+                    if is_outermost:
+                        return cached  # 最外层：留给 registry 读，不 reset
+                    try:
+                        return cached
+                    finally:
+                        cache_hit_var.reset(hit_token)
+                # 审计 M10：同 async_wrapper，miss 时显式 set(False)
+                hit_token = cache_hit_var.set(False)
+                try:
+                    result = func(**kwargs)
+                    set_cached(key, result, ttl)
+                    return result
+                finally:
+                    if not is_outermost:
+                        cache_hit_var.reset(hit_token)
+            finally:
+                _cache_depth_var.reset(depth_token)
         return sync_wrapper
 
     return decorator

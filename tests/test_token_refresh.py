@@ -255,7 +255,7 @@ async def test_refresh_rejects_expired_refresh_token(client):
         expires_delta=timedelta(seconds=-1),  # 已过期
         token_version=0,
     )
-    # jose 可能缓存时间，sleep 1s 让 exp 真正过期
+    # PyJWT 可能缓存时间，sleep 1s 让 exp 真正过期
     time.sleep(1.1)
     resp = await client.post("/api/v1/auth/refresh", json={"refresh_token": expired})
     assert resp.status_code == 401
@@ -409,8 +409,8 @@ async def test_legacy_token_without_type_claim_works_for_one_ttl(client):
     user_id = body["user"]["id"]
 
     # 手动构造一个 "旧式" token: 只有 sub/username/role/exp，无 type/ver
-    # 直接用 jose 签
-    from jose import jwt
+    # 直接用 PyJWT 签
+    import jwt
     from app.core.auth import SECRET_KEY, ALGORITHM
     from datetime import datetime, timezone
 
