@@ -16,6 +16,7 @@ from typing import Optional
 from app.api.routes.chat import get_engine, get_registry
 from app.tools.skills import load_skills
 from app.core.auth import require_admin
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/config", tags=["配置管理"])
@@ -61,6 +62,14 @@ async def update_llm_config(
     _user: dict = Depends(require_admin),
 ):
     """更新 LLM 配置（admin only）"""
+    # SEC-04: 启动时的 _validate_no_ssrf 只在进程启动跑一次；运行时改 base_url
+    # 时必须重新校验，否则 admin (或被接管账号) 可把 LLM 流量重定向到内网 /
+    # 云元数据端点 (SSRF)。复用 config.py 的同一份校验逻辑。
+    if req.base_url:
+        try:
+            settings._validate_no_ssrf(req.base_url, field="base_url")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"base_url 校验失败: {e}")
     get_engine().update_config(
         base_url=req.base_url,
         model=req.model,

@@ -1,10 +1,23 @@
 """Unit tests for coalesced session metadata retrieval"""
+import asyncio
 from unittest.mock import MagicMock, AsyncMock
 import pytest
 import redis
 
 from app.services.session_data import SessionDataManager
 from app.services.session_data_redis import RedisSessionDataManager
+
+
+def _bind_mock_redis(manager: RedisSessionDataManager, mock_redis) -> None:
+    """Inject a mock Redis client so ``_ensure_connected()`` short-circuits.
+
+    审计 TEST-13：``RedisSessionDataManager._ensure_connected()`` 现在懒构造客户端并
+    检查 ``_bound_loop is loop``。测试只设置 ``manager._r`` 不够——``_ensure_connected``
+    会发现 ``_bound_loop is None`` 而丢弃 mock、重新 ``Redis.from_url``。把 ``_bound_loop``
+    指向当前运行 loop 即可让客户端复用路径直接返回注入的 mock。
+    """
+    manager._r = mock_redis
+    manager._bound_loop = asyncio.get_running_loop()
 
 
 async def test_in_memory_session_metadata():
@@ -54,7 +67,7 @@ async def test_redis_session_metadata():
 
     mock_redis = MagicMock()
     mock_redis.pipeline.return_value = mock_ctx
-    manager._r = mock_redis
+    _bind_mock_redis(manager, mock_redis)
 
     metadata = await manager.get_session_metadata("session-xyz")
 
@@ -90,7 +103,7 @@ async def test_redis_session_metadata_error_fallback():
 
     mock_redis = MagicMock()
     mock_redis.pipeline.return_value = mock_ctx
-    manager._r = mock_redis
+    _bind_mock_redis(manager, mock_redis)
 
     # Stub the individual fallback methods on the manager
     manager.get_map_state = AsyncMock(return_value={"base_layer": "FallbackMap"})

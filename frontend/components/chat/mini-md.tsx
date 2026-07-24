@@ -10,7 +10,8 @@ interface MiniMdProps {
 
 // 审计 F36：默认 urlTransform 已经过滤 javascript:，但 data: 在某些浏览器
 // 仍可执行（image/svg+xml）。显式白名单只允许 http/https/mailto/相对路径。
-const safeUrlTransform: UrlTransform = (url) => {
+// FE-06：导出供 chat-panel.tsx 复用，避免第二个 ReactMarkdown 实例绕过防护。
+export const safeUrlTransform: UrlTransform = (url) => {
   if (!url) return url;
   const trimmed = url.trim();
   // 相对路径 / 同源锚点 / 标准协议放行

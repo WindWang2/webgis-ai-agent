@@ -1,6 +1,5 @@
 """Raster math operations: reclassify, calculator, resample."""
 import enum
-import os
 from typing import Optional
 
 import numpy as np
@@ -8,7 +7,6 @@ import rasterio
 from rasterio.enums import Resampling
 from rasterio.warp import reproject, calculate_default_transform
 
-from app.utils.path import validate_data_path
 
 
 class ResamplingMethod(enum.Enum):
@@ -88,7 +86,19 @@ def reclassify(
         data = src.read(1)
         profile = _gtiff_profile(src.profile, nodata)
         out_nodata = nodata if nodata is not None else (profile.get("nodata", 0))
-        out_data = np.full_like(data, fill_value=out_nodata, dtype=profile.get("dtype", data.dtype))
+
+        # BUG-10: derive output dtype from the scheme's reclass values so that
+        # float values aren't silently truncated when the source raster is, e.g.,
+        # uint8. result_type finds a common dtype for all values; promote_types
+        # widens it further if the source carries a larger integer dtype.
+        scheme_values = [r.get("value", 0) for r in scheme]
+        out_dtype = np.result_type(*scheme_values) if scheme_values else data.dtype
+        out_dtype = np.promote_types(out_dtype, data.dtype)
+        # The nodata fill must be representable in the chosen dtype.
+        if not np.can_cast(type(out_nodata), out_dtype):
+            out_dtype = np.promote_types(out_dtype, np.array([out_nodata]).dtype)
+        profile["dtype"] = out_dtype
+        out_data = np.full_like(data, fill_value=out_nodata, dtype=out_dtype)
 
         for rule in scheme:
             rmin = rule.get("min", -float("inf"))
@@ -102,10 +112,16 @@ def reclassify(
 
     unique_vals = np.unique(out_data[out_data != out_nodata])
     label_map = {rule["value"]: rule.get("label", str(rule["value"])) for rule in scheme}
+    # BUG-10: preserve float values when the output dtype is float; only cast
+    # to int for integer outputs (avoids silently dropping fractional classes).
+    if np.issubdtype(out_data.dtype, np.integer):
+        unique_value_list = [int(v) for v in unique_vals]
+    else:
+        unique_value_list = [float(v) for v in unique_vals]
     stats = {
         "output_path": out_path,
         "pixel_count": int((out_data != out_nodata).sum()),
-        "unique_values": [int(v) for v in unique_vals],
+        "unique_values": unique_value_list,
         "labels": {str(k): v for k, v in label_map.items() if k in unique_vals},
     }
     return stats
@@ -160,6 +176,9 @@ def raster_calculator(
         valid_a = np.where(mask, data_a, 0)
         valid_b = np.where(mask, data_b, 0)
         result = ne.evaluate(expression, local_dict={"A": valid_a, "B": valid_b})
+        # BUG-11: division-by-zero (e.g. "(A-B)/(A+B)" with A+B==0) yields inf/nan;
+        # sanitize to nodata so the non-finite values don't propagate downstream.
+        result = np.where(np.isfinite(result), result, out_nodata)
         result = np.where(mask, result, out_nodata)
         result = result.astype(data_a.dtype)
 

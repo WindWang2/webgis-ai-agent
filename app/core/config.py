@@ -8,7 +8,7 @@ from typing import List, Optional
 from urllib.parse import urlparse
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, model_validator
+from pydantic import model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     # LLM 配置 (OpenAI 兼容接口)
     LLM_BASE_URL: str = "https://api.deepseek.com"
     LLM_API_KEY: str = "your-api-key-here"
-    LLM_MODEL: str = "deepseek-v4-flash"
+    LLM_MODEL: str = "deepseek-chat"
     # 规划阶段专用模型；留空时回退 LLM_MODEL（便于以后单独配更便宜的模型）
     LLM_PLANNER_MODEL: str = ""
     LLM_PROMPT_CACHING_ENABLED: bool = True
@@ -140,6 +140,15 @@ class Settings(BaseSettings):
                         f"Current value: '{value}'. "
                         f"Set it via the {var_name} environment variable."
                     )
+            # CONFIG-01：生产环境禁止 sqlite —— 文件型 DB 无并发/无 HA，且
+            # 默认 ./data/webgis.db 在容器内不可靠。必须用 Postgres。
+            if not self.DATABASE_URL.startswith(("postgresql://", "postgres://")):
+                raise RuntimeError(
+                    "DATABASE_URL must use PostgreSQL in production "
+                    "(e.g. postgresql://user:pass@host/db). "
+                    f"Current value does not start with postgresql:// or postgres://: "
+                    f"'{self.DATABASE_URL[:60]}...'."
+                )
         else:
             # 开发模式：检查占位符并警告
             for var_name, placeholder in _PROD_REQUIRED.items():

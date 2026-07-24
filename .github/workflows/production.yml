@@ -43,8 +43,8 @@ jobs:
       - name: Run Ruff Check
         # --exit-zero: 项目历史包袱有 ~247 个 lint warning（多为 unused import）。
         # 报告但不阻断 CI -- 让 PR 能合并，lint 清理作为独立工作。
-        # 想收紧的话，先做一次全量 ruff check --fix（可自动修 143 个），
-        # 然后去掉 --exit-zero。
+        # TODO(lint-cleanup): 先做一次全量 ruff check --fix（可自动修 143 个），
+        # 然后去掉下面的 --exit-zero 让 lint 真正阻断 CI。
         run: ruff check --output-format=github --exit-zero .
 
       - name: Install Frontend Deps
@@ -52,12 +52,11 @@ jobs:
         run: npm ci
 
       - name: ESLint Check
-        # eslint.config.mjs 用了 v9 的 eslint/config subpath export，但
-        # package.json 锁的是 eslint ^8（实际装 8.57.1）-> 启动即报
-        # ERR_PACKAGE_PATH_NOT_EXPORTED。--exit-zero 让 CI 不被这个版本错配
-        # 阻断；升级 eslint 到 9.x + 全量 lint 是独立工作。
+        # eslint.config.mjs 用了 v9 的 flat config API，但 package.json 锁的是
+        # eslint ^8 -> eslint 8 在 flat config 模式下不接受 --exit-zero flag。
+        # TODO(eslint-upgrade): 升级 eslint 到 9.x + 全量 lint 是独立工作。
         working-directory: ./frontend
-        run: npx eslint . --max-warnings 0 --exit-zero
+        run: npx eslint . --max-warnings 0 || true
 
   # ============ Stage 2: 单元测试 ============
   test-backend:
@@ -114,14 +113,16 @@ jobs:
           echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
 
       - name: Run Tests with Coverage
-        # 现实基线 ~16%；以 ratchet 模式推进，每次提升后同步调高此闸值
+        # 现实基线 ~10%；以 ratchet 模式推进，每次提升后同步调高此闸值。
+        # 闸值暂设为 10（接近当前实际覆盖率），让覆盖检查真正生效而不是被忽略。
         #
-        # 注意：部分 backend 测试存在 asyncio event loop 隔离问题（session_data_manager
-        # 是模块级单例，Redis 连接绑定到第一个 loop，pytest-asyncio 每个测试用新 loop ->
-        # "Task got Future attached to a different loop"）。本地能跑是因为 loop 复用
-        # 偶然性。这是项目原有问题，需要重构 session_data 生命周期，跟踪在独立 issue。
-        # 暂用 || true 让 CI 不被阻断；前端测试 + lint + bandit 仍提供保护。
-        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=15 -v -x || true
+        # 不加 -x：保留所有失败用例的输出，便于一次看到全部问题。
+        # 不加 || true：测试失败应阻断 CI，这才是 gate 的意义。
+        #
+        # 注意：session_data_manager 的 asyncio event loop 隔离问题已通过懒加载
+        # Redis 连接修复（见 app/services/session_data_redis.py），不再在 import 时
+        # 绑定 event loop。
+        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=10 -v
 
       - name: Upload Coverage Report
         uses: codecov/codecov-action@v4
@@ -215,6 +216,9 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
+        with:
+          # 审计 CICD-02：构建镜像需要 vendor/pi 子模块（否则 source 不完整）。
+          submodules: recursive
 
       - name: Lowercase IMAGE_NAME
         # docker tag 要求全小写；github.repository 可能含大写（如 WindWang2/...）
@@ -248,12 +252,22 @@ jobs:
           # 不声明 platforms：build-push-action 在 load: true 模式下无法载入多架构
           # manifest 到本地 daemon，arm64 构建会被静默丢弃。如需多架构，需 push: true
           # 配合真实 registry。
+          # 审计 CICD-01：保留 load: true 以产出本地镜像供下游 preview/SSH/rollback
+          # 通过 docker save -> artifact 流程使用；镜像 push 由下面的 Push step 单独完成
+          # （buildx 不允许 load 与 push 同时为 true）。
           push: false
           load: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Push Image to Registry
+        # 审计 CICD-01：build job 必须把镜像推到 registry，否则 deploy-prod 的
+        # registry 路径（docker pull）无镜像可用。build 步骤因 load:true 无法同时 push，
+        # 故在此显式 push 刚 build 出的本地镜像。
+        run: |
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
       - name: Save Image Artifact
         run: |
@@ -427,6 +441,8 @@ jobs:
         with:
           ref: ${{ env.PREV_SHA }}
           fetch-depth: 1
+          # 审计 CICD-02：历史版本构建同样需要 vendor/pi 子模块。
+          submodules: recursive
 
       - name: Build Previous Image
         run: |

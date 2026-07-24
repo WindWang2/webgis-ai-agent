@@ -14,7 +14,7 @@ from app.tools.registry import ToolRegistry
 
 from app.utils.sse import sse_event
 
-from app.agent_pi_bridge import PiRpcError
+from app.agent_pi_bridge import PiRpcError, USE_NEW_AGENT
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["对话"])
@@ -32,7 +32,7 @@ SSE_HEADERS = {
 
 # Feature flag: 通过环境变量切换新旧 Agent 系统
 # true/1/yes 时使用 Pi 开源 agent (vendor/pi) 通过 RPC 调用
-USE_NEW_AGENT = os.getenv("USE_NEW_AGENT", "").lower() in ("true", "1", "yes")
+# (imported from app.agent_pi_bridge to avoid duplication)
 pi_bridge = None  # type: ignore[assignment]  # 由 lifespan 初始化
 
 
@@ -269,11 +269,8 @@ async def clear_session(session_id: str, _user: dict = Depends(get_current_user_
     """清除会话（内存 + DB）— 受所有权检查保护（A2）。"""
     user_id = _user.get("user_id")
 
-    # Note: Pi agent session state is managed by Pi's own session lifecycle
-    # (file-based in .pi/sessions/ with TTL cleanup).
-    # The legacy engine path below clears DB + memory state for this session_id.
-    # A full Pi session clear would require calling the agent bridge's abort()
-    # and deleting Pi's session files — deferred until abort() semantics are verified.
+    # Pi session clear deferred: abort() semantics + file-based session cleanup
+    # not yet verified. Legacy engine clears DB + memory below.
 
     ok = await get_engine().clear_session(session_id, user_id=user_id)
     if not ok:

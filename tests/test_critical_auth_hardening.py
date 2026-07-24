@@ -178,11 +178,15 @@ async def test_s29_admin_endpoint_rejects_anonymous(client, app_and_db):
     """/api/v1/chat/tools/execute 是 admin-only —— 未带 token 必须 401。"""
     # app_and_db fixture 没注册 chat router；改测一个直接的 require_admin 行为：
     # 这里在 fixture 外手动验证 require_admin 依赖的行为
-    from app.core.auth import require_admin
+    from app.core.auth import require_admin, get_current_user, get_current_user_with_version
     from fastapi import FastAPI
     from fastapi import Depends
 
     app = FastAPI()
+    # require_admin 现在依赖 get_current_user_with_version（会查 DB）。本测试用
+    # 不存在的 user id ("v1"/"a1") 签 token，故 override 为不查库的
+    # get_current_user，让 role 直接来自 JWT claim。
+    app.dependency_overrides[get_current_user_with_version] = get_current_user
 
     @app.get("/test-admin")
     async def _(_u: dict = Depends(require_admin)):

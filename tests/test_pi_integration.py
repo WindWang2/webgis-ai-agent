@@ -6,11 +6,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.agent_pi_bridge import PiBridge, PiRpcError
-from app.api.routes.pi_tools import (
+from tests.fixtures.pi_mocks import make_mock_process, make_readline
+
+
+from app.agent_pi_bridge import (
+    PiBridge,
+    PiRpcError,
     PiToolRequest,
     PiToolResponse,
-    execute_tool,
+    dispatch_tool,
     set_tool_registry,
 )
 from app.tools.registry import ToolRegistry
@@ -234,17 +238,6 @@ class TestPiBridgeSubprocessFlow:
     def bridge(self):
         return PiBridge(extension_paths=[])
 
-    @staticmethod
-    def _make_readline(lines):
-        """Return a sync callable that yields lines then '' (EOF)."""
-        it = iter(lines)
-        def _reader(*args, **kwargs):
-            try:
-                return next(it)
-            except StopIteration:
-                return ""
-        return _reader
-
     @pytest.mark.asyncio
     async def test_prompt_returns_content_from_events(self, bridge):
         """prompt() drains events and returns concatenated text."""
@@ -253,7 +246,7 @@ class TestPiBridgeSubprocessFlow:
         mock_proc.stdout = MagicMock()
         mock_proc.stderr = MagicMock()
         mock_proc.poll.return_value = None
-        mock_proc.stdout.readline.side_effect = self._make_readline([
+        mock_proc.stdout.readline.side_effect = make_readline([
             '{"type":"response","id":"1","success":true}\n',
             '{"type":"message_update","message":{"role":"assistant","content":[{"type":"text","text":"Hi there"}]}}\n',
             '{"type":"agent_end"}\n',
@@ -280,7 +273,7 @@ class TestPiBridgeSubprocessFlow:
         mock_proc.stdout = MagicMock()
         mock_proc.stderr = MagicMock()
         mock_proc.poll.return_value = None
-        mock_proc.stdout.readline.side_effect = self._make_readline([
+        mock_proc.stdout.readline.side_effect = make_readline([
             '{"type":"response","id":"1","success":false,"error":"No provider configured"}\n',
             '',
         ])
@@ -304,7 +297,7 @@ class TestPiBridgeSubprocessFlow:
         mock_proc.stdout = MagicMock()
         mock_proc.stderr = MagicMock()
         mock_proc.poll.return_value = None
-        mock_proc.stdout.readline.side_effect = self._make_readline([
+        mock_proc.stdout.readline.side_effect = make_readline([
             '{"type":"response","id":"1","success":true}\n',
             # Include assistantMessageEvent so _map_event_to_sse can detect token
             '{"type":"message_update","message":{"role":"assistant","content":[]},"assistantMessageEvent":{"type":"text_delta","content":"streamed"}}\n',
@@ -338,7 +331,7 @@ class TestPiBridgeSubprocessFlow:
         mock_proc.stdout = MagicMock()
         mock_proc.stderr = MagicMock()
         mock_proc.poll.return_value = None
-        mock_proc.stdout.readline.side_effect = self._make_readline([
+        mock_proc.stdout.readline.side_effect = make_readline([
             '{"type":"response","id":"1","success":true}\n',
             '',
         ])
@@ -369,7 +362,7 @@ class TestPiBridgeSubprocessFlow:
         mock_proc.stderr = MagicMock()
         mock_proc.poll.return_value = None
         # readline never called because send fails immediately
-        mock_proc.stdout.readline.side_effect = self._make_readline([''])
+        mock_proc.stdout.readline.side_effect = make_readline([''])
 
         with patch("subprocess.Popen", return_value=mock_proc):
             with patch("asyncio.sleep", return_value=None):
@@ -420,7 +413,7 @@ class TestPiToolsEndpoint:
         set_tool_registry(registry)
 
         req = PiToolRequest(toolCallId="tc-1", name="pi_test_echo", arguments={"msg": "hello"})
-        resp = await execute_tool(req)
+        resp = await dispatch_tool(req)
         assert resp.toolCallId == "tc-1"
         assert not resp.isError
         assert "echo:hello" in resp.content[0]["text"]
@@ -432,7 +425,7 @@ class TestPiToolsEndpoint:
         set_tool_registry(registry)
 
         req = PiToolRequest(toolCallId="tc-2", name="does_not_exist", arguments={})
-        resp = await execute_tool(req)
+        resp = await dispatch_tool(req)
         assert resp.isError
         assert "not found" in resp.content[0]["text"].lower()
 
@@ -449,7 +442,7 @@ class TestPiToolsEndpoint:
         set_tool_registry(registry)
 
         req = PiToolRequest(toolCallId="tc-3", name="pi_test_fail", arguments={})
-        resp = await execute_tool(req)
+        resp = await dispatch_tool(req)
         # The registry catches exceptions and returns a structured error dict.
         # pi_tools wraps it as content with isError=False so the LLM can read
         # the error details and decide how to recover.
@@ -477,7 +470,7 @@ class TestPiToolsEndpoint:
         set_tool_registry(registry)
 
         req = PiToolRequest(toolCallId="tc-4", name="pi_test_async", arguments={"x": "42"})
-        resp = await execute_tool(req)
+        resp = await dispatch_tool(req)
         assert not resp.isError
         assert "async:42" in resp.content[0]["text"]
 
@@ -512,7 +505,7 @@ class TestPiToolsEndpoint:
             arguments={"name": "x"},
             sessionId="my-session-1",
         )
-        resp = await execute_tool(req)
+        resp = await dispatch_tool(req)
         assert not resp.isError
         assert captured == ["my-session-1"]
         assert "sid=my-session-1" in resp.content[0]["text"]
@@ -523,7 +516,9 @@ class TestClearSessionRoute:
 
     def test_clear_session_has_no_pi_branch(self):
         """After Ticket 3 fix, clear_session should not have a dead Pi conditional branch."""
-        source = open("/home/kevin/projects/webgis-ai-agent/app/api/routes/chat.py").read()
+        import inspect
+        import app.api.routes.chat as chat_module
+        source = inspect.getsource(chat_module)
 
         # Find the clear_session function body
         start = source.find("async def clear_session(")

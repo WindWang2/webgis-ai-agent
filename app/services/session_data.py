@@ -1,4 +1,5 @@
 """会话数据管理器 - 存储大对象并提供游标引用"""
+import asyncio
 import uuid
 import logging
 from typing import Any, Optional
@@ -19,6 +20,11 @@ class SessionDataManager:
         # session_id -> deque of recent user actions (max 20)
         self._event_log: dict[str, deque] = {}
         self.capacity = capacity
+        # BUG-14: serialize read-modify-write mutations of the layers list so
+        # two concurrent update_layer_in_state calls don't clobber each other.
+        # A single instance lock is sufficient for the in-memory backend (it is
+        # only a fallback when Redis is unavailable).
+        self._lock = asyncio.Lock()
 
     async def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
         """存储数据并返回生成的游标 ID"""
@@ -40,6 +46,21 @@ class SessionDataManager:
 
         session_cache[ref_id] = data
         return ref_id
+
+    async def overwrite(self, session_id: str, ref_id: str, data: Any) -> bool:
+        """Overwrite the data stored at an existing ``ref_id``.
+
+        Unlike ``store`` (which always mints a new ref_id), this writes back to the
+        SAME key so callers that hold the original ref_id (e.g. plan_mode's
+        ``update_plan_status``) read the updated payload on the next ``get``.
+
+        Returns True if the ref_id existed and was updated, False otherwise.
+        """
+        session_cache = self._store.get(session_id)
+        if not session_cache or ref_id not in session_cache:
+            return False
+        session_cache[ref_id] = data
+        return True
 
     async def set_alias(self, session_id: str, ref_id: str, alias: str):
         """为引用 ID 设置别名"""
@@ -116,19 +137,25 @@ class SessionDataManager:
 
     async def update_layer_in_state(self, session_id: str, layer_id: str, updates: dict):
         """更新地图状态中单个图层的属性"""
-        layers = list(self._map_state.get(session_id, {}).get("layers", []))
-        for layer in layers:
-            if layer.get("id") == layer_id:
-                layer.update(updates)
-                break
-        else:
-            layers.append({"id": layer_id, **updates})
-        await self.set_map_state(session_id, "layers", layers)
+        # BUG-14: hold the lock across the whole read-modify-write so a
+        # concurrent update/remove on the same layers list can't interleave and
+        # lose one side's mutation.
+        async with self._lock:
+            layers = list(self._map_state.get(session_id, {}).get("layers", []))
+            for layer in layers:
+                if layer.get("id") == layer_id:
+                    layer.update(updates)
+                    break
+            else:
+                layers.append({"id": layer_id, **updates})
+            await self.set_map_state(session_id, "layers", layers)
 
     async def remove_layer_from_state(self, session_id: str, layer_id: str):
         """从地图状态中移除指定图层"""
-        layers = self._map_state.get(session_id, {}).get("layers", [])
-        await self.set_map_state(session_id, "layers", [l for l in layers if l.get("id") != layer_id])
+        # BUG-14: same read-modify-write race as update_layer_in_state.
+        async with self._lock:
+            layers = self._map_state.get(session_id, {}).get("layers", [])
+            await self.set_map_state(session_id, "layers", [l for l in layers if l.get("id") != layer_id])
 
     async def append_event(self, session_id: str, event: str, data: dict):
         """追加用户操作到事件日志"""
@@ -173,21 +200,34 @@ class SessionDataManager:
 def create_session_data_manager():
     """Factory: returns Redis-backed or in-memory manager based on config.
 
-    审计 B3：原实现里 import 时同步 `manager.ping()` 没有超时，Redis 抖动
-    会让模块 import 阻塞几十秒、最终让整个服务起不来。现在 RedisSessionDataManager
-    的 socket 已带 1 秒 timeout（见其 __init__），ping 最坏阻塞 1 秒即抛错并
-    回退到内存版 — 保留"启动期 Redis 不可达就降级"的语义，但不再长阻塞。
+    审计 TEST-13 / B3：本函数在模块 import 时同步调用（session_data_manager 单例）。
+    原实现里 import 时同步 `manager.ping()` —— ping() 会创建/复用一个 event loop
+    跑一次再关闭，导致 Redis 连接池绑定到那个错误的 loop，后续 pytest-asyncio 用
+    新 loop 时报 "Future attached to a different loop"。
+
+    现在的修复：不再在 import 期做任何 Redis I/O。
+    - RedisSessionDataManager 的 __init__ 只存配置，不创建客户端；
+    - ping() 改为 async，仅在运行中的 loop 里 await 时才懒构造客户端并连池；
+    - 这里只决定"用哪种后端"，不做连通性探测。
+
+    连通性：Redis 不可达时由各 async 方法的 try/except RedisError 降级处理
+    （store/get/append_event 等已隔离异常），语义与原"启动期降级"等价，
+    但不再有 import 期阻塞或 event loop 错配。
+    仅当 redis 库本身缺失（ImportError）或构造异常时，才在这里回退到内存版。
     """
     from app.core.config import settings
     if settings.USE_REDIS:
         try:
             from app.services.session_data_redis import RedisSessionDataManager
             manager = RedisSessionDataManager(settings.REDIS_URL)
-            manager.ping()  # 短超时下最多阻塞 1s；失败抛异常进入下方 fallback
-            logger.info("SessionDataManager: using Redis backend")
+            logger.info("SessionDataManager: using Redis backend (lazy connect)")
             return manager
+        except ImportError as e:
+            # redis 库未安装 -> 退化到内存后端
+            logger.warning(f"redis library unavailable ({e}), falling back to in-memory")
         except Exception as e:
-            logger.warning(f"Redis unavailable ({e}), falling back to in-memory")
+            # 构造期异常（非连通性，因为 __init__ 不连 Redis）-> 退化到内存后端
+            logger.warning(f"RedisSessionDataManager construction failed ({e}), falling back to in-memory")
     logger.info("SessionDataManager: using in-memory backend")
     return SessionDataManager()
 

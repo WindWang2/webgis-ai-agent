@@ -99,7 +99,14 @@ export function calculateBBox(geojson: any): [number, number, number, number] | 
   extract(geojson);
   if (coord.length === 0) return null;
 
-  coord.forEach(c => {
+  // FE-12：过滤掉 NaN/Infinity 坐标（畸形 GeoJSON 的 3D 坐标或空环），
+  // 否则 Math.min(Infinity, NaN) = NaN 会毒化整个 bbox，让 fitBounds 飞到 NaN。
+  const validCoords = coord.filter(c =>
+    c.length >= 2 && Number.isFinite(c[0]) && Number.isFinite(c[1])
+  );
+  if (validCoords.length === 0) return null;
+
+  validCoords.forEach(c => {
     if (c[0] < bounds[0]) bounds[0] = c[0];
     if (c[1] < bounds[1]) bounds[1] = c[1];
     if (c[0] > bounds[2]) bounds[2] = c[0];

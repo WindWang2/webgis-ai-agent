@@ -1,4 +1,5 @@
 """Rate limiter with Redis backend and in-memory fallback."""
+import asyncio
 import logging
 import time
 from collections import defaultdict, deque
@@ -15,15 +16,55 @@ class RateLimiter(Protocol):
 
 
 class RedisRateLimiter:
-    """Sliding-window rate limiter backed by Redis sorted sets."""
+    """Sliding-window rate limiter backed by Redis sorted sets.
+
+    审计 TEST-13：Redis 客户端在第一次 async 操作时把连接池绑定到当时的 event
+    loop。本实例是模块级单例（见 ``get_rate_limiter``），而 pytest-asyncio /
+    starlette TestClient 每个测试用新 loop。若客户端绑定的 loop 已关闭，下一次
+    调用会报 "Event loop is closed"。因此每次调用前用 ``_ensure_client`` 检测
+    loop 变化，必要时重建客户端。
+    """
 
     def __init__(self, redis_client):
         self._redis = redis_client
+        try:
+            self._bound_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._bound_loop = None
+
+    async def _ensure_client(self):
+        """Return a Redis client bound to the currently running loop.
+
+        Recreate the client when the running loop differs from the one the cached
+        client's connection pool is bound to (e.g. previous test's loop closed).
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if self._bound_loop is loop and self._redis is not None:
+            return self._redis
+        # loop 变了（或首次）—— 重建客户端。旧客户端可能绑在已关闭的 loop 上，
+        # aclose 会失败，忽略。
+        if self._redis is not None:
+            try:
+                await self._redis.aclose()
+            except Exception:
+                pass
+        import redis.asyncio as aioredis
+        self._redis = aioredis.from_url(
+            settings.REDIS_URL,
+            socket_connect_timeout=2,
+            decode_responses=True,
+        )
+        self._bound_loop = loop
+        return self._redis
 
     async def is_allowed(self, key: str, max_requests: int, window_seconds: int) -> bool:
+        client = await self._ensure_client()
         now = time.time()
         window_start = now - window_seconds
-        pipe = self._redis.pipeline()
+        pipe = client.pipeline()
         pipe.zremrangebyscore(key, 0, window_start)
         pipe.zadd(key, {str(now): now})
         pipe.zcard(key)

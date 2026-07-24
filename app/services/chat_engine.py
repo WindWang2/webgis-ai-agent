@@ -15,11 +15,10 @@ from typing import AsyncGenerator, Optional, Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from app.services.tool_catalog import ToolCatalog
 
-import httpx
 
 from app.core.config import settings
 from app.tools.registry import ToolRegistry
-from app.services.task_tracker import TaskTracker, detect_geojson
+from app.services.task_tracker import TaskTracker
 from app.services.session_data import session_data_manager
 from app.services.ws_service import broadcast_ws_event
 from app.tools._utils import async_db_session
@@ -29,18 +28,10 @@ from app.utils.sse import sse_event
 # ─── M1: 从拆出的子模块 re-export，保留旧符号兼容 ───────────
 from app.services.chat.sse_helpers import (
     LRUCache,
-    MSG_MAX_CHARS as _MSG_MAX_CHARS,
     parse_minimax_xml_tool_calls as _parse_minimax_xml_tool_calls,
-    normalize_tool_args as _normalize_tool_args,
-    is_error_dict as _is_error_dict,
-    wrap_error_dict_for_llm as _wrap_error_dict_for_llm,
-    slim_tool_result as _slim_tool_result,
-    calculate_bbox as _calculate_bbox,
-    slim_event_result as _slim_event_result,
 )
 from app.services.chat.prompt import (
     SYSTEM_PROMPT,
-    construct_self_healing_message as _construct_self_healing_message,
 )
 from app.services.chat.llm_client import LLMConfig, call_llm, call_llm_stream
 from app.services.chat.context_builder import (
@@ -286,6 +277,11 @@ class ChatEngine:
     async def _generate_title(self, session_id: str, first_user_message: str):
         """异步生成对话标题。"""
         import httpx as _httpx
+        # BUG-06: pre-bind title so an AttributeError from a malformed / None
+        # response body before the `async with` completes doesn't leave it
+        # unbound (which would otherwise raise UnboundLocalError when the
+        # fallback logic below tries to read it).
+        title = None
         try:
             payload = {
                 "model": self.model,
@@ -319,6 +315,15 @@ class ChatEngine:
                 await AsyncHistoryService(db).update_title(session_id, title)
         except Exception as e:
             logger.warning(f"History: title generation failed for {session_id}: {e}")
+            # BUG-06: fall back to a derived title so we don't leave the
+            # conversation without one when the LLM call fails partway through.
+            if title is None:
+                title = (first_user_message or "")[:20].rstrip() + "..."
+                try:
+                    async with async_db_session() as db:
+                        await AsyncHistoryService(db).update_title(session_id, title)
+                except Exception as e2:  # noqa: BLE001 — fallback must never raise
+                    logger.warning(f"History: title fallback failed for {session_id}: {e2}")
 
     def _llm_config(self) -> LLMConfig:
         """打包当前 ChatEngine 的 LLM 配置成一个不可变 dataclass，传给 chat/llm_client。"""
@@ -533,7 +538,14 @@ class ChatEngine:
 
             self.tracker.complete_task(task.id)
             return {"content": "达到最大工具调用轮数", "session_id": session_id}
-        except Exception as e:
+        except (asyncio.CancelledError, GeneratorExit):
+            # BUG-07: CancelledError inherits BaseException (not Exception), so the
+            # broad `except Exception` below wouldn't catch a client disconnect /
+            # task cancellation. Mark the task failed so it doesn't linger in a
+            # "running" state in TaskTracker, then re-raise to honor cancellation.
+            self.tracker.fail_task(task.id, "cancelled")
+            raise
+        except Exception:
             self.tracker.fail_task(task.id, "non-streaming chat exception")
             raise
 

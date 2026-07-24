@@ -24,6 +24,8 @@ def test_production_rejects_wildcard_cors():
             _env_file=None,
             ENV="production",
             JWT_SECRET_KEY="x" * 32,
+            LLM_API_KEY="sk-test-key-for-cors-test",
+            DATABASE_URL="postgresql://user:pass@localhost/db",
             CORS_ORIGINS=["*"],
         )
 

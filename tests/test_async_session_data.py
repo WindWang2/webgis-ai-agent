@@ -55,13 +55,25 @@ import fakeredis.aioredis
 
 
 @pytest.fixture
-def fake_redis_sdm():
-    """RedisSessionDataManager backed by fakeredis (async)."""
+async def fake_redis_sdm():
+    """RedisSessionDataManager backed by fakeredis (async).
+
+    审计 TEST-13：``_ensure_connected()`` 用 ``_bound_loop is loop`` 判断是否复用
+    客户端。必须走真实 __init__（设置 _redis_url/_socket_timeout/_bound_loop 等
+    字段）再注入 fakeredis，并把 _bound_loop 指向当前运行 loop，否则
+    _ensure_connected 会因 _bound_loop 为 None 而丢弃注入的 fakeredis、重建真实
+    客户端。用 async fixture 保证 fixture 体在测试的 event loop 内执行，
+    ``get_running_loop()`` 才能拿到与测试相同的 loop。
+    """
+    import asyncio
     server = fakeredis.FakeServer()
     from app.services.session_data_redis import RedisSessionDataManager
-    sdm = RedisSessionDataManager.__new__(RedisSessionDataManager)
+    sdm = RedisSessionDataManager("redis://localhost:6379", capacity=200)
     sdm._r = fakeredis.aioredis.FakeRedis(server=server)
-    sdm.capacity = 200
+    try:
+        sdm._bound_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        sdm._bound_loop = None
     return sdm
 
 

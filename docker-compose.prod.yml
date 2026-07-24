@@ -10,7 +10,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-webgis_prod}
-      POSTGRES_PASSWORD: ${DB_PWD:?Set DB_PWD in .env.production}
+      POSTGRES_PASSWORD: ${DB_PWD:?Set DB_PWD in .env.prod.example}
       POSTGRES_DB: ${DB_NAME:-webgis_prod}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
@@ -45,11 +45,13 @@ services:
       --appendonly
       --maxmemory 256mb
       --maxmemory-policy noeviction
-      --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.production}
+      --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.prod.example}
     volumes:
       - redis_prod_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.production}", "--raw", "incr", "ping"]
+      # 用 REDISCLI_AUTH 传密码，避免 -a 把密码暴露在进程列表 / shell history。
+      # $$ 转义让 compose 不展开，运行时由容器 shell 解析 $REDIS_PASSWORD。
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$REDIS_PASSWORD redis-cli ping"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -90,7 +92,7 @@ services:
       # 之前 mount /app/frontend/out/uploads 但应用写 ./data/uploads/，导致上传丢失。
       - DATA_DIR=/app
     env_file:
-      - .env.production
+      - .env.prod.example
     depends_on:
       db:
         condition: service_healthy
@@ -134,7 +136,7 @@ services:
       - LOG_LEVEL=INFO
       - PYTHONUNBUFFERED=1
     env_file:
-      - .env.production
+      - .env.prod.example
     depends_on:
       db:
         condition: service_healthy

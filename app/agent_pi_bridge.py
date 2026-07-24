@@ -2,6 +2,7 @@
 
 Spawns Pi as a subprocess and communicates via JSON-RPC over stdin/stdout.
 Supports both request/response and streaming event patterns.
+Also owns tool dispatch logic for the Pi extension's HTTP callback.
 """
 from __future__ import annotations
 
@@ -13,9 +14,14 @@ import subprocess
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
 
+from pydantic import BaseModel
+
 from app.utils.sse import sse_event
 
 logger = logging.getLogger(__name__)
+
+# Feature flag
+USE_NEW_AGENT = os.getenv("USE_NEW_AGENT", "").lower() in ("true", "1", "yes")
 
 # Pi RPC entry point
 PI_RPC_ENTRY = Path(__file__).parent.parent.parent / "vendor" / "pi" / "packages" / "coding-agent" / "dist" / "rpc-entry.js"
@@ -36,6 +42,117 @@ PI_STARTUP_READY_TIMEOUT = 10.0  # start()  readiness check 的总超时
 # 不暴露给最终用户（前端会以 content 事件渲染）。
 COMPACTION_START_MSG = "[压缩上下文...]\n"
 COMPACTION_END_MSG = "[上下文压缩完成]\n"
+
+
+# ── Pi tool dispatch models (owned by bridge, not pi_tools route) ──
+
+class PiToolRequest(BaseModel):
+    """Request from Pi extension to execute a GIS tool."""
+    toolCallId: str
+    name: str
+    arguments: dict[str, Any] = {}
+    sessionId: Optional[str] = None
+
+
+class PiToolResponse(BaseModel):
+    """Response from tool execution back to Pi extension."""
+    toolCallId: str
+    content: list[dict[str, Any]]
+    details: Any = None
+    isError: bool = False
+
+
+# ── Tool registry (injected at startup, shared by bridge + route) ──
+
+_tool_registry: Optional["ToolRegistry"] = None
+
+
+def set_tool_registry(registry: "ToolRegistry") -> None:
+    """Inject the live ToolRegistry so tool dispatch goes to real GIS tools."""
+    global _tool_registry
+    _tool_registry = registry
+    logger.info(f"[PiBridge] Tool registry injected ({len(registry.list_tools())} tools)")
+
+
+def get_tool_registry() -> "ToolRegistry":
+    """Return the injected registry, raising if not yet initialized."""
+    if _tool_registry is None:
+        raise PiRpcError("Tool registry not initialized")
+    return _tool_registry
+
+
+async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
+    """Dispatch a GIS tool call: validate → dispatch → normalize → respond.
+
+    This is the single owner of tool dispatch logic. The pi_tools FastAPI
+    route delegates here; the Pi extension's HTTP callback reaches here
+    via that route.
+    """
+    registry = get_tool_registry()
+    tool_name = request.name
+    args = request.arguments or {}
+
+    # Validate tool exists
+    available = set(registry.list_tools())
+    if tool_name not in available:
+        return PiToolResponse(
+            toolCallId=request.toolCallId,
+            content=[{
+                "type": "text",
+                "text": (
+                    f"Tool '{tool_name}' not found. "
+                    f"Available tools: {', '.join(sorted(available)[:20])}"
+                ),
+            }],
+            isError=True,
+        )
+
+    try:
+        # 审计 SEC-01/SEC-02：拒绝 tier>=3 工具（如 create_new_skill = RCE）。
+        # Pi 扩展是半信任的（共享密钥保护），但仍不应能触发写盘 + exec_module。
+        tier = registry.metadata(tool_name).get("tier", 1)
+        if tier >= 3:
+            return PiToolResponse(
+                toolCallId=request.toolCallId,
+                content=[{
+                    "type": "text",
+                    "text": f"Tool '{tool_name}' is tier-{tier} (destructive) and cannot be dispatched via Pi bridge.",
+                }],
+                isError=True,
+            )
+
+        # Dispatch via the real registry (handles Pydantic validation,
+        # reference resolution, caching)
+        raw = await registry.dispatch(tool_name, args, session_id=request.sessionId)
+
+        # Normalize the result into Pi's expected format
+        if raw is None:
+            content = [{"type": "text", "text": "Tool returned no result."}]
+            details = None
+        elif isinstance(raw, dict):
+            content = [{"type": "text", "text": json.dumps(raw, ensure_ascii=False)}]
+            details = raw
+        elif isinstance(raw, str):
+            content = [{"type": "text", "text": raw}]
+            details = raw
+        else:
+            content = [{"type": "text", "text": str(raw)}]
+            details = raw
+
+        return PiToolResponse(
+            toolCallId=request.toolCallId,
+            content=content,
+            details=details,
+            isError=False,
+        )
+    except Exception as e:
+        logger.error(f"[PiBridge] Tool {tool_name} failed: {e}", exc_info=True)
+        return PiToolResponse(
+            toolCallId=request.toolCallId,
+            content=[{"type": "text", "text": f"Error: {str(e)}"}],
+            isError=True,
+        )
+
 
 
 class PiRpcError(Exception):
@@ -69,6 +186,8 @@ class PiBridge:
         self._request_counter = 0
         self._reader_task: Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()
+        # 审计 AGENT-05：Pi 进程死亡后标记为 True，让 _use_pi_bridge() 能回退
+        self._process_died = False
         self._session_id: str = ""
 
     async def start(self) -> None:
@@ -82,6 +201,10 @@ class PiBridge:
         env["PI_SESSION_DIR"] = str(self._session_dir)
         env["PI_OFFLINE"] = "1"
         env["PI_SKIP_VERSION_CHECK"] = "1"
+        # 审计 SEC-01：注入共享密钥，Pi 扩展的 HTTP 回调用它调 /pi-tools/execute
+        from app.api.routes.pi_tools import get_bridge_secret
+        env["WEBGIS_BRIDGE_SECRET"] = get_bridge_secret()
+        env["WEBGIS_API_BASE"] = env.get("WEBGIS_API_BASE", "http://127.0.0.1:8000")
 
         # Build CLI args with --extension flags for each extension path
         args = ["node", str(self._pi_rpc_entry), "--mode", "rpc", "--no-session"]
@@ -100,6 +223,10 @@ class PiBridge:
 
         # Start reader task
         self._reader_task = asyncio.create_task(self._read_responses())
+
+        # Yield to let the reader task start (avoid race where _send_request writes
+        # to stdin before the reader is ready to consume the response).
+        await asyncio.sleep(0)
 
         # Wait for Pi to initialize by polling get_state until it responds
         try:
@@ -138,24 +265,40 @@ class PiBridge:
             self._reader_task = None
 
     async def _read_responses(self) -> None:
-        """Read responses and events from Pi stdout."""
-        while self._process and self._process.stdout:
-            line = await asyncio.get_running_loop().run_in_executor(None, self._process.stdout.readline)
-            if not line:
-                break
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-                # Request response: has "type": "response" and "id"
-                if obj.get("type") == "response" and obj.get("id"):
-                    await self._handle_response(obj)
-                # AgentSessionEvent: has "type" but no "id"
-                elif "type" in obj and "id" not in obj:
-                    await self._event_queue.put(obj)
-            except json.JSONDecodeError:
-                logger.warning(f"[PiBridge] Invalid JSON: {line[:200]}")
+        """Read responses and events from Pi stdout.
+
+        审计 AGENT-05：之前 Pi 进程退出时 readline 返回 ""，循环 break 但
+        所有 _pending_requests 的 future 永远不会被 resolve → 调用方挂 300s。
+        现在退出时主动 fail 所有 pending 请求。
+        """
+        try:
+            while self._process and self._process.stdout:
+                line = await asyncio.get_running_loop().run_in_executor(None, self._process.stdout.readline)
+                if not line:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    # Request response: has "type": "response" and "id"
+                    if obj.get("type") == "response" and obj.get("id"):
+                        await self._handle_response(obj)
+                    # AgentSessionEvent: has "type" but no "id"
+                    elif "type" in obj and "id" not in obj:
+                        await self._event_queue.put(obj)
+                except json.JSONDecodeError:
+                    logger.warning(f"[PiBridge] Invalid JSON: {line[:200]}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"[PiBridge] Reader task crashed: {e}", exc_info=True)
+        finally:
+            # Pi 进程退出 / reader 异常 → fail 所有 pending 请求，避免 300s 挂起
+            self._fail_all_pending("Pi process exited or reader stopped")
+            # 标记 bridge 为不可用
+            self._process_died = True
+            logger.error("[PiBridge] Pi subprocess exited; bridge is now unavailable until restart")
 
     async def _handle_response(self, response: dict) -> None:
         """Handle a request response from Pi."""
@@ -169,8 +312,20 @@ class PiBridge:
             else:
                 future.set_exception(PiRpcError(response.get("error", "Unknown error")))
 
+    def _fail_all_pending(self, reason: str) -> None:
+        """审计 AGENT-05：Pi 退出时主动 fail 所有 pending future。"""
+        for rid, future in list(self._pending_requests.items()):
+            if not future.done():
+                future.set_exception(PiRpcError(reason))
+        self._pending_requests.clear()
+
     async def _send_request(self, command: str, data: Optional[dict] = None) -> Any:
-        """Send a request to Pi and wait for response."""
+        """Send a request to Pi and wait for response.
+
+        审计 BUG-02：之前 stdin.write + flush 是同步阻塞调用，在 async 路径里
+        会卡住事件循环（所有并发协程被冻结）。现在用 run_in_executor 把
+        write+flush 放到线程池，不阻塞事件循环。
+        """
         if self._process is None or self._process.stdin is None:
             raise PiRpcError("Pi process not started")
 
@@ -186,13 +341,21 @@ class PiBridge:
 
         try:
             line = json.dumps(request) + "\n"
-            self._process.stdin.write(line)
-            self._process.stdin.flush()
+
+            def _write_and_flush():
+                self._process.stdin.write(line)
+                self._process.stdin.flush()
+
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, _write_and_flush)
             result = await asyncio.wait_for(future, timeout=PI_RPC_TIMEOUT)
             return result
         except asyncio.TimeoutError:
             self._pending_requests.pop(request_id, None)
             raise PiRpcError(f"Pi request timeout: {command}")
+        except (BrokenPipeError, OSError) as e:
+            self._pending_requests.pop(request_id, None)
+            raise PiRpcError(f"Pi pipe error: {e}")
 
     # ── Public API ──────────────────────────────────────────────
 
@@ -222,6 +385,8 @@ class PiBridge:
         while True:
             try:
                 event = await asyncio.wait_for(self._event_queue.get(), timeout=PI_EVENT_DRAIN_TIMEOUT)
+                if event.get("type") == "agent_end":
+                    break
                 text = self._extract_text_from_event(event)
                 if text:
                     content_parts.append(text)
@@ -320,8 +485,8 @@ class PiBridge:
         "tool_execution_start": "_handle_tool_execution_start",
         "tool_execution_end": "_handle_tool_execution_end",
         "agent_end": "_handle_agent_end",
-        "compaction_start": "_handle_compaction",
-        "compaction_end": "_handle_compaction",
+        "compaction_start": "_handle_compaction_start",
+        "compaction_end": "_handle_compaction_end",
     }
 
     def _map_event_to_sse(self, event: dict) -> Optional[str]:
@@ -387,10 +552,15 @@ class PiBridge:
             "summary": "",
         }))
 
-    def _handle_compaction(self, event: dict) -> Optional[str]:
-        is_start = event.get("type") == "compaction_start"
+    def _handle_compaction_start(self, event: dict) -> Optional[str]:
         return sse_event("content", {
-            "content": COMPACTION_START_MSG if is_start else COMPACTION_END_MSG,
+            "content": COMPACTION_START_MSG,
+            "session_id": self._session_id,
+        })
+
+    def _handle_compaction_end(self, event: dict) -> Optional[str]:
+        return sse_event("content", {
+            "content": COMPACTION_END_MSG,
             "session_id": self._session_id,
         })
 

@@ -6,6 +6,7 @@ from typing import Optional
 from app.api.routes.chat import get_engine
 from app.api.routes.layer import _verify_session_owner
 from app.core.auth import get_current_user
+from app.services.task_queue import TaskQueueService
 
 router = APIRouter(prefix="/tasks", tags=["任务管理"])
 
@@ -134,7 +135,6 @@ async def get_celery_task_status(task_id: str, _user: dict = Depends(get_current
     """查询 Celery 异步任务状态（审计 S34：校验任务所有权）"""
     if not TaskQueueService.verify_owner(task_id, _user.get("user_id", "")):
         raise HTTPException(status_code=404, detail="Task not found")
-    from app.services.task_queue import TaskQueueService
     return TaskQueueService.get_task_status(task_id)
 
 
@@ -143,6 +143,5 @@ async def revoke_celery_task(task_id: str, _user: dict = Depends(get_current_use
     """撤销 Celery 异步任务（审计 S34：校验任务所有权）"""
     if not TaskQueueService.verify_owner(task_id, _user.get("user_id", "")):
         raise HTTPException(status_code=404, detail="Task not found")
-    from app.services.task_queue import TaskQueueService
     revoked = TaskQueueService.revoke_task(task_id)
     return {"revoked": revoked, "task_id": task_id}

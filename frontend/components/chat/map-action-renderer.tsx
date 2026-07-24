@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 import { MapIcon, CheckCircle2 } from 'lucide-react';
 
@@ -17,9 +17,18 @@ interface MapActionRendererProps {
   content: string;
 }
 
+/**
+ * 审计 FE-02/FE-03：之前此组件在每个 streaming token 上重复 dispatch 所有
+ * JSON 块（useEffect dep 是 [content, dispatchAction]，而 content 随每个
+ * token 更新）。现在用 useRef<Set<string>> 跟踪已 dispatch 的块，跳过
+ * 重复。同时修复 bare JSON regex：用括号匹配替代非贪婪 `}` 避免截断嵌套
+ * params。
+ */
 export function MapActionRenderer({ content }: MapActionRendererProps) {
   const { dispatchAction } = useMapAction();
   const [status, setStatus] = useState<'parsing' | 'success' | 'error'>('parsing');
+  // FE-02: 跟踪已 dispatch 的 JSON 块，防重复
+  const dispatchedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!content || content === 'undefined' || content.trim() === '') {
@@ -28,41 +37,81 @@ export function MapActionRenderer({ content }: MapActionRendererProps) {
     }
 
     try {
-      // Find all JSON blocks (either in ```json ... ``` or just { ... })
+      // Find all JSON blocks (either in ```json ... ``` or balanced { ... })
       const jsonBlocks: string[] = [];
-      const regex = /```(?:json)?\s*([\s\S]*?)```|(\{[\s\S]*?\})/g;
-      let match;
 
-      while ((match = regex.exec(content)) !== null) {
-        // match[1] is the content of ```json ... ```
-        // match[2] is the content of { ... }
-        const raw = match[1] || match[2];
-        if (raw) jsonBlocks.push(raw.trim());
+      // 1. Code-fenced blocks: ```json ... ```
+      const fencedRegex = /```(?:json)?\s*([\s\S]*?)```/g;
+      let match;
+      while ((match = fencedRegex.exec(content)) !== null) {
+        if (match[1]) jsonBlocks.push(match[1].trim());
+      }
+
+      // 2. Bare JSON blocks: use balanced brace matching (FE-03 fix)
+      // Only try if no fenced blocks found (fenced is the preferred path)
+      if (jsonBlocks.length === 0) {
+        let i = 0;
+        while (i < content.length) {
+          if (content[i] === '{') {
+            // Balanced brace matching
+            let depth = 0;
+            let inString = false;
+            let escape = false;
+            let end = -1;
+            for (let j = i; j < content.length; j++) {
+              const c = content[j];
+              if (escape) { escape = false; continue; }
+              if (c === '\\' && inString) { escape = true; continue; }
+              if (c === '"') { inString = !inString; continue; }
+              if (inString) continue;
+              if (c === '{') depth++;
+              else if (c === '}') {
+                depth--;
+                if (depth === 0) { end = j; break; }
+              }
+            }
+            if (end > 0) {
+              jsonBlocks.push(content.substring(i, end + 1));
+              i = end + 1;
+            } else {
+              break; // Unbalanced - still streaming
+            }
+          } else {
+            i++;
+          }
+        }
       }
 
       if (jsonBlocks.length === 0) {
-        // Only set error if it doesn't look like JSON is starting
         if (!content.includes('{')) setStatus('error');
         return;
       }
 
       let successCount = 0;
-      jsonBlocks.forEach(block => {
+      let newBlocks = 0;
+      for (const block of jsonBlocks) {
+        // FE-02: skip already-dispatched blocks
+        const blockKey = block;
+        if (dispatchedRef.current.has(blockKey)) continue;
+
         try {
           const action = JSON.parse(block);
           if (action && action.command && ALLOWED_COMMANDS.has(action.command)) {
+            dispatchedRef.current.add(blockKey);
             dispatchAction(action);
             successCount++;
+            newBlocks++;
           }
         } catch {
           // Individual block failed, skip it
         }
-      });
+      }
 
-      if (successCount > 0) {
+      if (successCount > 0 && newBlocks > 0) {
         setStatus('success');
-      } else {
-        setStatus('error');
+      } else if (jsonBlocks.length > 0 && newBlocks === 0 && successCount === 0) {
+        // All blocks were already dispatched or failed
+        if (dispatchedRef.current.size === 0) setStatus('error');
       }
     } catch {
       setStatus('error');
