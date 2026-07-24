@@ -182,6 +182,9 @@ class Message(Base):
 
     __table_args__ = (
         CheckConstraint("role IN ('user', 'assistant', 'tool')", name="ck_message_role"),
+        # BUG-15: 按会话取消息列表（history load）几乎总是
+        # WHERE conversation_id = ? ORDER BY created_at，原表无覆盖索引 → 全表扫描 + filesort。
+        Index("idx_message_conversation_created", "conversation_id", "created_at"),
     )
 
 __all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "get_init_sql"]

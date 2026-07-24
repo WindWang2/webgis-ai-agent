@@ -30,11 +30,26 @@ PI_RPC_ENTRY = Path(__file__).parent.parent.parent / "vendor" / "pi" / "packages
 DEFAULT_SESSION_DIR = Path(__file__).parent.parent.parent / ".pi" / "sessions"
 
 # Timeout constants (seconds)
-# 审计: 之前硬编码在代码中，提取为常量便于运维调参。
-PI_RPC_TIMEOUT = 300.0        # _send_request 等待 Pi 响应的上限
-PI_EVENT_DRAIN_TIMEOUT = 2.0  # prompt() 非流式模式下 drain event queue 的单次超时
-PI_EVENT_STREAM_TIMEOUT = 30.0  # stream_prompt 等待下一个 event 的超时
-PI_STARTUP_READY_TIMEOUT = 10.0  # start()  readiness check 的总超时
+# CONFIG-04: 之前硬编码在代码中，运维调参需改代码重发。现改为从环境变量读取，
+# 括号内为默认值，保持原行为。数值非法时回退默认值并告警（避免单次拼写错误
+# 导致整个 Pi bridge 启动失败）。
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "CONFIG-04: ignoring invalid %s=%r, using default %s", name, raw, default,
+        )
+        return default
+
+
+PI_RPC_TIMEOUT = _env_float("PI_RPC_TIMEOUT", 300.0)        # _send_request 等待 Pi 响应的上限
+PI_EVENT_DRAIN_TIMEOUT = _env_float("PI_EVENT_DRAIN_TIMEOUT", 2.0)  # prompt() 非流式模式下 drain event queue 的单次超时
+PI_EVENT_STREAM_TIMEOUT = _env_float("PI_EVENT_STREAM_TIMEOUT", 30.0)  # stream_prompt 等待下一个 event 的超时
+PI_STARTUP_READY_TIMEOUT = _env_float("PI_STARTUP_READY_TIMEOUT", 10.0)  # start()  readiness check 的总超时
 
 # SSE content strings for compaction events.
 # TODO: Replace with i18n-aware strings when the frontend supports localized SSE events.
