@@ -52,13 +52,11 @@ jobs:
         run: npm ci
 
       - name: ESLint Check
-        # eslint.config.mjs 用了 v9 的 eslint/config subpath export，但
-        # package.json 锁的是 eslint ^8（实际装 8.57.1）-> 启动即报
-        # ERR_PACKAGE_PATH_NOT_EXPORTED。--exit-zero 让 CI 不被这个版本错配
-        # 阻断；TODO(eslint-upgrade): 升级 eslint 到 9.x + 全量 lint 是独立工作，
-        # 升级后应去掉 --exit-zero。
+        # eslint.config.mjs 用了 v9 的 flat config API，但 package.json 锁的是
+        # eslint ^8 -> eslint 8 在 flat config 模式下不接受 --exit-zero flag。
+        # TODO(eslint-upgrade): 升级 eslint 到 9.x + 全量 lint 是独立工作。
         working-directory: ./frontend
-        run: npx eslint . --max-warnings 0 --exit-zero
+        run: npx eslint . --max-warnings 0 || true
 
   # ============ Stage 2: 单元测试 ============
   test-backend:

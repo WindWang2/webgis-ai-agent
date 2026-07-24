@@ -1,4 +1,5 @@
 """Redis-backed session data manager - persistent storage with TTL and LRU eviction"""
+import asyncio
 import json
 import time
 import uuid
@@ -31,6 +32,7 @@ class RedisSessionDataManager:
         self._redis_url = redis_url
         self._socket_timeout = socket_timeout
         self._r: Optional[aioredis.Redis] = None
+        self._bound_loop: Optional[asyncio.AbstractEventLoop] = None
         self.capacity = capacity
 
     async def _ensure_connected(self) -> aioredis.Redis:
@@ -38,14 +40,34 @@ class RedisSessionDataManager:
 
         首次 async 调用时触发；之后复用同一个客户端。这样连接池总是绑定到真正
         运行测试/请求的 loop，避免 import 期 event loop 错配。
+
+        审计 TEST-13：pytest-asyncio 每个测试用新 event loop。如果上一个测试
+        的 loop 已关闭但 self._r 还绑定着它，下一个测试调用就会报
+        "Event loop is closed"。检测 loop 变化时重新创建客户端。
         """
-        if self._r is None:
-            self._r = aioredis.Redis.from_url(
-                self._redis_url,
-                decode_responses=False,
-                socket_timeout=self._socket_timeout,
-                socket_connect_timeout=self._socket_timeout,
-            )
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        # 如果客户端已存在且绑定的 loop 仍是当前 loop，复用
+        if self._r is not None and self._bound_loop is not None and self._bound_loop is loop:
+            return self._r
+
+        # loop 变了（或首次创建）—— 重建客户端
+        if self._r is not None:
+            try:
+                await self._r.aclose()
+            except Exception:
+                pass  # 旧 loop 可能已关闭，aclose 会失败，忽略
+
+        self._r = aioredis.Redis.from_url(
+            self._redis_url,
+            decode_responses=False,
+            socket_timeout=self._socket_timeout,
+            socket_connect_timeout=self._socket_timeout,
+        )
+        self._bound_loop = loop
         return self._r
 
     async def ping(self) -> None:
