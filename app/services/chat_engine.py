@@ -28,10 +28,13 @@ from app.utils.sse import sse_event
 # ─── M1: 从拆出的子模块 re-export，保留旧符号兼容 ───────────
 from app.services.chat.sse_helpers import (
     LRUCache,
+    calculate_bbox as _calculate_bbox,
     parse_minimax_xml_tool_calls as _parse_minimax_xml_tool_calls,
+    slim_tool_result as _slim_tool_result,
 )
 from app.services.chat.prompt import (
     SYSTEM_PROMPT,
+    construct_self_healing_message as _construct_self_healing_message,
 )
 from app.services.chat.llm_client import LLMConfig, call_llm, call_llm_stream
 from app.services.chat.context_builder import (

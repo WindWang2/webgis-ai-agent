@@ -9,6 +9,10 @@ def test_import_database():
     assert Base is not None
 
 
+@pytest.mark.skipif(
+    not os.environ.get("DATABASE_URL", "sqlite").startswith("sqlite"),
+    reason="engine is Postgres in CI (DATABASE_URL != sqlite); sqlite-specific check skipped",
+)
 def test_engine_is_sqlite():
     from app.core.database import get_engine
     engine = get_engine()

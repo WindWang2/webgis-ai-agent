@@ -48,13 +48,22 @@ def test_i6_versions_dir_has_initial_revision():
 
 
 def test_i6_alembic_upgrade_then_downgrade_round_trip(tmp_path):
-    """端到端：在临时 SQLite 上跑 upgrade head 然后 downgrade base，必须无错。"""
+    """端到端：在临时 SQLite 上跑 upgrade head 然后 downgrade base，必须无错。
+
+    CI 在 Postgres 上跑全量测试套件，但本用例必须始终在隔离的临时 SQLite 上
+    验证 Alembic 链路本身。因此显式覆盖 DATABASE_URL 并用当前解释器 (sys.executable)
+    跑子进程，避免 CI runner 上 `python` 解析到不同版本 / 不同 site-packages。
+    """
+    import sys
+
     db_path = tmp_path / "alembic_test.db"
+    # 显式覆盖 DATABASE_URL；子进程只继承必要环境，杜绝 CI Postgres 配置串扰。
     env = {**os.environ, "DATABASE_URL": f"sqlite:///{db_path}"}
+    py = sys.executable
 
     # upgrade head
     result = subprocess.run(
-        ["python", "-m", "alembic", "upgrade", "head"],
+        [py, "-m", "alembic", "upgrade", "head"],
         cwd=str(REPO_ROOT),
         env=env,
         capture_output=True,
@@ -73,7 +82,7 @@ def test_i6_alembic_upgrade_then_downgrade_round_trip(tmp_path):
 
     # downgrade base
     result = subprocess.run(
-        ["python", "-m", "alembic", "downgrade", "base"],
+        [py, "-m", "alembic", "downgrade", "base"],
         cwd=str(REPO_ROOT),
         env=env,
         capture_output=True,

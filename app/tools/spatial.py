@@ -58,6 +58,7 @@ def _generate_heatmap(features: list, cell_size: int = 500, radius: int = 1000,
     import matplotlib.pyplot as plt
     from matplotlib.colors import LinearSegmentedColormap
     from scipy.ndimage import gaussian_filter
+    import numpy as np
 
     fig = None
     try:
@@ -79,7 +80,7 @@ def _generate_heatmap(features: list, cell_size: int = 500, radius: int = 1000,
                         "render_type": "grid",
                         "field": "weight",
                         "cell_size": cell_size,
-                        "point_count": len(points),
+                        "point_count": len(xs),
                         "palette": palette
                     }
                 },
@@ -157,14 +158,14 @@ def _generate_heatmap(features: list, cell_size: int = 500, radius: int = 1000,
                     "type": "heatmap_raster",
                     "image": img_b64,
                     "bbox": [float(xedges[0]), float(yedges[0]), float(xedges[-1]), float(yedges[-1])],
-                    "total_points": len(points),
+                    "total_points": len(xs),
                     "metadata": {
                         "render_type": "raster",
-                        "point_count": len(points),
+                        "point_count": len(xs),
                         "palette": palette
                     }
                 },
-                "status_desc": f"Raster heatmap generated (palette: {palette}) covering {len(points)} points."
+                "status_desc": f"Raster heatmap generated (palette: {palette}) covering {len(xs)} points."
             }
     except (ValueError, TypeError, OSError, RuntimeError) as e:
         logger.error(f"Heatmap generation failed: {e}", exc_info=True)

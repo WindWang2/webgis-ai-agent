@@ -139,7 +139,23 @@ def register_skill_tools(registry: ToolRegistry):
     )
 
 async def create_new_skill(module_name: str, code: str, description: str) -> str:
-    """Agent 调用的创建技能函数"""
+    """Agent 调用的创建技能函数。
+
+    审计 SEC-02：AST 沙箱（_validate_skill_code）是 deny-list，**不能**
+    防止有经验的攻击者逃逸（Python 对象图可通过无数非 dunder 路径到达
+    os/subprocess）。此工具默认禁用，需显式设置 ALLOW_DYNAMIC_SKILLS=true
+    才可用 —— 此时运维明确承担风险。
+
+    正确的沙箱方案（separate subprocess + seccomp / wasm）是独立大工作。
+    """
+    if os.getenv("ALLOW_DYNAMIC_SKILLS", "").lower() != "true":
+        return (
+            "动态技能创建已禁用（ALLOW_DYNAMIC_SKILLS 未设置）。\n"
+            "此功能在主进程中执行 importlib.exec_module，等同 RCE。\n"
+            "如需启用，设置 ALLOW_DYNAMIC_SKILLS=true 并确保 only trusted users "
+            "有 admin 权限。"
+        )
+
     errors = _validate_skill_code(code)
     if errors:
         return f"Skill validation failed:\n" + "\n".join(f"- {e}" for e in errors) + "\nPlease revise your code to remove dangerous patterns."

@@ -34,7 +34,7 @@ def _make_point_fc(n: int) -> dict:
     }
 
 
-def _dispatch_native(n=20, palette="classic", radius=2000):
+async def _dispatch_native(n=20, palette="classic", radius=2000):
     """Dispatch heatmap_data with render_type='native' through ToolRegistry."""
     reg = ToolRegistry()
     register_spatial_tools(reg)
@@ -45,21 +45,18 @@ def _dispatch_native(n=20, palette="classic", radius=2000):
         mock_redis.setex.side_effect = lambda k, ttl, v: storage.__setitem__(k, v)
         mock_client.return_value = mock_redis
 
-        import asyncio
-        return asyncio.get_event_loop().run_until_complete(
-            reg.dispatch(
-                "heatmap_data",
-                {"geojson": _make_point_fc(n), "render_type": "native", "palette": palette, "radius": radius},
-                session_id=None,
-            )
+        return await reg.dispatch(
+            "heatmap_data",
+            {"geojson": _make_point_fc(n), "render_type": "native", "palette": palette, "radius": radius},
+            session_id=None,
         )
 
 
 class TestHeatmapNativeLegendSpec:
     """RED: native mode should return legend_spec but currently doesn't."""
 
-    def test_native_returns_legend_spec(self):
-        result = _dispatch_native(n=20, palette="classic")
+    async def test_native_returns_legend_spec(self):
+        result = await _dispatch_native(n=20, palette="classic")
         assert isinstance(result, dict)
         assert result.get("command") == "add_native_heatmap"
         # This assertion should FAIL in RED phase — native mode has no legend_spec
@@ -71,14 +68,14 @@ class TestHeatmapNativeLegendSpec:
         assert "palette_colors" in legend
         assert len(legend["palette_colors"]) >= 3
 
-    def test_native_legend_uses_requested_palette(self):
-        result = _dispatch_native(n=20, palette="viridis")
+    async def test_native_legend_uses_requested_palette(self):
+        result = await _dispatch_native(n=20, palette="viridis")
         assert "legend_spec" in result
         assert result["legend_spec"]["palette"] == "Viridis"
 
-    def test_native_includes_weight_field_in_metadata(self):
+    async def test_native_includes_weight_field_in_metadata(self):
         """Verify native result carries the render metadata needed by frontend."""
-        result = _dispatch_native(n=10, palette="thermal", radius=3000)
+        result = await _dispatch_native(n=10, palette="thermal", radius=3000)
         assert result["metadata"]["render_type"] == "native"
         assert result["metadata"]["palette"] == "thermal"
         assert result["metadata"]["radius"] == 3000
