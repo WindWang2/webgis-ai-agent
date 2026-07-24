@@ -332,9 +332,12 @@ class PiBridge:
         self._request_counter += 1
         request_id = str(self._request_counter)
 
+        # 审计 AGENT-02：Pi 的 handleCommand 读扁平字段 (command.message,
+        # command.provider, command.modelId 等)，不拆 command.data。
+        # 之前嵌套在 data 里导致 Pi 收到 undefined 字段。
         request = {"id": request_id, "type": command}
         if data is not None:
-            request["data"] = data
+            request.update(data)
 
         future = asyncio.get_running_loop().create_future()
         self._pending_requests[request_id] = future

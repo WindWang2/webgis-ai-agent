@@ -54,7 +54,9 @@ async def lifespan(app: FastAPI):
     if USE_NEW_AGENT:
         try:
             from app.agent_pi_bridge import get_pi_bridge
-            extension_path = str(Path(__file__).parent.parent / "app" / "extensions" / "webgis-tools")
+            # 审计 AGENT-03：指向 .mjs 文件（Pi extension loader 需要可执行 JS，
+            # 不是 .ts）。.mjs 是 ESM 格式，Node 原生支持无需编译。
+            extension_path = str(Path(__file__).parent.parent / "app" / "extensions" / "webgis-tools" / "index.mjs")
             chat.pi_bridge = await get_pi_bridge(extension_paths=[extension_path])
             logger.info("[lifespan] Pi agent system enabled (USE_NEW_AGENT=true)")
         except Exception as e:
