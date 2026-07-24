@@ -21,9 +21,11 @@ async def session_factory(tmp_path):
     await eng.dispose()
 
 
-async def _seed_session(fac, session_id: str, owner: str | None) -> None:
+async def _seed_session(fac, session_id: str, owner: str | None) -> str | None:
+    """Seed a session. Returns the owner_token for new anonymous sessions (SEC-08)."""
     async with fac() as db:
-        await AsyncHistoryService(db).get_or_create_conversation(session_id, user_id=owner)
+        conv = await AsyncHistoryService(db).get_or_create_conversation(session_id, user_id=owner)
+        return conv.owner_token
 
 
 @pytest.mark.asyncio
@@ -66,13 +68,48 @@ async def test_get_session_allows_owner(session_factory):
 
 
 @pytest.mark.asyncio
-async def test_anon_session_remains_accessible_to_anyone(session_factory):
-    """旧匿名记录靠 session_id 作能力令牌，谁知道 id 谁能读 — 保持兼容。"""
-    await _seed_session(session_factory, "s-legacy", None)
+async def test_grandfather_anon_session_without_token_remains_accessible(session_factory):
+    """SEC-08 grandfather：owner_token IS NULL 的旧匿名记录仍按能力令牌语义放行。"""
+    from app.models.db_model import Conversation
+    async with session_factory() as db:
+        db.add(Conversation(id="s-legacy", user_id=None, owner_token=None, title="legacy"))
+        await db.commit()
     async with session_factory() as db:
         svc = AsyncHistoryService(db)
+        # 无 token 也能访问（向后兼容）
         assert (await svc.get_session("s-legacy", user_id=None)) is not None
         assert (await svc.get_session("s-legacy", user_id="user-alice")) is not None
+
+
+@pytest.mark.asyncio
+async def test_new_anon_session_requires_owner_token(session_factory):
+    """SEC-08：新建匿名会话签发 owner_token；无 token / 错 token 拒绝（返回 None）。"""
+    token = await _seed_session(session_factory, "s-anon-new", None)
+    assert token is not None and len(token) >= 32
+
+    async with session_factory() as db:
+        svc = AsyncHistoryService(db)
+        # 无 token -> 拒绝
+        assert (await svc.get_session("s-anon-new", user_id=None)) is None
+        # 错 token -> 拒绝
+        assert (await svc.get_session("s-anon-new", user_id=None, owner_token="wrong")) is None
+        # 正确 token -> 放行
+        conv = await svc.get_session("s-anon-new", user_id=None, owner_token=token)
+        assert conv is not None and conv.id == "s-anon-new"
+
+
+@pytest.mark.asyncio
+async def test_new_anon_session_delete_requires_owner_token(session_factory):
+    """SEC-08：删除匿名会话同样受 owner_token 保护。"""
+    token = await _seed_session(session_factory, "s-anon-del", None)
+    async with session_factory() as db:
+        svc = AsyncHistoryService(db)
+        # 无 token 删除失败
+        assert (await svc.delete_session("s-anon-del", user_id=None)) is False
+    async with session_factory() as db:
+        svc = AsyncHistoryService(db)
+        # 正确 token 删除成功
+        assert (await svc.delete_session("s-anon-del", user_id=None, owner_token=token)) is True
 
 
 @pytest.mark.asyncio

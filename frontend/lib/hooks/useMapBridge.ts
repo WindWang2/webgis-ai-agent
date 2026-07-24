@@ -32,6 +32,7 @@ export function useMapBridge(
   sessionId: string | undefined,
   dispatchAction: (action: MapActionPayload) => void,
   onEvent: (event: SSEEvent) => void,
+  sessionTokenRef?: React.MutableRefObject<string | null>,
 ): {
   aiStatus: AiStatus;
   send: (content: string, mapSnapshot: Record<string, unknown>) => Promise<void>;
@@ -78,7 +79,8 @@ export function useMapBridge(
       setAiStatus('thinking');
 
       try {
-        for await (const event of streamChat(content, sessionId, mapSnapshot, controller.signal)) {
+        // SEC-08：把当前持有的 owner_token 附在请求头，匿名会话后端据此放行。
+        for await (const event of streamChat(content, sessionId, mapSnapshot, controller.signal, undefined, sessionTokenRef?.current ?? null)) {
           if (controller.signal.aborted) break;
 
           // Skip unparseable data — streamChat yields raw string on JSON.parse failure
@@ -162,7 +164,7 @@ export function useMapBridge(
         // If not the active controller, a new send() has taken over — leave aiStatus alone
       }
     },
-    [sessionId, dispatchAction, onEvent, setAiStatus]
+    [sessionId, dispatchAction, onEvent, setAiStatus, sessionTokenRef]
   );
 
   // [ENG-D3] useCallback([sessionId]) — stable ref so MapPanel's handleMove deps don't churn
@@ -173,13 +175,18 @@ export function useMapBridge(
       if (now - lastMapStatePushRef.current < MAP_STATE_THROTTLE_MS) return;
       lastMapStatePushRef.current = now;
       if (!sessionId) return;
+      // SEC-08：匿名会话的 map-state 写入同样受 owner_token 保护。
+      const token = sessionTokenRef?.current ?? null;
       fetch(`${API_BASE}/api/v1/chat/sessions/${sessionId}/map-state`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'X-Session-Token': token } : {}),
+        },
         body: JSON.stringify({ viewport: { center, zoom, bearing, pitch } }),
       }).catch((e) => devOnly.warn('[useMapBridge] map-state POST failed:', e));
     },
-    [sessionId]
+    [sessionId, sessionTokenRef]
   );
 
   // 审计 F25：返回对象用 useMemo 包裹，避免每次 render 都创建新对象引用

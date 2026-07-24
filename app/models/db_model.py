@@ -155,6 +155,11 @@ class Conversation(Base):
     # Nullable：兼容历史匿名会话；新认证会话写入 users.id；查询时按 owner 过滤
     user_id = Column(String(255), ForeignKey("users.id"), nullable=True, index=True)
     title = Column(String(200), default="新对话")
+    # SEC-08：匿名会话的 owner_token。仅新建的匿名会话会生成（非 NULL）。
+    # NULL = grandfather（旧匿名会话，知道 session_id 即能力令牌）。
+    # 认证会话从不依赖此列。访问带 token 的匿名会话需通过 X-Session-Token
+    # 提供匹配值（见 history_service_async.get_session）。
+    owner_token = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

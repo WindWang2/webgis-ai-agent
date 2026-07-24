@@ -79,6 +79,11 @@ class ChatEngine:
         # 超限时清理最旧的（按 dict 插入顺序，Python 3.7+ 保证有序）。
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._MAX_LOCKS = 200
+        # SEC-08：缓存首次加载会话时读到的 owner_token（仅匿名新会话非 None）。
+        # 路由层通过 get_session_owner_token() 读取并回传给前端。
+        # 与 _sessions 解耦：_sessions 是 LRU 会被 evict，但 token 一旦发出就
+        # 不再变化，前端只需在会话首次创建时拿到一次。
+        self._session_owner_tokens: dict[str, str] = {}
 
     def _select_tools(self, session_id: Optional[str], messages: list[dict]) -> Optional[list[dict]]:
         """选出本轮要推给 LLM 的工具 schema 列表。
@@ -183,6 +188,10 @@ class ChatEngine:
         try:
             async with async_db_session() as db:
                 conv = await AsyncHistoryService(db).get_or_create_conversation(session_id, user_id=user_id)
+                # SEC-08：缓存匿名会话的 owner_token，供路由层在创建时回传给前端。
+                # 仅在尚未缓存时写入（token 首次创建后不变）；认证会话 token 为 None 不缓存。
+                if conv is not None and conv.owner_token and session_id not in self._session_owner_tokens:
+                    self._session_owner_tokens[session_id] = conv.owner_token
                 if conv and conv.messages:
                     sorted_msgs = sorted(conv.messages, key=lambda x: x.id)
                     history_messages = [self._db_msg_to_llm(m) for m in sorted_msgs]
@@ -194,6 +203,14 @@ class ChatEngine:
             history_messages.insert(0, {"role": "system", "content": self._build_system_prompt()})
 
         return history_messages
+
+    def get_session_owner_token(self, session_id: str) -> Optional[str]:
+        """SEC-08：取出并为调用方消费该会话的 owner_token（一次性）。
+
+        路由在创建/首次访问匿名会话时调用，把 token 回传给前端。取出后即清掉缓存，
+        避免同一 token 在后续请求里被重复泄漏（前端拿到一次后会自己存储）。
+        """
+        return self._session_owner_tokens.pop(session_id, None)
 
     # M1 深水区：上下文组装委托给 chat/context_builder.py（纯函数，方便单测）
     def _get_map_state_summary(self, session_id: str) -> str:
@@ -454,12 +471,16 @@ class ChatEngine:
         # 发起的任务在 /tasks 端点不可见，也无法 cancel。注册一个 task 让它可见。
         task = self.tracker.create(session_id, message)
 
+        # SEC-08：若本次创建了新的匿名会话，取出 owner_token 随响应回传给前端。
+        # get_session_owner_token 是一次性消费（取出即清缓存），故在循环外取一次。
+        owner_token = self.get_session_owner_token(session_id)
+
         # FC 循环
         try:
             for _ in range(self.max_rounds):
                 # 审计 M4：cooperative cancel 检查（与 chat_stream 一致）
                 if self.tracker.is_cancelled(task.id):
-                    return {"session_id": session_id, "content": "任务已取消"}
+                    return {"session_id": session_id, "content": "任务已取消", **({"owner_token": owner_token} if owner_token else {})}
 
                 messages_with_context = await self._compose_request_messages(session_id, messages)
 
@@ -537,10 +558,10 @@ class ChatEngine:
                     messages.append(entry)
                     await self._save_msg_async(session_id, "assistant", content, reasoning_content=reasoning)
                     self.tracker.complete_task(task.id)
-                    return {"session_id": session_id, "content": content, "reasoning": reasoning}
+                    return {"session_id": session_id, "content": content, "reasoning": reasoning, **({"owner_token": owner_token} if owner_token else {})}
 
             self.tracker.complete_task(task.id)
-            return {"content": "达到最大工具调用轮数", "session_id": session_id}
+            return {"content": "达到最大工具调用轮数", "session_id": session_id, **({"owner_token": owner_token} if owner_token else {})}
         except (asyncio.CancelledError, GeneratorExit):
             # BUG-07: CancelledError inherits BaseException (not Exception), so the
             # broad `except Exception` below wouldn't catch a client disconnect /
@@ -572,7 +593,13 @@ class ChatEngine:
 
         # 创建任务
         task = self.tracker.create(session_id, message)
-        yield sse_event("task_start", {"task_id": task.id, "session_id": session_id})
+        # SEC-08：若本次创建了新的匿名会话，把 owner_token 随 task_start 事件
+        # 回传给前端（一次性消费）。前端在收到后存入 ref，后续请求附在头里。
+        owner_token = self.get_session_owner_token(session_id)
+        task_start_data = {"task_id": task.id, "session_id": session_id}
+        if owner_token:
+            task_start_data["owner_token"] = owner_token
+        yield sse_event("task_start", task_start_data)
 
         plan = await self._maybe_plan(session_id, message, messages)
         try:
@@ -834,8 +861,13 @@ class ChatEngine:
             fire_broadcast=_broadcast,
         )
 
-    async def clear_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
-        """删除会话；user_id 用于所有权检查（A2）。
+    async def clear_session(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+        owner_token: Optional[str] = None,
+    ) -> bool:
+        """删除会话；user_id 用于所有权检查（A2），owner_token 用于 SEC-08。
 
         返回是否真的删除：False = 不存在或越权（让路由层映射成 404）。
         匿名调用 / NULL owner 仍走旧能力令牌语义。
@@ -843,7 +875,9 @@ class ChatEngine:
         deleted = False
         try:
             async with async_db_session() as db:
-                deleted = await AsyncHistoryService(db).delete_session(session_id, user_id=user_id)
+                deleted = await AsyncHistoryService(db).delete_session(
+                    session_id, user_id=user_id, owner_token=owner_token
+                )
         except Exception as e:
             logger.warning(f"History: failed to delete session {session_id}: {e}")
             return False
@@ -851,6 +885,8 @@ class ChatEngine:
             if session_id in self._sessions:
                 del self._sessions[session_id]
             self._session_locks.pop(session_id, None)
+            # SEC-08：同步清理 owner_token 缓存。
+            self._session_owner_tokens.pop(session_id, None)
             await session_data_manager.clear_session(session_id)
             from app.services.chat import planner
             planner.clear_plan(session_id)

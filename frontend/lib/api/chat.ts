@@ -53,17 +53,24 @@ export interface SSEEvent {
 
 /**
  * 发送流式对话请求，返回 AsyncGenerator
+ *
+ * SEC-08：ownerToken 仅在匿名会话首次创建后由前端持有；提供时附在
+ * `X-Session-Token` 头里回传，后端据此放行该匿名会话的访问。
  */
 export async function* streamChat(
   message: string,
   sessionId?: string,
   mapState?: Record<string, unknown>,
   signal?: AbortSignal,
-  skillName?: string
+  skillName?: string,
+  ownerToken?: string | null
 ): AsyncGenerator<SSEEvent> {
   const response = await fetch(`${API_BASE}/api/v1/chat/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(ownerToken ? { "X-Session-Token": ownerToken } : {}),
+    },
     body: JSON.stringify({
       message,
       session_id: sessionId,
@@ -141,15 +148,22 @@ export async function* streamChat(
 
 /**
  * 非流式对话
+ *
+ * SEC-08：ownerToken 用于匿名会话回传；提供时附在 X-Session-Token 头。
+ * 响应可能含 owner_token（新建匿名会话时由服务端签发），调用方需存储。
  */
 export async function sendChat(
   message: string,
   sessionId?: string,
-  mapState?: Record<string, unknown>
-): Promise<{ content: string; session_id: string }> {
+  mapState?: Record<string, unknown>,
+  ownerToken?: string | null
+): Promise<{ content: string; session_id: string; owner_token?: string }> {
   const response = await fetch(`${API_BASE}/api/v1/chat/completions`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(ownerToken ? { "X-Session-Token": ownerToken } : {}),
+    },
     body: JSON.stringify({ message, session_id: sessionId, map_state: mapState }),
   });
 
@@ -171,19 +185,26 @@ export async function getSessionList() {
 
 /**
  * 获取会话详细内容
+ *
+ * SEC-08：匿名会话需提供 ownerToken 匹配 X-Session-Token 头。
  */
-export async function getSessionDetail(sessionId: string) {
-  const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sessionId}`);
+export async function getSessionDetail(sessionId: string, ownerToken?: string | null) {
+  const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sessionId}`, {
+    headers: ownerToken ? { "X-Session-Token": ownerToken } : {},
+  });
   if (!res.ok) throw new Error(`API Error: ${res.status}`);
   return res.json();
 }
 
 /**
  * 删除会话
+ *
+ * SEC-08：匿名会话需提供 ownerToken 匹配 X-Session-Token 头。
  */
-export async function deleteSession(sessionId: string): Promise<void> {
+export async function deleteSession(sessionId: string, ownerToken?: string | null): Promise<void> {
   const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sessionId}`, {
     method: "DELETE",
+    headers: ownerToken ? { "X-Session-Token": ownerToken } : {},
   });
   if (!res.ok) throw new Error(`API Error: ${res.status}`);
 }

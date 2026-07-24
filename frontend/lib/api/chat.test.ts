@@ -67,13 +67,33 @@ describe('Chat API', () => {
       await deleteSession('s1');
       expect(mockFetch).toHaveBeenCalledWith(
         expect.stringContaining('/api/v1/chat/sessions/s1'),
-        { method: 'DELETE' }
+        expect.objectContaining({ method: 'DELETE' })
       );
     });
 
     it('throws on non-ok response', async () => {
       mockFetch.mockResolvedValueOnce({ ok: false, status: 403 });
       await expect(deleteSession('s1')).rejects.toThrow('API Error: 403');
+    });
+
+    // SEC-08: owner_token (when provided) is sent via X-Session-Token header.
+    it('includes X-Session-Token header when ownerToken is provided', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true });
+      await deleteSession('s1', 'tok-123');
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/chat/sessions/s1'),
+        expect.objectContaining({
+          method: 'DELETE',
+          headers: { 'X-Session-Token': 'tok-123' },
+        })
+      );
+    });
+
+    it('omits X-Session-Token header when ownerToken is absent', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true });
+      await deleteSession('s1');
+      const callArgs = mockFetch.mock.calls[0][1];
+      expect(callArgs.headers).toEqual({});
     });
   });
 

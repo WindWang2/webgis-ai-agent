@@ -5,12 +5,19 @@
   匿名访问保持 NULL（与现有数据兼容）。
 - `list_sessions(user_id)` 仅返回该用户的会话；user_id=None 视为匿名调用方，
   返回空（匿名用户没有列表入口，会话只能凭 session_id 直访）。
-- `get_session(session_id, user_id)` / `delete_session(session_id, user_id)`：
-  - 会话 user_id 为 NULL → 允许（旧匿名记录，知道 session_id 即能力令牌）
-  - 会话 user_id == 调用方 user_id → 允许
+- `get_session(session_id, user_id, owner_token)` / `delete_session(session_id, user_id)`：
+  - 认证会话 user_id 已绑定：仅原用户可见
+  - 匿名会话 user_id IS NULL 且 owner_token IS NULL → grandfather 旧记录，允许
+  - 匿名会话 user_id IS NULL 且 owner_token 已设置 → 调用方必须提供匹配的
+    owner_token（SEC-08），否则视为不存在
   - 否则返回 None / 静默忽略，**统一 404 风格**避免泄露存在性。
+
+SEC-08：新建的匿名会话会生成 server-issued `owner_token`（secrets.token_urlsafe(32)）。
+前端必须在后续请求的 `X-Session-Token` 头里回传该 token 才能访问该会话。
+认证会话与历史匿名会话（token 为 NULL）不受影响。
 """
 import logging
+import secrets
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -41,6 +48,9 @@ class AsyncHistoryService:
     ) -> Conversation:
         import anyio
         owner = None if _is_anonymous(user_id) else user_id
+        # SEC-08：新建匿名会话时生成 owner_token。认证会话（owner 非空）不需要。
+        # token 写入 owner_token 列；调用方通过 conv.owner_token 读取并回传给前端。
+        new_owner_token = secrets.token_urlsafe(32) if owner is None else None
         for attempt in range(3):
             try:
                 stmt = select(Conversation).where(Conversation.id == session_id).options(selectinload(Conversation.messages))
@@ -52,6 +62,7 @@ class AsyncHistoryService:
                 conv = Conversation(
                     id=session_id,
                     user_id=owner,
+                    owner_token=new_owner_token,
                     title="新对话",
                     created_at=datetime.now(timezone.utc),
                     updated_at=datetime.now(timezone.utc),
@@ -134,11 +145,15 @@ class AsyncHistoryService:
         self,
         session_id: str,
         user_id: Optional[str] = None,
+        owner_token: Optional[str] = None,
     ) -> Optional[Conversation]:
         """带所有权检查的会话取回。
 
-        - 会话 user_id IS NULL：视为旧匿名记录，知道 session_id 即可访问
-        - 会话 user_id 已绑定：仅原用户可见
+        - 会话 user_id 已绑定：仅原用户可见（认证用户校验）
+        - 会话 user_id IS NULL（匿名会话）：
+          - owner_token IS NULL：grandfather 旧记录，知道 session_id 即可访问
+          - owner_token 已设置：调用方必须提供匹配的 owner_token（SEC-08），
+            否则视为不存在（防止 session_id 泄漏后被任意人读取）
         - 不存在或越权：均返回 None（统一处理为 404，避免存在性泄露）
         """
         stmt = select(Conversation).where(Conversation.id == session_id).options(selectinload(Conversation.messages))
@@ -147,6 +162,12 @@ class AsyncHistoryService:
         if conv is None:
             return None
         if conv.user_id is None:
+            # SEC-08：匿名会话。若 owner_token 已设置则要求调用方提供匹配值；
+            # 使用 hmac.compare_digest 做常量时间比较以防时序侧信道。
+            if conv.owner_token is not None:
+                import hmac
+                if not owner_token or not hmac.compare_digest(conv.owner_token, owner_token):
+                    return None
             return conv
         if _is_anonymous(user_id):
             return None
@@ -158,6 +179,7 @@ class AsyncHistoryService:
         self,
         session_id: str,
         user_id: Optional[str] = None,
+        owner_token: Optional[str] = None,
     ) -> bool:
         """所有权检查后删除；返回是否真正删除（用于路由层决定 404 vs 204）。"""
         conv = await self.db.get(Conversation, session_id)
@@ -166,6 +188,13 @@ class AsyncHistoryService:
         if conv.user_id is not None:
             if _is_anonymous(user_id) or conv.user_id != user_id:
                 return False
+        else:
+            # SEC-08：匿名会话删除同样受 owner_token 保护（与 get_session 对齐）。
+            # owner_token 为 NULL 的旧记录 grandfather 放行。
+            if conv.owner_token is not None:
+                import hmac
+                if not owner_token or not hmac.compare_digest(conv.owner_token, owner_token):
+                    return False
         await self.db.delete(conv)
         await self.db.commit()
         return True
