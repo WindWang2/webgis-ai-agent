@@ -60,5 +60,15 @@ def test_nasa_settings():
 
 
 def test_database_url():
+    """DATABASE_URL must be a non-empty valid URL (sqlite or postgresql).
+
+    CI runs against Postgres while local dev defaults to sqlite, so the
+    assertion must accept both drivers instead of hard-coding sqlite.
+    """
+    from urllib.parse import urlparse
     s = Settings()
-    assert "sqlite" in s.DATABASE_URL
+    assert s.DATABASE_URL, "DATABASE_URL must be set"
+    parsed = urlparse(s.DATABASE_URL)
+    assert parsed.scheme in {"sqlite", "postgresql", "postgres"}, (
+        f"unsupported DATABASE_URL scheme: {parsed.scheme!r}"
+    )

@@ -6,6 +6,7 @@ python-multipart>=0.0.6
 
 # Database & ORM
 sqlalchemy>=2.0.25
+alembic>=1.13.0
 
 # GIS Libraries
 geopandas>=0.14.3
