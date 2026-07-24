@@ -21,7 +21,7 @@ ENV NEXT_RUNTIME=nodejs
 RUN npm run build
 
 # Stage 3: Backend Python Dependencies
-FROM python:3.12-slim-bookworm AS backend-deps
+FROM python:3.14-slim-bookworm AS backend-deps
 WORKDIR /app/backend
 
 # Install GDAL/GEOS/PROJ system libraries required by rasterio, pyogrio, geopandas
@@ -35,7 +35,7 @@ RUN pip install --no-cache-dir --break-system-packages \
     && uv pip install --system --no-cache -r requirements.txt
 
 # Stage 4: Final Runner
-FROM python:3.12-slim-bookworm AS runner
+FROM python:3.14-slim-bookworm AS runner
 WORKDIR /app/backend
 
 # Install Node.js, tini, and GDAL/GEOS/PROJ runtime libraries
