@@ -1,7 +1,7 @@
 """Chat API Route - SSE 流式对话"""
 import logging
 import os
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -34,6 +34,17 @@ SSE_HEADERS = {
 # true/1/yes 时使用 Pi 开源 agent (vendor/pi) 通过 RPC 调用
 # (imported from app.agent_pi_bridge to avoid duplication)
 pi_bridge = None  # type: ignore[assignment]  # 由 lifespan 初始化
+
+
+async def get_owner_token(
+    x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
+) -> Optional[str]:
+    """SEC-08：从请求头提取匿名会话的 owner_token。
+
+    匿名会话（user_id=NULL）在首次创建时由服务端签发 owner_token，前端在后续
+    请求里通过 `X-Session-Token` 头回传。认证会话忽略此值。
+    """
+    return x_session_token
 
 
 def get_engine() -> ChatEngine:
@@ -71,6 +82,8 @@ class ChatResponse(BaseModel):
     """聊天响应"""
     session_id: str
     content: str
+    # SEC-08：新建匿名会话时由服务端签发，前端需存储并在后续请求头里回传。
+    owner_token: Optional[str] = None
 
 
 @router.post("/completions", response_model=ChatResponse)
@@ -182,11 +195,17 @@ async def list_sessions(
 
 
 @router.get("/sessions/{session_id}")
-async def get_session_detail(session_id: str, _user: dict = Depends(get_current_user_optional)):
-    """获取会话详情（只读）— 受所有权检查保护（A2）。"""
+async def get_session_detail(
+    session_id: str,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """获取会话详情（只读）— 受所有权检查保护（A2 + SEC-08）。"""
     user_id = _user.get("user_id")
     async with async_db_session() as db:
-        conv = await AsyncHistoryService(db).get_session(session_id, user_id=user_id)
+        conv = await AsyncHistoryService(db).get_session(
+            session_id, user_id=user_id, owner_token=owner_token
+        )
         if not conv:
             raise HTTPException(status_code=404, detail="Session not found")
         return {
@@ -211,15 +230,19 @@ async def get_session_detail(session_id: str, _user: dict = Depends(get_current_
 async def get_session_map_state(
     session_id: str,
     _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ):
     """Return persisted map state (viewport, layers) for session restoration.
 
     审计 S31：之前 _user 注入但未做所有权校验 —— 任何认证用户知道 session_id
     就能读取他人的 viewport/layers。复用 get_session_detail 的同款检查。
+    SEC-08：匿名会话需匹配 owner_token。
     """
     user_id = _user.get("user_id")
     async with async_db_session() as db:
-        conv = await AsyncHistoryService(db).get_session(session_id, user_id=user_id)
+        conv = await AsyncHistoryService(db).get_session(
+            session_id, user_id=user_id, owner_token=owner_token
+        )
         if not conv:
             raise HTTPException(status_code=404, detail="Session not found")
     from app.services.session_data import session_data_manager
@@ -238,14 +261,18 @@ async def push_session_map_state(
     session_id: str,
     req: MapStatePushRequest,
     _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
 ):
     """Persist live map state pushed by the frontend during agent execution.
 
     审计 S31：同 get_session_map_state，跨租户写入必须拒绝。
+    SEC-08：匿名会话需匹配 owner_token。
     """
     user_id = _user.get("user_id")
     async with async_db_session() as db:
-        conv = await AsyncHistoryService(db).get_session(session_id, user_id=user_id)
+        conv = await AsyncHistoryService(db).get_session(
+            session_id, user_id=user_id, owner_token=owner_token
+        )
         if not conv:
             raise HTTPException(status_code=404, detail="Session not found")
     from app.services.session_data import session_data_manager
@@ -265,14 +292,20 @@ async def list_skills_api(_user: dict = Depends(get_current_user_optional)):
 
 
 @router.delete("/sessions/{session_id}")
-async def clear_session(session_id: str, _user: dict = Depends(get_current_user_optional)):
-    """清除会话（内存 + DB）— 受所有权检查保护（A2）。"""
+async def clear_session(
+    session_id: str,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """清除会话（内存 + DB）— 受所有权检查保护（A2 + SEC-08）。"""
     user_id = _user.get("user_id")
 
     # Pi session clear deferred: abort() semantics + file-based session cleanup
     # not yet verified. Legacy engine clears DB + memory below.
 
-    ok = await get_engine().clear_session(session_id, user_id=user_id)
+    ok = await get_engine().clear_session(
+        session_id, user_id=user_id, owner_token=owner_token
+    )
     if not ok:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"status": "ok"}

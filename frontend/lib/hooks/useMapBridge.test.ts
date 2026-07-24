@@ -48,7 +48,7 @@ describe('useMapBridge', () => {
       await result.current.send('hello', {});
     });
     expect(mockStreamChat).toHaveBeenCalledWith(
-      'hello', undefined, {}, expect.any(AbortSignal)
+      'hello', undefined, {}, expect.any(AbortSignal), undefined, null
     );
   });
 
@@ -61,7 +61,7 @@ describe('useMapBridge', () => {
       await result.current.send('hello', { zoom: 10 });
     });
     expect(mockStreamChat).toHaveBeenCalledWith(
-      'hello', 'sid-123', { zoom: 10 }, expect.any(AbortSignal)
+      'hello', 'sid-123', { zoom: 10 }, expect.any(AbortSignal), undefined, null
     );
   });
 

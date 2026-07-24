@@ -80,5 +80,5 @@ def test_delete_session(client):
     with patch.object(_chat_mod, "engine", mock_engine):
         resp = client.delete(f"{BASE}/sessions/s1")
     assert resp.status_code == 200
-    # A2: 现在带 user_id kwarg
-    mock_engine.clear_session.assert_awaited_once_with("s1", user_id="anonymous")
+    # A2: 带 user_id kwarg；SEC-08: 带 owner_token kwarg（无头时为 None）
+    mock_engine.clear_session.assert_awaited_once_with("s1", user_id="anonymous", owner_token=None)

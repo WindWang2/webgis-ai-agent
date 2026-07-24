@@ -11,6 +11,9 @@ import { devOnly } from "@/lib/utils/logger";
 export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) => void) {
   const [sessionId, setSessionId] = useState<string>();
   const sessionIdRef = useRef<string | undefined>(undefined);
+  // SEC-08：匿名会话的 owner_token。服务端在新建匿名会话时签发，前端持有并在
+  // 后续请求的 X-Session-Token 头里回传。认证会话 / 旧匿名会话该 ref 为 null。
+  const sessionTokenRef = useRef<string | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const sessionLoadAbortRef = useRef<AbortController | null>(null);
 
@@ -79,8 +82,14 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       // 仍是旧值 -> 若用户在窗口内点 send，消息会发到旧 session。改为同步先 set。
       setSessionId(sid);
       sessionIdRef.current = sid;
+      // SEC-08：切回某个会话时，前端通常仍持有该会话的 token（同一浏览器会话内）。
+      // 旧会话 / 认证会话 token 为 null，头不发送，后端按 grandfather/认证放行。
+      const token = sessionTokenRef.current;
       try {
-        const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}`, { signal });
+        const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}`, {
+          signal,
+          headers: token ? { 'X-Session-Token': token } : {},
+        });
         const data = await res.json();
         if (signal.aborted) return;
 
@@ -102,7 +111,10 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
 
         // setSessionId 已在函数开头同步调用（审计 F38），这里不再重复
 
-        const stateRes = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}/map-state`, { signal });
+        const stateRes = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}/map-state`, {
+          signal,
+          headers: token ? { 'X-Session-Token': token } : {},
+        });
         if (signal.aborted) return;
         if (stateRes.ok) {
           const stateData = await stateRes.json();
@@ -123,7 +135,11 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
             if (state.base_layer) store.setBaseLayer(state.base_layer);
             for (const layer of state.layers || []) {
               if (layer._refId && layer._refId.startsWith('ref:')) {
-                fetch(`${API_BASE}/api/v1/layers/data/${layer._refId}?session_id=${sid}`, { signal })
+                // SEC-08：匿名会话的图层引用数据同样受 owner_token 保护。
+                fetch(`${API_BASE}/api/v1/layers/data/${layer._refId}?session_id=${sid}`, {
+                  signal,
+                  headers: token ? { 'X-Session-Token': token } : {},
+                })
                   .then((r) => (r.ok ? r.json() : null))
                   .then((geojson) => {
                     if (signal.aborted) return;
@@ -158,6 +174,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
   const startNewSession = useCallback(
     (onClearMessages: () => void) => {
       setSessionId(undefined);
+      // SEC-08：新会话清掉旧 token；新匿名会话创建后由 SSE 响应重新填充。
+      sessionTokenRef.current = null;
       // 审计 F20：同 selectSession，新会话必须重置跨会话状态。
       clearLayers();
       clearAnnotations();
@@ -177,6 +195,10 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
     sessionId,
     setSessionId,
     sessionIdRef,
+    // SEC-08：暴露 token ref + 设置器。useSSEStream 在收到新会话的 owner_token
+    // 时写入；其它调用方只读（getSessionToken）。
+    sessionTokenRef,
+    getSessionToken: () => sessionTokenRef.current,
     sessions,
     setSessions,
     refreshSessions,

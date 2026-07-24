@@ -18,7 +18,8 @@ export function useSSEStream(
   sessionIdRef: React.MutableRefObject<string | undefined>,
   dispatchAction: (act: MapActionPayload) => void,
   getMapSnapshot: () => any,
-  userLocation: { lng: number; lat: number; accuracy?: number } | null
+  userLocation: { lng: number; lat: number; accuracy?: number } | null,
+  sessionTokenRef: React.MutableRefObject<string | null>
 ) {
   const [messages, setMessages] = useState<
     Array<{
@@ -83,6 +84,12 @@ export function useSSEStream(
       if (data?.session_id && data.session_id !== sessionIdRef.current) {
         setSessionId(data.session_id);
         sessionIdRef.current = data.session_id;
+      }
+
+      // SEC-08：服务端在新建匿名会话时签发 owner_token（随 task_start / session 事件下发）。
+      // 前端持有后在后续请求的 X-Session-Token 头里回传。认证会话不携带该字段。
+      if (data?.owner_token && typeof data.owner_token === 'string') {
+        sessionTokenRef.current = data.owner_token;
       }
 
       const thinkingId = thinkingMsgIdRef.current;
@@ -171,8 +178,11 @@ export function useSSEStream(
           if (data.geojson_ref) {
             const sid = sessionIdRef.current;
             const fetchRef = data.geojson_ref;
+            // SEC-08：匿名会话的图层引用数据受 owner_token 保护。
+            const token = sessionTokenRef.current;
             fetch(`${API_BASE}/api/v1/layers/data/${fetchRef}?session_id=${sid}`, {
               signal: layerFetchAbortRef.current?.signal,
+              headers: token ? { 'X-Session-Token': token } : {},
             })
               .then((r) => (r.ok ? r.json() : null))
               .then((geojson) => {
@@ -297,10 +307,10 @@ export function useSSEStream(
         });
       }
     },
-    [parseThink, setSessionId, sessionIdRef]
+    [parseThink, setSessionId, sessionIdRef, sessionTokenRef]
   );
 
-  const bridge = useMapBridge(sessionId, dispatchAction, onEvent);
+  const bridge = useMapBridge(sessionId, dispatchAction, onEvent, sessionTokenRef);
   const isLoading = bridge.aiStatus === 'thinking' || bridge.aiStatus === 'acting';
 
   const handlePlanAction = useCallback((planId: string, action: 'approve' | 'revise' | 'reject') => {

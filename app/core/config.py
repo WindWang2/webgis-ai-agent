@@ -248,5 +248,39 @@ class Settings(BaseSettings):
                         f"{field}='{url}' uses blocked domain pattern '{pat}'."
                     )
 
+            # 审计 SEC-07：DNS 解析 — 阻止域名解析到私有 IP。
+            # 之前只做字符串模式匹配，攻击者可用解析到 169.254.169.254 的域名绕过。
+            # 注意：这是静态检查（validate 时解析一次）。真正的 DNS rebinding TOCTOU
+            # 需在 HTTP client 层 pin IP（aiohttp custom connector），是独立大工作。
+            import socket
+            try:
+                infos = socket.getaddrinfo(hostname, None)
+                for family, _, _, _, sockaddr in infos:
+                    ip_str = sockaddr[0]
+                    try:
+                        resolved_ip = ipaddress.ip_address(ip_str)
+                    except ValueError:
+                        continue
+                    if (
+                        resolved_ip.is_private
+                        or resolved_ip.is_loopback
+                        or resolved_ip.is_link_local
+                        or resolved_ip.is_reserved
+                        or resolved_ip.is_multicast
+                    ):
+                        raise ValueError(
+                            f"{field}='{url}' hostname '{hostname}' resolves to "
+                            f"private/reserved IP {resolved_ip}. Blocked (SSRF)."
+                        )
+            except socket.gaierror:
+                # DNS 解析失败 — 不阻断（可能是开发环境临时域名），
+                # 但 log warning 让运维知道。
+                import logging
+                logging.getLogger(__name__).warning(
+                    "SEC-07: DNS resolution failed for %s in %s — "
+                    "cannot verify SSRF safety, allowing with warning",
+                    hostname, field,
+                )
+
 
 settings = Settings()

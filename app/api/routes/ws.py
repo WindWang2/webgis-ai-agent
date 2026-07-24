@@ -1,3 +1,14 @@
+"""WebSocket endpoint for real-time GIS data updates.
+
+审计 SEC-03：之前 WS 端点完全无认证 + 无 session 所有权校验 —— 任意客户端
+知道 session_id 就能连接并写入他人的 map state（layer toggle/remove/snapshot）。
+
+现在：1) 要求合法 access token；2) 校验 session 属于该用户；3) rate limit
+keyed on client IP 而非 session_id（攻击者无法通过轮换 session_id 绕过）。
+
+WS 感知通道在前端是死代码（useWebSocket 从未挂载），所以收紧认证不会破坏
+任何活跃功能。
+"""
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 import logging
 
@@ -9,12 +20,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ws", tags=["WebSocket"])
 
-# 审计 P0：WebSocket 认证修复
-# 之前 `if token:` 对空字符串也为 falsy，导致 `?token=` 完全绕过认证。
-# 使用 sentinel 区分「未提供 token」（允许匿名）和「提供了空 token」（拒绝）。
-_UNSET = object()
-
-# WebSocket 连接频率限制：每 session 每 60 秒最多 5 次连接尝试
 _WS_RATE_LIMIT_MAX = 5
 _WS_RATE_LIMIT_WINDOW = 60
 
@@ -25,28 +30,58 @@ async def websocket_endpoint(
     session_id: str,
     token: str = Query(default=""),
 ):
-    """WebSocket endpoint for real-time GIS data updates and bidirectional perception.
+    """WebSocket endpoint — requires valid access token + session ownership.
 
-    Auth 是 optional：带合法 token 时验证放行；不带 token 参数允许匿名连接。
-    但显式传递空 token（?token=）会被拒绝，防止绕过认证守卫。
-    匿名连接受 rate limit 保护（每 session 每 60 秒最多 5 次连接）。
+    审计 SEC-03：
+    - 必须提供合法 access token（不再允许匿名连接）
+    - session_id 必须属于 token 中的 user（防 IDOR）
+    - rate limit per client IP（不是 per session_id）
     """
-    # 审计 P1：WebSocket 连接频率限制，防止匿名连接被滥用
+    # Rate limit per client IP
+    client_ip = websocket.client.host if websocket.client else "unknown"
     limiter = await get_rate_limiter()
-    rate_key = f"ws_connect:{session_id}"
-    if not await limiter.is_allowed(rate_key, _WS_RATE_LIMIT_MAX, _WS_RATE_LIMIT_WINDOW):
+    if not await limiter.is_allowed(
+        f"ws_connect:{client_ip}", _WS_RATE_LIMIT_MAX, _WS_RATE_LIMIT_WINDOW
+    ):
         await websocket.close(code=4029, reason="Rate limit exceeded")
         return
 
-    # 审计 P0：用 sentinel 区分「参数不存在」和「显式空字符串」
-    raw_token = token if token else _UNSET
+    # SEC-03: 必须有合法 access token
+    if not token:
+        await websocket.close(code=4001, reason="Access token required")
+        return
 
-    if raw_token is not _UNSET:
-        # 提供了 token（哪怕是空的）— 必须有效
-        payload = verify_token(raw_token)
-        if payload is None:
-            await websocket.close(code=4001, reason="Invalid token")
+    payload = verify_token(token)
+    if payload is None:
+        await websocket.close(code=4001, reason="Invalid token")
+        return
+
+    # 拒绝 refresh token 被当 access 用
+    tok_type = payload.get("type")
+    if tok_type is not None and tok_type != "access":
+        await websocket.close(code=4001, reason="Wrong token type")
+        return
+
+    user_id = payload.get("sub")
+    if not user_id:
+        await websocket.close(code=4001, reason="Invalid token payload")
+        return
+
+    # SEC-03: 校验 session 所有权
+    from app.tools._utils import async_db_session
+    from app.services.history_service_async import AsyncHistoryService
+
+    try:
+        async with async_db_session() as db:
+            conv = await AsyncHistoryService(db).get_session(session_id, user_id)
+        if conv is None:
+            await websocket.close(code=4003, reason="Session not found or not owned by user")
             return
+    except Exception as e:
+        logger.error(f"WS session ownership check failed for {session_id}: {e}")
+        # DB 不可用时拒绝连接（fail-closed）
+        await websocket.close(code=4500, reason="Internal error during session validation")
+        return
 
     await manager.connect(websocket, session_id)
     try:

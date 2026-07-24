@@ -11,7 +11,7 @@ from app.api.routes import layer as _mod
 def app(monkeypatch):
     """跨租户守卫 _verify_session_owner 在隔离测试里依赖真 DB；
     stub 成 always-pass（跨租户隔离由 test_cross_tenant_isolation 覆盖）。"""
-    async def _noop_verify(session_id, user_id):
+    async def _noop_verify(session_id, user_id, owner_token=None):
         return None
     monkeypatch.setattr(_mod, "_verify_session_owner", _noop_verify)
 
