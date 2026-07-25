@@ -40,20 +40,19 @@ const MapPanel = dynamic(
 
 export default function Home() {
   const { getMapSnapshot, dispatchAction } = useMapAction();
-  const {
-    layers,
-    removeLayer,
-    toggleLayer,
-    leftPanelOpen,
-    settingsOpen,
-    historyOpen,
-    setHistoryOpen,
-    hudOpen,
-    setHudOpen,
-    ragPanelOpen,
-    setRagPanelOpen,
-    sidebarWidth,
-  } = useHudStore();
+  // FE-07：用单字段 selector 订阅，避免订阅整个 store 导致每次状态变更
+  // （视口平移、opsLog push、图层变更等）都触发本组件及全部子树重渲染。
+  const layers = useHudStore((s) => s.layers);
+  const removeLayer = useHudStore((s) => s.removeLayer);
+  const toggleLayer = useHudStore((s) => s.toggleLayer);
+  const leftPanelOpen = useHudStore((s) => s.leftPanelOpen);
+  const settingsOpen = useHudStore((s) => s.settingsOpen);
+  const historyOpen = useHudStore((s) => s.historyOpen);
+  const setHistoryOpen = useHudStore((s) => s.setHistoryOpen);
+  const hudOpen = useHudStore((s) => s.hudOpen);
+  const ragPanelOpen = useHudStore((s) => s.ragPanelOpen);
+  const setRagPanelOpen = useHudStore((s) => s.setRagPanelOpen);
+  const sidebarWidth = useHudStore((s) => s.sidebarWidth);
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);

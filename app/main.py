@@ -141,6 +141,16 @@ app.add_exception_handler(Exception, global_exception_handler)
 # 从未暴露任何 metrics 端点 → 监控全是 up==0 / No data。instrumentator 在 /metrics
 # 暴露 http_requests_total / http_request_duration_seconds 等，与 alerts-rules.json
 # 对齐。
+#
+# SEC-11: /metrics 暴露内部流量/延迟分布，prometheus-fastapi-instrumentator
+# 不原生支持鉴权钩子（expose 只是注册一个裸路由），强行加 BasicAuth 需要自己
+# 包一层 Depends，且 Prometheus scraper 端配置凭据较繁琐。
+# 因此推荐的网络层隔离方式（必须至少满足其一）：
+#   1. NetworkPolicy 限制 /metrics 仅允许监控 namespace（如 prometheus）的 Pod 访问；
+#   2. Ingress / 反向代理对 /metrics 做 IP 白名单或 mTLS；
+#   3. 部署时让 Prometheus 与本服务同 namespace，直接走 ClusterIP，不经过 Ingress。
+# 已设 include_in_schema=False，所以 /metrics 不会出现在公开的 OpenAPI 文档里，
+# 但这并不能阻止直接 HTTP 探测，必须配合上面的网络隔离。
 try:
     from prometheus_fastapi_instrumentator import Instrumentator
     # 不传 should_group_status_codes 等参数 —— 不同版本 API 不一致，使用默认最稳。

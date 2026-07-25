@@ -33,11 +33,15 @@ class TestMiddleware:
 
 class TestRouters:
     def test_health_router_registered(self):
+        """Verify health router is mounted by checking app.openapi() schema."""
         from app.main import app
-        routes = [r.path for r in app.routes]
-        assert any("/api/v1/health" in r for r in routes)
+        schema = app.openapi()
+        paths = list(schema.get("paths", {}).keys())
+        assert any("/health" in p for p in paths), f"health route not in OpenAPI paths: {paths[:15]}"
 
     def test_chat_router_registered(self):
+        """Verify chat router is mounted by checking app.openapi() schema."""
         from app.main import app
-        routes = [r.path for r in app.routes]
-        assert any("/api/v1/chat" in r for r in routes)
+        schema = app.openapi()
+        paths = list(schema.get("paths", {}).keys())
+        assert any("/chat" in p for p in paths), f"chat route not in OpenAPI paths: {paths[:15]}"

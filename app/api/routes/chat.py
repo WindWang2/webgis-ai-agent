@@ -300,8 +300,15 @@ async def clear_session(
     """清除会话（内存 + DB）— 受所有权检查保护（A2 + SEC-08）。"""
     user_id = _user.get("user_id")
 
-    # Pi session clear deferred: abort() semantics + file-based session cleanup
-    # not yet verified. Legacy engine clears DB + memory below.
+    # BUG-18：Pi 路径下 clear_session 之前是个 dead TODO —— 只删了 DB 行，
+    # 但 Pi agent 子进程里该 session 的在途 prompt 不会被中断，会继续消耗
+    # token / 写文件。现在先对 Pi bridge 发 abort（fire-and-forget RPC，
+    # 失败仅记日志，不影响后续 DB 清理），再走 legacy 清理。
+    if _use_pi_bridge():
+        try:
+            await pi_bridge.abort()
+        except Exception as e:  # noqa: BLE001 — abort 失败不能阻塞删除流程
+            logger.warning("Pi bridge abort failed for session %s: %s", session_id, e)
 
     ok = await get_engine().clear_session(
         session_id, user_id=user_id, owner_token=owner_token

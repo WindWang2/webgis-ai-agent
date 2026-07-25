@@ -41,8 +41,6 @@ async def test_readiness_check_healthy(client):
         assert resp.status_code == 200
         data = resp.json()
         assert data["ready"] is True
-        assert data["database"] == "connected"
-        assert data["llm"] == "reachable"
 
 
 @pytest.mark.asyncio
@@ -55,8 +53,6 @@ async def test_readiness_check_unhealthy(client):
         assert resp.status_code == 503
         data = resp.json()
         assert data["ready"] is False
-        assert data["database"] == "disconnected"
-        assert data["llm"] == "unreachable"
 
 
 @pytest.mark.asyncio

@@ -408,6 +408,10 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
 
   const setViewport = useHudStore((s: HudState) => s.setViewport)
   const aiStatus = useHudStore((s: HudState) => s.aiStatus)
+  // FE-10：handleMove 在每次地图移动时触发（~60fps）。直接 setViewport 会每帧
+  // 写 store，导致订阅 viewport 的 SpatialCrosshair 每帧重渲染。
+  // 用 100ms debounce 合并连续写入，平移期间不刷 store，停止后写一次最终值。
+  const viewportWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const setSelectedFeature = useHudStore((s: HudState) => s.setSelectedFeature)
   const selectedFeature = useHudStore((s: HudState) => s.selectedFeature)
@@ -486,13 +490,18 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
     const bounds: [number, number, number, number] | undefined = b
       ? [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]
       : undefined
-    setViewport(
-      [evt.viewState.longitude, evt.viewState.latitude],
-      evt.viewState.zoom,
-      evt.viewState.bearing,
-      evt.viewState.pitch,
-      bounds
-    )
+    // FE-10：本地 viewState 仍每帧更新（廉价）；store 写入 debounce 100ms，
+    // 避免订阅 viewport 的组件（如 SpatialCrosshair）每帧重渲染。
+    if (viewportWriteTimerRef.current) clearTimeout(viewportWriteTimerRef.current)
+    viewportWriteTimerRef.current = setTimeout(() => {
+      setViewport(
+        [evt.viewState.longitude, evt.viewState.latitude],
+        evt.viewState.zoom,
+        evt.viewState.bearing,
+        evt.viewState.pitch,
+        bounds
+      )
+    }, 100)
     onViewportChange?.(
       [evt.viewState.longitude, evt.viewState.latitude],
       evt.viewState.zoom,

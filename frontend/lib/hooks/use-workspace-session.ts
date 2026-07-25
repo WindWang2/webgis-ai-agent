@@ -17,16 +17,16 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const sessionLoadAbortRef = useRef<AbortController | null>(null);
 
-  const {
-    clearLayers,
-    clearOpsLog,
-    clearCausalChain,
-    clearAnnotations,
-    setSessions: setStoreSessions,
-    setSelectedFeature,
-    setAiStatus,
-    clearTask,
-  } = useHudStore();
+  // FE-07：用单字段 selector 订阅，避免订阅整个 store。
+  // 这里订阅的都是 actions（Zustand 中为稳定引用），选择它们本身零开销。
+  const clearLayers = useHudStore((s) => s.clearLayers);
+  const clearOpsLog = useHudStore((s) => s.clearOpsLog);
+  const clearCausalChain = useHudStore((s) => s.clearCausalChain);
+  const clearAnnotations = useHudStore((s) => s.clearAnnotations);
+  const setStoreSessions = useHudStore((s) => s.setSessions);
+  const setSelectedFeature = useHudStore((s) => s.setSelectedFeature);
+  const setAiStatus = useHudStore((s) => s.setAiStatus);
+  const clearTask = useHudStore((s) => s.clearTask);
 
   // Sync sessionId state to ref
   useEffect(() => {

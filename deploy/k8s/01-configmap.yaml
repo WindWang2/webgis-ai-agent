@@ -34,3 +34,9 @@ data:
 #
 # 或更安全：用 SealedSecrets / External Secrets / Vault 配合 GitOps。
 # 详见 docs/DEPLOYMENT.md 的 "Secret Management" 章节。
+#
+# ── K8S-04：完整字段模板与说明见 deploy/k8s/secret.example.yaml ──
+# 该模板列出了全部 stringData 字段（DATABASE_URL / JWT_SECRET_KEY /
+# LLM_API_KEY / REDIS_URL / CELERY_BROKER_URL / CELERY_RESULT_BACKEND）
+# 及 kubectl apply、SealedSecrets 两种落地方式。**注意**：模板文件
+# 本身不要填真实凭证后入库——拷成 secret.yaml 并加入 .gitignore。

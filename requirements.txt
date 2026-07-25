@@ -1,6 +1,9 @@
 # FastAPI & ASGI Server
-fastapi>=0.109.0
-starlette<0.39.0,>=0.37.2
+# fastapi>=0.115.0 对应 starlette>=0.40.0；DEPS-04：starlette 0.37.x/0.38.x
+# 存在 CVE-2024-47874 (DoS via multipart) 与 CVE-2024-49774 (Qt 注入相关) 等
+# 已在 0.40.0 修复。同时 fastapi>=0.115.0 是 starlette 0.40+ 的最低兼容版本。
+fastapi>=0.115.0
+starlette>=0.40.0
 uvicorn[standard]>=0.27.0
 python-multipart>=0.0.6
 
@@ -50,9 +53,8 @@ defusedxml>=0.7.1
 ijson>=3.2.0
 
 # Testing
-pytest>=7.4.4
-pytest-asyncio>=0.23.3
-pytest-cov>=7.1.0
+# 审计 DEPS-06：测试依赖已移至 requirements-dev.txt。生产镜像只装本文件，
+# 不再带 pytest 等 dev 工具。CI / 本地开发请 `pip install -r requirements-dev.txt`。
 
 # JWT 库：使用 PyJWT (python-jose 自 2024 起维护放缓，存在 JWT bomb
 # CVE-2024-33664 与算法混淆 CVE-2024-33663 等未修复 CVE)。PyJWT 对 HS256
@@ -86,4 +88,5 @@ esda>=2.5.1
 libpysal>=4.9.2
 
 # Prometheus metrics (审计 I11: exposes /metrics for prometheus scrape)
-prometheus-fastapi-instrumentator>=6.1.0,<7.0.0
+# >=7.0.0 required for FastAPI ≥0.115 / starlette ≥0.40 compat (_IncludedRouter fix)
+prometheus-fastapi-instrumentator>=7.0.0
