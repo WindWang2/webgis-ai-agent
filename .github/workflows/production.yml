@@ -98,10 +98,9 @@ jobs:
           cache: 'pip'
 
       - name: Install Dependencies
-        # 测试专用依赖（fakeredis 等）不进 requirements.txt（生产镜像不需要）。
-        # psycopg2-binary：CI 的 Postgres service 需要（asyncpg 是 async 驱动，
-        # 但某些测试可能用 sync SQLAlchemy 路径）。
-        run: pip install -r requirements.txt pytest pytest-asyncio httpx fakeredis psycopg2-binary
+        # requirements-dev.txt includes requirements.txt + test deps (pytest,
+        # pytest-cov, fakeredis). psycopg2-binary for CI's Postgres service.
+        run: pip install -r requirements-dev.txt httpx psycopg2-binary
 
       - name: Set Environment Variables
         run: |
