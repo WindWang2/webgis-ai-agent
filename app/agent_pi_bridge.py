@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
@@ -615,13 +616,53 @@ class PiBridge:
         return ""
 
     def _extract_error_text(self, result: Any) -> str:
-        """Extract error text from a tool result."""
+        """Extract error text from a tool result, sanitized for SSE output.
+
+        审计 BUG-16：原始实现直接 str(result)，会把内部文件系统绝对路径
+        （/app/data/...、/usr/src/app/...）、堆栈片段等泄露给前端 SSE，
+        便于攻击者做路径侦察。现在统一走 _sanitize_for_client：
+          1. 复用 app.utils.security.sanitize_error_msg（脱敏 DB/API 凭证）；
+          2. 额外把绝对路径替换成 <path>；
+          3. 截断到 500 字符，避免单条 error 事件撑爆 SSE / 日志。
+        """
         if isinstance(result, dict):
             content = result.get("content", [])
             if isinstance(content, list) and content:
-                return content[0].get("text", str(result))
-            return result.get("message", str(result))
-        return str(result)
+                raw = content[0].get("text", str(result))
+            else:
+                raw = result.get("message", str(result))
+        else:
+            raw = str(result)
+        return PiBridge._sanitize_for_client(raw)
+
+    @staticmethod
+    def _sanitize_for_client(text: str) -> str:
+        """Sanitize an error string for safe emission to clients/SSE."""
+        try:
+            from app.utils.security import sanitize_error_msg
+            text = sanitize_error_msg(text)
+        except Exception:  # noqa: BLE001 — 工具层不应因脱敏失败而抛
+            pass
+        text = PiBridge._redact_paths(text)
+        if len(text) > 500:
+            text = text[:500] + "...(truncated)"
+        return text
+
+    @staticmethod
+    def _redact_paths(text: str) -> str:
+        """Replace filesystem absolute paths with a placeholder.
+
+        匹配 Unix 绝对路径（/foo/bar）与 Windows 盘符路径（C:\\\\foo\\\\bar），
+        避免把部署目录结构泄露给前端。lookbehind 排除：
+          - ':' / '/' — URL scheme（https://...）和路径中段，避免把 URL 误伤；
+          - '.' — 相对路径（./data/x.geojson），它们常是用户可见的输入参数；
+          - word char — 避免吞掉标识符中段。
+        """
+        # Unix 绝对路径：至少两段 /word/word...
+        text = re.sub(r'(?<![:\w./])/(?:[\w.-]+/){1,}[\w.-]+', '<path>', text)
+        # Windows 盘符路径：C:\\foo\\bar
+        text = re.sub(r'[A-Za-z]:\\\\(?:[^\\\\\s]+\\\\)+[^\\\\\s]+', '<path>', text)
+        return text
 
 
 # Global bridge instance

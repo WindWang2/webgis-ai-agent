@@ -1,0 +1,38 @@
+# Horizontal Pod Autoscaler (HPA) for API
+# 审计 K8S-06：原本和 Ingress 混在 04-ingress.yaml，按职责拆分到独立文件，
+# 便于运维单独调参/回滚而不动 Ingress 路由。
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: webgis-api-hpa
+  namespace: webgis-prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: webgis-api
+  minReplicas: 2
+  maxReplicas: 10
+  # K8S-06：加 scaleDown.stabilizationWindowSeconds=300。否则负载一回落
+  # HPA 立刻缩容，下一个突发又得冷启动——滚动抖动 + 尾延迟尖刺。
+  # 300s 内只记录"建议副本数"，取窗口最大值再缩，平滑掉短时波动。
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50   # 单次最多缩 50% 现有副本，避免断崖式缩容
+        periodSeconds: 60
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80

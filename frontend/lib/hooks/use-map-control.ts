@@ -4,7 +4,9 @@ import { useCallback } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 
 export function useMapControl(mounted: boolean) {
-  const { setViewport, pushOpLog } = useHudStore();
+  // FE-07：用单字段 selector 订阅，避免订阅整个 store 导致任意状态变更都触发重渲染。
+  const setViewport = useHudStore((s) => s.setViewport);
+  const pushOpLog = useHudStore((s) => s.pushOpLog);
 
   const handleZoomIn = useCallback(() => {
     const { viewport } = useHudStore.getState();

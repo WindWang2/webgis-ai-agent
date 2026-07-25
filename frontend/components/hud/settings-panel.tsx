@@ -13,11 +13,12 @@ import { useHudStore } from '@/lib/store/useHudStore';
 
 import { devOnly } from "@/lib/utils/logger";
 export function SettingsPanel() {
-  const {
-    settingsOpen, setSettingsOpen,
-    setLlmConfig,
-    availableSkills, setAvailableSkills
-  } = useHudStore();
+  // FE-07：用单字段 selector 订阅，避免订阅整个 store 导致任意状态变更都触发重渲染。
+  const settingsOpen = useHudStore((s) => s.settingsOpen);
+  const setSettingsOpen = useHudStore((s) => s.setSettingsOpen);
+  const setLlmConfig = useHudStore((s) => s.setLlmConfig);
+  const availableSkills = useHudStore((s) => s.availableSkills);
+  const setAvailableSkills = useHudStore((s) => s.setAvailableSkills);
 
   const [activeTab, setActiveTab] = useState<'llm' | 'skills'>('llm');
   const [isSaving, setIsSaving] = useState(false);

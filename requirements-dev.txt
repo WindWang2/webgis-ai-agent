@@ -1,0 +1,16 @@
+# Development / test dependencies.
+# 审计 DEPS-06：从 requirements.txt 拆出，避免 pytest 等测试工具进入生产镜像。
+#
+# 用法：
+#   pip install -r requirements-dev.txt
+# （该文件已通过 -r requirements.txt 引入全部生产依赖，无需重复安装生产包。）
+
+-r requirements.txt
+
+# Testing framework
+pytest>=7.4.4
+pytest-asyncio>=0.23.3
+pytest-cov>=7.1.0
+
+# In-memory Redis fake for unit tests (tests/test_async_session_data.py 等使用)
+fakeredis>=2.21.0

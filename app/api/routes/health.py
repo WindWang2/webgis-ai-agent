@@ -98,6 +98,11 @@ def readiness_check():
 
     任一依赖不可达时返回 HTTP 503，让 k8s readinessProbe 暂停把流量打过来；
     全部就绪时返回 HTTP 200。
+
+    SEC-11：响应体只返回极简状态（不附带 DB/Redis/Celery 的具体连通细节），
+    因为 /ready 是无鉴权端点——之前的 body 会把内部依赖拓扑（哪个挂了、
+    哪个连着）泄露给任意调用方，便于攻击者做侦察。详细连通信息只在服务端
+    日志里保留，运维仍可定位故障点。
     """
     db_ready = _check_db()
     llm_ready = _check_llm()
@@ -106,13 +111,14 @@ def readiness_check():
 
     all_ready = db_ready and llm_ready and redis_ready and celery_ready
 
-    body = {
-        "ready": all_ready,
-        "database": "connected" if db_ready else "disconnected",
-        "llm": "reachable" if llm_ready else "unreachable",
-        "redis": "connected" if redis_ready else "disconnected",
-        "celery": "active" if celery_ready else "inactive",
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    }
-    # k8s readinessProbe 只看 HTTP 状态码；body.ready=false 但 200 会被当作就绪。
-    return JSONResponse(status_code=200 if all_ready else 503, content=body)
+    # 详细连通信息写日志，不进响应体
+    logger.info(
+        "readiness: ready=%s db=%s llm=%s redis=%s celery=%s",
+        all_ready, db_ready, llm_ready, redis_ready, celery_ready,
+    )
+
+    # k8s readinessProbe 只看 HTTP 状态码；body 仅返回极简状态，避免信息泄露。
+    return JSONResponse(
+        status_code=200 if all_ready else 503,
+        content={"ready": all_ready},
+    )
