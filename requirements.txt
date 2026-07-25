@@ -88,4 +88,5 @@ esda>=2.5.1
 libpysal>=4.9.2
 
 # Prometheus metrics (审计 I11: exposes /metrics for prometheus scrape)
-prometheus-fastapi-instrumentator>=6.1.0,<7.0.0
+# >=7.0.0 required for FastAPI ≥0.115 / starlette ≥0.40 compat (_IncludedRouter fix)
+prometheus-fastapi-instrumentator>=7.0.0

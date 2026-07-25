@@ -34,10 +34,12 @@ class TestMiddleware:
 class TestRouters:
     def test_health_router_registered(self):
         from app.main import app
-        routes = [r.path for r in app.routes]
+        # FastAPI ≥0.115: app.routes may contain _IncludedRouter objects
+        # that don't have .path. Use getattr with fallback.
+        routes = [getattr(r, 'path', '') for r in app.routes]
         assert any("/api/v1/health" in r for r in routes)
 
     def test_chat_router_registered(self):
         from app.main import app
-        routes = [r.path for r in app.routes]
+        routes = [getattr(r, 'path', '') for r in app.routes]
         assert any("/api/v1/chat" in r for r in routes)
