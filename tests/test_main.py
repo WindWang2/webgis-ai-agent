@@ -32,26 +32,16 @@ class TestMiddleware:
 
 
 class TestRouters:
-    def _all_paths(self, app, depth=0):
-        """Recursively collect all route paths at any nesting depth."""
-        if depth > 5:
-            return []
-        paths = []
-        for route in app.routes:
-            path = getattr(route, 'path', None)
-            if path:
-                paths.append(path)
-            nested = getattr(route, 'routes', None)
-            if nested and depth < 5:
-                paths.extend(self._all_paths(type('obj', (), {'routes': nested})(), depth + 1))
-        return paths
-
     def test_health_router_registered(self):
+        """Verify health router is mounted by checking app.openapi() schema."""
         from app.main import app
-        paths = self._all_paths(app)
-        assert any("/health" in p for p in paths), f"health route not found in {paths[:15]}"
+        schema = app.openapi()
+        paths = list(schema.get("paths", {}).keys())
+        assert any("/health" in p for p in paths), f"health route not in OpenAPI paths: {paths[:15]}"
 
     def test_chat_router_registered(self):
+        """Verify chat router is mounted by checking app.openapi() schema."""
         from app.main import app
-        paths = self._all_paths(app)
-        assert any("/chat" in p for p in paths), f"chat route not found in {paths[:15]}"
+        schema = app.openapi()
+        paths = list(schema.get("paths", {}).keys())
+        assert any("/chat" in p for p in paths), f"chat route not in OpenAPI paths: {paths[:15]}"
