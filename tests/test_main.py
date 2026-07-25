@@ -32,14 +32,28 @@ class TestMiddleware:
 
 
 class TestRouters:
+    def _all_paths(self, app):
+        """Recursively collect all route paths, handling _IncludedRouter nesting."""
+        paths = []
+        for route in app.routes:
+            path = getattr(route, 'path', None)
+            if path:
+                paths.append(path)
+            # _IncludedRouter / APIRoute may have nested .routes
+            nested = getattr(route, 'routes', None)
+            if nested:
+                for sub in nested:
+                    sub_path = getattr(sub, 'path', None)
+                    if sub_path:
+                        paths.append(sub_path)
+        return paths
+
     def test_health_router_registered(self):
         from app.main import app
-        # FastAPI ≥0.115: app.routes may contain _IncludedRouter objects
-        # that don't have .path. Use getattr with fallback.
-        routes = [getattr(r, 'path', '') for r in app.routes]
-        assert any("/api/v1/health" in r for r in routes)
+        paths = self._all_paths(app)
+        assert any("/api/v1/health" in p for p in paths), f"health route not found in {paths[:10]}"
 
     def test_chat_router_registered(self):
         from app.main import app
-        routes = [getattr(r, 'path', '') for r in app.routes]
-        assert any("/api/v1/chat" in r for r in routes)
+        paths = self._all_paths(app)
+        assert any("/api/v1/chat" in p for p in paths), f"chat route not found in {paths[:10]}"
