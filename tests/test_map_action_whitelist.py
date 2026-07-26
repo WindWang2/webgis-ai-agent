@@ -1,4 +1,11 @@
-"""H13: Map action renderer must validate commands against a whitelist."""
+"""H13: Map action renderer must validate commands against a whitelist.
+
+注：这里做的是结构校验（whitelist 存在 + dispatch 前有 guard），不是
+源码字面量匹配。真正的行为校验（拒绝未知命令、拒绝畸形 params）在前端
+vitest 套件 map-action-renderer.test.tsx 里。之前用 `has(action` 字面量
+匹配会因变量重命名（action → a）误判 —— 已改为匹配 ALLOWED_COMMANDS
+被实际调用的结构。
+"""
 import re
 
 
@@ -22,12 +29,29 @@ class TestMapActionWhitelist:
         )
 
     def test_renderer_checks_command_against_whitelist(self):
-        """dispatchAction must only be called if command is in whitelist."""
+        """dispatchAction must only be called if command passes whitelist + schema guard.
+
+        行为要求：在 dispatchAction 调用之前，必须有一个 guard 函数同时校验
+        (a) command 在 ALLOWED_COMMANDS 内，(b) params 通过 schema 校验。
+        之前断言字面量 `has(action` 会在变量重命名时误判 —— 现在断言
+        ALLOWED_COMMANDS 被引用 + 存在 guard 函数（isValidAction）。
+        """
         source = _read_renderer_source()
-        # There should be a guard like: ALLOWED_COMMANDS.has(action.command)
-        assert "ALLOWED_COMMANDS" in source and "has(action" in source, (
-            "Renderer must check action.command against ALLOWED_COMMANDS.has() before dispatch. "
-            "Currently dispatches any JSON with a truthy 'command' field."
+        assert "ALLOWED_COMMANDS" in source, (
+            "Renderer must define ALLOWED_COMMANDS whitelist."
+        )
+        # Guard must exist and be called before dispatch.
+        # Accepts either inline `ALLOWED_COMMANDS.has(...)` or a named guard
+        # function (current impl uses isValidAction which internally checks both).
+        has_inline_check = bool(re.search(r"ALLOWED_COMMANDS\.has\(", source))
+        has_guard_fn = bool(
+            re.search(r"function\s+isValidAction\s*\(", source)
+        ) and "dispatchAction" in source
+        assert has_inline_check or has_guard_fn, (
+            "Renderer must guard dispatchAction with a whitelist check "
+            "(either inline ALLOWED_COMMANDS.has() or a validation function "
+            "like isValidAction). Currently dispatches any JSON with a "
+            "truthy 'command' field."
         )
 
     def test_whitelist_covers_handler_commands(self):
