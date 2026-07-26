@@ -1,13 +1,14 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { History, X, Plus, Search } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import type { SessionSummary } from '@/lib/store/hud-types';
 
 interface HistoryDrawerProps {
   open: boolean;
   onClose: () => void;
-  onSelect: (session: any) => void;
+  onSelect: (session: SessionSummary | null) => void;
   accentColor: string;
 }
 
@@ -25,10 +26,33 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
     );
   }, [sessions, search]);
 
-  const handleSelect = (session: any) => {
+  const handleSelect = (session: SessionSummary) => {
     onSelect(session);
     onClose();
-  };
+  }
+
+  // 审计 a11y HIGH：drawer 缺 Escape 键关闭 + 焦点恢复。打开时聚焦 drawer，
+  // 关闭时把焦点还给之前活跃的元素。
+  const panelRef = useRef<HTMLDivElement>(null);
+  const previouslyFocused = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    previouslyFocused.current = document.activeElement as HTMLElement | null;
+    // 聚焦 drawer 面板（搜搜索框，便于键盘用户立刻操作）
+    const searchInput = panelRef.current?.querySelector<HTMLInputElement>('input[type="text"], input');
+    searchInput?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      previouslyFocused.current?.focus?.();
+    };
+  }, [open, onClose]);
 
   if (!open) return null;
 
@@ -39,11 +63,17 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
         className="flex-1 bg-slate-900/20"
         style={{ backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
         onClick={onClose}
+        aria-hidden="true"
       />
 
       {/* Drawer panel */}
       <div
-        className="w-[340px] shrink-0 flex flex-col border-l border-slate-200/60 shadow-[-2px_0_24px_rgba(15,23,42,0.09)]"
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="history-drawer-title"
+        tabIndex={-1}
+        className="w-[340px] shrink-0 flex flex-col border-l border-slate-200/60 shadow-[-2px_0_24px_rgba(15,23,42,0.09)] outline-none"
         style={{
           background: 'rgba(252,253,254,0.92)',
           backdropFilter: 'blur(28px)',
@@ -61,9 +91,10 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
         {/* Header */}
         <div className="shrink-0 flex items-center gap-2 px-4 py-3 border-b border-slate-200/60">
           <History size={16} style={{ color: accentColor }} />
-          <h2 className="flex-1 text-[15px] font-semibold text-slate-800">历史会话</h2>
+          <h2 id="history-drawer-title" className="flex-1 text-[15px] font-semibold text-slate-800">历史会话</h2>
           <button
             onClick={() => { onSelect(null); onClose(); }}
+            aria-label="新建会话"
             className="flex items-center gap-1 px-2 py-1 rounded-md text-[10.5px] font-medium text-white transition-opacity hover:opacity-90"
             style={{ backgroundColor: accentColor }}
           >
@@ -72,6 +103,7 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
           </button>
           <button
             onClick={onClose}
+            aria-label="关闭历史会话"
             className="p-1.5 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
           >
             <X size={15} />
@@ -83,8 +115,10 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
           <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-slate-100/60 border border-slate-200/60">
             <Search size={13} className="text-slate-300 shrink-0" />
             <input
+              type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              aria-label="搜索历史会话"
               placeholder="搜索会话..."
               className="flex-1 bg-transparent text-[14px] text-slate-700 placeholder:text-slate-300 outline-none"
             />
@@ -92,9 +126,13 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
         </div>
 
         {/* Session list */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto" role="list" aria-label="历史会话列表">
           {filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center px-6">
+            <div
+              className="flex flex-col items-center justify-center h-full text-center px-6"
+              role="status"
+              aria-live="polite"
+            >
               <History size={20} className="text-slate-200 mb-2" />
               <p className="text-[13.5px] text-slate-400">
                 {search ? '没有匹配的会话' : '暂无历史会话'}
@@ -107,6 +145,7 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
                   key={session.id}
                   onClick={() => handleSelect(session)}
                   className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-slate-50/80 transition-colors group"
+                  role="listitem"
                 >
                   {/* Title */}
                   <p className="text-[12.5px] font-medium text-slate-700 truncate group-hover:text-slate-900">

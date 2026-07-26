@@ -69,11 +69,22 @@ export default function MiniMd({ text }: MiniMdProps) {
               </code>
             );
           },
-          a: ({ href, children }) => (
-            <a href={href} target="_blank" rel="noopener noreferrer" className="text-green-600 underline hover:text-green-700">
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) => {
+            // 审计 F36：纵然顶层 urlTransform={safeUrlTransform} 已过滤，
+            // 这里再显式应用一次作为纵深防御 —— 避免未来 ReactMarkdown
+            // 版本变更 component props 传递顺序时绕过过滤。
+            const safeHref = safeUrlTransform(href ?? '', 'href', {
+              type: 'element',
+              tagName: 'a',
+              properties: {},
+              children: [],
+            });
+            return (
+              <a href={safeHref ?? undefined} target="_blank" rel="noopener noreferrer" className="text-green-600 underline hover:text-green-700">
+                {children}
+              </a>
+            );
+          },
           table: ({ children }) => (
             <div className="overflow-x-auto my-2 rounded-lg border border-slate-200/80">
               <table className="w-full text-[14px]">{children}</table>

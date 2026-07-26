@@ -13,6 +13,45 @@ const ALLOWED_COMMANDS = new Set([
   'apply_layer_filter',
 ]);
 
+/**
+ * 审计 FE-04（map-action-renderer params validation）：dispatch 前对每条命令
+ * 的关键 params 做最小 schema 校验。AI 输出可能带畸形 params，直接 dispatch
+ * 会让 MapLibre 抛未捕获异常或写入脏 store 状态。
+ *
+ * 这里只校验"该命令必须的字段存在且类型正确"，不做值域校验（值域由
+ * MapLibre / store reducer 兜底）。拒绝的 action 会被静默丢弃并记入 errorCount。
+ */
+const REQUIRED_PARAMS: Record<string, (p: Record<string, unknown>) => boolean> = {
+  add_layer: (p) => typeof p.id === 'string',
+  remove_layer: (p) => typeof p.id === 'string' || typeof p.layer_id === 'string',
+  fly_to: (p) => Array.isArray(p.center) && p.center.length === 2,
+  zoom_to_bbox: (p) => Array.isArray(p.bbox) && p.bbox.length === 4,
+  set_map_view: (p) => Array.isArray(p.center) || typeof p.zoom === 'number',
+  add_heatmap_raster: (p) => typeof p.url === 'string' || typeof p.image === 'string',
+  add_raster_layer: (p) => typeof p.url === 'string' || typeof p.image === 'string',
+  add_native_heatmap: (p) => !!p.geojson || typeof p.id === 'string',
+  base_layer_change: (p) => typeof p.name === 'string' || typeof p.id === 'string',
+  layer_visibility_update: (p) => typeof p.layer_id === 'string' || typeof p.id === 'string',
+  layer_style_update: (p) => typeof p.layer_id === 'string' || typeof p.id === 'string',
+  reorder_layer: (p) => Array.isArray(p.layers) || Array.isArray(p.order),
+  export_map: () => true,
+  add_marker: (p) => Array.isArray(p.center) || Array.isArray(p.coordinate),
+  draw_measurement: () => true,
+  clear_annotations: () => true,
+  apply_layer_filter: (p) => typeof p.layer_id === 'string' || typeof p.id === 'string',
+};
+
+function isValidAction(action: unknown): action is { command: string; params: Record<string, unknown> } {
+  if (typeof action !== 'object' || action === null) return false;
+  const a = action as { command?: unknown; params?: unknown };
+  if (typeof a.command !== 'string' || !ALLOWED_COMMANDS.has(a.command)) return false;
+  // params 可选（部分命令无参）；存在则必须是普通对象
+  const params = (a.params ?? {}) as Record<string, unknown>;
+  if (typeof params !== 'object' || params === null || Array.isArray(params)) return false;
+  const validator = REQUIRED_PARAMS[a.command];
+  return validator ? validator(params) : true;
+}
+
 interface MapActionRendererProps {
   content: string;
 }
@@ -96,21 +135,23 @@ export function MapActionRenderer({ content }: MapActionRendererProps) {
 
         try {
           const action = JSON.parse(block);
-          if (action && action.command && ALLOWED_COMMANDS.has(action.command)) {
+          // FE-04: schema-validate before dispatch
+          if (isValidAction(action)) {
             dispatchedRef.current.add(blockKey);
-            dispatchAction(action);
+            dispatchAction(action as Parameters<typeof dispatchAction>[0]);
             successCount++;
             newBlocks++;
           }
+          // else: malformed params or unknown command → silently skip
         } catch {
-          // Individual block failed, skip it
+          // Individual block failed to parse, skip it
         }
       }
 
       if (successCount > 0 && newBlocks > 0) {
         setStatus('success');
       } else if (jsonBlocks.length > 0 && newBlocks === 0 && successCount === 0) {
-        // All blocks were already dispatched or failed
+        // All blocks were already dispatched, malformed, or rejected
         if (dispatchedRef.current.size === 0) setStatus('error');
       }
     } catch {
@@ -118,10 +159,23 @@ export function MapActionRenderer({ content }: MapActionRendererProps) {
     }
   }, [content, dispatchAction]);
 
-  if (status === 'error') return null;
+  // 审计 a11y：之前 error 状态返回 null，把渲染失败藏起来。现在渲染一个
+  // 带 role="status" 的可访问提示，但用 aria-hidden 对可见用户保持安静
+  // （错误是 AI 输出畸形 JSON，不该打扰终端用户；保留给辅助技术探测）。
+  if (status === 'error') {
+    return (
+      <span role="status" aria-live="off" className="sr-only">
+        地图指令解析失败
+      </span>
+    );
+  }
 
   return (
-    <div className="my-2 flex items-center gap-2 rounded-md bg-blue-50/50 p-2 text-sm text-blue-600 dark:bg-blue-950/30 dark:text-blue-400">
+    <div
+      className="my-2 flex items-center gap-2 rounded-md bg-blue-50/50 p-2 text-sm text-blue-600 dark:bg-blue-950/30 dark:text-blue-400"
+      role="status"
+      aria-live="polite"
+    >
       {status === 'parsing' ? (
         <MapIcon className="h-4 w-4 animate-pulse" />
       ) : (

@@ -71,19 +71,22 @@ function SuggestedPromptButtons({ onSend, accentColor, isDark }: { onSend: (text
 }
 
 /* ─── Props ─── */
+interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  think?: string;
+  timestamp: Date | number | null;
+  isThinking?: boolean;
+  charts?: unknown[];
+  toolCalls?: import('@/lib/store/hud-types').ToolCallEntry[];
+  plan?: import('@/lib/store/hud-types').PlanProposalPayload;
+  agentPlan?: import('@/lib/types/agent-plan').AgentPlanState;
+  layerAdded?: string;
+}
+
 interface ChatTabProps {
-  messages: Array<{
-    id: string;
-    role: 'user' | 'assistant';
-    content: string;
-    timestamp: Date | number | null;
-    isThinking?: boolean;
-    charts?: unknown[];
-    toolCalls?: import('@/lib/store/hud-types').ToolCallEntry[];
-    plan?: import('@/lib/store/hud-types').PlanProposalPayload;
-    agentPlan?: import('@/lib/types/agent-plan').AgentPlanState;
-    layerAdded?: string;
-  }>;
+  messages: ChatMessage[];
   aiStatus: AiStatus;
   onSend: (text: string) => void;
   accentColor: string;
@@ -167,7 +170,7 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
 
         {/* Message list */}
         <div className="px-3 py-3 space-y-3">
-          {messages.map((msg: any, idx: number) => {
+          {messages.map((msg, idx) => {
             const isUser = msg.role === 'user';
             const time = (mounted && msg.timestamp)
               ? new Date(msg.timestamp).toLocaleTimeString('zh-CN', {
@@ -325,6 +328,7 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
+            aria-label="输入空间分析指令"
             placeholder="输入空间分析指令..."
             rows={1}
             style={{
