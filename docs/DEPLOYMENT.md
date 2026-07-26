@@ -2,7 +2,7 @@
 
 ## 前置环境要求 (Prerequisites)
 - Docker & Docker Compose (生产首选)
-- Python 3.10+
+- Python 3.12+ (`pyproject.toml` 锁定 `requires-python >= 3.12`，CI / Docker 均使用 3.12)
 - Node.js 18+
 - Redis 6+ (V3.2 强制依赖)
 - PostgreSQL 14+ (携带 PostGIS 3+)
@@ -91,8 +91,15 @@ kubectl create secret generic webgis-secret --namespace=webgis-prod \
 
 ### Docker Compose
 
-把凭证写进 `.env.production`（gitignored），compose 的 `${VAR:?...}` 语法
-会在缺失时强制 fail。
+凭证文件因 compose 变体而异（审计 D2 澄清）：
+
+| Compose 文件 | 凭证文件 | 用途 |
+|--------------|----------|------|
+| `docker-compose.yml` | `.env`（从 `.env.example` 复制） | 本地开发 |
+| `docker-compose.prod.yml` | `.env.production`（gitignored） | 标准生产 |
+| `docker-compose.prod.secure.yml` | `.env.Priv`（从 `.env.Priv.example` 复制，gitignored） | 加固生产（推荐） |
+
+所有变体的 `${VAR:?...}` 语法会在关键凭证缺失时强制 fail，拒绝用弱默认值启动。
 
 ### 初始 admin 账号
 

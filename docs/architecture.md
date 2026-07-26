@@ -87,8 +87,11 @@ graph TD
 
 ### 3.2 SSE Keep-Alive 心跳保活阵列
 在进行动辄数分钟的全国级道路网相交测算时，前端与 FastAPI 极易因为长时间无响应而发生 `ERR_CONNECTION_RESET`。
-**V2.0 解决方案**：
-在 `chat_engine.py` 的主异步生成器中，植入了一组独立看门狗循环。当测算被丢给 Celery 且进入阻塞等待时，看门狗每隔 **5 秒**向传输层丢弃一个透明的注释型数据框（如 `data: [HEARTBEAT]\n\n` 或空字段）。此机制从硬件网关（Nginx等）层面维系了通道常开。
+**V2.0 解决方案**（两种互补实现）：
+- **`chat_engine.py`**：在工具执行阻塞等待期间，事件驱动地发送 SSE 注释帧 `": keep-alive\n\n"`（无固定间隔，按需触发）。
+- **`explorer/orchestrator.py`**：独立看门狗循环，每隔 **15 秒**发送 `sse_event("heartbeat", {"ts": ...})` 数据帧。
+
+此机制从硬件网关（Nginx等）层面维系了通道常开。
 
 3.3 Map State & Sensory Integration (感官与状态同步)
 为了实现“一切皆 Agent”，我们构建了双向的感官反馈闭环：
