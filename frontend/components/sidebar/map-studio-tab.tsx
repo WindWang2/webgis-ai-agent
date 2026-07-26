@@ -17,6 +17,8 @@ const iconForType: Record<string, string> = {
 
 export function MapStudioTab() {
   const [activeSubTab, setActiveSubTab] = useState<'layout' | 'history'>('layout');
+  // 审计 findings.md：清空列表是破坏性操作，加确认状态防误触。
+  const [confirmingClear, setConfirmingClear] = useState(false);
   const exportSettings = useHudStore((s) => s.exportSettings);
   const updateExportSettings = useHudStore((s) => s.updateExportSettings);
   const { dispatchAction } = useMapAction();
@@ -350,13 +352,24 @@ export function MapStudioTab() {
               </span>
               {exports.length > 0 && (
                 <button
-                  onClick={() => setExports([])}
+                  onClick={() => {
+                    if (confirmingClear) {
+                      setExports([]);
+                      setConfirmingClear(false);
+                    } else {
+                      setConfirmingClear(true);
+                      // 3 秒后自动取消确认状态，避免用户误点后永久停留在"确认"文字
+                      setTimeout(() => setConfirmingClear(false), 3000);
+                    }
+                  }}
+                  onBlur={() => setConfirmingClear(false)}
                   className="text-[14px] px-2 py-1 rounded transition-colors"
                   style={{ color: isDark ? '#fca5a5' : '#ef4444' }}
                   onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(248,113,113,0.15)' : 'rgba(254,226,226,0.6)'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                  aria-label={confirmingClear ? '再次点击确认清空所有导出文件' : '清空导出列表'}
                 >
-                  清空列表
+                  {confirmingClear ? '确认清空？' : '清空列表'}
                 </button>
               )}
             </div>

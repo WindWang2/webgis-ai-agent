@@ -2,6 +2,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 import { MapIcon, CheckCircle2 } from 'lucide-react';
+import { devOnly } from '@/lib/utils/logger';
 
 const ALLOWED_COMMANDS = new Set([
   'add_layer', 'fly_to', 'zoom_to_bbox', 'set_map_view',
@@ -143,8 +144,11 @@ export function MapActionRenderer({ content }: MapActionRendererProps) {
             newBlocks++;
           }
           // else: malformed params or unknown command → silently skip
-        } catch {
-          // Individual block failed to parse, skip it
+        } catch (e) {
+          // 审计 findings.md：之前空 catch 让 JSON 解析失败完全不可观测。
+          // 用 devOnly.warn 而非 error —— 流式内容中途的部分 JSON 是预期情况，
+          // 不是真正的错误；仅当完整块解析失败时才有诊断价值。
+          devOnly.warn('[MapActionRenderer] JSON block parse failed:', (e as Error).message, block.slice(0, 80));
         }
       }
 
@@ -154,7 +158,9 @@ export function MapActionRenderer({ content }: MapActionRendererProps) {
         // All blocks were already dispatched, malformed, or rejected
         if (dispatchedRef.current.size === 0) setStatus('error');
       }
-    } catch {
+    } catch (e) {
+      // 审计 findings.md：外层 catch 同样改为可观测。
+      devOnly.error('[MapActionRenderer] Unexpected error in effect:', e);
       setStatus('error');
     }
   }, [content, dispatchAction]);
