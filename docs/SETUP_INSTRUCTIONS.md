@@ -60,6 +60,19 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 cd frontend && npm run dev
 ```
 
+### manage.py 命令清单
+
+除 `check` 和 `dev` 之外，`manage.py` 还提供以下子命令（审计 D2 补全）：
+
+| 命令 | 用途 |
+|------|------|
+| `python manage.py init-db` | 初始化数据库（创建所有表）。首次部署或测试环境重置时使用。 |
+| `python manage.py create-admin <username> <email> <password>` | 创建管理员账号。**仅当公开注册关闭时**需要（生产环境推荐关闭公开注册，通过此命令创建初始管理员）。 |
+| `python manage.py server` | 单独启动 FastAPI 后端（不含 Celery Worker）。 |
+| `python manage.py worker` | 单独启动 Celery Worker（不含后端）。 |
+| `python manage.py check` | 基础设施诊断（Agent CNS Health Check）。 |
+| `python manage.py dev` | 全栈一键启动（Backend + Worker + Frontend）。 |
+
 ## 4. 开发校验与提交铁律
 
 1. **绝对禁传大数**: 在编写新的 Python Backend Tool 时，绝不允许把十万个地图图元当结果直接打包塞给 LLM 返回通道。必须使用系统的 `session_data` 转存为引用 ID 后流转。
