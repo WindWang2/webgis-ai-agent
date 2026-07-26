@@ -6,7 +6,7 @@ import { UploadZone } from "@/components/upload/upload-zone"
 import type { UploadResponse } from "@/lib/api/upload"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { ChartRenderer } from "@/components/chat/chart-renderer"
+import { ChartRenderer, adaptChartData } from "@/components/chat/chart-renderer"
 import { MapActionRenderer } from "@/components/chat/map-action-renderer"
 import { safeUrlTransform } from "@/components/chat/mini-md"  // FE-06: 复用 F36 XSS 防护
 import { TaskProgress } from "./task-progress"
@@ -195,14 +195,21 @@ export function ChatHud({
                         <MapActionRenderer content={message.content} />
                       </div>
                     )}
-                    {(message.charts as any[])?.map((chart: any, idx: number) => (
-                      <div
-                        key={`chart-${message.id}-${idx}`}
-                        className="mt-3 p-3 rounded-lg bg-white/[0.02] border border-white/[0.04]"
-                      >
-                        <ChartRenderer chart={chart} />
-                      </div>
-                    ))}
+                    {/* 审计 FE-05：之前用 `as any[]` 强转绕过类型，且把未验证的
+                        chart 直接送进 ChartRenderer（它声明 ChartData 但实际拿到 any）。
+                        现在用 adaptChartData 做运行时校验，丢弃畸形 chart。 */}
+                    {message.charts?.map((raw, idx) => {
+                      const chart = adaptChartData(raw)
+                      if (!chart) return null
+                      return (
+                        <div
+                          key={`chart-${message.id}-${idx}`}
+                          className="mt-3 p-3 rounded-lg bg-white/[0.02] border border-white/[0.04]"
+                        >
+                          <ChartRenderer chart={chart} />
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </div>
