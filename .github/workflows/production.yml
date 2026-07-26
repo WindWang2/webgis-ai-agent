@@ -158,6 +158,19 @@ jobs:
         working-directory: ./frontend
         run: npm run test:ci
 
+      - name: TypeScript Check
+        # tsc --noEmit 抓类型错误（比 next build 快，单独跑让类型错误优先暴露）。
+        working-directory: ./frontend
+        run: npm run typecheck
+
+      - name: Production Build
+        # 审计 CI-GAP（PR #151 暴露）：之前 test-frontend 只跑 vitest，不跑 next build。
+        # use-client 指令顺序错误（webpack-only 检查）直到 Docker prod build 才被发现，
+        # 已合入 master。在此 PR 阶段跑 next build，把生产构建错误前移到快速反馈环。
+        # next build 同时校验：指令顺序、SSR 兼容性、静态导出、webpack 配置。
+        working-directory: ./frontend
+        run: npm run build
+
       - name: Upload Coverage
         uses: codecov/codecov-action@v4
         with:
