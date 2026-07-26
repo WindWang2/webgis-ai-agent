@@ -298,17 +298,32 @@ jobs:
 
       - name: Start Preview Stack
         run: |
-          # 审计 P0：docker-compose.preview.yml 不存在，改用 docker-compose.prod.secure.yml
-          # （它也支持通过环境变量定制预览实例，无需额外 overlay 文件）。
-          if [ -f .env.prod.example ]; then
-            cp .env.prod.example .env.preview
-            sed -i 's|/webgis_prod|/webgis_preview|g' .env.preview
+          # 审计 CICD-04：docker-compose.prod.secure.yml 的 api/celery 都声明
+          # `env_file: .env.Priv`，并用 `${DB_PWD:?...}` / `${REDIS_PASSWORD:?...}`
+          # / `${JWT_SECRET_KEY:?...}` 强制校验 —— 因此 compose 启动前必须在
+          # 工作目录存在 .env.Priv（不是 .env.preview / .env.prod）。
+          # .env.Priv.example 已提交，提供占位凭据；此处复制并填入随机值，
+          # 避免预览栈用默认弱口令。
+          if [ ! -f .env.Priv.example ]; then
+            echo "缺少 .env.Priv.example，无法生成预览环境凭据" >&2
+            exit 1
           fi
-          
-          # 修改端口避免冲突
+          cp .env.Priv.example .env.Priv
+
+          # 预览实例用随机强口令，并隔离 DB 名避免与生产混淆。
+          RANDOM_DB_PWD=$(openssl rand -hex 24)
+          RANDOM_REDIS_PWD=$(openssl rand -hex 24)
+          RANDOM_JWT=$(openssl rand -hex 32)
+          sed -i \
+            -e "s|^DB_PWD=.*|DB_PWD=${RANDOM_DB_PWD}|" \
+            -e "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=${RANDOM_REDIS_PWD}|" \
+            -e "s|^JWT_SECRET_KEY=.*|JWT_SECRET_KEY=${RANDOM_JWT}|" \
+            .env.Priv
+
+          # 修改端口避免与其它实例冲突
           export API_PORT=$((9000 + $RANDOM % 1000))
           export FRONTEND_PORT=$((13000 + $RANDOM % 1000))
-          
+
           docker-compose -f docker-compose.prod.secure.yml up -d
         env:
           IMAGE_TAG: ${{ github.sha }}
@@ -411,19 +426,25 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch'
     environment: production
+    permissions:
+      contents: read
+      packages: read  # 审计 CICD-03：从 ghcr 拉取历史 SHA tag 需要 packages: read
     steps:
-      # 审计 I27：之前 rollback checkout 旧 tag + docker build from source --
+      # 审计 CICD-03：之前 rollback checkout PREV_SHA + docker build from source ——
       # 慢（10+ 分钟）+ 不可重现（依赖可能 drift）+ 可能因依赖变化 build 失败。
-      # 改为：列出最近 N 个已 push 的 image tag，让 operator 选一个 redeploy。
-      # 真正的不可变 artifact 回滚需要 image registry（当前 push:false 模式下，
-      # 退化为 rebuild 但用之前 commit 的 source -- 至少 source 是 pinned 的）。
+      # 现改为：优先 docker pull registry 中该 commit 对应的 SHA tag（秒级、不可变）；
+      # 仅当 registry 没有该 tag（部署早于本流水线的 push 步骤上线）时，才回退到从
+      # pinned source 重新构建。SSH 分支与 deploy-prod 保持一致。
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 20  # 拿足够 history 找上一个稳定 commit
 
+      - name: Lowercase IMAGE_NAME
+        # docker tag 要求全小写；github.repository 可能含大写（见 build job 同名 step）
+        run: echo "IMAGE_NAME=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
       - name: Find Previous Stable Commit
-        id: prev-commit
         run: |
           # 跳过当前 HEAD，找上一个 merge commit（通常是稳定 PR 合并点）
           PREV_SHA=$(git log --merges --skip=1 -n 1 --format='%H')
@@ -435,7 +456,29 @@ jobs:
           echo "将回滚到: $PREV_SHA"
           git log --oneline -1 $PREV_SHA
 
-      - name: Checkout Previous Version
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull Previous Image from Registry
+        id: pull
+        continue-on-error: true
+        run: |
+          # 审计 CICD-03：build job 已 push ${IMAGE_NAME}:${{ github.sha }} 到 registry，
+          # 故历史 commit PREV_SHA 同样应存在对应 SHA tag（若当时也走了本流水线）。
+          # 用不可变 artifact 回滚，而非重新 docker build。
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_SHA }}
+          # 打 :rollback tag 供下游 deploy 步骤统一引用（与原 deploy 流程镜像名对齐）。
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_SHA }} \
+                     ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback
+
+      - name: Fallback - Checkout Previous Version
+        # 审计 CICD-03：registry 中无 PREV_SHA tag（部署早于 push 步骤上线）时，
+        # 退化为从 pinned source 重建 —— 至少 source 是 pin 到 PREV_SHA 的。
+        if: steps.pull.outcome == 'failure'
         uses: actions/checkout@v4
         with:
           ref: ${{ env.PREV_SHA }}
@@ -443,17 +486,39 @@ jobs:
           # 审计 CICD-02：历史版本构建同样需要 vendor/pi 子模块。
           submodules: recursive
 
-      - name: Build Previous Image
+      - name: Fallback - Rebuild Previous Image
+        if: steps.pull.outcome == 'failure'
         run: |
-          # 仍是 rebuild（push:false 模式下没有 registry 可 pull），
-          # 但 source 至少是 pinned 到 ${{ env.PREV_SHA }}，比原来的
-          # git describe tag 更精确。
+          echo "⚠️ registry 中未找到 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_SHA }}，回退从源码构建"
           docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback -f Dockerfile.prod .
 
-      - name: Deploy Rollback
+      - name: Configure SSH Access
+        if: vars.SSH_HOST != ''
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Deploy Rollback via SSH
+        if: vars.SSH_HOST != ''
         run: |
-          # 审计 P0：rollback 使用 docker-compose.prod.secure.yml 与生产部署一致。
-          docker-compose -f docker-compose.prod.secure.yml up -d
+          # 与 deploy-prod 一致：把 compose + .env.Priv + 镜像推到生产主机再 up。
+          docker save ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback > /tmp/rollback-image.tar
+          scp docker-compose.prod.secure.yml ${{ vars.SSH_HOST }}:~/
+          scp .env.Priv ${{ vars.SSH_HOST }}:~/
+          scp /tmp/rollback-image.tar ${{ vars.SSH_HOST }}:~/
+
+          ssh ${{ vars.SSH_HOST }} << 'EOF'
+            docker load < ~/rollback-image.tar
+            docker compose -f docker-compose.prod.secure.yml up -d
+            docker system prune -f
+          EOF
+
+      - name: Deploy Rollback via Container Registry
+        if: vars.SSH_HOST == ''
+        run: |
+          # 无 SSH_HOST：镜像（pull 或 rebuild 得到）push 到 registry，目标主机自行 pull。
+          # （同 deploy-prod 的 registry 分支：实际服务器 pull/up 步骤需在目标主机执行。）
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback
 
       - name: Verify Rollback
         run: |
