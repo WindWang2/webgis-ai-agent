@@ -1,6 +1,6 @@
-import { devOnly } from "@/lib/utils/logger";
 "use client"
 
+import { devOnly } from "@/lib/utils/logger";
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid,
