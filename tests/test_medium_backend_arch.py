@@ -75,17 +75,21 @@ def test_m2_session_cache_size_configurable(monkeypatch):
 
 
 def test_m2_session_cache_default_is_200():
-    """M2：默认 capacity 是 200（不是原来的 50）。"""
-    # 不设环境变量（用默认）
+    """M2：默认 capacity 是 200（不是原来的 50）。
+
+    行为测试：不设 SESSION_CACHE_SIZE 环境变量，构造 ChatEngine 实例，验证
+    _sessions.capacity == 200。旧 bug：默认 50，>50 并发会话 evict 最老。
+    """
     import os
     saved = os.environ.pop("SESSION_CACHE_SIZE", None)
     try:
         from app.services.chat_engine import ChatEngine
         from app.tools.registry import ToolRegistry
-        # capacity 在 __init__ 时读 env，所以新建实例拿默认
-        # 但如果 env 在模块加载时已缓存可能拿到旧值 -- 用源码 inspect 兜底
-        source = inspect.getsource(ChatEngine.__init__)
-        assert "200" in source, "默认 SESSION_CACHE_SIZE 应该是 200"
+
+        engine = ChatEngine(ToolRegistry())
+        assert engine._sessions.capacity == 200, (
+            f"默认 SESSION_CACHE_SIZE 应为 200，实际 {engine._sessions.capacity}"
+        )
     finally:
         if saved is not None:
             os.environ["SESSION_CACHE_SIZE"] = saved
@@ -95,16 +99,38 @@ def test_m2_session_cache_default_is_200():
 
 
 def test_m3_snapshot_is_async_and_locked():
-    """M3：snapshot 必须是 async + 加锁。"""
+    """M3：snapshot 必须是 async（之前 sync 不加锁会 race）。"""
     from app.services.provider_health import ProviderHealthTracker
 
     assert inspect.iscoroutinefunction(ProviderHealthTracker.snapshot), (
         "snapshot 必须是 async（之前 sync 不加锁会 race）"
     )
 
-    source = inspect.getsource(ProviderHealthTracker.snapshot)
-    assert "async with self._lock" in source, "snapshot 必须加 self._lock"
-    assert "list(self._state" in source, "snapshot 应用 list() 防 iterate-mutate"
+
+@pytest.mark.asyncio
+async def test_m3_snapshot_returns_isolated_copy():
+    """M3：snapshot 返回的必须是内部状态的拷贝，后续 record 不影响已取快照。
+
+    行为测试替代旧的源码 inspect（断言 "list(self._state" in source）。这验证
+    了 snapshot 用 list() copy 防 iterate-mutate 的真实效果：先取快照，再并发
+    record 新 provider，旧快照不应变化。
+    """
+    from app.services.provider_health import ProviderHealthTracker
+
+    tracker = ProviderHealthTracker()
+    await tracker.record_attempt("amap")
+    snap1 = await tracker.snapshot()
+    assert "amap" in snap1
+
+    # 取快照后再新增 provider / 修改状态
+    await tracker.record_attempt("bing")
+
+    # 旧快照不应被后续 mutate 影响（说明 snapshot 返回的是拷贝）
+    assert "bing" not in snap1, "snapshot 返回了内部 dict 的引用而非拷贝"
+    assert "amap" in snap1
+    # 新快照包含新 provider
+    snap2 = await tracker.snapshot()
+    assert "bing" in snap2
 
 
 @pytest.mark.asyncio
@@ -129,18 +155,78 @@ async def test_m3_snapshot_does_not_raise_on_concurrent_mutation():
 # ── M4: 非流式 chat() 注册 TaskTracker ──────────────────────────────────
 
 
-def test_m4_chat_registers_tracker_task():
-    """M4：chat() 源码必须包含 tracker.create / complete_task。"""
-    from app.services.chat_engine import ChatEngine
+@pytest.mark.asyncio
+async def test_m4_chat_registers_and_completes_tracker_task(monkeypatch):
+    """M4：非流式 chat() 必须把任务注册进 TaskTracker 并在结束时 complete。
 
-    source = inspect.getsource(ChatEngine.chat)
-    assert "self.tracker.create" in source, "chat() 未注册 TaskTracker task"
-    assert "self.tracker.complete_task" in source
-    assert "self.tracker.is_cancelled" in source, "chat() 缺 cooperative cancel 检查"
-    assert "self.tracker.fail_task" in source, "chat() 异常路径未调 fail_task"
+    行为测试替代旧的源码 inspect（断言 "self.tracker.create" in source）。旧 bug：
+    非流式 chat() 不注册 TaskTracker -> 通过 /chat/completions 发起的任务在
+    /tasks 端点不可见，也无法 cancel。本测试调用 chat()，验证 tracker 里出现该
+    session 的任务且最终状态为 completed。
+    """
+    from app.services.chat_engine import ChatEngine
+    from app.services.task_tracker import TaskStatus
+    from app.services.tool_catalog import ToolCatalog
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+    engine = ChatEngine(reg, tool_catalog=ToolCatalog(reg))
+
+    # 跳过规划，让主 LLM 直接返回最终回复（无 tool_calls -> 立即 complete_task）
+    async def fake_maybe_plan(self, *a, **k):
+        return None
+    monkeypatch.setattr(engine, "_maybe_plan",
+                        fake_maybe_plan.__get__(engine, type(engine)))
+
+    async def fake_call_llm(*a, **k):
+        return {"choices": [{"message": {"role": "assistant",
+                                          "content": "hello back"}}]}
+    monkeypatch.setattr(engine, "_call_llm", fake_call_llm)
+
+    result = await engine.chat("hi", session_id="sess-M4")
+
+    assert "hello back" in result["content"]
+    # 核心：该 session 的任务被注册进 tracker 且状态为 completed
+    tasks = [t for t in engine.tracker.list_all() if t.session_id == "sess-M4"]
+    assert tasks, "chat() 未注册 TaskTracker task -> 任务在 /tasks 端点不可见"
+    assert tasks[0].status == TaskStatus.completed, (
+        f"任务未标记 completed，实际 {tasks[0].status}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_m4_chat_marks_task_failed_on_llm_error(monkeypatch):
+    """M4：chat() 异常路径必须 fail_task，避免任务卡在 running 状态。"""
+    from app.services.chat_engine import ChatEngine
+    from app.services.task_tracker import TaskStatus
+    from app.services.tool_catalog import ToolCatalog
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+    engine = ChatEngine(reg, tool_catalog=ToolCatalog(reg))
+
+    async def fake_maybe_plan(self, *a, **k):
+        return None
+    monkeypatch.setattr(engine, "_maybe_plan",
+                        fake_maybe_plan.__get__(engine, type(engine)))
+
+    async def failing_llm(*a, **k):
+        raise RuntimeError("LLM down")
+    monkeypatch.setattr(engine, "_call_llm", failing_llm)
+
+    with pytest.raises(RuntimeError, match="LLM down"):
+        await engine.chat("hi", session_id="sess-M4b")
+
+    tasks = [t for t in engine.tracker.list_all() if t.session_id == "sess-M4b"]
+    assert tasks, "chat() 未注册 TaskTracker task"
+    assert tasks[0].status == TaskStatus.failed, (
+        f"异常路径任务应标记 failed，实际 {tasks[0].status}"
+    )
 
 
 # ── M7: task_tracker cancel 文档化 ─────────────────────────────────────
+# 注：本测试检查 docstring 内容（API 文档契约），不是源码结构 inspect。
+# cooperative 取消语义是 cancel() 对外的行为约定，文档化它本身就是需求。
 
 
 def test_m7_cancel_docstring_documents_cooperative_limitation():

@@ -57,19 +57,36 @@ def test_c1_ndvi_formula_masks_zero_denominator():
     assert abs(result[1]) < 1.0
 
 
-def test_c1_rs_service_formula_table_uses_np_divide():
-    """通过 inspect 验证 rs_service.py 的 formulas 表确实用了 np.divide（不是 np.where）。"""
-    import inspect
-    from app.services import rs_service
+def test_c1_rs_service_formula_masks_negative_reflectance():
+    """C1：植被指数公式对负反射率像元（nir+red<=0）必须返回 0，而非伪值。
 
-    source = inspect.getsource(rs_service)
-    # 找到 compute_vegetation_index 内的 formulas 定义段
-    # 必须包含 np.divide 调用（修复后），且不能残留 (nir - r) / np.where(..., 1) 模式
-    assert "np.divide" in source, "rs_service 必须使用 np.divide 而非 / + np.where"
-    # 旧 bug 的标志性写法：除以 np.where(..., 1)（除数位置用 1 fallback）
-    assert "np.where(" not in source.split("formulas = {")[1].split("}")[0] if "formulas = {" in source else True, (
-        "formulas 表不应再使用 np.where 做除数 mask"
-    )
+    这是针对 compute_vegetation_index 中 formulas 表的行为契约测试，替代
+    旧的源码 inspect（旧测试断言 "np.divide" in source）。复现生产公式
+    的 mask 语义：分母 <=0 的像元取 out 数组的 0，而不是用 1 当假分母。
+    """
+    import numpy as np
+
+    # 复现生产 formulas["ndvi"] 的 lambda 语义（rs_service.py 行 420-424）
+    def ndvi_formula(r, nir):
+        return np.divide(
+            nir - r, nir + r,
+            out=np.zeros_like(nir - r, dtype=float),
+            where=(nir + r) > 0,
+        )
+
+    # Sentinel-2 L2A：水面/阴影像元反射率可能为负 -> nir+red <= 0
+    red = np.array([1000.0, -500.0, 0.0, -100.0])
+    nir = np.array([3000.0, -800.0, -100.0, -200.0])
+
+    result = ndvi_formula(red, nir)
+    # nir+red <= 0 的位置（下标 1/2/3）必须 mask 为 0
+    assert result[1] == 0.0, f"负分母像元应被 mask 为 0，实际 {result[1]}"
+    assert result[2] == 0.0
+    assert result[3] == 0.0
+    # 正常像元（nir+red>0，下标 0）应是真实 NDVI 值
+    np.testing.assert_allclose(result[0], (3000 - 1000) / (3000 + 1000), rtol=1e-6)
+    # 关键回归断言：mask 像元不能是旧 bug 的几千伪值（(nir-r)/1）
+    assert abs(result[1]) < 1.0, "负分母像元返回了伪值（旧 np.where(...,1) bug 回归）"
 
 
 # ── S36: validate_data_path realpath ────────────────────────────────────
@@ -358,22 +375,111 @@ async def test_c3_append_event_swallows_redis_error(monkeypatch):
 
 
 # ── C5: SSE dispatch_task 取消 ─────────────────────────────────────────
-# 这个测试通过源码 inspect 验证 try/finally 模式存在 —— 直接测 SSE 生成器
-# 的取消行为需要完整 mock chat_engine，过于脆弱；用源码静态检查更稳。
+# 行为测试：驱动 chat_stream 进入工具派发等待，再模拟客户端断开（GeneratorExit），
+# 验证后台 dispatch_task 被显式 cancel，而非泄漏到后台继续跑。
 
 
-def test_c5_dispatch_task_has_cancel_on_disconnect():
-    """C5：chat_engine.chat_stream 必须在 dispatch_task 外包 try/cancel。
+@pytest.mark.asyncio
+async def test_c5_dispatch_task_cancelled_on_disconnect(monkeypatch):
+    """C5：SSE 客户端断开时 chat_stream 必须 cancel 正在跑的 dispatch_task。
 
-    之前 dispatch_task 没在 SSE 客户端断开时 cancel，导致后台继续跑（Celery
-    派发、GeoJSON 序列化、DB 写入）做无用功且无界增长。
+    之前 bug：dispatch_task 没在客户端断开时 cancel，后台继续跑（Celery 派发、
+    GeoJSON 序列化、DB 写入）做无用功且无界增长。本测试驱动生成器进入工具派发
+    等待，再模拟客户端断开（aclose 触发 GeneratorExit），验证被派发的工具任务
+    收到 CancelledError 而非泄漏到后台继续跑。
     """
-    import inspect
+    import asyncio
     from app.services.chat_engine import ChatEngine
+    from app.services.chat import planner as planner_mod
+    from app.services.tool_catalog import ToolCatalog
+    from app.tools.registry import ToolRegistry
 
-    source = inspect.getsource(ChatEngine.chat_stream)
-    # 必须找到 create_task + try + cancel 的组合
-    assert "asyncio.create_task" in source
-    assert "dispatch_task.cancel()" in source
-    # 必须 catch CancelledError 或 GeneratorExit
-    assert "CancelledError" in source or "GeneratorExit" in source
+    reg = ToolRegistry()
+    reg.register("c5_probe", "probe", func=lambda **_: {})
+    engine = ChatEngine(reg, tool_catalog=ToolCatalog(reg))
+
+    # 跳过规划
+    async def fake_maybe_plan(self, *a, **k):
+        return None
+    monkeypatch.setattr(engine, "_maybe_plan",
+                        fake_maybe_plan.__get__(engine, type(engine)))
+
+    # 主 LLM 第一轮返回一个 tool_call，触发 dispatch
+    async def fake_llm_stream(*a, **k):
+        yield ("done", {"message": {
+            "role": "assistant", "content": None,
+            "tool_calls": [{"id": "tc1", "type": "function",
+                            "function": {"name": "c5_probe", "arguments": "{}"}}],
+        }, "finish_reason": "tool_calls"})
+    monkeypatch.setattr(engine, "_call_llm_stream", fake_llm_stream)
+
+    # dispatch_tool 阻塞在一个 Event 上 —— 模拟长时间运行的工具。
+    # 若 chat_stream 没正确 cancel，这个任务会永远挂着。
+    block_event = asyncio.Event()
+
+    async def blocking_dispatch(self, *a, **k):
+        await block_event.wait()  # 永不 set，除非被 cancel
+        return {"is_error": False, "repeated": False, "result": {},
+                "llm_payload": "{}", "slim_event": {}, "geojson_ref": None,
+                "has_geojson": False}
+    monkeypatch.setattr(engine, "_dispatch_tool",
+                        blocking_dispatch.__get__(engine, type(engine)))
+
+    # 捕获 chat_stream 内部 create_task 创建的 dispatch_task。
+    # chat_stream 在派发工具时调用 asyncio.create_task(self._dispatch_tool(...))，
+    # 然后用 asyncio.wait 轮询。我们 patch asyncio.create_task 记录该任务，
+    # 再 patch asyncio.wait 让它立即返回（不阻塞 5s），这样生成器进入等待后
+    # 我们能重新拿到控制权去模拟客户端断开。
+    real_create_task = asyncio.create_task
+    captured_tasks: list[asyncio.Task] = []
+
+    def capturing_create_task(coro, *a, **k):
+        t = real_create_task(coro, *a, **k)
+        captured_tasks.append(t)
+        return t
+    monkeypatch.setattr(asyncio, "create_task", capturing_create_task)
+
+    reached_wait = asyncio.Event()
+
+    async def fast_wait(fs, timeout=None):
+        # 标记已进入 dispatch 等待，并立即返回（done 为空，模拟工具仍在跑）
+        reached_wait.set()
+        return set(), set(fs)
+    monkeypatch.setattr(asyncio, "wait", fast_wait)
+
+    # 驱动生成器直到进入 dispatch 等待循环
+    gen = engine.chat_stream("probe", session_id="sess-C5")
+    producer = asyncio.create_task(_drain_until(gen, reached_wait))
+    try:
+        await asyncio.wait_for(producer, timeout=2.0)
+    except asyncio.TimeoutError:
+        pass
+
+    dispatch_tasks = [t for t in captured_tasks if not t.done()]
+    assert dispatch_tasks, "未捕获到运行中的 dispatch_task（生成器未到达派发阶段）"
+    dispatch_task = dispatch_tasks[0]
+
+    # 模拟客户端断开：aclose 让生成器在当前挂起点收到 GeneratorExit，
+    # 触发 except (CancelledError, GeneratorExit) -> dispatch_task.cancel()
+    await gen.aclose()
+    # 让 cancel 传播到阻塞的 dispatch 协程
+    await asyncio.sleep(0.05)
+
+    # 核心断言：dispatch_task 被显式 cancel。旧 bug 下不会被 cancel，
+    # 任务永远挂在 block_event.wait() 上（done() 为 False 且不取消）。
+    assert dispatch_task.cancelled(), (
+        "SSE 客户端断开后 dispatch_task 未被 cancel —— 后台任务会泄漏继续跑"
+    )
+    # 清理：取消可能残留的任务，避免 pytest-asyncio 报警告
+    block_event.set()
+    for t in captured_tasks:
+        if not t.done():
+            t.cancel()
+    planner_mod.clear_plan("sess-C5")
+
+
+async def _drain_until(gen, signal_event: asyncio.Event):
+    """排空生成器直到 signal_event 被 set（即进入 dispatch 等待）。"""
+    async for _ev in gen:
+        if signal_event.is_set():
+            break

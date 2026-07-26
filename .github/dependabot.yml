@@ -14,6 +14,15 @@ updates:
     labels:
       - "dependencies"
       - "python"
+    # 审计 CICD-05：把 minor/patch 升级合并到一个 PR，减少 PR 噪声。
+    # major 升级仍各自独立成 PR（breaking change 需单独评估）。
+    groups:
+      python-minor:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   # 前端依赖
   - package-ecosystem: "npm"
@@ -25,6 +34,14 @@ updates:
     labels:
       - "dependencies"
       - "javascript"
+    # 审计 CICD-05：同 pip，minor/patch 批量化。
+    groups:
+      npm-minor:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   # Docker base images
   - package-ecosystem: "docker"

@@ -512,21 +512,58 @@ class TestPiToolsEndpoint:
 
 
 class TestClearSessionRoute:
-    """Test clear_session route no longer has dead Pi branch."""
+    """Test clear_session route delegates to the engine and does not require the Pi bridge.
 
-    def test_clear_session_has_no_pi_branch(self):
-        """After Ticket 3 fix, clear_session should not have a dead Pi conditional branch."""
-        import inspect
+    These behavioral tests replace the old source-text inspection
+    (``assert "if USE_NEW_AGENT" not in source``). The original concern was a
+    dead/inline Pi conditional branch in clear_session; the route now uses the
+    ``_use_pi_bridge()`` helper. We verify the observable behavior instead: with
+    ``pi_bridge is None`` (default), clearing a session delegates to the engine
+    and never touches the Pi bridge.
+    """
+
+    @pytest.mark.asyncio
+    async def test_clear_session_delegates_to_engine_when_pi_disabled(self):
+        """With pi_bridge=None, clear_session calls engine.clear_session and returns 200.
+
+        This is the real behavior the old source-inspection guarded: the legacy
+        (non-Pi) path must work end-to-end and not depend on a Pi branch.
+        """
         import app.api.routes.chat as chat_module
-        source = inspect.getsource(chat_module)
 
-        # Find the clear_session function body
-        start = source.find("async def clear_session(")
-        end = source.find("\n@router", start + 1)
-        if end == -1:
-            end = len(source)
-        func_body = source[start:end]
+        mock_engine = MagicMock()
+        mock_engine.clear_session = AsyncMock(return_value=True)
+        # pi_bridge 默认就是 None（模块级占位），_use_pi_bridge() 应返回 False
+        assert chat_module.pi_bridge is None, "测试前提：pi_bridge 未初始化"
+        assert chat_module._use_pi_bridge() is False
 
-        # No conditional Pi branch should remain
-        assert "if USE_NEW_AGENT" not in func_body, "clear_session should not contain USE_NEW_AGENT conditional"
-        assert "if USE_NEW_AGENT and pi_bridge" not in func_body, "clear_session should not contain dead Pi branch"
+        with patch.object(chat_module, "engine", mock_engine):
+            resp = await chat_module.clear_session(
+                session_id="sess-1",
+                _user={"user_id": "anonymous"},
+                owner_token=None,
+            )
+
+        # 委托给 engine.clear_session，带 user_id / owner_token
+        mock_engine.clear_session.assert_awaited_once_with(
+            "sess-1", user_id="anonymous", owner_token=None,
+        )
+        assert resp == {"status": "ok"}
+
+    @pytest.mark.asyncio
+    async def test_clear_session_returns_404_when_not_found(self):
+        """When engine.clear_session returns False, route raises 404 (not a Pi error)."""
+        import app.api.routes.chat as chat_module
+        from fastapi import HTTPException
+
+        mock_engine = MagicMock()
+        mock_engine.clear_session = AsyncMock(return_value=False)
+
+        with patch.object(chat_module, "engine", mock_engine):
+            with pytest.raises(HTTPException) as exc_info:
+                await chat_module.clear_session(
+                    session_id="missing",
+                    _user={"user_id": "u1"},
+                    owner_token=None,
+                )
+        assert exc_info.value.status_code == 404

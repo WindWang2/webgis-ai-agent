@@ -11,7 +11,7 @@ from app.tools.registry import ToolRegistry, tool
 from app.lib.geo_processor.core import safe_parse as safe_parse_geojson, to_utm_gdf
 from app.lib.geo_analysis.statistics import _extract_numeric_values as extract_numeric_values
 from app.services.spatial_analyzer import SpatialAnalyzer
-from app.tools._utils import cached_tool, trim_features
+from app.tools._utils import cached_tool, trim_features, std_error_response
 
 logger = logging.getLogger(__name__)
 
@@ -103,15 +103,15 @@ def register_spatial_stats_tools(registry: ToolRegistry):
 
         data = safe_parse_geojson(geojson)
         if not data:
-            return {"error": "无效的 GeoJSON 输入"}
+            return std_error_response("无效的 GeoJSON 输入", code="VALIDATION_ERROR", error_type="ValueError")
 
         result = to_utm_gdf(data)
         if result is None:
-             return {"error": "无法解析矢量数据"}
+             return std_error_response("无法解析矢量数据", code="VALIDATION_ERROR", error_type="ValueError")
         gdf, utm_crs = result
-        
+
         if len(gdf) < 3:
-            return {"error": "至少需要3个有效点要素"}
+            return std_error_response("至少需要3个有效点要素", code="VALIDATION_ERROR", error_type="ValueError")
 
         coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
 
@@ -122,7 +122,11 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             weights = extract_numeric_values(gdf, value_field)
             if weights is None:
                 numeric_cols = [c for c in gdf.columns if c != "geometry" and gdf[c].dtype in ("float64", "int64", "float32", "int32")]
-                return {"error": f"字段 '{value_field}' 不是数值类型。可用字段: {numeric_cols}"}
+                return std_error_response(
+                    f"字段 '{value_field}' 不是数值类型。可用字段: {numeric_cols}",
+                    code="VALIDATION_ERROR",
+                    error_type="TypeError",
+                )
             weights = np.abs(weights)
             # Weighted: repeat points by weight (clamped to avoid OOM)
             min_w = float(weights.min())
@@ -242,16 +246,16 @@ def register_spatial_stats_tools(registry: ToolRegistry):
             import matplotlib.pyplot as plt
             from scipy.stats import gaussian_kde
         except ImportError:
-            return {"error": "需要 matplotlib 和 scipy"}
+            return std_error_response("需要 matplotlib 和 scipy", code="DEPENDENCY_MISSING", error_type="ImportError")
 
         data = safe_parse_geojson(geojson)
         result = to_utm_gdf(data)
         if result is None:
-             return {"error": "无法解析矢量数据"}
+             return std_error_response("无法解析矢量数据", code="VALIDATION_ERROR", error_type="ValueError")
         gdf, utm_crs = result
 
         if len(gdf) < 5:
-            return {"error": "至少需要5个有效点要素进行等值面分析"}
+            return std_error_response("至少需要5个有效点要素进行等值面分析", code="VALIDATION_ERROR", error_type="ValueError")
 
         coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
         kde_data = coords.T
@@ -341,11 +345,11 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         data = safe_parse_geojson(geojson)
         result = to_utm_gdf(data)
         if result is None:
-            return {"error": "无法解析矢量数据"}
+            return std_error_response("无法解析矢量数据", code="VALIDATION_ERROR", error_type="ValueError")
         gdf, utm_crs = result
 
         if len(gdf) < 3:
-            return {"error": "至少需要3个点要素"}
+            return std_error_response("至少需要3个点要素", code="VALIDATION_ERROR", error_type="ValueError")
 
         coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
 
@@ -368,7 +372,11 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         try:
             vor = Voronoi(all_points)
         except (ValueError, TypeError, RuntimeError) as e:
-            return {"error": f"Voronoi 计算失败: {e}"}
+            return std_error_response(
+                f"Voronoi 计算失败: {e}",
+                code="TOOL_ERROR",
+                error_type=type(e).__name__,
+            )
 
         out_features = []
         clip_box = box(xmin - margin, ymin - margin, xmax + margin, ymax + margin)
@@ -428,11 +436,11 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         data = safe_parse_geojson(geojson)
         result = to_utm_gdf(data)
         if result is None:
-            return {"error": "无法解析矢量数据"}
+            return std_error_response("无法解析矢量数据", code="VALIDATION_ERROR", error_type="ValueError")
         gdf, utm_crs = result
 
         if len(gdf) < 3:
-            return {"error": "至少需要3个要素"}
+            return std_error_response("至少需要3个要素", code="VALIDATION_ERROR", error_type="ValueError")
 
         out_features = []
 
@@ -492,14 +500,14 @@ def register_spatial_stats_tools(registry: ToolRegistry):
         data = safe_parse_geojson(geojson)
         result = to_utm_gdf(data)
         if result is None:
-            return {"error": "无法解析矢量数据"}
+            return std_error_response("无法解析矢量数据", code="VALIDATION_ERROR", error_type="ValueError")
         gdf, utm_crs = result
 
         if distances is None:
             distances = [500, 1000, 1500]
 
         if not distances:
-            return {"error": "需要至少一个缓冲距离"}
+            return std_error_response("需要至少一个缓冲距离", code="VALIDATION_ERROR", error_type="ValueError")
 
         distances = sorted([float(d) for d in distances])
         union_geom = gdf.geometry.unary_union
