@@ -357,6 +357,13 @@ jobs:
       contents: read
       packages: read
     steps:
+      - name: Lowercase IMAGE_NAME
+        # 审计：全局 env.IMAGE_NAME = ${{ github.repository }} 是混合大小写
+        # （WindWang2/...），但 docker tag/manifest 要求全小写。build job 和
+        # rollback job 各自有此步骤，deploy-prod 之前漏了 —— 导致 manifest
+        # inspect 查的是 WindWang2/... 而 registry 里是 windwang2/...，找不到。
+        run: echo "IMAGE_NAME=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
       - name: Download Image Artifact
         uses: actions/download-artifact@v4
         with:
