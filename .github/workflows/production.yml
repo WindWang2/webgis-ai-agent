@@ -366,6 +366,15 @@ jobs:
       - name: Load Docker Image
         run: docker load < webgis-image.tar
 
+      - name: Login to Container Registry
+        # 审计 CICD-01：deploy-prod 需要 registry 读权限以校验镜像可达（manifest inspect）
+        # 以及供回滚流程 pull。用 GITHUB_TOKEN（与 build job 一致），无需额外 secret。
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Configure SSH Access
         if: vars.SSH_HOST != ''
         uses: webfactory/ssh-agent@v0.8.0
@@ -374,6 +383,10 @@ jobs:
 
       - name: Deploy to Server via SSH
         if: vars.SSH_HOST != ''
+        # ⚠️ 已知限制：此步骤 `scp .env.Priv` 假设 runner 工作目录已存在 .env.Priv，
+        # 但 deploy-prod job 没有 checkout 也没有创建该文件的步骤（preview job 有
+        # `cp .env.Priv.example .env.Priv`）。当前 SSH_HOST 未配置，该路径未执行。
+        # 配置 SSH_HOST 前需先在此 job 加 checkout + .env.Priv 生成步骤。
         run: |
           scp docker-compose.prod.secure.yml ${{ vars.SSH_HOST }}:~/
           scp .env.Priv ${{ vars.SSH_HOST }}:~/
@@ -385,17 +398,23 @@ jobs:
             docker system prune -f
           EOF
 
-      - name: Deploy via Container Registry
+      - name: Confirm Image Available in Registry
         if: vars.SSH_HOST == ''
+        # 审计 CICD-01：build job 的 "Push Image to Registry" step 已用 GITHUB_TOKEN
+        # 把镜像推到 registry。此分支（SSH_HOST 未配置 = 无生产主机）无需部署动作，
+        # 仅校验镜像 tag 在 registry 可达，供下游手动 `docker pull` 或回滚流程使用。
+        # 之前这里用 REGISTRY_TOKEN secret（不存在）重复 push —— 冗余且因空 token 导致
+        # 非 TTY 登录失败。改为只读校验。
         run: |
-          # 登录私有仓库（如果需要）
-          echo "${{ secrets.REGISTRY_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
-          
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          
-          # 在目标服务器上运行：
-          # docker-compose -f docker-compose.prod.yml pull
-          # docker-compose -f docker-compose.prod.yml up -d
+          if docker manifest inspect \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} > /dev/null 2>&1; then
+            echo "✅ 镜像已在 registry: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+            echo "   下游手动部署：docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          else
+            echo "❌ 镜像不在 registry —— build job 的 'Push Image to Registry' step 可能失败"
+            echo "   registry: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+            exit 1
+          fi
 
       - name: Health Check
         run: |
