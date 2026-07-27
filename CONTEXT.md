@@ -17,6 +17,15 @@ LLM never sees the full payload; the frontend fetches it separately.
 A Python callable registered in `ToolRegistry` with an OpenAI-compatible JSON schema, tier
 (1/2/3), and domain tags. Tools are the only interface to spatial operations.
 
+### Tool dispatch
+The single act of executing one tool call end-to-end: validate → tier-authorize → run via the
+registry → store large GeoJSON to a `ref_id` cursor (Fetch-on-Demand) → shape an LLM payload
+and a slim frontend event → intercept repeated calls → wrap errors as self-healing hints.
+"Dispatch" names this whole chain, not just the `registry.dispatch()` call inside it. Both the
+legacy ChatEngine path and the Pi bridge path perform tool dispatch; the deepened
+`ToolDispatchService` is the single module that owns it, returning a discriminated result
+(ok / repeated / error) so callers branch on the outcome rather than reassembling raw fields.
+
 ### Tier
 Tool priority classification. Tier 1 is always-on; Tier 2 activates on keyword/sticky match;
 Tier 3 is only visible to explicit `list_available_tools` calls.
