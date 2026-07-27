@@ -201,7 +201,7 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
               </div>
             ) : (
               /* ── Assistant message: left-aligned with avatar ── */
-              <div key={msg.id ?? idx} className="flex gap-2">
+              <div key={msg.id ?? `msg-${idx}`} className="flex gap-2">
                 <div className="shrink-0 mt-0.5">
                   <div
                     className="w-6 h-6 rounded-full flex items-center justify-center"

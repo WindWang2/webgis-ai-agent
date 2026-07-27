@@ -18,7 +18,7 @@ export function SuggestedPrompts({ onSend }: SuggestedPromptsProps) {
     <div className="px-4 py-3 flex gap-2 overflow-x-auto">
       {SUGGESTIONS.map((s, i) => (
         <motion.button
-          key={`prompt-${i}`}
+          key={s.text}
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: i * 0.05, duration: 0.2 }}

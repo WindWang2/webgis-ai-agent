@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import type { SpatialReasoningResult, ReasoningStep } from "@/lib/types/explorer";
 
 interface ReasoningPanelProps {
@@ -29,6 +29,11 @@ function getConfidenceInfo(confidence: number) {
 function truncateFact(fact: string, maxLength: number = 40): string {
   if (fact.length <= maxLength) return fact;
   return fact.slice(0, maxLength) + "…";
+}
+
+// 默认展开第一步；reasoning_chain 为空时返回空集合。
+function defaultExpandedSteps(result: SpatialReasoningResult): Set<number> {
+  return new Set(result.reasoning_chain.length > 0 ? [result.reasoning_chain[0].step] : []);
 }
 
 function ReasoningStepCard({
@@ -71,18 +76,16 @@ function ReasoningStepCard({
 }
 
 export function ReasoningPanel({ result }: ReasoningPanelProps) {
-  const [expandedSteps, setExpandedSteps] = useState<Set<number>>(
-    () => new Set(result.reasoning_chain.length > 0 ? [result.reasoning_chain[0].step] : [])
-  );
-
-  // 审计 findings.md State Management：lazy initializer 只在首次渲染运行。
-  // 如果 result.reasoning_chain 变化（如加载新分析结果），展开状态不会更新。
-  // 用 effect 在 result 变化时重置为默认（展开第一步）。
-  useEffect(() => {
-    setExpandedSteps(
-      new Set(result.reasoning_chain.length > 0 ? [result.reasoning_chain[0].step] : [])
-    );
-  }, [result]);
+  // 审计 findings.md State Management：lazy initializer 只在首次渲染运行，
+  // 不会在 result 变化（如加载新分析结果）时重置。用「渲染期间比较前一次 prop」
+  // 的模式同步重置 —— 比 useEffect 少一次渲染，且仅在 result 对象身份变化时触发，
+  // 不会覆盖同一结果上的用户折叠操作。
+  const [expandedSteps, setExpandedSteps] = useState<Set<number>>(() => defaultExpandedSteps(result));
+  const [prevResult, setPrevResult] = useState(result);
+  if (prevResult !== result) {
+    setPrevResult(result);
+    setExpandedSteps(defaultExpandedSteps(result));
+  }
 
   const confidence = getConfidenceInfo(result.confidence);
 
