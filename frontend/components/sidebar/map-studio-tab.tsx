@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import type { ExportItem } from '@/lib/store/hud-types';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 import { Download, Trash2, Printer, History } from 'lucide-react';
 import { API_BASE } from '@/lib/api/config';
@@ -50,7 +51,7 @@ export function MapStudioTab() {
     };
   }, [activeSubTab, updateExportSettings]);
 
-  const handleDownload = (item: any) => {
+  const handleDownload = (item: ExportItem) => {
     // 审计 F37：downloadName 来自后端响应，但防御性校验路径穿越/特殊字符。
     // 只允许字母数字 + . _ -，拒绝 ../ ? # 等。
     const downloadName = item.filename || item.name;

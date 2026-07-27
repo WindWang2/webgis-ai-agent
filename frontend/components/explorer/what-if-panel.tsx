@@ -134,13 +134,14 @@ export function WhatIfPanel({ result, onViewModeChange }: WhatIfPanelProps) {
           <div className="rounded-lg border border-white/10 bg-white/5 p-3">
             <div className="text-xs text-white/50">直接影响面积</div>
             <div className="mt-1 text-lg font-semibold text-white/90">
-              {result.impact_summary.direct_area_km2.toFixed(2)} km²
+              {/* 审计 findings.md：toFixed 无 null 守卫，后端缺字段时崩溃 */}
+              {(result.impact_summary.direct_area_km2 ?? 0).toFixed(2)} km²
             </div>
           </div>
           <div className="rounded-lg border border-white/10 bg-white/5 p-3">
             <div className="text-xs text-white/50">间接影响面积</div>
             <div className="mt-1 text-lg font-semibold text-white/90">
-              {result.impact_summary.indirect_area_km2.toFixed(2)} km²
+              {(result.impact_summary.indirect_area_km2 ?? 0).toFixed(2)} km²
             </div>
           </div>
         </div>
