@@ -59,7 +59,7 @@ ijson>=3.2.0
 # JWT 库：使用 PyJWT (python-jose 自 2024 起维护放缓，存在 JWT bomb
 # CVE-2024-33664 与算法混淆 CVE-2024-33663 等未修复 CVE)。PyJWT 对 HS256
 # 用法是 drop-in，且其 algorithms 白名单是必填项，天然缓解算法混淆。
-PyJWT>=2.8.0,<3.0.0
+PyJWT>=2.13.0,<3.0.0
 celery>=5.3.0
 # redis: 任务队列 broker + session_data 后端 + tool_cache。
 # 之前 requirements.txt 漏列此项，CI 干净环境跑 pytest 时直接
