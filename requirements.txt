@@ -1,8 +1,8 @@
 # FastAPI & ASGI Server
-# fastapi>=0.115.0 对应 starlette>=0.40.0；DEPS-04：starlette 0.37.x/0.38.x
+# fastapi>=0.140.0 对应 starlette>=0.40.0；DEPS-04：starlette 0.37.x/0.38.x
 # 存在 CVE-2024-47874 (DoS via multipart) 与 CVE-2024-49774 (Qt 注入相关) 等
-# 已在 0.40.0 修复。同时 fastapi>=0.115.0 是 starlette 0.40+ 的最低兼容版本。
-fastapi>=0.115.0
+# 已在 0.40.0 修复。同时 fastapi>=0.140.0 是 starlette 0.40+ 的最低兼容版本。
+fastapi>=0.140.0
 starlette>=0.40.0
 uvicorn[standard]>=0.27.0
 python-multipart>=0.0.6
