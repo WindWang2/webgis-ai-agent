@@ -75,7 +75,10 @@ export const CodeBlock = memo(function CodeBlock({
       </div>
 
       {/* Code Content */}
-      <pre className="p-3 overflow-x-auto text-sm font-mono leading-relaxed">
+      <pre
+        className="p-3 overflow-x-auto text-sm font-mono leading-relaxed"
+        aria-label={language ? `${language} 代码块` : '代码块'}
+      >
         <code className={langClass}>{code}</code>
       </pre>
     </div>

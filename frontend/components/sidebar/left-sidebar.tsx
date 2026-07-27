@@ -58,6 +58,7 @@ export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#
 
   return (
     <aside
+      aria-label="左侧导航栏"
       className="fixed top-[42px] left-0 bottom-[24px] z-40 flex flex-col"
       style={{
         width: sidebarWidth,

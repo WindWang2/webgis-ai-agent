@@ -87,6 +87,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
                 ref={nameRef}
                 value={tempName}
                 onChange={(e) => setTempName(e.target.value)}
+                aria-label="重命名图层"
                 className="flex-1 text-[15px] bg-white/[0.06] border border-hud-cyan/30 rounded px-2 py-1 text-white/90 focus:outline-none focus:border-hud-cyan/60"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
@@ -130,6 +131,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
                 <div className="relative w-7 h-7 rounded-lg overflow-hidden border border-white/10">
                   <input type="color" value={color}
                     onChange={(e) => updateStyle({ color: e.target.value })}
+                    aria-label="填充颜色"
                     className="absolute inset-0 w-full h-full cursor-pointer" />
                 </div>
                 <span className="text-[14px] text-white/30 font-mono">{color}</span>
@@ -143,6 +145,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
                 <div className="relative w-7 h-7 rounded-lg overflow-hidden border border-white/10">
                   <input type="color" value={strokeColor}
                     onChange={(e) => updateStyle({ strokeColor: e.target.value })}
+                    aria-label="描边颜色"
                     className="absolute inset-0 w-full h-full cursor-pointer" />
                 </div>
                 <span className="text-[14px] text-white/30 font-mono">{strokeColor}</span>
