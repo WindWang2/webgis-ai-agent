@@ -20,7 +20,7 @@ pyogrio>=0.13.0
 pandas>=2.0.0
 
 # Utilities
-pydantic>=2.5.3
+pydantic>=2.13.4
 pydantic-settings>=2.14.2
 python-dotenv>=1.0.0
 httpx>=0.26.0
