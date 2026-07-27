@@ -43,8 +43,11 @@ from app.services.chat.context_builder import (
     build_last_analysis_context as _build_last_analysis_context,
     compose_request_messages as _compose_request_messages_fn,
 )
-from app.services.chat.dispatcher import is_suspicious_result as _is_suspicious_result_fn
-from app.services.tool_dispatch_service import ToolDispatchResult, ToolDispatchService
+from app.services.tool_dispatch_service import (
+    ToolDispatchResult,
+    ToolDispatchService,
+    is_suspicious_result as _is_suspicious_result_fn,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -897,6 +900,6 @@ class ChatEngine:
         return deleted
 
     def _detect_suspicious_result(self, result: Any) -> bool:
-        """委托给 chat/dispatcher.is_suspicious_result。"""
+        """委托给 tool_dispatch_service.is_suspicious_result。"""
         return _is_suspicious_result_fn(result)
 

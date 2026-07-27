@@ -1,10 +1,10 @@
-"""ToolDispatchService 单测（统一工具调度 expand 阶段）：
+"""ToolDispatchService 单测（统一工具调度）：
 
 接口即测试面。通过 dispatch() 的返回值（判别式结果 dataclass）断言可观察结果，
-不窥探内部状态。这是 expand 阶段：新服务与旧 dispatcher.py 并存，尚无生产调用方。
+不窥探内部状态。两条 agent 路径（legacy ChatEngine + Pi bridge）共用本服务。
 
-复用现有 harness 约定（见 test_chat_dispatcher.py）：clean_session fixture、
-fake_registry（MagicMock + AsyncMock）、_tc 工具调用辅助。
+harness 约定：clean_session fixture、fake_registry（MagicMock + AsyncMock）、
+_tc 工具调用辅助。
 """
 import pytest
 from unittest.mock import AsyncMock, MagicMock

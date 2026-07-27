@@ -1,13 +1,12 @@
 """is_suspicious_result 单测。
 
-unified-tool-dispatch 票据 03：原 dispatch_tool 的行为测试已由
-test_tool_dispatch_service.py 在服务接口层覆盖（判别式结果 + geojson_ref 回归锁），
-此处按 DEEPENING「replace, don't layer」原则删除被取代形态的浅测试。
-仅保留 is_suspicious_result 纯函数枚举——该函数存活于 chat/dispatcher.py。
+unified-tool-dispatch 票据 04 contract：原 chat/dispatcher.py 已删除，
+is_suspicious_result 收敛到 tool_dispatch_service.py 作为唯一定义。
+本测试改为从该处导入。
 """
 import pytest
 
-from app.services.chat.dispatcher import is_suspicious_result
+from app.services.tool_dispatch_service import is_suspicious_result
 
 
 class TestSuspicious:

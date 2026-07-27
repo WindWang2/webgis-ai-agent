@@ -169,7 +169,7 @@ class ToolDispatchService:
         # 5. 给 LLM 的载荷（压缩 + 可选自愈提示）
         result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
         llm_payload = slim_tool_result(result, result_str, geojson_ref) or result_str
-        if _is_suspicious_result(result):
+        if is_suspicious_result(result):
             llm_payload += (
                 "\n\n(注意: 此操作未返回任何空间要素或有效数据。请检查查询范围、关键词或图层名称，"
                 "并根据需要尝试不同的参数。不要重复完全相同的调用。)"
@@ -213,12 +213,12 @@ class ToolDispatchService:
         await session_data_manager.append_event(session_id, "tool_executed", event_payload)
 
 
-def _is_suspicious_result(result: Any) -> bool:
+def is_suspicious_result(result: Any) -> bool:
     """检测工具返回是否"可疑"（空数据 / 错误响应），用于触发自愈提示尾。
 
-    纯函数无副作用。与旧 dispatcher.is_suspicious_result 行为一致；此处为内联副本，
-    因为旧 dispatcher.py 在 contract 阶段（04 票据）才会被删除，期间避免循环依赖。
-    03 票据迁移 legacy 路径时会统一收敛到单一处定义。
+    纯函数无副作用。本函数为单一权威定义（unified-tool-dispatch 票据 04 contract：
+    旧 chat/dispatcher.py 已删除，收敛至此）。供 ToolDispatchService 内部与
+    ChatEngine._log_tool_decision / _detect_suspicious_result 共用。
     """
     if not result:
         return True
