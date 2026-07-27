@@ -18,6 +18,7 @@ from typing import Any, AsyncGenerator, Optional
 from pydantic import BaseModel
 
 from app.utils.sse import sse_event
+from app.services.tool_dispatch_service import ToolDispatchService
 
 logger = logging.getLogger(__name__)
 
@@ -97,16 +98,48 @@ def get_tool_registry() -> "ToolRegistry":
     return _tool_registry
 
 
-async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
-    """Dispatch a GIS tool call: validate → dispatch → normalize → respond.
+# ── Session-keyed dispatch result cache (unified-tool-dispatch 票据 02) ──
+#
+# dispatch_tool（HTTP 回调）调度一次后把 ToolDispatchResult 按 (session_id, toolCallId)
+# 缓存；_handle_tool_execution_end（SSE 适配器）随后按同一 toolCallId 读取，发 step_result
+# 时携带 geojson_ref。这样两条适配器共享一次 dispatch，避免 Pi 回传的 result 与服务端
+# 视图（已 slim、已落 ref）不一致 —— 此前 Pi 路径从不产生 ref，前端图层挂载失效。
+#
+# 缓存短命（一个 turn 内）：dispatch 时写入，SSE 读取后即清除，杜绝跨任务泄漏。
+_dispatch_result_cache: dict[tuple[str, str], "ToolDispatchResult"] = {}
 
-    This is the single owner of tool dispatch logic. The pi_tools FastAPI
-    route delegates here; the Pi extension's HTTP callback reaches here
-    via that route.
+
+def cache_dispatch_result(session_id: Optional[str], tool_call_id: str, result: "ToolDispatchResult") -> None:
+    """缓存一次 dispatch 的结果，供 SSE 适配器按 toolCallId 读取。"""
+    key = (session_id or "", tool_call_id)
+    _dispatch_result_cache[key] = result
+
+
+def get_cached_dispatch_result(session_id: Optional[str], tool_call_id: str) -> "Optional[ToolDispatchResult]":
+    """读取并弹出缓存的 dispatch 结果（读后即清，单次消费）。"""
+    key = (session_id or "", tool_call_id)
+    return _dispatch_result_cache.pop(key, None)
+
+
+def _clear_session_dispatch_cache(session_id: str) -> None:
+    """清空某 session 的所有缓存 dispatch 结果（新 turn 开始时调用）。"""
+    sid = session_id or ""
+    for key in [k for k in _dispatch_result_cache if k[0] == sid]:
+        del _dispatch_result_cache[key]
+
+
+async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
+    """Dispatch a GIS tool call via ToolDispatchService, cache the result for the SSE adapter.
+
+    Pi 边界安全检查（工具存在性、tier>=3 拒绝）保留在此处——它们是 Pi 路径特有的
+    守卫（candidate #5，本批工作 Out of Scope），不属于统一调度的核心职责。
+    实际调度（ref 存储、自愈、广播、去重）全部委托给 ToolDispatchService。
+
+    HTTP 回调适配器：把 service 返回的 llm_payload 翻译成 PiToolResponse.content。
+    结果按 (session_id, toolCallId) 缓存，供 SSE 适配器读取并发携带 geojson_ref 的 step_result。
     """
     registry = get_tool_registry()
     tool_name = request.name
-    args = request.arguments or {}
 
     # Validate tool exists
     available = set(registry.list_tools())
@@ -123,51 +156,39 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
             isError=True,
         )
 
-    try:
-        # 审计 SEC-01/SEC-02：拒绝 tier>=3 工具（如 create_new_skill = RCE）。
-        # Pi 扩展是半信任的（共享密钥保护），但仍不应能触发写盘 + exec_module。
-        tier = registry.metadata(tool_name).get("tier", 1)
-        if tier >= 3:
-            return PiToolResponse(
-                toolCallId=request.toolCallId,
-                content=[{
-                    "type": "text",
-                    "text": f"Tool '{tool_name}' is tier-{tier} (destructive) and cannot be dispatched via Pi bridge.",
-                }],
-                isError=True,
-            )
-
-        # Dispatch via the real registry (handles Pydantic validation,
-        # reference resolution, caching)
-        raw = await registry.dispatch(tool_name, args, session_id=request.sessionId)
-
-        # Normalize the result into Pi's expected format
-        if raw is None:
-            content = [{"type": "text", "text": "Tool returned no result."}]
-            details = None
-        elif isinstance(raw, dict):
-            content = [{"type": "text", "text": json.dumps(raw, ensure_ascii=False)}]
-            details = raw
-        elif isinstance(raw, str):
-            content = [{"type": "text", "text": raw}]
-            details = raw
-        else:
-            content = [{"type": "text", "text": str(raw)}]
-            details = raw
-
+    # 审计 SEC-01/SEC-02：拒绝 tier>=3 工具（如 create_new_skill = RCE）。
+    # Pi 扩展是半信任的（共享密钥保护），但仍不应能触发写盘 + exec_module。
+    tier = registry.metadata(tool_name).get("tier", 1)
+    if tier >= 3:
         return PiToolResponse(
             toolCallId=request.toolCallId,
-            content=content,
-            details=details,
-            isError=False,
-        )
-    except Exception as e:
-        logger.error(f"[PiBridge] Tool {tool_name} failed: {e}", exc_info=True)
-        return PiToolResponse(
-            toolCallId=request.toolCallId,
-            content=[{"type": "text", "text": f"Error: {str(e)}"}],
+            content=[{
+                "type": "text",
+                "text": f"Tool '{tool_name}' is tier-{tier} (destructive) and cannot be dispatched via Pi bridge.",
+            }],
             isError=True,
         )
+
+    # 统一调度：委托给 ToolDispatchService（票据 01 引入）。
+    # executed_tools 复用一个 session 级 set，让重复调用拦截在 service 内生效。
+    service = ToolDispatchService(registry=registry)
+    tc = {"id": request.toolCallId, "function": {"name": tool_name, "arguments": request.arguments or {}}}
+    executed = _session_executed_sets.setdefault(request.sessionId or "", set())
+    result = await service.dispatch(tc, request.sessionId or "", executed)
+
+    # 缓存供 SSE 适配器读取
+    cache_dispatch_result(request.sessionId, request.toolCallId, result)
+
+    return PiToolResponse(
+        toolCallId=request.toolCallId,
+        content=[{"type": "text", "text": result.llm_payload}],
+        details=result.raw_result,
+        isError=(result.status == "error"),
+    )
+
+
+# 每个 session 的已执行工具集合，供重复调用拦截（service 接受外部 set）。
+_session_executed_sets: dict[str, set[tuple[str, str]]] = {}
 
 
 
@@ -396,6 +417,10 @@ class PiBridge:
             data["sessionId"] = session_id
             self._session_id = session_id
 
+        # 新 turn 开始：清空该 session 的重复调用拦截集合与 dispatch 结果缓存。
+        _session_executed_sets.pop(self._session_id, None)
+        _clear_session_dispatch_cache(self._session_id)
+
         async with self._lock:
             await self._send_request("prompt", data)
 
@@ -433,6 +458,11 @@ class PiBridge:
         if session_id:
             data["sessionId"] = session_id
             self._session_id = session_id
+
+        # 新 turn 开始：清空该 session 的重复调用拦截集合与 dispatch 结果缓存。
+        # 重复拦截语义是「同一 turn 内」—— 跨 turn 用户重发同一问题是合法的。
+        _session_executed_sets.pop(self._session_id, None)
+        _clear_session_dispatch_cache(self._session_id)
 
         # Send prompt command
         try:
@@ -543,27 +573,54 @@ class PiBridge:
         }))
 
     def _handle_tool_execution_end(self, event: dict) -> Optional[str]:
-        result = event.get("result", {})
-        is_error = event.get("isError", False)
+        """SSE 适配器：读缓存的 dispatch 结果发 step_result / step_error。
+
+        unified-tool-dispatch 票据 02：此前本方法从 Pi 事件 payload 取 result 再 slim，
+        从不携带 geojson_ref（因为 dispatch 没存 ref），导致前端图层挂载失效。
+        现在读 dispatch_tool 缓存的 ToolDispatchResult —— 服务端视图（已 slim、已落 ref）
+        才是前端需要的真相。缓存未命中时退化到旧行为（不崩溃，但不带 geojson_ref）。
+        """
         tool_name = event.get("toolName", "")
         tool_call_id = event.get("toolCallId", "")
+        cached = get_cached_dispatch_result(self._session_id, tool_call_id)
 
+        if cached is not None:
+            if cached.status == "error":
+                return sse_event("step_error", self._base_step_payload(event, {
+                    "tool": tool_name,
+                    "error": cached.error_msg or "",
+                }))
+            # ok / repeated：用服务端 slim_event + geojson_ref
+            payload = self._base_step_payload(event, {
+                "tool": tool_name,
+                "result": cached.slim_event,
+            })
+            if cached.geojson_ref:
+                payload["geojson_ref"] = cached.geojson_ref
+            return sse_event("step_result", payload)
+
+        # 缓存未命中（Pi 重复回传 / dispatch 未走 service 路径）：退化到旧行为
+        result = event.get("result", {})
+        is_error = event.get("isError", False)
+        logger.warning(
+            f"[PiBridge] dispatch cache miss for toolCallId={tool_call_id} "
+            f"(session={self._session_id}); falling back to Pi-echoed result without geojson_ref"
+        )
         if is_error:
             error_msg = self._extract_error_text(result)
             return sse_event("step_error", self._base_step_payload(event, {
                 "tool": tool_name,
                 "error": error_msg,
             }))
-        else:
-            try:
-                from app.services.chat.sse_helpers import slim_event_result
-                slim = slim_event_result(result)
-            except Exception:
-                slim = result
-            return sse_event("step_result", self._base_step_payload(event, {
-                "tool": tool_name,
-                "result": slim,
-            }))
+        try:
+            from app.services.chat.sse_helpers import slim_event_result
+            slim = slim_event_result(result)
+        except Exception:
+            slim = result
+        return sse_event("step_result", self._base_step_payload(event, {
+            "tool": tool_name,
+            "result": slim,
+        }))
 
     def _handle_agent_end(self, event: dict) -> Optional[str]:
         return sse_event("task_complete", self._base_step_payload(event, {
