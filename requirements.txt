@@ -24,7 +24,7 @@ pydantic>=2.5.3
 pydantic-settings>=2.14.2
 python-dotenv>=1.0.0
 httpx>=0.26.0
-pyyaml>=6.0.1
+pyyaml>=6.0.3
 
 # Logging & Monitoring
 structlog>=26.1.0
