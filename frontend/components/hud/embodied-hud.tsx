@@ -82,6 +82,9 @@ export function EmbodiedHud() {
   // Waveform phase animation
   const [phase, setPhase] = useState(0);
   useEffect(() => {
+    // 审计 findings.md Perf Medium：HUD 关闭时（仅显示 24px 条）无需动画，
+    // 暂停 rAF 循环避免空转的 60fps 状态更新 + 重渲染。
+    if (!hudOpen) return;
     let frame: number;
     const tick = () => {
       setPhase((p) => (p + (isThinking ? 0.25 : 0.08)) % (Math.PI * 2));
@@ -89,7 +92,7 @@ export function EmbodiedHud() {
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [isThinking]);
+  }, [isThinking, hudOpen]);
 
   // Render CPU Cognitive Waveform
   const renderWaveform = () => {
