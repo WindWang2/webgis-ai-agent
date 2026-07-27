@@ -42,7 +42,7 @@ export function OpsLogTab() {
       </div>
 
       {/* Log list */}
-      <div className='flex-1 overflow-y-auto p-2'>
+      <div className='flex-1 overflow-y-auto p-2' aria-live='polite' aria-label='操作日志'>
         {opsLog.length === 0 ? (
           <div className='text-center py-8 text-xs text-slate-400'>
             暂无操作记录

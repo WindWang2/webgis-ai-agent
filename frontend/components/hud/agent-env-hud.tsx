@@ -54,6 +54,7 @@ export function AgentEnvHud({ open, onClose }: AgentEnvHudProps) {
         </div>
         <button
           onClick={onClose}
+          aria-label="关闭环境感知面板"
           className='w-6 h-6 flex items-center justify-center rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600'
         >
           <X size={14} />

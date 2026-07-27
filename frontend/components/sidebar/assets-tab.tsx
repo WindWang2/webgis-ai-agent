@@ -86,7 +86,11 @@ export function AssetsTab() {
 
   if (analysisAssets.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-center px-6">
+      <div
+        className="flex flex-col items-center justify-center h-full text-center px-6"
+        role="status"
+        aria-live="polite"
+      >
         <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center mb-2">
           <FileText size={16} className="text-slate-300" />
         </div>

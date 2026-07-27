@@ -44,6 +44,8 @@ function ReasoningStepCard({
     <div className="rounded-lg border border-white/10 bg-white/5">
       <button
         onClick={onToggle}
+        aria-expanded={isExpanded}
+        aria-controls={`reasoning-step-${step.step}-content`}
         className="flex w-full items-center justify-between p-3 text-left"
       >
         <div className="flex items-center gap-2">
@@ -59,7 +61,7 @@ function ReasoningStepCard({
         </span>
       </button>
       {isExpanded && (
-        <div className="border-t border-white/10 px-3 pb-3 pt-2">
+        <div id={`reasoning-step-${step.step}-content`} className="border-t border-white/10 px-3 pb-3 pt-2">
           <p className="text-sm text-white/80">{step.fact}</p>
           <p className="mt-1 text-xs text-white/50">来源：{step.source}</p>
         </div>

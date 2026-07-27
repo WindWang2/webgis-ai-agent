@@ -14,10 +14,15 @@ export function CollapsibleThink({ content, isDark, accentColor }: CollapsibleTh
 
   if (!content) return null;
 
+  // 审计 findings.md a11y Low：toggle 缺 aria-expanded + aria-controls 关联。
+  const panelId = 'think-content';
+
   return (
     <div className="mb-2">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
+        aria-expanded={isExpanded}
+        aria-controls={panelId}
         className="flex items-center gap-1.5 px-2 py-1 rounded-md transition-colors hover:bg-black/5"
         style={{ color: isDark ? '#94a3b8' : '#64748b' }}
       >
@@ -27,9 +32,10 @@ export function CollapsibleThink({ content, isDark, accentColor }: CollapsibleTh
       </button>
 
       {isExpanded && (
-        <div 
+        <div
+          id={panelId}
           className="mt-1 px-3 py-2 rounded-lg text-[13.5px] leading-relaxed border-l-2 italic"
-          style={{ 
+          style={{
             backgroundColor: isDark ? 'rgba(30,41,59,0.4)' : 'rgba(241,245,249,0.6)',
             borderColor: accentColor,
             color: isDark ? '#cbd5e1' : '#475569'

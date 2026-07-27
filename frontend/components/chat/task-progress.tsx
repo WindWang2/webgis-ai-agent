@@ -77,6 +77,8 @@ export function TaskProgress({ task }: TaskProgressProps) {
       {/* 标题栏 */}
       <button
         onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
+        aria-controls="task-progress-content"
         className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-card/60 transition-colors"
       >
         <div className="flex items-center gap-3 min-w-0">
@@ -107,7 +109,7 @@ export function TaskProgress({ task }: TaskProgressProps) {
       </button>
 
       {/* 内容区 */}
-      <div className={`transition-all duration-300 ease-in-out ${expanded ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'} overflow-hidden`}>
+      <div id="task-progress-content" className={`transition-all duration-300 ease-in-out ${expanded ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'} overflow-hidden`}>
         <div className="px-4 pb-4 pt-1 space-y-4">
           {/* 进度轨道 */}
           <div className="relative">
