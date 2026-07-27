@@ -181,7 +181,7 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
 
             return isUser ? (
               /* ── User message: right-aligned bubble ── */
-              <div key={msg.id ?? idx} className="flex justify-end">
+              <div key={msg.id ?? `msg-${idx}`} className="flex justify-end">
                 <div className="max-w-[85%]">
                   <div className="flex items-center justify-end gap-1.5 mb-0.5">
                     {time && <span className="text-[15px]" style={{ color: isDark ? '#475569' : '#cbd5e1' }}>{time}</span>}

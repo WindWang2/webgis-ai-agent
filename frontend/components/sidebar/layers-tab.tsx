@@ -249,10 +249,14 @@ export function LayersTab() {
                               updateLayer(layer.id, { opacity: parseInt(e.target.value, 10) / 100 })
                             }
                             style={{
-                              flex: 1, height: 4, appearance: 'none' as any,
+                              flex: 1, height: 4,
+                              // 审计 findings.md：appearance 不在 React CSSProperties 类型中，
+                              // 之前用 'none' as any 绕过。改用 MozAppearance + WebkitAppearance
+                              // 覆盖所有引擎（两者都在类型定义中）。
+                              MozAppearance: 'none',
+                              WebkitAppearance: 'none',
                               backgroundColor: isDark ? 'rgba(148,163,184,0.3)' : 'rgba(226,232,240,0.8)',
                               borderRadius: 999, cursor: 'pointer',
-                              WebkitAppearance: 'none'
                             }}
                           />
                           <span style={{ fontSize: 11, color: isDark ? '#64748b' : '#94a3b8', width: 28, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>

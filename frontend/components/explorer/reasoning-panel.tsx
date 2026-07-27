@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { SpatialReasoningResult, ReasoningStep } from "@/lib/types/explorer";
 
 interface ReasoningPanelProps {
@@ -74,6 +74,15 @@ export function ReasoningPanel({ result }: ReasoningPanelProps) {
   const [expandedSteps, setExpandedSteps] = useState<Set<number>>(
     () => new Set(result.reasoning_chain.length > 0 ? [result.reasoning_chain[0].step] : [])
   );
+
+  // 审计 findings.md State Management：lazy initializer 只在首次渲染运行。
+  // 如果 result.reasoning_chain 变化（如加载新分析结果），展开状态不会更新。
+  // 用 effect 在 result 变化时重置为默认（展开第一步）。
+  useEffect(() => {
+    setExpandedSteps(
+      new Set(result.reasoning_chain.length > 0 ? [result.reasoning_chain[0].step] : [])
+    );
+  }, [result]);
 
   const confidence = getConfidenceInfo(result.confidence);
 
