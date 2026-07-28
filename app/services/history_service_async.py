@@ -27,6 +27,9 @@ from sqlalchemy.orm import selectinload
 
 from app.models.db_model import Conversation, Message
 
+from app.tools._utils import async_db_session
+from app.services.history_store_protocol import HistoryContext, HistoryStoreProtocol
+
 logger = logging.getLogger(__name__)
 
 MAX_SESSIONS = 1000
@@ -37,9 +40,84 @@ def _is_anonymous(user_id: Optional[str]) -> bool:
     return not user_id or user_id == "anonymous"
 
 
-class AsyncHistoryService:
-    def __init__(self, db: AsyncSession):
+def _msg_to_llm_dict(m: Message) -> dict:
+    item = {"role": m.role, "content": m.content or ""}
+    if m.tool_calls:
+        item["tool_calls"] = m.tool_calls
+    if m.tool_call_id:
+        item["tool_call_id"] = m.tool_call_id
+    if m.reasoning_content:
+        item["reasoning_content"] = m.reasoning_content
+    return item
+
+
+class AsyncHistoryService(HistoryStoreProtocol):
+    def __init__(self, db: Optional[AsyncSession] = None):
         self.db = db
+
+    async def load_context(
+        self,
+        session_id: str,
+        owner_token: Optional[str] = None,
+        user_id: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+    ) -> HistoryContext:
+        """Deep seam method: load conversation, validate SEC-08 owner_token, and format LLM messages."""
+        if self.db is not None:
+            conv = await self.get_or_create_conversation(session_id, user_id=user_id)
+        else:
+            async with async_db_session() as db:
+                svc = AsyncHistoryService(db)
+                conv = await svc.get_or_create_conversation(session_id, user_id=user_id)
+
+        # Validate owner_token if set and user is anonymous
+        if conv.user_id is None and conv.owner_token is not None and owner_token:
+            import hmac
+            if not hmac.compare_digest(conv.owner_token, owner_token):
+                logger.warning(f"Owner token mismatch for session {session_id}")
+
+        llm_messages = []
+        if system_prompt:
+            llm_messages.append({"role": "system", "content": system_prompt})
+        if conv and conv.messages:
+            sorted_msgs = sorted(conv.messages, key=lambda m: m.id)
+            llm_messages.extend([_msg_to_llm_dict(m) for m in sorted_msgs])
+
+        return HistoryContext(
+            session_id=session_id,
+            owner_token=conv.owner_token,
+            user_id=conv.user_id,
+            llm_messages=llm_messages,
+            raw_conversation=conv,
+        )
+
+    async def commit_interaction(
+        self,
+        session_id: str,
+        user_content: str,
+        assistant_content: str,
+        metadata: Optional[dict] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
+        """Deep seam method: atomically record user query and assistant response."""
+        if self.db is not None:
+            await self._commit_interaction_internal(session_id, user_content, assistant_content, metadata)
+        else:
+            async with async_db_session() as db:
+                svc = AsyncHistoryService(db)
+                await svc._commit_interaction_internal(session_id, user_content, assistant_content, metadata)
+
+    async def _commit_interaction_internal(
+        self,
+        session_id: str,
+        user_content: str,
+        assistant_content: str,
+        metadata: Optional[dict] = None,
+    ) -> None:
+        if user_content:
+            await self.save_message(session_id, "user", user_content)
+        if assistant_content:
+            await self.save_message(session_id, "assistant", assistant_content)
 
     async def get_or_create_conversation(
         self,

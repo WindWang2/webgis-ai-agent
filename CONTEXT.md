@@ -74,9 +74,8 @@ retry, change parameters, or abort.
 Multi-tenant root entity. All users, layers, and documents belong to an organization via
 `org_id`. The `slug` field is used for URL-level tenancy.
 
-### token_version
-Logout-everywhere mechanism: incrementing this integer invalidates all existing JWT access
-and refresh tokens, which carry a `ver` claim.
+### HistoryStore & HistoryContext
+Deepened conversation persistence seam. `HistoryContext` consolidates Conversation ORM metadata, owner token validation (SEC-08), and role-converted LLM messages (`llm_messages`). `HistoryStoreProtocol` defines 4 intent operations: `load_context`, `commit_interaction`, `delete_history`, and `summarize_session_title`.
 
 ## Key Relationships
 

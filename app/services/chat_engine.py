@@ -186,26 +186,20 @@ class ChatEngine:
         session_id: str,
         user_id: Optional[str] = None,
     ) -> list[dict]:
-        """Async DB call to load conversation history. user_id 用于新建时记录 owner（A2）。"""
-        history_messages = []
+        """Async DB call to load conversation history using deep HistoryService."""
         try:
-            async with async_db_session() as db:
-                conv = await AsyncHistoryService(db).get_or_create_conversation(session_id, user_id=user_id)
-                # SEC-08：缓存匿名会话的 owner_token，供路由层在创建时回传给前端。
-                # 仅在尚未缓存时写入（token 首次创建后不变）；认证会话 token 为 None 不缓存。
-                if conv is not None and conv.owner_token and session_id not in self._session_owner_tokens:
-                    self._session_owner_tokens[session_id] = conv.owner_token
-                if conv and conv.messages:
-                    sorted_msgs = sorted(conv.messages, key=lambda x: x.id)
-                    history_messages = [self._db_msg_to_llm(m) for m in sorted_msgs]
+            history_svc = AsyncHistoryService()
+            ctx = await history_svc.load_context(
+                session_id=session_id,
+                user_id=user_id,
+                system_prompt=self._build_system_prompt(),
+            )
+            if ctx.owner_token and session_id not in self._session_owner_tokens:
+                self._session_owner_tokens[session_id] = ctx.owner_token
+            return ctx.llm_messages
         except Exception as e:
             logger.warning(f"History: failed to load conversation {session_id}: {e}")
-
-        has_system = any(m.get("role") == "system" for m in history_messages)
-        if not has_system:
-            history_messages.insert(0, {"role": "system", "content": self._build_system_prompt()})
-
-        return history_messages
+            return [{"role": "system", "content": self._build_system_prompt()}]
 
     def get_session_owner_token(self, session_id: str) -> Optional[str]:
         """SEC-08：取出并为调用方消费该会话的 owner_token（一次性）。
