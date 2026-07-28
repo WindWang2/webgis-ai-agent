@@ -43,8 +43,9 @@ from app.services.chat.context_builder import (
     build_last_analysis_context as _build_last_analysis_context,
     compose_request_messages as _compose_request_messages_fn,
 )
-from app.services.chat.dispatcher import (
-    dispatch_tool as _dispatch_tool_fn,
+from app.services.tool_dispatch_service import (
+    ToolDispatchResult,
+    ToolDispatchService,
     is_suspicious_result as _is_suspicious_result_fn,
 )
 
@@ -389,7 +390,7 @@ class ChatEngine:
         message: str,
         tool_name: str,
         tool_args: dict,
-        outcome: dict,
+        outcome: ToolDispatchResult,
         subset_size: int,
         step_n: int | None = None,
     ) -> None:
@@ -404,11 +405,10 @@ class ChatEngine:
         """
         from app.services.chat import planner
         from app.services.chat.decision_log import ToolDecisionRecord, log_tool_decision
-        from app.services.chat.dispatcher import is_suspicious_result
 
-        if outcome.get("is_error"):
+        if outcome.status == "error":
             quality = "error"
-        elif is_suspicious_result(outcome.get("result")):
+        elif _is_suspicious_result_fn(outcome.raw_result):
             quality = "empty"
         else:
             quality = "ok"
@@ -529,8 +529,8 @@ class ChatEngine:
                                 tool_args_dict = {}
                         step = self.tracker.start_step(task.id, tool_name, tool_args_dict if isinstance(tool_args_dict, dict) else {})
                         outcome = await self._dispatch_tool(tc, session_id, executed_tools)
-                        self.tracker.complete_step(task.id, step.id, outcome["result"])
-                        llm_payload = outcome["llm_payload"]
+                        self.tracker.complete_step(task.id, step.id, outcome.raw_result)
+                        llm_payload = outcome.llm_payload
 
                         if standard_calls:
                             messages.append({
@@ -750,38 +750,38 @@ class ChatEngine:
                     except Exception as e:  # noqa: BLE001
                         logger.warning(f"[chat_engine] plan_step_done 发送失败: {e}")
 
-                    msg_result_str = outcome["llm_payload"]
+                    msg_result_str = outcome.llm_payload
 
-                    if outcome["repeated"]:
+                    if outcome.status == "repeated":
                         # 重复调用拦截：不更新 tracker（没有真实执行），只发 step_result
                         yield sse_event("step_result", {
                             "task_id": task.id,
                             "step_id": step.id,
                             "tool": tool_name,
-                            "result": outcome["slim_event"],
+                            "result": outcome.slim_event,
                             "session_id": session_id,
                         })
-                    elif outcome["is_error"]:
-                        self.tracker.fail_step(task.id, step.id, outcome["error_msg"])
+                    elif outcome.status == "error":
+                        self.tracker.fail_step(task.id, step.id, outcome.error_msg or "")
                         yield sse_event("step_error", {
                             "task_id": task.id,
                             "step_id": step.id,
                             "tool": tool_name,
-                            "error": outcome["error_msg"],
+                            "error": outcome.error_msg,
                         })
                         yield sse_event("tool_result", {"name": tool_name, "result": msg_result_str, "session_id": session_id})
                     else:
-                        self.tracker.complete_step(task.id, step.id, outcome["result"])
-                        yield sse_event("step_result", {
+                        self.tracker.complete_step(task.id, step.id, outcome.raw_result)
+                        step_payload = {
                             "task_id": task.id,
                             "step_id": step.id,
                             "tool": tool_name,
-                            "result": outcome["slim_event"],
-                            "geojson_ref": outcome["geojson_ref"],
-                            "has_geojson": outcome["has_geojson"],
+                            "result": outcome.slim_event,
+                            "geojson_ref": outcome.geojson_ref,
                             "session_id": session_id,
-                        })
-                        yield sse_event("tool_result", {"name": tool_name, "result": outcome["slim_event"], "session_id": session_id})
+                        }
+                        yield sse_event("step_result", step_payload)
+                        yield sse_event("tool_result", {"name": tool_name, "result": outcome.slim_event, "session_id": session_id})
 
                     if standard_calls:
                         messages.append({
@@ -848,18 +848,17 @@ class ChatEngine:
         tc: dict,
         session_id: str,
         executed_tools: set[tuple[str, str]],
-    ) -> dict:
-        """委托给 chat/dispatcher.dispatch_tool — 显式注入 registry 与 WS 广播回调。"""
+    ) -> ToolDispatchResult:
+        """委托给 ToolDispatchService — 显式注入 registry 与 WS 广播回调。
+
+        unified-tool-dispatch 票据 03：legacy 路径改走统一服务，返回判别式结果。
+        调用方按 result.status 分支，不再从 8 字段 dict 里重新拼装结论。
+        """
         def _broadcast(sid: str, event_type: str, data: dict) -> None:
             self._fire_and_forget(broadcast_ws_event, sid, event_type, data)
 
-        return await _dispatch_tool_fn(
-            tc,
-            session_id,
-            executed_tools,
-            registry=self.registry,
-            fire_broadcast=_broadcast,
-        )
+        service = ToolDispatchService(registry=self.registry, fire_broadcast=_broadcast)
+        return await service.dispatch(tc, session_id, executed_tools)
 
     async def clear_session(
         self,
@@ -901,6 +900,6 @@ class ChatEngine:
         return deleted
 
     def _detect_suspicious_result(self, result: Any) -> bool:
-        """委托给 chat/dispatcher.is_suspicious_result。"""
+        """委托给 tool_dispatch_service.is_suspicious_result。"""
         return _is_suspicious_result_fn(result)
 

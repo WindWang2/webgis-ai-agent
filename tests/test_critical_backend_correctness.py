@@ -417,11 +417,14 @@ async def test_c5_dispatch_task_cancelled_on_disconnect(monkeypatch):
     # 若 chat_stream 没正确 cancel，这个任务会永远挂着。
     block_event = asyncio.Event()
 
+    from app.services.tool_dispatch_service import ToolDispatchResult
     async def blocking_dispatch(self, *a, **k):
         await block_event.wait()  # 永不 set，除非被 cancel
-        return {"is_error": False, "repeated": False, "result": {},
-                "llm_payload": "{}", "slim_event": {}, "geojson_ref": None,
-                "has_geojson": False}
+        # 返回值永不执行（任务被 cancel），但保持契约诚实：返回判别式结果而非旧 dict。
+        return ToolDispatchResult(
+            status="ok", llm_payload="{}", slim_event={},
+            geojson_ref=None, raw_result={}, error_msg=None,
+        )
     monkeypatch.setattr(engine, "_dispatch_tool",
                         blocking_dispatch.__get__(engine, type(engine)))
 

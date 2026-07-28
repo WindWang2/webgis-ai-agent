@@ -58,6 +58,7 @@ async def test_maybe_plan_skips_short_followup(engine, monkeypatch):
 def test_log_tool_decision_accepts_step_n_parameter(engine, tmp_path, monkeypatch):
     """_log_tool_decision 必须接收 step_n 参数而不是内部计算。"""
     from app.services.chat import decision_log
+    from app.services.tool_dispatch_service import ToolDispatchResult
     captured: list = []
     monkeypatch.setattr(decision_log, "log_tool_decision",
                         lambda rec: captured.append(rec))
@@ -68,7 +69,14 @@ def test_log_tool_decision_accepts_step_n_parameter(engine, tmp_path, monkeypatc
         message="test",
         tool_name="buffer_analysis",
         tool_args={},
-        outcome={"is_error": False, "result": {"ok": True}},
+        outcome=ToolDispatchResult(
+            status="ok",
+            llm_payload="ok",
+            slim_event={"ok": True},
+            geojson_ref=None,
+            raw_result={"ok": True},
+            error_msg=None,
+        ),
         subset_size=5,
         step_n=2,
     )
@@ -185,10 +193,16 @@ async def test_chat_stream_emits_plan_step_done_after_tool(engine, monkeypatch):
                             "finish_reason": "stop"})
     monkeypatch.setattr(engine, "_call_llm_stream", fake_llm_stream)
     # 让 dispatch 不实际跑工具
+    from app.services.tool_dispatch_service import ToolDispatchResult
     async def fake_dispatch(self, *a, **k):
-        return {"is_error": False, "repeated": False,
-                "result": {"ok": True}, "llm_payload": "{}",
-                "slim_event": {"ok": True}, "geojson_ref": None, "has_geojson": False}
+        return ToolDispatchResult(
+            status="ok",
+            llm_payload="{}",
+            slim_event={"ok": True},
+            geojson_ref=None,
+            raw_result={"ok": True},
+            error_msg=None,
+        )
     monkeypatch.setattr(engine, "_dispatch_tool",
                         fake_dispatch.__get__(engine, type(engine)))
 
