@@ -170,8 +170,10 @@ describe('HistoryDrawer keyboard focus trap', () => {
 // 工具：获取容器内 tab 顺序的可聚焦元素（与浏览器 Tab 行为一致）。
 // 注意：jsdom 不计算布局，getClientRects() 恒为空，故不能用可见性过滤 —— 这里只按
 // 选择器与 DOM 顺序返回，符合浏览器对可见元素的默认 Tab 顺序。
+// 选择器必须与生产代码 history-drawer.tsx::getTabbableIn 完全一致（含 input[type=hidden]
+// 排除），否则测试不会覆盖生产代码所做的过滤。
 function getTabbable(container: HTMLElement): HTMLElement[] {
   const selector =
-    'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
   return Array.from(container.querySelectorAll<HTMLElement>(selector));
 }
