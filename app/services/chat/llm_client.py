@@ -12,12 +12,70 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import uuid
+from collections import OrderedDict
 from dataclasses import dataclass
-from typing import AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Optional
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+
+# ─── LRU Cache ──────────────────────────────────────────────
+
+
+class LRUCache(OrderedDict):
+    """Simple LRU Cache to bound memory usage."""
+
+    def __init__(self, capacity: int = 100):
+        super().__init__()
+        self.capacity = capacity
+
+    def __getitem__(self, key):
+        value = super().__getitem__(key)
+        self.move_to_end(key)
+        return value
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        if len(self) > self.capacity:
+            oldest = next(iter(self))
+            del self[oldest]
+
+
+# ─── XML tool-call 解析（MiniMax 风格） ─────────────────────────
+
+
+_INVOKE_PAT = re.compile(
+    r'minimax:tool_call\s+<invoke\s+name="([^"]+)">(.*?)(?:</invoke>|$)',
+    re.DOTALL,
+)
+_PARAM_PAT = re.compile(r'<parameter\s+name="([^"]+)">(.*?)</parameter>', re.DOTALL)
+
+
+def parse_minimax_xml_tool_calls(content: str) -> list[dict]:
+    """Parse MiniMax XML-format tool calls from content field.
+
+    Handles: minimax:tool_call <invoke name="tool"> <parameter name="p">v</parameter> </invoke>
+    """
+    tool_calls: list[dict] = []
+    for tool_name, body in _INVOKE_PAT.findall(content):
+        params: dict = {}
+        for p_name, p_value in _PARAM_PAT.findall(body):
+            v = p_value.strip()
+            try:
+                params[p_name] = json.loads(v)
+            except (json.JSONDecodeError, ValueError):
+                params[p_name] = v
+        if tool_name.strip():
+            tool_calls.append({
+                "id": f"call_{uuid.uuid4().hex[:8]}",
+                "function": {"name": tool_name.strip(), "arguments": params},
+            })
+    return tool_calls
+
 
 
 @dataclass

@@ -26,17 +26,17 @@ from app.services.history_service_async import AsyncHistoryService
 from app.utils.sse import sse_event
 
 # ─── M1: 从拆出的子模块 re-export，保留旧符号兼容 ───────────
-from app.services.chat.sse_helpers import (
+from app.services.chat.llm_client import (
+    LLMConfig,
     LRUCache,
-    calculate_bbox as _calculate_bbox,
+    call_llm,
+    call_llm_stream,
     parse_minimax_xml_tool_calls as _parse_minimax_xml_tool_calls,
-    slim_tool_result as _slim_tool_result,
 )
 from app.services.chat.prompt import (
     SYSTEM_PROMPT,
     construct_self_healing_message as _construct_self_healing_message,
 )
-from app.services.chat.llm_client import LLMConfig, call_llm, call_llm_stream
 from app.services.chat.context_builder import (
     build_map_state_summary as _build_map_state_summary,
     format_layer_lines as _format_layer_lines,
@@ -46,7 +46,9 @@ from app.services.chat.context_builder import (
 from app.services.tool_dispatch_service import (
     ToolDispatchResult,
     ToolDispatchService,
+    calculate_bbox as _calculate_bbox,
     is_suspicious_result as _is_suspicious_result_fn,
+    slim_tool_result as _slim_tool_result,
 )
 
 logger = logging.getLogger(__name__)

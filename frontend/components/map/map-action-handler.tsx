@@ -109,7 +109,17 @@ export function MapActionHandler() {
   const { actions, popAction, setSelectedBaseLayer } = useMapAction();
   const mapContext = useMap();
   const mapInstance = mapContext.default;
+  const annotations = useHudStore((s) => s.annotations);
   const action = actions[0];
+
+  // Refresh annotation layers on map when annotations change in Zustand store
+  useEffect(() => {
+    if (!mapInstance) return;
+    const map = mapInstance.getMap();
+    if (!map) return;
+    ensureAnnotationLayers(map);
+    refreshAnnotations(map);
+  }, [mapInstance, annotations]);
 
   useEffect(() => {
     if (!action) return;

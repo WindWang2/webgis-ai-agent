@@ -309,7 +309,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
                       filter: getLayerFilter("Polygon"),
                       paint: {
                         "fill-extrusion-color": color,
-                        "fill-extrusion-height": ["coalesce", ["get", "height"], ["*", ["random"], 100], 20],
+                        "fill-extrusion-height": ["coalesce", ["get", "height"], 20],
                         "fill-extrusion-base": 0,
                         "fill-extrusion-opacity": layer.opacity || 0.8,
                       },

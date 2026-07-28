@@ -514,6 +514,41 @@ class RedisSessionDataManager:
             await self.clear_session(sid)
         logger.info("Cleaned up %d idle sessions", min(to_remove, len(scored)))
 
+    async def load_context(self, session_id: str):
+        from app.services.session_data_protocol import SessionContext
+        meta = await self.get_session_metadata(session_id)
+        map_state = meta.get("map_state", {})
+        layers = list(map_state.get("layers", []))
+        event_log = meta.get("event_log", [])
+        started_at = meta.get("started_at")
+        refs = meta.get("list_refs", {})
+        return SessionContext(
+            session_id=session_id,
+            map_state=map_state,
+            layers=layers,
+            event_log=event_log,
+            started_at=started_at,
+            refs=refs,
+        )
+
+    async def commit_dispatch(
+        self,
+        session_id: str,
+        tool_name: str,
+        geojson_ref: Optional[str] = None,
+        event_payload: Optional[dict] = None,
+        result: Optional[Any] = None,
+    ) -> None:
+        payload = {"tool": tool_name}
+        if geojson_ref:
+            payload["ref"] = geojson_ref
+        if event_payload:
+            payload.update(event_payload)
+        await self.append_event(session_id, "tool_executed", payload)
+
+    async def get_ref_data(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]:
+        return await self.get(session_id, ref_id_or_alias)
+
     async def _evict_ref(self, pipe, session_id: str, ref_id: str) -> None:
         """Add eviction commands to an open pipeline. Alias hget needs immediate await."""
         # 调用方（store）已 _ensure_connected()；这里防御性再确认一次。

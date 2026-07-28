@@ -222,6 +222,7 @@ class PiBridge:
         self._event_queue: asyncio.Queue = asyncio.Queue()
         self._request_counter = 0
         self._reader_task: Optional[asyncio.Task] = None
+        self._stderr_task: Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()
         # 审计 AGENT-05：Pi 进程死亡后标记为 True，让 _use_pi_bridge() 能回退
         self._process_died = False
@@ -258,8 +259,9 @@ class PiBridge:
             text=True,
         )
 
-        # Start reader task
+        # Start reader tasks for stdout and stderr to avoid OS pipe deadlock
         self._reader_task = asyncio.create_task(self._read_responses())
+        self._stderr_task = asyncio.create_task(self._read_stderr())
 
         # Yield to let the reader task start (avoid race where _send_request writes
         # to stdin before the reader is ready to consume the response).
@@ -300,6 +302,29 @@ class PiBridge:
             except asyncio.CancelledError:
                 pass
             self._reader_task = None
+
+        if self._stderr_task:
+            self._stderr_task.cancel()
+            try:
+                await self._stderr_task
+            except asyncio.CancelledError:
+                pass
+            self._stderr_task = None
+
+    async def _read_stderr(self) -> None:
+        """Read and log stderr lines from Pi subprocess to prevent OS pipe deadlock."""
+        try:
+            while self._process and self._process.stderr:
+                line = await asyncio.get_running_loop().run_in_executor(None, self._process.stderr.readline)
+                if not line:
+                    break
+                line = line.strip()
+                if line:
+                    logger.debug(f"[PiStderr] {line[:200]}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"[PiStderr] Reader exited: {e}")
 
     async def _read_responses(self) -> None:
         """Read responses and events from Pi stdout.
@@ -613,7 +638,7 @@ class PiBridge:
                 "error": error_msg,
             }))
         try:
-            from app.services.chat.sse_helpers import slim_event_result
+            from app.services.tool_dispatch_service import slim_event_result
             slim = slim_event_result(result)
         except Exception:
             slim = result

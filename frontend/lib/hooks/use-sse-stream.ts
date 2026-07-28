@@ -97,28 +97,30 @@ export function useSSEStream(
       if (event.event === 'token' || event.event === 'content') {
         const chunk = data.content || '';
         if (data.is_reasoning || data.type === 'reasoning') {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === thinkingId
-                ? { ...m, think: (m.think || '') + chunk, isThinking: false }
-                : m
-            )
-          );
+          setMessages((prev) => {
+            const idx = prev.findIndex((m) => m.id === thinkingId);
+            if (idx === -1) return prev;
+            const updated = [...prev];
+            const target = updated[idx];
+            updated[idx] = { ...target, think: (target.think || '') + chunk, isThinking: false };
+            return updated;
+          });
         } else {
           rawContentRef.current += chunk;
           const parsed = parseThink(rawContentRef.current);
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === thinkingId
-                ? {
-                    ...m,
-                    content: parsed.content,
-                    think: parsed.thinking || m.think,
-                    isThinking: false,
-                  }
-                : m
-            )
-          );
+          setMessages((prev) => {
+            const idx = prev.findIndex((m) => m.id === thinkingId);
+            if (idx === -1) return prev;
+            const updated = [...prev];
+            const target = updated[idx];
+            updated[idx] = {
+              ...target,
+              content: parsed.content,
+              think: parsed.thinking || target.think,
+              isThinking: false,
+            };
+            return updated;
+          });
         }
       } else if (event.event === 'step_result') {
         // Plan Mode：propose_plan 返回的 plan 摘要挂到当前消息，由 PlanProposalCard 渲染

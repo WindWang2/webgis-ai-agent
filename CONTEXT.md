@@ -10,8 +10,15 @@ acts as a capability token for data access.
 
 ### ref_id (Cursor)
 An opaque 16-hex string (e.g., `ref:geojson-abc123...`) pointing to large data objects stored
-in `SessionDataManager`, not in the DB. This is the core of the Fetch-on-Demand pattern: the
-LLM never sees the full payload; the frontend fetches it separately.
+in `SessionStore`, not in the DB. This is the core of the Fetch-on-Demand pattern: the
+LLM never sees the full payload; the frontend fetches it separately via `get_ref_data`.
+
+### SessionStore
+The deep state storage module managing runtime session data across 4 primary operations:
+`load_context` (fetch SessionContext), `commit_dispatch` (atomic ref store + event + state update),
+`update_map_state` (atomic layer mutations), and `get_ref_data` (Fetch-on-Demand payload retrieval).
+Implemented by two adapters: `RedisSessionStore` (production) and `MemorySessionStore` (test/local fallback).
+
 
 ### Tool
 A Python callable registered in `ToolRegistry` with an OpenAI-compatible JSON schema, tier
@@ -20,11 +27,14 @@ A Python callable registered in `ToolRegistry` with an OpenAI-compatible JSON sc
 ### Tool dispatch
 The single act of executing one tool call end-to-end: validate → tier-authorize → run via the
 registry → store large GeoJSON to a `ref_id` cursor (Fetch-on-Demand) → shape an LLM payload
-and a slim frontend event → intercept repeated calls → wrap errors as self-healing hints.
+and a slim frontend event (BBox, property truncation, sample feature generation) → intercept
+repeated calls → wrap errors as self-healing hints.
 "Dispatch" names this whole chain, not just the `registry.dispatch()` call inside it. Both the
 legacy ChatEngine path and the Pi bridge path perform tool dispatch; the deepened
-`ToolDispatchService` is the single module that owns it, returning a discriminated result
-(ok / repeated / error) so callers branch on the outcome rather than reassembling raw fields.
+`ToolDispatchService` is the single module that owns execution, data slimming, and error self-healing
+wrapping, returning a discriminated `ToolDispatchResult` (ok / repeated / error) so callers
+branch on the outcome rather than directly calling shallow `sse_helpers`.
+
 
 ### Tier
 Tool priority classification. Tier 1 is always-on; Tier 2 activates on keyword/sticky match;

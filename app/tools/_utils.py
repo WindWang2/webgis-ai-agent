@@ -4,12 +4,25 @@
 """
 import logging
 from contextlib import contextmanager, asynccontextmanager
-from typing import Optional, List
-
-# 缓存装饰器从 lib 单点导出。新工具 from app.tools._utils import cached_tool, trim_features
-from app.lib.tool_cache import cached_tool  # noqa: F401
+from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)
+
+from app.lib.tool_cache import cached_tool  # noqa: F401
+
+
+def sanitize_json_obj(obj: Any) -> Any:
+    """Recursively replace NaN and Inf values in dict/list/floats with None to prevent JSON serialization crashes."""
+    import math
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    elif isinstance(obj, dict):
+        return {k: sanitize_json_obj(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_json_obj(v) for v in obj]
+    return obj
 
 
 # ============================================================================
