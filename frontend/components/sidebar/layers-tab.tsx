@@ -249,10 +249,10 @@ export function LayersTab() {
                               updateLayer(layer.id, { opacity: parseInt(e.target.value, 10) / 100 })
                             }
                             style={{
-                              flex: 1, height: 4, appearance: 'none' as any,
+                              flex: 1, height: 4,
+                              appearance: 'none',
                               backgroundColor: isDark ? 'rgba(148,163,184,0.3)' : 'rgba(226,232,240,0.8)',
                               borderRadius: 999, cursor: 'pointer',
-                              WebkitAppearance: 'none'
                             }}
                           />
                           <span style={{ fontSize: 11, color: isDark ? '#64748b' : '#94a3b8', width: 28, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>

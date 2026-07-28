@@ -12,6 +12,14 @@ interface HistoryDrawerProps {
   accentColor: string;
 }
 
+// 面板内 tab 顺序的可聚焦元素，供焦点陷阱循环使用。
+// 排除 hidden input（不可聚焦但会被 input 选择器命中，导致循环目标落到空节点）。
+function getTabbableIn(container: HTMLElement): HTMLElement[] {
+  const selector =
+    'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  return Array.from(container.querySelectorAll<HTMLElement>(selector));
+}
+
 export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryDrawerProps) {
   const sessions = useHudStore((s) => s.sessions);
   const [search, setSearch] = useState('');
@@ -31,8 +39,9 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
     onClose();
   }
 
-  // 审计 a11y HIGH：drawer 缺 Escape 键关闭 + 焦点恢复。打开时聚焦 drawer，
-  // 关闭时把焦点还给之前活跃的元素。
+  // 审计 a11y HIGH（findings.md F4 残留缺口）：drawer 已有 Escape 关闭、打开聚焦、
+  // 关闭回焦；缺 Tab 焦点陷阱 —— 键盘用户可 Tab 到背景元素。这里在已有 keydown 处理
+  // 里拦截 Tab/Shift+Tab，把焦点循环限制在面板内的可聚焦元素之间。
   const panelRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
   useEffect(() => {
@@ -45,6 +54,29 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
       if (e.key === 'Escape') {
         e.preventDefault();
         onClose();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      const focusables = getTabbableIn(panel);
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey) {
+        // 在第一个（或面板本身）上 Shift+Tab → 跳到最后一个，阻止焦点回退到背景。
+        if (active === first || active === panel || !panel.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        // 在最后一个（或面板本身）上 Tab → 跳回第一个，阻止焦点前进到背景。
+        // 注意 panel 自身 tabIndex={-1} 不在 focusables 中，故需显式判断 active === panel。
+        if (active === last || active === panel || !panel.contains(active)) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     };
     document.addEventListener('keydown', onKey);
