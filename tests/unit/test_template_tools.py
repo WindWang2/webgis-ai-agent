@@ -90,6 +90,22 @@ async def test_apply_template_basemap(registry):
 
 
 @pytest.mark.asyncio
+async def test_apply_template_layout(registry):
+    """Test apply_template with a layout template ID emitting EXPORT_LAYOUT_UPDATE / export_map command."""
+    result = await registry.dispatch("apply_template", {
+        "template_id": "tmpl_ly_academic"
+    })
+
+    assert "error" not in result
+    assert result["status"] == "template_applied"
+    assert result["kind"] == "layout"
+    assert result["command"] in ("export_map", "EXPORT_LAYOUT_UPDATE")
+    assert "params" in result
+    assert result["params"]["paperSize"] == "A4"
+    assert result["params"]["style"]["fontFamily"] == "Georgia, serif"
+
+
+@pytest.mark.asyncio
 async def test_apply_template_unknown_id(registry):
     """Test apply_template with non-existent template_id returns an error."""
     result = await registry.dispatch("apply_template", {"template_id": "tmpl_non_existent"})
