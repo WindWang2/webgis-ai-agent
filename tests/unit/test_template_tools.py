@@ -106,6 +106,51 @@ async def test_apply_template_layout(registry):
 
 
 @pytest.mark.asyncio
+async def test_apply_template_thematic_choropleth(registry):
+    """Test apply_template with a thematic choropleth preset template ID."""
+    sample_geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"pop": 10}},
+            {"type": "Feature", "properties": {"pop": 50}},
+            {"type": "Feature", "properties": {"pop": 100}},
+        ]
+    }
+    result = await registry.dispatch("apply_template", {
+        "template_id": "tmpl_th_pop_choro",
+        "field": "pop",
+        "geojson": sample_geojson,
+    })
+
+    assert "error" not in result
+    assert result["status"] == "template_applied"
+    assert result["kind"] == "thematic"
+    assert result["variant"] == "choropleth"
+    assert result["command"] == "create_thematic_map"
+    assert result["field"] == "pop"
+    assert result["style"] is not None
+    assert result["legend_spec"] is not None
+    assert result["legend_spec"]["type"] == "graduated"
+
+
+@pytest.mark.asyncio
+async def test_apply_template_thematic_heatmap(registry):
+    """Test apply_template with a thematic heatmap preset template ID."""
+    result = await registry.dispatch("apply_template", {
+        "template_id": "tmpl_th_heatmap",
+        "field": "density"
+    })
+
+    assert "error" not in result
+    assert result["status"] == "template_applied"
+    assert result["kind"] == "thematic"
+    assert result["variant"] == "heatmap"
+    assert result["command"] == "add_native_heatmap"
+    assert result["field"] == "density"
+    assert result["params"]["radius"] == 30
+
+
+@pytest.mark.asyncio
 async def test_apply_template_unknown_id(registry):
     """Test apply_template with non-existent template_id returns an error."""
     result = await registry.dispatch("apply_template", {"template_id": "tmpl_non_existent"})

@@ -212,16 +212,59 @@ def register_template_tools(registry: ToolRegistry):
 
         elif kind == "thematic":
             target_field = field or payload.get("field", "")
-            return {
-                "status": "template_applied",
-                "kind": "thematic",
-                "template_id": template_id,
-                "template_name": target_tmpl["name"],
-                "command": "THEMATIC_MAP_PRESET",
-                "field": target_field,
-                "params": payload,
-                "geojson": _safe_parse_geojson(geojson),
-            }
+            variant = payload.get("variant", "choropleth")
+            parsed_geojson = _safe_parse_geojson(geojson)
+
+            if variant == "heatmap":
+                return {
+                    "status": "template_applied",
+                    "kind": "thematic",
+                    "variant": "heatmap",
+                    "template_id": template_id,
+                    "template_name": target_tmpl["name"],
+                    "command": "add_native_heatmap",
+                    "field": target_field,
+                    "params": {
+                        "field": target_field,
+                        "intensity": payload.get("intensity", 0.8),
+                        "radius": payload.get("radius", 25),
+                        "heatPalette": payload.get("heatPalette", ["#0000ff", "#00ff00", "#ffff00", "#ff0000"]),
+                    },
+                    "geojson": parsed_geojson,
+                }
+            else:
+                # choropleth variant
+                style_def = None
+                legend_spec = None
+                if parsed_geojson and target_field:
+                    from app.services.cartography_service import CartographyService
+                    style_def = CartographyService.build_thematic_style(
+                        geojson=parsed_geojson,
+                        field=target_field,
+                        method=payload.get("method", "quantiles"),
+                        k=payload.get("k", 5),
+                        palette=payload.get("palette", "YlOrRd"),
+                    )
+                    if style_def:
+                        legend_spec = CartographyService.build_legend_spec(
+                            style_def, palette=payload.get("palette", "YlOrRd")
+                        )
+
+                return {
+                    "status": "template_applied",
+                    "kind": "thematic",
+                    "variant": "choropleth",
+                    "template_id": template_id,
+                    "template_name": target_tmpl["name"],
+                    "command": "create_thematic_map",
+                    "field": target_field,
+                    "method": payload.get("method", "quantiles"),
+                    "k": payload.get("k", 5),
+                    "palette": payload.get("palette", "YlOrRd"),
+                    "style": style_def,
+                    "legend_spec": legend_spec,
+                    "geojson": parsed_geojson,
+                }
 
         return {"error": f"Unknown template kind: {kind}"}
 
