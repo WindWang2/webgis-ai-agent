@@ -477,7 +477,7 @@ jobs:
       # 仅当 registry 没有该 tag（部署早于本流水线的 push 步骤上线）时，才回退到从
       # pinned source 重新构建。SSH 分支与 deploy-prod 保持一致。
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 20  # 拿足够 history 找上一个稳定 commit
 
@@ -520,7 +520,7 @@ jobs:
         # 审计 CICD-03：registry 中无 PREV_SHA tag（部署早于 push 步骤上线）时，
         # 退化为从 pinned source 重建 —— 至少 source 是 pin 到 PREV_SHA 的。
         if: steps.pull.outcome == 'failure'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.PREV_SHA }}
           fetch-depth: 1
