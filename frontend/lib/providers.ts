@@ -8,6 +8,8 @@
 export type ProviderId =
   | "carto-light"
   | "carto-dark"
+  | "carto-positron"
+  | "carto-dark-vec"
   | "osm"
   | "esri-img"
   | "esri-topo"
@@ -22,10 +24,10 @@ export interface TileProvider {
   id: ProviderId;
   /** 中文展示名，同时也是 AI 指令中的自然语言目标 */
   name: string;
-  /** XYZ / WMTS 瓦片 URL 模板 */
+  /** XYZ / WMTS 瓦片 URL 模板或 GL style JSON URL */
   url: string;
-  /** 图层类型，当前全为 raster */
-  type: "raster";
+  /** 图层类型: raster 瓦片 或 vector 矢量 */
+  type: "raster" | "vector";
   /**
    * AI 关键字索引 —— BASE_LAYER_CHANGE 处理器通过这些词命中本条目。
    * 如搜索关键词含 "dark" 则命中 carto-dark，含 "卫星"/"影像" 则命中 esri-img。
@@ -36,6 +38,20 @@ export interface TileProvider {
 const _TIANDITU_TOKEN = process.env.NEXT_PUBLIC_TIANDITU_TOKEN || "";
 
 export const TILE_PROVIDERS: TileProvider[] = [
+  {
+    id: "carto-positron",
+    name: "Carto Positron 矢量",
+    url: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+    type: "vector",
+    keywords: ["carto-positron", "positron", "浅色矢量", "学术", "矢量底图"],
+  },
+  {
+    id: "carto-dark-vec",
+    name: "Carto Dark Matter 矢量",
+    url: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+    type: "vector",
+    keywords: ["carto-dark-vec", "dark-matter", "深色矢量", "夜间矢量", "大屏"],
+  },
   {
     id: "carto-light",
     name: "Carto 浅色",

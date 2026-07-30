@@ -75,6 +75,21 @@ async def test_apply_template_symbology_single(registry):
 
 
 @pytest.mark.asyncio
+async def test_apply_template_basemap(registry):
+    """Test apply_template with a basemap template ID emitting BASE_LAYER_CHANGE command."""
+    result = await registry.dispatch("apply_template", {
+        "template_id": "tmpl_bm_positron"
+    })
+
+    assert "error" not in result
+    assert result["status"] == "template_applied"
+    assert result["kind"] == "basemap"
+    assert result["command"] == "BASE_LAYER_CHANGE"
+    assert result["params"]["providerId"] == "carto-positron"
+    assert "vectorStyleUrl" in result["params"]
+
+
+@pytest.mark.asyncio
 async def test_apply_template_unknown_id(registry):
     """Test apply_template with non-existent template_id returns an error."""
     result = await registry.dispatch("apply_template", {"template_id": "tmpl_non_existent"})
