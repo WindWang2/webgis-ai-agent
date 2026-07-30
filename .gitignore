@@ -99,4 +99,5 @@ task_plan.md
 # Development artifacts
 .zcode/
 screenshot-*.png
+.webgis-agent/
 
