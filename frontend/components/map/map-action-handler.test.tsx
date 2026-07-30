@@ -75,20 +75,33 @@ const mockClearAnnotations = vi.fn(() => {
 let mockLayersStore: Array<{ id: string; name?: string; style?: any }> = [];
 let mockAnnotationsStore: any[] = [];
 
-vi.mock('@/lib/store/useHudStore', () => ({
-  useHudStore: {
-    getState: () => ({
-      get layers() { return mockLayersStore; },
-      setBaseLayer: mockSetBaseLayer,
-      setPendingSystemMessage: mockSetPendingSystemMessage,
-      removeLayer: mockRemoveLayer,
-      updateLayer: mockUpdateLayer,
-      get annotations() { return mockAnnotationsStore; },
-      addAnnotation: mockAddAnnotation,
-      clearAnnotations: mockClearAnnotations,
-    }),
-  },
-}));
+// Zustand stores are callable as hooks AND expose .getState().
+// MapActionHandler uses both shapes:
+//   - `useHudStore((s) => s.annotations)` at render (hook subscription)
+//   - `useHudStore.getState().setBaseLayer(...)` inside handlers (imperative read)
+// The mock factory builds the store inside itself (so the binding exists when the
+// hoisted vi.mock runs); the module-level mock fns (mockSetBaseLayer etc.) are
+// referenced by closure and resolve at call time.
+vi.mock('@/lib/store/useHudStore', () => {
+  const buildState = () => ({
+    // Lazy getters so test mutations to mockLayersStore/mockAnnotationsStore are seen live
+    get layers() { return mockLayersStore; },
+    setBaseLayer: mockSetBaseLayer,
+    setPendingSystemMessage: mockSetPendingSystemMessage,
+    removeLayer: mockRemoveLayer,
+    updateLayer: mockUpdateLayer,
+    get annotations() { return mockAnnotationsStore; },
+    addAnnotation: mockAddAnnotation,
+    clearAnnotations: mockClearAnnotations,
+  });
+  // Callable as a hook: useHudStore(selector) → selector(state).
+  // Also exposes .getState() for imperative reads.
+  const useHudStore = Object.assign(
+    (selector?: (s: any) => any) => (selector ? selector(buildState()) : buildState()),
+    { getState: buildState },
+  );
+  return { useHudStore };
+});
 
 describe('MapActionHandler', () => {
   beforeEach(() => {
