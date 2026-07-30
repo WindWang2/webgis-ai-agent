@@ -77,6 +77,73 @@ Multi-tenant root entity. All users, layers, and documents belong to an organiza
 ### HistoryStore & HistoryContext
 Deepened conversation persistence seam. `HistoryContext` consolidates Conversation ORM metadata, owner token validation (SEC-08), and role-converted LLM messages (`llm_messages`). `HistoryStoreProtocol` defines 4 intent operations: `load_context`, `commit_interaction`, `delete_history`, and `summarize_session_title`.
 
+### MapSpec (Cartographic Intent)
+The declarative, high-level cartographic specification: view, layers with high-level style
+methods (`constant` / `interpolate` / `step` / `match` / `field`), layout (legend, controls,
+margins), and runtime thresholds. Co-exists with Redis `map_state` under a **dual-write**
+contract — see *Cartographic Intent vs. Runtime State* below. Lives as a versioned document
+in `.webgis-agent/` (the doc), **not** a replacement for `map_state`.
+
+### Cartographic Intent vs. Runtime State
+Two cooperating sources, distinct responsibilities:
+- **Runtime State** = `map_state` in `SessionStore` (Redis). What is *actually rendering*:
+  live layer refs, viewport, transient paint. The frontend `map-kit` renders from this.
+- **Cartographic Intent** = `MapSpec`. What the map *should be*: high-level style/layout/legend.
+- The **MapSpec Compiler** turns Intent → MapLibre Style, which feeds Runtime State.
+- **MapSpec is authoritative.** The data flow is one-way: Agent → MapSpec → Compiler →
+  `map_state`. Frontend live-UI edits (drag, opacity slider, paint tweaks) write `map_state`
+  directly and are **transient** — they are *not* back-synced to MapSpec and are overwritten
+  on the next Agent tool call that recompiles. To persist a manual edit, the user invokes
+  `webgis_layer_upsert` (surfaced in the UI as an explicit "保留 (Keep)" button when a live
+  edit diverges from MapSpec).
+- Layers in MapSpec reference data by `ref_id` at runtime (Fetch-on-Demand preserved); only at
+  **checkpoint** is the payload behind the ref materialized (snapshot copy), so a checkpoint is
+  self-contained and replayable.
+
+### MapSpec Compiler
+Deterministic, framework-agnostic TS module (`frontend/lib/mapspec-compiler/`) that turns a
+MapSpec into MapLibre `style.json` + `index.html`. Consumed by both the live `map-kit`
+(frontend) and the headless Playwright runtime validator (Node), so there is a single source
+of truth for "what this MapSpec renders to". Supports **GeoJSON sources only** in this refactor;
+PMTiles/OGC/Cesium/OpenLayers are deferred to "后续 Adapter".
+
+### Tool Catalog (webgis_*)
+The 11 `webgis_*` tools (`webgis_project_init`, `webgis_state_get`, `webgis_source_profile`,
+`webgis_view_set`, `webgis_layer_upsert`, `webgis_layout_set`, `webgis_validate`,
+`webgis_compile_maplibre`, `webgis_runtime_validate`, `webgis_checkpoint`, …) are the canonical
+tool names, **hard-migrated** from the legacy `add_layer` / `set_view` / etc. via a central
+`old→new` alias table at the `ToolRegistry.dispatch()` entry, so Pi bridge, history replay, and
+tests all cross one normalization boundary. Legacy names carry no alias; stored history is
+translated through the table on replay.
+
+### Runtime Validator
+Headless Playwright over a **static** `index.html`+`style.json` produced by the MapSpec Compiler
+(not the live Next.js app). Self-contained and replayable: serves its own read-only static
+server, drives Chromium, emits PNG/trace/`report.json`. Verifies `mapLoaded`, `mapIdle`,
+console/page/network errors, canvas-blank rate, and control overflow/collision. Live-Next.js
+regression testing is out of scope.
+
+### Eval Evidence
+Per-run artifacts auto-captured: MapSpec revisions, Spatial Meta Profiles, `style.json`,
+`index.html`, PNG, Playwright trace, `report.json`, cost stats. Scored on 5 computable
+dimensions (spatial/data correctness 25%, task completion 20%, browser runtime 15%,
+traceability/safety/reproducibility 10%, tool-call efficiency/cost 10%). Cartographic quality
+(20%) is **deferred** pending the future `webgis-visual-judge`; reported scores are normalized
+to an 80% max until then.
+
+### Spatial Meta Profile
+The statistical/metadata summary of a source (GeoJSON only in this refactor): BBOX, suggested
+view, CRS, feature count, geometry types, field names/types/sample-values, numeric field
+min/max/mean/histogram. **Auto-injected**: the *first* dissectable layer auto-writes
+`view.center`/`view.zoom` on its first upsert (only when the view has not been explicitly set);
+the Agent can override via `webgis_view_set`. Prevents blind-guessing viewport and breaks.
+PMTiles metadata (zoom/tile-type/vector-layers) is deferred to the "后续 Adapter" queue.
+
+### Checkpoint
+A self-contained snapshot of a MapSpec at a point in time: the intent doc *plus* the materialized
+payload of every `ref_id` it references (copied into the snapshot dir). Enables rollback, diff,
+and replay without the live Redis store.
+
 ## Key Relationships
 
 ```
