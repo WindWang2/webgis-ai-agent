@@ -39,6 +39,28 @@ class WebgisLayerRemoveArgs(BaseModel):
   layer_id: str = Field(..., description="要移除的图层 ID")
 
 
+class WebgisLayoutSetArgs(BaseModel):
+  legend: Optional[Dict[str, Any]] = Field(default=None, description="图例配置，如 {'title': '标题', 'position': 'top-right', 'visible': True}")
+  controls: Optional[List[Dict[str, Any]]] = Field(default=None, description="地图控件配置列表")
+  margins: Optional[Dict[str, Any]] = Field(default=None, description="边距配置")
+
+
+class WebgisValidateArgs(BaseModel):
+  pass
+
+
+class WebgisCompileMaplibreArgs(BaseModel):
+  pass
+
+
+class WebgisCheckpointArgs(BaseModel):
+  checkpoint_id: Optional[str] = Field(default=None, description="可选的快照名称 ID")
+
+
+class WebgisRollbackArgs(BaseModel):
+  checkpoint_id: str = Field(..., description="要回滚到的快照 ID")
+
+
 def register_cartography_harness_tools(registry: ToolRegistry) -> None:
   """注册 MapSpec Harness 规范化 webgis_* 工具。"""
 
@@ -169,3 +191,79 @@ def register_cartography_harness_tools(registry: ToolRegistry) -> None:
         "removed_id": layer_id,
         "summary": f"Layer '{layer_id}' removed from MapSpec",
     }
+
+  @tool(
+      registry,
+      name="webgis_layout_set",
+      description="设置 MapSpec 版面配置 (图例位置、控件、边距)。",
+      args_model=WebgisLayoutSetArgs,
+      tier=1,
+  )
+  async def webgis_layout_set(
+      legend: Optional[Dict[str, Any]] = None,
+      controls: Optional[List[Dict[str, Any]]] = None,
+      margins: Optional[Dict[str, Any]] = None,
+      session_id: Optional[str] = None,
+  ) -> dict:
+    if not session_id:
+      return {"success": False, "message": "Missing session_id"}
+    res = await mapspec_store.layout_set(session_id, legend, controls, margins)
+    return {
+        "success": True,
+        "layout": res["layout"],
+        "summary": "MapSpec layout updated",
+    }
+
+  @tool(
+      registry,
+      name="webgis_validate",
+      description="在编译前检验 MapSpec 规范性 (CRS, 字段存在性, stops 严格单调性, view 合理性)。",
+      args_model=WebgisValidateArgs,
+      tier=1,
+  )
+  async def webgis_validate(session_id: Optional[str] = None) -> dict:
+    if not session_id:
+      return {"success": False, "message": "Missing session_id"}
+    return await mapspec_store.validate_mapspec(session_id)
+
+  @tool(
+      registry,
+      name="webgis_compile_maplibre",
+      description="执行 MapSpec 编译，产出 style.json, index.html 与 compile-report.json。",
+      args_model=WebgisCompileMaplibreArgs,
+      tier=1,
+  )
+  async def webgis_compile_maplibre(session_id: Optional[str] = None) -> dict:
+    if not session_id:
+      return {"success": False, "message": "Missing session_id"}
+    return await mapspec_store.compile_mapspec_cli(session_id)
+
+  @tool(
+      registry,
+      name="webgis_checkpoint",
+      description="创建 MapSpec 快照并具象化落地所引用的全部 ref_id 数据载荷。",
+      args_model=WebgisCheckpointArgs,
+      tier=1,
+  )
+  async def webgis_checkpoint(
+      checkpoint_id: Optional[str] = None,
+      session_id: Optional[str] = None,
+  ) -> dict:
+    if not session_id:
+      return {"success": False, "message": "Missing session_id"}
+    return await mapspec_store.checkpoint(session_id, checkpoint_id)
+
+  @tool(
+      registry,
+      name="webgis_rollback",
+      description="回滚 MapSpec 与 runtime map_state 到指定的快照点。",
+      args_model=WebgisRollbackArgs,
+      tier=1,
+  )
+  async def webgis_rollback(
+      checkpoint_id: str,
+      session_id: Optional[str] = None,
+  ) -> dict:
+    if not session_id:
+      return {"success": False, "message": "Missing session_id"}
+    return await mapspec_store.rollback(session_id, checkpoint_id)

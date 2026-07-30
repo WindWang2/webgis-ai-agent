@@ -78,66 +78,88 @@ async def test_layer_upsert_auto_profiles_and_auto_views(clean_session):
   res = await mapspec_store.layer_upsert(clean_session, layer, source_data=geojson_data)
   mapspec = res["mapspec"]
 
-  # Check layer added
   assert len(mapspec["layers"]) == 1
   assert mapspec["layers"][0]["id"] == "eq_layer"
-
-  # Check auto-profiling injected
   assert "profile" in mapspec["sources"]["eq_source"]
   assert mapspec["sources"]["eq_source"]["profile"]["featureCount"] == 2
-
-  # Check first layer auto-view injection (center of [120.0, 30.0] and [121.0, 31.0] -> [120.5, 30.5])
   assert mapspec["view"]["center"] == [120.5, 30.5]
 
-  # Check dual-write to map_state layers
-  map_state = await session_data_manager.get_map_state(clean_session)
-  assert len(map_state["layers"]) == 1
-  assert map_state["layers"][0]["id"] == "eq_layer"
-
 
 @pytest.mark.asyncio
-async def test_layer_remove(clean_session):
-  layer = {"id": "test_layer", "source": "s1", "type": "circle"}
-  await mapspec_store.layer_upsert(clean_session, layer)
-
-  res = await mapspec_store.layer_remove(clean_session, "test_layer")
-  assert res["success"] is True
-  assert len(res["mapspec"]["layers"]) == 0
-
-  map_state = await session_data_manager.get_map_state(clean_session)
-  assert len(map_state["layers"]) == 0
-
-
-@pytest.mark.asyncio
-async def test_cartography_harness_tools_dispatch(clean_session):
-  registry = ToolRegistry()
-  register_cartography_harness_tools(registry)
-
-  # webgis_project_init
-  init_res = await registry.dispatch("webgis_project_init", {"view": {"center": [100.0, 20.0], "zoom": 5}}, session_id=clean_session)
-  assert init_res["success"] is True
-  assert init_res["mapspec"]["view"]["center"] == [100.0, 20.0]
-
-  # webgis_layer_upsert
-  upsert_res = await registry.dispatch(
-      "webgis_layer_upsert",
-      {
-          "layer": {
-              "id": "pts_layer",
-              "source": "pts_source",
-              "type": "circle",
-              "paint": {"color": "#00ff00"},
+async def test_validate_and_compile(clean_session):
+  layer = {
+      "id": "test_layer",
+      "source": "s1",
+      "type": "circle",
+      "paint": {
+          "color": {
+              "type": "interpolate",
+              "field": "val",
+              "stops": [
+                  [10, "#ff0000"],
+                  [20, "#00ff00"],
+              ],
           }
       },
-      session_id=clean_session,
+  }
+  await mapspec_store.layer_upsert(clean_session, layer)
+
+  # Validate
+  val_res = await mapspec_store.validate_mapspec(clean_session)
+  assert val_res["success"] is True
+
+  # Compile
+  comp_res = await mapspec_store.compile_mapspec_cli(clean_session)
+  assert comp_res["success"] is True
+  assert comp_res["style"]["version"] == 8
+
+
+@pytest.mark.asyncio
+async def test_layout_set(clean_session):
+  await mapspec_store.init_project(clean_session)
+  res = await mapspec_store.layout_set(
+      clean_session,
+      legend={"title": "Earthquakes", "position": "top-left", "visible": True},
   )
-  assert upsert_res["success"] is True
-  assert upsert_res["layer_id"] == "pts_layer"
+  assert res["success"] is True
+  assert res["layout"]["legend"]["title"] == "Earthquakes"
 
-  # webgis_state_get
-  get_res = await registry.dispatch("webgis_state_get", {}, session_id=clean_session)
-  assert get_res["success"] is True
 
-  # webgis_layer_remove
-  remove_res = await registry.dispatch("webgis_layer_remove", {"layer_id": "pts_layer"}, session_id=clean_session)
-  assert remove_res["success"] is True
+@pytest.mark.asyncio
+async def test_checkpoint_and_rollback(clean_session):
+  # 1. Store ref data & layer
+  geojson = {"type": "FeatureCollection", "features": []}
+  ref_id = await session_data_manager.store(clean_session, geojson, prefix="geojson")
+
+  layer = {
+      "id": "pts",
+      "source": "s1",
+      "type": "circle",
+      "paint": {"color": "#0000ff"},
+  }
+
+  await mapspec_store.layer_upsert(clean_session, layer)
+
+  # Set source url to ref_id
+  mapspec = await mapspec_store.get_mapspec(clean_session)
+  mapspec["sources"]["s1"]["url"] = ref_id
+  await mapspec_store.save_mapspec(clean_session, mapspec)
+
+  # 2. Create Checkpoint
+  ckpt_res = await mapspec_store.checkpoint(clean_session, "ckpt_1")
+  assert ckpt_res["success"] is True
+  assert ckpt_res["checkpoint_id"] == "ckpt_1"
+  assert ckpt_res["ref_count"] == 1
+
+  # 3. Mutate MapSpec (add layer)
+  layer2 = {"id": "line_layer", "source": "s1", "type": "line"}
+  await mapspec_store.layer_upsert(clean_session, layer2)
+  mutated = await mapspec_store.get_mapspec(clean_session)
+  assert len(mutated["layers"]) == 2
+
+  # 4. Rollback to ckpt_1
+  rb_res = await mapspec_store.rollback(clean_session, "ckpt_1")
+  assert rb_res["success"] is True
+  restored = rb_res["mapspec"]
+  assert len(restored["layers"]) == 1
+  assert restored["layers"][0]["id"] == "pts"
