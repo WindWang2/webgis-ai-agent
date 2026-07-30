@@ -40,10 +40,23 @@ def _is_anonymous(user_id: Optional[str]) -> bool:
     return not user_id or user_id == "anonymous"
 
 
+from app.services.tool_dispatch_service import normalize_tool_name
+
+
 def _msg_to_llm_dict(m: Message) -> dict:
     item = {"role": m.role, "content": m.content or ""}
     if m.tool_calls:
-        item["tool_calls"] = m.tool_calls
+        # Translate legacy tool names in stored history on replay (Ticket #207)
+        tool_calls = []
+        for tc in m.tool_calls:
+            if isinstance(tc, dict) and "function" in tc and "name" in tc["function"]:
+                tc_copy = dict(tc)
+                tc_copy["function"] = dict(tc["function"])
+                tc_copy["function"]["name"] = normalize_tool_name(tc["function"]["name"])
+                tool_calls.append(tc_copy)
+            else:
+                tool_calls.append(tc)
+        item["tool_calls"] = tool_calls
     if m.tool_call_id:
         item["tool_call_id"] = m.tool_call_id
     if m.reasoning_content:
