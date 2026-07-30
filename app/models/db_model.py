@@ -64,7 +64,7 @@ class Layer(Base):
     crs = Column(String(100), default="EPSG:4326")
     bounds = Column(JSON)
     feature_count = Column(BigInteger, default=0)
-    properties_def = Column(JSON)
+    # style_config 充当当前图层套用的 template_id 指针（如 {"template_id": "tmpl_..."} 或直接存 ID 字符串）
     style_config = Column(JSON)
     visibility = Column(String(20), default="org")
     is_basemap = Column(Boolean, default=False)
@@ -187,4 +187,33 @@ class Message(Base):
         Index("idx_message_conversation_created", "conversation_id", "created_at"),
     )
 
-__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "get_init_sql"]
+
+class CartographyTemplate(Base):
+    """地图制图模板表 - 支持 basemap / symbology / layout / thematic 四种类别"""
+    __tablename__ = "cartography_templates"
+    
+    id = Column(String(255), primary_key=True)
+    org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)
+    creator_id = Column(String(255), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    kind = Column(String(50), nullable=False, index=True)
+    name = Column(String(255), nullable=False, index=True)
+    category = Column(String(100), index=True)
+    keywords = Column(JSON, nullable=False, default=list)
+    description = Column(Text)
+    payload = Column(JSON, nullable=False)
+    is_builtin = Column(Boolean, nullable=False, default=False, index=True)
+    version = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("idx_template_builtin_kind", "is_builtin", "kind"),
+        Index("idx_template_org_kind", "org_id", "kind"),
+        CheckConstraint("kind IN ('basemap', 'symbology', 'layout', 'thematic')", name="ck_template_kind"),
+    )
+
+    organization = relationship("Organization", backref="templates", lazy="selectin")
+    creator = relationship("User", backref="templates", lazy="selectin")
+
+
+__all__ = ["Base", "Organization", "User", "Layer", "AnalysisTask", "LayerPermission", "Conversation", "Message", "CartographyTemplate", "get_init_sql"]
