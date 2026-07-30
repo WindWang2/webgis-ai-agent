@@ -1,5 +1,5 @@
 /** @deprecated use TILE_PROVIDERS from ./providers */
-export type LayerType = "raster" | "style"
+export type LayerType = "raster" | "vector" | "style"
 
 /** @deprecated use TileProvider from ./providers */
 export interface MapStyleOption {
