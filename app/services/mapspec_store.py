@@ -229,5 +229,106 @@ class MapSpecStore:
 
     return await self.save_mapspec(session_id, mapspec)
 
+  async def source_profile(
+      self,
+      session_id: str,
+      source_id: str,
+      geojson_data: Any,
+  ) -> Dict[str, Any]:
+    from app.services.spatial_meta_profiler import profile_geojson_source
+
+    mapspec = await self.get_mapspec(session_id)
+    if not mapspec:
+      res = await self.init_project(session_id)
+      mapspec = res["mapspec"]
+
+    profile = profile_geojson_source(geojson_data)
+
+    if "sources" not in mapspec:
+      mapspec["sources"] = {}
+    if source_id not in mapspec["sources"]:
+      mapspec["sources"][source_id] = {"type": "geojson"}
+
+    mapspec["sources"][source_id]["profile"] = profile
+    if isinstance(geojson_data, dict):
+      mapspec["sources"][source_id]["inlineData"] = geojson_data
+    elif isinstance(geojson_data, str) and (geojson_data.startswith("http") or geojson_data.startswith("/")):
+      mapspec["sources"][source_id]["url"] = geojson_data
+
+    await self.save_mapspec(session_id, mapspec)
+    return profile
+
+  async def layer_upsert(
+      self,
+      session_id: str,
+      layer: Dict[str, Any],
+      source_data: Optional[Any] = None,
+  ) -> Dict[str, Any]:
+    from app.services.spatial_meta_profiler import profile_geojson_source
+
+    mapspec = await self.get_mapspec(session_id)
+    if not mapspec:
+      res = await self.init_project(session_id)
+      mapspec = res["mapspec"]
+
+    source_id = layer.get("source", "default_source")
+    if "sources" not in mapspec:
+      mapspec["sources"] = {}
+    if source_id not in mapspec["sources"]:
+      mapspec["sources"][source_id] = {"type": "geojson"}
+
+    source_entry = mapspec["sources"][source_id]
+
+    # Auto-profiling & auto-view injection (User Stories 12 & 13)
+    data_to_profile = source_data or source_entry.get("inlineData") or source_entry.get("url") or source_entry.get("dataPath")
+    if data_to_profile and "profile" not in source_entry:
+      try:
+        profile = profile_geojson_source(data_to_profile)
+        source_entry["profile"] = profile
+
+        # First dissectable layer auto-writes view when view is unset/default
+        curr_center = mapspec.get("view", {}).get("center", [0.0, 0.0])
+        if (curr_center == [0.0, 0.0] or curr_center == [0, 0]) and "suggestedView" in profile:
+          mapspec["view"]["center"] = profile["suggestedView"]["center"]
+          mapspec["view"]["zoom"] = profile["suggestedView"]["zoom"]
+      except Exception as e:
+        logger.warning(f"Auto-profiling failed for layer {layer.get('id')}: {e}")
+
+    # Upsert layer into mapspec["layers"]
+    layers = mapspec.setdefault("layers", [])
+    updated = False
+    for i, l in enumerate(layers):
+      if l.get("id") == layer.get("id"):
+        layers[i] = layer
+        updated = True
+        break
+    if not updated:
+      layers.append(layer)
+
+    res = await self.save_mapspec(session_id, mapspec)
+    return {
+        "success": True,
+        "mapspec": res["mapspec"],
+        "layer": layer,
+    }
+
+  async def layer_remove(self, session_id: str, layer_id: str) -> Dict[str, Any]:
+    mapspec = await self.get_mapspec(session_id)
+    if not mapspec:
+      return {"success": False, "message": "MapSpec not found"}
+
+    layers = mapspec.get("layers", [])
+    filtered_layers = [l for l in layers if l.get("id") != layer_id and l.get("id") != f"{layer_id}-label"]
+    mapspec["layers"] = filtered_layers
+
+    res = await self.save_mapspec(session_id, mapspec)
+    await session_data_manager.remove_layer_from_state(session_id, layer_id)
+
+    return {
+        "success": True,
+        "mapspec": res["mapspec"],
+        "removed_id": layer_id,
+    }
+
 
 mapspec_store = MapSpecStore()

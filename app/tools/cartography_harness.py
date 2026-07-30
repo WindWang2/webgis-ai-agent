@@ -25,6 +25,20 @@ class WebgisStateGetArgs(BaseModel):
   pass
 
 
+class WebgisSourceProfileArgs(BaseModel):
+  source_id: str = Field(..., description="数据源唯一标识符，如 'earthquakes'")
+  geojson_data: Any = Field(..., description="GeoJSON 数据对象、数据引用 ref:xxx 或 URL/文件路径")
+
+
+class WebgisLayerUpsertArgs(BaseModel):
+  layer: Dict[str, Any] = Field(..., description="图层规范对象 (包含 id, source, type, paint, layout, label)")
+  source_data: Optional[Any] = Field(default=None, description="可选的 GeoJSON 数据对象或引用 ref:xxx，供自动分析与视图计算")
+
+
+class WebgisLayerRemoveArgs(BaseModel):
+  layer_id: str = Field(..., description="要移除的图层 ID")
+
+
 def register_cartography_harness_tools(registry: ToolRegistry) -> None:
   """注册 MapSpec Harness 规范化 webgis_* 工具。"""
 
@@ -90,4 +104,68 @@ def register_cartography_harness_tools(registry: ToolRegistry) -> None:
         "success": True,
         "view": res["mapspec"]["view"],
         "summary": f"View updated to {res['mapspec']['view']}",
+    }
+
+  @tool(
+      registry,
+      name="webgis_source_profile",
+      description="剖析 GeoJSON 数据源生成 Spatial Meta Profile (BBOX, 建议视图, 字段统计, 数值分布)。",
+      args_model=WebgisSourceProfileArgs,
+      tier=1,
+  )
+  async def webgis_source_profile(
+      source_id: str,
+      geojson_data: Any,
+      session_id: Optional[str] = None,
+  ) -> dict:
+    if not session_id:
+      return {"success": False, "message": "Missing session_id"}
+    profile = await mapspec_store.source_profile(session_id, source_id, geojson_data)
+    return {
+        "success": True,
+        "source_id": source_id,
+        "profile": profile,
+        "summary": f"Profile generated for source '{source_id}'",
+    }
+
+  @tool(
+      registry,
+      name="webgis_layer_upsert",
+      description="创建或更新 MapSpec 图层规范，自动剖析数据源并设置建议视角，且同步编译发布到 runtime map_state。",
+      args_model=WebgisLayerUpsertArgs,
+      tier=1,
+  )
+  async def webgis_layer_upsert(
+      layer: Dict[str, Any],
+      source_data: Optional[Any] = None,
+      session_id: Optional[str] = None,
+  ) -> dict:
+    if not session_id:
+      return {"success": False, "message": "Missing session_id"}
+    res = await mapspec_store.layer_upsert(session_id, layer, source_data)
+    return {
+        "success": True,
+        "layer_id": layer.get("id"),
+        "mapspec": res["mapspec"],
+        "summary": f"Layer '{layer.get('id')}' upserted into MapSpec",
+    }
+
+  @tool(
+      registry,
+      name="webgis_layer_remove",
+      description="从 MapSpec 中移除指定图层并同步从 runtime map_state 擦除。",
+      args_model=WebgisLayerRemoveArgs,
+      tier=1,
+  )
+  async def webgis_layer_remove(
+      layer_id: str,
+      session_id: Optional[str] = None,
+  ) -> dict:
+    if not session_id:
+      return {"success": False, "message": "Missing session_id"}
+    res = await mapspec_store.layer_remove(session_id, layer_id)
+    return {
+        "success": True,
+        "removed_id": layer_id,
+        "summary": f"Layer '{layer_id}' removed from MapSpec",
     }
