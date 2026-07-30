@@ -399,7 +399,7 @@ jobs:
 
       - name: Configure SSH Access
         if: vars.SSH_HOST != ''
-        uses: webfactory/ssh-agent@v0.8.0
+        uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
@@ -535,7 +535,7 @@ jobs:
 
       - name: Configure SSH Access
         if: vars.SSH_HOST != ''
-        uses: webfactory/ssh-agent@v0.8.0
+        uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
