@@ -3,16 +3,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 import { MapIcon, CheckCircle2 } from 'lucide-react';
 import { devOnly } from '@/lib/utils/logger';
-
-const ALLOWED_COMMANDS = new Set([
-  'add_layer', 'fly_to', 'zoom_to_bbox', 'set_map_view',
-  'add_heatmap_raster', 'add_native_heatmap',
-  'base_layer_change', 'layer_visibility_update', 'layer_style_update',
-  'remove_layer', 'reorder_layer',
-  'export_map', 'add_raster_layer',
-  'add_marker', 'draw_measurement', 'clear_annotations',
-  'apply_layer_filter',
-]);
+import { COMMAND_CATALOGUE } from '@/lib/map-commands/catalogue';
 
 /**
  * 审计 FE-04（map-action-renderer params validation）：dispatch 前对每条命令
@@ -21,35 +12,21 @@ const ALLOWED_COMMANDS = new Set([
  *
  * 这里只校验"该命令必须的字段存在且类型正确"，不做值域校验（值域由
  * MapLibre / store reducer 兜底）。拒绝的 action 会被静默丢弃并记入 errorCount。
+ *
+ * The vocabulary + validators are derived from the single source of truth
+ * (COMMAND_CATALOGUE) so the gate cannot drift from the handler. Command names
+ * are lowercased before lookup so UPPERCASE backend emissions are tolerated.
  */
-const REQUIRED_PARAMS: Record<string, (p: Record<string, unknown>) => boolean> = {
-  add_layer: (p) => typeof p.id === 'string',
-  remove_layer: (p) => typeof p.id === 'string' || typeof p.layer_id === 'string',
-  fly_to: (p) => Array.isArray(p.center) && p.center.length === 2,
-  zoom_to_bbox: (p) => Array.isArray(p.bbox) && p.bbox.length === 4,
-  set_map_view: (p) => Array.isArray(p.center) || typeof p.zoom === 'number',
-  add_heatmap_raster: (p) => typeof p.url === 'string' || typeof p.image === 'string',
-  add_raster_layer: (p) => typeof p.url === 'string' || typeof p.image === 'string',
-  add_native_heatmap: (p) => !!p.geojson || typeof p.id === 'string',
-  base_layer_change: (p) => typeof p.name === 'string' || typeof p.id === 'string',
-  layer_visibility_update: (p) => typeof p.layer_id === 'string' || typeof p.id === 'string',
-  layer_style_update: (p) => typeof p.layer_id === 'string' || typeof p.id === 'string',
-  reorder_layer: (p) => Array.isArray(p.layers) || Array.isArray(p.order),
-  export_map: () => true,
-  add_marker: (p) => Array.isArray(p.center) || Array.isArray(p.coordinate),
-  draw_measurement: () => true,
-  clear_annotations: () => true,
-  apply_layer_filter: (p) => typeof p.layer_id === 'string' || typeof p.id === 'string',
-};
-
 function isValidAction(action: unknown): action is { command: string; params: Record<string, unknown> } {
   if (typeof action !== 'object' || action === null) return false;
   const a = action as { command?: unknown; params?: unknown };
-  if (typeof a.command !== 'string' || !ALLOWED_COMMANDS.has(a.command)) return false;
+  if (typeof a.command !== 'string') return false;
+  const name = a.command.toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(COMMAND_CATALOGUE, name)) return false;
   // params 可选（部分命令无参）；存在则必须是普通对象
   const params = (a.params ?? {}) as Record<string, unknown>;
   if (typeof params !== 'object' || params === null || Array.isArray(params)) return false;
-  const validator = REQUIRED_PARAMS[a.command];
+  const validator = COMMAND_CATALOGUE[name]?.requiredParams;
   return validator ? validator(params) : true;
 }
 

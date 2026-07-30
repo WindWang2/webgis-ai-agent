@@ -62,9 +62,18 @@ export function MapActionProvider({ children }: { children: React.ReactNode }) {
   } | null>(null);
 
   const dispatchAction = useCallback((newAction: MapActionPayload) => {
-    if (newAction.command === 'fly_to' && newAction.params) {
-      const center = (newAction.params as Record<string, unknown>).center;
-      const zoom = (newAction.params as Record<string, unknown>).zoom;
+    // Normalize the command to lowercase before any downstream logic so the
+    // frontend is tolerant of UPPERCASE backend emissions (BASE_LAYER_CHANGE,
+    // REMOVE_LAYER, …). The command catalogue keys are all lowercase; the
+    // handler and renderer gate look up by this normalized value. MapActionPayload
+    // still carries mixed-case literals at the type level — that's fine, the
+    // runtime value is what matters.
+    const command = newAction.command.toLowerCase();
+    const normalized = { ...newAction, command } as MapActionPayload;
+
+    if (normalized.command === 'fly_to' && normalized.params) {
+      const center = (normalized.params as Record<string, unknown>).center;
+      const zoom = (normalized.params as Record<string, unknown>).zoom;
       if (Array.isArray(center) && typeof zoom === 'number') {
         const centerKey = center.join(',');
         const now = Date.now();
@@ -79,7 +88,7 @@ export function MapActionProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    setActions(prev => [...prev, newAction]);
+    setActions(prev => [...prev, normalized]);
   }, []);
 
   const popAction = useCallback(() => {
