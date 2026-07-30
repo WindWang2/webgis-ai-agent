@@ -42,6 +42,39 @@ from app.utils.security import sanitize_error_msg
 logger = logging.getLogger(__name__)
 
 
+# ─── 规范化工具名称映射表 ─────────────────────────────
+
+LEGACY_TOOL_NAME_MAP: dict[str, str] = {
+    # 图层管理与样式设置
+    "add_layer": "webgis_layer_upsert",
+    "set_layer_style": "webgis_layer_upsert",
+    "update_layer": "webgis_layer_upsert",
+    "remove_layer": "webgis_layer_remove",
+    "delete_layer": "webgis_layer_remove",
+    # 视角与导航
+    "set_view": "webgis_view_set",
+    "move_view": "webgis_view_set",
+    "zoom_to_layer": "webgis_view_set",
+    # MapSpec 生命周期与检验
+    "init_project": "webgis_project_init",
+    "get_state": "webgis_state_get",
+    "get_map_state": "webgis_state_get",
+    "profile_source": "webgis_source_profile",
+    "get_source_profile": "webgis_source_profile",
+    "set_layout": "webgis_layout_set",
+    "validate_spec": "webgis_validate",
+    "compile_maplibre": "webgis_compile_maplibre",
+    "runtime_validate": "webgis_runtime_validate",
+    "checkpoint": "webgis_checkpoint",
+    "create_checkpoint": "webgis_checkpoint",
+}
+
+
+def normalize_tool_name(name: str) -> str:
+    """把历史遗留工具名称规范化为 canonical 的 webgis_* 工具名。"""
+    return LEGACY_TOOL_NAME_MAP.get(name, name)
+
+
 # ─── 结果脱敏与元数据提取常量 ─────────────────────────
 
 MSG_MAX_CHARS = 3000
@@ -271,7 +304,8 @@ class ToolDispatchService:
         executed_tools: 同一任务内已执行过的 (tool_name, normalized_args) 集合，
                         会被本调用按需更新（重复拦截语义）。
         """
-        tool_name = tc["function"]["name"]
+        raw_tool_name = tc["function"]["name"]
+        tool_name = normalize_tool_name(raw_tool_name)
         tool_args_raw = tc["function"]["arguments"]
 
         # 1. 重复调用拦截

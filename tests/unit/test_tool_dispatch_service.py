@@ -10,8 +10,10 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from app.services.tool_dispatch_service import (
+    LEGACY_TOOL_NAME_MAP,
     ToolDispatchResult,
     ToolDispatchService,
+    normalize_tool_name,
 )
 from app.services.session_data import session_data_manager
 
@@ -181,3 +183,28 @@ async def test_suspicious_result_appends_hint(service, fake_registry, clean_sess
     result = await service.dispatch(_tc("query_osm_poi", {"area": "..."}), clean_session, set())
     assert result.status == "ok"  # 空结果不是错误，是可疑
     assert "未返回任何空间要素" in result.llm_payload
+
+
+def test_tool_name_normalization_table():
+    """断言 legacy 工具名被正确映射为 webgis_* canonical 名称。"""
+    assert normalize_tool_name("add_layer") == "webgis_layer_upsert"
+    assert normalize_tool_name("set_layer_style") == "webgis_layer_upsert"
+    assert normalize_tool_name("set_view") == "webgis_view_set"
+    assert normalize_tool_name("remove_layer") == "webgis_layer_remove"
+    assert normalize_tool_name("init_project") == "webgis_project_init"
+    assert normalize_tool_name("unknown_tool") == "unknown_tool"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_normalizes_legacy_tool_names(service, fake_registry, clean_session):
+    """【Seam B】通过 legacy 工具名 dispatch → registry.dispatch 被调用的工具名被规范化为 canonical webgis_*。"""
+    fake_registry.dispatch.return_value = {"summary": "layer upserted"}
+    tc = _tc("add_layer", {"layer_id": "test_layer"})
+    
+    result = await service.dispatch(tc, clean_session, set())
+    
+    assert result.status == "ok"
+    fake_registry.dispatch.assert_called_once()
+    called_tool_name = fake_registry.dispatch.call_args[0][0]
+    assert called_tool_name == "webgis_layer_upsert"
+
