@@ -61,6 +61,10 @@ class WebgisRollbackArgs(BaseModel):
   checkpoint_id: str = Field(..., description="要回滚到的快照 ID")
 
 
+class WebgisRuntimeValidateArgs(BaseModel):
+  pass
+
+
 def register_cartography_harness_tools(registry: ToolRegistry) -> None:
   """注册 MapSpec Harness 规范化 webgis_* 工具。"""
 
@@ -267,3 +271,17 @@ def register_cartography_harness_tools(registry: ToolRegistry) -> None:
     if not session_id:
       return {"success": False, "message": "Missing session_id"}
     return await mapspec_store.rollback(session_id, checkpoint_id)
+
+  @tool(
+      registry,
+      name="webgis_runtime_validate",
+      description="重新编译当前 MapSpec 并在 Headless 环境下进行运行时验收与 5-维度评分 (80% max)。",
+      args_model=WebgisRuntimeValidateArgs,
+      tier=1,
+  )
+  async def webgis_runtime_validate(session_id: Optional[str] = None) -> dict:
+    from app.services.runtime_validator import runtime_validator
+    if not session_id:
+      return {"success": False, "message": "Missing session_id"}
+    return await runtime_validator.validate_runtime(session_id)
+
