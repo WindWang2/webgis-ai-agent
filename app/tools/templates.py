@@ -206,7 +206,7 @@ def register_template_tools(registry: ToolRegistry):
                 "kind": "layout",
                 "template_id": template_id,
                 "template_name": target_tmpl["name"],
-                "command": "EXPORT_LAYOUT_UPDATE",
+                "command": "export_map",
                 "params": payload,
             }
 

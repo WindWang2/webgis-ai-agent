@@ -2,6 +2,7 @@
 import { useEffect } from 'react';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
+import type { ThematicStyleDef } from '@/lib/map-kit/types';
 import maplibregl from 'maplibre-gl';
 
 import { useMap } from 'react-map-gl/maplibre';
@@ -251,6 +252,22 @@ export function MapActionHandler() {
             radius,
             opacity: 0.8
           });
+          break;
+        }
+
+        case 'create_thematic_map': {
+          // Choropleth / LISA thematic map. Backend computes the breaks/colors (style_def)
+          // and legend; the frontend just needs to mount a step/match-expression layer.
+          // Note: legend_spec is carried by the result but no legend panel consumes it yet
+          // (tracked separately); mount is the gating behavior for the apply path.
+          const { geojson, layerId, style, field } = (action.params || {}) as {
+            geojson?: any; layerId?: string; style?: ThematicStyleDef; field?: string;
+          };
+          if (!geojson || !style) break;
+
+          const id = `custom-${layerId || 'thematic-' + (field || Date.now())}`;
+          renderer.addGeoJsonSource(map, id, geojson);
+          renderer.addThematicLayer(map, id, geojson, style);
           break;
         }
 

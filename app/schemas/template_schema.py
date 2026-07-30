@@ -21,7 +21,9 @@ class SymbologySinglePayload(BaseModel):
 class SymbologyCategoricalPayload(BaseModel):
     mode: Literal["categorical"] = "categorical"
     geometry: str
-    field: str
+    # field is injected at apply-time from user data; not stored in the preset
+    # (matches the thematic-preset invariant — US22-style).
+    field: Optional[str] = None
     colorMap: Dict[str, str]
     baseStyle: Optional[Dict[str, Any]] = None
 
@@ -257,7 +259,7 @@ SEED_TEMPLATES: List[Dict[str, Any]] = [
         "payload": {
             "mode": "categorical",
             "geometry": "Polygon",
-            "field": "landuse",
+            # field intentionally omitted — injected at apply-time (e.g. user selects "landuse")
             "colorMap": {
                 "residential": "#fca5a5",
                 "commercial": "#93c5fd",

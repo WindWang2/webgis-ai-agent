@@ -17,7 +17,9 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useMapAction } from '@/lib/contexts/map-action-context';
 import { applyBaseline } from '@/lib/basemap-apply';
+import { applySymbology } from '@/lib/symbology-apply';
 import { resolveThematicPreset } from '@/lib/thematic-apply';
 import { resolveStyle } from '@/lib/map-kit/layout-style';
 
@@ -25,7 +27,7 @@ export type TemplateKind = 'basemap' | 'symbology' | 'thematic' | 'layout';
 export type SourceFilter = 'all' | 'builtin' | 'user';
 
 interface TemplateItem {
-  id: str;
+  id: string;
   kind: TemplateKind;
   name: string;
   category?: string;
@@ -246,8 +248,11 @@ export function TemplateGallery({ open, onClose, onApplyTemplate }: TemplateGall
   const [newTmplKind, setNewTmplKind] = useState<TemplateKind>('symbology');
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
 
-  const selectedLayerId = useHudStore((s) => s.selectedLayerId);
+  const selectedLayerId = useHudStore((s: any) => s.selectedLayerId);
+  const layers = useHudStore((s) => s.layers);
   const setBaseLayer = useHudStore((s) => s.setBaseLayer);
+  // Twin seam: the gallery emits the SAME commands as backend apply_template.
+  const dispatchAction = useMapAction().dispatchAction;
 
   // Fetch templates from GET /api/v1/templates or fall back to BUILTIN_TEMPLATES
   useEffect(() => {
@@ -283,11 +288,20 @@ export function TemplateGallery({ open, onClose, onApplyTemplate }: TemplateGall
   const handleApply = (tmpl: TemplateItem) => {
     setPromptMessage(null);
 
-    // Dispatch by kind
+    // Twin seam: gallery dispatch mirrors backend apply_template per kind.
+    // Both callers MUST emit the same command + payload shape (spec invariant).
     if (tmpl.kind === 'basemap') {
       const providerId = tmpl.payload.providerId;
       if (providerId) {
         setBaseLayer(providerId);
+      }
+      // applyBaseline produces the resolved MapLibre style (incl. rasterFilters / overlays);
+      // emit BASE_LAYER_CHANGE so the handler swaps the full style, not just the name.
+      try {
+        applyBaseline(tmpl.payload);
+        dispatchAction({ command: 'BASE_LAYER_CHANGE', params: { ...tmpl.payload } });
+      } catch {
+        /* basemap style resolution is best-effort; setBaseLayer above is the fallback */
       }
       onApplyTemplate?.(tmpl);
     } else if (tmpl.kind === 'symbology') {
@@ -295,22 +309,35 @@ export function TemplateGallery({ open, onClose, onApplyTemplate }: TemplateGall
         setPromptMessage('请先选择图层再套用符号化模板');
         return;
       }
+      const { command, params } = applySymbology(tmpl.payload, selectedLayerId);
+      dispatchAction({ command, params });
       onApplyTemplate?.(tmpl, { layerId: selectedLayerId });
     } else if (tmpl.kind === 'thematic') {
       if (!selectedLayerId) {
         setPromptMessage('请先选择图层再套用专题图模板');
         return;
       }
-      // Open field selector
+      // Open field selector — dispatch happens in handleConfirmThematicField
       setSelectedThematicTmpl(tmpl);
       setSelectedField('');
     } else if (tmpl.kind === 'layout') {
+      // resolveStyle merges template overrides with light/dark defaults; emit export_map
+      // so the next export honors the layout payload (handler reads the layout fields).
+      resolveStyle('light', tmpl.payload.style);
+      dispatchAction({ command: 'export_map', params: { ...tmpl.payload } });
       onApplyTemplate?.(tmpl);
     }
   };
 
   const handleConfirmThematicField = () => {
     if (!selectedThematicTmpl || !selectedField.trim()) return;
+    // Twin seam: emit add_native_heatmap (heatmap) or create_thematic_map (choropleth),
+    // the same variant split as backend apply_template.
+    const { toolCall } = resolveThematicPreset(selectedThematicTmpl.payload, selectedField.trim());
+    dispatchAction({
+      command: toolCall.tool as any,
+      params: { ...toolCall.params, layerId: selectedLayerId || undefined },
+    });
     onApplyTemplate?.(selectedThematicTmpl, {
       field: selectedField.trim(),
       layerId: selectedLayerId || undefined,
@@ -327,6 +354,21 @@ export function TemplateGallery({ open, onClose, onApplyTemplate }: TemplateGall
       thematic: { variant: 'choropleth', method: 'natural_breaks', k: 5, palette: 'YlOrRd' },
       layout: { paperSize: 'A4', orientation: 'landscape', title: newTmplName },
     };
+
+    // US32: when saving a symbology template with a selected layer, capture that
+    // layer's actual style instead of the hardcoded sample. (No current layer →
+    // fall back to the sample so the modal still works.)
+    if (newTmplKind === 'symbology' && selectedLayerId) {
+      const layer = layers.find((l) => l.id === selectedLayerId);
+      const layerStyle = layer?.style;
+      if (layerStyle && Object.keys(layerStyle).length > 0) {
+        samplePayloads.symbology = {
+          mode: 'single',
+          geometry: 'Polygon',
+          style: { ...layerStyle },
+        };
+      }
+    }
 
     const reqData = {
       name: newTmplName.trim(),

@@ -4,6 +4,17 @@ import React from "react";
 import { TemplateGallery } from "./template-gallery";
 import { useHudStore } from "@/lib/store/useHudStore";
 
+// The gallery emits commands via useMapAction(selector).dispatchAction — mock the
+// context so tests can assert the twin-seam dispatch without a MapActionProvider.
+// The component calls useMapAction with a selector, so the mock must honor it.
+const { mockDispatchAction } = vi.hoisted(() => ({ mockDispatchAction: vi.fn() }));
+vi.mock("@/lib/contexts/map-action-context", () => ({
+  useMapAction: (selector?: any) => {
+    const store = { dispatchAction: mockDispatchAction };
+    return selector ? selector(store) : store;
+  },
+}));
+
 describe("TemplateGallery Component", () => {
   const defaultProps = {
     open: true,
@@ -13,6 +24,7 @@ describe("TemplateGallery Component", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockDispatchAction.mockReset();
   });
 
   it("renders 4 kind tabs (底图模板, 符号化, 专题图, 版式布局) and search input", () => {
@@ -33,7 +45,7 @@ describe("TemplateGallery Component", () => {
     expect(screen.getAllByText("我的").length).toBeGreaterThan(0);
   });
 
-  it("basemap apply dispatches baseLayer update and onApplyTemplate callback", async () => {
+  it("basemap apply dispatches BASE_LAYER_CHANGE command (twin seam)", async () => {
     render(<TemplateGallery {...defaultProps} />);
 
     // Click on basemap tab
@@ -47,6 +59,10 @@ describe("TemplateGallery Component", () => {
     fireEvent.click(applyButtons[0]);
 
     expect(defaultProps.onApplyTemplate).toHaveBeenCalled();
+    // Gallery must emit the same command backend apply_template emits for basemap
+    expect(mockDispatchAction).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "BASE_LAYER_CHANGE" })
+    );
   });
 
   it("symbology apply without selected layer shows prompt", async () => {
@@ -59,12 +75,15 @@ describe("TemplateGallery Component", () => {
     fireEvent.click(screen.getByRole("button", { name: /符号化/i }));
 
     const applyButtons = screen.getAllByText(/套用/i);
-    if (applyButtons.length > 0) {
-      fireEvent.click(applyButtons[0]);
-      await waitFor(() => {
-        expect(screen.getByText(/请先选择图层/i)).toBeDefined();
-      });
-    }
+    expect(applyButtons.length).toBeGreaterThan(0);
+    fireEvent.click(applyButtons[0]);
+
+    // Prompt MUST appear (previously this was a no-op `if` guard that passed vacuously)
+    await waitFor(() => {
+      expect(screen.getByText(/请先选择图层/i)).toBeDefined();
+    });
+    // No command should have been dispatched (apply aborted)
+    expect(mockDispatchAction).not.toHaveBeenCalled();
   });
 
   it("save-as template button opens save modal", async () => {

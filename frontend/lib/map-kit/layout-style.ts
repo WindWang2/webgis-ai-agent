@@ -1,7 +1,6 @@
 export interface LayoutStyle {
   titleColor?: string;
   titleFont?: string;
-  subtitleFont?: string;
   accentColor?: string;
   marginPx?: number;
   fontFamily?: string;
@@ -20,7 +19,6 @@ export function resolveStyle(
   const defaults: ResolvedLayoutStyle = {
     titleColor: isDark ? "#00f2ff" : "#1e293b",
     titleFont: "bold 32px sans-serif",
-    subtitleFont: "20px sans-serif",
     accentColor: isDark ? "#38bdf8" : "#2563eb",
     marginPx: 56,
     fontFamily: "sans-serif",
@@ -35,7 +33,6 @@ export function resolveStyle(
   return {
     titleColor: style.titleColor ?? defaults.titleColor,
     titleFont: style.titleFont ?? defaults.titleFont,
-    subtitleFont: style.subtitleFont ?? defaults.subtitleFont,
     accentColor: style.accentColor ?? defaults.accentColor,
     marginPx: style.marginPx ?? defaults.marginPx,
     fontFamily: style.fontFamily ?? defaults.fontFamily,

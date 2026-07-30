@@ -99,7 +99,8 @@ async def test_apply_template_layout(registry):
     assert "error" not in result
     assert result["status"] == "template_applied"
     assert result["kind"] == "layout"
-    assert result["command"] in ("export_map", "EXPORT_LAYOUT_UPDATE")
+    # Layout must dispatch to the real frontend command (was EXPORT_LAYOUT_UPDATE — fixed)
+    assert result["command"] == "export_map"
     assert "params" in result
     assert result["params"]["paperSize"] == "A4"
     assert result["params"]["style"]["fontFamily"] == "Georgia, serif"
@@ -165,3 +166,22 @@ def test_init_tools_includes_templates():
     tools = reg.list_tools()
     assert "list_templates" in tools
     assert "apply_template" in tools
+
+
+def test_no_builtin_symbology_preset_carries_field():
+    """Spec invariant (US22-style): field is injected at apply-time, NOT stored in a preset.
+
+    Categorical symbology seeds must not hardcode `field` (only thematic does, and even
+    thematic injects it at apply). This guards against regression of the field-in-preset fix.
+    """
+    from app.schemas.template_schema import SEED_TEMPLATES
+
+    offenders = [
+        t["id"]
+        for t in SEED_TEMPLATES
+        if t.get("kind") == "symbology"
+        and t.get("is_builtin")
+        and t.get("payload", {}).get("mode") == "categorical"
+        and "field" in t.get("payload", {})
+    ]
+    assert offenders == [], f"builtin categorical symbology presets must not carry `field`: {offenders}"
