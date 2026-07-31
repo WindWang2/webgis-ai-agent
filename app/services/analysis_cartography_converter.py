@@ -6,6 +6,7 @@ from collections import Counter
 from datetime import datetime, timezone
 import logging
 import math
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,12 @@ DEFAULT_CONSTANT_PAINTS = {
 def _is_number(val: Any) -> bool:
     """Check if val is a valid finite number (int/float, excluding bool and NaN/Inf)."""
     return isinstance(val, (int, float)) and not isinstance(val, bool) and math.isfinite(val)
+
+
+def _slugify(name: str) -> str:
+    """Sanitize name string for layer/source IDs."""
+    slug = re.sub(r"[^a-zA-Z0-9_]", "", str(name).lower().replace(" ", "_").replace("-", "_"))
+    return slug or "layer"
 
 
 def is_analysis_result(source_data: Any) -> bool:
@@ -125,7 +132,7 @@ def _infer_geometry_category(geojson: Optional[Dict[str, Any]]) -> Tuple[str, Li
         warnings.append("no_geometries: analysis result contains no valid GeoJSON features")
         return "point", warnings
 
-    unique_types = sorted(list(set(geom_types)))
+    unique_types = sorted(set(geom_types))
     active_categories = [cat for cat in ["point", "line", "polygon"] if counts[cat] > 0]
 
     if len(active_categories) > 1:
@@ -196,7 +203,7 @@ def _convert_continuous_legend(legend_spec: Dict[str, Any]) -> Tuple[Optional[Di
     return None, warnings
 
 
-def _convert_categorical_legend(legend_spec: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+def _convert_categorical_legend(legend_spec: Dict[str, Any], default_fallback: str = "#999999") -> Tuple[Optional[Dict[str, Any]], List[str]]:
     """Converts a categorical legend_spec into a match StyleMethod."""
     warnings: List[str] = []
     field = legend_spec.get("field", "")
@@ -215,7 +222,7 @@ def _convert_categorical_legend(legend_spec: Dict[str, Any]) -> Tuple[Optional[D
                 cases.append([cat[0], cat[1]])
 
         if cases:
-            default_color = default_color_override or cases[-1][1] or "#999999"
+            default_color = default_color_override or cases[-1][1] or default_fallback
             return {
                 "method": "match",
                 "field": field,
@@ -270,25 +277,31 @@ def convert_analysis_to_mapspec_layer(
         paint_color: Any = None
         has_thematic_paint = False
 
-        if isinstance(legend_spec, dict):
-            legend_type = legend_spec.get("type")
-            if legend_type == "graduated":
-                paint_color, legend_warns = _convert_graduated_legend(legend_spec)
-                warnings.extend(legend_warns)
-                if paint_color:
-                    has_thematic_paint = True
-            elif legend_type == "continuous":
-                paint_color, legend_warns = _convert_continuous_legend(legend_spec)
-                warnings.extend(legend_warns)
-                if paint_color:
-                    has_thematic_paint = True
-            elif legend_type == "categorical":
-                paint_color, legend_warns = _convert_categorical_legend(legend_spec)
-                warnings.extend(legend_warns)
-                if paint_color:
-                    has_thematic_paint = True
+        if legend_spec is not None:
+            if isinstance(legend_spec, dict):
+                legend_type = legend_spec.get("type")
+                default_paint_defaults = DEFAULT_CONSTANT_PAINTS.get(layer_type, {"color": "#3b82f6"})
+                default_color = default_paint_defaults.get("color", "#3b82f6")
+
+                if legend_type == "graduated":
+                    paint_color, legend_warns = _convert_graduated_legend(legend_spec)
+                    warnings.extend(legend_warns)
+                    if paint_color:
+                        has_thematic_paint = True
+                elif legend_type == "continuous":
+                    paint_color, legend_warns = _convert_continuous_legend(legend_spec)
+                    warnings.extend(legend_warns)
+                    if paint_color:
+                        has_thematic_paint = True
+                elif legend_type == "categorical":
+                    paint_color, legend_warns = _convert_categorical_legend(legend_spec, default_fallback=default_color)
+                    warnings.extend(legend_warns)
+                    if paint_color:
+                        has_thematic_paint = True
+                else:
+                    warnings.append(f"unrecognized_legend_type: {legend_type}")
             else:
-                warnings.append(f"unrecognized_legend_type: {legend_type}")
+                warnings.append("invalid_legend_spec: legend_spec must be a dictionary")
 
         default_paint_defaults = DEFAULT_CONSTANT_PAINTS.get(layer_type, {"color": "#3b82f6"})
         if paint_color is None:
@@ -317,9 +330,12 @@ def convert_analysis_to_mapspec_layer(
                 sw = str(w)
                 if sw not in warnings:
                     warnings.append(sw)
+        elif raw_warnings:
+            warnings.append(str(raw_warnings))
 
-        # Deduplicate warnings while preserving order
         unique_warnings = list(dict.fromkeys(warnings))
+        if unique_warnings:
+            logger.warning("Analysis cartography converter emitted warnings: %s", unique_warnings)
 
         provenance = {
             "algorithm": algorithm,
@@ -332,7 +348,7 @@ def convert_analysis_to_mapspec_layer(
 
         layer_id = base_layer.get("id")
         if not layer_id:
-            algo_slug = str(algorithm).lower().replace("-", "_")
+            algo_slug = _slugify(algorithm)
             layer_id = f"{algo_slug}_layer"
 
         source_id = base_layer.get("source")
@@ -353,10 +369,20 @@ def convert_analysis_to_mapspec_layer(
         err_msg = f"converter_error: {str(e)}"
         unique_warnings = list(dict.fromkeys(warnings + [err_msg]))
 
-        layer_id = base_layer.get("id", "analysis_layer")
-        source_id = base_layer.get("source", f"{layer_id}_source")
+        algorithm = (
+            analysis_result.get("algorithm")
+            if isinstance(analysis_result, dict)
+            else base_layer.get("algorithm", "spatial_analysis")
+        ) or "spatial_analysis"
+
+        layer_id = base_layer.get("id") or f"{_slugify(algorithm)}_layer"
+        source_id = base_layer.get("source") or f"{layer_id}_source"
         layer_type = base_layer.get("type", "circle")
-        default_paint = DEFAULT_CONSTANT_PAINTS.get(layer_type, {"color": "#3b82f6"})
+
+        default_paint = dict(DEFAULT_CONSTANT_PAINTS.get(layer_type, {"color": "#3b82f6"}))
+        existing_paint = base_layer.get("paint")
+        if isinstance(existing_paint, dict):
+            default_paint.update(existing_paint)
 
         res_layer = dict(base_layer)
         res_layer["id"] = layer_id
@@ -364,7 +390,7 @@ def convert_analysis_to_mapspec_layer(
         res_layer["type"] = layer_type
         res_layer["paint"] = default_paint
         res_layer["provenance"] = {
-            "algorithm": base_layer.get("algorithm", "spatial_analysis"),
+            "algorithm": algorithm,
             "computed_at": datetime.now(timezone.utc).isoformat(),
             "warnings": unique_warnings,
         }
