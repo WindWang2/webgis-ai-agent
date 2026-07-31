@@ -23,7 +23,7 @@ def process_layer_ingestion(
     """
     Processes layer ingestion transformation rules.
 
-    Pure domain transformation engine:
+    Domain transformation engine:
     1. Raster payload detection -> PNG rendering -> save_png -> imageRef assignment.
     2. Spatial Analysis result dict detection -> convert_analysis_to_mapspec_layer.
     3. Source data shape classification & storage (store_data).
@@ -52,12 +52,13 @@ def process_layer_ingestion(
         if legend is not None:
             processed_layer.setdefault("legend_spec", legend)
 
-        if png is not None and raster_source_data is not None and session_dir is not None:
-            src_id_for_raster = processed_layer.get("source", "default_source")
-            raster_source_data["imageRef"] = save_png(session_dir, src_id_for_raster, png)
+        if raster_source_data is not None:
+            if png is not None and session_dir is not None:
+                src_id_for_raster = processed_layer.get("source", "default_source")
+                raster_source_data["imageRef"] = save_png(session_dir, src_id_for_raster, png)
             processed_source_data = raster_source_data
         else:
-            processed_source_data = raster_source_data if session_dir is None else None
+            processed_source_data = None
 
     elif isinstance(processed_source_data, dict):
         from app.services.analysis_cartography_converter import (

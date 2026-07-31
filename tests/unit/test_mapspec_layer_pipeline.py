@@ -1,4 +1,5 @@
 """Unit tests for MapSpec Layer Ingestion Pipeline (app/services/mapspec_layer_pipeline.py)."""
+import numpy as np
 import pytest
 from app.services.mapspec_layer_pipeline import process_layer_ingestion
 
@@ -62,6 +63,29 @@ def test_process_layer_ingestion_analysis_result():
     assert processed_layer["type"] == "circle"
     assert processed_layer["paint"]["color"]["method"] == "step"
     assert source_entry["inlineData"] == geojson
+
+
+def test_process_layer_ingestion_raster_payload(tmp_path):
+    raster_data = {
+        "success": True,
+        "algorithm": "ndvi",
+        "array": np.array([[0.1, 0.5], [0.8, 0.2]], dtype=float),
+        "bounds": [120.0, 30.0, 121.0, 31.0],
+        "legend_spec": {"type": "continuous", "min": 0, "max": 1, "palette": "RdYlGn"}
+    }
+    layer = {"id": "ndvi_layer", "source": "ndvi_source"}
+    mapspec = {}
+
+    processed_layer, source_entry, suggested_view = process_layer_ingestion(
+        mapspec, layer, source_data=raster_data, session_dir=tmp_path
+    )
+
+    assert processed_layer["id"] == "ndvi_layer"
+    assert processed_layer["type"] == "raster"
+    assert source_entry["type"] == "raster"
+    assert "imageRef" in source_entry
+    assert source_entry["bounds"] == [120.0, 30.0, 121.0, 31.0]
+    assert suggested_view is None  # Rasters do not run GeoJSON auto-profiling
 
 
 def test_process_layer_ingestion_preserves_existing_view():
