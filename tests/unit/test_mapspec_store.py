@@ -167,3 +167,44 @@ async def test_checkpoint_and_rollback(clean_session):
   restored = rb_res["mapspec"]
   assert len(restored["layers"]) == 1
   assert restored["layers"][0]["id"] == "pts"
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_materializes_inline_data(clean_session):
+  """A checkpoint of an inlineData layer must be self-contained (spec Story 31).
+
+  layer_upsert with source_data must persist the data (previously it was
+  profiled-then-discarded, leaving the source with no data). With the data
+  persisted as source.inlineData, the checkpoint's mapspec.json copy carries
+  it — so the snapshot is replayable without the live session store.
+  """
+  geojson = {
+      "type": "FeatureCollection",
+      "features": [
+          {"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]},
+           "properties": {"mag": 5}},
+      ],
+  }
+  layer = {
+      "id": "eq",
+      "source": "pts",
+      "type": "circle",
+      "paint": {"color": "#ff0000"},
+  }
+  # layer_upsert with source_data must persist it into source.inlineData.
+  await mapspec_store.layer_upsert(clean_session, layer, source_data=geojson)
+  persisted = await mapspec_store.get_mapspec(clean_session)
+  assert persisted["sources"]["pts"]["inlineData"] == geojson, (
+      "layer_upsert must persist source_data as inlineData"
+  )
+
+  # Checkpoint, then prove the snapshot is self-contained: reading ONLY the
+  # checkpoint dir (no live session store) recovers the original GeoJSON.
+  ckpt_res = await mapspec_store.checkpoint(clean_session, "ckpt_inline")
+  assert ckpt_res["success"] is True
+  import json as _json
+  ckpt_dir = BASE_STORAGE_DIR / clean_session / "checkpoints" / "ckpt_inline"
+  snapshot = _json.loads((ckpt_dir / "mapspec.json").read_text())
+  assert snapshot["sources"]["pts"]["inlineData"] == geojson, (
+      "inlineData must survive into the checkpoint snapshot"
+  )

@@ -159,6 +159,17 @@ class MapSpecStore:
 
     source_entry = mapspec["sources"][source_id]
 
+    # Persist the supplied source data so the MapSpec is self-contained —
+    # matches source_profile's storage shape and what the TS compiler reads.
+    # Inline GeoJSON → source.inlineData; a ref:/url/path string → source.url.
+    # Without this, source_data was profiled-then-discarded, leaving the source
+    # entry with no data at all (and checkpoints with nothing to materialize).
+    if source_data is not None and "inlineData" not in source_entry and "url" not in source_entry:
+      if isinstance(source_data, dict):
+        source_entry["inlineData"] = source_data
+      elif isinstance(source_data, str):
+        source_entry["url"] = source_data
+
     # Auto-profiling & auto-view injection (User Stories 12 & 13)
     data_to_profile = source_data or source_entry.get("inlineData") or source_entry.get("url") or source_entry.get("dataPath")
     if data_to_profile and "profile" not in source_entry:
