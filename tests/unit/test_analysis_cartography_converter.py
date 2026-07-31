@@ -108,6 +108,92 @@ def test_graduated_legend_to_step_style_method():
     assert "computed_at" in provenance
 
 
+def test_continuous_legend_to_interpolate_style_method():
+    geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [120.0, 30.0]},
+                "properties": {"kde_density": 0.42},
+            }
+        ],
+    }
+    analysis = {
+        "success": True,
+        "algorithm": "kde_analysis",
+        "data": geojson,
+        "legend_spec": {
+            "type": "continuous",
+            "field": "kde_density",
+            "min": 0.0,
+            "max": 100.0,
+            "palette_colors": ["#eff3ff", "#6baed6", "#08519c"],
+        },
+    }
+
+    converted_layer, inline_geojson, warnings = convert_analysis_to_mapspec_layer(analysis)
+
+    assert warnings == []
+    assert converted_layer["type"] == "circle"
+
+    # Verify paint color interpolate mapping
+    color_paint = converted_layer["paint"]["color"]
+    assert color_paint["method"] == "interpolate"
+    assert color_paint["field"] == "kde_density"
+    assert color_paint["stops"] == [
+        [0.0, "#eff3ff"],
+        [50.0, "#6baed6"],
+        [100.0, "#08519c"],
+    ]
+
+
+def test_categorical_legend_to_match_style_method():
+    geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]],
+                },
+                "properties": {"cluster": "HH"},
+            }
+        ],
+    }
+    analysis = {
+        "success": True,
+        "algorithm": "lisa_analysis",
+        "data": geojson,
+        "legend_spec": {
+            "type": "categorical",
+            "field": "cluster",
+            "categories": [
+                {"key": "HH", "color": "#ff0000", "label": "High-High"},
+                {"key": "LL", "color": "#0000ff", "label": "Low-Low"},
+                {"key": "NS", "color": "#cccccc", "label": "Not Significant"},
+            ],
+        },
+    }
+
+    converted_layer, inline_geojson, warnings = convert_analysis_to_mapspec_layer(analysis)
+
+    assert warnings == []
+    assert converted_layer["type"] == "fill"
+
+    # Verify paint color match mapping
+    color_paint = converted_layer["paint"]["color"]
+    assert color_paint["method"] == "match"
+    assert color_paint["field"] == "cluster"
+    assert color_paint["cases"] == [
+        ["HH", "#ff0000"],
+        ["LL", "#0000ff"],
+        ["NS", "#cccccc"],
+    ]
+    assert color_paint["default"] == "#cccccc"
+
+
 def test_geometry_inference_and_constant_fallback():
     polygon_geojson = {
         "type": "FeatureCollection",
