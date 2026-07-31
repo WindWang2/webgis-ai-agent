@@ -45,6 +45,28 @@ describe("MapSpec Compiler (Seam A)", () => {
       ]);
     });
 
+    it("compiles step style method with default and stops", () => {
+      const compiled = compileStyleMethod({
+        method: "step",
+        field: "score",
+        default: "#ffffb2",
+        stops: [
+          [10.0, "#fd8d3c"],
+          [20.0, "#bd0026"],
+        ],
+      });
+
+      expect(compiled).toEqual([
+        "step",
+        ["to-number", ["get", "score"]],
+        "#ffffb2",
+        10.0,
+        "#fd8d3c",
+        20.0,
+        "#bd0026",
+      ]);
+    });
+
     it("compiles step style method", () => {
       const compiled = compileStyleMethod({
         method: "step",

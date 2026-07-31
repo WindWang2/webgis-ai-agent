@@ -150,6 +150,43 @@ A self-contained snapshot of a MapSpec at a point in time: the intent doc *plus*
 payload of every `ref_id` it references (copied into the snapshot dir). Enables rollback, diff,
 and replay without the live Redis store.
 
+### Analysis Result
+The canonical shape returned by a spatial-analysis algorithm (`GeoAnalysisResult.to_llm_response()`):
+a `{success, summary, data, error_type?, correction_hint?}` dict where `data` is a GeoJSON
+FeatureCollection (for geometry-emitting algorithms) or a `{stats, ...}` dict (for pure-statistic
+algorithms). A subset of geometry-emitting algorithms additionally attach a `legend_spec` at the
+top level of the returned dict — this is what makes them *thematic* rather than merely geometric.
+
+### legend_spec
+The classification contract an analysis algorithm emits to describe how its output *should be
+colored*. A discriminated object with a `type` of `graduated` (class breaks + a palette of hex
+colors, one per class), `continuous` (a min/max range + palette ramp), or `categorical` (a list of
+`{key, color, label}` entries). Produced by `CartographyService.build_legend_spec` and a few inline
+emitters (`h3_binning`, `kde_contours`, `heatmap_data`). This is a **distinct, parallel contract**
+from a MapSpec `StyleMethod`: `legend_spec` feeds the live-map `<ThematicLegend>` overlay path,
+whereas a MapSpec layer's `paint.color` (a `step`/`interpolate`/`match` `StyleMethod`) is what the
+MapSpec Compiler auto-derives its own legend from. The two legend pipelines do not share a type.
+
+### Thematic vs. Geometry-only Analysis
+Two classes of spatial-analysis output, distinguished by whether a `legend_spec` is attached.
+**Thematic** algorithms (hotspot, h3-binning, kde-contours, heatmap, choropleth/thematic-map) carry
+data-driven classification → they style a MapSpec layer with a `step`/`interpolate`/`match`
+`StyleMethod` derived from their `legend_spec`. **Geometry-only** algorithms (buffer, clip, dissolve,
+overlay, voronoi, isochrone, fishnet, nearest-neighbor) emit pure geometry with no classification →
+they style a MapSpec layer with a `constant` paint and sensible per-type defaults. Both flow through
+the same ingestion path; the difference is only how rich the resulting paint is.
+
+### Derived Layer (Analysis-backed)
+A MapSpec layer whose source data is the output of a spatial-analysis algorithm, rather than a
+user-provided or fetched dataset. Persisted like any other layer — its GeoJSON travels inline
+(checkpoint-replayable) — but additionally carries **provenance** metadata recording which algorithm
+produced it, from which source, with which parameters, and at what time. Provenance is audit
+lineage; it is opaque to the MapSpec Compiler (which renders from the materialized GeoJSON + paint)
+and surfaces best-effort `warnings` (e.g. `mixed_geometries`) rather than blocking the layer. Raster
+analyses (NDVI, terrain, reclassification) are **excluded** from this v1 — they discard their
+computed arrays and return only statistics, so they cannot back a layer without their own
+raster-source-schema decision (deferred).
+
 ## Key Relationships
 
 ```

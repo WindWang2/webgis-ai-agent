@@ -150,6 +150,17 @@ class MapSpecStore:
       res = await self.init_project(session_id)
       mapspec = res["mapspec"]
 
+    # Branch detection for Analysis Result dict vs GeoJSON dict vs URL string
+    if isinstance(source_data, dict):
+      from app.services.analysis_cartography_converter import (
+          is_analysis_result,
+          convert_analysis_to_mapspec_layer,
+      )
+      if is_analysis_result(source_data):
+        converted_layer, inline_geojson, _ = convert_analysis_to_mapspec_layer(source_data, layer)
+        layer = converted_layer
+        source_data = inline_geojson
+
     source_id = layer.get("source", "default_source")
     if "sources" not in mapspec:
       mapspec["sources"] = {}

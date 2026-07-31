@@ -245,3 +245,52 @@ async def test_checkpoint_materializes_inline_data(clean_session):
   assert snapshot["sources"]["pts"]["inlineData"] == geojson, (
       "inlineData must survive into the checkpoint snapshot"
   )
+
+
+@pytest.mark.asyncio
+async def test_layer_upsert_analysis_result_contract(clean_session):
+  geojson = {
+      "type": "FeatureCollection",
+      "features": [
+          {
+              "type": "Feature",
+              "geometry": {"type": "Point", "coordinates": [120.0, 30.0]},
+              "properties": {"val": 5},
+          },
+          {
+              "type": "Feature",
+              "geometry": {"type": "Point", "coordinates": [121.0, 31.0]},
+              "properties": {"val": 15},
+          },
+      ],
+  }
+  analysis_data = {
+      "success": True,
+      "algorithm": "spatial_hotspot",
+      "data": geojson,
+      "legend_spec": {
+          "type": "graduated",
+          "field": "val",
+          "breaks": [0.0, 10.0, 20.0],
+          "palette_colors": ["#0000ff", "#ff0000"],
+      },
+      "source_ref": "ref:input_1",
+      "params": {"radius": 1000},
+  }
+
+  layer = {
+      "id": "hotspot_layer",
+      "source": "hotspot_source",
+  }
+
+  res = await mapspec_store.layer_upsert(clean_session, layer, source_data=analysis_data)
+  mapspec = res["mapspec"]
+
+  upserted_layer = mapspec["layers"][0]
+  assert upserted_layer["id"] == "hotspot_layer"
+  assert upserted_layer["type"] == "circle"
+  assert upserted_layer["paint"]["color"]["method"] == "step"
+  assert upserted_layer["paint"]["color"]["field"] == "val"
+  assert upserted_layer["provenance"]["algorithm"] == "spatial_hotspot"
+  assert mapspec["sources"]["hotspot_source"]["inlineData"] == geojson
+
