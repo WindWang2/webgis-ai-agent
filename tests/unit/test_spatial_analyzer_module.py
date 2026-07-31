@@ -11,8 +11,11 @@ from app.lib.geo_processor.core import GeoAnalysisResult
 
 
 def test_analysis_result_alias():
+    # ADR-0009 / Candidate #3: AnalysisResult is a *type alias* for
+    # GeoAnalysisResult, not a wrapper subclass. They are the same class.
+    assert AnalysisResult is GeoAnalysisResult
     res = GeoAnalysisResult(True, {"type": "FeatureCollection", "features": []}, "OK")
-    assert AnalysisResult.from_geo(res) is res
+    assert isinstance(res, AnalysisResult)
 
 
 def test_to_feature_collection_normalization():

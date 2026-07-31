@@ -208,7 +208,12 @@ class MapSpecStore:
     return {
         "success": True,
         "mapspec": res["mapspec"],
-        "layer": layer,
+        # Return the *processed* layer, not the raw input: the raster path
+        # rewrites type/paint/legend_spec and the analysis path rewrites
+        # type/paint, so callers reading .layer.type/.layer.paint must see the
+        # converted values. Returning the original `layer` here was a regression
+        # introduced when LayerIngestionPipeline split the variable (Candidate #4).
+        "layer": processed_layer,
     }
 
   async def layer_remove(self, session_id: str, layer_id: str) -> Dict[str, Any]:

@@ -23,12 +23,12 @@ from app.lib.geo_analysis.network import calculate_isochrones
 logger = logging.getLogger(__name__)
 
 
-class AnalysisResult(GeoAnalysisResult):
-    """Backward-compatible container class (zero-copy delegation to GeoAnalysisResult)."""
-
-    @classmethod
-    def from_geo(cls, r: GeoAnalysisResult) -> GeoAnalysisResult:
-        return r
+# ADR-0009: analysis-result identity is GeoAnalysisResult itself — there is no
+# second consumer justifying a separate interface. Candidate #3's "AnalysisResult
+# class alias" therefore names a *type alias*, not a wrapper subclass: an earlier
+# `class AnalysisResult(GeoAnalysisResult)` only delegated by identity (Middle Man)
+# and was never instantiated, so it has been flattened to the alias the spec named.
+AnalysisResult = GeoAnalysisResult
 
 
 def _to_feature_collection(data: Any) -> Dict[str, Any]:

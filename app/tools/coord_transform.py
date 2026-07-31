@@ -15,6 +15,7 @@ import logging
 from typing import Any
 
 from app.tools.registry import ToolRegistry, tool
+from app.tools._utils import std_error_response
 from app.utils.coord_transform import transform_geojson
 from app.lib.geo_processor.core import safe_parse
 
@@ -49,15 +50,21 @@ def register_coord_transform_tools(registry: ToolRegistry):
         src = (from_crs or "").lower().replace("-", "").replace(" ", "")
         dst = (to_crs or "").lower().replace("-", "").replace(" ", "")
         if src not in _SUPPORTED_CHINESE or dst not in _SUPPORTED_CHINESE:
-            return {
-                "success": False,
-                "error": f"不支持的坐标系 from={from_crs} to={to_crs}。"
-                         f"必须是 {sorted(_SUPPORTED_CHINESE)} 之一。",
-            }
+            msg = (f"不支持的坐标系 from={from_crs} to={to_crs}。"
+                   f"必须是 {sorted(_SUPPORTED_CHINESE)} 之一。")
+            return std_error_response(
+                msg,
+                code="VALIDATION_ERROR",
+                correction_hint=f"请将 from_crs/to_crs 改为 {sorted(_SUPPORTED_CHINESE)} 之一。",
+            )
 
         data = safe_parse(geojson)
         if not data:
-            return {"success": False, "error": "无法解析输入 GeoJSON"}
+            return std_error_response(
+                "无法解析输入 GeoJSON",
+                code="VALIDATION_ERROR",
+                correction_hint="请提供合法的 GeoJSON 对象、FeatureCollection 或 ref:xxx 引用。",
+            )
 
         if src == dst:
             return {
@@ -75,7 +82,12 @@ def register_coord_transform_tools(registry: ToolRegistry):
                 "metadata": {"from_crs": src, "to_crs": dst},
             }
         except Exception as e:
-            return {"success": False, "error": f"坐标转换失败: {e}"}
+            return std_error_response(
+                f"坐标转换失败: {e}",
+                code="TOOL_ERROR",
+                error_type=type(e).__name__,
+                correction_hint="请检查输入几何是否合法、坐标系参数是否匹配。",
+            )
 
 
 def register_epsg_transform_tools(registry: ToolRegistry):
@@ -101,7 +113,11 @@ def register_epsg_transform_tools(registry: ToolRegistry):
     def reproject_coordinates(geojson: Any, from_epsg: str, to_epsg: str) -> dict:
         data = safe_parse(geojson)
         if not data:
-            return {"success": False, "error": "无法解析输入 GeoJSON"}
+            return std_error_response(
+                "无法解析输入 GeoJSON",
+                code="VALIDATION_ERROR",
+                correction_hint="请提供合法的 GeoJSON 对象、FeatureCollection 或 ref:xxx 引用。",
+            )
 
         src_clean = (from_epsg or "").strip().upper()
         dst_clean = (to_epsg or "").strip().upper()
@@ -124,5 +140,15 @@ def register_epsg_transform_tools(registry: ToolRegistry):
         except Exception as e:
             err = str(e).lower()
             if "crs" in err or "epsg" in err or "unsupported" in err:
-                return {"success": False, "error": f"不支持的 CRS: {from_epsg} → {to_epsg} ({e})"}
-            return {"success": False, "error": f"重投影失败: {e}"}
+                return std_error_response(
+                    f"不支持的 CRS: {from_epsg} → {to_epsg} ({e})",
+                    code="VALIDATION_ERROR",
+                    error_type=type(e).__name__,
+                    correction_hint=f"请使用合法的 EPSG 代码（如 EPSG:4326、EPSG:32650）。",
+                )
+            return std_error_response(
+                f"重投影失败: {e}",
+                code="TOOL_ERROR",
+                error_type=type(e).__name__,
+                correction_hint="请检查输入几何与坐标系参数是否合法。",
+            )

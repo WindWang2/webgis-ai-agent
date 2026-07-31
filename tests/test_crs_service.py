@@ -81,8 +81,13 @@ class TestEPSGReprojection:
 
         result = tool_fn(geojson={"type": "Point", "coordinates": [0, 0]},
                          from_epsg="EPSG:99999", to_epsg="EPSG:4326")
+        # Standardized error contract (std_error_response / Candidate #5):
+        # error text lives under `message`, carries a `code`, and a
+        # `correction_hint` for LLM self-healing.
         assert result["success"] is False
-        assert "不支持的" in result.get("error", "") or "invalid" in result.get("error", "").lower()
+        assert result["code"] == "VALIDATION_ERROR"
+        assert "不支持的" in result.get("message", "") or "invalid" in result.get("message", "").lower()
+        assert result.get("correction_hint"), "self-healing hint must be present"
 
     def test_same_epsg_returns_unchanged(self):
         from app.tools.coord_transform import register_epsg_transform_tools

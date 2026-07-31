@@ -175,8 +175,14 @@ async def test_transform_invalid_crs_returns_error(registry):
         "transform_coordinates",
         {"geojson": geojson, "from_crs": "wgs84", "to_crs": "epsg4326"},
     )
+    # Standardized error contract (std_error_response / Candidate #5):
+    # error text lives under `message`, carries a `code`, and the dispatch
+    # error path requires `code` for is_error_dict to route it as a failure.
     assert result.get("success") is False
-    assert "wgs84" in result.get("error", "") or "epsg" in result.get("error", "").lower()
+    assert result.get("code") == "VALIDATION_ERROR"
+    msg = result.get("message", "")
+    assert "wgs84" in msg or "epsg" in msg.lower()
+    assert result.get("correction_hint"), "self-healing hint must be present"
 
 
 @pytest.mark.asyncio
