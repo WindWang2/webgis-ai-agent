@@ -70,7 +70,7 @@ class MapSpecStore:
   ) -> Dict[str, Any]:
     mapspec = {
         "version": "1.0",
-        "view": view or {"center": [0.0, 0.0], "zoom": 2.0},
+        "view": view or {},
         "sources": {},
         "layers": [],
         "layout": {
@@ -176,9 +176,12 @@ class MapSpecStore:
         profile = profile_geojson_source(data_to_profile)
         source_entry["profile"] = profile
 
-        # First dissectable layer auto-writes view when view is unset/default
-        curr_center = mapspec.get("view", {}).get("center", [0.0, 0.0])
-        if (curr_center == [0.0, 0.0] or curr_center == [0, 0]) and "suggestedView" in profile:
+        # First dissectable layer auto-writes view only when NO center has
+        # been explicitly set. Replaces the old center == [0.0, 0.0] magic-value
+        # heuristic, which clobbered a legitimately-set origin (e.g. Null Island).
+        from app.services.mapspec_view import view_has_center
+        if not view_has_center(mapspec) and "suggestedView" in profile:
+          mapspec.setdefault("view", {})
           mapspec["view"]["center"] = profile["suggestedView"]["center"]
           mapspec["view"]["zoom"] = profile["suggestedView"]["zoom"]
       except Exception as e:

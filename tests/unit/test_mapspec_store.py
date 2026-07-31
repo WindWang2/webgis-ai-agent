@@ -90,6 +90,43 @@ async def test_layer_upsert_auto_profiles_and_auto_views(clean_session):
 
 
 @pytest.mark.asyncio
+async def test_layer_upsert_does_not_clobber_explicit_origin(clean_session):
+  """Regression: an explicitly-set center=[0,0] must survive auto-view injection.
+
+  Previously the heuristic `center == [0.0, 0.0]` treated the origin as
+  "unset" and clobbered it with the profiler's suggestedView. A user wanting
+  Null Island (common in demos/tests) lost their view. Now only an *absent*
+  center is treated as unset.
+  """
+  # Init with an explicit origin view.
+  await mapspec_store.init_project(
+      clean_session, view={"center": [0.0, 0.0], "zoom": 4.0}
+  )
+  geojson = {
+      "type": "FeatureCollection",
+      "features": [
+          {"type": "Feature", "geometry": {"type": "Point", "coordinates": [120.0, 30.0]},
+           "properties": {"val": 1}},
+      ],
+  }
+  layer = {"id": "eq2", "source": "src2", "type": "circle", "paint": {"color": "#00f"}}
+  await mapspec_store.layer_upsert(clean_session, layer, source_data=geojson)
+
+  mapspec = await mapspec_store.get_mapspec(clean_session)
+  # The explicit origin must survive — NOT replaced by the profiler's suggestion.
+  assert mapspec["view"]["center"] == [0.0, 0.0]
+  assert mapspec["view"]["zoom"] == 4.0
+
+
+@pytest.mark.asyncio
+async def test_init_project_leaves_view_unset_when_not_provided(clean_session):
+  """A fresh MapSpec with no view argument should have an empty (unset) view,
+  not the magic {center: [0,0], zoom: 2} default that previously masked 'unset'."""
+  res = await mapspec_store.init_project(clean_session)
+  assert res["mapspec"]["view"] == {}
+
+
+@pytest.mark.asyncio
 async def test_validate_and_compile(clean_session):
   layer = {
       "id": "test_layer",
