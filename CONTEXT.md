@@ -170,15 +170,21 @@ and replay without the live Redis store.
 The canonical shape returned by a spatial-analysis algorithm (`GeoAnalysisResult.to_llm_response()`):
 a `{success, summary, data, error_type?, correction_hint?}` dict where `data` is a GeoJSON
 FeatureCollection (for geometry-emitting algorithms) or a `{stats, ...}` dict (for pure-statistic
-algorithms). A subset of geometry-emitting algorithms additionally attach a `legend_spec` at the
-top level of the returned dict — this is what makes them *thematic* rather than merely geometric.
+algorithms). The dataclass **never carries `legend_spec`** — `to_llm_response()` emits only the
+fields above. Thematic markers (`legend_spec`, `algorithm`, `source_ref`) are attached **after**
+flattening, by inline emitters at the tool layer (`h3_binning`, `heatmap_data`, `kde_contours`,
+`create_thematic_map`, `apply_template`), and **only one** of those (`h3_binning`) routes through
+the dataclass — the rest attach `legend_spec` to a raw dict that bypasses `GeoAnalysisResult`
+entirely. See ADR-0009: analysis-result identity is *not* the divergent concern; the `legend_spec`
+attachment location is.
 
 ### legend_spec
 The classification contract an analysis algorithm emits to describe how its output *should be
 colored*. A discriminated object with a `type` of `graduated` (class breaks + a palette of hex
 colors, one per class), `continuous` (a min/max range + palette ramp), or `categorical` (a list of
-`{key, color, label}` entries). Produced by `CartographyService.build_legend_spec` and a few inline
-emitters (`h3_binning`, `kde_contours`, `heatmap_data`). This is a **distinct, parallel contract**
+`{key, color, label}` entries). Produced by `CartographyService.build_legend_spec` and five inline
+emitters (`h3_binning`, `kde_contours`, `heatmap_data`, `create_thematic_map`, `apply_template`).
+This is a **distinct, parallel contract**
 from a MapSpec `StyleMethod`: `legend_spec` feeds the live-map `<ThematicLegend>` overlay path,
 whereas a MapSpec layer's `paint.color` (a `step`/`interpolate`/`match` `StyleMethod`) is what the
 MapSpec Compiler auto-derives its own legend from. The two legend pipelines do not share a type.
