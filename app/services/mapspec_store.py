@@ -174,112 +174,35 @@ class MapSpecStore:
       layer: Dict[str, Any],
       source_data: Optional[Any] = None,
   ) -> Dict[str, Any]:
-    from app.services.spatial_meta_profiler import profile_geojson_source
+    from app.services.mapspec_layer_pipeline import process_layer_ingestion
 
     mapspec = await self.get_mapspec(session_id)
     if not mapspec:
       res = await self.init_project(session_id)
       mapspec = res["mapspec"]
 
-    # Branch detection for Analysis Result dict vs Raster payload vs GeoJSON dict vs URL string.
-    # Order matters: raster and analysis-result are both dicts; raster is checked
-    # first (it carries an array+bounds, analysis-result carries legend_spec/
-    # algorithm/success+data), then analysis-result, then plain GeoJSON/str.
-    is_raster = False
-    if isinstance(source_data, dict):
-      from app.services.raster_cartography_converter import is_raster_source
-      is_raster = is_raster_source(source_data)
-
-    if is_raster:
-      # Raster path (ADR-0011): the converter owns extraction + rendering +
-      # source-data assembly (symmetric with the vector converter's
-      # convert_analysis_to_mapspec_layer). The store only persists the PNG,
-      # fills in the imageRef, and hands the result to mapspec_source.store_data.
-      from app.services.raster_cartography_converter import convert_raster_to_mapspec_layer
-      from app.services.raster_store import save_png
-
-      raster_layer, legend, png, raster_source_data = convert_raster_to_mapspec_layer(
-          source_data, layer
-      )
-      layer = raster_layer
-      if legend is not None:
-          layer.setdefault("legend_spec", legend)
-      # Persist the PNG, then fill the imageRef the converter left blank.
-      if png is not None and raster_source_data is not None:
-        src_id_for_raster = layer.get("source", "default_source")
-        session_dir = self.get_session_dir(session_id)
-        raster_source_data["imageRef"] = save_png(session_dir, src_id_for_raster, png)
-        source_data = raster_source_data
-      else:
-        # Rendering failed (converter returned None png) — nothing to store.
-        source_data = None
-
-    elif isinstance(source_data, dict):
-      from app.services.analysis_cartography_converter import (
-          is_analysis_result,
-          convert_analysis_to_mapspec_layer,
-      )
-      if is_analysis_result(source_data):
-        converted_layer, inline_geojson, _ = convert_analysis_to_mapspec_layer(source_data, layer)
-        layer = converted_layer
-        source_data = inline_geojson
-
-    source_id = layer.get("source", "default_source")
-    if "sources" not in mapspec:
-      mapspec["sources"] = {}
-    if source_id not in mapspec["sources"]:
-      mapspec["sources"][source_id] = {"type": "geojson"}
-
-    source_entry = mapspec["sources"][source_id]
-
-    # Persist the supplied source data so the MapSpec is self-contained —
-    # matches source_profile's storage shape and what the TS compiler reads.
-    # Inline GeoJSON → source.inlineData; a ref:/url/path string → source.url;
-    # a raster payload → source.type:"raster" + imageRef/bounds/imageSize.
-    # Without this, source_data was profiled-then-discarded, leaving the source
-    # entry with no data at all (and checkpoints with nothing to materialize).
-    # source-shape classification routes through mapspec_source (ADR-0008/0011).
-    # This site's policy: idempotent — skip if data is already present.
-    from app.services.mapspec_source import store_data, profile_data, is_raster_entry
-
-    already_has_data = (
-        "inlineData" in source_entry or "url" in source_entry or is_raster_entry(source_entry)
+    session_dir = self.get_session_dir(session_id)
+    processed_layer, source_entry, suggested_view = process_layer_ingestion(
+        mapspec, layer, source_data, session_dir
     )
-    if source_data is not None and not already_has_data:
-      store_data(source_entry, source_data)
 
-    # Auto-profiling & auto-view injection (User Stories 12 & 13).
-    # Raster sources carry no GeoJSON to profile — skip (is_raster_entry guard).
-    # Caller-supplied source_data takes precedence over the entry's stored data.
-    if is_raster_entry(source_entry):
-      data_to_profile = None
-    else:
-      data_to_profile = source_data or profile_data(source_entry)
-    if data_to_profile and "profile" not in source_entry:
-      try:
-        profile = profile_geojson_source(data_to_profile)
-        source_entry["profile"] = profile
+    source_id = processed_layer.get("source", "default_source")
+    mapspec.setdefault("sources", {})[source_id] = source_entry
 
-        # First dissectable layer auto-writes view only when NO center has
-        # been explicitly set. Replaces the old center == [0.0, 0.0] magic-value
-        # heuristic, which clobbered a legitimately-set origin (e.g. Null Island).
-        if not view_has_center(mapspec) and "suggestedView" in profile:
-          mapspec.setdefault("view", {})
-          mapspec["view"]["center"] = profile["suggestedView"]["center"]
-          mapspec["view"]["zoom"] = profile["suggestedView"]["zoom"]
-      except Exception as e:
-        logger.warning(f"Auto-profiling failed for layer {layer.get('id')}: {e}")
+    if suggested_view:
+      mapspec.setdefault("view", {})
+      mapspec["view"]["center"] = suggested_view["center"]
+      mapspec["view"]["zoom"] = suggested_view["zoom"]
 
-    # Upsert layer into mapspec["layers"]
     layers = mapspec.setdefault("layers", [])
     updated = False
     for i, l in enumerate(layers):
-      if l.get("id") == layer.get("id"):
-        layers[i] = layer
+      if l.get("id") == processed_layer.get("id"):
+        layers[i] = processed_layer
         updated = True
         break
     if not updated:
-      layers.append(layer)
+      layers.append(processed_layer)
 
     res = await self.save_mapspec(session_id, mapspec)
     return {
