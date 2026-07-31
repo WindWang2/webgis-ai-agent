@@ -135,6 +135,9 @@ def wrap_error_dict_for_llm(tool_name: str, result: dict) -> str:
     code = result.get("code", "TOOL_ERROR")
     message = result.get("message", "")
     error_type = result.get("error_type", code)
+    hint = result.get("correction_hint")
+    if hint and hint not in message:
+        message = f"{message}\n({hint})"
     return construct_self_healing_message(tool_name, message, error_type)
 
 

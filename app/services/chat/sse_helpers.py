@@ -8,6 +8,7 @@
 """
 from app.services.chat.llm_client import LRUCache, parse_minimax_xml_tool_calls
 from app.services.tool_dispatch_service import (
+    MSG_MAX_CHARS,
     calculate_bbox,
     is_error_dict,
     normalize_tool_args,
@@ -18,6 +19,7 @@ from app.services.tool_dispatch_service import (
 
 __all__ = [
     "LRUCache",
+    "MSG_MAX_CHARS",
     "parse_minimax_xml_tool_calls",
     "normalize_tool_args",
     "is_error_dict",
