@@ -5,6 +5,7 @@ Converts spatial analysis results (GeoAnalysisResult output) into MapSpec layer 
 from collections import Counter
 from datetime import datetime, timezone
 import logging
+import math
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,11 @@ DEFAULT_CONSTANT_PAINTS = {
     "fill": {"color": "#3b82f6", "opacity": 0.6},
     "heatmap": {"color": "#d97706", "radius": 10},
 }
+
+
+def _is_number(val: Any) -> bool:
+    """Check if val is a valid finite number (int/float, excluding bool and NaN/Inf)."""
+    return isinstance(val, (int, float)) and not isinstance(val, bool) and math.isfinite(val)
 
 
 def is_analysis_result(source_data: Any) -> bool:
@@ -129,6 +135,101 @@ def _infer_geometry_category(geojson: Optional[Dict[str, Any]]) -> Tuple[str, Li
     return majority_cat, warnings
 
 
+def _convert_graduated_legend(legend_spec: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+    """Converts a graduated legend_spec into a step StyleMethod."""
+    warnings: List[str] = []
+    field = legend_spec.get("field", "")
+    breaks = legend_spec.get("breaks", [])
+    palette_colors = legend_spec.get("palette_colors") or legend_spec.get("colors") or []
+
+    valid_breaks = isinstance(breaks, list) and len(breaks) >= 2 and all(_is_number(b) for b in breaks)
+    valid_colors = isinstance(palette_colors, list) and len(palette_colors) >= 1
+
+    if field and valid_breaks and valid_colors:
+        default_color = palette_colors[0]
+        stops = []
+        for i in range(1, len(breaks) - 1):
+            color_i = palette_colors[i] if i < len(palette_colors) else palette_colors[-1]
+            stops.append([float(breaks[i]), color_i])
+
+        return {
+            "method": "step",
+            "field": field,
+            "default": default_color,
+            "stops": stops,
+        }, warnings
+
+    warnings.append("graduated_legend_invalid: insufficient breaks or palette_colors")
+    return None, warnings
+
+
+def _convert_continuous_legend(legend_spec: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+    """Converts a continuous legend_spec into an interpolate StyleMethod."""
+    warnings: List[str] = []
+    field = legend_spec.get("field", "")
+    min_val = legend_spec.get("min")
+    max_val = legend_spec.get("max")
+    palette_colors = legend_spec.get("palette_colors") or legend_spec.get("colors") or []
+
+    if (
+        field
+        and _is_number(min_val)
+        and _is_number(max_val)
+        and float(min_val) < float(max_val)
+        and isinstance(palette_colors, list)
+        and len(palette_colors) >= 2
+    ):
+        n = len(palette_colors)
+        step = (float(max_val) - float(min_val)) / (n - 1)
+        stops = [
+            [round(float(min_val) + i * step, 6), palette_colors[i]]
+            for i in range(n)
+        ]
+
+        return {
+            "method": "interpolate",
+            "field": field,
+            "stops": stops,
+        }, warnings
+
+    warnings.append("continuous_legend_invalid: missing field, palette_colors (min 2), or min must be strictly less than max")
+    return None, warnings
+
+
+def _convert_categorical_legend(legend_spec: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+    """Converts a categorical legend_spec into a match StyleMethod."""
+    warnings: List[str] = []
+    field = legend_spec.get("field", "")
+    categories = legend_spec.get("categories", [])
+    default_color_override = legend_spec.get("default")
+
+    if field and isinstance(categories, list) and len(categories) >= 1:
+        cases = []
+        for cat in categories:
+            if isinstance(cat, dict):
+                key = cat.get("key")
+                color = cat.get("color")
+                if key is not None and color:
+                    cases.append([key, color])
+            elif isinstance(cat, (list, tuple)) and len(cat) >= 2:
+                cases.append([cat[0], cat[1]])
+
+        if cases:
+            default_color = default_color_override or cases[-1][1] or "#999999"
+            return {
+                "method": "match",
+                "field": field,
+                "cases": cases,
+                "default": default_color,
+            }, warnings
+
+        warnings.append("categorical_legend_invalid: no valid category entries")
+        return None, warnings
+
+    warnings.append("categorical_legend_invalid: missing field or categories")
+    return None, warnings
+
+
 def convert_analysis_to_mapspec_layer(
     analysis_result: Dict[str, Any],
     layer: Optional[Dict[str, Any]] = None,
@@ -166,91 +267,20 @@ def convert_analysis_to_mapspec_layer(
     if isinstance(legend_spec, dict):
         legend_type = legend_spec.get("type")
         if legend_type == "graduated":
-            field = legend_spec.get("field", "")
-            breaks = legend_spec.get("breaks", [])
-            palette_colors = legend_spec.get("palette_colors") or legend_spec.get("colors") or []
-
-            if (
-                field
-                and isinstance(breaks, list)
-                and len(breaks) >= 2
-                and isinstance(palette_colors, list)
-                and len(palette_colors) >= 1
-            ):
-                default_color = palette_colors[0]
-                stops = []
-                for i in range(1, len(breaks) - 1):
-                    color_i = palette_colors[i] if i < len(palette_colors) else palette_colors[-1]
-                    stops.append([breaks[i], color_i])
-
-                paint_color = {
-                    "method": "step",
-                    "field": field,
-                    "default": default_color,
-                    "stops": stops,
-                }
+            paint_color, legend_warns = _convert_graduated_legend(legend_spec)
+            warnings.extend(legend_warns)
+            if paint_color:
                 has_thematic_paint = True
-            else:
-                warnings.append("graduated_legend_invalid: insufficient breaks or palette_colors")
-
         elif legend_type == "continuous":
-            field = legend_spec.get("field", "")
-            min_val = legend_spec.get("min")
-            max_val = legend_spec.get("max")
-            palette_colors = legend_spec.get("palette_colors") or legend_spec.get("colors") or []
-
-            if (
-                field
-                and isinstance(min_val, (int, float))
-                and isinstance(max_val, (int, float))
-                and isinstance(palette_colors, list)
-                and len(palette_colors) >= 1
-            ):
-                n = len(palette_colors)
-                if n == 1:
-                    stops = [[float(min_val), palette_colors[0]], [float(max_val), palette_colors[0]]]
-                else:
-                    step = (float(max_val) - float(min_val)) / (n - 1) if max_val != min_val else 0.0
-                    stops = [
-                        [round(float(min_val) + i * step, 6), palette_colors[i]]
-                        for i in range(n)
-                    ]
-
-                paint_color = {
-                    "method": "interpolate",
-                    "field": field,
-                    "stops": stops,
-                }
+            paint_color, legend_warns = _convert_continuous_legend(legend_spec)
+            warnings.extend(legend_warns)
+            if paint_color:
                 has_thematic_paint = True
-            else:
-                warnings.append("continuous_legend_invalid: missing field, min, max, or palette_colors")
-
         elif legend_type == "categorical":
-            field = legend_spec.get("field", "")
-            categories = legend_spec.get("categories", [])
-
-            if field and isinstance(categories, list) and len(categories) >= 1:
-                cases = []
-                for cat in categories:
-                    if isinstance(cat, dict):
-                        key = cat.get("key")
-                        color = cat.get("color", "#999999")
-                        if key is not None:
-                            cases.append([key, color])
-
-                if cases:
-                    default_color = cases[-1][1]
-                    paint_color = {
-                        "method": "match",
-                        "field": field,
-                        "cases": cases,
-                        "default": default_color,
-                    }
-                    has_thematic_paint = True
-                else:
-                    warnings.append("categorical_legend_invalid: no valid category entries")
-            else:
-                warnings.append("categorical_legend_invalid: missing field or categories")
+            paint_color, legend_warns = _convert_categorical_legend(legend_spec)
+            warnings.extend(legend_warns)
+            if paint_color:
+                has_thematic_paint = True
 
     default_paint_defaults = DEFAULT_CONSTANT_PAINTS.get(layer_type, {"color": "#3b82f6"})
     if paint_color is None:
