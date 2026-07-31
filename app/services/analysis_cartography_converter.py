@@ -236,103 +236,136 @@ def convert_analysis_to_mapspec_layer(
 ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], List[str]]:
     """
     Converts an Analysis Result dict into a MapSpec layer specification and inline GeoJSON data.
+    Guaranteed best-effort execution (never raises unhandled exceptions).
     """
     warnings: List[str] = []
-    base_layer = dict(layer) if layer else {}
+    base_layer = dict(layer) if isinstance(layer, dict) else {}
 
-    inline_geojson = _extract_geojson(analysis_result)
-    geom_cat, geom_warnings = _infer_geometry_category(inline_geojson)
-    warnings.extend(geom_warnings)
+    try:
+        if not isinstance(analysis_result, dict):
+            warnings.append("invalid_analysis_result: input is not a dictionary")
+            analysis_result = {}
 
-    cat_to_layer_type = {
-        "point": "circle",
-        "line": "line",
-        "polygon": "fill",
-    }
-    inferred_layer_type = cat_to_layer_type.get(geom_cat, "circle")
+        inline_geojson = _extract_geojson(analysis_result)
+        geom_cat, geom_warnings = _infer_geometry_category(inline_geojson)
+        warnings.extend(geom_warnings)
 
-    type_hint = analysis_result.get("type_hint") or base_layer.get("type_hint")
-    if type_hint == "heatmap":
-        inferred_layer_type = "heatmap"
+        cat_to_layer_type = {
+            "point": "circle",
+            "line": "line",
+            "polygon": "fill",
+        }
+        inferred_layer_type = cat_to_layer_type.get(geom_cat, "circle")
 
-    layer_type = base_layer.get("type") or inferred_layer_type
+        type_hint = analysis_result.get("type_hint") or base_layer.get("type_hint")
+        if type_hint == "heatmap":
+            inferred_layer_type = "heatmap"
 
-    legend_spec = analysis_result.get("legend_spec")
-    if not legend_spec and isinstance(analysis_result.get("data"), dict):
-        legend_spec = analysis_result["data"].get("legend_spec")
+        layer_type = base_layer.get("type") or inferred_layer_type
 
-    paint_color: Any = None
-    has_thematic_paint = False
+        legend_spec = analysis_result.get("legend_spec")
+        if not legend_spec and isinstance(analysis_result.get("data"), dict):
+            legend_spec = analysis_result["data"].get("legend_spec")
 
-    if isinstance(legend_spec, dict):
-        legend_type = legend_spec.get("type")
-        if legend_type == "graduated":
-            paint_color, legend_warns = _convert_graduated_legend(legend_spec)
-            warnings.extend(legend_warns)
-            if paint_color:
-                has_thematic_paint = True
-        elif legend_type == "continuous":
-            paint_color, legend_warns = _convert_continuous_legend(legend_spec)
-            warnings.extend(legend_warns)
-            if paint_color:
-                has_thematic_paint = True
-        elif legend_type == "categorical":
-            paint_color, legend_warns = _convert_categorical_legend(legend_spec)
-            warnings.extend(legend_warns)
-            if paint_color:
-                has_thematic_paint = True
+        paint_color: Any = None
+        has_thematic_paint = False
 
-    default_paint_defaults = DEFAULT_CONSTANT_PAINTS.get(layer_type, {"color": "#3b82f6"})
-    if paint_color is None:
-        paint_color = default_paint_defaults.get("color", "#3b82f6")
+        if isinstance(legend_spec, dict):
+            legend_type = legend_spec.get("type")
+            if legend_type == "graduated":
+                paint_color, legend_warns = _convert_graduated_legend(legend_spec)
+                warnings.extend(legend_warns)
+                if paint_color:
+                    has_thematic_paint = True
+            elif legend_type == "continuous":
+                paint_color, legend_warns = _convert_continuous_legend(legend_spec)
+                warnings.extend(legend_warns)
+                if paint_color:
+                    has_thematic_paint = True
+            elif legend_type == "categorical":
+                paint_color, legend_warns = _convert_categorical_legend(legend_spec)
+                warnings.extend(legend_warns)
+                if paint_color:
+                    has_thematic_paint = True
+            else:
+                warnings.append(f"unrecognized_legend_type: {legend_type}")
 
-    existing_paint = base_layer.get("paint")
-    paint = dict(default_paint_defaults)
-    if isinstance(existing_paint, dict):
-        paint.update(existing_paint)
+        default_paint_defaults = DEFAULT_CONSTANT_PAINTS.get(layer_type, {"color": "#3b82f6"})
+        if paint_color is None:
+            paint_color = default_paint_defaults.get("color", "#3b82f6")
 
-    if has_thematic_paint or "color" not in paint:
-        paint["color"] = paint_color
+        existing_paint = base_layer.get("paint")
+        paint = dict(default_paint_defaults)
+        if isinstance(existing_paint, dict):
+            paint.update(existing_paint)
 
-    algorithm = (
-        analysis_result.get("algorithm")
-        or analysis_result.get("analysis_type")
-        or "spatial_analysis"
-    )
-    source_ref = analysis_result.get("source_ref")
-    params = analysis_result.get("params", {})
-    computed_at = analysis_result.get("computed_at") or datetime.now(timezone.utc).isoformat()
+        if has_thematic_paint or "color" not in paint:
+            paint["color"] = paint_color
 
-    raw_warnings = analysis_result.get("warnings", [])
-    if isinstance(raw_warnings, list):
-        for w in raw_warnings:
-            sw = str(w)
-            if sw not in warnings:
-                warnings.append(sw)
+        algorithm = (
+            analysis_result.get("algorithm")
+            or analysis_result.get("analysis_type")
+            or "spatial_analysis"
+        )
+        source_ref = analysis_result.get("source_ref")
+        params = analysis_result.get("params", {})
+        computed_at = analysis_result.get("computed_at") or datetime.now(timezone.utc).isoformat()
 
-    provenance = {
-        "algorithm": algorithm,
-        "source_ref": source_ref,
-        "params": params,
-        "computed_at": computed_at,
-    }
-    if warnings:
-        provenance["warnings"] = warnings
+        raw_warnings = analysis_result.get("warnings", [])
+        if isinstance(raw_warnings, list):
+            for w in raw_warnings:
+                sw = str(w)
+                if sw not in warnings:
+                    warnings.append(sw)
 
-    layer_id = base_layer.get("id")
-    if not layer_id:
-        algo_slug = str(algorithm).lower().replace("-", "_")
-        layer_id = f"{algo_slug}_layer"
+        # Deduplicate warnings while preserving order
+        unique_warnings = list(dict.fromkeys(warnings))
 
-    source_id = base_layer.get("source")
-    if not source_id:
-        source_id = f"{layer_id}_source"
+        provenance = {
+            "algorithm": algorithm,
+            "source_ref": source_ref,
+            "params": params,
+            "computed_at": computed_at,
+        }
+        if unique_warnings:
+            provenance["warnings"] = unique_warnings
 
-    res_layer = dict(base_layer)
-    res_layer["id"] = layer_id
-    res_layer["source"] = source_id
-    res_layer["type"] = layer_type
-    res_layer["paint"] = paint
-    res_layer["provenance"] = provenance
+        layer_id = base_layer.get("id")
+        if not layer_id:
+            algo_slug = str(algorithm).lower().replace("-", "_")
+            layer_id = f"{algo_slug}_layer"
 
-    return res_layer, inline_geojson, warnings
+        source_id = base_layer.get("source")
+        if not source_id:
+            source_id = f"{layer_id}_source"
+
+        res_layer = dict(base_layer)
+        res_layer["id"] = layer_id
+        res_layer["source"] = source_id
+        res_layer["type"] = layer_type
+        res_layer["paint"] = paint
+        res_layer["provenance"] = provenance
+
+        return res_layer, inline_geojson, unique_warnings
+
+    except Exception as e:
+        logger.exception("Analysis to MapSpec converter encountered unhandled exception: %s", e)
+        err_msg = f"converter_error: {str(e)}"
+        unique_warnings = list(dict.fromkeys(warnings + [err_msg]))
+
+        layer_id = base_layer.get("id", "analysis_layer")
+        source_id = base_layer.get("source", f"{layer_id}_source")
+        layer_type = base_layer.get("type", "circle")
+        default_paint = DEFAULT_CONSTANT_PAINTS.get(layer_type, {"color": "#3b82f6"})
+
+        res_layer = dict(base_layer)
+        res_layer["id"] = layer_id
+        res_layer["source"] = source_id
+        res_layer["type"] = layer_type
+        res_layer["paint"] = default_paint
+        res_layer["provenance"] = {
+            "algorithm": base_layer.get("algorithm", "spatial_analysis"),
+            "computed_at": datetime.now(timezone.utc).isoformat(),
+            "warnings": unique_warnings,
+        }
+        return res_layer, None, unique_warnings

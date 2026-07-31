@@ -275,3 +275,46 @@ def test_unsupported_geometry_collection_does_not_crash():
     cat, warnings = _infer_geometry_category(geom_coll_geojson)
     assert cat == "point"
     assert any("no_geometries" in w for w in warnings)
+
+
+def test_unrecognized_legend_type_warning():
+    geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]}}
+        ],
+    }
+    analysis = {
+        "success": True,
+        "algorithm": "custom_algorithm",
+        "data": geojson,
+        "legend_spec": {
+            "type": "unknown_custom_type",
+            "field": "score",
+        },
+    }
+
+    converted_layer, inline_geojson, warnings = convert_analysis_to_mapspec_layer(analysis)
+
+    assert converted_layer["type"] == "circle"
+    assert converted_layer["paint"]["color"] == "#3b82f6"
+    assert any("unrecognized_legend_type" in w for w in warnings)
+    assert any("unrecognized_legend_type" in w for w in converted_layer["provenance"]["warnings"])
+
+
+def test_converter_exception_resilience_on_malformed_input():
+    # Pass a dict designed to trigger unexpected attribute error or exception during internal parsing
+    malformed_analysis = {
+        "success": True,
+        "algorithm": "broken_algo",
+        "data": "not_a_valid_geojson_or_dict",
+        "legend_spec": 12345,  # Invalid type
+    }
+
+    converted_layer, inline_geojson, warnings = convert_analysis_to_mapspec_layer(malformed_analysis)
+
+    assert converted_layer["id"] == "broken_algo_layer"
+    assert converted_layer["type"] in ["circle", "fill", "line"]
+    assert "provenance" in converted_layer
+    assert len(converted_layer["provenance"]["warnings"]) >= 1
+
