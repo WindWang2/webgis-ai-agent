@@ -9,11 +9,23 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONSTANT_COLORS = {
-    "circle": "#3b82f6",
-    "line": "#2563eb",
-    "fill": "#3b82f6",
-    "heatmap": "#d97706",
+GEOJSON_TYPES = {
+    "FeatureCollection",
+    "Feature",
+    "Point",
+    "LineString",
+    "Polygon",
+    "MultiPoint",
+    "MultiLineString",
+    "MultiPolygon",
+    "GeometryCollection",
+}
+
+DEFAULT_CONSTANT_PAINTS = {
+    "circle": {"color": "#3b82f6", "radius": 5},
+    "line": {"color": "#2563eb", "width": 2},
+    "fill": {"color": "#3b82f6", "opacity": 0.6},
+    "heatmap": {"color": "#d97706", "radius": 10},
 }
 
 
@@ -21,6 +33,11 @@ def is_analysis_result(source_data: Any) -> bool:
     """
     Returns True if source_data is a spatial Analysis Result dict.
     Differentiates from plain GeoJSON dicts or string URLs/paths/refs.
+    Detection order:
+    1. Not dict -> False
+    2. Explicit analysis metadata -> True
+    3. GeoJSON dict -> False
+    4. Wrapped 'data' payload -> True
     """
     if not isinstance(source_data, dict):
         return False
@@ -29,22 +46,12 @@ def is_analysis_result(source_data: Any) -> bool:
     if any(k in source_data for k in analysis_keys):
         return True
 
+    top_type = source_data.get("type")
+    if top_type in GEOJSON_TYPES or "features" in source_data:
+        return False
+
     if "data" in source_data:
         return True
-
-    top_type = source_data.get("type")
-    if top_type in [
-        "FeatureCollection",
-        "Feature",
-        "Point",
-        "LineString",
-        "Polygon",
-        "MultiPoint",
-        "MultiLineString",
-        "MultiPolygon",
-        "GeometryCollection",
-    ]:
-        return False
 
     return False
 
@@ -55,40 +62,12 @@ def _extract_geojson(analysis_result: Dict[str, Any]) -> Optional[Dict[str, Any]
         data = analysis_result["data"]
         if isinstance(data, dict):
             data_type = data.get("type")
-            if (
-                data_type
-                in [
-                    "FeatureCollection",
-                    "Feature",
-                    "Point",
-                    "LineString",
-                    "Polygon",
-                    "MultiPoint",
-                    "MultiLineString",
-                    "MultiPolygon",
-                    "GeometryCollection",
-                ]
-                or "features" in data
-            ):
+            if data_type in GEOJSON_TYPES or "features" in data:
                 return data
             return None
 
     top_type = analysis_result.get("type")
-    if (
-        top_type
-        in [
-            "FeatureCollection",
-            "Feature",
-            "Point",
-            "LineString",
-            "Polygon",
-            "MultiPoint",
-            "MultiLineString",
-            "MultiPolygon",
-            "GeometryCollection",
-        ]
-        or "features" in analysis_result
-    ):
+    if top_type in GEOJSON_TYPES or "features" in analysis_result:
         return analysis_result
 
     return None
@@ -136,7 +115,7 @@ def _infer_geometry_category(geojson: Optional[Dict[str, Any]]) -> Tuple[str, Li
         elif gtype in ("Polygon", "MultiPolygon"):
             counts["polygon"] += 1
 
-    if not geom_types:
+    if not geom_types or not counts:
         warnings.append("no_geometries: analysis result contains no valid GeoJSON features")
         return "point", warnings
 
@@ -182,6 +161,7 @@ def convert_analysis_to_mapspec_layer(
         legend_spec = analysis_result["data"].get("legend_spec")
 
     paint_color: Any = None
+    has_thematic_paint = False
 
     if isinstance(legend_spec, dict):
         legend_type = legend_spec.get("type")
@@ -209,20 +189,21 @@ def convert_analysis_to_mapspec_layer(
                     "default": default_color,
                     "stops": stops,
                 }
+                has_thematic_paint = True
             else:
                 warnings.append("graduated_legend_invalid: insufficient breaks or palette_colors")
-                paint_color = DEFAULT_CONSTANT_COLORS.get(layer_type, "#3b82f6")
 
+    default_paint_defaults = DEFAULT_CONSTANT_PAINTS.get(layer_type, {"color": "#3b82f6"})
     if paint_color is None:
-        paint_color = DEFAULT_CONSTANT_COLORS.get(layer_type, "#3b82f6")
+        paint_color = default_paint_defaults.get("color", "#3b82f6")
 
     existing_paint = base_layer.get("paint")
+    paint = dict(default_paint_defaults)
     if isinstance(existing_paint, dict):
-        paint = dict(existing_paint)
-        if "color" not in paint:
-            paint["color"] = paint_color
-    else:
-        paint = {"color": paint_color}
+        paint.update(existing_paint)
+
+    if has_thematic_paint or "color" not in paint:
+        paint["color"] = paint_color
 
     algorithm = (
         analysis_result.get("algorithm")

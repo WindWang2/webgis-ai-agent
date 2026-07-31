@@ -3,7 +3,9 @@ import pytest
 from app.services.analysis_cartography_converter import (
     is_analysis_result,
     convert_analysis_to_mapspec_layer,
+    _infer_geometry_category,
 )
+
 
 def test_is_analysis_result_detection():
     # Plain GeoJSON dictionary
@@ -18,6 +20,14 @@ def test_is_analysis_result_detection():
         ],
     }
     assert is_analysis_result(geojson) is False
+
+    # Plain GeoJSON with a 'data' property key
+    geojson_with_data_prop = {
+        "type": "FeatureCollection",
+        "data": "some_extra_info",
+        "features": [],
+    }
+    assert is_analysis_result(geojson_with_data_prop) is False
 
     # Analysis result with legend_spec
     analysis_with_legend = {
@@ -124,6 +134,7 @@ def test_geometry_inference_and_constant_fallback():
     assert inline_geojson == polygon_geojson
     assert converted_layer["type"] == "fill"
     assert converted_layer["paint"]["color"] == "#3b82f6"
+    assert converted_layer["paint"]["opacity"] == 0.6
     assert converted_layer["provenance"]["algorithm"] == "spatial_buffer"
 
 
@@ -159,7 +170,22 @@ def test_mixed_geometries_warning():
 
     converted_layer, inline_geojson, warnings = convert_analysis_to_mapspec_layer(analysis)
 
-    # Point is majority (2 vs 1) -> circle
     assert converted_layer["type"] == "circle"
     assert any("mixed_geometries" in w for w in warnings)
     assert any("mixed_geometries" in w for w in converted_layer["provenance"].get("warnings", []))
+
+
+def test_unsupported_geometry_collection_does_not_crash():
+    geom_coll_geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "GeometryCollection", "geometries": []},
+                "properties": {},
+            }
+        ],
+    }
+    cat, warnings = _infer_geometry_category(geom_coll_geojson)
+    assert cat == "point"
+    assert any("no_geometries" in w for w in warnings)
