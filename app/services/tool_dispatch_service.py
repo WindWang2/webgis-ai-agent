@@ -328,30 +328,25 @@ class ToolDispatchService:
             )
         executed_tools.add(tool_key)
 
-        # 2. 执行（registry 内部已含 ref 解析、参数校验、异常包装）
+        # 2. 执行（registry 内部全权处理 ref 解析、校验、异常捕获与自愈）
         try:
             result = await self._registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
         except Exception as e:
-            # 这里只有 _resolve_references 抛 ValueError 才会走到
-            # （其余路径都返回 std_error_response dict）
-            error_type = "参数校验失败" if isinstance(e, ValueError) and "失败" in str(e) else "执行出错"
-            error_msg = sanitize_error_msg(str(e))
-            logger.error(f"Tool {tool_name} error: {error_msg}")
-            llm_payload = construct_self_healing_message(tool_name, error_msg, error_type)
-            return ToolDispatchResult(
-                status="error",
-                llm_payload=llm_payload,
-                slim_event={"success": False, "code": error_type, "message": error_msg},
-                geojson_ref=None,
-                raw_result={"success": False, "code": error_type, "message": error_msg, "data": None},
-                error_msg=error_msg,
+            from app.tools._utils import std_error_response
+            error_msg = str(e)
+            result = std_error_response(
+                error_msg,
+                code="TOOL_ERROR",
+                error_type=type(e).__name__,
+                correction_hint=f"Execution error: {error_msg}",
             )
 
-        # 3. registry 返回 std_error_response dict 的统一路径
+        # 3. registry 返回 std_error_response dict 的统一错误路径
         if is_error_dict(result):
             error_msg = sanitize_error_msg(result.get("message", ""))
             result["message"] = error_msg
-            llm_payload = wrap_error_dict_for_llm(tool_name, result)
+            correction_hint = result.get("correction_hint")
+            llm_payload = correction_hint if correction_hint else wrap_error_dict_for_llm(tool_name, result)
             await session_data_manager.append_event(
                 session_id,
                 "tool_failed",

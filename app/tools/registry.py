@@ -183,11 +183,20 @@ class ToolRegistry:
         # 注意：排除某些特殊字段（如 ref_id, layer_ref, layer_id, plan_id），
         # 这些字段本身就是为了接收引用 ID，绝不应被自动解引用为 GeoJSON 数据。
         if session_id and isinstance(arguments, dict):
-            arguments = await self._resolve_references(
-                session_id,
-                arguments,
-                skip_keys={"ref_id", "layer_ref", "layer_id", "plan_id", "before_ref"},
-            )
+            try:
+                arguments = await self._resolve_references(
+                    session_id,
+                    arguments,
+                    skip_keys={"ref_id", "layer_ref", "layer_id", "plan_id", "before_ref"},
+                )
+            except ValueError as e:
+                error_msg = str(e)
+                return std_error_response(
+                    error_msg,
+                    code="VALIDATION_ERROR",
+                    error_type="ValueError",
+                    correction_hint=f"Reference Resolution Error: {error_msg}"
+                )
 
         # Pydantic 语义校验
         model = self._models.get(name)
