@@ -91,26 +91,33 @@ two-`type` collision. The TS compiler (`frontend/lib/mapspec-compiler/`) is the 
 for compiling MapSpec → MapLibre style.
 
 ### Cartographic Intent vs. Runtime State
-Two cooperating sources, distinct responsibilities:
-- **Runtime State** = `map_state` in `SessionStore` (Redis). What is *actually rendering*:
-  live layer refs, viewport, transient paint. The frontend `map-kit` renders from this.
+Two sources with distinct responsibilities — **currently connected headless-only, not live**:
+- **Runtime State** = `map_state` in `SessionStore` (Redis). What the running map *actually
+  renders*: live layer refs, viewport, and inline `layer.style` + `layer.legend_spec` (the
+  live-map overlay path). The frontend `map-kit` renders from this.
 - **Cartographic Intent** = `MapSpec`. What the map *should be*: high-level style/layout/legend.
-- The **MapSpec Compiler** turns Intent → MapLibre Style, which feeds Runtime State.
-- **MapSpec is authoritative.** The data flow is one-way: Agent → MapSpec → Compiler →
-  `map_state`. Frontend live-UI edits (drag, opacity slider, paint tweaks) write `map_state`
-  directly and are **transient** — they are *not* back-synced to MapSpec and are overwritten
-  on the next Agent tool call that recompiles. To persist a manual edit, the user invokes
-  `webgis_layer_upsert` (surfaced in the UI as an explicit "保留 (Keep)" button when a live
-  edit diverges from MapSpec).
+- The **MapSpec Compiler** turns Intent → MapLibre Style (`style.json`/`index.html`). **This
+  output does NOT feed the live map today** — it drives only headless consumers: the Playwright
+  runtime validator, eval-evidence scoring, and the static exporter. The function that would
+  apply compiled MapSpec to the live map (`applyMapSpecToMap`) has no live callers. Making the
+  live map render from compiled MapSpec is an unrealized spec aspiration (the "dual-write
+  tension"), not the current architecture.
+- **MapSpec is authoritative for intent and headless acceptance.** Frontend live-UI edits
+  (drag, opacity slider, paint tweaks) write `map_state` directly and are **transient** — they
+  are *not* back-synced to MapSpec. To persist a manual edit, the user invokes
+  `webgis_layer_upsert` (intended to surface as a "保留 (Keep)" button when a live edit
+  diverges from MapSpec — that diff detector is itself an open item, #202).
 - Layers in MapSpec reference data by `ref_id` at runtime (Fetch-on-Demand preserved); only at
   **checkpoint** is the payload behind the ref materialized (snapshot copy), so a checkpoint is
   self-contained and replayable.
 
 ### MapSpec Compiler
 Deterministic, framework-agnostic TS module (`frontend/lib/mapspec-compiler/`) that turns a
-MapSpec into MapLibre `style.json` + `index.html`. Consumed by both the live `map-kit`
-(frontend) and the headless Playwright runtime validator (Node), so there is a single source
-of truth for "what this MapSpec renders to". Supports **GeoJSON sources only** in this refactor;
+MapSpec into MapLibre `style.json` + `index.html`. **Consumed only by headless consumers today**
+— the Playwright runtime validator, eval-evidence capture, and the static map exporter — so it is
+the single source of truth for "what this MapSpec renders to *headlessly*". The live `map-kit`
+map does NOT render from compiled MapSpec (see *Cartographic Intent vs. Runtime State*); wiring
+that is an unrealized aspiration. Supports **GeoJSON sources only** in this refactor;
 PMTiles/OGC/Cesium/OpenLayers are deferred to "后续 Adapter".
 
 ### Tool Catalog (webgis_*)
