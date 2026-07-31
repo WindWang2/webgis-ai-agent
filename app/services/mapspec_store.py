@@ -141,10 +141,17 @@ class MapSpecStore:
       mapspec["sources"][source_id] = {"type": "geojson"}
 
     mapspec["sources"][source_id]["profile"] = profile
+    # source-shape classification routes through mapspec_source (ADR-0008).
+    # This site's policy: a dict → inlineData unconditionally; a string is
+    # only stored as `url` if it looks like a real location (http/abs-path).
+    # Non-locational strings (e.g. bare ref: cursors) are dropped here —
+    # intentionally stricter than layer_upsert.
+    from app.services.mapspec_source import store_data
+
     if isinstance(geojson_data, dict):
-      mapspec["sources"][source_id]["inlineData"] = geojson_data
+      store_data(mapspec["sources"][source_id], geojson_data)
     elif isinstance(geojson_data, str) and (geojson_data.startswith("http") or geojson_data.startswith("/")):
-      mapspec["sources"][source_id]["url"] = geojson_data
+      store_data(mapspec["sources"][source_id], geojson_data)
 
     await self.save_mapspec(session_id, mapspec)
     return profile
@@ -186,14 +193,16 @@ class MapSpecStore:
     # Inline GeoJSON → source.inlineData; a ref:/url/path string → source.url.
     # Without this, source_data was profiled-then-discarded, leaving the source
     # entry with no data at all (and checkpoints with nothing to materialize).
-    if source_data is not None and "inlineData" not in source_entry and "url" not in source_entry:
-      if isinstance(source_data, dict):
-        source_entry["inlineData"] = source_data
-      elif isinstance(source_data, str):
-        source_entry["url"] = source_data
+    # source-shape classification routes through mapspec_source (ADR-0008).
+    # This site's policy: idempotent — skip if data is already present.
+    from app.services.mapspec_source import store_data, profile_data
 
-    # Auto-profiling & auto-view injection (User Stories 12 & 13)
-    data_to_profile = source_data or source_entry.get("inlineData") or source_entry.get("url") or source_entry.get("dataPath")
+    if source_data is not None and "inlineData" not in source_entry and "url" not in source_entry:
+      store_data(source_entry, source_data)
+
+    # Auto-profiling & auto-view injection (User Stories 12 & 13).
+    # Caller-supplied source_data takes precedence over the entry's stored data.
+    data_to_profile = source_data or profile_data(source_entry)
     if data_to_profile and "profile" not in source_entry:
       try:
         profile = profile_geojson_source(data_to_profile)

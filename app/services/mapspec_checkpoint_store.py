@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from app.services.mapspec_source import ref as source_ref
+
 
 async def snapshot(
     mapspec: Dict[str, Any],
@@ -43,7 +45,11 @@ async def snapshot(
   session_id_for_refs = session_dir.name  # session_dir is .../<session_id>
   materialized_refs: Dict[str, Any] = {}
   for source in mapspec.get("sources", {}).values():
-    ref_candidate = source.get("url") or source.get("dataPath") or ""
+    # source-shape knowledge routes through mapspec_source (ADR-0008). ref()
+    # returns the url/dataPath string if present, else None — known overload:
+    # real URLs and ref: cursors share the field; the startswith check below
+    # decides which to materialize.
+    ref_candidate = source_ref(source) or ""
     if isinstance(ref_candidate, str) and ref_candidate.startswith("ref:"):
       ref_data = await session_data_manager.get(session_id_for_refs, ref_candidate)
       if ref_data is not None:

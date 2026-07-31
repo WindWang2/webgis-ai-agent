@@ -84,6 +84,15 @@ margins), and runtime thresholds. Co-exists with Redis `map_state` under a **dua
 contract — see *Cartographic Intent vs. Runtime State* below. Lives as a versioned document
 in `.webgis-agent/` (the doc), **not** a replacement for `map_state`.
 
+### MapSpec Source (geojson source entry)
+A per-key entry under a MapSpec document's `sources` map. GeoJSON-only in this refactor, with
+shape `{type: "geojson"}` plus **exactly one** of `inlineData` (the dict payload, travelling
+inside the doc), `url` (a string: a real HTTP/local URL, or — as a known overload — an opaque
+`ref:xxx` cursor), or `dataPath` (a ref path; **read-only in Python today**, only written by the
+TS side or carried by existing checkpoints). This shape knowledge is owned by the
+`app/services/mapspec_source.py` pure-function module (ADR-0008); producers call it rather than
+re-deriving "which key holds the data" inline.
+
 The style-method discriminant field is **`method`** (e.g. `{"method": "interpolate", "field":
 "mag", "stops": [...]}`), per the originating spec doc. This is distinct from a layer's
 MapLibre `type` (`circle`/`line`/`fill`); a style-method object carries `method` to avoid the
