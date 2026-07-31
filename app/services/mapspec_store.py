@@ -12,6 +12,18 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 BASE_STORAGE_DIR = PROJECT_ROOT / ".webgis-agent"
 
 
+def view_has_center(mapspec: Dict[str, Any]) -> bool:
+  """Predicate over a raw MapSpec dict: has a center been explicitly set?
+
+  This is the replacement for the old `center == [0.0, 0.0]` heuristic. It
+  treats only an *absent* center as unset; an explicitly-set [0.0, 0.0] counts
+  as a real value and must not be clobbered by auto-view injection.
+  """
+  view = mapspec.get("view") or {}
+  center = view.get("center", None)
+  return "center" in view and center is not None
+
+
 class MapSpecStore:
   """Manages MapSpec intent storage and dual-writing into runtime map_state."""
 
@@ -190,7 +202,6 @@ class MapSpecStore:
         # First dissectable layer auto-writes view only when NO center has
         # been explicitly set. Replaces the old center == [0.0, 0.0] magic-value
         # heuristic, which clobbered a legitimately-set origin (e.g. Null Island).
-        from app.services.mapspec_view import view_has_center
         if not view_has_center(mapspec) and "suggestedView" in profile:
           mapspec.setdefault("view", {})
           mapspec["view"]["center"] = profile["suggestedView"]["center"]

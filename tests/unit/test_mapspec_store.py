@@ -1,7 +1,7 @@
 import shutil
 import uuid
 import pytest
-from app.services.mapspec_store import mapspec_store, BASE_STORAGE_DIR
+from app.services.mapspec_store import mapspec_store, BASE_STORAGE_DIR, view_has_center
 from app.services.session_data import session_data_manager
 from app.tools.registry import ToolRegistry
 from app.tools.cartography_harness import register_cartography_harness_tools
@@ -293,4 +293,22 @@ async def test_layer_upsert_analysis_result_contract(clean_session):
   assert upserted_layer["paint"]["color"]["field"] == "val"
   assert upserted_layer["provenance"]["algorithm"] == "spatial_hotspot"
   assert mapspec["sources"]["hotspot_source"]["inlineData"] == geojson
+
+
+def test_view_has_center_false_when_absent():
+  assert view_has_center({}) is False
+  assert view_has_center({"view": {}}) is False
+  assert view_has_center({"view": {"zoom": 5.0}}) is False
+
+
+def test_view_has_center_false_when_none():
+  # Defensive: a center key carrying None is treated as unset.
+  assert view_has_center({"view": {"center": None}}) is False
+
+
+def test_view_has_center_true_for_origin():
+  # The regression: an explicitly-set [0.0, 0.0] must count as set.
+  assert view_has_center({"view": {"center": [0.0, 0.0]}}) is True
+  assert view_has_center({"view": {"center": [120.0, 30.0]}}) is True
+
 
