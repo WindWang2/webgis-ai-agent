@@ -24,11 +24,13 @@ async def test_mapspec_store_init_and_get(clean_session):
   assert init_res["mapspec"]["version"] == "1.0"
   assert init_res["mapspec"]["view"]["center"] == [120.0, 30.0]
 
-  # Check dual-write to map_state
+  # Check dual-write to map_state: the MapSpec intent is cached under
+  # map_state["mapspec"] (the live read path). A separate top-level
+  # map_state["view"] key was removed — nothing read it (readers use
+  # "viewport"); the canonical view lives inside the cached mapspec.
   map_state = await session_data_manager.get_map_state(clean_session)
   assert "mapspec" in map_state
   assert map_state["mapspec"]["view"]["zoom"] == 10.0
-  assert "view" in map_state
 
   # Check retrieved MapSpec
   retrieved = await mapspec_store.get_mapspec(clean_session)
@@ -43,8 +45,10 @@ async def test_mapspec_store_set_view(clean_session):
   assert res["mapspec"]["view"]["center"] == [116.4, 39.9]
   assert res["mapspec"]["view"]["zoom"] == 12.0
 
+  # The view is reachable via the cached mapspec (the live read path),
+  # not a separate top-level map_state["view"] key.
   map_state = await session_data_manager.get_map_state(clean_session)
-  assert map_state["view"]["center"] == [116.4, 39.9]
+  assert map_state["mapspec"]["view"]["center"] == [116.4, 39.9]
 
 
 @pytest.mark.asyncio

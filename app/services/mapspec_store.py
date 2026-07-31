@@ -13,121 +13,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 BASE_STORAGE_DIR = PROJECT_ROOT / ".webgis-agent"
 
 
-def compile_mapspec_python(mapspec: Dict[str, Any]) -> Dict[str, Any]:
-  """
-  Python implementation of MapSpec compilation to MapLibre style JSON.
-  Used as a fast path and fallback when Node CLI is unavailable.
-  """
-  sources: Dict[str, Any] = {}
-  for k, s in mapspec.get("sources", {}).items():
-    if "inlineData" in s:
-      sources[k] = {"type": "geojson", "data": s["inlineData"]}
-    elif "url" in s or "dataPath" in s:
-      sources[k] = {"type": "geojson", "data": s.get("url") or s.get("dataPath")}
-    else:
-      sources[k] = {"type": "geojson", "data": {"type": "FeatureCollection", "features": []}}
-
-  compiled_layers: List[Dict[str, Any]] = []
-  for layer in mapspec.get("layers", []):
-    l_type = layer.get("type", "circle")
-    maplibre_layer: Dict[str, Any] = {
-        "id": layer["id"],
-        "type": l_type,
-        "source": layer["source"],
-        "layout": {},
-        "paint": {},
-    }
-
-    paint = layer.get("paint", {})
-    if l_type == "circle":
-      if "color" in paint:
-        maplibre_layer["paint"]["circle-color"] = _compile_style_method(paint["color"])
-      if "radius" in paint:
-        maplibre_layer["paint"]["circle-radius"] = _compile_style_method(paint["radius"])
-      if "opacity" in paint:
-        maplibre_layer["paint"]["circle-opacity"] = _compile_style_method(paint["opacity"])
-    elif l_type == "line":
-      if "color" in paint:
-        maplibre_layer["paint"]["line-color"] = _compile_style_method(paint["color"])
-      if "width" in paint:
-        maplibre_layer["paint"]["line-width"] = _compile_style_method(paint["width"])
-    elif l_type == "fill":
-      if "color" in paint:
-        maplibre_layer["paint"]["fill-color"] = _compile_style_method(paint["color"])
-      if "opacity" in paint:
-        maplibre_layer["paint"]["fill-opacity"] = _compile_style_method(paint["opacity"])
-
-    compiled_layers.append(maplibre_layer)
-
-    # Label split
-    label_spec = layer.get("label") or (
-        {"field": layer["layout"]["labelField"]} if layer.get("layout", {}).get("labelField") else None
-    )
-    if label_spec and label_spec.get("field"):
-      label_layer = {
-          "id": f"{layer['id']}-label",
-          "type": "symbol",
-          "source": layer["source"],
-          "layout": {
-              "text-field": ["get", label_spec["field"]],
-              "text-size": _compile_style_method(label_spec.get("size", 12)),
-          },
-          "paint": {
-              "text-color": _compile_style_method(label_spec.get("color", "#000000")),
-          },
-      }
-      compiled_layers.append(label_layer)
-
-  view = mapspec.get("view", {})
-  style = {
-      "version": 8,
-      "name": "MapSpec Compiled Style",
-      "center": view.get("center", [0.0, 0.0]),
-      "zoom": view.get("zoom", 2.0),
-      "sources": sources,
-      "layers": compiled_layers,
-  }
-
-  return style
-
-
-def _compile_style_method(method: Any) -> Any:
-  if not isinstance(method, dict) or "type" not in method:
-    return method
-
-  m_type = method["type"]
-  if m_type == "constant":
-    return method.get("value")
-  elif m_type == "field":
-    return ["get", method.get("field")]
-  elif m_type == "interpolate":
-    field_expr = ["to-number", ["get", method.get("field")]]
-    stops = []
-    for s in method.get("stops", []):
-      stops.extend(s)
-    return ["interpolate", ["linear"], field_expr, *stops]
-  elif m_type == "step":
-    field_expr = ["to-number", ["get", method.get("field")]]
-    raw_stops = method.get("stops", [])
-    if not raw_stops:
-      return method.get("default", 0)
-    init_val = method.get("default", raw_stops[0][1])
-    stops = []
-    start_idx = 0 if method.get("default") is not None else 1
-    for s in raw_stops[start_idx:]:
-      stops.extend(s)
-    return ["step", field_expr, init_val, *stops]
-  elif m_type == "match":
-    field_expr = ["get", method.get("field")]
-    cases = []
-    for c in method.get("cases", []):
-      cases.extend(c)
-    default_val = method.get("default", "")
-    return ["match", field_expr, *cases, default_val]
-
-  return method.get("value")
-
-
 class MapSpecStore:
   """Manages MapSpec intent storage and dual-writing into runtime map_state."""
 
@@ -169,19 +54,14 @@ class MapSpecStore:
     with open(rev_dir / rev_filename, "w", encoding="utf-8") as f:
       json.dump(mapspec, f, ensure_ascii=False, indent=2)
 
-    # 2. Compile MapSpec to style JSON
-    compiled_style = compile_mapspec_python(mapspec)
-
-    # 3. Dual-write to map_state in SessionStore
+    # 2. Cache the MapSpec intent in runtime map_state. The compiled MapLibre
+    # style is produced on demand by the TS compiler (compile_mapspec_cli /
+    # the Runtime Validator); it is not a dual-write concern here. Earlier
+    # writes of map_state["layers"] / ["view"] were removed: nothing reads
+    # them (readers use "viewport" and the SSE/HudState layer model).
     await session_data_manager.set_map_state(session_id, "mapspec", mapspec)
-    await session_data_manager.set_map_state(session_id, "layers", compiled_style.get("layers", []))
-    if mapspec.get("view"):
-      await session_data_manager.set_map_state(session_id, "view", mapspec["view"])
 
-    return {
-        "mapspec": mapspec,
-        "style": compiled_style,
-    }
+    return {"mapspec": mapspec}
 
   async def init_project(
       self,
@@ -373,25 +253,34 @@ class MapSpecStore:
             "stats": {"sourceCount": 0, "layerCount": 0, "compiledLayerCount": 0, "labelLayerCount": 0},
         }
     except Exception as e:
-      logger.warning(f"Node CLI compilation fallback to Python compiler: {e}")
+      logger.warning(f"Node CLI compilation failed: {e}")
       report = {
-          "success": True,
-          "errors": [],
-          "warnings": [f"Compiled via Python fallback: {e}"],
+          "success": False,
+          "errors": [{"code": "CLI_UNAVAILABLE", "message": str(e)}],
+          "warnings": [],
           "stats": {
               "sourceCount": len(mapspec.get("sources", {})),
               "layerCount": len(mapspec.get("layers", [])),
-              "compiledLayerCount": len(mapspec.get("layers", [])),
+              "compiledLayerCount": 0,
               "labelLayerCount": 0,
           },
       }
 
-    style = compile_mapspec_python(mapspec)
-    with open(target_out_dir / "style.json", "w", encoding="utf-8") as f:
-      json.dump(style, f, ensure_ascii=False, indent=2)
+    # The TS CLI is the sole compiler; it writes style.json itself. Do NOT
+    # overwrite it — read it back only to populate the return value. Earlier
+    # code ran a second (stale, divergent) Python compiler here and clobbered
+    # the authoritative TS output.
+    style = {}
+    style_file = target_out_dir / "style.json"
+    if style_file.exists():
+      try:
+        with open(style_file, "r", encoding="utf-8") as f:
+          style = json.load(f)
+      except Exception as e:
+        logger.warning(f"Could not read back compiled style.json: {e}")
 
     return {
-        "success": report.get("success", True),
+        "success": report.get("success", False),
         "report": report,
         "out_dir": str(target_out_dir),
         "style": style,
