@@ -12,6 +12,18 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 BASE_STORAGE_DIR = PROJECT_ROOT / ".webgis-agent"
 
 
+# Companion label layer convention emitted by the MapLibre compiler
+LABEL_LAYER_SUFFIX = "-label"
+
+
+def _should_remove_layer(layer: Dict[str, Any], target_layer_id: str) -> bool:
+  """Check if a layer matches the target layer ID or its associated companion label layer."""
+  lid = layer.get("id")
+  if not lid:
+    return False
+  return lid == target_layer_id or lid == f"{target_layer_id}{LABEL_LAYER_SUFFIX}"
+
+
 def view_has_center(mapspec: Dict[str, Any]) -> bool:
   """Predicate over a raw MapSpec dict: has a center been explicitly set?
 
@@ -242,7 +254,7 @@ class MapSpecStore:
       return {"success": False, "message": "MapSpec not found"}
 
     layers = mapspec.get("layers", [])
-    filtered_layers = [l for l in layers if l.get("id") != layer_id and l.get("id") != f"{layer_id}-label"]
+    filtered_layers = [l for l in layers if not _should_remove_layer(l, layer_id)]
     mapspec["layers"] = filtered_layers
 
     res = await self.save_mapspec(session_id, mapspec)

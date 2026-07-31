@@ -92,35 +92,6 @@ class CartographyService:
         return np.linspace(arr.min(), arr.max(), k + 1).tolist()
 
     @classmethod
-    def apply_choropleth(
-        cls, 
-        geojson: Dict[str, Any], 
-        field: str, 
-        method: str = "quantiles", 
-        k: int = 5, 
-        palette: str = "YlOrRd"
-    ) -> Dict[str, Any]:
-        """
-        [Deprecated] 为 GeoJSON 要素添加专题图样式属性
-        建议使用 build_thematic_style 代替。
-        """
-        features = geojson.get("features", [])
-        if not features:
-            return geojson
-
-        style_def = cls.build_thematic_style(geojson, field, method, k, palette)
-        if not style_def:
-            return geojson
-
-        # 为保持兼容性，仍然可以应用颜色（如果需要）
-        # 但是根据需求，我们要重构为不修改geojson，直接返回。
-        # 由于指令提到"Refactor apply_choropleth (or add a new build_thematic_style) to NOT mutate the GeoJSON... Instead return a dictionary"
-        # 这里为了稳妥，我们在新函数里做计算。由于指令明确了不要改变 GeoJSON，我把 apply_choropleth 维持原样，或者也改成返回style？
-        # 指令要求： "Refactor apply_choropleth (or add a new build_thematic_style) to NOT mutate the GeoJSON (i.e. don't add fill_color to every feature). Instead, calculate the breaks and colors, and return a dictionary representing a ThematicStyleDef."
-        # 如果调用者期望拿到 GeoJSON，而我们返回 style，会破坏契约。我们重构 apply_choropleth 或者新增 build_thematic_style。
-        # 最好是直接新增并在 cartography.py 里使用。
-
-    @classmethod
     def build_thematic_style(
         cls,
         geojson: Dict[str, Any],

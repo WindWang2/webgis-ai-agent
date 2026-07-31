@@ -97,6 +97,7 @@ to a single definition inside the service module.
   typed SSE event catalogue remains a follow-up (architecture candidate #3).
 - Tier-3 tool authorization is still enforced inline at the Pi boundary (`dispatch_tool`), not in
   the service — it is Pi-path-specific and was explicitly out of scope (architecture candidate #5).
+- **Legacy Tool Name Normalization Seam**: `LEGACY_TOOL_NAME_MAP` and `normalize_tool_name()` serve as a read-time translation seam for history replay (`history_service_async`), ensuring legacy stored tool calls are translated to canonical `webgis_*` names upon read rather than gating execution.
 
 ## References
 

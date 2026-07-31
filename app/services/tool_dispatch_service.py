@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 # ─── 规范化工具名称映射表 ─────────────────────────────
+# 用于历史会话重放 (history_service_async) 等 Read Seam，将存储的旧工具名规范化为 canonical webgis_* 名称。
 
 LEGACY_TOOL_NAME_MAP: dict[str, str] = {
     # 图层管理与样式设置
@@ -71,7 +72,7 @@ LEGACY_TOOL_NAME_MAP: dict[str, str] = {
 
 
 def normalize_tool_name(name: str) -> str:
-    """把历史遗留工具名称规范化为 canonical 的 webgis_* 工具名。"""
+    """把历史遗留工具名称规范化为 canonical 的 webgis_* 工具名 (供历史重放 Read-Seam 与兜底机制使用)。"""
     return LEGACY_TOOL_NAME_MAP.get(name, name)
 
 
