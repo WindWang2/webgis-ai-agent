@@ -1,32 +1,32 @@
 export type StyleMethodType = "constant" | "interpolate" | "step" | "match" | "field";
 
 export interface ConstantStyleMethod {
-  type: "constant";
+  method: "constant";
   value: string | number | boolean;
 }
 
 export interface InterpolateStyleMethod {
-  type: "interpolate";
+  method: "interpolate";
   field: string;
   stops: Array<[number, string | number]>;
 }
 
 export interface StepStyleMethod {
-  type: "step";
+  method: "step";
   field: string;
   stops: Array<[number, string | number]>;
   default?: string | number;
 }
 
 export interface MatchStyleMethod {
-  type: "match";
+  method: "match";
   field: string;
   cases: Array<[string | number, string | number]>;
   default: string | number;
 }
 
 export interface FieldStyleMethod {
-  type: "field";
+  method: "field";
   field: string;
 }
 

@@ -11,11 +11,11 @@ describe("MapSpec Compiler (Seam A)", () => {
   describe("compileStyleMethod", () => {
     it("handles primitive values and constant style method", () => {
       expect(compileStyleMethod("#ff0000")).toBe("#ff0000");
-      expect(compileStyleMethod({ type: "constant", value: 12 })).toBe(12);
+      expect(compileStyleMethod({ method: "constant", value: 12 })).toBe(12);
     });
 
     it("handles field style method", () => {
-      expect(compileStyleMethod({ type: "field", field: "magnitude" })).toEqual([
+      expect(compileStyleMethod({ method: "field", field: "magnitude" })).toEqual([
         "get",
         "magnitude",
       ]);
@@ -23,7 +23,7 @@ describe("MapSpec Compiler (Seam A)", () => {
 
     it("compiles interpolate style method", () => {
       const compiled = compileStyleMethod({
-        type: "interpolate",
+        method: "interpolate",
         field: "magnitude",
         stops: [
           [2.0, "#00ff00"],
@@ -47,7 +47,7 @@ describe("MapSpec Compiler (Seam A)", () => {
 
     it("compiles step style method", () => {
       const compiled = compileStyleMethod({
-        type: "step",
+        method: "step",
         field: "depth",
         stops: [
           [10, "#blue"],
@@ -69,7 +69,7 @@ describe("MapSpec Compiler (Seam A)", () => {
 
     it("compiles match style method", () => {
       const compiled = compileStyleMethod({
-        type: "match",
+        method: "match",
         field: "category",
         cases: [
           ["A", "#ff0000"],
@@ -114,7 +114,7 @@ describe("MapSpec Compiler (Seam A)", () => {
             type: "circle",
             paint: {
               color: {
-                type: "interpolate",
+                method: "interpolate",
                 field: "val",
                 stops: [
                   [10, "#ff0000"],
@@ -142,7 +142,7 @@ describe("MapSpec Compiler (Seam A)", () => {
             type: "circle",
             paint: {
               color: {
-                type: "interpolate",
+                method: "interpolate",
                 field: "val",
                 stops: [[10, "#ff0000"]],
               },
@@ -173,7 +173,7 @@ describe("MapSpec Compiler (Seam A)", () => {
             type: "circle",
             paint: {
               color: {
-                type: "interpolate",
+                method: "interpolate",
                 field: "mag",
                 stops: [
                   [2.0, "#00ff00"],

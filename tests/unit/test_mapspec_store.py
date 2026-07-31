@@ -97,7 +97,7 @@ async def test_validate_and_compile(clean_session):
       "type": "circle",
       "paint": {
           "color": {
-              "type": "interpolate",
+              "method": "interpolate",
               "field": "val",
               "stops": [
                   [10, "#ff0000"],

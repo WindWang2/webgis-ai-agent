@@ -15,8 +15,8 @@ export function isStyleMethodObject(val: any): boolean {
   return (
     val !== null &&
     typeof val === "object" &&
-    "type" in val &&
-    typeof val.type === "string"
+    "method" in val &&
+    typeof val.method === "string"
   );
 }
 
@@ -30,7 +30,7 @@ export function compileStyleMethod(
   }
 
   const m = method as any;
-  switch (m.type) {
+  switch (m.method) {
     case "constant":
       return m.value;
 
@@ -110,11 +110,11 @@ export function validateMapSpec(
         if (!styleMethod || !isStyleMethodObject(styleMethod)) continue;
         const m = styleMethod as any;
 
-        if (m.type === "interpolate" || m.type === "step") {
+        if (m.method === "interpolate" || m.method === "step") {
           if (!Array.isArray(m.stops) || m.stops.length < 2) {
             errors.push({
               code: "INVALID_STOPS_COUNT",
-              message: `Layer "${layer.id}" property "${propName}" (${m.type}) must have at least 2 stops.`,
+              message: `Layer "${layer.id}" property "${propName}" (${m.method}) must have at least 2 stops.`,
               layerId: layer.id,
               field: m.field,
             });
@@ -123,7 +123,7 @@ export function validateMapSpec(
               if (m.stops[i][0] >= m.stops[i + 1][0]) {
                 errors.push({
                   code: "NON_INCREASING_STOPS",
-                  message: `Layer "${layer.id}" property "${propName}" (${m.type}) stops must be strictly increasing. Found ${m.stops[i][0]} >= ${m.stops[i + 1][0]}.`,
+                  message: `Layer "${layer.id}" property "${propName}" (${m.method}) stops must be strictly increasing. Found ${m.stops[i][0]} >= ${m.stops[i + 1][0]}.`,
                   layerId: layer.id,
                   field: m.field,
                 });
@@ -137,7 +137,7 @@ export function validateMapSpec(
               `Layer "${layer.id}" references field "${m.field}" which is not found in spatial profile.`
             );
           }
-        } else if (m.type === "match" || m.type === "field") {
+        } else if (m.method === "match" || m.method === "field") {
           if (profile && profile.fields && m.field && !(m.field in profile.fields)) {
             warnings.push(
               `Layer "${layer.id}" references field "${m.field}" which is not found in spatial profile.`
@@ -158,7 +158,7 @@ function extractLegendForLayer(layer: MapSpecLayer): LegendDef | null {
 
   if (colorProp && isStyleMethodObject(colorProp)) {
     const m = colorProp as any;
-    if (m.type === "interpolate" || m.type === "step") {
+    if (m.method === "interpolate" || m.method === "step") {
       for (const [val, color] of m.stops) {
         items.push({
           label: `${m.field}: ${val}`,
@@ -166,7 +166,7 @@ function extractLegendForLayer(layer: MapSpecLayer): LegendDef | null {
           type: layer.type === "circle" ? "point" : layer.type === "line" ? "line" : "polygon",
         });
       }
-    } else if (m.type === "match") {
+    } else if (m.method === "match") {
       for (const [val, color] of m.cases) {
         items.push({
           label: `${m.field}: ${val}`,
@@ -181,7 +181,7 @@ function extractLegendForLayer(layer: MapSpecLayer): LegendDef | null {
           type: layer.type === "circle" ? "point" : layer.type === "line" ? "line" : "polygon",
         });
       }
-    } else if (m.type === "constant") {
+    } else if (m.method === "constant") {
       items.push({
         label: layer.id,
         color: String(m.value),

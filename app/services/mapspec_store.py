@@ -309,7 +309,7 @@ class MapSpecStore:
       paint = layer.get("paint", {})
       for prop, method in paint.items():
         if isinstance(method, dict):
-          m_type = method.get("type")
+          m_type = method.get("method")
           if m_type in ("interpolate", "step"):
             stops = method.get("stops", [])
             if len(stops) < 2:

@@ -84,6 +84,12 @@ margins), and runtime thresholds. Co-exists with Redis `map_state` under a **dua
 contract — see *Cartographic Intent vs. Runtime State* below. Lives as a versioned document
 in `.webgis-agent/` (the doc), **not** a replacement for `map_state`.
 
+The style-method discriminant field is **`method`** (e.g. `{"method": "interpolate", "field":
+"mag", "stops": [...]}`), per the originating spec doc. This is distinct from a layer's
+MapLibre `type` (`circle`/`line`/`fill`); a style-method object carries `method` to avoid the
+two-`type` collision. The TS compiler (`frontend/lib/mapspec-compiler/`) is the sole authority
+for compiling MapSpec → MapLibre style.
+
 ### Cartographic Intent vs. Runtime State
 Two cooperating sources, distinct responsibilities:
 - **Runtime State** = `map_state` in `SessionStore` (Redis). What is *actually rendering*:

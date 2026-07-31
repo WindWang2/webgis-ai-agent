@@ -139,7 +139,7 @@ async def test_runtime_validator_full_flow(clean_session):
       },
       "paint": {
           "color": {
-              "type": "interpolate",
+              "method": "interpolate",
               "field": "mag",
               "stops": [[0, "#2ca25f"], [8, "#de2d26"]],
           },
