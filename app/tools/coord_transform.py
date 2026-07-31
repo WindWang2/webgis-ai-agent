@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import copy
 import logging
 from typing import Any
 
@@ -61,7 +62,7 @@ def register_coord_transform_tools(registry: ToolRegistry):
         if src == dst:
             return {
                 "success": True,
-                "data": data,
+                "data": copy.deepcopy(data),
                 "summary": f"源 = 目标坐标系 ({src})，原样返回。",
             }
 
@@ -102,10 +103,13 @@ def register_epsg_transform_tools(registry: ToolRegistry):
         if not data:
             return {"success": False, "error": "无法解析输入 GeoJSON"}
 
-        if from_epsg == to_epsg:
+        src_clean = (from_epsg or "").strip().upper()
+        dst_clean = (to_epsg or "").strip().upper()
+
+        if src_clean == dst_clean:
             return {
                 "success": True,
-                "data": data,
+                "data": copy.deepcopy(data),
                 "summary": f"源 = 目标 CRS ({from_epsg})，原样返回。",
             }
 
