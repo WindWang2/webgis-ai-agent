@@ -1,4 +1,4 @@
-"""中国坐标系互转工具 (WGS84 ↔ GCJ-02 ↔ BD-09)。
+"""中国坐标系互转工具 (WGS84 ↔ GCJ-02 ↔ BD-09) & 通用 EPSG 重投影工具。
 
 中国 GIS 的核心痛点：
 - WGS84  — 国际标准、GPS、OSM、Sentinel 等遥感数据、Nominatim 反查
@@ -11,60 +11,15 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from app.tools.registry import ToolRegistry, tool
-from app.utils.coord_transform import (
-    wgs84_to_gcj02,
-    gcj02_to_wgs84,
-    gcj02_to_bd09,
-    bd09_to_gcj02,
-)
+from app.utils.coord_transform import transform_geojson
 from app.lib.geo_processor.core import safe_parse
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED = {"wgs84", "gcj02", "bd09"}
-
-
-def _transform_point(lng: float, lat: float, src: str, dst: str) -> tuple[float, float]:
-    """单点转换：先 normalize 到 gcj02 中转再发散到目标。"""
-    if src == dst:
-        return lng, lat
-    # 先归一化到 gcj02
-    if src == "wgs84":
-        lng, lat = wgs84_to_gcj02(lng, lat)
-    elif src == "bd09":
-        lng, lat = bd09_to_gcj02(lng, lat)
-    # 再从 gcj02 散到目标
-    if dst == "wgs84":
-        return gcj02_to_wgs84(lng, lat)
-    if dst == "bd09":
-        return gcj02_to_bd09(lng, lat)
-    return lng, lat  # dst == gcj02
-
-
-def _walk_coords(coords: Any, src: str, dst: str) -> Any:
-    """递归走 GeoJSON coordinates 数组（兼容 Point/LineString/Polygon/Multi*）。"""
-    if not isinstance(coords, list) or not coords:
-        return coords
-    # 判断是不是末端的 [lng, lat] 对
-    if isinstance(coords[0], (int, float)) and len(coords) >= 2:
-        lng, lat = _transform_point(float(coords[0]), float(coords[1]), src, dst)
-        rest = coords[2:]  # 保留 z / m
-        return [lng, lat, *rest]
-    return [_walk_coords(c, src, dst) for c in coords]
-
-
-def _transform_geometry(geom: dict, src: str, dst: str) -> dict:
-    if not isinstance(geom, dict):
-        return geom
-    new = dict(geom)
-    if "coordinates" in new:
-        new["coordinates"] = _walk_coords(new["coordinates"], src, dst)
-    if "geometries" in new:  # GeometryCollection
-        new["geometries"] = [_transform_geometry(g, src, dst) for g in new["geometries"]]
-    return new
+_SUPPORTED_CHINESE = {"wgs84", "gcj02", "bd09"}
 
 
 def register_coord_transform_tools(registry: ToolRegistry):
@@ -90,13 +45,13 @@ def register_coord_transform_tools(registry: ToolRegistry):
               "to_crs": "目标坐标系：'wgs84' | 'gcj02' | 'bd09'",
           })
     def transform_coordinates(geojson: Any, from_crs: str, to_crs: str) -> dict:
-        src = (from_crs or "").lower().replace("-", "")
-        dst = (to_crs or "").lower().replace("-", "")
-        if src not in _SUPPORTED or dst not in _SUPPORTED:
+        src = (from_crs or "").lower().replace("-", "").replace(" ", "")
+        dst = (to_crs or "").lower().replace("-", "").replace(" ", "")
+        if src not in _SUPPORTED_CHINESE or dst not in _SUPPORTED_CHINESE:
             return {
                 "success": False,
                 "error": f"不支持的坐标系 from={from_crs} to={to_crs}。"
-                         f"必须是 {sorted(_SUPPORTED)} 之一。",
+                         f"必须是 {sorted(_SUPPORTED_CHINESE)} 之一。",
             }
 
         data = safe_parse(geojson)
@@ -110,27 +65,16 @@ def register_coord_transform_tools(registry: ToolRegistry):
                 "summary": f"源 = 目标坐标系 ({src})，原样返回。",
             }
 
-        geo_type = data.get("type")
-        if geo_type == "FeatureCollection":
-            new_features = []
-            for feat in data.get("features", []) or []:
-                new_feat = dict(feat)
-                new_feat["geometry"] = _transform_geometry(feat.get("geometry") or {}, src, dst)
-                new_features.append(new_feat)
-            out = {"type": "FeatureCollection", "features": new_features}
-        elif geo_type == "Feature":
-            out = dict(data)
-            out["geometry"] = _transform_geometry(data.get("geometry") or {}, src, dst)
-        else:
-            # 裸 Geometry
-            out = _transform_geometry(data, src, dst)
-
-        return {
-            "success": True,
-            "data": out,
-            "summary": f"已将图层从 {src} 转换为 {dst}",
-            "metadata": {"from_crs": src, "to_crs": dst},
-        }
+        try:
+            out = transform_geojson(data, src, dst)
+            return {
+                "success": True,
+                "data": out,
+                "summary": f"已将图层从 {src} 转换为 {dst}",
+                "metadata": {"from_crs": src, "to_crs": dst},
+            }
+        except Exception as e:
+            return {"success": False, "error": f"坐标转换失败: {e}"}
 
 
 def register_epsg_transform_tools(registry: ToolRegistry):
@@ -154,57 +98,19 @@ def register_epsg_transform_tools(registry: ToolRegistry):
               "to_epsg": "目标坐标系 EPSG 代码，如 'EPSG:32650'",
           })
     def reproject_coordinates(geojson: Any, from_epsg: str, to_epsg: str) -> dict:
+        data = safe_parse(geojson)
+        if not data:
+            return {"success": False, "error": "无法解析输入 GeoJSON"}
+
         if from_epsg == to_epsg:
-            data = safe_parse(geojson)
             return {
                 "success": True,
-                "data": data or geojson,
+                "data": data,
                 "summary": f"源 = 目标 CRS ({from_epsg})，原样返回。",
             }
 
         try:
-            import pyproj
-            from shapely.geometry import shape as to_shape
-            transformer = pyproj.Transformer.from_crs(
-                pyproj.CRS(from_epsg), pyproj.CRS(to_epsg), always_xy=True
-            )
-
-            data = safe_parse(geojson)
-            if not data:
-                return {"success": False, "error": "无法解析输入 GeoJSON"}
-
-            def reproject_coords(coords: list) -> list:
-                if not isinstance(coords, list) or not coords:
-                    return coords
-                if isinstance(coords[0], (int, float)) and len(coords) >= 2:
-                    x, y = transformer.transform(float(coords[0]), float(coords[1]))
-                    return [x, y, *coords[2:]]
-                return [reproject_coords(c) for c in coords]
-
-            def reproject_geom(geom: dict) -> dict:
-                if not isinstance(geom, dict):
-                    return geom
-                new = dict(geom)
-                if "coordinates" in new:
-                    new["coordinates"] = reproject_coords(new["coordinates"])
-                if "geometries" in new:
-                    new["geometries"] = [reproject_geom(g) for g in new["geometries"]]
-                return new
-
-            geo_type = data.get("type")
-            if geo_type == "FeatureCollection":
-                new_features = []
-                for feat in data.get("features", []) or []:
-                    nf = dict(feat)
-                    nf["geometry"] = reproject_geom(feat.get("geometry") or {})
-                    new_features.append(nf)
-                out = {"type": "FeatureCollection", "features": new_features}
-            elif geo_type == "Feature":
-                out = dict(data)
-                out["geometry"] = reproject_geom(data.get("geometry") or {})
-            else:
-                out = reproject_geom(data)
-
+            out = transform_geojson(data, from_epsg, to_epsg)
             return {
                 "success": True,
                 "data": out,
@@ -213,6 +119,6 @@ def register_epsg_transform_tools(registry: ToolRegistry):
             }
         except Exception as e:
             err = str(e).lower()
-            if "crs" in err or "epsg" in err or "proj" in err:
+            if "crs" in err or "epsg" in err or "unsupported" in err:
                 return {"success": False, "error": f"不支持的 CRS: {from_epsg} → {to_epsg} ({e})"}
             return {"success": False, "error": f"重投影失败: {e}"}
