@@ -3,7 +3,6 @@ import logging
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import subprocess
 
 from app.services.session_data import session_data_manager
 
@@ -223,120 +222,33 @@ class MapSpecStore:
 
 
   async def compile_mapspec_cli(self, session_id: str, out_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """Compile the session's MapSpec to MapLibre style via the TS CLI.
+
+    Façade (Candidate #2): loads the MapSpec, hands its file path to the
+    CompileCoordinator, returns the result. The coordinator owns the CLI
+    subprocess; this store stays the data authority.
+    """
     mapspec = await self.get_mapspec(session_id)
     if not mapspec:
       return {"success": False, "message": "MapSpec not found"}
 
     session_dir = self.get_session_dir(session_id)
     target_out_dir = out_dir or (session_dir / "compiled")
-    target_out_dir.mkdir(parents=True, exist_ok=True)
-
     mapspec_file = session_dir / "mapspec.json"
-    cli_path = PROJECT_ROOT / "frontend" / "lib" / "mapspec-compiler" / "cli.ts"
-
-    cmd = [
-        "npx",
-        "tsx",
-        str(cli_path),
-        "--input",
-        str(mapspec_file),
-        "--out-dir",
-        str(target_out_dir),
-    ]
-
-    try:
-      proc = subprocess.run(
-          cmd,
-          cwd=str(PROJECT_ROOT / "frontend"),
-          capture_output=True,
-          text=True,
-          timeout=15,
-      )
-      report_file = target_out_dir / "compile-report.json"
-      if report_file.exists():
-        with open(report_file, "r", encoding="utf-8") as f:
-          report = json.load(f)
-      else:
-        report = {
-            "success": proc.returncode == 0,
-            "errors": [{"code": "CLI_ERROR", "message": proc.stderr or proc.stdout}],
-            "warnings": [],
-            "stats": {"sourceCount": 0, "layerCount": 0, "compiledLayerCount": 0, "labelLayerCount": 0},
-        }
-    except Exception as e:
-      logger.warning(f"Node CLI compilation failed: {e}")
-      report = {
-          "success": False,
-          "errors": [{"code": "CLI_UNAVAILABLE", "message": str(e)}],
-          "warnings": [],
-          "stats": {
-              "sourceCount": len(mapspec.get("sources", {})),
-              "layerCount": len(mapspec.get("layers", [])),
-              "compiledLayerCount": 0,
-              "labelLayerCount": 0,
-          },
-      }
-
-    # The TS CLI is the sole compiler; it writes style.json itself. Do NOT
-    # overwrite it — read it back only to populate the return value. Earlier
-    # code ran a second (stale, divergent) Python compiler here and clobbered
-    # the authoritative TS output.
-    style = {}
-    style_file = target_out_dir / "style.json"
-    if style_file.exists():
-      try:
-        with open(style_file, "r", encoding="utf-8") as f:
-          style = json.load(f)
-      except Exception as e:
-        logger.warning(f"Could not read back compiled style.json: {e}")
-
-    return {
-        "success": report.get("success", False),
-        "report": report,
-        "out_dir": str(target_out_dir),
-        "style": style,
-    }
+    from app.services import mapspec_compile_coordinator
+    return await mapspec_compile_coordinator.compile_via_cli(mapspec_file, target_out_dir)
 
   async def validate_mapspec(self, session_id: str) -> Dict[str, Any]:
+    """Validate the session's MapSpec structure pre-compile.
+
+    Façade (Candidate #2): loads the MapSpec and delegates to the pure
+    CompileCoordinator.validate. No session/storage access in the validator.
+    """
     mapspec = await self.get_mapspec(session_id)
     if not mapspec:
       return {"success": False, "message": "MapSpec not found", "errors": ["MapSpec not initialized"]}
-
-    errors: List[Dict[str, Any]] = []
-    warnings: List[str] = []
-
-    sources = mapspec.get("sources", {})
-    layers = mapspec.get("layers", [])
-
-    if not sources:
-      errors.append({"code": "MISSING_SOURCES", "message": "No sources defined in MapSpec"})
-
-    source_keys = set(sources.keys())
-    for layer in layers:
-      l_source = layer.get("source")
-      if l_source not in source_keys:
-        errors.append({"code": "INVALID_SOURCE_REF", "message": f"Layer '{layer.get('id')}' references missing source '{l_source}'"})
-
-      paint = layer.get("paint", {})
-      for prop, method in paint.items():
-        if isinstance(method, dict):
-          m_type = method.get("method")
-          if m_type in ("interpolate", "step"):
-            stops = method.get("stops", [])
-            if len(stops) < 2:
-              errors.append({"code": "INVALID_STOPS_COUNT", "message": f"Property '{prop}' in layer '{layer.get('id')}' requires at least 2 stops"})
-            else:
-              for i in range(len(stops) - 1):
-                if stops[i][0] >= stops[i + 1][0]:
-                  errors.append({"code": "NON_INCREASING_STOPS", "message": f"Property '{prop}' stops must be strictly increasing: {stops[i][0]} >= {stops[i+1][0]}"})
-                  break
-
-    return {
-        "success": len(errors) == 0,
-        "errors": errors,
-        "warnings": warnings,
-        "summary": "Validation passed" if len(errors) == 0 else f"Validation failed with {len(errors)} errors",
-    }
+    from app.services import mapspec_compile_coordinator
+    return mapspec_compile_coordinator.validate(mapspec)
 
   async def layout_set(
       self,
@@ -366,73 +278,40 @@ class MapSpecStore:
     }
 
   async def checkpoint(self, session_id: str, checkpoint_id: Optional[str] = None) -> Dict[str, Any]:
+    """Snapshot the session's MapSpec into a self-contained checkpoint.
+
+    Façade (Candidate #2): loads the MapSpec and delegates to CheckpointStore.
+    The coordinator owns the snapshot bytes + ref materialization.
+    """
     mapspec = await self.get_mapspec(session_id)
     if not mapspec:
       return {"success": False, "message": "MapSpec not found"}
-
-    ckpt_id = checkpoint_id or f"ckpt_{int(time.time() * 1000)}"
     session_dir = self.get_session_dir(session_id)
-    ckpt_dir = session_dir / "checkpoints" / ckpt_id
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
-
-    # 1. Copy mapspec.json
-    with open(ckpt_dir / "mapspec.json", "w", encoding="utf-8") as f:
-      json.dump(mapspec, f, ensure_ascii=False, indent=2)
-
-    # 2. Materialize payloads behind referenced ref_ids (Decision 3 & Story 31)
-    materialized_refs: Dict[str, Any] = {}
-    for s_id, source in mapspec.get("sources", {}).items():
-      ref_candidate = source.get("url") or source.get("dataPath") or ""
-      if isinstance(ref_candidate, str) and ref_candidate.startswith("ref:"):
-        ref_data = await session_data_manager.get(session_id, ref_candidate)
-        if ref_data is not None:
-          materialized_refs[ref_candidate] = ref_data
-
-    with open(ckpt_dir / "materialized_refs.json", "w", encoding="utf-8") as f:
-      json.dump(materialized_refs, f, ensure_ascii=False, indent=2)
-
-    meta = {
-        "checkpoint_id": ckpt_id,
-        "timestamp": time.time(),
-        "ref_count": len(materialized_refs),
-    }
-    with open(ckpt_dir / "checkpoint_meta.json", "w", encoding="utf-8") as f:
-      json.dump(meta, f, ensure_ascii=False, indent=2)
-
-    return {
-        "success": True,
-        "checkpoint_id": ckpt_id,
-        "checkpoint_dir": str(ckpt_dir),
-        "ref_count": len(materialized_refs),
-        "summary": f"Checkpoint '{ckpt_id}' created with {len(materialized_refs)} materialized refs",
-    }
+    from app.services import mapspec_checkpoint_store
+    return await mapspec_checkpoint_store.snapshot(
+        mapspec, session_dir, session_data_manager, checkpoint_id
+    )
 
   async def rollback(self, session_id: str, checkpoint_id: str) -> Dict[str, Any]:
+    """Roll back to a checkpoint. The store owns the post-rollback save.
+
+    Façade (Candidate #2, decision p): CheckpointStore.rollback recovers the
+    snapshot (files + ref payloads) and RETURNS the restored MapSpec; this
+    store persists it as the sole write authority.
+    """
     session_dir = self.get_session_dir(session_id)
-    ckpt_dir = session_dir / "checkpoints" / checkpoint_id
-    if not ckpt_dir.exists():
-      return {"success": False, "message": f"Checkpoint '{checkpoint_id}' not found"}
-
-    # 1. Restore mapspec.json
-    mapspec_file = ckpt_dir / "mapspec.json"
-    with open(mapspec_file, "r", encoding="utf-8") as f:
-      mapspec = json.load(f)
-
-    # 2. Restore materialized ref_ids into session_data_manager
-    refs_file = ckpt_dir / "materialized_refs.json"
-    if refs_file.exists():
-      with open(refs_file, "r", encoding="utf-8") as f:
-        refs_data = json.load(f)
-        for ref_id, payload in refs_data.items():
-          await session_data_manager.overwrite(session_id, ref_id, payload)
-
-    # 3. Dual-write restored MapSpec to map_state
-    await self.save_mapspec(session_id, mapspec)
-
+    from app.services import mapspec_checkpoint_store
+    recovered = await mapspec_checkpoint_store.rollback(
+        session_dir, checkpoint_id, session_data_manager
+    )
+    if not recovered.get("success"):
+      return recovered
+    restored_mapspec = recovered["mapspec"]
+    await self.save_mapspec(session_id, restored_mapspec)
     return {
         "success": True,
         "checkpoint_id": checkpoint_id,
-        "mapspec": mapspec,
+        "mapspec": restored_mapspec,
         "summary": f"Rolled back to checkpoint '{checkpoint_id}'",
     }
 
