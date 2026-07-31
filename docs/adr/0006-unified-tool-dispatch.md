@@ -97,7 +97,15 @@ to a single definition inside the service module.
   typed SSE event catalogue remains a follow-up (architecture candidate #3).
 - Tier-3 tool authorization is still enforced inline at the Pi boundary (`dispatch_tool`), not in
   the service — it is Pi-path-specific and was explicitly out of scope (architecture candidate #5).
-- **Legacy Tool Name Normalization Seam**: `LEGACY_TOOL_NAME_MAP` and `normalize_tool_name()` serve as a read-time translation seam for history replay (`history_service_async`), ensuring legacy stored tool calls are translated to canonical `webgis_*` names upon read rather than gating execution.
+- **Legacy Tool Name Normalization**: `LEGACY_TOOL_NAME_MAP` and `normalize_tool_name()` are
+  applied at **two** call sites, by design: (1) at the dispatch entry (`tool_dispatch_service.py`,
+  inside `dispatch()`) so that *fresh* tool calls from either live path — the ChatEngine's LLM-model
+  output (`chat_engine.py`) or the Pi bridge's client request (`agent_pi_bridge.py`) — are
+  normalized before registry lookup; and (2) in history replay (`history_service_async.py`) so
+  stored legacy tool names are translated before re-dispatch. The dispatch-site normalization is
+  locked by the regression test `test_dispatch_normalizes_legacy_tool_names` ("Seam B"). See
+  ADR-0010, which rejected an architecture-review proposal to remove the dispatch-site call:
+  both live dispatch paths can legitimately receive legacy names, so the call is not redundant.
 
 ## References
 

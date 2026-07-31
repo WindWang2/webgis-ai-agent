@@ -43,7 +43,12 @@ logger = logging.getLogger(__name__)
 
 
 # ─── 规范化工具名称映射表 ─────────────────────────────
-# 用于历史会话重放 (history_service_async) 等 Read Seam，将存储的旧工具名规范化为 canonical webgis_* 名称。
+# 把遗留工具名规范化为 canonical webgis_* 名称。两个调用点，均刻意保留：
+# (1) dispatch 入口 (本模块 dispatch()) — 规范化来自 ChatEngine LLM 输出 / Pi bridge
+#     客户端请求的 *实时* tool_call，避免模型或客户端发出遗留名时 registry 找不到工具。
+# (2) history replay (history_service_async) — 重放存储的历史 tool_call 前翻译遗留名。
+# 见 ADR-0010：架构评审曾提议移除 (1)，但两条实时路径都可能收到遗留名，(1) 并非冗余；
+# 由 test_dispatch_normalizes_legacy_tool_names ("Seam B") 锁定。
 
 LEGACY_TOOL_NAME_MAP: dict[str, str] = {
     # 图层管理与样式设置
@@ -72,7 +77,7 @@ LEGACY_TOOL_NAME_MAP: dict[str, str] = {
 
 
 def normalize_tool_name(name: str) -> str:
-    """把历史遗留工具名称规范化为 canonical 的 webgis_* 工具名 (供历史重放 Read-Seam 与兜底机制使用)。"""
+    """规范化遗留工具名为 canonical webgis_* 名称 (供 dispatch 入口与历史重放两处调用，见 ADR-0010)。"""
     return LEGACY_TOOL_NAME_MAP.get(name, name)
 
 
