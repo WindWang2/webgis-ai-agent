@@ -2,6 +2,7 @@
 SpatialAnalyzer: Unified spatial analysis engine and operator execution seam.
 Supports standardized GeoAnalysisResult payloads across all spatial operations.
 """
+import json
 import logging
 import re
 from typing import Dict, List, Any, Optional, Callable
@@ -21,20 +22,26 @@ from app.lib.geo_analysis.network import calculate_isochrones
 
 logger = logging.getLogger(__name__)
 
-# Direct alias for GeoAnalysisResult (zero-copy backward compatibility)
-AnalysisResult = GeoAnalysisResult
 
-if not hasattr(AnalysisResult, "from_geo"):
+class AnalysisResult(GeoAnalysisResult):
+    """Backward-compatible container class (zero-copy delegation to GeoAnalysisResult)."""
+
     @classmethod
-    def _from_geo(cls, r: GeoAnalysisResult) -> GeoAnalysisResult:
+    def from_geo(cls, r: GeoAnalysisResult) -> GeoAnalysisResult:
         return r
-    setattr(AnalysisResult, "from_geo", _from_geo)
 
 
 def _to_feature_collection(data: Any) -> Dict[str, Any]:
-    """Normalize input data (GeoJSON dict, features list, or single feature) into a valid FeatureCollection dict."""
+    """Normalize input data (GeoJSON dict, features list, string, or single feature) into a valid FeatureCollection dict."""
     if not data:
         return {"type": "FeatureCollection", "features": []}
+
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except Exception:
+            return {"type": "FeatureCollection", "features": []}
+
     if isinstance(data, dict):
         d_type = data.get("type")
         if d_type == "FeatureCollection":
@@ -48,9 +55,11 @@ def _to_feature_collection(data: Any) -> Dict[str, Any]:
                 "type": "FeatureCollection",
                 "features": [{"type": "Feature", "geometry": data, "properties": {}}]
             }
-        return data
+        return {"type": "FeatureCollection", "features": []}
+
     if isinstance(data, list):
         return {"type": "FeatureCollection", "features": data}
+
     return {"type": "FeatureCollection", "features": []}
 
 
@@ -96,17 +105,20 @@ class SpatialAnalyzer:
         try:
             if method_name == "overlay":
                 features_a = input_data
-                features_b = params.pop("layer_b", params.pop("features_b", []))
-                how = params.pop("how", "intersection")
+                features_b = params.get("layer_b") or params.get("features_b") or []
+                how = params.get("how", "intersection")
                 return method(features_a, features_b, how=how, callback=callback)
             elif method_name == "aggregate":
                 points = input_data
-                polygons = params.pop("polygons", params.pop("polygons_data", []))
-                return method(points, polygons, callback=callback, **params)
+                polygons = params.get("polygons") or params.get("polygons_data") or []
+                kw = {k: v for k, v in params.items() if k not in ("polygons", "polygons_data")}
+                return method(points, polygons, callback=callback, **kw)
             elif method_name == "path_analysis":
                 network = input_data
-                start = params.pop("start_point", [0, 0])
-                end = params.pop("end_point", [0, 0])
+                start = params.get("start_point")
+                end = params.get("end_point")
+                if not start or not end:
+                    return GeoAnalysisResult(False, None, "path_analysis requires start_point and end_point parameters")
                 return method(network, start, end, callback=callback)
             else:
                 return method(input_data, callback=callback, **params)

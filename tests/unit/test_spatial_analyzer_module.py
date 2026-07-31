@@ -1,4 +1,5 @@
 """Unit tests for the deepened SpatialAnalyzer module (app/services/spatial_analyzer.py)."""
+import json
 import pytest
 from app.services.spatial_analyzer import (
     SpatialAnalyzer,
@@ -10,7 +11,6 @@ from app.lib.geo_processor.core import GeoAnalysisResult
 
 
 def test_analysis_result_alias():
-    assert AnalysisResult is GeoAnalysisResult
     res = GeoAnalysisResult(True, {"type": "FeatureCollection", "features": []}, "OK")
     assert AnalysisResult.from_geo(res) is res
 
@@ -31,6 +31,14 @@ def test_to_feature_collection_normalization():
     fc_from_list = _to_feature_collection(feat_list)
     assert fc_from_list["type"] == "FeatureCollection"
     assert fc_from_list["features"] == feat_list
+
+    # String GeoJSON
+    str_fc = json.dumps(fc)
+    assert _to_feature_collection(str_fc) == fc
+
+    # Invalid dict fallback
+    invalid_dict = {"invalid": "shape"}
+    assert _to_feature_collection(invalid_dict) == {"type": "FeatureCollection", "features": []}
 
 
 def test_spatial_analyzer_buffer_accepts_full_geojson():
