@@ -312,3 +312,69 @@ def test_view_has_center_true_for_origin():
   assert view_has_center({"view": {"center": [120.0, 30.0]}}) is True
 
 
+@pytest.mark.asyncio
+async def test_layer_upsert_raster_source_contract(clean_session):
+  """Raster path (ADR-0011): a source_data payload carrying a numpy array +
+  bounds is rendered to a PNG and stored as a `type:"raster"` MapSpec source
+  (imageRef + bounds + imageSize), with a continuous legend_spec on the layer.
+
+  Mirrors test_layer_upsert_analysis_result_contract's shape: feed a payload,
+  assert the persisted MapSpec source + layer carry the right shape.
+  """
+  import numpy as np
+  from app.services.raster_store import resolve_png_path
+
+  await mapspec_store.init_project(clean_session)
+  arr = np.array([[0.1, 0.5, 0.9], [0.2, 0.8, 0.4]])
+  payload = {
+      "algorithm": "compute_ndvi",
+      "item_id": "S2B_tile_xyz",
+      "raster_source": {
+          "array": arr,
+          "bounds": [100.0, 20.0, 101.0, 21.0],
+          "band_stats": {"min": 0.1, "max": 0.9},
+          "suggested_palette": "Viridis",
+      },
+  }
+  layer = {"id": "ndvi_layer", "source": "ndvi_src"}
+
+  res = await mapspec_store.layer_upsert(clean_session, layer, source_data=payload)
+  mapspec = res["mapspec"]
+
+  # The layer became a raster layer with a continuous legend_spec.
+  upserted = mapspec["layers"][0]
+  assert upserted["id"] == "ndvi_layer"
+  assert upserted["type"] == "raster"
+  assert upserted["source"] == "ndvi_src"
+  assert upserted["legend_spec"]["type"] == "continuous"
+  assert upserted["legend_spec"]["palette"] == "Viridis"
+
+  # The source is type:"raster" with imageRef + bounds + imageSize.
+  src = mapspec["sources"]["ndvi_src"]
+  assert src["type"] == "raster"
+  assert src["bounds"] == [100.0, 20.0, 101.0, 21.0]
+  assert src["imageRef"].startswith("ref:raster/")
+  # imageSize is [width, height] = [cols, rows] of the array.
+  assert src["imageSize"] == [3, 2]
+
+  # The PNG actually landed on disk and resolves via the imageRef.
+  session_dir = BASE_STORAGE_DIR / clean_session
+  png_path = resolve_png_path(session_dir, src["imageRef"])
+  assert png_path is not None and png_path.exists()
+  assert png_path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+@pytest.mark.asyncio
+async def test_layer_upsert_raster_does_not_profile(clean_session):
+  """A raster source carries no GeoJSON — the auto-profiler must skip it
+  (is_raster_entry guard), leaving no `profile` key on the source entry."""
+  import numpy as np
+  await mapspec_store.init_project(clean_session)
+  payload = {
+      "raster_source": {"array": np.zeros((2, 2)), "bounds": [0, 0, 1, 1]},
+  }
+  await mapspec_store.layer_upsert(clean_session, {"id": "r", "source": "rs"}, source_data=payload)
+  persisted = await mapspec_store.get_mapspec(clean_session)
+  assert "profile" not in persisted["sources"]["rs"]
+
+

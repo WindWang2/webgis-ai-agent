@@ -161,6 +161,22 @@ class RemoteSensingService:
                 },
                 "vegetation_coverage": round(float((ndvi > 0.3).sum() / ndvi.size * 100), 1),
                 "bbox": bbox,
+                # Raster source for the cartography path (ADR-0011). The array was
+                # previously discarded here; it is now retained so the raster
+                # converter can render a colormap-baked PNG + a `type:"raster"`
+                # MapSpec layer. Additive only — existing consumers of
+                # ndvi_stats/vegetation_coverage are unaffected. bounds is the input
+                # bbox (WGS84 lng/lat) since the source is read in geographic CRS;
+                # it's what the MapLibre `image` source's 4 corners need.
+                "raster_source": {
+                    "array": ndvi,
+                    "bounds": list(bbox),
+                    "band_stats": {
+                        "min": float(ndvi.min()),
+                        "max": float(ndvi.max()),
+                    },
+                    "suggested_palette": "Viridis",
+                },
             }
         except ImportError as e:
             return {"error": f"Missing dependency: {e}. Install pystac-client and rasterio."}

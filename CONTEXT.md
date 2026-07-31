@@ -77,6 +77,12 @@ Multi-tenant root entity. All users, layers, and documents belong to an organiza
 ### HistoryStore & HistoryContext
 Deepened conversation persistence seam. `HistoryContext` consolidates Conversation ORM metadata, owner token validation (SEC-08), and role-converted LLM messages (`llm_messages`). `HistoryStoreProtocol` defines 4 intent operations: `load_context`, `commit_interaction`, `delete_history`, and `summarize_session_title`.
 
+### CartographicStyle (Thematic Style Module)
+The canonical deep module (`app/services/cartographic_style.py`) for thematic cartographic classification
+(Fisher-Jenks, quantiles, equal interval, LISA) and palette color generation. Solves the dual-pipeline
+friction between live map overlay state (`legend_spec`) and MapSpec compiler paint specifications
+(`StyleMethod`) by offering a unified model with twin adapters (`.to_legend_spec()` and `.to_style_method()`).
+
 ### MapSpec (Cartographic Intent)
 The declarative, high-level cartographic specification: view, layers with high-level style
 methods (`constant` / `interpolate` / `step` / `match` / `field`), layout (legend, controls,
@@ -85,13 +91,19 @@ contract — see *Cartographic Intent vs. Runtime State* below. Lives as a versi
 in `.webgis-agent/` (the doc), **not** a replacement for `map_state`.
 
 ### MapSpec Source (geojson source entry)
-A per-key entry under a MapSpec document's `sources` map. GeoJSON-only in this refactor, with
-shape `{type: "geojson"}` plus **exactly one** of `inlineData` (the dict payload, travelling
-inside the doc), `url` (a string: a real HTTP/local URL, or — as a known overload — an opaque
-`ref:xxx` cursor), or `dataPath` (a ref path; **read-only in Python today**, only written by the
-TS side or carried by existing checkpoints). This shape knowledge is owned by the
-`app/services/mapspec_source.py` pure-function module (ADR-0008); producers call it rather than
-re-deriving "which key holds the data" inline.
+A per-key entry under a MapSpec document's `sources` map. Carries `type` plus **exactly one** data
+key. Two source types now exist:
+- **`type:"geojson"`** — exactly one of `inlineData` (the dict payload, travelling inside the doc),
+  `url` (a string: a real HTTP/local URL, or — as a known overload — an opaque `ref:xxx` cursor), or
+  `dataPath` (a ref path; **read-only in Python today**, only written by the TS side or carried by
+  existing checkpoints).
+- **`type:"raster"`** — a single-resolution georeferenced PNG (ADR-0011). Carries `imageRef` (an
+  opaque `ref:`-style cursor into the session raster store), `bounds` ([w,s,e,n] WGS84), and
+  `imageSize` ([w,h] px). Compiled to a MapLibre `image` source; colormap is baked into the PNG at
+  render time, not data-driven.
+
+This shape knowledge is owned by the `app/services/mapspec_source.py` pure-function module
+(ADR-0008); producers call it rather than re-deriving "which key holds the data" inline.
 
 The style-method discriminant field is **`method`** (e.g. `{"method": "interpolate", "field":
 "mag", "stops": [...]}`), per the originating spec doc. This is distinct from a layer's
@@ -204,10 +216,18 @@ user-provided or fetched dataset. Persisted like any other layer — its GeoJSON
 (checkpoint-replayable) — but additionally carries **provenance** metadata recording which algorithm
 produced it, from which source, with which parameters, and at what time. Provenance is audit
 lineage; it is opaque to the MapSpec Compiler (which renders from the materialized GeoJSON + paint)
-and surfaces best-effort `warnings` (e.g. `mixed_geometries`) rather than blocking the layer. Raster
-analyses (NDVI, terrain, reclassification) are **excluded** from this v1 — they discard their
-computed arrays and return only statistics, so they cannot back a layer without their own
-raster-source-schema decision (deferred).
+and surfaces best-effort `warnings` (e.g. `mixed_geometries`) rather than blocking the layer.
+
+### Raster Layer (Analysis-backed, single-resolution)
+A MapSpec layer backed by a computed raster array (NDVI, slope, etc.), distinct from the
+geometry-only vector Derived Layer. The `rs_service`-computed array (previously discarded — see
+ADR-0011) is now rendered to a single-resolution georeferenced PNG by
+`raster_cartography_converter.py`, stored under `.webgis-agent/<sid>/raster/`, and referenced by a
+`type:"raster"` MapSpec source (image source + bounds). The colormap is baked into the PNG at render
+time (not data-driven); a parallel `legend_spec` (continuous: min/max + palette) carries the
+"what these colors mean" for the live-map overlay path — the same two-pipeline split as vector
+(ADR-0007). Multi-resolution zoom (XYZ/COG) and the upload-raster `UploadRecord` path remain out of
+scope.
 
 ## Key Relationships
 

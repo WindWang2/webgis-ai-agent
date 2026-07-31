@@ -7,7 +7,10 @@ shape knowledge, not storage.
 from typing import Any, Dict
 
 from app.services.mapspec_source import (
+    is_raster_entry,
     profile_data,
+    raster_bounds,
+    raster_image_ref,
     ref,
     store_data,
 )
@@ -121,3 +124,69 @@ def test_ref_ignores_inline_data():
   """A ref cursor is never an inline dict — inlineData is the materialized
   payload, not a reference. ref() must not return it."""
   assert ref({"inlineData": {"type": "FeatureCollection"}}) is None
+
+
+# ─── raster source entries (ADR-0011) ──────────────────────────────────────
+# A raster source is {type:"raster", imageRef, bounds, imageSize}. imageRef is
+# an opaque ref:-style cursor pointing at the PNG on disk; bounds is [w,s,e,n]
+# WGS84; imageSize is [w,h] px. Distinct from the geojson inlineData/url shape.
+
+
+_RASTER_PAYLOAD = {"array": [[0.1, 0.5], [0.9, 0.2]], "bounds": [100.0, 20.0, 101.0, 21.0]}
+
+
+def test_store_data_raster_payload_marks_type_and_carries_ref():
+  """store_data with a raster payload (carries 'bounds') sets type:"raster" +
+  imageRef + bounds + imageSize, NOT inlineData/url. The caller supplies the
+  already-resolved imageRef (a path/ref string) since the array→PNG render
+  happens upstream in raster_cartography_converter."""
+  entry: Dict[str, Any] = {}
+  store_data(entry, {"imageRef": "ref:raster-abc", "bounds": [100.0, 20.0, 101.0, 21.0],
+                     "imageSize": [256, 256]})
+  assert entry["type"] == "raster"
+  assert entry["imageRef"] == "ref:raster-abc"
+  assert entry["bounds"] == [100.0, 20.0, 101.0, 21.0]
+  assert entry["imageSize"] == [256, 256]
+  assert "inlineData" not in entry and "url" not in entry
+
+
+def test_is_raster_entry_true_for_raster_source():
+  assert is_raster_entry({"type": "raster", "imageRef": "ref:x", "bounds": [0, 0, 1, 1]}) is True
+
+
+def test_is_raster_entry_false_for_geojson():
+  assert is_raster_entry({"type": "geojson"}) is False
+  assert is_raster_entry({"inlineData": {}}) is False
+  assert is_raster_entry({}) is False
+
+
+def test_raster_image_ref_reads_imageref():
+  assert raster_image_ref({"type": "raster", "imageRef": "ref:raster-abc"}) == "ref:raster-abc"
+
+
+def test_raster_image_ref_none_when_absent():
+  assert raster_image_ref({"type": "geojson"}) is None
+  assert raster_image_ref({}) is None
+
+
+def test_raster_bounds_reads_bounds():
+  assert raster_bounds({"type": "raster", "bounds": [100.0, 20.0, 101.0, 21.0]}) == [100.0, 20.0, 101.0, 21.0]
+
+
+def test_raster_bounds_none_when_absent():
+  assert raster_bounds({"type": "raster"}) is None
+  assert raster_bounds({}) is None
+
+
+def test_ref_reads_raster_imageref_as_fallback():
+  """Checkpoint materialization: a raster source's cursor lives in imageRef.
+  ref() returns it as a fallback so the checkpoint can materialize the PNG,
+  mirroring how it materializes geojson ref: cursors today."""
+  assert ref({"type": "raster", "imageRef": "ref:raster-abc"}) == "ref:raster-abc"
+
+
+def test_profile_data_skips_raster_entries():
+  """profile_data is for the GeoJSON profiler; a raster entry carries no
+  GeoJSON to profile, so it returns None (the caller checks is_raster_entry
+  first and skips profiling)."""
+  assert profile_data({"type": "raster", "imageRef": "ref:x", "bounds": [0, 0, 1, 1]}) is None

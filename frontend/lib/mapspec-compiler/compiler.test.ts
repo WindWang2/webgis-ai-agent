@@ -351,4 +351,54 @@ describe("MapSpec Compiler (Seam A)", () => {
       expect(diffResult.diffs).toHaveLength(2);
     });
   });
+
+  // ADR-0011: a `type:"raster"` source (imageRef + bounds) compiles to a
+  // MapLibre `image` source with the 4 corner coordinates, and a `type:"raster"`
+  // layer compiles to a MapLibre raster layer carrying raster-opacity. The
+  // imageRef cursor is emitted verbatim as the url (the session-aware caller
+  // rewrites it to the serving route — the compiler stays session-agnostic).
+  describe("raster source compilation (ADR-0011)", () => {
+    it("emits an image source with corner coordinates from bounds + a raster layer", () => {
+      const spec: MapSpec = {
+        version: "1.0",
+        view: { center: [100.5, 20.5], zoom: 8 },
+        sources: {
+          ndvi: {
+            type: "raster",
+            imageRef: "ref:raster/ndvi_src",
+            bounds: [100.0, 20.0, 101.0, 21.0],
+            imageSize: [256, 256],
+          },
+        },
+        layers: [
+          {
+            id: "ndvi-layer",
+            source: "ndvi",
+            type: "raster",
+            paint: { opacity: 0.85 },
+          },
+        ],
+      };
+
+      const result = compileMapSpec(spec);
+
+      expect(result.report.success).toBe(true);
+      // image source with 4 corners in MapLibre's [TL, TR, BR, BL] order.
+      expect(result.style.sources.ndvi).toEqual({
+        type: "image",
+        url: "ref:raster/ndvi_src",
+        coordinates: [
+          [100.0, 21.0], // top-left     (w, n)
+          [101.0, 21.0], // top-right    (e, n)
+          [101.0, 20.0], // bottom-right (e, s)
+          [100.0, 20.0], // bottom-left  (w, s)
+        ],
+      });
+      // raster layer with raster-opacity, no label layer generated.
+      const rasterLayer = result.style.layers.find((l: any) => l.id === "ndvi-layer");
+      expect(rasterLayer).toBeDefined();
+      expect(rasterLayer.type).toBe("raster");
+      expect(rasterLayer.paint["raster-opacity"]).toBe(0.85);
+    });
+  });
 });

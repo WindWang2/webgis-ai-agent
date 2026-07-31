@@ -40,12 +40,24 @@ export type StyleMethod =
   | number
   | boolean;
 
-export interface MapSpecSource {
+export interface GeoJSONMapSpecSource {
   type: "geojson";
   dataPath?: string;
   url?: string;
   inlineData?: any;
 }
+
+export interface RasterMapSpecSource {
+  type: "raster";
+  // imageRef is an opaque `ref:raster/<id>` cursor resolved by the session
+  // raster route (ADR-0011). The compiler turns it into the serving URL.
+  imageRef: string;
+  // WGS84 bounds [west, south, east, north] — the 4 image-source corners.
+  bounds: [number, number, number, number];
+  imageSize?: [number, number]; // [width, height] px (informational)
+}
+
+export type MapSpecSource = GeoJSONMapSpecSource | RasterMapSpecSource;
 
 export interface MapSpecLayerLabel {
   field: string;
@@ -76,7 +88,7 @@ export interface MapSpecLayerLayout {
 export interface MapSpecLayer {
   id: string;
   source: string;
-  type: "circle" | "line" | "fill" | "symbol" | "heatmap";
+  type: "circle" | "line" | "fill" | "symbol" | "heatmap" | "raster";
   paint?: MapSpecLayerPaint;
   layout?: MapSpecLayerLayout;
   label?: MapSpecLayerLabel;

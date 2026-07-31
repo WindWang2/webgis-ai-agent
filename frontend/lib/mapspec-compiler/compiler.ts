@@ -151,6 +151,21 @@ export function validateMapSpec(
   return { errors, warnings };
 }
 
+/**
+ * Convert WGS84 bounds [w, s, e, n] → the 4 corner coordinates a MapLibre
+ * `image` source needs, in the order MapLibre expects:
+ * [top-left, top-right, bottom-right, bottom-left]. (ADR-0011)
+ */
+function boundsToImageCorners(bounds: [number, number, number, number]) {
+  const [w, s, e, n] = bounds;
+  return [
+    [w, n], // top-left
+    [e, n], // top-right
+    [e, s], // bottom-right
+    [w, s], // bottom-left
+  ];
+}
+
 function extractLegendForLayer(layer: MapSpecLayer): LegendDef | null {
   if (!layer.paint) return null;
   const items: LegendItem[] = [];
@@ -214,7 +229,19 @@ export function compileMapSpec(
 
   const sources: Record<string, any> = {};
   for (const [key, source] of Object.entries(spec.sources || {})) {
-    if (source.inlineData) {
+    if (source.type === "raster") {
+      // Raster source (ADR-0011) → MapLibre `image` source. The colormap is
+      // baked into the PNG at render time; the source carries the image URL +
+      // the 4 corner coordinates georeferencing it. The imageRef cursor is
+      // emitted verbatim as the url — a session-aware rewrite step (in the
+      // compile caller, which has session_id) turns `ref:raster/<id>` into the
+      // serving route. The compiler stays session-agnostic by design.
+      sources[key] = {
+        type: "image",
+        url: source.imageRef,
+        coordinates: boundsToImageCorners(source.bounds),
+      };
+    } else if (source.inlineData) {
       sources[key] = {
         type: "geojson",
         data: source.inlineData,
@@ -281,6 +308,12 @@ export function compileMapSpec(
           maplibreLayer.paint["heatmap-radius"] = compileStyleMethod(layer.paint.radius, "number");
         if (layer.paint.opacity !== undefined)
           maplibreLayer.paint["heatmap-opacity"] = compileStyleMethod(layer.paint.opacity, "number");
+      } else if (layerType === "raster") {
+        // Raster layer (ADR-0011): colors are baked into the source image; the
+        // only paint property is opacity. A raster layer references its
+        // (already-emitted) `image` source by id.
+        if (layer.paint.opacity !== undefined)
+          maplibreLayer.paint["raster-opacity"] = compileStyleMethod(layer.paint.opacity, "number");
       }
     }
 
