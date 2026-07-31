@@ -238,6 +238,99 @@ describe("MapSpec Compiler (Seam A)", () => {
       expect(result.html).toContain("<!DOCTYPE html>");
       expect(result.html).toContain("maplibregl.Map");
     });
+
+    // #214 Seam C: a layer carrying a converter-emitted interpolate paint
+    // (continuous legend_spec → interpolate StyleMethod) compiles to a valid
+    // MapLibre interpolation expression through the full layer path.
+    it("compiles a converter-emitted interpolate paint to a MapLibre interpolation expression", () => {
+      const spec: MapSpec = {
+        version: "1.0",
+        sources: {
+          density: { type: "geojson", url: "/api/geojson/density.json" },
+        },
+        layers: [
+          {
+            id: "kde-fill",
+            source: "density",
+            type: "fill",
+            // Shape produced by _convert_continuous_legend: stops distributed
+            // across [min, max] from palette_colors.
+            paint: {
+              color: {
+                method: "interpolate",
+                field: "density",
+                stops: [
+                  [0.0, "#440154"],
+                  [25.0, "#21908c"],
+                  [50.0, "#fde725"],
+                ],
+              },
+            },
+          },
+        ],
+      };
+
+      const result = compileMapSpec(spec);
+      expect(result.report.success).toBe(true);
+      expect(result.style.layers[0].paint["fill-color"]).toEqual([
+        "interpolate",
+        ["linear"],
+        ["to-number", ["get", "density"]],
+        0.0,
+        "#440154",
+        25.0,
+        "#21908c",
+        50.0,
+        "#fde725",
+      ]);
+    });
+
+    // #214 Seam C: a layer carrying a converter-emitted match paint
+    // (categorical legend_spec → match StyleMethod) compiles to a valid
+    // MapLibre match expression through the full layer path.
+    it("compiles a converter-emitted match paint to a MapLibre match expression", () => {
+      const spec: MapSpec = {
+        version: "1.0",
+        sources: {
+          lisa: { type: "geojson", url: "/api/geojson/lisa.json" },
+        },
+        layers: [
+          {
+            id: "lisa-fill",
+            source: "lisa",
+            type: "fill",
+            // Shape produced by _convert_categorical_legend: cases from
+            // categories[].key/color, default = last category color.
+            paint: {
+              color: {
+                method: "match",
+                field: "cluster",
+                cases: [
+                  ["HH", "#ff0000"],
+                  ["LL", "#0000ff"],
+                  ["HL", "#ffaaaa"],
+                ],
+                default: "#cccccc",
+              },
+            },
+          },
+        ],
+      };
+
+      const result = compileMapSpec(spec);
+      expect(result.report.success).toBe(true);
+      expect(result.style.layers[0].paint["fill-color"]).toEqual([
+        "match",
+        ["get", "cluster"],
+        "HH",
+        "#ff0000",
+        "LL",
+        "#0000ff",
+        "HL",
+        "#ffaaaa",
+        "#cccccc",
+      ]);
+    });
   });
 
   describe("diffLiveStateVsMapSpec", () => {

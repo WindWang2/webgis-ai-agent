@@ -56,6 +56,23 @@ def test_is_analysis_result_detection():
     assert is_analysis_result("ref:123") is False
     assert is_analysis_result(None) is False
 
+    # Detection priority: a GeoJSON FeatureCollection that happens to carry a
+    # top-level analysis-marker key (e.g. `algorithm`/`source_ref`) must still
+    # be treated as GeoJSON, NOT an analysis result. GeoJSON wins over markers.
+    geojson_with_marker = {
+        "type": "FeatureCollection",
+        "algorithm": "stray_metadata",  # legal extra top-level key
+        "source_ref": "ref:leftover",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [0, 0]},
+                "properties": {},
+            }
+        ],
+    }
+    assert is_analysis_result(geojson_with_marker) is False
+
 
 def test_graduated_legend_to_step_style_method():
     geojson = {
@@ -192,6 +209,42 @@ def test_categorical_legend_to_match_style_method():
         ["NS", "#cccccc"],
     ]
     assert color_paint["default"] == "#cccccc"
+
+
+def test_categorical_default_is_last_category_color_ignoring_legend_default():
+    """The categorical legend_spec contract has no `default` field; the match
+    default is always the last category color. An extraneous `legend_spec.default`
+    key must be ignored (regression guard for the undocumented-override fix)."""
+    geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [0, 0]},
+                "properties": {"cluster": "HH"},
+            }
+        ],
+    }
+    analysis = {
+        "success": True,
+        "algorithm": "lisa",
+        "data": geojson,
+        "legend_spec": {
+            "type": "categorical",
+            "field": "cluster",
+            "categories": [
+                {"key": "HH", "color": "#ff0000", "label": "High-High"},
+                {"key": "LL", "color": "#0000ff", "label": "Low-Low"},
+            ],
+            # Extraneous, not part of the contract — must be ignored.
+            "default": "#ffffff",
+        },
+    }
+
+    converted_layer, _, _ = convert_analysis_to_mapspec_layer(analysis)
+    color_paint = converted_layer["paint"]["color"]
+    # Default is the LAST category color, NOT the ignored legend_spec.default.
+    assert color_paint["default"] == "#0000ff"
 
 
 def test_geometry_inference_and_constant_fallback():
