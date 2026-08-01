@@ -160,6 +160,66 @@ async def test_reorder_layer_accepts_valid_session_ref(registry, session_with_la
     assert out["command"] == "REORDER_LAYER"
 
 
+# ─── D2: P1-6 gate extended to the 3 previously-unguarded tools ──────────
+# resolve_layer_ref() (architecture-review D2) unified all 5 layer-mutation
+# tools behind one resolver with the existence gate. set_layer_status /
+# update_layer_appearance / apply_layer_filter previously had NO gate — an
+# unresolved LLM ref passed through to the frontend's prefix-match handler
+# (renderer.ts:285). These tests lock in that the gate now closes on them too.
+
+
+@pytest.mark.asyncio
+async def test_set_layer_status_rejects_unknown_layer_ref(registry, session_with_layer):
+    """D2: the P1-6 gate now covers set_layer_status (previously unguarded)."""
+    sid, _ref = session_with_layer
+    for bad in ["", "ref:", "ref:not-in-this-session-xyz"]:
+        out = await registry.dispatch(
+            "set_layer_status",
+            {"layer_ref": bad, "visible": False},
+            session_id=sid,
+        )
+        assert "error" in out, f"expected reject for layer_ref={bad!r}, got {out}"
+
+
+@pytest.mark.asyncio
+async def test_update_layer_appearance_rejects_unknown_layer_ref(registry, session_with_layer):
+    """D2: the P1-6 gate now covers update_layer_appearance (previously unguarded)."""
+    sid, _ref = session_with_layer
+    for bad in ["", "ref:", "ref:not-in-this-session-xyz"]:
+        out = await registry.dispatch(
+            "update_layer_appearance",
+            {"layer_ref": bad, "color": "#ff0000"},
+            session_id=sid,
+        )
+        assert "error" in out, f"expected reject for layer_ref={bad!r}, got {out}"
+
+
+@pytest.mark.asyncio
+async def test_apply_layer_filter_rejects_unknown_layer_ref(registry, session_with_layer):
+    """D2: the P1-6 gate now covers apply_layer_filter (previously unguarded)."""
+    sid, _ref = session_with_layer
+    for bad in ["", "ref:", "ref:not-in-this-session-xyz"]:
+        out = await registry.dispatch(
+            "apply_layer_filter",
+            {"layer_ref": bad, "expression": "pop > 1000"},
+            session_id=sid,
+        )
+        assert "error" in out, f"expected reject for layer_ref={bad!r}, got {out}"
+
+
+@pytest.mark.asyncio
+async def test_set_layer_status_accepts_session_owned_ref(registry, session_with_layer):
+    """Sanity: the happy path still works after the gate was added."""
+    sid, ref = session_with_layer
+    out = await registry.dispatch(
+        "set_layer_status",
+        {"layer_ref": "我的层", "visible": False},
+        session_id=sid,
+    )
+    assert out.get("success") is True, f"expected success, got {out}"
+    assert out["params"]["layer_id"] == ref
+
+
 @pytest.mark.asyncio
 async def test_remove_layer_accepts_valid_session_ref(registry, session_with_layer):
     sid, _ref = session_with_layer
