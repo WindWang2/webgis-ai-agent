@@ -79,6 +79,10 @@ A dedicated deep module (`ToolExecutionPipeline` in `app/services/chat/tool_pipe
 ### SpatialAnalyzer Domain Engine
 A unified domain service (`SpatialAnalyzer` in `app/services/spatial_analyzer.py`) providing deep spatial and raster analysis operations (`buffer`, `clip`, `overlay`, `spatial_join`, `zonal_stats`, `raster_reclassify`, `raster_calculator`, `raster_resample`, `isochrone_network`, `statistics`, `cluster`, `central_feature`). Encapsulates `validate_data_path` security checks and `rasterio.Env` GDAL VFS sandbox protection, returning standardized `GeoAnalysisResult` objects.
 
+### Tracked Provider HTTP Request
+An automated HTTP execution seam (`tracked_provider_get` in `app/services/provider_health.py`) that binds `ProviderHealthTracker` directly to `get_shared_client()`. Automatically handles rate limiting (`record_attempt`), proxy/SSL context injection, HTTP/JSON decoding, provider-specific business status validation (`check_amap_status`, `check_baidu_status`, `check_tianditu_status`), and circuit breaker state tracking (`record_success` / `record_error`).
+
+
 
 
 

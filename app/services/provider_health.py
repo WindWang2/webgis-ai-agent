@@ -127,5 +127,93 @@ class ProviderHealthTracker:
             }
 
 
+from typing import Callable, Any
+
 # 全局单例，chinese_maps.py 直接 import 使用
 health_tracker = ProviderHealthTracker()
+
+
+# ─── Standard Provider Business Status Checkers ─────────────────────────────
+
+
+def check_amap_status(data: dict) -> tuple[bool, str]:
+    """Check Amap JSON response for status == '1' or infocode == '10000'."""
+    if not isinstance(data, dict):
+        return False, "Invalid Amap response format"
+    if data.get("status") != "1" and data.get("infocode") != "10000":
+        return False, f"Amap: {data.get('info', 'unknown error')}"
+    return True, ""
+
+
+def check_baidu_status(data: dict) -> tuple[bool, str]:
+    """Check Baidu JSON response for status == 0."""
+    if not isinstance(data, dict):
+        return False, "Invalid Baidu response format"
+    status = data.get("status")
+    if status is not None and status != 0:
+        return False, f"Baidu: {data.get('message', f'error status {status}')}"
+    return True, ""
+
+
+def check_tianditu_status(data: dict) -> tuple[bool, str]:
+    """Check Tianditu JSON response for error presence."""
+    if not isinstance(data, dict):
+        return False, "Invalid Tianditu response format"
+    if "error" in data:
+        return False, f"Tianditu: {data.get('error')}"
+    return True, ""
+
+
+async def tracked_provider_get(
+    provider: str,
+    url: str,
+    params: dict,
+    *,
+    business_checker: Callable[[dict], tuple[bool, str]] | None = None,
+    tracker: ProviderHealthTracker | None = None,
+    ssl_context: Any = None,
+    proxy: str | None = None,
+    timeout: float = 10.0,
+) -> dict:
+    """Execute a tracked HTTP GET request using get_shared_client() with circuit breaker protection."""
+    ht = tracker or health_tracker
+    if not await ht.record_attempt(provider):
+        return {"error": f"{provider.capitalize()} 暂时不可用（频率限制或服务故障），请稍后重试"}
+
+    from app.core.network import get_shared_client, get_ssl_context
+    from app.core.config import settings
+
+    actual_ssl = ssl_context or get_ssl_context()
+    actual_proxy = proxy if proxy is not None else (settings.HTTPS_PROXY or settings.HTTP_PROXY)
+
+    try:
+        session = await get_shared_client()
+        async with session.get(
+            url,
+            params=params,
+            ssl=actual_ssl,
+            proxy=actual_proxy,
+            timeout=timeout,
+        ) as resp:
+            if resp.status != 200:
+                await ht.record_error(provider)
+                return {"error": f"{provider.capitalize()} API HTTP {resp.status}"}
+
+            import json
+            try:
+                data = await resp.json()
+            except (json.JSONDecodeError, TypeError, Exception) as e:
+                await ht.record_error(provider, e)
+                return {"error": f"{provider.capitalize()} JSON decode error: {e}"}
+
+            if business_checker is not None:
+                ok, err_msg = business_checker(data)
+                if not ok:
+                    await ht.record_error(provider)
+                    return {"error": err_msg}
+
+            await ht.record_success(provider)
+            return data
+    except Exception as e:
+        await ht.record_error(provider, e)
+        raise
