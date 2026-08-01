@@ -184,181 +184,48 @@ def explorer_parse_task(self, prev_result: dict):
 
 @celery_app.task(bind=True, max_retries=2, soft_time_limit=290, time_limit=300)
 def explorer_geocode_task(self, prev_result: dict):
-    """地理编码阶段"""
+    """地理编码阶段 — thin Celery adapter over the pure :func:`geocode_stage`.
+
+    Owns only the Celery-specific concerns (retry/timeout policy, progress
+    reporting via ``self.update_state``, and the next-stage handoff dict). The
+    algorithm itself — index mapping, the 30% provider-rotation threshold,
+    coordinate extraction, per-row status — lives in
+    :func:`app.services.explorer.geocode_stage.geocode_stage`, testable
+    through its interface without Celery.
+    """
     from app.tools.chinese_maps import batch_geocode_cn
+    from app.services.explorer.geocode_stage import geocode_stage
 
     task_id = prev_result["task_id"]
     logger.info(f"[Explorer:{task_id}] Starting geocode stage")
-    self.update_state(state="PROGRESS", meta={"stage": "geocode", "progress": 0})
 
-    parsed_results = prev_result["parsed_results"]
-    total_rows = sum(r["row_count"] for r in parsed_results)
-
-    if total_rows == 0:
-        return {"task_id": task_id, "geocoded_ref_id": None, "total_rows": 0, "success_rate": 0.0}
-
-    providers = ["amap", "baidu", "tianditu"]
-    all_geocoded = []
-    processed = 0
-    multi_provider = False
-
-    for parsed in parsed_results:
-        data = _load_ref(parsed["ref_id"], task_id=task_id)
-        if not data:
-            processed += parsed["row_count"]
-            continue
-
-        rows = data["rows"]
-        mapping = data.get("mapping", {})
-        address_field = mapping.get("address", "address")
-        lat_field = mapping.get("lat")
-        lon_field = mapping.get("lon")
-
-        # Collect rows that need geocoding
-        chunk = []  # List of (row_index, address_string)
-        for idx, row in enumerate(rows):
-            has_lat = lat_field is not None and row.get(lat_field) is not None
-            has_lon = lon_field is not None and row.get(lon_field) is not None
-            if has_lat and has_lon:
-                row["_lat"] = row[lat_field]
-                row["_lon"] = row[lon_field]
-                row["_geocode_status"] = "predefined"
-                row["_geocode_provider"] = None
-                row["_geocode_error"] = None
-            else:
-                address = row.get(address_field)
-                if address:
-                    chunk.append((idx, str(address)))
-                else:
-                    row["_lat"] = None
-                    row["_lon"] = None
-                    row["_geocode_status"] = "failed"
-                    row["_geocode_provider"] = None
-                    row["_geocode_error"] = "missing address"
-            all_geocoded.append(row)
-
-        # Process in batches of 100
-        for batch_start in range(0, len(chunk), 100):
-            batch = chunk[batch_start:batch_start + 100]
-            pending = list(range(len(batch)))  # indices into batch
-            provider_idx = 0
-
-            while pending and provider_idx < len(providers):
-                provider = providers[provider_idx]
-                addresses = [batch[i][1] for i in pending]
-
-                result = _run_async(batch_geocode_cn(addresses, provider=provider, max_concurrency=3))
-
-                # Handle complete provider failure
-                if "error" in result and not result.get("results") and not result.get("errors"):
-                    provider_idx += 1
-                    multi_provider = True
-                    continue
-
-                # Map results back by index within the current addresses list
-                # result["index"] maps to position in `addresses`, translate back to batch index
-                success_by_idx = {}
-                for r in result.get("results", []):
-                    batch_idx = pending[r["index"]]
-                    success_by_idx[batch_idx] = r
-                error_by_idx = {}
-                for e in result.get("errors", []):
-                    batch_idx = pending[e["index"]]
-                    error_by_idx[batch_idx] = e
-
-                failed_this_attempt = []
-                for p_idx in pending:
-                    if p_idx in success_by_idx:
-                        r = success_by_idx[p_idx]
-                        row_idx = batch[p_idx][0]
-                        row = rows[row_idx]
-
-                        # Extract coordinates
-                        lat = None
-                        lon = None
-                        results_list = r.get("results")
-                        if results_list and len(results_list) > 0:
-                            loc = results_list[0].get("location")
-                            if loc and len(loc) == 2:
-                                lon, lat = loc[0], loc[1]
-                        if lat is None:
-                            lat = r.get("lat")
-                        if lon is None:
-                            lon = r.get("lon")
-
-                        if lat is not None and lon is not None:
-                            row["_lat"] = lat
-                            row["_lon"] = lon
-                            row["_geocode_status"] = "ok"
-                            row["_geocode_provider"] = provider
-                            row["_geocode_error"] = None
-                        else:
-                            failed_this_attempt.append(p_idx)
-                    else:
-                        failed_this_attempt.append(p_idx)
-
-                failure_rate = len(failed_this_attempt) / len(pending) if pending else 0
-                if failure_rate > 0.30 and failed_this_attempt and provider_idx < len(providers) - 1:
-                    multi_provider = True
-                    pending = failed_this_attempt
-                    provider_idx += 1
-                else:
-                    # Mark remaining as failed
-                    for p_idx in failed_this_attempt:
-                        row_idx = batch[p_idx][0]
-                        row = rows[row_idx]
-                        row["_lat"] = None
-                        row["_lon"] = None
-                        row["_geocode_status"] = "failed"
-                        row["_geocode_provider"] = provider
-                        if provider_idx == len(providers) - 1:
-                            row["_geocode_error"] = "all_providers_failed"
-                        elif p_idx in error_by_idx:
-                            row["_geocode_error"] = error_by_idx[p_idx].get("error", "unknown error")
-                        else:
-                            row["_geocode_error"] = "no response"
-                    pending = []
-
-            # If we exhausted all providers and still have pending, mark all as failed
-            for p_idx in pending:
-                row_idx = batch[p_idx][0]
-                row = rows[row_idx]
-                row["_lat"] = None
-                row["_lon"] = None
-                row["_geocode_status"] = "failed"
-                row["_geocode_provider"] = providers[-1] if providers else None
-                row["_geocode_error"] = "all_providers_failed"
-
-        processed += len(rows)
-        progress = int(processed / total_rows * 100)
+    def _on_progress(progress: int) -> None:
         self.update_state(state="PROGRESS", meta={"stage": "geocode", "progress": progress})
 
-    total = len(all_geocoded)
-    success = sum(1 for r in all_geocoded if r.get("_geocode_status") == "ok")
-    failed = sum(1 for r in all_geocoded if r.get("_geocode_status") == "failed")
-    predefined = sum(1 for r in all_geocoded if r.get("_geocode_status") == "predefined")
-    to_geocode = total - predefined
-    success_rate = round(success / to_geocode, 4) if to_geocode > 0 else 0.0
+    result = _run_async(geocode_stage(
+        prev_result["parsed_results"],
+        load_ref=lambda ref_id: _load_ref(ref_id, task_id=task_id),
+        batch_geocode=batch_geocode_cn,
+        on_progress=_on_progress,
+    ))
 
-    result_ref = _store_ref({
-        "rows": all_geocoded,
-        "summary": {
-            "total": total,
-            "success": success,
-            "failed": failed,
-            "predefined": predefined,
-            "success_rate": success_rate,
-            "multi_provider": multi_provider,
-        }
-    }, task_id=task_id, prefix="geocoded")
-
-    self.update_state(state="PROGRESS", meta={"stage": "geocode", "progress": 100})
+    # The pure fn returns rows + summary; the task mints the ref_id and emits
+    # the handoff dict the validate stage reads. store_ref stays out of the
+    # algorithm — it crosses the session-store seam here, in the adapter.
+    if result.rows or result.summary.total:
+        geocoded_ref_id = _store_ref(
+            {"rows": result.rows, "summary": result.summary.as_dict()},
+            task_id=task_id,
+            prefix="geocoded",
+        )
+    else:
+        geocoded_ref_id = None
 
     return {
         "task_id": task_id,
-        "geocoded_ref_id": result_ref,
-        "total_rows": total,
-        "success_rate": success_rate,
+        "geocoded_ref_id": geocoded_ref_id,
+        "total_rows": result.summary.total,
+        "success_rate": result.summary.success_rate,
     }
 
 
