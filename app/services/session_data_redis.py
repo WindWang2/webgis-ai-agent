@@ -18,7 +18,7 @@ SESSION_TTL = 4 * 60 * 60
 MAX_EVENTS = 20
 
 
-class RedisSessionDataManager:
+class RedisSessionStore:
     """Session-level data store backed by Redis with cursor support (LRU)."""
 
     def __init__(self, redis_url: str, capacity: int = 200, socket_timeout: float = 5.0):
@@ -535,3 +535,7 @@ class RedisSessionDataManager:
             self._index_key(session_id),
         ]:
             pipe.expire(key, SESSION_TTL)
+
+
+# Backward-compatible alias
+RedisSessionDataManager = RedisSessionStore

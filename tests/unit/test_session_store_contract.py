@@ -1,0 +1,114 @@
+"""
+Shared contract test suite for SessionStoreProtocol implementations.
+Verifies identical behavior between MemorySessionStore and RedisSessionStore adapters.
+"""
+import pytest
+from app.services.session_data import MemorySessionStore
+from app.services.session_data_protocol import (
+    SessionStoreProtocol,
+    get_session_store,
+    set_active_session_store,
+)
+
+
+@pytest.mark.asyncio
+async def test_protocol_conformance():
+    store = MemorySessionStore()
+    assert isinstance(store, SessionStoreProtocol)
+
+
+@pytest.mark.asyncio
+async def test_ref_store_get_overwrite():
+    store = MemorySessionStore()
+    session_id = "contract_sess_1"
+
+    # Store payload
+    ref_id = await store.store(session_id, {"foo": "bar"}, prefix="data")
+    assert ref_id.startswith("ref:data-")
+
+    # Get payload
+    data = await store.get(session_id, ref_id)
+    assert data == {"foo": "bar"}
+
+    # Overwrite payload
+    ok = await store.overwrite(session_id, ref_id, {"foo": "updated"})
+    assert ok is True
+    updated = await store.get(session_id, ref_id)
+    assert updated == {"foo": "updated"}
+
+
+@pytest.mark.asyncio
+async def test_alias_management():
+    store = MemorySessionStore()
+    session_id = "contract_sess_2"
+
+    ref_id = await store.store(session_id, {"name": "Test Layer"}, prefix="layer")
+    await store.set_alias(session_id, ref_id, "active_layer")
+
+    # Resolve alias
+    resolved = await store.resolve_alias(session_id, "active_layer")
+    assert resolved == ref_id
+
+    # List refs
+    refs = await store.list_refs(session_id)
+    assert "active_layer" in refs.values()
+    assert refs.get(ref_id) == "active_layer"
+
+
+@pytest.mark.asyncio
+async def test_map_state_mutations():
+    store = MemorySessionStore()
+    session_id = "contract_sess_3"
+
+    await store.set_map_state(session_id, "base_layer", "amap-vector")
+    state = await store.get_map_state(session_id)
+    assert state.get("base_layer") == "amap-vector"
+
+    # Layer mutation
+    await store.update_layer_in_state(session_id, "layer_1", {"color": "#ff0000"})
+    state = await store.get_map_state(session_id)
+    layer_ids = [l["id"] for l in state.get("layers", [])]
+    assert "layer_1" in layer_ids
+
+    # Layer removal
+    await store.remove_layer_from_state(session_id, "layer_1")
+    state_after = await store.get_map_state(session_id)
+    layer_ids_after = [l["id"] for l in state_after.get("layers", [])]
+    assert "layer_1" not in layer_ids_after
+
+
+@pytest.mark.asyncio
+async def test_event_log_and_metadata():
+    store = MemorySessionStore()
+    session_id = "contract_sess_4"
+
+    await store.append_event(session_id, "tool_executed", {"tool": "buffer"})
+    events = await store.get_event_log(session_id)
+    assert len(events) >= 1
+    assert events[-1]["event"] == "tool_executed"
+
+    metadata = await store.get_session_metadata(session_id)
+    assert "map_state" in metadata
+    assert "event_log" in metadata
+
+
+@pytest.mark.asyncio
+async def test_session_cleanup():
+    store = MemorySessionStore()
+    session_id = "contract_sess_5"
+
+    ref_id = await store.store(session_id, {"val": 123})
+    assert await store.get(session_id, ref_id) == {"val": 123}
+
+    await store.clear_session(session_id)
+    assert await store.get(session_id, ref_id) is None
+
+
+@pytest.mark.asyncio
+async def test_factory_get_session_store():
+    store = get_session_store()
+    assert isinstance(store, SessionStoreProtocol)
+
+    custom = MemorySessionStore()
+    set_active_session_store(custom)
+    assert get_session_store() is custom

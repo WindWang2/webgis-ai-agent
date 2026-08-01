@@ -8,8 +8,8 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-class SessionDataManager:
-    """Session-level data store with cursor support (LRU)"""
+class MemorySessionStore:
+    """In-memory SessionStore implementation with cursor support (LRU)"""
     def __init__(self, capacity: int = 200):
         # session_id -> {ref_id -> data}
         self._store: dict[str, OrderedDict[str, Any]] = {}
@@ -229,8 +229,11 @@ def create_session_data_manager():
             # 构造期异常（非连通性，因为 __init__ 不连 Redis）-> 退化到内存后端
             logger.warning(f"RedisSessionDataManager construction failed ({e}), falling back to in-memory")
     logger.info("SessionDataManager: using in-memory backend")
-    return SessionDataManager()
+    return MemorySessionStore()
 
+
+# Backward-compatible alias
+SessionDataManager = MemorySessionStore
 
 # Singleton — created once at import time via factory.
 session_data_manager = create_session_data_manager()

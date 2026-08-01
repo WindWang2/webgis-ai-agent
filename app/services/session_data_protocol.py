@@ -65,3 +65,32 @@ class SessionStoreProtocol(Protocol):
 
 # 保留旧 Protocol 名以兼容现有 import
 SessionDataProtocol = SessionStoreProtocol
+
+_active_store: Optional[SessionStoreProtocol] = None
+
+
+def get_session_store() -> SessionStoreProtocol:
+    """
+    Return active SessionStore instance.
+    Defaults to MemorySessionStore, or RedisSessionStore if enabled.
+    """
+    global _active_store
+    if _active_store is None:
+        from app.core.config import settings
+        if getattr(settings, "REDIS_ENABLED", False):
+            try:
+                from app.services.session_data_redis import RedisSessionStore
+                _active_store = RedisSessionStore()
+            except Exception:
+                from app.services.session_data import MemorySessionStore
+                _active_store = MemorySessionStore()
+        else:
+            from app.services.session_data import MemorySessionStore
+            _active_store = MemorySessionStore()
+    return _active_store
+
+
+def set_active_session_store(store: SessionStoreProtocol) -> None:
+    """Override active session store (for testing or custom initialization)."""
+    global _active_store
+    _active_store = store

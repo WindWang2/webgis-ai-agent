@@ -14,10 +14,12 @@ in `SessionStore`, not in the DB. This is the core of the Fetch-on-Demand patter
 LLM never sees the full payload; the frontend fetches it separately via `get_ref_data`.
 
 ### SessionStore
-The deep state storage module managing runtime session data across 4 primary operations:
-`load_context` (fetch SessionContext), `commit_dispatch` (atomic ref store + event + state update),
-`update_map_state` (atomic layer mutations), and `get_ref_data` (Fetch-on-Demand payload retrieval).
-Implemented by two adapters: `RedisSessionStore` (production) and `MemorySessionStore` (test/local fallback).
+The deep state storage module managing runtime session data across 16 core operations
+(`get`, `store`, `overwrite`, `set_alias`, `resolve_alias`, `list_refs`, `get_map_state`,
+`set_map_state`, `update_layer_in_state`, `remove_layer_from_state`, `get_event_log`, `append_event`,
+`get_started_at`, `get_session_metadata`, `clear_session`, `cleanup_idle_sessions`).
+Implemented by two adapters: `RedisSessionStore` (`app/services/session_data_redis.py`) and
+`MemorySessionStore` (`app/services/session_data.py`), with `get_session_store()` as active provider.
 
 ### ChatContextAssembler
 The deep prompt context composition engine (`app/services/chat/context_assembler.py`).
