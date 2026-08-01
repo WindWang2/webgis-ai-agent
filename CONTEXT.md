@@ -38,7 +38,11 @@ via `ToolRegistry.dispatch()`, as they do not require agent-loop cross-cutting c
 The concrete Python class (`app/services/spatial_analyzer.py`) providing pure spatial calculations
 (buffer, clip, overlay, statistics, cluster, aggregate, etc.). Dynamic string-based operator dispatch
 (`execute`, `OPERATOR_MAP`) was a dead seam (ADR-0013) and was deleted; spatial tools call concrete
-methods directly.
+methods directly. The operator surface includes the 5 density/geometry algorithms extracted from the
+tool adapter (ADR-0029: `kde_surface`, `kde_contours`, `voronoi_polygons`, `convex_hull`,
+`multi_ring_buffer`) plus `hotspot` and `lisa` - all routed through SpatialAnalyzer so the invariant
+"all geo math goes through SpatialAnalyzer" holds uniformly for the 7 stats tools. The orphaned
+`path_analysis` operator was deleted (vaporware - `shortest_path` never existed, live `ImportError`).
 
 
 ### Tier

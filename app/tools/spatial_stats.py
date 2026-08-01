@@ -2,14 +2,8 @@
 import logging
 from typing import Any, Optional
 
-import numpy as np
-import geopandas as gpd
-from shapely.geometry import box, mapping
-from scipy.spatial import distance_matrix
-
 from app.tools.registry import ToolRegistry, tool
-from app.lib.geo_processor.core import safe_parse as safe_parse_geojson, to_utm_gdf
-from app.lib.geo_analysis.statistics import _extract_numeric_values as extract_numeric_values
+from app.lib.geo_processor.core import safe_parse as safe_parse_geojson
 from app.services.spatial_analyzer import SpatialAnalyzer
 from app.tools._utils import cached_tool, trim_features, std_error_response
 

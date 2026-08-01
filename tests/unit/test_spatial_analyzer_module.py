@@ -126,3 +126,49 @@ def test_path_analysis_tool_not_registered():
     r = ToolRegistry()
     register_advanced_spatial_tools(r)
     assert "path_analysis" not in r.list_tools()
+
+
+# ── F2: operator parity - all new operators return GeoAnalysisResult ───────
+# (architecture-review F2, step 4: the invariant is machine-checkable)
+
+def test_all_f2_operators_return_geoanalysisresult():
+    """All 7 operators added/moved in F2 return GeoAnalysisResult with synthetic input."""
+    pts = _synthetic_weighted_points(20)
+    operators = [
+        ("kde_surface", lambda: SpatialAnalyzer.kde_surface(pts, cell_size=2000)),
+        ("kde_contours", lambda: SpatialAnalyzer.kde_contours(pts)),
+        ("voronoi_polygons", lambda: SpatialAnalyzer.voronoi_polygons(pts)),
+        ("convex_hull", lambda: SpatialAnalyzer.convex_hull(pts)),
+        ("multi_ring_buffer", lambda: SpatialAnalyzer.multi_ring_buffer(pts, distances=[500, 1000])),
+        ("hotspot", lambda: SpatialAnalyzer.hotspot(pts, "value", distance_band=5000)),
+        ("lisa", lambda: SpatialAnalyzer.lisa(pts, "value")),
+    ]
+    for name, call in operators:
+        res = call()
+        assert isinstance(res, GeoAnalysisResult), f"{name} did not return GeoAnalysisResult"
+        # success or failure is fine (e.g. lisa may fail on h3 lib), but the
+        # contract is the return type
+
+
+def test_no_direct_lib_bypass_in_spatial_stats_tools():
+    """spatial_stats.py tool wrappers must not import lib.geo_analysis directly.
+
+    The 'all geo math through SpatialAnalyzer' invariant means the tool layer
+    routes through the seam, not around it. This catches any re-introduction of
+    the hotspot/h3_lisa bypass pattern.
+    """
+    import app.tools.spatial_stats as mod
+    import inspect
+    src = inspect.getsource(mod)
+    # The tool layer should not import from lib.geo_analysis directly;
+    # it should go through SpatialAnalyzer.
+    assert "from app.lib.geo_analysis" not in src, (
+        "spatial_stats.py bypasses SpatialAnalyzer by importing lib.geo_analysis directly"
+    )
+
+
+def test_spatial_analyzer_has_no_path_analysis():
+    """path_analysis was deleted - confirm it stays gone (vaporware guard)."""
+    assert not hasattr(SpatialAnalyzer, "path_analysis")
+    assert not hasattr(SpatialAnalyzer, "execute")
+    assert not hasattr(SpatialAnalyzer, "OPERATOR_MAP")
