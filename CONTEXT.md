@@ -30,10 +30,15 @@ registry → store large GeoJSON to a `ref_id` cursor (Fetch-on-Demand) → shap
 and a slim frontend event (BBox, property truncation, sample feature generation) → intercept
 repeated calls → wrap errors as self-healing hints.
 "Dispatch" names this whole chain, not just the `registry.dispatch()` call inside it. Both the
-legacy ChatEngine path and the Pi bridge path perform tool dispatch; the deepened
-`ToolDispatchService` is the single module that owns execution, data slimming, and error self-healing
-wrapping, returning a discriminated `ToolDispatchResult` (ok / repeated / error) so callers
-branch on the outcome rather than directly calling shallow `sse_helpers`.
+legacy ChatEngine path and the Pi bridge path perform agent-loop tool dispatch via `ToolDispatchService`.
+Non-agent tool execution (`plan_mode` batch runner, `/tools/execute` admin endpoint) executes directly
+via `ToolRegistry.dispatch()`, as they do not require agent-loop cross-cutting concerns (ADR-0014).
+
+### SpatialAnalyzer
+The concrete Python class (`app/services/spatial_analyzer.py`) providing pure spatial calculations
+(buffer, clip, overlay, statistics, cluster, aggregate, etc.). Dynamic string-based operator dispatch
+(`execute`, `OPERATOR_MAP`) was a dead seam (ADR-0013) and was deleted; spatial tools call concrete
+methods directly.
 
 
 ### Tier
@@ -168,10 +173,13 @@ to an 80% max until then.
 ### Spatial Meta Profile
 The statistical/metadata summary of a source (GeoJSON only in this refactor): BBOX, suggested
 view, CRS, feature count, geometry types, field names/types/sample-values, numeric field
-min/max/mean/histogram. **Auto-injected**: the *first* dissectable layer auto-writes
-`view.center`/`view.zoom` on its first upsert (only when the view has not been explicitly set);
-the Agent can override via `webgis_view_set`. Prevents blind-guessing viewport and breaks.
-PMTiles metadata (zoom/tile-type/vector-layers) is deferred to the "后续 Adapter" queue.
+min/max/mean/histogram. Calculated via the canonical `geojson_bbox` walker (`app/utils/geojson.py`),
+which structurally traverses Feature / Geometry / Collection elements. Empty sources return `None`
+for BBOX (rather than `[0,0,0,0]`), suppressing `suggestedView` to prevent Null Island (`[0,0]`) view
+injection. **Auto-injected**: the *first* dissectable layer auto-writes `view.center`/`view.zoom` on
+its first upsert (only when the view has not been explicitly set); the Agent can override via
+`webgis_view_set`. Prevents blind-guessing viewport and breaks. PMTiles metadata is deferred to
+the "后续 Adapter" queue.
 
 ### Checkpoint
 A self-contained snapshot of a MapSpec at a point in time: the intent doc *plus* the materialized
