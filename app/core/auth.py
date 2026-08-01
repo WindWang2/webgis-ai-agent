@@ -18,7 +18,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import jwt
 from sqlalchemy import select
@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_async_db
-from app.models.db_model import User
+from app.models.db_model import Conversation, User
 
 security = HTTPBearer(auto_error=False)
 
@@ -356,3 +356,54 @@ async def require_admin(_user: dict = Depends(get_current_user_with_version)) ->
             detail="Admin privileges required",
         )
     return _user
+
+
+async def get_owner_token(
+    x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
+) -> Optional[str]:
+    """提取 X-Session-Token 请求头 (SEC-08 匿名会话所有权校验)。"""
+    return x_session_token
+
+
+async def verify_session_owner(
+    db: AsyncSession,
+    session_id: str,
+    user_id: Optional[str] = None,
+    owner_token: Optional[str] = None,
+) -> Conversation:
+    """跨租户隔离守卫 (S31/S32/SEC-08): 验证 session_id 是否存在且属于 user_id / owner_token。
+
+    若不存在或无权访问，统一抛出 HTTPException(404, "Session not found")。
+    返回 Conversation ORM 实例。
+    """
+    from app.services.history_service_async import AsyncHistoryService
+
+    conv = await AsyncHistoryService(db).get_session(
+        session_id, user_id=user_id, owner_token=owner_token
+    )
+    if not conv:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found",
+        )
+    return conv
+
+
+async def require_owned_session(
+    session_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
+) -> Conversation:
+    """FastAPI 依赖注入：要求当前请求的 session_id 属于当前用户 (或匹配 owner_token)。
+
+    校验成功后直接注入并返回 `Conversation` 对象。
+    """
+    user_id = _user.get("user_id") if isinstance(_user, dict) else None
+    return await verify_session_owner(
+        db=db,
+        session_id=session_id,
+        user_id=user_id,
+        owner_token=owner_token,
+    )
+
