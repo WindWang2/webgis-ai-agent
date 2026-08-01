@@ -42,11 +42,6 @@ def _run_raster_tool(
     return GeoAnalysisResult(success=True, data=result, summary=summary).to_llm_response()
 
 
-class PathAnalysisArgs(BaseModel):
-    network_features: Any = Field(..., description="路网要素集 (GeoJSON 或 ref:xxx)")
-    start_point: List[float] = Field(..., description="起点坐标 [lon, lat]")
-    end_point: List[float] = Field(..., description="终点坐标 [lon, lat]")
-
 class ZonalStatsArgs(BaseModel):
     geojson: Any = Field(..., description="矢量区域要素 (GeoJSON 或 ref:xxx)")
     raster_path: str = Field(..., description="栅格数据路径或标识")
@@ -97,24 +92,6 @@ class RasterResampleArgs(BaseModel):
 
 def register_advanced_spatial_tools(registry: ToolRegistry):
     """注册高级空间分析工具"""
-
-    @tool(registry, name="path_analysis",
-           description=(
-               "图论最短路径：给定路网 LineString 集合 + 起终点坐标，返回最短路径线 + 距离。"
-               "\n何时用：需要在自定义路网（用户上传 / OSM 抓取）上做最短路径；"
-               "出行规划的可控替代（不依赖第三方路径 API）。"
-               "\n何时不用：(1) 走真实道路的导航 — 用 search_route_cn (Amap，含转向/限行) 或 search_transit_route；"
-               "(2) 要可达范围而非单点路径 — 用 isochrone_network / isochrone_analysis；"
-               "(3) 网络规模 > 1 万边 — 性能会退化，先用 attribute_filter 裁子网。"
-               "\n关键约束：网络必须是连通的 LineString；起终点会就近吸附到最近节点。"
-           ),
-           tier=2, domains=["network"],
-           args_model=PathAnalysisArgs)
-    def path_analysis(network_features: Any, start_point: List[float], end_point: List[float]) -> dict:
-        data = safe_parse_geojson(network_features)
-        features = data.get("features", [])
-        res = SpatialAnalyzer.path_analysis(features, start_point, end_point)
-        return res.to_llm_response()
 
     @tool(registry, name="zonal_stats",
            description=(
@@ -376,7 +353,7 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                "**双集合最近邻匹配的唯一工具**。"
                "\n何时不用：(1) 同一集合内的最近邻距离/聚集度 — 用 nearest_neighbor (单集合统计)；"
                "(2) 服务区/可达性 — 用 isochrone_analysis 或 service_area_simple；"
-               "(3) 沿路网最近 — 当前是欧氏距离，沿路网需 path_analysis 逐点算。"
+               "(3) 沿路网最近 — 当前是欧氏距离，沿路网路网最短路径暂不支持。"
                "\n返回：每个源点的副本，properties 新增 nearest_target_id 与 distance_m。"
            ),
            param_descriptions={

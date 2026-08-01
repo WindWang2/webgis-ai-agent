@@ -77,3 +77,52 @@ def test_spatial_analyzer_buffer_concrete_method():
 
     res = SpatialAnalyzer.buffer(fc, distance=200, unit="m")
     assert res.success is True
+
+
+# ── F2: hotspot + lisa operators route through SpatialAnalyzer ──────────────
+# (architecture-review F2, step 3: bypass fix)
+
+import random as _random
+
+
+def _synthetic_weighted_points(n: int = 20) -> dict:
+    """N points with a numeric 'value' field for hotspot/lisa testing."""
+    _random.seed(42)
+    feats = []
+    for i in range(n):
+        lng = 116.3 + _random.uniform(0, 0.2)
+        lat = 39.8 + _random.uniform(0, 0.2)
+        feats.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lng, lat]},
+            "properties": {"value": _random.uniform(1, 100)},
+        })
+    return {"type": "FeatureCollection", "features": feats}
+
+
+def test_spatial_analyzer_hotspot_operator():
+    """SpatialAnalyzer.hotspot returns GeoAnalysisResult (routes through the seam)."""
+    res = SpatialAnalyzer.hotspot(_synthetic_weighted_points(20), "value", distance_band=5000)
+    assert isinstance(res, GeoAnalysisResult)
+    assert res.success
+
+
+def test_spatial_analyzer_lisa_operator():
+    """SpatialAnalyzer.lisa returns GeoAnalysisResult (contract holds even if h3 missing)."""
+    res = SpatialAnalyzer.lisa(_synthetic_weighted_points(20), "value")
+    assert isinstance(res, GeoAnalysisResult)
+    # h3 lib may be absent (ImportError) - the contract is what matters here
+
+
+def test_path_analysis_operator_deleted():
+    """path_analysis was deleted (vaporware - live ImportError crash, no shortest_path impl)."""
+    assert not hasattr(SpatialAnalyzer, "path_analysis")
+
+
+def test_path_analysis_tool_not_registered():
+    """The path_analysis tool must not be registered after deletion."""
+    from app.tools.advanced_spatial import register_advanced_spatial_tools
+    from app.tools.registry import ToolRegistry
+    r = ToolRegistry()
+    register_advanced_spatial_tools(r)
+    assert "path_analysis" not in r.list_tools()

@@ -335,20 +335,29 @@ class SpatialAnalyzer:
         return _multi_ring_buffer(fc, distances=distances, merge_rings=merge_rings)
 
     @classmethod
-    def path_analysis(
+    def hotspot(
         cls,
-        network_features: Any,
-        start_point: List[float],
-        end_point: List[float],
-        callback: Optional[Callable] = None
+        features: Any,
+        value_field: str,
+        distance_band: float = 0,
+        callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
-        from app.lib.geo_analysis.network import shortest_path
-        fc_network = _to_feature_collection(network_features)
-        return shortest_path(
-            fc_network,
-            start_point,
-            end_point
-        )
+        """Getis-Ord Gi* hotspot analysis (route through SpatialAnalyzer)."""
+        if callback: callback(20, "Executing hotspot analysis...")
+        fc = _to_feature_collection(features)
+        return hotspot_narrated(fc, value_field, distance_band)
+
+    @classmethod
+    def lisa(
+        cls,
+        features: Any,
+        value_field: str,
+        callback: Optional[Callable] = None,
+    ) -> GeoAnalysisResult:
+        """H3-grid LISA local spatial autocorrelation (route through SpatialAnalyzer)."""
+        if callback: callback(20, "Executing LISA analysis...")
+        fc = _to_feature_collection(features)
+        return h3_lisa(fc, value_field)
 
     @classmethod
     def spatial_join(

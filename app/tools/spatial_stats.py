@@ -73,9 +73,7 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "distance_band": "空间权重距离阈值（米），0表示自动计算（默认）",
            })
     def hotspot_analysis(geojson: Any, value_field: str, distance_band: float = 0) -> dict:
-        from app.lib.geo_analysis.statistics import hotspot_narrated
-        data = safe_parse_geojson(geojson)
-        res = hotspot_narrated(data, value_field, distance_band)
+        res = SpatialAnalyzer.hotspot(geojson, value_field, distance_band=distance_band)
         return res.to_llm_response()
 
     @tool(registry, name="kde_surface",
@@ -187,7 +185,5 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "value_field": "参与LISA分析的数值字段名",
            })
     def h3_lisa(h3_geojson: Any, value_field: str) -> dict:
-        from app.lib.geo_analysis.statistics import h3_lisa as _h3_lisa
-        data = safe_parse_geojson(h3_geojson)
-        res = _h3_lisa(data, value_field)
+        res = SpatialAnalyzer.lisa(h3_geojson, value_field)
         return res.to_llm_response()
