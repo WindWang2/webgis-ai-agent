@@ -73,6 +73,10 @@ outputs). The `geometry_type` field carries implicit semantics like `"raster_ana
 ### Report & Report Generation Saga
 A **Report** is a DB-backed artifact (`reports` table) generated from a session's conversation history into PDF, HTML, or Markdown format. The report creation lifecycle follows a 2-phase transactional **status-lifecycle saga** (`ReportService.create_and_generate`): initial `Report` creation in `"generating"` status with immediate detachment (`db.expunge`), async Jinja2/WeasyPrint rendering without holding the primary DB session, and a separate DB session update to terminal status (`"completed"` or `"failed"`).
 
+### Tool Execution Pipeline
+A dedicated deep module (`ToolExecutionPipeline` in `app/services/chat/tool_pipeline.py`) responsible for executing AI tool calls during chat loops. It encapsulates tool parameter JSON parsing, sentinel duplicate-loop detection, `TaskTracker` step lifecycle management (`start_step` / `complete_step` / `fail_step`), `ToolDispatchService` invocation, and payload slimming into a structured `ToolExecutionResult`.
+
+
 
 ### Exception As Thought
 Architectural philosophy where tool errors are returned as structured error dicts with

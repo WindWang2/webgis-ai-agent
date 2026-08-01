@@ -49,6 +49,7 @@ from app.services.tool_dispatch_service import (
     is_suspicious_result as _is_suspicious_result_fn,
     slim_tool_result as _slim_tool_result,
 )
+from app.services.chat.tool_pipeline import ToolExecutionPipeline, ToolExecutionResult
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,9 @@ class ChatEngine:
         self.use_prompt_caching = settings.LLM_PROMPT_CACHING_ENABLED
         self.max_rounds = 60
         self.tracker = TaskTracker()
+        self.tool_pipeline = ToolExecutionPipeline(
+            self.registry, self.tracker, dispatch_fn=lambda *a, **k: self._dispatch_tool(*a, **k)
+        )
         # 内存对话存储: session_id -> messages list (LRU Cache to bound memory)
         # 审计 M2：之前 capacity=50，>50 并发会话会 evict 最老的 -> 后续请求
         # 需从 DB 重载 + in-flight 持有旧 list 引用的请求可能与新请求分歧。
@@ -513,29 +517,20 @@ class ChatEngine:
 
                     tool_result_msgs: list[str] = []
                     for tc in tc_list:
-                        # 审计 M4：注册 step（与 chat_stream 一致），让进度可查
-                        tool_name = tc["function"]["name"]
-                        tool_args_dict = tc["function"]["arguments"]
-                        if isinstance(tool_args_dict, str):
-                            try:
-                                tool_args_dict = json.loads(tool_args_dict)
-                            except Exception as e:
-                                logger.warning(f"[chat_engine] tool_args JSON parse failed for {tool_name}: {e}")
-                                tool_args_dict = {}
-                        step = self.tracker.start_step(task.id, tool_name, tool_args_dict if isinstance(tool_args_dict, dict) else {})
-                        outcome = await self._dispatch_tool(tc, session_id, executed_tools)
-                        self.tracker.complete_step(task.id, step.id, outcome.raw_result)
-                        llm_payload = outcome.llm_payload
+                        exec_res = await self.tool_pipeline.execute_tool_call(
+                            tc, session_id, task.id, executed_tools
+                        )
+                        llm_payload = exec_res.llm_payload
 
                         if standard_calls:
                             messages.append({
                                 "role": "tool",
-                                "tool_call_id": tc["id"],
+                                "tool_call_id": tc.get("id", ""),
                                 "content": llm_payload,
                             })
-                            await self._save_msg_async(session_id, "tool", "", None, llm_payload, tc["id"])
+                            await self._save_msg_async(session_id, "tool", "", None, llm_payload, tc.get("id", ""))
                         else:
-                            tool_result_msgs.append(f"{tc['function']['name']}: {llm_payload}")
+                            tool_result_msgs.append(f"{exec_res.tool_name}: {llm_payload}")
 
                     if xml_calls and tool_result_msgs:
                         messages.append({
@@ -691,7 +686,6 @@ class ChatEngine:
                     tool_name = tc["function"]["name"]
                     tool_args_raw = tc["function"]["arguments"]
 
-                    # 解析参数用于跟踪
                     try:
                         tool_args_dict = json.loads(tool_args_raw) if isinstance(tool_args_raw, str) else tool_args_raw
                     except (json.JSONDecodeError, TypeError) as e:
@@ -709,24 +703,21 @@ class ChatEngine:
                     })
                     yield sse_event("tool_call", {"name": tool_name, "arguments": tool_args_raw})
 
-                    # 用统一 helper 跑工具，外层包一层心跳保活
-                    dispatch_task = asyncio.create_task(
-                        self._dispatch_tool(tc, session_id, executed_tools)
+                    pipeline_task = asyncio.create_task(
+                        self.tool_pipeline.execute_tool_call(tc, session_id, task.id, executed_tools)
                     )
                     try:
-                        while not dispatch_task.done():
-                            done, _pending = await asyncio.wait([dispatch_task], timeout=5.0)
+                        while not pipeline_task.done():
+                            done, _pending = await asyncio.wait([pipeline_task], timeout=5.0)
                             if not done:
                                 yield ": keep-alive\n\n"
                                 logger.debug(f"SSE Heartbeat sent for tool: {tool_name}")
-                        outcome = await dispatch_task
+                        exec_res = await pipeline_task
                     except (asyncio.CancelledError, GeneratorExit):
-                        # 审计 C5：SSE 客户端断开时 FastAPI 会 cancel 生成器，
-                        # 但之前 dispatch_task 没被显式 cancel/await → 它在后台继续
-                        # 跑（Celery 派发、GeoJSON 序列化、DB 写入）直到自然完成，
-                        # 浪费资源且无界增长。这里显式 cancel 并让上层重抛。
-                        dispatch_task.cancel()
+                        pipeline_task.cancel()
                         raise
+
+                    outcome = exec_res.outcome
 
                     from app.services.chat import planner as _planner
                     step_n_matched = _planner.mark_step_done(session_id, tool_name, self.registry)
