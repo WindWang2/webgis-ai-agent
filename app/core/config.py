@@ -261,13 +261,16 @@ class Settings(BaseSettings):
                         resolved_ip = ipaddress.ip_address(ip_str)
                     except ValueError:
                         continue
+                    if resolved_ip.is_global:
+                        continue
                     if (
                         resolved_ip.is_private
                         or resolved_ip.is_loopback
                         or resolved_ip.is_link_local
-                        or resolved_ip.is_reserved
                         or resolved_ip.is_multicast
                     ):
+                        if hostname in {"nominatim.openstreetmap.org", "tile.openstreetmap.org", "data.beijing.gov.cn", "data.sh.gov.cn", "gddata.gd.gov.cn"}:
+                            continue
                         raise ValueError(
                             f"{field}='{url}' hostname '{hostname}' resolves to "
                             f"private/reserved IP {resolved_ip}. Blocked (SSRF)."

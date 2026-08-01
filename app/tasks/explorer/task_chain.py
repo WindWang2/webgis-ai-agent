@@ -158,30 +158,4 @@ def explorer_validate_task(self, prev_result: dict):
     return res.data
 
 
-def _auto_field_mapping(fields: list) -> dict:
-    """自动字段映射"""
-    mapping = {}
-    name_patterns = ["name", "名称", "title", "标题"]
-    address_patterns = ["address", "地址", "addr", "location", "位置"]
-    lat_patterns = ["lat", "latitude", "纬度", "y"]
-    lon_patterns = ["lon", "lng", "longitude", "经度", "x"]
 
-    for field in fields:
-        fname = field.name.lower()
-        if any(p in fname for p in name_patterns):
-            mapping["name"] = field.name
-        elif any(p in fname for p in address_patterns):
-            mapping["address"] = field.name
-        elif any(p in fname for p in lat_patterns):
-            mapping["lat"] = field.name
-        elif any(p in fname for p in lon_patterns):
-            mapping["lon"] = field.name
-
-    return mapping
-
-
-def _mapping_confidence(mapping: dict) -> float:
-    """计算字段映射置信度"""
-    required = ["name", "address"]
-    matched = sum(1 for k in required if k in mapping)
-    return round(matched / len(required), 4)

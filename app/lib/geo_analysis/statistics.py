@@ -28,15 +28,7 @@ def _build_weights(gdf: gpd.GeoDataFrame, k: int = 8) -> sparse.coo_matrix:
     data = np.ones(len(rows), dtype=float)
     return sparse.coo_matrix((data, (rows, cols)), shape=(n, n))
 
-def _extract_numeric_values(gdf: gpd.GeoDataFrame, value_field: str) -> np.ndarray | None:
-    """Helper to extract numeric values from a GDF field."""
-    if value_field not in gdf.columns:
-        return None
-    values = gdf[value_field]
-    if not np.issubdtype(values.dtype, np.number):
-        # Try converting to numeric
-        values = pd.to_numeric(values, errors='coerce')
-    return values.dropna().values
+
 
 
 def _filter_numeric_gdf(
@@ -462,9 +454,12 @@ def cluster_narrated(
     coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
 
     if value_field:
-        vals = _extract_numeric_values(gdf, value_field)
-        if vals is None:
-            return GeoAnalysisResult(False, None, f"Field '{value_field}' is not numeric")
+        filtered_gdf = _filter_numeric_gdf(gdf, value_field)
+        if filtered_gdf.empty:
+            return GeoAnalysisResult(False, None, f"Field '{value_field}' is not numeric or contains only nulls")
+        gdf = filtered_gdf
+        coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
+        vals = gdf[value_field].to_numpy(dtype=float)
         scaler = StandardScaler()
         vals_scaled = scaler.fit_transform(vals.reshape(-1, 1))
         features = np.column_stack([coords, vals_scaled])

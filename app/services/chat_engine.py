@@ -215,8 +215,8 @@ class ChatEngine:
         return self._session_owner_tokens.pop(session_id, None)
 
     # M1 深水区：上下文组装委托给 chat/context_builder.py（纯函数，方便单测）
-    def _get_map_state_summary(self, session_id: str) -> str:
-        return _build_map_state_summary(session_id)
+    async def _get_map_state_summary(self, session_id: str) -> str:
+        return await _build_map_state_summary(session_id)
 
     @staticmethod
     def _format_layer_lines(inventory: dict, active_layers: list[dict]) -> list[str]:
@@ -378,7 +378,7 @@ class ChatEngine:
         has_plan = planner.get_plan(session_id) is not None
         if not planner.should_plan(message, messages, has_plan):
             return None
-        env = self._get_map_state_summary(session_id)
+        env = await self._get_map_state_summary(session_id)
         try:
             return await planner.make_plan(self._planner_llm_config(), session_id, message, env)
         except Exception as e:  # noqa: BLE001 — 规划绝不能拖垮对话

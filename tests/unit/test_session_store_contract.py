@@ -11,15 +11,22 @@ from app.services.session_data_protocol import (
 )
 
 
+from app.services.session_data_redis import RedisSessionStore
+
+STORE_FACTORIES = [MemorySessionStore]
+
+
+@pytest.mark.parametrize("store_factory", STORE_FACTORIES)
 @pytest.mark.asyncio
-async def test_protocol_conformance():
-    store = MemorySessionStore()
+async def test_protocol_conformance(store_factory):
+    store = store_factory()
     assert isinstance(store, SessionStoreProtocol)
 
 
+@pytest.mark.parametrize("store_factory", STORE_FACTORIES)
 @pytest.mark.asyncio
-async def test_ref_store_get_overwrite():
-    store = MemorySessionStore()
+async def test_ref_store_get_overwrite(store_factory):
+    store = store_factory()
     session_id = "contract_sess_1"
 
     # Store payload
@@ -37,9 +44,10 @@ async def test_ref_store_get_overwrite():
     assert updated == {"foo": "updated"}
 
 
+@pytest.mark.parametrize("store_factory", STORE_FACTORIES)
 @pytest.mark.asyncio
-async def test_alias_management():
-    store = MemorySessionStore()
+async def test_alias_management(store_factory):
+    store = store_factory()
     session_id = "contract_sess_2"
 
     ref_id = await store.store(session_id, {"name": "Test Layer"}, prefix="layer")
@@ -55,9 +63,10 @@ async def test_alias_management():
     assert refs.get(ref_id) == "active_layer"
 
 
+@pytest.mark.parametrize("store_factory", STORE_FACTORIES)
 @pytest.mark.asyncio
-async def test_map_state_mutations():
-    store = MemorySessionStore()
+async def test_map_state_mutations(store_factory):
+    store = store_factory()
     session_id = "contract_sess_3"
 
     await store.set_map_state(session_id, "base_layer", "amap-vector")
@@ -77,9 +86,10 @@ async def test_map_state_mutations():
     assert "layer_1" not in layer_ids_after
 
 
+@pytest.mark.parametrize("store_factory", STORE_FACTORIES)
 @pytest.mark.asyncio
-async def test_event_log_and_metadata():
-    store = MemorySessionStore()
+async def test_event_log_and_metadata(store_factory):
+    store = store_factory()
     session_id = "contract_sess_4"
 
     await store.append_event(session_id, "tool_executed", {"tool": "buffer"})
@@ -92,9 +102,10 @@ async def test_event_log_and_metadata():
     assert "event_log" in metadata
 
 
+@pytest.mark.parametrize("store_factory", STORE_FACTORIES)
 @pytest.mark.asyncio
-async def test_session_cleanup():
-    store = MemorySessionStore()
+async def test_session_cleanup(store_factory):
+    store = store_factory()
     session_id = "contract_sess_5"
 
     ref_id = await store.store(session_id, {"val": 123})
