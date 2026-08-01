@@ -59,12 +59,15 @@ async def handle_viewport_change(session_id: str, data: dict):
         "pitch": data.get("pitch", 0),
     }
     await session_data_manager.set_map_state(session_id, "viewport", viewport)
-    # Round 3: 后台预热视口地名，下一轮 [环境感知] 同步读 cache 即可
+    # Round 3: 后台预热视口地名，加 rate limit（每 session 每 5 秒最多 1 次）保护 Nominatim
     from app.services.viewport_naming import schedule_populate
+    from app.core.rate_limiter import get_rate_limiter
     center = viewport.get("center") or [0, 0]
     if isinstance(center, (list, tuple)) and len(center) >= 2:
         try:
-            schedule_populate(float(center[0]), float(center[1]))
+            limiter = await get_rate_limiter()
+            if await limiter.is_allowed(f"ws_viewport_populate:{session_id}", max_requests=1, window_seconds=5):
+                schedule_populate(float(center[0]), float(center[1]))
         except (ValueError, TypeError):
             pass
 
