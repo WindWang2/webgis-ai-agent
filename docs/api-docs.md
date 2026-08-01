@@ -11,9 +11,9 @@ from app.main import app
 ### 基础健康与探针端点
 | 方法 | 路径 | 说明 |
 |------|-----|-----|
-| GET | / | 根路径，网关在线状态 |
+| GET | /api/v1/health | 基础健康探针，网关在线状态 |
 | GET | /api/v1/health/live | 存活探针 (K8s liveness) |
-| GET | /api/v1/health/ready | 就绪探针 (K8s readiness, 检查依赖可达) |
+| GET | /api/v1/ready | 就绪探针 (K8s readiness, 检查依赖可达) |
 | GET | /docs | Swagger OpenAPI 动态文档 |
 
 ---
@@ -51,6 +51,18 @@ from app.main import app
 | POST | /api/v1/chat/stream | optional | 发送分析请求 (SSE 协议分发) |
 | POST | /api/v1/chat/completions | optional | 非流式对话接口 |
 
+### 地图交互指令协议 (Server → Client)
+| 指令名 | 参数 | 说明 |
+|--------|------|-----|
+| `fly_to_location` | `longitude, latitude, zoom, bearing, pitch` | 地名/坐标飞越定位 |
+| `zoom_to_bbox` | `bbox, padding` | 缩放至包围盒 |
+| `zoom_to_layer` | `layer_ref, padding` | 缩放至图层范围 |
+| `reset_map_view` | - | 重置为全国默认视角 |
+| `set_map_view` | `zoom, bearing, pitch` | 精确设定视角 |
+| `reorder_layer` | `layer_id, new_index` | 图层排序 |
+| `remove_layer` | `layer_id` | 移除图层 |
+| `display_layer` | `layer_id, visible` | 图层显隐控制 |
+
 ### SSE 事件类型
 
 | 事件名 | 载荷数据 (Data) | 描述 |
@@ -83,6 +95,7 @@ from app.main import app
 | 方法 | 路径 | 认证 | 说明 |
 |------|-----|------|-----|
 | GET | /api/v1/layers/data/{ref_id} | optional | 获取原始空间 Payload (校验 session 所有权) |
+| GET | /api/v1/layer-types | optional | 获取支持的图层与分析类型列表 |
 
 ---
 
@@ -137,12 +150,16 @@ from app.main import app
 
 ---
 
-## T008 遥感分析资产管理 (Analysis Assets)
+## T008 数据上传与分析资产管理 (Uploads & Assets)
 
 | 方法 | 路径 | 认证 | 说明 |
 |------|-----|------|-----|
-| GET | /api/v1/uploads | required | 获取分析产物清单 |
-| GET | /api/v1/static/analysis_results/{file} | required | 静态资源访问 |
+| POST | /api/v1/upload | required | 上传 GIS 数据文件 (矢量/栅格) |
+| GET | /api/v1/uploads | required | 按 session_id 获取已上传文件列表 |
+| GET | /api/v1/uploads/{upload_id} | required | 获取单个上传记录详情 (校验所有权) |
+| GET | /api/v1/uploads/{upload_id}/geojson | required | 获取上传矢量的 GeoJSON 数据 (50MB 限制) |
+| DELETE | /api/v1/uploads/{upload_id} | required | 删除上传记录及关联文件 (校验所有权) |
+| GET | /api/v1/static/{file_path:path} | optional | 安全静态资源访问 (支持 Bearer / HMAC / 公共白名单) |
 
 ### 遥感分析算子 (Agent Tools)
 | 工具名 | 描述 |
@@ -157,7 +174,7 @@ from app.main import app
 
 | 方法 | 路径 | 认证 | 说明 |
 |------|-----|------|-----|
-| WS | /ws/{session_id} | optional | 建立双向实时连接 (空 token 被拒绝) |
+| WS | /api/v1/ws/{session_id} | required | 建立双向实时连接 (需传递 `?token=...`，校验所有权) |
 
 ### 感知事件类型 (Client → Server)
 | 事件名 | 数据 | 描述 |
