@@ -62,9 +62,7 @@ async def test_query_osm_poi_mock():
 
     mock_session.get.return_value = mock_geo_resp
     mock_session.post.return_value = mock_overpass_resp
-    mock_session.__aenter__.return_value = mock_session
-
-    with patch("aiohttp.ClientSession", return_value=mock_session):
+    with patch("app.tools.osm.get_shared_client", new_callable=AsyncMock, return_value=mock_session):
         result = await registry.dispatch("query_osm_poi", {"area": "北京", "category": "restaurant"})
         assert result["type"] == "poi_query"
         assert result["area"] == "北京"

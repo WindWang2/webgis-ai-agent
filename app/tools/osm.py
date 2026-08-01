@@ -6,7 +6,7 @@ from typing import Optional, List, Dict
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
-from app.core.network import get_ssl_context, get_base_headers
+from app.core.network import get_ssl_context, get_base_headers, get_shared_client
 from app.tools.registry import ToolRegistry, tool
 
 logger = logging.getLogger(__name__)
@@ -61,20 +61,20 @@ async def _query_overpass(query: str) -> dict:
     logger.info(f"[OSM] Querying Overpass API...")
     
     try:
-        async with aiohttp.ClientSession(headers=get_base_headers()) as session:
-            async with session.post(
-                settings.OVERPASS_API_URL,
-                data={"data": full_query},
-                timeout=aiohttp.ClientTimeout(total=60),
-                ssl=get_ssl_context(),
-                proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY
-                        ) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    logger.error(f"[OSM] Overpass error {resp.status}: {text}")
-                    return {"type": "FeatureCollection", "features": [], "error": f"Overpass error {resp.status}: {text}"}
-                data = await resp.text()
-                logger.info(f"[OSM] Overpass query successful, data size: {len(data)} bytes")
+        session = await get_shared_client()
+        async with session.post(
+            settings.OVERPASS_API_URL,
+            data={"data": full_query},
+            timeout=aiohttp.ClientTimeout(total=60),
+            ssl=get_ssl_context(),
+            proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY
+        ) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                logger.error(f"[OSM] Overpass error {resp.status}: {text}")
+                return {"type": "FeatureCollection", "features": [], "error": f"Overpass error {resp.status}: {text}"}
+            data = await resp.text()
+            logger.info(f"[OSM] Overpass query successful, data size: {len(data)} bytes")
     except aiohttp.ClientError as e:
         logger.error(f"[OSM] Overpass network/timeout error: {e}")
         return {"type": "FeatureCollection", "features": [], "error": str(e)}
@@ -90,18 +90,18 @@ async def _geocode_bbox(query: str, expand_km: float = 0) -> Optional[str]:
         "limit": 5,
         "accept-language": "zh",
     }
-    async with aiohttp.ClientSession(headers=get_base_headers()) as session:
-        async with session.get(
-            settings.NOMINATIM_URL,
-            params=params,
-            timeout=aiohttp.ClientTimeout(total=30),
-            ssl=get_ssl_context(),
-            proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY
-            ) as resp:
-            if resp.status != 200:
-                logger.error(f"Nominatim error: {resp.status}")
-                return None
-            results = await resp.json()
+    session = await get_shared_client()
+    async with session.get(
+        settings.NOMINATIM_URL,
+        params=params,
+        timeout=aiohttp.ClientTimeout(total=30),
+        ssl=get_ssl_context(),
+        proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY
+    ) as resp:
+        if resp.status != 200:
+            logger.error(f"Nominatim error: {resp.status}")
+            return None
+        results = await resp.json()
 
     if not results:
         return None
@@ -147,12 +147,17 @@ async def _nominatim_search_poi(category: str, bbox: str, limit: int) -> dict:
         "bounded": "1",
     }
     features = []
-    async with aiohttp.ClientSession(headers={"User-Agent": "WebGIS-AI-Agent/1.0"}) as session:
-        async with session.get(settings.NOMINATIM_URL, params=params, ssl=get_ssl_context(),
-            ) as resp:
-            if resp.status != 200:
-                return {"type": "FeatureCollection", "features": []}
-            results = await resp.json()
+    session = await get_shared_client()
+    async with session.get(
+        settings.NOMINATIM_URL,
+        params=params,
+        timeout=aiohttp.ClientTimeout(total=30),
+        ssl=get_ssl_context(),
+        proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY
+    ) as resp:
+        if resp.status != 200:
+            return {"type": "FeatureCollection", "features": []}
+        results = await resp.json()
 
     for r in results:
         lat = float(r.get("lat", 0))
@@ -403,30 +408,31 @@ def register_osm_tools(registry: ToolRegistry):
                 "accept-language": "zh",
                 "polygon_geojson": "1",
             }
-            async with aiohttp.ClientSession(headers=get_base_headers()) as session:
-                async with session.get(
-                    settings.NOMINATIM_URL, 
-                    params=params, 
-                    ssl=get_ssl_context(),
-                    proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY
-                ) as resp:
-                    if resp.status == 200:
-                        results = await resp.json()
-                        if results:
-                            r = results[0]
-                            geojson_poly = r.get("geojson")
-                            if geojson_poly:
-                                geojson = {
-                                    "type": "FeatureCollection",
-                                    "features": [{
-                                        "type": "Feature",
-                                        "geometry": geojson_poly,
-                                        "properties": {
-                                            "name": r.get("name", name),
-                                            "display_name": r.get("display_name", ""),
-                                        },
-                                    }],
-                                }
+            session = await get_shared_client()
+            async with session.get(
+                settings.NOMINATIM_URL, 
+                params=params, 
+                timeout=aiohttp.ClientTimeout(total=30),
+                ssl=get_ssl_context(),
+                proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY
+            ) as resp:
+                if resp.status == 200:
+                    results = await resp.json()
+                    if results:
+                        r = results[0]
+                        geojson_poly = r.get("geojson")
+                        if geojson_poly:
+                            geojson = {
+                                "type": "FeatureCollection",
+                                "features": [{
+                                    "type": "Feature",
+                                    "geometry": geojson_poly,
+                                    "properties": {
+                                        "name": r.get("name", name),
+                                        "display_name": r.get("display_name", ""),
+                                    },
+                                }],
+                            }
 
         return {
             "type": "boundary_query",
@@ -435,3 +441,4 @@ def register_osm_tools(registry: ToolRegistry):
             "count": len(geojson.get("features", [])),
             "geojson": geojson,
         }
+
