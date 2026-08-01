@@ -33,11 +33,19 @@ class ExplorerOrchestrator:
         context: SearchContext,
         session_id: str = "",
         user_id: str = "",
+        mode: str = "celery",
     ) -> str:
-        """启动探索任务，返回 celery task_id"""
+        """启动探索任务，返回 task_id"""
         task_id = f"exp_{session_id}_{asyncio.get_running_loop().time():.0f}"
 
-        # 构建 Celery 任务链
+        if mode == "in_process":
+            from app.services.explorer.pipeline import ExplorerPipeline
+            pipeline = ExplorerPipeline()
+            res = await pipeline.run_in_process(task_id, query, context)
+            logger.info(f"[Explorer] Finished in-process task {task_id} (success={res.success})")
+            return task_id
+
+        # 构建 Celery 任务链 (default "celery" mode)
         from app.tasks.explorer.task_chain import (
             explorer_discover_task,
             explorer_fetch_task,

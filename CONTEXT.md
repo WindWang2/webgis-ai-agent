@@ -25,6 +25,12 @@ Encapsulates map state ambient summaries, history token budget truncation, XML s
 and execution plan blocks behind a single `assemble(session_id, messages)` interface method.
 Returns a structured `ContextAssemblyResult` value object.
 
+### ExplorerPipeline
+The 5-stage GIS exploration pipeline (`discover`, `fetch`, `parse`, `geocode`, `validate`).
+Extracted into pure async stage modules (`discover_stage.py`, `fetch_stage.py`, `parse_stage.py`,
+`geocode_stage.py`, `validate_stage.py`) behind an `ExplorerPipeline.run_in_process(...)` engine
+(`app/services/explorer/pipeline.py`). Celery tasks in `task_chain.py` serve as thin adapters.
+
 
 ### Tool
 A Python callable registered in `ToolRegistry` with an OpenAI-compatible JSON schema, tier

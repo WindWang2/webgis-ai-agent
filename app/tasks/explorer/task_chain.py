@@ -45,35 +45,18 @@ def _load_ref(ref_id: str, task_id: str):
 
 @celery_app.task(bind=True, max_retries=2, soft_time_limit=30, time_limit=30)
 def explorer_discover_task(self, task_id: str, query: str, context: dict):
-    """数据发现阶段"""
+    """数据发现阶段 — thin Celery adapter."""
+    from app.services.explorer.discover_stage import run_discover_stage
     logger.info(f"[Explorer:{task_id}] Starting discover stage")
-    self.update_state(state="PROGRESS", meta={"stage": "discover", "progress": 10})
+
+    def _on_progress(progress: int) -> None:
+        self.update_state(state="PROGRESS", meta={"stage": "discover", "progress": progress})
 
     try:
-        ctx = SearchContext(**context)
-        adapter = GovDataAdapter()
-
-        # 发现数据源
-        sources = _run_async(adapter.discover(query, ctx))
-
-        # 质量预评估
-        scored = []
-        for source in sources[:3]:  # top-3
-            score = _run_async(adapter.quick_assess(query, source))
-            scored.append({
-                "source": source.model_dump(),
-                "score": score.model_dump(),
-            })
-
-        scored.sort(key=lambda x: x["score"]["overall"], reverse=True)
-
-        self.update_state(state="PROGRESS", meta={"stage": "discover", "progress": 100})
-
-        return {
-            "task_id": task_id,
-            "selected_sources": scored,
-        }
-
+        res = _run_async(run_discover_stage(
+            task_id, query, context, on_progress=_on_progress
+        ))
+        return res.data
     except Exception as e:
         logger.error(f"[Explorer:{task_id}] Discover failed: {e}")
         raise self.retry(exc=e, countdown=2 ** self.request.retries)
@@ -81,118 +64,48 @@ def explorer_discover_task(self, task_id: str, query: str, context: dict):
 
 @celery_app.task(bind=True, max_retries=1, soft_time_limit=55, time_limit=60)
 def explorer_fetch_task(self, prev_result: dict):
-    """内容抓取阶段"""
+    """内容抓取阶段 — thin Celery adapter."""
+    from app.services.explorer.fetch_stage import run_fetch_stage
     task_id = prev_result["task_id"]
     logger.info(f"[Explorer:{task_id}] Starting fetch stage")
-    self.update_state(state="PROGRESS", meta={"stage": "fetch", "progress": 10})
 
-    adapter = GovDataAdapter()
-    sources_data = prev_result.get("selected_sources", [])
+    def _on_progress(progress: int) -> None:
+        self.update_state(state="PROGRESS", meta={"stage": "fetch", "progress": progress})
 
-    results = []
-    for item in sources_data:
-        source_dict = item["source"]
-        source = DataSource(**source_dict)
-
-        try:
-            raw = _run_async(adapter.fetch(source))
-            # 存储原始数据 (hex encode bytes for JSON serialization)
-            ref_id = _store_ref({
-                "data": raw.data.hex(),
-                "content_type": raw.content_type,
-                "encoding": raw.encoding,
-            }, task_id=task_id, prefix="fetch")
-
-            results.append({
-                "source_id": source.id,
-                "ref_id": ref_id,
-                "size_bytes": len(raw.data),
-                "format": source.format,
-            })
-        except Exception as e:
-            logger.warning(f"[Explorer:{task_id}] Fetch failed for {source.id}: {e}")
-            results.append({
-                "source_id": source.id,
-                "error": str(e),
-            })
-
-    successful = [r for r in results if "ref_id" in r]
-    if not successful:
-        raise RuntimeError(f"All source fetches failed: {results}")
-
-    self.update_state(state="PROGRESS", meta={"stage": "fetch", "progress": 100})
-
-    return {
-        "task_id": task_id,
-        "fetch_results": successful,
-    }
+    res = _run_async(run_fetch_stage(
+        task_id,
+        prev_result.get("selected_sources", []),
+        store_ref=lambda data, prefix: _store_ref(data, task_id=task_id, prefix=prefix),
+        on_progress=_on_progress,
+    ))
+    if not res.success:
+        raise RuntimeError(res.error)
+    return res.data
 
 
 @celery_app.task(bind=True, soft_time_limit=55, time_limit=60)
 def explorer_parse_task(self, prev_result: dict):
-    """结构化解析阶段"""
+    """结构化解析阶段 — thin Celery adapter."""
+    from app.services.explorer.parse_stage import run_parse_stage
     task_id = prev_result["task_id"]
     logger.info(f"[Explorer:{task_id}] Starting parse stage")
-    self.update_state(state="PROGRESS", meta={"stage": "parse", "progress": 10})
 
-    adapter = GovDataAdapter()
-    fetch_results = prev_result["fetch_results"]
+    def _on_progress(progress: int) -> None:
+        self.update_state(state="PROGRESS", meta={"stage": "parse", "progress": progress})
 
-    parsed_all = []
-    for result in fetch_results:
-        ref_id = result["ref_id"]
-        stored = _load_ref(ref_id, task_id=task_id)
-
-        if not stored:
-            logger.warning(f"[Explorer:{task_id}] Ref {ref_id} not found")
-            continue
-
-        # 重建 RawContent
-        raw = RawContent(
-            data=bytes.fromhex(stored["data"]),
-            content_type=stored["content_type"],
-            encoding=stored["encoding"],
-        )
-
-        structured = _run_async(adapter.parse(raw))
-
-        # 字段映射（简化：自动匹配常见字段名）
-        mapping = _auto_field_mapping(structured.fields)
-        confidence = _mapping_confidence(mapping)
-
-        parsed_ref = _store_ref({
-            "rows": structured.rows,
-            "fields": [f.model_dump() for f in structured.fields],
-            "mapping": mapping,
-        }, task_id=task_id, prefix="parsed")
-
-        parsed_all.append({
-            "source_id": result["source_id"],
-            "ref_id": parsed_ref,
-            "row_count": len(structured.rows),
-            "mapping": mapping,
-            "confidence": confidence,
-        })
-
-    self.update_state(state="PROGRESS", meta={"stage": "parse", "progress": 100})
-
-    return {
-        "task_id": task_id,
-        "parsed_results": parsed_all,
-    }
+    res = _run_async(run_parse_stage(
+        task_id,
+        prev_result.get("fetch_results", []),
+        load_ref=lambda ref_id: _load_ref(ref_id, task_id=task_id),
+        store_ref=lambda data, prefix: _store_ref(data, task_id=task_id, prefix=prefix),
+        on_progress=_on_progress,
+    ))
+    return res.data
 
 
 @celery_app.task(bind=True, max_retries=2, soft_time_limit=290, time_limit=300)
 def explorer_geocode_task(self, prev_result: dict):
-    """地理编码阶段 — thin Celery adapter over the pure :func:`geocode_stage`.
-
-    Owns only the Celery-specific concerns (retry/timeout policy, progress
-    reporting via ``self.update_state``, and the next-stage handoff dict). The
-    algorithm itself — index mapping, the 30% provider-rotation threshold,
-    coordinate extraction, per-row status — lives in
-    :func:`app.services.explorer.geocode_stage.geocode_stage`, testable
-    through its interface without Celery.
-    """
+    """地理编码阶段 — thin Celery adapter over the pure :func:`geocode_stage`."""
     from app.tools.chinese_maps import batch_geocode_cn
     from app.services.explorer.geocode_stage import geocode_stage
 
@@ -209,9 +122,6 @@ def explorer_geocode_task(self, prev_result: dict):
         on_progress=_on_progress,
     ))
 
-    # The pure fn returns rows + summary; the task mints the ref_id and emits
-    # the handoff dict the validate stage reads. store_ref stays out of the
-    # algorithm — it crosses the session-store seam here, in the adapter.
     if result.rows or result.summary.total:
         geocoded_ref_id = _store_ref(
             {"rows": result.rows, "summary": result.summary.as_dict()},
@@ -231,19 +141,21 @@ def explorer_geocode_task(self, prev_result: dict):
 
 @celery_app.task(bind=True, soft_time_limit=25, time_limit=30)
 def explorer_validate_task(self, prev_result: dict):
-    """质量验证阶段"""
+    """质量验证阶段 — thin Celery adapter."""
+    from app.services.explorer.validate_stage import run_validate_stage
     task_id = prev_result["task_id"]
     logger.info(f"[Explorer:{task_id}] Starting validate stage")
 
-    geocoded_ref_id = prev_result.get("geocoded_ref_id")
-    total_rows = prev_result.get("total_rows", 0)
+    def _on_progress(progress: int) -> None:
+        self.update_state(state="PROGRESS", meta={"stage": "validate", "progress": progress})
 
-    return {
-        "task_id": task_id,
-        "status": "completed",
-        "geocoded_ref_id": geocoded_ref_id,
-        "total_rows": total_rows,
-    }
+    res = _run_async(run_validate_stage(
+        task_id,
+        geocoded_ref_id=prev_result.get("geocoded_ref_id"),
+        total_rows=prev_result.get("total_rows", 0),
+        on_progress=_on_progress,
+    ))
+    return res.data
 
 
 def _auto_field_mapping(fields: list) -> dict:
