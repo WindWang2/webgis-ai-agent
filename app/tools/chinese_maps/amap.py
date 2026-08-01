@@ -10,6 +10,18 @@ from app.core.config import settings
 from app.utils.coord_transform import wgs84_to_gcj02, gcj02_to_wgs84
 
 from app.tools.chinese_maps.http import _amap_get, _speed_mps
+from app.tools.chinese_maps._shaping import shape_poi_collection
+
+
+def _extract_amap_loc(p: dict) -> tuple[float, float] | None:
+    """Pull (lng, lat) from an Amap ``"lng,lat"`` location string, or None."""
+    loc = p.get("location", "").split(",")
+    if len(loc) != 2:
+        return None
+    try:
+        return float(loc[0]), float(loc[1])
+    except ValueError:
+        return None
 
 logger = logging.getLogger(__name__)
 
@@ -406,31 +418,21 @@ async def _search_poi_amap(keyword: str, city: str, limit: int) -> dict:
     if "error" in data:
         return data
     pois = data.get("pois", [])
-    features = []
-    for p in pois[:limit]:
-        loc = p.get("location", "").split(",")
-        if len(loc) != 2:
-            continue
-        gcj_lng, gcj_lat = float(loc[0]), float(loc[1])
-        lng, lat = gcj02_to_wgs84(gcj_lng, gcj_lat)
-        features.append({
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [lng, lat]},
-            "properties": {
-                "name": p.get("name", ""),
-                "address": p.get("address", "") or p.get("pname", ""),
-                "type": p.get("type", ""),
-                "tel": p.get("tel", ""),
-                "city": p.get("cityname", ""),
-                "district": p.get("adname", ""),
-            },
-        })
-    return {
-        "type": "FeatureCollection",
-        "features": features,
-        "count": len(features),
-        "provider": "amap",
-    }
+    return shape_poi_collection(
+        pois,
+        extract_coord=_extract_amap_loc,
+        properties_fn=lambda p: {
+            "name": p.get("name", ""),
+            "address": p.get("address", "") or p.get("pname", ""),
+            "type": p.get("type", ""),
+            "tel": p.get("tel", ""),
+            "city": p.get("cityname", ""),
+            "district": p.get("adname", ""),
+        },
+        provider="amap",
+        src_crs="gcj02",
+        limit=limit,
+    )
 
 
 
@@ -452,31 +454,21 @@ async def _search_poi_around_amap(
     if "error" in data:
         return data
     pois = data.get("pois", [])
-    features = []
-    for p in pois[:limit]:
-        loc = p.get("location", "").split(",")
-        if len(loc) != 2:
-            continue
-        lng, lat = gcj02_to_wgs84(float(loc[0]), float(loc[1]))
-        features.append({
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [lng, lat]},
-            "properties": {
-                "name": p.get("name", ""),
-                "address": p.get("address", "") or p.get("pname", ""),
-                "type": p.get("type", ""),
-                "distance_m": int(p.get("distance", 0) or 0),
-                "tel": p.get("tel", ""),
-            },
-        })
-    return {
-        "type": "FeatureCollection",
-        "features": features,
-        "count": len(features),
-        "center": center,
-        "radius_m": radius_m,
-        "provider": "amap",
-    }
+    return shape_poi_collection(
+        pois,
+        extract_coord=_extract_amap_loc,
+        properties_fn=lambda p: {
+            "name": p.get("name", ""),
+            "address": p.get("address", "") or p.get("pname", ""),
+            "type": p.get("type", ""),
+            "distance_m": int(p.get("distance", 0) or 0),
+            "tel": p.get("tel", ""),
+        },
+        provider="amap",
+        src_crs="gcj02",
+        limit=limit,
+        extra_envelope={"center": center, "radius_m": radius_m},
+    )
 
 
 
@@ -495,29 +487,20 @@ async def _search_poi_polygon_amap(
     if "error" in data:
         return data
     pois = data.get("pois", [])
-    features = []
-    for p in pois[:limit]:
-        loc = p.get("location", "").split(",")
-        if len(loc) != 2:
-            continue
-        lng, lat = gcj02_to_wgs84(float(loc[0]), float(loc[1]))
-        features.append({
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [lng, lat]},
-            "properties": {
-                "name": p.get("name", ""),
-                "address": p.get("address", "") or p.get("pname", ""),
-                "type": p.get("type", ""),
-                "tel": p.get("tel", ""),
-            },
-        })
-    return {
-        "type": "FeatureCollection",
-        "features": features,
-        "count": len(features),
-        "polygon": polygon,
-        "provider": "amap",
-    }
+    return shape_poi_collection(
+        pois,
+        extract_coord=_extract_amap_loc,
+        properties_fn=lambda p: {
+            "name": p.get("name", ""),
+            "address": p.get("address", "") or p.get("pname", ""),
+            "type": p.get("type", ""),
+            "tel": p.get("tel", ""),
+        },
+        provider="amap",
+        src_crs="gcj02",
+        limit=limit,
+        extra_envelope={"polygon": polygon},
+    )
 
 
 

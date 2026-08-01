@@ -10,6 +10,19 @@ from app.core.config import settings
 from app.utils.coord_transform import wgs84_to_bd09, bd09_to_wgs84
 
 from app.tools.chinese_maps.http import _baidu_get
+from app.tools.chinese_maps._shaping import shape_poi_collection
+
+
+def _extract_baidu_loc(p: dict) -> tuple[float, float] | None:
+    """Pull (lng, lat) from a Baidu ``{lng, lat}`` location dict, or None."""
+    loc = p.get("location", {})
+    lng, lat = loc.get("lng"), loc.get("lat")
+    if lng is None or lat is None:
+        return None
+    try:
+        return float(lng), float(lat)
+    except (TypeError, ValueError):
+        return None
 
 logger = logging.getLogger(__name__)
 
@@ -224,30 +237,21 @@ async def _search_poi_around_baidu(
     if "error" in data:
         return data
     pois = data.get("results", [])
-    features = []
-    for p in pois[:limit]:
-        loc = p.get("location", {})
-        b_lng, b_lat = loc.get("lng", 0), loc.get("lat", 0)
-        lng, lat = bd09_to_wgs84(b_lng, b_lat)
-        features.append({
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [lng, lat]},
-            "properties": {
-                "name": p.get("name", ""),
-                "address": p.get("address", ""),
-                "type": p.get("detail_info", {}).get("type", ""),
-                "distance_m": int(p.get("detail_info", {}).get("distance", 0) or 0),
-                "tel": p.get("telephone", ""),
-            },
-        })
-    return {
-        "type": "FeatureCollection",
-        "features": features,
-        "count": len(features),
-        "center": center,
-        "radius_m": radius_m,
-        "provider": "baidu",
-    }
+    return shape_poi_collection(
+        pois,
+        extract_coord=_extract_baidu_loc,
+        properties_fn=lambda p: {
+            "name": p.get("name", ""),
+            "address": p.get("address", ""),
+            "type": p.get("detail_info", {}).get("type", ""),
+            "distance_m": int(p.get("detail_info", {}).get("distance", 0) or 0),
+            "tel": p.get("telephone", ""),
+        },
+        provider="baidu",
+        src_crs="bd09",
+        limit=limit,
+        extra_envelope={"center": center, "radius_m": radius_m},
+    )
 
 
 
@@ -257,29 +261,21 @@ async def _search_poi_baidu(keyword: str, city: str, limit: int) -> dict:
     if "error" in data:
         return data
     pois = data.get("results", [])
-    features = []
-    for p in pois[:limit]:
-        loc = p.get("location", {})
-        bd_lng, bd_lat = loc.get("lng", 0), loc.get("lat", 0)
-        lng, lat = bd09_to_wgs84(bd_lng, bd_lat)
-        features.append({
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [lng, lat]},
-            "properties": {
-                "name": p.get("name", ""),
-                "address": p.get("address", ""),
-                "type": p.get("detail_info", {}).get("type", ""),
-                "tel": p.get("telephone", ""),
-                "city": p.get("city", ""),
-                "district": p.get("area", ""),
-            },
-        })
-    return {
-        "type": "FeatureCollection",
-        "features": features,
-        "count": len(features),
-        "provider": "baidu",
-    }
+    return shape_poi_collection(
+        pois,
+        extract_coord=_extract_baidu_loc,
+        properties_fn=lambda p: {
+            "name": p.get("name", ""),
+            "address": p.get("address", ""),
+            "type": p.get("detail_info", {}).get("type", ""),
+            "tel": p.get("telephone", ""),
+            "city": p.get("city", ""),
+            "district": p.get("area", ""),
+        },
+        provider="baidu",
+        src_crs="bd09",
+        limit=limit,
+    )
 
 
 
@@ -302,28 +298,22 @@ async def _search_poi_polygon_baidu(
     if "error" in data:
         return data
     pois = data.get("results", [])
-    features = []
-    for p in pois[:limit]:
-        loc = p.get("location", {})
-        b_lng, b_lat = loc.get("lng", 0), loc.get("lat", 0)
-        lng, lat = bd09_to_wgs84(b_lng, b_lat)
-        features.append({
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [lng, lat]},
-            "properties": {
-                "name": p.get("name", ""),
-                "address": p.get("address", ""),
-                "type": p.get("detail_info", {}).get("type", ""),
-                "tel": p.get("telephone", ""),
-            },
-        })
-    return {
-        "type": "FeatureCollection",
-        "features": features,
-        "count": len(features),
-        "polygon": polygon,
-        "provider": "baidu",
-        "note": "Baidu 用 polygon 外接矩形 (bbox) 近似查询",
-    }
+    return shape_poi_collection(
+        pois,
+        extract_coord=_extract_baidu_loc,
+        properties_fn=lambda p: {
+            "name": p.get("name", ""),
+            "address": p.get("address", ""),
+            "type": p.get("detail_info", {}).get("type", ""),
+            "tel": p.get("telephone", ""),
+        },
+        provider="baidu",
+        src_crs="bd09",
+        limit=limit,
+        extra_envelope={
+            "polygon": polygon,
+            "note": "Baidu 用 polygon 外接矩形 (bbox) 近似查询",
+        },
+    )
 
 

@@ -10,6 +10,21 @@ import logging
 from app.core.config import settings
 
 from app.tools.chinese_maps.http import _tianditu_get
+from app.tools.chinese_maps._shaping import shape_poi_collection
+
+
+def _extract_tianditu_loc(p: dict) -> tuple[float, float] | None:
+    """Pull (lng, lat) from a Tianditu ``"lng lat"`` lonlat string, or None.
+
+    Tianditu coordinates are CGCS2000 (≈ WGS84), so no CRS transform is applied.
+    """
+    lonlat = p.get("lonlat", "").split(" ")
+    if len(lonlat) != 2:
+        return None
+    try:
+        return float(lonlat[0]), float(lonlat[1])
+    except ValueError:
+        return None
 
 logger = logging.getLogger(__name__)
 
@@ -200,29 +215,19 @@ async def _search_poi_around_tianditu(
     if "error" in data:
         return data
     pois = data.get("pois", [])
-    features = []
-    for p in pois[:limit]:
-        lonlat = p.get("lonlat", "").split(" ")
-        if len(lonlat) != 2:
-            continue
-        lng, lat = float(lonlat[0]), float(lonlat[1])
-        features.append({
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [lng, lat]},
-            "properties": {
-                "name": p.get("name", ""),
-                "address": p.get("address", ""),
-                "tel": p.get("phone", ""),
-            },
-        })
-    return {
-        "type": "FeatureCollection",
-        "features": features,
-        "count": len(features),
-        "center": center,
-        "radius_m": radius_m,
-        "provider": "tianditu",
-    }
+    return shape_poi_collection(
+        pois,
+        extract_coord=_extract_tianditu_loc,
+        properties_fn=lambda p: {
+            "name": p.get("name", ""),
+            "address": p.get("address", ""),
+            "tel": p.get("phone", ""),
+        },
+        provider="tianditu",
+        src_crs=None,  # CGCS2000 ≈ WGS84, no transform
+        limit=limit,
+        extra_envelope={"center": center, "radius_m": radius_m},
+    )
 
 
 
@@ -245,26 +250,17 @@ async def _search_poi_tianditu(keyword: str, city: str, limit: int) -> dict:
     pois = data.get("pois", [])
     if not pois and isinstance(data.get("resultType"), int):
         return {"type": "FeatureCollection", "features": [], "count": 0, "provider": "tianditu"}
-    features = []
-    for p in pois[:limit]:
-        lonlat = p.get("lonlat", "").split(" ")
-        if len(lonlat) != 2:
-            continue
-        lng, lat = float(lonlat[0]), float(lonlat[1])
-        features.append({
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [lng, lat]},
-            "properties": {
-                "name": p.get("name", ""),
-                "address": p.get("address", ""),
-                "tel": p.get("phone", ""),
-            },
-        })
-    return {
-        "type": "FeatureCollection",
-        "features": features,
-        "count": len(features),
-        "provider": "tianditu",
-    }
+    return shape_poi_collection(
+        pois,
+        extract_coord=_extract_tianditu_loc,
+        properties_fn=lambda p: {
+            "name": p.get("name", ""),
+            "address": p.get("address", ""),
+            "tel": p.get("phone", ""),
+        },
+        provider="tianditu",
+        src_crs=None,  # CGCS2000 ≈ WGS84, no transform
+        limit=limit,
+    )
 
 
