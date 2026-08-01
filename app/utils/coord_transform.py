@@ -110,6 +110,15 @@ def normalize_chinese_crs(crs_str: str) -> Optional[str]:
     return None
 
 
+def supported_chinese_crs() -> Tuple[str, ...]:
+    """Return the supported Chinese-CRS set as a stable, ascending tuple.
+
+    Adapters format error messages from this single source rather than
+    hardcoding the set (Candidate #2). 调用方可依赖顺序做文案拼接。
+    """
+    return tuple(sorted(_CHINESE_CRS))
+
+
 def _transform_chinese_point(lng: float, lat: float, src: str, dst: str) -> Tuple[float, float]:
     if src == dst:
         return lng, lat

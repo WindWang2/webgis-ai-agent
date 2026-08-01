@@ -6,9 +6,9 @@ from typing import Any, Dict, List, Union
 from app.utils.geojson import geojson_bbox
 
 
-def _calculate_suggested_zoom(minx: float, miny: float, maxx: float, maxy: float) -> int:
-  dx = abs(maxx - minx)
-  dy = abs(maxy - miny)
+def _calculate_suggested_zoom(west: float, south: float, east: float, north: float) -> int:
+  dx = abs(east - west)
+  dy = abs(north - south)
   span = max(dx, dy)
 
   if span <= 0:

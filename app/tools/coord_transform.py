@@ -16,7 +16,7 @@ from typing import Any
 
 from app.tools.registry import ToolRegistry, tool
 from app.tools._utils import std_error_response
-from app.utils.coord_transform import transform_geojson, normalize_chinese_crs
+from app.utils.coord_transform import transform_geojson, normalize_chinese_crs, supported_chinese_crs
 from app.lib.geo_processor.core import safe_parse
 
 logger = logging.getLogger(__name__)
@@ -55,12 +55,13 @@ def register_coord_transform_tools(registry: ToolRegistry):
         src = normalize_chinese_crs(from_crs)
         dst = normalize_chinese_crs(to_crs)
         if src is None or dst is None:
+            crs_list = list(supported_chinese_crs())
             msg = (f"不支持的坐标系 from={from_crs} to={to_crs}。"
-                   f"必须是 ['bd09', 'gcj02', 'wgs84'] 之一。")
+                   f"必须是 {crs_list} 之一。")
             return std_error_response(
                 msg,
                 code="VALIDATION_ERROR",
-                correction_hint="请将 from_crs/to_crs 改为 ['bd09', 'gcj02', 'wgs84'] 之一。",
+                correction_hint=f"请将 from_crs/to_crs 改为 {crs_list} 之一。",
             )
 
         data = safe_parse(geojson)

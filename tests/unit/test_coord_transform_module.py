@@ -4,6 +4,7 @@ import pytest
 from app.utils.coord_transform import (
     transform_geojson,
     normalize_chinese_crs,
+    supported_chinese_crs,
     wgs84_to_gcj02,
     gcj02_to_wgs84,
     gcj02_to_bd09,
@@ -24,6 +25,18 @@ def test_normalize_chinese_crs():
     assert normalize_chinese_crs("EPSG:4326") is None
     assert normalize_chinese_crs("utm") is None
     assert normalize_chinese_crs("") is None
+
+
+def test_supported_chinese_crs():
+    # Candidate #2: supported_chinese_crs is the single source the adapter
+    # formats its error messages from, so the supported set must live in one
+    # place. 调用方可依赖顺序做文案拼接。
+    crs = supported_chinese_crs()
+    # Stable, ascending tuple — order is part of the contract.
+    assert isinstance(crs, tuple)
+    assert crs == ("bd09", "gcj02", "wgs84")
+    # Content equals the canonical set; callers cannot mutate the private set.
+    assert set(crs) == {"bd09", "gcj02", "wgs84"}
 
 
 def test_scalar_math_helpers():
