@@ -46,7 +46,6 @@ from app.services.chat.context_builder import (
 from app.services.tool_dispatch_service import (
     ToolDispatchResult,
     ToolDispatchService,
-    calculate_bbox as _calculate_bbox,
     is_suspicious_result as _is_suspicious_result_fn,
     slim_tool_result as _slim_tool_result,
 )

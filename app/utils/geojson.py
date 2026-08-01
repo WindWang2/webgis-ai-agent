@@ -47,13 +47,17 @@ def geojson_bbox(data: Any) -> Optional[List[float]]:
         elif isinstance(node, dict):
             if "coordinates" in node:
                 walk(node["coordinates"], depth + 1)
-            if node.get("type") == "FeatureCollection":
+            # Walk a features list whether or not a strict type tag is present —
+            # callers (e.g. the spatial meta profiler) feed loose {"features": [...]}
+            # dicts, and this converged walker must handle every shape the three
+            # originals did (Candidate #4).
+            if node.get("type") == "FeatureCollection" or isinstance(node.get("features"), list):
                 for f in node.get("features", []) or []:
                     walk(f, depth + 1)
-            elif node.get("type") == "Feature":
-                geom = node.get("geometry")
-                if geom:
-                    walk(geom, depth + 1)
+            # Walk a geometry whether or not the node is tagged as a Feature —
+            # mirrors how "coordinates" is walked structurally, not by type tag.
+            if "geometry" in node and isinstance(node["geometry"], dict):
+                walk(node["geometry"], depth + 1)
 
     walk(data)
     return bounds if found else None

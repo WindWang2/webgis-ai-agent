@@ -9,7 +9,6 @@
 from app.services.chat.llm_client import LRUCache, parse_minimax_xml_tool_calls
 from app.services.tool_dispatch_service import (
     MSG_MAX_CHARS,
-    calculate_bbox,
     is_error_dict,
     normalize_tool_args,
     slim_event_result,
@@ -25,6 +24,5 @@ __all__ = [
     "is_error_dict",
     "wrap_error_dict_for_llm",
     "slim_tool_result",
-    "calculate_bbox",
     "slim_event_result",
 ]

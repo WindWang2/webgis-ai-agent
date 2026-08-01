@@ -38,6 +38,7 @@ from app.services.session_data import session_data_manager
 from app.services.chat.prompt import construct_self_healing_message
 from app.tools.registry import ToolRegistry
 from app.utils.security import sanitize_error_msg
+from app.utils.geojson import geojson_bbox
 
 logger = logging.getLogger(__name__)
 
@@ -141,39 +142,6 @@ def wrap_error_dict_for_llm(tool_name: str, result: dict) -> str:
     return construct_self_healing_message(tool_name, message, error_type)
 
 
-def calculate_bbox(geojson: Any) -> Optional[list]:
-    if not isinstance(geojson, dict):
-        return None
-    features = geojson.get("features", [])
-    if not features:
-        return None
-    min_lat, min_lon = float("inf"), float("inf")
-    max_lat, max_lon = float("-inf"), float("-inf")
-    found = False
-
-    def process(c):
-        nonlocal min_lat, min_lon, max_lat, max_lon, found
-        if isinstance(c, (list, tuple)) and len(c) >= 2 and isinstance(c[0], (int, float)):
-            lng, lat = float(c[0]), float(c[1])
-            min_lon, max_lon = min(min_lon, lng), max(max_lon, lng)
-            min_lat, max_lat = min(min_lat, lat), max(max_lat, lat)
-            found = True
-        elif isinstance(c, list):
-            for item in c:
-                process(item)
-
-    for f in features:
-        geom = f.get("geometry")
-        if not geom:
-            continue
-        coords = geom.get("coordinates")
-        if not coords:
-            continue
-        process(coords)
-
-    return [min_lon, min_lat, max_lon, max_lat] if found else None
-
-
 def slim_tool_result(result: Any, result_str: str, session_geojson_ref: Optional[str]) -> str:
     if isinstance(result, dict) and "summary" in result:
         slim = {"summary": result["summary"]}
@@ -240,9 +208,9 @@ def slim_event_result(result: Any) -> Any:
     bbox = result.get("bbox")
     if not bbox:
         if "geojson" in result:
-            bbox = calculate_bbox(result["geojson"])
+            bbox = geojson_bbox(result["geojson"])
         elif result.get("type") == "FeatureCollection" and "features" in result:
-            bbox = calculate_bbox(result)
+            bbox = geojson_bbox(result)
 
     if isinstance(bbox, str) and bbox:
         parts = [float(x) for x in bbox.split(",") if x.strip()]

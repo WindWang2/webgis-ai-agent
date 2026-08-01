@@ -3,6 +3,8 @@ import math
 from pathlib import Path
 from typing import Any, Dict, List, Union
 
+from app.utils.geojson import geojson_bbox
+
 
 def _calculate_suggested_zoom(minx: float, miny: float, maxx: float, maxy: float) -> int:
   dx = abs(maxx - minx)
@@ -42,46 +44,6 @@ def _calculate_suggested_zoom(minx: float, miny: float, maxx: float, maxy: float
   return 15
 
 
-def _extract_bbox_and_geometries(features: List[Dict[str, Any]]) -> tuple[List[float], List[str]]:
-  minx, miny = float("inf"), float("inf")
-  maxx, maxy = float("-inf"), float("-inf")
-  geom_types = set()
-
-  def process_coords(coords: Any):
-    nonlocal minx, miny, maxx, maxy
-    if not coords:
-      return
-    if isinstance(coords[0], (int, float)):
-      x, y = float(coords[0]), float(coords[1])
-      if x < minx:
-        minx = x
-      if x > maxx:
-        maxx = x
-      if y < miny:
-        miny = y
-      if y > maxy:
-        maxy = y
-    else:
-      for sub in coords:
-        process_coords(sub)
-
-  for f in features:
-    geom = f.get("geometry")
-    if not geom:
-      continue
-    gtype = geom.get("type")
-    if gtype:
-      geom_types.add(gtype)
-    coords = geom.get("coordinates")
-    if coords:
-      process_coords(coords)
-
-  if minx == float("inf"):
-    return [0.0, 0.0, 0.0, 0.0], sorted(list(geom_types))
-
-  return [round(minx, 6), round(miny, 6), round(maxx, 6), round(maxy, 6)], sorted(list(geom_types))
-
-
 def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]) -> Dict[str, Any]:
   """
   Analyzes a GeoJSON data source and produces a Spatial Meta Profile.
@@ -108,11 +70,29 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
       features = data["features"]
 
   feature_count = len(features)
-  bbox, geom_types = _extract_bbox_and_geometries(features)
 
-  center_lng = round((bbox[0] + bbox[2]) / 2, 6)
-  center_lat = round((bbox[1] + bbox[3]) / 2, 6)
-  zoom = _calculate_suggested_zoom(bbox[0], bbox[1], bbox[2], bbox[3])
+  # bbox: route through the canonical geojson_bbox (handles Feature / Geometry /
+  # Collection + bbox short-circuit). geom_types is profiler-specific (single
+  # consumer), so it stays inline here rather than widening geojson_bbox's
+  # interface (Candidate #4).
+  bbox = geojson_bbox(data) if isinstance(data, dict) else None
+
+  geom_types = sorted({
+      f.get("geometry", {}).get("type")
+      for f in features
+      if isinstance(f, dict) and f.get("geometry", {}).get("type")
+  })
+
+  # Empty source → no bbox → no suggestedView. Previously this returned
+  # [0,0,0,0], whose center [0,0] (Null Island) got auto-injected as the
+  # map view; now the downstream view_has_center check skips it.
+  if bbox is not None:
+    center_lng = round((bbox[0] + bbox[2]) / 2, 6)
+    center_lat = round((bbox[1] + bbox[3]) / 2, 6)
+    zoom = _calculate_suggested_zoom(bbox[0], bbox[1], bbox[2], bbox[3])
+    suggested_view = {"center": [center_lng, center_lat], "zoom": zoom}
+  else:
+    suggested_view = {}
 
   # Profile fields
   field_values: Dict[str, List[Any]] = {}
@@ -166,5 +146,5 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
       "featureCount": feature_count,
       "geometryTypes": geom_types,
       "fields": fields_profile,
-      "suggestedView": {"center": [center_lng, center_lat], "zoom": zoom},
+      "suggestedView": suggested_view,
   }

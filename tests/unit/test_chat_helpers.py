@@ -10,7 +10,6 @@ import pytest
 from app.services.chat.sse_helpers import (
     LRUCache,
     MSG_MAX_CHARS,
-    calculate_bbox,
     is_error_dict,
     normalize_tool_args,
     parse_minimax_xml_tool_calls,
@@ -22,6 +21,7 @@ from app.services.chat.prompt import (
     SYSTEM_PROMPT,
     construct_self_healing_message,
 )
+from app.utils.geojson import geojson_bbox
 
 
 # ─── LRUCache ──────────────────────────────────────────────────
@@ -151,14 +151,14 @@ def test_parse_minimax_xml_empty_when_no_match():
     assert parse_minimax_xml_tool_calls("just text") == []
 
 
-# ─── calculate_bbox ───────────────────────────────────────────
+# ─── geojson_bbox (converged canonical walker, Candidate #4) ──
 
 
-class TestCalculateBbox:
+class TestGeojsonBbox:
     def test_returns_none_for_empty(self):
-        assert calculate_bbox({"features": []}) is None
-        assert calculate_bbox({}) is None
-        assert calculate_bbox("nope") is None
+        assert geojson_bbox({"features": []}) is None
+        assert geojson_bbox({}) is None
+        assert geojson_bbox("nope") is None
 
     def test_handles_point_and_polygon(self):
         gc = {
@@ -167,7 +167,13 @@ class TestCalculateBbox:
                 {"geometry": {"type": "Polygon", "coordinates": [[[0, 0], [30, 0], [30, 25], [0, 25], [0, 0]]]}},
             ]
         }
-        assert calculate_bbox(gc) == [0.0, 0.0, 30.0, 25.0]
+        assert geojson_bbox(gc) == [0.0, 0.0, 30.0, 25.0]
+
+    def test_handles_bare_feature(self):
+        # geojson_bbox covers bare Feature/Geometry — the old narrow
+        # calculate_bbox silently returned None here (Candidate #4 fix).
+        feat = {"type": "Feature", "geometry": {"type": "Point", "coordinates": [5, 15]}}
+        assert geojson_bbox(feat) == [5.0, 15.0, 5.0, 15.0]
 
 
 # ─── 兼容性：旧 chat_engine 别名 ─────────────────────────────
@@ -177,7 +183,6 @@ def test_chat_engine_reexports_old_names():
     """老代码 / 旧测试 import 的下划线版本必须仍工作。"""
     from app.services import chat_engine as ce
     assert ce._slim_tool_result is slim_tool_result
-    assert ce._calculate_bbox is calculate_bbox
     assert ce._construct_self_healing_message is construct_self_healing_message
     assert ce._parse_minimax_xml_tool_calls is parse_minimax_xml_tool_calls
     assert ce.SYSTEM_PROMPT is SYSTEM_PROMPT
