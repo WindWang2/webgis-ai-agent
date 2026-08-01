@@ -40,9 +40,9 @@ class TestPiBridgeBasics:
         return PiBridge(extension_paths=[])
 
     def test_create_with_defaults(self, bridge):
-        assert bridge._process is None
-        assert bridge._pending_requests == {}
-        assert bridge._event_queue.empty()
+        assert bridge._rpc._process is None
+        assert bridge._rpc._pending_requests == {}
+        assert bridge._rpc._event_queue.empty()
 
     def test_create_with_custom_paths(self):
         bridge = PiBridge(
@@ -51,342 +51,112 @@ class TestPiBridgeBasics:
             cwd=None,
             extension_paths=["/ext/one", "/ext/two"],
         )
-        assert bridge._extension_paths == ["/ext/one", "/ext/two"]
+        assert bridge._rpc._extension_paths == ["/ext/one", "/ext/two"]
 
-
-class TestPiBridgeEventMapping:
-    """Test _map_event_to_sse without subprocess."""
-
-    @pytest.fixture
-    def bridge(self):
-        b = PiBridge()
-        b._session_id = "sess-123"
-        return b
-
-    @staticmethod
-    def _parse_sse(sse: str) -> tuple[str, dict]:
-        lines = sse.strip().split("\n")
-        event_type = lines[0].replace("event: ", "").strip()
-        data_line = lines[1].replace("data: ", "").strip()
-        return event_type, json.loads(data_line)
-
-    # --- token events ---
-
-    def test_text_delta_maps_to_token(self, bridge):
-        event = {
-            "type": "message_update",
-            "message": {
-                "role": "assistant",
-                "content": [{"type": "text", "text": "Hello"}],
-            },
-            "assistantMessageEvent": {
-                "type": "text_delta",
-                "content": "Hello",
-            },
-        }
-        sse = bridge._map_event_to_sse(event)
-        assert sse is not None
-        ev, data = self._parse_sse(sse)
-        assert ev == "token"
-        assert data["content"] == "Hello"
-        assert data["session_id"] == "sess-123"
-
-    def test_thinking_delta_maps_to_token_with_reasoning(self, bridge):
-        event = {
-            "type": "message_update",
-            "message": {"role": "assistant", "content": [{"type": "thinking", "text": "hmm"}]},
-            "assistantMessageEvent": {
-                "type": "thinking_delta",
-                "content": "hmm",
-            },
-        }
-        sse = bridge._map_event_to_sse(event)
-        assert sse is not None
-        ev, data = self._parse_sse(sse)
-        assert ev == "token"
-        assert data["is_reasoning"] is True
-
-    def test_tool_call_message_maps_to_tool_call(self, bridge):
-        event = {
-            "type": "message_update",
-            "message": {
-                "role": "assistant",
-                "content": [{"type": "tool_call", "name": "spatial_analyze", "arguments": "{}"}],
-            },
-            "assistantMessageEvent": {
-                "type": "tool_call",
-                "name": "spatial_analyze",
-                "arguments": "{}",
-            },
-        }
-        sse = bridge._map_event_to_sse(event)
-        assert sse is not None
-        ev, data = self._parse_sse(sse)
-        assert ev == "tool_call"
-        assert data["name"] == "spatial_analyze"
-
-    # --- tool execution events ---
-
-    def test_tool_execution_start_maps_to_step_start(self, bridge):
-        event = {
-            "type": "tool_execution_start",
-            "toolCallId": "tc-1",
-            "toolName": "spatial_analyze",
-            "args": {"layer": "buildings"},
-        }
-        sse = bridge._map_event_to_sse(event)
-        assert sse is not None
-        ev, data = self._parse_sse(sse)
-        assert ev == "step_start"
-        assert data["tool"] == "spatial_analyze"
-        assert data["step_id"] == "tc-1"
-
-    def test_tool_execution_end_success_maps_to_step_result(self, bridge):
-        event = {
-            "type": "tool_execution_end",
-            "toolCallId": "tc-1",
-            "toolName": "spatial_analyze",
-            "result": {"features": 10},
-            "isError": False,
-        }
-        sse = bridge._map_event_to_sse(event)
-        assert sse is not None
-        ev, data = self._parse_sse(sse)
-        assert ev == "step_result"
-        assert data["tool"] == "spatial_analyze"
-
-    def test_tool_execution_end_error_maps_to_step_error(self, bridge):
-        event = {
-            "type": "tool_execution_end",
-            "toolCallId": "tc-1",
-            "toolName": "spatial_analyze",
-            "result": {"content": [{"type": "text", "text": "invalid layer"}]},
-            "isError": True,
-        }
-        sse = bridge._map_event_to_sse(event)
-        assert sse is not None
-        ev, data = self._parse_sse(sse)
-        assert ev == "step_error"
-        assert "invalid layer" in data["error"]
-
-    # --- lifecycle events ---
-
-    def test_agent_end_maps_to_task_complete(self, bridge):
-        event = {"type": "agent_end"}
-        sse = bridge._map_event_to_sse(event)
-        assert sse is not None
-        ev, data = self._parse_sse(sse)
-        assert ev == "task_complete"
-
-    def test_compaction_start_maps_to_content(self, bridge):
-        event = {"type": "compaction_start"}
-        sse = bridge._map_event_to_sse(event)
-        assert sse is not None
-        ev, data = self._parse_sse(sse)
-        assert ev == "content"
-        assert "压缩" in data["content"]
-
-    def test_compaction_end_maps_to_content(self, bridge):
-        event = {"type": "compaction_end"}
-        sse = bridge._map_event_to_sse(event)
-        assert sse is not None
-        ev, data = self._parse_sse(sse)
-        assert ev == "content"
-        assert "完成" in data["content"]
-
-    def test_unknown_event_returns_none(self, bridge):
-        assert bridge._map_event_to_sse({"type": "unknown"}) is None
-
-    def test_extract_text_from_string_content(self, bridge):
-        text = bridge._extract_text_from_event({
-            "type": "message_update",
-            "message": {"content": "plain text"},
-        })
-        assert text == "plain text"
-
-    def test_extract_text_from_list_content(self, bridge):
-        text = bridge._extract_text_from_event({
-            "type": "message_update",
-            "message": {
-                "content": [
-                    {"type": "text", "text": "part1"},
-                    {"type": "text", "text": "part2"},
-                ]
-            },
-        })
-        assert text == "part1part2"
-
-    def test_extract_error_text_from_dict(self, bridge):
-        err = bridge._extract_error_text({
-            "content": [{"type": "text", "text": "boom"}],
-        })
-        assert err == "boom"
-
-    def test_extract_error_text_fallback(self, bridge):
-        err = bridge._extract_error_text("simple error")
-        assert err == "simple error"
-
-
-# ============================================================================
-# PiBridge subprocess flow tests (mocked)
-# ============================================================================
 
 class TestPiBridgeSubprocessFlow:
-    """Test the bridge start/stop and request/response flow with mocked subprocess."""
-
-    @pytest.fixture
-    def bridge(self):
-        return PiBridge(extension_paths=[])
+    """Test the bridge start/stop and request/response flow with mocked RPC client."""
 
     @pytest.mark.asyncio
-    async def test_prompt_returns_content_from_events(self, bridge):
+    async def test_prompt_returns_content_from_events(self):
         """prompt() drains events and returns concatenated text."""
-        mock_proc = MagicMock()
-        mock_proc.stdin = MagicMock()
-        mock_proc.stdout = MagicMock()
-        mock_proc.stderr = MagicMock()
-        mock_proc.poll.return_value = None
-        mock_proc.stdout.readline.side_effect = make_readline([
-            '{"type":"response","id":"1","success":true}\n',
-            '{"type":"message_update","message":{"role":"assistant","content":[{"type":"text","text":"Hi there"}]}}\n',
-            '{"type":"agent_end"}\n',
-            '',
-        ])
+        rpc = MagicMock()
+        rpc.events = asyncio.Queue()
+        rpc.start = AsyncMock()
+        rpc.stop = AsyncMock()
+        bridge = PiBridge(rpc=rpc)
 
-        with patch("subprocess.Popen", return_value=mock_proc):
-            with patch("asyncio.sleep", return_value=None):
-                with patch.object(bridge, "_send_request", new_callable=AsyncMock, return_value=None):
-                    await bridge.start()
+        async def fake_request(cmd, data=None):
+            if cmd == "prompt":
+                await rpc.events.put({
+                    "type": "message_update",
+                    "message": {"role": "assistant", "content": [{"type": "text", "text": "Hi there"}]},
+                })
+                await rpc.events.put({"type": "agent_end"})
 
-        try:
-            result = await bridge.prompt("Say hi")
-            assert result["content"] == "Hi there"
-            assert "sessionId" in result
-        finally:
-            await bridge.stop()
+        rpc.request = AsyncMock(side_effect=fake_request)
+
+        result = await bridge.prompt("Say hi")
+        assert result["content"] == "Hi there"
+        assert "sessionId" in result
 
     @pytest.mark.asyncio
-    async def test_prompt_pi_error_raises_exception(self, bridge):
+    async def test_prompt_pi_error_raises_exception(self):
         """When Pi returns error, prompt() raises PiRpcError instead of returning error dict."""
-        mock_proc = MagicMock()
-        mock_proc.stdin = MagicMock()
-        mock_proc.stdout = MagicMock()
-        mock_proc.stderr = MagicMock()
-        mock_proc.poll.return_value = None
-        mock_proc.stdout.readline.side_effect = make_readline([
-            '{"type":"response","id":"1","success":false,"error":"No provider configured"}\n',
-            '',
-        ])
+        rpc = MagicMock()
+        rpc.request = AsyncMock(side_effect=PiRpcError("No provider configured"))
+        rpc.events = asyncio.Queue()
+        bridge = PiBridge(rpc=rpc)
 
-        with patch("subprocess.Popen", return_value=mock_proc):
-            with patch("asyncio.sleep", return_value=None):
-                with patch.object(bridge, "_send_request", new_callable=AsyncMock, return_value=None):
-                    await bridge.start()
-
-        try:
-            with pytest.raises(PiRpcError, match="No provider configured"):
-                await bridge.prompt("test")
-        finally:
-            await bridge.stop()
+        with pytest.raises(PiRpcError, match="No provider configured"):
+            await bridge.prompt("test")
 
     @pytest.mark.asyncio
-    async def test_stream_prompt_yields_sse_sequence(self, bridge):
+    async def test_stream_prompt_yields_sse_sequence(self):
         """stream_prompt yields task_start → token → task_complete → done."""
-        mock_proc = MagicMock()
-        mock_proc.stdin = MagicMock()
-        mock_proc.stdout = MagicMock()
-        mock_proc.stderr = MagicMock()
-        mock_proc.poll.return_value = None
-        mock_proc.stdout.readline.side_effect = make_readline([
-            '{"type":"response","id":"1","success":true}\n',
-            # Include assistantMessageEvent so _map_event_to_sse can detect token
-            '{"type":"message_update","message":{"role":"assistant","content":[]},"assistantMessageEvent":{"type":"text_delta","content":"streamed"}}\n',
-            '{"type":"agent_end"}\n',
-            '',
-        ])
+        rpc = MagicMock()
+        rpc.events = asyncio.Queue()
+        rpc.start = AsyncMock()
+        rpc.stop = AsyncMock()
+        bridge = PiBridge(rpc=rpc)
 
-        with patch("subprocess.Popen", return_value=mock_proc):
-            with patch("asyncio.sleep", return_value=None):
-                with patch.object(bridge, "_send_request", new_callable=AsyncMock, return_value=None):
-                    await bridge.start()
+        async def fake_request(cmd, data=None):
+            if cmd == "prompt":
+                await rpc.events.put({
+                    "type": "message_update",
+                    "message": {"role": "assistant", "content": []},
+                    "assistantMessageEvent": {"type": "text_delta", "content": "streamed"},
+                })
+                await rpc.events.put({"type": "agent_end"})
 
-        try:
-            events = []
-            async for ev in bridge.stream_prompt("stream me"):
-                events.append(ev)
+        rpc.request = AsyncMock(side_effect=fake_request)
 
-            event_types = [e.split("\n")[0].replace("event: ", "") for e in events if e.strip()]
-            assert "task_start" in event_types
-            assert "token" in event_types, f"Expected 'token' in events, got: {event_types}"
-            assert "task_complete" in event_types
-            assert event_types[-1] == "done"
-        finally:
-            await bridge.stop()
+        events = []
+        async for ev in bridge.stream_prompt("stream me"):
+            events.append(ev)
+
+        event_types = [e.split("\n")[0].replace("event: ", "") for e in events if e.strip()]
+        assert "task_start" in event_types
+        assert "token" in event_types, f"Expected 'token' in events, got: {event_types}"
+        assert "task_complete" in event_types
+        assert event_types[-1] == "done"
 
     @pytest.mark.asyncio
-    async def test_stream_prompt_timeout_yields_error_event(self, bridge):
+    async def test_stream_prompt_timeout_yields_error_event(self, monkeypatch):
         """When no events arrive within timeout, stream_prompt yields error SSE + done."""
-        mock_proc = MagicMock()
-        mock_proc.stdin = MagicMock()
-        mock_proc.stdout = MagicMock()
-        mock_proc.stderr = MagicMock()
-        mock_proc.poll.return_value = None
-        mock_proc.stdout.readline.side_effect = make_readline([
-            '{"type":"response","id":"1","success":true}\n',
-            '',
-        ])
+        rpc = MagicMock()
+        rpc.events = asyncio.Queue()
+        rpc.request = AsyncMock()
+        bridge = PiBridge(rpc=rpc)
 
-        with patch("subprocess.Popen", return_value=mock_proc):
-            with patch("asyncio.sleep", return_value=None):
-                with patch.object(bridge, "_send_request", new_callable=AsyncMock, return_value=None):
-                    await bridge.start()
+        monkeypatch.setattr("app.agent_pi_bridge.PI_EVENT_STREAM_TIMEOUT", 0.01)
 
-        try:
-            events = []
-            async for ev in bridge.stream_prompt("slow"):
-                events.append(ev)
+        events = []
+        async for ev in bridge.stream_prompt("slow"):
+            events.append(ev)
 
-            event_types = [e.split("\n")[0].replace("event: ", "") for e in events if e.strip()]
-            assert event_types[0] == "task_start"
-            assert "error" in event_types, f"Expected 'error' event on timeout, got: {event_types}"
-            assert event_types[-1] == "done"
-        finally:
-            await bridge.stop()
+        event_types = [e.split("\n")[0].replace("event: ", "") for e in events if e.strip()]
+        assert event_types[0] == "task_start"
+        assert "error" in event_types, f"Expected 'error' event on timeout, got: {event_types}"
+        assert event_types[-1] == "done"
 
     @pytest.mark.asyncio
-    async def test_stream_prompt_rpc_error_yields_task_error(self, bridge):
-        """When _send_request fails, stream_prompt yields task_error + done."""
-        mock_proc = MagicMock()
-        mock_proc.stdin = MagicMock()
-        mock_proc.stdout = MagicMock()
-        mock_proc.stderr = MagicMock()
-        mock_proc.poll.return_value = None
-        # readline never called because send fails immediately
-        mock_proc.stdout.readline.side_effect = make_readline([''])
+    async def test_stream_prompt_rpc_error_yields_task_error(self):
+        """When _rpc.request fails, stream_prompt yields task_error + done."""
+        rpc = MagicMock()
+        rpc.request = AsyncMock(side_effect=PiRpcError("connection refused"))
+        rpc.events = asyncio.Queue()
+        bridge = PiBridge(rpc=rpc)
 
-        with patch("subprocess.Popen", return_value=mock_proc):
-            with patch("asyncio.sleep", return_value=None):
-                with patch.object(bridge, "_send_request", new_callable=AsyncMock, return_value=None):
-                    await bridge.start()
+        events = []
+        async for ev in bridge.stream_prompt("test"):
+            events.append(ev)
 
-        try:
-            # Patch _send_request to raise PiRpcError
-            async def failing_send(cmd, data=None):
-                raise PiRpcError("connection refused")
-            bridge._send_request = failing_send
-
-            events = []
-            async for ev in bridge.stream_prompt("test"):
-                events.append(ev)
-
-            event_types = [e.split("\n")[0].replace("event: ", "") for e in events if e.strip()]
-            assert "task_error" in event_types, f"Expected 'task_error', got: {event_types}"
-            # Verify error payload mentions the failure reason
-            error_ev = next(e for e in events if "task_error" in e)
-            assert "connection refused" in error_ev
-            assert event_types[-1] == "done"
-        finally:
-            await bridge.stop()
+        event_types = [e.split("\n")[0].replace("event: ", "") for e in events if e.strip()]
+        assert "task_error" in event_types, f"Expected 'task_error', got: {event_types}"
+        error_ev = next(e for e in events if "task_error" in e)
+        assert "connection refused" in error_ev
+        assert event_types[-1] == "done"
 
 
 # ============================================================================
@@ -446,8 +216,8 @@ class TestPiToolsEndpoint:
         # The registry catches exceptions and returns a structured error dict.
         # pi_tools wraps it as content with isError=False so the LLM can read
         # the error details and decide how to recover.
-        assert "boom" in resp.content[0]["text"]
-        assert resp.details.get("success") is False
+        assert resp.isError is True
+        assert resp.details.get("error_type") == "RuntimeError"
 
     @pytest.mark.asyncio
     async def test_execute_async_tool(self):

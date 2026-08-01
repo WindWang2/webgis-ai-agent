@@ -20,6 +20,7 @@ from app.agent_pi_bridge import (
 )
 from app.agent_pi_bridge import _session_executed_sets, _dispatch_result_cache
 from app.services.session_data import session_data_manager
+from app.services.chat.pi_event_mapper import map_event_to_sse
 
 
 @pytest.fixture
@@ -96,14 +97,14 @@ async def test_http_callback_caches_result_for_sse_adapter(clean_session):
     assert cached.geojson_ref is not None  # 关键：ref 被存储了
 
 
-# ─── SSE 适配器：_handle_tool_execution_end 读缓存 ────────────────
+# ─── SSE 适配器：map_event_to_sse 读缓存 ────────────────
 
 
 @pytest.mark.asyncio
 async def test_sse_adapter_round_trips_geojson_ref(clean_session):
     """【回归锁定核心】SSE step_result 必须携带 geojson_ref。
 
-    此前 Pi 路径的 _handle_tool_execution_end 从 Pi 事件 payload 取 result 再 slim，
+    此前 Pi 路径的 map_event_to_sse 从 Pi 事件 payload 取 result 再 slim，
     从不携带 geojson_ref（因为 dispatch 没存 ref）。现在读缓存结果，
     geojson_ref 必须 round-trip 进 SSE payload，前端才能挂载图层。
     """
@@ -117,8 +118,6 @@ async def test_sse_adapter_round_trips_geojson_ref(clean_session):
     ))
 
     # Pi 随后流式回传 tool_execution_end 事件 —— SSE 适配器读缓存
-    bridge = PiBridge()
-    bridge._session_id = clean_session
     event = {
         "type": "tool_execution_end",
         "toolCallId": "tc-geo-3",
@@ -126,7 +125,7 @@ async def test_sse_adapter_round_trips_geojson_ref(clean_session):
         "result": {},  # 现在被忽略；真相在缓存里
         "isError": False,
     }
-    sse = bridge._map_event_to_sse(event)
+    sse = map_event_to_sse(event, clean_session, cache_lookup=get_cached_dispatch_result)
     assert sse is not None
     assert "geojson_ref" in sse
     assert "ref:geojson-" in sse
@@ -138,8 +137,6 @@ async def test_sse_adapter_falls_back_when_no_cache(clean_session):
 
     退化到旧行为：从事件 payload 取 result slim 一下，但不带 geojson_ref。
     """
-    bridge = PiBridge()
-    bridge._session_id = clean_session
     event = {
         "type": "tool_execution_end",
         "toolCallId": "tc-miss",
@@ -147,7 +144,7 @@ async def test_sse_adapter_falls_back_when_no_cache(clean_session):
         "result": {"summary": "info"},
         "isError": False,
     }
-    sse = bridge._map_event_to_sse(event)
+    sse = map_event_to_sse(event, clean_session, cache_lookup=get_cached_dispatch_result)
     assert sse is not None  # 不崩溃
     assert "step_result" in sse
 
@@ -171,8 +168,6 @@ async def test_sse_adapter_error_uses_cached_error_status(clean_session):
         sessionId=clean_session,
     ))
 
-    bridge = PiBridge()
-    bridge._session_id = clean_session
     event = {
         "type": "tool_execution_end",
         "toolCallId": "tc-err-1",
@@ -180,6 +175,6 @@ async def test_sse_adapter_error_uses_cached_error_status(clean_session):
         "result": {},
         "isError": False,  # Pi 不知道服务端判定为 error；真相在缓存
     }
-    sse = bridge._map_event_to_sse(event)
+    sse = map_event_to_sse(event, clean_session, cache_lookup=get_cached_dispatch_result)
     assert sse is not None
     assert "step_error" in sse
