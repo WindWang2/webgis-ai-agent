@@ -47,9 +47,6 @@ async def test_deep_enhancement_flow():
     # 5. 测试叠加分析 (overlay_analysis)
     print("\nTesting overlay_analysis (buffer + intersect)...")
     # 先做个 buffer
-    from app.services.spatial_tasks import run_buffer_analysis
-    # 模拟 Agent 手法: run_buffer(ref:xxx) -> returns ref:yyy
-    # 这里我们简化，直接调 service
     from app.services.spatial_analyzer import SpatialAnalyzer
     buf_res = SpatialAnalyzer.buffer(mock_data["features"], distance=1, unit="km")
     ref_buf = session_data_manager.store(session_id, buf_res.data)

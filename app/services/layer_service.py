@@ -3,8 +3,8 @@ from typing import Optional, List, Tuple, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 from datetime import datetime, timezone
-from app.models.db_model import Layer, AnalysisTask
-from app.models.pydantic_models import LayerCreate, LayerUpdate, TaskCreate, TaskResponse
+from app.models.db_model import Layer
+from app.models.pydantic_models import LayerCreate, LayerUpdate
 
 
 class LayerService:
@@ -73,62 +73,8 @@ class LayerService:
         return True
 
 
-class TaskService:
-    """任务服务"""
-
-    def __init__(self, db: Session):
-        self.db = db
-
-    def create(self, task_data: TaskCreate, creator_id: str) -> AnalysisTask:
-        """创建任务"""
-        task = AnalysisTask(
-            task_type=task_data.task_type,
-            parameters=task_data.parameters,
-            status="pending",
-            creator_id=creator_id,
-            org_id=1,  # Default org ID
-            progress=0,
-            retry_count=0,
-            max_retries=3
-        )
-        self.db.add(task)
-        self.db.commit()
-        self.db.refresh(task)
-        return task
-
-    def get_task(self, task_id: str) -> Optional[AnalysisTask]:
-        """获取任务(按celery_task_id)"""
-        return self.db.query(AnalysisTask).filter(
-            AnalysisTask.celery_task_id == task_id
-        ).first()
-
-    def get_task_by_id(self, task_id: int) -> Optional[AnalysisTask]:
-        """获取任务（通过自增ID）"""
-        return self.db.query(AnalysisTask).filter(
-            AnalysisTask.id == task_id
-        ).first()
-
-    
-
-    def update_task_status(
-        self,
-        task_id: str,
-        status: str,
-        progress: Optional[int] = None,
-        result: Optional[Dict[str, Any]] = None,
-        error_message: Optional[str] = None
-    ) -> Optional[AnalysisTask]:
-        """更新任务状态"""
-        task = self.get_task(task_id)
-        if not task:
-            return None
-        task.status = status
-        if progress is not None:
-            task.progress = progress
-        if result is not None:
-            task.result = result
-        if error_message is not None:
-            task.error_message = error_message
-        self.db.commit()
-        self.db.refresh(task)
-        return task
+# TaskService 已删除——0 生产调用方。原 AnalysisTask DB 路径（TaskCreate →
+# AnalysisTask 行 → Celery dispatch → 状态轮询）端到端孤立：agent 工具直接调
+# SpatialAnalyzer（ADR-0013），3 个活 Celery 任务（run_heatmap_generation /
+# run_ndvi_analysis / run_change_detection）改用 UploadRecord 落库。
+# AnalysisTask 表模型保留——drop table 是带数据风险的迁移，不在本清理范围。

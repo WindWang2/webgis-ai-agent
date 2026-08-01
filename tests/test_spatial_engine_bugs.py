@@ -4,12 +4,12 @@ from unittest.mock import MagicMock
 
 pytestmark = pytest.mark.heavy
 
-# Test the core logic functions directly
-from app.services.spatial_tasks import (
-    _do_buffer_analysis, 
-    _do_heatmap_generation, 
-    _do_spatial_stats
-)
+# Test the core logic functions directly.
+# 注：原 _do_buffer_analysis / _do_spatial_stats 包装器已删除（D1，agent 工具直接调
+# SpatialAnalyzer）。这两个测试改为直接调引擎方法。_do_heatmap_generation 保留（仍
+# 支撑活 task run_heatmap_generation）。
+from app.services.spatial_tasks import _do_heatmap_generation
+from app.services.spatial_analyzer import SpatialAnalyzer
 
 def test_heatmap_empty_features():
     """测试空要素下的热力图生成"""
@@ -36,16 +36,22 @@ def test_buffer_heterogeneous_geometries():
         {"type": "Feature", "geometry": {"type": "Point", "coordinates": [120, 30]}},
         {"type": "Feature", "geometry": {"type": "LineString", "coordinates": [[120, 30], [121, 31]]}}
     ]
-    result = _do_buffer_analysis(features=features, distance=100, unit="m")
-    assert result["success"] is True
-    assert len(result["data"]["features"]) == 2
+    # 直接调 SpatialAnalyzer.buffer（原 _do_buffer_analysis 是它的薄包装，已删除）
+    result = SpatialAnalyzer.buffer(features=features, distance=100, unit="m")
+    assert result.success is True
+    assert len(result.data["features"]) == 2
 
 def test_spatial_stats_no_geometries():
-    """测试无几何对象的空间统计"""
+    """测试无几何对象的空间统计——引擎优雅处理，不崩溃。
+
+    注：原 _do_spatial_stats 包装器有自定义 'No valid geometries' 早返回守卫，
+    SpatialAnalyzer.statistics 没有该守卫（它对 properties 做 DataFrame 统计，
+    几何为 None 的 feature 仍计入 count）。包装器已删除，测试改为断言引擎真实
+    行为：无有效几何时不抛异常，返回成功 + count。
+    """
     features = [{"type": "Feature", "geometry": None, "properties": {"a": 1}}]
-    result = _do_spatial_stats(features=features)
-    assert result["success"] is False
-    assert "No valid geometries" in result["error"]
+    result = SpatialAnalyzer.statistics(features)
+    assert result.success is True
 
 def test_bug_spatial_join_crs_mismatch():
     """测试空间连接是否存在坐标系不匹配的 Bug (已修复)"""

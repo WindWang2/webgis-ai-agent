@@ -11,7 +11,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.spatial import cKDTree
 from scipy.ndimage import gaussian_filter
 from shapely.geometry import box, mapping
 
@@ -25,65 +24,10 @@ from app.tools._utils import db_session
 
 logger = logging.getLogger(__name__)
 
-# --- 核心逻辑函数 (脱离 Celery，方便测试) ---
-
-def _do_buffer_analysis(features: List[Dict], distance: float, unit: str = "m", dissolve: bool = False, callback: Optional[Callable] = None):
-    result = SpatialAnalyzer.buffer(
-        features=features,
-        distance=distance,
-        unit=unit,
-        dissolve=dissolve,
-        callback=callback
-    )
-    if result.success:
-        return {
-            "success": True, 
-            "data": result.data, 
-            "summary": result.summary,
-            "status_desc": result.summary
-        }
-    else:
-        return {"success": False, "error": result.summary}
-
-def _do_spatial_stats(features: List[Dict], callback: Optional[Callable] = None):
-    from shapely.geometry import shape
-    import geopandas as gpd
-    try:
-        if callback: callback(20, "解析几何对象...")
-        geometries = [shape(f["geometry"]) for f in features if f.get("geometry")]
-        if not geometries:
-            return {"success": False, "error": "No valid geometries"}
-
-        if callback: callback(50, "计算投影统计...")
-        gdf = gpd.GeoSeries(geometries, crs="EPSG:4326")
-        gdf_proj = gdf.to_crs("ESRI:54009")
-        
-        stats = {
-            "feature_count": len(geometries),
-            "total_area_sqkm": round(float(gdf_proj.area.sum()) / 1e6, 4),
-            "total_length_km": round(float(gdf_proj.length.sum()) / 1000, 4),
-            "centroid": {
-                "lat": round(float(gdf.centroid.y.mean()), 6),
-                "lon": round(float(gdf.centroid.x.mean()), 6),
-            },
-            "bounds": {
-                "min_lon": round(float(gdf.bounds.minx.min()), 6),
-                "min_lat": round(float(gdf.bounds.miny.min()), 6),
-                "max_lon": round(float(gdf.bounds.maxx.max()), 6),
-                "max_lat": round(float(gdf.bounds.maxy.max()), 6),
-            },
-        }
-        if callback: callback(100, "完成统计")
-        return {
-            "success": True, 
-            "stats": stats, 
-            "status_desc": f"已完成空间统计分析，共处理 {stats['feature_count']} 个要素。"
-        }
-    except Exception as e:
-        logger.error(f"Spatial stats failed: {e}")
-        return {"success": False, "error": str(e)}
-
 # --- 共享热力图核心逻辑 (expand-contract: 消除 spatial.py 重复) ---
+# 注：原 _do_buffer_analysis / _do_spatial_stats 包装器已删除——agent 工具直接调用
+# SpatialAnalyzer.buffer / .statistics（ADR-0013 删除了会路由到它们的 dispatch seam）。
+# 保留下列热力图辅助函数：spatial.py 的进程内回退路径直接 import 它们。
 
 
 def _extract_heatmap_points(features: List[Dict]) -> tuple[list, list]:
@@ -191,71 +135,18 @@ def _do_heatmap_generation(features: List[Dict], cell_size: int = 500, radius: i
         return {"success": False, "error": str(e)}
 
 # --- Celery 任务包装器 ---
-
-@celery_app.task(name="app.services.spatial_tasks.run_buffer_analysis", bind=True)
-def run_buffer_analysis(self, features: List[Dict], distance: float, unit: str = "m", dissolve: bool = False):
-    def cb(curr, msg): self.update_state(state='PROGRESS', meta={'progress': curr, 'message': msg})
-    return _do_buffer_analysis(features, distance, unit, dissolve, callback=cb)
-
-@celery_app.task(name="app.services.spatial_tasks.run_spatial_stats", bind=True)
-def run_spatial_stats(self, features: List[Dict]):
-    def cb(curr, msg): self.update_state(state='PROGRESS', meta={'progress': curr, 'message': msg})
-    return _do_spatial_stats(features, callback=cb)
+# 注：原 run_buffer_analysis / run_spatial_stats / run_nearest_neighbor /
+# run_overlay_analysis / run_attribute_filter / run_path_analysis 已删除——agent
+# 工具直接调 SpatialAnalyzer 的对应方法（ADR-0013 删除了路由到它们的 dispatch seam，
+# 这些 task 包装器失去生产调用方）。保留的 3 个 task 由工具 .delay/.apply_async 调用：
+#   - run_heatmap_generation  (spatial.py:274)
+#   - run_ndvi_analysis       (nature_resources.py:41)
+#   - run_change_detection    (change_detection.py:68)
 
 @celery_app.task(name="app.services.spatial_tasks.run_heatmap_generation", bind=True)
 def run_heatmap_generation(self, features: List[Dict], cell_size: int = 500, radius: int = 1000, render_type: str = "raster", palette: str = "classic"):
     def cb(curr, msg): self.update_state(state='PROGRESS', meta={'progress': curr, 'message': msg})
     return _do_heatmap_generation(features, cell_size, radius, render_type, palette, callback=cb)
-
-@celery_app.task(name="app.services.spatial_tasks.run_nearest_neighbor", bind=True)
-def run_nearest_neighbor(self, features: List[Dict]):
-    try:
-        points = []
-        for f in features:
-            geom = f.get("geometry") or {}
-            if geom.get("type") == "Point" and geom.get("coordinates"):
-                coords = geom["coordinates"]
-                points.append((coords[0], coords[1]))
-        if len(points) < 2: return {"success": False, "error": "Need at least 2 points"}
-        coords_arr = np.array(points)
-        
-        # cKDTree O(n log n) 替代 O(n²) distance_matrix
-        tree = cKDTree(coords_arr)
-        dist, _ = tree.query(coords_arr, k=2)
-        nn_distances = dist[:, 1]
-        
-        return {
-            "success": True,
-            "data": {
-                "point_count": len(points),
-                "mean_nearest_distance": round(float(nn_distances.mean()), 4),
-            }
-        }
-    except Exception as e:
-        logger.error(f"run_nearest_neighbor failed: {e}")
-        return {"success": False, "error": str(e)}
-
-@celery_app.task(name="app.services.spatial_tasks.run_overlay_analysis", bind=True)
-def run_overlay_analysis(self, features_a: List[Dict], features_b: List[Dict], how: str = "intersection"):
-    def cb(curr, msg): self.update_state(state='PROGRESS', meta={'progress': curr, 'message': msg})
-    result = SpatialAnalyzer.overlay(features_a, features_b, how=how, callback=cb)
-    if result.success:
-        return {"success": True, "data": result.data, "status_desc": f"已完成 {how} 叠加分析。"}
-    return {"success": False, "error": result.error_message}
-
-@celery_app.task(name="app.services.spatial_tasks.run_attribute_filter", bind=True)
-def run_attribute_filter(self, features: List[Dict], query: str):
-    def cb(curr, msg): self.update_state(state='PROGRESS', meta={'progress': curr, 'message': msg})
-    result = SpatialAnalyzer.attribute_filter(features, query=query, callback=cb)
-    if result.success: return {"success": True, "data": result.data}
-    return {"success": False, "error": result.error_message}
-
-@celery_app.task(name="app.services.spatial_tasks.run_path_analysis", bind=True)
-def run_path_analysis(self, network_features: List[Dict], start_point: List[float], end_point: List[float]):
-    def cb(curr, msg): self.update_state(state='PROGRESS', meta={'progress': curr, 'message': msg})
-    result = SpatialAnalyzer.path_analysis(network_features, start_point, end_point, callback=cb)
-    if result.success: return {"success": True, "data": result.data}
-    return {"success": False, "error": result.error_message}
 
 # --- 自然资源与遥感任务 ---
 
