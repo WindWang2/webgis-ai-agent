@@ -1,27 +1,32 @@
-"""Round 7: 工具结果 slim 升级 - 字段类型 / 元数据保留 / 值截断"""
+"""Round 7: 工具结果 slim 升级 - 字段类型 / 元数据保留 / 值截断。
+
+原 sse_helpers re-export shim 已删除（Candidate #7）；这些符号从它们的真实
+归属模块导入。_infer_simple_type 已不存在，其行为后继是 utils.geojson 的
+infer_field_type（同样的 null/bool/number/string/array/object 分桶）。
+"""
 import json
 
 import pytest
 
-from app.services.chat.sse_helpers import (
+from app.services.tool_dispatch_service import (
     slim_tool_result,
-    _infer_simple_type,
     _truncate_value,
     _truncate_properties,
     VALUE_MAX_CHARS,
     PROPERTY_KEYS_MAX,
 )
+from app.utils.geojson import infer_field_type
 
 
 def test_infer_simple_type_buckets():
-    assert _infer_simple_type(None) == "null"
-    assert _infer_simple_type(True) == "bool"
-    assert _infer_simple_type(False) == "bool"
-    assert _infer_simple_type(12) == "number"
-    assert _infer_simple_type(1.5) == "number"
-    assert _infer_simple_type("hi") == "string"
-    assert _infer_simple_type([1, 2]) == "array"
-    assert _infer_simple_type({"a": 1}) == "object"
+    assert infer_field_type(None) == "null"
+    assert infer_field_type(True) == "bool"
+    assert infer_field_type(False) == "bool"
+    assert infer_field_type(12) == "number"
+    assert infer_field_type(1.5) == "number"
+    assert infer_field_type("hi") == "string"
+    assert infer_field_type([1, 2]) == "array"
+    assert infer_field_type({"a": 1}) == "object"
 
 
 def test_truncate_value_long_string():

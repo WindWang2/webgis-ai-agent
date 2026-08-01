@@ -1,25 +1,24 @@
-"""M1 拆分回归：app/services/chat/sse_helpers + prompt 子模块直测。
+"""M1 拆分回归：tool_dispatch_service / llm_client / prompt 子模块直测。
 
-确保从巨型 chat_engine.py 拆出的纯函数行为不变，并且 chat_engine 仍以
-下划线别名 re-export 它们（外部代码 / 旧测试可继续 import 老路径）。
+确保从巨型 chat_engine.py 拆出的纯函数行为不变。原 sse_helpers re-export
+shim 已删除（Candidate #7）；这些符号从它们的真实归属模块导入。
 """
 import json
 
 import pytest
 
-from app.services.chat.sse_helpers import (
-    LRUCache,
-    MSG_MAX_CHARS,
-    is_error_dict,
-    normalize_tool_args,
-    parse_minimax_xml_tool_calls,
-    slim_event_result,
-    slim_tool_result,
-    wrap_error_dict_for_llm,
-)
+from app.services.chat.llm_client import LRUCache, parse_minimax_xml_tool_calls
 from app.services.chat.prompt import (
     SYSTEM_PROMPT,
     construct_self_healing_message,
+)
+from app.services.tool_dispatch_service import (
+    MSG_MAX_CHARS,
+    is_error_dict,
+    normalize_tool_args,
+    slim_event_result,
+    slim_tool_result,
+    wrap_error_dict_for_llm,
 )
 from app.utils.geojson import geojson_bbox
 
