@@ -118,12 +118,12 @@ export function EmbodiedHud() {
         right: 0,
         zIndex: 50,
         height: hudOpen ? 210 : 24,
-        background: isDark ? 'rgba(15, 23, 42, 0.82)' : 'rgba(252, 253, 254, 0.82)',
+        background: 'var(--theme-bg-panel)',
         backdropFilter: 'blur(28px)',
         WebkitBackdropFilter: 'blur(28px)',
-        borderTop: isDark ? '1px solid rgba(148, 163, 184, 0.12)' : '1px solid rgba(15, 23, 42, 0.06)',
-        boxShadow: isDark ? '0 -8px 32px rgba(0,0,0,0.5)' : '0 -4px 20px rgba(15,23,42,0.06)',
-        color: colors.text,
+        borderTop: '1px solid var(--theme-border)',
+        boxShadow: 'var(--theme-shadow)',
+        color: 'var(--theme-text-primary)',
         transition: 'height 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
         display: 'flex',
         flexDirection: 'column',
@@ -159,7 +159,7 @@ export function EmbodiedHud() {
           paddingRight: 12,
           cursor: 'pointer',
           userSelect: 'none',
-          borderBottom: hudOpen ? (isDark ? '1px solid rgba(148, 163, 184, 0.08)' : '1px solid rgba(15,23,42,0.04)') : 'none',
+          borderBottom: hudOpen ? '1px solid var(--theme-border)' : 'none',
         }}
       >
         {/* Telemetry Stats */}
@@ -173,10 +173,10 @@ export function EmbodiedHud() {
             { label: '图层', value: `${visibleLayerCount}/${layers.length}` }
           ].map((item) => (
             <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ fontSize: 11, fontWeight: 600, color: isDark ? '#475569' : '#94a3b8', letterSpacing: '0.06em' }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--theme-text-muted)', letterSpacing: '0.06em' }}>
                 {item.label}
               </span>
-              <span style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: isDark ? '#94a3b8' : '#64748b' }}>
+              <span style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: 'var(--theme-text-secondary)' }}>
                 {item.value}
               </span>
             </div>
@@ -186,9 +186,9 @@ export function EmbodiedHud() {
         {/* Neural Wave representation in Docked State */}
         {!hudOpen && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 24, flex: 1, height: '100%', overflow: 'hidden' }}>
-            <span style={{ fontSize: 11, color: isDark ? '#334155' : '#cbd5e1' }}>|</span>
+            <span style={{ fontSize: 11, color: 'var(--theme-text-subtle)' }}>|</span>
             <Activity size={10} style={{ color: isThinking ? accentColor : '#475569', animation: isThinking ? 'pulse 1s infinite' : 'none' }} />
-            <span style={{ fontSize: 11, color: isDark ? '#475569' : '#94a3b8', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.04em' }}>
+            <span style={{ fontSize: 11, color: 'var(--theme-text-muted)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.04em' }}>
               {isThinking ? 'AGENT NEURAL SIGNAL ACTIVE' : 'COGNITIVE CORE IDLE'}
             </span>
             <svg width="60" height="12" style={{ opacity: 0.4, marginLeft: 4 }}>
@@ -214,7 +214,7 @@ export function EmbodiedHud() {
               border: 'none',
               padding: 0,
               cursor: 'pointer',
-              color: isDark ? '#64748b' : '#94a3b8',
+              color: 'var(--theme-text-muted)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -224,7 +224,7 @@ export function EmbodiedHud() {
             {isDark ? <Sun size={12} className="hover:text-amber-400 transition-colors" /> : <Moon size={12} className="hover:text-indigo-600 transition-colors" />}
           </button>
 
-          <span style={{ fontSize: 11, color: isDark ? '#334155' : '#cbd5e1' }}>|</span>
+          <span style={{ fontSize: 11, color: 'var(--theme-text-subtle)' }}>|</span>
 
           {/* Expand/Collapse Chevron */}
           <div 
@@ -233,7 +233,7 @@ export function EmbodiedHud() {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: isDark ? '#64748b' : '#94a3b8',
+              color: 'var(--theme-text-muted)',
               cursor: 'pointer'
             }}
           >
@@ -260,10 +260,10 @@ export function EmbodiedHud() {
             display: 'flex',
             flexDirection: 'column',
             gap: 8,
-            borderRight: isDark ? '1px solid rgba(148, 163, 184, 0.08)' : '1px solid rgba(15,23,42,0.04)',
+            borderRight: '1px solid var(--theme-border)',
             paddingRight: 12
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: isDark ? '#94a3b8' : '#475569', fontWeight: 600, letterSpacing: '0.04em' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--theme-text-secondary)', fontWeight: 600, letterSpacing: '0.04em' }}>
               <Compass size={13} style={{ color: isThinking ? accentColor : '#64748b' }} />
               <span>感知系统 / SENSORY PERCEPTION</span>
             </div>
@@ -272,11 +272,11 @@ export function EmbodiedHud() {
               {/* Sonar Vector Radar */}
               <div style={{ position: 'relative', width: 70, height: 70, flexShrink: 0 }}>
                 <svg width="70" height="70" viewBox="0 0 100 100" style={{ transform: 'rotate(-90deg)' }}>
-                  <circle cx="50" cy="50" r="45" fill="none" stroke={isDark ? 'rgba(148, 163, 184, 0.1)' : 'rgba(0,0,0,0.05)'} strokeWidth="1" />
-                  <circle cx="50" cy="50" r="30" fill="none" stroke={isDark ? 'rgba(148, 163, 184, 0.06)' : 'rgba(0,0,0,0.03)'} strokeWidth="1" />
-                  <circle cx="50" cy="50" r="15" fill="none" stroke={isDark ? 'rgba(148, 163, 184, 0.06)' : 'rgba(0,0,0,0.03)'} strokeWidth="1" />
-                  <line x1="50" y1="5" x2="50" y2="95" stroke={isDark ? 'rgba(148, 163, 184, 0.06)' : 'rgba(0,0,0,0.03)'} strokeWidth="0.75" />
-                  <line x1="5" y1="50" x2="95" y2="50" stroke={isDark ? 'rgba(148, 163, 184, 0.06)' : 'rgba(0,0,0,0.03)'} strokeWidth="0.75" />
+                  <circle cx="50" cy="50" r="45" fill="none" stroke="var(--theme-border)" strokeWidth="1" />
+                  <circle cx="50" cy="50" r="30" fill="none" stroke="var(--theme-border)" strokeWidth="1" />
+                  <circle cx="50" cy="50" r="15" fill="none" stroke="var(--theme-border)" strokeWidth="1" />
+                  <line x1="50" y1="5" x2="50" y2="95" stroke="var(--theme-border)" strokeWidth="0.75" />
+                  <line x1="5" y1="50" x2="95" y2="50" stroke="var(--theme-border)" strokeWidth="0.75" />
                   {/* Radar sweep */}
                   <path
                     d="M 50,50 L 50,5 A 45,45 0 0,1 81.8,18.1 Z"
@@ -296,19 +296,19 @@ export function EmbodiedHud() {
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 3, fontFamily: "'JetBrains Mono', monospace", fontSize: '12px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: '#64748b' }}>CENTER:</span>
-                  <span style={{ color: colors.textSecondary }}>[{lng.toFixed(4)}, {lat.toFixed(4)}]</span>
+                  <span style={{ color: 'var(--theme-text-secondary)' }}>[{lng.toFixed(4)}, {lat.toFixed(4)}]</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: '#64748b' }}>BEARING/PITCH:</span>
-                  <span style={{ color: colors.textSecondary }}>{bearing.toFixed(0)}° / {pitch.toFixed(0)}°</span>
+                  <span style={{ color: 'var(--theme-text-secondary)' }}>{bearing.toFixed(0)}° / {pitch.toFixed(0)}°</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: '#64748b' }}>DIMENSION:</span>
-                  <span style={{ color: colors.textSecondary }}>{is3D ? '3D TERRAIN (1.5x)' : '2D PERSPECTIVE'}</span>
+                  <span style={{ color: 'var(--theme-text-secondary)' }}>{is3D ? '3D TERRAIN (1.5x)' : '2D PERSPECTIVE'}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: '#64748b' }}>BASEMAP:</span>
-                  <span style={{ color: colors.textSecondary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 95 }}>
+                  <span style={{ color: 'var(--theme-text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 95 }}>
                     {BASE_LAYER_LABELS[baseLayer] ?? baseLayer}
                   </span>
                 </div>
@@ -321,10 +321,10 @@ export function EmbodiedHud() {
             display: 'flex',
             flexDirection: 'column',
             gap: 8,
-            borderRight: isDark ? '1px solid rgba(148, 163, 184, 0.08)' : '1px solid rgba(15,23,42,0.04)',
+            borderRight: '1px solid var(--theme-border)',
             paddingRight: 12
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: isDark ? '#94a3b8' : '#475569', fontWeight: 600, letterSpacing: '0.04em' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--theme-text-secondary)', fontWeight: 600, letterSpacing: '0.04em' }}>
               <Cpu size={13} style={{ color: isThinking ? accentColor : '#64748b' }} />
               <span>认知中枢 / COGNITIVE CORE</span>
             </div>
@@ -339,10 +339,10 @@ export function EmbodiedHud() {
                   gap: 5,
                   padding: '2px 8px',
                   borderRadius: 6,
-                  background: isThinking ? `${accentColor}18` : (isDark ? 'rgba(51, 65, 85, 0.4)' : 'rgba(0,0,0,0.03)'),
+                  background: isThinking ? `${accentColor}18` : 'var(--theme-bg-hover)',
                   fontSize: '11.5px',
                   fontWeight: 600,
-                  color: isThinking ? accentColor : (isDark ? '#94a3b8' : '#64748b'),
+                  color: isThinking ? accentColor : 'var(--theme-text-secondary)',
                   border: isThinking ? `1px solid ${accentColor}33` : '1px solid transparent'
                 }}>
                   {isThinking ? (
@@ -384,12 +384,12 @@ export function EmbodiedHud() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     <Database size={10} style={{ color: '#94a3b8' }} />
                     <span style={{ color: '#64748b' }}>RAG MEM:</span>
-                    <span style={{ color: colors.textSecondary }}>{ragResults.length} SLOTS</span>
+                    <span style={{ color: 'var(--theme-text-secondary)' }}>{ragResults.length} SLOTS</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     <Layers size={10} style={{ color: '#94a3b8' }} />
                     <span style={{ color: '#64748b' }}>SPATIAL REF:</span>
-                    <span style={{ color: colors.textSecondary }}>{layers.length} ACTIVE</span>
+                    <span style={{ color: 'var(--theme-text-secondary)' }}>{layers.length} ACTIVE</span>
                   </div>
                 </div>
               </div>
@@ -401,7 +401,7 @@ export function EmbodiedHud() {
                 justifyContent: 'space-between',
                 marginTop: 'auto',
                 paddingTop: 8,
-                borderTop: isDark ? '1px dashed rgba(148, 163, 184, 0.08)' : '1px dashed rgba(15, 23, 42, 0.04)',
+                borderTop: '1px dashed var(--theme-border)',
                 width: '100%'
               }}>
                 {STEPS.map((step, i) => {
@@ -415,7 +415,7 @@ export function EmbodiedHud() {
                   
                   if (state === 'done') {
                     dotColor = '#10b981';
-                    textColor = isDark ? '#cbd5e1' : '#1e293b';
+                    textColor = 'var(--theme-text-primary)';
                   } else if (state === 'active') {
                     dotColor = accentColor;
                     textColor = accentColor;
@@ -424,8 +424,8 @@ export function EmbodiedHud() {
                       animation: 'pulse 1.5s infinite'
                     };
                   } else {
-                    dotColor = isDark ? '#334155' : '#cbd5e1';
-                    textColor = isDark ? '#475569' : '#94a3b8';
+                    dotColor = 'var(--theme-text-subtle)';
+                    textColor = 'var(--theme-text-muted)';
                   }
 
                   return (
@@ -455,7 +455,7 @@ export function EmbodiedHud() {
                           }}>{step.label}</span>
                           <span style={{
                             fontSize: '9.5px',
-                            color: isDark ? '#475569' : '#94a3b8',
+                            color: 'var(--theme-text-muted)',
                             whiteSpace: 'nowrap',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis'
@@ -471,8 +471,8 @@ export function EmbodiedHud() {
                           marginLeft: 6,
                           marginRight: 6,
                           background: state === 'done' 
-                            ? `linear-gradient(to right, #10b981, ${getStepState(i+1, aiStatus) === 'active' ? accentColor : (isDark ? '#334155' : '#cbd5e1')})`
-                            : (isDark ? 'rgba(148, 163, 184, 0.1)' : 'rgba(0,0,0,0.05)'),
+                            ? `linear-gradient(to right, #10b981, ${getStepState(i+1, aiStatus) === 'active' ? accentColor : 'var(--theme-text-subtle)'})`
+                            : 'var(--theme-border)',
                           transition: 'background 0.3s ease',
                           minWidth: 8
                         }} />
@@ -491,7 +491,7 @@ export function EmbodiedHud() {
             gap: 8,
             minHeight: 0
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: isDark ? '#94a3b8' : '#475569', fontWeight: 600, letterSpacing: '0.04em' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--theme-text-secondary)', fontWeight: 600, letterSpacing: '0.04em' }}>
               <Terminal size={13} style={{ color: isThinking ? accentColor : '#64748b' }} />
               <span>执行通道 / ACTION LOG & CAUSAL CHAIN</span>
             </div>
@@ -502,8 +502,8 @@ export function EmbodiedHud() {
               style={{
                 flex: 1,
                 overflowY: 'auto',
-                background: isDark ? 'rgba(9, 15, 30, 0.4)' : 'rgba(0, 0, 0, 0.02)',
-                border: isDark ? '1px solid rgba(148,163,184,0.06)' : '1px solid rgba(15,23,42,0.04)',
+                background: 'var(--theme-bg-input)',
+                border: '1px solid var(--theme-border)',
                 borderRadius: 8,
                 padding: '6px 8px',
                 fontFamily: "'JetBrains Mono', monospace",
@@ -527,14 +527,14 @@ export function EmbodiedHud() {
                         <span>[CAUSAL] {entry.tool}</span>
                         <span style={{ color: '#475569', fontSize: '10px' }}>{entry.time}</span>
                       </div>
-                      {entry.toolInput && <div style={{ color: colors.textSecondary }}>IN: {entry.toolInput}</div>}
+                      {entry.toolInput && <div style={{ color: 'var(--theme-text-secondary)' }}>IN: {entry.toolInput}</div>}
                       {entry.mapEffect && <div style={{ color: '#94a3b8' }}>OUT: {entry.mapEffect}</div>}
                     </div>
                   ))}
 
                   {opsLog.map((entry) => (
                     <div key={entry.id} style={{ display: 'flex', flexDirection: 'column', gap: 1, borderLeft: '1.5px solid #475569', paddingLeft: 6, marginBottom: 2 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', color: colors.textSecondary, fontWeight: 500 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--theme-text-secondary)', fontWeight: 500 }}>
                         <span>[OP] {entry.label}</span>
                         <span style={{ color: '#475569', fontSize: '10px' }}>{entry.time}</span>
                       </div>

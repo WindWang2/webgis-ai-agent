@@ -124,6 +124,16 @@ export default function Home() {
   const fontSize = useHudStore((s) => s.fontSize);
   const colors = getThemeColors(theme);
 
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+      document.documentElement.setAttribute('data-theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      document.documentElement.setAttribute('data-theme', 'light');
+    }
+  }, [theme]);
+
   const currentSessionTitle = sessionId
     ? sessions.find((s) => s.id === sessionId)?.title || '新会话'
     : '新会话';

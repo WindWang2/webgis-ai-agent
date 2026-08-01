@@ -40,17 +40,65 @@
 
   --radius: 0.75rem;
 
-  /* Agent semantic tokens */
-  --agent-bg: #dce8f2;
-  --agent-panel: rgba(252, 253, 254, 0.88);
-  --agent-glass: rgba(255, 255, 255, 0.70);
-  --agent-border: rgba(15, 23, 42, 0.08);
+  /* Standardized Semantic Theme Design Tokens - Light Theme */
+  --theme-bg: #dce8f2;
+  --theme-bg-panel: rgba(252, 253, 254, 0.88);
+  --theme-bg-glass: rgba(255, 255, 255, 0.80);
+  --theme-bg-subtle: rgba(248, 250, 252, 0.80);
+  --theme-bg-muted: rgba(226, 232, 240, 0.60);
+  --theme-bg-input: rgba(255, 255, 255, 0.60);
+  --theme-bg-hover: rgba(226, 232, 240, 0.60);
+
+  --theme-text-primary: #1e293b;
+  --theme-text-secondary: #475569;
+  --theme-text-muted: #94a3b8;
+  --theme-text-subtle: #cbd5e1;
+
+  --theme-border: rgba(15, 23, 42, 0.08);
+  --theme-border-subtle: rgba(226, 232, 240, 0.80);
+  --theme-border-strong: rgba(15, 23, 42, 0.15);
+
+  --theme-shadow: 0 4px 20px rgba(15, 23, 42, 0.06);
+
+  /* Agent semantic tokens (legacy compat) */
+  --agent-bg: var(--theme-bg);
+  --agent-panel: var(--theme-bg-panel);
+  --agent-glass: var(--theme-bg-glass);
+  --agent-border: var(--theme-border);
   --agent-accent: #16a34a;
 
   /* Layout */
   --topH: 42px;
   --stH: 24px;
   --sw: 330px;
+}
+
+.dark,
+[data-theme='dark'] {
+  /* Standardized Semantic Theme Design Tokens - Dark Theme */
+  --theme-bg: #0f172a;
+  --theme-bg-panel: rgba(15, 23, 42, 0.85);
+  --theme-bg-glass: rgba(9, 9, 11, 0.80);
+  --theme-bg-subtle: rgba(30, 41, 59, 0.80);
+  --theme-bg-muted: rgba(30, 41, 59, 0.60);
+  --theme-bg-input: rgba(15, 23, 42, 0.60);
+  --theme-bg-hover: rgba(148, 163, 184, 0.15);
+
+  --theme-text-primary: #e2e8f0;
+  --theme-text-secondary: #cbd5e1;
+  --theme-text-muted: #94a3b8;
+  --theme-text-subtle: #64748b;
+
+  --theme-border: rgba(255, 255, 255, 0.06);
+  --theme-border-subtle: rgba(148, 163, 184, 0.20);
+  --theme-border-strong: rgba(148, 163, 184, 0.30);
+
+  --theme-shadow: 0 -8px 32px rgba(0, 0, 0, 0.5);
+
+  --agent-bg: var(--theme-bg);
+  --agent-panel: var(--theme-bg-panel);
+  --agent-glass: var(--theme-bg-glass);
+  --agent-border: var(--theme-border);
 }
 
 /* ═══ Base Styles ═══ */

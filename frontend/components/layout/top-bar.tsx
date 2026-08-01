@@ -33,11 +33,11 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
 
   const getStatusConfig = (status: string) => {
     switch (status) {
-      case 'idle': return { label: '就绪', color: isDark ? '#64748b' : '#94a3b8', bg: isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)' };
+      case 'idle': return { label: '就绪', color: 'var(--theme-text-muted)', bg: 'var(--theme-bg-muted)' };
       case 'thinking': case 'acting': return { label: status === 'thinking' ? '感知中' : '执行中', color: accentColor, bg: isDark ? `${accentColor}15` : `${accentColor}10` };
       case 'done': return { label: '完成', color: isDark ? '#4ade80' : '#16a34a', bg: isDark ? 'rgba(74,222,128,0.15)' : 'rgba(16,185,129,0.10)' };
       case 'error': return { label: '异常', color: isDark ? '#fca5a5' : '#ef4444', bg: isDark ? 'rgba(248,113,113,0.15)' : 'rgba(254,226,226,0.6)' };
-      default: return { label: '就绪', color: isDark ? '#64748b' : '#94a3b8', bg: isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)' };
+      default: return { label: '就绪', color: 'var(--theme-text-muted)', bg: 'var(--theme-bg-muted)' };
     }
   };
 
@@ -65,11 +65,11 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
       style={{
         position: 'fixed', top: 0, left: 0, right: 0, zIndex: 50,
         display: 'flex', alignItems: 'center', height: 42, paddingLeft: 12, paddingRight: 12, gap: 10,
-        backgroundColor: isDark ? 'rgba(9, 9, 11, 0.8)' : 'rgba(255,255,255,0.8)',
+        backgroundColor: 'var(--theme-bg-glass)',
         backdropFilter: 'blur(28px)', WebkitBackdropFilter: 'blur(28px)',
         borderBottomWidth: isActive ? 2 : 1,
         borderBottomStyle: 'solid',
-        borderBottomColor: isActive ? `${accentColor}55` : isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'
+        borderBottomColor: isActive ? `${accentColor}55` : 'var(--theme-border)'
       }}
     >
       {/* heartbeat scan line */}
@@ -93,9 +93,9 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
         style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           width: 28, height: 28, borderRadius: 6, cursor: 'pointer',
-          color: isDark ? '#e2e8f0' : '#475569', backgroundColor: 'transparent'
+          color: 'var(--theme-text-primary)', backgroundColor: 'transparent'
         }}
-        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)'; }}
+        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--theme-bg-hover)'; }}
         onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
         title={leftPanelOpen ? '收起侧栏' : '展开侧栏'}
       >
@@ -114,10 +114,10 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
           <Compass size={13} style={{ color: '#fff' }} />
         </span>
         <div style={{ lineHeight: 1 }}>
-          <span style={{ fontSize: 15, fontWeight: 600, color: isDark ? '#e2e8f0' : '#1e293b' }}>
+          <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--theme-text-primary)' }}>
             GeoAgent
           </span>
-          <span style={{ fontSize: 11, marginLeft: 4, color: isDark ? '#64748b' : '#94a3b8' }}>All is Agent</span>
+          <span style={{ fontSize: 11, marginLeft: 4, color: 'var(--theme-text-muted)' }}>All is Agent</span>
         </div>
       </div>
 
@@ -125,10 +125,10 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
       <span
         style={{
           marginLeft: 4, padding: '2px 8px', borderRadius: 999,
-          backgroundColor: isDark ? 'rgba(30,41,59,0.6)' : 'rgba(226,232,240,0.6)',
-          fontSize: 12, color: isDark ? '#94a3b8' : '#64748b',
+          backgroundColor: 'var(--theme-bg-muted)',
+          fontSize: 12, color: 'var(--theme-text-secondary)',
           borderWidth: 1, borderStyle: 'solid',
-          borderColor: isDark ? 'rgba(148,163,184,0.2)' : 'rgba(226,232,240,0.8)',
+          borderColor: 'var(--theme-border-subtle)',
           maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
         }}
       >
@@ -150,7 +150,7 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
             width: 6, height: 6, borderRadius: '50%', backgroundColor: status.color
           }}
         />
-        <span style={{ color: isDark ? '#e2e8f0' : '#1e293b' }}>{status.label}</span>
+        <span style={{ color: 'var(--theme-text-primary)' }}>{status.label}</span>
       </span>
 
       {/* right actions */}
@@ -161,10 +161,10 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             width: 28, height: 28, borderRadius: 6, cursor: 'pointer',
-            color: isDark ? '#94a3b8' : '#64748b', backgroundColor: 'transparent'
+            color: 'var(--theme-text-secondary)', backgroundColor: 'transparent'
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)'; e.currentTarget.style.color = isDark ? '#e2e8f0' : '#475569'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = isDark ? '#94a3b8' : '#64748b'; }}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--theme-bg-hover)'; e.currentTarget.style.color = 'var(--theme-text-primary)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--theme-text-secondary)'; }}
           title="新建会话"
         >
           <Plus size={15} />
@@ -175,16 +175,16 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             width: 28, height: 28, borderRadius: 6, cursor: 'pointer',
-            color: isDark ? '#94a3b8' : '#64748b', backgroundColor: 'transparent'
+            color: 'var(--theme-text-secondary)', backgroundColor: 'transparent'
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)'; e.currentTarget.style.color = isDark ? '#e2e8f0' : '#475569'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = isDark ? '#94a3b8' : '#64748b'; }}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--theme-bg-hover)'; e.currentTarget.style.color = 'var(--theme-text-primary)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--theme-text-secondary)'; }}
           title="历史记录"
         >
           <History size={15} />
         </button>
 
-        <span style={{ marginLeft: 4, marginRight: 4, width: 1, height: 16, backgroundColor: isDark ? 'rgba(148,163,184,0.2)' : 'rgba(226,232,240,0.8)' }} />
+        <span style={{ marginLeft: 4, marginRight: 4, width: 1, height: 16, backgroundColor: 'var(--theme-border-subtle)' }} />
 
         <BaselayerSwitcher />
 
@@ -196,13 +196,13 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
           style={{
             padding: '5px 10px',
             borderRadius: 8,
-            background: isDark ? 'rgba(15, 23, 42, 0.72)' : 'rgba(255,255,255,0.88)',
+            background: 'var(--theme-bg-glass)',
             backdropFilter: 'blur(12px)',
             WebkitBackdropFilter: 'blur(12px)',
-            border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(255,255,255,0.92)',
-            boxShadow: isDark ? '0 2px 12px rgba(0,0,0,0.3)' : '0 2px 12px rgba(15,23,42,0.08)',
+            border: '1px solid var(--theme-border)',
+            boxShadow: 'var(--theme-shadow)',
             fontSize: '12.5px',
-            color: isDark ? '#cbd5e1' : '#475569',
+            color: 'var(--theme-text-secondary)',
             cursor: 'pointer',
             fontFamily: "'JetBrains Mono', monospace",
             display: 'flex',
@@ -211,35 +211,35 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
             transition: 'all 0.2s ease',
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.background = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.04)';
+            e.currentTarget.style.background = 'var(--theme-bg-hover)';
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.background = isDark ? 'rgba(15, 23, 42, 0.72)' : 'rgba(255,255,255,0.88)';
+            e.currentTarget.style.background = 'var(--theme-bg-glass)';
           }}
         >
           <svg width='11' height='11' viewBox='0 0 11 11' fill='none' style={{ display: 'block' }}>
             {is3D ? (
               <path d='M5.5 1.5L2 3.5l3.5 2L9 3.5 5.5 1.5z M2 6l3.5 2L9 6 M2 8.5l3.5 2 3.5-2' stroke={isDark ? '#4ade80' : '#16a34a'} strokeWidth='1' strokeLinecap='round' strokeLinejoin='round'/>
             ) : (
-              <path d='M5.5 2.5L2 4.5l3.5 2 3.5-2-3.5-2z' stroke={isDark ? '#cbd5e1' : '#475569'} strokeWidth='1' strokeLinecap='round' strokeLinejoin='round'/>
+              <path d='M5.5 2.5L2 4.5l3.5 2 3.5-2-3.5-2z' stroke='var(--theme-text-secondary)' strokeWidth='1' strokeLinecap='round' strokeLinejoin='round'/>
             )}
           </svg>
-          <span style={{ color: is3D ? (isDark ? '#4ade80' : '#16a34a') : (isDark ? '#cbd5e1' : '#475569'), fontWeight: is3D ? 600 : 400 }}>
+          <span style={{ color: is3D ? (isDark ? '#4ade80' : '#16a34a') : 'var(--theme-text-secondary)', fontWeight: is3D ? 600 : 400 }}>
             {is3D ? '3D' : '2D'}
           </span>
         </button>
 
-        <span style={{ marginLeft: 4, marginRight: 4, width: 1, height: 16, backgroundColor: isDark ? 'rgba(148,163,184,0.2)' : 'rgba(226,232,240,0.8)' }} />
+        <span style={{ marginLeft: 4, marginRight: 4, width: 1, height: 16, backgroundColor: 'var(--theme-border-subtle)' }} />
 
         <button
           onClick={() => setSettingsOpen(true)}
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             width: 28, height: 28, borderRadius: 6, cursor: 'pointer',
-            color: isDark ? '#94a3b8' : '#64748b', backgroundColor: 'transparent'
+            color: 'var(--theme-text-secondary)', backgroundColor: 'transparent'
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)'; e.currentTarget.style.color = isDark ? '#e2e8f0' : '#475569'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = isDark ? '#94a3b8' : '#64748b'; }}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--theme-bg-hover)'; e.currentTarget.style.color = 'var(--theme-text-primary)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--theme-text-secondary)'; }}
           title="设置"
         >
           <Settings size={15} />

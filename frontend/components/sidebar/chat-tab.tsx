@@ -14,7 +14,7 @@ import { ChartRenderer, adaptChartData } from '@/components/chat/chart-renderer'
 /* ─── Thinking dots animation ─── */
 const DOT_ANIMS = ['animate-dot-1', 'animate-dot-2', 'animate-dot-3'];
 
-function ThinkingDots({ text, accentColor, isDark }: { text: string; accentColor: string; isDark: boolean }) {
+function ThinkingDots({ text, accentColor }: { text: string; accentColor: string; isDark?: boolean }) {
   return (
     <div className="flex items-center gap-2 py-1.5 px-1">
       <div className="flex gap-[3px]">
@@ -29,7 +29,7 @@ function ThinkingDots({ text, accentColor, isDark }: { text: string; accentColor
           />
         ))}
       </div>
-      <span className="text-[15px]" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>{text}</span>
+      <span className="text-[15px]" style={{ color: 'var(--theme-text-muted)' }}>{text}</span>
     </div>
   );
 }
@@ -42,10 +42,10 @@ const SUGGESTED_PROMPTS = [
   '叠加分析两个图层',
 ];
 
-function SuggestedPromptButtons({ onSend, accentColor, isDark }: { onSend: (text: string) => void; accentColor: string; isDark: boolean }) {
+function SuggestedPromptButtons({ onSend, accentColor }: { onSend: (text: string) => void; accentColor: string; isDark?: boolean }) {
   return (
     <div className="px-3 pt-3 pb-2">
-      <p className="text-[14px] uppercase tracking-wider mb-2" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>快捷指令</p>
+      <p className="text-[14px] uppercase tracking-wider mb-2" style={{ color: 'var(--theme-text-muted)' }}>快捷指令</p>
       <div className="flex flex-wrap gap-1.5">
         {SUGGESTED_PROMPTS.map((prompt) => (
           <button
@@ -53,14 +53,14 @@ function SuggestedPromptButtons({ onSend, accentColor, isDark }: { onSend: (text
             onClick={() => onSend(prompt)}
             style={{
               padding: '6px 10px', borderRadius: 8, fontSize: 13,
-              color: isDark ? '#e2e8f0' : '#475569',
+              color: 'var(--theme-text-primary)',
               borderWidth: 1, borderStyle: 'solid',
               borderColor: `${accentColor}22`,
-              backgroundColor: isDark ? 'rgba(30,41,59,0.6)' : 'rgba(255,255,255,0.6)',
+              backgroundColor: 'var(--theme-bg-subtle)',
               cursor: 'pointer', transition: 'background-color 0.15s'
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(30,41,59,0.9)' : 'rgba(255,255,255,0.9)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(30,41,59,0.6)' : 'rgba(255,255,255,0.6)'; }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--theme-bg-hover)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--theme-bg-subtle)'; }}
           >
             {prompt}
           </button>
@@ -161,8 +161,8 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
             >
               <Sparkles size={22} style={{ color: accentColor }} />
             </div>
-            <h3 className="text-[15px] font-semibold mb-1" style={{ color: isDark ? '#e2e8f0' : '#1e293b' }}>GeoAgent</h3>
-            <p className="text-[13.5px] leading-relaxed" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>
+            <h3 className="text-[15px] font-semibold mb-1" style={{ color: 'var(--theme-text-primary)' }}>GeoAgent</h3>
+            <p className="text-[13.5px] leading-relaxed" style={{ color: 'var(--theme-text-secondary)' }}>
               输入空间分析指令，开始智能 GIS 分析
             </p>
           </div>
@@ -184,7 +184,7 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
               <div key={msg.id ?? `msg-${idx}`} className="flex justify-end">
                 <div className="max-w-[85%]">
                   <div className="flex items-center justify-end gap-1.5 mb-0.5">
-                    {time && <span className="text-[15px]" style={{ color: isDark ? '#475569' : '#cbd5e1' }}>{time}</span>}
+                    {time && <span className="text-[15px]" style={{ color: 'var(--theme-text-subtle)' }}>{time}</span>}
                     <span className="text-[14px] font-semibold" style={{ color: accentColor }}>You</span>
                   </div>
                   <div
@@ -214,7 +214,7 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
                     <span className="text-[14px] font-semibold" style={{ color: accentColor }}>GeoAgent</span>
-                    {time && <span className="text-[15px]" style={{ color: isDark ? '#475569' : '#cbd5e1' }}>{time}</span>}
+                    {time && <span className="text-[15px]" style={{ color: 'var(--theme-text-subtle)' }}>{time}</span>}
                   </div>
 
                   {msg.layerAdded && (
@@ -236,9 +236,9 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
                     <div style={{
                       borderTopLeftRadius: 4, borderTopRightRadius: 16,
                       borderBottomLeftRadius: 16, borderBottomRightRadius: 16,
-                      backgroundColor: isDark ? 'rgba(30,41,59,0.8)' : 'rgba(248,250,252,0.8)',
+                      backgroundColor: 'var(--theme-bg-subtle)',
                       borderWidth: 1, borderStyle: 'solid',
-                      borderColor: isDark ? 'rgba(148,163,184,0.2)' : 'rgba(226,232,240,0.8)',
+                      borderColor: 'var(--theme-border-subtle)',
                       padding: '8px 12px'
                     }}>
                       {msg.think && (
@@ -275,7 +275,7 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
                         const chart = adaptChartData(raw);
                         if (!chart) return null;
                         return (
-                          <div key={`chart-${idx}`} style={{ marginTop: 8, borderRadius: 8, overflow: 'hidden', border: `1px solid ${accentColor}22`, backgroundColor: isDark ? 'rgba(15,23,42,0.6)' : 'rgba(248,250,252,0.8)' }}>
+                          <div key={`chart-${idx}`} style={{ marginTop: 8, borderRadius: 8, overflow: 'hidden', border: `1px solid ${accentColor}22`, backgroundColor: 'var(--theme-bg-input)' }}>
                             <ChartRenderer chart={chart} />
                           </div>
                         );
@@ -302,8 +302,8 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
       {/* Input area */}
       <div style={{
         borderTopWidth: 1, borderTopStyle: 'solid',
-        borderTopColor: isDark ? 'rgba(148,163,184,0.2)' : 'rgba(226,232,240,0.6)',
-        backgroundColor: isDark ? 'rgba(15,23,42,0.6)' : 'rgba(255,255,255,0.6)',
+        borderTopColor: 'var(--theme-border-subtle)',
+        backgroundColor: 'var(--theme-bg-input)',
         backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)'
       }} className="shrink-0">
         <div className="flex items-end gap-2 px-3 pt-2.5 pb-1.5">
@@ -312,11 +312,11 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
             aria-label="上传文件"
             style={{
               flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              width: 24, height: 24, borderRadius: 6, color: isDark ? '#64748b' : '#94a3b8',
+              width: 24, height: 24, borderRadius: 6, color: 'var(--theme-text-muted)',
               backgroundColor: 'transparent', cursor: 'pointer'
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(148,163,184,0.15)' : 'rgba(226,232,240,0.6)'; e.currentTarget.style.color = isDark ? '#e2e8f0' : '#475569'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = isDark ? '#64748b' : '#94a3b8'; }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--theme-bg-hover)'; e.currentTarget.style.color = 'var(--theme-text-primary)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--theme-text-muted)'; }}
             title="上传文件"
           >
             <Upload size={14} />
@@ -333,7 +333,7 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
             rows={1}
             style={{
               flex: 1, resize: 'none', backgroundColor: 'transparent',
-              fontSize: 14.5, color: isDark ? '#e2e8f0' : '#1e293b',
+              fontSize: 14.5, color: 'var(--theme-text-primary)',
               outline: 'none', lineHeight: 1.5, maxHeight: 80, paddingTop: 4, paddingBottom: 4
             }}
           />
@@ -347,8 +347,8 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
               flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
               width: 26, height: 26, borderRadius: 8, transition: 'opacity 0.15s',
               opacity: !input.trim() || isBusy ? 0.4 : 1,
-              backgroundColor: input.trim() ? accentColor : isDark ? '#334155' : '#e2e8f0',
-              color: input.trim() ? '#fff' : isDark ? '#64748b' : '#94a3b8',
+              backgroundColor: input.trim() ? accentColor : 'var(--theme-bg-muted)',
+              color: input.trim() ? '#fff' : 'var(--theme-text-muted)',
               cursor: 'pointer'
             }}
           >
@@ -358,7 +358,7 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
 
         {/* Hint */}
         <div className="px-3 pb-2">
-          <span className="text-[9.5px]" style={{ color: isDark ? '#475569' : '#cbd5e1' }}>
+          <span className="text-[9.5px]" style={{ color: 'var(--theme-text-subtle)' }}>
             Enter 发送 · Shift+Enter 换行
           </span>
         </div>

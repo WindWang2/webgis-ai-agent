@@ -75,16 +75,16 @@ export function MapStudioTab() {
       <div 
         className="p-3 border-b flex flex-col gap-2.5 shrink-0"
         style={{
-          borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-          backgroundColor: isDark ? 'rgba(9, 9, 11, 0.4)' : 'rgba(255,255,255,0.4)'
+          borderBottomColor: 'var(--theme-border)',
+          backgroundColor: 'var(--theme-bg-glass)'
         }}
       >
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-xs font-bold tracking-wide uppercase" style={{ color: isDark ? '#e2e8f0' : '#1e293b' }}>
+            <h2 className="text-xs font-bold tracking-wide uppercase" style={{ color: 'var(--theme-text-primary)' }}>
               制图工坊
             </h2>
-            <p className="text-[14px]" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>
+            <p className="text-[14px]" style={{ color: 'var(--theme-text-muted)' }}>
               地图排版设计与历史文件导出
             </p>
           </div>
@@ -94,8 +94,8 @@ export function MapStudioTab() {
         <div 
           className="flex p-0.5 rounded-lg text-xs"
           style={{
-            backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)',
-            border: isDark ? '1px solid rgba(255,255,255,0.05)' : '1px solid rgba(0,0,0,0.04)'
+            backgroundColor: 'var(--theme-bg-muted)',
+            border: '1px solid var(--theme-border)'
           }}
         >
           <button
@@ -103,11 +103,11 @@ export function MapStudioTab() {
             className="flex-1 py-1.5 rounded-md flex items-center justify-center gap-1.5 font-medium transition-all"
             style={{
               backgroundColor: activeSubTab === 'layout' 
-                ? (isDark ? 'rgba(255,255,255,0.08)' : '#fff') 
+                ? 'var(--theme-bg-subtle)' 
                 : 'transparent',
               color: activeSubTab === 'layout'
-                ? (isDark ? '#fff' : '#1e293b')
-                : (isDark ? '#64748b' : '#94a3b8'),
+                ? 'var(--theme-text-primary)'
+                : 'var(--theme-text-muted)',
               boxShadow: activeSubTab === 'layout' && !isDark 
                 ? '0 1px 3px rgba(0,0,0,0.08)' 
                 : 'none',
@@ -121,11 +121,11 @@ export function MapStudioTab() {
             className="flex-1 py-1.5 rounded-md flex items-center justify-center gap-1.5 font-medium transition-all"
             style={{
               backgroundColor: activeSubTab === 'history' 
-                ? (isDark ? 'rgba(255,255,255,0.08)' : '#fff') 
+                ? 'var(--theme-bg-subtle)' 
                 : 'transparent',
               color: activeSubTab === 'history'
-                ? (isDark ? '#fff' : '#1e293b')
-                : (isDark ? '#64748b' : '#94a3b8'),
+                ? 'var(--theme-text-primary)'
+                : 'var(--theme-text-muted)',
               boxShadow: activeSubTab === 'history' && !isDark 
                 ? '0 1px 3px rgba(0,0,0,0.08)' 
                 : 'none',
@@ -150,7 +150,7 @@ export function MapStudioTab() {
             {/* Titles */}
             <div className="space-y-3.5">
               <div>
-                <label className="block text-[15px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: isDark ? '#94a3b8' : '#64748b' }}>
+                <label className="block text-[15px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--theme-text-secondary)' }}>
                   主标题
                 </label>
                 <input 
@@ -159,16 +159,16 @@ export function MapStudioTab() {
                   onChange={(e) => handleChange('title', e.target.value)} 
                   placeholder="如：成都市高校分布图" 
                   style={{
-                    backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#fff',
-                    borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
-                    color: isDark ? '#f8fafc' : '#0f172a'
+                    backgroundColor: 'var(--theme-bg-input)',
+                    borderColor: 'var(--theme-border)',
+                    color: 'var(--theme-text-primary)'
                   }}
                   className="w-full text-xs border rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium" 
                 />
               </div>
               
               <div>
-                <label className="block text-[15px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: isDark ? '#94a3b8' : '#64748b' }}>
+                <label className="block text-[15px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--theme-text-secondary)' }}>
                   副标题
                 </label>
                 <input 
@@ -177,16 +177,16 @@ export function MapStudioTab() {
                   onChange={(e) => handleChange('subtitle', e.target.value)} 
                   placeholder="如：数据来源: OSM, 制图日期: 2026" 
                   style={{
-                    backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#fff',
-                    borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
-                    color: isDark ? '#f8fafc' : '#0f172a'
+                    backgroundColor: 'var(--theme-bg-input)',
+                    borderColor: 'var(--theme-border)',
+                    color: 'var(--theme-text-primary)'
                   }}
                   className="w-full text-xs border rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium" 
                 />
               </div>
 
               <div>
-                <label className="block text-[15px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: isDark ? '#94a3b8' : '#64748b' }}>
+                <label className="block text-[15px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--theme-text-secondary)' }}>
                   作者
                 </label>
                 <input
@@ -195,16 +195,16 @@ export function MapStudioTab() {
                   onChange={(e) => handleChange('author', e.target.value)}
                   placeholder="制图者名称"
                   style={{
-                    backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#fff',
-                    borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
-                    color: isDark ? '#f8fafc' : '#0f172a'
+                    backgroundColor: 'var(--theme-bg-input)',
+                    borderColor: 'var(--theme-border)',
+                    color: 'var(--theme-text-primary)'
                   }}
                   className="w-full text-xs border rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
                 />
               </div>
 
               <div>
-                <label className="block text-[15px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: isDark ? '#94a3b8' : '#64748b' }}>
+                <label className="block text-[15px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--theme-text-secondary)' }}>
                   数据来源
                 </label>
                 <input
@@ -213,9 +213,9 @@ export function MapStudioTab() {
                   onChange={(e) => handleChange('dataSource', e.target.value)}
                   placeholder="如：OSM, 天地图"
                   style={{
-                    backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#fff',
-                    borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
-                    color: isDark ? '#f8fafc' : '#0f172a'
+                    backgroundColor: 'var(--theme-bg-input)',
+                    borderColor: 'var(--theme-border)',
+                    color: 'var(--theme-text-primary)'
                   }}
                   className="w-full text-xs border rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
                 />
@@ -223,8 +223,8 @@ export function MapStudioTab() {
             </div>
 
             {/* Map Decorations / Elements */}
-            <div className="space-y-2 border-t pt-4" style={{ borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }}>
-              <label className="block text-[15px] font-semibold uppercase tracking-wider mb-2.5" style={{ color: isDark ? '#94a3b8' : '#64748b' }}>
+            <div className="space-y-2 border-t pt-4" style={{ borderColor: 'var(--theme-border)' }}>
+              <label className="block text-[15px] font-semibold uppercase tracking-wider mb-2.5" style={{ color: 'var(--theme-text-secondary)' }}>
                 地图辅助元素
               </label>
               <div className="grid grid-cols-2 gap-3">
@@ -245,10 +245,10 @@ export function MapStudioTab() {
                         : 'transparent',
                       borderColor: exportSettings[el.key as keyof typeof exportSettings]
                         ? `${accentColor}33`
-                        : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'),
+                        : 'var(--theme-border)',
                       color: exportSettings[el.key as keyof typeof exportSettings]
                         ? (isDark ? '#4ade80' : '#16a34a')
-                        : (isDark ? '#94a3b8' : '#64748b')
+                        : 'var(--theme-text-secondary)'
                     }}
                   >
                     <input 
@@ -265,21 +265,21 @@ export function MapStudioTab() {
             </div>
 
             {/* Paper & Quality Settings */}
-            <div className="space-y-3.5 border-t pt-4 font-medium text-xs" style={{ borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }}>
-              <label className="block text-[15px] font-semibold uppercase tracking-wider" style={{ color: isDark ? '#94a3b8' : '#64748b' }}>
+            <div className="space-y-3.5 border-t pt-4 font-medium text-xs" style={{ borderColor: 'var(--theme-border)' }}>
+              <label className="block text-[15px] font-semibold uppercase tracking-wider" style={{ color: 'var(--theme-text-secondary)' }}>
                 排版与品质输出
               </label>
 
               <div className="space-y-3">
                 <div className="flex items-center justify-between gap-4">
-                  <span style={{ color: isDark ? '#64748b' : '#94a3b8' }}>输出格式</span>
+                  <span style={{ color: 'var(--theme-text-muted)' }}>输出格式</span>
                   <select 
                     value={exportSettings.format} 
                     onChange={(e) => handleChange('format', e.target.value)} 
                     style={{
-                      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff',
-                      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
-                      color: isDark ? '#e2e8f0' : '#334155'
+                      backgroundColor: 'var(--theme-bg-input)',
+                      borderColor: 'var(--theme-border)',
+                      color: 'var(--theme-text-primary)'
                     }}
                     className="text-xs border rounded-lg px-2 py-1.5 focus:outline-none"
                   >
@@ -290,14 +290,14 @@ export function MapStudioTab() {
                 </div>
 
                 <div className="flex items-center justify-between gap-4">
-                  <span style={{ color: isDark ? '#64748b' : '#94a3b8' }}>纸张尺寸</span>
+                  <span style={{ color: 'var(--theme-text-muted)' }}>纸张尺寸</span>
                   <select 
                     value={exportSettings.paperSize} 
                     onChange={(e) => handleChange('paperSize', e.target.value)} 
                     style={{
-                      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff',
-                      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
-                      color: isDark ? '#e2e8f0' : '#334155'
+                      backgroundColor: 'var(--theme-bg-input)',
+                      borderColor: 'var(--theme-border)',
+                      color: 'var(--theme-text-primary)'
                     }}
                     className="text-xs border rounded-lg px-2 py-1.5 focus:outline-none"
                   >
@@ -308,15 +308,15 @@ export function MapStudioTab() {
                 </div>
 
                 <div className="flex items-center justify-between gap-4">
-                  <span style={{ color: isDark ? '#64748b' : '#94a3b8' }}>纸张方向</span>
+                  <span style={{ color: 'var(--theme-text-muted)' }}>纸张方向</span>
                   <select 
                     value={exportSettings.orientation} 
                     onChange={(e) => handleChange('orientation', e.target.value)} 
                     disabled={exportSettings.paperSize === 'screen'} 
                     style={{
-                      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff',
-                      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
-                      color: isDark ? '#e2e8f0' : '#334155'
+                      backgroundColor: 'var(--theme-bg-input)',
+                      borderColor: 'var(--theme-border)',
+                      color: 'var(--theme-text-primary)'
                     }}
                     className="text-xs border rounded-lg px-2 py-1.5 focus:outline-none disabled:opacity-40"
                   >
@@ -326,14 +326,14 @@ export function MapStudioTab() {
                 </div>
 
                 <div className="flex items-center justify-between gap-4">
-                  <span style={{ color: isDark ? '#64748b' : '#94a3b8' }}>解析度 (DPI)</span>
+                  <span style={{ color: 'var(--theme-text-muted)' }}>解析度 (DPI)</span>
                   <select 
                     value={exportSettings.dpi} 
                     onChange={(e) => handleChange('dpi', Number(e.target.value))} 
                     style={{
-                      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff',
-                      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
-                      color: isDark ? '#e2e8f0' : '#334155'
+                      backgroundColor: 'var(--theme-bg-input)',
+                      borderColor: 'var(--theme-border)',
+                      color: 'var(--theme-text-primary)'
                     }}
                     className="text-xs border rounded-lg px-2 py-1.5 focus:outline-none"
                   >
@@ -348,7 +348,7 @@ export function MapStudioTab() {
         ) : (
           <div className="p-2 space-y-1 h-full">
             <div className="flex items-center justify-between px-2 py-1">
-              <span className="text-[14px] font-semibold uppercase tracking-wider" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>
+              <span className="text-[14px] font-semibold uppercase tracking-wider" style={{ color: 'var(--theme-text-muted)' }}>
                 历史生成文件 ({exports.length})
               </span>
               {exports.length > 0 && (
@@ -365,8 +365,8 @@ export function MapStudioTab() {
                   }}
                   onBlur={() => setConfirmingClear(false)}
                   className="text-[14px] px-2 py-1 rounded transition-colors"
-                  style={{ color: isDark ? '#fca5a5' : '#ef4444' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(248,113,113,0.15)' : 'rgba(254,226,226,0.6)'; }}
+                  style={{ color: '#ef4444' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.15)'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
                   aria-label={confirmingClear ? '再次点击确认清空所有导出文件' : '清空导出列表'}
                 >
@@ -377,10 +377,10 @@ export function MapStudioTab() {
 
             {exports.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-center px-6">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-2.5" style={{ backgroundColor: isDark ? 'rgba(148,163,184,0.08)' : 'rgba(226,232,240,0.5)' }}>
-                  <Download size={16} style={{ color: isDark ? '#475569' : '#cbd5e1' }} />
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-2.5" style={{ backgroundColor: 'var(--theme-bg-muted)' }}>
+                  <Download size={16} style={{ color: 'var(--theme-text-subtle)' }} />
                 </div>
-                <p className="text-[15px] font-medium" style={{ color: isDark ? '#475569' : '#94a3b8' }}>暂无已导出的文件</p>
+                <p className="text-[15px] font-medium" style={{ color: 'var(--theme-text-muted)' }}>暂无已导出的文件</p>
               </div>
             ) : (
               <div className="space-y-1 overflow-y-auto">
@@ -390,25 +390,25 @@ export function MapStudioTab() {
                     className="flex items-center gap-2.5 p-2 rounded-lg transition-colors border"
                     style={{ 
                       backgroundColor: 'transparent',
-                      borderColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)'
+                      borderColor: 'var(--theme-border)'
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)'; }}
+                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--theme-bg-hover)'; }}
                     onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
                   >
-                    <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base flex-shrink-0" style={{ backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }}>
+                    <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base flex-shrink-0" style={{ backgroundColor: 'var(--theme-bg-muted)' }}>
                       {iconForType[item.type] || '📁'}
                     </div>
                     
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs font-semibold truncate" style={{ color: isDark ? '#e2e8f0' : '#334155' }}>
+                      <div className="text-xs font-semibold truncate" style={{ color: 'var(--theme-text-primary)' }}>
                         {item.name}
                       </div>
                       <div className="flex items-center gap-1.5 mt-0.5 text-[15px] font-medium">
-                        <span className="uppercase px-1 rounded font-mono" style={{ backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', color: isDark ? '#94a3b8' : '#64748b' }}>
+                        <span className="uppercase px-1 rounded font-mono" style={{ backgroundColor: 'var(--theme-bg-muted)', color: 'var(--theme-text-muted)' }}>
                           {item.type}
                         </span>
-                        <span style={{ color: isDark ? '#475569' : '#cbd5e1' }}>|</span>
-                        <span className="font-mono" style={{ color: isDark ? '#64748b' : '#94a3b8' }}>
+                        <span style={{ color: 'var(--theme-text-subtle)' }}>|</span>
+                        <span className="font-mono" style={{ color: 'var(--theme-text-muted)' }}>
                           {item.size}
                         </span>
                       </div>
@@ -419,14 +419,14 @@ export function MapStudioTab() {
                         onClick={() => handleDownload(item)}
                         aria-label="下载"
                         className="p-1.5 rounded-md transition-colors"
-                        style={{ color: isDark ? '#94a3b8' : '#64748b' }}
+                        style={{ color: 'var(--theme-text-secondary)' }}
                         onMouseEnter={(e) => { 
-                          e.currentTarget.style.backgroundColor = isDark ? 'rgba(74,222,128,0.1)' : 'rgba(16,185,129,0.08)'; 
-                          e.currentTarget.style.color = isDark ? '#4ade80' : '#10b981'; 
+                          e.currentTarget.style.backgroundColor = 'rgba(22,163,74,0.1)'; 
+                          e.currentTarget.style.color = '#16a34a'; 
                         }}
                         onMouseLeave={(e) => { 
                           e.currentTarget.style.backgroundColor = 'transparent'; 
-                          e.currentTarget.style.color = isDark ? '#94a3b8' : '#64748b'; 
+                          e.currentTarget.style.color = 'var(--theme-text-secondary)'; 
                         }}
                         title="下载"
                       >
@@ -436,14 +436,14 @@ export function MapStudioTab() {
                         onClick={() => handleDelete(item.id)}
                         aria-label="删除"
                         className="p-1.5 rounded-md transition-colors"
-                        style={{ color: isDark ? '#94a3b8' : '#64748b' }}
+                        style={{ color: 'var(--theme-text-secondary)' }}
                         onMouseEnter={(e) => { 
-                          e.currentTarget.style.backgroundColor = isDark ? 'rgba(248,113,113,0.1)' : 'rgba(254,226,226,0.5)'; 
-                          e.currentTarget.style.color = isDark ? '#fca5a5' : '#ef4444'; 
+                          e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.1)'; 
+                          e.currentTarget.style.color = '#ef4444'; 
                         }}
                         onMouseLeave={(e) => { 
                           e.currentTarget.style.backgroundColor = 'transparent'; 
-                          e.currentTarget.style.color = isDark ? '#94a3b8' : '#64748b'; 
+                          e.currentTarget.style.color = 'var(--theme-text-secondary)'; 
                         }}
                         title="删除"
                       >
@@ -462,7 +462,7 @@ export function MapStudioTab() {
       {activeSubTab === 'layout' && (
         <div 
           className="p-3 bg-transparent border-t shrink-0" 
-          style={{ borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }}
+          style={{ borderColor: 'var(--theme-border)' }}
         >
           <button 
             className="w-full text-white font-bold py-2 rounded-lg shadow-md transition-all text-xs" 
