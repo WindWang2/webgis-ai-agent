@@ -19,7 +19,7 @@ ref/alias、event-log、lifecycle），不可强行收口。SessionContext 数�
 get_session_metadata 返回同形态数据，未来若真出现一站式读取需求可重建 load_context。
 """
 from dataclasses import dataclass, field
-from typing import Any, Optional, Protocol
+from typing import Any, Optional, Protocol, runtime_checkable
 
 
 @dataclass
@@ -37,16 +37,17 @@ class SessionContext:
     refs: dict[str, str] = field(default_factory=dict)
 
 
+@runtime_checkable
 class SessionStoreProtocol(Protocol):
-    """SessionStore 细粒度接口协议（ADR-0018）。
+    """SessionStore 细粒度接口协议（ADR-0018 / ADR-0025）。
 
-    这 14 个方法各自承载 ADR-0018 §2 列举的关注点（frontend perception、ref/alias
-    解析、event log、lifecycle），是真正承重的表面。曾声明的 3 个「深意图」方法
-    （load_context / commit_dispatch / get_ref_data）已删除——见模块 docstring。
+    包含 16 个核心 API 方法，确保内存后端 (SessionDataManager) 与 Redis 后端
+    (RedisSessionDataManager) 具备 100% 协议一致性。
     """
 
     async def get(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]: ...
     async def store(self, session_id: str, data: Any, prefix: str = "data") -> str: ...
+    async def overwrite(self, session_id: str, ref_id: str, data: Any) -> bool: ...
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None: ...
     async def list_refs(self, session_id: str) -> dict[str, str]: ...
     async def resolve_alias(self, session_id: str, ref_or_alias: str) -> str: ...
@@ -59,6 +60,7 @@ class SessionStoreProtocol(Protocol):
     async def get_started_at(self, session_id: str) -> Optional[str]: ...
     async def get_session_metadata(self, session_id: str) -> dict[str, Any]: ...
     async def clear_session(self, session_id: str) -> None: ...
+    async def cleanup_idle_sessions(self, max_sessions: int = 100) -> None: ...
 
 
 # 保留旧 Protocol 名以兼容现有 import

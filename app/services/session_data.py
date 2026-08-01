@@ -62,7 +62,7 @@ class SessionDataManager:
         session_cache[ref_id] = data
         return True
 
-    async def set_alias(self, session_id: str, ref_id: str, alias: str):
+    async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
         """为引用 ID 设置别名"""
         if session_id not in self._aliases:
             self._aliases[session_id] = {}
@@ -118,7 +118,7 @@ class SessionDataManager:
             for k in to_delete:
                 del aliases[k]
 
-    async def set_map_state(self, session_id: str, key: str, value: Any):
+    async def set_map_state(self, session_id: str, key: str, value: Any) -> None:
         """设置地图状态元数据"""
         if session_id not in self._map_state:
             self._map_state[session_id] = {}
@@ -135,7 +135,7 @@ class SessionDataManager:
         """获取当前地图所有状态"""
         return self._map_state.get(session_id, {})
 
-    async def update_layer_in_state(self, session_id: str, layer_id: str, updates: dict):
+    async def update_layer_in_state(self, session_id: str, layer_id: str, updates: dict) -> None:
         """更新地图状态中单个图层的属性"""
         # BUG-14: hold the lock across the whole read-modify-write so a
         # concurrent update/remove on the same layers list can't interleave and
@@ -150,14 +150,14 @@ class SessionDataManager:
                 layers.append({"id": layer_id, **updates})
             await self.set_map_state(session_id, "layers", layers)
 
-    async def remove_layer_from_state(self, session_id: str, layer_id: str):
+    async def remove_layer_from_state(self, session_id: str, layer_id: str) -> None:
         """从地图状态中移除指定图层"""
         # BUG-14: same read-modify-write race as update_layer_in_state.
         async with self._lock:
             layers = self._map_state.get(session_id, {}).get("layers", [])
             await self.set_map_state(session_id, "layers", [l for l in layers if l.get("id") != layer_id])
 
-    async def append_event(self, session_id: str, event: str, data: dict):
+    async def append_event(self, session_id: str, event: str, data: dict) -> None:
         """追加用户操作到事件日志"""
         if session_id not in self._event_log:
             self._event_log[session_id] = deque(maxlen=20)
@@ -180,14 +180,14 @@ class SessionDataManager:
             "started_at": await self.get_started_at(session_id),
         }
 
-    async def clear_session(self, session_id: str):
+    async def clear_session(self, session_id: str) -> None:
         """清理会话数据"""
         self._store.pop(session_id, None)
         self._aliases.pop(session_id, None)
         self._map_state.pop(session_id, None)
         self._event_log.pop(session_id, None)
 
-    async def cleanup_idle_sessions(self, max_sessions: int = 100):
+    async def cleanup_idle_sessions(self, max_sessions: int = 100) -> None:
         """Evict oldest sessions when total exceeds max_sessions."""
         if len(self._store) <= max_sessions:
             return
