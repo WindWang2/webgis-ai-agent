@@ -363,9 +363,13 @@ def convert_analysis_to_mapspec_layer(
 
         layer_type = base_layer.get("type") or inferred_layer_type
 
+        # All legend-bearing emitters attach legend_spec at the top level of their
+        # result dict (h3_binning, kde_contours, heatmap_data, apply_template,
+        # create_thematic_map). An earlier `data`-inner fallback existed for
+        # heatmap_data, but heatmap_data's output is a FeatureCollection shape,
+        # which is_analysis_result rejects ("GeoJSON wins") before this converter
+        # runs — so the fallback was unreachable dead code. See ADR-0015.
         legend_spec = analysis_result.get("legend_spec")
-        if not legend_spec and isinstance(analysis_result.get("data"), dict):
-            legend_spec = analysis_result["data"].get("legend_spec")
 
         paint_color, has_thematic_paint, legend_warnings = _resolve_paint_color(legend_spec, layer_type)
         warnings.extend(legend_warnings)
