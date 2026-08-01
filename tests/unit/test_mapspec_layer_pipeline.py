@@ -1,4 +1,5 @@
 """Unit tests for MapSpec Layer Ingestion Pipeline (app/services/mapspec_layer_pipeline.py)."""
+import copy
 import numpy as np
 import pytest
 from app.services.mapspec_layer_pipeline import process_layer_ingestion
@@ -108,3 +109,39 @@ def test_process_layer_ingestion_preserves_existing_view():
 
     # View was already explicitly set (even at origin [0,0]), so no new suggested_view is returned
     assert suggested_view is None
+
+
+def test_process_layer_ingestion_does_not_mutate_mapspec():
+    # Purity invariant (Candidate #3): process_layer_ingestion reads mapspec only
+    # to seed the source entry's existing keys and never writes back. MapSpecStore
+    # remains the sole write authority. Locks the invariant so a future change
+    # can't silently reintroduce aliasing mutation (the friction an earlier
+    # review flagged, already prevented by the dict(existing_entry) copy).
+    geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [120.0, 30.0]},
+                "properties": {}
+            }
+        ]
+    }
+    layer = {"id": "l1", "source": "s1"}
+    mapspec = {
+        "sources": {"s1": {"type": "geojson", "existing": "KEEP"}},
+        "view": {"center": [0.0, 0.0], "zoom": 1},
+    }
+    before = copy.deepcopy(mapspec)
+
+    processed_layer, source_entry, suggested_view = process_layer_ingestion(
+        mapspec, layer, source_data=geojson
+    )
+
+    # The mapspec document is byte-for-byte unchanged.
+    assert mapspec == before
+    # The returned source_entry carries the new data + preserved existing key,
+    # proving the entry is a copy, not an alias into mapspec["sources"].
+    assert "inlineData" in source_entry
+    assert source_entry.get("existing") == "KEEP"
+    assert "inlineData" not in mapspec["sources"]["s1"]

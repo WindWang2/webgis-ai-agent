@@ -29,6 +29,16 @@ def process_layer_ingestion(
     3. Source data shape classification & storage (store_data).
     4. Auto-profiling & suggested view calculation.
 
+    Pure with respect to `mapspec`: it reads `mapspec["sources"]` only to seed the
+    source entry's existing keys (via a shallow copy), and never writes back to
+    `mapspec`. All outputs — the processed layer, the source entry, and the
+    suggested view — are returned for the caller (MapSpecStore) to apply. This
+    keeps MapSpecStore the sole write authority over the mapspec document (its
+    own docstrings claim that role), and keeps the pipeline unit-testable through
+    its return values alone. An earlier review flagged an aliasing mutation here;
+    the `dict(existing_entry)` copy already prevents it, and the purity invariant
+    is locked by test_process_layer_ingestion_does_not_mutate_mapspec.
+
     Returns:
     (processed_layer, processed_source_entry, optional_suggested_view_dict)
     """
