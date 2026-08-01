@@ -47,5 +47,29 @@ def sanitize_error_msg(error_msg: str) -> str:
         return "***"
     
     s = _OPENAI_KEY_RE.sub(_mask_openai, s)
-    
+
     return s
+
+
+# 4. Filesystem absolute path redaction
+# Replaces Unix absolute paths (/foo/bar) and Windows drive paths (C:\\foo\\bar)
+# with <path> to avoid leaking deployment directory structure to clients/SSE.
+# Lookbehinds exclude URL schemes (https://), path mid-segments, and relative
+# paths (./data/x) which are often user-visible input parameters.
+_UNIX_ABS_PATH_RE = re.compile(r'(?<![:\w./])/(?:[\w.-]+/){1,}[\w.-]+')
+_WIN_DRIVE_PATH_RE = re.compile(r'[A-Za-z]:\\\\(?:[^\\\\\s]+\\\\)+[^\\\\\s]+')
+
+
+def redact_paths(text: str) -> str:
+    """Replace filesystem absolute paths with a ``<path>`` placeholder.
+
+    Matches Unix absolute paths (at least two segments /word/word...) and
+    Windows drive-letter paths (C:\\\\foo\\\\bar). Excludes URL schemes and
+    relative paths via lookbehind so ``https://example.com`` and
+    ``./data/x.geojson`` are preserved.
+    """
+    if not text:
+        return ""
+    text = _UNIX_ABS_PATH_RE.sub('<path>', text)
+    text = _WIN_DRIVE_PATH_RE.sub('<path>', text)
+    return text

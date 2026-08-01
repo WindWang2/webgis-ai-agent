@@ -304,7 +304,7 @@ class ToolDispatchService:
             result = await self._registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
         except Exception as e:
             from app.tools._utils import std_error_response
-            error_msg = str(e)
+            error_msg = sanitize_error_msg(str(e))
             result = std_error_response(
                 error_msg,
                 code="TOOL_ERROR",
@@ -316,6 +316,8 @@ class ToolDispatchService:
         if is_error_dict(result):
             error_msg = sanitize_error_msg(result.get("message", ""))
             result["message"] = error_msg
+            if "correction_hint" in result and result["correction_hint"]:
+                result["correction_hint"] = sanitize_error_msg(result["correction_hint"])
             correction_hint = result.get("correction_hint")
             llm_payload = correction_hint if correction_hint else wrap_error_dict_for_llm(tool_name, result)
             await session_data_manager.append_event(
