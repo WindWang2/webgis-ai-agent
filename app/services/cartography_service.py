@@ -5,28 +5,13 @@ import logging
 from typing import List, Dict, Any, Optional
 import numpy as np
 
+from app.lib.cartography.palettes import COLOR_PALETTES, get_color_from_palette
+
 logger = logging.getLogger(__name__)
 
-COLOR_PALETTES = {
-    "YlOrRd": ["#ffffb2", "#fed976", "#feb24c", "#fd8d3c", "#f03b20", "#bd0026"],
-    "Blues": ["#eff3ff", "#bdd7e7", "#6baed6", "#3182bd", "#08519c"],
-    "Greens": ["#edf8e9", "#bae4b3", "#74c476", "#31a354", "#006d2c"],
-    "Reds": ["#fee5d9", "#fcae91", "#fb6a4a", "#de2d26", "#a50f15"],
-    "Viridis": ["#440154", "#3b528b", "#21908c", "#5dc963", "#fde725"],
-    "Magma": ["#000004", "#3b0f70", "#8c2981", "#de4968", "#feb078", "#fcfdbf"],
-}
 
 class CartographyService:
-    @staticmethod
-    def get_color_from_palette(palette_name: str, value: float) -> str:
-        """
-        从调色板中获取对应数值的颜色
-        value: 0 ~ 1 之间的浮点数
-        """
-        palette = COLOR_PALETTES.get(palette_name, COLOR_PALETTES["YlOrRd"])
-        n = len(palette)
-        idx = min(int(value * n), n - 1)
-        return palette[idx]
+    get_color_from_palette = staticmethod(get_color_from_palette)
 
     @classmethod
     def _jenks_natural_breaks(cls, values: np.ndarray, k: int) -> List[float]:

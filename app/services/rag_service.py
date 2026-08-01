@@ -1,142 +1,52 @@
 """
-RAG 检索增强生成服务 - 基于 FAISS 的本地向量搜索
-支持: 文档嵌入、分块、相似度检索、与对话引擎集成
+RAG 检索增强生成服务 - 基于 FAISS 的本地向量搜索与知识库管理。
+深度模块适配层，将向量存储委托给 FaissVectorStore，分块委托给 chunker。
 """
 import asyncio
-import io
-import json
-import math
-import os
-import re
+import logging
 import uuid
-import fcntl
-from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
-import logging
+
+from app.services.rag.chunker import split_into_chunks, split_markdown_sections
+from app.services.rag.faiss_store import FaissVectorStore
 
 logger = logging.getLogger(__name__)
 
-# 全局向量索引和模型缓存
-_faiss_index = None
-_embedding_model = None
-INDEX_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "vectors_store")
-
-
-def _get_embedding_model():
-    """延迟加载 embedding 模型"""
-    global _embedding_model
-    if _embedding_model is None:
-        try:
-            from sentence_transformers import SentenceTransformer
-            _embedding_model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
-            logger.info("[RAG] Loaded embedding model: paraphrase-multilingual-MiniLM-L12-v2")
-        except Exception as e:
-            logger.error(f"[RAG] Failed to load embedding model: {e}")
-            raise
-    return _embedding_model
+# Single default vector store instance for application usage
+_default_store = FaissVectorStore()
 
 
 def _get_faiss_index(dim: int = 384):
-    """获取或创建 FAISS 索引"""
-    global _faiss_index
-    if _faiss_index is None:
-        try:
-            import faiss
-            # 使用 Inner Product (cosine similarity via normalized vectors)
-            _faiss_index = faiss.IndexFlatIP(dim)
-            logger.info(f"[RAG] Created FAISS index, dim={dim}")
-            
-            # 如果存在持久化索引则加载
-            index_file = os.path.join(INDEX_DIR, "index.faiss")
-            meta_file = os.path.join(INDEX_DIR, "metadata.json")
-            if os.path.exists(index_file) and os.path.exists(meta_file):
-                _faiss_index = faiss.read_index(index_file)
-                logger.info("[RAG] Loaded existing FAISS index")
-        except Exception as e:
-            logger.error(f"[RAG] Failed to init FAISS: {e}")
-            raise
-    return _faiss_index
+    """Backward compatibility helper returning underlying FAISS index."""
+    return _default_store._get_index(dim)
 
 
-def _save_index():
-    """持久化 FAISS 索引"""
-    global _faiss_index
-    if _faiss_index is not None:
-        os.makedirs(INDEX_DIR, exist_ok=True)
-        try:
-            import faiss
-            faiss.write_index(_faiss_index, os.path.join(INDEX_DIR, "index.faiss"))
-            logger.info("[RAG] Saved FAISS index to disk")
-        except Exception as e:
-            logger.warning(f"[RAG] Failed to save index: {e}")
+def _get_embedding_model():
+    """Backward compatibility helper returning underlying embedding model."""
+    return _default_store._get_embedding_model()
 
 
-# ----------------------------------------------------------------------
-# 文档分块策略
-# ----------------------------------------------------------------------
-
-def split_into_chunks(
-    text: str,
-    max_tokens: int = 512,
-    overlap: int = 50
-) -> list[dict[str, Any]]:
-    """
-    将文本分割为多个chunk，支持重叠滑动窗口。
-    
-    Args:
-        text: 输入文本
-        max_tokens: 每个chunk的最大token数
-        overlap: 相邻chunk的重叠token数
-        
-    Returns:
-        [{content, start_char, end_char, chunk_index}, ...]
-    """
-    chunk_size = max_tokens * 4  # 粗略估计: 1 token ≈ 4 chars
-    overlap_chars = overlap * 4
-    
-    chunk_size = min(chunk_size, len(text))
-    if chunk_size <= 0:
-        return []
-    
-    chunk_list = []
-    start = 0
-    idx = 0
-    
-    while start < len(text):
-        end = start + chunk_size
-        chunk_text = text[start:end]
-        
-        # 尝试在自然断点处优化边界
-        if idx > 0:
-            # 寻找最近的分隔符
-            for sep in ["\n\n", "\n", ". ", "。"]:
-                last_sep = chunk_text.rfind(sep)
-                if last_sep > chunk_size // 2:
-                    end = start + last_sep + len(sep)
-                    chunk_text = text[start:end]
-                    break
-        
-        chunk_list.append({
-            "content": chunk_text.strip(),
-            "start_char": start,
-            "end_char": end,
-            "chunk_index": idx,
-        })
-        
-        # 滑动窗口移动
-        start = end - overlap_chars
-        if start >= len(text):
-            break
-        idx += 1
-    
-    return chunk_list
+def _load_metadata() -> dict:
+    """Backward compatibility helper for metadata loading."""
+    return _default_store.load_metadata()
 
 
-# ----------------------------------------------------------------------
-# 核心 RAG 操作
-# ----------------------------------------------------------------------
+def _save_metadata(meta: dict) -> None:
+    """Backward compatibility helper for metadata saving."""
+    _default_store.save_metadata(meta)
+
+
+def _mark_deleted(doc_id: str) -> None:
+    """Backward compatibility helper for marking deleted docs."""
+    _default_store.mark_deleted(doc_id)
+
+
+def _split_markdown_section(text: str) -> list[str]:
+    """Backward compatibility helper for markdown splitting."""
+    return split_markdown_sections(text)
+
 
 async def add_document(
     title: str,
@@ -147,26 +57,15 @@ async def add_document(
 ) -> dict[str, Any]:
     """
     添加文档到知识库，执行全文嵌入。
-    
-    Args:
-        title: 文档标题
-        content: 文档全文
-        file_type: 文档类型
-        
-    Returns:
-        {document_id, chunk_count, status}
     """
     from datetime import datetime, timezone
-    from sqlalchemy import select, func
+    from app.models.knowledge_base import Chunk, Document
     from app.tools._utils import async_db_session
-    from app.models.knowledge_base import Document, Chunk
 
     doc_id = str(uuid.uuid4())
 
-    # 解析content
     if file_type == "markdown":
-        # Markdown 特殊处理：按 ## 标题分段
-        sections_chunks = _split_markdown_section(content)
+        sections_chunks = split_markdown_sections(content)
         chunks_list = []
         pos = 0
         for i, sec in enumerate(sections_chunks):
@@ -179,13 +78,11 @@ async def add_document(
             pos += len(sec)
         chunk_list = chunks_list
     else:
-        # 默认分块策略
         chunk_list = split_into_chunks(content)
 
     if not chunk_list:
         return {"error": "Empty content"}
 
-    # 保存到数据库
     try:
         async with async_db_session() as db:
             doc = Document(
@@ -211,33 +108,23 @@ async def add_document(
                 )
                 db.add(chunk)
 
-            # 生成 embeddings 并建立向量索引 (offload to thread pool — CPU-heavy)
-            embed_model = _get_embedding_model()
             texts = [ch["content"] for ch in chunk_list]
             loop = asyncio.get_running_loop()
             vectors = await loop.run_in_executor(
-                None, lambda: embed_model.encode(texts, normalize_embeddings=True)
+                None, lambda: _default_store.embed_texts(texts)
             )
 
-            # L2归一化转为一维数组
-            vectors = np.array(vectors, dtype=np.float32)
-
-            faiss_idx = _get_faiss_index(vectors.shape[1])
-            faiss_idx.add(vectors)
-
-            # 元数据保存（审计 C3：加锁防止并发写入）
-            meta = _load_metadata()
-            base_idx = len(meta.get("chunks", []))
-            for i, text in enumerate(texts):
-                meta.setdefault("chunks", []).append({
-                    "index": base_idx + i,
+            chunks_meta = [
+                {
                     "document_id": doc_id,
                     "chunk_id": f"{doc_id}_chunk_{i}",
                     "title": title,
                     "content": text,
-                })
-            _save_metadata(meta)
-            _save_index()
+                }
+                for i, text in enumerate(texts)
+            ]
+
+            _default_store.add_vectors(vectors, chunks_meta)
 
             doc.status = "completed"
             doc.indexed_at = datetime.now(timezone.utc)
@@ -246,18 +133,12 @@ async def add_document(
             "document_id": doc_id,
             "title": title,
             "chunk_count": len(chunk_list),
-            "status": "completed"
+            "status": "completed",
         }
 
     except Exception as e:
         logger.error(f"[RAG] add_document failed: {e}", exc_info=True)
         return {"error": str(e)}
-
-
-def _split_markdown_section(text: str) -> list[str]:
-    """将 Markdown 按 ## 标题分割成章节"""
-    parts = re.split(r"(?=^##\s+.+$)", text, flags=re.MULTILINE)
-    return [p.strip() for p in parts if p.strip()]
 
 
 async def semantic_search(
@@ -269,79 +150,50 @@ async def semantic_search(
 ) -> list[dict[str, Any]]:
     """
     语义向量相似度搜索。
-    
-    Args:
-        query: 查询文本
-        top_k: 返回top结果数
-        document_id: 可选限定文档
-        
-    Returns:
-        [{document_id, chunk_id, content, score}, ...]
     """
     try:
-        embed_model = _get_embedding_model()
-        query_vec = embed_model.encode([query], normalize_embeddings=True)
-        query_vec = np.array(query_vec, dtype=np.float32)
-        
-        faiss_idx = _get_faiss_index()
-        scores, indices = faiss_idx.search(query_vec, top_k * 2)  # 多搜一些后面过滤
-        
-        # 读取元数据 — 按 org_id 过滤（审计 S41）
-        meta = _load_metadata()
-        allowed_doc_ids: set[str] = set()
-        if org_id is not None:
-            try:
-                from sqlalchemy import select
-                from app.tools._utils import async_db_session
-                from app.models.knowledge_base import Document
-                async with async_db_session() as db:
-                    rows = await db.execute(
-                        select(Document.id).where(Document.org_id == org_id)
-                    )
-                    allowed_doc_ids = {r[0] for r in rows.all()}
-            except Exception as exc:
-                logger.warning("[RAG] Failed to filter by org_id: %s", exc)
+        query_vec = _default_store.embed_texts([query])
+
+        raw_results = _default_store.search(query_vec, top_k=top_k * 2)
+
         results = []
-        
-        for score, idx in zip(scores[0], indices[0]):
-            if idx < 0 or idx >= len(meta.get("chunks", [])):
+        for ch_meta in raw_results:
+            if ch_meta.get("deleted"):
                 continue
-            
-            chunk_meta = meta["chunks"][int(idx)]
-            if document_id and chunk_meta.get("document_id") != document_id:
+            if document_id and ch_meta.get("document_id") != document_id:
                 continue
-            
+
             results.append({
-                "document_id": chunk_meta.get("document_id"),
-                "chunk_id": chunk_meta.get("chunk_id"),
-                "content": chunk_meta.get("content", "")[:500],
-                "score": float(score),
+                "document_id": ch_meta.get("document_id"),
+                "chunk_id": ch_meta.get("chunk_id"),
+                "content": ch_meta.get("content", "")[:500],
+                "score": float(ch_meta.get("score", 0.0)),
             })
-            
+
             if len(results) >= top_k:
                 break
-        
+
         return results
-        
+
     except Exception as e:
         logger.error(f"[RAG] semantic_search failed: {e}", exc_info=True)
         return []
 
 
-async def delete_document(document_id: str, user_id: Optional[str] = None, org_id: Optional[int] = None) -> bool:
+async def delete_document(
+    document_id: str,
+    user_id: Optional[str] = None,
+    org_id: Optional[int] = None,
+) -> bool:
     """
     删除指定文档的所有chunk和相关向量。
-    
-    Note: FAISS 目前无法真正删除向量，仅标记删除。
-    实际可通过重建索引实现完全删除。此处简化处理返回成功。
     """
-    from sqlalchemy import select, delete
+    from sqlalchemy import delete, select
+    from app.models.knowledge_base import Chunk, Document
     from app.tools._utils import async_db_session
-    from app.models.knowledge_base import Document, Chunk
 
     try:
         async with async_db_session() as db:
-            # 审计 S41：所有权校验
             owner_check = select(Document).where(Document.id == document_id)
             if org_id is not None:
                 owner_check = owner_check.where(Document.org_id == org_id)
@@ -349,13 +201,17 @@ async def delete_document(document_id: str, user_id: Optional[str] = None, org_i
                 owner_check = owner_check.where(Document.creator_id == user_id)
             existing = (await db.execute(owner_check)).scalar_one_or_none()
             if existing is None:
-                logger.warning("[RAG] delete denied: doc %s not owned by user %s org %s", document_id, user_id, org_id)
+                logger.warning(
+                    "[RAG] delete denied: doc %s not owned by user %s org %s",
+                    document_id,
+                    user_id,
+                    org_id,
+                )
                 return False
             await db.execute(delete(Chunk).where(Chunk.document_id == document_id))
             await db.execute(delete(Document).where(Document.id == document_id))
 
-            # 更新元数据标记删除
-            _mark_deleted(document_id)
+            _default_store.mark_deleted(document_id)
 
         return True
     except Exception as e:
@@ -370,9 +226,9 @@ async def list_documents(
     org_id: Optional[int] = None,
 ) -> dict[str, Any]:
     """列出知识库文档"""
-    from sqlalchemy import select, func
-    from app.tools._utils import async_db_session
+    from sqlalchemy import func, select
     from app.models.knowledge_base import Document
+    from app.tools._utils import async_db_session
 
     async with async_db_session() as db:
         count_stmt = select(func.count()).select_from(Document)
@@ -380,7 +236,6 @@ async def list_documents(
         total = total_result.scalar_one()
 
         stmt = select(Document).order_by(Document.created_at.desc()).offset(offset).limit(limit)
-        # 审计 S41：隔离不同租户的文档
         if org_id is not None:
             stmt = stmt.where(Document.org_id == org_id)
         elif user_id is not None:
@@ -399,85 +254,26 @@ async def list_documents(
                     "created_at": d.created_at.isoformat() if d.created_at else None,
                 }
                 for d in items
-            ]
+            ],
         }
 
 
-# ----------------------------------------------------------------------
-# 元数据持久化 (配合 FAISS 使用)
-# ----------------------------------------------------------------------
-
-def _get_meta_path() -> str:
-    os.makedirs(INDEX_DIR, exist_ok=True)
-    return os.path.join(INDEX_DIR, "metadata.json")
-
-
-def _get_lock_path(meta_path: str) -> str:
-    """审计 C3：元数据文件锁，防止并发读写导致 torn writes / lost updates。"""
-    return meta_path + ".lock"
-
-
-def _load_metadata() -> dict:
-    """审计 C3：加共享锁读取 metadata.json，防止读取到 torn write。"""
-    meta_path = _get_meta_path()
-    if not os.path.exists(meta_path):
-        return {}
-    lock_path = _get_lock_path(meta_path)
-    try:
-        with open(lock_path, "w") as lock_f:
-            fcntl.flock(lock_f.fileno(), fcntl.LOCK_SH)
-            try:
-                with open(meta_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            finally:
-                fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def _save_metadata(meta: dict) -> None:
-    """审计 C3：加独占锁写入 metadata.json，防止并发写入覆盖。"""
-    meta_path = _get_meta_path()
-    lock_path = _get_lock_path(meta_path)
-    try:
-        with open(lock_path, "w") as lock_f:
-            fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
-            try:
-                with open(meta_path, "w", encoding="utf-8") as f:
-                    json.dump(meta, f, ensure_ascii=False, indent=2)
-            finally:
-                fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
-    except OSError as e:
-        logger.error("[RAG] Failed to save metadata: %s", e)
-
-
-def _mark_deleted(doc_id: str):
-    """标记已删除的文档"""
-    meta = _load_metadata()
-    if "deleted" in meta:
-        meta["deleted"].append(doc_id)
-    else:
-        meta["deleted"] = [doc_id]
-    _save_metadata(meta)
-
-
-# ----------------------------------------------------------------------
-# 对话引擎集成钩子
-# ----------------------------------------------------------------------
-
-async def retrieve_context(query: str, top_k: int = 3, user_id: Optional[str] = None, org_id: Optional[int] = None) -> str:
+async def retrieve_context(
+    query: str,
+    top_k: int = 3,
+    user_id: Optional[str] = None,
+    org_id: Optional[int] = None,
+) -> str:
     """
     为对话引擎提供的上下文检索接口。
-    返回拼接的上下文字符串供LLM使用。
     """
-    results = await semantic_search(query, top_k=top_k, user_id=user_id, org_id=org_id)
+    results = await semantic_search(
+        query, top_k=top_k, user_id=user_id, org_id=org_id
+    )
     if not results:
         return ""
-    
-    ctx_parts = []
-    for r in results:
-        ctx_parts.append(f"[{r['score']:.2f}] {r['content']}")
-    
+
+    ctx_parts = [f"[{r['score']:.2f}] {r['content']}" for r in results]
     return "\n\n---\n\n".join(ctx_parts)
 
 
@@ -487,4 +283,5 @@ __all__ = [
     "delete_document",
     "list_documents",
     "retrieve_context",
+    "split_into_chunks",
 ]

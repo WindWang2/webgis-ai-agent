@@ -524,10 +524,10 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
         return GeoAnalysisResult(False, None, "Invalid GeoJSON or no features found", error_type="ValueError")
     
     gdf, utm_crs = res
-    values = _extract_numeric_values(gdf, value_field)
-    if values is None or len(values) == 0:
+    aligned = _filter_numeric_gdf(gdf, value_field)
+    if aligned is None:
         return GeoAnalysisResult(False, None, f"Field '{value_field}' missing or non-numeric", error_type="ValueError")
-    
+    gdf, values = aligned
     if len(values) < 3:
         return GeoAnalysisResult(False, None, "At least 3 features required for LISA", error_type="InsufficientData")
 
@@ -537,8 +537,8 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
     w = Queen.from_dataframe(gdf)
     w.transform = 'r'
     
-    # Calculate LISA
-    lisa = Moran_Local(values, w)
+    # Calculate LISA (with seed=42 for deterministic permutations)
+    lisa = Moran_Local(values, w, seed=42)
     
     # Assign clusters
     clusters = []

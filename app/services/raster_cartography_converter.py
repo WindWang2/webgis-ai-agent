@@ -102,7 +102,7 @@ def render_array_to_png(array: np.ndarray, palette: str = DEFAULT_RASTER_PALETTE
   """
   from PIL import Image
 
-  from app.services.cartography_service import COLOR_PALETTES
+  from app.lib.cartography.palettes import COLOR_PALETTES
 
   arr = np.asarray(array, dtype=float)
   if arr.ndim != 2 or arr.size == 0:
@@ -195,10 +195,9 @@ def build_raster_layer(
 
 
 def _known_palettes() -> Tuple[str, ...]:
-  """Palette names available in CartographyService.COLOR_PALETTES (lazy import
-  to avoid a hard dependency at module load)."""
+  """Palette names available in COLOR_PALETTES."""
   try:
-    from app.services.cartography_service import COLOR_PALETTES
+    from app.lib.cartography.palettes import COLOR_PALETTES
     return tuple(COLOR_PALETTES.keys())
   except Exception:
     return (DEFAULT_RASTER_PALETTE,)

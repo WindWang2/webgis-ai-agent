@@ -76,3 +76,22 @@ class StructuredData(BaseModel):
     """结构化数据"""
     rows: list[dict]
     fields: list[FieldInfo]
+
+
+class ExplorerStageContext(BaseModel):
+    """5-Stage Pipeline execution context."""
+    task_id: str
+    stage: Literal["discover", "fetch", "parse", "geocode", "validate"]
+    search_context: Optional[SearchContext] = None
+    data_packages: list[DataPackage] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StageResult(BaseModel):
+    """Result returned by a single Explorer pipeline stage execution."""
+    success: bool
+    stage: str
+    message: str = ""
+    data: Optional[dict[str, Any]] = None
+    next_stage: Optional[str] = None
+
