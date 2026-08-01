@@ -286,58 +286,22 @@ def build_plan_block(plan) -> str:
     return "\n".join(lines)
 
 
+_default_assembler = None
+
+
+def _get_assembler() -> ChatContextAssembler:
+    global _default_assembler
+    if _default_assembler is None:
+        from app.services.chat.context_assembler import ChatContextAssembler
+        _default_assembler = ChatContextAssembler()
+    return _default_assembler
+
+
 async def compose_request_messages(session_id: str, messages: list[dict]) -> list[dict]:
-    """组装一次 LLM 请求的消息列表：SYSTEM_PROMPT + 实时感知 + (可选)对话上下文摘要 + 历史。"""
-    if not messages:
-        return []
-
-    if hasattr(session_data_manager, "get_session_metadata"):
-        metadata = await session_data_manager.get_session_metadata(session_id)
-        map_state = metadata.get("map_state") or {}
-        list_refs = metadata.get("list_refs") or {}
-        event_log = metadata.get("event_log") or []
-        started_at = metadata.get("started_at")
-
-        env_summary = await build_map_state_summary(
-            session_id,
-            state=map_state,
-            inventory=list_refs,
-            event_log=event_log,
-            _fetched=True
-        )
-        overview = await build_session_overview(
-            session_id,
-            messages,
-            started_at=started_at,
-            event_log=event_log,
-            inventory=list_refs,
-            _fetched=True
-        )
-    else:
-        env_summary = await build_map_state_summary(session_id)
-        overview = await build_session_overview(session_id, messages)
-
-    if overview:
-        env_summary += f"\n- 会话概览: {overview}"
-    logger.debug(f"[ENV-INJECT] session={session_id}\n{env_summary}")
-
-    sys_msg = dict(messages[0])
-    sys_msg["content"] = sys_msg.get("content", "") + "\n\n" + env_summary
-
-    head = [sys_msg]
-
-    from app.services.chat.planner import get_plan
-    plan = get_plan(session_id)
-    if plan is not None:
-        head.append({"role": "system", "content": build_plan_block(plan)})
-
-    last_ctx = build_last_analysis_context(messages)
-    if last_ctx:
-        head.append({"role": "system", "content": last_ctx})
-
-    history, dropped = truncate_history_by_budget(messages[1:])
-    if dropped > 0:
-        head.append({"role": "system", "content": _build_truncation_notice(dropped)})
-        logger.info(f"[HISTORY-TRUNC] session={session_id} dropped {dropped} turns")
-    head.extend(history)
-    return head
+    """
+    组装一次 LLM 请求的消息列表 (Legacy Shim).
+    Delegates to ChatContextAssembler deep module.
+    """
+    assembler = _get_assembler()
+    res = await assembler.assemble(session_id, messages)
+    return res.to_messages()

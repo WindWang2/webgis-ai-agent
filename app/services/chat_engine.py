@@ -69,6 +69,8 @@ class ChatEngine:
         self.use_prompt_caching = settings.LLM_PROMPT_CACHING_ENABLED
         self.max_rounds = 60
         self.tracker = TaskTracker()
+        from app.services.chat.context_assembler import ChatContextAssembler
+        self.context_assembler = ChatContextAssembler()
         self.tool_pipeline = ToolExecutionPipeline(
             self.registry, self.tracker, dispatch_fn=lambda *a, **k: self._dispatch_tool(*a, **k)
         )
@@ -221,7 +223,8 @@ class ChatEngine:
         return _format_layer_lines(inventory, active_layers)
 
     async def _compose_request_messages(self, session_id: str, messages: list[dict]) -> list[dict]:
-        return await _compose_request_messages_fn(session_id, messages)
+        res = await self.context_assembler.assemble(session_id, messages)
+        return res.to_messages()
 
     def _build_last_analysis_context(self, messages: list[dict]) -> str:
         return _build_last_analysis_context(messages)

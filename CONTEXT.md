@@ -19,6 +19,12 @@ The deep state storage module managing runtime session data across 4 primary ope
 `update_map_state` (atomic layer mutations), and `get_ref_data` (Fetch-on-Demand payload retrieval).
 Implemented by two adapters: `RedisSessionStore` (production) and `MemorySessionStore` (test/local fallback).
 
+### ChatContextAssembler
+The deep prompt context composition engine (`app/services/chat/context_assembler.py`).
+Encapsulates map state ambient summaries, history token budget truncation, XML security fencing,
+and execution plan blocks behind a single `assemble(session_id, messages)` interface method.
+Returns a structured `ContextAssemblyResult` value object.
+
 
 ### Tool
 A Python callable registered in `ToolRegistry` with an OpenAI-compatible JSON schema, tier
