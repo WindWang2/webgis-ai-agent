@@ -12,6 +12,14 @@ from typing import Any, Optional
 import jinja2
 import logging
 
+import uuid
+from dataclasses import dataclass
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.models.api_response import ErrCode
+from app.models.report import Report
+from app.models.db_model import Conversation, Message
+
 try:
     import weasyprint
 except ImportError:
@@ -22,6 +30,38 @@ logger = logging.getLogger(__name__)
 REPORT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "reports")
 
 
+def file_ext(fmt: str) -> str:
+    if fmt in ("markdown", "md"):
+        return "md"
+    return fmt
+
+
+def serialize_report(r: Report) -> dict:
+    return {
+        "id": r.id,
+        "session_id": r.session_id,
+        "title": r.title,
+        "format": r.format,
+        "status": r.status,
+        "file_size": r.file_size,
+        "share_code": r.share_code,
+        "share_expires_at": (
+            r.share_expires_at.isoformat() if r.share_expires_at else None
+        ),
+        "error_message": r.error_message,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+        "download_url": f"/api/v1/reports/{r.id}/download" if r.status == "completed" else None,
+    }
+
+
+@dataclass
+class ReportSagaResult:
+    success: bool
+    report_data: Optional[dict] = None
+    message: str = ""
+    err_code: Optional[ErrCode] = None
+
+
 class ReportService:
     def __init__(self):
         template_path = os.path.join(os.path.dirname(__file__), "templates")
@@ -29,6 +69,144 @@ class ReportService:
             loader=jinja2.FileSystemLoader(template_path),
             autoescape=jinja2.select_autoescape(["html", "xml"]),
         )
+
+    async def create_and_generate(
+        self,
+        db: AsyncSession,
+        session_id: str,
+        format: str = "pdf",
+        title: Optional[str] = None,
+        session_factory=None,
+    ) -> ReportSagaResult:
+        """
+        Report status-lifecycle saga (ADR-0023):
+        1. Fetch conversation & messages using active `db` session.
+        2. Create Report row in 'generating' status, commit, and `db.expunge(report)`.
+        3. Perform rendering (`generate_report`).
+        4. Write final status ('completed'/'failed') via `session_factory` (or fallback `db`).
+        """
+        fmt = format.lower()
+        allowed_formats = {"pdf", "html", "markdown", "md"}
+        if fmt not in allowed_formats:
+            return ReportSagaResult(
+                success=False,
+                err_code=ErrCode.VALIDATE_ERROR,
+                message=f"不支持的格式: {fmt}，可选: {', '.join(sorted(allowed_formats))}",
+            )
+
+        conversation = await db.get(Conversation, session_id)
+        if not conversation:
+            return ReportSagaResult(
+                success=False,
+                err_code=ErrCode.NOT_FOUND,
+                message="会话不存在",
+            )
+
+        result = await db.execute(
+            select(Message)
+            .where(Message.conversation_id == session_id)
+            .order_by(Message.created_at.asc())
+        )
+        messages = result.scalars().all()
+
+        if not messages:
+            return ReportSagaResult(
+                success=False,
+                err_code=ErrCode.VALIDATE_ERROR,
+                message="会话中暂无消息，无法生成报告",
+            )
+
+        report_id = str(uuid.uuid4())
+        report_title = title or conversation.title or "分析报告"
+        file_name = f"{report_id}.{file_ext(fmt)}"
+        file_path = os.path.join(REPORT_DIR, file_name)
+
+        report = Report(
+            id=report_id,
+            session_id=session_id,
+            title=report_title,
+            format=fmt,
+            status="generating",
+            file_path=file_path,
+        )
+        db.add(report)
+        await db.commit()
+        await db.refresh(report)
+
+        # Detach report object so async rendering doesn't hold the DB session
+        db.expunge(report)
+
+        final_status = "failed"
+        final_error = "报告生成失败"
+        final_size = None
+
+        try:
+            msg_dicts = [
+                {
+                    "role": m.role,
+                    "content": m.content or "",
+                    "tool_calls": m.tool_calls,
+                    "tool_result": m.tool_result,
+                }
+                for m in messages
+            ]
+
+            success = await self.generate_report(
+                session_id=session_id,
+                session_title=report_title,
+                messages=msg_dicts,
+                output_path=file_path,
+                format=fmt,
+            )
+
+            if success and os.path.exists(file_path):
+                final_status = "completed"
+                final_size = os.path.getsize(file_path)
+                final_error = None
+        except Exception as e:
+            logger.error(f"Report generation error: {e}", exc_info=True)
+
+        if session_factory is None:
+            from app.core.database import AsyncSessionLocal
+            session_factory = AsyncSessionLocal
+
+        if session_factory is not None:
+            async with session_factory() as db2:
+                db2_report = await db2.get(Report, report_id)
+                if db2_report is not None:
+                    db2_report.status = final_status
+                    db2_report.error_message = final_error
+                    if final_size is not None:
+                        db2_report.file_size = final_size
+                    await db2.commit()
+                    report.status = final_status
+                    report.error_message = final_error
+                    if final_size is not None:
+                        report.file_size = final_size
+        else:
+            report.status = final_status
+            report.error_message = final_error
+            if final_size is not None:
+                report.file_size = final_size
+            await db.commit()
+            await db.refresh(report)
+
+        report_serialized = serialize_report(report)
+
+        if report.status == "failed":
+            return ReportSagaResult(
+                success=False,
+                report_data=report_serialized,
+                err_code=ErrCode.SERVER_ERROR,
+                message="报告生成失败",
+            )
+
+        return ReportSagaResult(
+            success=True,
+            report_data=report_serialized,
+            message="报告生成成功",
+        )
+
 
     async def generate_report(
         self,

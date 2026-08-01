@@ -110,117 +110,27 @@ async def create_report(
     db: AsyncSession = Depends(get_async_db),
     _user: dict = Depends(get_current_user),
 ):
-    """从会话历史生成报告"""
-    fmt = request.format.lower()
-    if fmt not in ALLOWED_FORMATS:
-        return ApiResponse.fail(code=ErrCode.VALIDATE_ERROR, message=f"不支持的格式: {fmt}，可选: {', '.join(sorted(ALLOWED_FORMATS))}")
-
-    # 审计 S35：先校验会话归属，再做后续操作。
+    """从会话历史生成报告（ADR-0023: 状态 Saga 已收敛至 ReportService）"""
     user_id = _user.get("user_id")
     await _check_session_owner(db, request.session_id, user_id)
 
-    # 验证会话存在
-    conversation = await db.get(Conversation, request.session_id)
-    if not conversation:
-        return ApiResponse.fail(code=ErrCode.NOT_FOUND, message="会话不存在")
-
-    result = await db.execute(
-        select(Message)
-        .where(Message.conversation_id == request.session_id)
-        .order_by(Message.created_at.asc())
-    )
-    messages = result.scalars().all()
-
-    if not messages:
-        return ApiResponse.fail(code=ErrCode.VALIDATE_ERROR, message="会话中暂无消息，无法生成报告")
-
-    # 创建报告记录
-    report_id = str(uuid.uuid4())
-    title = request.title or conversation.title or "分析报告"
-    file_name = f"{report_id}.{_file_ext(fmt)}"
-    file_path = os.path.join(REPORT_DIR, file_name)
-
-    report = Report(
-        id=report_id,
-        session_id=request.session_id,
-        title=title,
-        format=fmt,
-        status="generating",
-        file_path=file_path,
-    )
-    db.add(report)
-    await db.commit()
-    await db.refresh(report)
-
-    # 审计 M6：之前在 generate_report（可能 30s）期间持有同一个 AsyncSession，
-    # 导致连接池耗尽 + 第二次 commit 之间崩溃报告卡在 'generating' 永久状态。
-    # 修法：expunge report 对象（detach），generate_report 用纯本地数据，
-    # 最后开新 session 写最终 status。
-    db.expunge(report)
-
-    # 异步生成报告（不再持有 DB session）
     svc = ReportService()
-    final_status = "failed"
-    final_error = "报告生成失败"
-    final_size = None
-    try:
-        msg_dicts = [
-            {
-                "role": m.role,
-                "content": m.content or "",
-                "tool_calls": m.tool_calls,
-                "tool_result": m.tool_result,
-            }
-            for m in messages
-        ]
+    res = await svc.create_and_generate(
+        db=db,
+        session_id=request.session_id,
+        format=request.format,
+        title=request.title,
+    )
 
-        success = await svc.generate_report(
-            session_id=request.session_id,
-            session_title=title,
-            messages=msg_dicts,
-            output_path=file_path,
-            format=fmt,
-        )
-
-        if success and os.path.exists(file_path):
-            final_status = "completed"
-            final_size = os.path.getsize(file_path)
-            final_error = None
-    except Exception as e:
-        logger.error(f"Report generation error: {e}", exc_info=True)
-
-    # 用新 session 写最终 status（不阻塞原 session）
-    from app.core.database import AsyncSessionLocal
-    if AsyncSessionLocal is not None:
-        async with AsyncSessionLocal() as db2:
-            db2_report = await db2.get(Report, report_id)
-            if db2_report is not None:
-                db2_report.status = final_status
-                db2_report.error_message = final_error
-                if final_size is not None:
-                    db2_report.file_size = final_size
-                await db2.commit()
-                report.status = final_status
-                report.error_message = final_error
-                if final_size is not None:
-                    report.file_size = final_size
-    else:
-        # fallback：async DB 不可用（SQLite-only 老路径），用原 session
-        report.status = final_status
-        report.error_message = final_error
-        if final_size is not None:
-            report.file_size = final_size
-        await db.commit()
-        await db.refresh(report)
-
-    if report.status == "failed":
+    if not res.success:
         return ApiResponse.fail(
-            code=ErrCode.SERVER_ERROR,
-            message="报告生成失败",
-            data=_serialize_report(report),
+            code=res.err_code or ErrCode.SERVER_ERROR,
+            message=res.message,
+            data=res.report_data,
         )
 
-    return ApiResponse.ok(data=_serialize_report(report), message="报告生成成功")
+    return ApiResponse.ok(data=res.report_data, message=res.message)
+
 
 
 @router.get("", response_model=ApiResponse)

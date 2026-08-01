@@ -70,6 +70,10 @@ external data discovery.
 Catch-all asset table storing both user uploads *and* analysis results (e.g., NDVI GeoTIFF
 outputs). The `geometry_type` field carries implicit semantics like `"raster_analysis"`.
 
+### Report & Report Generation Saga
+A **Report** is a DB-backed artifact (`reports` table) generated from a session's conversation history into PDF, HTML, or Markdown format. The report creation lifecycle follows a 2-phase transactional **status-lifecycle saga** (`ReportService.create_and_generate`): initial `Report` creation in `"generating"` status with immediate detachment (`db.expunge`), async Jinja2/WeasyPrint rendering without holding the primary DB session, and a separate DB session update to terminal status (`"completed"` or `"failed"`).
+
+
 ### Exception As Thought
 Architectural philosophy where tool errors are returned as structured error dicts with
 `correction_hint` rather than raised as HTTP 500s. The LLM sees these and decides whether to
