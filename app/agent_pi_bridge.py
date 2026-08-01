@@ -290,7 +290,8 @@ class PiBridge:
                 event = await asyncio.wait_for(self._rpc.events.get(), timeout=PI_EVENT_DRAIN_TIMEOUT)
                 if event.get("type") == "agent_end":
                     break
-                text = self._extract_text_from_event(event)
+                from app.services.chat.pi_event_mapper import _extract_text_from_event
+                text = _extract_text_from_event(event)
                 if text:
                     content_parts.append(text)
             except asyncio.TimeoutError:
@@ -340,11 +341,12 @@ class PiBridge:
         # Stream events from Pi
         yield sse_event("task_start", {"task_id": session_id or "", "session_id": self._session_id})
 
+        from app.services.chat.pi_event_mapper import map_event_to_sse
         timed_out = False
         while True:
             try:
                 event = await asyncio.wait_for(self._rpc.events.get(), timeout=PI_EVENT_STREAM_TIMEOUT)
-                sse = self._map_event_to_sse(event)
+                sse = map_event_to_sse(event, self._session_id, cache_lookup=get_cached_dispatch_result)
                 if sse:
                     yield sse
                 if event.get("type") == "agent_end":
@@ -360,219 +362,6 @@ class PiBridge:
             })
 
         yield sse_event("done", {"session_id": self._session_id})
-
-    async def get_state(self) -> dict:
-        """Get current Pi agent state."""
-        async with self._lock:
-            result = await self._rpc.request("get_state")
-            return result or {}
-
-    async def get_available_models(self) -> list[dict]:
-        """Get available models."""
-        async with self._lock:
-            result = await self._rpc.request("get_available_models")
-            return result.get("models", []) if result else []
-
-    async def set_model(self, provider: str, model_id: str) -> dict:
-        """Set the model."""
-        async with self._lock:
-            result = await self._rpc.request("set_model", {"provider": provider, "modelId": model_id})
-            return result or {}
-
-    async def abort(self) -> dict:
-        """Abort current operation."""
-        async with self._lock:
-            result = await self._rpc.request("abort")
-            return result or {}
-
-    # ── Event mapping (stays here until Commit 2 extracts it) ─────
-
-    # Dispatch table: Pi event type -> PiBridge handler method name
-    _EVENT_HANDLERS: dict[str, str] = {
-        "message_update": "_handle_message_update",
-        "tool_execution_start": "_handle_tool_execution_start",
-        "tool_execution_end": "_handle_tool_execution_end",
-        "agent_end": "_handle_agent_end",
-        "compaction_start": "_handle_compaction_start",
-        "compaction_end": "_handle_compaction_end",
-    }
-
-    def _map_event_to_sse(self, event: dict) -> Optional[str]:
-        """Map Pi AgentSessionEvent to SSE format via dispatch table."""
-        event_type = event.get("type", "")
-        method_name = self._EVENT_HANDLERS.get(event_type)
-        if method_name is None:
-            return None
-        return getattr(self, method_name)(event)
-
-    def _handle_message_update(self, event: dict) -> Optional[str]:
-        assistant_event = event.get("assistantMessageEvent", {})
-        event_kind = assistant_event.get("type", "")
-
-        if "text" in event_kind or "thinking" in event_kind:
-            content = assistant_event.get("content", "")
-            is_reasoning = "thinking" in event_kind
-            if content:
-                return sse_event("token", {
-                    "content": content,
-                    "is_reasoning": is_reasoning,
-                    "session_id": self._session_id,
-                })
-        elif "tool_call" in event_kind or "toolcall" in event_kind:
-            return sse_event("tool_call", {
-                "name": assistant_event.get("name", ""),
-                "arguments": assistant_event.get("arguments", ""),
-            })
-        return None
-
-    def _handle_tool_execution_start(self, event: dict) -> Optional[str]:
-        return sse_event("step_start", self._base_step_payload(event, {
-            "step_index": 0,  # TODO: derive from actual step metadata when available
-            "tool": event.get("toolName", ""),
-        }))
-
-    def _handle_tool_execution_end(self, event: dict) -> Optional[str]:
-        """SSE 适配器：读缓存的 dispatch 结果发 step_result / step_error。
-
-        unified-tool-dispatch 票据 02：此前本方法从 Pi 事件 payload 取 result 再 slim，
-        从不携带 geojson_ref（因为 dispatch 没存 ref），导致前端图层挂载失效。
-        现在读 dispatch_tool 缓存的 ToolDispatchResult -- 服务端视图（已 slim、已落 ref）
-        才是前端需要的真相。缓存未命中时退化到旧行为（不崩溃，但不带 geojson_ref）。
-        """
-        tool_name = event.get("toolName", "")
-        tool_call_id = event.get("toolCallId", "")
-        cached = get_cached_dispatch_result(self._session_id, tool_call_id)
-
-        if cached is not None:
-            if cached.status == "error":
-                return sse_event("step_error", self._base_step_payload(event, {
-                    "tool": tool_name,
-                    "error": cached.error_msg or "",
-                }))
-            # ok / repeated：用服务端 slim_event + geojson_ref
-            payload = self._base_step_payload(event, {
-                "tool": tool_name,
-                "result": cached.slim_event,
-            })
-            if cached.geojson_ref:
-                payload["geojson_ref"] = cached.geojson_ref
-            return sse_event("step_result", payload)
-
-        # 缓存未命中（Pi 重复回传 / dispatch 未走 service 路径）：退化到旧行为
-        result = event.get("result", {})
-        is_error = event.get("isError", False)
-        logger.warning(
-            f"[PiBridge] dispatch cache miss for toolCallId={tool_call_id} "
-            f"(session={self._session_id}); falling back to Pi-echoed result without geojson_ref"
-        )
-        if is_error:
-            error_msg = self._extract_error_text(result)
-            return sse_event("step_error", self._base_step_payload(event, {
-                "tool": tool_name,
-                "error": error_msg,
-            }))
-        try:
-            from app.services.tool_dispatch_service import slim_event_result
-            slim = slim_event_result(result)
-        except Exception:
-            slim = result
-        return sse_event("step_result", self._base_step_payload(event, {
-            "tool": tool_name,
-            "result": slim,
-        }))
-
-    def _handle_agent_end(self, event: dict) -> Optional[str]:
-        return sse_event("task_complete", self._base_step_payload(event, {
-            "step_count": 0,
-            "summary": "",
-        }))
-
-    def _handle_compaction_start(self, event: dict) -> Optional[str]:
-        return sse_event("content", {
-            "content": COMPACTION_START_MSG,
-            "session_id": self._session_id,
-        })
-
-    def _handle_compaction_end(self, event: dict) -> Optional[str]:
-        return sse_event("content", {
-            "content": COMPACTION_END_MSG,
-            "session_id": self._session_id,
-        })
-
-    def _base_step_payload(self, event: dict, extra: dict) -> dict:
-        """Build base SSE payload with common fields shared across step events."""
-        base = {
-            "task_id": self._session_id,
-            "step_id": event.get("toolCallId", ""),
-            "session_id": self._session_id,
-        }
-        base.update(extra)
-        return base
-
-    def _extract_text_from_event(self, event: dict) -> str:
-        """Extract text content from an AgentSessionEvent."""
-        event_type = event.get("type", "")
-
-        if event_type == "message_update":
-            msg = event.get("message", {})
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                return content
-            elif isinstance(content, list):
-                return "".join(
-                    seg.get("text", "") for seg in content if isinstance(seg, dict)
-                )
-
-        elif event_type == "agent_end":
-            msg = event.get("message", {})
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                return content
-
-        return ""
-
-    def _extract_error_text(self, result: Any) -> str:
-        """Extract error text from a tool result, sanitized for SSE output.
-
-        审计 BUG-16：原始实现直接 str(result)，会把内部文件系统绝对路径
-        （/app/data/...、/usr/src/app/...）、堆栈片段等泄露给前端 SSE，
-        便于攻击者做路径侦察。现在统一走 _sanitize_for_client：
-          1. 复用 app.utils.security.sanitize_error_msg（脱敏 DB/API 凭证）；
-          2. 额外把绝对路径替换成 <path>；
-          3. 截断到 500 字符，避免单条 error 事件撑爆 SSE / 日志。
-        """
-        if isinstance(result, dict):
-            content = result.get("content", [])
-            if isinstance(content, list) and content:
-                raw = content[0].get("text", str(result))
-            else:
-                raw = result.get("message", str(result))
-        else:
-            raw = str(result)
-        return PiBridge._sanitize_for_client(raw)
-
-    @staticmethod
-    def _sanitize_for_client(text: str) -> str:
-        """Sanitize an error string for safe emission to clients/SSE."""
-        try:
-            from app.utils.security import sanitize_error_msg
-            text = sanitize_error_msg(text)
-        except Exception:  # noqa: BLE001 - 工具层不应因脱敏失败而抛
-            pass
-        text = PiBridge._redact_paths(text)
-        if len(text) > 500:
-            text = text[:500] + "...(truncated)"
-        return text
-
-    @staticmethod
-    def _redact_paths(text: str) -> str:
-        """Replace filesystem absolute paths with a placeholder.
-
-        NOTE: moved to app.utils.security.redact_paths in Commit 1; this
-        staticmethod delegates to it for back-compat until Commit 2 removes it.
-        """
-        from app.utils.security import redact_paths
-        return redact_paths(text)
 
 
 # Global bridge instance
