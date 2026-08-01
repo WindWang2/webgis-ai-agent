@@ -11,14 +11,17 @@ from app.lib.geo_processor.core import GeoAnalysisResult, to_utm_gdf
 from app.lib.geo_processor.geometry import buffer_smart, clip_smart
 from app.lib.geo_processor.overlay import overlay_smart
 from app.lib.geo_analysis.statistics import (
-    calculate_sde, 
-    moran_i_narrated, 
+    calculate_sde,
+    moran_i_narrated,
+    hotspot_narrated,
     cluster_narrated,
     calculate_central_feature,
-    calculate_nearest
+    calculate_nearest,
+    h3_lisa,
 )
 from app.lib.geo_analysis.aggregation import spatial_aggregate
 from app.lib.geo_analysis.network import calculate_isochrones
+from app.lib.geo_analysis.density import kde_surface as _kde_surface, kde_contours as _kde_contours
 
 logger = logging.getLogger(__name__)
 
@@ -264,6 +267,33 @@ class SpatialAnalyzer:
         if not target_features:
             return calculate_nearest(fc_source)
         return GeoAnalysisResult(False, None, "Cross-layer nearest neighbor not yet implemented")
+
+    @classmethod
+    def kde_surface(
+        cls,
+        features: Any,
+        bandwidth: float = 0,
+        cell_size: float = 500,
+        value_field: str = "",
+        bounds: Optional[list] = None,
+        callback: Optional[Callable] = None,
+    ) -> GeoAnalysisResult:
+        if callback: callback(20, "Executing KDE surface analysis...")
+        fc = _to_feature_collection(features)
+        return _kde_surface(fc, bandwidth=bandwidth, cell_size=cell_size,
+                             value_field=value_field, bounds=bounds)
+
+    @classmethod
+    def kde_contours(
+        cls,
+        features: Any,
+        levels: int = 8,
+        bandwidth: float = 0,
+        callback: Optional[Callable] = None,
+    ) -> GeoAnalysisResult:
+        if callback: callback(20, "Executing KDE contour analysis...")
+        fc = _to_feature_collection(features)
+        return _kde_contours(fc, levels=levels, bandwidth=bandwidth)
 
     @classmethod
     def path_analysis(

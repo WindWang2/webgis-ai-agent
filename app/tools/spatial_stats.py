@@ -95,136 +95,11 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            })
     def kde_surface(geojson: Any, bandwidth: float = 0, cell_size: float = 500,
                     value_field: str = "", bounds: Optional[list] = None) -> dict:
-        from scipy.stats import gaussian_kde
-
-        # 防止可变默认参数共享状态
-        if bounds is None:
-            bounds = []
-
-        data = safe_parse_geojson(geojson)
-        if not data:
-            return std_error_response("无效的 GeoJSON 输入", code="VALIDATION_ERROR", error_type="ValueError")
-
-        result = to_utm_gdf(data)
-        if result is None:
-             return std_error_response("无法解析矢量数据", code="VALIDATION_ERROR", error_type="ValueError")
-        gdf, utm_crs = result
-
-        if len(gdf) < 3:
-            return std_error_response("至少需要3个有效点要素", code="VALIDATION_ERROR", error_type="ValueError")
-
-        coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
-
-        # 审计：权重重复上限，防止大动态范围权重导致 OOM
-        _MAX_REPEAT_FACTOR = 100
-
-        if value_field:
-            weights = extract_numeric_values(gdf, value_field)
-            if weights is None:
-                numeric_cols = [c for c in gdf.columns if c != "geometry" and gdf[c].dtype in ("float64", "int64", "float32", "int32")]
-                return std_error_response(
-                    f"字段 '{value_field}' 不是数值类型。可用字段: {numeric_cols}",
-                    code="VALIDATION_ERROR",
-                    error_type="TypeError",
-                )
-            weights = np.abs(weights)
-            # Weighted: repeat points by weight (clamped to avoid OOM)
-            min_w = float(weights.min())
-            if min_w == 0:
-                min_w = 1e-10
-            repeat_factors = np.clip(np.maximum((weights / min_w).astype(int), 1), 1, _MAX_REPEAT_FACTOR)
-            weighted_coords = np.repeat(coords, repeat_factors, axis=0)
-            kde_data = weighted_coords.T
-        else:
-            kde_data = coords.T
-
-        # Bandwidth — always compute in CRS units (meters)
-        data_std = np.mean(np.std(kde_data, axis=1))
-        if data_std == 0:
-            data_std = 1.0
-
-        if bandwidth <= 0:
-            kde = gaussian_kde(kde_data, bw_method="scott")
-            scott_factor = kde.factor
-            bw = float(scott_factor * data_std)
-        else:
-            bw_factor = float(bandwidth / data_std)
-            kde = gaussian_kde(kde_data, bw_method=bw_factor)
-            bw = bandwidth
-
-        # Bounds
-        if bounds and len(bounds) == 4:
-            bounds_gdf = gpd.GeoDataFrame(geometry=[box(bounds[0], bounds[1], bounds[2], bounds[3])],
-                                          crs="EPSG:4326").to_crs(utm_crs)
-            xmin, ymin, xmax, ymax = bounds_gdf.total_bounds
-        else:
-            xmin, ymin, xmax, ymax = gdf.total_bounds
-            buffer_x = (xmax - xmin) * 0.1
-            buffer_y = (ymax - ymin) * 0.1
-            xmin -= buffer_x
-            xmax += buffer_x
-            ymin -= buffer_y
-            ymax += buffer_y
-
-        # Grid
-        nx = max(int((xmax - xmin) / cell_size), 2)
-        ny = max(int((ymax - ymin) / cell_size), 2)
-
-        # Grid safety limit to prevent OOM
-        MAX_GRID_CELLS = 100_000
-        if nx * ny > MAX_GRID_CELLS:
-            cell_size = max(cell_size, ((xmax - xmin) * (ymax - ymin)) ** 0.5 / (MAX_GRID_CELLS ** 0.5))
-            nx = max(int((xmax - xmin) / cell_size), 2)
-            ny = max(int((ymax - ymin) / cell_size), 2)
-            logger.warning(f"KDE grid auto-adjusted to {nx}x{ny}={nx*ny} cells (cell_size={cell_size:.0f}m)")
-
-        grid_x = np.linspace(xmin, xmax, nx)
-        grid_y = np.linspace(ymin, ymax, ny)
-        gx, gy = np.meshgrid(grid_x, grid_y)
-        grid_coords = np.vstack([gx.ravel(), gy.ravel()])
-        density = kde(grid_coords).reshape(ny, nx)
-
-        max_d = density.max()
-        threshold = max_d * 0.1
-        
-        # 批量构建格网几何体并一次性 reproject 到 WGS84（审计：避免 O(n) 逐单元格 CRS 转换）
-        cell_geoms = []
-        cell_data = []  # (i, j, d_val) tuples
-        for i in range(ny):
-            for j in range(nx):
-                d_val = float(density[i, j])
-                if d_val < threshold:
-                    continue
-                x0, x1 = grid_x[j] - cell_size / 2, grid_x[j] + cell_size / 2
-                y0, y1 = grid_y[i] - cell_size / 2, grid_y[i] + cell_size / 2
-                cell_geoms.append(box(x0, y0, x1, y1))
-                cell_data.append((i, j, d_val))
-        
-        if cell_geoms:
-            cells_gdf = gpd.GeoSeries(cell_geoms, crs=utm_crs).to_crs("EPSG:4326")
-            out_features = [
-                {
-                    "type": "Feature",
-                    "geometry": mapping(cells_gdf.iloc[k]),
-                    "properties": {"density": round(cell_data[k][2], 8)},
-                }
-                for k in range(len(cell_geoms))
-            ]
-        else:
-            out_features = []
-
-        return {
-            "type": "FeatureCollection",
-            "features": out_features,
-            "count": len(out_features),
-            "grid_size": [nx, ny],
-            "stats": {
-                "min_density": round(float(density.min()), 8),
-                "max_density": round(float(density.max()), 8),
-                "mean_density": round(float(density.mean()), 8),
-            },
-            "bandwidth_m": round(bw, 1),
-        }
+        res = SpatialAnalyzer.kde_surface(
+            geojson, bandwidth=bandwidth, cell_size=cell_size,
+            value_field=value_field, bounds=bounds,
+        )
+        return res.to_llm_response()
 
     @tool(registry, name="kde_contours",
            description=(
@@ -240,92 +115,17 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            })
     @cached_tool(ttl=86400)
     def kde_contours(geojson: Any, levels: int = 8, bandwidth: float = 0) -> dict:
-        try:
-            import matplotlib
-            matplotlib.use("Agg")
-            import matplotlib.pyplot as plt
-            from scipy.stats import gaussian_kde
-        except ImportError:
-            return std_error_response("需要 matplotlib 和 scipy", code="DEPENDENCY_MISSING", error_type="ImportError")
-
-        data = safe_parse_geojson(geojson)
-        result = to_utm_gdf(data)
-        if result is None:
-             return std_error_response("无法解析矢量数据", code="VALIDATION_ERROR", error_type="ValueError")
-        gdf, utm_crs = result
-
-        if len(gdf) < 5:
-            return std_error_response("至少需要5个有效点要素进行等值面分析", code="VALIDATION_ERROR", error_type="ValueError")
-
-        coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
-        kde_data = coords.T
-        
-        kde = gaussian_kde(kde_data, bw_method="scott" if bandwidth <= 0 else bandwidth/np.std(kde_data))
-        
-        xmin, ymin, xmax, ymax = gdf.total_bounds
-        buf_x, buf_y = (xmax-xmin)*0.2, (ymax-ymin)*0.2
-        X, Y = np.mgrid[xmin-buf_x:xmax+buf_x:100j, ymin-buf_y:ymax+buf_y:100j]
-        positions = np.vstack([X.ravel(), Y.ravel()])
-        Z = np.reshape(kde(positions).T, X.shape)
-
-        fig, ax = plt.subplots()
-        cs = ax.contourf(X, Y, Z, levels=levels)
-        plt.close(fig)
-
-        out_features = []
-        from shapely.geometry import Polygon
-        raw_polys = []  # (poly, val) — batch CRS transform after loop
-        for i, segs in enumerate(cs.allsegs):
-            val = float(cs.levels[i])
-            for poly_coords in segs:
-                if len(poly_coords) < 3:
-                    continue
-                poly = Polygon(poly_coords)
-                if not poly.is_valid:
-                    poly = poly.buffer(0)
-                raw_polys.append((poly, val))
-
-        # Batch CRS transform: one GeoSeries instead of N per-polygon calls
-        if raw_polys:
-            gs = gpd.GeoSeries([p for p, _ in raw_polys], crs=utm_crs).to_crs("EPSG:4326")
-            for (poly, val), poly_wgs84 in zip(raw_polys, gs):
-                out_features.append({
-                    "type": "Feature",
-                    "geometry": mapping(poly_wgs84),
-                    "properties": {"level": i, "density_value": val}
-                })
-
-        # compute continuous legend_spec from contour level values
-        legend_spec = None
-        if out_features:
-            level_vals = [
-                float(f.get("properties", {}).get("density_value", 0.0))
-                for f in out_features
-            ]
-            level_vals = [v for v in level_vals if v is not None]
-            if level_vals:
-                try:
-                    from app.services.cartography_service import COLOR_PALETTES
-                    palette = "Viridis"
-                    palette_colors = list(COLOR_PALETTES.get(palette, []))
-                    legend_spec = {
-                        "type": "continuous",
-                        "min": min(level_vals),
-                        "max": max(level_vals),
-                        "palette": palette,
-                        "palette_colors": palette_colors[:5] if palette_colors else ["#440154", "#21908c", "#fde725"],
-                    }
-                except Exception:  # noqa: BLE001
-                    legend_spec = None
-
-        result_dict = {
-            "type": "FeatureCollection",
-            "features": out_features,
-            "count": len(out_features),
-            "levels_count": len(cs.levels)
-        }
-        if legend_spec is not None:
-            result_dict["legend_spec"] = legend_spec
+        res = SpatialAnalyzer.kde_contours(geojson, levels=levels, bandwidth=bandwidth)
+        if not res.success:
+            return std_error_response(
+                res.summary, code="VALIDATION_ERROR",
+                error_type=res.error_type or "ValueError",
+                correction_hint=res.correction_hint,
+            )
+        # Return the FC dict directly (not to_llm_response): the dispatch layer
+        # matches type=="FeatureCollection" and the cartography converters read
+        # legend_spec as a top-level analysis marker on this dict.
+        result_dict = res.data
         if isinstance(result_dict, dict) and result_dict.get("type") == "FeatureCollection":
             result_dict = trim_features(result_dict)
         return result_dict
