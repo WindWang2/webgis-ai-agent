@@ -87,9 +87,10 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
   # [0,0,0,0], whose center [0,0] (Null Island) got auto-injected as the
   # map view; now the downstream view_has_center check skips it.
   if bbox is not None:
-    center_lng = round((bbox[0] + bbox[2]) / 2, 6)
-    center_lat = round((bbox[1] + bbox[3]) / 2, 6)
-    zoom = _calculate_suggested_zoom(bbox[0], bbox[1], bbox[2], bbox[3])
+    west, south, east, north = bbox
+    center_lng = round((west + east) / 2, 6)
+    center_lat = round((south + north) / 2, 6)
+    zoom = _calculate_suggested_zoom(west, south, east, north)
     suggested_view = {"center": [center_lng, center_lat], "zoom": zoom}
   else:
     suggested_view = {}
