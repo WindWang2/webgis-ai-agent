@@ -3,6 +3,7 @@ import copy
 import pytest
 from app.utils.coord_transform import (
     transform_geojson,
+    normalize_chinese_crs,
     wgs84_to_gcj02,
     gcj02_to_wgs84,
     gcj02_to_bd09,
@@ -10,6 +11,19 @@ from app.utils.coord_transform import (
     wgs84_to_bd09,
     bd09_to_wgs84,
 )
+
+
+def test_normalize_chinese_crs():
+    # Candidate #2: normalize_chinese_crs is the single authority for "what
+    # counts as a Chinese CRS" — the tool adapter's policy gate depends on it.
+    assert normalize_chinese_crs("wgs84") == "wgs84"
+    assert normalize_chinese_crs("WGS-84") == "wgs84"
+    assert normalize_chinese_crs("GCJ 02") == "gcj02"
+    assert normalize_chinese_crs("BD09") == "bd09"
+    # Non-Chinese CRS (including EPSG) → None, the rejection signal.
+    assert normalize_chinese_crs("EPSG:4326") is None
+    assert normalize_chinese_crs("utm") is None
+    assert normalize_chinese_crs("") is None
 
 
 def test_scalar_math_helpers():

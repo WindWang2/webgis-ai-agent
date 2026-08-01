@@ -16,12 +16,14 @@ from typing import Any
 
 from app.tools.registry import ToolRegistry, tool
 from app.tools._utils import std_error_response
-from app.utils.coord_transform import transform_geojson
+from app.utils.coord_transform import transform_geojson, normalize_chinese_crs
 from app.lib.geo_processor.core import safe_parse
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_CHINESE = {"wgs84", "gcj02", "bd09"}
+# The supported-Chinese-CRS set lives in the deep module (app.utils.coord_transform);
+# this adapter delegates "what counts as a Chinese CRS" to normalize_chinese_crs
+# rather than re-deriving the normalization and the set (Candidate #2).
 
 
 def register_coord_transform_tools(registry: ToolRegistry):
@@ -47,15 +49,18 @@ def register_coord_transform_tools(registry: ToolRegistry):
               "to_crs": "目标坐标系：'wgs84' | 'gcj02' | 'bd09'",
           })
     def transform_coordinates(geojson: Any, from_crs: str, to_crs: str) -> dict:
-        src = (from_crs or "").lower().replace("-", "").replace(" ", "")
-        dst = (to_crs or "").lower().replace("-", "").replace(" ", "")
-        if src not in _SUPPORTED_CHINESE or dst not in _SUPPORTED_CHINESE:
+        # Policy gate: this tool is Chinese-CRS-only. normalize_chinese_crs is
+        # the deep module's single authority for "what counts as a Chinese CRS";
+        # the adapter keeps the policy (reject non-Chinese) and dict-shaping.
+        src = normalize_chinese_crs(from_crs)
+        dst = normalize_chinese_crs(to_crs)
+        if src is None or dst is None:
             msg = (f"不支持的坐标系 from={from_crs} to={to_crs}。"
-                   f"必须是 {sorted(_SUPPORTED_CHINESE)} 之一。")
+                   f"必须是 ['bd09', 'gcj02', 'wgs84'] 之一。")
             return std_error_response(
                 msg,
                 code="VALIDATION_ERROR",
-                correction_hint=f"请将 from_crs/to_crs 改为 {sorted(_SUPPORTED_CHINESE)} 之一。",
+                correction_hint="请将 from_crs/to_crs 改为 ['bd09', 'gcj02', 'wgs84'] 之一。",
             )
 
         data = safe_parse(geojson)

@@ -95,7 +95,15 @@ def bd09_to_wgs84(lng: float, lat: float) -> Tuple[float, float]:
     return gcj02_to_wgs84(gcj[0], gcj[1])
 
 
-def _normalize_chinese_crs(crs_str: str) -> Optional[str]:
+def normalize_chinese_crs(crs_str: str) -> Optional[str]:
+    """Normalize a Chinese-CRS string to its canonical lowercase form.
+
+    Returns the canonical name ("wgs84" / "gcj02" / "bd09") if the input is a
+    recognized Chinese CRS (case/separator-insensitive: "WGS-84", "GCJ 02" all
+    resolve), or None if it is not. This is the single authority for "what
+    counts as a Chinese CRS" — tool adapters use it as their policy gate rather
+    than re-deriving the normalization and the supported set (Candidate #2).
+    """
     cleaned = (crs_str or "").lower().replace("-", "").replace(" ", "")
     if cleaned in _CHINESE_CRS:
         return cleaned
@@ -152,8 +160,8 @@ def transform_geojson(geojson: Dict[str, Any], from_crs: str, to_crs: str) -> Di
     if not isinstance(geojson, dict):
         return geojson
 
-    src_chinese = _normalize_chinese_crs(from_crs)
-    dst_chinese = _normalize_chinese_crs(to_crs)
+    src_chinese = normalize_chinese_crs(from_crs)
+    dst_chinese = normalize_chinese_crs(to_crs)
 
     transform_fn: Callable[[float, float], Tuple[float, float]]
 
