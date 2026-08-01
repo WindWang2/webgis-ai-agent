@@ -138,85 +138,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "clip_bounds": "可选：裁剪范围 [xmin, ymin, xmax, ymax]（WGS84），默认使用数据范围+10%缓冲",
            })
     def voronoi_polygons(geojson: Any, clip_bounds: list = None) -> dict:
-        from scipy.spatial import Voronoi
-        if clip_bounds is None:
-            clip_bounds = []
-
-        data = safe_parse_geojson(geojson)
-        result = to_utm_gdf(data)
-        if result is None:
-            return std_error_response("无法解析矢量数据", code="VALIDATION_ERROR", error_type="ValueError")
-        gdf, utm_crs = result
-
-        if len(gdf) < 3:
-            return std_error_response("至少需要3个点要素", code="VALIDATION_ERROR", error_type="ValueError")
-
-        coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
-
-        xmin, ymin, xmax, ymax = gdf.total_bounds
-        margin = max(xmax - xmin, ymax - ymin) * 0.5
-        mirror_points = np.array([
-            coords[:, 0], 2 * ymin - coords[:, 1],
-        ]).T
-        mirror_points2 = np.array([
-            2 * xmax - coords[:, 0], coords[:, 1],
-        ]).T
-        mirror_points3 = np.array([
-            coords[:, 0], 2 * ymax - coords[:, 1],
-        ]).T
-        mirror_points4 = np.array([
-            2 * xmin - coords[:, 0], coords[:, 1],
-        ]).T
-        all_points = np.vstack([coords, mirror_points, mirror_points2, mirror_points3, mirror_points4])
-
-        try:
-            vor = Voronoi(all_points)
-        except (ValueError, TypeError, RuntimeError) as e:
-            return std_error_response(
-                f"Voronoi 计算失败: {e}",
-                code="TOOL_ERROR",
-                error_type=type(e).__name__,
-            )
-
-        out_features = []
-        clip_box = box(xmin - margin, ymin - margin, xmax + margin, ymax + margin)
-        raw_polys = []  # (poly, props) — batch CRS after loop
-
-        for i in range(len(coords)):
-            region_idx = vor.point_region[i]
-            region = vor.regions[region_idx]
-            if -1 in region or len(region) == 0:
-                continue
-            polygon_coords = [vor.vertices[v] for v in region]
-            try:
-                from shapely.geometry import Polygon
-                poly = Polygon(polygon_coords)
-                if not poly.is_valid:
-                    poly = poly.buffer(0)
-                poly = poly.intersection(clip_box)
-                if poly.is_empty:
-                    continue
-                props = {k: v for k, v in gdf.iloc[i].items() if k != "geometry"}
-                props["area_km2"] = round(float(poly.area) / 1e6, 4)
-                raw_polys.append((poly, props))
-            except (ValueError, TypeError):
-                continue
-
-        # Batch CRS transform: one GeoSeries instead of N per-polygon calls
-        if raw_polys:
-            gs = gpd.GeoSeries([p for p, _ in raw_polys], crs=utm_crs).to_crs("EPSG:4326")
-            for (poly, props), poly_wgs84 in zip(raw_polys, gs):
-                out_features.append({
-                    "type": "Feature",
-                    "geometry": mapping(poly_wgs84),
-                    "properties": props,
-                })
-
-        return {
-            "type": "FeatureCollection",
-            "features": out_features,
-            "count": len(out_features),
-        }
+        res = SpatialAnalyzer.voronoi_polygons(geojson, clip_bounds=clip_bounds)
+        return res.to_llm_response()
 
     @tool(registry, name="convex_hull",
            description=(
@@ -233,52 +156,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
                "group_by": "可选属性字段名。若提供，每个唯一值生成一个独立凸包",
            })
     def convex_hull(geojson: Any, group_by: str = "") -> dict:
-        data = safe_parse_geojson(geojson)
-        result = to_utm_gdf(data)
-        if result is None:
-            return std_error_response("无法解析矢量数据", code="VALIDATION_ERROR", error_type="ValueError")
-        gdf, utm_crs = result
-
-        if len(gdf) < 3:
-            return std_error_response("至少需要3个要素", code="VALIDATION_ERROR", error_type="ValueError")
-
-        out_features = []
-
-        if group_by and group_by in gdf.columns:
-            for name, group in gdf.groupby(group_by):
-                try:
-                    hull = group.geometry.unary_union.convex_hull
-                    if hull.is_empty:
-                        continue
-                    hull_wgs84 = gpd.GeoSeries([hull], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
-                    out_features.append({
-                        "type": "Feature",
-                        "geometry": mapping(hull_wgs84),
-                        "properties": {
-                            group_by: str(name),
-                            "feature_count": len(group),
-                            "area_km2": round(float(hull.area) / 1e6, 4),
-                        },
-                    })
-                except (ValueError, TypeError):
-                    continue
-        else:
-            hull = gdf.geometry.unary_union.convex_hull
-            hull_wgs84 = gpd.GeoSeries([hull], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
-            out_features.append({
-                "type": "Feature",
-                "geometry": mapping(hull_wgs84),
-                "properties": {
-                    "feature_count": len(gdf),
-                    "area_km2": round(float(hull.area) / 1e6, 4),
-                },
-            })
-
-        return {
-            "type": "FeatureCollection",
-            "features": out_features,
-            "count": len(out_features),
-        }
+        res = SpatialAnalyzer.convex_hull(geojson, group_by=group_by)
+        return res.to_llm_response()
 
     @tool(registry, name="multi_ring_buffer",
            description=(
@@ -297,51 +176,8 @@ def register_spatial_stats_tools(registry: ToolRegistry):
            })
     def multi_ring_buffer(geojson: Any, distances: list = None,
                            merge_rings: bool = True) -> dict:
-        data = safe_parse_geojson(geojson)
-        result = to_utm_gdf(data)
-        if result is None:
-            return std_error_response("无法解析矢量数据", code="VALIDATION_ERROR", error_type="ValueError")
-        gdf, utm_crs = result
-
-        if distances is None:
-            distances = [500, 1000, 1500]
-
-        if not distances:
-            return std_error_response("需要至少一个缓冲距离", code="VALIDATION_ERROR", error_type="ValueError")
-
-        distances = sorted([float(d) for d in distances])
-        union_geom = gdf.geometry.unary_union
-        out_features = []
-
-        prev_buffer = None
-        for dist in distances:
-            buf = union_geom.buffer(dist, resolution=32)
-
-            if merge_rings and prev_buffer is not None:
-                ring = buf.difference(prev_buffer)
-            else:
-                ring = buf
-
-            if ring.is_empty:
-                continue
-
-            ring_wgs84 = gpd.GeoSeries([ring], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
-            out_features.append({
-                "type": "Feature",
-                "geometry": mapping(ring_wgs84),
-                "properties": {
-                    "distance_m": dist,
-                    "area_km2": round(float(ring.area) / 1e6, 4),
-                },
-            })
-            prev_buffer = buf
-
-        return {
-            "type": "FeatureCollection",
-            "features": out_features,
-            "count": len(out_features),
-            "method": "多环缓冲区" + ("（环形区域）" if merge_rings else ""),
-        }
+        res = SpatialAnalyzer.multi_ring_buffer(geojson, distances=distances, merge_rings=merge_rings)
+        return res.to_llm_response()
 
     @tool(registry, name="h3_lisa",
            description="H3网格LISA空间自相关分析：基于H3网格的Local Moran's I热点和冷点聚类分析（如识别显著的高-高或低-低聚集区）。必须传入带有数值字段的H3网格数据（如通过 h3_binning 得到的数据）。",

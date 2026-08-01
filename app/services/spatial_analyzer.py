@@ -22,6 +22,11 @@ from app.lib.geo_analysis.statistics import (
 from app.lib.geo_analysis.aggregation import spatial_aggregate
 from app.lib.geo_analysis.network import calculate_isochrones
 from app.lib.geo_analysis.density import kde_surface as _kde_surface, kde_contours as _kde_contours
+from app.lib.geo_analysis.geometry_ops import (
+    voronoi_polygons as _voronoi_polygons,
+    convex_hull as _convex_hull,
+    multi_ring_buffer as _multi_ring_buffer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +299,40 @@ class SpatialAnalyzer:
         if callback: callback(20, "Executing KDE contour analysis...")
         fc = _to_feature_collection(features)
         return _kde_contours(fc, levels=levels, bandwidth=bandwidth)
+
+    @classmethod
+    def voronoi_polygons(
+        cls,
+        features: Any,
+        clip_bounds: Optional[list] = None,
+        callback: Optional[Callable] = None,
+    ) -> GeoAnalysisResult:
+        if callback: callback(20, "Executing Voronoi tessellation...")
+        fc = _to_feature_collection(features)
+        return _voronoi_polygons(fc, clip_bounds=clip_bounds)
+
+    @classmethod
+    def convex_hull(
+        cls,
+        features: Any,
+        group_by: str = "",
+        callback: Optional[Callable] = None,
+    ) -> GeoAnalysisResult:
+        if callback: callback(20, "Executing convex hull...")
+        fc = _to_feature_collection(features)
+        return _convex_hull(fc, group_by=group_by)
+
+    @classmethod
+    def multi_ring_buffer(
+        cls,
+        features: Any,
+        distances: Optional[list] = None,
+        merge_rings: bool = True,
+        callback: Optional[Callable] = None,
+    ) -> GeoAnalysisResult:
+        if callback: callback(20, "Executing multi-ring buffer...")
+        fc = _to_feature_collection(features)
+        return _multi_ring_buffer(fc, distances=distances, merge_rings=merge_rings)
 
     @classmethod
     def path_analysis(
