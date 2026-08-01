@@ -129,55 +129,9 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            tier=2, domains=["raster"],
            args_model=ZonalStatsArgs)
     def zonal_stats(geojson: Any, raster_path: str) -> dict:
-        from app.lib.geo_analysis.raster_ops import zonal_statistics
-        from app.lib.geo_processor.core import GeoAnalysisResult
-        from app.utils.path import validate_data_path
-
         data = safe_parse_geojson(geojson)
-        features = data.get("features", [])
-
-        # 审计 S37：raster_path 之前完全未校验，直接喂给 rasterstats/rasterio。
-        # 风险：(1) 路径穿越读任意文件；(2) GDAL 虚拟文件系统（/vsicurl/、/vsizip/、/vsis3/）
-        # 让攻击者通过 LLM 提示注入或 /chat/tools/execute 发起 SSRF / 读云存储。
-        # 修复：用 validate_data_path（realpath 解析）锁死在 data_dir 内；用 rasterio.Env
-        # 关闭 VFS 相关选项。
-        try:
-            raster_path = validate_data_path(raster_path)
-        except ValueError as e:
-            return GeoAnalysisResult(
-                False, None,
-                f"raster_path {raster_path} 不在允许的 data_dir 范围内",
-                error_type="ValidationError",
-            ).to_llm_response()
-
-        # Ensure we have a valid FeatureCollection for rasterstats
-        fc = {"type": "FeatureCollection", "features": features}
-        try:
-            import rasterio
-            with rasterio.Env(
-                GDAL_DISABLE_READDIR_ON_OPEN="TRUE",
-                GDAL_HTTP_TIMEOUT=5,
-                GDAL_HTTP_MAX_RETRY=0,
-            ):
-                stats = zonal_statistics(fc, raster_path)
-        except Exception as e:
-            return GeoAnalysisResult(
-                False, None,
-                f"raster_path {raster_path} 无法打开：{e}",
-                error_type="RasterError",
-            ).to_llm_response()
-
-        # Merge stats back into features
-        for i, s in enumerate(stats):
-            if i < len(features):
-                features[i]["properties"].update(s)
-
-        summary = f"Computed zonal statistics for {len(features)} zones against raster {raster_path}."
-        return GeoAnalysisResult(
-            success=True,
-            data={"type": "FeatureCollection", "features": features},
-            summary=summary,
-        ).to_llm_response()
+        res = SpatialAnalyzer.zonal_stats(data.get("features", []), raster_path)
+        return res.to_llm_response()
 
     @tool(registry, name="idw_interpolation",
            description="反距离加权插值(IDW)：将离散采样点转换为连续的 H3 六边形网格表面。适用于气象、污染等连续变量建模。",
@@ -283,10 +237,9 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            tier=2, domains=["network"],
            args_model=IsochroneAnalysisArgs)
     def isochrone_network(network_layer: Any, facilities: Any, travel_time: float = 15, mode: str = "walking") -> dict:
-        from app.lib.geo_analysis.network import calculate_isochrones
         net = safe_parse_geojson(network_layer)
         facs = safe_parse_geojson(facilities)
-        res = calculate_isochrones(net, facs, travel_time, mode)
+        res = SpatialAnalyzer.isochrone_network(net.get("features", []), facs.get("features", []), travel_time, mode)
         return res.to_llm_response()
 
     @tool(registry, name="fishnet_grid",
@@ -447,13 +400,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            tier=2, domains=["raster"],
            args_model=RasterReclassifyArgs)
     def raster_reclassify(raster_path: str, scheme: List[dict], nodata: Optional[float] = None) -> dict:
-        from app.lib.geo_analysis.raster_math import reclassify
-        return _run_raster_tool(
-            [raster_path],
-            lambda p: reclassify(p, scheme, nodata),
-            summary=f"Reclassified raster to {len(scheme)} classes.",
-            error_label="重分类失败",
-        )
+        res = SpatialAnalyzer.raster_reclassify(raster_path, scheme, nodata)
+        return res.to_llm_response()
 
     @tool(registry, name="raster_calculator",
            description=(
@@ -467,14 +415,8 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            tier=2, domains=["raster"],
            args_model=RasterCalculatorArgs)
     def raster_calculator(raster_a: str, raster_b: Optional[str] = None, expression: str = "A + B", constant: Optional[float] = None, nodata: Optional[float] = None) -> dict:
-        from app.lib.geo_analysis.raster_math import raster_calculator
-        paths = [raster_a] + ([raster_b] if raster_b else [])
-        return _run_raster_tool(
-            paths,
-            lambda *p: raster_calculator(p[0], p[1] if len(p) > 1 else None, expression, constant, nodata),
-            summary=f"Raster calculator: {expression}",
-            error_label="栅格计算失败",
-        )
+        res = SpatialAnalyzer.raster_calculator(raster_a, raster_b, expression, constant, nodata)
+        return res.to_llm_response()
 
     @tool(registry, name="raster_resample",
            description=(
@@ -488,10 +430,5 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
            tier=2, domains=["raster"],
            args_model=RasterResampleArgs)
     def raster_resample(raster_path: str, target_resolution: float, target_crs: Optional[str] = None, resampling: str = "bilinear") -> dict:
-        from app.lib.geo_analysis.raster_math import resample_raster
-        return _run_raster_tool(
-            [raster_path],
-            lambda p: resample_raster(p, target_resolution, target_crs, resampling),
-            summary=f"Resampled raster to {target_resolution} ({resampling}).",
-            error_label="重采样失败",
-        )
+        res = SpatialAnalyzer.raster_resample(raster_path, target_resolution, target_crs, resampling)
+        return res.to_llm_response()

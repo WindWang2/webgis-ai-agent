@@ -281,5 +281,210 @@ class SpatialAnalyzer:
             end_point
         )
 
+    @classmethod
+    def spatial_join(
+        cls,
+        left_features: Any,
+        right_features: Any,
+        join_type: str = "inner",
+        predicate: str = "intersects",
+        callback: Optional[Callable] = None,
+    ) -> GeoAnalysisResult:
+        """Perform spatial join between left and right feature collections."""
+        if callback: callback(20, f"Executing {join_type} spatial join with {predicate}...")
+        fc_left = _to_feature_collection(left_features)
+        fc_right = _to_feature_collection(right_features)
+        feats_left = fc_left.get("features", [])
+        feats_right = fc_right.get("features", [])
+
+        if not feats_left or not feats_right:
+            return GeoAnalysisResult(False, None, "Empty features in left or right layer for spatial join")
+
+        try:
+            import geopandas as gpd
+            gdf_left = gpd.GeoDataFrame.from_features(feats_left, crs="EPSG:4326")
+            gdf_right = gpd.GeoDataFrame.from_features(feats_right, crs="EPSG:4326")
+
+            joined = gpd.sjoin(gdf_left, gdf_right, how=join_type, predicate=predicate)
+            if "index_right" in joined.columns:
+                joined = joined.drop(columns=["index_right"])
+
+            summary = f"Joined {len(feats_left)} left features with {len(feats_right)} right features using predicate '{predicate}' ({join_type} join)."
+            return GeoAnalysisResult(True, json.loads(joined.to_json()), summary)
+        except Exception as e:
+            return GeoAnalysisResult(False, None, f"Spatial join failed: {str(e)}")
+
+    @classmethod
+    def _prepare_raster_paths(cls, paths: List[str]) -> tuple[Optional[List[str]], Optional[GeoAnalysisResult]]:
+        """Validate raster data paths to prevent path traversal and VFS abuse."""
+        from app.utils.path import validate_data_path
+        validated = []
+        for p in paths:
+            try:
+                validated.append(validate_data_path(p))
+            except ValueError as e:
+                return None, GeoAnalysisResult(
+                    False, None,
+                    f"raster_path '{p}' 不在允许的 data_dir 范围内: {e}",
+                    error_type="ValidationError"
+                )
+        return validated, None
+
+    @classmethod
+    def zonal_stats(
+        cls,
+        features: Any,
+        raster_path: str,
+        callback: Optional[Callable] = None,
+    ) -> GeoAnalysisResult:
+        """Compute zonal statistics for vector polygons against a raster surface."""
+        if callback: callback(20, "Executing zonal statistics...")
+        validated_paths, err_res = cls._prepare_raster_paths([raster_path])
+        if err_res:
+            return err_res
+        valid_path = validated_paths[0]
+
+        fc = _to_feature_collection(features)
+        feat_list = fc.get("features", [])
+        if not feat_list:
+            return GeoAnalysisResult(False, None, "No features provided for zonal statistics")
+
+        from app.lib.geo_analysis.raster_ops import zonal_statistics
+        try:
+            import rasterio
+            with rasterio.Env(
+                GDAL_DISABLE_READDIR_ON_OPEN="TRUE",
+                GDAL_HTTP_TIMEOUT=5,
+                GDAL_HTTP_MAX_RETRY=0,
+            ):
+                stats = zonal_statistics({"type": "FeatureCollection", "features": feat_list}, valid_path)
+        except Exception as e:
+            return GeoAnalysisResult(
+                False, None,
+                f"raster_path '{raster_path}' 无法打开: {e}",
+                error_type="RasterError"
+            )
+
+        for i, s in enumerate(stats):
+            if i < len(feat_list):
+                feat_list[i]["properties"].update(s)
+
+        summary = f"Computed zonal statistics for {len(feat_list)} zones against raster {raster_path}."
+        return GeoAnalysisResult(
+            success=True,
+            data={"type": "FeatureCollection", "features": feat_list},
+            summary=summary,
+        )
+
+    @classmethod
+    def raster_reclassify(
+        cls,
+        raster_path: str,
+        scheme: List[dict],
+        nodata: Optional[float] = None,
+        callback: Optional[Callable] = None,
+    ) -> GeoAnalysisResult:
+        """Reclassify continuous raster values according to a scheme."""
+        if callback: callback(20, "Executing raster reclassification...")
+        validated_paths, err_res = cls._prepare_raster_paths([raster_path])
+        if err_res:
+            return err_res
+        valid_path = validated_paths[0]
+
+        from app.lib.geo_analysis.raster_math import reclassify
+        try:
+            import rasterio
+            with rasterio.Env(
+                GDAL_DISABLE_READDIR_ON_OPEN="TRUE",
+                GDAL_HTTP_TIMEOUT=5,
+                GDAL_HTTP_MAX_RETRY=0,
+            ):
+                result = reclassify(valid_path, scheme, nodata)
+            summary = f"Reclassified raster {raster_path} into {len(scheme)} classes."
+            return GeoAnalysisResult(True, result, summary)
+        except Exception as e:
+            return GeoAnalysisResult(False, None, f"重分类失败: {e}", error_type="RasterError")
+
+    @classmethod
+    def raster_calculator(
+        cls,
+        raster_a: str,
+        raster_b: Optional[str] = None,
+        expression: str = "A + B",
+        constant: Optional[float] = None,
+        nodata: Optional[float] = None,
+        callback: Optional[Callable] = None,
+    ) -> GeoAnalysisResult:
+        """Execute pixel-level math operations across one or two rasters."""
+        if callback: callback(20, f"Executing raster calculation: {expression}...")
+        raw_paths = [raster_a] + ([raster_b] if raster_b else [])
+        validated_paths, err_res = cls._prepare_raster_paths(raw_paths)
+        if err_res:
+            return err_res
+
+        from app.lib.geo_analysis.raster_math import raster_calculator
+        try:
+            import rasterio
+            with rasterio.Env(
+                GDAL_DISABLE_READDIR_ON_OPEN="TRUE",
+                GDAL_HTTP_TIMEOUT=5,
+                GDAL_HTTP_MAX_RETRY=0,
+            ):
+                result = raster_calculator(
+                    validated_paths[0],
+                    validated_paths[1] if len(validated_paths) > 1 else None,
+                    expression,
+                    constant,
+                    nodata,
+                )
+            summary = f"Raster calculator operation '{expression}' completed."
+            return GeoAnalysisResult(True, result, summary)
+        except Exception as e:
+            return GeoAnalysisResult(False, None, f"栅格计算失败: {e}", error_type="RasterError")
+
+    @classmethod
+    def raster_resample(
+        cls,
+        raster_path: str,
+        target_resolution: float,
+        target_crs: Optional[str] = None,
+        resampling: str = "bilinear",
+        callback: Optional[Callable] = None,
+    ) -> GeoAnalysisResult:
+        """Resample raster pixel resolution and/or reproject CRS."""
+        if callback: callback(20, f"Executing raster resampling to {target_resolution}...")
+        validated_paths, err_res = cls._prepare_raster_paths([raster_path])
+        if err_res:
+            return err_res
+
+        from app.lib.geo_analysis.raster_math import resample_raster
+        try:
+            import rasterio
+            with rasterio.Env(
+                GDAL_DISABLE_READDIR_ON_OPEN="TRUE",
+                GDAL_HTTP_TIMEOUT=5,
+                GDAL_HTTP_MAX_RETRY=0,
+            ):
+                result = resample_raster(validated_paths[0], target_resolution, target_crs, resampling)
+            summary = f"Resampled raster {raster_path} to resolution {target_resolution} ({resampling})."
+            return GeoAnalysisResult(True, result, summary)
+        except Exception as e:
+            return GeoAnalysisResult(False, None, f"重采样失败: {e}", error_type="RasterError")
+
+    @classmethod
+    def isochrone_network(
+        cls,
+        network_features: Any,
+        facilities: Any,
+        travel_time: float = 15,
+        mode: str = "walking",
+        callback: Optional[Callable] = None,
+    ) -> GeoAnalysisResult:
+        """Compute network-based travel time isochrone polygon reachable areas."""
+        if callback: callback(20, f"Executing {travel_time}-min {mode} isochrone analysis...")
+        fc_net = _to_feature_collection(network_features)
+        fc_facs = _to_feature_collection(facilities)
+        return calculate_isochrones(fc_net, fc_facs, travel_time, mode)
+
 
 __all__ = ["SpatialAnalyzer", "AnalysisResult"]
