@@ -180,40 +180,6 @@ class SessionDataManager:
             "started_at": await self.get_started_at(session_id),
         }
 
-    async def load_context(self, session_id: str):
-        from app.services.session_data_protocol import SessionContext
-        map_state = await self.get_map_state(session_id)
-        layers = list(map_state.get("layers", []))
-        event_log = await self.get_event_log(session_id)
-        started_at = await self.get_started_at(session_id)
-        refs = await self.list_refs(session_id)
-        return SessionContext(
-            session_id=session_id,
-            map_state=map_state,
-            layers=layers,
-            event_log=event_log,
-            started_at=started_at,
-            refs=refs,
-        )
-
-    async def commit_dispatch(
-        self,
-        session_id: str,
-        tool_name: str,
-        geojson_ref: Optional[str] = None,
-        event_payload: Optional[dict] = None,
-        result: Optional[Any] = None,
-    ) -> None:
-        payload = {"tool": tool_name}
-        if geojson_ref:
-            payload["ref"] = geojson_ref
-        if event_payload:
-            payload.update(event_payload)
-        await self.append_event(session_id, "tool_executed", payload)
-
-    async def get_ref_data(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]:
-        return await self.get(session_id, ref_id_or_alias)
-
     async def clear_session(self, session_id: str):
         """清理会话数据"""
         self._store.pop(session_id, None)

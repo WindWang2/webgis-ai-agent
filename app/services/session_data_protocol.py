@@ -1,10 +1,22 @@
-"""SessionStore 提深接口与数据结构约定。
+"""SessionStore 接口与数据结构约定。
 
-收拢 14 个浅层 API 为 4 个主意图接口：
-- `load_context`: 一站式获取会话状态、图层与历史
-- `commit_dispatch`: 原子化提交工具调度结果与状态
-- `update_map_state`: 原子化更新图层与全局 Viewport 状态
-- `get_ref_data`: 面向 Fetch-on-Demand 的游标数据读取
+ADR-0018（保留 14 个细粒度方法）与 ADR-0018 Trigger 2 的落地（删除未兑现的
+深层方法层）：本 Protocol 曾声明 3 个「深意图」方法（load_context /
+commit_dispatch / get_ref_data），但调查证实它们全部零生产调用方或仅剩薄包装：
+
+- `load_context` —— 0 外部调用方（chat_engine 上的同名调用走 AsyncHistoryService，
+  另一协议）；删除。
+- `commit_dispatch` —— 1 调用方（tool_dispatch_service._record_event），体只是
+  重建 payload 再 append_event("tool_executed")；已 inline 到调用点，删除。
+- `get_ref_data` —— 0 调用方（仅测试）；体是 `return await self.get(...)` 的改名；
+  删除。
+
+「4 个深方法」的说法（含 update_map_state）从未实现——update_map_state 仅出现在
+早期 docstring，从未进入 Protocol 类体，是 vaporware。
+
+剩下的 14 个细粒度方法是真正承重的表面（ADR-0018 详述其各自的关注点：map-state、
+ref/alias、event-log、lifecycle），不可强行收口。SessionContext 数据类保留——
+get_session_metadata 返回同形态数据，未来若真出现一站式读取需求可重建 load_context。
 """
 from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol
@@ -12,7 +24,10 @@ from typing import Any, Optional, Protocol
 
 @dataclass
 class SessionContext:
-    """会话聚合上下文数据类。"""
+    """会话聚合上下文数据类。
+
+    保留供未来重建 load_context 使用；当前 get_session_metadata 返回同形态数据。
+    """
 
     session_id: str
     map_state: dict[str, Any] = field(default_factory=dict)
@@ -23,22 +38,13 @@ class SessionContext:
 
 
 class SessionStoreProtocol(Protocol):
-    """深层 SessionStore 统一接口协议。"""
+    """SessionStore 细粒度接口协议（ADR-0018）。
 
-    async def load_context(self, session_id: str) -> SessionContext: ...
+    这 14 个方法各自承载 ADR-0018 §2 列举的关注点（frontend perception、ref/alias
+    解析、event log、lifecycle），是真正承重的表面。曾声明的 3 个「深意图」方法
+    （load_context / commit_dispatch / get_ref_data）已删除——见模块 docstring。
+    """
 
-    async def commit_dispatch(
-        self,
-        session_id: str,
-        tool_name: str,
-        geojson_ref: Optional[str] = None,
-        event_payload: Optional[dict] = None,
-        result: Optional[Any] = None,
-    ) -> None: ...
-
-    async def get_ref_data(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]: ...
-
-    # 兼容过渡 API
     async def get(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]: ...
     async def store(self, session_id: str, data: Any, prefix: str = "data") -> str: ...
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None: ...

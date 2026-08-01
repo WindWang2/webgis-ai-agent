@@ -389,12 +389,13 @@ class ToolDispatchService:
                 v = result.get(k)
                 if v is not None:
                     event_payload[k] = v
-        await session_data_manager.commit_dispatch(
-            session_id=session_id,
-            tool_name=tool_name,
-            geojson_ref=geojson_ref,
-            event_payload=event_payload,
-            result=result,
+        # Inlined from SessionStore.commit_dispatch (ADR-0018 Trigger 2): that
+        # method was an anemic wrapper that rebuilt this same payload and called
+        # append_event("tool_executed", ...). event_payload already carries tool
+        # + ref + result fields, so append directly. The granular surface owns
+        # this; the deep-method layer is gone.
+        await session_data_manager.append_event(
+            session_id, "tool_executed", event_payload
         )
 
 
