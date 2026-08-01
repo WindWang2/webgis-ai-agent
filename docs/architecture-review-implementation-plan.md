@@ -43,6 +43,9 @@
 3. `tests/unit/test_spatial_analyzer_module.py`: `test_spatial_analyzer_execute_dynamic_dispatch` → `test_spatial_analyzer_buffer_concrete_method`（直接调 `.buffer()`）；删除 `test_spatial_analyzer_unknown_operation`
 4. 写 `docs/adr/0013-delete-spatial-analyzer-dispatch-seam.md`
 
+### 关联修复（评审修复提交 `2416656`）
+- `AnalysisResult` 从 `class(GeoAnalysisResult)` 子类（唯一方法是恒等委托 `from_geo`）扁平化为类型别名 `AnalysisResult = GeoAnalysisResult`。这是 ADR-0009「不引入 AnalysisResult 接口」决策的落地，借评审修复提交一并完成（非 #1 原定的 seam 删除工作）。
+
 ### 实际改动
 3 文件，+76/−92。测试：53 passed。
 
@@ -65,6 +68,9 @@
 1. `app/utils/coord_transform.py`: `_normalize_chinese_crs` → `normalize_chinese_crs`（公开 + docstring）；更新内部 2 处调用
 2. `app/tools/coord_transform.py`: 删 `_SUPPORTED_CHINESE`；import + 调用 `normalize_chinese_crs`；保留 Chinese-only 策略门（None → `std_error_response`）
 3. `tests/unit/test_coord_transform_module.py`: 加 `test_normalize_chinese_crs`（规范化解析 + None 拒绝路径）
+
+### 关联修复（评审修复提交 `2416656`）
+- coord 适配器 6 处错误响应统一改写为 `std_error_response(...)`。**注意：错误契约统一由 Invariant #4 / 提交 `731fc9e`（Candidate #5 的 `ToolRegistry` 封装）驱动，`2416656` 将其落地到 coord 适配器，非 #2 原定工作。** #2 的原定工作仅是 CRS 归一化委托。
 
 ### 实际改动
 3 文件，+37/−10。测试：22 passed。
@@ -116,6 +122,9 @@
 4. `app/services/chat_engine.py`: 删未用的 `_calculate_bbox` 别名 import
 5. `app/services/chat/sse_helpers.py`: 删 `calculate_bbox` re-export
 6. `tests/unit/test_chat_helpers.py`: `TestCalculateBbox` → `TestGeojsonBbox`（加 bare Feature 覆盖）；删 `_calculate_bbox` 别名断言
+
+### 关联修复（评审修复提交 `2416656`）
+- `mapspec_store.py` 的 `layer_upsert` 返回值从原始 `layer` 改为 `processed_layer`。这是 #4 提取 `LayerIngestionPipeline` 时引入的回归——返回原始输入而非管线产物会让调用方拿到未处理（未入库、未 profile）的图层。评审发现并随 `2416656` 修复。
 
 ### 实施中发现
 `geojson_bbox` 原本比 `calculate_bbox` 更严格（依赖 type 标签），无法处理调用方实际传入的松散字典。深化它成为真正超集（结构化遍历），这才是「收敛到正确版本」。
