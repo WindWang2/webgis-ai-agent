@@ -33,6 +33,7 @@ from app.tools.chinese_maps.http import (
     _VALID_PROVIDERS,
     _amap_get, _baidu_get, _tianditu_get,
     _speed_mps,
+    with_fallback,
 )
 
 # 三个 provider 的全部 _*_* 实现，按原名 import
@@ -65,14 +66,11 @@ async def geocode_cn(address: str, city: str = "", provider: str = "amap") -> di
     _dispatch = {
         "amap": _geocode_amap, "baidu": _geocode_baidu, "tianditu": _geocode_tianditu,
     }
-    for p in _fallback_order(provider):
-        if not _has_provider(p):
-            continue
-        try:
-            return await _dispatch[p](address, city)
-        except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
-            logger.warning(f"geocode_cn {p} failed: {e}")
-    return {"error": "未配置任何地图 API Key"}
+    return await with_fallback(
+        provider,
+        lambda p: _dispatch[p](address, city),
+        tool_name="geocode_cn",
+    )
 
 
 
@@ -129,16 +127,19 @@ def register_chinese_map_tools(registry: ToolRegistry):
             "amap": _search_poi_amap, "baidu": _search_poi_baidu, "tianditu": _search_poi_tianditu,
         }
         errors = []
-        for p in _fallback_order(provider):
-            if not _has_provider(p):
-                continue
+
+        async def _call(p):
             try:
                 return await _dispatch[p](keyword, city, limit)
             except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
-                logger.warning(f"search_poi {p} failed: {e}")
                 errors.append(f"{p}: {e}")
+                raise
 
-        return {"error": f"所有服务商均失败: {'; '.join(errors)}" if errors else "未配置任何地图 API Key"}
+        return await with_fallback(
+            provider, _call,
+            no_key_msg=(f"所有服务商均失败: {'; '.join(errors)}" if errors else "未配置任何地图 API Key"),
+            tool_name="search_poi",
+        )
 
     tool(registry, name="geocode_cn",
          description="中文地址转坐标，比 Nominatim 中文地址准确率更高，可选高德/百度/天地图",
@@ -164,14 +165,11 @@ def register_chinese_map_tools(registry: ToolRegistry):
             "amap": _reverse_geocode_amap, "baidu": _reverse_geocode_baidu,
             "tianditu": _reverse_geocode_tianditu,
         }
-        for p in _fallback_order(provider):
-            if not _has_provider(p):
-                continue
-            try:
-                return await _dispatch[p](location[0], location[1])
-            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
-                logger.warning(f"reverse_geocode_cn {p} failed: {e}")
-        return {"error": "未配置任何地图 API Key"}
+        return await with_fallback(
+            provider,
+            lambda p: _dispatch[p](location[0], location[1]),
+            tool_name="reverse_geocode_cn",
+        )
 
     @tool(registry, tier=2, domains=["network"], name="plan_route",
            description="路径规划（驾车/步行/骑行/公交），返回距离、时间和路线坐标",
@@ -189,14 +187,13 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": f"provider 必须是 'amap' 或 'baidu'"}
 
         _dispatch = {"amap": _route_amap, "baidu": _route_baidu}
-        for p in _fallback_order(provider, exclude={"tianditu"}):
-            if not _has_provider(p):
-                continue
-            try:
-                return await _dispatch[p](origin, destination, mode, city)
-            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
-                logger.warning(f"plan_route {p} failed: {e}")
-        return {"error": "未配置高德或百度 API Key，路径规划需要 API Key"}
+        return await with_fallback(
+            provider,
+            lambda p: _dispatch[p](origin, destination, mode, city),
+            exclude={"tianditu"},
+            no_key_msg="未配置高德或百度 API Key，路径规划需要 API Key",
+            tool_name="plan_route",
+        )
 
     @tool(registry, name="get_district",
            description=(
@@ -220,14 +217,11 @@ def register_chinese_map_tools(registry: ToolRegistry):
         _dispatch = {
             "amap": _district_amap, "baidu": _district_baidu, "tianditu": _district_tianditu,
         }
-        for p in _fallback_order(provider):
-            if not _has_provider(p):
-                continue
-            try:
-                return await _dispatch[p](keywords, level, return_geometry)
-            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
-                logger.warning(f"get_district {p} failed: {e}")
-        return {"error": "未配置任何地图 API Key"}
+        return await with_fallback(
+            provider,
+            lambda p: _dispatch[p](keywords, level, return_geometry),
+            tool_name="get_district",
+        )
 
     tool(registry, name="batch_geocode_cn",
          description="批量中文地址转坐标，支持高德/百度/天地图。一次处理多条地址，带并发控制。返回每个地址的 WGS84 坐标、成功/失败状态和标准化地址。",
@@ -326,14 +320,11 @@ def register_chinese_map_tools(registry: ToolRegistry):
             "baidu": _search_poi_around_baidu,
             "tianditu": _search_poi_around_tianditu,
         }
-        for p in _fallback_order(provider):
-            if not _has_provider(p):
-                continue
-            try:
-                return await _dispatch[p](center, radius_m, keyword, types, limit)
-            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
-                logger.warning(f"search_poi_around {p} failed: {e}")
-        return {"error": "未配置任何地图 API Key"}
+        return await with_fallback(
+            provider,
+            lambda p: _dispatch[p](center, radius_m, keyword, types, limit),
+            tool_name="search_poi_around",
+        )
 
     @tool(registry, name="search_poi_polygon",
            description="多边形区域内搜索：在指定的闭合多边形区域内搜索 POI。适合『查询锦江区内的咖啡馆』等精准场景。注意：如果是行政区，请先拿边界再搜。",
@@ -387,14 +378,13 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": "keyword 与 types 至少提供一个"}
 
         _dispatch = {"amap": _search_poi_polygon_amap, "baidu": _search_poi_polygon_baidu}
-        for p in _fallback_order(provider, exclude={"tianditu"}):
-            if not _has_provider(p):
-                continue
-            try:
-                return await _dispatch[p](target_poly, keyword, types, limit)
-            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
-                logger.warning(f"search_poi_polygon {p} failed: {e}")
-        return {"error": "未配置高德或百度 API Key"}
+        return await with_fallback(
+            provider,
+            lambda p: _dispatch[p](target_poly, keyword, types, limit),
+            exclude={"tianditu"},
+            no_key_msg="未配置高德或百度 API Key",
+            tool_name="search_poi_polygon",
+        )
 
     @tool(registry, name="input_tips",
            description="地点输入联想/纠错。给一个不完整或可能拼错的地名（如『中关创业大街』），返回候选地名+坐标，帮助消除歧义。比直接 geocode 更鲁棒，适合用户口语化输入。",
@@ -416,14 +406,13 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": "provider 必须是 'amap' 或 'baidu'"}
 
         _dispatch = {"amap": _input_tips_amap, "baidu": _input_tips_baidu}
-        for p in _fallback_order(provider, exclude={"tianditu"}):
-            if not _has_provider(p):
-                continue
-            try:
-                return await _dispatch[p](keyword, city, location)
-            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
-                logger.warning(f"input_tips {p} failed: {e}")
-        return {"error": "未配置高德或百度 API Key"}
+        return await with_fallback(
+            provider,
+            lambda p: _dispatch[p](keyword, city, location),
+            exclude={"tianditu"},
+            no_key_msg="未配置高德或百度 API Key",
+            tool_name="input_tips",
+        )
 
     @tool(registry, tier=2, domains=["network"], name="search_transit_route",
            description="公交路径规划：起终点之间的公交/地铁换乘方案，返回多个备选路线（步行段+乘车段），含换乘次数、总耗时、票价。仅支持 Amap。",
