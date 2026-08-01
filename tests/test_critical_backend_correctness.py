@@ -60,19 +60,13 @@ def test_c1_ndvi_formula_masks_zero_denominator():
 def test_c1_rs_service_formula_masks_negative_reflectance():
     """C1：植被指数公式对负反射率像元（nir+red<=0）必须返回 0，而非伪值。
 
-    这是针对 compute_vegetation_index 中 formulas 表的行为契约测试，替代
-    旧的源码 inspect（旧测试断言 "np.divide" in source）。复现生产公式
-    的 mask 语义：分母 <=0 的像元取 out 数组的 0，而不是用 1 当假分母。
+    直接测试 app.services.rs_service 中导出的 INDEX_FORMULAS 契约，
+    验证生产公式的 mask 语义：分母 <=0 的像元取 out 数组的 0。
     """
     import numpy as np
+    from app.services.rs_service import INDEX_FORMULAS
 
-    # 复现生产 formulas["ndvi"] 的 lambda 语义（rs_service.py 行 420-424）
-    def ndvi_formula(r, nir):
-        return np.divide(
-            nir - r, nir + r,
-            out=np.zeros_like(nir - r, dtype=float),
-            where=(nir + r) > 0,
-        )
+    _, ndvi_formula = INDEX_FORMULAS["ndvi"]
 
     # Sentinel-2 L2A：水面/阴影像元反射率可能为负 -> nir+red <= 0
     red = np.array([1000.0, -500.0, 0.0, -100.0])
@@ -87,6 +81,7 @@ def test_c1_rs_service_formula_masks_negative_reflectance():
     np.testing.assert_allclose(result[0], (3000 - 1000) / (3000 + 1000), rtol=1e-6)
     # 关键回归断言：mask 像元不能是旧 bug 的几千伪值（(nir-r)/1）
     assert abs(result[1]) < 1.0, "负分母像元返回了伪值（旧 np.where(...,1) bug 回归）"
+
 
 
 # ── S36: validate_data_path realpath ────────────────────────────────────
