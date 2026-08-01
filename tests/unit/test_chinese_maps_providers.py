@@ -268,3 +268,142 @@ async def test_distance_matrix_riding_fallback_runs_without_nameerror():
     assert out["mode"] == "riding"
     assert out["matrix"][0][0] is not None
     assert out["matrix"][0][0]["distance_km"] == 3.0
+
+
+# ── Baidu provider: representative capability coverage ───────────────────────
+
+from app.tools.chinese_maps.baidu import BaiduProvider
+
+
+async def test_search_poi_baidu_shapes_canned_response():
+    fake = FakeGet({
+        "/place/v2/search": {
+            "results": [
+                {"name": "便利店", "location": {"lng": 116.40, "lat": 39.90}, "address": "中关村"},
+            ],
+        },
+    })
+    prov = BaiduProvider(get=fake)
+    fc = await prov.search_poi("便利店", "北京", 20)
+    assert fc["provider"] == "baidu"
+    assert fc["count"] == 1
+    # BD-09 → WGS-84 shift
+    out_lng, out_lat = fc["features"][0]["geometry"]["coordinates"]
+    assert abs(out_lng - 116.40) > 1e-3 or abs(out_lat - 39.90) > 1e-3
+
+
+async def test_geocode_baidu_normalizes_to_wgs84():
+    fake = FakeGet({
+        "/geocoding/v3/": {
+            "result": {"location": {"lng": 116.40, "lat": 39.90}, "level": "ROAD"},
+        },
+    })
+    prov = BaiduProvider(get=fake)
+    out = await prov.geocode("北京", "")
+    assert out["count"] == 1
+    lng, lat = out["results"][0]["location"]
+    assert abs(lng - 116.40) > 1e-3 or abs(lat - 39.90) > 1e-3
+
+
+async def test_route_baidu_polyline_normalized():
+    fake = FakeGet({
+        "/directionlite/v1/driving": {
+            "result": {
+                "routes": [{
+                    "distance": 5000,
+                    "duration": 600,
+                    "steps": [{
+                        "instruction": "go",
+                        "distance": "5000",
+                        "duration": "600",
+                        # baidu 'path' field, bd09 coords
+                        "path": "116.40,39.90;116.41,39.91",
+                    }],
+                }],
+            },
+        },
+    })
+    prov = BaiduProvider(get=fake)
+    out = await prov.route([116.0, 39.0], [117.0, 40.0], "driving", "")
+    assert out["distance_m"] == 5000
+    assert len(out["polyline"]) == 2
+    for lng, lat in out["polyline"]:
+        assert abs(lng - 116.40) > 1e-3 or abs(lat - 39.90) > 1e-3
+
+
+async def test_distance_matrix_baidu_batch():
+    fake = FakeGet({
+        "/direction/v2/matrix": {
+            "result": {
+                "rows": [
+                    {"elements": [
+                        {"distance": {"value": 1000}, "duration": {"value": 60}},
+                        {"distance": {"value": 2000}, "duration": {"value": 120}},
+                    ]},
+                ],
+            },
+        },
+    })
+    prov = BaiduProvider(get=fake)
+    out = await prov.distance_matrix([[116.0, 39.0]], [[117.0, 40.0], [118.0, 41.0]], "driving")
+    assert out["provider"] == "baidu"
+    assert out["matrix"][0][0]["distance_km"] == 1.0
+    assert out["matrix"][0][1]["distance_km"] == 2.0
+
+
+# ── Tianditu provider: representative capability coverage (WGS84 identity) ───
+
+from app.tools.chinese_maps.tianditu import TiandituProvider
+
+
+async def test_search_poi_tianditu_no_crs_shift():
+    """Tianditu (CGCS2000 ≈ WGS84): coords pass through unchanged."""
+    fake = FakeGet({
+        "/search": {
+            "pois": [
+                {"name": "学校", "lonlat": "116.40 39.90", "address": "某路"},
+            ],
+        },
+    })
+    prov = TiandituProvider(get=fake)
+    fc = await prov.search_poi("学校", "", 20)
+    assert fc["provider"] == "tianditu"
+    out_lng, out_lat = fc["features"][0]["geometry"]["coordinates"]
+    # identity — no shift
+    assert out_lng == 116.40
+    assert out_lat == 39.90
+
+
+async def test_geocode_tianditu_identity():
+    fake = FakeGet({
+        "/geocoder": {
+            "result": {"location": {"lon": 116.40, "lat": 39.90}, "level": "street"},
+        },
+    })
+    prov = TiandituProvider(get=fake)
+    out = await prov.geocode("北京", "")
+    lng, lat = out["results"][0]["location"]
+    assert lng == 116.40
+    assert lat == 39.90
+
+
+async def test_district_tianditu_v2_polygon():
+    """district_v2 (non-Protocol, called by admin tools) parses polygons."""
+    fake = FakeGet({
+        "/administrative": {
+            "status": "100",
+            "data": [{
+                "name": "海淀区",
+                "lnt": 116.30,
+                "lat": 39.95,
+                "points": "116.30,39.95;116.31,39.95;116.31,39.96;116.30,39.95",
+            }],
+        },
+    })
+    prov = TiandituProvider(get=fake)
+    out = await prov.district_v2("海淀区", child_level=0, return_polygon=True)
+    assert out["provider"] == "tianditu"
+    geom = out["features"][0]["geometry"]
+    assert geom["type"] == "Polygon"
+    # tianditu is WGS84 — coords unchanged
+    assert geom["coordinates"][0][0] == [116.30, 39.95]

@@ -35,23 +35,18 @@ from app.tools.chinese_maps.http import (
     with_fallback,
 )
 
-# Amap 已深化为 AmapProvider 类（架构评审 F1）。Baidu/Tianditu 仍是自由函数，
-# 下一个 commit 也会深化为类。_PROVIDERS 统一两类形态的派发入口。
+# 三个 provider 已全部深化为类（架构评审 F1）。每个类封装自己的端点、参数构造、
+# 解包键和双向 CRS。_PROVIDERS 是唯一的派发入口；能力矩阵 = Protocol 成员关系 +
+# 各 dispatch 点的 exclude= 集合（声明 tianditu 不支持的 route/input_tips/polygon）。
 from app.tools.chinese_maps.amap import AmapProvider
-from app.tools.chinese_maps.baidu import (
-    _search_poi_baidu, _geocode_baidu, _reverse_geocode_baidu, _route_baidu,
-    _district_baidu, _distance_matrix_baidu,
-    _search_poi_around_baidu, _search_poi_polygon_baidu,
-    _input_tips_baidu,
-)
-from app.tools.chinese_maps.tianditu import (
-    _search_poi_tianditu, _geocode_tianditu, _reverse_geocode_tianditu,
-    _district_tianditu_v2, _district_tianditu,
-    _search_poi_around_tianditu,
-)
+from app.tools.chinese_maps.baidu import BaiduProvider
+from app.tools.chinese_maps.tianditu import TiandituProvider
 
-# Provider 单例。AmapProvider 接受注入的 get（默认走真实 tracked_provider_get）。
+# Provider 单例。每个 Provider 接受注入的 get（默认走真实 tracked_provider_get）。
 _AMAP = AmapProvider()
+_BAIDU = BaiduProvider()
+_TIANDITU = TiandituProvider()
+_PROVIDERS = {"amap": _AMAP, "baidu": _BAIDU, "tianditu": _TIANDITU}
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +56,7 @@ async def geocode_cn(address: str, city: str = "", provider: str = "amap") -> di
         return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
     _dispatch = {
-        "amap": _AMAP.geocode, "baidu": _geocode_baidu, "tianditu": _geocode_tianditu,
+        "amap": _AMAP.geocode, "baidu": _BAIDU.geocode, "tianditu": _TIANDITU.geocode,
     }
     return await with_fallback(
         provider,
@@ -121,7 +116,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'，收到: {provider}"}
 
         _dispatch = {
-            "amap": _AMAP.search_poi, "baidu": _search_poi_baidu, "tianditu": _search_poi_tianditu,
+            "amap": _AMAP.search_poi, "baidu": _BAIDU.search_poi, "tianditu": _TIANDITU.search_poi,
         }
         errors = []
 
@@ -159,8 +154,8 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
         _dispatch = {
-            "amap": _AMAP.reverse_geocode, "baidu": _reverse_geocode_baidu,
-            "tianditu": _reverse_geocode_tianditu,
+            "amap": _AMAP.reverse_geocode, "baidu": _BAIDU.reverse_geocode,
+            "tianditu": _TIANDITU.reverse_geocode,
         }
         return await with_fallback(
             provider,
@@ -183,7 +178,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if provider not in _VALID_PROVIDERS:
             return {"error": f"provider 必须是 'amap' 或 'baidu'"}
 
-        _dispatch = {"amap": _AMAP.route, "baidu": _route_baidu}
+        _dispatch = {"amap": _AMAP.route, "baidu": _BAIDU.route}
         return await with_fallback(
             provider,
             lambda p: _dispatch[p](origin, destination, mode, city),
@@ -212,7 +207,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
         _dispatch = {
-            "amap": _AMAP.district, "baidu": _district_baidu, "tianditu": _district_tianditu,
+            "amap": _AMAP.district, "baidu": _BAIDU.district, "tianditu": _TIANDITU.district,
         }
         return await with_fallback(
             provider,
@@ -256,7 +251,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if provider == "amap":
             return await _AMAP.distance_matrix(origins, destinations, mode)
         else:
-            return await _distance_matrix_baidu(origins, destinations, mode)
+            return await _BAIDU.distance_matrix(origins, destinations, mode)
 
     @tool(registry, tier=2, domains=["network"], name="isochrone_analysis",
            description="等时圈分析：从一个中心点出发，计算并可视化指定时间内可达的范围。支持驾驶/步行/骑行方向。返回 GeoJSON 面数据和半径米数。当前仅支持高德路径规划。",
@@ -314,8 +309,8 @@ def register_chinese_map_tools(registry: ToolRegistry):
 
         _dispatch = {
             "amap": _AMAP.search_poi_around,
-            "baidu": _search_poi_around_baidu,
-            "tianditu": _search_poi_around_tianditu,
+            "baidu": _BAIDU.search_poi_around,
+            "tianditu": _TIANDITU.search_poi_around,
         }
         return await with_fallback(
             provider,
@@ -374,7 +369,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if not keyword and not types:
             return {"error": "keyword 与 types 至少提供一个"}
 
-        _dispatch = {"amap": _AMAP.search_poi_polygon, "baidu": _search_poi_polygon_baidu}
+        _dispatch = {"amap": _AMAP.search_poi_polygon, "baidu": _BAIDU.search_poi_polygon}
         return await with_fallback(
             provider,
             lambda p: _dispatch[p](target_poly, keyword, types, limit),
@@ -402,7 +397,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if provider not in ("amap", "baidu"):
             return {"error": "provider 必须是 'amap' 或 'baidu'"}
 
-        _dispatch = {"amap": _AMAP.input_tips, "baidu": _input_tips_baidu}
+        _dispatch = {"amap": _AMAP.input_tips, "baidu": _BAIDU.input_tips}
         return await with_fallback(
             provider,
             lambda p: _dispatch[p](keyword, city, location),
@@ -491,7 +486,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if not _has_provider("tianditu"):
             return {"error": "行政区划查询需要配置 TIANDITU_TOKEN"}
 
-        return await _district_tianditu_v2(keywords, child_level, extensions == "all")
+        return await _TIANDITU.district_v2(keywords, child_level, extensions == "all")
 
     @tool(registry, name="get_child_districts",
            description="获取下级行政区列表及轮廓。例如『获取成都市的所有区县边界』或『获取锦江区的所有街道边界』。比多次调用 get_district 更高效。",
@@ -507,7 +502,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
             
         if provider == "tianditu" or not _has_provider("amap"):
             # 天地图 V2 本身就支持返回下级，且支持 polygon
-            return await _district_tianditu_v2(keywords, child_level=1, return_polygon=(return_geometry == "polygon"))
+            return await _TIANDITU.district_v2(keywords, child_level=1, return_polygon=(return_geometry == "polygon"))
         
         # 高德方案：先获取下级名称列表，然后（如果是 polygon 模式）并发获取每个下级的边界
         params = {"keywords": keywords, "subdistrict": "1", "extensions": "base"}
