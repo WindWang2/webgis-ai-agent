@@ -6,7 +6,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 
-from app.core.auth import get_current_user_optional, require_admin
+from app.core.auth import get_current_user_optional, get_owner_token, require_admin, require_owned_session
+from app.models.db_model import Conversation
 from app.services.chat_engine import ChatEngine
 from app.services.history_service_async import AsyncHistoryService
 from app.tools._utils import async_db_session
@@ -34,17 +35,6 @@ SSE_HEADERS = {
 # true/1/yes 时使用 Pi 开源 agent (vendor/pi) 通过 RPC 调用
 # (imported from app.agent_pi_bridge to avoid duplication)
 pi_bridge = None  # type: ignore[assignment]  # 由 lifespan 初始化
-
-
-async def get_owner_token(
-    x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
-) -> Optional[str]:
-    """SEC-08：从请求头提取匿名会话的 owner_token。
-
-    匿名会话（user_id=NULL）在首次创建时由服务端签发 owner_token，前端在后续
-    请求里通过 `X-Session-Token` 头回传。认证会话忽略此值。
-    """
-    return x_session_token
 
 
 def get_engine() -> ChatEngine:
@@ -197,40 +187,31 @@ async def list_sessions(
 @router.get("/sessions/{session_id}")
 async def get_session_detail(
     session_id: str,
-    _user: dict = Depends(get_current_user_optional),
-    owner_token: Optional[str] = Depends(get_owner_token),
+    conv: Conversation = Depends(require_owned_session),
 ):
     """获取会话详情（只读）— 受所有权检查保护（A2 + SEC-08）。"""
-    user_id = _user.get("user_id")
-    async with async_db_session() as db:
-        conv = await AsyncHistoryService(db).get_session(
-            session_id, user_id=user_id, owner_token=owner_token
-        )
-        if not conv:
-            raise HTTPException(status_code=404, detail="Session not found")
-        return {
-            "id": conv.id,
-            "title": conv.title,
-            "createdAt": conv.created_at.timestamp() * 1000,
-            "updatedAt": conv.updated_at.timestamp() * 1000,
-            "messages": [
-                {
-                    "id": str(m.id),
-                    "role": m.role,
-                    "content": m.content,
-                    "timestamp": m.created_at.timestamp() * 1000,
-                }
-                for m in conv.messages
-                if m.role in ("user", "assistant")
-            ],
-        }
+    return {
+        "id": conv.id,
+        "title": conv.title,
+        "createdAt": conv.created_at.timestamp() * 1000,
+        "updatedAt": conv.updated_at.timestamp() * 1000,
+        "messages": [
+            {
+                "id": str(m.id),
+                "role": m.role,
+                "content": m.content,
+                "timestamp": m.created_at.timestamp() * 1000,
+            }
+            for m in conv.messages
+            if m.role in ("user", "assistant")
+        ],
+    }
 
 
 @router.get("/sessions/{session_id}/map-state")
 async def get_session_map_state(
     session_id: str,
-    _user: dict = Depends(get_current_user_optional),
-    owner_token: Optional[str] = Depends(get_owner_token),
+    _conv: Conversation = Depends(require_owned_session),
 ):
     """Return persisted map state (viewport, layers) for session restoration.
 
@@ -238,13 +219,6 @@ async def get_session_map_state(
     就能读取他人的 viewport/layers。复用 get_session_detail 的同款检查。
     SEC-08：匿名会话需匹配 owner_token。
     """
-    user_id = _user.get("user_id")
-    async with async_db_session() as db:
-        conv = await AsyncHistoryService(db).get_session(
-            session_id, user_id=user_id, owner_token=owner_token
-        )
-        if not conv:
-            raise HTTPException(status_code=404, detail="Session not found")
     from app.services.session_data import session_data_manager
     state = await session_data_manager.get_map_state(session_id)
     return {"session_id": session_id, "map_state": state}
@@ -260,21 +234,13 @@ class MapStatePushRequest(BaseModel):
 async def push_session_map_state(
     session_id: str,
     req: MapStatePushRequest,
-    _user: dict = Depends(get_current_user_optional),
-    owner_token: Optional[str] = Depends(get_owner_token),
+    _conv: Conversation = Depends(require_owned_session),
 ):
     """Persist live map state pushed by the frontend during agent execution.
 
     审计 S31：同 get_session_map_state，跨租户写入必须拒绝。
     SEC-08：匿名会话需匹配 owner_token。
     """
-    user_id = _user.get("user_id")
-    async with async_db_session() as db:
-        conv = await AsyncHistoryService(db).get_session(
-            session_id, user_id=user_id, owner_token=owner_token
-        )
-        if not conv:
-            raise HTTPException(status_code=404, detail="Session not found")
     from app.services.session_data import session_data_manager
     if req.viewport:
         await session_data_manager.set_map_state(session_id, "viewport", req.viewport)
@@ -296,6 +262,7 @@ async def clear_session(
     session_id: str,
     _user: dict = Depends(get_current_user_optional),
     owner_token: Optional[str] = Depends(get_owner_token),
+    _conv: Conversation = Depends(require_owned_session),
 ):
     """清除会话（内存 + DB）— 受所有权检查保护（A2 + SEC-08）。"""
     user_id = _user.get("user_id")

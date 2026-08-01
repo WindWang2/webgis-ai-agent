@@ -53,11 +53,9 @@ def test_get_session_detail(client):
     msg.tool_result = None
     msg.created_at = datetime(2026, 4, 10)
     conv.messages = [msg]
-    with patch.object(_chat_mod, "AsyncHistoryService") as MockHS:
-        mock_svc = MagicMock()
-        MockHS.return_value = mock_svc
-        mock_svc.get_session = AsyncMock(return_value=conv)
+    with patch("app.core.auth.verify_session_owner", AsyncMock(return_value=conv)):
         resp = client.get(f"{BASE}/sessions/s1")
+    assert resp.status_code == 200
     assert resp.status_code == 200
     data = resp.json()
     assert data["id"] == "s1"
@@ -66,10 +64,7 @@ def test_get_session_detail(client):
 
 
 def test_get_session_detail_not_found(client):
-    with patch.object(_chat_mod, "AsyncHistoryService") as MockHS:
-        mock_svc = MagicMock()
-        MockHS.return_value = mock_svc
-        mock_svc.get_session = AsyncMock(return_value=None)
+    with patch("app.core.auth.verify_session_owner", AsyncMock(side_effect=_chat_mod.HTTPException(status_code=404, detail="Session not found"))):
         resp = client.get(f"{BASE}/sessions/nonexistent")
     assert resp.status_code == 404
 
@@ -77,7 +72,8 @@ def test_get_session_detail_not_found(client):
 def test_delete_session(client):
     mock_engine = MagicMock()
     mock_engine.clear_session = AsyncMock(return_value=True)  # A2: 返回 bool
-    with patch.object(_chat_mod, "engine", mock_engine):
+    conv = make_conv("s1", "Test", datetime(2026, 4, 10))
+    with patch.object(_chat_mod, "engine", mock_engine), patch("app.core.auth.verify_session_owner", AsyncMock(return_value=conv)):
         resp = client.delete(f"{BASE}/sessions/s1")
     assert resp.status_code == 200
     # A2: 带 user_id kwarg；SEC-08: 带 owner_token kwarg（无头时为 None）

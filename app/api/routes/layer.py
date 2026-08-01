@@ -11,11 +11,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
+from app.core.auth import require_owned_session, verify_session_owner
+from app.models.db_model import Conversation
 from app.services.session_data import session_data_manager
-from app.services.history_service_async import AsyncHistoryService
 from app.services.task_tracker import TaskTracker  # noqa: F401  (typing aid)
 from app.tools._utils import async_db_session
-from app.core.auth import get_current_user_optional
 
 router = APIRouter()
 
@@ -25,33 +25,21 @@ async def _verify_session_owner(
     user_id,
     owner_token: Optional[str] = None,
 ) -> None:
-    """跨租户隔离守卫：session_id 必须属于 user_id（或为旧匿名记录）。
-
-    审计 S31/S32：所有按 session_id 读取的路由必须先过此关，否则用户 A
-    可以通过猜/枚举 session_id 读取用户 B 的分析输出（GeoJSON 常含真实坐标 / PII）。
-    SEC-08：匿名会话若设置了 owner_token，调用方必须提供匹配值。
-    """
+    """Back-compat wrapper delegating to verify_session_owner."""
     async with async_db_session() as db:
-        conv = await AsyncHistoryService(db).get_session(
-            session_id, user_id=user_id, owner_token=owner_token
-        )
-        if not conv:
-            raise HTTPException(status_code=404, detail="Session not found")
+        await verify_session_owner(db, session_id, user_id=user_id, owner_token=owner_token)
 
 
 @router.get("/layers/data/{ref_id}", tags=["图层数据"])
 async def get_session_layer_data(
     ref_id: str,
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
-    _user: dict = Depends(get_current_user_optional),
-    x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
+    _conv: Conversation = Depends(require_owned_session),
 ):
     """通过引用 ID 获取会话缓存中的大数据对象（如分析产生的 GeoJSON）。"""
     if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
         raise HTTPException(status_code=400, detail="非法 ref_id")
-    # 审计 S32：先校验 session 归属，再读 session 内的数据。
-    # SEC-08：匿名会话需匹配 X-Session-Token。
-    await _verify_session_owner(session_id, _user.get("user_id"), x_session_token)
+    # 审计 S32 / SEC-08: 校验通过 Depends(require_owned_session) 完成
     data = await session_data_manager.get(session_id, ref_id)
     if not data:
         raise HTTPException(status_code=404, detail="数据已过期或不存在")

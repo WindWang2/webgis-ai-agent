@@ -14,12 +14,11 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, verify_session_owner
 from app.core.database import get_async_db
 from app.models.api_response import ApiResponse, ErrCode
 from app.models.report import Report
 from app.models.db_model import Conversation, Message
-from app.services.history_service_async import AsyncHistoryService
 from app.services.report_service import ReportService, REPORT_DIR
 
 import logging
@@ -28,17 +27,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/reports", tags=["报告生成"])
 
 ALLOWED_FORMATS = {"pdf", "html", "markdown", "md"}
-
-
-async def _check_session_owner(db: AsyncSession, session_id: str, user_id) -> None:
-    """跨租户守卫：会话必须属于调用方（审计 S35）。
-
-    Report 表无 user_id 字段，但通过 session_id → Conversation.user_id 解析归属。
-    匿名会话（user_id IS NULL）允许 —— 与 history_service_async 的语义一致。
-    """
-    conv = await AsyncHistoryService(db).get_session(session_id, user_id=user_id)
-    if not conv:
-        raise HTTPException(status_code=404, detail="Session not found")
 
 
 # ── Schemas ──────────────────────────────────────────────────────────
@@ -112,7 +100,7 @@ async def create_report(
 ):
     """从会话历史生成报告（ADR-0023: 状态 Saga 已收敛至 ReportService）"""
     user_id = _user.get("user_id")
-    await _check_session_owner(db, request.session_id, user_id)
+    await verify_session_owner(db, request.session_id, user_id=user_id)
 
     svc = ReportService()
     res = await svc.create_and_generate(
@@ -151,7 +139,7 @@ async def list_reports(
             message="session_id 为必填，避免跨租户泄漏",
         )
     user_id = _user.get("user_id")
-    await _check_session_owner(db, session_id, user_id)
+    await verify_session_owner(db, session_id, user_id=user_id)
 
     stmt = select(Report).where(Report.session_id == session_id).order_by(Report.created_at.desc())
     result = await db.execute(stmt.limit(100))
@@ -213,7 +201,7 @@ async def _check_report_owner(db: AsyncSession, report_id: str, user_id) -> Repo
     report = await db.get(Report, report_id)
     if not report:
         raise HTTPException(status_code=404, detail="报告不存在")
-    await _check_session_owner(db, report.session_id, user_id)
+    await verify_session_owner(db, report.session_id, user_id=user_id)
     return report
 
 

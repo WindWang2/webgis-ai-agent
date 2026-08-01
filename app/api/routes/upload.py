@@ -11,10 +11,9 @@ from pydantic import BaseModel
 from sqlalchemy import select, func
 
 from app.core.config import settings
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, verify_session_owner
 from app.tools._utils import async_db_session
 from app.models.upload import UploadRecord
-from app.services.history_service_async import AsyncHistoryService
 from app.services.data_parser import (
     MAX_RASTER_SIZE,
     MAX_VECTOR_SIZE,
@@ -39,9 +38,7 @@ async def _verify_session_owner(db, session_id: Optional[str], user_id) -> None:
     """
     if not session_id:
         return
-    conv = await AsyncHistoryService(db).get_session(session_id, user_id=user_id)
-    if not conv:
-        raise HTTPException(status_code=404, detail="Session not found")
+    await verify_session_owner(db, session_id, user_id=user_id)
 
 
 # ==================== 响应模型 ====================

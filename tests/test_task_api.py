@@ -10,8 +10,8 @@ from app.services.chat_engine import ChatEngine
 from app.tools.registry import ToolRegistry
 from app.api.routes import chat as chat_mod
 from app.api.routes.task import router as task_router
-from app.api.routes.layer import _verify_session_owner
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, require_owned_session, verify_session_owner
+from app.models.db_model import Conversation
 
 # Create a real ChatEngine instance for tests
 _engine = ChatEngine(ToolRegistry())
@@ -31,17 +31,18 @@ def _inject_engine():
 
 @pytest.fixture
 def app(monkeypatch):
-    """跨租户守卫 _verify_session_owner 依赖 Conversation.user_id 校验。
-    单测不连真 DB，stub 成 always-pass 即可（隔离由 test_cross_tenant_isolation
+    """跨租户守卫 require_owned_session 依赖 Conversation.user_id 校验。
+    单测不连真 DB，stub 成 return Conversation 即：隔离由 test_cross_tenant_isolation
     单独覆盖）。"""
-    async def _noop_verify(session_id, user_id):
-        return None
-    monkeypatch.setattr("app.api.routes.layer._verify_session_owner", _noop_verify)
-    # task.py 通过 from app.api.routes.layer import _verify_session_owner 拷贝名字
-    monkeypatch.setattr("app.api.routes.task._verify_session_owner", _noop_verify)
+    async def _noop_verify(db=None, session_id=None, user_id=None, owner_token=None):
+        return Conversation(id=session_id or "test-session", user_id=user_id or "test-user")
+
+    monkeypatch.setattr("app.core.auth.verify_session_owner", _noop_verify)
+    monkeypatch.setattr("app.api.routes.task.verify_session_owner", _noop_verify)
 
     _app = FastAPI()
     _app.dependency_overrides[get_current_user] = lambda: _mock_user
+    _app.dependency_overrides[require_owned_session] = lambda: Conversation(id="test-session", user_id="test-user")
     _app.include_router(router, prefix="/api/v1")
     _app.include_router(task_router, prefix="/api/v1")
     return _app

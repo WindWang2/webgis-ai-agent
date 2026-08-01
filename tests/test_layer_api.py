@@ -5,17 +5,22 @@ from unittest.mock import patch, MagicMock
 from fastapi import FastAPI
 
 from app.api.routes import layer as _mod
+from app.core.auth import require_owned_session
+from app.models.db_model import Conversation
+
+_VALID_SID = "session-aaaaaaaaaaaaaaaa"  # >= min_length=8
 
 
 @pytest.fixture
 def app(monkeypatch):
-    """跨租户守卫 _verify_session_owner 在隔离测试里依赖真 DB；
+    """跨租户守卫在隔离测试里依赖真 DB；
     stub 成 always-pass（跨租户隔离由 test_cross_tenant_isolation 覆盖）。"""
     async def _noop_verify(session_id, user_id, owner_token=None):
         return None
     monkeypatch.setattr(_mod, "_verify_session_owner", _noop_verify)
 
     app = FastAPI()
+    app.dependency_overrides[require_owned_session] = lambda: Conversation(id=_VALID_SID)
     app.include_router(_mod.router, prefix="/api/v1")
     return app
 
