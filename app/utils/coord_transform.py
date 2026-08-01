@@ -135,7 +135,15 @@ def _transform_chinese_point(lng: float, lat: float, src: str, dst: str) -> Tupl
 
 
 def _walk_coords(coords: Any, transform_fn: Callable[[float, float], Tuple[float, float]]) -> Any:
-    """Recursively walks GeoJSON coordinates, preserving Z/M dimensions."""
+    """Recursively walks GeoJSON coordinates, preserving Z/M dimensions.
+
+    Accepts both ``list`` and ``tuple`` coordinate sequences — GeoJSON permits
+    either, and shapely's ``__geo_interface__`` emits tuples. Tuples are
+    normalized to lists so the recursion (and the returned tree) is uniformly
+    list-typed, matching the GeoJSON canonical form.
+    """
+    if isinstance(coords, tuple):
+        coords = list(coords)
     if not isinstance(coords, list) or not coords:
         return coords
     if isinstance(coords[0], (int, float)) and len(coords) >= 2:

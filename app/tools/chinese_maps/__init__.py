@@ -27,23 +27,17 @@ from app.utils.coord_transform import (
     wgs84_to_bd09, bd09_to_wgs84,
 )
 
-# HTTP + provider 路由
+# HTTP + provider 路由（_amap_get/_baidu_get/_tianditu_get 由各 provider 模块自行导入）
 from app.tools.chinese_maps.http import (
     _has_provider, _fallback_order,
     _VALID_PROVIDERS,
-    _amap_get, _baidu_get, _tianditu_get,
     _speed_mps,
     with_fallback,
 )
 
-# 三个 provider 的全部 _*_* 实现，按原名 import
-from app.tools.chinese_maps.amap import (
-    _search_poi_amap, _geocode_amap, _reverse_geocode_amap, _route_amap,
-    _district_amap, _distance_matrix_amap,
-    _isochrone_analysis, _get_route_distance_amap,
-    _search_poi_around_amap, _search_poi_polygon_amap,
-    _input_tips_amap, _transit_amap, _traffic_amap,
-)
+# Amap 已深化为 AmapProvider 类（架构评审 F1）。Baidu/Tianditu 仍是自由函数，
+# 下一个 commit 也会深化为类。_PROVIDERS 统一两类形态的派发入口。
+from app.tools.chinese_maps.amap import AmapProvider
 from app.tools.chinese_maps.baidu import (
     _search_poi_baidu, _geocode_baidu, _reverse_geocode_baidu, _route_baidu,
     _district_baidu, _distance_matrix_baidu,
@@ -56,6 +50,9 @@ from app.tools.chinese_maps.tianditu import (
     _search_poi_around_tianditu,
 )
 
+# Provider 单例。AmapProvider 接受注入的 get（默认走真实 tracked_provider_get）。
+_AMAP = AmapProvider()
+
 logger = logging.getLogger(__name__)
 
 
@@ -64,7 +61,7 @@ async def geocode_cn(address: str, city: str = "", provider: str = "amap") -> di
         return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
     _dispatch = {
-        "amap": _geocode_amap, "baidu": _geocode_baidu, "tianditu": _geocode_tianditu,
+        "amap": _AMAP.geocode, "baidu": _geocode_baidu, "tianditu": _geocode_tianditu,
     }
     return await with_fallback(
         provider,
@@ -124,7 +121,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'，收到: {provider}"}
 
         _dispatch = {
-            "amap": _search_poi_amap, "baidu": _search_poi_baidu, "tianditu": _search_poi_tianditu,
+            "amap": _AMAP.search_poi, "baidu": _search_poi_baidu, "tianditu": _search_poi_tianditu,
         }
         errors = []
 
@@ -162,7 +159,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
         _dispatch = {
-            "amap": _reverse_geocode_amap, "baidu": _reverse_geocode_baidu,
+            "amap": _AMAP.reverse_geocode, "baidu": _reverse_geocode_baidu,
             "tianditu": _reverse_geocode_tianditu,
         }
         return await with_fallback(
@@ -186,7 +183,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if provider not in _VALID_PROVIDERS:
             return {"error": f"provider 必须是 'amap' 或 'baidu'"}
 
-        _dispatch = {"amap": _route_amap, "baidu": _route_baidu}
+        _dispatch = {"amap": _AMAP.route, "baidu": _route_baidu}
         return await with_fallback(
             provider,
             lambda p: _dispatch[p](origin, destination, mode, city),
@@ -215,7 +212,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
         _dispatch = {
-            "amap": _district_amap, "baidu": _district_baidu, "tianditu": _district_tianditu,
+            "amap": _AMAP.district, "baidu": _district_baidu, "tianditu": _district_tianditu,
         }
         return await with_fallback(
             provider,
@@ -257,7 +254,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": f"未配置 {provider} API Key"}
 
         if provider == "amap":
-            return await _distance_matrix_amap(origins, destinations, mode)
+            return await _AMAP.distance_matrix(origins, destinations, mode)
         else:
             return await _distance_matrix_baidu(origins, destinations, mode)
 
@@ -286,7 +283,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if not _has_provider(provider):
             return {"error": f"未配置 {provider} API Key"}
 
-        return await _isochrone_analysis(provider, center, minutes, mode)
+        return await _AMAP.isochrone(center, minutes, mode)
 
     @tool(registry, name="search_poi_around",
            description="在指定坐标周围按半径搜索 POI。适合『附近 500 米的便利店』『地铁站周边餐厅』等近邻问题。返回 GeoJSON 点集。",
@@ -316,7 +313,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
         _dispatch = {
-            "amap": _search_poi_around_amap,
+            "amap": _AMAP.search_poi_around,
             "baidu": _search_poi_around_baidu,
             "tianditu": _search_poi_around_tianditu,
         }
@@ -377,7 +374,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if not keyword and not types:
             return {"error": "keyword 与 types 至少提供一个"}
 
-        _dispatch = {"amap": _search_poi_polygon_amap, "baidu": _search_poi_polygon_baidu}
+        _dispatch = {"amap": _AMAP.search_poi_polygon, "baidu": _search_poi_polygon_baidu}
         return await with_fallback(
             provider,
             lambda p: _dispatch[p](target_poly, keyword, types, limit),
@@ -405,7 +402,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if provider not in ("amap", "baidu"):
             return {"error": "provider 必须是 'amap' 或 'baidu'"}
 
-        _dispatch = {"amap": _input_tips_amap, "baidu": _input_tips_baidu}
+        _dispatch = {"amap": _AMAP.input_tips, "baidu": _input_tips_baidu}
         return await with_fallback(
             provider,
             lambda p: _dispatch[p](keyword, city, location),
@@ -436,7 +433,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": "origin/destination 必须是 [lng,lat]"}
         if not _has_provider("amap"):
             return {"error": "公交查询当前仅支持 amap，请配置 AMAP_API_KEY"}
-        return await _transit_amap(origin, destination, city, city_d, strategy)
+        return await _AMAP.transit(origin, destination, city, city_d, strategy)
 
     @tool(registry, tier=2, domains=["network"], name="get_traffic_status",
            description="查询实时路况：指定矩形或圆形范围内的道路拥堵情况。返回道路名+拥堵等级+长度。适合『现在三环堵不堵』『机场高速路况』等问题。仅 Amap。",
@@ -462,7 +459,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
             return {"error": "circle 模式需要 center=[lng,lat]"}
         if not _has_provider("amap"):
             return {"error": "实时路况当前仅支持 amap"}
-        return await _traffic_amap(mode, rectangle, center, radius_m, level)
+        return await _AMAP.traffic(mode, rectangle, center, radius_m, level)
 
     @tool(registry, name="get_admin_division",
            description=(
@@ -514,7 +511,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         
         # 高德方案：先获取下级名称列表，然后（如果是 polygon 模式）并发获取每个下级的边界
         params = {"keywords": keywords, "subdistrict": "1", "extensions": "base"}
-        data = await _amap_get("/config/district", params)
+        data = await _AMAP._get("/config/district", params)
         if "error" in data: return data
         
         districts = data.get("districts", [])
@@ -542,7 +539,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         for s in sub_units:
             name = s.get("name")
             if name:
-                tasks.append(_district_amap(name, level=s.get("level", "district"), return_geometry="polygon"))
+                tasks.append(_AMAP.district(name, level=s.get("level", "district"), return_geometry="polygon"))
         
         results = await asyncio.gather(*tasks, return_exceptions=True)
         all_features = []

@@ -82,8 +82,22 @@ A unified domain service (`SpatialAnalyzer` in `app/services/spatial_analyzer.py
 ### Tracked Provider HTTP Request
 An automated HTTP execution seam (`tracked_provider_get` in `app/services/provider_health.py`) that binds `ProviderHealthTracker` directly to `get_shared_client()`. Automatically handles rate limiting (`record_attempt`), proxy/SSL context injection, HTTP/JSON decoding, provider-specific business status validation (`check_amap_status`, `check_baidu_status`, `check_tianditu_status`), and circuit breaker state tracking (`record_success` / `record_error`).
 
-
-
+### Chinese Maps Provider (capability matrix)
+The deep provider module (`app/tools/chinese_maps/`) for Amap / Baidu / Tianditu. A `ChineseMapsProvider`
+Protocol defines the **9 shared capabilities** with identical signatures across providers
+(`search_poi`, `search_poi_around`, `search_poi_polygon`, `geocode`, `reverse_geocode`, `route`,
+`input_tips`, `district`, `distance_matrix`); `AmapProvider` / `BaiduProvider` / `TiandituProvider`
+implement it. Each class encapsulates endpoint paths, request-param building, response-unwrap keys, and
+**both sides of coordinate transformation** (input WGS84→provider CRS via a private `_to_src`, output
+normalization via provider-private `_shape_*` helpers; POI outputs still route through `_shaping.py`).
+The three Amap-only features (`isochrone_analysis`, `search_transit_route`, `get_traffic_status`) are
+non-Protocol methods on `AmapProvider`. The capability matrix is the Protocol's membership plus three
+singleton declarations — not scattered `exclude=` sets. A `get: Callable[[str, dict], Awaitable[dict]]`
+injected into each provider's `__init__` (defaulting to the real `_amap_get` / `_baidu_get` /
+`_tianditu_get`) is the seam between provider logic and the Tracked Provider HTTP Request; it doubles as
+the fake-GET test seam. `@tool` wrappers in `__init__.py` retain per-capability LLM-facing input
+validation (Chinese error strings, returns to the LLM) and delegate transport fallback to a shared
+`with_fallback(provider, call, exclude)` helper.
 
 
 ### Exception As Thought
