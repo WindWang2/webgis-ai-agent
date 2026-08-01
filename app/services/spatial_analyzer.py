@@ -66,65 +66,12 @@ def _to_feature_collection(data: Any) -> Dict[str, Any]:
 class SpatialAnalyzer:
     """
     Spatial analysis operator class - delegates to specialized geoprocessing & geo_analysis libraries.
+
+    The class exposes its concrete operators (buffer, clip, overlay, statistics, cluster,
+    ...) directly as the interface. A dynamic name-dispatch seam (execute() /
+    execute_analysis() / OPERATOR_MAP) previously fronted these, but had zero production
+    callers and swapped parameter order between its two signatures — see ADR-0013.
     """
-
-    OPERATOR_MAP = {
-        "buffer": "buffer",
-        "clip": "clip",
-        "overlay": "overlay",
-        "statistics": "statistics",
-        "stats": "statistics",
-        "cluster": "cluster",
-        "clustering": "cluster",
-        "aggregate": "aggregate",
-        "spatial_aggregate": "aggregate",
-        "central_feature": "central_feature",
-        "attribute_filter": "attribute_filter",
-        "filter": "attribute_filter",
-        "nearest": "nearest",
-        "path_analysis": "path_analysis",
-        "shortest_path": "path_analysis",
-    }
-
-    @classmethod
-    def execute(
-        cls,
-        op_name: str,
-        input_data: Any,
-        parameters: Optional[Dict[str, Any]] = None,
-        callback: Optional[Callable] = None
-    ) -> GeoAnalysisResult:
-        """Execute a spatial analysis operation dynamically by name."""
-        params = dict(parameters) if isinstance(parameters, dict) else {}
-        op_key = (op_name or "").lower().strip()
-        method_name = cls.OPERATOR_MAP.get(op_key)
-        if not method_name or not hasattr(cls, method_name):
-            return GeoAnalysisResult(False, None, f"Unknown analysis type: {op_name}")
-
-        method = getattr(cls, method_name)
-        try:
-            if method_name == "overlay":
-                features_a = input_data
-                features_b = params.get("layer_b") or params.get("features_b") or []
-                how = params.get("how", "intersection")
-                return method(features_a, features_b, how=how, callback=callback)
-            elif method_name == "aggregate":
-                points = input_data
-                polygons = params.get("polygons") or params.get("polygons_data") or []
-                kw = {k: v for k, v in params.items() if k not in ("polygons", "polygons_data")}
-                return method(points, polygons, callback=callback, **kw)
-            elif method_name == "path_analysis":
-                network = input_data
-                start = params.get("start_point")
-                end = params.get("end_point")
-                if not start or not end:
-                    return GeoAnalysisResult(False, None, "path_analysis requires start_point and end_point parameters")
-                return method(network, start, end, callback=callback)
-            else:
-                return method(input_data, callback=callback, **params)
-        except Exception as e:
-            logger.exception(f"Error executing spatial operation '{op_name}': {e}")
-            return GeoAnalysisResult(False, None, f"Execution failed for {op_name}: {e}")
 
     @classmethod
     def recognize_vector_data(
@@ -335,22 +282,4 @@ class SpatialAnalyzer:
         )
 
 
-ANALYSIS_OPERATORS = SpatialAnalyzer.OPERATOR_MAP
-
-
-def execute_analysis(
-    task_type: str,
-    parameters: Dict,
-    input_data: Dict,
-    callback: Optional[Callable] = None
-) -> GeoAnalysisResult:
-    """Backwards-compatible top-level function delegating to SpatialAnalyzer.execute."""
-    return SpatialAnalyzer.execute(
-        op_name=task_type,
-        input_data=input_data,
-        parameters=parameters,
-        callback=callback
-    )
-
-
-__all__ = ["SpatialAnalyzer", "execute_analysis", "ANALYSIS_OPERATORS", "AnalysisResult"]
+__all__ = ["SpatialAnalyzer", "AnalysisResult"]

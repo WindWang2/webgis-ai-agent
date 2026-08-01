@@ -3,7 +3,6 @@ import json
 import pytest
 from app.services.spatial_analyzer import (
     SpatialAnalyzer,
-    execute_analysis,
     _to_feature_collection,
     AnalysisResult,
 )
@@ -61,7 +60,10 @@ def test_spatial_analyzer_buffer_accepts_full_geojson():
     assert len(res.data["features"]) > 0
 
 
-def test_spatial_analyzer_execute_dynamic_dispatch():
+def test_spatial_analyzer_buffer_concrete_method():
+    # ADR-0013: the dynamic name-dispatch seam (execute / execute_analysis) was
+    # deleted — concrete methods (.buffer, .overlay, ...) are the interface.
+    # This test migrated from the seam to the concrete method it always reached.
     fc = {
         "type": "FeatureCollection",
         "features": [
@@ -72,17 +74,6 @@ def test_spatial_analyzer_execute_dynamic_dispatch():
             }
         ]
     }
-    
-    # Dynamic execute for buffer
-    res_buf = SpatialAnalyzer.execute("buffer", fc, {"distance": 200})
-    assert res_buf.success is True
 
-    # Dynamic execute via top-level function
-    res_top = execute_analysis("buffer", {"distance": 200}, fc)
-    assert res_top.success is True
-
-
-def test_spatial_analyzer_unknown_operation():
-    res = SpatialAnalyzer.execute("unknown_op", {})
-    assert res.success is False
-    assert "Unknown analysis type" in res.summary
+    res = SpatialAnalyzer.buffer(fc, distance=200, unit="m")
+    assert res.success is True
