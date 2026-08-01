@@ -2,30 +2,8 @@ import { render, type RenderOptions } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import { vi } from 'vitest'
 import { useHudStore } from '@/lib/store/useHudStore'
-import type { HudState, TaskState, TaskStep, AiStatus, LeftTab, SettingsTab } from '@/lib/store/useHudStore'
+import type { HudState, AiStatus, LeftTab, SettingsTab } from '@/lib/store/useHudStore'
 import type { Layer } from '@/lib/types/layer'
-
-export function createMockTaskStep(overrides?: Partial<TaskStep>): TaskStep {
-  return {
-    id: 'step-001',
-    tool: 'query_osm_poi',
-    stepIndex: 0,
-    status: 'completed',
-    startedAt: Date.now() - 5000,
-    completedAt: Date.now(),
-    ...overrides,
-  }
-}
-
-export function createMockTaskState(overrides?: Partial<TaskState>): TaskState {
-  return {
-    id: 'task-abc123def456',
-    steps: [createMockTaskStep()],
-    status: 'running',
-    stepCount: 3,
-    ...overrides,
-  }
-}
 
 export function createMockLayer(overrides?: Partial<Layer>): Layer {
   return {
@@ -66,13 +44,6 @@ export function createMockStoreState(overrides?: Partial<HudState>): Record<stri
     clearLayers: vi.fn(),
     setEditingLayerId: vi.fn(),
     setMapLoaded: vi.fn(),
-    taskStart: vi.fn(),
-    stepStart: vi.fn(),
-    stepResult: vi.fn(),
-    stepError: vi.fn(),
-    taskComplete: vi.fn(),
-    taskError: vi.fn(),
-    taskCancelled: vi.fn(),
     clearTask: vi.fn(),
     addProcessLayer: vi.fn(),
     removeProcessLayer: vi.fn(),

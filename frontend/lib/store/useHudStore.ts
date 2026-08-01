@@ -15,9 +15,9 @@
  *   - DEMO 数据 / 默认配置已移到 lib/constants/demo.ts
  *
  * **公共契约不变**：
- *   - `useHudStore`、`HudState`、`TaskStep` 等类型导出保持原样
+ *   - `useHudStore`、`HudState` 等类型导出保持原样（TaskStep/TaskState 已随
+ *     死代码 chat-task 跟踪器一并移除，见 ADR-0022）
  *   - persist key、partialize 字段集合保持原样
- *   - 所有消费方无需修改
  */
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
@@ -31,8 +31,6 @@ import { createUiSlice } from './slices/uiSlice';
 // Type re-exports（保留旧导入习惯）
 export type {
   HudState,
-  TaskStep,
-  TaskState,
   AiStatus,
   LeftTab,
   SettingsTab,

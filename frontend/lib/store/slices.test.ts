@@ -59,30 +59,22 @@ describe('layers slice', () => {
 
 
 describe('task slice', () => {
-  it('task lifecycle 完整推进', () => {
+  // The chat-task tracker (currentTask + 7 lifecycle actions) was dead code
+  // and is gone (ADR-0022). clearTask stays as a no-op. Only the Explorer
+  // task list is live; this covers its CRUD.
+  it('clearTask is a harmless no-op (chat-task tracker removed, ADR-0022)', () => {
     const s = useHudStore.getState();
-    s.taskStart('T1');
-    s.stepStart('T1', 's1', 0, 'buffer_analysis');
-    expect(useHudStore.getState().currentTask?.steps).toHaveLength(1);
-    s.stepResult('T1', 's1', 'buffer_analysis', { ok: true }, false);
-    expect(useHudStore.getState().currentTask?.steps[0].status).toBe('completed');
-    s.taskComplete('T1', 1, 'done');
-    expect(useHudStore.getState().currentTask?.status).toBe('completed');
+    expect(() => s.clearTask()).not.toThrow();
   });
 
-  it('错误 taskId 不污染当前任务', () => {
-    const s = useHudStore.getState();
-    s.taskStart('T1');
-    s.stepStart('T_WRONG', 's1', 0, 'x');
-    expect(useHudStore.getState().currentTask?.steps).toHaveLength(0);
-  });
-
-  it('explorer task 与 chat task 隔离', () => {
+  it('explorer task add/update/remove', () => {
     const s = useHudStore.getState();
     s.addExplorerTask({ taskId: 'EX1', status: 'planning' as any, stage: 'plan' as any, progress: 0 } as any);
-    s.taskStart('T1');
     expect(useHudStore.getState().explorerTasks).toHaveLength(1);
-    expect(useHudStore.getState().currentTask?.id).toBe('T1');
+    s.updateExplorerTask('EX1', { progress: 50 });
+    expect(useHudStore.getState().explorerTasks[0].progress).toBe(50);
+    s.removeExplorerTask('EX1');
+    expect(useHudStore.getState().explorerTasks).toHaveLength(0);
   });
 });
 

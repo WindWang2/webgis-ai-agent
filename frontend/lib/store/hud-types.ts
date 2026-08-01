@@ -11,28 +11,6 @@ export interface SelectedFeatureInfo {
   selectedAt: number;       // epoch ms
 }
 
-export interface TaskStep {
-  id: string;
-  tool: string;
-  stepIndex: number;
-  status: 'pending' | 'running' | 'completed' | 'failed';
-  result?: unknown;
-  hasGeojson?: boolean;
-  error?: string;
-  geojsonSnapshot?: GeoJSONFeatureCollection;
-  startedAt?: number;
-  completedAt?: number;
-}
-
-export interface TaskState {
-  id: string;
-  steps: TaskStep[];
-  status: 'running' | 'completed' | 'failed' | 'cancelled';
-  stepCount?: number;
-  summary?: string;
-  planJson?: unknown;
-}
-
 export type AiStatus = 'idle' | 'thinking' | 'acting' | 'done' | 'error';
 // 新增 v2 类型
 export interface OpLogEntry {
@@ -181,14 +159,11 @@ export interface HudState {
   setEditingLayerId: (id: string | null) => void;
 
   /* ─── Task Stack ─── */
-  currentTask: TaskState | null;
-  taskStart: (taskId: string) => void;
-  stepStart: (taskId: string, stepId: string, stepIndex: number, tool: string) => void;
-  stepResult: (taskId: string, stepId: string, tool: string, result: unknown, hasGeojson: boolean, snapshot?: GeoJSONFeatureCollection) => void;
-  stepError: (taskId: string, stepId: string, error: string) => void;
-  taskComplete: (taskId: string, stepCount: number, summary: string) => void;
-  taskError: (taskId: string, error: string) => void;
-  taskCancelled: (taskId: string) => void;
+  // The chat-task tracker (currentTask + 7 lifecycle actions) was dead code:
+  // never dispatched in production (the SSE handler doesn't call taskStart/
+  // stepStart/stepResult), so currentTask was always null and TaskProgress
+  // never rendered. Removed (ADR-0022). clearTask stays as a no-op — it's
+  // called on session-switch (use-workspace-session.ts) as a defensive reset.
   clearTask: () => void;
 
   /* ─── Process Layers (temporary WS layers) ─── */

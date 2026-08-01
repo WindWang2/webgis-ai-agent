@@ -9,8 +9,6 @@ import remarkGfm from "remark-gfm"
 import { ChartRenderer, adaptChartData } from "@/components/chat/chart-renderer"
 import { MapActionRenderer } from "@/components/chat/map-action-renderer"
 import { safeUrlTransform } from "@/components/chat/mini-md"  // FE-06: 复用 F36 XSS 防护
-import { TaskProgress } from "./task-progress"
-import { useHudStore } from "@/lib/store/useHudStore"
 import { SuggestedPrompts } from "./suggested-prompts"
 import { motion, AnimatePresence } from "framer-motion"
 
@@ -45,7 +43,6 @@ export function ChatHud({
   void _isLoading;
   void _setShowUploadZone;
   const scrollRef = useRef<HTMLDivElement>(null)
-  const currentTask = useHudStore((s) => s.currentTask)
 
   const scrollToBottom = useCallback(() => {
     if (scrollRef.current) {
@@ -66,13 +63,6 @@ export function ChatHud({
         ref={scrollRef}
         className="flex-1 overflow-y-auto pb-6"
       >
-        {/* Task Progress (inline, if active) */}
-        {currentTask && (
-          <div className="border-b border-white/[0.04] mb-3">
-            <TaskProgress task={currentTask} />
-          </div>
-        )}
-
         {/* Messages */}
         <div className="px-4 py-3 space-y-3">
           <AnimatePresence initial={false}>

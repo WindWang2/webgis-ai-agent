@@ -1,93 +1,22 @@
 /**
- * Task slice — 当前 chat 任务的运行轨迹 + Explorer 后台任务列表。
+ * Task slice — Explorer 后台任务列表 +（已退场的）chat-task 清理钩子。
  *
- * 关注点：随 LLM 流式生成、tool 调用前进的「单任务」状态机。
+ * 原 chat-task 跟踪器（currentTask + 7 个生命周期 action）是死代码：SSE handler
+ * 从不 dispatch taskStart/stepStart/stepResult，currentTask 恒为 null，TaskProgress
+ * 从不渲染。已删除（ADR-0022）。clearTask 保留为 no-op —— use-workspace-session.ts
+ * 在切换 session 时调用它做防御性重置。
+ *
+ * Explorer Tasks 区块是活的：explorer_progress SSE 事件驱动 updateExplorerTask。
  */
 import type { StateCreator } from 'zustand';
 import type { HudState } from '../hud-types';
 
 export const createTaskSlice: StateCreator<HudState, [], [], Partial<HudState>> = (set) => ({
-  /* ─── 当前 chat Task ─── */
-  currentTask: null,
-
-  taskStart: (taskId) =>
-    set({ currentTask: { id: taskId, steps: [], status: 'running' } }),
-
-  stepStart: (taskId, stepId, stepIndex, tool) =>
-    set((s) => {
-      if (!s.currentTask || s.currentTask.id !== taskId) return s;
-      return {
-        currentTask: {
-          ...s.currentTask,
-          steps: [
-            ...s.currentTask.steps,
-            { id: stepId, tool, stepIndex, status: 'running', startedAt: Date.now() },
-          ],
-        },
-      };
-    }),
-
-  stepResult: (taskId, stepId, tool, result, hasGeojson, snapshot) =>
-    set((s) => {
-      if (!s.currentTask || s.currentTask.id !== taskId) return s;
-      return {
-        currentTask: {
-          ...s.currentTask,
-          steps: s.currentTask.steps.map((step) =>
-            step.id === stepId
-              ? {
-                  ...step,
-                  status: 'completed' as const,
-                  result,
-                  hasGeojson,
-                  tool,
-                  geojsonSnapshot: snapshot,
-                  completedAt: Date.now(),
-                }
-              : step,
-          ),
-        },
-      };
-    }),
-
-  stepError: (taskId, stepId, error) =>
-    set((s) => {
-      if (!s.currentTask || s.currentTask.id !== taskId) return s;
-      return {
-        currentTask: {
-          ...s.currentTask,
-          steps: s.currentTask.steps.map((step) =>
-            step.id === stepId
-              ? { ...step, status: 'failed' as const, error, completedAt: Date.now() }
-              : step,
-          ),
-        },
-      };
-    }),
-
-  taskComplete: (taskId, stepCount, summary) =>
-    set((s) => {
-      if (!s.currentTask || s.currentTask.id !== taskId) return s;
-      return {
-        currentTask: { ...s.currentTask, status: 'completed', stepCount, summary },
-      };
-    }),
-
-  taskError: (taskId, error) =>
-    set((s) => {
-      if (!s.currentTask || s.currentTask.id !== taskId) return s;
-      return {
-        currentTask: { ...s.currentTask, status: 'failed', summary: error },
-      };
-    }),
-
-  taskCancelled: (taskId) =>
-    set((s) => {
-      if (!s.currentTask || s.currentTask.id !== taskId) return s;
-      return { currentTask: { ...s.currentTask, status: 'cancelled' } };
-    }),
-
-  clearTask: () => set({ currentTask: null }),
+  /* ─── Chat Task（已退场，保留清理钩子）─── */
+  // No-op: the chat-task tracker is gone (ADR-0022), but use-workspace-session.ts
+  // still calls clearTask() on session-switch as a defensive reset. Kept as an
+  // empty function so those call sites stay valid without touching the hook.
+  clearTask: () => {},
 
   /* ─── Explorer Tasks ─── */
   explorerTasks: [],
