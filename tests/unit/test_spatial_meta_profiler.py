@@ -50,7 +50,7 @@ def test_profile_geojson_source_empty_or_nulls():
   profile = profile_geojson_source(data)
 
   assert profile["featureCount"] == 0
-  assert profile["bbox"] == [0.0, 0.0, 0.0, 0.0]
+  assert profile["bbox"] is None
   assert profile["geometryTypes"] == []
   assert profile["fields"] == {}
 
