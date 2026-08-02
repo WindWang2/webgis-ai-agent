@@ -203,48 +203,48 @@ class CompositeMapSpecBuilder:
         if "viewport" in combination_ids:
             self.with_viewport(combination_ids["viewport"])
 
-        bm = self._basemap or BasemapSlot(provider_id="carto-positron")
-        ly = self._layout or LayoutSlot()
-        vp = self._viewport or ViewportSlot(center=[0.0, 0.0], zoom=2.0)
+        basemap_slot = self._basemap or BasemapSlot(provider_id="carto-positron")
+        layout_slot = self._layout or LayoutSlot()
+        viewport_slot = self._viewport or ViewportSlot(center=[0.0, 0.0], zoom=2.0)
 
         mapspec: Dict[str, Any] = {
             "version": "1.0",
             "view": {
-                "center": vp.center or [0.0, 0.0],
-                "zoom": vp.zoom if vp.zoom is not None else 2.0,
-                "pitch": vp.pitch,
-                "bearing": vp.bearing,
+                "center": viewport_slot.center or [0.0, 0.0],
+                "zoom": viewport_slot.zoom if viewport_slot.zoom is not None else 2.0,
+                "pitch": viewport_slot.pitch,
+                "bearing": viewport_slot.bearing,
             },
             "basemap": {
-                "providerId": bm.provider_id,
+                "providerId": basemap_slot.provider_id,
             },
             "sources": {},
             "layers": [],
             "layout": {
-                "paperSize": ly.paper_size,
-                "orientation": ly.orientation,
-                "legend": {"visible": ly.show_legend, "position": "top-right"},
+                "paperSize": layout_slot.paper_size,
+                "orientation": layout_slot.orientation,
+                "legend": {"visible": layout_slot.show_legend, "position": "top-right"},
                 "controls": [
                     {"type": "navigation", "position": "top-right"},
-                    {"type": "scale", "visible": ly.show_scale_bar},
-                    {"type": "north", "visible": ly.show_north_arrow},
+                    {"type": "scale", "visible": layout_slot.show_scale_bar},
+                    {"type": "north", "visible": layout_slot.show_north_arrow},
                 ],
-                "margins": {"marginPx": ly.margin_px},
+                "margins": {"marginPx": layout_slot.margin_px},
                 "style": {
-                    "fontFamily": ly.font_family,
-                    "titleColor": ly.title_color,
-                    "accentColor": ly.accent_color,
+                    "fontFamily": layout_slot.font_family,
+                    "titleColor": layout_slot.title_color,
+                    "accentColor": layout_slot.accent_color,
                 },
             },
             "thresholds": {"maxFeatures": 50000, "timeoutMs": 30000},
         }
 
-        if bm.vector_style_url:
-            mapspec["basemap"]["vectorStyleUrl"] = bm.vector_style_url
-        if bm.raster_filters:
-            mapspec["basemap"]["rasterFilters"] = bm.raster_filters
-        if bm.overlays:
-            mapspec["basemap"]["overlays"] = bm.overlays
+        if basemap_slot.vector_style_url:
+            mapspec["basemap"]["vectorStyleUrl"] = basemap_slot.vector_style_url
+        if basemap_slot.raster_filters:
+            mapspec["basemap"]["rasterFilters"] = basemap_slot.raster_filters
+        if basemap_slot.overlays:
+            mapspec["basemap"]["overlays"] = basemap_slot.overlays
 
         target_id = layer_id or "default_layer"
         source_id = f"source_{target_id}"
@@ -269,42 +269,49 @@ class CompositeMapSpecBuilder:
             "paint": {},
         }
 
-
         # Override Hierarchy Rule: Thematic palette overrides Symbology fill color, while preserving stroke & radius
         if self._symbology:
-            sym = self._symbology
-            if sym.mode == "single":
-                if sym.color and not (self._thematic and self._thematic.field):
-                    layer_def["paint"]["fill-color" if layer_def["type"] == "fill" else "circle-color"] = sym.color
-                if sym.fill_opacity is not None:
-                    layer_def["paint"]["fill-opacity" if layer_def["type"] == "fill" else "circle-opacity"] = sym.fill_opacity
-                if sym.stroke_color:
-                    layer_def["paint"]["fill-outline-color" if layer_def["type"] == "fill" else "circle-stroke-color"] = sym.stroke_color
-                if sym.radius:
-                    layer_def["paint"]["circle-radius"] = sym.radius
-            elif sym.mode == "categorical" and sym.color_map and sym.field and not (self._thematic and self._thematic.field):
-                stops = [[val, col] for val, col in sym.color_map.items()]
-                layer_def["paint"]["fill-color" if layer_def["type"] == "fill" else "circle-color"] = {
-                    "property": sym.field,
+            symbology_slot = self._symbology
+            if symbology_slot.mode == "single":
+                if symbology_slot.color and not (self._thematic and self._thematic.field):
+                    color_key = "fill-color" if layer_type == "fill" else ("line-color" if layer_type == "line" else "circle-color")
+                    layer_def["paint"][color_key] = symbology_slot.color
+                if symbology_slot.fill_opacity is not None:
+                    opacity_key = "fill-opacity" if layer_type == "fill" else ("line-opacity" if layer_type == "line" else "circle-opacity")
+                    layer_def["paint"][opacity_key] = symbology_slot.fill_opacity
+                if symbology_slot.stroke_color:
+                    stroke_key = "fill-outline-color" if layer_type == "fill" else ("line-color" if layer_type == "line" else "circle-stroke-color")
+                    layer_def["paint"][stroke_key] = symbology_slot.stroke_color
+                if symbology_slot.stroke_width is not None:
+                    width_key = "line-width" if layer_type == "line" else "circle-stroke-width"
+                    if layer_type != "fill":
+                        layer_def["paint"][width_key] = symbology_slot.stroke_width
+                if symbology_slot.radius and layer_type == "circle":
+                    layer_def["paint"]["circle-radius"] = symbology_slot.radius
+            elif symbology_slot.mode == "categorical" and symbology_slot.color_map and symbology_slot.field and not (self._thematic and self._thematic.field):
+                stops = [[val, col] for val, col in symbology_slot.color_map.items()]
+                color_key = "fill-color" if layer_type == "fill" else ("line-color" if layer_type == "line" else "circle-color")
+                layer_def["paint"][color_key] = {
+                    "property": symbology_slot.field,
                     "type": "categorical",
                     "stops": stops,
                 }
 
         if self._thematic and self._thematic.field and self._thematic.variant != "none":
-            th = self._thematic
-            if th.variant == "choropleth":
+            thematic_slot = self._thematic
+            if thematic_slot.variant == "choropleth":
                 layer_def["thematic"] = {
-                    "field": th.field,
-                    "method": th.method,
-                    "k": th.k,
-                    "palette": th.palette,
+                    "field": thematic_slot.field,
+                    "method": thematic_slot.method,
+                    "k": thematic_slot.k,
+                    "palette": thematic_slot.palette,
                 }
-            elif th.variant == "heatmap":
+            elif thematic_slot.variant == "heatmap":
                 layer_def["type"] = "heatmap"
                 layer_def["paint"] = {
-                    "heatmap-weight": ["interpolate", ["linear"], ["get", th.field], 0, 0, 1, 1],
-                    "heatmap-intensity": th.intensity,
-                    "heatmap-radius": th.radius,
+                    "heatmap-weight": ["interpolate", ["linear"], ["get", thematic_slot.field], 0, 0, 1, 1],
+                    "heatmap-intensity": thematic_slot.intensity,
+                    "heatmap-radius": thematic_slot.radius,
                 }
 
         mapspec["layers"].append(layer_def)
@@ -314,3 +321,4 @@ class CompositeMapSpecBuilder:
             logger.warning("CompositeMapSpecBuilder validation warnings: %s", val_res.get("errors"))
 
         return mapspec
+

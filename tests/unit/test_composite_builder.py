@@ -62,3 +62,22 @@ def test_combine_map_theme_tool_execution():
     assert res["layer_id"] == "test_admin"
     assert "mapspec" in res
     assert res["mapspec"]["basemap"]["providerId"] == "carto-positron"
+
+
+def test_composite_builder_line_geometry_paint():
+    builder = CompositeMapSpecBuilder()
+    builder.with_symbology(SymbologySlot(
+        mode="single",
+        geometry="LineString",
+        color="#00ff00",
+        stroke_width=3.0,
+        fill_opacity=0.9
+    ))
+    mapspec = builder.assemble({}, layer_id="roads")
+
+    layer = mapspec["layers"][0]
+    assert layer["type"] == "line"
+    assert layer["paint"]["line-color"] == "#00ff00"
+    assert layer["paint"]["line-width"] == 3.0
+    assert layer["paint"]["line-opacity"] == 0.9
+

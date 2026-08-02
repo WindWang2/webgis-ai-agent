@@ -293,6 +293,34 @@ def register_template_tools(registry: ToolRegistry):
             layer_id=layer_id
         )
 
+    @tool(
+        registry,
+        name="webgis_map_combine",
+        description=(
+            "规范化地图组件组合工具 (Canonical alias for combine_map_theme)。合成 5 大地图正交组件槽位为 MapSpec。"
+        ),
+        args_model=CombineMapThemeArgs,
+    )
+    def _webgis_map_combine_tool(
+        preset: str = "",
+        basemap: str = "",
+        symbology: str = "",
+        thematic: str = "",
+        layout: str = "",
+        viewport: Optional[dict] = None,
+        layer_id: str = "default_layer"
+    ) -> dict:
+        return combine_map_theme(
+            preset=preset,
+            basemap=basemap,
+            symbology=symbology,
+            thematic=thematic,
+            layout=layout,
+            viewport=viewport,
+            layer_id=layer_id
+        )
+
+
 
 
 def json_geojson_style_apply(geojson: dict, color: str, opacity: float, stroke_width: float) -> dict:

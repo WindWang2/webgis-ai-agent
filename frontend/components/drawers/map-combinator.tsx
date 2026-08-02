@@ -62,8 +62,35 @@ export const MapCombinator: React.FC<MapCombinatorProps> = ({ onApplyCombination
 
   const handleApplyPreset = (presetId: string) => {
     setSelectedPreset(presetId);
+    if (presetId === "academic_research") {
+      setBasemap("carto-positron");
+      setSymbology("single");
+      setThematic("choropleth");
+      setLayout("tmpl_ly_academic");
+    } else if (presetId === "cyber_dark") {
+      setBasemap("carto-dark");
+      setSymbology("single");
+      setThematic("choropleth");
+      setLayout("tmpl_ly_dark_report");
+    } else if (presetId === "natural_terra") {
+      setBasemap("esri-imagery");
+      setSymbology("single");
+      setThematic("choropleth");
+      setLayout("tmpl_ly_minimal");
+    } else if (presetId === "heat_density") {
+      setBasemap("carto-dark");
+      setSymbology("single");
+      setThematic("heatmap");
+      setLayout("tmpl_ly_dark_report");
+    } else if (presetId === "engineering_survey") {
+      setBasemap("osm-standard");
+      setSymbology("single");
+      setThematic("choropleth");
+      setLayout("tmpl_ly_engineering");
+    }
     onApplyCombination?.({ preset: presetId });
   };
+
 
   const handleApplyCustom = () => {
     const vpData =
