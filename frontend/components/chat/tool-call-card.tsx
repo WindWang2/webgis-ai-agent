@@ -40,6 +40,7 @@ function parseArgs(argsStr?: string): Record<string, unknown> | null {
 }
 
 const TOOL_NAMES: Record<string, string> = {
+  // Legacy tool names
   query_osm_poi: 'POI 查询',
   query_osm_roads: '路网查询',
   query_osm_buildings: '建筑查询',
@@ -86,6 +87,23 @@ const TOOL_NAMES: Record<string, string> = {
   update_layer_appearance: '图层样式',
   list_uploaded_data: '上传数据',
   get_upload_info: '数据详情',
+
+  // Canonical webgis_* & STAC tool names
+  webgis_buffer: '缓冲区分析',
+  webgis_clip: '矢量裁剪',
+  webgis_overlay: '叠加分析',
+  webgis_spatial_join: '空间连接',
+  webgis_cluster: '空间聚类',
+  webgis_stats: '空间统计',
+  webgis_nearest: '最近邻分析',
+  webgis_voronoi: 'Voronoi 划分',
+  webgis_convex_hull: '凸包分析',
+  webgis_multi_ring: '多环缓冲区',
+  webgis_kde: '核密度估计',
+  webgis_h3_lisa: 'H3 LISA 聚类',
+  webgis_isochrones: '等时圈分析',
+  stac_search: 'STAC 遥感检索',
+  h3_binning: 'H3 网格化',
 };
 
 function ToolName({ name }: { name: string }) {
@@ -104,8 +122,8 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
 
   const CARTO_TOOLS = new Set(['create_thematic_map', 'h3_binning', 'kde_contours', 'heatmap_data']);
   const isCarto = CARTO_TOOLS.has(call.tool);
-  const focusLayer = useHudStore((s) => s.focusLayer);
-  const layers = useHudStore((s) => s.layers);
+  const focusLayer = useHudStore((s: { focusLayer: (id: string) => void }) => s.focusLayer);
+  const layers = useHudStore((s: { layers: Array<{ id: string; legend_spec?: unknown }> }) => s.layers);
   const latestCartoLayerId = isCarto ? (layers.find((l) => l.legend_spec)?.id ?? '') : '';
 
   const statusIcon =
@@ -117,11 +135,15 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
       <AlertCircle size={11} className="text-red-500" />
     );
 
+  const panelId = `tool-row-panel-${call.id}`;
+
   return (
     <div className={`rounded-md border text-[15px] overflow-hidden ${expanded ? 'border-slate-200/80 bg-white/50' : 'border-transparent'}`}>
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-1.5 px-2 py-1 text-left hover:bg-slate-50/60 transition-colors"
+        aria-expanded={open}
+        aria-controls={panelId}
+        className="w-full flex items-center gap-1.5 px-2 py-1 text-left hover:bg-slate-50/60 transition-colors focus:outline-none focus:ring-1 focus:ring-blue-400"
       >
         <ChevronRight
           size={10}
@@ -154,7 +176,7 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
       )}
 
       {open && (
-        <div className="border-t border-slate-100 px-2.5 py-1.5 space-y-1.5 bg-slate-50/30">
+        <div id={panelId} role="region" aria-label={`${call.tool} 详细信息`} className="border-t border-slate-100 px-2.5 py-1.5 space-y-1.5 bg-slate-50/30">
           {parsedArgs && (
             <div>
               <p className="text-[15px] font-semibold text-slate-400 uppercase tracking-wider mb-0.5">参数</p>
@@ -204,12 +226,16 @@ export function ToolCallChain({ calls }: { calls: ToolCallEntry[] }) {
     ? `${completedCount} 个工具调用完成${failedCount > 0 ? `，${failedCount} 个失败` : ''}`
     : `正在执行 ${runningCount} 个工具...`;
 
+  const chainListId = 'tool-call-chain-list';
+
   return (
     <div className="my-1.5 rounded-lg border border-slate-200/70 bg-white/40 overflow-hidden">
       {/* Chain header — click to expand */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-slate-50/60 transition-colors text-[15px]"
+        aria-expanded={expanded}
+        aria-controls={chainListId}
+        className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-slate-50/60 transition-colors text-[15px] focus:outline-none focus:ring-1 focus:ring-blue-400"
       >
         {expanded ? (
           <ChevronDown size={12} className="shrink-0 text-slate-400" />
@@ -231,7 +257,7 @@ export function ToolCallChain({ calls }: { calls: ToolCallEntry[] }) {
 
       {/* Expanded: individual tool calls */}
       {expanded && (
-        <div className="border-t border-slate-100 px-2 py-1 space-y-0.5 bg-slate-50/20">
+        <div id={chainListId} role="region" aria-label="工具调用链详情" className="border-t border-slate-100 px-2 py-1 space-y-0.5 bg-slate-50/20">
           {calls.map((tc) => (
             <ToolCallRow key={tc.id} call={tc} expanded={expanded} />
           ))}
