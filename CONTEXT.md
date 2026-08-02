@@ -32,6 +32,46 @@ Encapsulates map state ambient summaries, history token budget truncation, XML s
 and execution plan blocks behind a single `assemble(session_id, messages)` interface method.
 Returns a structured `ContextAssemblyResult` value object.
 
+### ChatExecutionEngine
+The deep agent chat loop execution engine (`app/services/chat/execution_engine.py`).
+Encapsulates streaming token emission, tool loop retries, session lock lifecycle management,
+and SSE event payload formatting behind `chat()` and `chat_stream()` interfaces.
+
+### AgentPlanOrchestrator
+The deep plan state orchestration engine (`app/services/chat/plan_orchestrator.py`).
+Encapsulates structured plan creation (`Plan`), heuristic gating, LRU plan memory caching,
+and `ToolCatalog` domain decay synchronization behind a unified execution seam.
+
+### SpectralRasterEngine
+The deep remote sensing raster computation engine (`app/services/rs/spectral_engine.py`).
+Encapsulates NumPy band math (NDVI, NDWI, EVI, NBR), Horn terrain derivatives (slope, aspect, hillshade),
+and STAC cloud-optimized GeoTIFF reads behind a degraded `RasterAnalysisResult` value object.
+
+### MapSpecLifecycleEngine
+The deep cartographic lifecycle engine (`app/services/mapspec/lifecycle_engine.py`).
+Encapsulates discriminated intent mutations (`InitProject`, `SetView`, `UpsertLayer`, `RemoveLayer`),
+spatial auto-profiling, pre-compile validation, disk/Redis dual-write, and checkpoint snapshot storage.
+
+### PdfRenderer
+The deep PDF cartography rendering engine (`app/lib/cartography/pdf_renderer.py`).
+Encapsulates A4 landscape figure geometry, thread-safe CJK font resolution (`FontProperties`),
+title/subtitle/footer layout math, and metadata embedding into pure `bytes`.
+
+### GeocodeProviderStrategy
+The deep multi-provider geocoding failover engine (`app/services/geocode_strategy.py`).
+Encapsulates provider rotation loops, failure rate threshold evaluation (>30%), and coordinate shape
+normalization (`loc` array, `lat`/`lon`, `location` dict) behind `GeocodeAddressResult` value objects.
+
+### LLMResultFormatter
+The deep LLM payload trimming and result formatting engine (`app/services/llm_result_formatter.py`).
+Encapsulates GeoJSON feature property sampling, error self-healing wrapping, and event log result slimming.
+
+### SpatialOperator
+The deep spatial operator runner decorator (`app/services/spatial_operator.py`).
+Encapsulates single/multi-layer GeoJSON input feature normalization (`to_feature_collection`), progress callback firing,
+and standardized exception safety wrapping behind `@spatial_operator(name, progress_pct, feature_keys)`.
+
+
 ### ExplorerPipeline
 The 5-stage GIS exploration pipeline (`discover`, `fetch`, `parse`, `geocode`, `validate`).
 Extracted into pure async stage modules (`discover_stage.py`, `fetch_stage.py`, `parse_stage.py`,
@@ -190,6 +230,10 @@ Two sources with distinct responsibilities — **currently connected headless-on
   **checkpoint** is the payload behind the ref materialized (snapshot copy), so a checkpoint is
   self-contained and replayable.
 
+### MapSpecLifecycleEngine
+The deep cartographic intent engine (`app/services/mapspec/lifecycle_engine.py`).
+Consolidates MapSpec document mutations (`InitProjectIntent`, `SetViewIntent`, `UpsertLayerIntent`, `RemoveLayerIntent`), source profiling, compiler coordination, and checkpoint generation behind an atomic `apply_mutation(session_id, intent)` seam.
+
 ### MapSpec Compiler
 Deterministic, framework-agnostic TS module (`frontend/lib/mapspec-compiler/`) that turns a
 MapSpec into MapLibre `style.json` + `index.html`. **Consumed by headless consumers** — the
@@ -300,6 +344,10 @@ time (not data-driven); a parallel `legend_spec` (continuous: min/max + palette)
 "what these colors mean" for the live-map overlay path — the same two-pipeline split as vector
 (ADR-0007). Multi-resolution zoom (XYZ/COG) and the upload-raster `UploadRecord` path remain out of
 scope.
+
+### SpectralRasterEngine & RasterAnalysisResult
+The deep remote sensing engine (`app/services/rs/spectral_engine.py`) and value object dataclass (`RasterAnalysisResult`).
+Encapsulates spectral index formulas (NDVI, NDWI, EVI, NBR), terrain surface modeling (slope, aspect, hillshade), GDAL/Rasterio context reuse (`rasterio_env`), and PNG colormap rendering into an atomic, testable domain service.
 
 ## Key Relationships
 

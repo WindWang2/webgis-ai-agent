@@ -36,6 +36,10 @@ class TaskStep:
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: datetime | None = None
 
+    @property
+    def is_error(self) -> bool:
+        return self.status == StepStatus.failed or self.error is not None
+
 
 @dataclass
 class TaskInfo:
@@ -51,6 +55,57 @@ class TaskInfo:
     _cancelled: bool = field(default=False, repr=False)  # 内部取消标志
 
 
+class _TrackStepContext:
+    """TaskTracker step lifecycle context manager."""
+
+    def __init__(
+        self,
+        tracker: "TaskTracker",
+        task_id: str | None,
+        tool: str,
+        params: dict,
+    ):
+        self.tracker = tracker
+        self.task_id = task_id
+        self.tool = tool
+        self.params = params
+        self.step: TaskStep | None = None
+
+    async def __aenter__(self) -> TaskStep | None:
+        if not self.task_id or self.task_id not in self.tracker._tasks:
+            return None
+        try:
+            self.step = self.tracker.start_step(self.task_id, self.tool, self.params)
+            return self.step
+        except Exception:
+            return None
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if not self.task_id or not self.step:
+            return False
+
+        if exc_type is not None:
+            err_msg = str(exc_val) if exc_val else f"Exception: {exc_type.__name__}"
+            try:
+                self.tracker.fail_step(self.task_id, self.step.id, err_msg)
+            except Exception:
+                pass
+            return False  # Re-raise exception
+
+        if getattr(self.step, "error", None) or getattr(self.step, "is_error", False):
+            err_msg = getattr(self.step, "error", None) or "Step failed with error"
+            try:
+                self.tracker.fail_step(self.task_id, self.step.id, str(err_msg))
+            except Exception:
+                pass
+        else:
+            try:
+                self.tracker.complete_step(self.task_id, self.step.id, self.step.result)
+            except Exception:
+                pass
+        return False
+
+
 class TaskTracker:
     """内存任务跟踪器"""
 
@@ -61,6 +116,10 @@ class TaskTracker:
         self._tasks: dict[str, TaskInfo] = {}
         self._session_tasks: dict[str, list[str]] = {}
         self._step_counters: dict[str, int] = {}  # task_id -> step counter
+
+    def track_step(self, task_id: str | None, tool: str, params: dict) -> _TrackStepContext:
+        """返回 TaskTracker 步骤生命周期 Context Manager"""
+        return _TrackStepContext(self, task_id, tool, params)
 
     def _generate_task_id(self) -> str:
         """生成 8 位 hex 的 task_id"""

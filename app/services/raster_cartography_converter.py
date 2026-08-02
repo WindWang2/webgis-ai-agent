@@ -206,20 +206,9 @@ def _known_palettes() -> Tuple[str, ...]:
 def convert_raster_to_mapspec_layer(
     payload: Dict[str, Any],
     layer: Optional[Dict[str, Any]] = None,
+    session_dir: Optional[Any] = None,
 ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], Optional[bytes], Optional[Dict[str, Any]]]:
-  """Convert a raster payload into a MapSpec raster layer + source-ready data.
-
-  Symmetric with the vector converter's `convert_analysis_to_mapspec_layer`:
-  takes the WHOLE payload dict (not pre-extracted array/bounds), extracts
-  internally, and returns everything the store needs in one call:
-    (raster_layer, legend_spec, png_bytes, source_data)
-  where `source_data` is a `{imageRef, bounds, imageSize}` dict the store hands
-  to `mapspec_source.store_data` to create the `type:"raster"` entry.
-
-  The caller (mapspec_store.layer_upsert) supplies the `imageRef` after
-  persisting the PNG — so this returns `imageRef=None` in source_data and the
-  caller fills it in. Best-effort: never raises (mirrors vector converter).
-  """
+  """Convert a raster payload into a MapSpec raster layer + source-ready data."""
   base_layer = dict(layer) if isinstance(layer, dict) else {}
   source_id = base_layer.get("source") or "raster_source"
   bounds = _extract_bounds(payload) or [0.0, 0.0, 1.0, 1.0]
@@ -234,14 +223,24 @@ def convert_raster_to_mapspec_layer(
       source_id=source_id, bounds=bounds, array=arr, palette=palette,
       provenance=provenance, layer_id=base_layer.get("id"),
   )
+  if legend is not None:
+    raster_layer.setdefault("legend_spec", legend)
 
-  # imageSize is derivable only when we have the array; imageRef is filled by
-  # the caller after persistence. source_data stays None on render failure.
   source_data: Optional[Dict[str, Any]] = None
   if png is not None and isinstance(arr, np.ndarray) and arr.ndim == 2:
     h, w = arr.shape
+    image_ref: Optional[str] = None
+    if session_dir is not None:
+      from pathlib import Path
+      from app.services.raster_store import save_png
+      s_dir = Path(session_dir) if not isinstance(session_dir, Path) else session_dir
+      try:
+        image_ref = save_png(s_dir, source_id, png)
+      except Exception as e:
+        logger.warning("Internal save_png failed in raster converter: %s", e)
+
     source_data = {
-        "imageRef": None,  # filled by caller (mapspec_store) after save_png
+        "imageRef": image_ref,
         "bounds": bounds,
         "imageSize": [int(w), int(h)],
     }

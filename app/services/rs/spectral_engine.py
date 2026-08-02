@@ -1,0 +1,199 @@
+"""SpectralRasterEngine - 核心遥感波段分析与地形表面引擎。
+
+深入封装 STAC COG 波段检索、带云掩膜的向量化波段代数、Horn 方法地形推导、
+以及与 MapSpec type:"raster" 图层的直接对接。
+"""
+import logging
+from typing import Any, Dict, List, Optional
+import numpy as np
+
+from app.services.rs.band_math import (
+    RasterAnalysisResult,
+    INDEX_FORMULAS,
+    compute_index_array,
+    compute_slope,
+    compute_aspect,
+    compute_hillshade,
+    compute_raster_stats,
+)
+from app.services.rs.stac_client import stac_primitive
+
+logger = logging.getLogger(__name__)
+
+
+class SpectralRasterEngine:
+    """深层遥感与栅格分析引擎"""
+
+    def __init__(self):
+        self.stac = stac_primitive
+
+    async def compute_index(
+        self,
+        bbox: List[float],
+        date_from: str,
+        date_to: str,
+        index_type: str = "ndvi",
+    ) -> RasterAnalysisResult:
+        """计算遥感光谱指数 (NDVI, NDWI, EVI, NBR)"""
+        idx = index_type.lower()
+        if idx not in INDEX_FORMULAS:
+            return RasterAnalysisResult(
+                index_type=idx,
+                is_error=True,
+                error_msg=f"不支持的指数类型 '{index_type}'",
+                correction_hint=f"可用指数类型: {list(INDEX_FORMULAS.keys())}",
+            )
+
+        stac_keys = {
+            "blue": "blue",
+            "green": "green",
+            "red": "red",
+            "nir": "nir",
+            "swir11": "swir16",
+            "swir12": "swir22",
+        }
+        bands_needed_keys, _ = INDEX_FORMULAS[idx]
+        bands_needed = {b: stac_keys[b] for b in bands_needed_keys}
+
+        fetch_res = await self.stac.fetch_stac_items_and_bands(
+            collection="sentinel-2-l2a",
+            bbox=bbox,
+            date_from=date_from,
+            date_to=date_to,
+            bands_needed=bands_needed,
+            ds_factor=4,
+            empty_error_msg=f"指定区域和时间段 [{date_from} ~ {date_to}] 无 Sentinel-2 数据",
+        )
+
+        if "error" in fetch_res or not fetch_res.get("bands"):
+            return RasterAnalysisResult(
+                index_type=idx,
+                is_error=True,
+                error_msg=fetch_res.get("error", "获取 Sentinel-2 波段失败"),
+                correction_hint="请放宽日期窗口 (如 1~3 个月) 或扩大部分边界框以容忍有云覆盖。",
+            )
+
+        try:
+            arr = compute_index_array(idx, **fetch_res["bands"])
+            stats = compute_raster_stats(arr)
+
+            # Continuous color ramp specification for live UI map overlay
+            legend_spec = {
+                "type": "continuous",
+                "palette": "Viridis",
+                "min": stats.get("min"),
+                "max": stats.get("max"),
+                "unit": idx.upper(),
+            }
+
+            return RasterAnalysisResult(
+                index_type=idx,
+                array=arr,
+                bounds=list(bbox),
+                stats=stats,
+                is_error=False,
+            )
+        except Exception as e:
+            logger.error(f"Failed to compute raster index {index_type}: {e}")
+            return RasterAnalysisResult(
+                index_type=idx,
+                is_error=True,
+                error_msg=f"光谱指数计算失败: {e}",
+            )
+
+    async def compute_terrain(
+        self,
+        bbox: List[float],
+        products: Optional[List[str]] = None,
+        dem_type: str = "cop-dem-glo-30",
+    ) -> RasterAnalysisResult:
+        """从数字高程模型 (DEM) 计算坡度、坡向、山体阴影"""
+        if products is None:
+            products = ["slope", "aspect", "hillshade"]
+
+        fetch_res = await self.stac.fetch_stac_items_and_bands(
+            collection=dem_type,
+            bbox=bbox,
+            bands_needed={"dem": "data"},
+            ds_factor=2,
+            empty_error_msg=f"指定区域 bbox={bbox} 无 {dem_type} 高程数据",
+        )
+
+        if "error" in fetch_res or not fetch_res.get("bands"):
+            return RasterAnalysisResult(
+                index_type="dem",
+                is_error=True,
+                error_msg=fetch_res.get("error", "获取 DEM 数据失败"),
+                correction_hint="请检查 bbox 边界框坐标是否合法（WGS84 经纬度）。",
+            )
+
+        try:
+            dem = fetch_res["bands"]["dem"]
+            nodata = dem <= -9999
+            dem[nodata] = np.nan
+            cell_size = fetch_res.get("cell_size_m", 30.0)
+
+            stats = compute_raster_stats(dem)
+            if "aspect" in products:
+                target_arr = compute_aspect(dem, cell_size)
+            elif "hillshade" in products:
+                target_arr = compute_hillshade(dem, cell_size)
+            elif "slope" in products:
+                target_arr = compute_slope(dem, cell_size)
+            else:
+                target_arr = dem
+
+            return RasterAnalysisResult(
+                index_type="dem",
+                array=target_arr,
+                bounds=list(bbox),
+                stats=stats,
+                is_error=False,
+            )
+        except Exception as e:
+            logger.error(f"Failed to compute terrain derivatives: {e}")
+            return RasterAnalysisResult(
+                index_type="dem",
+                is_error=True,
+                error_msg=f"地形推导计算失败: {e}",
+            )
+
+    async def emit_raster_layer(self, session_id: str, result: RasterAnalysisResult) -> Dict[str, Any]:
+        """将 RasterAnalysisResult 转化为 MapSpec type:'raster' 图层并写入 Persistence"""
+        if result.is_error or result.array is None or result.bounds is None:
+            return {"error": result.error_msg or "无效的栅格数据，无法挂载图层"}
+
+        try:
+            from app.services.raster_cartography_converter import render_array_to_png
+            from app.services.mapspec_store import mapspec_store
+
+            # Render array into colormap-baked PNG bytes
+            png_bytes = render_array_to_png(result.array)
+            raster_id = f"{result.index_type}_{session_id[:8]}"
+
+            source_data = {
+                "type": "raster",
+                "raster_source": {
+                    "png_bytes": png_bytes,
+                    "bounds": result.bounds,
+                    "image_size": [result.array.shape[1], result.array.shape[0]],
+                }
+            }
+
+            # Store PNG and register raster MapSpec source
+            source_ref = mapspec_store.upsert_source(session_id, raster_id, source_data)
+
+            return {
+                "status": "ok",
+                "session_id": session_id,
+                "raster_id": raster_id,
+                "source_ref": source_ref,
+                "bounds": result.bounds,
+                "stats": result.stats,
+            }
+        except Exception as e:
+            logger.error(f"Failed to emit raster layer for session {session_id}: {e}")
+            return {"error": f"挂载栅格图层失败: {e}"}
+
+
+spectral_engine = SpectralRasterEngine()
