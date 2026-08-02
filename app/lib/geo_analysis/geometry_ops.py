@@ -158,7 +158,7 @@ def convex_hull(
     if group_by and group_by in gdf.columns:
         for name, group in gdf.groupby(group_by):
             try:
-                hull = group.geometry.unary_union.convex_hull
+                hull = group.geometry.union_all().convex_hull
                 if hull.is_empty:
                     continue
                 hull_wgs84 = gpd.GeoSeries([hull], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
@@ -174,7 +174,7 @@ def convex_hull(
             except (ValueError, TypeError):
                 continue
     else:
-        hull = gdf.geometry.unary_union.convex_hull
+        hull = gdf.geometry.union_all().convex_hull
         hull_wgs84 = gpd.GeoSeries([hull], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
         out_features.append({
             "type": "Feature",
@@ -229,12 +229,12 @@ def multi_ring_buffer(
         )
 
     distances = sorted([float(d) for d in distances])
-    union_geom = gdf.geometry.unary_union
+    union_geom = gdf.geometry.union_all()
     out_features = []
 
     prev_buffer = None
     for dist in distances:
-        buf = union_geom.buffer(dist, resolution=32)
+        buf = union_geom.buffer(dist, quad_segs=32)
 
         if merge_rings and prev_buffer is not None:
             ring = buf.difference(prev_buffer)

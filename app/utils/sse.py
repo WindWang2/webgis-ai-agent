@@ -28,7 +28,7 @@ def _serialize_sse_data(data: Any) -> str:
             return json.dumps(data.model_dump(), ensure_ascii=False)
         # Pydantic v1
         if hasattr(data, "dict"):
-            return json.dumps(data.dict(), ensure_ascii=False)
+            return json.dumps(data.model_dump(), ensure_ascii=False)
         # Standard types
         return json.dumps(data, ensure_ascii=False)
     except Exception as e:

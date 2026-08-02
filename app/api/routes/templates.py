@@ -44,12 +44,12 @@ def _validate_payload(kind: str, payload: Dict[str, Any]):
             TypeAdapter(ThematicPresetPayload).validate_python(payload)
         else:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Unsupported template kind: {kind}"
             )
     except ValueError as e:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Invalid payload for kind '{kind}': {str(e)}"
         )
 

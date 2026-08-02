@@ -180,7 +180,7 @@ def to_utm_gdf(geojson: dict | str, source_crs: Optional[str] = None) -> tuple[g
         return gdf, str(gdf.crs)
         
     # Calculate UTM zone from centroid
-    centroid = gdf.geometry.unary_union.centroid
+    centroid = gdf.geometry.union_all().centroid
     zone_number = int((centroid.x + 180) / 6) + 1
     hemisphere = 32600 if centroid.y >= 0 else 32700
     utm_crs = f"EPSG:{hemisphere + zone_number}"
