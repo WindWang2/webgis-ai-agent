@@ -15,10 +15,11 @@ logger = logging.getLogger(__name__)
 
 # ─── 结果脱敏与元数据提取常量 ─────────────────────────
 
-MSG_MAX_CHARS = 3000
-VALUE_MAX_CHARS = 120
-SAMPLE_FEATURES = 3
-PROPERTY_KEYS_MAX = 20
+MSG_MAX_CHARS = 2500
+VALUE_MAX_CHARS = 80
+SAMPLE_FEATURES = 5
+PROPERTY_KEYS_MAX = 15
+
 
 _PRESERVED_META_KEYS = (
     "bbox",

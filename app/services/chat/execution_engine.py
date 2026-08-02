@@ -423,11 +423,23 @@ class ChatExecutionEngine:
                     await self._save_msg_async(session_id, "assistant", content_text, tc_list, reasoning_content=reasoning)
 
                     tool_result_msgs: list[str] = []
-                    for tc in tc_list:
-                        exec_res = await self.tool_pipeline.execute_tool_call(
-                            tc, session_id, task.id, executed_tools
-                        )
-                        llm_payload = exec_res.llm_payload
+                    if len(tc_list) > 1:
+                        tasks = [
+                            self.tool_pipeline.execute_tool_call(tc, session_id, task.id, executed_tools)
+                            for tc in tc_list
+                        ]
+                        exec_results = await asyncio.gather(*tasks, return_exceptions=True)
+                    else:
+                        exec_results = [
+                            await self.tool_pipeline.execute_tool_call(tc_list[0], session_id, task.id, executed_tools)
+                        ]
+
+                    for tc, exec_res in zip(tc_list, exec_results):
+                        if isinstance(exec_res, Exception):
+                            logger.error("Tool execution parallel exception for %s: %s", tc, exec_res)
+                            llm_payload = f"Tool execution failed: {exec_res}"
+                        else:
+                            llm_payload = exec_res.llm_payload
 
                         if standard_calls:
                             messages.append({
@@ -437,7 +449,9 @@ class ChatExecutionEngine:
                             })
                             await self._save_msg_async(session_id, "tool", "", None, llm_payload, tc.get("id", ""))
                         else:
-                            tool_result_msgs.append(f"{exec_res.tool_name}: {llm_payload}")
+                            tool_name = tc.get("function", {}).get("name", "tool") if isinstance(exec_res, Exception) else exec_res.tool_name
+                            tool_result_msgs.append(f"{tool_name}: {llm_payload}")
+
 
                     if xml_calls and tool_result_msgs:
                         messages.append({
