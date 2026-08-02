@@ -315,3 +315,157 @@ def kde_contours(
         fc["legend_spec"] = legend_spec
 
     return GeoAnalysisResult(True, fc, f"KDE contours: {len(out_features)} features, {len(cs.levels)} levels")
+
+
+# ─── Heatmap raster/grid generation ─────────────────────────────
+# Relocated verbatim from app/tools/spatial.py (_generate_heatmap) per
+# ADR-0037 Win 3. This is deep matplotlib/scipy density-rendering logic that
+# lived at the tool-adapter layer; density.py is the canonical home (same
+# precedent as the kde_surface/kde_contours extraction noted in the module
+# header — architecture-review F2). Renamed generate_heatmap_raster to drop
+# the private '_' prefix (it's now a package public export) and to clarify it
+# produces raster+grid output distinct from kde_surface.
+
+
+# Matplotlib RGBA stop tuples keyed by frontend palette name. Used only by
+# generate_heatmap_raster's raster mode (grid mode returns features, not PNGs).
+_HEATMAP_PALETTES = {
+    "classic": [
+        (0.00, (0.0, 0.0, 0.0, 0.0)),
+        (0.15, (0.0, 1.0, 1.0, 0.4)),
+        (0.40, (0.0, 1.0, 0.0, 0.6)),
+        (0.70, (1.0, 1.0, 0.0, 0.8)),
+        (0.90, (1.0, 0.5, 0.0, 0.9)),
+        (1.00, (1.0, 0.0, 0.0, 1.0)),
+    ],
+    "magma": [
+        (0.00, (0.0, 0.0, 0.0, 0.0)),
+        (0.20, (0.2, 0.04, 0.48, 0.5)),
+        (0.50, (0.7, 0.13, 0.45, 0.7)),
+        (0.80, (0.99, 0.55, 0.35, 0.85)),
+        (1.00, (0.98, 0.94, 0.60, 1.0)),
+    ],
+    "viridis": [
+        (0.00, (0.0, 0.0, 0.0, 0.0)),
+        (0.25, (0.27, 0.0, 0.33, 0.5)),
+        (0.50, (0.13, 0.57, 0.55, 0.7)),
+        (0.75, (0.37, 0.79, 0.36, 0.85)),
+        (1.00, (0.99, 0.9, 0.14, 1.0)),
+    ],
+    "thermal": [
+        (0.00, (0.0, 0.0, 0.0, 0.0)),
+        (0.33, (0.0, 0.0, 1.0, 0.5)),
+        (0.66, (1.0, 1.0, 0.0, 0.8)),
+        (1.00, (1.0, 0.0, 0.0, 1.0)),
+    ],
+}
+
+
+def generate_heatmap_raster(features: list, cell_size: int = 500, radius: int = 1000,
+                            render_type: str = "raster", palette: str = "classic") -> dict:
+    """Generate heatmap data without Celery. Supports raster and grid render types.
+
+    Relocated verbatim from ``app/tools/spatial.py:_generate_heatmap`` (ADR-0037
+    Win 3). All heavy imports (matplotlib, scipy) are kept lazy inside the body
+    to avoid making them hard package-level dependencies and to avoid import
+    cycles with ``app.services.spatial_tasks`` (whose helpers this calls).
+    """
+    import base64
+    import io
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap
+    from scipy.ndimage import gaussian_filter
+
+    # Lazy import: the spatial_tasks helpers are shared with the Celery task
+    # path (run_heatmap_generation); keep them lazy to avoid a cycle.
+    from app.services.spatial_tasks import (
+        _extract_heatmap_points,
+        _build_heatmap_grid,
+        _build_grid_features,
+    )
+
+    fig = None
+    try:
+        xs, ys = _extract_heatmap_points(features)
+        if not xs:
+            return {"error": "No valid point features found"}
+
+        H, xedges, yedges, _ = _build_heatmap_grid(xs, ys, cell_size)
+
+        if render_type == "grid":
+            max_val = float(H.max()) if H.max() > 0 else 1.0
+            grid_features = _build_grid_features(H, xedges, yedges, max_val)
+            return {
+                "success": True,
+                "data": {
+                    "type": "FeatureCollection",
+                    "features": grid_features,
+                    "metadata": {
+                        "render_type": "grid",
+                        "field": "weight",
+                        "cell_size": cell_size,
+                        "point_count": len(xs),
+                        "palette": palette
+                    }
+                },
+                "status_desc": f"Vector grid heatmap generated with {len(grid_features)} cells."
+            }
+
+        else:
+            # Raster mode
+            sigma = max(1.0, radius / cell_size)
+            H_smooth = gaussian_filter(H.T, sigma=sigma)
+
+            v_max_actual = H_smooth.max()
+            if v_max_actual > 0:
+                H_smooth[H_smooth < v_max_actual * 0.01] = 0
+
+            colors = _HEATMAP_PALETTES.get(palette, _HEATMAP_PALETTES["classic"])
+            cmap = LinearSegmentedColormap.from_list("dynamic_heat", colors, N=256)
+
+            fig, ax = plt.subplots(figsize=(10, 10), dpi=100)
+            v_max = np.percentile(H_smooth, 98) if H_smooth.max() > 0 else 1.0
+            if v_max <= 0:
+                v_max = H_smooth.max() or 1.0
+
+            ax.imshow(
+                H_smooth,
+                cmap=cmap,
+                origin="lower",
+                aspect="auto",
+                vmin=0,
+                vmax=v_max,
+                interpolation="bilinear",
+            )
+            ax.axis("off")
+            plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0, transparent=True)
+            buf.seek(0)
+            img_b64 = "data:image/png;base64," + base64.b64encode(buf.read()).decode()
+
+            return {
+                "success": True,
+                "data": {
+                    "type": "heatmap_raster",
+                    "image": img_b64,
+                    "bbox": [float(xedges[0]), float(yedges[0]), float(xedges[-1]), float(yedges[-1])],
+                    "total_points": len(xs),
+                    "metadata": {
+                        "render_type": "raster",
+                        "point_count": len(xs),
+                        "palette": palette
+                    }
+                },
+                "status_desc": f"Raster heatmap generated (palette: {palette}) covering {len(xs)} points."
+            }
+    except (ValueError, TypeError, OSError, RuntimeError) as e:
+        logger.error(f"Heatmap generation failed: {e}", exc_info=True)
+        return {"error": str(e)}
+    finally:
+        if fig:
+            plt.close(fig)

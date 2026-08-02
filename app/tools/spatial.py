@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from app.tools.registry import ToolRegistry, tool
 from app.tools._utils import cached_tool, trim_features
 from app.services.spatial_analyzer import SpatialAnalyzer
-from app.services.spatial_tasks import _extract_heatmap_points, _build_heatmap_grid, _build_grid_features
+from app.lib.geo_analysis.density import generate_heatmap_raster
 from app.lib.geo_processor.core import safe_parse as safe_parse_geojson
 
 logger = logging.getLogger(__name__)
@@ -22,16 +22,15 @@ _PALETTE_MAP = {
 
 def _build_legend_spec(palette: str, min_val: float = 0.0, max_val: float = 1.0) -> dict:
     """Build a continuous legend spec for heatmap rendering."""
-    from app.services.cartography_service import COLOR_PALETTES
+    from app.lib.cartography.palettes import resolve_palette_colors
     palette_key = _PALETTE_MAP.get(palette, "YlOrRd")
-    palette_colors = COLOR_PALETTES.get(palette_key) \
-        or COLOR_PALETTES.get("YlOrRd", ["#ffffb2", "#feb24c", "#bd0026"])
+    palette_colors = resolve_palette_colors(palette_key)
     return {
         "type": "continuous",
         "min": min_val,
         "max": max_val,
         "palette": palette_key,
-        "palette_colors": list(palette_colors),
+        "palette_colors": palette_colors,
     }
 
 
@@ -46,133 +45,6 @@ class HeatmapDataArgs(BaseModel):
     radius: int = Field(1000, ge=10, le=10000, description="搜索半径（米），范围 10-10000")
     render_type: str = Field("raster", description="渲染模式: raster(栅格), grid(格网), native(原生)")
     palette: str = Field("classic", description="配色方案: classic, magma, viridis, thermal")
-
-def _generate_heatmap(features: list, cell_size: int = 500, radius: int = 1000,
-                       render_type: str = "raster", palette: str = "classic") -> dict:
-    """Generate heatmap data without Celery. Supports raster and grid render types."""
-    import base64
-    import io
-
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from matplotlib.colors import LinearSegmentedColormap
-    from scipy.ndimage import gaussian_filter
-    import numpy as np
-
-    fig = None
-    try:
-        xs, ys = _extract_heatmap_points(features)
-        if not xs:
-            return {"error": "No valid point features found"}
-
-        H, xedges, yedges, _ = _build_heatmap_grid(xs, ys, cell_size)
-
-        if render_type == "grid":
-            max_val = float(H.max()) if H.max() > 0 else 1.0
-            grid_features = _build_grid_features(H, xedges, yedges, max_val)
-            return {
-                "success": True,
-                "data": {
-                    "type": "FeatureCollection",
-                    "features": grid_features,
-                    "metadata": {
-                        "render_type": "grid",
-                        "field": "weight",
-                        "cell_size": cell_size,
-                        "point_count": len(xs),
-                        "palette": palette
-                    }
-                },
-                "status_desc": f"Vector grid heatmap generated with {len(grid_features)} cells."
-            }
-
-        else:
-            # Raster mode
-            sigma = max(1.0, radius / cell_size)
-            H_smooth = gaussian_filter(H.T, sigma=sigma)
-            
-            v_max_actual = H_smooth.max()
-            if v_max_actual > 0:
-                H_smooth[H_smooth < v_max_actual * 0.01] = 0
-
-            PALETTES = {
-                "classic": [
-                    (0.00, (0.0, 0.0, 0.0, 0.0)),
-                    (0.15, (0.0, 1.0, 1.0, 0.4)),
-                    (0.40, (0.0, 1.0, 0.0, 0.6)),
-                    (0.70, (1.0, 1.0, 0.0, 0.8)),
-                    (0.90, (1.0, 0.5, 0.0, 0.9)),
-                    (1.00, (1.0, 0.0, 0.0, 1.0)),
-                ],
-                "magma": [
-                    (0.00, (0.0, 0.0, 0.0, 0.0)),
-                    (0.20, (0.2, 0.04, 0.48, 0.5)),
-                    (0.50, (0.7, 0.13, 0.45, 0.7)),
-                    (0.80, (0.99, 0.55, 0.35, 0.85)),
-                    (1.00, (0.98, 0.94, 0.60, 1.0)),
-                ],
-                "viridis": [
-                    (0.00, (0.0, 0.0, 0.0, 0.0)),
-                    (0.25, (0.27, 0.0, 0.33, 0.5)),
-                    (0.50, (0.13, 0.57, 0.55, 0.7)),
-                    (0.75, (0.37, 0.79, 0.36, 0.85)),
-                    (1.00, (0.99, 0.9, 0.14, 1.0)),
-                ],
-                "thermal": [
-                    (0.00, (0.0, 0.0, 0.0, 0.0)),
-                    (0.33, (0.0, 0.0, 1.0, 0.5)),
-                    (0.66, (1.0, 1.0, 0.0, 0.8)),
-                    (1.00, (1.0, 0.0, 0.0, 1.0)),
-                ]
-            }
-
-            colors = PALETTES.get(palette, PALETTES["classic"])
-            cmap = LinearSegmentedColormap.from_list("dynamic_heat", colors, N=256)
-
-            fig, ax = plt.subplots(figsize=(10, 10), dpi=100)
-            v_max = np.percentile(H_smooth, 98) if H_smooth.max() > 0 else 1.0
-            if v_max <= 0:
-                v_max = H_smooth.max() or 1.0
-
-            ax.imshow(
-                H_smooth,
-                cmap=cmap,
-                origin="lower",
-                aspect="auto",
-                vmin=0,
-                vmax=v_max,
-                interpolation="bilinear",
-            )
-            ax.axis("off")
-            plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
-
-            buf = io.BytesIO()
-            fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0, transparent=True)
-            buf.seek(0)
-            img_b64 = "data:image/png;base64," + base64.b64encode(buf.read()).decode()
-
-            return {
-                "success": True,
-                "data": {
-                    "type": "heatmap_raster",
-                    "image": img_b64,
-                    "bbox": [float(xedges[0]), float(yedges[0]), float(xedges[-1]), float(yedges[-1])],
-                    "total_points": len(xs),
-                    "metadata": {
-                        "render_type": "raster",
-                        "point_count": len(xs),
-                        "palette": palette
-                    }
-                },
-                "status_desc": f"Raster heatmap generated (palette: {palette}) covering {len(xs)} points."
-            }
-    except (ValueError, TypeError, OSError, RuntimeError) as e:
-        logger.error(f"Heatmap generation failed: {e}", exc_info=True)
-        return {"error": str(e)}
-    finally:
-        if fig:
-            plt.close(fig)
 
 def register_spatial_tools(registry: ToolRegistry):
     """注册空间分析工具"""
@@ -280,7 +152,7 @@ def register_spatial_tools(registry: ToolRegistry):
             # Any Celery failure (ImportError, broker down, TimeoutError, WorkerLostError)
             # degrades gracefully to an in-process fallback.
             logger.warning(f"[heatmap_data] Celery fallback triggered: {type(exc).__name__}: {exc}")
-            result = _generate_heatmap(features, cell_size, radius, render_type, palette)
+            result = generate_heatmap_raster(features, cell_size, radius, render_type, palette)
         
         if result.get("success"):
             res_data = result.get("data")

@@ -273,10 +273,11 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
                     if isinstance(f.get("properties", {}).get(stat_field_name), (int, float))
                 ]
                 if len(values) >= 2:
-                    from app.services.cartography_service import CartographyService, COLOR_PALETTES
+                    from app.services.cartography_service import CartographyService
+                    from app.lib.cartography.palettes import resolve_palette_colors
                     breaks = CartographyService.classify(values, "quantiles", 5)
                     palette = "YlOrRd"
-                    palette_colors = list(COLOR_PALETTES.get(palette, []))[:5]
+                    palette_colors = resolve_palette_colors(palette)[:5]
                     if isinstance(payload, dict):
                         payload["legend_spec"] = {
                             "type": "graduated",
