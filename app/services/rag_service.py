@@ -53,170 +53,43 @@ async def add_document(
     content: str,
     file_type: str = "text",
     user_id: Optional[str] = None,
-    org_id: Optional[int] = None,
+    org_id: Optional[Any] = None,
 ) -> dict[str, Any]:
     """
-    添加文档到知识库，执行全文嵌入。
+    添加文档到知识库，执行全文嵌入（委托给 KnowledgeEngine）。
     """
-    from datetime import datetime, timezone
-    from app.models.knowledge_base import Chunk, Document
-    from app.tools._utils import async_db_session
-
-    doc_id = str(uuid.uuid4())
-
-    if file_type == "markdown":
-        sections_chunks = split_markdown_sections(content)
-        chunks_list = []
-        pos = 0
-        for i, sec in enumerate(sections_chunks):
-            chunks_list.append({
-                "content": sec.strip(),
-                "start_char": pos,
-                "end_char": pos + len(sec),
-                "chunk_index": i,
-            })
-            pos += len(sec)
-        chunk_list = chunks_list
-    else:
-        chunk_list = split_into_chunks(content)
-
-    if not chunk_list:
-        return {"error": "Empty content"}
-
-    try:
-        async with async_db_session() as db:
-            doc = Document(
-                id=doc_id,
-                title=title,
-                content=content[:1000] if content else "",
-                file_type=file_type,
-                chunk_count=len(chunk_list),
-                status="indexing",
-                creator_id=user_id,
-                org_id=org_id,
-            )
-            db.add(doc)
-
-            for ch in chunk_list:
-                chunk = Chunk(
-                    id=str(uuid.uuid4()),
-                    document_id=doc_id,
-                    content=ch["content"],
-                    chunk_index=ch["chunk_index"],
-                    start_char=ch.get("start_char"),
-                    end_char=ch.get("end_char"),
-                )
-                db.add(chunk)
-
-            texts = [ch["content"] for ch in chunk_list]
-            loop = asyncio.get_running_loop()
-            vectors = await loop.run_in_executor(
-                None, lambda: _default_store.embed_texts(texts)
-            )
-
-            chunks_meta = [
-                {
-                    "document_id": doc_id,
-                    "chunk_id": f"{doc_id}_chunk_{i}",
-                    "title": title,
-                    "content": text,
-                }
-                for i, text in enumerate(texts)
-            ]
-
-            _default_store.add_vectors(vectors, chunks_meta)
-
-            doc.status = "completed"
-            doc.indexed_at = datetime.now(timezone.utc)
-
-        return {
-            "document_id": doc_id,
-            "title": title,
-            "chunk_count": len(chunk_list),
-            "status": "completed",
-        }
-
-    except Exception as e:
-        logger.error(f"[RAG] add_document failed: {e}", exc_info=True)
-        return {"error": str(e)}
-
-
+    from app.services.rag.engine import TenantContext, get_knowledge_engine
+    tenant = TenantContext(user_id=user_id, org_id=str(org_id) if org_id is not None else None)
+    engine = get_knowledge_engine()
+    return await engine.index_document(title=title, content=content, file_type=file_type, tenant=tenant)
 async def semantic_search(
     query: str,
     top_k: int = 5,
     document_id: Optional[str] = None,
     user_id: Optional[str] = None,
-    org_id: Optional[int] = None,
+    org_id: Optional[Any] = None,
 ) -> list[dict[str, Any]]:
     """
-    语义向量相似度搜索。
+    语义向量相似度搜索（委托给 KnowledgeEngine）。
     """
-    try:
-        query_vec = _default_store.embed_texts([query])
-
-        raw_results = _default_store.search(query_vec, top_k=top_k * 2)
-
-        results = []
-        for ch_meta in raw_results:
-            if ch_meta.get("deleted"):
-                continue
-            if document_id and ch_meta.get("document_id") != document_id:
-                continue
-
-            results.append({
-                "document_id": ch_meta.get("document_id"),
-                "chunk_id": ch_meta.get("chunk_id"),
-                "content": ch_meta.get("content", "")[:500],
-                "score": float(ch_meta.get("score", 0.0)),
-            })
-
-            if len(results) >= top_k:
-                break
-
-        return results
-
-    except Exception as e:
-        logger.error(f"[RAG] semantic_search failed: {e}", exc_info=True)
-        return []
+    from app.services.rag.engine import TenantContext, get_knowledge_engine
+    tenant = TenantContext(user_id=user_id, org_id=str(org_id) if org_id is not None else None)
+    engine = get_knowledge_engine()
+    return await engine.search(query=query, tenant=tenant, top_k=top_k, document_id=document_id)
 
 
 async def delete_document(
     document_id: str,
     user_id: Optional[str] = None,
-    org_id: Optional[int] = None,
+    org_id: Optional[Any] = None,
 ) -> bool:
     """
-    删除指定文档的所有chunk和相关向量。
+    删除指定文档的所有chunk和相关向量（委托给 KnowledgeEngine）。
     """
-    from sqlalchemy import delete, select
-    from app.models.knowledge_base import Chunk, Document
-    from app.tools._utils import async_db_session
-
-    try:
-        async with async_db_session() as db:
-            owner_check = select(Document).where(Document.id == document_id)
-            if org_id is not None:
-                owner_check = owner_check.where(Document.org_id == org_id)
-            elif user_id is not None:
-                owner_check = owner_check.where(Document.creator_id == user_id)
-            existing = (await db.execute(owner_check)).scalar_one_or_none()
-            if existing is None:
-                logger.warning(
-                    "[RAG] delete denied: doc %s not owned by user %s org %s",
-                    document_id,
-                    user_id,
-                    org_id,
-                )
-                return False
-            await db.execute(delete(Chunk).where(Chunk.document_id == document_id))
-            await db.execute(delete(Document).where(Document.id == document_id))
-
-            _default_store.mark_deleted(document_id)
-
-        return True
-    except Exception as e:
-        logger.error(f"[RAG] delete_document failed: {e}", exc_info=True)
-        return False
+    from app.services.rag.engine import TenantContext, get_knowledge_engine
+    tenant = TenantContext(user_id=user_id, org_id=str(org_id) if org_id is not None else None)
+    engine = get_knowledge_engine()
+    return await engine.delete_document(document_id, tenant=tenant)
 
 
 async def list_documents(

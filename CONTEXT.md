@@ -21,6 +21,11 @@ The deep state storage module managing runtime session data across 16 core opera
 Implemented by two adapters: `RedisSessionStore` (`app/services/session_data_redis.py`) and
 `MemorySessionStore` (`app/services/session_data.py`), with `get_session_store()` as active provider.
 
+### KnowledgeEngine
+The deep RAG knowledge retrieval and vector indexing engine (`app/services/rag/engine.py`).
+Encapsulates document chunking, embedding generation, multi-tenant security isolation (`TenantContext`),
+and automatic FAISS vector index compaction (`compact_index`).
+
 ### ChatContextAssembler
 The deep prompt context composition engine (`app/services/chat/context_assembler.py`).
 Encapsulates map state ambient summaries, history token budget truncation, XML security fencing,

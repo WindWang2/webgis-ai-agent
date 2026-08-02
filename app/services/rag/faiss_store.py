@@ -113,16 +113,37 @@ class FaissVectorStore:
         self.save_metadata(meta)
         self.save_index()
 
-    def search(self, query_vector: Any, top_k: int = 5) -> List[Dict[str, Any]]:
-        """Search top-k most similar vectors."""
+    def search(
+        self,
+        query_vector: Any,
+        top_k: int = 5,
+        user_id: Optional[str] = None,
+        org_id: Optional[str] = None,
+        is_admin: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Search top-k most similar vectors with optional tenant filtering."""
         idx = self._get_index()
-        scores, indices = idx.search(query_vector, top_k * 2)
+        fetch_count = min(top_k * 4, idx.ntotal) if idx.ntotal > 0 else top_k
+        scores, indices = idx.search(query_vector, fetch_count)
         meta = self.load_metadata()
         results = []
         for score, i in zip(scores[0], indices[0]):
             if i < 0 or i >= len(meta.get("chunks", [])):
                 continue
             chunk_meta = dict(meta["chunks"][int(i)])
+
+            if chunk_meta.get("deleted", False):
+                continue
+
+            # Tenant filtering check
+            if not is_admin and (user_id or org_id):
+                c_user = chunk_meta.get("user_id")
+                c_org = chunk_meta.get("org_id")
+                if c_user and user_id and c_user != user_id:
+                    continue
+                if c_org and org_id and c_org != org_id:
+                    continue
+
             chunk_meta["score"] = float(score)
             results.append(chunk_meta)
             if len(results) >= top_k:
@@ -137,14 +158,51 @@ class FaissVectorStore:
                 ch["deleted"] = True
         self.save_metadata(meta)
 
+    def compact(self) -> Dict[str, Any]:
+        """Compact index by purging deleted chunks and rebuilding FAISS index."""
+        import faiss
+        meta = self.load_metadata()
+        chunks = meta.get("chunks", [])
+        active_chunks = [ch for ch in chunks if not ch.get("deleted", False)]
+        purged_count = len(chunks) - len(active_chunks)
+
+        if purged_count == 0:
+            return {"purged": 0, "total": len(active_chunks)}
+
+        # Update metadata indices
+        for new_idx, ch in enumerate(active_chunks):
+            ch["index"] = new_idx
+
+        meta["chunks"] = active_chunks
+        self.save_metadata(meta)
+
+        # Rebuild FAISS index from active chunks if texts exist
+        if active_chunks:
+            texts = [ch.get("content", ch.get("text", "")) for ch in active_chunks if ch.get("content") or ch.get("text")]
+            if texts:
+                vectors = self.embed_texts(texts)
+                self._index = faiss.IndexFlatIP(vectors.shape[1])
+                self._index.add(vectors)
+                self.save_index()
+        else:
+            self._index = None
+            index_path = os.path.join(self.index_dir, "index.faiss")
+            if os.path.exists(index_path):
+                os.remove(index_path)
+
+        logger.info(f"[FaissVectorStore] Compacted index: purged {purged_count} deleted vectors")
+        return {"purged": purged_count, "total": len(active_chunks)}
+
     def get_stats(self) -> Dict[str, Any]:
-        """Return index stats."""
+        """Return index statistics (total_vectors, index_dim, deleted_count)."""
         idx = self._get_index()
         meta = self.load_metadata()
         chunks = meta.get("chunks", [])
-        active_chunks = [c for c in chunks if not c.get("deleted")]
+        deleted_count = sum(1 for ch in chunks if ch.get("deleted", False))
+
         return {
+            "total_vectors": idx.ntotal,
+            "dimension": idx.d,
             "total_chunks": len(chunks),
-            "active_chunks": len(active_chunks),
-            "vector_count": idx.ntotal if idx else 0,
+            "deleted_count": deleted_count,
         }
