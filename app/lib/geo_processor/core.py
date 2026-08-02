@@ -90,6 +90,51 @@ def safe_parse(geojson: Any) -> dict | None:
                 return None
     return None
 
+
+def to_feature_collection(data: Any) -> dict:
+    """Normalize input data into a valid FeatureCollection dict.
+
+    Accepts a GeoJSON dict, a features list, a string (parsed via
+    :func:`safe_parse`, which also repairs truncated JSON), a single Feature,
+    or a bare geometry — and always returns a ``{"type": "FeatureCollection",
+    "features": [...]}`` dict (never None). Never raises.
+
+    Relocated from ``app/services/spatial_analyzer.py:_to_feature_collection``
+    (ADR-0037 Win 5) so the GeoJSON parse/normalize domain knowledge lives in
+    one module alongside :func:`safe_parse`. The string branch now delegates
+    to ``safe_parse``, gaining its truncated-JSON repair behavior for free
+    (previously this function silently returned an empty FC on a truncated
+    string, a latent inconsistency with safe_parse).
+    """
+    if not data:
+        return {"type": "FeatureCollection", "features": []}
+
+    if isinstance(data, str):
+        # Delegate to safe_parse: gets truncated-JSON repair for free.
+        data = safe_parse(data)
+        if not isinstance(data, dict):
+            return {"type": "FeatureCollection", "features": []}
+
+    if isinstance(data, dict):
+        d_type = data.get("type")
+        if d_type == "FeatureCollection":
+            return data
+        if d_type == "Feature":
+            return {"type": "FeatureCollection", "features": [data]}
+        if "features" in data and isinstance(data["features"], list):
+            return {"type": "FeatureCollection", "features": data["features"]}
+        if "coordinates" in data and "type" in data:
+            return {
+                "type": "FeatureCollection",
+                "features": [{"type": "Feature", "geometry": data, "properties": {}}]
+            }
+        return {"type": "FeatureCollection", "features": []}
+
+    if isinstance(data, list):
+        return {"type": "FeatureCollection", "features": data}
+
+    return {"type": "FeatureCollection", "features": []}
+
 def to_utm_gdf(geojson: dict | str, source_crs: Optional[str] = None) -> tuple[gpd.GeoDataFrame, str] | None:
     """Convert GeoJSON to UTM GeoDataFrame with automatic zone detection.
     

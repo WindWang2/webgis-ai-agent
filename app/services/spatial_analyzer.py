@@ -7,7 +7,7 @@ import logging
 import re
 from typing import Dict, List, Any, Optional, Callable
 
-from app.lib.geo_processor.core import GeoAnalysisResult, to_utm_gdf
+from app.lib.geo_processor.core import GeoAnalysisResult, to_utm_gdf, to_feature_collection
 from app.lib.geo_processor.geometry import buffer_smart, clip_smart
 from app.lib.geo_processor.overlay import overlay_smart
 from app.lib.geo_analysis.statistics import (
@@ -39,36 +39,9 @@ logger = logging.getLogger(__name__)
 AnalysisResult = GeoAnalysisResult
 
 
-def _to_feature_collection(data: Any) -> Dict[str, Any]:
-    """Normalize input data (GeoJSON dict, features list, string, or single feature) into a valid FeatureCollection dict."""
-    if not data:
-        return {"type": "FeatureCollection", "features": []}
-
-    if isinstance(data, str):
-        try:
-            data = json.loads(data)
-        except Exception:
-            return {"type": "FeatureCollection", "features": []}
-
-    if isinstance(data, dict):
-        d_type = data.get("type")
-        if d_type == "FeatureCollection":
-            return data
-        if d_type == "Feature":
-            return {"type": "FeatureCollection", "features": [data]}
-        if "features" in data and isinstance(data["features"], list):
-            return {"type": "FeatureCollection", "features": data["features"]}
-        if "coordinates" in data and "type" in data:
-            return {
-                "type": "FeatureCollection",
-                "features": [{"type": "Feature", "geometry": data, "properties": {}}]
-            }
-        return {"type": "FeatureCollection", "features": []}
-
-    if isinstance(data, list):
-        return {"type": "FeatureCollection", "features": data}
-
-    return {"type": "FeatureCollection", "features": []}
+# ADR-0037 Win 5: backward-compat alias for the old private name, which the test
+# suite imports. to_feature_collection now lives in geo_processor/core.py.
+_to_feature_collection = to_feature_collection
 
 
 class SpatialAnalyzer:
@@ -89,7 +62,7 @@ class SpatialAnalyzer:
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
         if callback: callback(10, "Recognizing vector data...")
-        fc = _to_feature_collection(features)
+        fc = to_feature_collection(features)
         res = to_utm_gdf(fc)
         if not res:
              return GeoAnalysisResult(False, None, "Invalid vector data")
@@ -109,7 +82,7 @@ class SpatialAnalyzer:
         source_crs: Optional[str] = None
     ) -> GeoAnalysisResult:
         if callback: callback(20, "Executing buffer analysis...")
-        fc = _to_feature_collection(features)
+        fc = to_feature_collection(features)
         return buffer_smart(
             geojson=fc,
             distance=distance,
@@ -126,7 +99,7 @@ class SpatialAnalyzer:
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
         if callback: callback(20, "Executing clip analysis...")
-        fc = _to_feature_collection(features)
+        fc = to_feature_collection(features)
         return clip_smart(fc, boundary)
 
     @classmethod
@@ -138,8 +111,8 @@ class SpatialAnalyzer:
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
         if callback: callback(20, f"Executing {how} overlay...")
-        layer_a = _to_feature_collection(features_a)
-        layer_b = _to_feature_collection(features_b)
+        layer_a = to_feature_collection(features_a)
+        layer_b = to_feature_collection(features_b)
         return overlay_smart(layer_a, layer_b, how)
 
     # Whitelist: identifiers, numbers, strings, comparison/logical operators, parens, brackets
@@ -175,7 +148,7 @@ class SpatialAnalyzer:
         validation_error = cls._validate_query(query)
         if validation_error:
             return GeoAnalysisResult(False, None, validation_error)
-        fc = _to_feature_collection(features)
+        fc = to_feature_collection(features)
         feat_list = fc.get("features", [])
         try:
             import geopandas as gpd
@@ -194,7 +167,7 @@ class SpatialAnalyzer:
         spatial_stats: bool = False,
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
-        fc = _to_feature_collection(features)
+        fc = to_feature_collection(features)
         if spatial_stats:
              if field:
                  return moran_i_narrated(fc, field)
@@ -223,7 +196,7 @@ class SpatialAnalyzer:
         value_field: str = "",
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
-        fc = _to_feature_collection(features)
+        fc = to_feature_collection(features)
         return cluster_narrated(
             fc,
             method=method,
@@ -240,7 +213,7 @@ class SpatialAnalyzer:
         method: str = "mean_center",
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
-        fc = _to_feature_collection(features)
+        fc = to_feature_collection(features)
         return calculate_central_feature(fc, method)
 
     @classmethod
@@ -252,8 +225,8 @@ class SpatialAnalyzer:
         value_field: Optional[str] = None,
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
-        fc_points = _to_feature_collection(points)
-        fc_polygons = _to_feature_collection(polygons)
+        fc_points = to_feature_collection(points)
+        fc_polygons = to_feature_collection(polygons)
         return spatial_aggregate(
             fc_points,
             fc_polygons,
@@ -268,7 +241,7 @@ class SpatialAnalyzer:
         target_features: Any = None,
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
-        fc_source = _to_feature_collection(source_features)
+        fc_source = to_feature_collection(source_features)
         if not target_features:
             return calculate_nearest(fc_source)
         return GeoAnalysisResult(False, None, "Cross-layer nearest neighbor not yet implemented")
@@ -284,7 +257,7 @@ class SpatialAnalyzer:
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
         if callback: callback(20, "Executing KDE surface analysis...")
-        fc = _to_feature_collection(features)
+        fc = to_feature_collection(features)
         return _kde_surface(fc, bandwidth=bandwidth, cell_size=cell_size,
                              value_field=value_field, bounds=bounds)
 
@@ -297,7 +270,7 @@ class SpatialAnalyzer:
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
         if callback: callback(20, "Executing KDE contour analysis...")
-        fc = _to_feature_collection(features)
+        fc = to_feature_collection(features)
         return _kde_contours(fc, levels=levels, bandwidth=bandwidth)
 
     @classmethod
@@ -308,7 +281,7 @@ class SpatialAnalyzer:
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
         if callback: callback(20, "Executing Voronoi tessellation...")
-        fc = _to_feature_collection(features)
+        fc = to_feature_collection(features)
         return _voronoi_polygons(fc, clip_bounds=clip_bounds)
 
     @classmethod
@@ -319,7 +292,7 @@ class SpatialAnalyzer:
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
         if callback: callback(20, "Executing convex hull...")
-        fc = _to_feature_collection(features)
+        fc = to_feature_collection(features)
         return _convex_hull(fc, group_by=group_by)
 
     @classmethod
@@ -331,7 +304,7 @@ class SpatialAnalyzer:
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
         if callback: callback(20, "Executing multi-ring buffer...")
-        fc = _to_feature_collection(features)
+        fc = to_feature_collection(features)
         return _multi_ring_buffer(fc, distances=distances, merge_rings=merge_rings)
 
     @classmethod
@@ -344,7 +317,7 @@ class SpatialAnalyzer:
     ) -> GeoAnalysisResult:
         """Getis-Ord Gi* hotspot analysis (route through SpatialAnalyzer)."""
         if callback: callback(20, "Executing hotspot analysis...")
-        fc = _to_feature_collection(features)
+        fc = to_feature_collection(features)
         return hotspot_narrated(fc, value_field, distance_band)
 
     @classmethod
@@ -356,7 +329,7 @@ class SpatialAnalyzer:
     ) -> GeoAnalysisResult:
         """H3-grid LISA local spatial autocorrelation (route through SpatialAnalyzer)."""
         if callback: callback(20, "Executing LISA analysis...")
-        fc = _to_feature_collection(features)
+        fc = to_feature_collection(features)
         return h3_lisa(fc, value_field)
 
     @classmethod
@@ -370,8 +343,8 @@ class SpatialAnalyzer:
     ) -> GeoAnalysisResult:
         """Perform spatial join between left and right feature collections."""
         if callback: callback(20, f"Executing {join_type} spatial join with {predicate}...")
-        fc_left = _to_feature_collection(left_features)
-        fc_right = _to_feature_collection(right_features)
+        fc_left = to_feature_collection(left_features)
+        fc_right = to_feature_collection(right_features)
         feats_left = fc_left.get("features", [])
         feats_right = fc_right.get("features", [])
 
@@ -422,7 +395,7 @@ class SpatialAnalyzer:
             return err_res
         valid_path = validated_paths[0]
 
-        fc = _to_feature_collection(features)
+        fc = to_feature_collection(features)
         feat_list = fc.get("features", [])
         if not feat_list:
             return GeoAnalysisResult(False, None, "No features provided for zonal statistics")
@@ -541,8 +514,8 @@ class SpatialAnalyzer:
     ) -> GeoAnalysisResult:
         """Compute network-based travel time isochrone polygon reachable areas."""
         if callback: callback(20, f"Executing {travel_time}-min {mode} isochrone analysis...")
-        fc_net = _to_feature_collection(network_features)
-        fc_facs = _to_feature_collection(facilities)
+        fc_net = to_feature_collection(network_features)
+        fc_facs = to_feature_collection(facilities)
         return calculate_isochrones(fc_net, fc_facs, travel_time, mode)
 
 
