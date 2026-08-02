@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import redis.asyncio as aioredis
+from app.services.session_data_protocol import SessionRefDataResult
 
 logger = logging.getLogger(__name__)
 
@@ -219,14 +220,54 @@ class RedisSessionStore:
             async with self._r.pipeline() as pipe:
                 pipe.expire(data_key, DATA_TTL)
                 pipe.zadd(self._refs_order_key(session_id), {ref_id: time.time()})
+                self._refresh_session_ttl(pipe, session_id)
                 await pipe.execute()
-            return json.loads(raw)
+
+            raw_str = raw.decode() if isinstance(raw, bytes) else raw
+            try:
+                return json.loads(raw_str)
+            except Exception:
+                return raw_str
         except aioredis.RedisError as e:
             logger.error(
-                "Redis get failed for session %s ref %s: %s — returning None",
+                "Redis get failed for session %s ref %s: %s — returning cache-miss",
                 session_id, ref_id_or_alias, e,
             )
             return None
+
+    async def get_ref_data(
+        self,
+        session_id: str,
+        ref_or_alias: str,
+        owner_token: Optional[str] = None,
+    ) -> SessionRefDataResult:
+        """Deep interface method: resolves alias, validates owner token if present, and returns data."""
+        meta = await self.get_session_metadata(session_id)
+        map_state = meta.get("map_state", {}) if meta else {}
+        expected_token = (meta.get("owner_token") if meta else None) or map_state.get("owner_token")
+        if expected_token and owner_token != expected_token:
+            return SessionRefDataResult(
+                success=False,
+                error="Security token mismatch",
+                error_type="PermissionDenied",
+            )
+
+        raw_data = await self.get(session_id, ref_or_alias)
+        if raw_data is None:
+            return SessionRefDataResult(
+                success=False,
+                error="Referenced data expired or not found",
+                error_type="NotFound",
+            )
+
+        if isinstance(raw_data, str):
+            try:
+                parsed = json.loads(raw_data)
+                return SessionRefDataResult(success=True, data=parsed)
+            except Exception:
+                return SessionRefDataResult(success=True, data=raw_data)
+
+        return SessionRefDataResult(success=True, data=raw_data)
 
     async def list_refs(self, session_id: str) -> dict[str, str]:
         await self._ensure_connected()

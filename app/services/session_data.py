@@ -6,6 +6,8 @@ from typing import Any, Optional
 from collections import OrderedDict, deque
 from datetime import datetime, timezone
 
+from app.services.session_data_protocol import SessionRefDataResult
+
 logger = logging.getLogger(__name__)
 
 class MemorySessionStore:
@@ -97,6 +99,41 @@ class MemorySessionStore:
         data = session_cache.pop(ref_id)
         session_cache[ref_id] = data
         return data
+
+    async def get_ref_data(
+        self,
+        session_id: str,
+        ref_or_alias: str,
+        owner_token: Optional[str] = None,
+    ) -> SessionRefDataResult:
+        """Deep interface method: resolves alias, validates owner token if present, and returns data."""
+        meta = await self.get_session_metadata(session_id)
+        map_state = meta.get("map_state", {}) if meta else {}
+        expected_token = (meta.get("owner_token") if meta else None) or map_state.get("owner_token")
+        if expected_token and owner_token != expected_token:
+            return SessionRefDataResult(
+                success=False,
+                error="Security token mismatch",
+                error_type="PermissionDenied",
+            )
+
+        raw_data = await self.get(session_id, ref_or_alias)
+        if raw_data is None:
+            return SessionRefDataResult(
+                success=False,
+                error="Referenced data expired or not found",
+                error_type="NotFound",
+            )
+
+        if isinstance(raw_data, str):
+            try:
+                import json
+                parsed = json.loads(raw_data)
+                return SessionRefDataResult(success=True, data=parsed)
+            except Exception:
+                return SessionRefDataResult(success=True, data=raw_data)
+
+        return SessionRefDataResult(success=True, data=raw_data)
 
     async def list_refs(self, session_id: str) -> dict[str, str]:
         """列出所有引用及其别名"""
