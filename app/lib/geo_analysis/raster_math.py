@@ -1,5 +1,6 @@
 """Raster math operations: reclassify, calculator, resample."""
 import enum
+from contextlib import contextmanager
 from typing import Optional
 
 import numpy as np
@@ -7,6 +8,26 @@ import rasterio
 from rasterio.enums import Resampling
 from rasterio.warp import reproject, calculate_default_transform
 
+
+# ─── Shared GDAL environment ────────────────────────────────────
+
+
+@contextmanager
+def rasterio_env():
+    """Shared GDAL env for all raster reads/writes.
+
+    Disables read-dir-on-open (avoids scanning adjacent files), sets a short
+    HTTP timeout, and forbids retries — so a hanging remote source fails fast
+    instead of blocking the worker. Consolidates the 4 identical
+    ``rasterio.Env(...)`` blocks previously inlined in ``SpatialAnalyzer``'s
+    raster methods (ADR-0037 Win 2).
+    """
+    with rasterio.Env(
+        GDAL_DISABLE_READDIR_ON_OPEN="TRUE",
+        GDAL_HTTP_TIMEOUT=5,
+        GDAL_HTTP_MAX_RETRY=0,
+    ):
+        yield
 
 
 class ResamplingMethod(enum.Enum):

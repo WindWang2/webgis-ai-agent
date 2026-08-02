@@ -22,9 +22,21 @@ import geopandas as gpd
 from shapely.geometry import box, mapping
 
 from app.lib.geo_processor.core import GeoAnalysisResult, to_utm_gdf
-from app.lib.geo_analysis.statistics import _extract_numeric_values as extract_numeric_values
+from app.lib.geo_analysis.statistics import _filter_numeric_gdf
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_numeric_values(gdf, value_field):
+    """Extract a numeric values array from a GeoDataFrame column.
+
+    Thin adapter over :func:`_filter_numeric_gdf`: returns just the values
+    array (or None when the field is missing), matching the contract
+    ``density.py`` historically expected from the now-removed
+    ``_extract_numeric_values`` in ``statistics.py``.
+    """
+    out = _filter_numeric_gdf(gdf, value_field)
+    return None if out is None else out[1]
 
 # OOM guard: cap the KDE grid to prevent unbounded memory allocation.
 _MAX_GRID_CELLS = 100_000
@@ -78,7 +90,7 @@ def kde_surface(
     coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
 
     if value_field:
-        weights = extract_numeric_values(gdf, value_field)
+        weights = _extract_numeric_values(gdf, value_field)
         if weights is None:
             numeric_cols = [c for c in gdf.columns if c != "geometry" and gdf[c].dtype in ("float64", "int64", "float32", "int32")]
             return GeoAnalysisResult(

@@ -428,13 +428,9 @@ class SpatialAnalyzer:
             return GeoAnalysisResult(False, None, "No features provided for zonal statistics")
 
         from app.lib.geo_analysis.raster_ops import zonal_statistics
+        from app.lib.geo_analysis.raster_math import rasterio_env
         try:
-            import rasterio
-            with rasterio.Env(
-                GDAL_DISABLE_READDIR_ON_OPEN="TRUE",
-                GDAL_HTTP_TIMEOUT=5,
-                GDAL_HTTP_MAX_RETRY=0,
-            ):
+            with rasterio_env():
                 stats = zonal_statistics({"type": "FeatureCollection", "features": feat_list}, valid_path)
         except Exception as e:
             return GeoAnalysisResult(
@@ -469,14 +465,9 @@ class SpatialAnalyzer:
             return err_res
         valid_path = validated_paths[0]
 
-        from app.lib.geo_analysis.raster_math import reclassify
+        from app.lib.geo_analysis.raster_math import reclassify, rasterio_env
         try:
-            import rasterio
-            with rasterio.Env(
-                GDAL_DISABLE_READDIR_ON_OPEN="TRUE",
-                GDAL_HTTP_TIMEOUT=5,
-                GDAL_HTTP_MAX_RETRY=0,
-            ):
+            with rasterio_env():
                 result = reclassify(valid_path, scheme, nodata)
             summary = f"Reclassified raster {raster_path} into {len(scheme)} classes."
             return GeoAnalysisResult(True, result, summary)
@@ -500,14 +491,9 @@ class SpatialAnalyzer:
         if err_res:
             return err_res
 
-        from app.lib.geo_analysis.raster_math import raster_calculator
+        from app.lib.geo_analysis.raster_math import raster_calculator, rasterio_env
         try:
-            import rasterio
-            with rasterio.Env(
-                GDAL_DISABLE_READDIR_ON_OPEN="TRUE",
-                GDAL_HTTP_TIMEOUT=5,
-                GDAL_HTTP_MAX_RETRY=0,
-            ):
+            with rasterio_env():
                 result = raster_calculator(
                     validated_paths[0],
                     validated_paths[1] if len(validated_paths) > 1 else None,
@@ -535,14 +521,9 @@ class SpatialAnalyzer:
         if err_res:
             return err_res
 
-        from app.lib.geo_analysis.raster_math import resample_raster
+        from app.lib.geo_analysis.raster_math import resample_raster, rasterio_env
         try:
-            import rasterio
-            with rasterio.Env(
-                GDAL_DISABLE_READDIR_ON_OPEN="TRUE",
-                GDAL_HTTP_TIMEOUT=5,
-                GDAL_HTTP_MAX_RETRY=0,
-            ):
+            with rasterio_env():
                 result = resample_raster(validated_paths[0], target_resolution, target_crs, resampling)
             summary = f"Resampled raster {raster_path} to resolution {target_resolution} ({resampling})."
             return GeoAnalysisResult(True, result, summary)

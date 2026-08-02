@@ -6,40 +6,9 @@ from pydantic import BaseModel, Field
 from app.tools.registry import ToolRegistry, tool
 from app.tools._utils import cached_tool, trim_features
 from app.services.spatial_analyzer import SpatialAnalyzer
-from app.lib.geo_processor.core import safe_parse as safe_parse_geojson, GeoAnalysisResult
+from app.lib.geo_processor.core import safe_parse as safe_parse_geojson
 
 logger = logging.getLogger(__name__)
-
-# ─── Shared raster tool runner ──────────────────────────────────
-
-
-def _run_raster_tool(
-    paths: list[str],
-    fn: callable,
-    *args,
-    summary: str,
-    error_label: str = "RasterError",
-) -> dict:
-    """Shared runner: validate paths, open rasterio.Env, call lib fn, wrap result.
-
-    Eliminates duplicated try/except skeleton across raster tools.
-    """
-    import rasterio
-    from app.utils.path import validate_data_path
-
-    validated = []
-    for p in paths:
-        try:
-            validated.append(validate_data_path(p))
-        except ValueError as e:
-            return GeoAnalysisResult(False, None, f"路径校验失败: {e}", error_type="ValidationError").to_llm_response()
-
-    try:
-        with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="TRUE", GDAL_HTTP_TIMEOUT=5, GDAL_HTTP_MAX_RETRY=0):
-            result = fn(*validated, *args)
-    except Exception as e:
-        return GeoAnalysisResult(False, None, f"{error_label}: {e}", error_type=error_label).to_llm_response()
-    return GeoAnalysisResult(success=True, data=result, summary=summary).to_llm_response()
 
 
 class ZonalStatsArgs(BaseModel):
