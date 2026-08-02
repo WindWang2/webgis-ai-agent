@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { ChevronRight, ChevronDown, CheckCircle2, AlertCircle, Loader2, Clock, Wrench } from 'lucide-react';
 import { CartographyResultCard } from './cartography-result-card';
+import { H3LisaResultCard } from './h3-lisa-result-card';
+import { IsochroneResultCard } from './isochrone-result-card';
 import { useHudStore } from '@/lib/store/useHudStore';
 
 export interface ToolCallEntry {
@@ -121,10 +123,17 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
   const parsedArgs = parseArgs(call.arguments);
 
   const CARTO_TOOLS = new Set(['create_thematic_map', 'h3_binning', 'kde_contours', 'heatmap_data']);
+  const LISA_TOOLS = new Set(['h3_lisa', 'webgis_h3_lisa']);
+  const ISOCHRONE_TOOLS = new Set(['isochrones', 'webgis_isochrones', 'service_area']);
+
   const isCarto = CARTO_TOOLS.has(call.tool);
+  const isLisa = LISA_TOOLS.has(call.tool);
+  const isIsochrone = ISOCHRONE_TOOLS.has(call.tool);
+
   const focusLayer = useHudStore((s: { focusLayer: (id: string) => void }) => s.focusLayer);
   const layers = useHudStore((s: { layers: Array<{ id: string; legend_spec?: unknown }> }) => s.layers);
   const latestCartoLayerId = isCarto ? (layers.find((l) => l.legend_spec)?.id ?? '') : '';
+  const latestActiveLayerId = layers[0]?.id ?? '';
 
   const statusIcon =
     call.status === 'running' ? (
@@ -171,6 +180,22 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
         <CartographyResultCard
           result={call.result}
           layerId={latestCartoLayerId}
+          onFocus={(id) => id && focusLayer(id)}
+        />
+      )}
+
+      {isLisa && call.result && (
+        <H3LisaResultCard
+          result={call.result}
+          layerId={latestActiveLayerId}
+          onFocus={(id) => id && focusLayer(id)}
+        />
+      )}
+
+      {isIsochrone && call.result && (
+        <IsochroneResultCard
+          result={call.result}
+          layerId={latestActiveLayerId}
           onFocus={(id) => id && focusLayer(id)}
         />
       )}
