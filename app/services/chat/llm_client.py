@@ -27,22 +27,43 @@ logger = logging.getLogger(__name__)
 
 
 class LRUCache(OrderedDict):
-    """Simple LRU Cache to bound memory usage."""
+    """Simple LRU Cache to bound memory usage.
+
+    Thread-safe: protects internal ``OrderedDict`` mutations
+    (``move_to_end``, ``__delitem__``) with a reentrant lock so
+    concurrent async reads cannot corrupt the data structure.
+    """
 
     def __init__(self, capacity: int = 100):
         super().__init__()
         self.capacity = capacity
+        import threading
+        self._lock = threading.RLock()
 
     def __getitem__(self, key):
-        value = super().__getitem__(key)
-        self.move_to_end(key)
-        return value
+        with self._lock:
+            value = super().__getitem__(key)
+            self.move_to_end(key)
+            return value
 
     def __setitem__(self, key, value):
-        super().__setitem__(key, value)
-        if len(self) > self.capacity:
-            oldest = next(iter(self))
-            del self[oldest]
+        with self._lock:
+            super().__setitem__(key, value)
+            if len(self) > self.capacity:
+                oldest = next(iter(self))
+                del self[oldest]
+
+    def __contains__(self, key):
+        with self._lock:
+            return super().__contains__(key)
+
+    def __delitem__(self, key):
+        with self._lock:
+            super().__delitem__(key)
+
+    def pop(self, key, *args):
+        with self._lock:
+            return super().pop(key, *args)
 
 
 # ─── XML tool-call 解析（MiniMax 风格） ─────────────────────────
