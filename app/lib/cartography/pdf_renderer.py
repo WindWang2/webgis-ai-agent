@@ -118,18 +118,21 @@ def generate_map_pdf(
 
         # ── In-Memory PDF Compilation ──
         pdf_buf = io.BytesIO()
-        fig.savefig(
-            pdf_buf,
-            format="pdf",
-            dpi=dpi,
-            bbox_inches="tight",
-            metadata={
-                "Title": map_title,
-                "Author": author or "WebGIS AI Agent",
-                "Subject": subtitle or "",
-                "Creator": "WebGIS AI Agent",
-            },
-        )
+        import warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Glyph .* missing from font", category=UserWarning)
+            fig.savefig(
+                pdf_buf,
+                format="pdf",
+                dpi=dpi,
+                bbox_inches="tight",
+                metadata={
+                    "Title": map_title,
+                    "Author": author or "WebGIS AI Agent",
+                    "Subject": subtitle or "",
+                    "Creator": "WebGIS AI Agent",
+                },
+            )
         return pdf_buf.getvalue()
 
     finally:

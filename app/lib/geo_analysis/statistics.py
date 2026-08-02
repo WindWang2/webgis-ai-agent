@@ -278,7 +278,8 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
     numerators = w @ values - x_bar * sum_wi
     denom_inners = (n * sum_wi2 - sum_wi**2) / (n - 1)
     denominators = np.where(denom_inners > 0, s * np.sqrt(denom_inners), 0)
-    gi_stars = np.where(denominators != 0, numerators / denominators, 0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        gi_stars = np.where(denominators != 0, numerators / denominators, 0)
     p_vals = 2 * (1 - norm.cdf(np.abs(gi_stars)))
     
     hot_count = int(np.sum((p_vals < 0.05) & (gi_stars > 0)))

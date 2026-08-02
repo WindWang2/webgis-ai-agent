@@ -106,8 +106,8 @@ def test_h3_binning(sample_points):
 
 
 def test_h3_lisa():
-    pytest.importorskip("esda")
-    pytest.importorskip("libpysal")
+    pytest.importorskip("esda", exc_type=ImportError)
+    pytest.importorskip("libpysal", exc_type=ImportError)
     # Create a grid of hexes via points
     import h3
     center = h3.latlng_to_cell(39.9, 116.39, 8)
