@@ -187,12 +187,23 @@ Two sources with distinct responsibilities — **currently connected headless-on
 
 ### MapSpec Compiler
 Deterministic, framework-agnostic TS module (`frontend/lib/mapspec-compiler/`) that turns a
-MapSpec into MapLibre `style.json` + `index.html`. **Consumed only by headless consumers today**
-— the Playwright runtime validator, eval-evidence capture, and the static map exporter — so it is
+MapSpec into MapLibre `style.json` + `index.html`. **Consumed by headless consumers** — the
+Playwright runtime validator, eval-evidence capture, and the static map exporter — so it is
 the single source of truth for "what this MapSpec renders to *headlessly*". The live `map-kit`
-map does NOT render from compiled MapSpec (see *Cartographic Intent vs. Runtime State*); wiring
-that is an unrealized aspiration. Supports **GeoJSON sources only** in this refactor;
-PMTiles/OGC/Cesium/OpenLayers are deferred to "后续 Adapter".
+map reconciles against a derived MapSpec via the **MapSpecRuntime** (ADR-0036); see below.
+Supports **GeoJSON sources only** in this refactor; PMTiles/OGC/Cesium/OpenLayers are deferred
+to "后续 Adapter".
+
+### MapSpecRuntime (Live Reconciliation Engine)
+The deep module (`frontend/lib/mapspec-runtime/`, ADR-0036) that bridges the two previously-
+disconnected worlds of *Cartographic Intent* and *Runtime State* on the live map. A pure
+`hudStateToMapSpec` adapter projects the HUD store's `Layer[]` (+ processLayers +
+activeFilters + is3D) into a flat `MapSpec`; the `MapSpecRuntime` class reconciles that spec
+against the live MapLibre instance via `diffSpecs` (pure, in the compiler package) → minimal
+source/layer/view patch → side-effectful application reusing `map-kit/renderer`'s cache-aware
+helpers. Replaces the orphaned `applyMapSpecToMap` (zero callers) and the ~225-line imperative
+render loop + 6 stale-closure refs that previously lived in `map-panel.tsx`. View changes stay
+imperative (`flyTo`); only sources/layers/paint are reconciled.
 
 ### Tool Catalog (webgis_*)
 The 11 `webgis_*` tools (`webgis_project_init`, `webgis_state_get`, `webgis_source_profile`,

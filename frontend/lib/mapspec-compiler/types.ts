@@ -88,10 +88,16 @@ export interface MapSpecLayerLayout {
 export interface MapSpecLayer {
   id: string;
   source: string;
-  type: "circle" | "line" | "fill" | "symbol" | "heatmap" | "raster";
+  // ADR-0036: `fill-extrusion` added to support the is3D-gated extrusion
+  // sublayer emitted by hudStateToMapSpec. The compiler's `compileMapSpec`
+  // path doesn't emit it (it's only produced by the runtime adapter), but it
+  // is a valid MapLibre layer type the runtime must apply.
+  type: "circle" | "line" | "fill" | "symbol" | "heatmap" | "raster" | "fill-extrusion";
   paint?: MapSpecLayerPaint;
   layout?: MapSpecLayerLayout;
   label?: MapSpecLayerLabel;
+  /** MapLibre filter expression. Emitted by hudStateToMapSpec for $type + thematic filters. */
+  filter?: unknown[];
 }
 
 export interface MapSpecView {
