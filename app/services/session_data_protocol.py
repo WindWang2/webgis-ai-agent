@@ -83,11 +83,20 @@ _active_store: Optional[SessionStoreProtocol] = None
 
 
 def get_session_store() -> SessionStoreProtocol:
-    """Return the active SessionStore singleton instance."""
+    """Return active SessionStore singleton instance."""
     global _active_store
     if _active_store is None:
-        from app.services.session_data import session_data_manager
-        return session_data_manager
+        try:
+            from app.core.config import settings
+            if getattr(settings, "REDIS_ENABLED", False):
+                from app.services.session_data_redis import session_data_manager as redis_mgr
+                _active_store = redis_mgr
+            else:
+                from app.services.session_data import session_data_manager
+                _active_store = session_data_manager
+        except Exception:
+            from app.services.session_data import session_data_manager
+            _active_store = session_data_manager
     return _active_store
 
 

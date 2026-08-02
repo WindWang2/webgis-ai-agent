@@ -1,7 +1,9 @@
 import json
+from unittest.mock import AsyncMock, MagicMock
 import pytest
 from app.services.session_data import MemorySessionStore
 from app.services.session_data_protocol import SessionRefDataResult, SessionStoreProtocol
+from app.services.session_data_redis import RedisSessionStore
 
 
 @pytest.mark.asyncio
@@ -34,8 +36,8 @@ async def test_memory_session_store_get_ref_data_owner_token():
     store = MemorySessionStore(capacity=10)
     sid = "sess-test-ref-token-1"
 
-    # Set metadata with owner token
-    store._map_state[sid] = {"owner_token": "secret_token_123"}
+    # Use public set_map_state interface
+    await store.set_map_state(sid, "owner_token", "secret_token_123")
 
     ref_id = await store.store(sid, {"hello": "world"})
 
@@ -48,3 +50,16 @@ async def test_memory_session_store_get_ref_data_owner_token():
     res2 = await store.get_ref_data(sid, ref_id, owner_token="wrong_token")
     assert res2.success is False
     assert res2.error_type == "PermissionDenied"
+
+
+@pytest.mark.asyncio
+async def test_redis_session_store_get_ref_data_fallback():
+    redis_store = RedisSessionStore("redis://localhost:6379/0")
+
+    # Mock get_session_metadata and get
+    redis_store.get_session_metadata = AsyncMock(return_value={"map_state": {}})
+    redis_store.get = AsyncMock(return_value={"status": "ok"})
+
+    res = await redis_store.get_ref_data("sess_redis_1", "ref:data-123")
+    assert res.success is True
+    assert res.data == {"status": "ok"}
