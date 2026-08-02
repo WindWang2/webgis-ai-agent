@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Clock, Play, Pause, RotateCcw, Target, Sparkles, Activity } from 'lucide-react';
 
 export interface StDbscanResultStats {
@@ -38,6 +38,20 @@ interface Props {
 export function StDbscanResultCard({ result, layerId, onFocus, onFrameChange }: Props) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [framePct, setFramePct] = useState(100);
+
+  useEffect(() => {
+    if (!isPlaying) return;
+    const interval = setInterval(() => {
+      setFramePct((prev) => {
+        const next = prev >= 100 ? 0 : prev + 5;
+        if (onFrameChange) {
+          onFrameChange(next);
+        }
+        return next;
+      });
+    }, 200);
+    return () => clearInterval(interval);
+  }, [isPlaying, onFrameChange]);
 
   if (!result) return null;
 

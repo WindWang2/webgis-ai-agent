@@ -195,8 +195,9 @@ def register_spatial_stats_tools(registry: ToolRegistry):
     def st_dbscan(geojson: Any, eps1_spatial_meters: float = 1000.0,
                   eps2_temporal_seconds: float = 3600.0, min_samples: int = 5,
                   timestamp_field: str = "timestamp") -> dict:
+        data = safe_parse_geojson(geojson)
         res = SpatialAnalyzer.st_dbscan(
-            geojson,
+            data,
             eps1_spatial_meters=eps1_spatial_meters,
             eps2_temporal_seconds=eps2_temporal_seconds,
             min_samples=min_samples,

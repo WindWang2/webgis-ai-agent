@@ -27,6 +27,9 @@ class SessionStoreProtocol(Protocol):
     async def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
         ...
 
+    async def overwrite(self, session_id: str, ref_id: str, data: Any) -> None:
+        ...
+
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
         ...
 
