@@ -1,46 +1,5 @@
 import maplibregl from 'maplibre-gl';
 import { ThematicStyleDef } from './types';
-import { compileMapSpec, MapSpec, MapSpecCompileResult } from '../mapspec-compiler';
-
-export { compileMapSpec };
-export type { MapSpec, MapSpecCompileResult };
-
-/**
- * Renders a MapSpec directly onto a MapLibre map instance.
- */
-export function applyMapSpecToMap(map: any, mapSpec: MapSpec): MapSpecCompileResult {
-  const result = compileMapSpec(mapSpec);
-  if (!result.report.success) {
-    console.warn("MapSpec compile failed with errors:", result.report.errors);
-    return result;
-  }
-
-  // Apply sources
-  for (const [sourceId, sourceDef] of Object.entries(result.style.sources || {})) {
-    const existing = map.getSource(sourceId);
-    if (!existing) {
-      map.addSource(sourceId, sourceDef);
-    }
-  }
-
-  // Apply layers
-  for (const layerDef of result.style.layers || []) {
-    if (map.getLayer(layerDef.id)) {
-      map.removeLayer(layerDef.id);
-    }
-    map.addLayer(layerDef);
-  }
-
-  // Set view if specified
-  if (result.style.center) {
-    map.setCenter(result.style.center);
-  }
-  if (result.style.zoom !== undefined) {
-    map.setZoom(result.style.zoom);
-  }
-
-  return result;
-}
 
 /**
 /**

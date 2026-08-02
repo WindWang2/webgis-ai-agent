@@ -385,39 +385,3 @@ export function compileMapSpec(
     report,
   };
 }
-
-export function diffLiveStateVsMapSpec(liveState: any, mapSpec: MapSpec): {
-  diverged: boolean;
-  diffs: Array<{ type: string; details: string }>;
-} {
-  const diffs: Array<{ type: string; details: string }> = [];
-
-  if (!liveState || !mapSpec) {
-    return { diverged: false, diffs: [] };
-  }
-
-  if (liveState.zoom !== undefined && mapSpec.view?.zoom !== undefined) {
-    if (Math.abs(liveState.zoom - mapSpec.view.zoom) > 0.01) {
-      diffs.push({
-        type: "VIEW_ZOOM",
-        details: `Live zoom (${liveState.zoom}) differs from MapSpec zoom (${mapSpec.view.zoom})`,
-      });
-    }
-  }
-
-  if (liveState.center && mapSpec.view?.center) {
-    const [lng1, lat1] = liveState.center;
-    const [lng2, lat2] = mapSpec.view.center;
-    if (Math.abs(lng1 - lng2) > 0.0001 || Math.abs(lat1 - lat2) > 0.0001) {
-      diffs.push({
-        type: "VIEW_CENTER",
-        details: `Live center ([${lng1}, ${lat1}]) differs from MapSpec center ([${lng2}, ${lat2}])`,
-      });
-    }
-  }
-
-  return {
-    diverged: diffs.length > 0,
-    diffs,
-  };
-}

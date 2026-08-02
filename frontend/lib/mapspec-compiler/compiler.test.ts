@@ -3,7 +3,6 @@ import {
   compileMapSpec,
   compileStyleMethod,
   validateMapSpec,
-  diffLiveStateVsMapSpec,
 } from "./compiler";
 import { MapSpec, SpatialMetaProfile } from "./types";
 
@@ -330,25 +329,6 @@ describe("MapSpec Compiler (Seam A)", () => {
         "#ffaaaa",
         "#cccccc",
       ]);
-    });
-  });
-
-  describe("diffLiveStateVsMapSpec", () => {
-    it("detects view zoom and center divergence", () => {
-      const spec: MapSpec = {
-        version: "1.0",
-        view: { center: [100, 30], zoom: 5 },
-        sources: {},
-        layers: [],
-      };
-
-      const liveStateSame = { center: [100, 30], zoom: 5 };
-      expect(diffLiveStateVsMapSpec(liveStateSame, spec).diverged).toBe(false);
-
-      const liveStateMoved = { center: [105, 32], zoom: 7 };
-      const diffResult = diffLiveStateVsMapSpec(liveStateMoved, spec);
-      expect(diffResult.diverged).toBe(true);
-      expect(diffResult.diffs).toHaveLength(2);
     });
   });
 

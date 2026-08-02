@@ -4,13 +4,13 @@ import { MAP_STYLES, MapStyleOption } from "@/lib/constants"
 import Map, { MapRef, ViewStateChangeEvent, Popup } from "react-map-gl/maplibre"
 import maplibregl from "maplibre-gl"
 import type { Layer } from "@/lib/types/layer"
-import type { GeoJSONFeatureCollection, HeatmapRasterSource } from "@/lib/types"
 import { MapActionHandler } from "./map-action-handler"
 import { ThematicLegend } from "./thematic-legend"
 import { MapDecorations } from "./map-decorations"
 import { useHudStore, type HudState } from "@/lib/store/useHudStore"
 import * as renderer from "@/lib/map-kit/renderer"
 import { fitBounds as navFitBounds, calculateBBox } from "@/lib/map-kit/navigation"
+import { MapSpecRuntime, hudStateToMapSpec } from "@/lib/mapspec-runtime"
 import { devOnly } from "@/lib/utils/logger"
 
 interface MapPanelProps {
@@ -55,23 +55,6 @@ const DEFAULT_VIEW_STATE = {
   longitude: 116.4074,
   latitude: 39.9042,
   zoom: 4,
-}
-
-function isHeatmapRasterSource(source: Layer["source"]): source is HeatmapRasterSource {
-  return typeof source === "object" && source !== null && "image" in source && "bbox" in source
-}
-
-function isGeoJSONSource(source: Layer["source"]): source is GeoJSONFeatureCollection {
-  return typeof source === "object" && source !== null && "type" in source && source.type === "FeatureCollection"
-}
-
-function parseDashArray(dash: string): number[] {
-  switch (dash) {
-    case 'dashed': return [4, 2]
-    case 'dotted': return [1, 2]
-    case 'dashdot': return [4, 2, 1, 2]
-    default: return []
-  }
 }
 
 export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer: _onToggleLayer, onViewportChange }: MapPanelProps) {
@@ -145,265 +128,34 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
     }
   }, [is3D, mapReady])
 
-  const renderTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const isUpdatingRef = useRef(false)
-  // 审计 F26：styledata 监听器用此 ref 调最新版 renderLayers，
-  // 防止 effect 重跑时旧闭包用 stale layers 触发渲染。
-  const renderLayersRef = useRef<() => void>(() => {})
+  // ADR-0036: layer rendering is delegated to the MapSpecRuntime, which
+  // reconciles a derived MapSpec against the live map via minimal diff/patch.
+  // This replaces the previous ~225-line render loop + 6 stale-closure refs
+  // (renderTimeoutRef/isUpdatingRef/renderLayersRef) + the styledata re-listen
+  // machinery. The runtime owns the style-loaded retry internally.
+  const runtimeRef = useRef<MapSpecRuntime | null>(null)
 
-  // Dynamic layer rendering with debounce optimization
+  // Lazily create the runtime once the map instance is available.
   useEffect(() => {
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
-
-    const renderLayers = () => {
-      // 审计 F26：每次 effect 重跑都把最新版存入 ref，让 styledata 监听
-      // 始终调当前闭包（避免 stale layers）。
-      renderLayersRef.current = renderLayers
-      if (isUpdatingRef.current) return
-      // Style not loaded yet — retry after a short delay instead of silently dropping.
-      // 必须把 timeout id 存进 renderTimeoutRef，让 effect cleanup 清掉，
-      // 否则卸载/重渲染后会调用 stale closure。
-      if (!map.isStyleLoaded()) {
-        if (renderTimeoutRef.current) clearTimeout(renderTimeoutRef.current)
-        renderTimeoutRef.current = setTimeout(renderLayers, 100)
-        return
-      }
-
-      isUpdatingRef.current = true
-      try {
-        // Step 1: Remove stale layers/sources — M4 用 renderer.removeOrphanCustomLayers
-        const knownIds = new Set(layers.map((l) => l.id))
-        renderer.removeOrphanCustomLayers(map, knownIds, "custom-")
-
-        // Step 2: Add or Update layers
-        for (const layer of layers) {
-          if (!layer.visible || !layer.source) {
-            if (map.getSource(`custom-${layer.id}`)) {
-              renderer.setLayerStackVisibility(map, `custom-${layer.id}`, false)
-            }
-            continue
-          }
-
-          const sourceId = `custom-${layer.id}`
-          const isNewSource = !map.getSource(sourceId)
-
-          try {
-            if (layer.type === "raster" || layer.type === "tile") {
-              renderer.addRasterTileSource(map, sourceId, layer.source as string)
-            } else if (layer.type === "heatmap" && isHeatmapRasterSource(layer.source)) {
-              const src = layer.source as HeatmapRasterSource
-              const [west, south, east, north] = src.bbox
-              renderer.addImageSource(map, sourceId, src.image, [[west, north], [east, north], [east, south], [west, south]])
-            } else {
-              renderer.addGeoJsonSource(map, sourceId, layer.source as any)
-            }
-
-            const color = layer.style?.color || "#16a34a"
-            const strokeColor = layer.style?.strokeColor || layer.style?.color || "#16a34a"
-            const thematicField = layer.source && typeof layer.source === "object" ? (layer.source as any).metadata?.field : null
-            const filterRanges = activeFilters[layer.id]
-
-            const getLayerFilter = (baseType: string): unknown[] => {
-              const base: unknown[] = ["==", "$type", baseType]
-              if (thematicField && filterRanges) {
-                const rangeFilters = filterRanges.map((range: number[]) => ["all", [">=", ["get", thematicField], range[0]], ["<", ["get", thematicField], range[1]]])
-                return ["all", base, ["any", ...rangeFilters]]
-              }
-              return base
-            }
-
-            const addOrUpdate = (subId: string, layerConfig: Record<string, unknown>) => {
-              const fullId = `custom-${layer.id}-${subId}`
-              if (!map.getLayer(fullId)) {
-                map.addLayer({ ...layerConfig, id: fullId, source: sourceId } as any)
-              } else {
-                map.setLayoutProperty(fullId, "visibility", "visible")
-                if ((layerConfig as any).filter) map.setFilter(fullId, (layerConfig as any).filter as any)
-                if ((layerConfig as any).paint) {
-                  Object.keys((layerConfig as any).paint).forEach((key) => {
-                    map.setPaintProperty(fullId, key, (layerConfig as any).paint[key])
-                  })
-                }
-              }
-            }
-
-            if (layer.type === "raster" || layer.type === "tile") {
-              const rasterPaint: Record<string, any> = { "raster-opacity": layer.opacity || 1 }
-              if (layer.style?.brightness != null) rasterPaint["raster-brightness-max"] = layer.style.brightness
-              if (layer.style?.contrast != null) rasterPaint["raster-contrast"] = layer.style.contrast
-              if (layer.style?.saturation != null) rasterPaint["raster-saturation"] = layer.style.saturation
-              addOrUpdate("main", {
-                type: "raster",
-                paint: rasterPaint,
-              })
-            } else if (layer.type === "heatmap" && isHeatmapRasterSource(layer.source)) {
-              addOrUpdate("raster", {
-                type: "raster",
-                paint: { "raster-opacity": layer.opacity ?? 0.85, "raster-resampling": "linear" },
-              })
-            } else {
-              const src = isGeoJSONSource(layer.source) ? layer.source : null
-              const features = src?.features || []
-              const hasPolygons = features.some((f) => f.geometry?.type?.includes("Polygon"))
-              const hasLines = features.some((f) => f.geometry?.type?.includes("Line"))
-              const hasPoints = features.some((f) => f.geometry?.type?.includes("Point"))
-              const isNativeHeatmap = layer.type === "heatmap" && src && !isHeatmapRasterSource(layer.source)
-              const isHeatmapMode = layer.type === "heatmap" || layer.style?.renderType === "heatmap" || layer.style?.renderType === "grid"
-
-              if (isNativeHeatmap) {
-                addOrUpdate("native-heat", {
-                  type: "heatmap",
-                  maxzoom: 19,
-                  paint: {
-                    "heatmap-weight": ["interpolate", ["linear"], ["get", "weight"], 0, 0, 1, 1],
-                    "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 0, 1, 10, 3, 15, 5, 18, 8],
-                    "heatmap-color": [
-                      "interpolate", ["linear"], ["heatmap-density"],
-                      0, "rgba(0,0,0,0)",
-                      0.1, "rgba(0,242,255,0.3)",
-                      0.3, "rgba(0,255,65,0.5)",
-                      0.5, "rgba(255,255,0,0.7)",
-                      0.7, "rgba(255,95,0,0.85)",
-                      1, "rgba(255,45,85,1)",
-                    ],
-                    "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 0, 2, 5, 5, 9, 25, 12, 40, 15, 70, 18, 100],
-                    "heatmap-opacity": ["interpolate", ["linear"], ["zoom"], 7, 1, 19, 0.85],
-                  },
-                })
-              } else if (hasPolygons) {
-                if (isHeatmapMode) {
-                  addOrUpdate("heatgrid", {
-                    type: "fill",
-                    filter: getLayerFilter("Polygon"),
-                    paint: {
-                      "fill-color": [
-                        "interpolate", ["linear"], ["get", "weight"],
-                        0.0, "rgba(0,0,0,0)",
-                        0.2, "rgba(0,242,255,0.4)",
-                        0.4, "rgba(0,255,65,0.6)",
-                        0.6, "rgba(255,255,0,0.7)",
-                        0.8, "rgba(255,95,0,0.85)",
-                        1.0, "rgba(255,45,85,0.95)",
-                      ],
-                      "fill-outline-color": "rgba(255, 255, 255, 0.05)",
-                      "fill-opacity": layer.opacity ?? 1,
-                      "fill-antialias": true,
-                    },
-                  })
-                } else {
-                  addOrUpdate("fill", {
-                    type: "fill",
-                    filter: getLayerFilter("Polygon"),
-                    paint: {
-                      "fill-color": layer.style?.fill !== false
-                        ? ["coalesce", ["get", "fill_color"], color]
-                        : "rgba(0,0,0,0)",
-                      "fill-opacity": layer.style?.fill !== false ? (layer.opacity || 1) * 0.3 : 0,
-                    },
-                  })
-                  // If 3D mode is active, also add an extrusion layer for polygons
-                  if (is3D) {
-                    addOrUpdate("extrusion", {
-                      type: "fill-extrusion",
-                      filter: getLayerFilter("Polygon"),
-                      paint: {
-                        "fill-extrusion-color": color,
-                        "fill-extrusion-height": ["coalesce", ["get", "height"], 20],
-                        "fill-extrusion-base": 0,
-                        "fill-extrusion-opacity": layer.opacity || 0.8,
-                      },
-                    })
-                  }
-                  addOrUpdate("outline", {
-                    type: "line",
-                    filter: getLayerFilter("Polygon"),
-                    paint: {
-                      "line-color": ["coalesce", ["get", "stroke_color"], ["get", "fill_color"], strokeColor],
-                      "line-width": layer.style?.strokeWidth ?? 2,
-                      "line-opacity": layer.opacity || 1,
-                      ...(layer.style?.dashArray && layer.style.dashArray !== 'solid' ? { "line-dasharray": parseDashArray(layer.style.dashArray) } : {}),
-                    },
-                  })
-                }
-              }
-              if (hasLines && !isNativeHeatmap) {
-                addOrUpdate("line", {
-                  type: "line",
-                  filter: getLayerFilter("LineString"),
-                  paint: {
-                    "line-color": ["coalesce", ["get", "fill_color"], strokeColor],
-                    "line-width": layer.style?.strokeWidth ?? 2,
-                    "line-opacity": layer.opacity || 1,
-                    ...(layer.style?.dashArray && layer.style.dashArray !== 'solid' ? { "line-dasharray": parseDashArray(layer.style.dashArray) } : {}),
-                  },
-                })
-              }
-              if (hasPoints && !isNativeHeatmap) {
-                addOrUpdate("point", {
-                  type: "circle",
-                  filter: getLayerFilter("Point"),
-                  paint: {
-                    "circle-radius": layer.style?.pointSize != null ? layer.style.pointSize : features.some((f) => f.properties?.weight != null) ? ["interpolate", ["linear"], ["get", "weight"], 0, 4, 1, 8] : 6,
-                    "circle-color": ["coalesce", ["get", "fill_color"], color],
-                    "circle-stroke-width": 1.5,
-                    "circle-stroke-color": "rgba(22, 163, 74, 0.3)",
-                    "circle-opacity": layer.opacity || 1,
-                  },
-                })
-              } else {
-                // Hide stale point sublayer when layer no longer has point features
-                const stalePointId = `custom-${layer.id}-point`
-                if (map.getLayer(stalePointId)) {
-                  map.setLayoutProperty(stalePointId, "visibility", "none")
-                }
-              }
-            }
-          } catch (_e) {
-            devOnly.error("[MapPanel] incremental update error for:", layer.id, _e)
-          }
-        }
-
-        // Step 2b: Render process layers — M4 走 renderer.addProcessLayerStack
-        for (const [stepId, geojson] of Object.entries(processLayers)) {
-          renderer.addProcessLayerStack(map, stepId, geojson)
-        }
-        // Clean up stale process layers — 走通用 renderer.removeOrphanCustomLayers
-        const currentProcessIds = new Set(Object.keys(processLayers))
-        renderer.removeOrphanCustomLayers(map, currentProcessIds, "process-")
-
-        // Step 3: Z-Index Sync — heatmap layers go below point layers
-        // 走 renderer.syncLayerZOrder：传 layers 数组顺序，helper 自己反向迭代
-        renderer.syncLayerZOrder(map, "custom-", layers.map((l) => l.id))
-      } catch (err) {
-        devOnly.error("[MapPanel] renderLayers error:", err)
-      } finally {
-        isUpdatingRef.current = false
-      }
+    if (!runtimeRef.current) {
+      runtimeRef.current = new MapSpecRuntime(map)
     }
-
-    // Debounced trigger
-    if (renderTimeoutRef.current) clearTimeout(renderTimeoutRef.current)
-    renderTimeoutRef.current = setTimeout(renderLayers, 50)
-
-    // Re-apply layers after basemap style changes (MapLibre destroys custom layers on style change)
-    // 审计 F26：用 renderLayersRef 而非闭包内的 renderLayers，确保调最新版。
-    const onStyleData = () => {
-      if (isUpdatingRef.current) {
-        isUpdatingRef.current = false
-      }
-      if (renderTimeoutRef.current) clearTimeout(renderTimeoutRef.current)
-      renderTimeoutRef.current = setTimeout(() => renderLayersRef.current(), 100)
-    }
-    map.on('styledata', onStyleData)
-
     return () => {
-      if (renderTimeoutRef.current) clearTimeout(renderTimeoutRef.current)
-      map.off('styledata', onStyleData)
-      isUpdatingRef.current = false
+      runtimeRef.current?.dispose()
+      runtimeRef.current = null
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layers, mapReady, currentMapStyle, activeFilters, processLayers])
+  }, [mapReady])
+
+  // Reconcile whenever the inputs to the derived MapSpec change. The runtime's
+  // internal diff is the no-op fast path for unchanged specs, so no debounce is
+  // needed (the F31 source-ref cache makes repeated setData cheap).
+  useEffect(() => {
+    if (!runtimeRef.current) return
+    const spec = hudStateToMapSpec({ layers, processLayers, activeFilters, is3D })
+    runtimeRef.current.reconcile(spec)
+  }, [layers, processLayers, activeFilters, is3D, mapReady, currentMapStyle])
 
 
   const setViewport = useHudStore((s: HudState) => s.setViewport)
@@ -418,10 +170,11 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   const layersRef = useRef(layers)
   useEffect(() => { layersRef.current = layers }, [layers])
 
-  // /review C8: derive interactiveLayerIds from actual style sublayers.
-  // The renderer adds sublayer ids like `custom-${id}-fill` / `-line` / `-circle`,
-  // not the bare `custom-${id}` - without enumerating sublayers, MapLibre never
-  // toggles pointer-cursor on hover and clickable features have no affordance.
+  // /review C8 + ADR-0036: derive interactiveLayerIds from actual style sublayers.
+  // The MapSpecRuntime emits sublayer ids like `${layerId}__fill` / `__line` /
+  // `__point` (and `process-${stepId}__${sub}`) — the `__` separator marks a
+  // sublayer we added. Without enumerating these, MapLibre never toggles
+  // pointer-cursor on hover and clickable features have no affordance.
   const [interactiveIds, setInteractiveIds] = useState<string[]>([])
   // 审计 F32：缓存上次计算的 IDs joined 字符串，相同则跳过 setInteractiveIds
   // -> 防止 styledata 频繁触发时产生 re-render 风暴。
@@ -431,7 +184,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
     if (!map) return
     const recompute = () => {
       const all = (map.getStyle()?.layers || []) as Array<{ id: string }>
-      const ids = all.map((l) => l.id).filter((id) => id.startsWith('custom-'))
+      const ids = all.map((l) => l.id).filter((id) => id.includes('__'))
       const joined = ids.join(',')
       if (joined !== lastInteractiveIdsRef.current) {
         lastInteractiveIdsRef.current = joined
@@ -446,11 +199,11 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   const handleMapClick = useCallback((evt: any) => {
     const map = mapRef.current?.getMap()
     if (!map) return
-    // 只查询我们自己添加的 custom-* 图层；底图瓦片层不应吃 click
+    // 只查询我们自己添加的 __ 子图层；底图瓦片层不应吃 click
     const styleLayers = map.getStyle()?.layers || []
     const customLayerIds = styleLayers
       .map((l: any) => l.id as string)
-      .filter((id) => id.startsWith('custom-'))
+      .filter((id) => id.includes('__'))
     if (customLayerIds.length === 0) {
       setSelectedFeature(null)
       return
@@ -462,11 +215,12 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
     }
     const top = features[0]
     const sublayerId = top.layer?.id as string | undefined
-    // 还原回 ref:xxx：sublayerId 形如 'custom-ref:geojson-xxx' 或 'custom-ref:geojson-xxx-line'
+    // 还原回 ref:xxx：sublayerId 形如 'ref:geojson-xxx__point' 或
+    // 'ref:geojson-xxx__fill'。剥掉 '__${sub}' 后缀得到父 layer.id。
     let refId: string | undefined
     let layerInfo: any
     if (sublayerId) {
-      const stripped = sublayerId.replace(/^custom-/, '')
+      const stripped = sublayerId.replace(/__[^_]*$/, '')
       // 匹配最长 layer.id 前缀
       layerInfo = layersRef.current.find((l) => stripped.startsWith(l.id))
       if (layerInfo?.id?.startsWith('ref:')) {
