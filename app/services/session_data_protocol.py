@@ -79,8 +79,56 @@ class SessionStoreProtocol(Protocol):
         ...
 
 
+class BaseSessionStore:
+    """Abstract base class providing unified domain logic for SessionStore implementations.
+
+    Subclasses must implement: `get`, `store`, `overwrite`, `set_alias`,
+    `get_map_state`, `set_map_state`, `get_session_metadata`, etc.
+    """
+
+    async def resolve_alias(self, session_id: str, ref_or_alias: str) -> str:
+        """Default fallback alias resolution. Overridden by subclasses if alias map is separate."""
+        return ref_or_alias
+
+    async def get_ref_data(
+        self,
+        session_id: str,
+        ref_or_alias: str,
+        owner_token: Optional[str] = None,
+    ) -> SessionRefDataResult:
+        """Deep interface method: resolves alias, validates owner token if present, and returns deserialized data."""
+        meta = await self.get_session_metadata(session_id)
+        map_state = meta.get("map_state", {}) if meta else {}
+        expected_token = (meta.get("owner_token") if meta else None) or map_state.get("owner_token")
+        if expected_token and owner_token != expected_token:
+            return SessionRefDataResult(
+                success=False,
+                error="Security token mismatch",
+                error_type="PermissionDenied",
+            )
+
+        raw_data = await self.get(session_id, ref_or_alias)
+        if raw_data is None:
+            return SessionRefDataResult(
+                success=False,
+                error="Referenced data expired or not found",
+                error_type="NotFound",
+            )
+
+        if isinstance(raw_data, str):
+            try:
+                import json
+                parsed = json.loads(raw_data)
+                return SessionRefDataResult(success=True, data=parsed)
+            except Exception:
+                return SessionRefDataResult(success=True, data=raw_data)
+
+        return SessionRefDataResult(success=True, data=raw_data)
+
+
 # Backward compatibility aliases
 SessionDataProtocol = SessionStoreProtocol
+
 
 _active_store: Optional[SessionStoreProtocol] = None
 

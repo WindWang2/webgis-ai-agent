@@ -6,11 +6,12 @@ from typing import Any, Optional
 from collections import OrderedDict, deque
 from datetime import datetime, timezone
 
-from app.services.session_data_protocol import SessionRefDataResult
+from app.services.session_data_protocol import BaseSessionStore, SessionRefDataResult
 
 logger = logging.getLogger(__name__)
 
-class MemorySessionStore:
+class MemorySessionStore(BaseSessionStore):
+
     """In-memory SessionStore implementation with cursor support (LRU)"""
     def __init__(self, capacity: int = 200):
         # session_id -> {ref_id -> data}

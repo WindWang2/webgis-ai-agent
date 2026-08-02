@@ -52,19 +52,40 @@ export interface SpecPatch {
 }
 
 /**
- * Normalize a value for deep equality. `JSON.stringify` is cheap and
- * unambiguous for the plain-data shapes MapSpec uses (no functions, Dates, or
- * circular refs). Object key insertion order is stable here because we always
- * build these objects from typed literals, not from arbitrary user input.
+ * Fast early-exit structural deep equality check for MapSpec nodes.
+ * Avoids JSON.stringify allocation overhead on every reconciliation frame.
  */
-function signature(val: unknown): string {
-  return JSON.stringify(val);
+function isDeepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!isDeepEqual(a[i], b[i])) return false;
+    }
+    return true;
+  }
+
+  const objA = a as Record<string, unknown>;
+  const objB = b as Record<string, unknown>;
+  const keysA = Object.keys(objA);
+  const keysB = Object.keys(objB);
+  if (keysA.length !== keysB.length) return false;
+
+  for (const key of keysA) {
+    if (!Object.prototype.hasOwnProperty.call(objB, key)) return false;
+    if (!isDeepEqual(objA[key], objB[key])) return false;
+  }
+  return true;
 }
 
 function diffView(prev: MapSpecView | undefined, next: MapSpecView | undefined): ViewChange | undefined {
-  if (signature(prev) === signature(next)) return undefined;
+  if (isDeepEqual(prev, next)) return undefined;
   return { prev, next };
 }
+
 
 /**
  * Compute the delta between two MapSpecs.
@@ -101,7 +122,7 @@ export function diffSpecs(prev: MapSpec | null, next: MapSpec): SpecPatch {
       sources.push({ id, kind: "remove" });
     } else if (!inPrev && inNext) {
       sources.push({ id, kind: "add", next: nextSources[id] });
-    } else if (signature(prevSources[id]) !== signature(nextSources[id])) {
+    } else if (!isDeepEqual(prevSources[id], nextSources[id])) {
       sources.push({ id, kind: "update", next: nextSources[id] });
     }
   }
@@ -118,9 +139,10 @@ export function diffSpecs(prev: MapSpec | null, next: MapSpec): SpecPatch {
     const prevLayer = prevLayerById.get(layer.id);
     if (!prevLayer) {
       layers.push({ id: layer.id, kind: "add", next: layer });
-    } else if (signature(prevLayer) !== signature(layer)) {
+    } else if (!isDeepEqual(prevLayer, layer)) {
       layers.push({ id: layer.id, kind: "recompile", next: layer });
     }
+
     // else: unchanged → omitted (no-op)
   }
   // Removes: layers present in prev but absent from next.

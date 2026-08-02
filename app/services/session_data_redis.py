@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import redis.asyncio as aioredis
-from app.services.session_data_protocol import SessionRefDataResult
+from app.services.session_data_protocol import BaseSessionStore, SessionRefDataResult
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,8 @@ SESSION_TTL = 4 * 60 * 60
 MAX_EVENTS = 20
 
 
-class RedisSessionStore:
+class RedisSessionStore(BaseSessionStore):
+
     """Session-level data store backed by Redis with cursor support (LRU)."""
 
     def __init__(self, redis_url: str, capacity: int = 200, socket_timeout: float = 5.0):
