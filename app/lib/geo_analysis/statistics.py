@@ -602,3 +602,157 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
     }
     
     return GeoAnalysisResult(True, data_out, summary)
+
+
+def st_dbscan_narrated(
+    geojson: dict,
+    eps1_spatial_meters: float = 1000.0,
+    eps2_temporal_seconds: float = 3600.0,
+    min_samples: int = 5,
+    timestamp_field: str = "timestamp",
+) -> GeoAnalysisResult:
+    """
+    Spatio-Temporal DBSCAN (ST-DBSCAN) clustering using vectorized NumPy & Scikit-Learn.
+    Evaluates spatial distance threshold eps1 (meters) and temporal distance threshold eps2 (seconds)
+    simultaneously via a normalized max metric matrix.
+    """
+    try:
+        from sklearn.cluster import DBSCAN
+    except ImportError:
+        return GeoAnalysisResult(False, None, "scikit-learn not installed", error_type="ImportError")
+
+    res = to_utm_gdf(geojson)
+    if not res:
+        return GeoAnalysisResult(False, None, "Invalid GeoJSON or no features found", error_type="ValueError")
+
+    gdf, utm_crs = res
+    if len(gdf) < min_samples:
+        return GeoAnalysisResult(
+            False, None,
+            f"At least {min_samples} features required for ST-DBSCAN (found {len(gdf)})",
+            error_type="InsufficientData",
+        )
+
+    # 1. Parse timestamps
+    target_ts_field = timestamp_field
+    if target_ts_field not in gdf.columns:
+        possible_fields = ["timestamp", "time", "datetime", "t", "date", "created_at"]
+        found = [f for f in possible_fields if f in gdf.columns]
+        if found:
+            target_ts_field = found[0]
+        else:
+            return GeoAnalysisResult(
+                False, None,
+                f"Timestamp field '{timestamp_field}' not found in feature properties",
+                error_type="ValueError",
+                correction_hint="Ensure features contain an ISO-8601 string or numeric epoch timestamp property.",
+            )
+
+    ts_series = gdf[target_ts_field]
+    try:
+        parsed_dt = pd.to_datetime(ts_series, errors="coerce", utc=True)
+        valid_mask = parsed_dt.notna()
+        if not valid_mask.any():
+            return GeoAnalysisResult(
+                False, None,
+                f"No valid timestamps could be parsed from field '{target_ts_field}'",
+                error_type="ValueError",
+            )
+
+        gdf_valid = gdf[valid_mask].reset_index(drop=True)
+        parsed_dt_valid = parsed_dt[valid_mask]
+        t_seconds = parsed_dt_valid.astype("int64").to_numpy() / 1e9
+    except Exception as e:
+        return GeoAnalysisResult(
+            False, None,
+            f"Failed to parse timestamp field '{target_ts_field}': {str(e)}",
+            error_type="ValueError",
+        )
+
+    n = len(gdf_valid)
+    if n < min_samples:
+        return GeoAnalysisResult(
+            False, None,
+            f"Fewer than min_samples ({min_samples}) valid timestamped points found ({n})",
+            error_type="InsufficientData",
+        )
+
+    coords = np.column_stack((gdf_valid.centroid.x.values, gdf_valid.centroid.y.values))
+
+    # 2. Combined Vectorized Distance Matrix Computation
+    if n <= 5000:
+        from scipy.spatial.distance import pdist, squareform
+        d_spatial = squareform(pdist(coords, metric="euclidean"))
+        d_temporal = np.abs(t_seconds[:, None] - t_seconds[None, :])
+        d_combined = np.maximum(d_spatial / max(eps1_spatial_meters, 1e-6), d_temporal / max(eps2_temporal_seconds, 1e-6))
+        
+        db = DBSCAN(eps=1.0, min_samples=min_samples, metric="precomputed")
+        labels = db.fit_predict(d_combined)
+    else:
+        from scipy.spatial import cKDTree
+        from scipy import sparse
+        tree = cKDTree(coords)
+        coo_spatial = tree.sparse_distance_matrix(tree, max_distance=eps1_spatial_meters, output_type="coo_matrix")
+        
+        r, c = coo_spatial.row, coo_spatial.col
+        spatial_dists = coo_spatial.data
+        temporal_dists = np.abs(t_seconds[r] - t_seconds[c])
+        
+        valid_edges = temporal_dists <= eps2_temporal_seconds
+        r_valid, c_valid = r[valid_edges], c[valid_edges]
+        combined_dists = np.maximum(
+            spatial_dists[valid_edges] / max(eps1_spatial_meters, 1e-6),
+            temporal_dists[valid_edges] / max(eps2_temporal_seconds, 1e-6)
+        )
+        dist_matrix_sparse = sparse.csr_matrix((combined_dists, (r_valid, c_valid)), shape=(n, n))
+        
+        db = DBSCAN(eps=1.0, min_samples=min_samples, metric="precomputed")
+        labels = db.fit_predict(dist_matrix_sparse)
+
+    # 3. Compute Metrics Summary
+    unique_labels = set(labels)
+    n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
+    noise_points = int(np.sum(labels == -1))
+    clustered_points = int(np.sum(labels >= 0))
+
+    t_min_sec = float(t_seconds.min())
+    t_max_sec = float(t_seconds.max())
+    temporal_span_hours = round((t_max_sec - t_min_sec) / 3600.0, 2)
+
+    # 4. Format Output GeoJSON
+    gdf_wgs84 = gdf_valid.to_crs("EPSG:4326")
+    out_features = []
+    for i in range(n):
+        geom_wgs84 = gdf_wgs84.geometry.iloc[i]
+        row = gdf_valid.iloc[i]
+        props = {k: v for k, v in row.items() if k != "geometry"}
+        props["cluster_id"] = int(labels[i])
+        out_features.append({
+            "type": "Feature",
+            "geometry": mapping(geom_wgs84),
+            "properties": props,
+        })
+
+    summary_stats = {
+        "total_clusters": n_clusters,
+        "clustered_points": clustered_points,
+        "noise_points": noise_points,
+        "temporal_span_hours": temporal_span_hours,
+        "eps1_spatial_meters": float(eps1_spatial_meters),
+        "eps2_temporal_seconds": float(eps2_temporal_seconds),
+        "min_samples": int(min_samples),
+    }
+
+    data_out = {
+        "type": "FeatureCollection",
+        "features": out_features,
+        "cluster_stats": summary_stats,
+    }
+
+    summary = (
+        f"ST-DBSCAN identified {n_clusters} spatio-temporal cluster(s) and {noise_points} noise point(s) "
+        f"across a temporal span of {temporal_span_hours:.2f} hours "
+        f"(eps1={eps1_spatial_meters}m, eps2={eps2_temporal_seconds}s, min_samples={min_samples})."
+    )
+
+    return GeoAnalysisResult(True, data_out, summary)

@@ -456,5 +456,25 @@ class SpatialAnalyzer:
     ) -> GeoAnalysisResult:
         return calculate_isochrones(network_features, facilities, travel_time, mode)
 
+    @classmethod
+    @spatial_operator(name="st_dbscan")
+    def st_dbscan(
+        cls,
+        features: Any,
+        eps1_spatial_meters: float = 1000.0,
+        eps2_temporal_seconds: float = 3600.0,
+        min_samples: int = 5,
+        timestamp_field: str = "timestamp",
+        callback: Optional[Callable] = None,
+    ) -> GeoAnalysisResult:
+        from app.lib.geo_analysis.statistics import st_dbscan_narrated
+        return st_dbscan_narrated(
+            features,
+            eps1_spatial_meters=eps1_spatial_meters,
+            eps2_temporal_seconds=eps2_temporal_seconds,
+            min_samples=min_samples,
+            timestamp_field=timestamp_field,
+        )
+
 
 __all__ = ["SpatialAnalyzer", "AnalysisResult"]
