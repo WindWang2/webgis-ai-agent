@@ -48,21 +48,21 @@ export function H3LisaResultCard({ result, layerId, onFocus }: Props) {
     : 0;
 
   return (
-    <div className="my-2 p-3 rounded-lg border border-slate-200/80 bg-white/70 dark:border-slate-800 dark:bg-slate-900/70 backdrop-blur-sm text-sm">
+    <div className="my-2 p-3.5 rounded-xl border border-slate-200/80 bg-white/80 dark:border-slate-800 dark:bg-slate-900/80 backdrop-blur-md text-sm shadow-sm transition-all">
       {/* Header */}
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-2.5">
         <div className="flex items-center gap-1.5 font-semibold text-slate-800 dark:text-slate-200">
           <Hexagon className="h-4 w-4 text-indigo-500 shrink-0" />
           <span>H3 LISA 空间聚类分析</span>
         </div>
-        <span className="text-[12px] px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-300 font-mono font-medium">
+        <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-300 font-mono font-medium">
           字段: {valueField}
         </span>
       </div>
 
       {/* Cluster Swatches / Badges */}
       {counts && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mb-2.5">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
           {(['HH', 'LL', 'HL', 'LH'] as const).map((type) => {
             const count = counts[type] ?? 0;
             const cfg = CLUSTER_CONFIG[type];
@@ -70,13 +70,13 @@ export function H3LisaResultCard({ result, layerId, onFocus }: Props) {
               <div
                 key={type}
                 data-testid={`lisa-badge-${type}`}
-                className={`p-1.5 rounded border ${cfg.bg} flex flex-col justify-between transition-all`}
+                className={`p-2 rounded-lg border ${cfg.bg} flex flex-col justify-between transition-all`}
               >
                 <div className="flex items-center justify-between">
-                  <span className={`text-[11px] font-bold ${cfg.text}`}>{cfg.label}</span>
-                  <span className={`text-[13px] font-mono font-bold ${cfg.text}`}>{count}</span>
+                  <span className={`text-xs font-bold ${cfg.text}`}>{cfg.label}</span>
+                  <span className={`text-sm font-mono font-bold ${cfg.text}`}>{count}</span>
                 </div>
-                <span className="text-[10px] text-slate-400 dark:text-slate-500 truncate mt-0.5">{cfg.desc}</span>
+                <span className="text-xs text-slate-400 dark:text-slate-500 truncate mt-0.5">{cfg.desc}</span>
               </div>
             );
           })}
@@ -85,14 +85,14 @@ export function H3LisaResultCard({ result, layerId, onFocus }: Props) {
 
       {/* Summary note */}
       {summaryText && (
-        <div className="flex items-start gap-1.5 mb-2 text-[12px] text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50/80 dark:bg-slate-800/40 p-2 rounded border border-slate-100 dark:border-slate-800">
-          <Sparkles className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
+        <div className="flex items-start gap-2 mb-2.5 text-sm text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50/90 dark:bg-slate-800/50 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800">
+          <Sparkles className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
           <span>{summaryText}</span>
         </div>
       )}
 
       {/* Action Footer */}
-      <div className="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-800 text-[12px]">
+      <div className="flex items-center justify-between pt-1.5 border-t border-slate-100 dark:border-slate-800 text-xs">
         <span className="text-slate-400 dark:text-slate-500 font-mono">
           {totalSig > 0 ? `累计显著聚类: ${totalSig} 个网格` : '未发现显著聚集'}
         </span>
@@ -102,7 +102,7 @@ export function H3LisaResultCard({ result, layerId, onFocus }: Props) {
             onClick={() => onFocus(layerId)}
             className="inline-flex items-center gap-1 font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300 hover:underline transition-colors"
           >
-            <Target className="h-3 w-3" />
+            <Target className="h-3.5 w-3.5" />
             高亮图层
           </button>
         )}
