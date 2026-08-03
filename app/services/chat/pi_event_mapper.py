@@ -100,8 +100,9 @@ def _handle_message_update(event: dict, session_id: str, cache_lookup: Optional[
 
 
 def _handle_tool_execution_start(event: dict, session_id: str, cache_lookup: Optional[Callable]) -> Optional[str]:
+    step_idx = event.get("stepIndex") or event.get("step_index") or 0
     return sse_event("step_start", _base_step_payload(event, session_id, {
-        "step_index": 0,  # TODO: derive from actual step metadata when available
+        "step_index": step_idx,
         "tool": event.get("toolName", ""),
     }))
 

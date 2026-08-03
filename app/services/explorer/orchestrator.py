@@ -64,7 +64,13 @@ class ExplorerOrchestrator:
 
         # 提交任务
         result = task_chain.apply_async()
-        celery_task_id = result.id
+
+        # F-06 fix: traverse parent chain to find the root (first) task ID
+        # so stream_progress can poll from the beginning of the pipeline
+        root_result = result
+        while getattr(root_result, "parent", None) is not None:
+            root_result = root_result.parent
+        celery_task_id = root_result.id
 
         # 审计 S42：记录任务所有权
         if user_id:

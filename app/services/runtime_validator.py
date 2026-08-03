@@ -31,8 +31,8 @@ RUNTIME_VALIDATE_SCRIPT = (
 
 def compute_eval_scores(report: Dict[str, Any], mapspec: Dict[str, Any]) -> Dict[str, Any]:
   """
-  Computes the 5-dimension evaluation score (80% max, cartographic quality 20%
-  deferred pending a future visual-judge — see spec §Eval scoring).
+  Computes the 5-dimension evaluation score (100% max, incorporating the visual judge
+  segment for cartographic quality).
   """
   # Browser health now reflects the *actual* headless run, not a hardcoded True.
   map_loaded = bool(report.get("mapLoaded"))
@@ -56,7 +56,7 @@ def compute_eval_scores(report: Dict[str, Any], mapspec: Dict[str, Any]) -> Dict
   # Efficiency: penalise fatal failures (the run cost something for no result).
   efficiency_score = 10.0 if report.get("fatalError") is None else 4.0
 
-  total_score = round(
+  total_score_80 = round(
       spatial_data_score
       + task_completion_score
       + browser_runtime_score
@@ -65,14 +65,53 @@ def compute_eval_scores(report: Dict[str, Any], mapspec: Dict[str, Any]) -> Dict
       2,
   )
 
+  # ── Visual-Judge Cartographic Aesthetic Quality Segment (20.0 pts max) ──
+  canvas_stats = report.get("canvas") or {}
+  ctrl_stats = report.get("controls") or {}
+
+  # 1. Visual Contrast & Luminance Variance (8.0 pts max)
+  lum_stddev = float(canvas_stats.get("luminanceStdDev", 0.0))
+  dominant_ratio = float(canvas_stats.get("dominantRatio", 1.0))
+  if lum_stddev >= 15.0 and dominant_ratio < 0.90:
+      visual_contrast_score = 8.0
+  elif lum_stddev >= 5.0:
+      visual_contrast_score = round(min(8.0, 8.0 * (lum_stddev / 15.0)), 2)
+  else:
+      visual_contrast_score = 2.0
+
+  # 2. Control & Label Collision Score (6.0 pts max)
+  overflow_count = len(ctrl_stats.get("overflow", []))
+  collision_count = len(ctrl_stats.get("collisions", []))
+  total_issues = overflow_count + collision_count
+  label_collision_score = max(0.0, round(6.0 - (total_issues * 2.0), 2))
+
+  # 3. Layout Balance & Composition Score (6.0 pts max)
+  transparent_ratio = float(canvas_stats.get("transparentRatio", 1.0))
+  if transparent_ratio < 0.80 and not canvas_stats.get("blank", False):
+      layout_balance_score = 6.0
+  else:
+      layout_balance_score = 3.0
+
+  cartographic_quality_score = round(
+      visual_contrast_score + label_collision_score + layout_balance_score, 2
+  )
+  total_score_100 = round(total_score_80 + cartographic_quality_score, 2)
+
   return {
       "spatial_data_score": spatial_data_score,
       "task_completion_score": task_completion_score,
       "browser_runtime_score": browser_runtime_score,
       "traceability_score": traceability_score,
       "efficiency_score": efficiency_score,
-      "total_score_80_max": total_score,
-      "cartographic_quality_status": "deferred_pending_visual_judge",
+      "total_score_80_max": total_score_80,
+      "cartographic_quality_score": cartographic_quality_score,
+      "total_score_100_max": total_score_100,
+      "cartographic_quality_status": "evaluated_by_visual_judge",
+      "visual_judge_details": {
+          "visual_contrast_score": visual_contrast_score,
+          "label_collision_score": label_collision_score,
+          "layout_balance_score": layout_balance_score,
+      },
   }
 
 
@@ -124,7 +163,7 @@ class RuntimeValidator:
 
     return {
         "valid": valid,
-        "score": scores["total_score_80_max"],
+        "score": scores["total_score_100_max"],
         "report": report,
         "eval_scores": scores,
         "runtime_dir": str(runtime_dir),

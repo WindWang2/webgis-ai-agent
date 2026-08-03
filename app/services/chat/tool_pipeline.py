@@ -81,45 +81,33 @@ class ToolExecutionPipeline:
         # 2. Sentinel check / fallback
         sentinels = executed_tools if executed_tools is not None else set()
 
-        # 3. TaskTracker step registration
-        step_id: Optional[str] = None
-        if task_id and self.tracker:
-            try:
-                step = self.tracker.start_step(task_id, tool_name, args_dict)
-                step_id = step.id
-            except Exception as e:
-                logger.warning(f"[ToolPipeline] TaskTracker start_step failed: {e}")
-
-        # 4. Execute tool dispatch via dispatch_fn or ToolDispatchService
+        # 3. Execute tool dispatch inside TaskTracker step context
         outcome: ToolDispatchResult
-        try:
-            if self.dispatch_fn is not None:
-                outcome = await self.dispatch_fn(tc, session_id, sentinels)
-            else:
-                outcome = await self.dispatch_service.dispatch(tc, session_id, sentinels)
-        except Exception as e:
-            logger.error(f"[ToolPipeline] Dispatch error for {tool_name}: {e}", exc_info=True)
-            err_msg = f"工具执行异常 ({type(e).__name__}): {e}"
-            outcome = ToolDispatchResult(
-                status="error",
-                llm_payload=err_msg,
-                slim_event={"error": err_msg},
-                geojson_ref=None,
-                raw_result={"error": err_msg},
-                error_msg=err_msg,
-            )
+        is_error = False
 
-        is_error = (outcome.status == "error")
-
-        # 5. Complete TaskTracker step
-        if task_id and step_id and self.tracker:
+        async with self.tracker.track_step(task_id, tool_name, args_dict) as step:
             try:
-                if is_error:
-                    self.tracker.fail_step(task_id, step_id, str(outcome.raw_result))
+                if self.dispatch_fn is not None:
+                    outcome = await self.dispatch_fn(tc, session_id, sentinels)
                 else:
-                    self.tracker.complete_step(task_id, step_id, outcome.raw_result)
+                    outcome = await self.dispatch_service.dispatch(tc, session_id, sentinels)
             except Exception as e:
-                logger.warning(f"[ToolPipeline] TaskTracker step update failed: {e}")
+                logger.error(f"[ToolPipeline] Dispatch error for {tool_name}: {e}", exc_info=True)
+                err_msg = f"工具执行异常 ({type(e).__name__}): {e}"
+                outcome = ToolDispatchResult(
+                    status="error",
+                    llm_payload=err_msg,
+                    slim_event={"error": err_msg},
+                    geojson_ref=None,
+                    raw_result={"error": err_msg},
+                    error_msg=err_msg,
+                )
+
+            is_error = (outcome.status == "error")
+            if step is not None:
+                step.result = outcome.raw_result
+                if is_error:
+                    step.error = str(outcome.raw_result)
 
         elapsed_ms = (time.time() - start_time) * 1000
         return ToolExecutionResult(

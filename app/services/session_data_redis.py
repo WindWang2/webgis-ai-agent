@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import redis.asyncio as aioredis
+from app.services.session_data_protocol import BaseSessionStore, SessionRefDataResult
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,8 @@ SESSION_TTL = 4 * 60 * 60
 MAX_EVENTS = 20
 
 
-class RedisSessionStore:
+class RedisSessionStore(BaseSessionStore):
+
     """Session-level data store backed by Redis with cursor support (LRU)."""
 
     def __init__(self, redis_url: str, capacity: int = 200, socket_timeout: float = 5.0):
@@ -219,14 +221,25 @@ class RedisSessionStore:
             async with self._r.pipeline() as pipe:
                 pipe.expire(data_key, DATA_TTL)
                 pipe.zadd(self._refs_order_key(session_id), {ref_id: time.time()})
+                self._refresh_session_ttl(pipe, session_id)
                 await pipe.execute()
-            return json.loads(raw)
+
+            raw_str = raw.decode() if isinstance(raw, bytes) else raw
+            try:
+                return json.loads(raw_str)
+            except Exception:
+                return raw_str
         except aioredis.RedisError as e:
             logger.error(
-                "Redis get failed for session %s ref %s: %s — returning None",
+                "Redis get failed for session %s ref %s: %s — returning cache-miss",
                 session_id, ref_id_or_alias, e,
             )
             return None
+
+    # P2-1: get_ref_data was a byte-identical override of
+    # BaseSessionStore.get_ref_data and has been removed. The inherited Base
+    # implementation delegates to self.get() and self.get_session_metadata()
+    # (both overridden below), which carry the backend-specific logic.
 
     async def list_refs(self, session_id: str) -> dict[str, str]:
         await self._ensure_connected()

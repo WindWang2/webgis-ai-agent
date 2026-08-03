@@ -51,7 +51,7 @@ def buffer_smart(
         
         if dissolve:
             # Dissolve all geometries into one
-            dissolved_geom = buffered_gdf.geometry.unary_union
+            dissolved_geom = buffered_gdf.geometry.union_all()
             buffered_gdf = gpd.GeoDataFrame(geometry=[dissolved_geom], crs=utm_crs)
         
         # Convert back to original CRS

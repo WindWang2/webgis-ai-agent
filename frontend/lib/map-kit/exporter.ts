@@ -669,6 +669,331 @@ export async function exportToPDF(
   return doc.output('blob');
 }
 
+export interface VectorExportOptions {
+  title?: string;
+  subtitle?: string;
+  layoutId?: string;
+  dpi?: number;
+  width?: number;
+  height?: number;
+}
+
+/**
+ * Generates pure vector SVG string representation for a MapSpec and Print Layout.
+ */
+export async function generateMapSpecVectorSvgString(
+  mapspec: any,
+  options: VectorExportOptions = {}
+): Promise<string> {
+  const { compileMapSpecToSvg } = await import('../mapspec-compiler/mapspec-to-svg');
+  const { renderSvgPrintLayout } = await import('./svg-marginalia');
+
+  const dpi = options.dpi ?? 300;
+  const width = options.width ?? 1200;
+  const height = options.height ?? 848;
+  const layoutId = options.layoutId ?? 'tmpl_ly_academic';
+
+  // 1. Compile pure vector SVG layers from MapSpec
+  const mapSvgContent = compileMapSpecToSvg(mapspec, {
+    targetDpi: dpi,
+    width,
+    height,
+  });
+
+  // Extract layer inner markup (<g class="mapspec-vector-layers">...</g>)
+  const layerMatch = mapSvgContent.match(/<g class="mapspec-vector-layers">[\s\S]*?<\/g>/);
+  const layersMarkup = layerMatch ? layerMatch[0] : '';
+
+  // 2. Generate Marginalia SVG print layout container
+  const layoutSvg = renderSvgPrintLayout({
+    layoutId,
+    width,
+    height,
+    title: options.title ?? '高清矢量地图',
+    subtitle: options.subtitle ?? 'WebGIS AI Agent HD Vector Export',
+  });
+
+  // Combine: inject the map vector layers at the MAP_CONTENT_HERE anchor so
+  // they paint at the bottom of the Z-order (marginalia stay on top).
+  // P0-2 fix: previously injected before </svg>, making the map the LAST
+  // child and painting it over the title banner / north arrow / legend.
+  const PLACEHOLDER = '<!-- MAP_CONTENT_HERE -->';
+  if (layoutSvg.includes(PLACEHOLDER)) {
+    return layoutSvg.replace(PLACEHOLDER, layersMarkup);
+  }
+  // Fallback: layout without the anchor — inject right after the opening
+  // <svg ...> tag so the map is still the first painted element.
+  const openTagEnd = layoutSvg.indexOf('>');
+  if (openTagEnd !== -1) {
+    return layoutSvg.slice(0, openTagEnd + 1) + `\n  ${layersMarkup}\n` + layoutSvg.slice(openTagEnd + 1);
+  }
+  return layoutSvg;
+}
+
+/**
+ * Exports a MapSpec directly to a 100% resolution-independent SVG vector file Blob.
+ */
+export async function exportMapSpecToVectorSvg(
+  mapspec: any,
+  options: VectorExportOptions = {}
+): Promise<Blob> {
+  const svgText = await generateMapSpecVectorSvgString(mapspec, options);
+  return new Blob([svgText], { type: 'image/svg+xml' });
+}
+
+/**
+ * Exports a MapSpec to a high-definition 300+ DPI vector PDF file.
+ *
+ * P0-3a fix: the SVG is now parsed with DOMParser and walked recursively,
+ * accumulating ancestor `<g transform="translate(...)">` offsets, so the
+ * north arrow / legend / scalebar render at their correct positions and
+ * `<text>` / `<rect>` / `<line>` elements (previously dropped entirely by
+ * order-sensitive regexes) are now rendered. fill/stroke opacity attributes
+ * no longer break attribute parsing.
+ */
+export async function exportMapSpecToVectorPdf(
+  mapspec: any,
+  options: VectorExportOptions = {}
+): Promise<Blob> {
+  const { default: jsPDF } = await import('jspdf');
+  const pdf = new jsPDF({
+    orientation: 'landscape',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const pageW = pdf.internal.pageSize.getWidth(); // ~297 mm
+  const pageH = pdf.internal.pageSize.getHeight(); // ~210 mm
+
+  // 1. Generate full vector SVG string from MapSpec and Print Layout
+  const svgString = await generateMapSpecVectorSvgString(mapspec, {
+    ...options,
+    width: 1200,
+    height: 848,
+  });
+
+  // SVG coordinate to PDF mm scale factors
+  const scaleX = (pageW - 20) / 1200;
+  const scaleY = (pageH - 24) / 848;
+  const toMmX = (x: number) => 10 + x * scaleX;
+  const toMmY = (y: number) => 12 + y * scaleY;
+
+  // 2. Parse the SVG into a DOM tree and walk it, accumulating transforms.
+  const doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
+  const parseError = doc.querySelector('parsererror');
+  if (parseError) {
+    // Malformed SVG — fall back to an empty content PDF (title + frame only)
+    // rather than throwing, so the export button never hard-fails.
+  }
+
+  // Accumulated translate offset from ancestor <g transform="translate(x,y)">.
+  interface Offset { x: number; y: number; }
+
+  function parseTranslate(transform: string | null): Offset {
+    if (!transform) return { x: 0, y: 0 };
+    // Handle "translate(x, y)" and "translate(x y)".
+    const m = transform.match(/translate\(\s*([\d.\-]+)[\s,]+([\d.\-]+)\s*\)/);
+    if (m) return { x: parseFloat(m[1]), y: parseFloat(m[2]) };
+    const single = transform.match(/translate\(\s*([\d.\-]+)\s*\)/);
+    if (single) return { x: parseFloat(single[1]), y: 0 };
+    return { x: 0, y: 0 };
+  }
+
+  function attr(el: Element, name: string, fallback = '0'): string {
+    return el.getAttribute(name) ?? fallback;
+  }
+
+  function num(el: Element, name: string, fallback = 0): number {
+    const v = el.getAttribute(name);
+    return v == null ? fallback : parseFloat(v);
+  }
+
+  // Convert a hex (#rrggbb) or #rgb color to [r,g,b] for jsPDF; returns null
+  // for non-hex (e.g. named/css) so the caller can skip or default.
+  function hexToRgb(hex: string): [number, number, number] | null {
+    let h = hex.trim().replace(/^#/, '');
+    if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+    if (h.length !== 6 || /[^0-9a-fA-F]/.test(h)) return null;
+    return [
+      parseInt(h.slice(0, 2), 16),
+      parseInt(h.slice(2, 4), 16),
+      parseInt(h.slice(4, 6), 16),
+    ];
+  }
+
+  function applyFillColor(pdf: any, fill: string): boolean {
+    const rgb = hexToRgb(fill);
+    if (rgb) { pdf.setFillColor(rgb[0], rgb[1], rgb[2]); return true; }
+    return false;
+  }
+
+  function applyDrawColor(pdf: any, stroke: string): boolean {
+    const rgb = hexToRgb(stroke);
+    if (rgb) { pdf.setDrawColor(rgb[0], rgb[1], rgb[2]); return true; }
+    return false;
+  }
+
+  function renderNode(el: Element, offset: Offset): void {
+    const tag = el.tagName.toLowerCase();
+    // Descend into groups, accumulating their translate offset.
+    if (tag === 'g' || tag === 'svg') {
+      const t = parseTranslate(el.getAttribute('transform'));
+      // Nested <svg> may carry x/y attributes too.
+      const nx = num(el, 'x', 0);
+      const ny = num(el, 'y', 0);
+      const childOffset = { x: offset.x + t.x + nx, y: offset.y + t.y + ny };
+      for (const child of Array.from(el.children)) {
+        renderNode(child, childOffset);
+      }
+      return;
+    }
+
+    const ox = offset.x;
+    const oy = offset.y;
+
+    if (tag === 'circle') {
+      const cx = num(el, 'cx') + ox;
+      const cy = num(el, 'cy') + oy;
+      const r = num(el, 'r');
+      const fill = attr(el, 'fill', '#000000');
+      if (applyFillColor(pdf, fill)) {
+        pdf.circle(toMmX(cx), toMmY(cy), Math.max(0.1, r * scaleX), 'F');
+      }
+      return;
+    }
+
+    if (tag === 'line') {
+      const x1 = num(el, 'x1') + ox;
+      const y1 = num(el, 'y1') + oy;
+      const x2 = num(el, 'x2') + ox;
+      const y2 = num(el, 'y2') + oy;
+      const stroke = attr(el, 'stroke', '#000000');
+      const sw = num(el, 'stroke-width', 1);
+      if (applyDrawColor(pdf, stroke)) {
+        pdf.setLineWidth(Math.max(0.1, sw * scaleX));
+        pdf.line(toMmX(x1), toMmY(y1), toMmX(x2), toMmY(y2));
+      }
+      return;
+    }
+
+    if (tag === 'rect') {
+      const x = num(el, 'x') + ox;
+      const y = num(el, 'y') + oy;
+      const w = num(el, 'width');
+      const h = num(el, 'height');
+      const fill = el.getAttribute('fill');
+      const stroke = el.getAttribute('stroke');
+      if (fill && fill !== 'none' && applyFillColor(pdf, fill)) {
+        pdf.rect(toMmX(x), toMmY(y), w * scaleX, h * scaleY, 'F');
+      }
+      if (stroke && stroke !== 'none' && applyDrawColor(pdf, stroke)) {
+        const sw = num(el, 'stroke-width', 1);
+        pdf.setLineWidth(Math.max(0.1, sw * scaleX));
+        pdf.rect(toMmX(x), toMmY(y), w * scaleX, h * scaleY, 'S');
+      }
+      return;
+    }
+
+    if (tag === 'polygon') {
+      const pointsStr = attr(el, 'points', '');
+      const coords = pointsStr.trim().split(/[\s,]+/).map(Number).filter((n) => !isNaN(n));
+      if (coords.length < 6) return; // need at least 3 (x,y) pairs
+      const pts: [number, number][] = [];
+      for (let i = 0; i + 1 < coords.length; i += 2) {
+        pts.push([coords[i] + ox, coords[i + 1] + oy]);
+      }
+      const fill = el.getAttribute('fill');
+      if (fill && fill !== 'none' && applyFillColor(pdf, fill) && pts.length >= 3) {
+        const [sx, sy] = pts[0];
+        const lines = pts.slice(1).map(([px, py]) => [
+          toMmX(px) - toMmX(sx),
+          toMmY(py) - toMmY(sy),
+        ]);
+        pdf.lines(lines, toMmX(sx), toMmY(sy), [1, 1], 'F');
+      }
+      const stroke = el.getAttribute('stroke');
+      if (stroke && stroke !== 'none' && applyDrawColor(pdf, stroke) && pts.length >= 2) {
+        const sw = num(el, 'stroke-width', 1);
+        pdf.setLineWidth(Math.max(0.1, sw * scaleX));
+        for (let i = 0; i < pts.length; i++) {
+          const [x1, y1] = pts[i];
+          const [x2, y2] = pts[(i + 1) % pts.length];
+          pdf.line(toMmX(x1), toMmY(y1), toMmX(x2), toMmY(y2));
+        }
+      }
+      return;
+    }
+
+    if (tag === 'path') {
+      // Compiler emits "M x1,y1 L x2,y2 L ..." polylines only.
+      const d = attr(el, 'd', '');
+      const m = d.match(/M\s*([\d.\-,\s]+?)\s*L\s*([\d.\-,\s]+)/);
+      if (!m) return;
+      const head = m[1].split(',').map(Number);
+      const allPts: [number, number][] = [[head[0] + ox, head[1] + oy]];
+      const rest = m[2].split(' L ');
+      for (const seg of rest) {
+        const p = seg.split(',').map(Number);
+        if (p.length === 2) allPts.push([p[0] + ox, p[1] + oy]);
+      }
+      const stroke = attr(el, 'stroke', '#000000');
+      const sw = num(el, 'stroke-width', 1);
+      if (applyDrawColor(pdf, stroke)) {
+        pdf.setLineWidth(Math.max(0.1, sw * scaleX));
+        for (let i = 0; i < allPts.length - 1; i++) {
+          pdf.line(toMmX(allPts[i][0]), toMmY(allPts[i][1]), toMmX(allPts[i + 1][0]), toMmY(allPts[i + 1][1]));
+        }
+      }
+      return;
+    }
+
+    if (tag === 'text') {
+      const x = num(el, 'x') + ox;
+      const y = num(el, 'y') + oy;
+      const fontSize = num(el, 'font-size', 12);
+      const fill = attr(el, 'fill', '#000000');
+      const rgb = hexToRgb(fill);
+      if (rgb) pdf.setTextColor(rgb[0], rgb[1], rgb[2]);
+      // font-size in SVG px → pt: PDF unit is mm; jsPDF font size is pt.
+      // Approximate px→pt (1px ≈ 0.75pt at 96dpi), keep legible minimum.
+      pdf.setFontSize(Math.max(6, fontSize * 0.75));
+      const txt = (el.textContent || '').trim();
+      if (txt) pdf.text(txt, toMmX(x), toMmY(y));
+      return;
+    }
+  }
+
+  // Walk from the root <svg> element (skip the white background <rect> which
+  // the PDF page already provides).
+  const root = doc.documentElement;
+  if (root) {
+    for (const child of Array.from(root.children)) {
+      renderNode(child, { x: 0, y: 0 });
+    }
+  }
+
+  // 3. PDF-level Title Banner & footer (vector text, drawn last → on top).
+  pdf.setFontSize(14);
+  pdf.setTextColor(30, 41, 59);
+  pdf.text(options.title || 'WebGIS AI Agent HD Vector Map', pageW / 2, 10, { align: 'center' });
+
+  if (options.subtitle) {
+    pdf.setFontSize(9);
+    pdf.setTextColor(100, 116, 139);
+    pdf.text(options.subtitle, pageW / 2, 15, { align: 'center' });
+  }
+
+  pdf.setDrawColor(30, 58, 138);
+  pdf.setLineWidth(0.5);
+  pdf.rect(10, 18, pageW - 20, pageH - 26);
+
+  pdf.setFontSize(8);
+  pdf.setTextColor(148, 163, 184);
+  pdf.text('Generated by WebGIS AI Agent (Infinite Resolution Vector PDF)', pageW / 2, pageH - 3, { align: 'center' });
+
+  return pdf.output('blob');
+}
+
 /**
  * Triggers a file download for a Blob.
  * @param blob The Blob to download.

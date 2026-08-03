@@ -65,7 +65,7 @@ class WebgisRuntimeValidateArgs(BaseModel):
   pass
 
 
-def register_cartography_harness_tools(registry: ToolRegistry) -> None:
+def register_cartography_tools(registry: ToolRegistry) -> None:
   """注册 MapSpec Harness 规范化 webgis_* 工具。"""
 
   @tool(
@@ -284,4 +284,3 @@ def register_cartography_harness_tools(registry: ToolRegistry) -> None:
     if not session_id:
       return {"success": False, "message": "Missing session_id"}
     return await runtime_validator.validate_runtime(session_id)
-

@@ -2,9 +2,11 @@
 SpatialAnalyzer: Unified spatial analysis engine and operator execution seam.
 Supports standardized GeoAnalysisResult payloads across all spatial operations.
 """
+import hashlib
 import json
 import logging
 import re
+from collections import OrderedDict
 from typing import Dict, List, Any, Optional, Callable
 
 from app.lib.geo_processor.core import GeoAnalysisResult, to_utm_gdf, to_feature_collection
@@ -27,20 +29,12 @@ from app.lib.geo_analysis.geometry_ops import (
     convex_hull as _convex_hull,
     multi_ring_buffer as _multi_ring_buffer,
 )
+from app.services.spatial_operator import spatial_operator
 
 logger = logging.getLogger(__name__)
 
-
-# ADR-0009: analysis-result identity is GeoAnalysisResult itself — there is no
-# second consumer justifying a separate interface. Candidate #3's "AnalysisResult
-# class alias" therefore names a *type alias*, not a wrapper subclass: an earlier
-# `class AnalysisResult(GeoAnalysisResult)` only delegated by identity (Middle Man)
-# and was never instantiated, so it has been flattened to the alias the spec named.
 AnalysisResult = GeoAnalysisResult
 
-
-# ADR-0037 Win 5: backward-compat alias for the old private name, which the test
-# suite imports. to_feature_collection now lives in geo_processor/core.py.
 _to_feature_collection = to_feature_collection
 
 
@@ -55,23 +49,23 @@ class SpatialAnalyzer:
     """
 
     @classmethod
+    @spatial_operator(name="Recognize vector data", progress_pct=10)
     def recognize_vector_data(
         cls,
         features: Any,
         auto_repair: bool = True,
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
-        if callback: callback(10, "Recognizing vector data...")
-        fc = to_feature_collection(features)
-        res = to_utm_gdf(fc)
+        res = to_utm_gdf(features)
         if not res:
              return GeoAnalysisResult(False, None, "Invalid vector data")
         
         gdf, utm_crs = res
         summary = f"Recognized {len(gdf)} features with CRS {utm_crs}."
-        return GeoAnalysisResult(True, fc, summary)
+        return GeoAnalysisResult(True, features, summary)
 
     @classmethod
+    @spatial_operator(name="buffer")
     def buffer(
         cls, 
         features: Any,
@@ -81,10 +75,8 @@ class SpatialAnalyzer:
         callback: Optional[Callable] = None,
         source_crs: Optional[str] = None
     ) -> GeoAnalysisResult:
-        if callback: callback(20, "Executing buffer analysis...")
-        fc = to_feature_collection(features)
         return buffer_smart(
-            geojson=fc,
+            geojson=features,
             distance=distance,
             unit=unit,
             dissolve=dissolve,
@@ -92,17 +84,17 @@ class SpatialAnalyzer:
         )
 
     @classmethod
+    @spatial_operator(name="clip")
     def clip(
         cls,
         features: Any,
         boundary: Dict,
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
-        if callback: callback(20, "Executing clip analysis...")
-        fc = to_feature_collection(features)
-        return clip_smart(fc, boundary)
+        return clip_smart(features, boundary)
 
     @classmethod
+    @spatial_operator(name="overlay", feature_keys=["features_a", "features_b"])
     def overlay(
         cls,
         features_a: Any,
@@ -110,12 +102,8 @@ class SpatialAnalyzer:
         how: str = "intersection",
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
-        if callback: callback(20, f"Executing {how} overlay...")
-        layer_a = to_feature_collection(features_a)
-        layer_b = to_feature_collection(features_b)
-        return overlay_smart(layer_a, layer_b, how)
+        return overlay_smart(features_a, features_b, how)
 
-    # Whitelist: identifiers, numbers, strings, comparison/logical operators, parens, brackets
     _SAFE_QUERY_RE = re.compile(
         r"^[\w\s.\'\":<>=!(),\[\]-]+$"
     )
@@ -127,7 +115,6 @@ class SpatialAnalyzer:
 
     @classmethod
     def _validate_query(cls, query: str) -> Optional[str]:
-        """Return error message if query is unsafe, None if safe."""
         if not cls._SAFE_QUERY_RE.match(query):
             return f"Unsafe query: disallowed characters in '{query}'"
         if "__" in query:
@@ -139,6 +126,7 @@ class SpatialAnalyzer:
         return None
 
     @classmethod
+    @spatial_operator(name="attribute_filter")
     def attribute_filter(
         cls,
         features: Any,
@@ -148,18 +136,15 @@ class SpatialAnalyzer:
         validation_error = cls._validate_query(query)
         if validation_error:
             return GeoAnalysisResult(False, None, validation_error)
-        fc = to_feature_collection(features)
-        feat_list = fc.get("features", [])
-        try:
-            import geopandas as gpd
-            gdf = gpd.GeoDataFrame.from_features(feat_list)
-            filtered_gdf = gdf.query(query)
-            summary = f"Filtered {len(feat_list)} features to {len(filtered_gdf)} using query: {query}"
-            return GeoAnalysisResult(True, filtered_gdf.__geo_interface__, summary)
-        except Exception as e:
-            return GeoAnalysisResult(False, None, f"Filter failed: {str(e)}")
+        feat_list = features.get("features", [])
+        import geopandas as gpd
+        gdf = gpd.GeoDataFrame.from_features(feat_list)
+        filtered_gdf = gdf.query(query)
+        summary = f"Filtered {len(feat_list)} features to {len(filtered_gdf)} using query: {query}"
+        return GeoAnalysisResult(True, filtered_gdf.__geo_interface__, summary)
 
     @classmethod
+    @spatial_operator(name="statistics")
     def statistics(
         cls,
         features: Any,
@@ -167,25 +152,22 @@ class SpatialAnalyzer:
         spatial_stats: bool = False,
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
-        fc = to_feature_collection(features)
         if spatial_stats:
              if field:
-                 return moran_i_narrated(fc, field)
+                 return moran_i_narrated(features, field)
              else:
-                 return calculate_sde(fc)
+                 return calculate_sde(features)
         
-        feat_list = fc.get("features", [])
-        try:
-            import pandas as pd
-            df = pd.DataFrame([f["properties"] for f in feat_list if isinstance(f, dict) and "properties" in f])
-            if field and field in df.columns:
-                stats = df[field].describe().to_dict()
-                return GeoAnalysisResult(True, {"stats": stats}, f"Statistics for {field}: {stats}")
-            return GeoAnalysisResult(True, {"count": len(feat_list)}, f"Total features: {len(feat_list)}")
-        except Exception as e:
-            return GeoAnalysisResult(False, None, str(e))
+        feat_list = features.get("features", [])
+        import pandas as pd
+        df = pd.DataFrame([f["properties"] for f in feat_list if isinstance(f, dict) and "properties" in f])
+        if field and field in df.columns:
+            stats = df[field].describe().to_dict()
+            return GeoAnalysisResult(True, {"stats": stats}, f"Statistics for {field}: {stats}")
+        return GeoAnalysisResult(True, {"count": len(feat_list)}, f"Total features: {len(feat_list)}")
 
     @classmethod
+    @spatial_operator(name="cluster")
     def cluster(
         cls,
         features: Any,
@@ -196,9 +178,8 @@ class SpatialAnalyzer:
         value_field: str = "",
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
-        fc = to_feature_collection(features)
         return cluster_narrated(
-            fc,
+            features,
             method=method,
             n_clusters=n_clusters,
             eps=eps,
@@ -207,16 +188,17 @@ class SpatialAnalyzer:
         )
 
     @classmethod
+    @spatial_operator(name="central_feature")
     def central_feature(
         cls,
         features: Any,
         method: str = "mean_center",
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
-        fc = to_feature_collection(features)
-        return calculate_central_feature(fc, method)
+        return calculate_central_feature(features, method)
 
     @classmethod
+    @spatial_operator(name="aggregate", feature_keys=["points", "polygons"])
     def aggregate(
         cls,
         points: Any,
@@ -225,28 +207,27 @@ class SpatialAnalyzer:
         value_field: Optional[str] = None,
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
-        fc_points = to_feature_collection(points)
-        fc_polygons = to_feature_collection(polygons)
         return spatial_aggregate(
-            fc_points,
-            fc_polygons,
+            points,
+            polygons,
             stats=stats,
             value_field=value_field
         )
 
     @classmethod
+    @spatial_operator(name="nearest", feature_keys=["source_features", "target_features"])
     def nearest(
         cls,
         source_features: Any,
         target_features: Any = None,
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
-        fc_source = to_feature_collection(source_features)
         if not target_features:
-            return calculate_nearest(fc_source)
+            return calculate_nearest(source_features)
         return GeoAnalysisResult(False, None, "Cross-layer nearest neighbor not yet implemented")
 
     @classmethod
+    @spatial_operator(name="KDE surface")
     def kde_surface(
         cls,
         features: Any,
@@ -256,12 +237,11 @@ class SpatialAnalyzer:
         bounds: Optional[list] = None,
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
-        if callback: callback(20, "Executing KDE surface analysis...")
-        fc = to_feature_collection(features)
-        return _kde_surface(fc, bandwidth=bandwidth, cell_size=cell_size,
+        return _kde_surface(features, bandwidth=bandwidth, cell_size=cell_size,
                              value_field=value_field, bounds=bounds)
 
     @classmethod
+    @spatial_operator(name="KDE contour")
     def kde_contours(
         cls,
         features: Any,
@@ -269,33 +249,30 @@ class SpatialAnalyzer:
         bandwidth: float = 0,
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
-        if callback: callback(20, "Executing KDE contour analysis...")
-        fc = to_feature_collection(features)
-        return _kde_contours(fc, levels=levels, bandwidth=bandwidth)
+        return _kde_contours(features, levels=levels, bandwidth=bandwidth)
 
     @classmethod
+    @spatial_operator(name="Voronoi tessellation")
     def voronoi_polygons(
         cls,
         features: Any,
         clip_bounds: Optional[list] = None,
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
-        if callback: callback(20, "Executing Voronoi tessellation...")
-        fc = to_feature_collection(features)
-        return _voronoi_polygons(fc, clip_bounds=clip_bounds)
+        return _voronoi_polygons(features, clip_bounds=clip_bounds)
 
     @classmethod
+    @spatial_operator(name="convex hull")
     def convex_hull(
         cls,
         features: Any,
         group_by: str = "",
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
-        if callback: callback(20, "Executing convex hull...")
-        fc = to_feature_collection(features)
-        return _convex_hull(fc, group_by=group_by)
+        return _convex_hull(features, group_by=group_by)
 
     @classmethod
+    @spatial_operator(name="multi-ring buffer")
     def multi_ring_buffer(
         cls,
         features: Any,
@@ -303,11 +280,10 @@ class SpatialAnalyzer:
         merge_rings: bool = True,
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
-        if callback: callback(20, "Executing multi-ring buffer...")
-        fc = to_feature_collection(features)
-        return _multi_ring_buffer(fc, distances=distances, merge_rings=merge_rings)
+        return _multi_ring_buffer(features, distances=distances, merge_rings=merge_rings)
 
     @classmethod
+    @spatial_operator(name="hotspot")
     def hotspot(
         cls,
         features: Any,
@@ -315,24 +291,20 @@ class SpatialAnalyzer:
         distance_band: float = 0,
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
-        """Getis-Ord Gi* hotspot analysis (route through SpatialAnalyzer)."""
-        if callback: callback(20, "Executing hotspot analysis...")
-        fc = to_feature_collection(features)
-        return hotspot_narrated(fc, value_field, distance_band)
+        return hotspot_narrated(features, value_field, distance_band)
 
     @classmethod
+    @spatial_operator(name="LISA")
     def lisa(
         cls,
         features: Any,
         value_field: str,
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
-        """H3-grid LISA local spatial autocorrelation (route through SpatialAnalyzer)."""
-        if callback: callback(20, "Executing LISA analysis...")
-        fc = to_feature_collection(features)
-        return h3_lisa(fc, value_field)
+        return h3_lisa(features, value_field)
 
     @classmethod
+    @spatial_operator(name="spatial join", feature_keys=["left_features", "right_features"])
     def spatial_join(
         cls,
         left_features: Any,
@@ -341,33 +313,25 @@ class SpatialAnalyzer:
         predicate: str = "intersects",
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
-        """Perform spatial join between left and right feature collections."""
-        if callback: callback(20, f"Executing {join_type} spatial join with {predicate}...")
-        fc_left = to_feature_collection(left_features)
-        fc_right = to_feature_collection(right_features)
-        feats_left = fc_left.get("features", [])
-        feats_right = fc_right.get("features", [])
+        feats_left = left_features.get("features", [])
+        feats_right = right_features.get("features", [])
 
         if not feats_left or not feats_right:
             return GeoAnalysisResult(False, None, "Empty features in left or right layer for spatial join")
 
-        try:
-            import geopandas as gpd
-            gdf_left = gpd.GeoDataFrame.from_features(feats_left, crs="EPSG:4326")
-            gdf_right = gpd.GeoDataFrame.from_features(feats_right, crs="EPSG:4326")
+        import geopandas as gpd
+        gdf_left = gpd.GeoDataFrame.from_features(feats_left, crs="EPSG:4326")
+        gdf_right = gpd.GeoDataFrame.from_features(feats_right, crs="EPSG:4326")
 
-            joined = gpd.sjoin(gdf_left, gdf_right, how=join_type, predicate=predicate)
-            if "index_right" in joined.columns:
-                joined = joined.drop(columns=["index_right"])
+        joined = gpd.sjoin(gdf_left, gdf_right, how=join_type, predicate=predicate)
+        if "index_right" in joined.columns:
+            joined = joined.drop(columns=["index_right"])
 
-            summary = f"Joined {len(feats_left)} left features with {len(feats_right)} right features using predicate '{predicate}' ({join_type} join)."
-            return GeoAnalysisResult(True, json.loads(joined.to_json()), summary)
-        except Exception as e:
-            return GeoAnalysisResult(False, None, f"Spatial join failed: {str(e)}")
+        summary = f"Joined {len(feats_left)} left features with {len(feats_right)} right features using predicate '{predicate}' ({join_type} join)."
+        return GeoAnalysisResult(True, json.loads(joined.to_json()), summary)
 
     @classmethod
     def _prepare_raster_paths(cls, paths: List[str]) -> tuple[Optional[List[str]], Optional[GeoAnalysisResult]]:
-        """Validate raster data paths to prevent path traversal and VFS abuse."""
         from app.utils.path import validate_data_path
         validated = []
         for p in paths:
@@ -382,35 +346,26 @@ class SpatialAnalyzer:
         return validated, None
 
     @classmethod
+    @spatial_operator(name="zonal statistics")
     def zonal_stats(
         cls,
         features: Any,
         raster_path: str,
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
-        """Compute zonal statistics for vector polygons against a raster surface."""
-        if callback: callback(20, "Executing zonal statistics...")
         validated_paths, err_res = cls._prepare_raster_paths([raster_path])
         if err_res:
             return err_res
         valid_path = validated_paths[0]
 
-        fc = to_feature_collection(features)
-        feat_list = fc.get("features", [])
+        feat_list = features.get("features", [])
         if not feat_list:
             return GeoAnalysisResult(False, None, "No features provided for zonal statistics")
 
         from app.lib.geo_analysis.raster_ops import zonal_statistics
         from app.lib.geo_analysis.raster_math import rasterio_env
-        try:
-            with rasterio_env():
-                stats = zonal_statistics({"type": "FeatureCollection", "features": feat_list}, valid_path)
-        except Exception as e:
-            return GeoAnalysisResult(
-                False, None,
-                f"raster_path '{raster_path}' 无法打开: {e}",
-                error_type="RasterError"
-            )
+        with rasterio_env():
+            stats = zonal_statistics({"type": "FeatureCollection", "features": feat_list}, valid_path)
 
         for i, s in enumerate(stats):
             if i < len(feat_list):
@@ -424,6 +379,7 @@ class SpatialAnalyzer:
         )
 
     @classmethod
+    @spatial_operator(name="raster reclassification")
     def raster_reclassify(
         cls,
         raster_path: str,
@@ -431,23 +387,19 @@ class SpatialAnalyzer:
         nodata: Optional[float] = None,
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
-        """Reclassify continuous raster values according to a scheme."""
-        if callback: callback(20, "Executing raster reclassification...")
         validated_paths, err_res = cls._prepare_raster_paths([raster_path])
         if err_res:
             return err_res
         valid_path = validated_paths[0]
 
         from app.lib.geo_analysis.raster_math import reclassify, rasterio_env
-        try:
-            with rasterio_env():
-                result = reclassify(valid_path, scheme, nodata)
-            summary = f"Reclassified raster {raster_path} into {len(scheme)} classes."
-            return GeoAnalysisResult(True, result, summary)
-        except Exception as e:
-            return GeoAnalysisResult(False, None, f"重分类失败: {e}", error_type="RasterError")
+        with rasterio_env():
+            result = reclassify(valid_path, scheme, nodata)
+        summary = f"Reclassified raster {raster_path} into {len(scheme)} classes."
+        return GeoAnalysisResult(True, result, summary)
 
     @classmethod
+    @spatial_operator(name="raster calculation")
     def raster_calculator(
         cls,
         raster_a: str,
@@ -457,29 +409,25 @@ class SpatialAnalyzer:
         nodata: Optional[float] = None,
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
-        """Execute pixel-level math operations across one or two rasters."""
-        if callback: callback(20, f"Executing raster calculation: {expression}...")
         raw_paths = [raster_a] + ([raster_b] if raster_b else [])
         validated_paths, err_res = cls._prepare_raster_paths(raw_paths)
         if err_res:
             return err_res
 
         from app.lib.geo_analysis.raster_math import raster_calculator, rasterio_env
-        try:
-            with rasterio_env():
-                result = raster_calculator(
-                    validated_paths[0],
-                    validated_paths[1] if len(validated_paths) > 1 else None,
-                    expression,
-                    constant,
-                    nodata,
-                )
-            summary = f"Raster calculator operation '{expression}' completed."
-            return GeoAnalysisResult(True, result, summary)
-        except Exception as e:
-            return GeoAnalysisResult(False, None, f"栅格计算失败: {e}", error_type="RasterError")
+        with rasterio_env():
+            result = raster_calculator(
+                validated_paths[0],
+                validated_paths[1] if len(validated_paths) > 1 else None,
+                expression,
+                constant,
+                nodata,
+            )
+        summary = f"Raster calculator operation '{expression}' completed."
+        return GeoAnalysisResult(True, result, summary)
 
     @classmethod
+    @spatial_operator(name="raster resampling")
     def raster_resample(
         cls,
         raster_path: str,
@@ -488,22 +436,18 @@ class SpatialAnalyzer:
         resampling: str = "bilinear",
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
-        """Resample raster pixel resolution and/or reproject CRS."""
-        if callback: callback(20, f"Executing raster resampling to {target_resolution}...")
         validated_paths, err_res = cls._prepare_raster_paths([raster_path])
         if err_res:
             return err_res
 
         from app.lib.geo_analysis.raster_math import resample_raster, rasterio_env
-        try:
-            with rasterio_env():
-                result = resample_raster(validated_paths[0], target_resolution, target_crs, resampling)
-            summary = f"Resampled raster {raster_path} to resolution {target_resolution} ({resampling})."
-            return GeoAnalysisResult(True, result, summary)
-        except Exception as e:
-            return GeoAnalysisResult(False, None, f"重采样失败: {e}", error_type="RasterError")
+        with rasterio_env():
+            result = resample_raster(validated_paths[0], target_resolution, target_crs, resampling)
+        summary = f"Resampled raster {raster_path} to resolution {target_resolution} ({resampling})."
+        return GeoAnalysisResult(True, result, summary)
 
     @classmethod
+    @spatial_operator(name="isochrone", feature_keys=["network_features", "facilities"])
     def isochrone_network(
         cls,
         network_features: Any,
@@ -512,11 +456,40 @@ class SpatialAnalyzer:
         mode: str = "walking",
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
-        """Compute network-based travel time isochrone polygon reachable areas."""
-        if callback: callback(20, f"Executing {travel_time}-min {mode} isochrone analysis...")
-        fc_net = to_feature_collection(network_features)
-        fc_facs = to_feature_collection(facilities)
-        return calculate_isochrones(fc_net, fc_facs, travel_time, mode)
+        return calculate_isochrones(network_features, facilities, travel_time, mode)
+
+    # ── ST-DBSCAN Pairwise Distance Matrix LRU Cache Accessors ──
+    @classmethod
+    def clear_st_dbscan_cache(cls) -> None:
+        """Clear the ST-DBSCAN pairwise distance matrix LRU cache."""
+        from app.lib.geo_analysis.statistics import clear_distance_matrix_cache
+        clear_distance_matrix_cache()
+
+    @classmethod
+    def get_st_dbscan_cache_info(cls) -> Dict[str, Any]:
+        """Return distance matrix cache hits, misses, current size, and maxsize."""
+        from app.lib.geo_analysis.statistics import get_distance_matrix_cache_info
+        return get_distance_matrix_cache_info()
+
+    @classmethod
+    @spatial_operator(name="st_dbscan")
+    def st_dbscan(
+        cls,
+        features: Any,
+        eps1_spatial_meters: float = 1000.0,
+        eps2_temporal_seconds: float = 3600.0,
+        min_samples: int = 5,
+        timestamp_field: str = "timestamp",
+        callback: Optional[Callable] = None,
+    ) -> GeoAnalysisResult:
+        from app.lib.geo_analysis.statistics import st_dbscan_narrated
+        return st_dbscan_narrated(
+            features,
+            eps1_spatial_meters=eps1_spatial_meters,
+            eps2_temporal_seconds=eps2_temporal_seconds,
+            min_samples=min_samples,
+            timestamp_field=timestamp_field,
+        )
 
 
 __all__ = ["SpatialAnalyzer", "AnalysisResult"]

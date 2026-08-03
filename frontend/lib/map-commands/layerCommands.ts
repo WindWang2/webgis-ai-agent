@@ -202,7 +202,7 @@ export const layerCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { map, params } = ctx;
       const { layer_id, position, before_id } = params || {};
-      if (!layer_id || !position) return;
+      if (!layer_id || typeof layer_id !== 'string' || !layer_id.trim() || layer_id === 'ref:' || layer_id === 'custom-' || !position) return;
       const style = map.getStyle();
       const allLayers = style.layers || [];
       const subIds = allLayers

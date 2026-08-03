@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
 
@@ -32,6 +33,8 @@ from pydantic import BaseModel
 
 from app.utils.sse import sse_event
 from app.services.tool_dispatch_service import ToolDispatchService
+from app.lib.harness.pi_agent_harness import PiAgentHarness
+from app.lib.harness.tool_call_event import ToolCallEvent
 
 logger = logging.getLogger(__name__)
 
@@ -184,10 +187,48 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     service = ToolDispatchService(registry=registry)
     tc = {"id": request.toolCallId, "function": {"name": tool_name, "arguments": request.arguments or {}}}
     executed = _session_executed_sets.setdefault(request.sessionId or "", set())
-    result = await service.dispatch(tc, request.sessionId or "", executed)
+
+    # P1 fix: time the dispatch, record telemetry on BOTH the success and the
+    # exception path (previously an exception skipped recording entirely),
+    # and truncate error_msg so a multi-KB llm_payload doesn't flood telemetry.
+    t0 = time.monotonic()
+    try:
+        result = await service.dispatch(tc, request.sessionId or "", executed)
+    except Exception as exc:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        if _harness is not None:
+            err_msg = str(exc)[:200]
+            _harness.record_event(ToolCallEvent(
+                tool_call_id=request.toolCallId,
+                tool_name=request.name,
+                arguments=request.arguments or {},
+                duration_ms=duration_ms,
+                is_error=True,
+                error_msg=err_msg,
+                result={},
+                session_id=request.sessionId,
+            ))
+        raise
+
+    duration_ms = int((time.monotonic() - t0) * 1000)
 
     # 缓存供 SSE 适配器读取
     cache_dispatch_result(request.sessionId, request.toolCallId, result)
+
+    if _harness is not None:
+        is_error = result.status == "error"
+        event = ToolCallEvent(
+            tool_call_id=request.toolCallId,
+            tool_name=request.name,
+            arguments=request.arguments or {},
+            duration_ms=duration_ms,
+            is_error=is_error,
+            # P1 fix: truncate to a short message rather than the full payload.
+            error_msg=(result.llm_payload[:200] if is_error else ""),
+            result={"status": result.status, "llm_payload_len": len(result.llm_payload)},
+            session_id=request.sessionId,
+        )
+        _harness.record_event(event)
 
     return PiToolResponse(
         toolCallId=request.toolCallId,
@@ -199,6 +240,18 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
 
 # 每个 session 的已执行工具集合，供重复调用拦截（service 接受外部 set）。
 _session_executed_sets: dict[str, set[tuple[str, str]]] = {}
+
+
+# ── Optional evaluation harness (opt-in via PI_HARNESS_ENABLED=true) ──
+_harness: Optional[PiAgentHarness] = None
+if os.getenv("PI_HARNESS_ENABLED", "").lower() in ("true", "1", "yes"):
+    _harness = PiAgentHarness(session_id="production")
+    logger.info("[PiBridge] Evaluation harness enabled for production telemetry")
+
+
+def get_harness() -> Optional[PiAgentHarness]:
+    """Return the active evaluation harness, or None if disabled."""
+    return _harness
 
 
 # ── PiBridge: thin orchestrator (holds PiRpcClient + delegates mapping) ──────
@@ -347,6 +400,8 @@ class PiBridge:
             try:
                 event = await asyncio.wait_for(self._rpc.events.get(), timeout=PI_EVENT_STREAM_TIMEOUT)
                 sse = map_event_to_sse(event, self._session_id, cache_lookup=get_cached_dispatch_result)
+                if _harness is not None:
+                    _harness.record_sse_event(event)
                 if sse:
                     yield sse
                 if event.get("type") == "agent_end":

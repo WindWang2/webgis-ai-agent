@@ -96,6 +96,7 @@ class ToolCatalog:
         self.sticky_ttl = max(0, sticky_ttl)
         # session_id -> {domain -> 剩余轮次}
         self._sticky: dict[str, dict[str, int]] = {}
+        self._MAX_STICKY_SESSIONS = 500
 
     # ─── 公共接口 ──────────────────────────────────────────────
 
@@ -142,6 +143,13 @@ class ToolCatalog:
         """清掉会话粘性（清理会话时调用）。"""
         self._sticky.pop(session_id, None)
 
+    def decay_sticky_domain(self, session_id: str) -> None:
+        """手动衰减一轮会话 sticky domain TTL（plan_orchestrator 步骤完成后调用）。"""
+        sticky = self._sticky.get(session_id)
+        if not sticky:
+            return
+        self._sticky[session_id] = {d: t - 1 for d, t in sticky.items() if t - 1 > 0}
+
     # ─── 内部 ──────────────────────────────────────────────────
 
     @staticmethod
@@ -170,6 +178,12 @@ class ToolCatalog:
         fresh = self.detect_domains(user_message or "")
         if not session_id or self.sticky_ttl == 0:
             return fresh
+
+        # F-08: evict oldest sessions when sticky cache exceeds cap
+        if len(self._sticky) > self._MAX_STICKY_SESSIONS:
+            evict_count = self._MAX_STICKY_SESSIONS // 4
+            for sid in list(self._sticky.keys())[:evict_count]:
+                del self._sticky[sid]
 
         sticky = self._sticky.get(session_id, {})
         # 先衰减一轮

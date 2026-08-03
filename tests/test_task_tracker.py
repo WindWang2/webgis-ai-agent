@@ -179,6 +179,61 @@ class TestTaskTracker:
 
         assert tracker.is_cancelled(task.id) is True
 
+    @pytest.mark.asyncio
+    async def test_track_step_success(self):
+        """测试 track_step 成功完成步骤"""
+        from app.services.task_tracker import TaskTracker, StepStatus
+
+        tracker = TaskTracker()
+        task = tracker.create("session-1", "测试请求")
+
+        async with tracker.track_step(task.id, "query_osm", {"city": "北京"}) as step:
+            assert step is not None
+            assert step.id == "step-1"
+            assert step.tool == "query_osm"
+            step.result = {"count": 42}
+
+        assert task.steps[0].status == StepStatus.completed
+        assert task.steps[0].result == {"count": 42}
+
+    @pytest.mark.asyncio
+    async def test_track_step_exception(self):
+        """测试 track_step 抛出异常自动标记失败"""
+        from app.services.task_tracker import TaskTracker, StepStatus
+
+        tracker = TaskTracker()
+        task = tracker.create("session-1", "测试请求")
+
+        with pytest.raises(RuntimeError, match="API Error"):
+            async with tracker.track_step(task.id, "query_osm", {}) as step:
+                raise RuntimeError("API Error")
+
+        assert task.steps[0].status == StepStatus.failed
+        assert "API Error" in task.steps[0].error
+
+    @pytest.mark.asyncio
+    async def test_track_step_null_task_id_noop(self):
+        """测试 track_step 在 task_id 为 None 时作为 no-op 允许代码正常运行"""
+        from app.services.task_tracker import TaskTracker
+
+        tracker = TaskTracker()
+        async with tracker.track_step(None, "query_osm", {}) as step:
+            assert step is None
+
+    @pytest.mark.asyncio
+    async def test_track_step_manual_error_flag(self):
+        """测试在 track_step 内手动标记 step.error"""
+        from app.services.task_tracker import TaskTracker, StepStatus
+
+        tracker = TaskTracker()
+        task = tracker.create("session-1", "测试请求")
+
+        async with tracker.track_step(task.id, "query_osm", {}) as step:
+            step.error = "Domain error without python exception"
+
+        assert task.steps[0].status == StepStatus.failed
+        assert task.steps[0].error == "Domain error without python exception"
+
 
 class TestTaskModels:
     """Task 模型测试"""

@@ -34,16 +34,18 @@ async def _verify_session_owner(
 async def get_session_layer_data(
     ref_id: str,
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _conv: Conversation = Depends(require_owned_session),
 ):
-    """通过引用 ID 获取会话缓存中的大数据对象（如分析产生的 GeoJSON）。"""
+    """通过引用 ID 或别名获取会话缓存中的大数据对象（如分析产生的 GeoJSON）。"""
     if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
         raise HTTPException(status_code=400, detail="非法 ref_id")
-    # 审计 S32 / SEC-08: 校验通过 Depends(require_owned_session) 完成
-    data = await session_data_manager.get(session_id, ref_id)
-    if not data:
-        raise HTTPException(status_code=404, detail="数据已过期或不存在")
-    return data
+
+    res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
+    if not res.success:
+        status_code = 403 if res.error_type == "PermissionDenied" else 404
+        raise HTTPException(status_code=status_code, detail=res.error or "数据不可用")
+    return res.data
 
 
 @router.get("/layer-types", tags=["元数据"])

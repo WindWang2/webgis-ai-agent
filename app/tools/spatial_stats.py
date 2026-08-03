@@ -181,3 +181,26 @@ def register_spatial_stats_tools(registry: ToolRegistry):
     def h3_lisa(h3_geojson: Any, value_field: str) -> dict:
         res = SpatialAnalyzer.lisa(h3_geojson, value_field)
         return res.to_llm_response()
+
+    @tool(registry, name="st_dbscan",
+           description="时空聚类分析（ST-DBSCAN）：结合空间距离(eps1_spatial_meters)和时间间隔(eps2_temporal_seconds)识别时空事件的聚类簇与噪声点。",
+           tier=2, domains=["statistics"],
+           param_descriptions={
+               "geojson": "包含时间戳(ISO-8601或Epoch)的点要素集 GeoJSON 数据或引用(ref:xxx)",
+               "eps1_spatial_meters": "空间距离半径（米），默认 1000.0",
+               "eps2_temporal_seconds": "时间间隔阈值（秒），默认 3600.0",
+               "min_samples": "形成聚类簇所需的最小点数，默认 5",
+               "timestamp_field": "包含时间戳信息的属性字段名称，默认 'timestamp'",
+           })
+    def st_dbscan(geojson: Any, eps1_spatial_meters: float = 1000.0,
+                  eps2_temporal_seconds: float = 3600.0, min_samples: int = 5,
+                  timestamp_field: str = "timestamp") -> dict:
+        data = safe_parse_geojson(geojson)
+        res = SpatialAnalyzer.st_dbscan(
+            data,
+            eps1_spatial_meters=eps1_spatial_meters,
+            eps2_temporal_seconds=eps2_temporal_seconds,
+            min_samples=min_samples,
+            timestamp_field=timestamp_field,
+        )
+        return res.to_llm_response()

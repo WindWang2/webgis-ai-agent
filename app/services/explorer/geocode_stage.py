@@ -32,16 +32,12 @@ from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
-# Default provider fallback order, mirroring the prior inline literal. Kept as
-# a module constant so the task and tests can reference/override one source of
-# truth rather than re-hardcoding the list.
-DEFAULT_PROVIDERS: list[str] = ["amap", "baidu", "tianditu"]
-
-# Rotate to the next provider when the per-batch failure rate exceeds this.
-PROVIDER_FAILURE_THRESHOLD = 0.30
-
-# Rows are geocoded in batches of this size (matches the prior inline literal).
-BATCH_SIZE = 100
+from app.services.geocode_strategy import (
+    DEFAULT_PROVIDERS,
+    PROVIDER_FAILURE_THRESHOLD,
+    BATCH_SIZE,
+    GeocodeProviderStrategy,
+)
 
 
 @dataclass
@@ -226,107 +222,25 @@ async def _geocode_chunk(
     failed addresses are retried against the next provider, and ``flag`` is
     set to signal that a rotation occurred.
     """
-    for batch_start in range(0, len(chunk), BATCH_SIZE):
-        batch = chunk[batch_start:batch_start + BATCH_SIZE]
-        pending = list(range(len(batch)))  # indices into batch
-        provider_idx = 0
-
-        while pending and provider_idx < len(providers):
-            provider = providers[provider_idx]
-            addresses = [batch[i][1] for i in pending]
-
-            result = await batch_geocode(
-                addresses, provider=provider, max_concurrency=3
-            )
-
-            # Complete provider failure (no results, no per-row errors): rotate.
-            if "error" in result and not result.get("results") and not result.get("errors"):
-                provider_idx += 1
-                flag.hit = True
-                continue
-
-            # Map results/errors back by index within the current addresses list.
-            # result["index"] is position in `addresses`; translate to batch idx.
-            success_by_idx: dict[int, dict] = {}
-            for r in result.get("results", []):
-                batch_idx = pending[r["index"]]
-                success_by_idx[batch_idx] = r
-            error_by_idx: dict[int, dict] = {}
-            for e in result.get("errors", []):
-                batch_idx = pending[e["index"]]
-                error_by_idx[batch_idx] = e
-
-            failed_this_attempt: list[int] = []
-            for p_idx in pending:
-                if p_idx in success_by_idx:
-                    r = success_by_idx[p_idx]
-                    row_idx = batch[p_idx][0]
-                    row = rows[row_idx]
-
-                    # Extract coordinates: prefer result["results"][0]["location"]
-                    # (a [lon, lat] pair); fall back to top-level lat/lon.
-                    lat: float | None = None
-                    lon: float | None = None
-                    results_list = r.get("results")
-                    if results_list and len(results_list) > 0:
-                        loc = results_list[0].get("location")
-                        if loc and len(loc) == 2:
-                            lon, lat = loc[0], loc[1]
-                    if lat is None:
-                        lat = r.get("lat")
-                    if lon is None:
-                        lon = r.get("lon")
-
-                    if lat is not None and lon is not None:
-                        row["_lat"] = lat
-                        row["_lon"] = lon
-                        row["_geocode_status"] = "ok"
-                        row["_geocode_provider"] = provider
-                        row["_geocode_error"] = None
-                    else:
-                        failed_this_attempt.append(p_idx)
-                else:
-                    failed_this_attempt.append(p_idx)
-
-            failure_rate = (
-                len(failed_this_attempt) / len(pending) if pending else 0
-            )
-            if (
-                failure_rate > PROVIDER_FAILURE_THRESHOLD
-                and failed_this_attempt
-                and provider_idx < len(providers) - 1
-            ):
-                flag.hit = True
-                pending = failed_this_attempt
-                provider_idx += 1
-            else:
-                # Mark remaining as failed.
-                for p_idx in failed_this_attempt:
-                    row_idx = batch[p_idx][0]
-                    row = rows[row_idx]
-                    row["_lat"] = None
-                    row["_lon"] = None
-                    row["_geocode_status"] = "failed"
-                    row["_geocode_provider"] = provider
-                    if provider_idx == len(providers) - 1:
-                        row["_geocode_error"] = "all_providers_failed"
-                    elif p_idx in error_by_idx:
-                        row["_geocode_error"] = error_by_idx[p_idx].get(
-                            "error", "unknown error"
-                        )
-                    else:
-                        row["_geocode_error"] = "no response"
-                pending = []
-
-        # Exhausted all providers with rows still pending: mark all failed.
-        for p_idx in pending:
-            row_idx = batch[p_idx][0]
-            row = rows[row_idx]
-            row["_lat"] = None
-            row["_lon"] = None
-            row["_geocode_status"] = "failed"
-            row["_geocode_provider"] = providers[-1] if providers else None
-            row["_geocode_error"] = "all_providers_failed"
+    addresses = [address for _, address in chunk]
+    strategy = GeocodeProviderStrategy()
+    results, hit = await strategy.geocode_addresses(
+        addresses,
+        batch_geocode=batch_geocode,
+        providers=providers,
+        failure_threshold=PROVIDER_FAILURE_THRESHOLD,
+        batch_size=BATCH_SIZE
+    )
+    if hit:
+        flag.hit = True
+        
+    for (row_idx, _), res in zip(chunk, results):
+        row = rows[row_idx]
+        row["_lat"] = res.lat
+        row["_lon"] = res.lon
+        row["_geocode_status"] = res.status
+        row["_geocode_provider"] = res.provider
+        row["_geocode_error"] = res.error
 
 
 def _summarize(all_geocoded: list[dict]) -> GeocodeSummary:

@@ -266,7 +266,61 @@ def register_template_tools(registry: ToolRegistry):
                     "geojson": parsed_geojson,
                 }
 
-        return {"error": f"Unknown template kind: {kind}"}
+    @tool(
+        registry,
+        name="combine_map_theme",
+        description=(
+            "模块化组合地图主题工具。支持通过自由组合 5 大正交组件槽位（basemap 底图件, symbology 符号件, thematic 配色件, layout 版式件, viewport 视口件）或快捷组合预设名称一键合成为目标地图。"
+        ),
+        args_model=CombineMapThemeArgs,
+    )
+    def _combine_map_theme_tool(
+        preset: str = "",
+        basemap: str = "",
+        symbology: str = "",
+        thematic: str = "",
+        layout: str = "",
+        viewport: Optional[dict] = None,
+        layer_id: str = "default_layer"
+    ) -> dict:
+        return combine_map_theme(
+            preset=preset,
+            basemap=basemap,
+            symbology=symbology,
+            thematic=thematic,
+            layout=layout,
+            viewport=viewport,
+            layer_id=layer_id
+        )
+
+    @tool(
+        registry,
+        name="webgis_map_combine",
+        description=(
+            "规范化地图组件组合工具 (Canonical alias for combine_map_theme)。合成 5 大地图正交组件槽位为 MapSpec。"
+        ),
+        args_model=CombineMapThemeArgs,
+    )
+    def _webgis_map_combine_tool(
+        preset: str = "",
+        basemap: str = "",
+        symbology: str = "",
+        thematic: str = "",
+        layout: str = "",
+        viewport: Optional[dict] = None,
+        layer_id: str = "default_layer"
+    ) -> dict:
+        return combine_map_theme(
+            preset=preset,
+            basemap=basemap,
+            symbology=symbology,
+            thematic=thematic,
+            layout=layout,
+            viewport=viewport,
+            layer_id=layer_id
+        )
+
+
 
 
 def json_geojson_style_apply(geojson: dict, color: str, opacity: float, stroke_width: float) -> dict:
@@ -281,3 +335,53 @@ def json_geojson_style_apply(geojson: dict, color: str, opacity: float, stroke_w
         f["properties"]["opacity"] = opacity
         f["properties"]["stroke_width"] = stroke_width
     return data
+
+
+class CombineMapThemeArgs(BaseModel):
+    preset: Optional[str] = Field("", description="快捷组合预设: academic_research, cyber_dark, natural_terra, heat_density, engineering_survey")
+    basemap: Optional[str] = Field("", description="底图件 ID 或提供者名称 (如 carto-positron, carto-dark, esri-imagery, osm-standard)")
+    symbology: Optional[str] = Field("", description="符号件 ID 或风格名称 (如 tmpl_sym_admin_blue, single, categorical)")
+    thematic: Optional[str] = Field("", description="配色件 ID 或专题图模式 (如 tmpl_th_pop_choro, choropleth, heatmap)")
+    layout: Optional[str] = Field("", description="版式件 ID (如 tmpl_ly_academic, tmpl_ly_dark_report, tmpl_ly_minimal, tmpl_ly_engineering)")
+    viewport: Optional[Dict[str, Any]] = Field(None, description="视口件配置: {center: [lng, lat], zoom: 10}")
+    layer_id: Optional[str] = Field("default_layer", description="目标图层 ID")
+
+
+def combine_map_theme(
+    preset: str = "",
+    basemap: str = "",
+    symbology: str = "",
+    thematic: str = "",
+    layout: str = "",
+    viewport: Optional[dict] = None,
+    layer_id: str = "default_layer"
+) -> dict:
+    """组合 5 大正交地图组件槽位并生成完整 MapSpec。"""
+    from app.services.mapspec.composite_builder import CompositeMapSpecBuilder
+
+    combination_ids: Dict[str, Any] = {}
+    if preset:
+        combination_ids["preset"] = preset
+    if basemap:
+        combination_ids["basemap"] = basemap
+    if symbology:
+        combination_ids["symbology"] = symbology
+    if thematic:
+        combination_ids["thematic"] = thematic
+    if layout:
+        combination_ids["layout"] = layout
+    if viewport:
+        combination_ids["viewport"] = viewport
+
+    builder = CompositeMapSpecBuilder()
+    mapspec = builder.assemble(combination_ids, layer_id=layer_id)
+
+    return {
+        "status": "composite_map_assembled",
+        "preset": preset,
+        "combination": combination_ids,
+        "layer_id": layer_id,
+        "mapspec": mapspec
+    }
+
+

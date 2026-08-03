@@ -42,7 +42,14 @@ function TaskCard({ task }: { task: ExplorerTask }) {
 
       {task.status !== "completed" && task.status !== "failed" && (
         <div className="mt-2">
-          <div className="h-1.5 rounded-full bg-white/10">
+          <div
+            className="h-1.5 rounded-full bg-white/10 overflow-hidden"
+            role="progressbar"
+            aria-valuenow={progress}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`${stageLabel} 进度`}
+          >
             <div
               className="h-1.5 rounded-full bg-blue-400 transition-all duration-500"
               style={{ width: `${progress}%` }}

@@ -123,16 +123,26 @@ class GovDataAdapter(BaseDataAdapter):
         if not source.url:
             raise ValueError("Source URL is empty")
 
+        MAX_SIZE = 50 * 1024 * 1024  # 50MB
+
         async with aiohttp.ClientSession(headers=get_base_headers()) as session:
             async with session.get(source.url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 if resp.status != 200:
                     raise RuntimeError(f"Download failed: HTTP {resp.status}")
-                data = await resp.read()
 
-        # 大小限制检查
-        MAX_SIZE = 50 * 1024 * 1024  # 50MB
-        if len(data) > MAX_SIZE:
-            raise RuntimeError(f"File too large: {len(data)} bytes > {MAX_SIZE}")
+                cl_header = resp.headers.get("Content-Length")
+                if cl_header and cl_header.isdigit() and int(cl_header) > MAX_SIZE:
+                    raise RuntimeError(f"File too large: {int(cl_header)} bytes > {MAX_SIZE}")
+
+                chunks = []
+                total_bytes = 0
+                async for chunk in resp.content.iter_chunked(65536):
+                    total_bytes += len(chunk)
+                    if total_bytes > MAX_SIZE:
+                        raise RuntimeError(f"File too large: exceeds {MAX_SIZE} bytes during streaming download")
+                    chunks.append(chunk)
+
+                data = b"".join(chunks)
 
         return RawContent(
             data=data,

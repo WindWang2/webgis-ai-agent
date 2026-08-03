@@ -181,7 +181,7 @@ async def test_execute_topological_order_with_shuffled_input(registry):
                          depends_on=["s1"]),
         ],
     )
-    plan_id = svc.store_plan(sid, plan)
+    plan_id = await svc.store_plan(sid, plan)
     # 此时 validate_plan 因为 s3 出现时 s2 还没出现而拒绝 → 这是预期，
     # 但拓扑 _topological_order 本身（不经 validate）应该能算
     order = svc._topological_order(plan)

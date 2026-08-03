@@ -68,6 +68,12 @@ interface RuntimeReport {
   failedRequests: { url: string; status: number | null; method: string }[];
   canvas: (PixelStats & { captured: boolean; blank: boolean; blankReason: string }) | null;
   controls: { overflow: string[]; collisions: string[] };
+  visualJudge?: {
+    contrastRatio: number;
+    labelCollisionCount: number;
+    controlOverflowCount: number;
+    evaluated: boolean;
+  };
   fatalError: string | null;
 }
 
@@ -80,6 +86,12 @@ function emptyReport(fatalError: string | null): RuntimeReport {
     failedRequests: [],
     canvas: null,
     controls: { overflow: [], collisions: [] },
+    visualJudge: {
+      contrastRatio: 0,
+      labelCollisionCount: 0,
+      controlOverflowCount: 0,
+      evaluated: false,
+    },
     fatalError,
   };
 }

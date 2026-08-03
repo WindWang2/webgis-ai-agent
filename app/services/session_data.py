@@ -6,9 +6,12 @@ from typing import Any, Optional
 from collections import OrderedDict, deque
 from datetime import datetime, timezone
 
+from app.services.session_data_protocol import BaseSessionStore, SessionRefDataResult
+
 logger = logging.getLogger(__name__)
 
-class MemorySessionStore:
+class MemorySessionStore(BaseSessionStore):
+
     """In-memory SessionStore implementation with cursor support (LRU)"""
     def __init__(self, capacity: int = 200):
         # session_id -> {ref_id -> data}
@@ -97,6 +100,11 @@ class MemorySessionStore:
         data = session_cache.pop(ref_id)
         session_cache[ref_id] = data
         return data
+
+    # P2-1: get_ref_data was a byte-identical override of
+    # BaseSessionStore.get_ref_data and has been removed. The inherited Base
+    # implementation delegates to self.get() and self.get_session_metadata()
+    # (both overridden below), which carry the backend-specific logic.
 
     async def list_refs(self, session_id: str) -> dict[str, str]:
         """列出所有引用及其别名"""

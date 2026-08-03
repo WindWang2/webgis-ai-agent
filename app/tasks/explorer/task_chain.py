@@ -24,7 +24,17 @@ def _get_celery_loop() -> asyncio.AbstractEventLoop:
 
 def _run_async(coro):
     """在 Celery worker 的持久事件循环中执行 async coroutine。"""
+    try:
+        running_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        running_loop = None
+
+    if running_loop and running_loop.is_running():
+        return asyncio.run_coroutine_threadsafe(coro, running_loop).result()
+
     loop = _get_celery_loop()
+    if loop.is_running():
+        return asyncio.run_coroutine_threadsafe(coro, loop).result()
     return loop.run_until_complete(coro)
 
 
@@ -79,7 +89,8 @@ def explorer_fetch_task(self, prev_result: dict):
         on_progress=_on_progress,
     ))
     if not res.success:
-        raise RuntimeError(res.error)
+        error_msg = res.message if hasattr(res, "message") else str(res)
+        raise RuntimeError(error_msg)
     return res.data
 
 
