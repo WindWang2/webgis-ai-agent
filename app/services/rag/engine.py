@@ -2,6 +2,7 @@
 KnowledgeEngine - Deep RAG Knowledge Retrieval & Vector Indexing Engine.
 Enforces TenantContext multi-tenant security isolation and index compaction.
 """
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
@@ -56,7 +57,11 @@ class KnowledgeEngine:
             return {"error": "No valid text chunks generated from document"}
 
         texts = [c["content"] if isinstance(c, dict) else str(c) for c in chunk_list]
-        embeddings = self._store.embed_texts(texts)
+        # REVIEW-P1-5: SentenceTransformer.encode is CPU-bound (seconds for
+        # many chunks). Offload to the default thread pool so the event loop
+        # stays responsive for other requests during /knowledge/documents POST.
+        # ADR-0038 dropped the run_in_executor wrapper that rag_service had.
+        embeddings = await asyncio.to_thread(self._store.embed_texts, texts)
         doc_id = f"doc_{uuid.uuid4().hex[:12]}"
 
         # Positional chunk records for callers that persist chunk rows alongside
@@ -108,7 +113,8 @@ class KnowledgeEngine:
         if not query.strip():
             return []
 
-        query_vectors = self._store.embed_texts([query])
+        # REVIEW-P1-5: see index_document — embed_texts is CPU-bound.
+        query_vectors = await asyncio.to_thread(self._store.embed_texts, [query])
 
         user_id = tenant.user_id if tenant else None
         org_id = tenant.org_id if tenant else None
