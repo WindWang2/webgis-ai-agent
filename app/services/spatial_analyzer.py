@@ -492,4 +492,81 @@ class SpatialAnalyzer:
         )
 
 
-__all__ = ["SpatialAnalyzer", "AnalysisResult"]
+class SpatialAnalysisEngine:
+    """Deep Spatial Analysis Engine.
+    
+    Consolidates spatial operator dispatch, GeoJSON normalization, CRS transformation,
+    result payload trimming/caching via SessionStore cursor payloads, and standard LLM response formatting.
+    """
+
+    def __init__(self):
+        self.analyzer = SpatialAnalyzer
+
+    def analyze(
+        self,
+        operator: str,
+        features: Any,
+        session_id: Optional[str] = None,
+        auto_trim: bool = True,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Dispatch a spatial operation by name, normalizing input features and session state."""
+        func = getattr(self.analyzer, operator, None)
+        if not callable(func):
+            return {
+                "success": False,
+                "summary": f"未知空间分析算子: {operator}",
+                "data": {},
+            }
+        try:
+            res: GeoAnalysisResult = func(features, **kwargs)
+            out = res.to_llm_response()
+            if auto_trim and isinstance(out, dict):
+                from app.tools._utils import trim_features
+                if out.get("type") == "FeatureCollection":
+                    out = trim_features(out)
+                elif isinstance(out.get("data"), dict) and out["data"].get("type") == "FeatureCollection":
+                    out["data"] = trim_features(out["data"])
+            if session_id and res.success and isinstance(out, dict):
+                self._persist_session_cursor(session_id, operator, out)
+            return out
+        except Exception as e:
+            logger.error(f"SpatialAnalysisEngine execution error ({operator}): {e}", exc_info=True)
+            return {
+                "success": False,
+                "summary": f"空间分析算子 {operator} 执行失败: {e}",
+                "data": {},
+            }
+
+    def _persist_session_cursor(self, session_id: str, operator: str, result_payload: Dict[str, Any]) -> None:
+        """Persist result payload in session cursor cache if payload contains spatial features."""
+        try:
+            from app.services.session_data import session_store
+            session_store.upsert_ref_data(
+                session_id=session_id,
+                ref_key=f"analysis_result_{operator}",
+                data=result_payload,
+            )
+        except Exception as err:
+            logger.warning(f"Failed to persist session cursor for {operator}: {err}")
+
+    def buffer(self, features: Any, distance: float, unit: str = "m", session_id: Optional[str] = None) -> Dict[str, Any]:
+        return self.analyze("buffer", features, session_id=session_id, distance=distance, unit=unit)
+
+    def clip(self, features: Any, mask_features: Any, session_id: Optional[str] = None) -> Dict[str, Any]:
+        return self.analyze("clip", features, session_id=session_id, mask_features=mask_features)
+
+    def overlay(self, features_a: Any, features_b: Any, how: str = "intersection", session_id: Optional[str] = None) -> Dict[str, Any]:
+        return self.analyze("overlay", features_a, session_id=session_id, features_b=features_b, how=how)
+
+    def statistics(self, features: Any, session_id: Optional[str] = None) -> Dict[str, Any]:
+        return self.analyze("statistics", features, session_id=session_id)
+
+    def nearest(self, features: Any, session_id: Optional[str] = None) -> Dict[str, Any]:
+        return self.analyze("nearest", features, session_id=session_id)
+
+
+spatial_analysis_engine = SpatialAnalysisEngine()
+
+
+__all__ = ["SpatialAnalyzer", "AnalysisResult", "SpatialAnalysisEngine", "spatial_analysis_engine"]

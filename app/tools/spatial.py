@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
 from app.tools._utils import cached_tool, trim_features
-from app.services.spatial_analyzer import SpatialAnalyzer
+from app.services.spatial_analyzer import SpatialAnalyzer, spatial_analysis_engine
 from app.lib.geo_analysis.density import generate_heatmap_raster
 from app.lib.geo_processor.core import safe_parse as safe_parse_geojson
 
@@ -65,14 +65,7 @@ def register_spatial_tools(registry: ToolRegistry):
     def buffer_analysis(geojson: Any, distance: float, unit: str = "m") -> dict:
         data = safe_parse_geojson(geojson)
         features = data.get("features", [])
-        res = SpatialAnalyzer.buffer(features, distance, unit)
-        out = res.to_llm_response()
-        # 裁剪可能很大的缓冲结果载荷
-        if isinstance(out, dict) and out.get("type") == "FeatureCollection":
-            out = trim_features(out)
-        elif isinstance(out, dict) and isinstance(out.get("data"), dict) and out["data"].get("type") == "FeatureCollection":
-            out["data"] = trim_features(out["data"])
-        return out
+        return spatial_analysis_engine.buffer(features, distance, unit)
 
     @tool(registry, name="spatial_stats",
            description=(
@@ -87,8 +80,7 @@ def register_spatial_tools(registry: ToolRegistry):
     def spatial_stats(geojson: Any) -> dict:
         data = safe_parse_geojson(geojson)
         features = data.get("features", [])
-        res = SpatialAnalyzer.statistics(features)
-        return res.to_llm_response()
+        return spatial_analysis_engine.statistics(features)
 
     @tool(registry, name="nearest_neighbor",
            description=(
@@ -103,8 +95,7 @@ def register_spatial_tools(registry: ToolRegistry):
     def nearest_neighbor(geojson: Any) -> dict:
         data = safe_parse_geojson(geojson)
         features = data.get("features", [])
-        res = SpatialAnalyzer.nearest(features)
-        return res.to_llm_response()
+        return spatial_analysis_engine.nearest(features)
 
     @tool(registry, name="heatmap_data",
            description=(
