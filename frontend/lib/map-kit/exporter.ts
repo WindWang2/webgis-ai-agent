@@ -783,13 +783,10 @@ export async function exportMapSpecToVectorPdf(
   const toMmY = (y: number) => 12 + y * scaleY;
 
   // 2. Parse the SVG into a DOM tree and walk it, accumulating transforms.
-  let domParser: DOMParser;
-  if (typeof DOMParser !== 'undefined') {
-    domParser = new DOMParser();
-  } else {
-    const { JSDOM } = require('jsdom');
-    domParser = new (new JSDOM().window).DOMParser();
+  if (typeof DOMParser === 'undefined') {
+    throw new Error('DOMParser is not available in the current environment');
   }
+  const domParser = new DOMParser();
   const doc = domParser.parseFromString(svgString, 'image/svg+xml');
   const parseError = doc.querySelector ? doc.querySelector('parsererror') : null;
   if (parseError) {
