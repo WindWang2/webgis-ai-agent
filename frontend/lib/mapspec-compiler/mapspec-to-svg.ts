@@ -14,6 +14,21 @@ export interface MapSpecToSvgOptions {
   includeMarginalia?: boolean;
 }
 
+/**
+ * Escapes a string for safe interpolation into an SVG attribute value.
+ * MapSpec paint values (colors, opacities) flow directly into attributes like
+ * fill="...", so a crafted value containing `"` could break out of the
+ * attribute and inject markup (attribute-injection / XSS). This mirrors the
+ * minimal set HTML-escaped by the Python twin (html.escape(s, quote=True)).
+ */
+function escapeSvgAttr(value: unknown): string {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 export function compileMapSpecToSvg(
   mapspec: any,
   options: MapSpecToSvgOptions = {}
@@ -95,16 +110,16 @@ export function compileMapSpecToSvg(
         const [x, y] = project(geom.coordinates as [number, number]);
         const baseRadius = Number(paint["circle-radius"] ?? 5);
         const radius = Math.round(baseRadius * dpiScale * 100) / 100;
-        const color = paint["circle-color"] ?? "#3b82f6";
-        const opacity = paint["circle-opacity"] ?? 1.0;
+        const color = escapeSvgAttr(paint["circle-color"] ?? "#3b82f6");
+        const opacity = escapeSvgAttr(paint["circle-opacity"] ?? 1.0);
 
         elementsSvg += `<circle cx="${x}" cy="${y}" r="${radius}" fill="${color}" fill-opacity="${opacity}" />\n`;
       } else if (layerType === "line" && (geom.type === "LineString" || geom.type === "MultiLineString")) {
         const lines = geom.type === "LineString" ? [geom.coordinates] : geom.coordinates;
         const baseWidth = Number(paint["line-width"] ?? 2);
         const lineWidth = Math.round(baseWidth * dpiScale * 100) / 100;
-        const color = paint["line-color"] ?? "#2563eb";
-        const opacity = paint["line-opacity"] ?? 1.0;
+        const color = escapeSvgAttr(paint["line-color"] ?? "#2563eb");
+        const opacity = escapeSvgAttr(paint["line-opacity"] ?? 1.0);
 
         lines.forEach((lineCoords: any) => {
           const pathPoints = lineCoords.map((c: any) => project(c).join(",")).join(" L ");
@@ -112,9 +127,9 @@ export function compileMapSpecToSvg(
         });
       } else if (layerType === "fill" && (geom.type === "Polygon" || geom.type === "MultiPolygon")) {
         const polygons = geom.type === "Polygon" ? [geom.coordinates] : geom.coordinates;
-        const color = paint["fill-color"] ?? "#60a5fa";
-        const opacity = paint["fill-opacity"] ?? 0.6;
-        const outlineColor = paint["fill-outline-color"] ?? "#1d4ed8";
+        const color = escapeSvgAttr(paint["fill-color"] ?? "#60a5fa");
+        const opacity = escapeSvgAttr(paint["fill-opacity"] ?? 0.6);
+        const outlineColor = escapeSvgAttr(paint["fill-outline-color"] ?? "#1d4ed8");
         const outlineWidth = Math.round(1.0 * dpiScale * 100) / 100;
 
         polygons.forEach((polyRings: any) => {

@@ -53,3 +53,40 @@ def test_compile_mapspec_to_svg_basic():
     assert 'r="20.83"' in svg_300
     # 1.0 * (300 / 72) = 4.17
     assert 'stroke-width="4.17"' in svg_300
+
+
+def test_compile_mapspec_to_svg_escapes_paint_values():
+    """P0-3b: paint color/opacity values are interpolated into SVG attributes
+    without escaping, allowing attribute-injection (XSS) via a crafted color.
+    The compiler must HTML-escape these values.
+    """
+    mapspec = {
+        "sources": {
+            "s1": {
+                "type": "geojson",
+                "data": {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": {"type": "Point", "coordinates": [116.4, 39.9]},
+                            "properties": {},
+                        }
+                    ],
+                },
+            }
+        },
+        "layers": [
+            {
+                "id": "pts",
+                "type": "circle",
+                "source": "s1",
+                # Tries to break out of the fill=" attribute.
+                "paint": {"circle-color": 'red" onclick="alert(1)'},
+            }
+        ],
+    }
+    svg = compile_mapspec_to_svg(mapspec, target_dpi=72)
+    # The injected attribute boundary must not survive.
+    assert 'red" onclick' not in svg
+    assert "&quot;" in svg

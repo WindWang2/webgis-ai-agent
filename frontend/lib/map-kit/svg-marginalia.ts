@@ -150,6 +150,10 @@ export function renderSvgPrintLayout(options: PrintLayoutOptions = {}): string {
     : "";
 
   return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" data-layout-id="${layoutId}" xmlns="http://www.w3.org/2000/svg">
+  <!-- MAP_CONTENT_HERE: compiled MapSpec vector layers are injected at this
+       anchor by generateMapSpecVectorSvgString. Placing it BEFORE the frame
+       and marginalia groups ensures the map paints at the bottom of the
+       Z-order, so title banner / north arrow / legend stay visible on top. -->
   <!-- Outer Print Frame Border -->
   <rect x="${margin}" y="${margin}" width="${width - margin * 2}" height="${height - margin * 2}" fill="none" stroke="${borderColor}" stroke-width="2" rx="${isEngineering ? 0 : 4}" />
   ${borderExtra}

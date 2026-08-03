@@ -4,7 +4,19 @@ Compiles a declarative MapSpec into resolution-independent SVG vector markup
 with DPI resolution scaling for WeasyPrint PDF report generation.
 """
 
+import html as _html
 from typing import Any, Dict, List, Tuple
+
+
+def _escape_svg_attr(value: Any) -> str:
+    """Escape a value for safe interpolation into an SVG attribute.
+
+    Mirrors the JS twin's escapeSvgAttr: MapSpec paint values flow into
+    attributes like fill="...", so a crafted value containing `"` could break
+    out of the attribute (attribute-injection / XSS). quote=True escapes both
+    double and single quotes.
+    """
+    return _html.escape(str(value), quote=True)
 
 
 def compile_mapspec_to_svg(
@@ -80,16 +92,16 @@ def compile_mapspec_to_svg(
                 x, y = project(geom.get("coordinates"))
                 base_r = float(paint.get("circle-radius", 5))
                 r = round(base_r * dpi_scale, 2)
-                color = paint.get("circle-color", "#3b82f6")
-                opacity = paint.get("circle-opacity", 1.0)
+                color = _escape_svg_attr(paint.get("circle-color", "#3b82f6"))
+                opacity = _escape_svg_attr(paint.get("circle-opacity", 1.0))
                 elements_svg += f'<circle cx="{x}" cy="{y}" r="{r}" fill="{color}" fill-opacity="{opacity}" />\n'
 
             elif layer_type == "line" and geom.get("type") in ("LineString", "MultiLineString"):
                 lines = [geom.get("coordinates")] if geom.get("type") == "LineString" else geom.get("coordinates")
                 base_w = float(paint.get("line-width", 2))
                 line_w = round(base_w * dpi_scale, 2)
-                color = paint.get("line-color", "#2563eb")
-                opacity = paint.get("line-opacity", 1.0)
+                color = _escape_svg_attr(paint.get("line-color", "#2563eb"))
+                opacity = _escape_svg_attr(paint.get("line-opacity", 1.0))
 
                 for line_coords in lines:
                     path_str = " L ".join(f"{project(c)[0]},{project(c)[1]}" for c in line_coords)
@@ -97,9 +109,9 @@ def compile_mapspec_to_svg(
 
             elif layer_type == "fill" and geom.get("type") in ("Polygon", "MultiPolygon"):
                 polygons = [geom.get("coordinates")] if geom.get("type") == "Polygon" else geom.get("coordinates")
-                color = paint.get("fill-color", "#60a5fa")
-                opacity = paint.get("fill-opacity", 0.6)
-                outline = paint.get("fill-outline-color", "#1d4ed8")
+                color = _escape_svg_attr(paint.get("fill-color", "#60a5fa"))
+                opacity = _escape_svg_attr(paint.get("fill-opacity", 0.6))
+                outline = _escape_svg_attr(paint.get("fill-outline-color", "#1d4ed8"))
                 outline_w = round(1.0 * dpi_scale, 2)
 
                 for poly_rings in polygons:

@@ -20,6 +20,7 @@ from app.models.api_response import ApiResponse, ErrCode
 from app.models.report import Report
 from app.models.db_model import Conversation, Message
 from app.services.report_service import ReportService, REPORT_DIR
+from app.services.mapspec_store import mapspec_store
 
 import logging
 
@@ -103,11 +104,16 @@ async def create_report(
     await verify_session_owner(db, request.session_id, user_id=user_id)
 
     svc = ReportService()
+    # P0-1 fix: forward the session's MapSpec so WeasyPrint can inject crisp
+    # vector SVG into the PDF report. Previously mapspec was never passed,
+    # leaving vector_svg=None in production PDFs (review finding).
+    mapspec = await mapspec_store.get_mapspec(request.session_id)
     res = await svc.create_and_generate(
         db=db,
         session_id=request.session_id,
         format=request.format,
         title=request.title,
+        mapspec=mapspec,
     )
 
     if not res.success:

@@ -13,6 +13,7 @@ from typing import Optional
 
 from app.tools.registry import ToolRegistry
 from app.services.report_service import ReportService, REPORT_DIR
+from app.services.mapspec_store import mapspec_store
 from app.tools._utils import db_session
 from app.models.db_model import Conversation, Message
 from app.models.report import Report
@@ -103,12 +104,16 @@ def register_report_tools(registry: ToolRegistry):
                 for m in messages
             ]
 
+            # P0-1 fix: forward the session's MapSpec so generate_report can
+            # embed crisp vector SVG into the PDF (review finding: was None).
+            mapspec = await mapspec_store.get_mapspec(session_id)
             success = await svc.generate_report(
                 session_id=session_id,
                 session_title=conversation.title or report_title,
                 messages=msg_dicts,
                 output_path=file_path,
                 format=format,
+                mapspec=mapspec,
             )
 
             if success and os.path.exists(file_path):

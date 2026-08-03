@@ -88,4 +88,41 @@ describe("MapSpec-to-SVG Compiler Target", () => {
     expect(svg).toContain('stroke-width="8.33"');
     expect(svg).toContain('stroke-width="4.17"');
   });
+
+  it("escapes paint color/opacity values to prevent SVG attribute injection (XSS)", () => {
+    // A malicious MapSpec color with a double-quote would break out of the
+    // attribute and inject arbitrary markup. The compiler must escape it.
+    const malicious = {
+      sources: {
+        s1: {
+          type: "geojson",
+          data: {
+            type: "FeatureCollection",
+            features: [
+              {
+                type: "Feature",
+                geometry: { type: "Point", coordinates: [116.4, 39.9] },
+                properties: {},
+              },
+            ],
+          },
+        },
+      },
+      layers: [
+        {
+          id: "pts",
+          type: "circle",
+          source: "s1",
+          // Tries to close the fill=" attribute and inject an onclick handler.
+          paint: { "circle-color": 'red" onclick="alert(1)', "circle-opacity": 1 },
+        },
+      ],
+    };
+    const svg = compileMapSpecToSvg(malicious, { targetDpi: 72 });
+    // The raw double-quote must NOT appear inside the attribute value.
+    // The compiler escapes " -> &quot; so the injected onclick never becomes
+    // a real attribute on the circle element.
+    expect(svg).not.toContain('red" onclick');
+    expect(svg).toContain("&quot;");
+  });
 });
