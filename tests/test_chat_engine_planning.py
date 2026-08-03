@@ -8,10 +8,19 @@ from app.services.chat import planner as planner_mod
 
 
 @pytest.fixture
-def engine():
+def engine(monkeypatch):
     reg = ToolRegistry()
     reg.register("buffer_analysis", "buffer", func=lambda **_: {})
     eng = ChatEngine(reg, tool_catalog=ToolCatalog(reg))
+    async def fake_get_or_create_session(session_id, user_id=None):
+        return [{"role": "system", "content": eng._build_system_prompt()}]
+    async def fake_save_msg_async(*a, **k):
+        pass
+    async def fake_generate_title(*a, **k):
+        pass
+    monkeypatch.setattr(eng, "_get_or_create_session", fake_get_or_create_session)
+    monkeypatch.setattr(eng, "_save_msg_async", fake_save_msg_async)
+    monkeypatch.setattr(eng, "_generate_title", fake_generate_title)
     return eng
 
 

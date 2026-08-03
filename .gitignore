@@ -21,6 +21,7 @@ Thumbs.db
 **/.env.*.local
 # Frontend test artifacts
 frontend/test-results.xml
+frontend/test-results.junit.xml
 frontend/coverage/
 
 # 密钥与证书
@@ -39,6 +40,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+uv.lock
 
 # IDE
 .vscode/
@@ -62,6 +64,7 @@ data/
 # Ad-hoc dev scripts / debug artifacts — keep on disk if useful but never commit
 scratch/
 temp_output.txt
+diff_output.txt
 current-state
 initial_snapshot.png
 screenshot.png

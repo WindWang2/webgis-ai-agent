@@ -1,7 +1,21 @@
 """Unit tests for ReportService WeasyPrint vector SVG map injection."""
+import os
+import tempfile
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+from app.services import report_service as report_service_mod
 from app.services.report_service import ReportService
+
+
+# WeasyPrint is an optional system dependency (requires native libs: cairo,
+# pango, gdk-pixbuf). The integration test below runs the REAL WeasyPrint render
+# (no mock) only when it is importable; otherwise it skips. This matches the
+# spec #271 requirement: a backend E2E test guarded by
+# ``@pytest.mark.skipif(weasyprint is None)`` that asserts the output PDF is a
+# real, non-empty PDF.
+weasyprint = report_service_mod.weasyprint
 
 
 # Fixture MapSpec reused across the vector-injection tests.
@@ -57,10 +71,11 @@ async def test_generate_report_embeds_vector_svg():
         )
 
         assert success is True
-        # Verify WeasyPrint HTML instantiation contained vector SVG markup with DPI scaled radius
+        # Verify WeasyPrint HTML instantiation contained vector SVG markup with DPI scaled radius.
+        # The compiler now emits the canonical minimal form (_fmt_num strips
+        # trailing zeros): 6 * (300/72) = 25.0 -> "25" (not "25.0").
         html_passed = mock_weasyprint.HTML.call_args[1]["string"]
-        expected_r = round(6 * (300 / 72.0), 2)  # base_r * (target_dpi / 72)
-        assert f'r="{expected_r}"' in html_passed
+        assert 'r="25"' in html_passed
         assert "#de2d26" in html_passed
 
 
@@ -150,3 +165,62 @@ async def test_create_and_generate_without_mapspec_omits_vector_svg():
     assert mock_wp.HTML.called
     html_passed = mock_wp.HTML.call_args[1]["string"]
     assert "mapspec-vector-layers" not in html_passed
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Spec #271: real WeasyPrint integration test.
+#
+# The tests above mock WeasyPrint, so they verify the HTML wiring but never
+# produce a real PDF. Spec #271 requires an E2E test that runs WeasyPrint for
+# real and asserts the output file exists, is non-empty, and is a valid PDF
+# (magic bytes %PDF-). Guarded with skipif(weasyprint is None) since
+# WeasyPrint needs native system libs (cairo/pango) that may not be present in
+# every environment; it runs wherever WeasyPrint is installed.
+# ──────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.skipif(weasyprint is None, reason="WeasyPrint not installed (needs cairo/pango system libs)")
+@pytest.mark.asyncio
+async def test_generate_report_renders_real_pdf_with_magic_bytes():
+    """E2E: generate_report(format='pdf') runs the real WeasyPrint engine and
+    writes a valid, non-empty PDF whose first 5 bytes are '%PDF-'.
+
+    No mocks: the full pipeline (data prep -> HTML render -> WeasyPrint ->
+    file write) executes. If WeasyPrint is missing the test skips; where it is
+    present (CI with the native deps) it asserts a genuine PDF is produced.
+    """
+    service = ReportService()
+
+    messages = [
+        {"role": "user", "content": "生成北京市地图报告"},
+        {"role": "assistant", "content": "这是生成的地图报告。"},
+    ]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_path = os.path.join(tmpdir, "real_report.pdf")
+
+        success = await service.generate_report(
+            session_id="e2e_real_pdf",
+            session_title="E2E Real PDF Test",
+            messages=messages,
+            output_path=output_path,
+            format="pdf",
+            mapspec=_MAPSPEC,
+        )
+
+        assert success is True
+        # File exists and is non-empty.
+        assert os.path.isfile(output_path)
+        assert os.path.getsize(output_path) > 0
+
+        # Magic bytes: a real PDF starts with %PDF-.
+        with open(output_path, "rb") as f:
+            head = f.read(5)
+        assert head == b"%PDF-"
+
+        # Page count: WeasyPrint emits at least one /Type /Page object. Read the
+        # whole file and require >= 1 page entry so a zero-page PDF fails.
+        with open(output_path, "rb") as f:
+            content = f.read()
+        page_obj_matches = __import__("re").findall(rb"/Type\s*/Page(?!s)\b", content)
+        assert len(page_obj_matches) >= 1

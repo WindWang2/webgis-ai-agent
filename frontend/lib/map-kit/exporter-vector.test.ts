@@ -54,6 +54,34 @@ describe('Client-Side HD Vector SVG/PDF Exporter API', () => {
     expect(blob.size).toBeGreaterThan(500); // Ensures PDF contains actual vector paths and text streams
   });
 
+  it('E2E: exportMapSpecToVectorPdf produces a real PDF with %PDF- magic bytes and >= 1 page (spec #271)', async () => {
+    // Spec #271 requires E2E verification that the export pipeline returns a
+    // valid non-empty PDF. This runs the REAL jsPDF render (no mock) and asserts
+    // the PDF magic bytes ("%PDF-") and that at least one /Type /Page object
+    // exists in the byte stream. A near-empty or corrupted export would fail
+    // the magic-bytes check; a zero-page PDF would fail the page check.
+    const blob = await exportMapSpecToVectorPdf(sampleMapSpec, {
+      title: 'E2E Magic Bytes Test',
+      subtitle: 'Real jsPDF Render',
+      dpi: 300,
+    });
+    expect(blob.type).toBe('application/pdf');
+
+    // Read the PDF bytes via Blob.arrayBuffer() (polyfilled for jsdom in
+    // test/setup.ts). Spec #271 requires asserting the %PDF- magic bytes and
+    // page count on the real rendered PDF.
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const head = String.fromCharCode(...bytes.slice(0, 5));
+    expect(head).toBe('%PDF-');
+
+    // Parse the PDF byte stream for page objects. jsPDF emits "/Type /Pages"
+    // (the root pages tree) plus "/Type /Page" (each page). We require at
+    // least one /Page entry so a zero-page PDF fails.
+    const text = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
+    const pageObjMatches = text.match(/\/Type\s*\/Page(?!s)\b/g) || [];
+    expect(pageObjMatches.length).toBeGreaterThanOrEqual(1);
+  });
+
   it('paints MapSpec vector layers BELOW the marginalia (correct Z-order)', async () => {
     // P0-2 regression: the map <g> must precede the marginalia groups in
     // document order so it renders underneath (SVG paints later siblings
@@ -118,5 +146,34 @@ describe('Client-Side HD Vector SVG/PDF Exporter API', () => {
     // north arrow with "N", legend with labels, scalebar) is materially
     // larger than the ~500-byte near-empty baseline.
     expect(blob.size).toBeGreaterThan(1500);
+  });
+
+  it('includes oversampled raster tiles with zoom boost for 300 DPI exports', async () => {
+    const rasterMapSpec = {
+      sources: {
+        r1: {
+          type: 'raster',
+          tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+          tileSize: 256,
+        },
+      },
+      layers: [
+        {
+          id: 'base-raster',
+          type: 'raster',
+          source: 'r1',
+          paint: { 'raster-opacity': 0.8 },
+        },
+      ],
+    };
+
+    const svgText = await generateMapSpecVectorSvgString(rasterMapSpec, {
+      title: 'Raster Oversampling Test',
+      dpi: 300,
+    });
+
+    expect(svgText).toContain('<image');
+    expect(svgText).toContain('data-oversample-boost="2"');
+    expect(svgText).toContain('opacity="0.8"');
   });
 });

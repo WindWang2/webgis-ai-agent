@@ -29,20 +29,32 @@ def _count(svg: str, tag: str) -> int:
 
 
 def test_python_compiles_fixture_to_expected_element_counts(mapspec):
-    """The fixture has 1 Point + 1 LineString + 1 Polygon across 3 layers."""
+    """The fixture has 1 Point + 1 LineString + 1 Polygon + 3 text elements across 4 layers."""
     svg = compile_mapspec_to_svg(mapspec, target_dpi=72)
     assert _count(svg, "circle") == 1
     assert _count(svg, "path") == 1
     assert _count(svg, "polygon") == 1
+    assert _count(svg, "text") == 3
 
 
 def test_python_scales_by_dpi_factor(mapspec):
     """radius 5 * (300/72) = 20.83; line-width 2 * (300/72) = 8.33;
-    outline 1.0 * (300/72) = 4.17."""
+    outline 1.0 * (300/72) = 4.17; font-size 12 * (300/72) = 50.0.
+
+    Canonical minimal form (_fmt_num strips trailing zeros): "20.83", "8.33",
+    "4.17", "50". P0-2 fix: previously asserted ``'font-size="50.0"' in svg or
+    'font-size="50"' in svg`` -- the ``or`` mask accepted BOTH forms so twin
+    drift could never fail. Now both twins emit one canonical form, and this
+    pins exactly that string.
+    """
     svg = compile_mapspec_to_svg(mapspec, target_dpi=300)
     assert 'r="20.83"' in svg
     assert 'stroke-width="8.33"' in svg
     assert 'stroke-width="4.17"' in svg
+    # ONE canonical string - no `or` mask. Both twins emit font-size="50".
+    assert 'font-size="50"' in svg
+    assert 'font-size="50.0"' not in svg
+    assert "Beijing" in svg
 
 
 def test_python_emits_default_colors_and_group_wrapper(mapspec):
@@ -55,6 +67,13 @@ def test_python_emits_default_colors_and_group_wrapper(mapspec):
     assert "#60a5fa" in svg  # fill-color
     assert "#1d4ed8" in svg  # fill-outline-color
     assert 'fill-opacity="0.6"' in svg
+    # Default opacities are canonical minimal form: "1" not "1.0".
+    assert 'fill-opacity="1"' in svg
+    assert 'fill-opacity="1.0"' not in svg
+    # Coordinate parity: the range bug (clamped small ranges to 1.0) is fixed;
+    # both twins now project the Point (116.4, 39.9) to cx="413.33".
+    assert 'cx="413.33"' in svg
+    assert 'cy="400"' in svg
 
 
 def test_python_wraps_in_svg_root_with_white_background(mapspec):
@@ -63,3 +82,19 @@ def test_python_wraps_in_svg_root_with_white_background(mapspec):
     assert svg.startswith('<svg width="800" height="600"')
     assert 'viewBox="0 0 800 600"' in svg
     assert '<rect width="100%" height="100%" fill="#ffffff" />' in svg
+
+
+def test_python_compiles_raster_layer_with_oversample_boost():
+    """Raster layers emit <image> with oversample boost calculated via log2(dpi / 96)."""
+    raster_mapspec = {
+        "sources": {
+            "r1": {"type": "raster", "tiles": ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"]}
+        },
+        "layers": [
+            {"id": "r-base", "type": "raster", "source": "r1", "paint": {"raster-opacity": 0.8}}
+        ]
+    }
+    svg = compile_mapspec_to_svg(raster_mapspec, target_dpi=300)
+    assert '<image' in svg
+    assert 'data-oversample-boost="2"' in svg
+    assert 'opacity="0.8"' in svg

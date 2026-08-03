@@ -45,8 +45,10 @@ def test_compile_mapspec_to_svg_basic():
     assert "<svg" in svg_72
     assert "<circle" in svg_72
     assert "<polygon" in svg_72
-    assert 'r="5.0"' in svg_72
-    assert 'stroke-width="1.0"' in svg_72
+    # The compiler emits the canonical minimal form (_fmt_num strips trailing
+    # zeros): 5.0 -> "5", 1.0 -> "1".
+    assert 'r="5"' in svg_72
+    assert 'stroke-width="1"' in svg_72
 
     svg_300 = compile_mapspec_to_svg(mapspec, target_dpi=300)
     # 5 * (300 / 72) = 20.83

@@ -11,6 +11,7 @@
 pytest>=7.4.4
 pytest-asyncio>=0.23.3
 pytest-cov>=7.1.0
+pytest-timeout>=2.3.1
 
 # In-memory Redis fake for unit tests (tests/test_async_session_data.py 等使用)
 fakeredis>=2.37.0
