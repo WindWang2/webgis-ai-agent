@@ -472,3 +472,94 @@ async def test_cross_tenant_reports_list_404(client, tenants):
         headers=_auth_headers(tenants["user_b"]),
     )
     assert resp.status_code == 404
+
+
+# ────────────────────────────────────────────────────────────────────
+# 8. Chat body session_id 所有权 (REVIEW-P0-2)
+#
+# ADR-0030 给 /chat/sessions/* 全部挂上了 require_owned_session，但
+# /chat/completions 与 /chat/stream 漏掉了 —— 这两个端点的 session_id 来自
+# request body，只有 get_current_user_optional，下游 load_context 又对
+# owner_token 不匹配只打 warning，导致任何人拿到别人的 session UUID 就能读取
+# 全部历史并往里追加消息。这里补齐该契约。
+#
+# 说明：越权时守卫在触达 ChatEngine 之前就 404，所以这些用例不需要可用的 LLM。
+# 放行路径只断言"不是 404"（后续引擎调用可能因无 LLM 而失败），这足以证明守卫
+# 没有误拦。
+# ────────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_cross_tenant_chat_stream_404(client, tenants):
+    """反向：Bob 拿 Alice 的 session_id 发 /chat/stream → 404。"""
+    resp = await client.post(
+        "/api/v1/chat/stream",
+        json={"message": "leak alice's history", "session_id": tenants["conv_a"].id},
+        headers=_auth_headers(tenants["user_b"]),
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_chat_completions_404(client, tenants):
+    """反向：Bob 拿 Alice 的 session_id 发 /chat/completions → 404。"""
+    resp = await client.post(
+        "/api/v1/chat/completions",
+        json={"message": "leak alice's history", "session_id": tenants["conv_a"].id},
+        headers=_auth_headers(tenants["user_b"]),
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_anonymous_cannot_post_to_owned_session(client, tenants):
+    """反向：完全未认证的调用者拿 Alice 的 session_id 发消息 → 404。"""
+    resp = await client.post(
+        "/api/v1/chat/stream",
+        json={"message": "no auth at all", "session_id": tenants["conv_a"].id},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_owner_not_blocked_on_own_session(tenants):
+    """正向：Alice 用自己的 session_id 不被守卫拦截。
+
+    放行路径直接断言守卫本身，不走整条路由 —— 一旦放行，真实 ChatEngine 会去
+    调 LLM 并挂住整个用例（守卫之后就没有可断言的边界了）。
+    """
+    from app.api.routes.chat import _guard_body_session
+
+    await _guard_body_session(tenants["conv_a"].id, tenants["user_a"].id, None)
+
+
+@pytest.mark.asyncio
+async def test_new_session_id_not_blocked(tenants):
+    """正向：库中不存在的 session_id 必须放行（首条消息会新建该会话），
+    否则守卫会把"开新对话"这条正常路径打成 404。"""
+    from app.api.routes.chat import _guard_body_session
+
+    await _guard_body_session(str(uuid.uuid4()), tenants["user_a"].id, None)
+
+
+@pytest.mark.asyncio
+async def test_omitted_session_id_not_blocked(tenants):
+    """正向：不带 session_id（前端首次进入）必须放行。"""
+    from app.api.routes.chat import _guard_body_session
+
+    await _guard_body_session(None, tenants["user_a"].id, None)
+
+
+@pytest.mark.asyncio
+async def test_guard_rejects_other_tenants_session(tenants):
+    """反向（守卫层）：Bob 传 Alice 的 session_id → HTTPException 404。
+
+    与上面的路由级用例互补：这里锁定守卫自身的返回码，确保未来重构守卫时
+    不会退化成 403（会泄漏会话存在性）或静默放行。
+    """
+    from fastapi import HTTPException
+
+    from app.api.routes.chat import _guard_body_session
+
+    with pytest.raises(HTTPException) as exc:
+        await _guard_body_session(tenants["conv_a"].id, tenants["user_b"].id, None)
+    assert exc.value.status_code == 404

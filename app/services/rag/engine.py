@@ -59,6 +59,18 @@ class KnowledgeEngine:
         embeddings = self._store.embed_texts(texts)
         doc_id = f"doc_{uuid.uuid4().hex[:12]}"
 
+        # Positional chunk records for callers that persist chunk rows alongside
+        # the vector index. Derived here so chunking stays single-sourced.
+        chunk_records = [
+            {
+                "content": texts[i],
+                "chunk_index": c.get("chunk_index", i) if isinstance(c, dict) else i,
+                "start_char": c.get("start_char") if isinstance(c, dict) else None,
+                "end_char": c.get("end_char") if isinstance(c, dict) else None,
+            }
+            for i, c in enumerate(chunk_list)
+        ]
+
         user_id = tenant.user_id if tenant else None
         org_id = tenant.org_id if tenant else None
 
@@ -81,6 +93,7 @@ class KnowledgeEngine:
             "document_id": doc_id,
             "title": title,
             "chunks_count": len(chunk_list),
+            "chunks": chunk_records,
             "status": "indexed",
         }
 

@@ -76,10 +76,42 @@ class ChatResponse(BaseModel):
     owner_token: Optional[str] = None
 
 
+async def _guard_body_session(
+    session_id: Optional[str],
+    user_id: Optional[str],
+    owner_token: Optional[str],
+) -> None:
+    """S31/S32/SEC-08：校验请求体携带的 session_id 属于当前调用者。
+
+    不能直接复用 `require_owned_session`：chat 的 session_id 来自 body 而非
+    路径参数，且首条消息会新建会话，所以"库中不存在"必须放行、只有"存在但
+    属于他人"才拒绝。与既有守卫一致统一返回 404，避免泄漏会话存在性。
+    """
+    if not session_id:
+        return
+
+    async with async_db_session() as db:
+        owned = await AsyncHistoryService(db).get_session(
+            session_id, user_id=user_id, owner_token=owner_token
+        )
+        if owned is not None:
+            return
+        # get_session 对"不存在"和"越权"都返回 None，需区分两者。
+        exists = await db.get(Conversation, session_id) is not None
+
+    if exists:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+
 @router.post("/completions", response_model=ChatResponse)
-async def chat_completions(req: ChatRequest, _user: dict = Depends(get_current_user_optional)):
+async def chat_completions(
+    req: ChatRequest,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
     """非流式对话接口"""
     user_id = _user.get("user_id")
+    await _guard_body_session(req.session_id, user_id, owner_token)
 
     if _use_pi_bridge():
         try:
@@ -108,9 +140,14 @@ async def chat_completions(req: ChatRequest, _user: dict = Depends(get_current_u
 
 
 @router.post("/stream", response_model=None)
-async def chat_stream(req: ChatRequest, _user: dict = Depends(get_current_user_optional)):
+async def chat_stream(
+    req: ChatRequest,
+    _user: dict = Depends(get_current_user_optional),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
     """SSE 流式对话接口"""
     user_id = _user.get("user_id")
+    await _guard_body_session(req.session_id, user_id, owner_token)
 
     if _use_pi_bridge():
         async def pi_event_generator():
