@@ -115,12 +115,13 @@ export function compileMapSpecToSvg(
         const color = paint["fill-color"] ?? "#60a5fa";
         const opacity = paint["fill-opacity"] ?? 0.6;
         const outlineColor = paint["fill-outline-color"] ?? "#1d4ed8";
+        const outlineWidth = Math.round(1.0 * dpiScale * 100) / 100;
 
         polygons.forEach((polyRings: any) => {
           const outerRing = polyRings[0];
           if (!outerRing) return;
           const pointsStr = outerRing.map((c: any) => project(c).join(",")).join(" ");
-          elementsSvg += `<polygon points="${pointsStr}" fill="${color}" fill-opacity="${opacity}" stroke="${outlineColor}" stroke-width="1" />\n`;
+          elementsSvg += `<polygon points="${pointsStr}" fill="${color}" fill-opacity="${opacity}" stroke="${outlineColor}" stroke-width="${outlineWidth}" />\n`;
         });
       }
     });

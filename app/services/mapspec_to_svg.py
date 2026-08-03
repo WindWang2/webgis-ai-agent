@@ -100,12 +100,13 @@ def compile_mapspec_to_svg(
                 color = paint.get("fill-color", "#60a5fa")
                 opacity = paint.get("fill-opacity", 0.6)
                 outline = paint.get("fill-outline-color", "#1d4ed8")
+                outline_w = round(1.0 * dpi_scale, 2)
 
                 for poly_rings in polygons:
                     if not poly_rings:
                         continue
                     points_str = " ".join(f"{project(c)[0]},{project(c)[1]}" for c in poly_rings[0])
-                    elements_svg += f'<polygon points="{points_str}" fill="{color}" fill-opacity="{opacity}" stroke="{outline}" stroke-width="1" />\n'
+                    elements_svg += f'<polygon points="{points_str}" fill="{color}" fill-opacity="{opacity}" stroke="{outline}" stroke-width="{outline_w}" />\n'
 
     return f"""<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">
   <rect width="100%" height="100%" fill="#ffffff" />

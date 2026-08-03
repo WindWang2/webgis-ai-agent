@@ -25,6 +25,14 @@ describe("MapSpec-to-SVG Compiler Target", () => {
               },
               properties: { name: "Road 1" },
             },
+            {
+              type: "Feature",
+              geometry: {
+                type: "Polygon",
+                coordinates: [[[116.3, 39.8], [116.5, 39.8], [116.5, 40.0], [116.3, 40.0], [116.3, 39.8]]],
+              },
+              properties: { name: "Area 1" },
+            },
           ],
         },
       },
@@ -48,6 +56,15 @@ describe("MapSpec-to-SVG Compiler Target", () => {
           "line-width": 2,
         },
       },
+      {
+        id: "polys-layer",
+        type: "fill",
+        source: "s1",
+        paint: {
+          "fill-color": "#60a5fa",
+          "fill-outline-color": "#1d4ed8",
+        },
+      },
     ],
   };
 
@@ -56,6 +73,7 @@ describe("MapSpec-to-SVG Compiler Target", () => {
     expect(svg).toContain("<svg");
     expect(svg).toContain("<circle");
     expect(svg).toContain("<path");
+    expect(svg).toContain("<polygon");
     expect(svg).toContain("#de2d26");
     expect(svg).toContain("#2563eb");
   });
@@ -63,9 +81,11 @@ describe("MapSpec-to-SVG Compiler Target", () => {
   it("scales stroke-width and radius proportionately according to targetDpi / 72 factor", () => {
     // at 300 DPI, dpiScale = 300 / 72 = 4.16666...
     // radius 6 * 4.16666 = 25
-    // line-width 2 * 4.16666 = 8.3333...
+    // line-width 2 * 4.16666 = 8.33
+    // polygon stroke-width 1 * 4.16666 = 4.17
     const svg = compileMapSpecToSvg(sampleMapSpec, { targetDpi: 300 });
     expect(svg).toContain('r="25"');
     expect(svg).toContain('stroke-width="8.33"');
+    expect(svg).toContain('stroke-width="4.17"');
   });
 });
