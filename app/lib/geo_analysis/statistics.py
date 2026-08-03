@@ -1,3 +1,7 @@
+import hashlib
+import threading
+from collections import OrderedDict
+from typing import Any
 import numpy as np
 import pandas as pd
 import geopandas as gpd
@@ -604,6 +608,83 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
     return GeoAnalysisResult(True, data_out, summary)
 
 
+# ── Thread-Safe Pairwise Distance Matrix LRU Cache ──
+_distance_matrix_cache: OrderedDict = OrderedDict()
+_distance_matrix_maxsize: int = 128
+_distance_matrix_hits: int = 0
+_distance_matrix_misses: int = 0
+_distance_matrix_lock = threading.Lock()
+
+
+def clear_distance_matrix_cache() -> None:
+    """Clear the pairwise distance matrix LRU cache."""
+    with _distance_matrix_lock:
+        _distance_matrix_cache.clear()
+        global _distance_matrix_hits, _distance_matrix_misses
+        _distance_matrix_hits = 0
+        _distance_matrix_misses = 0
+
+
+def get_distance_matrix_cache_info() -> dict:
+    """Return distance matrix cache hits, misses, size, and maxsize."""
+    with _distance_matrix_lock:
+        return {
+            "hits": _distance_matrix_hits,
+            "misses": _distance_matrix_misses,
+            "size": len(_distance_matrix_cache),
+            "maxsize": _distance_matrix_maxsize,
+        }
+
+
+def compute_st_distance_matrix(
+    coords: np.ndarray,
+    t_seconds: np.ndarray,
+    eps1_spatial_meters: float,
+    eps2_temporal_seconds: float,
+) -> Any:
+    """Compute (or retrieve from LRU cache) normalized $L_\\infty$ spatio-temporal distance matrix."""
+    global _distance_matrix_hits, _distance_matrix_misses
+    key_raw = f"{eps1_spatial_meters}:{eps2_temporal_seconds}:{hashlib.md5(coords.tobytes() + t_seconds.tobytes()).hexdigest()}"
+
+    with _distance_matrix_lock:
+        if key_raw in _distance_matrix_cache:
+            _distance_matrix_hits += 1
+            _distance_matrix_cache.move_to_end(key_raw)
+            return _distance_matrix_cache[key_raw]
+
+        _distance_matrix_misses += 1
+
+    n = len(coords)
+    if n <= 5000:
+        from scipy.spatial.distance import pdist, squareform
+        d_spatial = squareform(pdist(coords, metric="euclidean"))
+        d_temporal = np.abs(t_seconds[:, None] - t_seconds[None, :])
+        d_mat = np.maximum(d_spatial / max(eps1_spatial_meters, 1e-6), d_temporal / max(eps2_temporal_seconds, 1e-6))
+    else:
+        from scipy.spatial import cKDTree
+        tree = cKDTree(coords)
+        coo_spatial = tree.sparse_distance_matrix(tree, max_distance=eps1_spatial_meters, output_type="coo_matrix")
+
+        r, c = coo_spatial.row, coo_spatial.col
+        spatial_dists = coo_spatial.data
+        temporal_dists = np.abs(t_seconds[r] - t_seconds[c])
+
+        valid_edges = temporal_dists <= eps2_temporal_seconds
+        r_valid, c_valid = r[valid_edges], c[valid_edges]
+        combined_dists = np.maximum(
+            spatial_dists[valid_edges] / max(eps1_spatial_meters, 1e-6),
+            temporal_dists[valid_edges] / max(eps2_temporal_seconds, 1e-6)
+        )
+        d_mat = sparse.csr_matrix((combined_dists, (r_valid, c_valid)), shape=(n, n))
+
+    with _distance_matrix_lock:
+        _distance_matrix_cache[key_raw] = d_mat
+        if len(_distance_matrix_cache) > _distance_matrix_maxsize:
+            _distance_matrix_cache.popitem(last=False)
+
+    return d_mat
+
+
 def st_dbscan_narrated(
     geojson: dict,
     eps1_spatial_meters: float = 1000.0,
@@ -679,35 +760,10 @@ def st_dbscan_narrated(
 
     coords = np.column_stack((gdf_valid.centroid.x.values, gdf_valid.centroid.y.values))
 
-    # 2. Combined Vectorized Distance Matrix Computation
-    if n <= 5000:
-        from scipy.spatial.distance import pdist, squareform
-        d_spatial = squareform(pdist(coords, metric="euclidean"))
-        d_temporal = np.abs(t_seconds[:, None] - t_seconds[None, :])
-        d_combined = np.maximum(d_spatial / max(eps1_spatial_meters, 1e-6), d_temporal / max(eps2_temporal_seconds, 1e-6))
-        
-        db = DBSCAN(eps=1.0, min_samples=min_samples, metric="precomputed")
-        labels = db.fit_predict(d_combined)
-    else:
-        from scipy.spatial import cKDTree
-        from scipy import sparse
-        tree = cKDTree(coords)
-        coo_spatial = tree.sparse_distance_matrix(tree, max_distance=eps1_spatial_meters, output_type="coo_matrix")
-        
-        r, c = coo_spatial.row, coo_spatial.col
-        spatial_dists = coo_spatial.data
-        temporal_dists = np.abs(t_seconds[r] - t_seconds[c])
-        
-        valid_edges = temporal_dists <= eps2_temporal_seconds
-        r_valid, c_valid = r[valid_edges], c[valid_edges]
-        combined_dists = np.maximum(
-            spatial_dists[valid_edges] / max(eps1_spatial_meters, 1e-6),
-            temporal_dists[valid_edges] / max(eps2_temporal_seconds, 1e-6)
-        )
-        dist_matrix_sparse = sparse.csr_matrix((combined_dists, (r_valid, c_valid)), shape=(n, n))
-        
-        db = DBSCAN(eps=1.0, min_samples=min_samples, metric="precomputed")
-        labels = db.fit_predict(dist_matrix_sparse)
+    # 2. Pairwise Distance Matrix Computation (from LRU Cache)
+    d_matrix = compute_st_distance_matrix(coords, t_seconds, eps1_spatial_meters, eps2_temporal_seconds)
+    db = DBSCAN(eps=1.0, min_samples=min_samples, metric="precomputed")
+    labels = db.fit_predict(d_matrix)
 
     # 3. Compute Metrics Summary
     unique_labels = set(labels)
