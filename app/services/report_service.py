@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.api_response import ErrCode
 from app.models.report import Report
 from app.models.db_model import Conversation, Message
+from app.services.mapspec_to_svg import compile_mapspec_to_svg
 
 try:
     import weasyprint
@@ -215,6 +216,7 @@ class ReportService:
         messages: list[dict[str, Any]],
         output_path: str,
         format: str = "pdf",
+        mapspec: Optional[dict[str, Any]] = None,
     ) -> bool:
         """
         从会话消息生成报告。
@@ -225,6 +227,7 @@ class ReportService:
             messages: 消息列表，每条包含 role / content / tool_result 等
             output_path: 输出文件路径
             format: pdf / html / markdown / md
+            mapspec: 可选的 MapSpec 定义字典
 
         Returns:
             生成是否成功
@@ -233,7 +236,7 @@ class ReportService:
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
             report_data = self._prepare_report_data(
-                session_id, session_title, messages, format
+                session_id, session_title, messages, format, mapspec=mapspec
             )
 
             if format in ("markdown", "md"):
@@ -271,6 +274,7 @@ class ReportService:
         session_title: str,
         messages: list[dict[str, Any]],
         format: str,
+        mapspec: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         """将原始消息转换为模板可用的结构化数据。"""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -302,6 +306,13 @@ class ReportService:
                     "result": self._format_tool_result(tool_result_raw),
                 })
 
+        vector_svg = None
+        if mapspec:
+            try:
+                vector_svg = compile_mapspec_to_svg(mapspec, target_dpi=300)
+            except Exception as ex:
+                logger.warning(f"Failed to compile MapSpec to SVG for report: {ex}")
+
         return {
             "title": f"分析报告: {session_title}",
             "session_id": session_id,
@@ -313,6 +324,7 @@ class ReportService:
             "has_tool_results": len(tool_results) > 0,
             "messages": conversation_msgs,
             "tool_results": tool_results,
+            "vector_svg": vector_svg,
         }
 
     # ------------------------------------------------------------------
@@ -335,6 +347,8 @@ class ReportService:
             f"<p>Generated: {esc(data['generated_at'])}</p>",
             f"<p>Messages: {data['message_count']}</p>",
         ]
+        if data.get("vector_svg"):
+            parts.append(f"<div class='vector-map-container'>{data['vector_svg']}</div>")
         for msg in data.get("messages", []):
             parts.append(
                 f"<div><b>{esc(msg['role_label'])}</b><pre>{esc(msg['content'])}</pre></div>"

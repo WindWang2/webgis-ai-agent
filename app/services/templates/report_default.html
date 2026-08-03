@@ -337,6 +337,16 @@
 
     <!-- Main Content -->
     <div class="content">
+        {% if vector_svg %}
+        <!-- Vector Map Section -->
+        <div class="section" id="section-vector-map">
+            <h2 class="section-title"><span class="num">1</span> 高清矢量地图 (300+ DPI Vector Map)</h2>
+            <div class="vector-map-container" style="text-align: center; margin-top: 16px;">
+                {{ vector_svg|safe }}
+            </div>
+        </div>
+        {% endif %}
+
         <!-- TOC -->
         {% if has_conversation or has_tool_results %}
         <div class="toc">
