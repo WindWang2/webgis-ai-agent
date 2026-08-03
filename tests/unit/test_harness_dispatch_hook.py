@@ -135,6 +135,37 @@ def test_harness_caps_accumulated_events():
     assert len(harness.exceptions) <= PiAgentHarness.MAX_EVENTS
 
 
+def test_telemetry_summary_separates_rates_from_counts():
+    """U5 fix: get_telemetry_summary must separate rates (0-100, rendered with
+    %) from raw counts (rendered without %). Previously both shared one flat
+    Dict[str, float], so the UI showed ToolCallsCount=42 as "42%"."""
+    harness = PiAgentHarness(session_id="u5_test")
+    # Record 2 tool calls + 1 error so counts are non-zero.
+    harness.record_event(ToolCallEvent(
+        tool_call_id="ok_1", tool_name="noop", arguments={}, result={},
+    ))
+    harness.record_event(ToolCallEvent(
+        tool_call_id="ok_2", tool_name="noop", arguments={}, result={},
+    ))
+    harness.record_event(ToolCallEvent(
+        tool_call_id="err_1", tool_name="noop", arguments={}, is_error=True,
+        error_msg="boom",
+    ))
+
+    summary = harness.get_telemetry_summary()
+    assert "rates" in summary
+    assert "counts" in summary
+    # Rates are 0-100 percentages.
+    assert "MapSpecValidity" in summary["rates"]
+    assert "ErrorRecoveryRate" in summary["rates"]
+    for v in summary["rates"].values():
+        assert 0.0 <= v <= 100.0
+    # Counts are raw integers-as-floats, NOT in rates.
+    assert summary["counts"]["ToolCallsCount"] == 3.0
+    assert summary["counts"]["ExceptionsCount"] == 1.0
+    assert "ToolCallsCount" not in summary["rates"]
+
+
 def test_tool_metrics_record_event():
     """Verify tool_metrics.record_event delegates to record_tool_call."""
     from app.lib.harness.tool_call_event import ToolCallEvent
