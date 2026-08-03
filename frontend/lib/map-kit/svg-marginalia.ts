@@ -116,19 +116,24 @@ export interface PrintLayoutOptions {
 }
 
 export function renderSvgPrintLayout(options: PrintLayoutOptions = {}): string {
-  const width = options.width ?? 1200;
-  const height = options.height ?? 800;
+  const layoutId = options.layoutId ?? "tmpl_ly_academic";
+  const isEngineering = layoutId === "tmpl_ly_engineering";
+  const isDarkReport = layoutId === "tmpl_ly_dark_report" || options.theme === "dark";
+
+  // A4 Ratio default: 1200x848 (A4 landscape ratio)
+  const width = options.width ?? (isDarkReport ? 1280 : 1200);
+  const height = options.height ?? (isDarkReport ? 720 : 848);
   const title = options.title ?? "高清地图 Print Layout";
   const subtitle = options.subtitle ?? "WebGIS AI Agent High-Definition Export";
   const scaleLabel = options.scaleLabel ?? "5 km";
-  const isDark = options.theme === "dark";
 
-  const color = isDark ? "#f8fafc" : "#0f172a";
-  const borderColor = isDark ? "#38bdf8" : "#2563eb";
-  const margin = 24;
+  const color = isDarkReport ? "#f8fafc" : "#0f172a";
+  const borderColor = isDarkReport ? "#38bdf8" : isEngineering ? "#334155" : "#1e3a8a";
+  const fontFamily = isEngineering ? "monospace" : "sans-serif";
+  const margin = isEngineering ? 20 : 28;
 
   const northArrowSvg = renderSvgNorthArrow({ width: 44, height: 44, color: borderColor });
-  const scalebarSvg = renderSvgScalebar({ lengthPx: 120, labelText: scaleLabel, color });
+  const scalebarSvg = renderSvgScalebar({ lengthPx: 120, labelText: scaleLabel, color, fontFamily });
   const legendSvg = renderSvgLegend({
     title: "图例 Legend",
     items: options.legendItems ?? [
@@ -136,17 +141,23 @@ export function renderSvgPrintLayout(options: PrintLayoutOptions = {}): string {
       { label: "边界界线", color: "#ec4899", type: "line" },
     ],
     color,
-    backgroundColor: isDark ? "rgba(15, 23, 42, 0.85)" : "rgba(255, 255, 255, 0.9)",
+    fontFamily,
+    backgroundColor: isDarkReport ? "rgba(15, 23, 42, 0.85)" : "rgba(255, 255, 255, 0.9)",
   });
 
-  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
+  const borderExtra = !isDarkReport && !isEngineering
+    ? `<rect x="${margin + 4}" y="${margin + 4}" width="${width - (margin + 4) * 2}" height="${height - (margin + 4) * 2}" fill="none" stroke="${borderColor}" stroke-width="0.75" />`
+    : "";
+
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" data-layout-id="${layoutId}" xmlns="http://www.w3.org/2000/svg">
   <!-- Outer Print Frame Border -->
-  <rect x="${margin}" y="${margin}" width="${width - margin * 2}" height="${height - margin * 2}" fill="none" stroke="${borderColor}" stroke-width="2" rx="4" />
-  
+  <rect x="${margin}" y="${margin}" width="${width - margin * 2}" height="${height - margin * 2}" fill="none" stroke="${borderColor}" stroke-width="2" rx="${isEngineering ? 0 : 4}" />
+  ${borderExtra}
+
   <!-- Title Block Banner -->
   <g transform="translate(${margin + 16}, ${margin + 16})">
-    <text x="0" y="24" font-family="sans-serif" font-size="22" font-weight="bold" fill="${color}">${title}</text>
-    <text x="0" y="44" font-family="sans-serif" font-size="12" fill="${color}" opacity="0.75">${subtitle}</text>
+    <text x="0" y="24" font-family="${fontFamily}" font-size="22" font-weight="bold" fill="${color}">${title}</text>
+    <text x="0" y="44" font-family="${fontFamily}" font-size="12" fill="${color}" opacity="0.75">${subtitle}</text>
   </g>
 
   <!-- North Arrow (Top Right) -->
