@@ -644,7 +644,10 @@ def compute_st_distance_matrix(
 ) -> Any:
     """Compute (or retrieve from LRU cache) normalized $L_\\infty$ spatio-temporal distance matrix."""
     global _distance_matrix_hits, _distance_matrix_misses
-    key_raw = f"{eps1_spatial_meters}:{eps2_temporal_seconds}:{hashlib.md5(coords.tobytes() + t_seconds.tobytes()).hexdigest()}"
+    # usedforsecurity=False: this digest is a non-cryptographic LRU cache key
+    # (fingerprint of the coords/time arrays), not a security primitive.
+    # Declaring it silences bandit B324 and documents intent.
+    key_raw = f"{eps1_spatial_meters}:{eps2_temporal_seconds}:{hashlib.md5(coords.tobytes() + t_seconds.tobytes(), usedforsecurity=False).hexdigest()}"
 
     with _distance_matrix_lock:
         if key_raw in _distance_matrix_cache:
