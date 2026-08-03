@@ -2,9 +2,11 @@
 SpatialAnalyzer: Unified spatial analysis engine and operator execution seam.
 Supports standardized GeoAnalysisResult payloads across all spatial operations.
 """
+import hashlib
 import json
 import logging
 import re
+from collections import OrderedDict
 from typing import Dict, List, Any, Optional, Callable
 
 from app.lib.geo_processor.core import GeoAnalysisResult, to_utm_gdf, to_feature_collection
@@ -456,6 +458,45 @@ class SpatialAnalyzer:
     ) -> GeoAnalysisResult:
         return calculate_isochrones(network_features, facilities, travel_time, mode)
 
+    # ── ST-DBSCAN Pairwise Distance Matrix LRU Cache ──
+    _st_dbscan_cache: OrderedDict = OrderedDict()
+    _st_dbscan_cache_maxsize: int = 128
+    _st_dbscan_hits: int = 0
+    _st_dbscan_misses: int = 0
+
+    @classmethod
+    def _compute_st_dbscan_key(
+        cls,
+        features: Any,
+        eps1: float,
+        eps2: float,
+        min_samples: int,
+        timestamp_field: str,
+    ) -> str:
+        try:
+            feat_repr = json.dumps(features, sort_keys=True)
+        except Exception:
+            feat_repr = str(features)
+        feat_hash = hashlib.md5(feat_repr.encode("utf-8")).hexdigest()
+        return f"st_dbscan:{feat_hash}:{eps1}:{eps2}:{min_samples}:{timestamp_field}"
+
+    @classmethod
+    def clear_st_dbscan_cache(cls) -> None:
+        """Clear the ST-DBSCAN pairwise distance matrix LRU cache."""
+        cls._st_dbscan_cache.clear()
+        cls._st_dbscan_hits = 0
+        cls._st_dbscan_misses = 0
+
+    @classmethod
+    def get_st_dbscan_cache_info(cls) -> Dict[str, Any]:
+        """Return cache hits, misses, current size, and maxsize."""
+        return {
+            "hits": cls._st_dbscan_hits,
+            "misses": cls._st_dbscan_misses,
+            "size": len(cls._st_dbscan_cache),
+            "maxsize": cls._st_dbscan_cache_maxsize,
+        }
+
     @classmethod
     @spatial_operator(name="st_dbscan")
     def st_dbscan(
@@ -467,14 +508,28 @@ class SpatialAnalyzer:
         timestamp_field: str = "timestamp",
         callback: Optional[Callable] = None,
     ) -> GeoAnalysisResult:
+        cache_key = cls._compute_st_dbscan_key(
+            features, eps1_spatial_meters, eps2_temporal_seconds, min_samples, timestamp_field
+        )
+        if cache_key in cls._st_dbscan_cache:
+            cls._st_dbscan_hits += 1
+            cls._st_dbscan_cache.move_to_end(cache_key)
+            return cls._st_dbscan_cache[cache_key]
+
+        cls._st_dbscan_misses += 1
         from app.lib.geo_analysis.statistics import st_dbscan_narrated
-        return st_dbscan_narrated(
+        result = st_dbscan_narrated(
             features,
             eps1_spatial_meters=eps1_spatial_meters,
             eps2_temporal_seconds=eps2_temporal_seconds,
             min_samples=min_samples,
             timestamp_field=timestamp_field,
         )
+        if result.success:
+            cls._st_dbscan_cache[cache_key] = result
+            if len(cls._st_dbscan_cache) > cls._st_dbscan_cache_maxsize:
+                cls._st_dbscan_cache.popitem(last=False)
+        return result
 
 
 __all__ = ["SpatialAnalyzer", "AnalysisResult"]
