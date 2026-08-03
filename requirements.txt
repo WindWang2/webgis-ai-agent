@@ -71,7 +71,7 @@ redis>=5.0.0,<6.0.0
 # 之前漏列导致 CI 装 sqlalchemy 但没有 driver -> ModuleNotFoundError。
 aiosqlite>=0.19.0
 asyncpg>=0.29.0
-matplotlib>=3.8.0
+matplotlib>=3.11.1
 
 # RAG & Vector Search
 sentence-transformers>=2.2.0
