@@ -5,7 +5,7 @@
 fastapi>=0.140.0
 starlette>=0.40.0
 uvicorn[standard]>=0.27.0
-python-multipart>=0.0.6
+python-multipart>=0.0.32
 
 # Database & ORM
 sqlalchemy>=2.0.25
