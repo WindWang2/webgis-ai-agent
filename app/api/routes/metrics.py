@@ -22,7 +22,7 @@ async def get_metrics_digest() -> Dict[str, Any]:
 
     harness_metrics = None
     if harness is not None:
-        harness_metrics = harness.evaluate_all(expected_tools=[], ideal_step_count=0)
+        harness_metrics = harness.get_telemetry_summary()
 
     return {
         "success": True,

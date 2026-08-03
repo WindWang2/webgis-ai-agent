@@ -11,10 +11,18 @@ from app.services.spatial_analyzer import SpatialAnalyzer
 client = TestClient(app)
 
 
-def test_metrics_digest_endpoint():
-    """Verify /api/v1/metrics/digest returns tool_metrics, spatial_cache, and harness info."""
+@pytest.fixture(autouse=True)
+def cleanup_metrics():
+    """Reset global metrics and cache state before and after each test."""
     tool_metrics._reset_for_tests()
     SpatialAnalyzer.clear_st_dbscan_cache()
+    yield
+    tool_metrics._reset_for_tests()
+    SpatialAnalyzer.clear_st_dbscan_cache()
+
+
+def test_metrics_digest_endpoint():
+    """Verify /api/v1/metrics/digest returns tool_metrics, spatial_cache, and harness info."""
 
     # Record sample tool call
     tool_metrics.record_tool_call(

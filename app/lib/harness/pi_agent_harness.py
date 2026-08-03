@@ -198,6 +198,16 @@ class PiAgentHarness:
         rate = (self.recovered_exceptions_count / total_exceptions) * 100.0
         return min(100.0, max(0.0, rate))
 
+    def get_telemetry_summary(self) -> Dict[str, float]:
+        """Return instant in-memory telemetry metrics summary."""
+        return {
+            "MapSpecValidity": round(self.compute_mapspec_validity(), 2),
+            "CursorResolutionRate": round(self.compute_cursor_resolution_rate(), 2),
+            "ErrorRecoveryRate": round(self.compute_error_recovery_rate(), 2),
+            "ToolCallsCount": float(len(self.tool_calls)),
+            "ExceptionsCount": float(len(self.exceptions)),
+        }
+
     def evaluate_all(
         self, expected_tools: List[str], ideal_step_count: int
     ) -> Dict[str, float]:
