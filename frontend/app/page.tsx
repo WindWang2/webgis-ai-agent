@@ -17,6 +17,7 @@ import TopBar from '@/components/layout/top-bar';
 import { LeftSidebar } from '@/components/sidebar/left-sidebar';
 import FloatingLegend from '@/components/map/floating-legend';
 import { SpatialCrosshair } from '@/components/map/spatial-crosshair';
+import { MapErrorBoundary } from '@/components/map/map-error-boundary';
 import { EmbodiedHud } from '@/components/hud/embodied-hud';
 import TweaksPanel from '@/components/tweaks-panel';
 
@@ -159,14 +160,16 @@ export default function Home() {
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden', marginTop: 42, marginBottom: 24 }}>
         {/* Map Panel */}
         <div style={{ position: 'absolute', inset: 0 }}>
-          <MapPanel
-            layers={layers}
-            onRemoveLayer={removeLayer}
-            onToggleLayer={toggleLayer}
-            onViewportChange={bridge.onViewportChange}
-          />
-          <ExportMask />
-          <SpatialCrosshair />
+          <MapErrorBoundary>
+            <MapPanel
+              layers={layers}
+              onRemoveLayer={removeLayer}
+              onToggleLayer={toggleLayer}
+              onViewportChange={bridge.onViewportChange}
+            />
+            <ExportMask />
+            <SpatialCrosshair />
+          </MapErrorBoundary>
         </div>
 
         {/* Floating Legend */}
