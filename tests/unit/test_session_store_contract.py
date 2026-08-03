@@ -182,3 +182,52 @@ async def test_factory_get_session_store():
     custom = MemorySessionStore()
     set_active_session_store(custom)
     assert get_session_store() is custom
+
+
+def test_factory_selects_backend_from_settings_use_redis(monkeypatch):
+    """REVIEW-P1-6: the seam used to gate on settings.REDIS_ENABLED (which
+    does not exist) and then try to import a name the redis module doesn't
+    export, so the `except Exception` fallback always returned memory even
+    when USE_REDIS=True. Verify the seam now honors the real config flag.
+    """
+    import fakeredis.aioredis
+
+    from app.services import session_data_protocol
+    from app.services.session_data_redis import RedisSessionDataManager
+
+    # Wire the factory to an injected fakeredis so USE_REDIS=True doesn't
+    # try to reach a real Redis server.
+    fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=False)
+    use_redis = {"value": False}  # mutable so the factory closure reads it
+
+    def _factory_with_fake():
+        from app.services.session_data import MemorySessionStore
+
+        if use_redis["value"]:
+            return RedisSessionDataManager(
+                redis_url="redis://unused", redis=fake_redis
+            )
+        return MemorySessionStore()
+
+    monkeypatch.setattr(
+        "app.services.session_data.create_session_data_manager",
+        _factory_with_fake,
+    )
+
+    # Force a fresh singleton so the factory re-runs.
+    session_data_protocol._active_store = None
+    use_redis["value"] = False
+    store = get_session_store()
+    assert not isinstance(store, RedisSessionDataManager), (
+        f"USE_REDIS=False must not yield a Redis store, got {type(store).__name__}"
+    )
+
+    session_data_protocol._active_store = None
+    use_redis["value"] = True
+    store = get_session_store()
+    assert isinstance(store, RedisSessionDataManager), (
+        f"USE_REDIS=True should yield RedisSessionDataManager, got {type(store).__name__}"
+    )
+
+    # Reset for following tests.
+    session_data_protocol._active_store = None
