@@ -187,12 +187,15 @@ class ReportService:
                     if final_size is not None:
                         report.file_size = final_size
         else:
-            report.status = final_status
-            report.error_message = final_error
-            if final_size is not None:
-                report.file_size = final_size
-            await db.commit()
-            await db.refresh(report)
+            r = await db.get(Report, report_id)
+            if r is not None:
+                r.status = final_status
+                r.error_message = final_error
+                if final_size is not None:
+                    r.file_size = final_size
+                await db.commit()
+                await db.refresh(r)
+                report = r
 
         report_serialized = serialize_report(report)
 

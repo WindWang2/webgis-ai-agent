@@ -88,7 +88,7 @@ def register_report_tools(registry: ToolRegistry):
                 file_path=file_path,
             )
             db.add(report)
-            db.flush()
+            db.commit()
 
             msg_dicts = [
                 {
@@ -100,21 +100,24 @@ def register_report_tools(registry: ToolRegistry):
                 for m in messages
             ]
 
-            mapspec = await mapspec_store.get_mapspec(session_id)
-            success = await spatial_report_engine.generate_report(
-                session_id=session_id,
-                session_title=conversation.title or report_title,
-                messages=msg_dicts,
-                output_path=file_path,
-                format=format,
-                mapspec=mapspec,
-            )
+        mapspec = await mapspec_store.get_mapspec(session_id)
+        success = await spatial_report_engine.generate_report(
+            session_id=session_id,
+            session_title=report_title,
+            messages=msg_dicts,
+            output_path=file_path,
+            format=format,
+            mapspec=mapspec,
+        )
 
+        with db_session() as db:
+            report = db.get(Report, report_id)
             if success and os.path.exists(file_path):
                 file_size = os.path.getsize(file_path)
-                report.status = "completed"
-                report.file_size = file_size
-                db.commit()
+                if report:
+                    report.status = "completed"
+                    report.file_size = file_size
+                    db.commit()
 
                 return {
                     "type": "report_generated",
@@ -126,7 +129,8 @@ def register_report_tools(registry: ToolRegistry):
                     "message": f"报告「{report_title}」已生成完毕（{format.upper()} 格式，{round(file_size / 1024, 1)} KB）。",
                 }
             else:
-                report.status = "failed"
-                report.error_message = "生成过程未产出文件"
-                db.commit()
+                if report:
+                    report.status = "failed"
+                    report.error_message = "生成过程未产出文件"
+                    db.commit()
                 return {"error": "报告生成过程失败，未能生成文件。"}
