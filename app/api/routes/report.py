@@ -19,7 +19,7 @@ from app.core.database import get_async_db
 from app.models.api_response import ApiResponse, ErrCode
 from app.models.report import Report
 from app.models.db_model import Conversation, Message
-from app.services.report_service import ReportService, REPORT_DIR
+from app.services.report_service import ReportService, REPORT_DIR, serialize_report as _serialize_report, file_ext as _file_ext
 from app.services.mapspec_store import mapspec_store
 
 import logging
@@ -58,36 +58,12 @@ class ShareRequest(BaseModel):
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
-def _serialize_report(r: Report) -> dict:
-    return {
-        "id": r.id,
-        "session_id": r.session_id,
-        "title": r.title,
-        "format": r.format,
-        "status": r.status,
-        "file_size": r.file_size,
-        "share_code": r.share_code,
-        "share_expires_at": (
-            r.share_expires_at.isoformat() if r.share_expires_at else None
-        ),
-        "error_message": r.error_message,
-        "created_at": r.created_at.isoformat() if r.created_at else None,
-        "download_url": f"/api/v1/reports/{r.id}/download" if r.status == "completed" else None,
-    }
-
-
 def _media_type(fmt: str) -> str:
     if fmt == "pdf":
         return "application/pdf"
     if fmt == "html":
         return "text/html"
     return "text/markdown"
-
-
-def _file_ext(fmt: str) -> str:
-    if fmt in ("markdown", "md"):
-        return "md"
-    return fmt
 
 
 # ── Endpoints ────────────────────────────────────────────────────────

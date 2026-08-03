@@ -173,29 +173,18 @@ class ReportService:
             from app.core.database import AsyncSessionLocal
             session_factory = AsyncSessionLocal
 
-        if session_factory is not None:
-            async with session_factory() as db2:
-                db2_report = await db2.get(Report, report_id)
-                if db2_report is not None:
-                    db2_report.status = final_status
-                    db2_report.error_message = final_error
-                    if final_size is not None:
-                        db2_report.file_size = final_size
-                    await db2.commit()
-                    report.status = final_status
-                    report.error_message = final_error
-                    if final_size is not None:
-                        report.file_size = final_size
-        else:
-            r = await db.get(Report, report_id)
-            if r is not None:
-                r.status = final_status
-                r.error_message = final_error
+        async with session_factory() as db2:
+            db2_report = await db2.get(Report, report_id)
+            if db2_report is not None:
+                db2_report.status = final_status
+                db2_report.error_message = final_error
                 if final_size is not None:
-                    r.file_size = final_size
-                await db.commit()
-                await db.refresh(r)
-                report = r
+                    db2_report.file_size = final_size
+                await db2.commit()
+                report.status = final_status
+                report.error_message = final_error
+                if final_size is not None:
+                    report.file_size = final_size
 
         report_serialized = serialize_report(report)
 

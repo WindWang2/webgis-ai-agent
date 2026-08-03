@@ -20,10 +20,10 @@ import { SpatialCrosshair } from '@/components/map/spatial-crosshair';
 import { EmbodiedHud } from '@/components/hud/embodied-hud';
 import TweaksPanel from '@/components/tweaks-panel';
 
-const RagIndependentPanel = dynamic(() => import('@/components/panel/rag-independent-panel'));
-const HistoryDrawer = dynamic(() => import('@/components/drawers/history-drawer').then(m => ({ default: m.HistoryDrawer })));
-const SettingsPanel = dynamic(() => import('@/components/settings/settings-panel').then(m => ({ default: m.SettingsPanel })));
-const ExportMask = dynamic(() => import('@/components/map/export-mask').then(m => ({ default: m.ExportMask })));
+const RagIndependentPanel = dynamic(() => import('@/components/panel/rag-independent-panel'), { ssr: false });
+const HistoryDrawer = dynamic(() => import('@/components/drawers/history-drawer').then(m => ({ default: m.HistoryDrawer })), { ssr: false });
+const SettingsPanel = dynamic(() => import('@/components/settings/settings-panel').then(m => ({ default: m.SettingsPanel })), { ssr: false });
+const ExportMask = dynamic(() => import('@/components/map/export-mask').then(m => ({ default: m.ExportMask })), { ssr: false });
 
 const MapPanel = dynamic(
   () => import('@/components/map/map-panel').then((m) => ({ default: m.MapPanel })),
