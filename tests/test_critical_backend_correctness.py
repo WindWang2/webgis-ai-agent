@@ -64,7 +64,7 @@ def test_c1_rs_service_formula_masks_negative_reflectance():
     验证生产公式的 mask 语义：分母 <=0 的像元取 out 数组的 0。
     """
     import numpy as np
-    from app.services.rs_service import INDEX_FORMULAS
+    from app.services.rs.band_math import INDEX_FORMULAS
 
     _, ndvi_formula = INDEX_FORMULAS["ndvi"]
 
