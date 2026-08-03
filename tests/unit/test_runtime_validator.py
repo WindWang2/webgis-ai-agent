@@ -168,6 +168,17 @@ async def test_runtime_validator_full_flow(clean_session):
   Requires the Playwright chromium browser and network access to the MapLibre
   CDN (the compiled HTML loads maplibre-gl from unpkg). Run with: pytest -m heavy
   """
+  # The validator drives a Node subprocess (npx tsx runtime-validate.ts, cwd=frontend)
+  # that launches Playwright Chromium and loads maplibre-gl from a CDN. The Backend
+  # Tests CI job never runs `npm ci`, so frontend/node_modules/playwright is absent
+  # and the subprocess fails with `mapLoaded: False`. Skip gracefully rather than
+  # fail with a misleading assertion. Mirrors the skipif(weasyprint is None) guard
+  # in test_report_service_vector_svg.py.
+  from app.services.mapspec_store import PROJECT_ROOT
+
+  if not (PROJECT_ROOT / "frontend" / "node_modules" / "playwright").exists():
+    pytest.skip("requires Playwright (run `npm ci` in frontend/ first)")
+
   from app.services.runtime_validator import runtime_validator
 
   await mapspec_store.init_project(
