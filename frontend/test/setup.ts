@@ -19,8 +19,6 @@ Object.defineProperty(window, 'localStorage', {
 // real browser where Blob.prototype.arrayBuffer already exists.
 if (typeof Blob !== 'undefined' && typeof Blob.prototype.arrayBuffer !== 'function') {
   Blob.prototype.arrayBuffer = async function (): Promise<ArrayBuffer> {
-    // jsdom stores the underlying bytes in _buffer (a Node Buffer) on the impl
-    // object; reach it via the public wrapper's symbol or FileReader fallback.
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
@@ -30,6 +28,42 @@ if (typeof Blob !== 'undefined' && typeof Blob.prototype.arrayBuffer !== 'functi
       reader.onerror = () => reject(reader.error);
       reader.readAsArrayBuffer(this);
     });
+  };
+}
+
+if (typeof HTMLCanvasElement !== 'undefined') {
+  HTMLCanvasElement.prototype.getContext = function () {
+    return {
+      drawImage: () => {},
+      fillText: () => {},
+      fillRect: () => {},
+      createLinearGradient: () => ({ addColorStop: () => {} }),
+      beginPath: () => {},
+      moveTo: () => {},
+      lineTo: () => {},
+      closePath: () => {},
+      fill: () => {},
+      stroke: () => {},
+      strokeRect: () => {},
+      arc: () => {},
+      arcTo: () => {},
+      save: () => {},
+      restore: () => {},
+      translate: () => {},
+      rotate: () => {},
+      setLineDash: () => {},
+      measureText: () => ({ width: 50 }),
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 1,
+      font: '',
+      textAlign: 'left',
+      shadowColor: '',
+      shadowBlur: 0,
+    } as any;
+  };
+  HTMLCanvasElement.prototype.toDataURL = function () {
+    return 'data:image/png;base64,iVBORw0KGgoAAAANSU5EUgAAAAIAAAACCAYAAABytg0kAAAAC0lEQVR4XmNgQAcAABIAAQu7JJwAAAAASUVORK5CYII=';
   };
 }
 

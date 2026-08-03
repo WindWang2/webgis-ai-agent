@@ -1,6 +1,5 @@
 import type { CommandEntry } from './types';
-import { runExport } from '@/lib/map-exporter';
-import type { ExportRequest } from '@/lib/map-exporter';
+import { MapExporterEngine, type ExportRequest } from '@/lib/map-kit/exporter';
 import { devOnly } from '@/lib/utils/logger';
 
 /**
@@ -27,7 +26,7 @@ export const exportCommands: Record<string, CommandEntry> = {
 
       map.once('render', async () => {
         try {
-          const outcome = await runExport(
+          const outcome = await MapExporterEngine.export(
             { map, getHudState },
             (params || {}) as ExportRequest,
           );

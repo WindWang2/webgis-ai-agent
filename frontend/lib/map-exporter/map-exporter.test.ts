@@ -1,53 +1,5 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
-import { runExport, type ExportDeps, type ExportRequest } from './index';
-
-// ── Mock map-kit/exporter ───────────────────────────────────────────
-
-vi.mock('@/lib/map-kit/exporter', () => ({
-  prepareExportCanvas: vi.fn((_canvas: any) => ({
-    canvas: {
-      width: 800,
-      height: 600,
-      getContext: () => ({
-        drawImage: vi.fn(),
-        fillText: vi.fn(),
-        fillRect: vi.fn(),
-        createLinearGradient: () => ({ addColorStop: vi.fn() }),
-        beginPath: vi.fn(),
-        moveTo: vi.fn(),
-        lineTo: vi.fn(),
-        closePath: vi.fn(),
-        fill: vi.fn(),
-        stroke: vi.fn(),
-        strokeRect: vi.fn(),
-        arc: vi.fn(),
-        arcTo: vi.fn(),
-        save: vi.fn(),
-        restore: vi.fn(),
-        translate: vi.fn(),
-        rotate: vi.fn(),
-        setLineDash: vi.fn(),
-        measureText: () => ({ width: 50 }),
-        set fillStyle(_: any) {},
-        set strokeStyle(_: any) {},
-        set lineWidth(_: any) {},
-        set font(_: any) {},
-        set textAlign(_: any) {},
-        set shadowColor(_: any) {},
-        set shadowBlur(_: any) {},
-      }),
-      toDataURL: () => 'data:image/png;base64,AAAA',
-    },
-    scaleX: 1,
-    scaleY: 1,
-    srcX: 0,
-    srcY: 0,
-    srcW: 800,
-    srcH: 600,
-  })),
-  composeLayout: vi.fn(),
-  exportToPDF: vi.fn(async () => new Blob(['pdf-data'], { type: 'application/pdf' })),
-}));
+import { runExport, MapExporterEngine, type ExportDeps, type ExportRequest } from '@/lib/map-kit/exporter';
 
 vi.mock('@/lib/api/config', () => ({
   API_BASE: 'http://localhost:8001',
@@ -59,16 +11,22 @@ vi.mock('@/lib/utils/logger', () => ({
 
 // ── Test helpers ────────────────────────────────────────────────────
 
+function createMockCanvas() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 800;
+  canvas.height = 600;
+  return canvas;
+}
+
+beforeEach(() => {
+  vi.restoreAllMocks();
+});
+
 function createMockMap(overrides: Partial<Record<string, any>> = {}) {
   return {
     getPixelRatio: vi.fn(() => 1),
     setPixelRatio: vi.fn(),
-    getCanvas: vi.fn(() => ({
-      width: 800,
-      height: 600,
-      getContext: () => null,
-      toDataURL: () => 'data:image/png;base64,AAAA',
-    })),
+    getCanvas: vi.fn(() => createMockCanvas()),
     getCenter: vi.fn(() => ({ lat: 39.9, lng: 116.4 })),
     getZoom: vi.fn(() => 10),
     getBearing: vi.fn(() => 0),
@@ -114,13 +72,19 @@ function mockFetchSuccess(url = '/exports/test.png', filename = 'test.png') {
   return mockFetch;
 }
 
-function mockFetchUpload(url = '/exports/test.png', filename = 'test.png') {
-  const mockFetch = vi.fn() as Mock;
-  // Single call: upload POST → { url, filename }
-  mockFetch.mockResolvedValueOnce({
-    ok: true,
-    json: async () => ({ url, filename }),
-  });
+function mockFetchUpload(url = '/exports/map.png', filename = 'map.png') {
+  const mockFetch = vi.fn((reqUrl: string) => {
+    if (typeof reqUrl === 'string' && reqUrl.includes('/api/v1/export')) {
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ url, filename }),
+      } as any);
+    }
+    return Promise.resolve({
+      ok: true,
+      blob: async () => new Blob(['img-data'], { type: 'image/png' }),
+    } as any);
+  }) as Mock;
   vi.stubGlobal('fetch', mockFetch);
   return mockFetch;
 }
@@ -173,6 +137,9 @@ describe('runExport', () => {
   it('PDF export uses jsPDF', async () => {
     const deps = createDeps();
     mockFetchUpload('/exports/map.pdf', 'map.pdf');
+    const exportToPDFSpy = vi.spyOn(MapExporterEngine, 'exportToPDF').mockResolvedValue(
+      new Blob(['pdf-data'], { type: 'application/pdf' })
+    );
 
     const req: ExportRequest = {
       title: 'PDF Report',
@@ -182,12 +149,12 @@ describe('runExport', () => {
       author: '作者',
     };
     const outcome = await runExport(deps, req);
+    if (!outcome.ok) throw new Error(`[PDF TEST ERROR]: ${outcome.error}`);
 
     expect(outcome.ok).toBe(true);
     expect(outcome.format).toBe('pdf');
 
-    const { exportToPDF } = await import('@/lib/map-kit/exporter');
-    expect(exportToPDF).toHaveBeenCalledWith(
+    expect(exportToPDFSpy).toHaveBeenCalledWith(
       expect.anything(),       // canvas
       'PDF Report',            // title
       undefined,               // subtitle
