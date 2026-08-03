@@ -521,7 +521,7 @@ async def test_anonymous_cannot_post_to_owned_session(client, tenants):
 
 
 @pytest.mark.asyncio
-async def test_owner_not_blocked_on_own_session(tenants):
+async def test_owner_not_blocked_on_own_session(db, tenants):
     """正向：Alice 用自己的 session_id 不被守卫拦截。
 
     放行路径直接断言守卫本身，不走整条路由 —— 一旦放行，真实 ChatEngine 会去
@@ -529,28 +529,28 @@ async def test_owner_not_blocked_on_own_session(tenants):
     """
     from app.api.routes.chat import _guard_body_session
 
-    await _guard_body_session(tenants["conv_a"].id, tenants["user_a"].id, None)
+    await _guard_body_session(db, tenants["conv_a"].id, tenants["user_a"].id, None)
 
 
 @pytest.mark.asyncio
-async def test_new_session_id_not_blocked(tenants):
+async def test_new_session_id_not_blocked(db, tenants):
     """正向：库中不存在的 session_id 必须放行（首条消息会新建该会话），
     否则守卫会把"开新对话"这条正常路径打成 404。"""
     from app.api.routes.chat import _guard_body_session
 
-    await _guard_body_session(str(uuid.uuid4()), tenants["user_a"].id, None)
+    await _guard_body_session(db, str(uuid.uuid4()), tenants["user_a"].id, None)
 
 
 @pytest.mark.asyncio
-async def test_omitted_session_id_not_blocked(tenants):
+async def test_omitted_session_id_not_blocked(db, tenants):
     """正向：不带 session_id（前端首次进入）必须放行。"""
     from app.api.routes.chat import _guard_body_session
 
-    await _guard_body_session(None, tenants["user_a"].id, None)
+    await _guard_body_session(db, None, tenants["user_a"].id, None)
 
 
 @pytest.mark.asyncio
-async def test_guard_rejects_other_tenants_session(tenants):
+async def test_guard_rejects_other_tenants_session(db, tenants):
     """反向（守卫层）：Bob 传 Alice 的 session_id → HTTPException 404。
 
     与上面的路由级用例互补：这里锁定守卫自身的返回码，确保未来重构守卫时
@@ -561,5 +561,5 @@ async def test_guard_rejects_other_tenants_session(tenants):
     from app.api.routes.chat import _guard_body_session
 
     with pytest.raises(HTTPException) as exc:
-        await _guard_body_session(tenants["conv_a"].id, tenants["user_b"].id, None)
+        await _guard_body_session(db, tenants["conv_a"].id, tenants["user_b"].id, None)
     assert exc.value.status_code == 404
