@@ -1,5 +1,5 @@
-import { diffSpecs } from "./reconciler";
-import { MapSpec, SpecPatch } from "./types";
+import { diffSpecs, SpecPatch } from "./reconciler";
+import { MapSpec } from "./types";
 
 export class WorkerReconcilerBridge {
   private worker: Worker | null = null;
