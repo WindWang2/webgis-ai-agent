@@ -78,6 +78,7 @@ class ReportService:
         format: str = "pdf",
         title: Optional[str] = None,
         session_factory=None,
+        mapspec: Optional[dict[str, Any]] = None,
     ) -> ReportSagaResult:
         """
         Report status-lifecycle saga (ADR-0023):
@@ -158,6 +159,7 @@ class ReportService:
                 messages=msg_dicts,
                 output_path=file_path,
                 format=fmt,
+                mapspec=mapspec,
             )
 
             if success and os.path.exists(file_path):

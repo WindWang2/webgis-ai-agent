@@ -53,8 +53,8 @@ async def test_generate_report_embeds_vector_svg():
         )
 
         assert success is True
-        # Verify WeasyPrint HTML instantiation contained vector SVG markup
+        # Verify WeasyPrint HTML instantiation contained vector SVG markup with DPI scaled radius
         html_passed = mock_weasyprint.HTML.call_args[1]["string"]
-        assert "<svg" in html_passed
-        assert 'r="25.0"' in html_passed or 'r="25"' in html_passed  # 6 * (300/72)
+        expected_r = round(6 * (300 / 72.0), 2)  # base_r * (target_dpi / 72)
+        assert f'r="{expected_r}"' in html_passed
         assert "#de2d26" in html_passed
