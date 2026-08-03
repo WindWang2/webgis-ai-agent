@@ -73,14 +73,12 @@ def register_report_tools(registry: ToolRegistry):
             if not messages:
                 return {"error": "会话中暂无消息，无法生成报告"}
 
-            # Prepare
             report_id = str(uuid.uuid4())
             report_title = title or conversation.title or "空间分析报告"
             ext = "md" if format in ("markdown", "md") else format
             file_name = f"{report_id}.{ext}"
             file_path = os.path.join(REPORT_DIR, file_name)
 
-            # Create DB record
             report = Report(
                 id=report_id,
                 session_id=session_id,
@@ -90,9 +88,8 @@ def register_report_tools(registry: ToolRegistry):
                 file_path=file_path,
             )
             db.add(report)
-            db.flush()  # flush so the record exists for the ID
+            db.flush()
 
-            # Generate
             msg_dicts = [
                 {
                     "role": m.role,
@@ -103,8 +100,6 @@ def register_report_tools(registry: ToolRegistry):
                 for m in messages
             ]
 
-            # P0-1 fix: forward the session's MapSpec so generate_report can
-            # embed crisp vector SVG into the PDF (review finding: was None).
             mapspec = await mapspec_store.get_mapspec(session_id)
             success = await spatial_report_engine.generate_report(
                 session_id=session_id,
@@ -133,4 +128,5 @@ def register_report_tools(registry: ToolRegistry):
             else:
                 report.status = "failed"
                 report.error_message = "生成过程未产出文件"
-                return {"error": "报告生成失败，请稍后重试。"}
+                db.commit()
+                return {"error": "报告生成过程失败，未能生成文件。"}

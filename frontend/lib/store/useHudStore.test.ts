@@ -29,5 +29,10 @@ describe('EmbodiedHudEngine', () => {
 
     const undone = EmbodiedHudEngine.undo();
     expect(undone).toBe(true);
+    expect(useHudStore.getState().activeTool).toBe(null);
+
+    const redone = EmbodiedHudEngine.redo();
+    expect(redone).toBe(true);
+    expect(useHudStore.getState().activeTool).toBe('buffer');
   });
 });

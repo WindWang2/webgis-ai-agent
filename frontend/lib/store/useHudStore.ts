@@ -109,10 +109,15 @@ export class EmbodiedHudEngine {
 
   public static undo(): boolean {
     if (this.historyStack.length === 0) return false;
-    const current = this.recordSnapshot();
     const previous = this.historyStack.pop();
     if (!previous) return false;
-    this.redoStack.push(current);
+    const state = useHudStore.getState();
+    this.redoStack.push({
+      hudOpen: state.hudOpen,
+      activeLeftTab: state.activeLeftTab,
+      activeTool: state.activeTool,
+      timestamp: Date.now(),
+    });
     useHudStore.setState({
       hudOpen: previous.hudOpen,
       activeLeftTab: previous.activeLeftTab,
@@ -125,13 +130,13 @@ export class EmbodiedHudEngine {
     if (this.redoStack.length === 0) return false;
     const next = this.redoStack.pop();
     if (!next) return false;
-    const currentSnapshot: HudSnapshot = {
-      hudOpen: useHudStore.getState().hudOpen,
-      activeLeftTab: useHudStore.getState().activeLeftTab,
-      activeTool: useHudStore.getState().activeTool,
+    const state = useHudStore.getState();
+    this.historyStack.push({
+      hudOpen: state.hudOpen,
+      activeLeftTab: state.activeLeftTab,
+      activeTool: state.activeTool,
       timestamp: Date.now(),
-    };
-    this.historyStack.push(currentSnapshot);
+    });
     useHudStore.setState({
       hudOpen: next.hudOpen,
       activeLeftTab: next.activeLeftTab,
