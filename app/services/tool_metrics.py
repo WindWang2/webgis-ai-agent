@@ -12,6 +12,7 @@ import os
 import threading
 from datetime import datetime, timezone
 from typing import Optional
+from app.lib.harness.tool_call_event import ToolCallEvent
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,19 @@ def record_tool_call(
         logger.warning(f"[tool_metrics] write failed (dropping row): {type(e).__name__}: {e}")
 
     _update_aggregator(tool, duration_ms, cache_hit, error)
+
+
+def record_event(event: ToolCallEvent) -> None:
+    """Record a tool call event from the unified telemetry model."""
+    record_tool_call(
+        tool=event.tool_name,
+        arg_bytes=event.arg_bytes,
+        result_bytes=event.result_bytes,
+        duration_ms=event.duration_ms,
+        cache_hit=event.cache_hit,
+        error=event.error_msg if event.is_error else None,
+        session_id=event.session_id,
+    )
 
 
 def _update_aggregator(tool: str, duration_ms: int, cache_hit: bool, error: Optional[str]) -> None:

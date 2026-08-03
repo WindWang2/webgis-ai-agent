@@ -4,7 +4,7 @@ import pytest
 from app.services.mapspec_store import mapspec_store, BASE_STORAGE_DIR, view_has_center
 from app.services.session_data import session_data_manager
 from app.tools.registry import ToolRegistry
-from app.tools.cartography_harness import register_cartography_harness_tools
+from app.tools.cartography_tools import register_cartography_tools
 
 
 @pytest.fixture

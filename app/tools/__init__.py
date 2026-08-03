@@ -37,7 +37,7 @@ _TOOL_MODULES = [
     ("app.tools.plan_mode", "register_plan_mode_tools"),
     ("app.tools.subagent", "register_subagent_tools"),
     ("app.tools.meta_tools", "register_meta_tools"),
-    ("app.tools.cartography_harness", "register_cartography_harness_tools"),
+    ("app.tools.cartography_tools", "register_cartography_tools"),
     ("app.tools.templates", "register_template_tools"),
 ]
 

@@ -32,6 +32,7 @@ from pydantic import BaseModel
 
 from app.utils.sse import sse_event
 from app.services.tool_dispatch_service import ToolDispatchService
+from app.lib.harness.pi_agent_harness import PiAgentHarness
 
 logger = logging.getLogger(__name__)
 
@@ -183,11 +184,21 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     # executed_tools 复用一个 session 级 set，让重复调用拦截在 service 内生效。
     service = ToolDispatchService(registry=registry)
     tc = {"id": request.toolCallId, "function": {"name": tool_name, "arguments": request.arguments or {}}}
+    if _harness is not None:
+        _harness.record_tool_call(request.toolCallId, request.name, request.arguments or {})
     executed = _session_executed_sets.setdefault(request.sessionId or "", set())
     result = await service.dispatch(tc, request.sessionId or "", executed)
 
     # 缓存供 SSE 适配器读取
     cache_dispatch_result(request.sessionId, request.toolCallId, result)
+
+    if _harness is not None:
+        _harness.record_tool_result(
+            request.toolCallId, request.name,
+            {"status": result.status, "llm_payload_len": len(result.llm_payload)},
+            is_error=(result.status == "error"),
+            error_msg=result.llm_payload if result.status == "error" else None,
+        )
 
     return PiToolResponse(
         toolCallId=request.toolCallId,
@@ -199,6 +210,18 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
 
 # 每个 session 的已执行工具集合，供重复调用拦截（service 接受外部 set）。
 _session_executed_sets: dict[str, set[tuple[str, str]]] = {}
+
+
+# ── Optional evaluation harness (opt-in via PI_HARNESS_ENABLED=true) ──
+_harness: Optional[PiAgentHarness] = None
+if os.getenv("PI_HARNESS_ENABLED", "").lower() in ("true", "1", "yes"):
+    _harness = PiAgentHarness(session_id="production")
+    logger.info("[PiBridge] Evaluation harness enabled for production telemetry")
+
+
+def get_harness() -> Optional[PiAgentHarness]:
+    """Return the active evaluation harness, or None if disabled."""
+    return _harness
 
 
 # ── PiBridge: thin orchestrator (holds PiRpcClient + delegates mapping) ──────
@@ -347,6 +370,8 @@ class PiBridge:
             try:
                 event = await asyncio.wait_for(self._rpc.events.get(), timeout=PI_EVENT_STREAM_TIMEOUT)
                 sse = map_event_to_sse(event, self._session_id, cache_lookup=get_cached_dispatch_result)
+                if _harness is not None:
+                    _harness.record_sse_event(event)
                 if sse:
                     yield sse
                 if event.get("type") == "agent_end":

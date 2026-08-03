@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any, Dict, List, Optional
+from app.lib.harness.tool_call_event import ToolCallEvent
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,21 @@ class PiAgentHarness:
     def record_sse_event(self, event: Dict[str, Any]) -> None:
         """Intercept and record an SSE event dict."""
         self.sse_events.append(event)
+
+    def record_event(self, event: ToolCallEvent) -> None:
+        """Record a complete tool call event from the unified telemetry model."""
+        self.record_tool_call(
+            tool_call_id=event.tool_call_id,
+            name=event.tool_name,
+            arguments=event.arguments,
+        )
+        self.record_tool_result(
+            tool_call_id=event.tool_call_id,
+            name=event.tool_name,
+            result=event.result,
+            is_error=event.is_error,
+            error_msg=event.error_msg,
+        )
 
     def _scan_and_record_ref_cursors(self, tool_call_id: str, args: Dict[str, Any]) -> None:
         """Scan tool arguments recursively for ref: cursor strings."""
