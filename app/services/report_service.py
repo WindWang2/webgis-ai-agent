@@ -443,3 +443,34 @@ class ReportService:
             fn = tool_calls.get("function", {})
             if isinstance(fn, dict):
                 return fn.get("name", "Tool")
+        return "Tool"
+
+
+class SpatialReportEngine(ReportService):
+    """Deep Spatial Report Engine consolidating metadata extraction, Jinja HTML templating, WeasyPrint PDF conversion, and report status saga."""
+
+    def __init__(self):
+        super().__init__()
+
+    async def generate_report_saga(
+        self,
+        db: AsyncSession,
+        session_id: str,
+        format: str = "pdf",
+        title: Optional[str] = None,
+        session_factory=None,
+        mapspec: Optional[dict[str, Any]] = None,
+    ) -> ReportSagaResult:
+        """Execute complete status-lifecycle saga for report generation."""
+        return await self.create_and_generate(
+            db=db,
+            session_id=session_id,
+            format=format,
+            title=title,
+            session_factory=session_factory,
+            mapspec=mapspec,
+        )
+
+
+spatial_report_engine = SpatialReportEngine()
+report_service = spatial_report_engine
