@@ -163,7 +163,7 @@ class RuntimeValidator:
 
     return {
         "valid": valid,
-        "score": scores["total_score_80_max"],
+        "score": scores["total_score_100_max"],
         "report": report,
         "eval_scores": scores,
         "runtime_dir": str(runtime_dir),

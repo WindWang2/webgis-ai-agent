@@ -218,5 +218,5 @@ async def test_runtime_validator_full_flow(clean_session):
   assert (Path(res["runtime_dir"]) / "map.png").exists()
   assert (Path(res["runtime_dir"]) / "trace.zip").exists()
   assert (Path(res["runtime_dir"]) / "report.json").exists()
-  # Score is present and capped at the 80% max (cartographic quality deferred).
-  assert res["score"] <= 80.0
+  # Score is present and evaluated up to 100.0 max (cartographic quality visual judge included).
+  assert res["score"] <= 100.0
