@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
 
@@ -186,18 +187,44 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     service = ToolDispatchService(registry=registry)
     tc = {"id": request.toolCallId, "function": {"name": tool_name, "arguments": request.arguments or {}}}
     executed = _session_executed_sets.setdefault(request.sessionId or "", set())
-    result = await service.dispatch(tc, request.sessionId or "", executed)
+
+    # P1 fix: time the dispatch, record telemetry on BOTH the success and the
+    # exception path (previously an exception skipped recording entirely),
+    # and truncate error_msg so a multi-KB llm_payload doesn't flood telemetry.
+    t0 = time.monotonic()
+    try:
+        result = await service.dispatch(tc, request.sessionId or "", executed)
+    except Exception as exc:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        if _harness is not None:
+            err_msg = str(exc)[:200]
+            _harness.record_event(ToolCallEvent(
+                tool_call_id=request.toolCallId,
+                tool_name=request.name,
+                arguments=request.arguments or {},
+                duration_ms=duration_ms,
+                is_error=True,
+                error_msg=err_msg,
+                result={},
+                session_id=request.sessionId,
+            ))
+        raise
+
+    duration_ms = int((time.monotonic() - t0) * 1000)
 
     # 缓存供 SSE 适配器读取
     cache_dispatch_result(request.sessionId, request.toolCallId, result)
 
     if _harness is not None:
+        is_error = result.status == "error"
         event = ToolCallEvent(
             tool_call_id=request.toolCallId,
             tool_name=request.name,
             arguments=request.arguments or {},
-            is_error=(result.status == "error"),
-            error_msg=result.llm_payload if result.status == "error" else "",
+            duration_ms=duration_ms,
+            is_error=is_error,
+            # P1 fix: truncate to a short message rather than the full payload.
+            error_msg=(result.llm_payload[:200] if is_error else ""),
             result={"status": result.status, "llm_payload_len": len(result.llm_payload)},
             session_id=request.sessionId,
         )

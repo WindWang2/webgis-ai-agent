@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 from app.lib.harness.tool_call_event import ToolCallEvent
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,11 @@ MAPSPEC_MUTATION_TOOLS = {
 class PiAgentHarness:
     """Simulation seam & evaluation harness for PiAgentBridge execution sessions."""
 
+    # P1 fix: the production harness is a module-level singleton, so its
+    # accumulator lists would grow without bound over a long-lived process.
+    # Each list is trimmed to this cap (FIFO eviction) to bound memory.
+    MAX_EVENTS: ClassVar[int] = 1000
+
     def __init__(self, session_id: str = ""):
         self.session_id = session_id
         self.tool_calls: List[Dict[str, Any]] = []
@@ -43,6 +48,12 @@ class PiAgentHarness:
         self.exceptions: List[Dict[str, Any]] = []
         self.recovered_exceptions_count: int = 0
         self._in_error_state: bool = False
+
+    def _append_capped(self, lst: List[Dict[str, Any]], item: Dict[str, Any]) -> None:
+        """Append and enforce the MAX_EVENTS FIFO cap."""
+        lst.append(item)
+        if len(lst) > self.MAX_EVENTS:
+            del lst[: len(lst) - self.MAX_EVENTS]
 
     def reset(self, session_id: str = "") -> None:
         """Reset the harness state for a new test session."""
@@ -65,11 +76,11 @@ class PiAgentHarness:
             "name": name,
             "arguments": arguments or {},
         }
-        self.tool_calls.append(call_entry)
+        self._append_capped(self.tool_calls, call_entry)
         self._scan_and_record_ref_cursors(tool_call_id, arguments)
 
         if name in MAPSPEC_MUTATION_TOOLS:
-            self.mapspec_mutations.append({
+            self._append_capped(self.mapspec_mutations, {
                 "tool_call_id": tool_call_id,
                 "tool_name": name,
                 "arguments": arguments,
@@ -94,10 +105,10 @@ class PiAgentHarness:
             "is_error": is_error,
             "error_msg": error_msg or "",
         }
-        self.tool_results.append(result_entry)
+        self._append_capped(self.tool_results, result_entry)
 
         if is_error:
-            self.exceptions.append({
+            self._append_capped(self.exceptions, {
                 "tool_call_id": tool_call_id,
                 "name": name,
                 "error_msg": error_msg or "",
@@ -119,7 +130,7 @@ class PiAgentHarness:
 
     def record_sse_event(self, event: Dict[str, Any]) -> None:
         """Intercept and record an SSE event dict."""
-        self.sse_events.append(event)
+        self._append_capped(self.sse_events, event)
 
     def record_event(self, event: ToolCallEvent) -> None:
         """Record a complete tool call event from the unified telemetry model."""
@@ -142,7 +153,7 @@ class PiAgentHarness:
         found_refs = set(re.findall(r"ref:(?:geojson|raster|table):[a-zA-Z0-9_-]+", args_str))
         for ref in found_refs:
             is_resolved = self._check_ref_cursor_resolved(ref)
-            self.ref_cursors.append({
+            self._append_capped(self.ref_cursors, {
                 "tool_call_id": tool_call_id,
                 "ref_cursor": ref,
                 "is_resolved": is_resolved,

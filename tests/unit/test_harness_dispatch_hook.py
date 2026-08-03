@@ -1,8 +1,11 @@
 """Tests for PiAgentHarness dispatch hook wiring in agent_pi_bridge."""
+import os
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.lib.harness.pi_agent_harness import PiAgentHarness
+from app.lib.harness.tool_call_event import ToolCallEvent
 
 
 def test_harness_records_tool_call_via_record_event():
@@ -45,14 +48,91 @@ def test_harness_records_error_event():
 
 
 def test_harness_disabled_by_default():
-    """Verify _harness is None when PI_HARNESS_ENABLED is not set."""
+    """Verify the opt-in flag: without PI_HARNESS_ENABLED, a freshly-imported
+    bridge module has _harness = None.
+
+    P1 fix: the previous assertion (`harness is None or isinstance(...)`) was
+    vacuously true — a live harness passed via the isinstance branch, so it
+    proved nothing. We spawn a clean subprocess (no env var) so the
+    module-level _harness initialization runs without interference from the
+    test process's already-imported module, and without polluting other tests
+    via importlib.reload.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-c",
+         "import app.agent_pi_bridge as b; "
+         "h = b.get_harness(); "
+         "print('HARNESS_IS_NONE' if h is None else 'HARNESS_IS_LIVE')"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PI_HARNESS_ENABLED": ""},
+    )
+    # The flag is explicitly empty -> opt-in disabled -> harness must be None.
+    assert "HARNESS_IS_NONE" in result.stdout, (
+        f"expected harness None when PI_HARNESS_ENABLED empty, "
+        f"got stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_tool_records_duration_and_truncated_error(monkeypatch):
+    """P1 fix: dispatch_tool must populate duration_ms, truncate error_msg,
+    and still record telemetry on the exception path (previously skipped)."""
     import app.agent_pi_bridge as bridge
-    # In normal test runs, PI_HARNESS_ENABLED is not set
-    # So get_harness() should return None (unless explicitly enabled)
-    # This test verifies the opt-in pattern works
-    harness = bridge.get_harness()
-    # harness may be None or a PiAgentHarness depending on env
-    assert harness is None or isinstance(harness, PiAgentHarness)
+
+    harness = PiAgentHarness(session_id="exc_test")
+    monkeypatch.setattr(bridge, "_harness", harness)
+
+    # Force the dispatch service to raise a long error message.
+    long_msg = "x" * 500
+    fake_service = MagicMock()
+    fake_service.dispatch = AsyncMock(side_effect=RuntimeError(long_msg))
+    monkeypatch.setattr(bridge, "ToolDispatchService", lambda **kw: fake_service)
+
+    fake_registry = MagicMock()
+    fake_registry.list_tools = MagicMock(return_value=["some_tool"])
+    fake_registry.metadata = MagicMock(return_value={"tier": 1})
+    monkeypatch.setattr(bridge, "_tool_registry", fake_registry)
+
+    request = bridge.PiToolRequest(
+        toolCallId="tc_x",
+        name="some_tool",
+        arguments={},
+        sessionId="exc_test",
+    )
+
+    # The exception propagates out of dispatch_tool, but telemetry is recorded.
+    with pytest.raises(RuntimeError):
+        await bridge.dispatch_tool(request)
+
+    assert len(harness.exceptions) == 1
+    exc_entry = harness.exceptions[0]
+    # error_msg is the truncated exception text, not the full 500-char payload.
+    assert len(exc_entry["error_msg"]) <= 200
+    assert exc_entry["error_msg"] == long_msg[:200]
+
+
+def test_harness_caps_accumulated_events():
+    """P1 fix: the production harness is a singleton; unbounded accumulation
+    of tool_calls/sse_events/etc. is a memory leak. Each list is capped."""
+    harness = PiAgentHarness(session_id="cap_test")
+    # Inject well over the cap on every accumulator surface.
+    for i in range(1500):
+        harness.record_event(ToolCallEvent(
+            tool_call_id=f"tc_{i}",
+            tool_name="noop",
+            arguments={},
+            result={},
+        ))
+        harness.record_sse_event({"type": "noop", "i": i})
+
+    assert len(harness.tool_calls) <= PiAgentHarness.MAX_EVENTS
+    assert len(harness.tool_results) <= PiAgentHarness.MAX_EVENTS
+    assert len(harness.sse_events) <= PiAgentHarness.MAX_EVENTS
+    assert len(harness.exceptions) <= PiAgentHarness.MAX_EVENTS
 
 
 def test_tool_metrics_record_event():
