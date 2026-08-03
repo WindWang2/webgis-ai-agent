@@ -23,8 +23,14 @@ describe("TelemetryStatusCard", () => {
     },
     harness_enabled: true,
     harness_metrics: {
-      ToolChoiceAccuracy: 95.0,
-      MapSpecValidity: 100.0,
+      rates: {
+        ToolChoiceAccuracy: 95.0,
+        MapSpecValidity: 100.0,
+      },
+      counts: {
+        ToolCallsCount: 42,
+        ExceptionsCount: 3,
+      },
     },
   };
 
@@ -34,7 +40,7 @@ describe("TelemetryStatusCard", () => {
     expect(screen.getByText("暂无遥测数据，请点击刷新加载。")).toBeDefined();
   });
 
-  it("renders metrics, spatial cache hit ratio, and harness metrics", () => {
+  it("renders metrics, spatial cache hit ratio, and harness rates with %", () => {
     render(<TelemetryStatusCard digest={sampleDigest} />);
     expect(screen.getByText("生产端性能与评估遥测")).toBeDefined();
     expect(screen.getByText("83%")).toBeDefined(); // 10 hits / 12 total = 83%
@@ -42,6 +48,18 @@ describe("TelemetryStatusCard", () => {
     expect(screen.getByText("30 ms")).toBeDefined(); // 150ms / 5 = 30ms
     expect(screen.getByText("ToolChoiceAccuracy")).toBeDefined();
     expect(screen.getByText("95%")).toBeDefined();
+  });
+
+  it("renders raw counts WITHOUT a % suffix (U5 regression)", () => {
+    // Previously ToolCallsCount (42) and ExceptionsCount (3) were rendered
+    // as "42%" / "3%" because the card applied % to every harness_metrics
+    // value. Counts must now render as plain numbers.
+    render(<TelemetryStatusCard digest={sampleDigest} />);
+    expect(screen.getByText("42")).toBeDefined();
+    expect(screen.getByText("3")).toBeDefined();
+    // The counts must NOT carry a % - "42%" must not exist in the document.
+    expect(screen.queryByText("42%")).toBeNull();
+    expect(screen.queryByText("3%")).toBeNull();
   });
 
   it("triggers onRefresh callback when refresh button clicked", () => {

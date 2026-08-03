@@ -18,12 +18,19 @@ export interface SpatialCacheInfo {
   maxsize: number;
 }
 
+export interface HarnessTelemetryMetrics {
+  /** 0-100 percentage metrics. Rendered with a ``%`` suffix. */
+  rates: Record<string, number>;
+  /** Raw integer counts. Rendered without a ``%`` suffix. */
+  counts: Record<string, number>;
+}
+
 export interface TelemetryDigest {
   success: boolean;
   tool_metrics: Record<string, ToolMetricSnapshot>;
   spatial_cache: SpatialCacheInfo;
   harness_enabled: boolean;
-  harness_metrics?: Record<string, number> | null;
+  harness_metrics?: HarnessTelemetryMetrics | null;
 }
 
 export interface TelemetryStatusCardProps {
@@ -137,13 +144,24 @@ export function TelemetryStatusCard({
             5-维 GIS 评估质量指标
           </span>
           <div className="grid grid-cols-2 gap-2 text-xs">
-            {Object.entries(harness_metrics).map(([name, score]) => (
+            {Object.entries(harness_metrics.rates || {}).map(([name, score]) => (
               <div key={name} className="flex justify-between items-center bg-slate-900/60 p-1.5 rounded">
                 <span className="text-slate-400 text-[11px] truncate">{name}</span>
                 <span className="font-mono font-semibold text-emerald-400">{score}%</span>
               </div>
             ))}
           </div>
+          {/* Raw counts - rendered WITHOUT % (U5 fix: previously shown as percentages). */}
+          {Object.entries(harness_metrics.counts || {}).length > 0 && (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1 border-t border-slate-800/60">
+              {Object.entries(harness_metrics.counts || {}).map(([name, count]) => (
+                <span key={name} className="text-[11px] text-slate-400">
+                  <span className="text-slate-500">{name}: </span>
+                  <span className="font-mono text-slate-200">{Math.round(count)}</span>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
