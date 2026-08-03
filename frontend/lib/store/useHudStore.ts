@@ -74,3 +74,95 @@ export const useHudStore = create<HudState>()(
     },
   ),
 );
+
+export interface HudSnapshot {
+  hudOpen: boolean;
+  activeLeftTab: LeftTab;
+  activeTool: string | null;
+  timestamp: number;
+}
+
+export class EmbodiedHudEngine {
+  private static historyStack: HudSnapshot[] = [];
+  private static redoStack: HudSnapshot[] = [];
+  private static maxHistory = 20;
+
+  public static getState(): HudState {
+    return useHudStore.getState();
+  }
+
+  public static recordSnapshot(): HudSnapshot {
+    const state = useHudStore.getState();
+    const snapshot: HudSnapshot = {
+      hudOpen: state.hudOpen,
+      activeLeftTab: state.activeLeftTab,
+      activeTool: state.activeTool,
+      timestamp: Date.now(),
+    };
+    this.historyStack.push(snapshot);
+    if (this.historyStack.length > this.maxHistory) {
+      this.historyStack.shift();
+    }
+    this.redoStack = [];
+    return snapshot;
+  }
+
+  public static undo(): boolean {
+    if (this.historyStack.length === 0) return false;
+    const current = this.recordSnapshot();
+    const previous = this.historyStack.pop();
+    if (!previous) return false;
+    this.redoStack.push(current);
+    useHudStore.setState({
+      hudOpen: previous.hudOpen,
+      activeLeftTab: previous.activeLeftTab,
+      activeTool: previous.activeTool,
+    });
+    return true;
+  }
+
+  public static redo(): boolean {
+    if (this.redoStack.length === 0) return false;
+    const next = this.redoStack.pop();
+    if (!next) return false;
+    const currentSnapshot: HudSnapshot = {
+      hudOpen: useHudStore.getState().hudOpen,
+      activeLeftTab: useHudStore.getState().activeLeftTab,
+      activeTool: useHudStore.getState().activeTool,
+      timestamp: Date.now(),
+    };
+    this.historyStack.push(currentSnapshot);
+    useHudStore.setState({
+      hudOpen: next.hudOpen,
+      activeLeftTab: next.activeLeftTab,
+      activeTool: next.activeTool,
+    });
+    return true;
+  }
+
+  public static toggleLeftDrawer(tab?: LeftTab): void {
+    this.recordSnapshot();
+    const state = useHudStore.getState();
+    if (tab && state.activeLeftTab === tab && state.hudOpen) {
+      state.setHudOpen(false);
+    } else if (tab) {
+      state.setActiveLeftTab(tab);
+      state.setHudOpen(true);
+    } else {
+      state.setHudOpen(!state.hudOpen);
+    }
+  }
+
+  public static setActiveTool(toolName: string | null): void {
+    this.recordSnapshot();
+    useHudStore.setState({ activeTool: toolName });
+  }
+
+  public static resetState(): void {
+    this.recordSnapshot();
+    useHudStore.setState({
+      activeTool: null,
+      hudOpen: false,
+    });
+  }
+}
