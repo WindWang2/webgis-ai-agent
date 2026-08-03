@@ -28,11 +28,34 @@ def registry():
         return {
             "type": "FeatureCollection",
             "features": [
-                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [116.4074, 39.9042]}}
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [116.4074, 39.9074]}}
             ]
         }
 
     return r
+
+
+@pytest.fixture
+def engine(registry, monkeypatch):
+    """A ChatEngine whose session/plan/title side effects are stubbed out so
+    chat_stream does not touch the DB / Redis / a real LLM planner (which
+    would hang the test). Mirrors the fixture pattern in
+    test_chat_engine_planning.py."""
+    eng = ChatEngine(registry)
+
+    async def fake_get_or_create_session(session_id, user_id=None):
+        return []
+
+    async def fake_maybe_plan(*a, **kw):
+        return None
+
+    async def fake_generate_title(*a, **kw):
+        return None
+
+    monkeypatch.setattr(eng, "_get_or_create_session", fake_get_or_create_session)
+    monkeypatch.setattr(eng, "_maybe_plan", fake_maybe_plan)
+    monkeypatch.setattr(eng, "_generate_title", fake_generate_title)
+    return eng
 
 
 def test_tracker_accessible(registry):
@@ -43,10 +66,8 @@ def test_tracker_accessible(registry):
 
 
 @pytest.mark.asyncio
-async def test_stream_emits_task_start(registry):
+async def test_stream_emits_task_start(engine):
     """测试流式对话发送 task_start 事件"""
-    engine = ChatEngine(registry)
-
     mock_msg = {"content": "北京坐标是 39.9042, 116.4074", "tool_calls": None}
 
     with patch.object(engine, "_call_llm_stream", return_value=_fake_stream(mock_msg)()):
@@ -63,10 +84,8 @@ async def test_stream_emits_task_start(registry):
 
 
 @pytest.mark.asyncio
-async def test_stream_emits_task_complete(registry):
+async def test_stream_emits_task_complete(engine):
     """测试流式对话发送 task_complete 事件"""
-    engine = ChatEngine(registry)
-
     mock_msg = {"content": "北京坐标是 39.9042, 116.4074", "tool_calls": None}
 
     with patch.object(engine, "_call_llm_stream", return_value=_fake_stream(mock_msg)()):
@@ -80,10 +99,8 @@ async def test_stream_emits_task_complete(registry):
 
 
 @pytest.mark.asyncio
-async def test_stream_emits_step_events_on_tool_call(registry):
+async def test_stream_emits_step_events_on_tool_call(engine):
     """测试工具调用时发送 step_start 和 step_result 事件"""
-    engine = ChatEngine(registry)
-
     msg1 = {
         "content": None,
         "tool_calls": [
@@ -116,10 +133,8 @@ async def test_stream_emits_step_events_on_tool_call(registry):
 
 
 @pytest.mark.asyncio
-async def test_stream_step_error_on_tool_failure(registry):
+async def test_stream_step_error_on_tool_failure(engine):
     """测试工具执行失败时发送 step_error 事件"""
-    engine = ChatEngine(registry)
-
     msg1 = {
         "content": None,
         "tool_calls": [
@@ -146,10 +161,8 @@ async def test_stream_step_error_on_tool_failure(registry):
 
 
 @pytest.mark.asyncio
-async def test_task_cancellation_stops_loop(registry):
+async def test_task_cancellation_stops_loop(engine):
     """测试任务取消后停止循环并发送 task_cancelled 事件"""
-    engine = ChatEngine(registry)
-
     msg_with_tool = {
         "content": None,
         "tool_calls": [

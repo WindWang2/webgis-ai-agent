@@ -49,10 +49,10 @@ async def test_m9_clear_session_clears_layer_schema_cache(monkeypatch):
     async def fake_db_session():
         yield fake_db
 
-    monkeypatch.setattr("app.services.chat_engine.async_db_session", fake_db_session)
-    monkeypatch.setattr("app.services.chat_engine.AsyncHistoryService", lambda db: fake_history)
+    monkeypatch.setattr("app.services.chat.execution_engine.async_db_session", fake_db_session)
+    monkeypatch.setattr("app.services.chat.execution_engine.AsyncHistoryService", lambda db: fake_history)
     # clear_session 还会调 session_data_manager.clear_session / planner.clear_plan
-    monkeypatch.setattr("app.services.chat_engine.session_data_manager",
+    monkeypatch.setattr("app.services.chat.execution_engine.session_data_manager",
                         MagicMock(clear_session=AsyncMock()))
 
     deleted = await engine.clear_session("sess-M9a")

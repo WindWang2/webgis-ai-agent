@@ -60,9 +60,26 @@ async def test_chat_completions(client):
 
 
 @pytest.mark.asyncio
-async def test_clear_session(client):
+async def test_clear_session(client, app):
+    # clear_session is now guarded by require_owned_session (SEC-08 ownership
+    # check), which queries the DB and returns 404 when the session is absent.
+    # FastAPI resolves Depends() at route-registration time (module import),
+    # so patching the module attribute does not affect the already-registered
+    # dependency. Use FastAPI's dependency_overrides to replace it.
+    from app.api.routes.chat import clear_session, require_owned_session
+    from app.models.db_model import Conversation
+
     mock_engine = MagicMock()
     mock_engine.clear_session = AsyncMock(return_value=True)  # A2: clear_session 返回 bool
-    with patch.object(_chat_mod, "engine", mock_engine):
-        resp = await client.delete("/api/chat/sessions/test-session")
-        assert resp.status_code == 200
+    mock_conv = MagicMock(spec=Conversation)
+
+    async def _override_owned_session():
+        return mock_conv
+
+    app.dependency_overrides[require_owned_session] = _override_owned_session
+    try:
+        with patch("app.api.routes.chat.get_engine", return_value=mock_engine):
+            resp = await client.delete("/api/chat/sessions/test-session")
+            assert resp.status_code == 200
+    finally:
+        app.dependency_overrides.clear()

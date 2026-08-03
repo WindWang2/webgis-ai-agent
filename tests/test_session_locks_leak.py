@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 def _make_engine():
     from app.tools.registry import ToolRegistry
-    with patch("app.services.chat_engine.settings") as mock_settings:
+    with patch("app.services.chat.execution_engine.settings") as mock_settings:
         mock_settings.LLM_MODEL = "test"
         mock_settings.LLM_API_KEY = "test-key"
         mock_settings.LLM_PROMPT_CACHING_ENABLED = False
@@ -28,9 +28,9 @@ class TestSessionLocksCleanup:
         mock_history = AsyncMock()
         mock_history.delete_session = AsyncMock(return_value=True)
 
-        with patch("app.services.chat_engine.async_db_session") as mock_db_ctx, \
-             patch("app.services.chat_engine.AsyncHistoryService", return_value=mock_history), \
-             patch("app.services.chat_engine.session_data_manager") as mock_sdm:
+        with patch("app.services.chat.execution_engine.async_db_session") as mock_db_ctx, \
+             patch("app.services.chat.execution_engine.AsyncHistoryService", return_value=mock_history), \
+             patch("app.services.chat.execution_engine.session_data_manager") as mock_sdm:
             mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
             mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_sdm.clear_session = AsyncMock()
@@ -53,9 +53,9 @@ class TestSessionLocksCleanup:
         mock_history = AsyncMock()
         mock_history.delete_session = AsyncMock(return_value=True)
 
-        with patch("app.services.chat_engine.async_db_session") as mock_db_ctx, \
-             patch("app.services.chat_engine.AsyncHistoryService", return_value=mock_history), \
-             patch("app.services.chat_engine.session_data_manager") as mock_sdm:
+        with patch("app.services.chat.execution_engine.async_db_session") as mock_db_ctx, \
+             patch("app.services.chat.execution_engine.AsyncHistoryService", return_value=mock_history), \
+             patch("app.services.chat.execution_engine.session_data_manager") as mock_sdm:
             mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
             mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_sdm.clear_session = AsyncMock()

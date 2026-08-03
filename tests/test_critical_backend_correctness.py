@@ -399,6 +399,17 @@ async def test_c5_dispatch_task_cancelled_on_disconnect(monkeypatch):
     monkeypatch.setattr(engine, "_maybe_plan",
                         fake_maybe_plan.__get__(engine, type(engine)))
 
+    # Stub the session/DB side effects so chat_stream reaches the dispatch
+    # stage without touching the DB / Redis / a real LLM (mirrors the fixture
+    # pattern in test_chat_engine_planning.py). Without these the generator
+    # hangs in _get_or_create_session and never reaches the tool-dispatch wait.
+    async def fake_get_or_create_session(self, session_id, user_id=None):
+        return []
+    monkeypatch.setattr(engine, "_get_or_create_session",
+                        fake_get_or_create_session.__get__(engine, type(engine)))
+    monkeypatch.setattr(engine, "_save_msg_async", AsyncMock(return_value=None))
+    monkeypatch.setattr(engine, "_generate_title", AsyncMock(return_value=None))
+
     # 主 LLM 第一轮返回一个 tool_call，触发 dispatch
     async def fake_llm_stream(*a, **k):
         yield ("done", {"message": {

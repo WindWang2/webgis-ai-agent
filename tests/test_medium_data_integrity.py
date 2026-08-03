@@ -163,11 +163,15 @@ def test_m6_report_generate_uses_expunge():
     结构性守卫：generate_report 可能耗时 30s，期间不应持有原 DB session
     （否则连接池耗尽 + 崩溃后报告卡在 'generating'）。行为测试需完整 DB
     生命周期，mock 脆弱，故用源码 inspect 验证结构（expunge + 新 session）。
-    """
-    from app.api.routes import report
 
-    source = inspect.getsource(report.create_report)
-    assert "expunge" in source, "create_report 未在 generate_report 前 expunge"
+    ADR-0023: the saga (expunge + new session) was converged from the
+    create_report route into ReportService.create_and_generate, so the guard
+    inspects that method now.
+    """
+    from app.services.report_service import ReportService
+
+    source = inspect.getsource(ReportService.create_and_generate)
+    assert "expunge" in source, "create_and_generate 未在 generate_report 前 expunge"
     # 不应在 generate_report 之后还有同一个 db.commit() 持有原 session
     assert "AsyncSessionLocal" in source, "应用新 session 写最终 status"
 
@@ -206,9 +210,9 @@ async def test_m8_save_msg_async_truncates_tool_result(monkeypatch):
     async def fake_db_session():
         yield object()  # 假 db 句柄
 
-    monkeypatch.setattr("app.services.chat_engine.async_db_session",
+    monkeypatch.setattr("app.services.chat.execution_engine.async_db_session",
                         fake_db_session)
-    monkeypatch.setattr("app.services.chat_engine.AsyncHistoryService",
+    monkeypatch.setattr("app.services.chat.execution_engine.AsyncHistoryService",
                         _FakeHistoryService)
 
     huge_result = "X" * 150_000  # 150k 字符，超过 100000 阈值
@@ -247,9 +251,9 @@ async def test_m8_save_msg_async_keeps_short_tool_result(monkeypatch):
     async def fake_db_session():
         yield object()
 
-    monkeypatch.setattr("app.services.chat_engine.async_db_session",
+    monkeypatch.setattr("app.services.chat.execution_engine.async_db_session",
                         fake_db_session)
-    monkeypatch.setattr("app.services.chat_engine.AsyncHistoryService",
+    monkeypatch.setattr("app.services.chat.execution_engine.AsyncHistoryService",
                         _FakeHistoryService)
 
     short_result = '{"features": []}'  # 远低于阈值

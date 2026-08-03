@@ -29,10 +29,20 @@ async def test_query_map_features_output():
     assert result["buffer_m"] == 20
 
 @pytest.mark.asyncio
-async def test_apply_layer_filter_output():
+async def test_apply_layer_filter_output(monkeypatch):
     registry = ToolRegistry()
     register_layer_management_tools(registry)
-    
+
+    # apply_layer_filter resolves the layer_ref against session state. Without a
+    # real session the resolution returns an error dict (no "success" key).
+    # Patch resolve_layer_ref to return the ref verbatim so the tool builds its
+    # command payload -- the behaviour this test guards (output shape).
+    from app.tools import layer_manager as _lm
+
+    async def _fake_resolve(session_id, layer_ref):
+        return layer_ref, None
+    monkeypatch.setattr(_lm, "resolve_layer_ref", _fake_resolve)
+
     # Mocking session_id
     result = await registry.dispatch("apply_layer_filter", {"layer_ref": "ref:abc", "expression": "pop > 100"}, session_id="test_session")
     assert result["success"] is True

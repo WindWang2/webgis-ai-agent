@@ -14,6 +14,11 @@ async def test_orchestrator_start_and_status():
     with patch("app.services.explorer.orchestrator.chain") as mock_chain:
         mock_result = MagicMock()
         mock_result.id = "test_task_123"
+        # F-06 fix: start_exploration traverses result.parent to find the root
+        # task. A MagicMock auto-creates a truthy .parent on every access, which
+        # makes that traversal loop forever. Pin .parent to None so the loop
+        # terminates (the result IS the root in this single-link mock).
+        mock_result.parent = None
         mock_chain.return_value.apply_async.return_value = mock_result
 
         task_id = await orchestrator.start_exploration(
