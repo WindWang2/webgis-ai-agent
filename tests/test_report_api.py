@@ -27,9 +27,15 @@ async def client(app):
 
 @pytest.mark.asyncio
 async def test_create_report_unsupported_format(client):
-    resp = await client.post("/api/v1/reports", json={
-        "session_id": "sess-1", "format": "docx"
-    })
+    # create_report calls verify_session_owner before format validation; without
+    # a real DB session the ownership check returns 404. Patch it so the request
+    # reaches ReportService, which rejects the unsupported "docx" format with a
+    # success=False result (the behaviour this test guards).
+    with patch("app.api.routes.report.verify_session_owner", new_callable=AsyncMock), \
+         patch("app.api.routes.report.mapspec_store.get_mapspec", new_callable=AsyncMock, return_value=None):
+        resp = await client.post("/api/v1/reports", json={
+            "session_id": "sess-1", "format": "docx"
+        })
     assert resp.status_code == 200
     data = resp.json()
     assert data["success"] is False

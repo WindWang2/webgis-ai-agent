@@ -1,7 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { captureMapCanvas, composeLayout, downloadBlob } from './exporter';
+import { captureMapCanvas, composeLayout, downloadBlob, getOversampledZoom } from './exporter';
 
 describe('exporter', () => {
+  describe('getOversampledZoom', () => {
+    it('returns original zoom at 96 DPI (screen)', () => {
+      expect(getOversampledZoom(10, 96)).toBe(10);
+    });
+
+    it('boosts zoom by +1 at 192 DPI (2x retina)', () => {
+      expect(getOversampledZoom(10, 192)).toBe(11);
+    });
+
+    it('boosts zoom by +2 at 300 DPI (high-res print cap)', () => {
+      expect(getOversampledZoom(10, 300)).toBe(12);
+    });
+  });
   describe('captureMapCanvas', () => {
     it('should return a Blob from the map canvas', async () => {
       const mockBlob = new Blob(['test'], { type: 'image/png' });
@@ -162,9 +175,12 @@ describe('exporter', () => {
       const createElement = vi.fn(() => linkMock);
       const appendChild = vi.fn();
       const removeChild = vi.fn();
-      global.document.createElement = createElement as any;
-      global.document.body.appendChild = appendChild as any;
-      global.document.body.removeChild = removeChild as any;
+      if (typeof globalThis.document === 'undefined') {
+        (globalThis as any).document = { body: {} };
+      }
+      globalThis.document.createElement = createElement as any;
+      globalThis.document.body.appendChild = appendChild as any;
+      globalThis.document.body.removeChild = removeChild as any;
 
       downloadBlob(blob, filename);
 

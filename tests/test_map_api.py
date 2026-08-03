@@ -107,13 +107,17 @@ async def test_export_pdf_success(client):
 
 @pytest.mark.asyncio
 async def test_export_pdf_invalid_image(client):
-    """Non-image bytes should return 500."""
+    """Non-image bytes should return a 4xx client error (not 500).
+
+    The route now raises HTTP 400 on ValueError from the PDF renderer (a bad
+    image is a client error, not a server error). Previously this returned 500.
+    """
     with patch.object(_mod, "EXPORT_DIR", _TEST_EXPORT_DIR):
         resp = await client.post(
             "/api/v1/export/pdf",
             files={"file": ("bad.png", b"not-an-image", "image/png")},
         )
-    assert resp.status_code == 500
+    assert resp.status_code == 400
 
 
 @pytest.mark.asyncio

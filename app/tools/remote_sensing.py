@@ -3,7 +3,7 @@ import json
 import logging
 from typing import Optional
 from app.tools.registry import ToolRegistry, tool
-from app.services.rs_service import rs_service
+from app.services.rs.spectral_engine import spectral_engine
 from app.tools._utils import parse_bbox
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ def register_rs_tools(registry: ToolRegistry):
     async def fetch_sentinel(bbox: str, date_from: str, date_to: str, bands: str = "true-color") -> dict:
         try:
             parts = parse_bbox(bbox)
-            return await rs_service.fetch_sentinel_thumbnail(parts, date_from, date_to, bands)
+            return await spectral_engine.fetch_sentinel_thumbnail(parts, date_from, date_to, bands)
         except ValueError as e:
             return {"error": str(e)}
         except (RuntimeError, OSError) as e:
@@ -57,7 +57,7 @@ def register_rs_tools(registry: ToolRegistry):
     async def compute_ndvi(bbox: str, date_from: str, date_to: str) -> dict:
         try:
             parts = parse_bbox(bbox)
-            return await rs_service.compute_ndvi(parts, date_from, date_to)
+            return await spectral_engine.compute_ndvi(parts, date_from, date_to)
         except ValueError as e:
             return {"error": str(e)}
         except (RuntimeError, OSError) as e:
@@ -79,7 +79,7 @@ def register_rs_tools(registry: ToolRegistry):
     async def fetch_dem(bbox: str) -> dict:
         try:
             parts = parse_bbox(bbox)
-            return await rs_service.fetch_dem(parts)
+            return await spectral_engine.fetch_dem(parts)
         except ValueError as e:
             return {"error": str(e)}
         except (RuntimeError, OSError) as e:

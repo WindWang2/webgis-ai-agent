@@ -173,26 +173,18 @@ class ReportService:
             from app.core.database import AsyncSessionLocal
             session_factory = AsyncSessionLocal
 
-        if session_factory is not None:
-            async with session_factory() as db2:
-                db2_report = await db2.get(Report, report_id)
-                if db2_report is not None:
-                    db2_report.status = final_status
-                    db2_report.error_message = final_error
-                    if final_size is not None:
-                        db2_report.file_size = final_size
-                    await db2.commit()
-                    report.status = final_status
-                    report.error_message = final_error
-                    if final_size is not None:
-                        report.file_size = final_size
-        else:
-            report.status = final_status
-            report.error_message = final_error
-            if final_size is not None:
-                report.file_size = final_size
-            await db.commit()
-            await db.refresh(report)
+        async with session_factory() as db2:
+            db2_report = await db2.get(Report, report_id)
+            if db2_report is not None:
+                db2_report.status = final_status
+                db2_report.error_message = final_error
+                if final_size is not None:
+                    db2_report.file_size = final_size
+                await db2.commit()
+                report.status = final_status
+                report.error_message = final_error
+                if final_size is not None:
+                    report.file_size = final_size
 
         report_serialized = serialize_report(report)
 
@@ -443,3 +435,34 @@ class ReportService:
             fn = tool_calls.get("function", {})
             if isinstance(fn, dict):
                 return fn.get("name", "Tool")
+        return "Tool"
+
+
+class SpatialReportEngine(ReportService):
+    """Deep Spatial Report Engine consolidating metadata extraction, Jinja HTML templating, WeasyPrint PDF conversion, and report status saga."""
+
+    def __init__(self):
+        super().__init__()
+
+    async def generate_report_saga(
+        self,
+        db: AsyncSession,
+        session_id: str,
+        format: str = "pdf",
+        title: Optional[str] = None,
+        session_factory=None,
+        mapspec: Optional[dict[str, Any]] = None,
+    ) -> ReportSagaResult:
+        """Execute complete status-lifecycle saga for report generation."""
+        return await self.create_and_generate(
+            db=db,
+            session_id=session_id,
+            format=format,
+            title=title,
+            session_factory=session_factory,
+            mapspec=mapspec,
+        )
+
+
+spatial_report_engine = SpatialReportEngine()
+report_service = spatial_report_engine

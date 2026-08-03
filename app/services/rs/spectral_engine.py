@@ -195,5 +195,129 @@ class SpectralRasterEngine:
             logger.error(f"Failed to emit raster layer for session {session_id}: {e}")
             return {"error": f"挂载栅格图层失败: {e}"}
 
+    async def fetch_sentinel_thumbnail(
+        self,
+        bbox: list,
+        date_from: str,
+        date_to: str,
+        bands: str = "true-color",
+        width: int = 512,
+        height: int = 512,
+    ) -> dict:
+        from app.core.config import settings
+        if not settings.SENTINELHUB_CLIENT_ID:
+            return await self._fetch_sentinel_public(bbox, date_from, date_to)
+        return {"status": "configured", "message": "Sentinel Hub API 已配置，待实现具体调用"}
+
+    async def _fetch_sentinel_public(self, bbox: list, date_from: str, date_to: str) -> dict:
+        from app.tools._utils import asset_href
+        fetch_res = await self.stac.fetch_stac_items_and_bands(
+            collection="sentinel-2-l2a",
+            bbox=bbox,
+            date_from=date_from,
+            date_to=date_to,
+            max_items=5,
+            empty_error_msg="指定区域和时间范围内无数据",
+        )
+        if "error" in fetch_res:
+            if fetch_res["error"] == "指定区域和时间范围内无数据":
+                return {"status": "no_data", "message": fetch_res["error"]}
+            return fetch_res
+
+        results = []
+        for item in fetch_res["items"]:
+            results.append({
+                "id": item.id,
+                "datetime": str(item.datetime),
+                "bbox": item.bbox,
+                "cloud_cover": item.properties.get("eo:cloud_cover", "N/A"),
+                "assets": {
+                    "thumbnail": asset_href(item.assets, "thumbnail"),
+                    "visual": asset_href(item.assets, "visual"),
+                    "B04": asset_href(item.assets, "red"),
+                    "B03": asset_href(item.assets, "green"),
+                    "B02": asset_href(item.assets, "blue"),
+                    "B08": asset_href(item.assets, "nir"),
+                },
+            })
+
+        return {
+            "status": "ok",
+            "count": len(results),
+            "items": results,
+            "source": "Element84 Sentinel-2 L2A",
+        }
+
+    async def compute_ndvi(
+        self,
+        bbox: list,
+        date_from: str,
+        date_to: str,
+    ) -> dict:
+        res = await self.compute_index(bbox, date_from, date_to, index_type="ndvi")
+        if res.is_error:
+            return {"error": res.error_msg}
+        return {
+            "status": "ok",
+            "bbox": bbox,
+            "ndvi_stats": res.stats,
+            "vegetation_coverage": round(float((res.array > 0.3).sum() / res.array.size * 100), 1) if res.array is not None else 0.0,
+            "raster_source": {
+                "array": res.array,
+                "bounds": res.bounds,
+                "suggested_palette": "Viridis",
+            },
+        }
+
+    async def fetch_dem(self, bbox: list) -> dict:
+        from app.tools._utils import asset_href
+        fetch_res = await self.stac.fetch_stac_items_and_bands(
+            collection="cop-dem-glo-30",
+            bbox=bbox,
+            max_items=5,
+            empty_error_msg="No DEM data found for this area",
+        )
+        if "error" in fetch_res:
+            return fetch_res
+
+        results = []
+        for item in fetch_res["items"]:
+            results.append({
+                "id": item.id,
+                "bbox": item.bbox,
+                "assets": {
+                    "dem": asset_href(item.assets, "data"),
+                },
+            })
+
+        return {
+            "status": "ok",
+            "source": "Copernicus DEM GLO-30",
+            "count": len(results),
+            "items": results,
+        }
+
+    async def compute_vegetation_index(
+        self,
+        bbox: list,
+        date_from: str,
+        date_to: str,
+        index_type: str = "ndvi"
+    ) -> dict:
+        res = await self.compute_index(bbox, date_from, date_to, index_type=index_type)
+        if res.is_error:
+            return {"error": res.error_msg}
+        return {
+            "status": "ok",
+            "index_type": index_type.upper(),
+            "stats": res.stats,
+            "bbox": bbox,
+            "raster_source": {
+                "array": res.array,
+                "bounds": res.bounds,
+                "suggested_palette": "Viridis",
+            },
+        }
+
 
 spectral_engine = SpectralRasterEngine()

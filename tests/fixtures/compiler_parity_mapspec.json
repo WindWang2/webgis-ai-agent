@@ -49,6 +49,13 @@
       "type": "fill",
       "source": "s1",
       "paint": { "fill-color": "#60a5fa", "fill-opacity": 0.6, "fill-outline-color": "#1d4ed8" }
+    },
+    {
+      "id": "labels",
+      "type": "symbol",
+      "source": "s1",
+      "layout": { "text-field": "{name}", "text-size": 12 },
+      "paint": { "text-color": "#111827" }
     }
   ]
 }

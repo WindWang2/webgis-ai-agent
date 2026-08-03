@@ -1,12 +1,16 @@
-"""Test that chat_engine.py imports 're' module (used on MiniMax path)."""
+"""Test that the chat execution engine imports 're' module (used on MiniMax path).
+
+chat_engine.py is now a re-export shim; the re.sub calls live in
+app.services.chat.execution_engine, which must import 're'.
+"""
 import ast
 import inspect
-from app.services import chat_engine as ce_module
+from app.services.chat import execution_engine as ee_module
 
 
 def test_chat_engine_imports_re():
-    """Lines 441 and 581 call re.sub — 're' must be imported."""
-    source = inspect.getsource(ce_module)
+    """re.sub is used on the MiniMax tool-call path - 're' must be imported."""
+    source = inspect.getsource(ee_module)
     tree = ast.parse(source)
 
     imported_names = set()

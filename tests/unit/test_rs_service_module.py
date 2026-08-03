@@ -1,15 +1,14 @@
-"""Unit tests for app.services.rs_service module-level formulas and RemoteSensingService methods."""
+"""Unit tests for app.services.rs module-level formulas and SpectralRasterEngine methods."""
 import pytest
 import numpy as np
-from app.services.rs_service import (
+from app.services.rs.band_math import (
     INDEX_FORMULAS,
     compute_index_array,
     compute_slope,
     compute_aspect,
     compute_hillshade,
-    RemoteSensingService,
-    rs_service,
 )
+from app.services.rs.spectral_engine import spectral_engine, SpectralRasterEngine
 
 
 def test_index_formulas_exist():
@@ -51,12 +50,12 @@ def test_terrain_kernel_functions():
     assert np.all(hillshade >= 0) and np.all(hillshade <= 255)
 
 
-def test_remote_sensing_service_staticmethod_delegation():
+def test_spectral_raster_engine_kernel_delegation():
     dem = np.ones((3, 3))
     cell_size = 1.0
-    slope = RemoteSensingService._compute_slope(dem, cell_size)
-    aspect = RemoteSensingService._compute_aspect(dem, cell_size)
-    hillshade = RemoteSensingService._compute_hillshade(dem, cell_size)
+    slope = compute_slope(dem, cell_size)
+    aspect = compute_aspect(dem, cell_size)
+    hillshade = compute_hillshade(dem, cell_size)
 
     assert slope.shape == (3, 3)
     assert aspect.shape == (3, 3)
@@ -65,6 +64,6 @@ def test_remote_sensing_service_staticmethod_delegation():
 
 @pytest.mark.asyncio
 async def test_compute_vegetation_index_unsupported_type():
-    res = await rs_service.compute_vegetation_index([0, 0, 1, 1], "2023-01-01", "2023-01-02", index_type="invalid")
+    res = await spectral_engine.compute_vegetation_index([0, 0, 1, 1], "2023-01-01", "2023-01-02", index_type="invalid")
     assert "error" in res
     assert "不支持的指数类型" in res["error"]

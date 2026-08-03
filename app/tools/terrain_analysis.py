@@ -3,7 +3,7 @@ import logging
 from typing import Any
 
 from app.tools.registry import ToolRegistry, tool
-from app.services.rs_service import rs_service
+from app.services.rs.spectral_engine import spectral_engine
 from app.tools._utils import parse_bbox
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ def register_terrain_tools(registry: ToolRegistry):
     async def compute_terrain(bbox: str, products: list[str] | None = None) -> dict:
         try:
             parts = parse_bbox(bbox)
-            return await rs_service.compute_terrain(parts, products)
+            return await spectral_engine.compute_terrain(parts, products)
         except ValueError as e:
             return {"error": str(e)}
         except (RuntimeError, OSError) as e:
@@ -52,7 +52,7 @@ def register_terrain_tools(registry: ToolRegistry):
                                         index_type: str = "ndvi") -> dict:
         try:
             parts = parse_bbox(bbox)
-            return await rs_service.compute_vegetation_index(parts, date_from, date_to, index_type)
+            return await spectral_engine.compute_vegetation_index(parts, date_from, date_to, index_type)
         except ValueError as e:
             return {"error": str(e)}
         except (RuntimeError, OSError) as e:

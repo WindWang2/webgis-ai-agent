@@ -385,3 +385,13 @@ export function compileMapSpec(
     report,
   };
 }
+
+export class MapSpecCompilerEngine {
+  public static compile(spec: MapSpec, profile?: SpatialMetaProfile): MapSpecCompileResult {
+    return compileMapSpec(spec, profile);
+  }
+
+  public static validate(spec: MapSpec, profile?: SpatialMetaProfile): { errors: CompileError[]; warnings: string[] } {
+    return validateMapSpec(spec, profile);
+  }
+}

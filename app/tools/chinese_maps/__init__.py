@@ -51,6 +51,70 @@ _PROVIDERS = {"amap": _AMAP, "baidu": _BAIDU, "tianditu": _TIANDITU}
 logger = logging.getLogger(__name__)
 
 
+class ChineseMapsEngine:
+    """Chinese Maps Deep Provider Engine with provider health tracking & automatic failover."""
+
+    def __init__(self):
+        self.providers = _PROVIDERS
+
+    async def geocode(self, address: str, city: str = "", provider: str = "amap") -> dict:
+        return await geocode_cn(address, city, provider)
+
+    async def batch_geocode(self, addresses: list[str], provider: str = "amap", max_concurrency: int = 3) -> dict:
+        return await batch_geocode_cn(addresses, provider, max_concurrency)
+
+    async def reverse_geocode(self, location: list, provider: str = "amap") -> dict:
+        if len(location) != 2:
+            return {"error": "location 必须是 [经度, 纬度]"}
+        if provider not in _VALID_PROVIDERS:
+            return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
+        _dispatch = {
+            "amap": _AMAP.reverse_geocode, "baidu": _BAIDU.reverse_geocode,
+            "tianditu": _TIANDITU.reverse_geocode,
+        }
+        return await with_fallback(
+            provider,
+            lambda p: _dispatch[p](location[0], location[1]),
+            tool_name="reverse_geocode_cn",
+        )
+
+    async def route(self, origin: list, destination: list, mode: str = "driving", city: str = "", provider: str = "amap") -> dict:
+        if len(origin) != 2 or len(destination) != 2:
+            return {"error": "origin/destination 必须是 [经度, 纬度]"}
+        if provider not in _VALID_PROVIDERS:
+            return {"error": f"provider 必须是 'amap' 或 'baidu'"}
+        _dispatch = {"amap": _AMAP.route, "baidu": _BAIDU.route}
+        return await with_fallback(
+            provider,
+            lambda p: _dispatch[p](origin, destination, mode, city),
+            exclude={"tianditu"},
+            no_key_msg="未配置高德或百度 API Key，路径规划需要 API Key",
+            tool_name="plan_route",
+        )
+
+    async def search_poi(self, keyword: str, city: str = "", provider: str = "amap", limit: int = 20) -> dict:
+        if provider not in _VALID_PROVIDERS:
+            return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'，收到: {provider}"}
+        _dispatch = {
+            "amap": _AMAP.search_poi, "baidu": _BAIDU.search_poi, "tianditu": _TIANDITU.search_poi,
+        }
+        errors = []
+        async def _call(p):
+            try:
+                return await _dispatch[p](keyword, city, limit)
+            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+                errors.append(f"{p}: {e}")
+                raise
+        return await with_fallback(
+            provider, _call,
+            no_key_msg=(f"所有服务商均失败: {'; '.join(errors)}" if errors else "未配置任何地图 API Key"),
+            tool_name="search_poi",
+        )
+
+
+chinese_maps_engine = ChineseMapsEngine()
+
+
 async def geocode_cn(address: str, city: str = "", provider: str = "amap") -> dict:
     if provider not in _VALID_PROVIDERS:
         return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}

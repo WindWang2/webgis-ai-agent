@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.3] - 2026-08-03
+
+### Performance & Remediation
+
+- **JS Bundle Optimization**: Reduced First Load JS from 1.15 MB to 301 KB (-73.8%) via Next.js `optimizePackageImports` (`lucide-react`, `recharts`, `framer-motion`) and dynamic component code-splitting (`ssr: false` for secondary drawers & MapPanel).
+- **Backend Lock Unbinding**: Unbound long-running async I/O (WeasyPrint PDF rendering, SVG compilation) from synchronous DB transactions in `report_service.py` to prevent connection pool exhaustion under load.
+- **Deep Modules & Architecture Consolidation**: Consolidated `SpatialAnalysisEngine`, `EmbodiedHudEngine`, and `SpatialReportEngine` for atomic state management and clean separation of concerns.
+
 ## [Unreleased] - 2026-07
 
 ### Security

@@ -53,7 +53,7 @@ async def test_chat_with_tool_call(registry):
 
 
 @pytest.mark.asyncio
-async def test_chat_stream(registry):
+async def test_chat_stream(registry, monkeypatch):
     """测试流式对话"""
     engine = ChatEngine(registry)
     msg = {"content": "你好", "tool_calls": None}
@@ -61,13 +61,32 @@ async def test_chat_stream(registry):
     async def fake_stream(*args, **kwargs):
         yield ("done", {"message": msg})
 
+    # Patch the session/plan/title side effects so chat_stream does not touch
+    # the DB / Redis / a real LLM planner (which would hang the test). Mirrors
+    # the fixture pattern in test_chat_engine_planning.py.
+    async def fake_get_or_create_session(session_id, user_id=None):
+        return []
+
+    async def fake_save_msg_async(*a, **kw):
+        return None
+
+    async def fake_maybe_plan(*a, **kw):
+        return None
+
+    async def fake_generate_title(*a, **kw):
+        return None
+
+    monkeypatch.setattr(engine, "_get_or_create_session", fake_get_or_create_session)
+    monkeypatch.setattr(engine, "_save_msg_async", fake_save_msg_async)
+    monkeypatch.setattr(engine, "_maybe_plan", fake_maybe_plan)
+    monkeypatch.setattr(engine, "_generate_title", fake_generate_title)
+
     with patch.object(engine, "_call_llm_stream", return_value=fake_stream()):
-        with patch.object(engine, "_save_msg_async", new_callable=AsyncMock):
-            events = []
-            async for event in engine.chat_stream("你好"):
-                events.append(event)
-            assert len(events) >= 1
-            assert any("content" in e for e in events)
+        events = []
+        async for event in engine.chat_stream("你好"):
+            events.append(event)
+        assert len(events) >= 1
+        assert any("content" in e for e in events)
 
 
 @pytest.mark.asyncio

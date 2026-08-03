@@ -3,8 +3,13 @@ import { useState, useEffect, useRef, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { MapPanel } from "@/components/map/map-panel"
+import dynamic from "next/dynamic"
 import { API_BASE } from '@/lib/api/config';
+
+const MapPanel = dynamic(
+  () => import('@/components/map/map-panel').then((m) => ({ default: m.MapPanel })),
+  { ssr: false, loading: () => <div className="w-full h-full bg-slate-900 animate-pulse" /> }
+)
 
 import { devOnly } from "@/lib/utils/logger";
 import { useHudStore } from "@/lib/store/useHudStore"

@@ -82,6 +82,8 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   setAiStatus: (status: AiStatus) => set({ aiStatus: status }),
   activeLeftTab: 'chat' as LeftTab,
   setActiveLeftTab: (tab: LeftTab) => set({ activeLeftTab: tab }),
+  activeTool: null,
+  setActiveTool: (tool: string | null) => set({ activeTool: tool }),
   historyOpen: false,
   setHistoryOpen: (open: boolean) => set({ historyOpen: open }),
   settingsTab: 'llm' as SettingsTab,
