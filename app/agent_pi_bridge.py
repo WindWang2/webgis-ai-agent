@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from app.utils.sse import sse_event
 from app.services.tool_dispatch_service import ToolDispatchService
 from app.lib.harness.pi_agent_harness import PiAgentHarness
+from app.lib.harness.tool_call_event import ToolCallEvent
 
 logger = logging.getLogger(__name__)
 
@@ -184,8 +185,6 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     # executed_tools 复用一个 session 级 set，让重复调用拦截在 service 内生效。
     service = ToolDispatchService(registry=registry)
     tc = {"id": request.toolCallId, "function": {"name": tool_name, "arguments": request.arguments or {}}}
-    if _harness is not None:
-        _harness.record_tool_call(request.toolCallId, request.name, request.arguments or {})
     executed = _session_executed_sets.setdefault(request.sessionId or "", set())
     result = await service.dispatch(tc, request.sessionId or "", executed)
 
@@ -193,12 +192,16 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     cache_dispatch_result(request.sessionId, request.toolCallId, result)
 
     if _harness is not None:
-        _harness.record_tool_result(
-            request.toolCallId, request.name,
-            {"status": result.status, "llm_payload_len": len(result.llm_payload)},
+        event = ToolCallEvent(
+            tool_call_id=request.toolCallId,
+            tool_name=request.name,
+            arguments=request.arguments or {},
             is_error=(result.status == "error"),
-            error_msg=result.llm_payload if result.status == "error" else None,
+            error_msg=result.llm_payload if result.status == "error" else "",
+            result={"status": result.status, "llm_payload_len": len(result.llm_payload)},
+            session_id=request.sessionId,
         )
+        _harness.record_event(event)
 
     return PiToolResponse(
         toolCallId=request.toolCallId,
