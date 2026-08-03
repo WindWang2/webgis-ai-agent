@@ -44,13 +44,13 @@ describe('Client-Side HD Vector SVG/PDF Exporter API', () => {
     expect(blob.type).toBe('image/svg+xml');
   });
 
-  it('exportMapSpecToVectorPdf returns a valid PDF blob integrating vector marginalia', async () => {
+  it('exportMapSpecToVectorPdf returns a valid PDF blob integrating vector marginalia and MapSpec layers', async () => {
     const blob = await exportMapSpecToVectorPdf(sampleMapSpec, {
       title: '北京市专题地图',
       subtitle: 'Vector Print Layout Test',
       dpi: 300,
     });
     expect(blob.type).toBe('application/pdf');
-    expect(blob.size).toBeGreaterThan(0);
+    expect(blob.size).toBeGreaterThan(500); // Ensures PDF contains actual vector paths and text streams
   });
 });
