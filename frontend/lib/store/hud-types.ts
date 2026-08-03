@@ -227,6 +227,8 @@ export interface HudState {
   setAiStatus: (status: AiStatus) => void;
   activeLeftTab: LeftTab;
   setActiveLeftTab: (tab: LeftTab) => void;
+  activeTool: string | null;
+  setActiveTool: (tool: string | null) => void;
   historyOpen: boolean;
   setHistoryOpen: (open: boolean) => void;
   settingsTab: SettingsTab;

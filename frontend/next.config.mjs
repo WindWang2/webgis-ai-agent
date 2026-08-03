@@ -8,8 +8,8 @@ const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ["react-map-gl", "maplibre-gl"],
   output: "standalone",
-  turbopack: {
-    root: __dirname,
+  experimental: {
+    optimizePackageImports: ["lucide-react", "recharts", "framer-motion", "@dnd-kit/core"],
   },
 }
 

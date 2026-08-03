@@ -22,7 +22,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-import type { HudState } from './hud-types';
+import type { HudState, LeftTab } from './hud-types';
 import { createLayersSlice } from './slices/layersSlice';
 import { createSettingsSlice } from './slices/settingsSlice';
 import { createTaskSlice } from './slices/taskSlice';
@@ -96,7 +96,7 @@ export class EmbodiedHudEngine {
     const snapshot: HudSnapshot = {
       hudOpen: state.hudOpen,
       activeLeftTab: state.activeLeftTab,
-      activeTool: state.activeTool,
+      activeTool: state.activeTool ?? null,
       timestamp: Date.now(),
     };
     this.historyStack.push(snapshot);
@@ -115,7 +115,7 @@ export class EmbodiedHudEngine {
     this.redoStack.push({
       hudOpen: state.hudOpen,
       activeLeftTab: state.activeLeftTab,
-      activeTool: state.activeTool,
+      activeTool: state.activeTool ?? null,
       timestamp: Date.now(),
     });
     useHudStore.setState({
@@ -134,7 +134,7 @@ export class EmbodiedHudEngine {
     this.historyStack.push({
       hudOpen: state.hudOpen,
       activeLeftTab: state.activeLeftTab,
-      activeTool: state.activeTool,
+      activeTool: state.activeTool ?? null,
       timestamp: Date.now(),
     });
     useHudStore.setState({

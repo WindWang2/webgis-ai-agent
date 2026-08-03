@@ -18,11 +18,12 @@ import { LeftSidebar } from '@/components/sidebar/left-sidebar';
 import FloatingLegend from '@/components/map/floating-legend';
 import { SpatialCrosshair } from '@/components/map/spatial-crosshair';
 import { EmbodiedHud } from '@/components/hud/embodied-hud';
-import RagIndependentPanel from '@/components/panel/rag-independent-panel';
 import TweaksPanel from '@/components/tweaks-panel';
-import { HistoryDrawer } from '@/components/drawers/history-drawer';
-import { SettingsPanel } from '@/components/settings/settings-panel';
-import { ExportMask } from '@/components/map/export-mask';
+
+const RagIndependentPanel = dynamic(() => import('@/components/panel/rag-independent-panel'));
+const HistoryDrawer = dynamic(() => import('@/components/drawers/history-drawer').then(m => ({ default: m.HistoryDrawer })));
+const SettingsPanel = dynamic(() => import('@/components/settings/settings-panel').then(m => ({ default: m.SettingsPanel })));
+const ExportMask = dynamic(() => import('@/components/map/export-mask').then(m => ({ default: m.ExportMask })));
 
 const MapPanel = dynamic(
   () => import('@/components/map/map-panel').then((m) => ({ default: m.MapPanel })),
