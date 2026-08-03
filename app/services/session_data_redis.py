@@ -236,39 +236,10 @@ class RedisSessionStore(BaseSessionStore):
             )
             return None
 
-    async def get_ref_data(
-        self,
-        session_id: str,
-        ref_or_alias: str,
-        owner_token: Optional[str] = None,
-    ) -> SessionRefDataResult:
-        """Deep interface method: resolves alias, validates owner token if present, and returns data."""
-        meta = await self.get_session_metadata(session_id)
-        map_state = meta.get("map_state", {}) if meta else {}
-        expected_token = (meta.get("owner_token") if meta else None) or map_state.get("owner_token")
-        if expected_token and owner_token != expected_token:
-            return SessionRefDataResult(
-                success=False,
-                error="Security token mismatch",
-                error_type="PermissionDenied",
-            )
-
-        raw_data = await self.get(session_id, ref_or_alias)
-        if raw_data is None:
-            return SessionRefDataResult(
-                success=False,
-                error="Referenced data expired or not found",
-                error_type="NotFound",
-            )
-
-        if isinstance(raw_data, str):
-            try:
-                parsed = json.loads(raw_data)
-                return SessionRefDataResult(success=True, data=parsed)
-            except Exception:
-                return SessionRefDataResult(success=True, data=raw_data)
-
-        return SessionRefDataResult(success=True, data=raw_data)
+    # P2-1: get_ref_data was a byte-identical override of
+    # BaseSessionStore.get_ref_data and has been removed. The inherited Base
+    # implementation delegates to self.get() and self.get_session_metadata()
+    # (both overridden below), which carry the backend-specific logic.
 
     async def list_refs(self, session_id: str) -> dict[str, str]:
         await self._ensure_connected()

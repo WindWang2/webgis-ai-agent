@@ -1,0 +1,54 @@
+{
+  "_comment": "Shared fixture for MapSpec-to-SVG compiler parity contract tests. Both the Python (tests/unit/test_compiler_parity.py) and TypeScript (frontend/lib/mapspec-compiler/mapspec-to-svg.parity.test.ts) compilers read this file and assert identical normalized SVG output (element counts, DPI scaling factors, default colors). Locks the two twins against drift — see review Standards finding #1.",
+  "sources": {
+    "s1": {
+      "type": "geojson",
+      "data": {
+        "type": "FeatureCollection",
+        "features": [
+          {
+            "type": "Feature",
+            "geometry": { "type": "Point", "coordinates": [116.4, 39.9] },
+            "properties": { "name": "Beijing" }
+          },
+          {
+            "type": "Feature",
+            "geometry": {
+              "type": "LineString",
+              "coordinates": [[116.3, 39.8], [116.5, 40.0], [116.6, 39.9]]
+            },
+            "properties": { "name": "Route" }
+          },
+          {
+            "type": "Feature",
+            "geometry": {
+              "type": "Polygon",
+              "coordinates": [[[116.3, 39.8], [116.5, 39.8], [116.5, 40.0], [116.3, 40.0], [116.3, 39.8]]]
+            },
+            "properties": { "name": "Area" }
+          }
+        ]
+      }
+    }
+  },
+  "layers": [
+    {
+      "id": "pts",
+      "type": "circle",
+      "source": "s1",
+      "paint": { "circle-color": "#de2d26", "circle-radius": 5 }
+    },
+    {
+      "id": "lines",
+      "type": "line",
+      "source": "s1",
+      "paint": { "line-color": "#2563eb", "line-width": 2 }
+    },
+    {
+      "id": "polys",
+      "type": "fill",
+      "source": "s1",
+      "paint": { "fill-color": "#60a5fa", "fill-opacity": 0.6, "fill-outline-color": "#1d4ed8" }
+    }
+  ]
+}
