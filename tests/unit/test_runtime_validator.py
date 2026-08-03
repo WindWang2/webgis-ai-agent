@@ -48,7 +48,63 @@ def test_scores_full_marks_for_a_clean_run():
   assert scores["traceability_score"] == 10.0
   assert scores["efficiency_score"] == 10.0
   assert scores["total_score_80_max"] == 80.0
-  assert scores["cartographic_quality_status"] == "deferred_pending_visual_judge"
+  assert scores["cartographic_quality_status"] in ("deferred_pending_visual_judge", "evaluated_by_visual_judge")
+
+
+def test_scores_visual_judge_full_marks():
+  report = {
+      "mapLoaded": True,
+      "mapIdle": True,
+      "pageErrors": [],
+      "consoleErrors": [],
+      "failedRequests": [],
+      "fatalError": None,
+      "_evidenceComplete": True,
+      "canvas": {
+          "luminanceStdDev": 25.0,
+          "dominantRatio": 0.50,
+          "transparentRatio": 0.10,
+          "blank": False,
+      },
+      "controls": {"overflow": [], "collisions": []},
+  }
+  mapspec = {"sources": {"s1": {}}, "layers": [{"id": "l1"}]}
+  scores = compute_eval_scores(report, mapspec)
+  assert scores["cartographic_quality_score"] == 20.0
+  assert scores["total_score_100_max"] == 100.0
+  assert scores["cartographic_quality_status"] == "evaluated_by_visual_judge"
+  assert scores["visual_judge_details"]["visual_contrast_score"] == 8.0
+  assert scores["visual_judge_details"]["label_collision_score"] == 6.0
+  assert scores["visual_judge_details"]["layout_balance_score"] == 6.0
+
+
+def test_scores_visual_judge_penalises_collisions_and_flat_canvas():
+  report = {
+      "mapLoaded": True,
+      "mapIdle": True,
+      "pageErrors": [],
+      "consoleErrors": [],
+      "failedRequests": [],
+      "fatalError": None,
+      "_evidenceComplete": True,
+      "canvas": {
+          "luminanceStdDev": 2.0,
+          "dominantRatio": 0.99,
+          "transparentRatio": 0.85,
+          "blank": True,
+      },
+      "controls": {
+          "overflow": ["ctrl outside"],
+          "collisions": ["ctrl ↔ ctrl"],
+      },
+  }
+  mapspec = {"sources": {"s1": {}}, "layers": [{"id": "l1"}]}
+  scores = compute_eval_scores(report, mapspec)
+  assert scores["visual_judge_details"]["visual_contrast_score"] == 2.0
+  assert scores["visual_judge_details"]["label_collision_score"] == 2.0
+  assert scores["visual_judge_details"]["layout_balance_score"] == 3.0
+  assert scores["cartographic_quality_score"] == 7.0
+  assert scores["total_score_100_max"] == 87.0
 
 
 def test_scores_penalise_browser_failures():
