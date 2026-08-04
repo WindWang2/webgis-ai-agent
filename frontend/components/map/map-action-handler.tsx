@@ -1,5 +1,5 @@
 'use client';
-import { useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 import { useHudStore } from '@/lib/store/useHudStore';
 
@@ -11,7 +11,7 @@ import { ensureAnnotationLayers, refreshAnnotations } from '@/lib/map-commands/a
 
 import { devOnly } from "@/lib/utils/logger";
 
-export function MapActionHandler() {
+export const MapActionHandler = React.memo(function MapActionHandler() {
   const { actions, popAction, setSelectedBaseLayer } = useMapAction();
   const mapContext = useMap();
   const mapInstance = mapContext.default;
@@ -89,6 +89,6 @@ export function MapActionHandler() {
   }, [action, mapInstance, popAction]);
 
   return null;
-}
+});
 
 export default MapActionHandler;

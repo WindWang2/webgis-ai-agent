@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { flyTo, fitBounds, jumpTo, validateCoordinate } from './navigation';
+import { flyTo, fitBounds, jumpTo, validateCoordinate, calculateBBox, calculateBBoxAsync } from './navigation';
 import type { ViewportParams } from './types';
 import type { Map } from 'maplibre-gl';
 
@@ -86,6 +86,59 @@ describe('navigation', () => {
         center: [120, 30],
         zoom: 10,
       });
+    });
+  });
+
+  describe('calculateBBox', () => {
+    it('should return null for empty or null inputs', () => {
+      expect(calculateBBox(null)).toBeNull();
+      expect(calculateBBox({})).toBeNull();
+      expect(calculateBBox({ type: 'FeatureCollection', features: [] })).toBeNull();
+    });
+
+    it('should use precomputed bbox if valid', () => {
+      const geojson = {
+        type: 'FeatureCollection',
+        bbox: [100, 10, 120, 30],
+        features: []
+      };
+      expect(calculateBBox(geojson)).toEqual([100, 10, 120, 30]);
+    });
+
+    it('should correctly calculate bbox for FeatureCollection and filter NaN/Infinity', () => {
+      const geojson = {
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            geometry: {
+              type: 'Point',
+              coordinates: [116.4, 39.9]
+            }
+          },
+          {
+            type: 'Feature',
+            geometry: {
+              type: 'LineString',
+              coordinates: [[116.2, 39.8], [NaN, 40.0], [116.8, Infinity], [117.0, 40.2]]
+            }
+          }
+        ]
+      };
+      const bbox = calculateBBox(geojson);
+      expect(bbox).toEqual([116.2, 39.8, 117.0, 40.2]);
+    });
+
+    it('should calculate bbox asynchronously using calculateBBoxAsync', async () => {
+      const geojson = {
+        type: 'Feature',
+        geometry: {
+          type: 'Polygon',
+          coordinates: [[[10, 10], [20, 10], [20, 20], [10, 20], [10, 10]]]
+        }
+      };
+      const bbox = await calculateBBoxAsync(geojson);
+      expect(bbox).toEqual([10, 10, 20, 20]);
     });
   });
 });

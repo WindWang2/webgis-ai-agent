@@ -52,8 +52,10 @@ def register_coord_transform_tools(registry: ToolRegistry):
         # Policy gate: this tool is Chinese-CRS-only. normalize_chinese_crs is
         # the deep module's single authority for "what counts as a Chinese CRS";
         # the adapter keeps the policy (reject non-Chinese) and dict-shaping.
-        src = normalize_chinese_crs(from_crs)
-        dst = normalize_chinese_crs(to_crs)
+        from_crs_clean = str(from_crs or "").strip()
+        to_crs_clean = str(to_crs or "").strip()
+        src = normalize_chinese_crs(from_crs_clean)
+        dst = normalize_chinese_crs(to_crs_clean)
         if src is None or dst is None:
             crs_list = list(supported_chinese_crs())
             msg = (f"不支持的坐标系 from={from_crs} to={to_crs}。"
@@ -87,6 +89,13 @@ def register_coord_transform_tools(registry: ToolRegistry):
                 "summary": f"已将图层从 {src} 转换为 {dst}",
                 "metadata": {"from_crs": src, "to_crs": dst},
             }
+        except ImportError as e:
+            return std_error_response(
+                f"缺少 pyproj 依赖: {e}",
+                code="DEPENDENCY_ERROR",
+                error_type="ImportError",
+                correction_hint="请安装 pyproj 以支持坐标重投影。",
+            )
         except Exception as e:
             return std_error_response(
                 f"坐标转换失败: {e}",
@@ -125,8 +134,8 @@ def register_epsg_transform_tools(registry: ToolRegistry):
                 correction_hint="请提供合法的 GeoJSON 对象、FeatureCollection 或 ref:xxx 引用。",
             )
 
-        src_clean = (from_epsg or "").strip().upper()
-        dst_clean = (to_epsg or "").strip().upper()
+        src_clean = str(from_epsg or "").strip().upper()
+        dst_clean = str(to_epsg or "").strip().upper()
 
         if src_clean == dst_clean:
             return {
@@ -143,6 +152,13 @@ def register_epsg_transform_tools(registry: ToolRegistry):
                 "summary": f"已将图层从 {from_epsg} 重投影到 {to_epsg}",
                 "metadata": {"from_epsg": from_epsg, "to_epsg": to_epsg},
             }
+        except ImportError as e:
+            return std_error_response(
+                f"缺少 pyproj 依赖: {e}",
+                code="DEPENDENCY_ERROR",
+                error_type="ImportError",
+                correction_hint="请安装 pyproj 以支持通用 EPSG 坐标重投影。",
+            )
         except Exception as e:
             err = str(e).lower()
             if "crs" in err or "epsg" in err or "unsupported" in err:

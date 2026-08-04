@@ -7,8 +7,8 @@ import type { SessionSummary } from '@/lib/store/hud-types';
 // history-drawer 从 useHudStore 读取 sessions。提供一个可预测的 session 列表，
 // 使面板内可聚焦元素（搜索框 + 两个按钮 + 会话项按钮）顺序固定。
 const SESSIONS: SessionSummary[] = [
-  { id: 's1', title: '会话一', time: '今天', msgs: 3 },
-  { id: 's2', title: '会话二', time: '昨天', msgs: 1 },
+  { id: 's1', title: '会话一', time: '今天', msgs: 3, tags: [] },
+  { id: 's2', title: '会话二', time: '昨天', msgs: 1, tags: [] },
 ];
 
 vi.mock('@/lib/store/useHudStore', () => ({

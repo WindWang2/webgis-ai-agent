@@ -15,6 +15,11 @@ _mock_user = {"user_id": "test-user"}
 class TestGeoJSONExportEndpoint:
     """Backend should accept GeoJSON layer data and return a download URL."""
 
+    @pytest.fixture(autouse=True)
+    def clean_overrides(self):
+        yield
+        app.dependency_overrides.clear()
+
     def test_geojson_export_returns_download_url(self):
         from fastapi.testclient import TestClient
         app.dependency_overrides[get_current_user] = lambda: _mock_user

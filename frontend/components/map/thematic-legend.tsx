@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import type { LegendSpec } from '@/lib/map-kit/types';
 import { GraduatedLegend } from './legends/graduated-legend';
 import { ContinuousLegend } from './legends/continuous-legend';
@@ -13,7 +14,7 @@ interface Props {
   onFilterChange?: (visibleBreaks: number[][]) => void;
 }
 
-export function ThematicLegend({ spec, onFilterChange }: Props) {
+export const ThematicLegend = React.memo(function ThematicLegend({ spec, onFilterChange }: Props) {
   if (!spec) return null;
   switch (spec.type) {
     case 'graduated':
@@ -31,4 +32,4 @@ export function ThematicLegend({ spec, onFilterChange }: Props) {
       return null;
     }
   }
-}
+});

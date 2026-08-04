@@ -82,7 +82,7 @@ describe('exporter', () => {
         showScale: true,
         showCompass: true,
         showWatermark: true,
-        theme: 'light',
+        theme: 'light' as const,
         mapCenter: { lat: 0, lng: 0 },
         mapZoom: 10,
         mapBearing: 0,
@@ -135,7 +135,7 @@ describe('exporter', () => {
       const options = {
         showLegend: true,
         legendSpec: {
-          type: 'graduated',
+          type: 'graduated' as const,
           field: 'income',
           breaks: [1000, 5000, 10000],
           palette: 'YlOrRd',

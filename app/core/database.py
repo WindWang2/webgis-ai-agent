@@ -58,13 +58,19 @@ try:
         # NullPool 确保 Session 关闭时立即销毁 aiosqlite 连接与后台线程。
         _async_kwargs["poolclass"] = NullPool
         _async_kwargs["connect_args"] = {"check_same_thread": False}
-    else:
+    elif settings.is_production():
+        # 生产环境用 QueuePool 复用连接（asyncpg 连接池在长生命周期下高效）。
         _async_kwargs.update(
             pool_size=10,
             max_overflow=20,
             pool_timeout=30,
             pool_recycle=3600,
         )
+    else:
+        # 开发/测试环境（含 CI）：NullPool 让每个 AsyncSession 拿独立连接并在关闭时立即归还。
+        # TestClient 在 threadpool 跑 async 路由，QueuePool 会把同一个 asyncpg 连接并发派给
+        # 多个 session，触发 'cannot perform operation: another operation is in progress'。
+        _async_kwargs["poolclass"] = NullPool
 
     AsyncEngine = create_async_engine(_async_url, **_async_kwargs)
     AsyncSessionLocal = async_sessionmaker(bind=AsyncEngine, expire_on_commit=False)

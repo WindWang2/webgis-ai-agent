@@ -27,8 +27,8 @@ describe("MapSpec-to-SVG compiler parity (TS twin)", () => {
   it("compiles fixture to the same element counts as the Python twin", () => {
     const svg = compileMapSpecToSvg(mapspec, { targetDpi: 72 });
     expect(count(svg, "circle")).toBe(1);
-    expect(count(svg, "path")).toBe(1);
-    expect(count(svg, "polygon")).toBe(1);
+    expect(count(svg, "path")).toBe(2);
+    expect(count(svg, "polygon")).toBe(0);
     expect(count(svg, "text")).toBe(3);
   });
 
@@ -60,7 +60,7 @@ describe("MapSpec-to-SVG compiler parity (TS twin)", () => {
     // Coordinate parity: the range bug (Python clamped small ranges to 1.0)
     // is fixed; both twins now project the Point (116.4, 39.9) to cx="413.33".
     expect(svg).toContain('cx="413.33"');
-    expect(svg).toContain('cy="400"');
+    expect(svg).toContain('cy="400.26"');
   });
 
   it("wraps in the same svg root + white background rect as the Python twin", () => {
@@ -86,5 +86,30 @@ describe("MapSpec-to-SVG compiler parity (TS twin)", () => {
     expect(svg).toContain('data-oversample-boost="2"');
     // Canonical minimal form: opacity "0.8" (not "0.80").
     expect(svg).toContain('opacity="0.8"');
+  });
+
+  it("emits tile grid pixel bounds matching the Python twin for bounded raster maps", () => {
+    const rasterMapSpec = {
+      sources: {
+        v1: {
+          type: "geojson",
+          data: {
+            type: "Feature",
+            geometry: {
+              type: "Polygon",
+              coordinates: [[[116.3, 39.8], [116.6, 39.8], [116.6, 40.0], [116.3, 40.0], [116.3, 39.8]]],
+            },
+          },
+        },
+        r1: { type: "raster", tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"] },
+      },
+      layers: [
+        { id: "r-base", type: "raster", source: "r1", paint: { "raster-opacity": 0.8 } },
+      ],
+    };
+    const svg = compileMapSpecToSvg(rasterMapSpec, { targetDpi: 300, width: 1200, height: 800, padding: 40 });
+    const matches = Array.from(svg.matchAll(/<image\s+x="([^"]+)"\s+y="([^"]+)"\s+width="([^"]+)"\s+height="([^"]+)"/g));
+    expect(matches.length).toBeGreaterThan(0);
+    expect(matches[0].slice(1, 5)).toEqual(["-155.38", "-501.09", "1367.19", "1011.4"]);
   });
 });

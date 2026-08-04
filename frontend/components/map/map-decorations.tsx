@@ -28,7 +28,7 @@ function formatMeters(m: number): string {
   return m >= 1000 ? `${(m / 1000).toFixed(m % 1000 === 0 ? 0 : 1)} km` : `${m} m`;
 }
 
-export function MapDecorations({ show, title, zoom, centerLat, bearing }: Props) {
+export const MapDecorations = React.memo(function MapDecorations({ show, title, zoom, centerLat, bearing }: Props) {
   if (!show) return null;
   const { meters, pixels } = computeScale(zoom, centerLat);
 
@@ -62,4 +62,4 @@ export function MapDecorations({ show, title, zoom, centerLat, bearing }: Props)
       </div>
     </>
   );
-}
+});

@@ -7,20 +7,9 @@ import {
   Tooltip, ResponsiveContainer, Legend,
 } from "recharts"
 
-export interface ChartDataPoint {
-  name: string
-  value?: number
-  x?: number
-  y?: number
-}
+import type { ChartData, ChartDataPoint } from "@/lib/types";
+export type { ChartData, ChartDataPoint };
 
-export interface ChartData {
-  type: "bar" | "line" | "pie" | "scatter"
-  title: string
-  x_label?: string
-  y_label?: string
-  data: ChartDataPoint[]
-}
 
 const VALID_CHART_TYPES = new Set(["bar", "line", "pie", "scatter"] as const)
 

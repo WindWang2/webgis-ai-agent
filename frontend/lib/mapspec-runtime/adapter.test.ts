@@ -77,7 +77,7 @@ describe("MapSpec Runtime Adapter — hudStateToMapSpec (ADR-0036)", () => {
       });
       const spec = hudStateToMapSpec({ layers: [layer], processLayers: {}, activeFilters: {}, is3D: false });
       const circle = spec.layers[0];
-      expect(circle.paint["circle-radius"]).toEqual([
+      expect(circle.paint!["circle-radius"]).toEqual([
         "interpolate", ["linear"], ["get", "weight"], 0, 4, 1, 8,
       ]);
     });
@@ -88,7 +88,7 @@ describe("MapSpec Runtime Adapter — hudStateToMapSpec (ADR-0036)", () => {
         source: fc(pointFeature({ weight: 0.5 })),
       });
       const spec = hudStateToMapSpec({ layers: [layer], processLayers: {}, activeFilters: {}, is3D: false });
-      expect(spec.layers[0].paint["circle-radius"]).toBe(9);
+      expect(spec.layers[0].paint!["circle-radius"]).toBe(9);
     });
   });
 
@@ -114,7 +114,7 @@ describe("MapSpec Runtime Adapter — hudStateToMapSpec (ADR-0036)", () => {
         source: fc(lineFeature()),
       });
       const spec = hudStateToMapSpec({ layers: [layer], processLayers: {}, activeFilters: {}, is3D: false });
-      expect(spec.layers[0].paint["line-dasharray"]).toEqual([4, 2]);
+      expect(spec.layers[0].paint!["line-dasharray"]).toEqual([4, 2]);
     });
   });
 
@@ -163,8 +163,8 @@ describe("MapSpec Runtime Adapter — hudStateToMapSpec (ADR-0036)", () => {
       });
       const spec = hudStateToMapSpec({ layers: [noFill], processLayers: {}, activeFilters: {}, is3D: false });
       const fill = spec.layers.find((l) => l.type === "fill")!;
-      expect(fill.paint["fill-color"]).toBe("rgba(0,0,0,0)");
-      expect(fill.paint["fill-opacity"]).toBe(0);
+      expect(fill.paint!["fill-color"]).toBe("rgba(0,0,0,0)");
+      expect(fill.paint!["fill-opacity"]).toBe(0);
     });
   });
 
@@ -230,7 +230,7 @@ describe("MapSpec Runtime Adapter — hudStateToMapSpec (ADR-0036)", () => {
       const spec = hudStateToMapSpec({ layers: [layer], processLayers: {}, activeFilters: {}, is3D: false });
       const fills = spec.layers.filter((l) => l.type === "fill");
       expect(fills).toHaveLength(1);
-      expect(fills[0].paint["fill-color"]).toEqual([
+      expect(fills[0].paint!["fill-color"]).toEqual([
         "interpolate", ["linear"], ["get", "weight"],
         0.0, "rgba(0,0,0,0)",
         0.2, "rgba(0,242,255,0.4)",
@@ -342,7 +342,7 @@ describe("MapSpec Runtime Adapter — hudStateToMapSpec (ADR-0036)", () => {
         "process-step1__point",
       ]);
       const fill = spec.layers.find((l) => l.id === "process-step1__fill")!;
-      expect(fill.paint["fill-color"]).toBe("rgba(22, 163, 74, 0.08)");
+      expect(fill.paint!["fill-color"]).toBe("rgba(22, 163, 74, 0.08)");
     });
   });
 });

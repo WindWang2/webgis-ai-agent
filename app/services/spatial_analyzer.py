@@ -572,10 +572,11 @@ class SpatialAnalysisEngine:
         return self.analyze("nearest", features, session_id=session_id)
 
     def spatial_join(self, target_features: Any, join_features: Any, how: str = "inner", predicate: str = "intersects", session_id: Optional[str] = None) -> Dict[str, Any]:
-        return self.analyze("spatial_join", target_features, session_id=session_id, join_features=join_features, how=how, predicate=predicate)
+        return self.analyze("spatial_join", target_features, session_id=session_id, right_features=join_features, join_type=how, predicate=predicate)
 
     def zonal_stats(self, raster_data: Any, polygon_features: Any, stats: Optional[List[str]] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
-        return self.analyze("zonal_stats", raster_data, session_id=session_id, polygon_features=polygon_features, stats=stats)
+        return self.analyze("zonal_stats", polygon_features, session_id=session_id, raster_path=raster_data)
+
 
     def isochrone_network(self, network_features: Any, facilities: Any, travel_time: float = 15, mode: str = "walking", session_id: Optional[str] = None) -> Dict[str, Any]:
         return self.analyze("isochrone_network", network_features, session_id=session_id, facilities=facilities, travel_time=travel_time, mode=mode)

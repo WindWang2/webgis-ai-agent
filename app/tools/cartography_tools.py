@@ -65,7 +65,7 @@ class WebgisRuntimeValidateArgs(BaseModel):
   pass
 
 
-def register_cartography_tools(registry: ToolRegistry) -> None:
+def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   """注册 MapSpec Harness 规范化 webgis_* 工具。"""
 
   @tool(

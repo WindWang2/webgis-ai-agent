@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 
 export function SpatialCrosshair() {
@@ -9,6 +9,7 @@ export function SpatialCrosshair() {
   const accentColor = useHudStore((s) => s.accentColor);
   const is3D = useHudStore((s) => s.is3D);
   const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const lng = viewport.center[0];
   const lat = viewport.center[1];
@@ -18,10 +19,27 @@ export function SpatialCrosshair() {
 
   const isThinking = aiStatus === 'thinking' || aiStatus === 'acting';
 
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) {
+        clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const handleCopy = () => {
-    navigator.clipboard.writeText(`${lng.toFixed(6)}, ${lat.toFixed(6)}`);
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(`${lng.toFixed(6)}, ${lat.toFixed(6)}`);
+    }
     setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    if (copyTimerRef.current) {
+      clearTimeout(copyTimerRef.current);
+    }
+    copyTimerRef.current = setTimeout(() => {
+      setCopied(false);
+      copyTimerRef.current = null;
+    }, 1500);
   };
 
   return (
@@ -34,8 +52,7 @@ export function SpatialCrosshair() {
       pointerEvents: 'none',
       zIndex: 20
     }}>
-      {/* Embedded Animations */}
-      <style jsx global>{`
+      <style>{`
         @keyframes spin-clockwise {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }

@@ -6,21 +6,19 @@ describe("WorkerReconcilerBridge", () => {
   it("should perform diffing via sync fallback when Worker is undefined", async () => {
     const bridge = new WorkerReconcilerBridge();
 
-    const prev: MapSpec = {
+    const prev = {
       version: "1.0",
       view: { center: [0, 0], zoom: 2 },
-      basemap: { providerId: "carto-positron" },
       sources: {},
       layers: [],
-    };
+    } as unknown as MapSpec;
 
-    const next: MapSpec = {
+    const next = {
       version: "1.0",
       view: { center: [116.4, 39.9], zoom: 10 },
-      basemap: { providerId: "carto-dark" },
       sources: {},
       layers: [],
-    };
+    } as unknown as MapSpec;
 
     const patch = await bridge.diffSpecsAsync(prev, next);
 

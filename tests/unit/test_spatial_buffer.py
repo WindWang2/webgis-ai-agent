@@ -187,6 +187,19 @@ def test_buffer_smart_exception():
 
 
 
+def test_buffer_smart_projected_crs_preservation():
+    from app.lib.geo_processor.geometry import buffer_smart
+    feature = {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [13523282, 3662284]},
+        "properties": {}
+    }
+    res = buffer_smart(feature, 50, source_crs="EPSG:3857")
+    assert res.success is True
+    assert res.data["stats"]["reprojected"] is False
+    assert res.data["stats"]["working_crs"] == "EPSG:3857"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

@@ -29,11 +29,13 @@ def _count(svg: str, tag: str) -> int:
 
 
 def test_python_compiles_fixture_to_expected_element_counts(mapspec):
-    """The fixture has 1 Point + 1 LineString + 1 Polygon + 3 text elements across 4 layers."""
+    """The fixture has 1 Point + 1 LineString + 1 Polygon + 3 text elements across 4 layers.
+    MAPSPEC-02: Polygon fills are now rendered as <path d="..." fill-rule="evenodd" /> to support holes.
+    """
     svg = compile_mapspec_to_svg(mapspec, target_dpi=72)
     assert _count(svg, "circle") == 1
-    assert _count(svg, "path") == 1
-    assert _count(svg, "polygon") == 1
+    assert _count(svg, "path") == 2
+    assert _count(svg, "polygon") == 0
     assert _count(svg, "text") == 3
 
 
@@ -73,7 +75,7 @@ def test_python_emits_default_colors_and_group_wrapper(mapspec):
     # Coordinate parity: the range bug (clamped small ranges to 1.0) is fixed;
     # both twins now project the Point (116.4, 39.9) to cx="413.33".
     assert 'cx="413.33"' in svg
-    assert 'cy="400"' in svg
+    assert 'cy="400.26"' in svg
 
 
 def test_python_wraps_in_svg_root_with_white_background(mapspec):
@@ -98,3 +100,31 @@ def test_python_compiles_raster_layer_with_oversample_boost():
     assert '<image' in svg
     assert 'data-oversample-boost="2"' in svg
     assert 'opacity="0.8"' in svg
+
+
+def test_tile_grid_pixel_bounds_parity():
+    """Verifies that Web Mercator Y tile grid pixel bounds match the TS twin in scaled viewBox space."""
+    raster_mapspec = {
+        "sources": {
+            "v1": {
+                "type": "geojson",
+                "data": {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[[116.3, 39.8], [116.6, 39.8], [116.6, 40.0], [116.3, 40.0], [116.3, 39.8]]]
+                    }
+                }
+            },
+            "r1": {"type": "raster", "tiles": ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"]}
+        },
+        "layers": [
+            {"id": "r-base", "type": "raster", "source": "r1", "paint": {"raster-opacity": 0.8}}
+        ]
+    }
+    svg = compile_mapspec_to_svg(raster_mapspec, target_dpi=300, width=1200, height=800, padding=40)
+    images = re.findall(r'<image\s+x="([^"]+)"\s+y="([^"]+)"\s+width="([^"]+)"\s+height="([^"]+)"', svg)
+    assert len(images) > 0
+    assert images[0] == ("-155.38", "-501.09", "1367.19", "1011.4")
+
+

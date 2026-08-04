@@ -2,30 +2,58 @@ import json
 import logging
 from typing import Union
 import geopandas as gpd
-from app.lib.geo_processor.core import safe_parse, GeoAnalysisResult
+from app.lib.geo_processor.core import safe_parse, to_feature_collection, GeoAnalysisResult
 
 logger = logging.getLogger(__name__)
 
-def overlay_smart(layer_a: Union[dict, str], layer_b: Union[dict, str], how: str = 'intersection') -> GeoAnalysisResult:
+VALID_HOW_METHODS = {"intersection", "union", "difference", "symmetric_difference", "identity"}
+
+def overlay_smart(
+    layer_a: Union[dict, str, list],
+    layer_b: Union[dict, str, list],
+    how: str = 'intersection'
+) -> GeoAnalysisResult:
     """
     Performs a spatial overlay between layer_a and layer_b.
     Supported 'how' values: intersection, union, difference, symmetric_difference, identity.
     """
+    if how not in VALID_HOW_METHODS:
+        sorted_methods = sorted(list(VALID_HOW_METHODS))
+        return GeoAnalysisResult(
+            success=False,
+            data=None,
+            summary=f"Invalid overlay method '{how}'. Must be one of: {sorted_methods}",
+            error_type="ValueError",
+            correction_hint=f"Use one of: {sorted_methods}"
+        )
+
     try:
         t_parsed = safe_parse(layer_a)
         m_parsed = safe_parse(layer_b)
         
-        if not t_parsed or not m_parsed:
+        if t_parsed is None or m_parsed is None:
             return GeoAnalysisResult(False, None, "Invalid input layers")
             
-        gdf_a = gpd.GeoDataFrame.from_features(t_parsed.get("features", [t_parsed]) if t_parsed.get("type") in ["FeatureCollection", "Feature"] else [t_parsed], crs="EPSG:4326")
-        gdf_b = gpd.GeoDataFrame.from_features(m_parsed.get("features", [m_parsed]) if m_parsed.get("type") in ["FeatureCollection", "Feature"] else [m_parsed], crs="EPSG:4326")
+        fc_a = to_feature_collection(t_parsed)
+        fc_b = to_feature_collection(m_parsed)
+
+        gdf_a = gpd.GeoDataFrame.from_features(fc_a, crs="EPSG:4326")
+        gdf_b = gpd.GeoDataFrame.from_features(fc_b, crs="EPSG:4326")
         
         if gdf_a.empty or gdf_b.empty:
             return GeoAnalysisResult(True, {"type": "FeatureCollection", "features": []}, "Input layer(s) empty, nothing to overlay.")
 
+        # Align CRS of layer_b to match layer_a
+        if gdf_b.crs != gdf_a.crs:
+            gdf_b = gdf_b.to_crs(gdf_a.crs)
+
+        # Make valid before spatial overlay operation
+        gdf_a['geometry'] = gdf_a.geometry.make_valid()
+        gdf_b['geometry'] = gdf_b.geometry.make_valid()
+
         # Perform spatial overlay
         res_gdf = gpd.overlay(gdf_a, gdf_b, how=how)
+        res_gdf['geometry'] = res_gdf.geometry.make_valid()
         
         summary = f"Overlay ({how}) completed. {len(res_gdf)} features generated."
         
@@ -42,3 +70,4 @@ def overlay_smart(layer_a: Union[dict, str], layer_b: Union[dict, str], how: str
             summary=f"Overlay operation failed: {str(e)}",
             error_type=type(e).__name__
         )
+
