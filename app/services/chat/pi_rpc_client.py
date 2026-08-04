@@ -121,10 +121,13 @@ class PiRpcClient:
         try:
             proc.terminate()
             proc.wait(timeout=2)
-        except Exception:
+        except (ProcessLookupError, subprocess.TimeoutExpired):
+            # Process already gone or slow to exit; fall through to kill.
             try:
                 proc.kill()
-            except Exception:
+            except ProcessLookupError:
+                # Best-effort only: at exit the process may already be gone or
+                # the OS is tearing down; nothing to do, nothing to log.
                 pass
 
     @property

@@ -32,6 +32,7 @@ from typing import Any, AsyncGenerator, Optional
 from pydantic import BaseModel
 
 from app.utils.sse import sse_event
+from app.services.chat.pi_event_mapper import map_event_to_sse, _extract_text_from_event
 from app.services.tool_dispatch_service import ToolDispatchService
 from app.lib.harness.pi_agent_harness import PiAgentHarness
 from app.lib.harness.tool_call_event import ToolCallEvent
@@ -424,7 +425,6 @@ class PiBridge:
                     event = await asyncio.wait_for(self._rpc.events.get(), timeout=PI_EVENT_DRAIN_TIMEOUT)
                     if event.get("type") == "agent_end":
                         break
-                    from app.services.chat.pi_event_mapper import _extract_text_from_event
                     text = _extract_text_from_event(event)
                     if text:
                         content_parts.append(text)
@@ -494,7 +494,6 @@ class PiBridge:
             # Stream events from Pi
             yield sse_event("task_start", {"task_id": turn_sid, "session_id": turn_sid})
 
-            from app.services.chat.pi_event_mapper import map_event_to_sse
             timed_out = False
             while True:
                 try:
