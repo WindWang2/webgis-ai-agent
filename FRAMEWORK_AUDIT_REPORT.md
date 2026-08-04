@@ -93,7 +93,7 @@ This report presents an end-to-end technical audit of the WebGIS AI Agent framew
 | ID | Severity | Subsystem | Vulnerability / Bottleneck Summary | Impact |
 |----|----------|-----------|-----------------------------------|--------|
 | **F-01** | **CRITICAL** | Subsystem 5 | Celery Event Loop Deadlock via `_run_async` | Event loop crash in Celery task execution |
-| **F-02** | **CRITICAL** | Subsystem 3 | Event Loop Subprocess Freeze in MapSpec Compiler | Blocks entire asyncio main thread up to 15s |
+| **F-02** | **CRITICAL** | Subsystem 3 | Event Loop Subprocess Freeze in MapSpec Compiler | Blocks entire asyncio main thread up to 45s |
 | **F-03** | **HIGH** | Subsystem 1 | Un-locked Dialogue State Mutation in Chat Engine | Message list corruption under concurrent requests |
 | **F-04** | **HIGH** | Subsystems 1 & 3 | Flawed Lock Eviction Logic (FIFO / Race-prone) | Destruction of concurrency mutual exclusion |
 | **F-05** | **HIGH** | Subsystems 1, 3, 4 | Async Event Loop Blocking via Sync I/O | Severe request latency spikes under load |

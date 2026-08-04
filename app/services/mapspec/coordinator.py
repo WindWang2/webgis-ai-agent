@@ -37,13 +37,18 @@ async def compile_via_cli(mapspec_file: Path, target_out_dir: Path) -> Dict[str,
             stderr=asyncio.subprocess.PIPE,
         )
         try:
+            # 45s ceiling: `npx tsx` cold-start is ~2.3s locally and the actual
+            # compile is fast, but GitHub's 2-core CI runners are markedly slower
+            # under load. The old 15s ceiling produced spurious timeouts on
+            # test_validate_and_compile (it passed on retry) — 45s keeps a real
+            # hang detectable while absorbing cold-start + runner variance.
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=15,
+                proc.communicate(), timeout=45,
             )
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
-            raise TimeoutError("MapSpec CLI compilation timed out after 15s")
+            raise TimeoutError("MapSpec CLI compilation timed out after 45s")
 
         stdout_text = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
         stderr_text = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
