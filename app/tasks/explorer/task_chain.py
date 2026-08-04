@@ -39,18 +39,28 @@ def _run_async(coro):
 
 
 def _store_ref(data: dict, task_id: str, prefix: str = "explorer") -> str:
-    """存储数据到 session manager，返回 ref_id。"""
-    from app.services.session_data import session_data_manager
+    """存储数据到 session store，返回 ref_id。
+
+    Routes through ``get_session_store()`` (the config-gated seam) rather than
+    importing the module-level ``session_data_manager`` singleton directly.
+    The singleton is a per-process ``MemorySessionStore`` when ``USE_REDIS=false``
+    - created at import time, so each prefork worker gets its own store and a
+    ref stored in worker A is invisible to worker B -> the next stage's
+    ``load_ref`` returns ``None`` and the data is silently dropped.
+    ``get_session_store()`` returns the Redis-backed store when ``USE_REDIS=true``
+    (shared across workers) and the memory store under eager mode.
+    """
+    from app.services.session_data_protocol import get_session_store
     session_namespace = f"explorer:{task_id}"
-    ref_id = _run_async(session_data_manager.store(session_namespace, data, prefix=prefix))
+    ref_id = _run_async(get_session_store().store(session_namespace, data, prefix=prefix))
     return ref_id
 
 
 def _load_ref(ref_id: str, task_id: str):
-    """从 session manager 加载数据（按 task_id 命名空间）。"""
-    from app.services.session_data import session_data_manager
+    """从 session store 加载数据（按 task_id 命名空间）。See :func:`_store_ref`."""
+    from app.services.session_data_protocol import get_session_store
     session_namespace = f"explorer:{task_id}"
-    return _run_async(session_data_manager.get(session_namespace, ref_id))
+    return _run_async(get_session_store().get(session_namespace, ref_id))
 
 
 @celery_app.task(bind=True, max_retries=2, soft_time_limit=30, time_limit=30)
@@ -72,9 +82,9 @@ def explorer_discover_task(self, task_id: str, query: str, context: dict):
         raise self.retry(exc=e, countdown=2 ** self.request.retries)
 
 
-@celery_app.task(bind=True, max_retries=1, soft_time_limit=55, time_limit=60)
+@celery_app.task(bind=True, soft_time_limit=55, time_limit=60)
 def explorer_fetch_task(self, prev_result: dict):
-    """内容抓取阶段 — thin Celery adapter."""
+    """内容抓取阶段 - thin Celery adapter."""
     from app.services.explorer.fetch_stage import run_fetch_stage
     task_id = prev_result["task_id"]
     logger.info(f"[Explorer:{task_id}] Starting fetch stage")
@@ -111,12 +121,21 @@ def explorer_parse_task(self, prev_result: dict):
         store_ref=lambda data, prefix: _store_ref(data, task_id=task_id, prefix=prefix),
         on_progress=_on_progress,
     ))
+    if not res.success:
+        # All fetch refs unresolved (cross-worker handoff break / store down):
+        # fail loudly rather than handing an empty parsed_results to geocode.
+        error_msg = res.message if hasattr(res, "message") else str(res)
+        raise RuntimeError(error_msg)
     return res.data
 
 
-@celery_app.task(bind=True, max_retries=2, soft_time_limit=290, time_limit=300)
+# No max_retries: this task never calls self.retry(), so a retry budget would
+# be misleading (implying retries are configured when they aren't). If retries
+# are added later, set max_retries alongside the self.retry() call + an
+# idempotency guard.
+@celery_app.task(bind=True, soft_time_limit=290, time_limit=300)
 def explorer_geocode_task(self, prev_result: dict):
-    """地理编码阶段 — thin Celery adapter over the pure :func:`geocode_stage`."""
+    """地理编码阶段 - thin Celery adapter over the pure :func:`geocode_stage`."""
     from app.tools.chinese_maps import batch_geocode_cn
     from app.services.explorer.geocode_stage import geocode_stage
 
@@ -132,6 +151,17 @@ def explorer_geocode_task(self, prev_result: dict):
         batch_geocode=batch_geocode_cn,
         on_progress=_on_progress,
     ))
+
+    # Fail-fast: if there were rows to geocode but none survived (every parsed
+    # ref unresolved), the handoff is broken — fail loudly rather than handing
+    # an empty geocoded_ref_id to validate and reporting success.
+    expected_rows = sum(s.get("row_count", 0) for s in prev_result["parsed_results"])
+    if expected_rows > 0 and not result.rows:
+        raise RuntimeError(
+            f"Geocode stage produced no rows: all parsed refs unresolved "
+            f"(expected {expected_rows} row(s), got 0). Likely a session-store "
+            f"handoff failure."
+        )
 
     if result.rows or result.summary.total:
         geocoded_ref_id = _store_ref(

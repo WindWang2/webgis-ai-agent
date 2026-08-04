@@ -1,4 +1,5 @@
 """政府开放数据适配器"""
+import asyncio
 import logging
 import aiohttp
 import csv
@@ -151,11 +152,18 @@ class GovDataAdapter(BaseDataAdapter):
         )
 
     async def parse(self, raw: RawContent) -> StructuredData:
-        """解析 CSV/Excel 为结构化数据"""
+        """解析 CSV/Excel 为结构化数据。
+
+        The underlying ``_parse_csv`` / ``_parse_excel`` are synchronous
+        (``csv.DictReader``, ``openpyxl.load_workbook``) and can block for the
+        full parse of a large file (up to the 50MB fetch cap). Offload them to
+        the default thread pool so the Celery worker's event loop stays
+        responsive - matches the house pattern (rag/engine.py, stac_client.py).
+        """
         if raw.content_type == "text/csv":
-            return self._parse_csv(raw)
+            return await asyncio.to_thread(self._parse_csv, raw)
         elif raw.content_type in ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"):
-            return self._parse_excel(raw)
+            return await asyncio.to_thread(self._parse_excel, raw)
         else:
             raise ValueError(f"Unsupported format: {raw.content_type}")
 

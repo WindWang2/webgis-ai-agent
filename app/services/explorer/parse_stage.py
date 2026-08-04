@@ -56,6 +56,8 @@ async def run_parse_stage(
 
     data_adapter = adapter or GovDataAdapter()
     parsed_all: List[Dict[str, Any]] = []
+    missing_refs: List[str] = []
+    errors: List[Dict[str, Any]] = []
 
     for result in fetch_results:
         ref_id = result.get("ref_id")
@@ -63,15 +65,24 @@ async def run_parse_stage(
 
         if not stored:
             logger.warning(f"[Explorer:{task_id}] Ref {ref_id} not found")
+            missing_refs.append(ref_id or "<none>")
             continue
 
-        raw = RawContent(
-            data=bytes.fromhex(stored["data"]),
-            content_type=stored["content_type"],
-            encoding=stored["encoding"],
-        )
+        # Per-source isolation: a corrupt payload (bad hex) or a parser failure
+        # must skip just this source, matching fetch_stage's error isolation.
+        # Previously an unguarded bytes.fromhex / parse could abort the whole stage.
+        try:
+            raw = RawContent(
+                data=bytes.fromhex(stored["data"]),
+                content_type=stored["content_type"],
+                encoding=stored["encoding"],
+            )
+            structured = await data_adapter.parse(raw)
+        except Exception as e:
+            logger.warning(f"[Explorer:{task_id}] Parse failed for ref {ref_id}: {e}")
+            errors.append({"source_id": result.get("source_id"), "ref_id": ref_id, "error": str(e)})
+            continue
 
-        structured = await data_adapter.parse(raw)
         mapping = auto_field_mapping(structured.fields)
         confidence = mapping_confidence(mapping)
 
@@ -93,8 +104,29 @@ async def run_parse_stage(
     if on_progress:
         on_progress(100)
 
+    # Fail-fast: if there were fetch results to parse but every ref was missing
+    # (cross-worker handoff break / store down), return failure rather than
+    # handing an empty parsed_results to geocode and reporting success.
+    # Partial misses (some refs resolved) stay success — one source failing
+    # shouldn't sink the whole pipeline.
+    if fetch_results and not parsed_all:
+        return StageResult(
+            stage="parse",
+            data={"task_id": task_id, "parsed_results": [], "missing_refs": missing_refs, "errors": errors},
+            success=False,
+            message=(
+                f"Parse stage produced no output: all {len(missing_refs)} fetch ref(s) "
+                f"unresolved (missing={missing_refs}). Likely a session-store handoff failure."
+            ),
+        )
+
     return StageResult(
         stage="parse",
-        data={"task_id": task_id, "parsed_results": parsed_all},
+        data={
+            "task_id": task_id,
+            "parsed_results": parsed_all,
+            "missing_refs": missing_refs,
+            "errors": errors,
+        },
         success=True,
     )

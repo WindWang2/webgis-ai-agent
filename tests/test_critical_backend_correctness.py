@@ -242,6 +242,7 @@ def test_m5_generic_exception_still_server_error():
 def test_c2_store_ref_uses_task_id_namespace(monkeypatch):
     """C2：_store_ref 必须把 task_id 作为 session namespace（不再是固定 'explorer'）。"""
     from app.tasks.explorer import task_chain
+    from app.services.session_data_protocol import set_active_session_store
 
     captured = {}
 
@@ -250,12 +251,16 @@ def test_c2_store_ref_uses_task_id_namespace(monkeypatch):
         captured["prefix"] = prefix
         return f"ref:{prefix}-abc"
 
-    # 用 monkeypatch 替换 session_data_manager
+    # _store_ref now routes through get_session_store(); inject via the seam
+    # (set_active_session_store) rather than patching the old module singleton.
     fake_manager = MagicMock()
     fake_manager.store = fake_store
-    monkeypatch.setattr("app.services.session_data.session_data_manager", fake_manager)
+    set_active_session_store(fake_manager)
+    try:
+        ref = task_chain._store_ref({"foo": 1}, task_id="task-xyz", prefix="fetch")
+    finally:
+        set_active_session_store(None)
 
-    ref = task_chain._store_ref({"foo": 1}, task_id="task-xyz", prefix="fetch")
     assert ref == "ref:fetch-abc"
     # 必须包含 task_id（之前是硬编码 "explorer"）
     assert "task-xyz" in captured["session_id"], (
@@ -266,6 +271,7 @@ def test_c2_store_ref_uses_task_id_namespace(monkeypatch):
 def test_c2_load_ref_uses_task_id_namespace(monkeypatch):
     """C2：_load_ref 也必须用 task_id namespace。"""
     from app.tasks.explorer import task_chain
+    from app.services.session_data_protocol import set_active_session_store
 
     captured = {}
 
@@ -275,9 +281,12 @@ def test_c2_load_ref_uses_task_id_namespace(monkeypatch):
 
     fake_manager = MagicMock()
     fake_manager.get = fake_get
-    monkeypatch.setattr("app.services.session_data.session_data_manager", fake_manager)
+    set_active_session_store(fake_manager)
+    try:
+        result = task_chain._load_ref("ref:fetch-abc", task_id="task-123")
+    finally:
+        set_active_session_store(None)
 
-    result = task_chain._load_ref("ref:fetch-abc", task_id="task-123")
     assert result == {"data": "ok"}
     assert "task-123" in captured["session_id"]
 

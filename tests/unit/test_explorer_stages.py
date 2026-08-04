@@ -298,3 +298,186 @@ async def test_fetch_reports_progress_on_success():
   )
 
   assert progress == [10, 100]
+
+
+# ─── Fetch concurrency (review §3 item 3c) ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_fetch_runs_sources_concurrently():
+  """Sources are fetched concurrently, not serially.
+
+  Regression for the serial-await defect: the loop previously did one
+  ``await data_adapter.fetch(source)`` at a time, so N sources × 30s timeout
+  blew the Celery soft_time_limit=55. Now uses asyncio.gather. This test
+  proves concurrency by having two fetches that each block on an asyncio.Event
+  until the other has started - impossible to satisfy serially.
+  """
+  import asyncio as _asyncio
+
+  a_started = _asyncio.Event()
+  b_started = _asyncio.Event()
+
+  class ConcurrencyProbeAdapter:
+    """Adapter whose fetch gates on the sibling starting."""
+
+    async def fetch(self, source):
+      if source.id == "a":
+        a_started.set()
+        # Wait until B has started (proves they overlap).
+        await _asyncio.wait_for(b_started.wait(), timeout=2.0)
+        return RawContent(data=b"a", content_type="text/csv")
+      else:
+        b_started.set()
+        await _asyncio.wait_for(a_started.wait(), timeout=2.0)
+        return RawContent(data=b"b", content_type="text/csv")
+
+  adapter = ConcurrencyProbeAdapter()
+  result = await run_fetch_stage(
+      task_id="t1",
+      selected_sources=[
+          {"source": _source("a").model_dump()},
+          {"source": _source("b").model_dump()},
+      ],
+      adapter=adapter,
+  )
+
+  # If fetches were serial, A would wait for B (which never starts) -> timeout
+  # -> the stage would fail or error. Both succeeded -> they ran concurrently.
+  assert result.success is True
+  assert len(result.data["fetch_results"]) == 2
+#
+# The parse stage previously swallowed a missing fetch ref as a `continue` and
+# still returned success=True — so a cross-worker handoff break (the ref stored
+# in worker A's MemorySessionStore invisible to worker B) produced an empty
+# parsed_results that silently sailed through to geocode and validate. These
+# tests pin the fail-fast + per-source isolation contract.
+
+from app.services.explorer.parse_stage import run_parse_stage
+from app.services.explorer.models import FieldInfo, StructuredData
+
+
+class FakeParseAdapter:
+  """Adapter double for the parse stage.
+
+  `parsed` maps source_id -> the rows/fields to return. Absent => raise, which
+  exercises the per-source parse-error isolation path.
+  """
+
+  def __init__(self, parsed: dict[str, list[dict]] | None = None):
+    self._parsed = parsed or {}
+    self.parsed_ids: list[str] = []
+
+  async def parse(self, raw) -> StructuredData:
+    # Recover the source id from the hex payload is awkward; tests instead key
+    # off call order. For determinism we just return the next queued rows.
+    self.parsed_ids.append(len(self.parsed_ids))
+    rows = self._rows_for(self.parsed_ids[-1] - 1)
+    return StructuredData(rows=rows, fields=[FieldInfo(name="address")])
+
+  def _rows_for(self, idx: int) -> list[dict]:
+    items = list(self._parsed.values())
+    if idx >= len(items):
+      raise RuntimeError(f"parse boom for source #{idx}")
+    return items[idx]
+
+
+def _stored_fetch_payload(rows_csv: bytes = b"address\nMain St\n") -> dict:
+  """A fetch-ref payload in the store shape the parse stage reads."""
+  return {
+      "data": rows_csv.hex(),
+      "content_type": "text/csv",
+      "encoding": "utf-8",
+  }
+
+
+@pytest.mark.asyncio
+async def test_parse_fails_when_all_refs_missing():
+  """Every fetch ref unresolved => success=False (fail-fast, not silent empty).
+
+  Regression for the handoff-break defect: without the gate, parse returns
+  success=True with empty parsed_results and the pipeline reports a successful
+  exploration that produced nothing.
+  """
+  result = await run_parse_stage(
+      task_id="t1",
+      fetch_results=[{"source_id": "a", "ref_id": "ref-a"}, {"source_id": "b", "ref_id": "ref-b"}],
+      load_ref=lambda ref_id: None,  # all refs missing (cross-worker break)
+      adapter=FakeParseAdapter(),
+  )
+  assert result.success is False
+  assert result.data["parsed_results"] == []
+  assert set(result.data["missing_refs"]) == {"ref-a", "ref-b"}
+  assert "unresolved" in result.message
+
+
+@pytest.mark.asyncio
+async def test_parse_partial_missing_keeps_success():
+  """Some refs resolve, some missing => success=True with the misses recorded.
+
+  One source's ref expiring must not sink the whole pipeline; the resolved
+  source's parsed result still flows to geocode.
+  """
+  store = {"ref-a": _stored_fetch_payload()}
+
+  def store_ref(payload, kind):
+    return f"ref-parsed-{kind}"
+
+  result = await run_parse_stage(
+      task_id="t1",
+      fetch_results=[{"source_id": "a", "ref_id": "ref-a"}, {"source_id": "b", "ref_id": "ref-b"}],
+      load_ref=lambda ref_id: store.get(ref_id),
+      store_ref=store_ref,
+      adapter=FakeParseAdapter({"a": [{"address": "Main St"}]}),
+  )
+  assert result.success is True
+  assert len(result.data["parsed_results"]) == 1
+  assert result.data["parsed_results"][0]["source_id"] == "a"
+  assert result.data["missing_refs"] == ["ref-b"]
+
+
+@pytest.mark.asyncio
+async def test_parse_isolates_bad_hex_payload():
+  """A corrupt payload (non-hex data) skips just that source, others survive.
+
+  Previously bytes.fromhex(stored["data"]) was unguarded and one bad payload
+  aborted the whole stage with a ValueError.
+  """
+  store = {
+      "ref-bad": {"data": "not-hex!!", "content_type": "text/csv", "encoding": "utf-8"},
+      "ref-ok": _stored_fetch_payload(),
+  }
+
+  def store_ref(payload, kind):
+    return f"ref-parsed-{kind}"
+
+  result = await run_parse_stage(
+      task_id="t1",
+      fetch_results=[{"source_id": "bad", "ref_id": "ref-bad"}, {"source_id": "ok", "ref_id": "ref-ok"}],
+      load_ref=lambda ref_id: store.get(ref_id),
+      store_ref=store_ref,
+      adapter=FakeParseAdapter({"ok": [{"address": "Main St"}]}),
+  )
+  assert result.success is True
+  assert len(result.data["parsed_results"]) == 1
+  assert result.data["parsed_results"][0]["source_id"] == "ok"
+  # The bad source is recorded as a per-source error, not a missing ref.
+  assert result.data["errors"]
+  assert result.data["errors"][0]["source_id"] == "bad"
+
+
+@pytest.mark.asyncio
+async def test_parse_empty_input_succeeds():
+  """No fetch results at all => success=True with empty output (not a failure).
+
+  An empty input is distinct from all-refs-missing: there was nothing to parse,
+  so it's not a handoff failure.
+  """
+  result = await run_parse_stage(
+      task_id="t1",
+      fetch_results=[],
+      load_ref=lambda ref_id: None,
+      adapter=FakeParseAdapter(),
+  )
+  assert result.success is True
+  assert result.data["parsed_results"] == []
