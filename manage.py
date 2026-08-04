@@ -21,7 +21,6 @@ import uuid
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from rich.status import Status
 
 console = Console()
 
@@ -41,17 +40,17 @@ def cmd_create_admin(username: str, email: str, password: str):
     """
     import re
     if not re.match(r"^[A-Za-z0-9_\-\.]{3,40}$", username):
-        console.print(f"[red]非法 username：长度 3-40，允许字母/数字/_-. [/red]")
+        console.print("[red]非法 username：长度 3-40，允许字母/数字/_-. [/red]")
         sys.exit(2)
     if not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
-        console.print(f"[red]非法 email 格式[/red]")
+        console.print("[red]非法 email 格式[/red]")
         sys.exit(2)
     if len(password) < 8:
-        console.print(f"[red]password 至少 8 位[/red]")
+        console.print("[red]password 至少 8 位[/red]")
         sys.exit(2)
 
     from app.core.database import init_db, Engine
-    from app.models.db_model import User, Base
+    from app.models.db_model import User
     from app.core.auth import hash_password
     from sqlalchemy import select, or_
 
@@ -149,7 +148,9 @@ def run_dev():
         try:
             r = redis.from_url(settings.REDIS_URL, socket_connect_timeout=1)
             r.ping()
-        except:
+        except Exception:
+            # Catch broad redis/network exceptions, but let KeyboardInterrupt/SystemExit
+            # propagate so the user can ctrl-C a dev server start.
             console.print("[bold red]ERROR:[/bold red] Redis is not running. Please start redis-server first.")
             return
 
