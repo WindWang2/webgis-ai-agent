@@ -54,6 +54,12 @@ services:
       --maxmemory-policy allkeys-lru
       --bind 0.0.0.0
       --requirepass "${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv and set REDIS_PASSWORD.}"
+    # Expose REDIS_PASSWORD to the container env so the healthcheck (below)
+    # can resolve $$REDIS_PASSWORD at runtime. Without this, the password is
+    # only on the `--requirepass` CLI arg and the healthcheck's redis-cli has
+    # no auth -> NOAUTH -> unhealthy -> compose aborts the whole stack.
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD}"
     volumes:
       - redis_data_secure:/data
     healthcheck:
