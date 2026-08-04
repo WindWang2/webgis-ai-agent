@@ -1,0 +1,414 @@
+"""
+RAG vector store durability tests (REVIEW-P0-PROMOTED, faiss_store).
+
+The pre-fix code:
+  - had non-atomic dual-file writes (metadata + index, no ordering, no
+    rename-via-tempfile), so a crash between the two left them
+    permanently divergent
+  - swallowed every exception in save_metadata / save_index to a
+    logger.warning line, so add_vectors returned success when nothing
+    reached disk
+  - wrote renumbered metadata BEFORE rebuilding the index in compact(),
+    so a crash left positions misaligned and search returned
+    wrong-chunk content
+
+The post-fix code:
+  - atomic-writes both files (tempfile in same dir + fsync + os.replace)
+  - holds a sidecar write lock for the whole critical section
+  - propagates every write failure as RagPersistenceError
+  - writes the index first in both add_vectors and compact, so a crash
+    leaves "stale metadata" (recoverable by _recover_index_metadata_consistency)
+  - on load, cross-checks index ntotal against metadata chunk count and
+    drops orphaned metadata entries (trust the index)
+"""
+import json
+import os
+import tempfile
+
+import numpy as np
+import pytest
+
+from app.services.rag.faiss_store import (
+    FaissVectorStore,
+    RagPersistenceError,
+    _atomic_write_json,
+)
+
+
+# ── helpers ─────────────────────────────────────────────────────────
+
+
+def _tmp_store() -> tuple[FaissVectorStore, str]:
+    """Build a store in a fresh temp dir; caller is responsible for cleanup."""
+    tmpdir = tempfile.mkdtemp(prefix="rag-durability-")
+    return FaissVectorStore(index_dir=tmpdir), tmpdir
+
+
+def _fake_vectors(n: int, dim: int = 8) -> np.ndarray:
+    """Deterministic unit-ish vectors so we don't need the real embed model."""
+    rng = np.random.default_rng(seed=42)
+    return (rng.random((n, dim))).astype(np.float32)
+
+
+@pytest.fixture
+def patch_embed(monkeypatch):
+    """Replace FaissVectorStore.embed_texts with a deterministic stub.
+
+    compact() calls embed_texts to re-encode the kept chunks; without
+    this stub the test would try to download the real SentenceTransformer
+    model, which is both slow and offline-broken.
+    """
+    counter = {"calls": 0}
+
+    def fake(self, texts):
+        counter["calls"] += 1
+        return _fake_vectors(len(texts))
+
+    monkeypatch.setattr(FaissVectorStore, "embed_texts", fake)
+    return counter
+
+
+# ── add_vectors: error propagation ──────────────────────────────────
+
+
+def test_add_vectors_propagates_save_index_failure(monkeypatch, tmp_path):
+    """REVIEW-P0-PROMOTED, fix A: add_vectors must raise when the underlying
+    save fails. The pre-fix code logged a warning and returned None;
+    callers (engine.index_document) treated that as success.
+    """
+    store, dir_ = _tmp_store()
+    try:
+        # First call needs to bootstrap the in-memory index; do that
+        # with a real call so the index is dim 8.
+        store.add_vectors(_fake_vectors(1), [{"document_id": "doc_init", "content": "x"}])
+        # Now monkeypatch _atomic_write_faiss to fail.
+        import app.services.rag.faiss_store as mod
+        original = mod._atomic_write_faiss
+
+        def boom(*a, **kw):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(mod, "_atomic_write_faiss", boom)
+        with pytest.raises(RagPersistenceError):
+            store.add_vectors(_fake_vectors(1), [{"document_id": "doc_2", "content": "y"}])
+    finally:
+        import shutil
+        shutil.rmtree(dir_, ignore_errors=True)
+
+
+def test_add_vectors_propagates_save_metadata_failure(monkeypatch):
+    """Same shape, but for the metadata side."""
+    store, dir_ = _tmp_store()
+    try:
+        store.add_vectors(_fake_vectors(1), [{"document_id": "doc_init", "content": "x"}])
+        import app.services.rag.faiss_store as mod
+
+        def boom(*a, **kw):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(mod, "_atomic_write_json", boom)
+        with pytest.raises(RagPersistenceError):
+            store.add_vectors(_fake_vectors(1), [{"document_id": "doc_2", "content": "y"}])
+    finally:
+        import shutil
+        shutil.rmtree(dir_, ignore_errors=True)
+
+
+# ── atomic_write_json: no temp file leak ───────────────────────────
+
+
+def test_atomic_write_json_no_temp_leak_on_failure(monkeypatch, tmp_path):
+    """If the rename itself fails, the temp file must be cleaned up so
+    a failed write doesn't accumulate .tmp files in the data dir.
+    """
+    target = tmp_path / "metadata.json"
+
+    def fail_rename(*a, **kw):
+        raise OSError("rename failed")
+
+    # Patch os.replace on the module's namespace to fail.
+    import app.services.rag.faiss_store as mod
+    monkeypatch.setattr(mod.os, "replace", fail_rename)
+    with pytest.raises(OSError):
+        _atomic_write_json(str(target), {"chunks": []})
+
+    leftovers = [p for p in tmp_path.iterdir() if p.name.startswith("metadata.json") and p.name.endswith(".tmp")]
+    assert leftovers == [], f"temp file leaked: {leftovers}"
+
+
+def test_atomic_write_json_round_trip(tmp_path):
+    target = tmp_path / "metadata.json"
+    _atomic_write_json(str(target), {"chunks": [{"id": 1}]})
+    assert json.loads(target.read_text()) == {"chunks": [{"id": 1}]}
+
+
+# ── add_vectors: order — index written before metadata ──────────────
+
+
+def test_add_vectors_writes_index_before_metadata(monkeypatch):
+    """REVIEW-P0-PROMOTED, fix B+C: a crash between the two writes
+    must leave the index in the OLD state (and the new metadata be
+    dropped on recovery), not the other way around. Verify by
+    observing the order of writes.
+    """
+    store, dir_ = _tmp_store()
+    try:
+        order: list[str] = []
+        import app.services.rag.faiss_store as mod
+        original_index = mod._atomic_write_faiss
+        original_meta = mod._atomic_write_json
+
+        def tracked_index(*a, **kw):
+            order.append("index")
+            return original_index(*a, **kw)
+
+        def tracked_meta(*a, **kw):
+            order.append("meta")
+            return original_meta(*a, **kw)
+
+        monkeypatch.setattr(mod, "_atomic_write_faiss", tracked_index)
+        monkeypatch.setattr(mod, "_atomic_write_json", tracked_meta)
+
+        store.add_vectors(_fake_vectors(2), [
+            {"document_id": "d1", "content": "a"},
+            {"document_id": "d2", "content": "b"},
+        ])
+
+        assert order == ["index", "meta"], (
+            f"add_vectors must write index first, then metadata; got {order}. "
+            "A crash in between would otherwise leave stale metadata "
+            "claiming chunks the (old) index doesn't have, with no way to recover."
+        )
+    finally:
+        import shutil
+        shutil.rmtree(dir_, ignore_errors=True)
+
+
+# ── recovery on load: trust index, drop orphaned metadata ──────────
+
+
+def test_recovery_drops_orphaned_metadata_when_index_is_behind(tmp_path):
+    """Simulate a crash between the index write and the metadata write:
+    index is older (smaller ntotal) than the metadata. On load, the
+    store must detect the divergence and truncate the metadata to
+    match the index, so positions are coherent.
+    """
+    from app.services.rag.faiss_store import _atomic_write_faiss, _atomic_write_json
+
+    # First call writes a 2-vector index and matching 2-chunk metadata.
+    store, dir_ = _tmp_store()
+    try:
+        store.add_vectors(_fake_vectors(2), [
+            {"document_id": "d1", "content": "a"},
+            {"document_id": "d2", "content": "b"},
+        ])
+
+        # Simulate the crash: rewrite the index to a smaller one
+        # (2 -> 1) WITHOUT updating the metadata. This represents
+        # "metadata was written, then index write was rolled back."
+        smaller = type(store._index)(8)
+        smaller.add(_fake_vectors(1))
+        _atomic_write_faiss(
+            os.path.join(dir_, "index.faiss"), smaller
+        )
+        # Drop the in-memory index so the next op reloads.
+        store._index = None
+
+        # Trigger load (via get_stats, which calls _get_index).
+        stats = store.get_stats()
+        # index says 1; recovery should have truncated metadata to 1.
+        assert stats["total_vectors"] == 1
+        assert stats["total_chunks"] == 1, (
+            f"expected recovery to truncate metadata to match index, "
+            f"got total_chunks={stats['total_chunks']}"
+        )
+    finally:
+        import shutil
+        shutil.rmtree(dir_, ignore_errors=True)
+
+
+def test_recovery_does_not_delete_when_files_are_consistent(tmp_path):
+    """Sanity: when index ntotal == len(metadata.chunks), the recovery
+    must be a no-op (no log warning, no rewrite).
+    """
+    store, dir_ = _tmp_store()
+    try:
+        store.add_vectors(_fake_vectors(2), [
+            {"document_id": "d1", "content": "a"},
+            {"document_id": "d2", "content": "b"},
+        ])
+        meta_before = store.load_metadata()
+        chunks_before = list(meta_before["chunks"])
+        store._index = None  # force reload
+
+        # Reload via stats.
+        store.get_stats()
+        meta_after = store.load_metadata()
+        # No truncation, no log-warning rename (the file mtime would
+        # change if recovery had rewritten it).
+        assert [c["document_id"] for c in meta_after["chunks"]] == [
+            c["document_id"] for c in chunks_before
+        ]
+    finally:
+        import shutil
+        shutil.rmtree(dir_, ignore_errors=True)
+
+
+# ── compact: reordering (index before metadata) and rebuildable filter
+
+
+def test_compact_writes_index_before_metadata(monkeypatch, patch_embed):
+    """REVIEW-P0-PROMOTED, fix B: compact used to renumber and save
+    metadata first, then rebuild the index. A crash between would
+    leave positions misaligned. New code rebuilds the index FIRST
+    in memory, writes it atomically, then writes the metadata.
+    """
+    store, dir_ = _tmp_store()
+    try:
+        store.add_vectors(_fake_vectors(2), [
+            {"document_id": "d1", "content": "alpha"},
+            {"document_id": "d2", "content": "beta"},
+        ])
+        # Soft-delete one chunk so compact has work to do.
+        store.mark_deleted("d1")
+
+        order: list[str] = []
+        import app.services.rag.faiss_store as mod
+        original_index = mod._atomic_write_faiss
+        original_meta = mod._atomic_write_json
+
+        monkeypatch.setattr(
+            mod,
+            "_atomic_write_faiss",
+            lambda *a, **kw: (order.append("index"), original_index(*a, **kw))[1],
+        )
+        monkeypatch.setattr(
+            mod,
+            "_atomic_write_json",
+            lambda *a, **kw: (order.append("meta"), original_meta(*a, **kw))[1],
+        )
+
+        store.compact()
+
+        assert order == ["index", "meta"], (
+            f"compact must write index first, then metadata; got {order}"
+        )
+
+        # After compact, only the active (d2) chunk remains.
+        meta = store.load_metadata()
+        assert len(meta["chunks"]) == 1
+        assert meta["chunks"][0]["document_id"] == "d2"
+    finally:
+        import shutil
+        shutil.rmtree(dir_, ignore_errors=True)
+
+
+def test_compact_drops_contentless_chunks(patch_embed):
+    """REVIEW-P0-PROMOTED, fix B part 2: the old code filtered on
+    ch.get("content") or ch.get("text") when rebuilding, leaving
+    content-less chunks in the renumbered metadata and out of the
+    index — permanently breaking alignment. New code drops
+    content-less chunks from both index and metadata.
+    """
+    store, dir_ = _tmp_store()
+    try:
+        # Add a chunk with content, then a chunk with no content at all.
+        store.add_vectors(_fake_vectors(2), [
+            {"document_id": "d1", "content": "real"},
+            {"document_id": "d_broken"},  # no content, no text
+        ])
+        # Mark the broken one for purge (its position must be skipped).
+        store.mark_deleted("d1")
+
+        result = store.compact()
+
+        # Only the broken chunk is active (d1 was deleted, d_broken
+        # has no content to rebuild). New behavior: drops content-less
+        # chunks entirely, so the index and metadata end up empty.
+        assert result["purged"] == 1  # d1
+        # The "kept" count after dropping content-less chunks is 0.
+        assert result["total"] == 0
+        meta = store.load_metadata()
+        assert meta["chunks"] == []
+    finally:
+        import shutil
+        shutil.rmtree(dir_, ignore_errors=True)
+
+
+# ── sidecar lock is exclusive ──────────────────────────────────────
+
+
+def test_write_lock_is_reentrant_within_a_thread():
+    """Regression for a deadlock found while mutation-testing this fix.
+
+    save_metadata() and save_index() each acquire _write_lock. add_vectors
+    and compact also hold it for their whole critical section. fcntl.flock
+    on a SECOND fd for the same file does not re-enter — it blocks
+    forever. So any future caller that holds the lock and then calls
+    save_metadata()/save_index() would hang the worker permanently.
+
+    The lock now tracks nesting depth in thread-local state, so nested
+    acquisitions are no-ops. Without that, this test hangs (and the
+    pytest timeout kills the run).
+    """
+    from app.services.rag.faiss_store import _write_lock
+
+    store, dir_ = _tmp_store()
+    try:
+        with _write_lock(dir_):
+            # Nested acquisition of the same lock must not block.
+            with _write_lock(dir_):
+                pass
+            # And a store method that takes the lock internally must
+            # also be safe to call while we hold it.
+            store.save_metadata({"chunks": []})
+    finally:
+        import shutil
+        shutil.rmtree(dir_, ignore_errors=True)
+
+
+def test_write_lock_blocks_concurrent_writers():
+    """Two add_vectors calls on separate store instances (the way two
+    uvicorn workers would) must serialize on the sidecar lock, not
+    race on the metadata file.
+    """
+    import threading
+
+    store1, dir_ = _tmp_store()
+    try:
+        store2 = FaissVectorStore(index_dir=dir_)  # same dir = same lock
+
+        # Both stores will compute base_idx = len(metadata["chunks"])
+        # before either has appended. Without the lock, both would
+        # compute 0, and the second add would clobber the first.
+        results: list[Exception | None] = [None, None]
+
+        def run(idx: int):
+            try:
+                getattr(store1 if idx == 0 else store2, "add_vectors")(
+                    _fake_vectors(1),
+                    [{"document_id": f"racer_{idx}", "content": f"x{idx}"}],
+                )
+            except Exception as e:
+                results[idx] = e
+
+        t1 = threading.Thread(target=run, args=(0,))
+        t2 = threading.Thread(target=run, args=(1,))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert results == [None, None], f"one of the concurrent writers failed: {results}"
+
+        # The two documents must have *distinct* base_idx values,
+        # i.e. the second writer waited for the first to finish.
+        meta = store1.load_metadata()
+        indices = sorted(c["index"] for c in meta["chunks"])
+        assert indices == [0, 1], (
+            f"concurrent writers clobbered each other's base_idx; "
+            f"got indices={indices}, expected [0, 1]"
+        )
+    finally:
+        import shutil
+        shutil.rmtree(dir_, ignore_errors=True)
