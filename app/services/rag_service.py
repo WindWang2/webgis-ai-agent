@@ -9,7 +9,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from app.services.rag.chunker import split_into_chunks, split_markdown_sections
+from app.services.rag.chunker import split_into_chunks
 from app.services.rag.faiss_store import FaissVectorStore
 
 logger = logging.getLogger(__name__)
@@ -31,21 +31,6 @@ def _get_embedding_model():
 def _load_metadata() -> dict:
     """Backward compatibility helper for metadata loading."""
     return _default_store.load_metadata()
-
-
-def _save_metadata(meta: dict) -> None:
-    """Backward compatibility helper for metadata saving."""
-    _default_store.save_metadata(meta)
-
-
-def _mark_deleted(doc_id: str) -> None:
-    """Backward compatibility helper for marking deleted docs."""
-    _default_store.mark_deleted(doc_id)
-
-
-def _split_markdown_section(text: str) -> list[str]:
-    """Backward compatibility helper for markdown splitting."""
-    return split_markdown_sections(text)
 
 
 async def add_document(
