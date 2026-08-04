@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.core.auth import create_access_token
 from app.models.db_model import CartographyTemplate
-from app.core.database import SessionLocal, Base, Engine
+from app.core.database import SessionLocal, Base, Engine, AsyncSessionLocal
 
 client = TestClient(app)
 
@@ -58,25 +58,35 @@ def test_be_audit_01_run_change_detection_uses_remote_sensing_service():
 
 # ── BE-AUDIT-02: Template CRUD Authentication & Ownership Check ─────────────
 
+async def _purge_user_templates():
+    """Delete non-builtin templates via the async session (same pool as the routes).
+
+    Avoids racing asyncpg connections under CI's real Postgres. Falls back to
+    the sync session when no async driver is configured (local SQLite).
+    """
+    if AsyncSessionLocal is None:
+        db = SessionLocal()
+        try:
+            db.query(CartographyTemplate).filter(CartographyTemplate.is_builtin == False).delete()
+            db.commit()
+        finally:
+            db.close()
+        return
+    from sqlalchemy import delete as _delete
+    async with AsyncSessionLocal() as db:
+        await db.execute(_delete(CartographyTemplate).where(CartographyTemplate.is_builtin == False))
+        await db.commit()
+
+
 @pytest.fixture(autouse=True)
-def clean_user_templates():
+async def clean_user_templates():
     """Clean up non-builtin templates and clear dependency overrides before and after test."""
     app.dependency_overrides.clear()
     Base.metadata.create_all(Engine)
-    db = SessionLocal()
-    try:
-        db.query(CartographyTemplate).filter(CartographyTemplate.is_builtin == False).delete()
-        db.commit()
-    finally:
-        db.close()
+    await _purge_user_templates()
     yield
     app.dependency_overrides.clear()
-    db = SessionLocal()
-    try:
-        db.query(CartographyTemplate).filter(CartographyTemplate.is_builtin == False).delete()
-        db.commit()
-    finally:
-        db.close()
+    await _purge_user_templates()
 
 
 def test_be_audit_02_template_creation_auth_and_deletion_ownership():

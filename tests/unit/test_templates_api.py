@@ -1,8 +1,9 @@
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import delete
 from app.main import app
 from app.models.db_model import CartographyTemplate
-from app.core.database import SessionLocal, Base, Engine
+from app.core.database import SessionLocal, Base, Engine, AsyncSessionLocal
 from app.core.auth import create_access_token
 from app.tools.registry import ToolRegistry
 from app.tools.templates import register_template_tools
@@ -16,27 +17,38 @@ other_user_token = create_access_token({"sub": "user_456", "role": "viewer"})
 other_user_headers = {"Authorization": f"Bearer {other_user_token}"}
 
 
+async def _purge_user_templates():
+    """Delete non-builtin templates via the async session (same pool as the routes).
+
+    Using the async session here — not the sync SessionLocal — avoids racing
+    asyncpg connections under CI's real Postgres ('cannot perform operation:
+    another operation is in progress'). Locally the async driver falls back to
+    sync, so this is a no-op concern there.
+    """
+    if AsyncSessionLocal is None:
+        db = SessionLocal()
+        try:
+            db.query(CartographyTemplate).filter(CartographyTemplate.is_builtin == False).delete()
+            db.commit()
+        finally:
+            db.close()
+        return
+    async with AsyncSessionLocal() as db:
+        await db.execute(delete(CartographyTemplate).where(CartographyTemplate.is_builtin == False))
+        await db.commit()
+
+
 @pytest.fixture(autouse=True)
-def setup_db():
+async def setup_db():
     """Ensure database tables exist, clean up user templates, and clear dependency overrides."""
     app.dependency_overrides.clear()
     Base.metadata.create_all(Engine)
-    db = SessionLocal()
-    try:
-        db.query(CartographyTemplate).filter(CartographyTemplate.is_builtin == False).delete()
-        db.commit()
-    finally:
-        db.close()
+    await _purge_user_templates()
 
     yield
 
     app.dependency_overrides.clear()
-    db = SessionLocal()
-    try:
-        db.query(CartographyTemplate).filter(CartographyTemplate.is_builtin == False).delete()
-        db.commit()
-    finally:
-        db.close()
+    await _purge_user_templates()
 
 
 def test_create_user_template_unauthenticated_fails():
