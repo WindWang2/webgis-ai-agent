@@ -158,6 +158,187 @@ class TestPiBridgeSubprocessFlow:
         assert "connection refused" in error_ev
         assert event_types[-1] == "done"
 
+    # ─── Session attribution regression tests (review §3 item 1) ────────────
+
+    @pytest.mark.asyncio
+    async def test_stream_prompt_drains_stale_events_from_prior_turn(self):
+        """Residual events from a prior turn must not bleed into this turn's SSE.
+
+        Regression for the singleton-bridge attribution bug: one shared queue
+        served all sessions, a prior turn's leftover events (after timeout or
+        client disconnect) were dequeued by the next turn and stamped with the
+        new session_id. stream_prompt must drain stale events at turn start.
+        """
+        rpc = MagicMock()
+        rpc.events = asyncio.Queue(maxsize=1024)
+        rpc.start = AsyncMock()
+        rpc.stop = AsyncMock()
+        bridge = PiBridge(rpc=rpc)
+
+        # Seed the queue with a stale event from a *prior* turn (e.g. one whose
+        # consumer timed out before reaching agent_end).
+        stale_event = {
+            "type": "message_update",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "STALE FROM PRIOR TURN"}]},
+            "assistantMessageEvent": {"type": "text_delta", "content": "STALE FROM PRIOR TURN"},
+        }
+        await rpc.events.put(stale_event)
+
+        async def fake_request(cmd, data=None):
+            if cmd == "prompt":
+                # This turn's own events arrive only AFTER the prompt is sent.
+                await rpc.events.put({
+                    "type": "message_update",
+                    "message": {"role": "assistant", "content": []},
+                    "assistantMessageEvent": {"type": "text_delta", "content": "fresh"},
+                })
+                await rpc.events.put({"type": "agent_end"})
+
+        rpc.request = AsyncMock(side_effect=fake_request)
+
+        events = []
+        async for ev in bridge.stream_prompt("next turn", session_id="sess-B"):
+            events.append(ev)
+
+        # The stale event's content must NOT appear in this turn's SSE stream.
+        joined = "\n".join(events)
+        assert "STALE FROM PRIOR TURN" not in joined, (
+            "stale event from prior turn leaked into this turn's SSE stream"
+        )
+        # The fresh event's content must still flow.
+        assert "fresh" in joined
+
+    @pytest.mark.asyncio
+    async def test_stream_prompt_attributes_events_to_request_session(self):
+        """Every emitted SSE carries the request's session_id, not bridge state.
+
+        Locks turn-scoped attribution: the session_id stamped on SSE payloads
+        comes from the request argument, not a mutable instance field a prior
+        turn could have overwritten.
+        """
+        rpc = MagicMock()
+        rpc.events = asyncio.Queue(maxsize=1024)
+        rpc.start = AsyncMock()
+        rpc.stop = AsyncMock()
+        bridge = PiBridge(rpc=rpc)
+
+        async def fake_request(cmd, data=None):
+            if cmd == "prompt":
+                await rpc.events.put({
+                    "type": "message_update",
+                    "message": {"role": "assistant", "content": []},
+                    "assistantMessageEvent": {"type": "text_delta", "content": "hello"},
+                })
+                await rpc.events.put({"type": "agent_end"})
+
+        rpc.request = AsyncMock(side_effect=fake_request)
+
+        events = []
+        async for ev in bridge.stream_prompt("hi", session_id="sess-attrib-target"):
+            events.append(ev)
+
+        # Every SSE payload that carries a session_id must carry THIS turn's id.
+        for ev in events:
+            if "session_id" in ev:
+                assert '"session_id": "sess-attrib-target"' in ev, (
+                    f"SSE payload attributed to wrong session: {ev!r}"
+                )
+
+    @pytest.mark.asyncio
+    async def test_stream_prompt_lock_serializes_concurrent_turns(self):
+        """The whole-turn lock serializes turns: turn B cannot send its prompt
+        until turn A has fully drained and emitted its final ``done``.
+
+        Without the lock (old behavior: lock only around the send RPC), turn B's
+        ``request("prompt")`` would run while turn A is still draining the shared
+        queue, so both turns' events interleave in the queue and get attributed
+        to whichever session drains them. This test pins the invariant directly:
+        while turn A is parked mid-drain (waiting on ``events.get()`` for its
+        agent_end), turn B must still be blocked on the lock and must NOT have
+        sent its prompt yet.
+        """
+        rpc = MagicMock()
+        rpc.events = asyncio.Queue(maxsize=1024)
+        rpc.start = AsyncMock()
+        rpc.stop = AsyncMock()
+        bridge = PiBridge(rpc=rpc)
+
+        # Turn A's send returns immediately after emitting one non-terminal
+        # event; its drain loop then parks on events.get() waiting for
+        # agent_end, which a feeder task supplies only after `a_release`.
+        a_drained_first_event = asyncio.Event()
+        a_release = asyncio.Event()
+        b_prompt_sent = asyncio.Event()
+
+        async def fake_request_a(cmd, data=None):
+            if cmd == "prompt":
+                await rpc.events.put({
+                    "type": "message_update",
+                    "message": {"role": "assistant", "content": []},
+                    "assistantMessageEvent": {"type": "text_delta", "content": "AAA"},
+                })
+
+        async def fake_request_b(cmd, data=None):
+            if cmd == "prompt":
+                b_prompt_sent.set()
+                await rpc.events.put({
+                    "type": "message_update",
+                    "message": {"role": "assistant", "content": []},
+                    "assistantMessageEvent": {"type": "text_delta", "content": "BBB"},
+                })
+                await rpc.events.put({"type": "agent_end"})
+
+        async def feed_a_agent_end():
+            """Wait until turn A has drained its first event, then hold for release."""
+            await a_drained_first_event.wait()
+            await a_release.wait()
+            await rpc.events.put({"type": "agent_end"})
+
+        a_events: list[str] = []
+        b_events: list[str] = []
+
+        async def run_a():
+            rpc.request = AsyncMock(side_effect=fake_request_a)
+            async for ev in bridge.stream_prompt("A", session_id="sess-A"):
+                if "AAA" in ev:
+                    a_drained_first_event.set()
+                a_events.append(ev)
+
+        async def run_b():
+            rpc.request = AsyncMock(side_effect=fake_request_b)
+            async for ev in bridge.stream_prompt("B", session_id="sess-B"):
+                b_events.append(ev)
+
+        feeder = asyncio.ensure_future(feed_a_agent_end())
+        task_a = asyncio.ensure_future(run_a())
+        # Let turn A drain its first event and park in events.get().
+        await asyncio.wait_for(a_drained_first_event.wait(), timeout=2.0)
+        # Ensure turn A is actually parked waiting for the next event.
+        await asyncio.sleep(0.02)
+
+        # Now start turn B. Under the whole-turn lock it must block on
+        # self._lock.acquire() (turn A holds it across its drain) and NOT send
+        # its prompt yet. Give the scheduler a chance to run B if it could.
+        task_b = asyncio.ensure_future(run_b())
+        await asyncio.sleep(0.05)
+        assert not b_prompt_sent.is_set(), (
+            "turn B sent its prompt while turn A was still parked mid-drain — "
+            "the whole-turn lock is not serializing turns (B should block on "
+            "self._lock until A's drain + done completes)"
+        )
+
+        # Release turn A's agent_end; it drains to completion and releases the
+        # lock, then turn B can proceed.
+        a_release.set()
+        await asyncio.wait_for(asyncio.gather(task_a, task_b, feeder), timeout=5.0)
+
+        assert a_events, "turn A produced no SSE events"
+        assert b_events, "turn B produced no SSE events"
+        assert b_prompt_sent.is_set(), "turn B never sent its prompt after A released"
+        # Turn A's events must all be attributed to sess-A, B's to sess-B.
+        assert all('"session_id": "sess-A"' in e or "session_id" not in e for e in a_events)
+        assert all('"session_id": "sess-B"' in e or "session_id" not in e for e in b_events)
+
 
 # ============================================================================
 # /pi-tools/execute endpoint tests

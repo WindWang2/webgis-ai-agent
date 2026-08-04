@@ -89,8 +89,8 @@ def test_map_tool_execution_end_with_cache_hit():
         geojson_ref="ref:buffer/1",
     )
 
-    def fake_lookup(sid, tcid):
-        if sid == "s1" and tcid == "tc-123":
+    def fake_lookup(tcid):
+        if tcid == "tc-123":
             return fake_result
         return None
 
@@ -112,7 +112,7 @@ def test_map_tool_execution_end_with_cache_error():
         error_msg="Buffer radius must be positive",
     )
 
-    def fake_lookup(sid, tcid):
+    def fake_lookup(tcid):
         return fake_result
 
     sse = map_event_to_sse(event, session_id="s1", cache_lookup=fake_lookup)
@@ -129,7 +129,7 @@ def test_map_tool_execution_end_cache_miss_fallback():
         "result": {"summary": "fallback result"},
         "isError": False,
     }
-    sse = map_event_to_sse(event, session_id="s1", cache_lookup=lambda s, t: None)
+    sse = map_event_to_sse(event, session_id="s1", cache_lookup=lambda t: None)
     assert sse is not None
     assert "event: step_result" in sse
     assert '"fallback result"' in sse
