@@ -12,7 +12,12 @@ dependencies = []
 # ruff versions. NOTE: full "E" is intentionally NOT selected — E501 (line-too-long)
 # would surface 1300+ pre-existing long lines the project has never linted.
 select = ["E4", "E7", "E9", "F"]
-ignore = []
+# E402 (module-import-not-at-top): the project uses several intentional non-top
+# imports — main.py runs load_dotenv() before importing app modules (env must be
+# set first); other modules use deferred imports to break circular dependencies
+# or for optional/conditional dependencies. These are deliberate patterns, so E402
+# is suppressed project-wide rather than flagged per-line.
+ignore = ["E402"]
 
 [tool.ruff.lint.per-file-ignores]
 # Backward-compat re-export facades: these modules deliberately mirror symbols

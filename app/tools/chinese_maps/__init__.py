@@ -568,13 +568,16 @@ def register_chinese_map_tools(registry: ToolRegistry):
         # 高德方案：先获取下级名称列表，然后（如果是 polygon 模式）并发获取每个下级的边界
         params = {"keywords": keywords, "subdistrict": "1", "extensions": "base"}
         data = await _AMAP._get("/config/district", params)
-        if "error" in data: return data
+        if "error" in data:
+            return data
         
         districts = data.get("districts", [])
-        if not districts: return {"error": f"未找到 '{keywords}' 的下级行政区"}
+        if not districts:
+            return {"error": f"未找到 '{keywords}' 的下级行政区"}
         
         sub_units = districts[0].get("districts", [])
-        if not sub_units: return {"error": f"'{keywords}' 没有更细分的下级单位"}
+        if not sub_units:
+            return {"error": f"'{keywords}' 没有更细分的下级单位"}
         
         if return_geometry == "point":
             features = []

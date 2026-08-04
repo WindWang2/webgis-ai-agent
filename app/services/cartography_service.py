@@ -69,7 +69,8 @@ class CartographyService:
     @classmethod
     def classify(cls, values: List[float], method: str = "quantiles", k: int = 5) -> List[float]:
         """数据分类方法 (quantiles / equal_interval / natural_breaks)"""
-        if not values: return []
+        if not values:
+            return []
         arr = np.array(values, dtype=float)
         if method == "quantiles":
             return np.unique(np.quantile(arr, np.linspace(0, 1, k + 1))).tolist()

@@ -182,12 +182,18 @@ def h3_binning(geojson: dict | str, resolution: int | None = None, stat_field: s
                 (ymax - ymin) * m_per_deg_lat,
             )
             # 阈值对应原度数阈值的等价米数（赤道近似）
-            if max_dim_m > 5_566_000: resolution = 1   # > ~50°
-            elif max_dim_m > 1_113_000: resolution = 3  # > ~10°
-            elif max_dim_m > 111_300: resolution = 5    # > ~1°
-            elif max_dim_m > 11_130: resolution = 7     # > ~0.1°
-            elif max_dim_m > 1_113: resolution = 9      # > ~0.01°
-            else: resolution = 11
+            if max_dim_m > 5_566_000:  # > ~50°
+                resolution = 1
+            elif max_dim_m > 1_113_000:  # > ~10°
+                resolution = 3
+            elif max_dim_m > 111_300:  # > ~1°
+                resolution = 5
+            elif max_dim_m > 11_130:  # > ~0.1°
+                resolution = 7
+            elif max_dim_m > 1_113:  # > ~0.01°
+                resolution = 9
+            else:
+                resolution = 11
             
         # Ensure point geometry
         if not all(geom.geom_type == 'Point' for geom in gdf.geometry):

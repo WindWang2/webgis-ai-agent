@@ -267,7 +267,8 @@ class ToolRegistry:
 
     async def _resolve_references(self, session_id: str, arguments: Any, skip_keys: Optional[set[str]] = None) -> Any:
         """递归解析参数中的数据引用 ref:xxx 或 别名"""
-        if skip_keys is None: skip_keys = set()
+        if skip_keys is None:
+            skip_keys = set()
 
         if isinstance(arguments, str):
             # /review P3-5: detect "is this a ref or a known alias?" via the public

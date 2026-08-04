@@ -36,8 +36,10 @@ def _serialize_sse_data(data: Any) -> str:
         # 尝试提取 session_id 或 task_id 用于基本的错误追踪
         info = {}
         if isinstance(data, dict):
-            if "session_id" in data: info["session_id"] = data["session_id"]
-            if "task_id" in data: info["task_id"] = data["task_id"]
+            if "session_id" in data:
+                info["session_id"] = data["session_id"]
+            if "task_id" in data:
+                info["task_id"] = data["task_id"]
         
         return json.dumps({
             "error": "Internal serialization error",

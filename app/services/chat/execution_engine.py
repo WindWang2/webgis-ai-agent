@@ -115,10 +115,14 @@ class ChatExecutionEngine:
 
     def update_config(self, base_url: str = None, model: str = None, api_key: str = None, use_prompt_caching: bool = None):
         """动态更新 LLM 配置"""
-        if base_url: self.base_url = base_url.rstrip("/")
-        if model: self.model = model
-        if api_key: self.api_key = api_key
-        if use_prompt_caching is not None: self.use_prompt_caching = use_prompt_caching
+        if base_url:
+            self.base_url = base_url.rstrip("/")
+        if model:
+            self.model = model
+        if api_key:
+            self.api_key = api_key
+        if use_prompt_caching is not None:
+            self.use_prompt_caching = use_prompt_caching
         logger.info(f"ChatExecutionEngine config updated: model={self.model}, base_url={self.base_url}")
 
     def get_config(self) -> dict:
@@ -552,7 +556,8 @@ class ChatExecutionEngine:
 
             if self.tracker.is_cancelled(task.id):
                 pf = _maybe_plan_finalized_event()
-                if pf: yield pf
+                if pf:
+                    yield pf
                 yield sse_event("task_cancelled", {"task_id": task.id})
                 return
 
@@ -696,7 +701,8 @@ class ChatExecutionEngine:
 
                     if self.tracker.is_cancelled(task.id):
                         pf = _maybe_plan_finalized_event()
-                        if pf: yield pf
+                        if pf:
+                            yield pf
                         yield sse_event("task_cancelled", {"task_id": task.id})
                         return
 
@@ -719,7 +725,8 @@ class ChatExecutionEngine:
                 yield sse_event("content", {"content": "", "session_id": session_id, "streaming_done": True})
 
                 pf = _maybe_plan_finalized_event()
-                if pf: yield pf
+                if pf:
+                    yield pf
                 self.tracker.complete_task(task.id)
                 yield sse_event("task_complete", {
                     "task_id": task.id,
@@ -732,7 +739,8 @@ class ChatExecutionEngine:
 
         self.tracker.fail_task(task.id, "达到最大工具调用轮数")
         pf = _maybe_plan_finalized_event()
-        if pf: yield pf
+        if pf:
+            yield pf
         yield sse_event("task_error", {"task_id": task.id, "error": "达到最大轮数"})
         yield sse_event("content", {"content": "达到最大工具调用轮数", "session_id": session_id})
         yield sse_event("done", {"session_id": session_id})

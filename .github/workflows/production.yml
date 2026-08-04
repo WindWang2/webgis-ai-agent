@@ -40,21 +40,15 @@ jobs:
       - name: Install Ruff Linter
         run: pip install ruff
 
-      - name: Run Ruff Check (blocking — F-rules + syntax)
-        # Blocking gate: F-rules (pyflakes: unused imports/variables, undefined
-        # names, redefinitions) + E9 (syntax errors). These catch real bugs.
-        # The unused-import backlog (~275 errors) was cleared in the lint-cleanup
-        # PR, so this now actually blocks. Config lives in pyproject.toml
-        # [tool.ruff.lint]; per-file-ignores suppress deliberate re-export F401
-        # and __future__-annotations F821 false positives.
-        run: ruff check --output-format=github --select F,E9 .
-
-      - name: Run Ruff Check (report-only — E-style)
-        # Non-blocking: E4/E7 style rules (line-too-long excluded, multiple-
-        # statements, ambiguous names, import order, lambda-assignment). ~67
-        # pre-existing style nits remain; reported so they're visible but don't
-        # block PRs. Fix incrementally in follow-up.
-        run: ruff check --output-format=github --select E4,E7 --exit-zero .
+      - name: Run Ruff Check
+        # Blocking gate: the full configured rule set (E4/E7/E9 + F, see
+        # pyproject.toml [tool.ruff.lint]). The ~275-error unused-import + style
+        # backlog was cleared in the lint-cleanup PR, so this now actually blocks.
+        # E402 is ignored project-wide (intentional non-top imports: main.py's
+        # load_dotenv() before app imports, deferred imports for circular-dep
+        # avoidance). per-file-ignores suppress deliberate re-export F401 and
+        # __future__-annotations F821 false positives.
+        run: ruff check --output-format=github .
 
       - name: Install Frontend Deps
         working-directory: ./frontend
