@@ -108,10 +108,15 @@ def _handle_tool_execution_start(event: dict, session_id: str, cache_lookup: Opt
 
 
 def _handle_tool_execution_end(event: dict, session_id: str, cache_lookup: Optional[Callable]) -> Optional[str]:
-    """SSE 适配器：读缓存的 dispatch 结果发 step_result / step_error."""
+    """SSE 适配器：读缓存的 dispatch 结果发 step_result / step_error.
+
+    cache_lookup is keyed by tool_call_id only (the dispatch cache collapsed its
+    session dimension — see app.agent_pi_bridge._dispatch_result_cache). session_id
+    here is still used to stamp the SSE payload's session_id field.
+    """
     tool_name = event.get("toolName", "")
     tool_call_id = event.get("toolCallId", "")
-    cached = cache_lookup(session_id, tool_call_id) if cache_lookup else None
+    cached = cache_lookup(tool_call_id) if cache_lookup else None
 
     if cached is not None:
         if getattr(cached, "status", None) == "error":
@@ -187,15 +192,19 @@ _EVENT_HANDLERS: dict[str, Callable[[dict, str, Optional[Callable]], Optional[st
 def map_event_to_sse(
     event: dict,
     session_id: str = "",
-    cache_lookup: Optional[Callable[[str, str], Optional[Any]]] = None,
+    cache_lookup: Optional[Callable[[str], Optional[Any]]] = None,
 ) -> Optional[str]:
     """Map a Pi AgentSessionEvent to an SSE-formatted string.
 
     Args:
         event: Pi event dictionary
-        session_id: Session ID
-        cache_lookup: Optional callable (session_id, tool_call_id) -> ToolDispatchResult
-                      injected by PiBridge (ADR-0022 rendezvous)
+        session_id: Session ID — used to stamp the SSE payload's session_id field.
+                    Caller must pass the turn-scoped id (not a stale bridge field),
+                    since Pi events carry no session of their own.
+        cache_lookup: Optional callable (tool_call_id,) -> ToolDispatchResult
+                      injected by PiBridge (ADR-0022 rendezvous). Keyed by
+                      tool_call_id only; the session dimension was collapsed
+                      because the HTTP callback never receives a real session_id.
 
     Returns:
         SSE-formatted string or None if unhandled

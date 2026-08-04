@@ -15,7 +15,7 @@ glues the RPC client + mapper together.
 
 ADR-0022 constraint: ``_dispatch_result_cache``, ``_session_executed_sets``,
 ``dispatch_tool``, ``cache_dispatch_result``, ``get_cached_dispatch_result``,
-and ``_clear_session_dispatch_cache`` stay here. The extracted modules have
+and ``_clear_dispatch_cache`` stay here. The extracted modules have
 zero knowledge of the cache.
 """
 from __future__ import annotations
@@ -103,36 +103,40 @@ def get_tool_registry() -> "ToolRegistry":
     return _tool_registry
 
 
-# ── Session-keyed dispatch result cache (unified-tool-dispatch 票据 02) ──
+# ── Dispatch result cache (unified-tool-dispatch 票据 02) ──
 #
-# dispatch_tool（HTTP 回调）调度一次后把 ToolDispatchResult 按 (session_id, toolCallId)
-# 缓存；_handle_tool_execution_end（SSE 适配器）随后按同一 toolCallId 读取，发 step_result
+# dispatch_tool（HTTP 回调）调度一次后把 ToolDispatchResult 按 toolCallId 缓存；
+# _handle_tool_execution_end（SSE 适配器）随后按同一 toolCallId 读取，发 step_result
 # 时携带 geojson_ref。这样两条适配器共享一次 dispatch，避免 Pi 回传的 result 与服务端
 # 视图（已 slim、已落 ref）不一致 -- 此前 Pi 路径从不产生 ref，前端图层挂载失效。
 #
 # 缓存短命（一个 turn 内）：dispatch 时写入，SSE 读取后即清除，杜绝跨任务泄漏。
+#
+# Keyed by tool_call_id only. The prior (session_id, tool_call_id) key was asymmetric:
+# the HTTP callback (`dispatch_tool`) receives sessionId=None (the Pi extension posts
+# no sessionId — see app/extensions/webgis-tools/index.mjs), so writes landed under
+# ("", tool_call_id); the SSE adapter read with the bridge's current session_id, which
+# is non-empty for any real chat turn -> guaranteed cache miss -> step_result lost its
+# geojson_ref. Turns are now strictly serial on the singleton bridge (whole-turn lock
+# in stream_prompt/prompt), so the session dimension is redundant for correlation.
 # ADR-0022: this cache + the two dispatch adapters stay here - they are the
 # deliberate rendezvous between the Pi HTTP-callback and SSE adapters.
-_dispatch_result_cache: dict[tuple[str, str], "ToolDispatchResult"] = {}
+_dispatch_result_cache: dict[str, "ToolDispatchResult"] = {}
 
 
-def cache_dispatch_result(session_id: Optional[str], tool_call_id: str, result: "ToolDispatchResult") -> None:
+def cache_dispatch_result(tool_call_id: str, result: "ToolDispatchResult") -> None:
     """缓存一次 dispatch 的结果，供 SSE 适配器按 toolCallId 读取。"""
-    key = (session_id or "", tool_call_id)
-    _dispatch_result_cache[key] = result
+    _dispatch_result_cache[tool_call_id] = result
 
 
-def get_cached_dispatch_result(session_id: Optional[str], tool_call_id: str) -> "Optional[ToolDispatchResult]":
+def get_cached_dispatch_result(tool_call_id: str) -> "Optional[ToolDispatchResult]":
     """读取并弹出缓存的 dispatch 结果（读后即清，单次消费）。"""
-    key = (session_id or "", tool_call_id)
-    return _dispatch_result_cache.pop(key, None)
+    return _dispatch_result_cache.pop(tool_call_id, None)
 
 
-def _clear_session_dispatch_cache(session_id: str) -> None:
-    """清空某 session 的所有缓存 dispatch 结果（新 turn 开始时调用）。"""
-    sid = session_id or ""
-    for key in [k for k in _dispatch_result_cache if k[0] == sid]:
-        del _dispatch_result_cache[key]
+def _clear_dispatch_cache() -> None:
+    """清空所有缓存的 dispatch 结果（新 turn 开始时调用）。"""
+    _dispatch_result_cache.clear()
 
 
 async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
@@ -206,8 +210,8 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
 
     duration_ms = int((time.monotonic() - t0) * 1000)
 
-    # 缓存供 SSE 适配器读取
-    cache_dispatch_result(request.sessionId, request.toolCallId, result)
+    # 缓存供 SSE 适配器读取（keyed by tool_call_id only — see cache docstring）
+    cache_dispatch_result(request.toolCallId, result)
 
     if _harness is not None:
         is_error = result.status == "error"
@@ -287,7 +291,6 @@ class PiBridge:
                 extension_paths=extension_paths or [],
             )
         self._lock = asyncio.Lock()
-        self._session_id: str = ""
 
     @property
     def _process_died(self) -> bool:
@@ -316,6 +319,13 @@ class PiBridge:
         `case "abort"` handler. Failures (no process, RPC error) propagate;
         callers wrap in try/except because abort must never block the cleanup
         path that follows.
+
+        Deliberately does NOT acquire ``self._lock``: ``prompt``/``stream_prompt``
+        hold the lock across the whole turn (send + drain) to serialize turns
+        on the singleton bridge, and an abort that blocked on the lock would
+        deadlock against the in-flight turn it is trying to cancel. The
+        ``request("abort")`` RPC + ``fail_all_pending`` below provide
+        cancellation without the lock.
         """
         result = await self._rpc.request("abort")
         # Cancel any pending request future the client hasn't resolved yet.
@@ -324,6 +334,51 @@ class PiBridge:
         # timeout error to the user instead of a clean cancellation.
         self._rpc.fail_all_pending("abort requested")
         return result or {}
+
+    async def _drain_stale_events(self) -> int:
+        """Drop any events left in the shared queue from a prior turn.
+
+        Called at the start of each turn (under ``self._lock``) so that a
+        previous turn's residual events — left behind after a consumer timeout
+        or client disconnect — cannot be dequeued and attributed to this turn.
+        Returns the number of events dropped. Bounded by the queue maxsize so
+        a runaway producer can't make this loop unbounded.
+        """
+        dropped = 0
+        last_type = ""
+        events = self._rpc.events
+        for _ in range(events.maxsize or 1024):
+            try:
+                event = events.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            dropped += 1
+            last_type = event.get("type", "") if isinstance(event, dict) else ""
+        if dropped:
+            logger.warning(
+                "[PiBridge] drained %d stale event(s) from prior turn before "
+                "starting this one (last type=%s); they would otherwise have "
+                "been attributed to the new session",
+                dropped, last_type,
+            )
+        return dropped
+
+    async def _drain_remaining_turn_events(self) -> None:
+        """Best-effort drain of this turn's leftover events after timeout/disconnect.
+
+        Without this, a timed-out or cancelled stream leaves the turn's
+        remaining events (up to ``agent_end``) in the shared queue, where the
+        next turn's drain loop would pick them up. Bounded and non-blocking so
+        a stuck producer cannot block cleanup.
+        """
+        events = self._rpc.events
+        for _ in range(events.maxsize or 1024):
+            try:
+                event = events.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if isinstance(event, dict) and event.get("type") == "agent_end":
+                break
 
     async def prompt(self, message: str, session_id: Optional[str] = None) -> dict:
         """Send a prompt to Pi agent (non-streaming).
@@ -338,34 +393,50 @@ class PiBridge:
         Raises:
             PiRpcError: If the Pi agent returns an error or the request fails.
         """
+        # Turn-scoped session id: attribution uses this local, never the
+        # mutable self._session_id field (which a concurrent/preceding turn
+        # could overwrite). Pi events carry no session of their own.
+        turn_sid = session_id or ""
         data: dict[str, Any] = {"message": message}
-        if session_id:
-            data["sessionId"] = session_id
-            self._session_id = session_id
+        if turn_sid:
+            data["sessionId"] = turn_sid
 
-        # 新 turn 开始：清空该 session 的重复调用拦截集合与 dispatch 结果缓存。
-        _session_executed_sets.pop(self._session_id, None)
-        _clear_session_dispatch_cache(self._session_id)
+        # 新 turn 开始：清空重复调用拦截集合与 dispatch 结果缓存。
+        # 重复拦截语义是「同一 turn 内」-- 跨 turn 用户重发同一问题是合法的。
+        _session_executed_sets.pop(turn_sid, None)
+        _clear_dispatch_cache()
 
-        async with self._lock:
+        # Hold the lock across send + drain so turns are strictly serial on the
+        # singleton bridge. Pi processes one prompt at a time, so this matches
+        # the real execution model and prevents two turns' events interleaving
+        # in the shared queue. Abort bypasses the lock (see abort()).
+        await self._lock.acquire()
+        try:
+            # Drop any residual events from a prior turn before sending, so they
+            # cannot be attributed to this turn.
+            await self._drain_stale_events()
             await self._rpc.request("prompt", data)
 
-        # Drain events from the queue (non-streaming mode)
-        content_parts: list[str] = []
-        while True:
-            try:
-                event = await asyncio.wait_for(self._rpc.events.get(), timeout=PI_EVENT_DRAIN_TIMEOUT)
-                if event.get("type") == "agent_end":
+            # Drain events from the queue (non-streaming mode)
+            content_parts: list[str] = []
+            while True:
+                try:
+                    event = await asyncio.wait_for(self._rpc.events.get(), timeout=PI_EVENT_DRAIN_TIMEOUT)
+                    if event.get("type") == "agent_end":
+                        break
+                    from app.services.chat.pi_event_mapper import _extract_text_from_event
+                    text = _extract_text_from_event(event)
+                    if text:
+                        content_parts.append(text)
+                except asyncio.TimeoutError:
                     break
-                from app.services.chat.pi_event_mapper import _extract_text_from_event
-                text = _extract_text_from_event(event)
-                if text:
-                    content_parts.append(text)
-            except asyncio.TimeoutError:
-                break
+            # Best-effort: drain any leftover events so the next turn starts clean.
+            await self._drain_remaining_turn_events()
+        finally:
+            self._lock.release()
 
         return {
-            "sessionId": self._session_id,
+            "sessionId": turn_sid,
             "content": "".join(content_parts),
         }
 
@@ -381,56 +452,77 @@ class PiBridge:
         Yields:
             SSE-formatted event strings
         """
+        # Turn-scoped session id: every SSE payload is stamped with this local
+        # value, not the mutable self._session_id field. Pi events carry no
+        # session of their own, so attribution must come from the request that
+        # owns this turn — not bridge instance state a prior turn could have
+        # overwritten.
+        turn_sid = session_id or ""
         data: dict[str, Any] = {"message": message}
-        if session_id:
-            data["sessionId"] = session_id
-            self._session_id = session_id
+        if turn_sid:
+            data["sessionId"] = turn_sid
 
-        # 新 turn 开始：清空该 session 的重复调用拦截集合与 dispatch 结果缓存。
+        # 新 turn 开始：清空重复调用拦截集合与 dispatch 结果缓存。
         # 重复拦截语义是「同一 turn 内」-- 跨 turn 用户重发同一问题是合法的。
-        _session_executed_sets.pop(self._session_id, None)
-        _clear_session_dispatch_cache(self._session_id)
+        _session_executed_sets.pop(turn_sid, None)
+        _clear_dispatch_cache()
 
-        # Send prompt command
+        # Hold the lock across send + drain + cleanup so turns are strictly
+        # serial on the singleton bridge (Pi processes one prompt at a time).
+        # try/finally ensures a client-disconnect GeneratorExit/CancelledError
+        # at the yield still releases the lock and drains residual events.
+        # Abort deliberately bypasses this lock (see abort()).
+        await self._lock.acquire()
         try:
-            async with self._lock:
-                await self._rpc.request("prompt", data)
-        except PiRpcError as e:
-            logger.error(f"[PiBridge] stream_prompt send failed: {e}")
-            yield sse_event("task_error", {
-                "task_id": session_id or "",
-                "session_id": self._session_id,
-                "error": str(e),
-            })
-            yield sse_event("done", {"session_id": self._session_id})
-            return
+            # Drop residual events from a prior turn so they can't be dequeued
+            # and attributed to this session.
+            await self._drain_stale_events()
 
-        # Stream events from Pi
-        yield sse_event("task_start", {"task_id": session_id or "", "session_id": self._session_id})
-
-        from app.services.chat.pi_event_mapper import map_event_to_sse
-        timed_out = False
-        while True:
+            # Send prompt command
             try:
-                event = await asyncio.wait_for(self._rpc.events.get(), timeout=PI_EVENT_STREAM_TIMEOUT)
-                sse = map_event_to_sse(event, self._session_id, cache_lookup=get_cached_dispatch_result)
-                if _harness is not None:
-                    _harness.record_sse_event(event)
-                if sse:
-                    yield sse
-                if event.get("type") == "agent_end":
+                await self._rpc.request("prompt", data)
+            except PiRpcError as e:
+                logger.error(f"[PiBridge] stream_prompt send failed: {e}")
+                yield sse_event("task_error", {
+                    "task_id": turn_sid,
+                    "session_id": turn_sid,
+                    "error": str(e),
+                })
+                yield sse_event("done", {"session_id": turn_sid})
+                return
+
+            # Stream events from Pi
+            yield sse_event("task_start", {"task_id": turn_sid, "session_id": turn_sid})
+
+            from app.services.chat.pi_event_mapper import map_event_to_sse
+            timed_out = False
+            while True:
+                try:
+                    event = await asyncio.wait_for(self._rpc.events.get(), timeout=PI_EVENT_STREAM_TIMEOUT)
+                    sse = map_event_to_sse(event, turn_sid, cache_lookup=get_cached_dispatch_result)
+                    if _harness is not None:
+                        _harness.record_sse_event(event)
+                    if sse:
+                        yield sse
+                    if event.get("type") == "agent_end":
+                        break
+                except asyncio.TimeoutError:
+                    timed_out = True
                     break
-            except asyncio.TimeoutError:
-                timed_out = True
-                break
 
-        if timed_out:
-            yield sse_event("error", {
-                "session_id": self._session_id,
-                "error": f"Pi agent response timed out ({int(PI_EVENT_STREAM_TIMEOUT)}s). The agent may be processing or stalled.",
-            })
+            if timed_out:
+                yield sse_event("error", {
+                    "session_id": turn_sid,
+                    "error": f"Pi agent response timed out ({int(PI_EVENT_STREAM_TIMEOUT)}s). The agent may be processing or stalled.",
+                })
 
-        yield sse_event("done", {"session_id": self._session_id})
+            yield sse_event("done", {"session_id": turn_sid})
+        finally:
+            # Drain any leftover events so a timeout/disconnect doesn't poison
+            # the next turn. (On a normal agent_end the queue is already empty;
+            # this is a no-op there.)
+            await self._drain_remaining_turn_events()
+            self._lock.release()
 
 
 # Global bridge instance
