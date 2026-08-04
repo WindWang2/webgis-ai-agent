@@ -4,7 +4,6 @@ import ast
 import importlib.util
 import sys
 import logging
-from typing import Optional
 import yaml
 from app.tools.registry import ToolRegistry
 
@@ -158,7 +157,7 @@ async def create_new_skill(module_name: str, code: str, description: str) -> str
 
     errors = _validate_skill_code(code)
     if errors:
-        return f"Skill validation failed:\n" + "\n".join(f"- {e}" for e in errors) + "\nPlease revise your code to remove dangerous patterns."
+        return "Skill validation failed:\n" + "\n".join(f"- {e}" for e in errors) + "\nPlease revise your code to remove dangerous patterns."
 
     from app.services.skill_creator import skill_creator
     from app.api.routes.chat import get_registry
@@ -242,5 +241,6 @@ async def fetch_remote_skills(registry: ToolRegistry, repo_url: str):
     logger.info(f"Fetching remote skills from {repo_url}...")
     # 模拟远程获取并写入本地 app/skills/remote_xxx.py
     # ...
+    from app.api.routes.chat import get_registry
     load_skills(get_registry())
     return {"status": "success", "count": 0}

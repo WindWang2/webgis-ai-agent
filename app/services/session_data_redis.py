@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import redis.asyncio as aioredis
-from app.services.session_data_protocol import BaseSessionStore, SessionRefDataResult
+from app.services.session_data_protocol import BaseSessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -393,7 +393,7 @@ class RedisSessionStore(BaseSessionStore):
                             layers = json.loads(raw_layers)
                     else:
                         layers = []
-                    new_layers = [l for l in layers if l.get("id") != layer_id]
+                    new_layers = [layer for layer in layers if layer.get("id") != layer_id]
                     pipe.multi()
                     pipe.hset(state_key, "layers", json.dumps(new_layers, ensure_ascii=False))
                     pipe.expire(state_key, STATE_TTL)

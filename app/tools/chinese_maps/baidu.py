@@ -4,11 +4,9 @@ The deep Baidu provider class. Same interface shape as :class:`AmapProvider`;
 source CRS is BD-09. CRS transforms cross :func:`wgs84_to_bd09` on the way in
 and :func:`bd09_to_wgs84` on the way out.
 """
-import json
 import logging
-from typing import Any, Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional
 
-from app.core.config import settings
 from app.utils.coord_transform import wgs84_to_bd09, bd09_to_wgs84, transform_geojson
 
 from app.tools.chinese_maps.http import _baidu_get

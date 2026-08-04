@@ -150,7 +150,7 @@ def register_epsg_transform_tools(registry: ToolRegistry):
                     f"不支持的 CRS: {from_epsg} → {to_epsg} ({e})",
                     code="VALIDATION_ERROR",
                     error_type=type(e).__name__,
-                    correction_hint=f"请使用合法的 EPSG 代码（如 EPSG:4326、EPSG:32650）。",
+                    correction_hint="请使用合法的 EPSG 代码（如 EPSG:4326、EPSG:32650）。",
                 )
             return std_error_response(
                 f"重投影失败: {e}",

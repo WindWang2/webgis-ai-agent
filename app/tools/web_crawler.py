@@ -8,7 +8,6 @@ LLM 拿到 snippets 后自己提取地名/事件，再调 geocode_cn 之类的�
 """
 import json
 import logging
-from typing import Optional, List, Dict
 from pydantic import BaseModel, Field
 
 import aiohttp

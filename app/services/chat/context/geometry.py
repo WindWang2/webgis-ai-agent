@@ -25,9 +25,9 @@ def viewport_layer_relation(viewport_bounds: list[float] | None, layer_bbox: lis
     if not (isinstance(layer_bbox, list) and len(layer_bbox) >= 4):
         return None
     v = [float(x) for x in viewport_bounds[:4]]
-    l = [float(x) for x in layer_bbox[:4]]
-    if not _bbox_intersects(v, l):
+    layer_b = [float(x) for x in layer_bbox[:4]]
+    if not _bbox_intersects(v, layer_b):
         return "在视口外"
-    if _bbox_contains(v, l):
+    if _bbox_contains(v, layer_b):
         return "在视口内"
     return "局部相交"

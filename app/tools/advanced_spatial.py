@@ -1,6 +1,6 @@
 """高级空间分析工具 (FC)"""
 import logging
-from typing import Any, List, Dict, Optional
+from typing import Any, List, Optional
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool

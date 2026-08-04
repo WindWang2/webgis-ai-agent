@@ -2,11 +2,11 @@
 import json
 import logging
 import aiohttp
-from typing import Optional, List, Dict
+from typing import Optional
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
-from app.core.network import get_ssl_context, get_base_headers, get_shared_client
+from app.core.network import get_ssl_context, get_shared_client
 from app.tools.registry import ToolRegistry, tool
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ def _overpass_to_geojson(data: str) -> dict:
 async def _query_overpass(query: str) -> dict:
     """执行 Overpass QL 查询，返回 GeoJSON"""
     full_query = f"[out:json][timeout:30];{query.rstrip(';')};out body geom;"
-    logger.info(f"[OSM] Querying Overpass API...")
+    logger.info("[OSM] Querying Overpass API...")
     
     try:
         session = await get_shared_client()
@@ -249,7 +249,9 @@ def register_osm_tools(registry: ToolRegistry):
 
         # 构造 Overpass 查询 - 查询 bbox 内的 POI
         # amenity 类型
-        amenity_types = {"restaurant", "school", "hospital", "bank", "cafe", "bar", "pharmacy",
+        # TODO: amenity_types is defined but has no matching 'if mapped_category in amenity_types'
+        # branch (unlike leisure_types/tourism_types below) — amenity POIs may be misclassified.
+        amenity_types = {"restaurant", "school", "hospital", "bank", "cafe", "bar", "pharmacy",  # noqa: F841 — wire up the branch in a follow-up.
                          "police", "fire_station", "post_office", "library", "cinema", "theatre",
                          "parking", "fuel", "bus_station", "university", "college", "kindergarten"}
         # leisure 类型

@@ -2,7 +2,7 @@
 HarnessEvaluator - 5-Dimensional Evaluation Metric Calculator & Quality Gate
 """
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 

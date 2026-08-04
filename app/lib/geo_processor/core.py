@@ -4,7 +4,7 @@ import geopandas as gpd
 from shapely.geometry import shape
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 
 # Re-export coordinate transform functions from the canonical module
 # (app/utils/coord_transform.py). Duplicate implementations removed below.
@@ -86,7 +86,7 @@ def safe_parse(geojson: Any) -> dict | None:
             try:
                 repaired = _repair_json(geojson)
                 return json.loads(repaired)
-            except Exception as e:
+            except Exception:
                 return None
     return None
 

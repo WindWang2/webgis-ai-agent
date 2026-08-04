@@ -368,8 +368,10 @@ def calculate_nearest(geojson: dict) -> GeoAnalysisResult:
     r_ratio = mean_dist / expected_mean if expected_mean > 0 else 1
     
     pattern = "random"
-    if r_ratio < 0.7: pattern = "clustered"
-    elif r_ratio > 1.3: pattern = "dispersed"
+    if r_ratio < 0.7:
+        pattern = "clustered"
+    elif r_ratio > 1.3:
+        pattern = "dispersed"
     
     summary = f"Nearest Neighbor Insight: The mean distance to the nearest neighbor is {mean_dist:.2f} meters. The distribution pattern appears to be {pattern} (R ratio: {r_ratio:.2f})."
     

@@ -41,11 +41,12 @@ jobs:
         run: pip install ruff
 
       - name: Run Ruff Check
-        # --exit-zero: 项目历史包袱有 ~247 个 lint warning（多为 unused import）。
-        # 报告但不阻断 CI -- 让 PR 能合并，lint 清理作为独立工作。
-        # TODO(lint-cleanup): 先做一次全量 ruff check --fix（可自动修 143 个），
-        # 然后去掉下面的 --exit-zero 让 lint 真正阻断 CI。
-        run: ruff check --output-format=github --exit-zero .
+        # Blocking gate on production code (app/). The ~275-error unused-import +
+        # style backlog was cleared in the lint-cleanup PR, so this now actually
+        # blocks. Scoped to app/ — tests/ has ~340 pre-existing lint nits that
+        # are a separate cleanup task; linting test code adds churn without much
+        # value. Config lives in pyproject.toml [tool.ruff.lint].
+        run: ruff check --output-format=github app/
 
       - name: Install Frontend Deps
         working-directory: ./frontend

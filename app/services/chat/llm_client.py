@@ -16,7 +16,7 @@ import re
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, AsyncGenerator, Optional
+from typing import AsyncGenerator, Optional
 
 import httpx
 

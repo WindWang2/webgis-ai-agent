@@ -6,7 +6,7 @@ with DPI resolution scaling for WeasyPrint PDF report generation.
 
 import html as _html
 import math as _math
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Tuple
 
 
 def _escape_svg_attr(value: Any) -> str:

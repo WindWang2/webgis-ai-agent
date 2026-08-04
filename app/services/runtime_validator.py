@@ -13,7 +13,7 @@ import logging
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from app.services.mapspec_store import mapspec_store, PROJECT_ROOT
 

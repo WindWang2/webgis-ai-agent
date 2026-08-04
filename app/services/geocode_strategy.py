@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import Optional, Callable, Any, Awaitable
+from typing import Optional, Callable, Awaitable
 
 logger = logging.getLogger(__name__)
 

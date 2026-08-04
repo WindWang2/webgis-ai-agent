@@ -3,7 +3,7 @@
 """
 import json
 import logging
-from typing import Optional, List, Dict, Any
+from typing import Any
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
@@ -83,7 +83,8 @@ def register_cartography_tools(registry: ToolRegistry):
             # 或者直接在 features 的 properties 中注入样式
             features = data.get("features", [])
             for f in features:
-                if "properties" not in f: f["properties"] = {}
+                if "properties" not in f:
+                    f["properties"] = {}
                 f["properties"]["fill_color"] = color
                 f["properties"]["opacity"] = opacity
                 f["properties"]["stroke_width"] = stroke_width

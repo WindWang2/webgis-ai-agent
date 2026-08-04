@@ -5,7 +5,10 @@ import logging
 from typing import List, Dict, Any, Optional
 import numpy as np
 
-from app.lib.cartography.palettes import COLOR_PALETTES, get_color_from_palette
+from app.lib.cartography.palettes import get_color_from_palette
+# COLOR_PALETTES re-exported for app.lib.geo_analysis.density (KDE legend_spec).
+# noqa: F401 — deliberate cross-module re-export.
+from app.lib.cartography.palettes import COLOR_PALETTES  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +69,8 @@ class CartographyService:
     @classmethod
     def classify(cls, values: List[float], method: str = "quantiles", k: int = 5) -> List[float]:
         """数据分类方法 (quantiles / equal_interval / natural_breaks)"""
-        if not values: return []
+        if not values:
+            return []
         arr = np.array(values, dtype=float)
         if method == "quantiles":
             return np.unique(np.quantile(arr, np.linspace(0, 1, k + 1))).tolist()

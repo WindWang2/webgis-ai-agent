@@ -2,8 +2,6 @@ import json
 import logging
 import geopandas as gpd
 from app.tools.registry import ToolRegistry, tool
-from app.lib.geo_processor.core import GeoAnalysisResult
-from typing import Any
 
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,6 @@
 """用户上传数据模型"""
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, BigInteger, String, Float, DateTime, JSON, CheckConstraint
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, JSON, CheckConstraint
 from app.core.database import Base
 
 

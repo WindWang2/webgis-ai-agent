@@ -58,13 +58,13 @@ async def _resolve_layer_id(session_id: str, layer_ref: str) -> Optional[str]:
     map_state = await session_data_manager.get_map_state(session_id) or {}
     layers = map_state.get("layers", []) or []
 
-    for l in layers:
-        if l.get("id") == candidate or l.get("id") == layer_ref:
-            return l.get("id")
-    for l in layers:
-        name = l.get("name", "") or ""
+    for layer in layers:
+        if layer.get("id") == candidate or layer.get("id") == layer_ref:
+            return layer.get("id")
+    for layer in layers:
+        name = layer.get("name", "") or ""
         if name == layer_ref or (layer_ref and layer_ref in name):
-            return l.get("id")
+            return layer.get("id")
     return candidate
 
 
@@ -167,9 +167,9 @@ def register_map_view_tools(registry: ToolRegistry):
         # 3) 兜底：看一下 map_state 是否记录了该图层的 extent
         if bbox is None:
             map_state = await session_data_manager.get_map_state(session_id) or {}
-            for l in (map_state.get("layers", []) or []):
-                if l.get("id") in (ref_id, layer_ref) or l.get("name") == layer_ref:
-                    cand = l.get("bbox") or l.get("extent")
+            for layer in (map_state.get("layers", []) or []):
+                if layer.get("id") in (ref_id, layer_ref) or layer.get("name") == layer_ref:
+                    cand = layer.get("bbox") or layer.get("extent")
                     if isinstance(cand, list) and len(cand) >= 4:
                         bbox = [float(x) for x in cand[:4]]
                         break

@@ -8,9 +8,8 @@ exclude tianditu for those).
 """
 import json
 import logging
-from typing import Any, Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional
 
-from app.core.config import settings
 
 from app.tools.chinese_maps.http import _tianditu_get
 from app.tools.chinese_maps._shaping import shape_poi_collection

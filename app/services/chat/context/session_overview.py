@@ -1,7 +1,7 @@
 """Session overview and duration calculation for chat context."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from app.services.session_data import session_data_manager
 
 def _format_duration(started_at_iso: str | None) -> str | None:

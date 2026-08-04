@@ -1,7 +1,5 @@
 """遥感数据 FC 工具"""
-import json
 import logging
-from typing import Optional
 from app.tools.registry import ToolRegistry, tool
 from app.services.rs.spectral_engine import spectral_engine
 from app.tools._utils import parse_bbox

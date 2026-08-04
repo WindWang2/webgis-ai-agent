@@ -1,7 +1,6 @@
 """意图识别器：判断是否需要深度搜索"""
 import logging
 from pydantic import BaseModel, Field
-from app.services.explorer.models import SearchContext
 
 logger = logging.getLogger(__name__)
 

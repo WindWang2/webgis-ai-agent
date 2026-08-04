@@ -6,7 +6,7 @@ XML security fencing, and execution plan blocks behind a unified assembly seam.
 """
 from dataclasses import dataclass
 import logging
-from typing import Any, List, Optional
+from typing import List, Optional
 
 from app.services.session_data import session_data_manager
 from app.services.session_data_protocol import SessionStoreProtocol

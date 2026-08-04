@@ -1,7 +1,6 @@
 """图层服务与任务管理"""
-from typing import Optional, List, Tuple, Dict, Any
+from typing import Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
 from datetime import datetime, timezone
 from app.models.db_model import Layer
 from app.models.pydantic_models import LayerCreate, LayerUpdate

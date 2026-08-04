@@ -2,7 +2,6 @@
 
 M2: 从单体 chinese_maps.py 抽出。register_chinese_map_tools 仍在 __init__.py。
 """
-import asyncio
 import json
 import logging
 

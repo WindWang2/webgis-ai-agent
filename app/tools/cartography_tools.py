@@ -189,7 +189,7 @@ def register_cartography_tools(registry: ToolRegistry) -> None:
   ) -> dict:
     if not session_id:
       return {"success": False, "message": "Missing session_id"}
-    res = await mapspec_store.layer_remove(session_id, layer_id)
+    await mapspec_store.layer_remove(session_id, layer_id)
     return {
         "success": True,
         "removed_id": layer_id,

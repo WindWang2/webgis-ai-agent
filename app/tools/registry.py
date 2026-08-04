@@ -2,7 +2,7 @@
 import inspect
 import json
 import logging
-from typing import Any, Callable, Optional, Type, Dict, List
+from typing import Any, Callable, Optional, Type, List
 from pydantic import BaseModel, create_model, ValidationError
 
 from app.services.session_data import session_data_manager
@@ -94,7 +94,6 @@ class ToolRegistry:
             p_type = param.annotation if param.annotation != inspect.Parameter.empty else Any
             default = param.default if param.default != inspect.Parameter.empty else ...
 
-            description = param_descriptions.get(p_name) if param_descriptions else None
             fields[p_name] = (p_type, default)
 
         return create_model(f"{name}_args", **fields)
@@ -133,7 +132,7 @@ class ToolRegistry:
         result: Any = None
         try:
             arg_bytes = len(_json.dumps(arguments, default=str))
-        except Exception as e:
+        except Exception:
             arg_bytes = 0
 
         try:
@@ -147,7 +146,7 @@ class ToolRegistry:
                 error_cls = error_cls or result.get("error_type") or result.get("code")
             try:
                 result_bytes = len(_json.dumps(result, default=str)) if result is not None else 0
-            except Exception as e:
+            except Exception:
                 result_bytes = 0
             cache_hit = cache_hit_var.get()
             tool_metrics.record_tool_call(
@@ -268,7 +267,8 @@ class ToolRegistry:
 
     async def _resolve_references(self, session_id: str, arguments: Any, skip_keys: Optional[set[str]] = None) -> Any:
         """递归解析参数中的数据引用 ref:xxx 或 别名"""
-        if skip_keys is None: skip_keys = set()
+        if skip_keys is None:
+            skip_keys = set()
 
         if isinstance(arguments, str):
             # /review P3-5: detect "is this a ref or a known alias?" via the public

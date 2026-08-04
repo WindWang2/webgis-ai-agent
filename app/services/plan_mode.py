@@ -17,9 +17,8 @@ from __future__ import annotations
 
 import logging
 import re
-import uuid
 from collections import deque
-from typing import Any, Optional, Union
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 

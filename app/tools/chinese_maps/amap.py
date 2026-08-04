@@ -15,11 +15,10 @@ as the fake-GET test seam.
 import asyncio
 import json
 import logging
-from typing import Any, Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional
 
 import aiohttp
 
-from app.core.config import settings
 from app.utils.coord_transform import wgs84_to_gcj02, gcj02_to_wgs84, transform_geojson
 
 from app.tools.chinese_maps.http import _amap_get, _speed_mps

@@ -16,22 +16,19 @@
 import asyncio
 import json
 import logging
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 import aiohttp
 
-from app.core.config import settings
 from app.tools.registry import ToolRegistry, tool
 from app.utils.coord_transform import (
-    wgs84_to_gcj02, gcj02_to_wgs84,
-    wgs84_to_bd09, bd09_to_wgs84,
+    gcj02_to_wgs84,
 )
 
 # HTTP + provider 路由（_amap_get/_baidu_get/_tianditu_get 由各 provider 模块自行导入）
 from app.tools.chinese_maps.http import (
-    _has_provider, _fallback_order,
+    _has_provider,
     _VALID_PROVIDERS,
-    _speed_mps,
     with_fallback,
 )
 
@@ -67,7 +64,7 @@ class ChineseMapsEngine:
         if len(location) != 2:
             return {"error": "location 必须是 [经度, 纬度]"}
         if provider not in _VALID_PROVIDERS:
-            return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
+            return {"error": "provider 必须是 'amap', 'baidu' 或 'tianditu'"}
         _dispatch = {
             "amap": _AMAP.reverse_geocode, "baidu": _BAIDU.reverse_geocode,
             "tianditu": _TIANDITU.reverse_geocode,
@@ -82,7 +79,7 @@ class ChineseMapsEngine:
         if len(origin) != 2 or len(destination) != 2:
             return {"error": "origin/destination 必须是 [经度, 纬度]"}
         if provider not in _VALID_PROVIDERS:
-            return {"error": f"provider 必须是 'amap' 或 'baidu'"}
+            return {"error": "provider 必须是 'amap' 或 'baidu'"}
         _dispatch = {"amap": _AMAP.route, "baidu": _BAIDU.route}
         return await with_fallback(
             provider,
@@ -117,7 +114,7 @@ chinese_maps_engine = ChineseMapsEngine()
 
 async def geocode_cn(address: str, city: str = "", provider: str = "amap") -> dict:
     if provider not in _VALID_PROVIDERS:
-        return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
+        return {"error": "provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
     _dispatch = {
         "amap": _AMAP.geocode, "baidu": _BAIDU.geocode, "tianditu": _TIANDITU.geocode,
@@ -136,7 +133,7 @@ async def batch_geocode_cn(
     max_concurrency: int = 3,
 ) -> dict:
     if provider not in _VALID_PROVIDERS:
-        return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
+        return {"error": "provider 必须是 'amap', 'baidu' 或 'tianditu'"}
     if not addresses or len(addresses) > 100:
         return {"error": "地址列表长度必须在 1~100 之间"}
     if not _has_provider(provider):
@@ -215,7 +212,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if len(location) != 2:
             return {"error": "location 必须是 [经度, 纬度]"}
         if provider not in _VALID_PROVIDERS:
-            return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
+            return {"error": "provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
         _dispatch = {
             "amap": _AMAP.reverse_geocode, "baidu": _BAIDU.reverse_geocode,
@@ -240,7 +237,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if len(origin) != 2 or len(destination) != 2:
             return {"error": "origin/destination 必须是 [经度, 纬度]"}
         if provider not in _VALID_PROVIDERS:
-            return {"error": f"provider 必须是 'amap' 或 'baidu'"}
+            return {"error": "provider 必须是 'amap' 或 'baidu'"}
 
         _dispatch = {"amap": _AMAP.route, "baidu": _BAIDU.route}
         return await with_fallback(
@@ -268,7 +265,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if return_geometry not in ("point", "polygon"):
             return {"error": "return_geometry 必须是 'point' 或 'polygon'"}
         if provider not in _VALID_PROVIDERS:
-            return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
+            return {"error": "provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
         _dispatch = {
             "amap": _AMAP.district, "baidu": _BAIDU.district, "tianditu": _TIANDITU.district,
@@ -369,7 +366,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if not keyword and not types:
             return {"error": "keyword 与 types 至少提供一个"}
         if provider not in _VALID_PROVIDERS:
-            return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
+            return {"error": "provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
         _dispatch = {
             "amap": _AMAP.search_poi_around,
@@ -571,13 +568,16 @@ def register_chinese_map_tools(registry: ToolRegistry):
         # 高德方案：先获取下级名称列表，然后（如果是 polygon 模式）并发获取每个下级的边界
         params = {"keywords": keywords, "subdistrict": "1", "extensions": "base"}
         data = await _AMAP._get("/config/district", params)
-        if "error" in data: return data
+        if "error" in data:
+            return data
         
         districts = data.get("districts", [])
-        if not districts: return {"error": f"未找到 '{keywords}' 的下级行政区"}
+        if not districts:
+            return {"error": f"未找到 '{keywords}' 的下级行政区"}
         
         sub_units = districts[0].get("districts", [])
-        if not sub_units: return {"error": f"'{keywords}' 没有更细分的下级单位"}
+        if not sub_units:
+            return {"error": f"'{keywords}' 没有更细分的下级单位"}
         
         if return_geometry == "point":
             features = []

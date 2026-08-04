@@ -1,12 +1,10 @@
 """GIS 数据文件解析服务"""
 import json
 import logging
-import os
 import shutil
-import uuid
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import geopandas as gpd
 import rasterio
@@ -64,7 +62,6 @@ def _validate_shapefile_zip(file_path: Path) -> None:
 
 def _detect_csv_columns(df) -> Tuple[Optional[str], Optional[str]]:
     """自动检测 CSV 中的经纬度列"""
-    columns = {c.strip().lower() for c in df.columns}
     lng_col = lat_col = None
     for c in df.columns:
         low = c.strip().lower()

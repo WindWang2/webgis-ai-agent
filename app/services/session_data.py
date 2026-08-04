@@ -6,7 +6,7 @@ from typing import Any, Optional
 from collections import OrderedDict, deque
 from datetime import datetime, timezone
 
-from app.services.session_data_protocol import BaseSessionStore, SessionRefDataResult
+from app.services.session_data_protocol import BaseSessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +163,7 @@ class MemorySessionStore(BaseSessionStore):
         # BUG-14: same read-modify-write race as update_layer_in_state.
         async with self._lock:
             layers = self._map_state.get(session_id, {}).get("layers", [])
-            await self.set_map_state(session_id, "layers", [l for l in layers if l.get("id") != layer_id])
+            await self.set_map_state(session_id, "layers", [layer for layer in layers if layer.get("id") != layer_id])
 
     async def append_event(self, session_id: str, event: str, data: dict) -> None:
         """追加用户操作到事件日志"""

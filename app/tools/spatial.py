@@ -1,12 +1,11 @@
 """空间分析 FC 工具"""
-import json
 import logging
-from typing import Optional, List, Dict, Any
+from typing import List, Any
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
 from app.tools._utils import cached_tool, trim_features
-from app.services.spatial_analyzer import SpatialAnalyzer, spatial_analysis_engine
+from app.services.spatial_analyzer import spatial_analysis_engine
 from app.lib.geo_analysis.density import generate_heatmap_raster
 from app.lib.geo_processor.core import safe_parse as safe_parse_geojson
 

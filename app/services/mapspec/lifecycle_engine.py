@@ -111,7 +111,8 @@ class MapSpecLifecycleEngine:
     def _get_lock(self, session_id: str) -> asyncio.Lock:
         if len(self._session_locks) > self._MAX_LOCKS:
             evict_count = self._MAX_LOCKS // 4
-            for sid in list(self._session_locks.keys())[:evict_count]:
+            for sid in list(self._session_locks.keys())[:
+                evict_count]:
                 lock_to_evict = self._session_locks[sid]
                 if not lock_to_evict.locked():
                     self._session_locks.pop(sid, None)
@@ -163,10 +164,14 @@ class MapSpecLifecycleEngine:
 
                 elif isinstance(intent, SetViewIntent):
                     view = mapspec.setdefault("view", {})
-                    if intent.center is not None: view["center"] = intent.center
-                    if intent.zoom is not None: view["zoom"] = intent.zoom
-                    if intent.pitch is not None: view["pitch"] = intent.pitch
-                    if intent.bearing is not None: view["bearing"] = intent.bearing
+                    if intent.center is not None:
+                        view["center"] = intent.center
+                    if intent.zoom is not None:
+                        view["zoom"] = intent.zoom
+                    if intent.pitch is not None:
+                        view["pitch"] = intent.pitch
+                    if intent.bearing is not None:
+                        view["bearing"] = intent.bearing
 
                 elif isinstance(intent, UpsertLayerIntent):
                     session_dir = self.store.get_session_dir(session_id)
@@ -183,8 +188,8 @@ class MapSpecLifecycleEngine:
 
                     layers = mapspec.setdefault("layers", [])
                     updated = False
-                    for i, l in enumerate(layers):
-                        if l.get("id") == processed_layer.get("id"):
+                    for i, layer in enumerate(layers):
+                        if layer.get("id") == processed_layer.get("id"):
                             layers[i] = processed_layer
                             updated = True
                             break
@@ -194,16 +199,19 @@ class MapSpecLifecycleEngine:
 
                 elif isinstance(intent, RemoveLayerIntent):
                     layers = mapspec.get("layers", [])
-                    filtered_layers = [l for l in layers if not _should_remove_layer(l, intent.layer_id)]
+                    filtered_layers = [layer for layer in layers if not _should_remove_layer(layer, intent.layer_id)]
                     mapspec["layers"] = filtered_layers
                     await session_data_manager.remove_layer_from_state(session_id, intent.layer_id)
                     auto_checkpoint = True
 
                 elif isinstance(intent, SetLayoutIntent):
                     layout = mapspec.setdefault("layout", {})
-                    if intent.legend is not None: layout["legend"] = intent.legend
-                    if intent.controls is not None: layout["controls"] = intent.controls
-                    if intent.margins is not None: layout["margins"] = intent.margins
+                    if intent.legend is not None:
+                        layout["legend"] = intent.legend
+                    if intent.controls is not None:
+                        layout["controls"] = intent.controls
+                    if intent.margins is not None:
+                        layout["margins"] = intent.margins
 
                 elif isinstance(intent, CheckpointIntent):
                     session_dir = self.store.get_session_dir(session_id)

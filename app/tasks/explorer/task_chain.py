@@ -1,12 +1,7 @@
 """Explorer Celery task chain"""
 import logging
 import asyncio
-import zlib
-import json
 from app.services.task_queue import celery_app
-from app.services.explorer.models import SearchContext, RawContent
-from app.adapters.gov.gov_data_adapter import GovDataAdapter
-from app.adapters.base import DataSource
 
 logger = logging.getLogger(__name__)
 

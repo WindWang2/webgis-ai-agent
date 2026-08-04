@@ -3,13 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
 
 from app.services.session_data import session_data_manager
 from app.utils.geojson import geojson_bbox, summarize_feature_properties
 from .geometry import viewport_layer_relation
 from .formatters import (
-    _untrusted,
     _xml_fence,
     format_style_summary,
     TAG_UNTRUSTED_LAYER_NAME,
@@ -139,7 +137,7 @@ async def format_layer_lines(
                 if isinstance(s, BaseException):
                     logger.warning("build_layer_schema failed for ref=%s: %s", rid, s)
 
-        visibility_map = {l.get("id"): l for l in active_layers if l.get("id")}
+        visibility_map = {layer.get("id"): layer for layer in active_layers if layer.get("id")}
         for ref_id, alias in inventory.items():
             meta = visibility_map.get(ref_id) or next(
                 (m for aid, m in visibility_map.items() if aid in ref_id or ref_id in aid),
