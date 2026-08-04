@@ -2,8 +2,7 @@ import logging
 import numpy as np
 import pandas as pd
 import geopandas as gpd
-import h3
-from shapely.geometry import box, Polygon, mapping
+from shapely.geometry import box, Polygon
 from app.lib.geo_processor.core import GeoAnalysisResult
 from app.lib.geo_processor.core import to_utm_gdf
 

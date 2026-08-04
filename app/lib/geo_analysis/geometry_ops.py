@@ -12,7 +12,7 @@ Extracted from ``app/tools/spatial_stats.py`` (architecture-review F2): these
 were orphan algorithms doing deep math in the tool adapter layer.
 """
 import logging
-from typing import Any, Optional
+from typing import Optional
 
 import numpy as np
 import geopandas as gpd

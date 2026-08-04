@@ -4,8 +4,6 @@ import ssl
 import logging
 import aiohttp
 import certifi
-from typing import Optional
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 

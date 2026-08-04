@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import copy
 import math
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 _A = 6378245.0
 _EE = 0.00669342162296594323

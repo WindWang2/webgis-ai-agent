@@ -4,7 +4,6 @@ Document: 文档元信息
 Chunk: 文档分块
 Embedding: 向量索引 (由 FAISS 管理，此表仅用于元数据追踪)
 """
-import os
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import (

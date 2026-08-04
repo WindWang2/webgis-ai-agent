@@ -1,7 +1,7 @@
 """
 API Response 统一格式定义
 """
-from typing import Generic, TypeVar, Optional, Any
+from typing import TypeVar, Optional, Any
 from pydantic import BaseModel
 
 T = TypeVar("T")

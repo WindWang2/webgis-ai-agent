@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Any, Union, Optional
+from typing import Union, Optional
 import geopandas as gpd
 from app.lib.geo_processor.core import to_utm_gdf, safe_parse, GeoAnalysisResult
 

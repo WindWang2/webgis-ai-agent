@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     Column, String, Integer, Text, DateTime, Index, CheckConstraint
 )
-from sqlalchemy.dialects.postgresql import UUID
 from app.core.database import Base
 
 
