@@ -35,6 +35,23 @@ PI_RPC_ENTRY = Path(__file__).parent.parent.parent.parent / "vendor" / "pi" / "p
 # Default session directory
 DEFAULT_SESSION_DIR = Path(__file__).parent.parent.parent.parent / ".pi" / "sessions"
 
+# REVIEW-P2 (Pi subprocess trust boundary):
+# Cap a single stdout line at 16 MiB. Pi is a trusted subprocess, but "trusted"
+# does not mean "well-behaved under every condition" — a runaway tool payload,
+# a corrupted stream, or a debug log line that omits its trailing newline would
+# otherwise buffer indefinitely in the reader thread and OOM the worker.
+# 16 MiB is well above any legitimate AgentSessionEvent we have observed
+# (typical tool-execution-end events are <10 KiB even with geojson refs).
+MAX_STDOUT_LINE_BYTES = int(os.environ.get("PI_MAX_STDOUT_LINE_BYTES", 16 * 1024 * 1024))
+
+# Cap the event queue at 1024 entries. A disconnected or slow SSE consumer
+# would otherwise let events accumulate without bound; the previous unbounded
+# asyncio.Queue meant a single abandoned chat turn could grow the process
+# indefinitely. On overflow we drop new events and log — the alternative
+# (blocking the reader) backpressures Pi's stdout pipe and can hang the
+# subprocess, which is worse.
+MAX_EVENT_QUEUE_SIZE = int(os.environ.get("PI_MAX_EVENT_QUEUE_SIZE", 1024))
+
 
 # ── Config (CONFIG-04: env-tunable with safe defaults) ──────────────────────
 
@@ -75,7 +92,7 @@ class PiRpcClient:
         self._extension_paths = extension_paths or []
         self._process: Optional[subprocess.Popen] = None
         self._pending_requests: dict[str, asyncio.Future] = {}
-        self._event_queue: asyncio.Queue = asyncio.Queue()
+        self._event_queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_EVENT_QUEUE_SIZE)
         self._request_counter = 0
         self._reader_task: Optional[asyncio.Task] = None
         self._stderr_task: Optional[asyncio.Task] = None
@@ -199,7 +216,23 @@ class PiRpcClient:
         """
         try:
             while self._process and self._process.stdout:
-                line = await asyncio.get_running_loop().run_in_executor(None, self._process.stdout.readline)
+                # Bounded read: cap a single line at MAX_STDOUT_LINE_BYTES so
+                # a runaway Pi payload can't OOM the reader thread. readline()
+                # has no length limit; we approximate one by reading in chunks
+                # and bailing if no newline appears within the budget.
+                line = await asyncio.get_running_loop().run_in_executor(
+                    None, self._readline_bounded
+                )
+                if line is None:
+                    # Line exceeded the budget without a newline. Drop it and
+                    # continue — the next readline picks up after the next
+                    # newline in the stream, which resyncs the reader.
+                    logger.warning(
+                        "[PiRpcClient] Dropped stdout line exceeding %d bytes "
+                        "(no newline within budget); stream may be resyncing",
+                        MAX_STDOUT_LINE_BYTES,
+                    )
+                    continue
                 if not line:
                     break
                 line = line.strip()
@@ -212,7 +245,19 @@ class PiRpcClient:
                         await self._handle_response(obj)
                     # AgentSessionEvent: has "type" but no "id"
                     elif "type" in obj and "id" not in obj:
-                        await self._event_queue.put(obj)
+                        try:
+                            self._event_queue.put_nowait(obj)
+                        except asyncio.QueueFull:
+                            # Drop new events on overflow rather than blocking
+                            # the reader (which would backpressure Pi's stdout
+                            # pipe and can hang the subprocess). The consumer
+                            # is by definition not keeping up; one dropped
+                            # event is preferable to a stuck reader.
+                            logger.warning(
+                                "[PiRpcClient] Event queue full (%d); dropping event "
+                                "type=%s — SSE consumer is not keeping up",
+                                MAX_EVENT_QUEUE_SIZE, obj.get("type"),
+                            )
                 except json.JSONDecodeError:
                     logger.warning(f"[PiRpcClient] Invalid JSON: {line[:200]}")
         except asyncio.CancelledError:
@@ -250,6 +295,36 @@ class PiRpcClient:
         in-flight `prompt` futures resolve with PiRpcError instead of timing
         out 30s later. Same semantics as _fail_all_pending."""
         self._fail_all_pending(reason)
+
+    def _readline_bounded(self) -> Optional[bytes]:
+        """Read one line from Pi stdout, capped at MAX_STDOUT_LINE_BYTES.
+
+        Returns the line (bytes, including newline) on success, b"" on EOF,
+        or None if the line exceeded the budget without a newline (the caller
+        should resync by reading until the next newline and dropping the
+        oversized payload).
+
+        Synchronous — called via run_in_executor so it doesn't block the
+        event loop. Reads byte-by-byte from the underlying buffer to avoid
+        the unbounded buffering that a bare readline() would do on a
+        malformed stream.
+        """
+        stdout = self._process.stdout
+        if stdout is None:
+            return b""
+        buf = bytearray()
+        budget = MAX_STDOUT_LINE_BYTES
+        while budget > 0:
+            ch = stdout.read(1)
+            if not ch:
+                # EOF
+                return bytes(buf) if buf else b""
+            buf += ch
+            if ch == b"\n":
+                return bytes(buf)
+            budget -= 1
+        # Budget exhausted without a newline — signal overflow.
+        return None
 
     async def request(self, command: str, data: Optional[dict] = None) -> Any:
         """Send a JSON-RPC request to Pi and wait for the multiplexed response.
