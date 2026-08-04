@@ -18,6 +18,7 @@ The ADR-0022 dispatch-result cache and the two dispatch adapters stay in
 from __future__ import annotations
 
 import asyncio
+import atexit
 import json
 import logging
 import os
@@ -98,6 +99,33 @@ class PiRpcClient:
         self._stderr_task: Optional[asyncio.Task] = None
         # 审计 AGENT-05：Pi 进程死亡后标记为 True，让 _use_pi_bridge() 能回退
         self._process_died = False
+        # Register an atexit hook so that if the Python process exits for any
+        # catchable reason (SIGTERM, unhandled exception, normal shutdown) the
+        # Pi child is terminated rather than orphaned. The k8s entrypoint's
+        # `trap 'kill 0' TERM INT` covers graceful pod termination at the
+        # container level; this hook covers the application level. SIGKILL/OOM
+        # is uncatchable and remains a deployment-level concern (tini/init).
+        atexit.register(self._cleanup_on_exit)
+
+    def _cleanup_on_exit(self) -> None:
+        """Terminate the Pi subprocess if still alive (atexit safety net).
+
+        Runs on Python-level exit. Cannot await stop() (no running loop at
+        exit time), so does a best-effort synchronous terminate/kill. This is
+        not a substitute for stop() during graceful ASGI shutdown - it's the
+        safety net for paths that bypass lifespan teardown.
+        """
+        proc = self._process
+        if proc is None:
+            return
+        try:
+            proc.terminate()
+            proc.wait(timeout=2)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
     @property
     def events(self) -> asyncio.Queue:
@@ -269,7 +297,21 @@ class PiRpcClient:
             self._fail_all_pending("Pi process exited or reader stopped")
             # 标记为不可用
             self._process_died = True
-            logger.error("[PiRpcClient] Pi subprocess exited; bridge is now unavailable until restart")
+            # Clear the dead process reference so start() can respawn (its guard
+            # is `if self._process is not None: return`). Only clear when the
+            # process has actually exited (poll() returns a non-None exit code) -
+            # on the stop()-cancellation path the process may still be
+            # mid-terminate and stop()'s own finally handles the final clearing.
+            if self._process is not None and self._process.poll() is not None:
+                self._process = None
+                logger.error(
+                    "[PiRpcClient] Pi subprocess exited (poll=dead); "
+                    "_process cleared, bridge can respawn via start()"
+                )
+            else:
+                logger.error(
+                    "[PiRpcClient] Pi subprocess exited; bridge is now unavailable until restart"
+                )
 
     async def _handle_response(self, response: dict) -> None:
         """Handle a request response from Pi."""
