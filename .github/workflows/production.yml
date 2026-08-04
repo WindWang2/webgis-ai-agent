@@ -364,7 +364,17 @@ jobs:
           # rely on interpolation - so without --env-file the step failed at
           # "required variable DB_PWD is missing a value". Point compose at
           # .env.Priv explicitly (its default is plain `.env`).
-          docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d
+          docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d || UP_RC=$?
+          # On failure, dump container logs so the actual redis/api error is
+          # visible (compose up only prints container lifecycle, not app logs).
+          if [ "${UP_RC:-0}" != "0" ]; then
+            echo "===== compose up failed (rc=${UP_RC}); container logs: ====="
+            for c in webgis-prod-redis webgis-prod-db webgis-prod-api webgis-prod-celery webgis-prod-nginx webgis-prod-prometheus; do
+              echo "----- $c -----"
+              docker logs $c 2>&1 | tail -30 || echo "(no logs / container absent)"
+            done
+            exit 1
+          fi
         env:
           IMAGE_TAG: ${{ github.sha }}
 
