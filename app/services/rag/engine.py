@@ -2,6 +2,7 @@
 KnowledgeEngine - Deep RAG Knowledge Retrieval & Vector Indexing Engine.
 Enforces TenantContext multi-tenant security isolation and index compaction.
 """
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
@@ -56,8 +57,24 @@ class KnowledgeEngine:
             return {"error": "No valid text chunks generated from document"}
 
         texts = [c["content"] if isinstance(c, dict) else str(c) for c in chunk_list]
-        embeddings = self._store.embed_texts(texts)
+        # REVIEW-P1-5: SentenceTransformer.encode is CPU-bound (seconds for
+        # many chunks). Offload to the default thread pool so the event loop
+        # stays responsive for other requests during /knowledge/documents POST.
+        # ADR-0038 dropped the run_in_executor wrapper that rag_service had.
+        embeddings = await asyncio.to_thread(self._store.embed_texts, texts)
         doc_id = f"doc_{uuid.uuid4().hex[:12]}"
+
+        # Positional chunk records for callers that persist chunk rows alongside
+        # the vector index. Derived here so chunking stays single-sourced.
+        chunk_records = [
+            {
+                "content": texts[i],
+                "chunk_index": c.get("chunk_index", i) if isinstance(c, dict) else i,
+                "start_char": c.get("start_char") if isinstance(c, dict) else None,
+                "end_char": c.get("end_char") if isinstance(c, dict) else None,
+            }
+            for i, c in enumerate(chunk_list)
+        ]
 
         user_id = tenant.user_id if tenant else None
         org_id = tenant.org_id if tenant else None
@@ -81,6 +98,7 @@ class KnowledgeEngine:
             "document_id": doc_id,
             "title": title,
             "chunks_count": len(chunk_list),
+            "chunks": chunk_records,
             "status": "indexed",
         }
 
@@ -95,7 +113,8 @@ class KnowledgeEngine:
         if not query.strip():
             return []
 
-        query_vectors = self._store.embed_texts([query])
+        # REVIEW-P1-5: see index_document — embed_texts is CPU-bound.
+        query_vectors = await asyncio.to_thread(self._store.embed_texts, [query])
 
         user_id = tenant.user_id if tenant else None
         org_id = tenant.org_id if tenant else None

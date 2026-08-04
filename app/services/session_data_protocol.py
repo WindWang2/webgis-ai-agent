@@ -134,20 +134,32 @@ _active_store: Optional[SessionStoreProtocol] = None
 
 
 def get_session_store() -> SessionStoreProtocol:
-    """Return active SessionStore singleton instance."""
+    """Return active SessionStore singleton instance.
+
+    REVIEW-P1-6: this seam had two latent faults that always landed in the
+    `except Exception` fallback to memory:
+      (a) it gates on `settings.REDIS_ENABLED` — that field does not exist;
+          the real config field is `USE_REDIS` (app/core/config.py:98).
+      (b) the Redis branch tries to import `session_data_manager` from
+          `session_data_redis`, but that module never defines it (it has
+          `RedisSessionStore` and `RedisSessionDataManager`, not
+          `session_data_manager`); the ImportError is swallowed and the
+          memory fallback runs.
+
+    Both are silent in any environment that has `USE_REDIS=True` in
+    settings, because the fallback path *works* — it just isn't the Redis
+    backend, defeating the protocol-parity contract ADR-0035 set out to
+    guarantee.
+
+    Delegate to `create_session_data_manager()`, which already implements
+    the right config-gate + Redis-or-memory selection with a narrower
+    `ImportError`-only fallback.
+    """
     global _active_store
     if _active_store is None:
-        try:
-            from app.core.config import settings
-            if getattr(settings, "REDIS_ENABLED", False):
-                from app.services.session_data_redis import session_data_manager as redis_mgr
-                _active_store = redis_mgr
-            else:
-                from app.services.session_data import session_data_manager
-                _active_store = session_data_manager
-        except Exception:
-            from app.services.session_data import session_data_manager
-            _active_store = session_data_manager
+        from app.services.session_data import create_session_data_manager
+
+        _active_store = create_session_data_manager()
     return _active_store
 
 

@@ -297,6 +297,9 @@ def _make_manager_with_failing_redis(monkeypatch, fail_method: str):
     # 不调用 __init__（避免 from_url），仅设置必要属性
     manager = RedisSessionDataManager.__new__(RedisSessionDataManager)
     manager.capacity = 100
+    # _ensure_connected() 现在读 _injected_redis（测试注入字段），__new__ 跳过
+    # __init__ 时需要手动置 None，否则 AttributeError。
+    manager._injected_redis = None
     # 审计 TEST-13：_ensure_connected() 引用 _bound_loop（用 __new__ 跳过 __init__
     # 时不会设置）。本 helper 只在 async 测试里调用，把 _bound_loop 指向当前运行
     # loop 让 _ensure_connected 的复用条件成立，从而保留注入的 _FakeRedis。

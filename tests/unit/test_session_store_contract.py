@@ -16,6 +16,34 @@ from app.services.session_data_redis import RedisSessionStore
 STORE_FACTORIES = [MemorySessionStore]
 
 
+def _redis_store_factory():
+    """RedisSessionStore backed by in-process fakeredis.
+
+    The whole point of a contract suite is to keep two implementations honest
+    about identical behaviour. Without Redis in the parametrize list, the only
+    ordering contract exercised was MemorySessionStore — so the lpush-vs-deque
+    inversion between backends shipped CI-green (REVIEW-P1-4).
+
+    In-process fakeredis (not TcpFakeServer) is required: the TCP server
+    raises `InvalidResponse Protocol Error: b'_'` on session keys containing
+    underscores, which the production code does on every contract test. The
+    injected client is wired in via the redis= test seam on RedisSessionStore
+    so the production code path runs unchanged.
+    """
+    import fakeredis.aioredis
+
+    from app.services.session_data_redis import RedisSessionStore
+
+    return RedisSessionStore(
+        redis_url="redis://unused",
+        redis=fakeredis.aioredis.FakeRedis(decode_responses=False),
+    )
+
+
+if RedisSessionStore is not None:
+    STORE_FACTORIES.append(_redis_store_factory)
+
+
 @pytest.mark.parametrize("store_factory", STORE_FACTORIES)
 @pytest.mark.asyncio
 async def test_protocol_conformance(store_factory):
@@ -104,6 +132,37 @@ async def test_event_log_and_metadata(store_factory):
 
 @pytest.mark.parametrize("store_factory", STORE_FACTORIES)
 @pytest.mark.asyncio
+async def test_event_log_preserves_chronological_order(store_factory):
+    """REVIEW-P1-4 regression: both backends must return events oldest-first.
+
+    The single-event check above is structurally blind to ordering. Consumers
+    in chat/context_builder.py slice from the end (tool_calls[-5:],
+    user_actions[-3:], pending[-3:]) to grab the most recent N; if the
+    underlying list is newest-first, those slices silently return the oldest
+    events and the LLM context is inverted in production (memory passes
+    locally; Redis failed in prod).
+    """
+    store = store_factory()
+    session_id = "contract_sess_order"
+
+    # Distinct payload so we can tell them apart.
+    await store.append_event(session_id, "first", {"i": 0})
+    await store.append_event(session_id, "second", {"i": 1})
+
+    events = await store.get_event_log(session_id)
+
+    assert [e["event"] for e in events] == ["first", "second"], (
+        f"append_event must produce oldest-first order; got "
+        f"{[e['event'] for e in events]}"
+    )
+    # And confirm the tail-slice consumers (context_builder.py:219/223/87) get
+    # the most recent events when they take [-N:].
+    assert events[-1]["event"] == "second"
+    assert events[-2]["event"] == "first"
+
+
+@pytest.mark.parametrize("store_factory", STORE_FACTORIES)
+@pytest.mark.asyncio
 async def test_session_cleanup(store_factory):
     store = store_factory()
     session_id = "contract_sess_5"
@@ -123,3 +182,52 @@ async def test_factory_get_session_store():
     custom = MemorySessionStore()
     set_active_session_store(custom)
     assert get_session_store() is custom
+
+
+def test_factory_selects_backend_from_settings_use_redis(monkeypatch):
+    """REVIEW-P1-6: the seam used to gate on settings.REDIS_ENABLED (which
+    does not exist) and then try to import a name the redis module doesn't
+    export, so the `except Exception` fallback always returned memory even
+    when USE_REDIS=True. Verify the seam now honors the real config flag.
+    """
+    import fakeredis.aioredis
+
+    from app.services import session_data_protocol
+    from app.services.session_data_redis import RedisSessionDataManager
+
+    # Wire the factory to an injected fakeredis so USE_REDIS=True doesn't
+    # try to reach a real Redis server.
+    fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=False)
+    use_redis = {"value": False}  # mutable so the factory closure reads it
+
+    def _factory_with_fake():
+        from app.services.session_data import MemorySessionStore
+
+        if use_redis["value"]:
+            return RedisSessionDataManager(
+                redis_url="redis://unused", redis=fake_redis
+            )
+        return MemorySessionStore()
+
+    monkeypatch.setattr(
+        "app.services.session_data.create_session_data_manager",
+        _factory_with_fake,
+    )
+
+    # Force a fresh singleton so the factory re-runs.
+    session_data_protocol._active_store = None
+    use_redis["value"] = False
+    store = get_session_store()
+    assert not isinstance(store, RedisSessionDataManager), (
+        f"USE_REDIS=False must not yield a Redis store, got {type(store).__name__}"
+    )
+
+    session_data_protocol._active_store = None
+    use_redis["value"] = True
+    store = get_session_store()
+    assert isinstance(store, RedisSessionDataManager), (
+        f"USE_REDIS=True should yield RedisSessionDataManager, got {type(store).__name__}"
+    )
+
+    # Reset for following tests.
+    session_data_protocol._active_store = None

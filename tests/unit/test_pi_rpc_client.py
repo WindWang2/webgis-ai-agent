@@ -86,3 +86,66 @@ async def test_pi_rpc_client_process_died_flag():
     await client._read_responses()
 
     assert client.process_died is True
+
+
+async def test_pi_rpc_client_fail_all_pending_resolves_futures():
+    """REVIEW-P1-3 / AGENT-05 regression: fail_all_pending must resolve any
+    still-pending request future with PiRpcError. Without this, an in-flight
+    prompt that gets aborted sits waiting for a response that will never come
+    and the stream consumer hangs the full 30s timeout.
+    """
+    client = PiRpcClient()
+
+    f1 = asyncio.get_running_loop().create_future()
+    f2 = asyncio.get_running_loop().create_future()
+    client._pending_requests["1"] = f1
+    client._pending_requests["2"] = f2
+
+    client.fail_all_pending("abort requested")
+
+    assert f1.done() and f1.exception() is not None
+    assert f2.done() and f2.exception() is not None
+    assert "abort requested" in str(f1.exception())
+    assert client._pending_requests == {}
+
+
+async def test_pi_bridge_abort_calls_rpc_and_fails_pending():
+    """REVIEW-P1-3 regression: chat.py:320 calls `pi_bridge.abort()` during
+    session deletion. ADR-0031 removed the method, leaving the call to
+    AttributeError into a swallowed `except Exception` — the in-flight Pi
+    prompt kept consuming tokens and writing files after deletion.
+
+    Verify the bridge now (a) calls request("abort") on the RPC client and
+    (b) fails any in-flight prompt future, so stream consumers don't sit
+    waiting for a response that will never come.
+    """
+    from unittest.mock import AsyncMock
+
+    from app.agent_pi_bridge import PiBridge
+    from app.services.chat.pi_rpc_client import PiRpcError
+
+    bridge = PiBridge.__new__(PiBridge)  # skip __init__ — we mock _rpc directly
+    rpc = AsyncMock()
+    rpc.request = AsyncMock(return_value={"ok": True})
+    # fail_all_pending is sync; AsyncMock returns a coroutine when called
+    # unless we use a plain MagicMock for it.
+    from unittest.mock import MagicMock
+
+    rpc.fail_all_pending = MagicMock()
+    bridge._rpc = rpc
+
+    # Seed a pending future as if a `prompt` call was awaiting a response.
+    pending = asyncio.get_running_loop().create_future()
+    rpc.fail_all_pending.side_effect = lambda reason: pending.set_exception(
+        PiRpcError(reason)
+    )
+
+    result = await bridge.abort()
+
+    rpc.request.assert_awaited_once_with("abort")
+    rpc.fail_all_pending.assert_called_once_with("abort requested")
+    assert result == {"ok": True}
+    assert pending.done()
+    assert isinstance(pending.exception(), PiRpcError)
+    assert "abort requested" in str(pending.exception())
+

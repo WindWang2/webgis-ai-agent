@@ -245,6 +245,12 @@ class PiRpcClient:
                 future.set_exception(PiRpcError(reason))
         self._pending_requests.clear()
 
+    def fail_all_pending(self, reason: str) -> None:
+        """Public version of _fail_all_pending. Used by PiBridge.abort() so
+        in-flight `prompt` futures resolve with PiRpcError instead of timing
+        out 30s later. Same semantics as _fail_all_pending."""
+        self._fail_all_pending(reason)
+
     async def request(self, command: str, data: Optional[dict] = None) -> Any:
         """Send a JSON-RPC request to Pi and wait for the multiplexed response.
 

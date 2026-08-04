@@ -23,7 +23,13 @@ class RedisSessionStore(BaseSessionStore):
 
     """Session-level data store backed by Redis with cursor support (LRU)."""
 
-    def __init__(self, redis_url: str, capacity: int = 200, socket_timeout: float = 5.0):
+    def __init__(
+        self,
+        redis_url: str,
+        capacity: int = 200,
+        socket_timeout: float = 5.0,
+        redis: Optional[aioredis.Redis] = None,
+    ):
         # 审计 TEST-13：不要在此创建 Redis 客户端。Redis.from_url 返回的客户端在
         # 第一次 async 操作时会把它内部的连接池绑定到当时的 event loop；而本单例在
         # 模块 import 时就构造（session_data_manager = create_session_data_manager()），
@@ -33,7 +39,10 @@ class RedisSessionStore(BaseSessionStore):
         # 改为懒构造：存配置，首次 async 调用时由 _ensure_connected() 在正确的 loop 上创建。
         self._redis_url = redis_url
         self._socket_timeout = socket_timeout
-        self._r: Optional[aioredis.Redis] = None
+        # 测试注入：允许测试套件传入一个已经构造好的客户端（例如 fakeredis）。
+        # 跳过 lazy 构造，避免 `redis_url` 与注入的客户端不一致。生产路径不传此参数。
+        self._injected_redis = redis
+        self._r: Optional[aioredis.Redis] = redis
         self._bound_loop: Optional[asyncio.AbstractEventLoop] = None
         self.capacity = capacity
 
@@ -51,6 +60,10 @@ class RedisSessionStore(BaseSessionStore):
             loop = asyncio.get_running_loop()
         except RuntimeError:
             loop = None
+
+        # 测试注入：注入的客户端在构造时已绑定，不需要懒构造或重连。
+        if self._injected_redis is not None:
+            return self._injected_redis
 
         # 如果客户端已存在且绑定的 loop 仍是当前 loop，复用
         if self._r is not None and self._bound_loop is not None and self._bound_loop is loop:
@@ -414,8 +427,11 @@ class RedisSessionStore(BaseSessionStore):
         try:
             async with self._r.pipeline() as pipe:
                 key = self._events_key(session_id)
-                pipe.lpush(key, entry)
-                pipe.ltrim(key, 0, MAX_EVENTS - 1)
+                # rpush 保持与 memory (deque.append) 相同的"最旧在前"时序。
+                # 消费方按 [-3:]/[-5:] 从尾部切片，所以"最旧在前"才能拿到最新 N 条；
+                # lpush 会让 Redis 的事件序列与 memory 倒置。
+                pipe.rpush(key, entry)
+                pipe.ltrim(key, -MAX_EVENTS, -1)
                 pipe.expire(key, EVENTS_TTL)
                 pipe.sadd(self._active_key(), session_id)
                 self._refresh_session_ttl(pipe, session_id)

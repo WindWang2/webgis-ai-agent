@@ -311,6 +311,27 @@ class PiBridge:
         """Stop the Pi subprocess (delegates to the RPC client)."""
         await self._rpc.stop()
 
+    async def abort(self) -> dict:
+        """Abort the currently-running Pi prompt (fire-and-forget from callers).
+
+        BUG-18 fix re-added: ADR-0031 F3 extraction removed the abort wrapper,
+        leaving chat.py:320's `await pi_bridge.abort()` to AttributeError into
+        a swallowed `except Exception` — the in-flight prompt kept consuming
+        tokens and writing files after session deletion.
+
+        The RPC client's `request("abort")` matches vendor/pi's rpc-mode.js
+        `case "abort"` handler. Failures (no process, RPC error) propagate;
+        callers wrap in try/except because abort must never block the cleanup
+        path that follows.
+        """
+        result = await self._rpc.request("abort")
+        # Cancel any pending request future the client hasn't resolved yet.
+        # Without this, an in-flight `prompt` would keep waiting for its
+        # response up to the stream timeout (30s) and then emit a generic
+        # timeout error to the user instead of a clean cancellation.
+        self._rpc.fail_all_pending("abort requested")
+        return result or {}
+
     async def prompt(self, message: str, session_id: Optional[str] = None) -> dict:
         """Send a prompt to Pi agent (non-streaming).
 
