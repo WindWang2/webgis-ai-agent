@@ -11,11 +11,12 @@ from app.services.rs.band_math import (
     compute_hillshade,
     compute_raster_stats,
 )
-from app.services.rs.spectral_engine import SpectralRasterEngine, spectral_engine
+from app.services.rs.spectral_engine import SpectralRasterEngine, spectral_engine, RemoteSensingService
 
 __all__ = [
     "SpectralRasterEngine",
     "spectral_engine",
+    "RemoteSensingService",
     "RasterAnalysisResult",
     "INDEX_FORMULAS",
     "compute_index_array",
@@ -24,3 +25,4 @@ __all__ = [
     "compute_hillshade",
     "compute_raster_stats",
 ]
+

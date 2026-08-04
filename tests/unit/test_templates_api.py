@@ -3,15 +3,23 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.models.db_model import CartographyTemplate
 from app.core.database import SessionLocal, Base, Engine
+from app.core.auth import create_access_token
 from app.tools.registry import ToolRegistry
 from app.tools.templates import register_template_tools
 
 client = TestClient(app)
 
+user_token = create_access_token({"sub": "user_123", "role": "viewer"})
+user_headers = {"Authorization": f"Bearer {user_token}"}
+
+other_user_token = create_access_token({"sub": "user_456", "role": "viewer"})
+other_user_headers = {"Authorization": f"Bearer {other_user_token}"}
+
 
 @pytest.fixture(autouse=True)
 def setup_db():
-    """Ensure database tables exist and clean up user templates."""
+    """Ensure database tables exist, clean up user templates, and clear dependency overrides."""
+    app.dependency_overrides.clear()
     Base.metadata.create_all(Engine)
     db = SessionLocal()
     try:
@@ -22,12 +30,28 @@ def setup_db():
 
     yield
 
+    app.dependency_overrides.clear()
     db = SessionLocal()
     try:
         db.query(CartographyTemplate).filter(CartographyTemplate.is_builtin == False).delete()
         db.commit()
     finally:
         db.close()
+
+
+def test_create_user_template_unauthenticated_fails():
+    """Test POST /templates without auth returns 401 Unauthorized."""
+    req_data = {
+        "name": "未认证模板",
+        "kind": "symbology",
+        "payload": {
+            "mode": "single",
+            "geometry": "Polygon",
+            "style": {"fill_color": "#1d4ed8", "opacity": 0.85, "stroke_color": "#1e3a8a", "stroke_width": 2.0},
+        },
+    }
+    response = client.post("/api/v1/templates", json=req_data)
+    assert response.status_code == 401
 
 
 def test_create_user_template_success():
@@ -49,12 +73,13 @@ def test_create_user_template_success():
         },
     }
 
-    response = client.post("/api/v1/templates", json=req_data)
+    response = client.post("/api/v1/templates", json=req_data, headers=user_headers)
     assert response.status_code == 201, response.text
     data = response.json()
     assert data["name"] == "自定义蓝色行政区"
     assert data["kind"] == "symbology"
     assert data["is_builtin"] is False
+    assert data["creator_id"] == "user_123"
     assert data["id"].startswith("tmpl_user_")
 
 
@@ -70,7 +95,7 @@ def test_create_user_template_invalid_payload():
         },
     }
 
-    response = client.post("/api/v1/templates", json=req_data)
+    response = client.post("/api/v1/templates", json=req_data, headers=user_headers)
     assert response.status_code == 422
 
 
@@ -86,7 +111,7 @@ async def test_user_template_appears_in_list_templates():
             "vectorStyleUrl": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
         },
     }
-    post_res = client.post("/api/v1/templates", json=req_data)
+    post_res = client.post("/api/v1/templates", json=req_data, headers=user_headers)
     assert post_res.status_code == 201
 
     # Check GET endpoint
@@ -105,13 +130,35 @@ async def test_user_template_appears_in_list_templates():
 
 def test_delete_built_in_template_forbidden():
     """Test deleting built-in template returns 403 Forbidden."""
-    response = client.delete("/api/v1/templates/tmpl_bm_positron")
+    response = client.delete("/api/v1/templates/tmpl_bm_positron", headers=user_headers)
     assert response.status_code == 403
     assert "built-in" in response.json()["detail"].lower()
 
 
+def test_delete_user_template_forbidden_for_other_user():
+    """Test that user B cannot delete template created by user A."""
+    req_data = {
+        "name": "用户A的模板",
+        "kind": "layout",
+        "payload": {
+            "paperSize": "A4",
+            "orientation": "landscape",
+            "showLegend": True,
+            "showNorthArrow": True,
+            "showScaleBar": True,
+            "showGrid": False,
+        },
+    }
+    post_res = client.post("/api/v1/templates", json=req_data, headers=user_headers)
+    tmpl_id = post_res.json()["id"]
+
+    del_res = client.delete(f"/api/v1/templates/{tmpl_id}", headers=other_user_headers)
+    assert del_res.status_code == 403
+    assert "authorized" in del_res.json()["detail"].lower()
+
+
 def test_delete_user_template_success():
-    """Test deleting user-created template succeeds with 200."""
+    """Test deleting user-created template succeeds with 200 for the creator."""
     req_data = {
         "name": "临时模板",
         "kind": "layout",
@@ -124,9 +171,9 @@ def test_delete_user_template_success():
             "showGrid": False,
         },
     }
-    post_res = client.post("/api/v1/templates", json=req_data)
+    post_res = client.post("/api/v1/templates", json=req_data, headers=user_headers)
     tmpl_id = post_res.json()["id"]
 
-    del_res = client.delete(f"/api/v1/templates/{tmpl_id}")
+    del_res = client.delete(f"/api/v1/templates/{tmpl_id}", headers=user_headers)
     assert del_res.status_code == 200
     assert del_res.json()["status"] == "deleted"

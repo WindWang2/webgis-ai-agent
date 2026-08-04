@@ -1,4 +1,4 @@
-import maplibregl from 'maplibre-gl';
+import type { GeoJSONSource, Map } from 'maplibre-gl';
 import { useHudStore } from '@/lib/store/useHudStore';
 
 // R8 annotation source: 单一 FeatureCollection 收纳 add_marker / draw_measurement 输出。
@@ -13,7 +13,7 @@ export const ANNOTATION_SOURCE_ID = 'claude-annotations';
  */
 export function annotationFC() {
   const annotations = useHudStore.getState().annotations;
-  return { type: 'FeatureCollection', features: annotations.slice() };
+  return { type: 'FeatureCollection' as const, features: annotations.slice() };
 }
 
 /**
@@ -22,9 +22,9 @@ export function annotationFC() {
  * Extracted verbatim from map-action-handler.tsx. Shared between the annotation
  * slice and the component's annotation-refresh useEffect.
  */
-export function ensureAnnotationLayers(map: any) {
+export function ensureAnnotationLayers(map: Map) {
   if (!map.getSource(ANNOTATION_SOURCE_ID)) {
-    map.addSource(ANNOTATION_SOURCE_ID, { type: 'geojson', data: annotationFC() });
+    map.addSource(ANNOTATION_SOURCE_ID, { type: 'geojson', data: annotationFC() as any });
   }
   if (!map.getLayer(`${ANNOTATION_SOURCE_ID}-fill`)) {
     map.addLayer({
@@ -85,8 +85,8 @@ export function ensureAnnotationLayers(map: any) {
  * Extracted verbatim from map-action-handler.tsx. Shared between the annotation
  * slice and the component's annotation-refresh useEffect.
  */
-export function refreshAnnotations(map: any) {
-  const src = map.getSource(ANNOTATION_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+export function refreshAnnotations(map: Map) {
+  const src = map.getSource(ANNOTATION_SOURCE_ID) as GeoJSONSource | undefined;
   if (src && typeof (src as any).setData === 'function') {
     src.setData(annotationFC() as any);
   }

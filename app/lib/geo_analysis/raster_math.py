@@ -1,6 +1,6 @@
 """Raster math operations: reclassify, calculator, resample."""
-import enum
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -30,19 +30,27 @@ def rasterio_env():
         yield
 
 
-class ResamplingMethod(enum.Enum):
-    """Supported raster resampling methods."""
-    NEAREST = Resampling.nearest
-    BILINEAR = Resampling.bilinear
-    CUBIC = Resampling.cubic
-    MODE = Resampling.mode
-    AVERAGE = Resampling.average
+RESAMPLING_MAP = {
+    "nearest": Resampling.nearest,
+    "bilinear": Resampling.bilinear,
+    "cubic": Resampling.cubic,
+    "mode": Resampling.mode,
+    "average": Resampling.average,
+    "lanczos": Resampling.lanczos,
+    "med": Resampling.med,
+    "min": Resampling.min,
+    "max": Resampling.max,
+    "sum": Resampling.sum,
+    "q1": Resampling.q1,
+    "q3": Resampling.q3,
+}
+
 
 
 # ─── Shared helpers ──────────────────────────────────────────────
 
 
-def _gtiff_profile(src_profile: dict, nodata: Optional[float] = None) -> dict:
+def _gtiff_profile(src_profile: dict, nodata: Optional[float] = None, count: int = 1) -> dict:
     """Build a compressed, tiled GTiff write profile from a source raster profile."""
     profile = src_profile.copy()
     profile.update({
@@ -51,6 +59,7 @@ def _gtiff_profile(src_profile: dict, nodata: Optional[float] = None) -> dict:
         "tiled": True,
         "blockxsize": 256,
         "blockysize": 256,
+        "count": count,
     })
     if nodata is not None:
         profile["nodata"] = nodata
@@ -58,15 +67,9 @@ def _gtiff_profile(src_profile: dict, nodata: Optional[float] = None) -> dict:
 
 
 def _suffix_output_path(raster_path: str, suffix: str) -> str:
-    """Append a suffix before the .tif extension, avoiding collisions."""
-    if raster_path.endswith(".tif"):
-        out_path = raster_path[:-4] + suffix
-    else:
-        out_path = raster_path + suffix
-    # Guard against path.replace producing the same string (e.g., already suffixed)
-    if out_path == raster_path:
-        out_path = raster_path + suffix
-    return out_path
+    """Append a suffix before the file extension, avoiding collisions."""
+    p = Path(raster_path)
+    return str(p.parent / f"{p.stem}{suffix}")
 
 
 def _validate_scheme(scheme: list[dict]) -> None:
@@ -78,6 +81,8 @@ def _validate_scheme(scheme: list[dict]) -> None:
             raise ValueError(f"scheme[{i}] missing required 'value' key")
         if "min" not in rule and "max" not in rule:
             raise ValueError(f"scheme[{i}] must have 'min' and/or 'max'")
+        if "min" in rule and "max" in rule and rule["min"] > rule["max"]:
+            raise ValueError(f"scheme[{i}] 'min' ({rule['min']}) cannot be greater than 'max' ({rule['max']})")
 
 
 # ─── Operations ──────────────────────────────────────────────────
@@ -100,48 +105,62 @@ def reclassify(
         dict with output_path, stats, and metadata.
     """
     _validate_scheme(scheme)
-    scheme = sorted(scheme, key=lambda s: s.get("min", -float("inf")))
     out_path = _suffix_output_path(raster_path, "_reclassified.tif")
 
     with rasterio.open(raster_path) as src:
         data = src.read(1)
-        profile = _gtiff_profile(src.profile, nodata)
-        out_nodata = nodata if nodata is not None else (profile.get("nodata", 0))
+        src_nodata = src.nodata if src.nodata is not None else src.profile.get("nodata")
 
-        # BUG-10: derive output dtype from the scheme's reclass values so that
-        # float values aren't silently truncated when the source raster is, e.g.,
-        # uint8. result_type finds a common dtype for all values; promote_types
-        # widens it further if the source carries a larger integer dtype.
+        if nodata is not None:
+            out_nodata = nodata
+        elif src_nodata is not None:
+            out_nodata = src_nodata
+        else:
+            out_nodata = 0
+
+        profile = _gtiff_profile(src.profile, nodata=out_nodata, count=1)
+
         scheme_values = [r.get("value", 0) for r in scheme]
-        out_dtype = np.result_type(*scheme_values) if scheme_values else data.dtype
-        out_dtype = np.promote_types(out_dtype, data.dtype)
-        # The nodata fill must be representable in the chosen dtype.
-        if not np.can_cast(type(out_nodata), out_dtype):
-            out_dtype = np.promote_types(out_dtype, np.array([out_nodata]).dtype)
+        out_dtype = np.result_type(*scheme_values, out_nodata) if scheme_values else np.result_type(out_nodata)
+
         profile["dtype"] = out_dtype
         out_data = np.full_like(data, fill_value=out_nodata, dtype=out_dtype)
+
+        assigned = np.zeros(data.shape, dtype=bool)
+        if src_nodata is not None:
+            assigned[data == src_nodata] = True
 
         for rule in scheme:
             rmin = rule.get("min", -float("inf"))
             rmax = rule.get("max", float("inf"))
             rval = rule["value"]
-            mask = (data >= rmin) & (data <= rmax) & (data != profile.get("nodata"))
-            out_data[mask] = rval
+            rule_mask = (data >= rmin) & (data <= rmax)
+            if src_nodata is not None:
+                rule_mask = rule_mask & (data != src_nodata)
+
+            match_mask = rule_mask & (~assigned)
+            out_data[match_mask] = rval
+            assigned[match_mask] = True
 
         with rasterio.open(out_path, "w", **profile) as dst:
             dst.write(out_data, 1)
 
-    unique_vals = np.unique(out_data[out_data != out_nodata])
+    if isinstance(out_nodata, float) and np.isnan(out_nodata):
+        valid_mask = ~np.isnan(out_data)
+    else:
+        valid_mask = (out_data != out_nodata)
+
+    unique_vals = np.unique(out_data[valid_mask])
     label_map = {rule["value"]: rule.get("label", str(rule["value"])) for rule in scheme}
-    # BUG-10: preserve float values when the output dtype is float; only cast
-    # to int for integer outputs (avoids silently dropping fractional classes).
+
     if np.issubdtype(out_data.dtype, np.integer):
         unique_value_list = [int(v) for v in unique_vals]
     else:
         unique_value_list = [float(v) for v in unique_vals]
+
     stats = {
         "output_path": out_path,
-        "pixel_count": int((out_data != out_nodata).sum()),
+        "pixel_count": int(valid_mask.sum()),
         "unique_values": unique_value_list,
         "labels": {str(k): v for k, v in label_map.items() if k in unique_vals},
     }
@@ -174,40 +193,75 @@ def raster_calculator(
 
     with rasterio.open(raster_a) as src_a:
         data_a = src_a.read(1)
-        profile = _gtiff_profile(src_a.profile)
-        nodata_a = profile.get("nodata")
+        nodata_a = src_a.nodata if src_a.nodata is not None else src_a.profile.get("nodata")
 
         if raster_b:
             with rasterio.open(raster_b) as src_b:
-                data_b = src_b.read(1).astype(data_a.dtype)
-                if src_b.shape != src_a.shape:
-                    data_b = np.broadcast_to(data_b, src_a.shape).copy()
-                nodata_b = src_b.profile.get("nodata", nodata_a)
+                nodata_b = src_b.nodata if src_b.nodata is not None else src_b.profile.get("nodata", nodata_a)
+                if (src_b.crs != src_a.crs) or (src_b.transform != src_a.transform) or (src_b.shape != src_a.shape):
+                    fill_b = nodata_b if nodata_b is not None else 0
+                    data_b = np.full(src_a.shape, fill_value=fill_b, dtype=src_b.dtypes[0])
+                    gcps_b, gcps_crs_b = src_b.gcps if src_b.gcps else (None, None)
+                    reproject_kwargs = {
+                        "source": rasterio.band(src_b, 1),
+                        "destination": data_b,
+                        "dst_transform": src_a.transform,
+                        "dst_crs": src_a.crs,
+                        "resampling": Resampling.nearest,
+                        "src_nodata": nodata_b,
+                        "dst_nodata": fill_b,
+                    }
+                    if gcps_b:
+                        reproject_kwargs["gcps"] = gcps_b
+                        reproject_kwargs["gcps_crs"] = gcps_crs_b
+                        reproject_kwargs["src_crs"] = gcps_crs_b or src_b.crs
+                    else:
+                        reproject_kwargs["src_transform"] = src_b.transform
+                        reproject_kwargs["src_crs"] = src_b.crs
+
+                    reproject(**reproject_kwargs)
+                else:
+                    data_b = src_b.read(1)
         else:
-            data_b = np.full_like(data_a, fill_value=constant if constant is not None else 0, dtype=data_a.dtype)
+            const_val = constant if constant is not None else 0
+            data_b = np.full_like(data_a, fill_value=const_val, dtype=data_a.dtype)
             nodata_b = nodata_a
 
-        # Use each raster's own nodata for masking (fix: was using nodata_a for both)
-        mask = (data_a != nodata_a) & (data_b != nodata_b)
         if nodata is None:
             out_nodata = nodata_a if nodata_a is not None else 0
         else:
             out_nodata = nodata
 
+        if nodata_a is not None:
+            mask_a = (data_a != nodata_a)
+        else:
+            mask_a = np.ones(src_a.shape, dtype=bool)
+
+        if raster_b and nodata_b is not None:
+            mask_b = (data_b != nodata_b)
+        else:
+            mask_b = np.ones(src_a.shape, dtype=bool)
+
+        mask = mask_a & mask_b
+
         valid_a = np.where(mask, data_a, 0)
         valid_b = np.where(mask, data_b, 0)
         result = ne.evaluate(expression, local_dict={"A": valid_a, "B": valid_b})
-        # BUG-11: division-by-zero (e.g. "(A-B)/(A+B)" with A+B==0) yields inf/nan;
-        # sanitize to nodata so the non-finite values don't propagate downstream.
+
         result = np.where(np.isfinite(result), result, out_nodata)
         result = np.where(mask, result, out_nodata)
-        result = result.astype(data_a.dtype)
 
-        profile.update({"nodata": out_nodata})
+        profile = _gtiff_profile(src_a.profile, nodata=out_nodata, count=1)
+        profile["dtype"] = result.dtype
+
         with rasterio.open(out_path, "w", **profile) as dst:
             dst.write(result, 1)
 
-    valid = result[result != out_nodata]
+    if isinstance(out_nodata, float) and np.isnan(out_nodata):
+        valid = result[~np.isnan(result)]
+    else:
+        valid = result[result != out_nodata]
+
     stats = {
         "output_path": out_path,
         "expression": expression,
@@ -236,42 +290,56 @@ def resample_raster(
     Returns:
         dict with output_path, new_shape, new_transform, and metadata.
     """
-    _RESAMPLING_METHODS = {
-        ResamplingMethod.NEAREST: Resampling.nearest,
-        ResamplingMethod.BILINEAR: Resampling.bilinear,
-        ResamplingMethod.CUBIC: Resampling.cubic,
-        ResamplingMethod.MODE: Resampling.mode,
-        ResamplingMethod.AVERAGE: Resampling.average,
-    }
-    method = ResamplingMethod(resampling.lower())
-    resampling_method = _RESAMPLING_METHODS[method]
+    res_key = resampling.lower()
+    if res_key not in RESAMPLING_MAP:
+        raise ValueError(f"Unsupported resampling method: '{resampling}'. Valid options: {list(RESAMPLING_MAP.keys())}")
+    resampling_method = RESAMPLING_MAP[res_key]
 
     out_path = _suffix_output_path(raster_path, "_resampled.tif")
 
     with rasterio.open(raster_path) as src:
-        dst_crs = target_crs if target_crs else src.crs
-        transform, width, height = calculate_default_transform(
-            src.crs, dst_crs, src.width, src.height, *src.bounds, resolution=target_resolution
-        )
-        profile = _gtiff_profile(src.profile)
+        gcps, gcps_crs = src.gcps if src.gcps else (None, None)
+        src_crs = gcps_crs or src.crs
+        dst_crs = target_crs if target_crs else src_crs
+
+        if gcps:
+            transform, width, height = calculate_default_transform(
+                src_crs, dst_crs, src.width, src.height, gcps=gcps, resolution=target_resolution
+            )
+        else:
+            transform, width, height = calculate_default_transform(
+                src_crs, dst_crs, src.width, src.height, *src.bounds, resolution=target_resolution
+            )
+
+        profile = _gtiff_profile(src.profile, count=src.count)
         profile.update({
             "crs": dst_crs,
             "transform": transform,
             "width": width,
             "height": height,
         })
+        src_nodata = src.nodata if src.nodata is not None else src.profile.get("nodata")
+        dst_nodata = profile.get("nodata")
 
         with rasterio.open(out_path, "w", **profile) as dst:
             for i in range(1, src.count + 1):
-                reproject(
-                    source=rasterio.band(src, i),
-                    destination=rasterio.band(dst, i),
-                    src_transform=src.transform,
-                    src_crs=src.crs,
-                    dst_transform=transform,
-                    dst_crs=dst_crs,
-                    resampling=resampling_method,
-                )
+                reproject_kwargs = {
+                    "source": rasterio.band(src, i),
+                    "destination": rasterio.band(dst, i),
+                    "src_crs": src_crs,
+                    "dst_transform": transform,
+                    "dst_crs": dst_crs,
+                    "resampling": resampling_method,
+                    "src_nodata": src_nodata,
+                    "dst_nodata": dst_nodata,
+                }
+                if gcps:
+                    reproject_kwargs["gcps"] = gcps
+                    reproject_kwargs["gcps_crs"] = gcps_crs
+                else:
+                    reproject_kwargs["src_transform"] = src.transform
+
+                reproject(**reproject_kwargs)
 
     return {
         "output_path": out_path,
@@ -280,3 +348,4 @@ def resample_raster(
         "new_shape": [height, width],
         "resampling": resampling,
     }
+

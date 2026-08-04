@@ -27,7 +27,7 @@ function makeMockMap() {
     getSource(id: string) { return sources[id]; },
     getLayer(id: string) { return layers.find((l) => l.id === id); },
     addSource(id: string, def: any) {
-      sources[id] = def;
+      sources[id] = { ...def, setData: vi.fn() };
       calls.addSource.push({ id, def });
     },
     removeSource(id: string) {
@@ -74,8 +74,8 @@ describe("MapSpecRuntime (ADR-0036)", () => {
       const rt = new MapSpecRuntime(map);
       rt.reconcile(pointSpec());
 
-      expect(map._calls.addSource.map((c) => c.id)).toEqual(["L1"]);
-      expect(map._calls.addLayer.map((c) => c.def.id)).toEqual(["L1__point"]);
+      expect(map._calls.addSource.map((c: any) => c.id)).toEqual(["L1"]);
+      expect(map._calls.addLayer.map((c: any) => c.def.id)).toEqual(["L1__point"]);
       expect(rt.getAppliedSpec()).toEqual(pointSpec());
     });
 
@@ -162,7 +162,7 @@ describe("MapSpecRuntime (ADR-0036)", () => {
       rt.reconcile(changed);
 
       expect(map._calls.removeLayer).toEqual(["L1__point"]);
-      expect(map._calls.addLayer.map((c) => c.def.id)).toEqual(["L1__point"]);
+      expect(map._calls.addLayer.map((c: any) => c.def.id)).toEqual(["L1__point"]);
       expect(map._calls.addLayer[0].def.paint["circle-radius"]).toBe(99);
     });
   });
@@ -181,7 +181,7 @@ describe("MapSpecRuntime (ADR-0036)", () => {
       loaded = true;
       await vi.advanceTimersByTimeAsync(150);
 
-      expect(map._calls.addSource.map((c) => c.id)).toEqual(["L1"]);
+      expect(map._calls.addSource.map((c: any) => c.id)).toEqual(["L1"]);
       vi.useRealTimers();
     });
   });
@@ -225,6 +225,26 @@ describe("MapSpecRuntime (ADR-0036)", () => {
     it("returns null before the first successful reconcile", () => {
       const rt = new MapSpecRuntime(map);
       expect(rt.getAppliedSpec()).toBeNull();
+    });
+  });
+
+  describe("invalidateStyle", () => {
+    it("resets appliedSpec to null so next reconcile re-applies all sources and layers", () => {
+      const rt = new MapSpecRuntime(map);
+      rt.reconcile(pointSpec());
+      expect(rt.getAppliedSpec()).not.toBeNull();
+      map._calls.addSource.length = 0;
+      map._calls.addLayer.length = 0;
+
+      // Simulate MapLibre clearing existing sources/layers when base style changes
+      delete map._sources["L1"];
+
+      rt.invalidateStyle();
+      expect(rt.getAppliedSpec()).toBeNull();
+
+      rt.reconcile(pointSpec());
+      expect(map._calls.addSource.map((c: any) => c.id)).toEqual(["L1"]);
+      expect(map._calls.addLayer.map((c: any) => c.def.id)).toEqual(["L1__point"]);
     });
   });
 });

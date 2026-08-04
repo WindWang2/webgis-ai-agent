@@ -67,7 +67,7 @@ describe("TemplateGallery Component", () => {
 
   it("symbology apply without selected layer shows prompt", async () => {
     // Ensure no layer selected
-    useHudStore.setState({ selectedLayerId: null, layers: [] });
+    useHudStore.setState({ layers: [] });
 
     render(<TemplateGallery {...defaultProps} />);
 

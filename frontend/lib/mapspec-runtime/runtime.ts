@@ -36,6 +36,14 @@ export class MapSpecRuntime {
   }
 
   /**
+   * Invalidate the last-applied spec state (e.g. when base style changes).
+   * Next reconcile will treat all sources/layers as new and re-apply them.
+   */
+  invalidateStyle(): void {
+    this.appliedSpec = null;
+  }
+
+  /**
    * Diff `nextSpec` against the last-applied spec and apply the minimal patch.
    * If the map style isn't loaded yet, schedules a retry (owning the loop that
    * was previously 3 React refs in map-panel.tsx).
@@ -79,18 +87,18 @@ export class MapSpecRuntime {
     for (const change of patch.sources) {
       if (change.kind === "remove") {
         this.removeSourceSafe(change.id);
-      } else if (change.kind === "add" || change.kind === "update") {
+      } else if ((change.kind === "add" || change.kind === "update") && change.next) {
         // add/update both route through the idempotent renderer helpers (they
         // carry the F28/F31 cache logic). Tile-URL sources carry no cache state
         // and addRasterTileSource is itself idempotent.
-        this.applySource(change.id, change.next!);
+        this.applySource(change.id, change.next);
       }
     }
 
     // --- layers (add + recompile re-add) ---
     for (const change of patch.layers) {
-      if (change.kind === "add" || change.kind === "recompile") {
-        this.addLayerSafe(change.next!);
+      if ((change.kind === "add" || change.kind === "recompile") && change.next) {
+        this.addLayerSafe(change.next);
       }
     }
 
@@ -135,10 +143,13 @@ export class MapSpecRuntime {
       );
     } else if (source.inlineData) {
       renderer.addGeoJsonSource(this.map, id, source.inlineData);
-    } else if (source.url || source.dataPath) {
-      // Tile URL source (raster/tile layer). The adapter emits this shape for
-      // string-sourced layers. addRasterTileSource is idempotent (no-op if exists).
-      renderer.addRasterTileSource(this.map, id, source.url || source.dataPath!);
+    } else {
+      const tileUrl = source.url || source.dataPath;
+      if (tileUrl) {
+        // Tile URL source (raster/tile layer). The adapter emits this shape for
+        // string-sourced layers. addRasterTileSource is idempotent (no-op if exists).
+        renderer.addRasterTileSource(this.map, id, tileUrl);
+      }
     }
     // else: nothing to apply (empty fallback source already added? skip).
   }

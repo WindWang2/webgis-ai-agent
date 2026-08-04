@@ -1,10 +1,9 @@
 import json
-from typing import Any
+from typing import Any, Optional
 import geopandas as gpd
 from shapely.geometry import shape
 
 from dataclasses import dataclass
-from typing import Optional
 
 # Re-export coordinate transform functions from the canonical module
 # (app/utils/coord_transform.py). Duplicate implementations removed below.
@@ -58,34 +57,63 @@ class GeoAnalysisResult:
 def _repair_json(s: str) -> str:
     """Very simple JSON repair: adds missing closing brackets/braces."""
     stack = []
+    in_string = False
+    escaped = False
     for char in s:
-        if char == '{':
-            stack.append('}')
-        elif char == '[':
-            stack.append(']')
-        elif char == '}':
-            if stack and stack[-1] == '}':
-                stack.pop()
-        elif char == ']':
-            if stack and stack[-1] == ']':
-                stack.pop()
-    return s + "".join(reversed(stack))
+        if escaped:
+            escaped = False
+            continue
+        if char == '\\' and in_string:
+            escaped = True
+        elif char == '"':
+            in_string = not in_string
+        elif not in_string:
+            if char == '{':
+                stack.append('}')
+            elif char == '[':
+                stack.append(']')
+            elif char == '}':
+                if stack and stack[-1] == '}':
+                    stack.pop()
+            elif char == ']':
+                if stack and stack[-1] == ']':
+                    stack.pop()
+    suffix = '"' if in_string else ''
+    return s + suffix + "".join(reversed(stack))
 
-def safe_parse(geojson: Any) -> dict | None:
-    """Robust parsing of GeoJSON string or dict."""
+def safe_parse(geojson: Any) -> dict | list | None:
+    """Robust parsing of GeoJSON string, dict, or feature list."""
+    if geojson is None:
+        return None
     if isinstance(geojson, dict):
         return geojson
+    if isinstance(geojson, list):
+        if not geojson or all(isinstance(x, dict) for x in geojson):
+            return geojson
+        return None
     if isinstance(geojson, str):
         geojson = geojson.strip()
-        if not geojson:
+        if not geojson or geojson.startswith("ref:"):
             return None
         try:
-            return json.loads(geojson)
+            parsed = json.loads(geojson)
+            if isinstance(parsed, dict):
+                return parsed
+            if isinstance(parsed, list):
+                if not parsed or all(isinstance(x, dict) for x in parsed):
+                    return parsed
+            return None
         except (json.JSONDecodeError, TypeError):
             # Try simple repair for truncated strings
             try:
                 repaired = _repair_json(geojson)
-                return json.loads(repaired)
+                parsed = json.loads(repaired)
+                if isinstance(parsed, dict):
+                    return parsed
+                if isinstance(parsed, list):
+                    if not parsed or all(isinstance(x, dict) for x in parsed):
+                        return parsed
+                return None
             except Exception:
                 return None
     return None
@@ -98,21 +126,15 @@ def to_feature_collection(data: Any) -> dict:
     :func:`safe_parse`, which also repairs truncated JSON), a single Feature,
     or a bare geometry — and always returns a ``{"type": "FeatureCollection",
     "features": [...]}`` dict (never None). Never raises.
-
-    Relocated from ``app/services/spatial_analyzer.py:_to_feature_collection``
-    (ADR-0037 Win 5) so the GeoJSON parse/normalize domain knowledge lives in
-    one module alongside :func:`safe_parse`. The string branch now delegates
-    to ``safe_parse``, gaining its truncated-JSON repair behavior for free
-    (previously this function silently returned an empty FC on a truncated
-    string, a latent inconsistency with safe_parse).
     """
     if not data:
         return {"type": "FeatureCollection", "features": []}
 
     if isinstance(data, str):
-        # Delegate to safe_parse: gets truncated-JSON repair for free.
+        if data.strip().startswith("ref:"):
+            return {"type": "FeatureCollection", "features": []}
         data = safe_parse(data)
-        if not isinstance(data, dict):
+        if not data:
             return {"type": "FeatureCollection", "features": []}
 
     if isinstance(data, dict):
@@ -135,30 +157,37 @@ def to_feature_collection(data: Any) -> dict:
 
     return {"type": "FeatureCollection", "features": []}
 
-def to_utm_gdf(geojson: dict | str, source_crs: Optional[str] = None) -> tuple[gpd.GeoDataFrame, str] | None:
+def to_utm_gdf(geojson: Any, source_crs: Optional[str] = None) -> tuple[gpd.GeoDataFrame, str] | tuple[None, None]:
     """Convert GeoJSON to UTM GeoDataFrame with automatic zone detection.
     
     Returns:
         tuple[gpd.GeoDataFrame, str]: (projected_gdf, utm_crs_string) or (None, None)
     """
     parsed = safe_parse(geojson)
-    if not parsed:
+    if parsed is None:
         return None, None
         
-    # Handle both FeatureCollection and single Feature/Geometry
-    if parsed.get("type") == "FeatureCollection":
-        features = parsed.get("features", [])
-    elif parsed.get("type") == "Feature":
-        features = [parsed]
-    else:
-        # Assume it's a bare geometry
-        features = [{"type": "Feature", "geometry": parsed, "properties": {}}]
+    fc = to_feature_collection(parsed)
+    features = fc.get("features", [])
 
     if not features:
         return None, None
 
+    if source_crs is None and isinstance(fc, dict) and "crs" in fc:
+        crs_obj = fc["crs"]
+        if isinstance(crs_obj, str):
+            source_crs = crs_obj
+        elif isinstance(crs_obj, dict):
+            props = crs_obj.get("properties", {})
+            if "name" in props:
+                source_crs = props["name"]
+            elif "code" in props:
+                source_crs = f"EPSG:{props['code']}"
+
     rows = []
     for f in features:
+        if not isinstance(f, dict):
+            continue
         geom = f.get("geometry")
         if not geom:
             continue
@@ -174,15 +203,40 @@ def to_utm_gdf(geojson: dict | str, source_crs: Optional[str] = None) -> tuple[g
     if not rows:
         return None, None
         
+    original_crs_explicit = source_crs
     gdf = gpd.GeoDataFrame(rows, crs=source_crs or "EPSG:4326")
+    gdf["geometry"] = gdf.geometry.make_valid()
+    gdf._original_crs = original_crs_explicit or (str(gdf.crs) if gdf.crs else "EPSG:4326")
     
     if gdf.crs and gdf.crs.is_projected:
         return gdf, str(gdf.crs)
         
-    # Calculate UTM zone from centroid
+    utm_crs = None
+    try:
+        utm_crs_obj = gdf.estimate_utm_crs()
+        if utm_crs_obj is not None:
+            utm_crs = str(utm_crs_obj)
+    except Exception:
+        utm_crs = None
+
+    if utm_crs:
+        try:
+            projected = gdf.to_crs(utm_crs)
+            projected["geometry"] = projected.geometry.make_valid()
+            projected._original_crs = gdf._original_crs
+            return projected, utm_crs
+        except Exception:
+            utm_crs = None
+
     centroid = gdf.geometry.union_all().centroid
-    zone_number = int((centroid.x + 180) / 6) + 1
+    lon = (centroid.x + 180) % 360 - 180
+    zone_number = int((lon + 180) / 6) + 1
+    zone_number = max(1, min(60, zone_number))
     hemisphere = 32600 if centroid.y >= 0 else 32700
     utm_crs = f"EPSG:{hemisphere + zone_number}"
     
-    return gdf.to_crs(utm_crs), utm_crs
+    projected = gdf.to_crs(utm_crs)
+    projected["geometry"] = projected.geometry.make_valid()
+    projected._original_crs = gdf._original_crs
+    return projected, utm_crs
+

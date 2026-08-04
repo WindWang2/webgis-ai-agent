@@ -69,7 +69,8 @@ async def update_llm_config(
         try:
             settings._validate_no_ssrf(req.base_url, field="base_url")
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=f"base_url 校验失败: {e}")
+            logger.warning(f"base_url SSRF validation failed: {e}")
+            raise HTTPException(status_code=400, detail="base_url 校验失败: 不允许使用该 URL")
     get_engine().update_config(
         base_url=req.base_url,
         model=req.model,

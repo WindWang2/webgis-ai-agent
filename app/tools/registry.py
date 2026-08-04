@@ -10,6 +10,59 @@ from app.lib.geo_processor.core import GeoAnalysisResult
 
 logger = logging.getLogger(__name__)
 
+VALID_GEOMETRY_TYPES = {
+    "Point", "MultiPoint",
+    "LineString", "MultiLineString",
+    "Polygon", "MultiPolygon",
+    "GeometryCollection",
+}
+VALID_GEOJSON_TYPES = VALID_GEOMETRY_TYPES | {"Feature", "FeatureCollection"}
+
+
+def validate_geojson_structure(obj: Any) -> None:
+    """GeoJSON 结构校验辅助函数 (BE-AUDIT-08)。
+    在调用空间分析等工具函数前校验参数中的 GeoJSON 几何/要素/要素集合结构。
+    """
+    if not isinstance(obj, (dict, list)):
+        return
+
+    if isinstance(obj, list):
+        for item in obj:
+            validate_geojson_structure(item)
+        return
+
+    if isinstance(obj, dict):
+        obj_type = obj.get("type")
+        if isinstance(obj_type, str) and obj_type in VALID_GEOJSON_TYPES:
+            if obj_type == "FeatureCollection":
+                if "features" not in obj:
+                    raise ValueError("GeoJSON FeatureCollection 缺少必需的 'features' 字段")
+                if not isinstance(obj["features"], list):
+                    raise ValueError("GeoJSON FeatureCollection 的 'features' 字段必须为列表 (list)")
+                for feat in obj["features"]:
+                    validate_geojson_structure(feat)
+            elif obj_type == "Feature":
+                geom = obj.get("geometry")
+                if geom is not None:
+                    validate_geojson_structure(geom)
+            elif obj_type == "GeometryCollection":
+                if "geometries" not in obj:
+                    raise ValueError("GeoJSON GeometryCollection 缺少必需的 'geometries' 字段")
+                if not isinstance(obj["geometries"], list):
+                    raise ValueError("GeoJSON GeometryCollection 的 'geometries' 字段必须为列表 (list)")
+                for geom in obj["geometries"]:
+                    validate_geojson_structure(geom)
+            else:
+                if "coordinates" not in obj:
+                    raise ValueError(f"GeoJSON Geometry '{obj_type}' 缺少必需的 'coordinates' 字段")
+                coords = obj["coordinates"]
+                if not isinstance(coords, (list, tuple)):
+                    raise ValueError(f"GeoJSON Geometry '{obj_type}' 的 'coordinates' 字段必须为列表或元组")
+
+        for key, val in obj.items():
+            if key not in ("features", "geometries", "geometry"):
+                validate_geojson_structure(val)
+
 
 class ToolRegistry:
     def __init__(self):
@@ -218,6 +271,17 @@ class ToolRegistry:
                     error_type="ValidationError",
                     correction_hint=f"Validation Error: {message}. Please check the tool definition and ensure all required parameters are provided with correct types."
                 )
+
+        # GeoJSON 几何结构校验 (BE-AUDIT-08)
+        try:
+            validate_geojson_structure(arguments)
+        except ValueError as e:
+            return std_error_response(
+                str(e),
+                code="VALIDATION_ERROR",
+                error_type="ValueError",
+                correction_hint=f"GeoJSON Validation Error: {str(e)}"
+            )
 
         # 执行函数
         # 探测函数签名，如果需要 session_id 则传入

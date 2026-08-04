@@ -124,7 +124,7 @@ async def chat_completions(
             return ChatResponse(session_id=result.get("sessionId", req.session_id or ""), content=result.get("content", ""))
         except PiRpcError as e:
             logger.error(f"Pi bridge error: {e}", exc_info=True)
-            raise HTTPException(status_code=502, detail=f"Agent error: {str(e)}")
+            raise HTTPException(status_code=502, detail="Agent bridge error")
         except Exception as e:
             logger.error(f"Pi bridge unexpected error: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="Internal server error")

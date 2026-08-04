@@ -2,12 +2,12 @@ import json
 import logging
 from typing import Union, Optional
 import geopandas as gpd
-from app.lib.geo_processor.core import to_utm_gdf, safe_parse, GeoAnalysisResult
+from app.lib.geo_processor.core import to_utm_gdf, safe_parse, to_feature_collection, GeoAnalysisResult
 
 logger = logging.getLogger(__name__)
 
 def buffer_smart(
-    geojson: Union[dict, str],
+    geojson: Union[dict, str, list],
     distance: float,
     unit: str = 'm',
     dissolve: bool = False,
@@ -20,20 +20,14 @@ def buffer_smart(
     """
     try:
         parsed = safe_parse(geojson)
-        if not parsed:
+        if parsed is None:
             return GeoAnalysisResult(False, None, "Invalid GeoJSON input")
             
-        # Fast fail if empty features list
-        if isinstance(parsed, dict) and parsed.get("type") == "FeatureCollection":
-            features = parsed.get("features", [])
-        else:
-            features = [parsed]
-        if not features:
+        fc = to_feature_collection(parsed)
+        if not fc.get("features"):
             return GeoAnalysisResult(False, None, "Input features list is empty")
 
         # Handle unit conversion while preserving the sign of distance.
-        # In GIS/Shapely semantics, negative polygon buffers shrink/erode
-        # the geometry; silently taking abs(distance) reverses that meaning.
         dist = distance
         if unit == 'km':
             dist = dist * 1000
@@ -44,18 +38,22 @@ def buffer_smart(
             return GeoAnalysisResult(False, None, "Failed to project data for buffering")
             
         gdf, utm_crs = res
-        original_crs = source_crs or "EPSG:4326"
+        original_crs = source_crs or getattr(gdf, "_original_crs", None) or (gdf.crs if gdf is not None and gdf.crs is not None else "EPSG:4326")
         
         buffered_gdf = gdf.copy()
-        buffered_gdf['geometry'] = gdf.buffer(dist)
+        buffered_gdf['geometry'] = buffered_gdf.geometry.make_valid()
+        buffered_gdf['geometry'] = buffered_gdf.buffer(dist)
+        buffered_gdf['geometry'] = buffered_gdf.geometry.make_valid()
         
         if dissolve:
             # Dissolve all geometries into one
             dissolved_geom = buffered_gdf.geometry.union_all()
             buffered_gdf = gpd.GeoDataFrame(geometry=[dissolved_geom], crs=utm_crs)
+            buffered_gdf['geometry'] = buffered_gdf.geometry.make_valid()
         
         # Convert back to original CRS
         res_gdf = buffered_gdf.to_crs(original_crs)
+        res_gdf['geometry'] = res_gdf.geometry.make_valid()
         
         summary = f"Buffered {len(gdf)} features by {distance}{unit} using UTM projection ({utm_crs})."
         
@@ -83,7 +81,7 @@ def buffer_smart(
             error_type=type(e).__name__
         )
 
-def clip_smart(target_layer: Union[dict, str], mask_layer: Union[dict, str]) -> GeoAnalysisResult:
+def clip_smart(target_layer: Union[dict, str, list], mask_layer: Union[dict, str, list]) -> GeoAnalysisResult:
     """
     Clips the target_layer to the boundary of the mask_layer.
     Automatically aligns CRS if they differ.
@@ -92,17 +90,29 @@ def clip_smart(target_layer: Union[dict, str], mask_layer: Union[dict, str]) -> 
         t_parsed = safe_parse(target_layer)
         m_parsed = safe_parse(mask_layer)
         
-        if not t_parsed or not m_parsed:
+        if t_parsed is None or m_parsed is None:
             return GeoAnalysisResult(False, None, "Invalid input layers")
             
-        tgdf = gpd.GeoDataFrame.from_features(t_parsed.get("features", [t_parsed]) if t_parsed.get("type") in ["FeatureCollection", "Feature"] else [t_parsed], crs="EPSG:4326")
-        mgdf = gpd.GeoDataFrame.from_features(m_parsed.get("features", [m_parsed]) if m_parsed.get("type") in ["FeatureCollection", "Feature"] else [m_parsed], crs="EPSG:4326")
+        t_fc = to_feature_collection(t_parsed)
+        m_fc = to_feature_collection(m_parsed)
+        
+        tgdf = gpd.GeoDataFrame.from_features(t_fc, crs="EPSG:4326")
+        mgdf = gpd.GeoDataFrame.from_features(m_fc, crs="EPSG:4326")
         
         if tgdf.empty or mgdf.empty:
             return GeoAnalysisResult(True, {"type": "FeatureCollection", "features": []}, "Input layer(s) empty, nothing to clip.")
 
+        # Align CRS of mask layer to match target layer
+        if mgdf.crs != tgdf.crs:
+            mgdf = mgdf.to_crs(tgdf.crs)
+
+        # Make valid before spatial operations
+        tgdf['geometry'] = tgdf.geometry.make_valid()
+        mgdf['geometry'] = mgdf.geometry.make_valid()
+
         # Perform spatial clip
         clipped_gdf = gpd.clip(tgdf, mgdf)
+        clipped_gdf['geometry'] = clipped_gdf.geometry.make_valid()
         
         summary = f"Clipped {len(tgdf)} features to mask, {len(clipped_gdf)} features remaining."
         
@@ -120,19 +130,39 @@ def clip_smart(target_layer: Union[dict, str], mask_layer: Union[dict, str]) -> 
             error_type=type(e).__name__
         )
 
-def dissolve_smart(geojson: Union[dict, str], field: str = None) -> GeoAnalysisResult:
+def dissolve_smart(geojson: Union[dict, str, list], field: Union[str, list, None] = None) -> GeoAnalysisResult:
     """Dissolve geometries in GeoJSON."""
     try:
         parsed = safe_parse(geojson)
-        if not parsed:
+        if parsed is None:
             return GeoAnalysisResult(False, None, "Invalid GeoJSON input")
             
-        gdf = gpd.GeoDataFrame.from_features(parsed.get("features", [parsed]) if parsed.get("type") in ["FeatureCollection", "Feature"] else [parsed], crs="EPSG:4326")
+        fc = to_feature_collection(parsed)
+        if not fc.get("features"):
+            return GeoAnalysisResult(True, {"type": "FeatureCollection", "features": []}, "Layer empty, nothing to dissolve.")
+
+        gdf = gpd.GeoDataFrame.from_features(fc, crs="EPSG:4326")
         
         if gdf.empty:
             return GeoAnalysisResult(True, {"type": "FeatureCollection", "features": []}, "Layer empty, nothing to dissolve.")
             
+        # Column validation
+        if field:
+            fields_to_check = [field] if isinstance(field, str) else list(field)
+            missing = [f for f in fields_to_check if f not in gdf.columns]
+            if missing:
+                avail = [c for c in gdf.columns if c != "geometry"]
+                return GeoAnalysisResult(
+                    success=False,
+                    data=None,
+                    summary=f"Dissolve field(s) {missing} not found in layer properties. Available fields: {avail}",
+                    error_type="KeyError",
+                    correction_hint=f"Specify a valid property field from: {avail}"
+                )
+
+        gdf['geometry'] = gdf.geometry.make_valid()
         dissolved = gdf.dissolve(by=field).reset_index()
+        dissolved['geometry'] = dissolved.geometry.make_valid()
         
         summary = f"Dissolved {len(gdf)} features into {len(dissolved)} features."
         if field:
@@ -145,4 +175,5 @@ def dissolve_smart(geojson: Union[dict, str], field: str = None) -> GeoAnalysisR
         )
     except Exception as e:
         logger.error(f"Dissolve operation failed: {e}")
-        return GeoAnalysisResult(False, None, f"Dissolve failed: {str(e)}")
+        return GeoAnalysisResult(False, None, f"Dissolve failed: {str(e)}", error_type=type(e).__name__)
+

@@ -1,3 +1,4 @@
+import json
 import pytest
 import geopandas as gpd
 from app.lib.geo_processor.core import (
@@ -122,3 +123,121 @@ def test_overlay_smart():
     res_uni = overlay_smart(poly1, poly2, how="union")
     assert res_uni.success is True
     assert len(res_uni.data["features"]) > 0
+
+def test_safe_parse_feature_list_and_ref_cursor():
+    # Feature list input
+    feats = [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]}}]
+    assert safe_parse(feats) == feats
+    assert safe_parse(json.dumps(feats)) == feats
+    
+    # Cursor ref strings rejected
+    assert safe_parse("ref:session_123") is None
+    assert safe_parse("ref:") is None
+
+def test_to_utm_gdf_boundary_fallback():
+    # Anti-meridian point (180 lon)
+    geojson_180 = {"type": "Point", "coordinates": [180.0, 10.0]}
+    gdf, utm_crs = to_utm_gdf(geojson_180)
+    assert gdf is not None
+    assert utm_crs.startswith("EPSG:32")
+    assert not utm_crs.endswith("61")  # No EPSG:32661 crash
+
+    # Out of bounds longitude
+    geojson_oob = {"type": "Point", "coordinates": [180.0001, 39.9]}
+    gdf_oob, utm_crs_oob = to_utm_gdf(geojson_oob)
+    assert gdf_oob is not None
+    assert utm_crs_oob.startswith("EPSG:32")
+    assert not utm_crs_oob.endswith("61")
+
+def test_make_valid_handling():
+    from app.lib.geo_processor.geometry import buffer_smart, clip_smart, dissolve_smart
+    from app.lib.geo_processor.overlay import overlay_smart
+
+    # Invalid self-intersecting polygon (bowtie)
+    invalid_poly = {
+        "type": "Polygon",
+        "coordinates": [[[0, 0], [0, 2], [1, 1], [2, 2], [2, 0], [1, 1], [0, 0]]]
+    }
+
+    # buffer_smart with invalid poly
+    res_buf = buffer_smart(invalid_poly, distance=10)
+    assert res_buf.success is True
+
+    # clip_smart with invalid poly
+    mask_poly = {"type": "Polygon", "coordinates": [[[-1, -1], [3, -1], [3, 3], [-1, 3], [-1, -1]]]}
+    res_clip = clip_smart(invalid_poly, mask_poly)
+    assert res_clip.success is True
+
+    # dissolve_smart with invalid poly
+    res_dis = dissolve_smart(invalid_poly)
+    assert res_dis.success is True
+
+    # overlay_smart with invalid poly
+    res_over = overlay_smart(invalid_poly, mask_poly, how="intersection")
+    assert res_over.success is True
+
+def test_bare_geometry_dict_parsing():
+    from app.lib.geo_processor.geometry import clip_smart, dissolve_smart
+    from app.lib.geo_processor.overlay import overlay_smart
+
+    bare_poly1 = {"type": "Polygon", "coordinates": [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]]}
+    bare_poly2 = {"type": "Polygon", "coordinates": [[[1, 1], [3, 1], [3, 3], [1, 3], [1, 1]]]}
+
+    # clip_smart with bare geometry dicts
+    res_clip = clip_smart(bare_poly1, bare_poly2)
+    assert res_clip.success is True
+    assert res_clip.data["type"] == "FeatureCollection"
+
+    # dissolve_smart with bare geometry dict
+    res_dis = dissolve_smart(bare_poly1)
+    assert res_dis.success is True
+    assert res_dis.data["type"] == "FeatureCollection"
+
+    # overlay_smart with bare geometry dicts
+    res_over = overlay_smart(bare_poly1, bare_poly2, how="intersection")
+    assert res_over.success is True
+    assert res_over.data["type"] == "FeatureCollection"
+
+def test_crs_alignment():
+    from app.lib.geo_processor.geometry import clip_smart
+    from app.lib.geo_processor.overlay import overlay_smart
+    import geopandas as gpd
+    from shapely.geometry import Polygon
+
+    # Layer A in EPSG:4326
+    poly_a = {"type": "Polygon", "coordinates": [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]]}
+    
+    # Layer B converted to EPSG:3857 GeoJSON
+    gdf_b = gpd.GeoDataFrame(
+        geometry=[Polygon([(1, 1), (3, 1), (3, 3), (1, 3), (1, 1)])],
+        crs="EPSG:4326"
+    ).to_crs("EPSG:3857")
+    layer_b_3857 = json.loads(gdf_b.to_json())
+
+    # clip_smart should handle differing CRS smoothly
+    res_clip = clip_smart(poly_a, layer_b_3857)
+    assert res_clip.success is True
+
+    # overlay_smart should handle differing CRS smoothly
+    res_over = overlay_smart(poly_a, layer_b_3857, how="intersection")
+    assert res_over.success is True
+
+def test_validation_errors():
+    from app.lib.geo_processor.geometry import dissolve_smart
+    from app.lib.geo_processor.overlay import overlay_smart
+
+    geojson = {
+        "type": "FeatureCollection",
+        "features": [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]}, "properties": {"a": 1}}]
+    }
+
+    # dissolve_smart with missing field
+    res_dis = dissolve_smart(geojson, field="non_existent_field")
+    assert res_dis.success is False
+    assert res_dis.error_type == "KeyError"
+
+    # overlay_smart with invalid how parameter
+    res_over = overlay_smart(geojson, geojson, how="invalid_how")
+    assert res_over.success is False
+    assert res_over.error_type == "ValueError"
+

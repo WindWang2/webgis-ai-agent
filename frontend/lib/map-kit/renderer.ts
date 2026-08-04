@@ -1,4 +1,4 @@
-import maplibregl from 'maplibre-gl';
+import type { GeoJSONSource, ImageSource, Map } from 'maplibre-gl';
 import { ThematicStyleDef } from './types';
 
 /**
@@ -20,8 +20,8 @@ const _lastImageUrl = new WeakMap<object, string>();
 /**
  * Safely adds or updates an image source.
  */
-export function addImageSource(map: any, id: string, url: string, coordinates: [[number, number], [number, number], [number, number], [number, number]]) {
-  const source = map.getSource(id) as maplibregl.ImageSource;
+export function addImageSource(map: Map, id: string, url: string, coordinates: [[number, number], [number, number], [number, number], [number, number]]) {
+  const source = map.getSource(id) as ImageSource;
   if (source) {
     if (source.updateImage) {
       // 审计 F28：同 url 加 cache-buster，防 MapLibre 内部缓存命中显示旧图
@@ -49,8 +49,8 @@ export function addImageSource(map: any, id: string, url: string, coordinates: [
  * 审计 F31：如果 data 引用与上次相同，跳过 setData -- MapLibre 的 setData
  * 即使 data 引用相同也会触发全量重新解析。
  */
-export function addGeoJsonSource(map: any, id: string, data: any) {
-  const source = map.getSource(id) as maplibregl.GeoJSONSource;
+export function addGeoJsonSource(map: Map, id: string, data: any) {
+  const source = map.getSource(id) as GeoJSONSource;
   if (source) {
     // 引用相同则跳过（最常见的优化 -- 大量 layer 重新渲染时）
     if (_lastGeoJsonData.get(source) === data) return;
@@ -82,7 +82,7 @@ export interface VectorLayerOptions {
  * Adds a vector layer (circle, line, or fill) to the map.
  * Removes existing layer with the same ID if it exists.
  */
-export function addVectorLayer(map: any, options: VectorLayerOptions, beforeId?: string) {
+export function addVectorLayer(map: Map, options: VectorLayerOptions, beforeId?: string) {
   if (map.getLayer(options.id)) {
     map.removeLayer(options.id);
   }
@@ -96,13 +96,13 @@ export function addVectorLayer(map: any, options: VectorLayerOptions, beforeId?:
     ...(options.minzoom !== undefined && { minzoom: options.minzoom }),
     ...(options.maxzoom !== undefined && { maxzoom: options.maxzoom }),
     ...(options.filter && { filter: options.filter }),
-  }, beforeId);
+  } as any, beforeId);
 }
 
 /**
  * Adds a thematic layer (choropleth or lisa) to the map using data-driven styling.
  */
-export function addThematicLayer(map: any, id: string, data: any, styleDef: ThematicStyleDef, beforeId?: string) {
+export function addThematicLayer(map: Map, id: string, data: any, styleDef: ThematicStyleDef, beforeId?: string) {
   const geomType = styleDef.geometry_type || 'Polygon';
   const layerType = geomType === 'Point' ? 'circle' : 'fill';
   
@@ -206,7 +206,7 @@ export interface HeatmapOptions {
 /**
  * Adds a native MapLibre heatmap layer.
  */
-export function addNativeHeatmap(map: any, options: HeatmapOptions) {
+export function addNativeHeatmap(map: Map, options: HeatmapOptions) {
   if (map.getLayer(options.id)) {
     map.removeLayer(options.id);
   }
@@ -233,30 +233,60 @@ export function addNativeHeatmap(map: any, options: HeatmapOptions) {
 }
 
 /**
- * Safely removes a layer and its corresponding source.
- * If prefix is true, removes all layers and the source starting with the id.
+ * Safely removes a layer stack and its corresponding source(s) and image texture(s).
+ * Ensures all dependent layers are detached before sources are removed.
+ * If prefix is true, removes all layers and sources matching or starting with the id.
  */
-export function removeLayerStack(map: any, id: string, prefix: boolean = false) {
+export function removeLayerStack(map: Map, id: string, prefix: boolean = false) {
+  const style = map.getStyle();
+  const targetLayerIds = new Set<string>();
+  const targetSourceIds = new Set<string>();
+
   if (prefix) {
-    const style = map.getStyle();
-    if (style && style.layers) {
-      style.layers.forEach((l: any) => {
-        if (l.id === id || l.id.startsWith(id + '-')) {
-          map.removeLayer(l.id);
+    style?.layers?.forEach((l: any) => {
+      if (l.id === id || l.id.startsWith(id + '-') || l.id.startsWith(id + '_')) {
+        targetLayerIds.add(l.id);
+      }
+    });
+    if (style?.sources) {
+      Object.keys(style.sources).forEach((sid) => {
+        if (sid === id || sid.startsWith(id + '-') || sid.startsWith(id + '_')) {
+          targetSourceIds.add(sid);
         }
       });
     }
-    if (map.getSource(id)) {
-      map.removeSource(id);
-    }
+    // Also include id directly in case style index doesn't list it
+    targetLayerIds.add(id);
+    targetSourceIds.add(id);
   } else {
-    if (map.getLayer(id)) {
-      map.removeLayer(id);
+    // Single layer/source mode: include id if present on map or style
+    if (map.getLayer?.(id) || style?.layers?.some((l: any) => l.id === id)) {
+      targetLayerIds.add(id);
     }
-    if (map.getSource(id)) {
-      map.removeSource(id);
+    if (map.getSource?.(id) || (style?.sources && id in style.sources)) {
+      targetSourceIds.add(id);
     }
   }
+
+  // Collect any layers referencing any of the target sources to ensure proper detachment
+  style?.layers?.forEach((l: any) => {
+    if (l.source && targetSourceIds.has(l.source)) {
+      targetLayerIds.add(l.id);
+    }
+  });
+
+  // 1. Remove all dependent layers first to detach from sources
+  targetLayerIds.forEach((lid) => {
+    try { map.removeLayer(lid); } catch { /* silent */ }
+  });
+
+  // 2. Remove target sources and cleanup any registered image textures
+  targetSourceIds.forEach((sid) => {
+    try { map.removeSource(sid); } catch { /* silent */ }
+    if (typeof map.hasImage === 'function' && map.hasImage(sid)) {
+      try { map.removeImage(sid); } catch { /* silent */ }
+    }
+  });
 }
 
 export interface StyleUpdateOptions {
@@ -274,7 +304,7 @@ export interface StyleUpdateOptions {
  * Updates a layer's style properties.
  * Supports visibility, opacity, color, strokeColor, strokeWidth, pointSize, dashArray, fill.
  */
-export function updateLayerStyle(map: any, id: string, style: StyleUpdateOptions) {
+export function updateLayerStyle(map: Map, id: string, style: StyleUpdateOptions) {
   if (!map.getLayer(id)) return;
 
   if (style.visibility) {
@@ -282,6 +312,7 @@ export function updateLayerStyle(map: any, id: string, style: StyleUpdateOptions
   }
 
   const layer = map.getLayer(id);
+  if (!layer) return;
 
   if (style.opacity !== undefined) {
     let opacityProp = '';
@@ -352,9 +383,9 @@ export function updateLayerStyle(map: any, id: string, style: StyleUpdateOptions
  * Sets a filter on a specific layer.
  * filterExp should be a MapLibre filter expression.
  */
-export function setLayerFilter(map: any, layerId: string, filterExp: any[]) {
+export function setLayerFilter(map: Map, layerId: string, filterExp: any[]) {
   if (map.getLayer(layerId)) {
-    map.setFilter(layerId, filterExp);
+    map.setFilter(layerId, filterExp as any);
   } else {
     throw new Error(`Layer '${layerId}' not found.`);
   }
@@ -369,7 +400,7 @@ export function setLayerFilter(map: any, layerId: string, filterExp: any[]) {
  * 主要给底图/外部 tile 服务用，替代 map-panel 里手写的
  * `map.addSource({type:'raster', tiles:[url], tileSize:256})`。
  */
-export function addRasterTileSource(map: any, id: string, urls: string | string[], tileSize: number = 256) {
+export function addRasterTileSource(map: Map, id: string, urls: string | string[], tileSize: number = 256) {
   if (map.getSource(id)) return;
   const tiles = Array.isArray(urls) ? urls : [urls];
   map.addSource(id, { type: 'raster', tiles, tileSize });
@@ -379,7 +410,7 @@ export function addRasterTileSource(map: any, id: string, urls: string | string[
  * 把一组前缀匹配的子图层一次性切换可见性。
  * 等价于：遍历 style.layers，凡 id.startsWith(prefix) 的就 setLayoutProperty。
  */
-export function setLayerStackVisibility(map: any, prefix: string, visible: boolean) {
+export function setLayerStackVisibility(map: Map, prefix: string, visible: boolean) {
   const style = map.getStyle();
   if (!style?.layers) return;
   const value = visible ? 'visible' : 'none';
@@ -406,7 +437,7 @@ export interface ProcessLayerStyle {
  * 每个 stepId 独立 source，前缀 `process-{stepId}-{fill|line|point}`。
  */
 export function addProcessLayerStack(
-  map: any,
+  map: Map,
   stepId: string,
   geojson: any,
   style: ProcessLayerStyle = {},
@@ -453,36 +484,48 @@ export function addProcessLayerStack(
 }
 
 /**
- * 移除所有"孤儿"自定义图层及其 source：style 中以 prefix 开头但不属于 knownIds 的。
+ * 移除所有"孤儿"自定义图层及其 source 及 image texture：style 中以 prefix 开头 unsuccessfully matched knownIds 的。
  *
  * `extractBaseId` 把 layer.id 切回它所属的"逻辑层 id"（map-panel 用
  * `custom-{layerId}-{sub}` 形式，stripPrefix 后再去掉最后一段 `-sub`）。
  * 不传时默认 `id => id`。
  */
 export function removeOrphanCustomLayers(
-  map: any,
+  map: Map,
   knownIds: Set<string>,
   prefix: string,
-  extractBaseId: (idAfterPrefix: string) => string = (id) => id.replace(/-[^-]*$/, ''),
+  extractBaseId: (idAfterPrefix: string) => string = (id) => id.replace(/[-_][^-_]*$/, ''),
 ) {
   const style = map.getStyle();
   if (!style) return;
 
-  // 先删 layer（layer 引用 source；先 source 后 layer 会报错）
-  for (const l of style.layers || []) {
-    if (l.id.startsWith(prefix)) {
-      const base = extractBaseId(l.id.slice(prefix.length));
-      if (!knownIds.has(base)) {
-        try { map.removeLayer(l.id); } catch { /* silent */ }
-      }
-    }
-  }
+  const orphanSourceIds = new Set<string>();
   for (const sid of Object.keys(style.sources || {})) {
     if (sid.startsWith(prefix)) {
       const base = sid.slice(prefix.length);
       if (!knownIds.has(base)) {
-        try { map.removeSource(sid); } catch { /* silent */ }
+        orphanSourceIds.add(sid);
       }
+    }
+  }
+
+  // 先删 layer（layer 引用 source；先 source 后 layer 会报错）
+  for (const l of style.layers || []) {
+    const lSource = (l as any).source as string | undefined;
+    if (l.id.startsWith(prefix)) {
+      const base = extractBaseId(l.id.slice(prefix.length));
+      if (!knownIds.has(base) || (lSource && orphanSourceIds.has(lSource))) {
+        try { map.removeLayer(l.id); } catch { /* silent */ }
+      }
+    } else if (lSource && orphanSourceIds.has(lSource)) {
+      try { map.removeLayer(l.id); } catch { /* silent */ }
+    }
+  }
+
+  for (const sid of Array.from(orphanSourceIds)) {
+    try { map.removeSource(sid); } catch { /* silent */ }
+    if (map.hasImage?.(sid)) {
+      try { map.removeImage(sid); } catch { /* silent */ }
     }
   }
 }
@@ -500,7 +543,7 @@ export interface TerrainOptions {
  * 启用 3D 地形 —— 添加 raster-dem source 并调 setTerrain。
  * 幂等：source 已存在时直接复用，不重复 addSource。
  */
-export function enable3DTerrain(map: any, options: TerrainOptions = {}) {
+export function enable3DTerrain(map: Map, options: TerrainOptions = {}) {
   const sourceId = options.sourceId || 'terrain-aws';
   const url = options.url || 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
   if (!map.getSource(sourceId)) {
@@ -515,7 +558,7 @@ export function enable3DTerrain(map: any, options: TerrainOptions = {}) {
 }
 
 /** 关闭 3D 地形（保留 source 以便快速重启）。 */
-export function disable3DTerrain(map: any) {
+export function disable3DTerrain(map: Map) {
   map.setTerrain(null);
 }
 
@@ -525,7 +568,7 @@ export function disable3DTerrain(map: any) {
  * MapLibre `moveLayer(id)` 无 beforeId 时把它移到栈顶。所以**反向迭代**
  * orderedBaseIds 即可让最后被 move 的（数组首）落在最顶。
  */
-export function syncLayerZOrder(map: any, prefix: string, orderedBaseIds: string[]) {
+export function syncLayerZOrder(map: Map, prefix: string, orderedBaseIds: string[]) {
   const style = map.getStyle();
   if (!style?.layers) return;
   // 反向：希望数组首的图层最终在最上面

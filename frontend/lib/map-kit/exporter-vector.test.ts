@@ -71,7 +71,7 @@ describe('Client-Side HD Vector SVG/PDF Exporter API', () => {
     // test/setup.ts). Spec #271 requires asserting the %PDF- magic bytes and
     // page count on the real rendered PDF.
     const bytes = new Uint8Array(await blob.arrayBuffer());
-    const head = String.fromCharCode(...bytes.slice(0, 5));
+    const head = String.fromCharCode(...Array.from(bytes.slice(0, 5)));
     expect(head).toBe('%PDF-');
 
     // Parse the PDF byte stream for page objects. jsPDF emits "/Type /Pages"

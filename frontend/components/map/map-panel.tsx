@@ -2,14 +2,14 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react"
 import { MAP_STYLES, MapStyleOption } from "@/lib/constants"
 import Map, { MapRef, ViewStateChangeEvent, Popup } from "react-map-gl/maplibre"
-import maplibregl from "maplibre-gl"
+import type { StyleSpecification } from "maplibre-gl"
 import type { Layer } from "@/lib/types/layer"
 import { MapActionHandler } from "./map-action-handler"
 import { ThematicLegend } from "./thematic-legend"
 import { MapDecorations } from "./map-decorations"
 import { useHudStore, type HudState } from "@/lib/store/useHudStore"
 import * as renderer from "@/lib/map-kit/renderer"
-import { fitBounds as navFitBounds, calculateBBox } from "@/lib/map-kit/navigation"
+import { fitBounds as navFitBounds, calculateBBox, calculateBBoxAsync } from "@/lib/map-kit/navigation"
 import { MapSpecRuntime, hudStateToMapSpec } from "@/lib/mapspec-runtime"
 import { devOnly } from "@/lib/utils/logger"
 
@@ -22,11 +22,10 @@ interface MapPanelProps {
 
 import { useMapAction } from "@/lib/contexts/map-action-context"
 
-function getMapStyle(option: MapStyleOption, index: number): maplibregl.StyleSpecification {
+function getMapStyle(option: MapStyleOption, index: number): string | StyleSpecification {
   if (option.type === "raster") {
     const sourceId = `raster-tiles-${index}`;
-
-const layerId = `raster-tiles-layer-${index}`;
+    const layerId = `raster-tiles-layer-${index}`;
     return {
       version: 8,
       sources: {
@@ -48,7 +47,7 @@ const layerId = `raster-tiles-layer-${index}`;
       ],
     }
   }
-  return option.url as unknown as maplibregl.StyleSpecification
+  return option.url
 }
 
 const DEFAULT_VIEW_STATE = {
@@ -98,20 +97,36 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
       return
     }
     const src = target.source as any
-    let bbox: [number, number, number, number] | null = null
-    if (src && Array.isArray(src.bbox) && src.bbox.length === 4) {
-      bbox = src.bbox as [number, number, number, number]
-    } else if (src && (src.type === "FeatureCollection" || src.type === "Feature")) {
-      bbox = calculateBBox(src)
-    }
-    if (bbox) {
-      try { navFitBounds(map, bbox, 80) } catch (err) {
-        devOnly.warn("[map-panel] focusLayer fitBounds failed:", err)
+    let cancelled = false
+    let timerId: any = null
+
+    const computeAndFit = async () => {
+      let bbox: [number, number, number, number] | null = null
+      if (src && Array.isArray(src.bbox) && src.bbox.length === 4) {
+        bbox = src.bbox as [number, number, number, number]
+      } else if (src && (src.type === "FeatureCollection" || src.type === "Feature")) {
+        bbox = await calculateBBoxAsync(src)
+      } else if (src) {
+        bbox = calculateBBox(src)
+      }
+
+      if (cancelled) return
+      if (bbox) {
+        try { navFitBounds(map, bbox, 80) } catch (err) {
+          devOnly.warn("[map-panel] focusLayer fitBounds failed:", err)
+        }
+      }
+      if (!cancelled) {
+        timerId = setTimeout(() => focusLayerSetter(null), 800)
       }
     }
-    // Clear after a short delay so the legend flash animation has time to fire.
-    const t = window.setTimeout(() => focusLayerSetter(null), 800)
-    return () => window.clearTimeout(t)
+
+    computeAndFit()
+
+    return () => {
+      cancelled = true
+      if (timerId) window.clearTimeout(timerId)
+    }
   }, [focusLayerId, mapReady, layers, focusLayerSetter])
 
   // 3D Terrain Toggle Effect — 走 map-kit/renderer 的 enable3DTerrain helper
@@ -148,6 +163,11 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
     }
   }, [mapReady])
 
+  // FE-AUDIT-01: Invalidate runtime style cache when basemap style changes so custom layers re-apply
+  useEffect(() => {
+    runtimeRef.current?.invalidateStyle()
+  }, [currentMapStyle])
+
   // Reconcile whenever the inputs to the derived MapSpec change. The runtime's
   // internal diff is the no-op fast path for unchanged specs, so no debounce is
   // needed (the F31 source-ref cache makes repeated setData cheap).
@@ -164,6 +184,16 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   // 写 store，导致订阅 viewport 的 SpatialCrosshair 每帧重渲染。
   // 用 100ms debounce 合并连续写入，平移期间不刷 store，停止后写一次最终值。
   const viewportWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // FE-AUDIT-02: Add unmount cleanup for viewportWriteTimerRef
+  useEffect(() => {
+    return () => {
+      if (viewportWriteTimerRef.current) {
+        clearTimeout(viewportWriteTimerRef.current)
+        viewportWriteTimerRef.current = null
+      }
+    }
+  }, [])
 
   const setSelectedFeature = useHudStore((s: HudState) => s.setSelectedFeature)
   const selectedFeature = useHudStore((s: HudState) => s.selectedFeature)

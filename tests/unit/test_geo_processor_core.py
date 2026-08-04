@@ -1,7 +1,7 @@
 """Tests for geo_processor/core.py normalization (ADR-0037 Win 5)."""
 import json
 
-from app.lib.geo_processor.core import to_feature_collection, safe_parse
+from app.lib.geo_processor.core import to_feature_collection, safe_parse, _repair_json
 
 
 def test_fc_passthrough():
@@ -69,3 +69,23 @@ def test_empty_inputs_yield_empty_fc():
 def test_invalid_shape_falls_back_to_empty_fc():
     """A dict with no recognized GeoJSON shape yields an empty FC."""
     assert to_feature_collection({"invalid": "shape"}) == {"type": "FeatureCollection", "features": []}
+
+
+def test_repair_json_string_quotes_and_braces():
+    """Test _repair_json with string quote tracking and escaped quotes."""
+    # Complete JSON with braces inside string should not be altered
+    valid_with_braces = '{"name": "foo {bar}"}'
+    assert _repair_json(valid_with_braces) == valid_with_braces
+    assert json.loads(_repair_json(valid_with_braces)) == {"name": "foo {bar}"}
+
+    # Truncated inside string containing brace
+    truncated_in_str = '{"name": "foo {bar'
+    repaired_in_str = _repair_json(truncated_in_str)
+    assert repaired_in_str == '{"name": "foo {bar"}'
+    assert json.loads(repaired_in_str) == {"name": "foo {bar"}
+
+    # Escaped quote inside string with brace
+    escaped_quote = '{"name": "foo \\" {bar"'
+    assert _repair_json(escaped_quote) == '{"name": "foo \\" {bar"}'
+    assert json.loads(_repair_json(escaped_quote)) == {"name": 'foo " {bar'}
+

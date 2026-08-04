@@ -27,7 +27,7 @@ def _transform_lat(lng: float, lat: float) -> float:
     ret += (20.0 * math.sin(lat * math.pi) +
             40.0 * math.sin(lat / 3.0 * math.pi)) * 2.0 / 3.0
     ret += (160.0 * math.sin(lat / 12.0 * math.pi) +
-            320 * math.sin(lat * math.pi / 30.0)) * 2.0 / 3.0
+            320.0 * math.sin(lat * math.pi / 30.0)) * 2.0 / 3.0
     return ret
 
 
@@ -60,28 +60,29 @@ def wgs84_to_gcj02(lng: float, lat: float) -> Tuple[float, float]:
 def gcj02_to_wgs84(lng: float, lat: float) -> Tuple[float, float]:
     if _out_of_china(lng, lat):
         return lng, lat
-    dlat = _transform_lat(lng - 105.0, lat - 35.0)
-    dlng = _transform_lng(lng - 105.0, lat - 35.0)
-    radlat = lat / 180.0 * math.pi
-    magic = math.sin(radlat)
-    magic = 1 - _EE * magic * magic
-    sqrtmagic = math.sqrt(magic)
-    dlat = (dlat * 180.0) / ((_A * (1 - _EE)) / (magic * sqrtmagic) * math.pi)
-    dlng = (dlng * 180.0) / (_A / sqrtmagic * math.cos(radlat) * math.pi)
-    return lng - dlng, lat - dlat
+    wgs_lng, wgs_lat = lng, lat
+    for _ in range(3):
+        g_lng, g_lat = wgs84_to_gcj02(wgs_lng, wgs_lat)
+        wgs_lng -= (g_lng - lng)
+        wgs_lat -= (g_lat - lat)
+    return wgs_lng, wgs_lat
 
 
 def gcj02_to_bd09(lng: float, lat: float) -> Tuple[float, float]:
+    if _out_of_china(lng, lat):
+        return lng, lat
     z = math.sqrt(lng * lng + lat * lat) + 0.00002 * math.sin(lat * math.pi * 3000.0 / 180.0)
     theta = math.atan2(lat, lng) + 0.000003 * math.cos(lng * math.pi * 3000.0 / 180.0)
     return z * math.cos(theta) + 0.0065, z * math.sin(theta) + 0.006
 
 
 def bd09_to_gcj02(lng: float, lat: float) -> Tuple[float, float]:
-    lng -= 0.0065
-    lat -= 0.006
-    z = math.sqrt(lng * lng + lat * lat) - 0.00002 * math.sin(lat * math.pi * 3000.0 / 180.0)
-    theta = math.atan2(lat, lng) - 0.000003 * math.cos(lng * math.pi * 3000.0 / 180.0)
+    if _out_of_china(lng, lat):
+        return lng, lat
+    x = lng - 0.0065
+    y = lat - 0.006
+    z = math.sqrt(x * x + y * y) - 0.00002 * math.sin(y * math.pi * 3000.0 / 180.0)
+    theta = math.atan2(y, x) - 0.000003 * math.cos(x * math.pi * 3000.0 / 180.0)
     return z * math.cos(theta), z * math.sin(theta)
 
 
@@ -95,16 +96,16 @@ def bd09_to_wgs84(lng: float, lat: float) -> Tuple[float, float]:
     return gcj02_to_wgs84(gcj[0], gcj[1])
 
 
-def normalize_chinese_crs(crs_str: str) -> Optional[str]:
+def normalize_chinese_crs(crs_str: Any) -> Optional[str]:
     """Normalize a Chinese-CRS string to its canonical lowercase form.
 
     Returns the canonical name ("wgs84" / "gcj02" / "bd09") if the input is a
-    recognized Chinese CRS (case/separator-insensitive: "WGS-84", "GCJ 02" all
+    recognized Chinese CRS (case/separator-insensitive: "WGS-84", "GCJ_02", "BD_09" all
     resolve), or None if it is not. This is the single authority for "what
     counts as a Chinese CRS" — tool adapters use it as their policy gate rather
     than re-deriving the normalization and the supported set (Candidate #2).
     """
-    cleaned = (crs_str or "").lower().replace("-", "").replace(" ", "")
+    cleaned = str(crs_str or "").lower().replace("-", "").replace("_", "").replace(" ", "")
     if cleaned in _CHINESE_CRS:
         return cleaned
     return None
@@ -146,7 +147,13 @@ def _walk_coords(coords: Any, transform_fn: Callable[[float, float], Tuple[float
         coords = list(coords)
     if not isinstance(coords, list) or not coords:
         return coords
-    if isinstance(coords[0], (int, float)) and len(coords) >= 2:
+    if (
+        len(coords) >= 2
+        and isinstance(coords[0], (int, float))
+        and not isinstance(coords[0], bool)
+        and isinstance(coords[1], (int, float))
+        and not isinstance(coords[1], bool)
+    ):
         x, y = transform_fn(float(coords[0]), float(coords[1]))
         rest = coords[2:]
         return [x, y, *rest]
@@ -177,8 +184,11 @@ def transform_geojson(geojson: Dict[str, Any], from_crs: str, to_crs: str) -> Di
     if not isinstance(geojson, dict):
         return geojson
 
-    src_chinese = normalize_chinese_crs(from_crs)
-    dst_chinese = normalize_chinese_crs(to_crs)
+    from_crs_str = str(from_crs or "").strip()
+    to_crs_str = str(to_crs or "").strip()
+
+    src_chinese = normalize_chinese_crs(from_crs_str)
+    dst_chinese = normalize_chinese_crs(to_crs_str)
 
     transform_fn: Callable[[float, float], Tuple[float, float]]
 
@@ -189,23 +199,58 @@ def transform_geojson(geojson: Dict[str, Any], from_crs: str, to_crs: str) -> Di
         def transform_fn(x: float, y: float) -> Tuple[float, float]:
             return _transform_chinese_point(x, y, src_chinese, dst_chinese)
     else:
-        # Normalize EPSG representations (wgs84 -> EPSG:4326)
-        src_epsg = "EPSG:4326" if src_chinese == "wgs84" else from_crs
-        dst_epsg = "EPSG:4326" if dst_chinese == "wgs84" else to_crs
+        chinese_pre_step: Optional[Callable[[float, float], Tuple[float, float]]] = None
+        chinese_post_step: Optional[Callable[[float, float], Tuple[float, float]]] = None
 
-        if src_epsg.upper() == dst_epsg.upper():
+        def _pre_to_wgs84(x: float, y: float) -> Tuple[float, float]:
+            return _transform_chinese_point(x, y, src_chinese, "wgs84")
+
+        def _post_from_wgs84(x: float, y: float) -> Tuple[float, float]:
+            return _transform_chinese_point(x, y, "wgs84", dst_chinese)
+
+        if src_chinese in ("gcj02", "bd09"):
+            chinese_pre_step = _pre_to_wgs84
+            src_epsg = "EPSG:4326"
+        elif src_chinese == "wgs84":
+            src_epsg = "EPSG:4326"
+        else:
+            src_epsg = from_crs_str
+
+        if dst_chinese in ("gcj02", "bd09"):
+            chinese_post_step = _post_from_wgs84
+            dst_epsg = "EPSG:4326"
+        elif dst_chinese == "wgs84":
+            dst_epsg = "EPSG:4326"
+        else:
+            dst_epsg = to_crs_str
+
+        if src_epsg.strip().upper() == dst_epsg.strip().upper() and not chinese_pre_step and not chinese_post_step:
             return copy.deepcopy(geojson)
 
-        try:
-            import pyproj
-            transformer = pyproj.Transformer.from_crs(
-                pyproj.CRS(src_epsg), pyproj.CRS(dst_epsg), always_xy=True
-            )
+        transformer = None
+        if src_epsg.strip().upper() != dst_epsg.strip().upper():
+            try:
+                import pyproj
+            except ImportError as e:
+                raise ImportError(f"pyproj library is missing for CRS transformation '{src_epsg}' -> '{dst_epsg}': {e}") from e
 
-            def transform_fn(x: float, y: float) -> Tuple[float, float]:  # noqa: F811
-                return transformer.transform(x, y)
-        except Exception as e:
-            raise ValueError(f"Unsupported CRS transformation: from '{from_crs}' to '{to_crs}': {e}") from e
+            try:
+                transformer = pyproj.Transformer.from_crs(
+                    pyproj.CRS(src_epsg), pyproj.CRS(dst_epsg), always_xy=True
+                )
+            except Exception as e:
+                raise ValueError(f"Unsupported CRS transformation: from '{from_crs}' to '{to_crs}': {e}") from e
+
+        def composed_transform(x: float, y: float) -> Tuple[float, float]:
+            if chinese_pre_step:
+                x, y = chinese_pre_step(x, y)
+            if transformer:
+                x, y = transformer.transform(x, y)
+            if chinese_post_step:
+                x, y = chinese_post_step(x, y)
+            return x, y
+
+        transform_fn = composed_transform
 
     data = copy.deepcopy(geojson)
     geo_type = data.get("type")

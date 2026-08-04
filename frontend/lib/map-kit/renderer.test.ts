@@ -213,6 +213,27 @@ describe('renderer', () => {
       expect(mapMock.removeLayer).toHaveBeenCalledWith('custom-foo-stroke');
       expect(mapMock.removeLayer).not.toHaveBeenCalledWith('custom-foobar-fill');
     });
+
+    it('should detach dependent layers before removing sources and clean up image textures', () => {
+      mapMock.hasImage = vi.fn().mockReturnValue(true);
+      mapMock.removeImage = vi.fn();
+      mapMock.getStyle.mockReturnValue({
+        layers: [
+          { id: 'custom-img-layer', source: 'custom-img' }
+        ],
+        sources: {
+          'custom-img': {}
+        }
+      });
+      mapMock.getLayer.mockReturnValue({});
+      mapMock.getSource.mockReturnValue({});
+
+      removeLayerStack(mapMock, 'custom-img', true);
+
+      expect(mapMock.removeLayer).toHaveBeenCalledWith('custom-img-layer');
+      expect(mapMock.removeSource).toHaveBeenCalledWith('custom-img');
+      expect(mapMock.removeImage).toHaveBeenCalledWith('custom-img');
+    });
   });
 
   describe('updateLayerStyle', () => {

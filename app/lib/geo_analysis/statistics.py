@@ -612,7 +612,7 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
 
 # ── Thread-Safe Pairwise Distance Matrix LRU Cache ──
 _distance_matrix_cache: OrderedDict = OrderedDict()
-_distance_matrix_maxsize: int = 128
+_distance_matrix_maxsize: int = 16
 _distance_matrix_hits: int = 0
 _distance_matrix_misses: int = 0
 _distance_matrix_lock = threading.Lock()
@@ -682,10 +682,18 @@ def compute_st_distance_matrix(
         )
         d_mat = sparse.csr_matrix((combined_dists, (r_valid, c_valid)), shape=(n, n))
 
+    # Memory guard: a dense n×n float64 matrix is ~8·n² bytes (200MB at n=5000).
+    # Caching 16 of those could consume >3GB, risking OOM. Sparse results (n>5000
+    # branch) are already small, so always cache those; only cache dense matrices
+    # below a size threshold so the LRU's worst-case footprint stays bounded.
+    _DENSE_CACHE_MAX_N = 2000
+    cacheable = sparse.issparse(d_mat) or n <= _DENSE_CACHE_MAX_N
+
     with _distance_matrix_lock:
-        _distance_matrix_cache[key_raw] = d_mat
-        if len(_distance_matrix_cache) > _distance_matrix_maxsize:
-            _distance_matrix_cache.popitem(last=False)
+        if cacheable:
+            _distance_matrix_cache[key_raw] = d_mat
+            if len(_distance_matrix_cache) > _distance_matrix_maxsize:
+                _distance_matrix_cache.popitem(last=False)
 
     return d_mat
 

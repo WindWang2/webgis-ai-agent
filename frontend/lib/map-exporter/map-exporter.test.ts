@@ -51,7 +51,7 @@ function createDeps(
 ): ExportDeps {
   const hudState = createMockHudState(hudOverrides);
   return {
-    map: createMockMap(mapOverrides),
+    map: createMockMap(mapOverrides) as any,
     getHudState: () => hudState,
   };
 }
@@ -209,7 +209,7 @@ describe('runExport', () => {
     });
     const hudState = createMockHudState();
     const deps: ExportDeps = {
-      map: mockMap,
+      map: mockMap as any,
       getHudState: () => hudState,
     };
 

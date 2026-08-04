@@ -1,4 +1,4 @@
-import maplibregl from 'maplibre-gl';
+import type { Map } from 'maplibre-gl';
 import type { LegendSpec } from './types';
 import { resolveStyle, type LayoutStyle } from './layout-style';
 import { API_BASE } from '@/lib/api/config';
@@ -13,7 +13,7 @@ export { getOversampledZoom, computeOversampleBoost } from './oversample';
  * @param map The MapLibre map instance.
  * @returns A promise resolving to a PNG Blob.
  */
-export async function captureMapCanvas(map: maplibregl.Map): Promise<Blob> {
+export async function captureMapCanvas(map: Map): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const canvas = map.getCanvas();
     // Using image/png by default for better quality
@@ -1049,7 +1049,7 @@ export interface ExportRequest {
 }
 
 export interface ExportDeps {
-  map: any;
+  map: Map;
   getHudState: () => any;
 }
 

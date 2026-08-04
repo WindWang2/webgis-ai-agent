@@ -323,3 +323,5 @@ class SpectralRasterEngine:
 
 
 spectral_engine = SpectralRasterEngine()
+RemoteSensingService = SpectralRasterEngine
+

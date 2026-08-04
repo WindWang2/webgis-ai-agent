@@ -67,3 +67,13 @@ async def test_compute_vegetation_index_unsupported_type():
     res = await spectral_engine.compute_vegetation_index([0, 0, 1, 1], "2023-01-01", "2023-01-02", index_type="invalid")
     assert "error" in res
     assert "不支持的指数类型" in res["error"]
+
+
+def test_remote_sensing_service_import():
+    from app.services.rs import RemoteSensingService
+    from app.services.rs.spectral_engine import RemoteSensingService as RSS2
+    from app.services.spatial_tasks import RemoteSensingService as RSS3
+    assert RemoteSensingService is SpectralRasterEngine
+    assert RSS2 is SpectralRasterEngine
+    assert RSS3 is SpectralRasterEngine
+

@@ -72,48 +72,78 @@ export function jumpTo(map: Map, params: ViewportParams): void {
 /**
  * Calculates the bounding box of a GeoJSON object.
  * Returns [minLng, minLat, maxLng, maxLat] or null.
+ *
+ * Optimized single-pass traversal without allocating intermediate coordinate arrays.
  */
 export function calculateBBox(geojson: any): [number, number, number, number] | null {
-  const bounds = [Infinity, Infinity, -Infinity, -Infinity];
-  const coord: number[][] = [];
+  if (!geojson || typeof geojson !== 'object') return null;
+
+  // 1. Fast path: check precomputed bbox if valid
+  if (Array.isArray(geojson.bbox) && geojson.bbox.length === 4) {
+    const [w, s, e, n] = geojson.bbox;
+    if (Number.isFinite(w) && Number.isFinite(s) && Number.isFinite(e) && Number.isFinite(n)) {
+      return [w, s, e, n] as [number, number, number, number];
+    }
+  }
+
+  let minLng = Infinity;
+  let minLat = Infinity;
+  let maxLng = -Infinity;
+  let maxLat = -Infinity;
+  let count = 0;
+
+  function updateBounds(lng: unknown, lat: unknown) {
+    if (typeof lng === 'number' && typeof lat === 'number' && Number.isFinite(lng) && Number.isFinite(lat)) {
+      if (lng < minLng) minLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lng > maxLng) maxLng = lng;
+      if (lat > maxLat) maxLat = lat;
+      count++;
+    }
+  }
 
   function extract(node: any) {
-    if (Array.isArray(node) && typeof node[0] === 'number') {
-      coord.push(node as number[]);
-    } else if (Array.isArray(node)) {
-      node.forEach(extract);
-    } else if (node && typeof node === 'object' && 'type' in node) {
-      const obj = node as any;
-      if (obj.type === 'FeatureCollection' && Array.isArray(obj.features)) {
-        obj.features.forEach((f: any) => {
-          if (f.geometry?.coordinates) extract(f.geometry.coordinates);
-        });
-      } else if (obj.type === 'Feature' && obj.geometry?.coordinates) {
-        extract(obj.geometry.coordinates);
-      } else if ('coordinates' in obj) {
-        extract(obj.coordinates);
+    if (!node) return;
+    if (Array.isArray(node)) {
+      if (typeof node[0] === 'number') {
+        updateBounds(node[0], node[1]);
+      } else {
+        for (let i = 0; i < node.length; i++) {
+          extract(node[i]);
+        }
+      }
+    } else if (typeof node === 'object') {
+      if (node.type === 'FeatureCollection' && Array.isArray(node.features)) {
+        for (let i = 0; i < node.features.length; i++) {
+          const f = node.features[i];
+          if (f?.geometry?.coordinates) extract(f.geometry.coordinates);
+        }
+      } else if (node.type === 'Feature' && node.geometry?.coordinates) {
+        extract(node.geometry.coordinates);
+      } else if ('coordinates' in node) {
+        extract(node.coordinates);
       }
     }
   }
 
   extract(geojson);
-  if (coord.length === 0) return null;
 
-  // FE-12：过滤掉 NaN/Infinity 坐标（畸形 GeoJSON 的 3D 坐标或空环），
-  // 否则 Math.min(Infinity, NaN) = NaN 会毒化整个 bbox，让 fitBounds 飞到 NaN。
-  const validCoords = coord.filter(c =>
-    c.length >= 2 && Number.isFinite(c[0]) && Number.isFinite(c[1])
-  );
-  if (validCoords.length === 0) return null;
+  if (count === 0) return null;
+  return [minLng, minLat, maxLng, maxLat];
+}
 
-  validCoords.forEach(c => {
-    if (c[0] < bounds[0]) bounds[0] = c[0];
-    if (c[1] < bounds[1]) bounds[1] = c[1];
-    if (c[0] > bounds[2]) bounds[2] = c[0];
-    if (c[1] > bounds[3]) bounds[3] = c[1];
+/**
+ * Asynchronously calculates the bounding box of a GeoJSON object, yielding
+ * to the main thread to prevent UI freezing on heavy datasets.
+ */
+export function calculateBBoxAsync(geojson: any): Promise<[number, number, number, number] | null> {
+  return new Promise((resolve) => {
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      (window as any).requestIdleCallback(() => resolve(calculateBBox(geojson)));
+    } else {
+      setTimeout(() => resolve(calculateBBox(geojson)), 0);
+    }
   });
-
-  return bounds as [number, number, number, number];
 }
 
 /**
