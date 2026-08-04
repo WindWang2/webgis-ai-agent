@@ -163,14 +163,21 @@ class KnowledgeEngine:
 
         if total_vectors > 0 and (deleted_count / total_vectors) >= 0.20:
             logger.info("KnowledgeEngine: deleted ratio exceeds 20%, executing compact()")
-            self.compact_index()
+            await self.compact_index()
 
         return True
 
-    def compact_index(self) -> Dict[str, Any]:
-        """Compact underlying vector index."""
+    async def compact_index(self) -> Dict[str, Any]:
+        """Compact underlying vector index.
+
+        Offloaded to a worker thread: compact() re-embeds the entire active
+        corpus via SentenceTransformer (seconds for any non-trivial KB),
+        which would otherwise stall the uvicorn event loop on a single
+        DELETE /knowledge/document request. Mirrors the asyncio.to_thread
+        treatment PR #289 applied to index_document/search.
+        """
         if hasattr(self._store, "compact"):
-            return self._store.compact()
+            return await asyncio.to_thread(self._store.compact)
         return {}
 
 

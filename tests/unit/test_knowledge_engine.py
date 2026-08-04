@@ -97,5 +97,5 @@ async def test_soft_delete_and_compaction(knowledge_engine):
     assert len(results) == 0
 
     # Manual compaction
-    compact_res = knowledge_engine.compact_index()
+    compact_res = await knowledge_engine.compact_index()
     assert "purged" in compact_res
