@@ -130,6 +130,9 @@ class FaissVectorStore:
         self.index_dir = index_dir
         self._index = None
         self._model = None
+        # (mtime_ns, parsed_dict) cache for load_metadata. None until first
+        # load. See load_metadata docstring for invalidation semantics.
+        self._metadata_cache: Optional[tuple] = None
 
     def _get_embedding_model(self):
         """Lazy load sentence transformer model."""
@@ -237,10 +240,42 @@ class FaissVectorStore:
 
     def load_metadata(self) -> Dict[str, Any]:
         """Load metadata. Uses a shared read lock so writers don't tear
-        the file mid-parse."""
+        the file mid-parse.
+
+        REVIEW-P2 perf: caches the parsed dict keyed by the file's mtime.
+        search() calls this on every query; without the cache each query
+        re-opened, flocked, and json.load'd the whole file (megabytes for
+        any non-trivial KB). The mtime check is a single stat() syscall,
+        and when the file hasn't changed we return the cached parse
+        directly. Cross-instance correctness is preserved: any writer
+        (this process, another uvicorn worker, a Celery compact task)
+        changes the mtime on save, so the next reader re-parses.
+        """
         meta_file = os.path.join(self.index_dir, "metadata.json")
-        if not os.path.exists(meta_file):
+        try:
+            stat = os.stat(meta_file)
+        except FileNotFoundError:
+            # Cache the empty-dict result too, so a missing-file case
+            # also avoids the os.path.exists check on every call.
+            self._metadata_cache = (None, {"chunks": []})
             return {"chunks": []}
+        except OSError:
+            # stat failed for some other reason — fall through to the
+            # uncached read path, which has its own error handling.
+            return self._load_metadata_uncached(meta_file)
+
+        cached = getattr(self, "_metadata_cache", None)
+        if cached is not None:
+            cached_mtime, cached_meta = cached
+            if cached_mtime == stat.st_mtime_ns:
+                return cached_meta
+
+        meta = self._load_metadata_uncached(meta_file)
+        self._metadata_cache = (stat.st_mtime_ns, meta)
+        return meta
+
+    def _load_metadata_uncached(self, meta_file: str) -> Dict[str, Any]:
+        """Read+parse metadata.json from disk, no cache."""
         try:
             with open(meta_file, "r", encoding="utf-8") as f:
                 fcntl.flock(f.fileno(), fcntl.LOCK_SH)
