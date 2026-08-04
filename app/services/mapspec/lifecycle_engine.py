@@ -183,8 +183,8 @@ class MapSpecLifecycleEngine:
 
                     layers = mapspec.setdefault("layers", [])
                     updated = False
-                    for i, l in enumerate(layers):
-                        if l.get("id") == processed_layer.get("id"):
+                    for i, layer in enumerate(layers):
+                        if layer.get("id") == processed_layer.get("id"):
                             layers[i] = processed_layer
                             updated = True
                             break
@@ -194,7 +194,7 @@ class MapSpecLifecycleEngine:
 
                 elif isinstance(intent, RemoveLayerIntent):
                     layers = mapspec.get("layers", [])
-                    filtered_layers = [l for l in layers if not _should_remove_layer(l, intent.layer_id)]
+                    filtered_layers = [layer for layer in layers if not _should_remove_layer(layer, intent.layer_id)]
                     mapspec["layers"] = filtered_layers
                     await session_data_manager.remove_layer_from_state(session_id, intent.layer_id)
                     auto_checkpoint = True

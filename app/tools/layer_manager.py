@@ -56,16 +56,16 @@ async def resolve_layer_ref(
 
     # 1. Exact id match against active layers (by resolved ref_id OR raw layer_ref)
     found_id = None
-    for l in active_layers:
-        if l.get("id") == ref_id or l.get("id") == layer_ref:
-            found_id = l.get("id")
+    for layer in active_layers:
+        if layer.get("id") == ref_id or layer.get("id") == layer_ref:
+            found_id = layer.get("id")
             break
 
     # 2. Name-substring fallback (UX: "reference a layer by its name")
     if not found_id and layer_ref:
-        for l in active_layers:
-            if l.get("name") == layer_ref or layer_ref in (l.get("name") or ""):
-                found_id = l.get("id")
+        for layer in active_layers:
+            if layer.get("name") == layer_ref or layer_ref in (layer.get("name") or ""):
+                found_id = layer.get("id")
                 break
 
     resolved = found_id or ref_id
@@ -75,7 +75,7 @@ async def resolve_layer_ref(
     # since legitimate flow can have the ref registered before the frontend
     # echoes it back. The point is to refuse a free-form LLM ref that wasn't
     # registered by THIS session.
-    if resolved not in session_refs and not any(l.get("id") == resolved for l in active_layers):
+    if resolved not in session_refs and not any(layer.get("id") == resolved for layer in active_layers):
         return None, {"error": f"layer_ref {layer_ref!r} 未在当前会话的图层 / 数据引用中找到对应的 id"}
 
     return resolved, None

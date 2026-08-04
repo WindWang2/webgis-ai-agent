@@ -185,7 +185,9 @@ def transform_geojson(geojson: Dict[str, Any], from_crs: str, to_crs: str) -> Di
     if src_chinese and dst_chinese:
         if src_chinese == dst_chinese:
             return copy.deepcopy(geojson)
-        transform_fn = lambda x, y: _transform_chinese_point(x, y, src_chinese, dst_chinese)
+
+        def transform_fn(x: float, y: float) -> Tuple[float, float]:
+            return _transform_chinese_point(x, y, src_chinese, dst_chinese)
     else:
         # Normalize EPSG representations (wgs84 -> EPSG:4326)
         src_epsg = "EPSG:4326" if src_chinese == "wgs84" else from_crs
@@ -199,7 +201,9 @@ def transform_geojson(geojson: Dict[str, Any], from_crs: str, to_crs: str) -> Di
             transformer = pyproj.Transformer.from_crs(
                 pyproj.CRS(src_epsg), pyproj.CRS(dst_epsg), always_xy=True
             )
-            transform_fn = lambda x, y: transformer.transform(x, y)
+
+            def transform_fn(x: float, y: float) -> Tuple[float, float]:  # noqa: F811
+                return transformer.transform(x, y)
         except Exception as e:
             raise ValueError(f"Unsupported CRS transformation: from '{from_crs}' to '{to_crs}': {e}") from e
 

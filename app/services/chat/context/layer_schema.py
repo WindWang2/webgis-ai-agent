@@ -137,7 +137,7 @@ async def format_layer_lines(
                 if isinstance(s, BaseException):
                     logger.warning("build_layer_schema failed for ref=%s: %s", rid, s)
 
-        visibility_map = {l.get("id"): l for l in active_layers if l.get("id")}
+        visibility_map = {layer.get("id"): layer for layer in active_layers if layer.get("id")}
         for ref_id, alias in inventory.items():
             meta = visibility_map.get(ref_id) or next(
                 (m for aid, m in visibility_map.items() if aid in ref_id or ref_id in aid),

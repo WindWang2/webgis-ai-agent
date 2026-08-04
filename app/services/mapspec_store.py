@@ -108,9 +108,9 @@ class MapSpecStore:
         # Find processed layer in updated mapspec
         processed_layer = layer
         if res.mapspec and "layers" in res.mapspec:
-            for l in res.mapspec["layers"]:
-                if l.get("id") == layer.get("id"):
-                    processed_layer = l
+            for existing_layer in res.mapspec["layers"]:
+                if existing_layer.get("id") == layer.get("id"):
+                    processed_layer = existing_layer
                     break
 
         return {
