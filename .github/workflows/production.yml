@@ -348,7 +348,7 @@ jobs:
           export API_PORT=$((9000 + $RANDOM % 1000))
           export FRONTEND_PORT=$((13000 + $RANDOM % 1000))
 
-          docker-compose -f docker-compose.prod.secure.yml up -d
+          docker compose -f docker-compose.prod.secure.yml up -d
         env:
           IMAGE_TAG: ${{ github.sha }}
 
