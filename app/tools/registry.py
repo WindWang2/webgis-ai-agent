@@ -94,7 +94,6 @@ class ToolRegistry:
             p_type = param.annotation if param.annotation != inspect.Parameter.empty else Any
             default = param.default if param.default != inspect.Parameter.empty else ...
 
-            description = param_descriptions.get(p_name) if param_descriptions else None
             fields[p_name] = (p_type, default)
 
         return create_model(f"{name}_args", **fields)
@@ -133,7 +132,7 @@ class ToolRegistry:
         result: Any = None
         try:
             arg_bytes = len(_json.dumps(arguments, default=str))
-        except Exception as e:
+        except Exception:
             arg_bytes = 0
 
         try:
@@ -147,7 +146,7 @@ class ToolRegistry:
                 error_cls = error_cls or result.get("error_type") or result.get("code")
             try:
                 result_bytes = len(_json.dumps(result, default=str)) if result is not None else 0
-            except Exception as e:
+            except Exception:
                 result_bytes = 0
             cache_hit = cache_hit_var.get()
             tool_metrics.record_tool_call(

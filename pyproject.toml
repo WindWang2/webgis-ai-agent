@@ -7,9 +7,11 @@ requires-python = ">=3.12"
 dependencies = []
 
 [tool.ruff.lint]
-# Defaults (E + F) match the implicit rule set the project has always run under.
-# Keep them explicit so the selected set is stable across ruff versions.
-select = ["E", "F"]
+# Match ruff's default selection (E4/E7/E9 + F) — this is the set the project has
+# always run under (no config = these defaults). Explicit so it's stable across
+# ruff versions. NOTE: full "E" is intentionally NOT selected — E501 (line-too-long)
+# would surface 1300+ pre-existing long lines the project has never linted.
+select = ["E4", "E7", "E9", "F"]
 ignore = []
 
 [tool.ruff.lint.per-file-ignores]

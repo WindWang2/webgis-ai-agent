@@ -77,8 +77,10 @@ class SpectralRasterEngine:
             arr = compute_index_array(idx, **fetch_res["bands"])
             stats = compute_raster_stats(arr)
 
-            # Continuous color ramp specification for live UI map overlay
-            legend_spec = {
+            # Continuous color ramp specification for live UI map overlay.
+            # TODO: legend_spec is computed but not yet attached to the returned
+            # RasterAnalysisResult below — wire it through in a follow-up.
+            legend_spec = {  # noqa: F841 — kept so the intended overlay metadata is visible.
                 "type": "continuous",
                 "palette": "Viridis",
                 "min": stats.get("min"),

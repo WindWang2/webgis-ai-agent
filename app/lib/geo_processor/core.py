@@ -86,7 +86,7 @@ def safe_parse(geojson: Any) -> dict | None:
             try:
                 repaired = _repair_json(geojson)
                 return json.loads(repaired)
-            except Exception as e:
+            except Exception:
                 return None
     return None
 

@@ -62,7 +62,6 @@ def _validate_shapefile_zip(file_path: Path) -> None:
 
 def _detect_csv_columns(df) -> Tuple[Optional[str], Optional[str]]:
     """自动检测 CSV 中的经纬度列"""
-    columns = {c.strip().lower() for c in df.columns}
     lng_col = lat_col = None
     for c in df.columns:
         low = c.strip().lower()
