@@ -115,6 +115,78 @@ async def test_pi_rpc_client_process_died_flag():
     await client._read_responses()
 
     assert client.process_died is True
+    # The dead process reference must be cleared so start() can respawn
+    # (its guard is `if self._process is not None: return`). Previously
+    # _process_died was set but _process kept pointing at the dead Popen,
+    # permanently blocking respawn.
+    assert client._process is None
+
+
+@pytest.mark.asyncio
+async def test_process_not_cleared_when_still_alive_on_cancellation():
+    """On the stop()-cancellation path, the process may still be alive
+    (mid-terminate). The reader's finally must NOT clear _process in that
+    case - stop()'s own finally handles the final clearing. The poll() guard
+    prevents a premature clear.
+    """
+    client = PiRpcClient()
+
+    mock_proc = MagicMock()
+    mock_proc.stdin = MagicMock()
+    mock_proc.stdout = DummyPipe(["x"])  # not empty, but we cancel before reading
+    mock_proc.stderr = DummyPipe([])
+    mock_proc.poll.return_value = None  # still alive
+
+    client._process = mock_proc
+    # Simulate the reader being cancelled (as stop() does).
+    client._reader_task = asyncio.create_task(client._read_responses())
+    await asyncio.sleep(0)  # let it start
+    client._reader_task.cancel()
+    try:
+        await client._reader_task
+    except asyncio.CancelledError:
+        pass
+
+    # _process should still be the mock (not cleared) because poll() is None.
+    # stop()'s finally would handle clearing it.
+    assert client._process is mock_proc
+
+
+@pytest.mark.asyncio
+async def test_start_can_respawn_after_natural_death():
+    """After the process dies naturally (EOF + poll=dead), start() must not
+    early-return on the `if self._process is not None: return` guard.
+
+    Previously _process was never cleared, so start() silently no-opped and
+    the bridge could never respawn without a full app restart.
+
+    We verify the guard passes by pre-importing pi_tools (so start()'s inline
+    import doesn't re-trigger numpy's subprocess chain) and mocking Popen.
+    """
+    # Pre-import so start()'s `from app.api.routes.pi_tools import ...` hits
+    # the cached module rather than triggering a fresh import chain.
+    import app.api.routes.pi_tools  # noqa: F401
+
+    client = PiRpcClient()
+
+    # Simulate a process that already died: _process cleared by the reader's
+    # finally (as tested above), _process_died set.
+    client._process = None
+    client._process_died = True
+
+    mock_proc = MagicMock()
+    mock_proc.poll.return_value = None
+    mock_proc.stdin = MagicMock()
+
+    with patch.object(PiRpcClient, "_read_responses", new_callable=AsyncMock), \
+         patch.object(PiRpcClient, "_read_stderr", new_callable=AsyncMock), \
+         patch("app.services.chat.pi_rpc_client.subprocess.Popen", return_value=mock_proc), \
+         patch("app.api.routes.pi_tools.get_bridge_secret", return_value="test-secret"), \
+         patch.object(PiRpcClient, "_wait_for_ready", new_callable=AsyncMock):
+        await client.start()
+
+    # start() did NOT early-return - it assigned the spawned process.
+    assert client._process is mock_proc, "start() should have spawned a new process, not early-returned"
 
 
 async def test_pi_rpc_client_fail_all_pending_resolves_futures():
