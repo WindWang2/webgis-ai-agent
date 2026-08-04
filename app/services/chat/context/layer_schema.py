@@ -3,13 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
 
 from app.services.session_data import session_data_manager
 from app.utils.geojson import geojson_bbox, summarize_feature_properties
 from .geometry import viewport_layer_relation
 from .formatters import (
-    _untrusted,
     _xml_fence,
     format_style_summary,
     TAG_UNTRUSTED_LAYER_NAME,

@@ -1,6 +1,6 @@
 import functools
 import inspect
-from typing import Optional, List, Callable, Any
+from typing import Optional, List
 from app.lib.geo_processor.core import GeoAnalysisResult, to_feature_collection
 
 def spatial_operator(

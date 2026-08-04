@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Optional
 
 from app.services.chat.llm_client import LLMConfig, call_llm
 from app.services.chat.plan_orchestrator import (

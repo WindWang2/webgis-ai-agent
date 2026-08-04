@@ -3,7 +3,6 @@
 使用 Jinja2 模板渲染 HTML，WeasyPrint 转换为 PDF
 """
 import html as html_mod
-import json
 import os
 import re
 from datetime import datetime, timezone

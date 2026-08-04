@@ -9,7 +9,7 @@ import logging
 import re
 from typing import Optional, List, Set
 
-from app.services.chat.llm_client import LLMConfig, LRUCache, call_llm
+from app.services.chat.llm_client import LLMConfig, LRUCache
 from app.services.tool_catalog import DOMAIN_KEYWORDS
 
 logger = logging.getLogger(__name__)

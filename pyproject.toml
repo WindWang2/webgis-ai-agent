@@ -5,3 +5,21 @@ description = "AI-powered GIS analysis platform with natural language interface"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
+
+[tool.ruff.lint]
+# Defaults (E + F) match the implicit rule set the project has always run under.
+# Keep them explicit so the selected set is stable across ruff versions.
+select = ["E", "F"]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+# Backward-compat re-export facades: these modules deliberately mirror symbols
+# from their deep-module origins so legacy `from <facade> import X` keeps
+# working. Their "unused" imports are the public re-export surface, not dead
+# code — ruff's file-local F401 can't see the cross-module consumers.
+"app/services/chat_engine.py" = ["F401"]
+"app/services/chat/context_builder.py" = ["F401"]
+"app/services/mapspec_store.py" = ["F401"]
+"app/services/tool_dispatch_service.py" = ["F401"]
+"app/services/chat/execution_engine.py" = ["F401"]
+"app/tools/_utils.py" = ["F401"]

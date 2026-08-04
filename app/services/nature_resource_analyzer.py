@@ -6,8 +6,7 @@ import os
 import logging
 import numpy as np
 import rasterio
-from typing import Dict, Optional, Tuple, List
-from pathlib import Path
+from typing import Dict, Optional
 import uuid
 import time
 

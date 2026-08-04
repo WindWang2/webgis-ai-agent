@@ -5,7 +5,7 @@ import os
 import io
 import base64
 import asyncio
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Optional, Callable
 
 import matplotlib
 matplotlib.use("Agg")
@@ -15,10 +15,7 @@ from scipy.ndimage import gaussian_filter
 from shapely.geometry import box, mapping
 
 from app.services.task_queue import celery_app
-from app.services.spatial_analyzer import SpatialAnalyzer
 from app.services.nature_resource_analyzer import NatureResourceAnalyzer
-from app.services.rs.spectral_engine import spectral_engine
-from app.core.config import settings
 from app.models.upload import UploadRecord
 from app.tools._utils import db_session
 

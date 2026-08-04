@@ -2,11 +2,9 @@
 SpatialAnalyzer: Unified spatial analysis engine and operator execution seam.
 Supports standardized GeoAnalysisResult payloads across all spatial operations.
 """
-import hashlib
 import json
 import logging
 import re
-from collections import OrderedDict
 from typing import Dict, List, Any, Optional, Callable
 
 from app.lib.geo_processor.core import GeoAnalysisResult, to_utm_gdf, to_feature_collection

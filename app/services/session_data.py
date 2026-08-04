@@ -6,7 +6,7 @@ from typing import Any, Optional
 from collections import OrderedDict, deque
 from datetime import datetime, timezone
 
-from app.services.session_data_protocol import BaseSessionStore, SessionRefDataResult
+from app.services.session_data_protocol import BaseSessionStore
 
 logger = logging.getLogger(__name__)
 

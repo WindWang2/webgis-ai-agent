@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import redis.asyncio as aioredis
-from app.services.session_data_protocol import BaseSessionStore, SessionRefDataResult
+from app.services.session_data_protocol import BaseSessionStore
 
 logger = logging.getLogger(__name__)
 

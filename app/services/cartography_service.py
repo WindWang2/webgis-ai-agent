@@ -5,7 +5,10 @@ import logging
 from typing import List, Dict, Any, Optional
 import numpy as np
 
-from app.lib.cartography.palettes import COLOR_PALETTES, get_color_from_palette
+from app.lib.cartography.palettes import get_color_from_palette
+# COLOR_PALETTES re-exported for app.lib.geo_analysis.density (KDE legend_spec).
+# noqa: F401 — deliberate cross-module re-export.
+from app.lib.cartography.palettes import COLOR_PALETTES  # noqa: F401
 
 logger = logging.getLogger(__name__)
 

@@ -4,7 +4,7 @@
 """
 import logging
 from contextlib import contextmanager, asynccontextmanager
-from typing import Any, List
+from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +117,7 @@ async def async_db_session():
 # STAC Asset Href 提取
 # ============================================================================
 
+from app.utils.path import validate_data_path
 
 
 def std_error_response(message: str, code: str = "TOOL_ERROR", error_type: str = "", correction_hint: str = "") -> dict:
