@@ -364,6 +364,9 @@ jobs:
           # rely on interpolation - so without --env-file the step failed at
           # "required variable DB_PWD is missing a value". Point compose at
           # .env.Priv explicitly (its default is plain `.env`).
+          echo "===== rendered redis command (from compose config) ====="
+          docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml config 2>&1 | sed -n '/^  redis:/,/^  prometheus:/p'
+          echo "===== end rendered config ====="
           docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d || UP_RC=$?
           # On failure, dump container logs so the actual redis/api error is
           # visible (compose up only prints container lifecycle, not app logs).
