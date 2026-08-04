@@ -61,12 +61,6 @@ PI_EVENT_DRAIN_TIMEOUT = _env_float_drain("PI_EVENT_DRAIN_TIMEOUT", 2.0)    # pr
 PI_EVENT_STREAM_TIMEOUT = _env_float_drain("PI_EVENT_STREAM_TIMEOUT", 30.0)  # stream_prompt 等待下一个 event 的超时
 
 
-# SSE content strings for compaction events.
-# TODO: Replace with i18n-aware strings when the frontend supports localized SSE events.
-COMPACTION_START_MSG = "[压缩上下文...]\n"
-COMPACTION_END_MSG = "[上下文压缩完成]\n"
-
-
 # ── Pi tool dispatch models (owned by bridge, not pi_tools route) ──
 
 class PiToolRequest(BaseModel):
@@ -263,8 +257,7 @@ class PiBridge:
     Thin orchestrator: holds a :class:`PiRpcClient` (the deep RPC core),
     owns the prompt/stream_prompt turn lifecycle (including the ADR-0022 cache
     clearing), and delegates event->SSE mapping to the pure
-    :func:`map_event_to_sse` function (extracted in Commit 2; until then the
-    mapper methods stay on this class).
+    :func:`map_event_to_sse` function.
 
     The ADR-0022 dispatch-result cache + the two dispatch adapters
     (``dispatch_tool`` HTTP callback + ``_handle_tool_execution_end`` SSE
