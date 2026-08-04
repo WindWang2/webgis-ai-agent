@@ -348,6 +348,11 @@ jobs:
           export API_PORT=$((9000 + $RANDOM % 1000))
           export FRONTEND_PORT=$((13000 + $RANDOM % 1000))
 
+          # redis 加载 deploy/redis.conf（避免 docker compose 在 runner 上把
+          # list-form command 合并成单字符串导致的配置解析错误）。该文件里的
+          # requirepass 是占位符，这里用上面生成的随机口令替换。
+          sed -i "s|__REDIS_PASSWORD_PLACEHOLDER__|${RANDOM_REDIS_PWD}|" deploy/redis.conf
+
           # nginx.conf 监听 443 端口并需要 /etc/nginx/ssl/server.crt 和
           # .key 文件。deploy/nginx/ssl 目录并未被追踪（证书不属于仓库内容），
           # 因此 docker 会自动将其创建为一个空目录，导致 nginx 启动失败。
@@ -364,9 +369,6 @@ jobs:
           # rely on interpolation - so without --env-file the step failed at
           # "required variable DB_PWD is missing a value". Point compose at
           # .env.Priv explicitly (its default is plain `.env`).
-          echo "===== rendered redis command (from compose config) ====="
-          docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml config 2>&1 | sed -n '/^  redis:/,/^  prometheus:/p'
-          echo "===== end rendered config ====="
           docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d || UP_RC=$?
           # On failure, dump container logs so the actual redis/api error is
           # visible (compose up only prints container lifecycle, not app logs).

@@ -47,27 +47,21 @@ services:
     image: redis:7-alpine
     container_name: webgis-prod-redis
     restart: unless-stopped
-    # list-form (not `>` folded scalar): the folded form joined all args into
-    # one string, which redis-server parsed as a config file and rejected:
-    #   FATAL CONFIG FILE ERROR >>> 'appendonly "--maxmemory" "256mb"'
-    command:
-      - redis-server
-      - --appendonly
-      - --maxmemory
-      - "256mb"
-      - --maxmemory-policy
-      - allkeys-lru
-      - --bind
-      - "0.0.0.0"
-      - --requirepass
-      - "${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv and set REDIS_PASSWORD.}"
+    # Load config from a mounted file rather than CLI args. On GitHub Actions
+    # runners, docker compose's list-form `command:` was serialized into a
+    # single string that redis-server then tried to parse as a config file
+    # (FATAL CONFIG FILE ERROR >>> 'appendonly "--maxmemory" "256mb"').
+    # The config-file path is unambiguous: redis-server treats the first
+    # non-flag arg as a config file, which is exactly what we want here.
+    # deploy/redis.conf has a __REDIS_PASSWORD_PLACEHOLDER__ that the start
+    # step (production.yml) sed-replaces with the real password before `up`.
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     # Expose REDIS_PASSWORD to the container env so the healthcheck (below)
-    # can resolve $$REDIS_PASSWORD at runtime. Without this, the password is
-    # only on the `--requirepass` CLI arg and the healthcheck's redis-cli has
-    # no auth -> NOAUTH -> unhealthy -> compose aborts the whole stack.
+    # can resolve $$REDIS_PASSWORD at runtime.
     environment:
       REDIS_PASSWORD: "${REDIS_PASSWORD}"
     volumes:
+      - ./deploy/redis.conf:/usr/local/etc/redis/redis.conf:ro
       - redis_data_secure:/data
     healthcheck:
       # 用 REDISCLI_AUTH 传密码，避免 -a 把密码暴露在进程列表 / shell history。
