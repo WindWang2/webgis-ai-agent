@@ -241,5 +241,6 @@ async def fetch_remote_skills(registry: ToolRegistry, repo_url: str):
     logger.info(f"Fetching remote skills from {repo_url}...")
     # 模拟远程获取并写入本地 app/skills/remote_xxx.py
     # ...
+    from app.api.routes.chat import get_registry
     load_skills(get_registry())
     return {"status": "success", "count": 0}
