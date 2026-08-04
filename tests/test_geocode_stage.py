@@ -293,3 +293,110 @@ def test_geocode_stage_all_providers_failed():
 
     # Both rows in one batch → all 3 providers tried once each
     assert call_count["n"] == 3
+
+
+def test_geocode_stage_dedupes_duplicate_addresses():
+    """Duplicate addresses are geocoded once, not N times.
+
+    Regression for the no-dedup defect: every row with a non-empty address
+    went into the geocode chunk verbatim, so duplicate addresses (common in
+    real datasets - e.g. multiple rows in the same district) were billed
+    N times against quota-limited/paid providers.
+    """
+    parsed_sources = [
+        {"ref_id": "ref_1", "row_count": 4, "mapping": {"address": "addr"}},
+    ]
+
+    # Four rows, but only two unique addresses.
+    rows = [
+        {"name": "A", "addr": "北京"},
+        {"name": "B", "addr": "上海"},
+        {"name": "C", "addr": "北京"},  # dup of A
+        {"name": "D", "addr": "上海"},  # dup of B
+    ]
+
+    def load_ref(ref_id):
+        return {"rows": rows, "mapping": {"address": "addr"}}
+
+    geocoded_addresses: list[str] = []
+
+    async def batch_geocode(addresses, provider="amap", max_concurrency=3):
+        geocoded_addresses.extend(addresses)
+        locs = {"北京": [116.4, 39.9], "上海": [121.5, 31.2]}
+        return {
+            "total": len(addresses),
+            "success_count": len(addresses),
+            "error_count": 0,
+            "results": [
+                {"index": i, "status": "ok", "address": a, "results": [{"location": locs[a]}]}
+                for i, a in enumerate(addresses)
+            ],
+            "errors": [],
+            "provider": "amap",
+        }
+
+    result = _run(geocode_stage(
+        parsed_sources,
+        load_ref=load_ref,
+        batch_geocode=batch_geocode,
+    ))
+
+    # Each unique address geocoded exactly once (2 calls, not 4).
+    assert geocoded_addresses == ["北京", "上海"], (
+        f"expected deduped geocode of 2 unique addresses, got {geocoded_addresses}"
+    )
+    # All four rows got results (fan-out from the deduped set).
+    assert result.summary.total == 4
+    assert result.summary.success == 4
+    # Duplicate-address rows share the same coordinates.
+    assert result.rows[0]["_lat"] == result.rows[2]["_lat"]  # both 北京
+    assert result.rows[1]["_lat"] == result.rows[3]["_lat"]  # both 上海
+    assert result.rows[0]["_lat"] != result.rows[1]["_lat"]   # 北京 != 上海
+
+
+def test_geocode_stage_dedup_preserves_result_mapping():
+    """Rows with the same address both get the correct lat/lon.
+
+    Pins the fan-out: the dedup must map the unique-address result back to
+    every row_idx that shares it, not just the first.
+    """
+    parsed_sources = [
+        {"ref_id": "ref_1", "row_count": 2, "mapping": {"address": "addr"}},
+    ]
+
+    rows = [
+        {"name": "A", "addr": "同一地址"},
+        {"name": "B", "addr": "同一地址"},
+    ]
+
+    def load_ref(ref_id):
+        return {"rows": rows, "mapping": {"address": "addr"}}
+
+    async def batch_geocode(addresses, provider="amap", max_concurrency=3):
+        assert addresses == ["同一地址"]
+        return {
+            "total": 1,
+            "success_count": 1,
+            "error_count": 0,
+            "results": [
+                {"index": 0, "status": "ok", "address": "同一地址", "results": [{"location": [116.4, 39.9]}]},
+            ],
+            "errors": [],
+            "provider": "amap",
+        }
+
+    result = _run(geocode_stage(
+        parsed_sources,
+        load_ref=load_ref,
+        batch_geocode=batch_geocode,
+    ))
+
+    assert result.summary.total == 2
+    assert result.summary.success == 2
+    # Both rows got the same coordinates from the single geocode call.
+    # location=[116.4, 39.9] is [lon, lat] (geocoding API convention), so
+    # _lat=39.9, _lon=116.4 (see extract_lat_lon in geocode_strategy.py).
+    assert result.rows[0]["_lat"] == 39.9
+    assert result.rows[0]["_lon"] == 116.4
+    assert result.rows[1]["_lat"] == 39.9
+    assert result.rows[1]["_lon"] == 116.4

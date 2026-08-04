@@ -72,9 +72,9 @@ def explorer_discover_task(self, task_id: str, query: str, context: dict):
         raise self.retry(exc=e, countdown=2 ** self.request.retries)
 
 
-@celery_app.task(bind=True, max_retries=1, soft_time_limit=55, time_limit=60)
+@celery_app.task(bind=True, soft_time_limit=55, time_limit=60)
 def explorer_fetch_task(self, prev_result: dict):
-    """内容抓取阶段 — thin Celery adapter."""
+    """内容抓取阶段 - thin Celery adapter."""
     from app.services.explorer.fetch_stage import run_fetch_stage
     task_id = prev_result["task_id"]
     logger.info(f"[Explorer:{task_id}] Starting fetch stage")
@@ -114,9 +114,13 @@ def explorer_parse_task(self, prev_result: dict):
     return res.data
 
 
-@celery_app.task(bind=True, max_retries=2, soft_time_limit=290, time_limit=300)
+# No max_retries: this task never calls self.retry(), so a retry budget would
+# be misleading (implying retries are configured when they aren't). If retries
+# are added later, set max_retries alongside the self.retry() call + an
+# idempotency guard.
+@celery_app.task(bind=True, soft_time_limit=290, time_limit=300)
 def explorer_geocode_task(self, prev_result: dict):
-    """地理编码阶段 — thin Celery adapter over the pure :func:`geocode_stage`."""
+    """地理编码阶段 - thin Celery adapter over the pure :func:`geocode_stage`."""
     from app.tools.chinese_maps import batch_geocode_cn
     from app.services.explorer.geocode_stage import geocode_stage
 
