@@ -131,6 +131,7 @@ async def geocode_stage(
 
     all_geocoded: list[dict] = []
     processed = 0
+    missing_refs: list[str] = []
     # One flag across all chunks, mirroring the original single-boolean
     # semantics: set whenever any batch rotated past the first provider.
     multi_provider = _MultiProviderFlag()
@@ -145,6 +146,7 @@ async def geocode_stage(
         data = load_ref(parsed["ref_id"])
         row_count = parsed.get("row_count", 0)
         if not data:
+            missing_refs.append(parsed.get("ref_id") or "<none>")
             processed += row_count
             continue
 

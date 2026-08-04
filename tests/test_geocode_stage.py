@@ -293,3 +293,35 @@ def test_geocode_stage_all_providers_failed():
 
     # Both rows in one batch → all 3 providers tried once each
     assert call_count["n"] == 3
+
+
+def test_geocode_stage_all_refs_missing_yields_empty_rows():
+    """Every parsed ref unresolved (cross-worker handoff break) => empty rows.
+
+    This is the pure-stage signal the Celery task gates on: when there were
+    rows to geocode (parsed_sources non-empty, row_count > 0) but every ref
+    failed to load, ``result.rows`` is empty. The task-level fail-fast
+    (``expected_rows > 0 and not result.rows``) turns this into a loud failure
+    rather than handing an empty geocoded_ref_id to validate. Here we pin the
+    stage's half of that contract.
+    """
+    parsed_sources = [
+        {"ref_id": "ref_1", "row_count": 2, "mapping": {"address": "addr"}},
+        {"ref_id": "ref_2", "row_count": 3, "mapping": {"address": "addr"}},
+    ]
+
+    def load_ref(ref_id):
+        return None  # cross-worker break: every ref invisible
+
+    async def batch_geocode(addresses, provider="amap", max_concurrency=3):
+        pytest.fail("batch_geocode must not run when no rows loaded")
+
+    result = _run(geocode_stage(
+        parsed_sources,
+        load_ref=load_ref,
+        batch_geocode=batch_geocode,
+    ))
+
+    # The signal the task gates on:
+    assert result.rows == []
+    assert result.summary.total == 0
