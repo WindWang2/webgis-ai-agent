@@ -348,7 +348,13 @@ jobs:
           export API_PORT=$((9000 + $RANDOM % 1000))
           export FRONTEND_PORT=$((13000 + $RANDOM % 1000))
 
-          docker compose -f docker-compose.prod.secure.yml up -d
+          # docker compose resolves ${DB_PWD:?...} / ${REDIS_PASSWORD:?...} /
+          # ${JWT_SECRET_KEY:?...} from the shell env OR its --env-file. The
+          # api/celery services load .env.Priv via `env_file:`, but db/redis
+          # rely on interpolation — so without --env-file the step failed at
+          # "required variable DB_PWD is missing a value". Point compose at
+          # .env.Priv explicitly (its default is plain `.env`).
+          docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d
         env:
           IMAGE_TAG: ${{ github.sha }}
 
