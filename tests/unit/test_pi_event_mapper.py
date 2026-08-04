@@ -178,7 +178,9 @@ def test_map_tool_execution_end_cache_miss_with_is_error():
         "result": {"content": [{"type": "text", "text": "Buffer radius must be positive"}]},
         "isError": True,
     }
-    sse = map_event_to_sse(event, session_id="s1", cache_lookup=lambda s, t: None)
+    # cache_lookup is single-arg (tool_call_id) since #295 collapsed the
+    # dispatch-cache key; the two-arg form would TypeError on master.
+    sse = map_event_to_sse(event, session_id="s1", cache_lookup=lambda t: None)
     assert sse is not None
     assert "event: step_error" in sse
     assert "Buffer radius must be positive" in sse
