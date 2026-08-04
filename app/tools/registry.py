@@ -2,7 +2,7 @@
 import inspect
 import json
 import logging
-from typing import Any, Callable, Optional, Type, Dict, List
+from typing import Any, Callable, Optional, Type, List
 from pydantic import BaseModel, create_model, ValidationError
 
 from app.services.session_data import session_data_manager

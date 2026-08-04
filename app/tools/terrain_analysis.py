@@ -1,6 +1,5 @@
 """地形分析与遥感指数工具 — 坡度/坡向/山体阴影、多源植被指数"""
 import logging
-from typing import Any
 
 from app.tools.registry import ToolRegistry, tool
 from app.services.rs.spectral_engine import spectral_engine

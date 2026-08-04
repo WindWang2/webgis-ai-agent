@@ -1,6 +1,6 @@
 """图层管理工具 (Session Context Management)"""
 import logging
-from typing import Any, List, Dict, Optional
+from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool

@@ -4,7 +4,6 @@ import ast
 import importlib.util
 import sys
 import logging
-from typing import Optional
 import yaml
 from app.tools.registry import ToolRegistry
 

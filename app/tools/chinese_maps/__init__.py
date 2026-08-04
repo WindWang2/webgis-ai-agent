@@ -16,22 +16,19 @@
 import asyncio
 import json
 import logging
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 import aiohttp
 
-from app.core.config import settings
 from app.tools.registry import ToolRegistry, tool
 from app.utils.coord_transform import (
-    wgs84_to_gcj02, gcj02_to_wgs84,
-    wgs84_to_bd09, bd09_to_wgs84,
+    gcj02_to_wgs84,
 )
 
 # HTTP + provider 路由（_amap_get/_baidu_get/_tianditu_get 由各 provider 模块自行导入）
 from app.tools.chinese_maps.http import (
-    _has_provider, _fallback_order,
+    _has_provider,
     _VALID_PROVIDERS,
-    _speed_mps,
     with_fallback,
 )
 

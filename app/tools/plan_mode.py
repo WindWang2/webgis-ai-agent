@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Optional
 
 from app.services import plan_mode as plan_svc
 from app.tools.registry import ToolRegistry

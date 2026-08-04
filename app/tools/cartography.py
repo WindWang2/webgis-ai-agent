@@ -3,7 +3,7 @@
 """
 import json
 import logging
-from typing import Optional, List, Dict, Any
+from typing import Any
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool

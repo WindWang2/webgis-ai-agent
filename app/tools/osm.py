@@ -2,11 +2,11 @@
 import json
 import logging
 import aiohttp
-from typing import Optional, List, Dict
+from typing import Optional
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
-from app.core.network import get_ssl_context, get_base_headers, get_shared_client
+from app.core.network import get_ssl_context, get_shared_client
 from app.tools.registry import ToolRegistry, tool
 
 logger = logging.getLogger(__name__)

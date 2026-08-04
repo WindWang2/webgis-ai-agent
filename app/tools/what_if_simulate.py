@@ -9,7 +9,7 @@ import numpy as np
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
-from app.tools.what_if_rules import WHAT_IF_RULES, get_rule
+from app.tools.what_if_rules import get_rule
 
 logger = logging.getLogger(__name__)
 

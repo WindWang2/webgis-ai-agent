@@ -24,7 +24,7 @@ by the parity test and (optionally) by type annotations at the dispatch site.
 """
 from __future__ import annotations
 
-from typing import Any, Optional, Protocol, runtime_checkable
+from typing import Optional, Protocol, runtime_checkable
 
 
 @runtime_checkable

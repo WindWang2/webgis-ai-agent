@@ -12,7 +12,7 @@ import os
 from typing import Optional
 
 from app.tools.registry import ToolRegistry
-from app.services.report_service import SpatialReportEngine, spatial_report_engine, REPORT_DIR
+from app.services.report_service import spatial_report_engine, REPORT_DIR
 from app.services.mapspec_store import mapspec_store
 from app.tools._utils import db_session
 from app.models.db_model import Conversation, Message
