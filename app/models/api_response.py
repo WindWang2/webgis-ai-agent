@@ -34,7 +34,7 @@ class ApiResponse(BaseModel):
     
     # ok() 的别名，保持向后兼容
     @classmethod
-    def success(cls, data=None, message: str = "操作成功"):
+    def success(cls, data=None, message: str = "操作成功"):  # noqa: F811
         return cls.ok(data=data, message=message)
     
     @classmethod

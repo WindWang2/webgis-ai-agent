@@ -199,7 +199,6 @@ def _parse_llm_json(content: str) -> Optional[dict]:
 
 async def _call_llm_real(system_prompt: str, user_prompt: str) -> dict:
     """Real LLM service call (only invoked when SPATIAL_REASONING_USE_REAL_LLM=true)."""
-    from pydantic import ValidationError
 
     logger.debug("_call_llm_real invoking LLM service")
 

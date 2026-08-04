@@ -4,7 +4,7 @@ import geopandas as gpd
 from shapely.geometry import shape
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 
 # Re-export coordinate transform functions from the canonical module
 # (app/utils/coord_transform.py). Duplicate implementations removed below.
