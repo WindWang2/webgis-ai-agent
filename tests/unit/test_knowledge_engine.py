@@ -99,3 +99,72 @@ async def test_soft_delete_and_compaction(knowledge_engine):
     # Manual compaction
     compact_res = await knowledge_engine.compact_index()
     assert "purged" in compact_res
+
+
+# ─── Negative-path tests (review §3 missing edge cases) ──────────────────
+
+
+@pytest.mark.asyncio
+async def test_index_document_empty_content_returns_error(knowledge_engine):
+    """Empty or whitespace-only content returns an error, not an empty index.
+
+    Pins engine.py:47-48 - the guard short-circuits before chunking/embedding.
+    """
+    result = await knowledge_engine.index_document(
+        title="Empty Doc",
+        content="   ",
+        file_type="text",
+        tenant=TenantContext(user_id="usr_1"),
+    )
+    assert "error" in result
+    assert "empty" in result["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_index_document_whitespace_markdown_returns_error(knowledge_engine):
+    """Markdown with only whitespace content also hits the empty guard."""
+    result = await knowledge_engine.index_document(
+        title="Empty MD",
+        content="\n\n  \n",
+        file_type="markdown",
+        tenant=TenantContext(user_id="usr_1"),
+    )
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_search_defense_in_depth_tenant_filter_drops_cross_tenant():
+    """The engine's post-store tenant filter drops cross-tenant results that
+    slip through the store's own search.
+
+    The review flagged that MockFaissStore inherits the real FaissVectorStore.search
+    (which pre-filters by tenant), so the engine's defense-in-depth filter
+    (engine.py:138-145) is dead in tests. This test uses a mock store that
+    deliberately returns a cross-tenant row, proving the engine filter catches it.
+    """
+    from unittest.mock import MagicMock
+
+    # A store whose search ignores tenant args and returns a cross-tenant row.
+    cross_tenant_store = MagicMock()
+    cross_tenant_store.embed_texts = MockFaissStore().embed_texts
+    cross_tenant_store.search.return_value = [
+        {
+            "content": "Alice's secret data",
+            "document_id": "doc_alice",
+            "user_id": "usr_alice",
+            "org_id": "org_alpha",
+            "deleted": False,
+        }
+    ]
+
+    engine = KnowledgeEngine(vector_store=cross_tenant_store)
+
+    # Bob searches - the store returns Alice's row, but the engine's
+    # defense-in-depth filter (engine.py:138-145) must drop it.
+    bob_tenant = TenantContext(user_id="usr_bob", org_id="org_beta")
+    results = await engine.search("secret data", tenant=bob_tenant, top_k=5)
+
+    assert len(results) == 0, (
+        "engine's defense-in-depth tenant filter should drop cross-tenant rows "
+        "that slip through the store's own search"
+    )

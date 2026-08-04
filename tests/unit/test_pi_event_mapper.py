@@ -159,3 +159,37 @@ def test_sanitize_error_text():
     sanitized = _extract_error_text(sensitive)
     assert "secret123" not in sanitized
     assert "<path>" in sanitized
+
+
+# ─── Negative-path tests (review §3 missing edge cases) ───────────────────
+
+
+def test_map_tool_execution_end_cache_miss_with_is_error():
+    """cache-miss + isError=True emits step_error with the extracted error text.
+
+    The cache-miss + isError=False path is covered by
+    test_map_tool_execution_end_cache_miss_fallback; this pins the isError=True
+    branch (pi_event_mapper.py:139-144) which emits step_error.
+    """
+    event = {
+        "type": "tool_execution_end",
+        "toolName": "buffer_analysis",
+        "toolCallId": "tc-err-miss",
+        "result": {"content": [{"type": "text", "text": "Buffer radius must be positive"}]},
+        "isError": True,
+    }
+    sse = map_event_to_sse(event, session_id="s1", cache_lookup=lambda s, t: None)
+    assert sse is not None
+    assert "event: step_error" in sse
+    assert "Buffer radius must be positive" in sse
+
+
+def test_map_unknown_event_type_returns_none():
+    """An event type not in _EVENT_HANDLERS returns None (no SSE emitted).
+
+    Pins pi_event_mapper.py:203-206: handler lookup returns None for unknown
+    types, and map_event_to_sse returns None instead of crashing.
+    """
+    event = {"type": "some_future_event_type", "data": "whatever"}
+    sse = map_event_to_sse(event, session_id="s1")
+    assert sse is None
