@@ -67,7 +67,7 @@ class ChineseMapsEngine:
         if len(location) != 2:
             return {"error": "location 必须是 [经度, 纬度]"}
         if provider not in _VALID_PROVIDERS:
-            return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
+            return {"error": "provider 必须是 'amap', 'baidu' 或 'tianditu'"}
         _dispatch = {
             "amap": _AMAP.reverse_geocode, "baidu": _BAIDU.reverse_geocode,
             "tianditu": _TIANDITU.reverse_geocode,
@@ -82,7 +82,7 @@ class ChineseMapsEngine:
         if len(origin) != 2 or len(destination) != 2:
             return {"error": "origin/destination 必须是 [经度, 纬度]"}
         if provider not in _VALID_PROVIDERS:
-            return {"error": f"provider 必须是 'amap' 或 'baidu'"}
+            return {"error": "provider 必须是 'amap' 或 'baidu'"}
         _dispatch = {"amap": _AMAP.route, "baidu": _BAIDU.route}
         return await with_fallback(
             provider,
@@ -117,7 +117,7 @@ chinese_maps_engine = ChineseMapsEngine()
 
 async def geocode_cn(address: str, city: str = "", provider: str = "amap") -> dict:
     if provider not in _VALID_PROVIDERS:
-        return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
+        return {"error": "provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
     _dispatch = {
         "amap": _AMAP.geocode, "baidu": _BAIDU.geocode, "tianditu": _TIANDITU.geocode,
@@ -136,7 +136,7 @@ async def batch_geocode_cn(
     max_concurrency: int = 3,
 ) -> dict:
     if provider not in _VALID_PROVIDERS:
-        return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
+        return {"error": "provider 必须是 'amap', 'baidu' 或 'tianditu'"}
     if not addresses or len(addresses) > 100:
         return {"error": "地址列表长度必须在 1~100 之间"}
     if not _has_provider(provider):
@@ -215,7 +215,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if len(location) != 2:
             return {"error": "location 必须是 [经度, 纬度]"}
         if provider not in _VALID_PROVIDERS:
-            return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
+            return {"error": "provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
         _dispatch = {
             "amap": _AMAP.reverse_geocode, "baidu": _BAIDU.reverse_geocode,
@@ -240,7 +240,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if len(origin) != 2 or len(destination) != 2:
             return {"error": "origin/destination 必须是 [经度, 纬度]"}
         if provider not in _VALID_PROVIDERS:
-            return {"error": f"provider 必须是 'amap' 或 'baidu'"}
+            return {"error": "provider 必须是 'amap' 或 'baidu'"}
 
         _dispatch = {"amap": _AMAP.route, "baidu": _BAIDU.route}
         return await with_fallback(
@@ -268,7 +268,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if return_geometry not in ("point", "polygon"):
             return {"error": "return_geometry 必须是 'point' 或 'polygon'"}
         if provider not in _VALID_PROVIDERS:
-            return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
+            return {"error": "provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
         _dispatch = {
             "amap": _AMAP.district, "baidu": _BAIDU.district, "tianditu": _TIANDITU.district,
@@ -369,7 +369,7 @@ def register_chinese_map_tools(registry: ToolRegistry):
         if not keyword and not types:
             return {"error": "keyword 与 types 至少提供一个"}
         if provider not in _VALID_PROVIDERS:
-            return {"error": f"provider 必须是 'amap', 'baidu' 或 'tianditu'"}
+            return {"error": "provider 必须是 'amap', 'baidu' 或 'tianditu'"}
 
         _dispatch = {
             "amap": _AMAP.search_poi_around,

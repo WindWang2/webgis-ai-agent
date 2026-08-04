@@ -58,7 +58,7 @@ def _overpass_to_geojson(data: str) -> dict:
 async def _query_overpass(query: str) -> dict:
     """执行 Overpass QL 查询，返回 GeoJSON"""
     full_query = f"[out:json][timeout:30];{query.rstrip(';')};out body geom;"
-    logger.info(f"[OSM] Querying Overpass API...")
+    logger.info("[OSM] Querying Overpass API...")
     
     try:
         session = await get_shared_client()

@@ -158,7 +158,7 @@ async def create_new_skill(module_name: str, code: str, description: str) -> str
 
     errors = _validate_skill_code(code)
     if errors:
-        return f"Skill validation failed:\n" + "\n".join(f"- {e}" for e in errors) + "\nPlease revise your code to remove dangerous patterns."
+        return "Skill validation failed:\n" + "\n".join(f"- {e}" for e in errors) + "\nPlease revise your code to remove dangerous patterns."
 
     from app.services.skill_creator import skill_creator
     from app.api.routes.chat import get_registry
