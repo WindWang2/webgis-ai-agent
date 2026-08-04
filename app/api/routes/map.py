@@ -8,7 +8,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import Optional, Any
-import io
 import json
 import logging
 import os

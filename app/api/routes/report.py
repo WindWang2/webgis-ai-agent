@@ -4,7 +4,6 @@
 """
 import os
 import secrets
-import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -18,7 +17,6 @@ from app.core.auth import get_current_user, verify_session_owner
 from app.core.database import get_async_db
 from app.models.api_response import ApiResponse, ErrCode
 from app.models.report import Report
-from app.models.db_model import Conversation, Message
 from app.services.report_service import ReportService, REPORT_DIR, serialize_report as _serialize_report, file_ext as _file_ext
 from app.services.mapspec_store import mapspec_store
 

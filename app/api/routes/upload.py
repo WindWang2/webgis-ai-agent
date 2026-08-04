@@ -3,7 +3,7 @@ import asyncio
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import List, Optional
 
 import ijson
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
