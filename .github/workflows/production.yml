@@ -348,10 +348,20 @@ jobs:
           export API_PORT=$((9000 + $RANDOM % 1000))
           export FRONTEND_PORT=$((13000 + $RANDOM % 1000))
 
+          # nginx.conf 监听 443 端口并需要 /etc/nginx/ssl/server.crt 和
+          # .key 文件。deploy/nginx/ssl 目录并未被追踪（证书不属于仓库内容），
+          # 因此 docker 会自动将其创建为一个空目录，导致 nginx 启动失败。
+          # 为预览环境（仅限 localhost）生成一个自签名证书。
+          mkdir -p deploy/nginx/ssl
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout deploy/nginx/ssl/server.key \
+            -out deploy/nginx/ssl/server.crt \
+            -subj "/CN=localhost" >/dev/null 2>&1
+
           # docker compose resolves ${DB_PWD:?...} / ${REDIS_PASSWORD:?...} /
           # ${JWT_SECRET_KEY:?...} from the shell env OR its --env-file. The
           # api/celery services load .env.Priv via `env_file:`, but db/redis
-          # rely on interpolation — so without --env-file the step failed at
+          # rely on interpolation - so without --env-file the step failed at
           # "required variable DB_PWD is missing a value". Point compose at
           # .env.Priv explicitly (its default is plain `.env`).
           docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d
