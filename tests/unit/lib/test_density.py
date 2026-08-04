@@ -7,7 +7,6 @@ Extracted from app/tools/spatial_stats.py (architecture-review F2): these
 algorithms previously lived in the tool adapter layer with zero behavioral
 coverage. Now testable as pure functions.
 """
-import pytest
 
 from app.lib.geo_processor.core import GeoAnalysisResult
 from app.lib.geo_analysis.density import kde_surface, kde_contours

@@ -4,13 +4,13 @@ Run with: python -m pytest tests/test_task_api.py -v
 """
 import pytest
 from httpx import AsyncClient, ASGITransport
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI
 
 from app.services.chat_engine import ChatEngine
 from app.tools.registry import ToolRegistry
 from app.api.routes import chat as chat_mod
 from app.api.routes.task import router as task_router
-from app.core.auth import get_current_user, require_owned_session, verify_session_owner
+from app.core.auth import get_current_user, require_owned_session
 from app.models.db_model import Conversation
 
 # Create a real ChatEngine instance for tests

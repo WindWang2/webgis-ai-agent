@@ -143,12 +143,10 @@ async def test_anon_session_delete_requires_token(client, db):
         token = conv.owner_token
 
     # 引入一个最小 engine 让 DELETE 路由可用
-    from unittest.mock import AsyncMock
     from app.api.routes import chat as chat_mod
 
     class _StubEngine:
         async def clear_session(self, sid, user_id=None, owner_token=None):
-            svc = AsyncHistoryService
             return True
 
     chat_mod.engine = _StubEngine()

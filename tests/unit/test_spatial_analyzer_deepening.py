@@ -1,5 +1,4 @@
 """Unit tests for SpatialAnalyzer deepening & operator completeness (ADR-0026)."""
-import pytest
 from app.services.spatial_analyzer import SpatialAnalyzer
 from app.lib.geo_processor.core import GeoAnalysisResult
 

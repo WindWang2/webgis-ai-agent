@@ -1,5 +1,4 @@
 """Security: fallback HTML in report_service must escape user content."""
-import pytest
 from app.services.report_service import ReportService
 
 

@@ -1,6 +1,5 @@
 """Unit tests for the deepened GeoCoordinateTransformer module (app/utils/coord_transform.py)."""
 import copy
-import pytest
 from app.utils.coord_transform import (
     transform_geojson,
     normalize_chinese_crs,
@@ -9,8 +8,6 @@ from app.utils.coord_transform import (
     gcj02_to_wgs84,
     gcj02_to_bd09,
     bd09_to_gcj02,
-    wgs84_to_bd09,
-    bd09_to_wgs84,
 )
 
 
@@ -159,7 +156,9 @@ def test_out_of_china_boundary_guards():
 
 def test_walk_coords_bool_and_element_validation():
     from app.utils.coord_transform import _walk_coords
-    dummy_fn = lambda x, y: (x + 10, y + 10)
+
+    def dummy_fn(x, y):
+        return (x + 10, y + 10)
     
     # Booleans should be preserved unchanged
     bool_coords = [True, False]

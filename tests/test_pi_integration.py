@@ -1,19 +1,15 @@
 """Tests for Pi bridge and GIS tools endpoint."""
 import asyncio
-import json
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tests.fixtures.pi_mocks import make_mock_process, make_readline
 
 
 from app.agent_pi_bridge import (
     PiBridge,
     PiRpcError,
     PiToolRequest,
-    PiToolResponse,
     dispatch_tool,
     set_tool_registry,
 )

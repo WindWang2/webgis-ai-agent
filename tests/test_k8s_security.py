@@ -1,5 +1,4 @@
 """Security: K8s deployments must have securityContext."""
-import pytest
 import yaml
 
 

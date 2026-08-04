@@ -1,5 +1,5 @@
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 import pytest
 from app.services.session_data import MemorySessionStore
 from app.services.session_data_protocol import SessionRefDataResult, SessionStoreProtocol

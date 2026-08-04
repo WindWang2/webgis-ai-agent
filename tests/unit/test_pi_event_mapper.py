@@ -2,13 +2,10 @@
 
 Tests pure event mapping logic without instantiating PiBridge or subprocesses.
 """
-import pytest
 from app.services.chat.pi_event_mapper import (
     map_event_to_sse,
     _extract_error_text,
-    _sanitize_for_client,
 )
-from app.services.tool_dispatch_service import ToolDispatchResult
 
 
 class FakeToolDispatchResult:

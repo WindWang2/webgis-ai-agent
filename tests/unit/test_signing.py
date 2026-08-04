@@ -1,6 +1,5 @@
 """HMAC 签名 helper：sign_path / verify_signature 行为契约。"""
 import time
-import pytest
 
 from app.core.signing import make_signature, sign_path, verify_signature
 

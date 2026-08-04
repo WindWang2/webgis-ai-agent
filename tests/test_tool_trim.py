@@ -1,5 +1,4 @@
 """trim_features tests — payload trim helper for heavy GeoJSON returns."""
-import pytest
 
 from app.tools._utils import trim_features
 

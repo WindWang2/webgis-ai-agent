@@ -1,5 +1,4 @@
 """Skill tools tests — _parse_md_frontmatter and _validate_skill_code"""
-import pytest
 from app.tools.skills import _parse_md_frontmatter, _validate_skill_code
 
 

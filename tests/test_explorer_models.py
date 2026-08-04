@@ -1,16 +1,11 @@
 """Explorer core data models tests"""
 import pytest
 from pydantic import ValidationError
-from datetime import datetime
 
 from app.services.explorer.models import (
     DataPackage,
     DataSourceQualityScore,
     ExplorerPerceptionEvent,
-    SearchContext,
-    FieldInfo,
-    RawContent,
-    StructuredData,
 )
 
 

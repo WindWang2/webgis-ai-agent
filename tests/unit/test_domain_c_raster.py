@@ -1,6 +1,5 @@
 """Unit tests for Domain C: Raster Math, GCP & Spatial Tools."""
 import os
-import json
 import numpy as np
 import pytest
 import rasterio

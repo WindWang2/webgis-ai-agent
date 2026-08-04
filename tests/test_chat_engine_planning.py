@@ -143,7 +143,8 @@ async def test_chat_stream_emits_plan_ready_when_plan_created(engine, monkeypatc
                         fake_maybe_plan.__get__(engine, type(engine)))
     # 让主 LLM 调用立即结束（不进工具循环），简化测试
     async def fake_llm_stream(*a, **k):
-        if False: yield
+        if False:
+            yield
         # 直接 yield 一个 done event
         yield ("done", {"message": {"role": "assistant", "content": "ok"},
                         "finish_reason": "stop"})
@@ -160,7 +161,7 @@ async def test_chat_stream_emits_plan_ready_when_plan_created(engine, monkeypatc
     import json
     plan_ready_chunks = [c for c in captured if c.startswith("event: plan_ready")]
     assert len(plan_ready_chunks) == 1
-    data_line = [l for l in plan_ready_chunks[0].splitlines() if l.startswith("data:")][0]
+    data_line = [line for line in plan_ready_chunks[0].splitlines() if line.startswith("data:")][0]
     data = json.loads(data_line[len("data:"):].strip())
     assert data["intent"] == "测试意图"
     assert data["domains"] == ["core", "chinese"]
@@ -224,7 +225,7 @@ async def test_chat_stream_emits_plan_step_done_after_tool(engine, monkeypatch):
     import json
     chunks = [c for c in captured if c.startswith("event: plan_step_done")]
     assert len(chunks) == 1
-    data = json.loads([l for l in chunks[0].splitlines() if l.startswith("data:")][0][len("data:"):])
+    data = json.loads([line for line in chunks[0].splitlines() if line.startswith("data:")][0][len("data:"):])
     assert data["step_n"] == 1
     planner_mod.clear_plan("sess-EV2")
 
@@ -261,7 +262,7 @@ async def test_chat_stream_emits_plan_finalized_with_skipped(engine, monkeypatch
     assert pf_idx >= 0 and tc_idx >= 0 and pf_idx < tc_idx
     import json
     chunks = [c for c in captured if c.startswith("event: plan_finalized")]
-    data = json.loads([l for l in chunks[0].splitlines() if l.startswith("data:")][0][len("data:"):])
+    data = json.loads([line for line in chunks[0].splitlines() if line.startswith("data:")][0][len("data:"):])
     assert data["skipped"] == [3]
     planner_mod.clear_plan("sess-EV3")
 

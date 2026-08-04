@@ -104,13 +104,13 @@ async def test_map_state_mutations(store_factory):
     # Layer mutation
     await store.update_layer_in_state(session_id, "layer_1", {"color": "#ff0000"})
     state = await store.get_map_state(session_id)
-    layer_ids = [l["id"] for l in state.get("layers", [])]
+    layer_ids = [line["id"] for line in state.get("layers", [])]
     assert "layer_1" in layer_ids
 
     # Layer removal
     await store.remove_layer_from_state(session_id, "layer_1")
     state_after = await store.get_map_state(session_id)
-    layer_ids_after = [l["id"] for l in state_after.get("layers", [])]
+    layer_ids_after = [line["id"] for line in state_after.get("layers", [])]
     assert "layer_1" not in layer_ids_after
 
 

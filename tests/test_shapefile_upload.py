@@ -3,8 +3,6 @@
 RED phase: these should fail until data_parser.py is updated.
 """
 import json
-import os
-import tempfile
 import zipfile
 from pathlib import Path
 

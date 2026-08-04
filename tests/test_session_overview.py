@@ -1,7 +1,6 @@
 """Round 6: session 元信息概览注入"""
 from datetime import datetime, timedelta
 
-import pytest
 
 from app.services.session_data import session_data_manager
 from app.services.chat.context_builder import (
@@ -114,7 +113,7 @@ async def test_compose_omits_overview_when_nothing_happened_yet():
         {"role": "user", "content": "你好"},
     ]
     out = await compose_request_messages(sid, msgs)
-    sys_content = out[0]["content"]
+    out[0]["content"]  # noqa: F841 — inspected via out2 below for the "no overview on empty" path
     # 全新 session 还没存 map_state/refs/events，只有 1 轮提问 — 仍应出现 overview
     # 但若把 messages 也清空（极端边界），就该 omit
     out2 = await compose_request_messages(sid, [{"role": "system", "content": "BASE"}])

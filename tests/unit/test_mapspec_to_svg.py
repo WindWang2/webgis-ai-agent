@@ -1,5 +1,4 @@
 """Unit tests for Python MapSpec-to-SVG vector compiler target."""
-import pytest
 from app.services.mapspec_to_svg import compile_mapspec_to_svg
 
 

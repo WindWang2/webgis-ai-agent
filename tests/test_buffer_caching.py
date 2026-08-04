@@ -43,7 +43,7 @@ async def test_buffer_analysis_second_call_cache_hit():
     assert r1 == r2
     # The second dispatch must have set cache_hit=True in its metrics row.
     import json
-    lines = [json.loads(l) for l in
+    lines = [json.loads(line) for line in
              open(tool_metrics.LOG_PATH).read().strip().splitlines()]
     assert lines[0]["cache_hit"] is False
     assert lines[1]["cache_hit"] is True

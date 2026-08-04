@@ -83,7 +83,6 @@ def test_add_vectors_propagates_save_index_failure(monkeypatch, tmp_path):
         store.add_vectors(_fake_vectors(1), [{"document_id": "doc_init", "content": "x"}])
         # Now monkeypatch _atomic_write_faiss to fail.
         import app.services.rag.faiss_store as mod
-        original = mod._atomic_write_faiss
 
         def boom(*a, **kw):
             raise OSError("disk full")
@@ -193,7 +192,7 @@ def test_recovery_drops_orphaned_metadata_when_index_is_behind(tmp_path):
     store must detect the divergence and truncate the metadata to
     match the index, so positions are coherent.
     """
-    from app.services.rag.faiss_store import _atomic_write_faiss, _atomic_write_json
+    from app.services.rag.faiss_store import _atomic_write_faiss
 
     # First call writes a 2-vector index and matching 2-chunk metadata.
     store, dir_ = _tmp_store()

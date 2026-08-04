@@ -12,9 +12,8 @@ from app.services.explorer.models import (
     StageResult,
 )
 from app.services.explorer.orchestrator import ExplorerOrchestrator
-from app.services.explorer.parse_stage import auto_field_mapping, mapping_confidence, run_parse_stage
+from app.services.explorer.parse_stage import auto_field_mapping, mapping_confidence
 from app.services.explorer.pipeline import ExplorerPipeline
-from app.services.explorer.validate_stage import run_validate_stage
 
 
 # REVIEW-P1-7: the two old tests below defaulted to a real GovDataAdapter

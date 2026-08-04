@@ -1,7 +1,7 @@
 """Unit tests for RateLimiter sliding-window enforcement and eviction (Issue 02)."""
 import pytest
 import asyncio
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from app.core.rate_limiter import MemoryRateLimiter
 from app.services.ws_service import handle_viewport_change
 

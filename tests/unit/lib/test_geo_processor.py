@@ -1,5 +1,4 @@
 import json
-import pytest
 import geopandas as gpd
 from app.lib.geo_processor.core import (
     safe_parse, to_utm_gdf,
@@ -65,7 +64,6 @@ def test_buffer_smart():
     assert res.data["type"] == "FeatureCollection"
     
     # Check if area is roughly pi * 100^2
-    import geopandas as gpd
     # Convert back to UTM to check area
     from app.lib.geo_processor.core import to_utm_gdf
     gdf, _ = to_utm_gdf(res.data)

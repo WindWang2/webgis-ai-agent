@@ -2,7 +2,6 @@
 
 Frontend changes (addExport, SVG dropdown) are tested via Vitest.
 """
-import json
 
 import pytest
 

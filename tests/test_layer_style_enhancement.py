@@ -1,5 +1,4 @@
 """Layer style enhancement tests — expanded update_layer_appearance tool params."""
-import pytest
 import inspect
 
 

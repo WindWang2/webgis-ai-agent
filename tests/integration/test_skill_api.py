@@ -3,7 +3,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.tools.skills import _md_skills
-from app.api.routes import chat as _chat_mod
 from app.api.routes.chat import router
 
 

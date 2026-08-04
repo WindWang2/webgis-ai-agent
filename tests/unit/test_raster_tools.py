@@ -1,6 +1,5 @@
 """Tests for raster analysis tools: reclassify, calculator, resample."""
 import os
-import tempfile
 import numpy as np
 import pytest
 import rasterio

@@ -1,5 +1,4 @@
 """Tests for the shared rasterio_env context manager (ADR-0037 Win 2)."""
-import io
 
 import rasterio
 

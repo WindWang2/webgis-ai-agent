@@ -1,5 +1,4 @@
 """Unit tests for Analysis -> Cartography Converter (Seam A)."""
-import pytest
 from app.services.analysis_cartography_converter import (
     is_analysis_result,
     convert_analysis_to_mapspec_layer,

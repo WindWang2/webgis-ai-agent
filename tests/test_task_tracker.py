@@ -1,7 +1,5 @@
 """TaskTracker 单元测试"""
 import pytest
-import time
-from datetime import datetime, timezone
 
 
 class TestTaskTracker:
@@ -143,7 +141,9 @@ class TestTaskTracker:
 
         task1 = tracker.create("session-1", "请求1")
         task2 = tracker.create("session-1", "请求2")
-        task3 = tracker.create("session-2", "请求3")
+        # Also create a task in a different session to confirm list_by_session
+        # filters correctly (this third task is not referenced by name).
+        tracker.create("session-2", "请求3")
 
         tasks = tracker.list_by_session("session-1")
 
@@ -205,7 +205,7 @@ class TestTaskTracker:
         task = tracker.create("session-1", "测试请求")
 
         with pytest.raises(RuntimeError, match="API Error"):
-            async with tracker.track_step(task.id, "query_osm", {}) as step:
+            async with tracker.track_step(task.id, "query_osm", {}):  # noqa: F841 — `as step` is just an alias for the entered context
                 raise RuntimeError("API Error")
 
         assert task.steps[0].status == StepStatus.failed

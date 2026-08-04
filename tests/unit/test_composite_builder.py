@@ -1,7 +1,6 @@
 """
 Unit tests for CompositeMapSpecBuilder and combine_map_theme tool
 """
-import pytest
 from app.schemas.map_component_slots import (
     BasemapSlot,
     SymbologySlot,
@@ -11,7 +10,6 @@ from app.schemas.map_component_slots import (
 )
 from app.services.mapspec.composite_builder import (
     CompositeMapSpecBuilder,
-    PRESET_COMBINATIONS,
 )
 from app.tools.templates import combine_map_theme
 

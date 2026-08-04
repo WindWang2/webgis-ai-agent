@@ -11,7 +11,6 @@ ADR-0038 dropped the run_in_executor wrapper the pre-extraction rag_service
 had. Verify it is back by recording the thread that embed_texts runs on and
 asserting it isn't the event loop's thread.
 """
-import asyncio
 import threading
 from typing import Any, Dict, List
 

@@ -5,7 +5,6 @@
 """
 import inspect
 
-import pytest
 
 from app.services.chat_engine import ChatEngine
 

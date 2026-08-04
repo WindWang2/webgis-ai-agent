@@ -1,7 +1,7 @@
 """ChatEngine Task Tracking 测试 - TDD"""
 import json
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 
 from app.services.chat_engine import ChatEngine
 from app.services.task_tracker import TaskTracker, detect_geojson

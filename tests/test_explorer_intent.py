@@ -1,6 +1,5 @@
 """Explorer intent detector tests"""
-import pytest
-from app.services.explorer.intent_detector import IntentDetector, ExploreDecision
+from app.services.explorer.intent_detector import IntentDetector
 
 
 def test_detects_poi_gap():

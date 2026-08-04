@@ -1,5 +1,4 @@
 import pytest
-import asyncio
 from app.tools.registry import ToolRegistry
 from app.tools.spatial import register_spatial_tools
 from app.tools.advanced_spatial import register_advanced_spatial_tools

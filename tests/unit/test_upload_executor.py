@@ -4,8 +4,6 @@
 线程已切换。
 """
 import threading
-from io import BytesIO
-from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
@@ -53,7 +51,6 @@ async def app_and_signals(tmp_path, monkeypatch):
                 pass
             async def refresh(self, _):
                 pass
-        from contextlib import asynccontextmanager
         return _Db()
 
     from contextlib import asynccontextmanager

@@ -1,8 +1,6 @@
 """Unit tests for coalesced session metadata retrieval"""
 import asyncio
 from unittest.mock import MagicMock, AsyncMock
-import pytest
-import redis
 
 from app.services.session_data import SessionDataManager
 from app.services.session_data_redis import RedisSessionDataManager

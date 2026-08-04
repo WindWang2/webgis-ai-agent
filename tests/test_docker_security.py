@@ -1,5 +1,4 @@
 """Security: docker-compose files must follow secure defaults."""
-import pytest
 import yaml
 
 

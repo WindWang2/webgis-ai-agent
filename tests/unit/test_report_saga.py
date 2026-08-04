@@ -1,9 +1,9 @@
 """Unit tests for ReportService.create_and_generate status saga (ADR-0023)."""
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from app.models.api_response import ErrCode
-from app.models.db_model import Conversation, Message
-from app.services.report_service import ReportService, ReportSagaResult
+from app.models.db_model import Conversation
+from app.services.report_service import ReportService
 
 
 @pytest.mark.asyncio

@@ -111,7 +111,7 @@ async def test_create_and_generate_forwards_mapspec_to_vector_svg():
         mock_factory.return_value.__aenter__ = AsyncMock(return_value=AsyncMock())
         mock_factory.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        res = await service.create_and_generate(
+        await service.create_and_generate(  # noqa: F841 — return value not asserted; side effect exercised
             db=db,
             session_id="sess-1",
             format="pdf",
@@ -154,7 +154,7 @@ async def test_create_and_generate_without_mapspec_omits_vector_svg():
         mock_factory.return_value.__aenter__ = AsyncMock(return_value=AsyncMock())
         mock_factory.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        res = await service.create_and_generate(
+        await service.create_and_generate(  # noqa: F841 — return value not asserted; side effect exercised
             db=db,
             session_id="sess-1",
             format="pdf",

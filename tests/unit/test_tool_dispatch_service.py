@@ -10,7 +10,6 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from app.services.tool_dispatch_service import (
-    LEGACY_TOOL_NAME_MAP,
     ToolDispatchResult,
     ToolDispatchService,
     normalize_tool_name,

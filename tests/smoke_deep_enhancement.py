@@ -1,6 +1,5 @@
 import asyncio
 import uuid
-import json
 from app.api.routes.chat import registry
 from app.services.session_data import session_data_manager
 

@@ -1,18 +1,15 @@
 """统一异常处理模块测试"""
-import pytest
 from unittest.mock import MagicMock
 
 from app.core.exception import (
     sanitize_traceback,
     format_error_response,
-    global_exception_handler,
     PRODUCTION_ERROR_MESSAGE,
 )
 
 
 class TestSanitizeTraceback:
     def test_removes_project_root(self):
-        from app.core.exception import PRODUCTION_ERROR_MESSAGE
         # Use actual project root for realistic test
         from pathlib import Path
         project_root = str(Path(__file__).parent.parent)

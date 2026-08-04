@@ -11,11 +11,9 @@ This test verifies:
 5. Feature flag gating (USE_NEW_AGENT=true/false)
 """
 import asyncio
-import json
-import os
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -23,7 +21,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.agent_pi_bridge import PiBridge, PiRpcError
-from app.api.routes.chat import _use_pi_bridge
 
 
 from tests.fixtures.pi_mocks import (

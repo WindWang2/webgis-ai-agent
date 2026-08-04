@@ -1,7 +1,6 @@
 """Unit tests for ToolExecutionPipeline (ADR-0024)."""
 import pytest
 import json
-from unittest.mock import AsyncMock, MagicMock
 from app.tools.registry import ToolRegistry, tool
 from app.services.task_tracker import TaskTracker
 from app.services.chat.tool_pipeline import ToolExecutionPipeline, ToolExecutionResult

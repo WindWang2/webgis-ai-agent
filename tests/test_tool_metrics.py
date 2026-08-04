@@ -1,6 +1,5 @@
 """tool_metrics tests — JSONL writer + in-process aggregator + digest emission."""
 import json
-import os
 import pytest
 
 from app.services import tool_metrics

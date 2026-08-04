@@ -1,8 +1,6 @@
 """
 Unit tests for RAG vector store deep module and chunker.
 """
-import pytest
-import os
 import tempfile
 from app.services.rag.chunker import split_into_chunks, split_markdown_sections
 from app.services.rag.protocol import VectorStoreProtocol

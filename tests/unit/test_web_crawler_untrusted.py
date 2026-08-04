@@ -1,6 +1,6 @@
 """A8 修复回归：web 搜索结果必须被 UNTRUSTED_WEB_CONTENT 标签包裹。"""
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from app.tools.registry import ToolRegistry
 from app.tools.web_crawler import register_crawler_tools, _wrap_untrusted, _wrap_payload

@@ -2,7 +2,6 @@
 Unit tests for ST-DBSCAN (Spatio-Temporal DBSCAN) operator.
 """
 from datetime import datetime, timezone, timedelta
-import pytest
 from app.lib.geo_analysis.statistics import st_dbscan_narrated
 from app.services.spatial_analyzer import SpatialAnalyzer
 

@@ -14,7 +14,7 @@ class TestAsyncDbSession:
     @pytest.mark.asyncio
     async def test_async_session_rollback_on_error(self):
         with pytest.raises(ValueError):
-            async with async_db_session() as db:
+            async with async_db_session():  # noqa: F841 — `as db` is just an alias for the entered context
                 raise ValueError("test error")
 
     @pytest.mark.asyncio

@@ -8,7 +8,6 @@ a stat() syscall decides hit vs miss, and any writer — this process,
 another uvicorn worker, a Celery compact task — changes the mtime on
 save, so the next reader re-parses.
 """
-import json
 import os
 import shutil
 import tempfile

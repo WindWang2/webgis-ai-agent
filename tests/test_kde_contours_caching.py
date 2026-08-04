@@ -22,8 +22,8 @@ def _isolated(tmp_path, monkeypatch):
 async def test_kde_contours_second_call_cache_hit():
     # Check dependencies
     try:
-        import matplotlib
-        import scipy
+        import matplotlib  # noqa: F401 — used as availability gate
+        import scipy  # noqa: F401 — used as availability gate
     except ImportError:
         pytest.skip("matplotlib/scipy not installed")
 
@@ -59,6 +59,6 @@ async def test_kde_contours_second_call_cache_hit():
     # Compare JSON serializations (cache returns lists instead of tuples for geometry coords)
     assert json.dumps(r1, sort_keys=True, default=str) == json.dumps(r2, sort_keys=True, default=str)
 
-    lines = [json.loads(l) for l in
+    lines = [json.loads(line) for line in
              open(tool_metrics.LOG_PATH).read().strip().splitlines()]
     assert lines[1]["cache_hit"] is True

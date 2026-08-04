@@ -11,7 +11,6 @@
 - I27: rollback 用 pinned commit 而非 tag
 """
 from pathlib import Path
-import pytest
 
 REPO = Path(__file__).parent.parent
 

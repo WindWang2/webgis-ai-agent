@@ -1,5 +1,4 @@
 """Explorer quality engine tests"""
-import pytest
 from datetime import datetime, timedelta, timezone
 from app.services.explorer.quality_engine import QualityEngine
 

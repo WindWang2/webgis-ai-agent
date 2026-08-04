@@ -47,7 +47,7 @@ async def setup_db(tmp_path):
         await conn.run_sync(Base.metadata.create_all)
     async with _TestSession() as s:
         from sqlalchemy import delete
-        await s.execute(delete(CartographyTemplate).where(CartographyTemplate.is_builtin == False))
+        await s.execute(delete(CartographyTemplate).where(not CartographyTemplate.is_builtin))
         await s.commit()
     yield
     app.dependency_overrides.clear()

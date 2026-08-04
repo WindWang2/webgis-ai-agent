@@ -1,6 +1,5 @@
 """B2 修复回归：_get_or_create_session 在并发下不应双加载。"""
 import asyncio
-from unittest.mock import AsyncMock
 
 import pytest
 

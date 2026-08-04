@@ -1,6 +1,5 @@
 """F14: CRS conversion failure must not silently produce mismatched GeoJSON."""
 import pytest
-from pathlib import Path
 from unittest.mock import patch
 from app.services.data_parser import parse_vector, ParseError
 

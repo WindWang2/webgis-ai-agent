@@ -1,5 +1,4 @@
 """Round 2 上下文注入增强：图层 bbox / 视口关系 / 后台任务 / 工具调用历史"""
-import pytest
 
 from app.services.session_data import session_data_manager
 from app.services.chat.context_builder import (
