@@ -344,9 +344,12 @@ jobs:
             -e "s|^JWT_SECRET_KEY=.*|JWT_SECRET_KEY=${RANDOM_JWT}|" \
             .env.Priv
 
-          # 修改端口避免与其它实例冲突
-          export API_PORT=$((9000 + $RANDOM % 1000))
-          export FRONTEND_PORT=$((13000 + $RANDOM % 1000))
+          # 修改端口避免与其它实例冲突。写到 $GITHUB_ENV 以便后续步骤
+          # （Comment Preview URL）能读到——跨步骤的 `export` 不会持久化。
+          API_PORT=$((9000 + $RANDOM % 1000))
+          FRONTEND_PORT=$((13000 + $RANDOM % 1000))
+          echo "API_PORT=$API_PORT" >> "$GITHUB_ENV"
+          echo "FRONTEND_PORT=$FRONTEND_PORT" >> "$GITHUB_ENV"
 
           # redis 加载 deploy/redis.conf（避免 docker compose 在 runner 上把
           # list-form command 合并成单字符串导致的配置解析错误）。该文件里的
@@ -389,14 +392,19 @@ jobs:
           script: |
             const commentBody = `
             🚀 **Preview 部署成功**
-            
+
             - API: http://localhost:${ process.env.API_PORT }
             - Frontend: http://localhost:${ process.env.FRONTEND_PORT }
-            
+
             镜像: ${ process.env.IMAGE_TAG }
             `;
-            
+
+            // 显式传 owner/repo: 之前只传 issue_number + body 时，octokit
+            // 的 context.repo 为空（repos///issues/... -> 404）。
+            const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
             await github.rest.issues.createComment({
+              owner,
+              repo,
               issue_number: context.issue.number,
               body: commentBody
             });
