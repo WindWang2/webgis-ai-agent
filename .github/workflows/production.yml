@@ -303,6 +303,14 @@ jobs:
     needs: [build]
     if: github.event_name == 'pull_request'
     steps:
+      - name: Checkout Code
+        # Start Preview Stack needs repo files that the image artifact
+        # doesn't carry: .env.Priv.example (seed for random secrets) and
+        # docker-compose.prod.secure.yml. Without checkout the runner's
+        # working dir only has the downloaded image tar, so the step failed
+        # at "缺少 .env.Priv.example".
+        uses: actions/checkout@v7
+
       - name: Download Image Artifact
         uses: actions/download-artifact@v4
         with:
