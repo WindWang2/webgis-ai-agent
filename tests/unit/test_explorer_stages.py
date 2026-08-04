@@ -300,7 +300,52 @@ async def test_fetch_reports_progress_on_success():
   assert progress == [10, 100]
 
 
-# ─── Parse stage: silent-data-loss regression (review §3 item 3) ──────────
+# ─── Fetch concurrency (review §3 item 3c) ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_fetch_runs_sources_concurrently():
+  """Sources are fetched concurrently, not serially.
+
+  Regression for the serial-await defect: the loop previously did one
+  ``await data_adapter.fetch(source)`` at a time, so N sources × 30s timeout
+  blew the Celery soft_time_limit=55. Now uses asyncio.gather. This test
+  proves concurrency by having two fetches that each block on an asyncio.Event
+  until the other has started - impossible to satisfy serially.
+  """
+  import asyncio as _asyncio
+
+  a_started = _asyncio.Event()
+  b_started = _asyncio.Event()
+
+  class ConcurrencyProbeAdapter:
+    """Adapter whose fetch gates on the sibling starting."""
+
+    async def fetch(self, source):
+      if source.id == "a":
+        a_started.set()
+        # Wait until B has started (proves they overlap).
+        await _asyncio.wait_for(b_started.wait(), timeout=2.0)
+        return RawContent(data=b"a", content_type="text/csv")
+      else:
+        b_started.set()
+        await _asyncio.wait_for(a_started.wait(), timeout=2.0)
+        return RawContent(data=b"b", content_type="text/csv")
+
+  adapter = ConcurrencyProbeAdapter()
+  result = await run_fetch_stage(
+      task_id="t1",
+      selected_sources=[
+          {"source": _source("a").model_dump()},
+          {"source": _source("b").model_dump()},
+      ],
+      adapter=adapter,
+  )
+
+  # If fetches were serial, A would wait for B (which never starts) -> timeout
+  # -> the stage would fail or error. Both succeeded -> they ran concurrently.
+  assert result.success is True
+  assert len(result.data["fetch_results"]) == 2
 #
 # The parse stage previously swallowed a missing fetch ref as a `continue` and
 # still returned success=True — so a cross-worker handoff break (the ref stored

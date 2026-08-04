@@ -223,11 +223,20 @@ async def _geocode_chunk(
     failure rate exceeds the threshold and another provider remains, the
     failed addresses are retried against the next provider, and ``flag`` is
     set to signal that a rotation occurred.
+
+    Deduplicates addresses before geocoding: each unique address is geocoded
+    once, then the result is fanned out to every row that shares it. This
+    avoids re-billing quota-limited/paid provider calls for duplicate
+    addresses (common in real datasets - e.g. multiple rows in the same
+    district).
     """
     addresses = [address for _, address in chunk]
+    # Dedup preserving first-occurrence order so the strategy sees each unique
+    # address exactly once. dict.fromkeys is insertion-ordered (3.7+).
+    unique_addrs: list[str] = list(dict.fromkeys(addresses))
     strategy = GeocodeProviderStrategy()
     results, hit = await strategy.geocode_addresses(
-        addresses,
+        unique_addrs,
         batch_geocode=batch_geocode,
         providers=providers,
         failure_threshold=PROVIDER_FAILURE_THRESHOLD,
@@ -235,8 +244,11 @@ async def _geocode_chunk(
     )
     if hit:
         flag.hit = True
-        
-    for (row_idx, _), res in zip(chunk, results):
+
+    # Fan out unique-address results to every row_idx that shares the address.
+    addr_to_result = dict(zip(unique_addrs, results))
+    for row_idx, addr in chunk:
+        res = addr_to_result[addr]
         row = rows[row_idx]
         row["_lat"] = res.lat
         row["_lon"] = res.lon
