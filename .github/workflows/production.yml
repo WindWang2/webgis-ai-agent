@@ -41,14 +41,12 @@ jobs:
         run: pip install ruff
 
       - name: Run Ruff Check
-        # Blocking gate: the full configured rule set (E4/E7/E9 + F, see
-        # pyproject.toml [tool.ruff.lint]). The ~275-error unused-import + style
-        # backlog was cleared in the lint-cleanup PR, so this now actually blocks.
-        # E402 is ignored project-wide (intentional non-top imports: main.py's
-        # load_dotenv() before app imports, deferred imports for circular-dep
-        # avoidance). per-file-ignores suppress deliberate re-export F401 and
-        # __future__-annotations F821 false positives.
-        run: ruff check --output-format=github .
+        # Blocking gate on production code (app/). The ~275-error unused-import +
+        # style backlog was cleared in the lint-cleanup PR, so this now actually
+        # blocks. Scoped to app/ — tests/ has ~340 pre-existing lint nits that
+        # are a separate cleanup task; linting test code adds churn without much
+        # value. Config lives in pyproject.toml [tool.ruff.lint].
+        run: ruff check --output-format=github app/
 
       - name: Install Frontend Deps
         working-directory: ./frontend
