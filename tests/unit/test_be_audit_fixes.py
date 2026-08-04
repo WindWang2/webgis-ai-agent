@@ -1,19 +1,29 @@
 """Unit tests verifying all 4 Backend GIS audit fixes (BE-AUDIT-01 to BE-AUDIT-04)."""
 import pytest
 from unittest.mock import patch, MagicMock
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from app.main import app
 from app.core.auth import create_access_token
-from app.models.db_model import CartographyTemplate
-from app.core.database import SessionLocal, Base, Engine, AsyncSessionLocal
-
-client = TestClient(app)
+from app.models.db_model import Base
+from app.core.database import get_async_db
 
 user1_token = create_access_token({"sub": "user_audit_1", "role": "viewer"})
 user1_headers = {"Authorization": f"Bearer {user1_token}"}
 
 user2_token = create_access_token({"sub": "user_audit_2", "role": "viewer"})
 user2_headers = {"Authorization": f"Bearer {user2_token}"}
+
+# Isolated sqlite async engine for the template CRUD test (BE-AUDIT-02) — avoids
+# racing asyncpg connections under CI's real Postgres. File-based (per tmp_path)
+# so all sessions in a test see the same data. Mirrors test_critical_auth_hardening.
+_tmpl_engine = None
+_TmplSession = None
+
+
+async def _override_get_async_db():
+    async with _TmplSession() as s:
+        yield s
 
 
 # ── BE-AUDIT-01: RemoteSensingService Import & Celery Task Verification ──────
@@ -58,67 +68,62 @@ def test_be_audit_01_run_change_detection_uses_remote_sensing_service():
 
 # ── BE-AUDIT-02: Template CRUD Authentication & Ownership Check ─────────────
 
-async def _purge_user_templates():
-    """Delete non-builtin templates via the async session (same pool as the routes).
-
-    Avoids racing asyncpg connections under CI's real Postgres. Falls back to
-    the sync session when no async driver is configured (local SQLite).
-    """
-    if AsyncSessionLocal is None:
-        db = SessionLocal()
-        try:
-            db.query(CartographyTemplate).filter(CartographyTemplate.is_builtin == False).delete()
-            db.commit()
-        finally:
-            db.close()
-        return
-    from sqlalchemy import delete as _delete
-    async with AsyncSessionLocal() as db:
-        await db.execute(_delete(CartographyTemplate).where(CartographyTemplate.is_builtin == False))
-        await db.commit()
-
-
 @pytest.fixture(autouse=True)
-async def clean_user_templates():
-    """Clean up non-builtin templates and clear dependency overrides before and after test."""
+async def clean_user_templates(tmp_path):
+    """Per-test file-based sqlite engine so the template routes don't touch the
+    real Postgres+asyncpg pool (which races under AsyncClient).
+
+    File-based (tmp_path) rather than :memory: so all sessions in one test share
+    one database.
+    """
+    global _tmpl_engine, _TmplSession
+    _tmpl_engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'be_audit.db'}",
+        connect_args={"check_same_thread": False},
+    )
+    _TmplSession = async_sessionmaker(bind=_tmpl_engine, expire_on_commit=False)
     app.dependency_overrides.clear()
-    Base.metadata.create_all(Engine)
-    await _purge_user_templates()
+    app.dependency_overrides[get_async_db] = _override_get_async_db
+    async with _tmpl_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     yield
     app.dependency_overrides.clear()
-    await _purge_user_templates()
+    await _tmpl_engine.dispose()
 
 
-def test_be_audit_02_template_creation_auth_and_deletion_ownership():
+@pytest.mark.asyncio
+async def test_be_audit_02_template_creation_auth_and_deletion_ownership():
     """Verify POST /templates requires auth and DELETE /templates enforces ownership check."""
-    # 1. Unauthenticated POST fails 401
-    payload = {
-        "name": "Audit Test Template",
-        "kind": "symbology",
-        "payload": {
-            "mode": "single",
-            "geometry": "Polygon",
-            "style": {"fill_color": "#ff0000", "opacity": 1.0, "stroke_color": "#000000", "stroke_width": 1.0},
-        },
-    }
-    res_unauth = client.post("/api/v1/templates", json=payload)
-    assert res_unauth.status_code == 401
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        # 1. Unauthenticated POST fails 401
+        payload = {
+            "name": "Audit Test Template",
+            "kind": "symbology",
+            "payload": {
+                "mode": "single",
+                "geometry": "Polygon",
+                "style": {"fill_color": "#ff0000", "opacity": 1.0, "stroke_color": "#000000", "stroke_width": 1.0},
+            },
+        }
+        res_unauth = await ac.post("/api/v1/templates", json=payload)
+        assert res_unauth.status_code == 401
 
-    # 2. Authenticated POST by User 1 succeeds
-    res_create = client.post("/api/v1/templates", json=payload, headers=user1_headers)
-    assert res_create.status_code == 201
-    tmpl_data = res_create.json()
-    assert tmpl_data["creator_id"] == "user_audit_1"
-    tmpl_id = tmpl_data["id"]
+        # 2. Authenticated POST by User 1 succeeds
+        res_create = await ac.post("/api/v1/templates", json=payload, headers=user1_headers)
+        assert res_create.status_code == 201
+        tmpl_data = res_create.json()
+        assert tmpl_data["creator_id"] == "user_audit_1"
+        tmpl_id = tmpl_data["id"]
 
-    # 3. Delete by User 2 fails with 403 Forbidden
-    res_del_user2 = client.delete(f"/api/v1/templates/{tmpl_id}", headers=user2_headers)
-    assert res_del_user2.status_code == 403
+        # 3. Delete by User 2 fails with 403 Forbidden
+        res_del_user2 = await ac.delete(f"/api/v1/templates/{tmpl_id}", headers=user2_headers)
+        assert res_del_user2.status_code == 403
 
-    # 4. Delete by creator (User 1) succeeds with 200 OK
-    res_del_user1 = client.delete(f"/api/v1/templates/{tmpl_id}", headers=user1_headers)
-    assert res_del_user1.status_code == 200
-    assert res_del_user1.json()["status"] == "deleted"
+        # 4. Delete by creator (User 1) succeeds with 200 OK
+        res_del_user1 = await ac.delete(f"/api/v1/templates/{tmpl_id}", headers=user1_headers)
+        assert res_del_user1.status_code == 200
+        assert res_del_user1.json()["status"] == "deleted"
 
 
 # ── BE-AUDIT-03: SpatialAnalysisEngine Parameter Keywords Verification ────────
@@ -168,7 +173,8 @@ def test_be_audit_04_distance_matrix_maxsize_is_16():
 
 # ── BE-AUDIT-06: Exception Sanitization Verification ─────────────────────────
 
-def test_be_audit_06_templates_and_config_sanitized():
+@pytest.mark.asyncio
+async def test_be_audit_06_templates_and_config_sanitized():
     """Verify raw exception strings are sanitized in templates and config routes."""
     from app.core.auth import get_current_user, get_current_user_with_version
     from app.api.routes import chat as chat_routes
@@ -183,11 +189,13 @@ def test_be_audit_06_templates_and_config_sanitized():
         admin_token = create_access_token({"sub": "admin_audit", "username": "admin", "role": "admin"})
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
-        # Test SSRF validation failure in config route does not leak raw exception
-        res = client.post("/api/v1/config/llm", json={"base_url": "http://127.0.0.1"}, headers=admin_headers)
-        assert res.status_code == 400
-        assert "127.0.0.1" not in res.json()["detail"]
-        assert "base_url 校验失败" in res.json()["detail"]
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            # Test SSRF validation failure in config route does not leak raw exception
+            res = await ac.post("/api/v1/config/llm", json={"base_url": "http://127.0.0.1"}, headers=admin_headers)
+            assert res.status_code == 400
+            assert "127.0.0.1" not in res.json()["detail"]
+            assert "base_url 校验失败" in res.json()["detail"]
     finally:
         chat_routes.engine = None
         chat_routes.registry = None
