@@ -32,3 +32,7 @@ Canonical triage roles mapped 1:1 (`needs-triage`, `needs-info`, `ready-for-agen
 
 Single-context repo layout (`CONTEXT.md` + `docs/adr/`). See `docs/agents/domain.md`.
 
+## Working conventions
+
+- **Never wait for CI results.** Do not gate commits, pushes, merges, or follow-up work on CI status, and do not set up background CI watchers. Proceed on the user's instruction regardless of CI.
+

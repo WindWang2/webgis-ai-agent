@@ -5,9 +5,13 @@ global:
 alerting:
   alertmanagers:
     - static_configs:
+        # 告警投递需要 alertmanager 服务（尚未部署）；规则仍会被加载并在
+        # Prometheus UI 中可见。
         - targets: []
 
-rule_files: []
+# 加载仓库内已跟踪的告警规则（deploy/alerts-rules.json，compose 中挂载）。
+rule_files:
+  - /etc/prometheus/alerts-rules.json
 
 scrape_configs:
   # Prometheus 自身监控
