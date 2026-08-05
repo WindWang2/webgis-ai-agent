@@ -1,6 +1,7 @@
 """WebGIS AI Agent - 服务启动入口"""
 import uvicorn
-from app.main import app
+# `app` is loaded by the uvicorn target string "main:app" below.
+from app.main import app  # noqa: F401
 
 
 def main():

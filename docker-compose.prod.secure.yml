@@ -47,14 +47,24 @@ services:
     image: redis:7-alpine
     container_name: webgis-prod-redis
     restart: unless-stopped
-    command: >
-      redis-server
-      --appendonly
-      --maxmemory 256mb
-      --maxmemory-policy allkeys-lru
-      --bind 0.0.0.0
-      --requirepass "${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv and set REDIS_PASSWORD.}"
+    # Load config from a mounted file rather than CLI args. On GitHub Actions
+    # runners, docker compose's list-form `command:` was serialized into a
+    # single string that redis-server then tried to parse as a config file
+    # (FATAL CONFIG FILE ERROR >>> 'appendonly "--maxmemory" "256mb"').
+    # The config-file path is unambiguous: redis-server treats the first
+    # non-flag arg as a config file, which is exactly what we want here.
+    # requirepass is NOT stored in deploy/redis.conf (audit I4/I6); the
+    # entrypoint script below injects it from the REDIS_PASSWORD env var, so
+    # local compose, CI preview, and prod SSH deploys all behave identically.
+    entrypoint: ["/bin/sh", "/usr/local/etc/redis/entrypoint.sh"]
+    # Expose REDIS_PASSWORD to the container env so the entrypoint can set
+    # requirepass and the healthcheck (below) can resolve $$REDIS_PASSWORD.
+    # `:?` fails fast when the var is missing, like the other services here.
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv and set REDIS_PASSWORD.}"
     volumes:
+      - ./deploy/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./deploy/redis-entrypoint.sh:/usr/local/etc/redis/entrypoint.sh:ro
       - redis_data_secure:/data
     healthcheck:
       # 用 REDISCLI_AUTH 传密码，避免 -a 把密码暴露在进程列表 / shell history。
@@ -81,17 +91,17 @@ services:
     container_name: webgis-prod-api
     restart: unless-stopped
     environment:
-      - ENV=production
-      - DEBUG=false
-      - DATABASE_URL=postgresql://${DB_USER:-webgis_prod}:${DB_PWD}@db:5432/${DB_NAME:-webgis_prod}
-      - JWT_SECRET_KEY="${JWT_SECRET_KEY:?ERROR: JWT_SECRET_KEY not set. Set it in .env.Priv.}"
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/0
-      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/1
-      - CORS_ORIGINS=${CORS_ORIGINS}
-      - LOG_LEVEL=INFO
+      ENV: production
+      DEBUG: "false"
+      DATABASE_URL: "postgresql://${DB_USER:-webgis_prod}:${DB_PWD}@db:5432/${DB_NAME:-webgis_prod}"
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY:?ERROR: JWT_SECRET_KEY not set. Set it in .env.Priv.}"
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/0"
+      CELERY_BROKER_URL: "redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/0"
+      CELERY_RESULT_BACKEND: "redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/1"
+      CORS_ORIGINS: "${CORS_ORIGINS}"
+      LOG_LEVEL: INFO
       # 审计 P1：统一上传路径为 /app/uploads（与 Dockerfile.prod 创建的一致）。
-      - DATA_DIR=/app
+      DATA_DIR: /app
     env_file:
       - .env.Priv
     expose:
@@ -129,12 +139,12 @@ services:
     container_name: webgis-prod-celery
     restart: unless-stopped
     environment:
-      - ENV=production
-      - DATABASE_URL=postgresql://${DB_USER:-webgis_prod}:${DB_PWD}@db:5432/${DB_NAME:-webgis_prod}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/0
-      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/1
+      ENV: production
+      DATABASE_URL: "postgresql://${DB_USER:-webgis_prod}:${DB_PWD}@db:5432/${DB_NAME:-webgis_prod}"
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY}"
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/0"
+      CELERY_BROKER_URL: "redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/0"
+      CELERY_RESULT_BACKEND: "redis://:${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv}@redis:6379/1"
     env_file:
       - .env.Priv
     command: celery -A app.services.task_queue worker --loglevel=info --concurrency=2
@@ -193,7 +203,7 @@ services:
     ports:
       - "127.0.0.1:9090:9090"
     volumes:
-      - ./deploy/prometheus.secure.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data_secure:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -214,6 +224,7 @@ volumes:
   redis_data_secure:
   nginx_logs_secure:
   prometheus_data_secure:
+  uploads:
 
 networks:
   webgis-internal:

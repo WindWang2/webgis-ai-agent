@@ -302,7 +302,21 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build]
     if: github.event_name == 'pull_request'
+    # Comment Preview URL uses github-script to create a PR comment, which
+    # needs pull-requests: write. The repo default token didn't grant it
+    # (403 "Resource not accessible by integration").
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
+      - name: Checkout Code
+        # Start Preview Stack needs repo files that the image artifact
+        # doesn't carry: .env.Priv.example (seed for random secrets) and
+        # docker-compose.prod.secure.yml. Without checkout the runner's
+        # working dir only has the downloaded image tar, so the step failed
+        # at "缺少 .env.Priv.example".
+        uses: actions/checkout@v7
+
       - name: Download Image Artifact
         uses: actions/download-artifact@v4
         with:
@@ -336,28 +350,65 @@ jobs:
             -e "s|^JWT_SECRET_KEY=.*|JWT_SECRET_KEY=${RANDOM_JWT}|" \
             .env.Priv
 
-          # 修改端口避免与其它实例冲突
-          export API_PORT=$((9000 + $RANDOM % 1000))
-          export FRONTEND_PORT=$((13000 + $RANDOM % 1000))
+          # 修改端口避免与其它实例冲突。写到 $GITHUB_ENV 以便后续步骤
+          # （Comment Preview URL）能读到——跨步骤的 `export` 不会持久化。
+          API_PORT=$((9000 + $RANDOM % 1000))
+          FRONTEND_PORT=$((13000 + $RANDOM % 1000))
+          echo "API_PORT=$API_PORT" >> "$GITHUB_ENV"
+          echo "FRONTEND_PORT=$FRONTEND_PORT" >> "$GITHUB_ENV"
 
-          docker-compose -f docker-compose.prod.secure.yml up -d
+          # settings.CORS_ORIGINS 是 List[str]，环境变量必须是 JSON 数组格式；
+          # 模板里的纯字符串会让 api 在 pydantic 解析时直接启动失败。对齐
+          # 预览注释里广告的前端地址，允许预览前端跨域访问 api。
+          sed -i "s|^CORS_ORIGINS=.*|CORS_ORIGINS=[\"http://localhost:${FRONTEND_PORT}\"]|" .env.Priv
+
+          # redis 加载 deploy/redis.conf（避免 docker compose 在 runner 上把
+          # list-form command 合并成单字符串导致的配置解析错误）。requirepass
+          # 不存于配置文件中，由容器 entrypoint（deploy/redis-entrypoint.sh）
+          # 从 REDIS_PASSWORD 环境变量注入——即上面写入 .env.Priv 的随机口令，
+          # 经 --env-file 传给容器。无需在此 sed 修改任何文件。
+
+          # nginx.conf 监听 443 端口并需要 /etc/nginx/ssl/server.crt 和
+          # .key 文件。deploy/nginx/ssl 目录并未被追踪（证书不属于仓库内容），
+          # 因此 docker 会自动将其创建为一个空目录，导致 nginx 启动失败。
+          # 为预览环境（仅限 localhost）生成一个自签名证书。
+          mkdir -p deploy/nginx/ssl
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout deploy/nginx/ssl/server.key \
+            -out deploy/nginx/ssl/server.crt \
+            -subj "/CN=localhost" >/dev/null 2>&1
+
+          # docker compose resolves ${DB_PWD:?...} / ${REDIS_PASSWORD:?...} /
+          # ${JWT_SECRET_KEY:?...} from the shell env OR its --env-file. The
+          # api/celery services load .env.Priv via `env_file:`, but db/redis
+          # rely on interpolation - so without --env-file the step failed at
+          # "required variable DB_PWD is missing a value". Point compose at
+          # .env.Priv explicitly (its default is plain `.env`).
+          docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d
         env:
           IMAGE_TAG: ${{ github.sha }}
 
       - name: Comment Preview URL
         uses: actions/github-script@v7
+        env:
+          IMAGE_TAG: ${{ github.sha }}
         with:
           script: |
             const commentBody = `
             🚀 **Preview 部署成功**
-            
+
             - API: http://localhost:${ process.env.API_PORT }
             - Frontend: http://localhost:${ process.env.FRONTEND_PORT }
-            
+
             镜像: ${ process.env.IMAGE_TAG }
             `;
-            
+
+            // 显式传 owner/repo: 之前只传 issue_number + body 时，octokit
+            // 的 context.repo 为空（repos///issues/... -> 404）。
+            const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
             await github.rest.issues.createComment({
+              owner,
+              repo,
               issue_number: context.issue.number,
               body: commentBody
             });
@@ -373,6 +424,12 @@ jobs:
       contents: read
       packages: read
     steps:
+      - name: Checkout
+        # Deploy to Server via SSH 依赖工作目录里的仓库文件（compose、
+        # deploy/redis.conf、deploy/redis-entrypoint.sh、.env.Priv.example）——
+        # 该 job 之前没有 checkout，导致 scp 找不到文件。
+        uses: actions/checkout@v7
+
       - name: Lowercase IMAGE_NAME
         # 审计：全局 env.IMAGE_NAME = ${{ github.repository }} 是混合大小写
         # （WindWang2/...），但 docker tag/manifest 要求全小写。build job 和
@@ -406,18 +463,33 @@ jobs:
 
       - name: Deploy to Server via SSH
         if: vars.SSH_HOST != ''
-        # ⚠️ 已知限制：此步骤 `scp .env.Priv` 假设 runner 工作目录已存在 .env.Priv，
-        # 但 deploy-prod job 没有 checkout 也没有创建该文件的步骤（preview job 有
-        # `cp .env.Priv.example .env.Priv`）。当前 SSH_HOST 未配置，该路径未执行。
-        # 配置 SSH_HOST 前需先在此 job 加 checkout + .env.Priv 生成步骤。
+        # 前置要求：SSH_HOST var + SSH_PRIVATE_KEY / DB_PWD / REDIS_PASSWORD /
+        # JWT_SECRET_KEY secrets 均已配置。任一凭据缺失时 printf 写出空行，
+        # compose 的 ${DB_PWD:?...} 等插值会在 up 时快速失败——绝不部署弱口令
+        # 或模板占位符。用 printf（而非 sed 替换模板）生成 .env.Priv，避免
+        # secret 值含 | / & 等字符时破坏文件。
         run: |
+          printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nCORS_ORIGINS=%s\n' \
+            "${{ secrets.DB_PWD }}" \
+            "${{ secrets.REDIS_PASSWORD }}" \
+            "${{ secrets.JWT_SECRET_KEY }}" \
+            "${{ secrets.CORS_ORIGINS || '["https://your-domain.com"]' }}" \
+            > .env.Priv
+          # redis 服务挂载 deploy/redis.conf + deploy/redis-entrypoint.sh，
+          # 必须随 compose 一起推送到主机（否则 bind mount 指向不存在路径，
+          # redis 启动失败）。
+          ssh ${{ vars.SSH_HOST }} 'mkdir -p ~/deploy'
           scp docker-compose.prod.secure.yml ${{ vars.SSH_HOST }}:~/
+          scp deploy/redis.conf deploy/redis-entrypoint.sh ${{ vars.SSH_HOST }}:~/deploy/
           scp .env.Priv ${{ vars.SSH_HOST }}:~/
           scp webgis-image.tar ${{ vars.SSH_HOST }}:~/
 
           ssh ${{ vars.SSH_HOST }} << 'EOF'
             docker load < ~/webgis-image.tar
-            docker compose -f docker-compose.prod.secure.yml up -d
+            # redis requirepass 由容器 entrypoint 从环境注入，无需额外渲染；
+            # 但 db/redis 的 ${DB_PWD:?...} / ${REDIS_PASSWORD:?...} 插值依赖
+            # compose 从 --env-file 读到变量（默认 .env 指向普通开发文件）。
+            docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d
             docker system prune -f
           EOF
 
@@ -543,15 +615,29 @@ jobs:
       - name: Deploy Rollback via SSH
         if: vars.SSH_HOST != ''
         run: |
-          # 与 deploy-prod 一致：把 compose + .env.Priv + 镜像推到生产主机再 up。
+          # 与 deploy-prod 一致：把 compose + .env.Priv + redis 配置 + 镜像推到生产主机再 up。
+          # 生产凭据来自 GitHub secrets（缺失时留空行，compose 的 ${VAR:?...} 快速失败）。
+          printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nCORS_ORIGINS=%s\n' \
+            "${{ secrets.DB_PWD }}" \
+            "${{ secrets.REDIS_PASSWORD }}" \
+            "${{ secrets.JWT_SECRET_KEY }}" \
+            "${{ secrets.CORS_ORIGINS || '["https://your-domain.com"]' }}" \
+            > .env.Priv
           docker save ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback > /tmp/rollback-image.tar
+          ssh ${{ vars.SSH_HOST }} 'mkdir -p ~/deploy'
           scp docker-compose.prod.secure.yml ${{ vars.SSH_HOST }}:~/
+          # 回退构建路径（Fallback - Checkout Previous Version）检出的是 PREV_SHA，
+          # 可能早于 redis.conf / redis-entrypoint.sh 的存在（本分支新增），且该
+          # 路径的旧 compose 也不挂载 redis 配置——文件缺失时跳过 scp。
+          for f in deploy/redis.conf deploy/redis-entrypoint.sh; do
+            [ -f "$f" ] && scp "$f" ${{ vars.SSH_HOST }}:~/deploy/
+          done
           scp .env.Priv ${{ vars.SSH_HOST }}:~/
           scp /tmp/rollback-image.tar ${{ vars.SSH_HOST }}:~/
 
           ssh ${{ vars.SSH_HOST }} << 'EOF'
             docker load < ~/rollback-image.tar
-            docker compose -f docker-compose.prod.secure.yml up -d
+            docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d
             docker system prune -f
           EOF
 
