@@ -204,6 +204,7 @@ services:
       - "127.0.0.1:9090:9090"
     volumes:
       - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/alerts-rules.json:/etc/prometheus/alerts-rules.json:ro
       - prometheus_data_secure:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
