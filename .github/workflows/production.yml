@@ -308,6 +308,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      actions: read
     steps:
       - name: Checkout Code
         # Start Preview Stack needs repo files that the image artifact
@@ -487,18 +488,18 @@ jobs:
       - name: Deploy to Server via SSH
         if: vars.SSH_HOST != ''
         # 前置要求：SSH_HOST var + SSH_PRIVATE_KEY / DB_PWD / REDIS_PASSWORD /
-        # JWT_SECRET_KEY secrets 均已配置。任一凭据缺失时 printf 写出空行，
-        # compose 的 ${DB_PWD:?...} 等插值会在 up 时快速失败——绝不部署弱口令
-        # 或模板占位符。用 printf（而非 sed 替换模板）生成 .env.Priv，避免
-        # secret 值含 | / & 等字符时破坏文件。
+        # JWT_SECRET_KEY secrets 均已配置。.env.Priv 由共享脚本
+        # deploy/ci-generate-env-priv.sh 从这些 secret 生成：任一凭据缺失时
+        # 写出空行，compose 的 ${DB_PWD:?...} 等插值会在 up 时快速失败——
+        # 绝不部署弱口令或模板占位符。
+        env:
+          DB_PWD: ${{ secrets.DB_PWD }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
         run: |
-          printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nLLM_API_KEY=%s\nCORS_ORIGINS=%s\n' \
-            "${{ secrets.DB_PWD }}" \
-            "${{ secrets.REDIS_PASSWORD }}" \
-            "${{ secrets.JWT_SECRET_KEY }}" \
-            "${{ secrets.LLM_API_KEY }}" \
-            "${{ secrets.CORS_ORIGINS || '["https://your-domain.com"]' }}" \
-            > .env.Priv
+          sh deploy/ci-generate-env-priv.sh
           # redis 服务挂载 deploy/redis.conf + deploy/redis-entrypoint.sh，
           # 必须随 compose 一起推送到主机（否则 bind mount 指向不存在路径，
           # redis 启动失败）。
@@ -638,16 +639,24 @@ jobs:
 
       - name: Deploy Rollback via SSH
         if: vars.SSH_HOST != ''
+        # 与 deploy-prod 一致：把 compose + .env.Priv + redis 配置 + 镜像推到生产主机再 up。
+        # .env.Priv 由共享脚本从 secrets 生成（缺失时留空行，compose 的
+        # ${VAR:?...} 快速失败）。回退构建路径检出 PREV_SHA，可能早于脚本
+        # 存在——此时用等价的 printf 兜底。
+        env:
+          DB_PWD: ${{ secrets.DB_PWD }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
         run: |
-          # 与 deploy-prod 一致：把 compose + .env.Priv + redis 配置 + 镜像推到生产主机再 up。
-          # 生产凭据来自 GitHub secrets（缺失时留空行，compose 的 ${VAR:?...} 快速失败）。
-          printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nLLM_API_KEY=%s\nCORS_ORIGINS=%s\n' \
-            "${{ secrets.DB_PWD }}" \
-            "${{ secrets.REDIS_PASSWORD }}" \
-            "${{ secrets.JWT_SECRET_KEY }}" \
-            "${{ secrets.LLM_API_KEY }}" \
-            "${{ secrets.CORS_ORIGINS || '["https://your-domain.com"]' }}" \
-            > .env.Priv
+          if [ -f deploy/ci-generate-env-priv.sh ]; then
+            sh deploy/ci-generate-env-priv.sh
+          else
+            printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nLLM_API_KEY=%s\nCORS_ORIGINS=%s\n' \
+              "$DB_PWD" "$REDIS_PASSWORD" "$JWT_SECRET_KEY" "$LLM_API_KEY" \
+              "${CORS_ORIGINS:-[\"https://your-domain.com\"]}" > .env.Priv
+          fi
           docker save ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback > /tmp/rollback-image.tar
           ssh ${{ vars.SSH_HOST }} 'mkdir -p ~/deploy'
           scp docker-compose.prod.secure.yml ${{ vars.SSH_HOST }}:~/

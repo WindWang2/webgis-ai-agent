@@ -21,7 +21,7 @@ Thumbs.db
 **/.env.*.local
 # Exception: the placeholder credential template IS tracked. CI's Deploy
 # Preview job (production.yml) copies .env.Priv.example → .env.Priv and fills
-# it with random secrets; the workflow asserts this file is committed, so it
+# it with random secrets; the job fails when the template is missing, so it
 # must not be ignored. .env.Priv itself (real secrets) stays ignored above.
 !.env.Priv.example
 # Frontend test artifacts
