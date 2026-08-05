@@ -1,7 +1,6 @@
 """地理编码工具 - Nominatim"""
-import aiohttp
 from app.core.config import settings
-from app.core.network import get_ssl_context, get_base_headers
+from app.services.provider_health import check_nominatim_status, tracked_provider_get
 from app.tools.registry import ToolRegistry, tool
 
 
@@ -29,16 +28,16 @@ def register_geocoding_tools(registry: ToolRegistry):
             "limit": limit,
             "accept-language": "zh",
         }
-        async with aiohttp.ClientSession(headers=get_base_headers()) as session:
-            async with session.get(
-                settings.NOMINATIM_URL, 
-                params=params, 
-                ssl=get_ssl_context(),
-                proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY
-            ) as resp:
-                if resp.status != 200:
-                    raise RuntimeError(f"Nominatim API error: {resp.status}")
-                results = await resp.json()
+        result = await tracked_provider_get(
+            "nominatim",
+            settings.NOMINATIM_URL,
+            params,
+            timeout=30,
+            business_checker=check_nominatim_status,
+        )
+        if "error" in result:
+            raise RuntimeError(f"Nominatim API error: {result['error']}")
+        results = result
 
         if not results:
             return {"results": [], "count": 0}
@@ -80,19 +79,16 @@ def register_geocoding_tools(registry: ToolRegistry):
             "format": "json",
             "accept-language": "zh",
         }
-        async with aiohttp.ClientSession(headers=get_base_headers()) as session:
-            async with session.get(
-                url, 
-                params=params, 
-                ssl=get_ssl_context(),
-                proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY
-            ) as resp:
-                if resp.status != 200:
-                    raise RuntimeError(f"Nominatim API error: {resp.status}")
-                data = await resp.json()
-
-        if "error" in data:
-            raise ValueError(data["error"])
+        result = await tracked_provider_get(
+            "nominatim",
+            url,
+            params,
+            timeout=30,
+            business_checker=check_nominatim_status,
+        )
+        if "error" in result:
+            raise RuntimeError(f"Nominatim API error: {result['error']}")
+        data = result
 
         return {
             "name": data.get("display_name", ""),

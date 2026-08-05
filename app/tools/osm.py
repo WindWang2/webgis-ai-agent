@@ -1,12 +1,11 @@
 """OSM 数据查询工具 - Overpass API (修复版)"""
 import json
 import logging
-import aiohttp
 from typing import Optional
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
-from app.core.network import get_ssl_context, get_shared_client
+from app.services.provider_health import check_nominatim_status, check_overpass_status, tracked_provider_get
 from app.tools.registry import ToolRegistry, tool
 
 logger = logging.getLogger(__name__)
@@ -20,11 +19,11 @@ def _sanitize_overpass_value(value: str) -> str:
     return str(value).replace("\\", "").replace('"', "").replace("]", "").replace(";", "").replace("\n", "").replace("\r", "")
 
 
-def _overpass_to_geojson(data: str) -> dict:
-    """将 Overpass JSON 结果转为 GeoJSON"""
+def _overpass_to_geojson(data: str | dict) -> dict:
+    """将 Overpass JSON 结果转为 GeoJSON（接受原始字符串或已解析 dict）。"""
     try:
-        result = json.loads(data)
-    except json.JSONDecodeError:
+        result = json.loads(data) if isinstance(data, str) else data
+    except (json.JSONDecodeError, TypeError):
         return {"type": "FeatureCollection", "features": []}
 
     features = []
@@ -59,26 +58,23 @@ async def _query_overpass(query: str) -> dict:
     """执行 Overpass QL 查询，返回 GeoJSON"""
     full_query = f"[out:json][timeout:30];{query.rstrip(';')};out body geom;"
     logger.info("[OSM] Querying Overpass API...")
-    
-    try:
-        session = await get_shared_client()
-        async with session.post(
-            settings.OVERPASS_API_URL,
-            data={"data": full_query},
-            timeout=aiohttp.ClientTimeout(total=60),
-            ssl=get_ssl_context(),
-            proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY
-        ) as resp:
-            if resp.status != 200:
-                text = await resp.text()
-                logger.error(f"[OSM] Overpass error {resp.status}: {text}")
-                return {"type": "FeatureCollection", "features": [], "error": f"Overpass error {resp.status}: {text}"}
-            data = await resp.text()
-            logger.info(f"[OSM] Overpass query successful, data size: {len(data)} bytes")
-    except aiohttp.ClientError as e:
-        logger.error(f"[OSM] Overpass network/timeout error: {e}")
-        return {"type": "FeatureCollection", "features": [], "error": str(e)}
 
+    # 经 ProviderHealthTracker 统一执行缝（熔断/限流/SSL/代理/超时），POST 提交查询体。
+    result = await tracked_provider_get(
+        "overpass",
+        settings.OVERPASS_API_URL,
+        {},
+        method="POST",
+        data={"data": full_query},
+        timeout=60,
+        business_checker=check_overpass_status,
+    )
+    if "error" in result:
+        logger.error(f"[OSM] Overpass error: {result['error']}")
+        return {"type": "FeatureCollection", "features": [], "error": result["error"]}
+
+    data = result
+    logger.info(f"[OSM] Overpass query successful, data size: {len(json.dumps(data))} bytes")
     return _overpass_to_geojson(data)
 
 
@@ -90,18 +86,17 @@ async def _geocode_bbox(query: str, expand_km: float = 0) -> Optional[str]:
         "limit": 5,
         "accept-language": "zh",
     }
-    session = await get_shared_client()
-    async with session.get(
+    result = await tracked_provider_get(
+        "nominatim",
         settings.NOMINATIM_URL,
-        params=params,
-        timeout=aiohttp.ClientTimeout(total=30),
-        ssl=get_ssl_context(),
-        proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY
-    ) as resp:
-        if resp.status != 200:
-            logger.error(f"Nominatim error: {resp.status}")
-            return None
-        results = await resp.json()
+        params,
+        timeout=30,
+        business_checker=check_nominatim_status,
+    )
+    if "error" in result:
+        logger.error(f"Nominatim error: {result['error']}")
+        return None
+    results = result
 
     if not results:
         return None
@@ -147,17 +142,16 @@ async def _nominatim_search_poi(category: str, bbox: str, limit: int) -> dict:
         "bounded": "1",
     }
     features = []
-    session = await get_shared_client()
-    async with session.get(
+    result = await tracked_provider_get(
+        "nominatim",
         settings.NOMINATIM_URL,
-        params=params,
-        timeout=aiohttp.ClientTimeout(total=30),
-        ssl=get_ssl_context(),
-        proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY
-    ) as resp:
-        if resp.status != 200:
-            return {"type": "FeatureCollection", "features": []}
-        results = await resp.json()
+        params,
+        timeout=30,
+        business_checker=check_nominatim_status,
+    )
+    if "error" in result:
+        return {"type": "FeatureCollection", "features": []}
+    results = result
 
     for r in results:
         lat = float(r.get("lat", 0))
@@ -410,17 +404,16 @@ def register_osm_tools(registry: ToolRegistry):
                 "accept-language": "zh",
                 "polygon_geojson": "1",
             }
-            session = await get_shared_client()
-            async with session.get(
-                settings.NOMINATIM_URL, 
-                params=params, 
-                timeout=aiohttp.ClientTimeout(total=30),
-                ssl=get_ssl_context(),
-                proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY
-            ) as resp:
-                if resp.status == 200:
-                    results = await resp.json()
-                    if results:
+            result = await tracked_provider_get(
+                "nominatim",
+                settings.NOMINATIM_URL,
+                params,
+                timeout=30,
+                business_checker=check_nominatim_status,
+            )
+            if "error" not in result:
+                results = result
+                if results:
                         r = results[0]
                         geojson_poly = r.get("geojson")
                         if geojson_poly:
