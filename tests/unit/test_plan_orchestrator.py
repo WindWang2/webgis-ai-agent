@@ -1,5 +1,4 @@
 """Unit tests for AgentPlanOrchestrator."""
-import pytest
 from app.services.chat.plan_orchestrator import (
     AgentPlanOrchestrator,
     Plan,
@@ -7,7 +6,6 @@ from app.services.chat.plan_orchestrator import (
     parse_plan,
     should_plan,
 )
-from app.tools.registry import ToolRegistry
 
 
 def test_parse_plan_valid_json():

@@ -1,5 +1,4 @@
 """Spatial tools tests — _safe_parse_geojson"""
-import pytest
 from app.tools.spatial import safe_parse_geojson as _safe_parse_geojson
 
 

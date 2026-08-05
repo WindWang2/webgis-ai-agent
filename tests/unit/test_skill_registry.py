@@ -1,6 +1,5 @@
 """Unit tests for app/tools/skills.py — .md skill loading and parsing."""
 import os
-import tempfile
 import pytest
 from app.tools.skills import (
     _parse_md_frontmatter,

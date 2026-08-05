@@ -104,9 +104,9 @@ def test_validate_file_path_no_dead_code():
     """_validate_file_path returns a bool, no unreachable code after return."""
     import inspect
     source = inspect.getsource(_mod._validate_file_path)
-    lines = [l.strip() for l in source.splitlines()]
+    lines = [line.strip() for line in source.splitlines()]
     # Find the return statement
-    return_idx = next(i for i, l in enumerate(lines) if l.startswith("return "))
+    return_idx = next(i for i, line in enumerate(lines) if line.startswith("return "))
     # No executable statements after return (only docstring/blank allowed)
     for line in lines[return_idx + 1:]:
         assert line == "" or line.startswith("#") or line == '"""', \

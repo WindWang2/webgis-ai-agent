@@ -1,7 +1,7 @@
 """Layer & Task API tests"""
 import pytest
 from httpx import AsyncClient, ASGITransport
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from fastapi import FastAPI
 
 from app.api.routes import layer as _mod

@@ -22,7 +22,6 @@ def _make_app_with_session(session_id: str = "sess-valid", user_id: str = "user-
     import tempfile
     import os
     from contextlib import asynccontextmanager
-    from unittest.mock import AsyncMock
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
     import app.tools._utils as _utils
     import app.api.routes.ws as ws_module

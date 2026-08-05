@@ -57,7 +57,6 @@ def test_s43_manage_analysis_asset_rejects_cross_session(monkeypatch):
     """S43：asset.session_id 与传入 session_id 不匹配时拒绝操作。"""
     from app.tools.nature_resources import register_nature_resource_tools
     from app.tools.registry import ToolRegistry
-    from app.models.upload import UploadRecord
     from unittest.mock import MagicMock
 
     registry = ToolRegistry()
@@ -74,7 +73,6 @@ def test_s43_manage_analysis_asset_rejects_cross_session(monkeypatch):
     fake_db.query.return_value.filter.return_value.first.return_value = fake_record
 
     import app.tools.nature_resources as nr_mod
-    original_db_session = nr_mod.db_session
     from contextlib import contextmanager
 
     @contextmanager
@@ -101,7 +99,6 @@ def test_s43_manage_analysis_asset_rejects_cross_session(monkeypatch):
 async def test_s49_get_upload_geojson_rejects_oversized(monkeypatch, tmp_path):
     """S49：GeoJSON 文件超过 MAX_VECTOR_SIZE 应返回 413。"""
     from app.api.routes import upload as upload_mod
-    from app.models.upload import UploadRecord
     from unittest.mock import AsyncMock, MagicMock
 
     # 构造一个大文件（超过 MAX_VECTOR_SIZE = 50MB）-- 用 stat 模拟大小

@@ -1,7 +1,6 @@
 """
 Unit tests for PiAgentHarness, HarnessEvaluator, and harness_runner
 """
-import pytest
 from app.lib.harness.evaluator import HarnessEvaluator
 from app.lib.harness.pi_agent_harness import PiAgentHarness
 from app.tools.harness_runner import run_benchmark_scenario

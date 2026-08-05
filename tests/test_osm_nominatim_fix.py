@@ -1,5 +1,4 @@
 """Test that Nominatim fallback uses correct SSL context function name."""
-import pytest
 import ast
 import inspect
 from app.tools import osm as osm_module

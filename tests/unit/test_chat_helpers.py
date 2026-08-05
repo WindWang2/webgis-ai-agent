@@ -5,7 +5,6 @@ shim 已删除（Candidate #7）；这些符号从它们的真实归属模块导
 """
 import json
 
-import pytest
 
 from app.services.chat.llm_client import LRUCache, parse_minimax_xml_tool_calls
 from app.services.chat.prompt import (

@@ -1,5 +1,4 @@
 """Unit tests for HistoryStoreProtocol and HistoryContext deepen seam."""
-import pytest
 from unittest.mock import MagicMock
 from app.services.history_store_protocol import HistoryContext, HistoryStoreProtocol
 from app.services.history_service_async import AsyncHistoryService, _msg_to_llm_dict

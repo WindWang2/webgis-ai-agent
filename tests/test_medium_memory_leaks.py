@@ -6,7 +6,6 @@
 - M10: cache_hit_var miss 时重置为 False
 - S46: _periodic_session_cleanup 后台任务存在
 """
-import asyncio
 import inspect
 import os
 import pytest
@@ -189,7 +188,7 @@ async def test_s46_periodic_cleanup_invokes_cleanup_idle_sessions(monkeypatch):
     session_data_manager.cleanup_idle_sessions —— 这是"死代码变活"的核心行为。
     """
     from app import main as main_module
-    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import MagicMock
 
     called = {"n": 0}
 

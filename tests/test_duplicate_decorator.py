@@ -9,6 +9,8 @@ AST 检查在这里是更务实的选择。
 """
 import ast
 
+import pytest
+
 
 def test_no_duplicate_staticmethod():
     """No function should have duplicate @staticmethod decorator."""

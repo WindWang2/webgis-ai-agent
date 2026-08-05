@@ -1,6 +1,5 @@
 """Tests for standardizing tool error responses."""
 import pytest
-import asyncio
 from unittest.mock import patch, MagicMock, AsyncMock
 from app.tools.registry import ToolRegistry
 from app.tools.spatial import register_spatial_tools

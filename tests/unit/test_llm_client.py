@@ -1,6 +1,5 @@
 import threading
 
-import pytest
 
 from app.services.chat.llm_client import LRUCache, parse_minimax_xml_tool_calls
 

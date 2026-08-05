@@ -17,7 +17,6 @@ import pytest
 from app.tools.registry import ToolRegistry
 
 from app.agent_pi_bridge import (
-    PiBridge,
     PiToolRequest,
     dispatch_tool,
     get_cached_dispatch_result,

@@ -1,6 +1,5 @@
 """Tests for generate_chart tool"""
 import json
-import pytest
 from app.tools.chart import generate_chart
 
 

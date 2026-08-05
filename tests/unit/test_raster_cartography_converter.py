@@ -1,6 +1,5 @@
 """Unit tests for Unified Raster Cartography Converter."""
 import numpy as np
-import pytest
 from app.services.raster_cartography_converter import (
     convert_raster_to_mapspec_layer,
     is_raster_source,

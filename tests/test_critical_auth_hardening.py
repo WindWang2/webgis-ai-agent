@@ -9,11 +9,10 @@
 - S50: WS optional auth（空 token 接受）
 """
 import os
-import asyncio
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch, AsyncMock
 
 # 在 import 之前设置
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-for-auth-hardening-32-chars-ok")
@@ -31,7 +30,6 @@ async def app_and_db(tmp_path, monkeypatch):
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
     from app.models.db_model import Base
     from app.core.database import get_async_db
-    from app.core import database as db_mod
     from app.core import rate_limiter as rl_mod
     from app.tools import _utils
     from contextlib import asynccontextmanager
@@ -214,7 +212,6 @@ async def test_s29_get_current_user_returns_role():
     """get_current_user 现在返回 role 字段（之前只返回 user_id，下游 role 检查全部 bypass）。"""
     from app.core.auth import create_access_token, get_current_user
     from fastapi import FastAPI, Depends
-    from fastapi.security import HTTPAuthorizationCredentials
 
     app = FastAPI()
 

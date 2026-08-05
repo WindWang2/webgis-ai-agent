@@ -5,7 +5,6 @@ import pytest
 from app.core.network import (
     get_ssl_context,
     get_base_headers,
-    create_client_session,
     get_shared_client,
     close_shared_client,
 )

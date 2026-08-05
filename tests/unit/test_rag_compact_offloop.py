@@ -8,7 +8,6 @@ finishes. PR #289 already moved index_document and search off the loop
 via asyncio.to_thread; this test pins the same contract for the
 compaction path triggered by delete_document.
 """
-import asyncio
 import threading
 from typing import Any, Dict, List
 

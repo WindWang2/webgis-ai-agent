@@ -1,5 +1,4 @@
 """Security: monitoring report fallback HTML must escape user content."""
-import pytest
 from app.tools.monitoring_report import _fallback_monitoring_html
 
 

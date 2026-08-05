@@ -1,7 +1,7 @@
 """Knowledge API tests"""
 import pytest
 from httpx import AsyncClient, ASGITransport
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch, AsyncMock
 from fastapi import FastAPI
 
 from app.api.routes import knowledge as _mod

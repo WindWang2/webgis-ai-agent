@@ -1,7 +1,7 @@
 """Tests for what-if simulation tool."""
 import pytest
 
-from app.tools.what_if_rules import WHAT_IF_RULES, get_rule, list_scenarios
+from app.tools.what_if_rules import WHAT_IF_RULES, list_scenarios
 from app.tools.what_if_simulate import (
     WhatIfArgs,
     MetricDelta,
@@ -9,7 +9,6 @@ from app.tools.what_if_simulate import (
     _detect_scenario_type,
     _sample_midpoint,
     _calculate_impact,
-    _generate_circle_polygon,
     _generate_simulation_geojson,
     what_if_simulate,
     register_what_if_simulate,

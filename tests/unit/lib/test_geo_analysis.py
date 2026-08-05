@@ -1,5 +1,4 @@
 import pytest
-import json
 from app.lib.geo_analysis.statistics import calculate_sde, moran_i_narrated, hotspot_narrated, h3_lisa
 from app.lib.geo_analysis.aggregation import spatial_aggregate, generate_fishnet, h3_binning
 from app.lib.geo_analysis.network import calculate_isochrones

@@ -1,7 +1,6 @@
 """
 Unit tests for SpatialAnalyzer ST-DBSCAN pairwise distance matrix LRU cache seam.
 """
-import pytest
 from app.services.spatial_analyzer import SpatialAnalyzer
 from tests.unit.test_st_dbscan import create_sample_st_geojson
 

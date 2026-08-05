@@ -6,10 +6,8 @@ import asyncio
 import json
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
-from pathlib import Path
 
 from app.services.chat.pi_rpc_client import PiRpcClient
-from app.agent_pi_bridge import PiRpcError
 
 
 class DummyPipe:

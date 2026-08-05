@@ -1,14 +1,10 @@
 """日志配置模块测试"""
 import logging
-import sys
-from pathlib import Path
 
-import pytest
 
 from app.core.logging_config import (
     get_logger,
     setup_logging_from_env,
-    LOG_DIR,
     _get_shared_file_handler,
 )
 

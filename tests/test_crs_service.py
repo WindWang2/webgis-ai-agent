@@ -7,13 +7,11 @@ Covers:
 """
 import json
 import zipfile
-from pathlib import Path
 
 import geopandas as gpd
-import pytest
-from shapely.geometry import Point, box
+from shapely.geometry import Point
 
-from app.services.data_parser import ParseError, _get_format, parse_vector, VECTOR_FORMATS
+from app.services.data_parser import parse_vector
 
 
 # ─── 1. General EPSG reprojection tool ──────────────────────────

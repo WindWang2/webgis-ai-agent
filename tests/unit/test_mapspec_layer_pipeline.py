@@ -1,7 +1,6 @@
 """Unit tests for MapSpec Layer Ingestion Pipeline (app/services/mapspec_layer_pipeline.py)."""
 import copy
 import numpy as np
-import pytest
 from app.services.mapspec_layer_pipeline import process_layer_ingestion
 
 

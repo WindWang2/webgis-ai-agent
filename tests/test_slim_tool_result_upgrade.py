@@ -6,7 +6,6 @@ infer_field_type（同样的 null/bool/number/string/array/object 分桶）。
 """
 import json
 
-import pytest
 
 from app.services.tool_dispatch_service import (
     slim_tool_result,

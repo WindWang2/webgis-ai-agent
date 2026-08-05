@@ -3,8 +3,6 @@ import uuid
 import pytest
 from app.services.mapspec_store import mapspec_store, BASE_STORAGE_DIR, view_has_center
 from app.services.session_data import session_data_manager
-from app.tools.registry import ToolRegistry
-from app.tools.cartography_tools import register_mapspec_cartography_tools
 
 
 @pytest.fixture

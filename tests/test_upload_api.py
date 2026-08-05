@@ -1,7 +1,7 @@
 """Upload API tests"""
 import pytest
 from httpx import AsyncClient, ASGITransport
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock
 from fastapi import FastAPI
 
 from app.api.routes import upload as _mod

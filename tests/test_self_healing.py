@@ -1,6 +1,5 @@
 import pytest
-import json
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, patch
 from app.services.chat_engine import ChatEngine
 from app.tools.registry import ToolRegistry
 
@@ -55,7 +54,8 @@ async def test_self_healing_hint_injection():
             with patch.object(engine, "_save_msg_async", new_callable=AsyncMock):
                 with patch.object(engine, "_get_or_create_session", return_value=[]):
 
-                    result = await engine.chat("test message", "session_1")
+                    # Exercised for its call-count side effect (asserted below).
+                    await engine.chat("test message", "session_1")
 
                     assert call_count == 2, f"Expected 2 _call_llm calls, got {call_count}"
                     messages_in_second_call = engine._call_llm.call_args_list[1][0][0]

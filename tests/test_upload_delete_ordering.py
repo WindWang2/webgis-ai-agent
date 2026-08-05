@@ -4,11 +4,7 @@
 改写为行为测试：注入 DB commit 失败 + 真 tmp 文件，验证文件保留。
 """
 import pytest
-import shutil
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
-from httpx import ASGITransport, AsyncClient
-from fastapi import FastAPI
+from unittest.mock import AsyncMock, MagicMock
 
 from app.api.routes import upload as upload_module
 

@@ -9,7 +9,6 @@
 """
 import asyncio
 import inspect
-import json
 import os
 import pytest
 
@@ -22,8 +21,7 @@ os.environ.setdefault("ENV", "development")
 
 def test_s44_tool_args_truncated():
     """S44：tool_args 整体超 2000 字符时截断。"""
-    from app.services.chat.decision_log import ToolDecisionRecord, log_tool_decision
-    from unittest.mock import patch
+    from app.services.chat.decision_log import ToolDecisionRecord
 
     big_args = {"geojson": {"features": ["x" * 5000]}}
     record = ToolDecisionRecord(

@@ -43,7 +43,9 @@ def test_be_audit_01_run_change_detection_uses_remote_sensing_service():
     from app.services.spatial_tasks import run_change_detection
 
     with patch("app.services.spatial_tasks.RemoteSensingService") as mock_rss, \
-         patch.object(run_change_detection, "update_state") as mock_update_state:
+         patch.object(run_change_detection, "update_state"):  # noqa: F841 — mock handle not used in assertions
+        instance = MagicMock()
+        mock_rss.return_value = instance
         instance = MagicMock()
         mock_rss.return_value = instance
 

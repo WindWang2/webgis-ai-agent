@@ -1,5 +1,4 @@
 """Round 5: 历史压缩 — token 估算 + 轮次切分 + 预算截断"""
-import pytest
 
 from app.services.session_data import session_data_manager
 from app.services.chat.context_builder import (

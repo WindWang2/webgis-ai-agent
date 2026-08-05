@@ -1,5 +1,4 @@
 """Round 4: 选中要素注入"""
-import pytest
 
 from app.services.session_data import session_data_manager
 from app.services.chat.context_builder import (

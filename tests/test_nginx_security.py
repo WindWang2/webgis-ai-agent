@@ -1,5 +1,4 @@
 """Security: Nginx CORS must use allow-list, not echo any Origin."""
-import re
 
 
 def test_nginx_cors_not_wildcard_echo():

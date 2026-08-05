@@ -4,7 +4,7 @@ Import these in any test file that needs to mock Pi subprocess I/O.
 """
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any
 from unittest.mock import MagicMock
 
 

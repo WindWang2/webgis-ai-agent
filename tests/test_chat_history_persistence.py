@@ -17,11 +17,6 @@ async def test_chat_history_reloading(chat_engine):
     session_id = "test-session-persistence"
 
     # 1. Mock DB messages
-    mock_messages = [
-        Message(id=1, role="user", content="First message"),
-        Message(id=2, role="assistant", content="First response")
-    ]
-
     mock_db = MagicMock()
     mock_async_session = MagicMock()
     mock_async_session.__aenter__ = AsyncMock(return_value=mock_db)

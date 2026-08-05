@@ -1,7 +1,7 @@
 """Test: update_plan_status must persist changes to all backends."""
 import pytest
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 
 class FakeRedisBackend:

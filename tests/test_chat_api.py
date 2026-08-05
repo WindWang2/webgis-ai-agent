@@ -66,7 +66,7 @@ async def test_clear_session(client, app):
     # FastAPI resolves Depends() at route-registration time (module import),
     # so patching the module attribute does not affect the already-registered
     # dependency. Use FastAPI's dependency_overrides to replace it.
-    from app.api.routes.chat import clear_session, require_owned_session
+    from app.api.routes.chat import require_owned_session
     from app.models.db_model import Conversation
 
     mock_engine = MagicMock()

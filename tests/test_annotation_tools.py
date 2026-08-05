@@ -1,5 +1,4 @@
 """Round 8: 测量 + 标注工具"""
-import math
 
 import pytest
 

@@ -1,15 +1,12 @@
 """Unit tests for Decoupled LLM Result Formatter."""
 import json
-import pytest
 from app.services.llm_result_formatter import (
     is_error_dict,
     wrap_error_dict_for_llm,
     slim_tool_result,
     slim_event_result,
-    normalize_tool_args,
     _truncate_value,
     _truncate_properties,
-    MSG_MAX_CHARS,
     VALUE_MAX_CHARS,
 )
 

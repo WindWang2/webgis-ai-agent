@@ -4,7 +4,6 @@ Synthetic point fixtures - no network, no tool layer. Asserts the
 GeoAnalysisResult return contract and algorithm correctness (coverage,
 containment, ring count).
 """
-import pytest
 from shapely.geometry import shape, Point
 
 from app.lib.geo_processor.core import GeoAnalysisResult

@@ -1,6 +1,4 @@
 """工具注册框架测试"""
-import pytest
-import asyncio
 from app.tools.registry import ToolRegistry, tool
 
 

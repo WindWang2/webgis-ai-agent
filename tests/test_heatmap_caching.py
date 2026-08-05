@@ -51,7 +51,7 @@ async def test_heatmap_native_mode_second_call_cache_hit():
     assert r1 == r2
 
     import json
-    lines = [json.loads(l) for l in
+    lines = [json.loads(line) for line in
              open(tool_metrics.LOG_PATH).read().strip().splitlines()]
     assert lines[0]["cache_hit"] is False
     assert lines[1]["cache_hit"] is True

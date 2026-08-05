@@ -1,6 +1,4 @@
 import pytest
-import json
-from unittest.mock import MagicMock
 
 pytestmark = pytest.mark.heavy
 

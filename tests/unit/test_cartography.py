@@ -1,4 +1,3 @@
-import pytest
 from app.services.cartography_service import CartographyService
 from app.tools.cartography import register_cartography_tools
 from app.tools.registry import ToolRegistry

@@ -111,7 +111,7 @@ async def test_m11_update_layer_retries_on_watch_error():
     state_key = manager._state_key("sess-1")
     import json
     layers = json.loads(manager._store[state_key]["layers"])
-    assert any(l.get("id") == "layer-A" and l.get("opacity") == 0.8 for l in layers)
+    assert any(line.get("id") == "layer-A" and line.get("opacity") == 0.8 for line in layers)
 
 
 @pytest.mark.asyncio
@@ -148,8 +148,8 @@ async def test_m11_remove_layer_retries_on_watch_error():
     await manager.remove_layer_from_state("sess-3", "layer-X")
     assert manager._attempt_counter["n"] >= 2, "未观察到 WatchError 重试"
     layers = json.loads(manager._store[state_key]["layers"])
-    assert all(l.get("id") != "layer-X" for l in layers), "layer 未被移除"
-    assert any(l.get("id") == "keep" for l in layers), "误删了其他 layer"
+    assert all(line.get("id") != "layer-X" for line in layers), "layer 未被移除"
+    assert any(line.get("id") == "keep" for line in layers), "误删了其他 layer"
 
 
 # ── M6: report.py 不持有 DB session ─────────────────────────────────────

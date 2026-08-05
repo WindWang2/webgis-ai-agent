@@ -1,6 +1,5 @@
 import pytest
 from app.services.geocode_strategy import (
-    GeocodeAddressResult,
     extract_lat_lon,
     GeocodeProviderStrategy,
 )

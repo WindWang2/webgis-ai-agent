@@ -3,7 +3,6 @@
 Tests the _validate_file_path helper that report and upload routes must call
 before serving files from DB-stored paths.
 """
-import pytest
 import os
 
 

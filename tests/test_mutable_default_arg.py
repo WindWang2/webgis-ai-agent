@@ -19,7 +19,7 @@ def test_multi_ring_buffer_no_mutable_default():
             defaults = node.args.defaults
             for d in defaults:
                 assert not isinstance(d, ast.List), (
-                    f"Mutable default argument found. Use None and initialize inside function."
+                    "Mutable default argument found. Use None and initialize inside function."
                 )
             return
 

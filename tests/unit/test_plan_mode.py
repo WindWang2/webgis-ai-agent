@@ -12,7 +12,6 @@ import pytest
 
 from app.tools.registry import ToolRegistry
 from app.services import plan_mode as svc
-from app.services.session_data import session_data_manager
 from app.tools.plan_mode import register_plan_mode_tools
 
 
@@ -181,7 +180,9 @@ async def test_execute_topological_order_with_shuffled_input(registry):
                          depends_on=["s1"]),
         ],
     )
-    plan_id = await svc.store_plan(sid, plan)
+    # store_plan has the side effect of persisting the plan; the return is unused
+    # here (validated separately in test_plan_store).
+    await svc.store_plan(sid, plan)
     # 此时 validate_plan 因为 s3 出现时 s2 还没出现而拒绝 → 这是预期，
     # 但拓扑 _topological_order 本身（不经 validate）应该能算
     order = svc._topological_order(plan)

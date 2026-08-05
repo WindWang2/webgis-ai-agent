@@ -1,7 +1,7 @@
 """Tests for geo_processor/core.py normalization (ADR-0037 Win 5)."""
 import json
 
-from app.lib.geo_processor.core import to_feature_collection, safe_parse, _repair_json
+from app.lib.geo_processor.core import to_feature_collection, _repair_json
 
 
 def test_fc_passthrough():

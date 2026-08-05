@@ -12,7 +12,6 @@ from app.tools.registry import ToolRegistry
 from app.services.session_data import session_data_manager
 from app.services.subagent import (
     SubagentDispatcher,
-    SubagentResult,
     select_tools_for_subagent,
 )
 from app.tools.subagent import register_subagent_tools

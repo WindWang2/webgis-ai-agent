@@ -1,6 +1,5 @@
 """Unit tests for the deepened SpatialAnalyzer module (app/services/spatial_analyzer.py)."""
 import json
-import pytest
 from app.services.spatial_analyzer import (
     SpatialAnalyzer,
     _to_feature_collection,

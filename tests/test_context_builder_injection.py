@@ -8,7 +8,6 @@ out of an enclosing tag and inject a fake `<system>` directive.
 These tests pin the defense by feeding known injection samples and asserting
 the dangerous characters (`<`, `>`, `&`) are escaped in the rendered output.
 """
-import pytest
 
 from app.services.session_data import session_data_manager
 from app.services.chat.context_builder import (

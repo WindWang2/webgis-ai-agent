@@ -1,5 +1,4 @@
 """Security: skill code AST validator must block all known bypass patterns."""
-import pytest
 from app.tools.skills import _validate_skill_code
 
 

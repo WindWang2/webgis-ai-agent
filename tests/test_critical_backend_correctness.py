@@ -11,10 +11,9 @@
 """
 import asyncio
 import os
-import sys
 import numpy as np
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-for-backend-correctness-x")
 os.environ.setdefault("ENV", "development")
@@ -191,7 +190,7 @@ def test_c4_perception_event_rejects_invalid_stage():
 def test_m5_error_response_maps_404_to_not_found():
     """M5：HTTPException(404) 的响应 body code 必须是 NOT_FOUND 而非 SERVER_ERROR。"""
     from app.core.exception import format_error_response
-    from fastapi import HTTPException, Request
+    from fastapi import HTTPException
 
     exc = HTTPException(status_code=404, detail="Session not found")
     fake_req = MagicMock()

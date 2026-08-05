@@ -7,10 +7,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
-from app.models.db_model import CartographyTemplate, Layer, Organization, User
+from app.models.db_model import CartographyTemplate, Organization, User
 from app.schemas.template_schema import (
-    CartographyTemplateCreate,
-    CartographyTemplateResponse,
     BasemapPayload,
     SymbologyPayload,
     LayoutTemplatePayload,

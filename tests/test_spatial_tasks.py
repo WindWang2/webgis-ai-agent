@@ -1,5 +1,4 @@
 """Tests for spatial_tasks Celery task definitions."""
-import pytest
 
 
 def test_no_spatial_join_task():

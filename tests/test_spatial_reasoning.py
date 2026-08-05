@@ -5,12 +5,9 @@ from unittest.mock import patch
 from app.tools.spatial_reasoning import (
     SPATIAL_RULES,
     SpatialReasoningArgs,
-    ReasoningStep,
-    SpatialReasoningResult,
     _build_system_prompt,
     _build_user_prompt,
     register_spatial_reasoning,
-    spatial_reasoning,
 )
 from app.tools.registry import ToolRegistry
 
@@ -122,7 +119,7 @@ async def test_spatial_reasoning_tool_output_format():
 
 def test_call_llm_default_returns_mock():
     """Without feature flag, _call_llm returns the deterministic mock."""
-    from app.tools.spatial_reasoning import _call_llm, _mock_result
+    from app.tools.spatial_reasoning import _mock_result
 
     result = _mock_result()
     assert result["type"] == "spatial_reasoning"
