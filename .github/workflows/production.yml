@@ -358,9 +358,10 @@ jobs:
           echo "FRONTEND_PORT=$FRONTEND_PORT" >> "$GITHUB_ENV"
 
           # redis 加载 deploy/redis.conf（避免 docker compose 在 runner 上把
-          # list-form command 合并成单字符串导致的配置解析错误）。该文件里的
-          # requirepass 是占位符，这里用上面生成的随机口令替换。
-          sed -i "s|__REDIS_PASSWORD_PLACEHOLDER__|${RANDOM_REDIS_PWD}|" deploy/redis.conf
+          # list-form command 合并成单字符串导致的配置解析错误）。requirepass
+          # 不存于配置文件中，由容器 entrypoint（deploy/redis-entrypoint.sh）
+          # 从 REDIS_PASSWORD 环境变量注入——即上面写入 .env.Priv 的随机口令，
+          # 经 --env-file 传给容器。无需在此 sed 修改任何文件。
 
           # nginx.conf 监听 443 端口并需要 /etc/nginx/ssl/server.crt 和
           # .key 文件。deploy/nginx/ssl 目录并未被追踪（证书不属于仓库内容），
@@ -378,17 +379,7 @@ jobs:
           # rely on interpolation - so without --env-file the step failed at
           # "required variable DB_PWD is missing a value". Point compose at
           # .env.Priv explicitly (its default is plain `.env`).
-          docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d || UP_RC=$?
-          # On failure, dump container logs so the actual redis/api error is
-          # visible (compose up only prints container lifecycle, not app logs).
-          if [ "${UP_RC:-0}" != "0" ]; then
-            echo "===== compose up failed (rc=${UP_RC}); container logs: ====="
-            for c in webgis-prod-redis webgis-prod-db webgis-prod-api webgis-prod-celery webgis-prod-nginx webgis-prod-prometheus; do
-              echo "----- $c -----"
-              docker logs $c 2>&1 | tail -30 || echo "(no logs / container absent)"
-            done
-            exit 1
-          fi
+          docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d
         env:
           IMAGE_TAG: ${{ github.sha }}
 
@@ -466,13 +457,21 @@ jobs:
         # `cp .env.Priv.example .env.Priv`）。当前 SSH_HOST 未配置，该路径未执行。
         # 配置 SSH_HOST 前需先在此 job 加 checkout + .env.Priv 生成步骤。
         run: |
+          # redis 服务挂载 deploy/redis.conf + deploy/redis-entrypoint.sh，
+          # 必须随 compose 一起推送到主机（否则 bind mount 指向不存在路径，
+          # redis 启动失败）。
+          ssh ${{ vars.SSH_HOST }} 'mkdir -p ~/deploy'
           scp docker-compose.prod.secure.yml ${{ vars.SSH_HOST }}:~/
+          scp deploy/redis.conf deploy/redis-entrypoint.sh ${{ vars.SSH_HOST }}:~/deploy/
           scp .env.Priv ${{ vars.SSH_HOST }}:~/
           scp webgis-image.tar ${{ vars.SSH_HOST }}:~/
 
           ssh ${{ vars.SSH_HOST }} << 'EOF'
             docker load < ~/webgis-image.tar
-            docker compose -f docker-compose.prod.secure.yml up -d
+            # redis requirepass 由容器 entrypoint 从环境注入，无需额外渲染；
+            # 但 db/redis 的 ${DB_PWD:?...} / ${REDIS_PASSWORD:?...} 插值依赖
+            # compose 从 --env-file 读到变量（默认 .env 指向普通开发文件）。
+            docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d
             docker system prune -f
           EOF
 
@@ -598,15 +597,17 @@ jobs:
       - name: Deploy Rollback via SSH
         if: vars.SSH_HOST != ''
         run: |
-          # 与 deploy-prod 一致：把 compose + .env.Priv + 镜像推到生产主机再 up。
+          # 与 deploy-prod 一致：把 compose + .env.Priv + redis 配置 + 镜像推到生产主机再 up。
           docker save ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback > /tmp/rollback-image.tar
+          ssh ${{ vars.SSH_HOST }} 'mkdir -p ~/deploy'
           scp docker-compose.prod.secure.yml ${{ vars.SSH_HOST }}:~/
+          scp deploy/redis.conf deploy/redis-entrypoint.sh ${{ vars.SSH_HOST }}:~/deploy/
           scp .env.Priv ${{ vars.SSH_HOST }}:~/
           scp /tmp/rollback-image.tar ${{ vars.SSH_HOST }}:~/
 
           ssh ${{ vars.SSH_HOST }} << 'EOF'
             docker load < ~/rollback-image.tar
-            docker compose -f docker-compose.prod.secure.yml up -d
+            docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml up -d
             docker system prune -f
           EOF
 

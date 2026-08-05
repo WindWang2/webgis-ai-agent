@@ -53,15 +53,18 @@ services:
     # (FATAL CONFIG FILE ERROR >>> 'appendonly "--maxmemory" "256mb"').
     # The config-file path is unambiguous: redis-server treats the first
     # non-flag arg as a config file, which is exactly what we want here.
-    # deploy/redis.conf has a __REDIS_PASSWORD_PLACEHOLDER__ that the start
-    # step (production.yml) sed-replaces with the real password before `up`.
-    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
-    # Expose REDIS_PASSWORD to the container env so the healthcheck (below)
-    # can resolve $$REDIS_PASSWORD at runtime.
+    # requirepass is NOT stored in deploy/redis.conf (audit I4/I6); the
+    # entrypoint script below injects it from the REDIS_PASSWORD env var, so
+    # local compose, CI preview, and prod SSH deploys all behave identically.
+    entrypoint: ["/bin/sh", "/usr/local/etc/redis/entrypoint.sh"]
+    # Expose REDIS_PASSWORD to the container env so the entrypoint can set
+    # requirepass and the healthcheck (below) can resolve $$REDIS_PASSWORD.
+    # `:?` fails fast when the var is missing, like the other services here.
     environment:
-      REDIS_PASSWORD: "${REDIS_PASSWORD}"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?ERROR: REDIS_PASSWORD not set. Copy .env.Priv.example to .env.Priv and set REDIS_PASSWORD.}"
     volumes:
       - ./deploy/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./deploy/redis-entrypoint.sh:/usr/local/etc/redis/entrypoint.sh:ro
       - redis_data_secure:/data
     healthcheck:
       # 用 REDISCLI_AUTH 传密码，避免 -a 把密码暴露在进程列表 / shell history。
