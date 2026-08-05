@@ -75,3 +75,17 @@ To prevent AST diffing from blocking UI interaction, `diffSpecs` is wrapped in a
 | **Frame Rate (FPS) during continuous slider drag** | Drops to 18-24 FPS | Maintains 58-60 FPS | **Zero micro-stuttering** |
 | **AST Diffing CPU Impact (150-layer Spec)** | 12ms on UI main thread | 0ms main thread (runs in Worker) | **100% main thread offload** |
 | **Redundant MapLibre GL API Calls** | N operations executed | 1 coalesced operation per property | **Up to 80% operation savings** |
+
+---
+
+## 6. 实现状态 (2026-08-05)
+
+按本设计完成集成,模块先建、接线补齐:
+
+- **`frontend/lib/mapspec-compiler/worker-bridge.ts`**(新增):`diffSpecsAsync(prev, next)` — 有 Worker 时经 `reconciler.worker` 异步 diff,不可用时(SSR/Node/测试)回退主线程同步 diff。独立模块,避免 worker 入口在主线程 import 时覆写 `window.onmessage`。
+- **`frontend/lib/mapspec-runtime/runtime.ts`**:
+  - 新增 `reconcileAsync(nextSpec)` — 样式未就绪重试 → worker diff → `RenderDebouncer` 帧预算调度应用(操作按严格顺序入队:layer 移除 → source → layer 添加 → z-order,全部 high 优先级,保证同帧内顺序)。
+  - 新增 `flush()` 同步排空(测试/截图用)。
+  - 原 `reconcile()` 同步路径保留为正确性参考(扩展开-收缩风格,与 unified-tool-dispatch 一致)。
+- **`frontend/components/map/map-panel.tsx`**:渲染路径切换到 `void reconcileAsync(spec)`。
+- **测试**:`worker-bridge.test.ts`(3 例:回退/worker 往返/worker 错误空补丁)、`runtime.test.ts` 新增 `reconcileAsync` 块(3 例:flush 后应用/同 spec 无操作/样式未就绪延迟)。全套 vitest 435 过、`tsc --noEmit` 0 错。

@@ -1,5 +1,7 @@
-import { diffSpecs } from "@/lib/mapspec-compiler/reconciler";
+import { diffSpecs, type SpecPatch } from "@/lib/mapspec-compiler/reconciler";
+import { diffSpecsAsync } from "@/lib/mapspec-compiler/worker-bridge";
 import type { MapSpec, MapSpecSource, MapSpecLayer } from "@/lib/mapspec-compiler/types";
+import { RenderDebouncer, type RenderOperation } from "@/lib/map-kit/render-debouncer";
 import * as renderer from "@/lib/map-kit/renderer";
 
 /**
@@ -30,9 +32,11 @@ export class MapSpecRuntime {
   private appliedSpec: MapSpec | null = null;
   private pendingTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
+  private debouncer: RenderDebouncer | null;
 
   constructor(map: any) {
     this.map = map;
+    this.debouncer = new RenderDebouncer(map);
   }
 
   /**
@@ -63,15 +67,51 @@ export class MapSpecRuntime {
     }
 
     const patch = diffSpecs(this.appliedSpec, nextSpec);
+    this.applyPatchDirect(patch, nextSpec);
+  }
 
-    // --- sources ---
-    // Removes must come before layer removes that reference them; the patch
-    // already orders sources arbitrarily, so we remove dependent layers first
-    // (below) — but MapLibre requires a source's layers gone before removeSource.
-    // We handle that by removing layers first (patch.layers), then sources.
-    // To be safe, we also remove layers whose source is being removed.
-    const removedSourceIds = new Set(patch.sources.filter((s) => s.kind === "remove").map((s) => s.id));
+  /**
+   * Async reconcile — worker-offloaded diff + frame-budgeted application.
+   *
+   * Same contract as `reconcile` (diff against last-applied → minimal patch),
+   * but: the diff runs in a Web Worker when available (falling back to the
+   * main thread), and the patch is applied through a RenderDebouncer so
+   * MapLibre mutations are coalesced and time-sliced per rAF frame instead of
+   * blocking the UI thread (ADR-0036 / issue #227).
+   *
+   * Fire-and-forget from callers: `void rt.reconcileAsync(spec)`.
+   * `flush()` drains pending operations synchronously (tests / screenshots).
+   */
+  async reconcileAsync(nextSpec: MapSpec): Promise<void> {
+    if (this.disposed || !this.map) return;
 
+    // Defer until the base style is loaded (mirrors the sync retry loop).
+    if (!this.map.isStyleLoaded()) {
+      await new Promise((resolve) => setTimeout(resolve, STYLE_RETRY_MS));
+      if (this.disposed || !this.map) return;
+      return this.reconcileAsync(nextSpec);
+    }
+
+    const patch = await diffSpecsAsync(this.appliedSpec, nextSpec);
+    if (this.disposed || !this.map) return;
+    this.applyPatchDebounced(patch, nextSpec);
+  }
+
+  /**
+   * Synchronously drain all pending debounced operations (e.g. before unmount
+   * or taking a screenshot). No-op when nothing is queued.
+   */
+  flush(): void {
+    this.debouncer?.flush();
+  }
+
+  /**
+   * Apply a SpecPatch immediately (synchronous path). Kept as the
+   * correctness-preserving reference used by `reconcile()` and the sync
+   * test suite; the debounced path enqueues the same operations in the same
+   * strict order.
+   */
+  private applyPatchDirect(patch: SpecPatch, nextSpec: MapSpec): void {
     // --- layers (remove + recompile may free sources) ---
     for (const change of patch.layers) {
       if (change.kind === "remove") {
@@ -108,7 +148,71 @@ export class MapSpecRuntime {
     renderer.syncLayerZOrder(this.map, "", orderedIds);
 
     this.appliedSpec = nextSpec;
-    void removedSourceIds; // (kept for clarity; removes already handled above)
+  }
+
+  /**
+   * Enqueue a SpecPatch as coalesced, frame-budgeted render operations.
+   * Ordering mirrors applyPatchDirect exactly (layers-remove → sources →
+   * layers-add → z-order), all high priority so the sequence within a frame
+   * is preserved — MapLibre requires a layer's source to exist first.
+   */
+  private applyPatchDebounced(patch: SpecPatch, nextSpec: MapSpec): void {
+    const ops: RenderOperation[] = [];
+
+    for (const change of patch.layers) {
+      if (change.kind === "remove" || change.kind === "recompile") {
+        ops.push({
+          id: `layer:remove:${change.id}`,
+          type: "REMOVE_LAYER",
+          priority: "high",
+          execute: () => this.removeLayerSafe(change.id),
+        });
+      }
+    }
+
+    for (const change of patch.sources) {
+      if (change.kind === "remove") {
+        ops.push({
+          id: `source:remove:${change.id}`,
+          type: "REMOVE_LAYER",
+          priority: "high",
+          execute: () => this.removeSourceSafe(change.id),
+        });
+      } else if ((change.kind === "add" || change.kind === "update") && change.next) {
+        const next = change.next;
+        ops.push({
+          id: `source:apply:${change.id}`,
+          type: "UPDATE_GEOJSON",
+          priority: "high",
+          execute: () => this.applySource(change.id, next),
+        });
+      }
+    }
+
+    for (const change of patch.layers) {
+      if ((change.kind === "add" || change.kind === "recompile") && change.next) {
+        const next = change.next;
+        ops.push({
+          id: `layer:add:${change.id}`,
+          type: "ADD_LAYER",
+          priority: "high",
+          execute: () => this.addLayerSafe(next),
+        });
+      }
+    }
+
+    const orderedIds = nextSpec.layers.map((l) => l.id);
+    ops.push({
+      id: "zorder:sync",
+      type: "SET_STYLE",
+      priority: "high",
+      execute: () => renderer.syncLayerZOrder(this.map, "", orderedIds),
+    });
+
+    for (const op of ops) {
+      this.debouncer?.enqueue(op);
+    }
+    this.appliedSpec = nextSpec;
   }
 
   getAppliedSpec(): MapSpec | null {
@@ -121,6 +225,8 @@ export class MapSpecRuntime {
       clearTimeout(this.pendingTimer);
       this.pendingTimer = null;
     }
+    this.debouncer?.dispose();
+    this.debouncer = null;
     this.map = null;
     this.appliedSpec = null;
   }

@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — Next.js 模块级树摇（Tree-Shaking）优化
 
-**Status:** ready-for-agent
+**Status:** done — verified 2026-08-05 (code + tests)
 
 - [x] 地图与二次抽屉组件通过 next/dynamic 异步懒加载
 - [x] Zustand useHudStore 状态水化保持 100% 一致

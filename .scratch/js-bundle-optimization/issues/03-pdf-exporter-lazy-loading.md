@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — Next.js 模块级树摇（Tree-Shaking）优化
 
-**Status:** ready-for-agent
+**Status:** done — verified 2026-08-05 (code + tests)
 
 - [x] jsPDF 使用动态 await import('jspdf') 异步加载
 - [x] 地图与报告 PDF 导出功能正常运行

@@ -1,30 +1,73 @@
-import { describe, expect, it } from "vitest";
-import { WorkerReconcilerBridge } from "./worker-bridge";
-import { MapSpec } from "./types";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { diffSpecsAsync, _resetWorkerBridgeForTests } from "./worker-bridge";
+import { diffSpecs } from "./reconciler";
+import type { MapSpec } from "./types";
 
-describe("WorkerReconcilerBridge", () => {
-  it("should perform diffing via sync fallback when Worker is undefined", async () => {
-    const bridge = new WorkerReconcilerBridge();
+// diffSpecsAsync: worker-offloaded diff with a main-thread fallback.
 
-    const prev = {
-      version: "1.0",
-      view: { center: [0, 0], zoom: 2 },
-      sources: {},
-      layers: [],
-    } as unknown as MapSpec;
+const spec: MapSpec = {
+  version: "1.0",
+  sources: {
+    A: { type: "geojson", inlineData: { type: "FeatureCollection", features: [] } },
+  },
+  layers: [{ id: "A__point", source: "A", type: "circle", paint: { "circle-radius": 6 } }],
+};
 
-    const next = {
-      version: "1.0",
-      view: { center: [116.4, 39.9], zoom: 10 },
-      sources: {},
-      layers: [],
-    } as unknown as MapSpec;
+describe("diffSpecsAsync", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    _resetWorkerBridgeForTests();
+  });
 
-    const patch = await bridge.diffSpecsAsync(prev, next);
+  it("falls back to a synchronous diff when Worker is unavailable", async () => {
+    vi.stubGlobal("Worker", undefined);
+    const patch = await diffSpecsAsync(null, spec);
+    expect(patch.layers).toHaveLength(1);
+    expect(patch.layers[0].kind).toBe("add");
+    expect(patch.sources[0].kind).toBe("add");
+  });
 
-    expect(patch.sources).toBeDefined();
-    expect(patch.layers).toBeDefined();
+  it("round-trips through a worker when one is available", async () => {
+    let listener: ((event: { data: { id: string; patch: ReturnType<typeof diffSpecs> } }) => void) | null = null;
+    class FakeWorker {
+      constructor(_url: URL, _opts?: { type?: string }) {}
+      postMessage(msg: { id: string; prev: MapSpec | null; next: MapSpec }) {
+        const { id, prev, next } = msg;
+        queueMicrotask(() => {
+          const patch = diffSpecs(prev, next);
+          listener?.({ data: { id, patch } });
+        });
+      }
+      addEventListener(_type: string, cb: typeof listener) {
+        listener = cb;
+      }
+      removeEventListener() {}
+    }
+    vi.stubGlobal("Worker", FakeWorker as unknown as typeof Worker);
 
-    bridge.destroy();
+    const patch = await diffSpecsAsync(null, spec);
+    expect(patch.layers[0].kind).toBe("add");
+    // The worker path must produce the same patch as the sync diff.
+    expect(patch).toEqual(diffSpecs(null, spec));
+  });
+
+  it("resolves an empty patch on worker error, matching the no-op contract", async () => {
+    let listener: ((event: { data: { id: string; patch: ReturnType<typeof diffSpecs>; error?: string } }) => void) | null = null;
+    class ErrorWorker {
+      constructor(_url: URL, _opts?: { type?: string }) {}
+      postMessage(msg: { id: string }) {
+        queueMicrotask(() => {
+          listener?.({ data: { id: msg.id, patch: { sources: [], layers: [] }, error: "boom" } });
+        });
+      }
+      addEventListener(_type: string, cb: typeof listener) {
+        listener = cb;
+      }
+      removeEventListener() {}
+    }
+    vi.stubGlobal("Worker", ErrorWorker as unknown as typeof Worker);
+
+    const patch = await diffSpecsAsync(null, spec);
+    expect(patch).toEqual({ sources: [], layers: [] });
   });
 });

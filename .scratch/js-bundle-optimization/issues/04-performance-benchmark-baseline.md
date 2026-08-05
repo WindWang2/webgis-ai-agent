@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — 重型组件代码拆分与 Dynamic Import, 03 — 客户端 PDF 导出器按需延迟加载
 
-**Status:** ready-for-agent
+**Status:** done — verified 2026-08-05 (code + tests)
 
 - [x] .gstack/benchmark-reports/baselines/baseline.json 保存存盘
 - [x] /benchmark 检测通过并评级为 Grade A (A+)
