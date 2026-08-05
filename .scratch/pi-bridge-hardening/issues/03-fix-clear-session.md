@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — Surface prompt() errors to HTTP layer
 
-**Status:** ready-for-agent
+**Status:** done — verified 2026-08-05 (code + tests)
 
-- [ ] Either implement `clear_session` via `pi_bridge.abort()` + state reset, or remove the `if USE_NEW_AGENT` branch with an explicit comment
-- [ ] Add test verifying the chosen behavior
+- [x] Either implement `clear_session` via `pi_bridge.abort()` + state reset, or remove the `if USE_NEW_AGENT` branch with an explicit comment
+- [x] Add test verifying the chosen behavior

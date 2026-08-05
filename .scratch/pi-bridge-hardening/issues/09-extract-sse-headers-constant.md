@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done — verified 2026-08-05 (code + tests)
 
-- [ ] Extract `SSE_HEADERS` dict constant at module level in `chat.py`
-- [ ] Replace both copies of the headers dict with the constant
+- [x] Extract `SSE_HEADERS` dict constant at module level in `chat.py`
+- [x] Replace both copies of the headers dict with the constant

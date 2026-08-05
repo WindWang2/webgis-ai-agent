@@ -1,5 +1,6 @@
 """Tests for Pi bridge and GIS tools endpoint."""
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,6 +14,7 @@ from app.agent_pi_bridge import (
     dispatch_tool,
     set_tool_registry,
 )
+import app.agent_pi_bridge as pi_bridge_module  # 读取 monkeypatched 的超时常量
 from app.tools.registry import ToolRegistry
 
 
@@ -135,6 +137,14 @@ class TestPiBridgeSubprocessFlow:
         assert event_types[0] == "task_start"
         assert "error" in event_types, f"Expected 'error' event on timeout, got: {event_types}"
         assert event_types[-1] == "done"
+
+        # 超时错误消息必须引用常量（而不是硬编码的 "30s"）：随常量调优而更新。
+        error_event = next(e for e in events if e.startswith("event: error"))
+        error_data = json.loads(error_event.split("data: ", 1)[1])
+        assert error_data["error"] == (
+            f"Pi agent response timed out ({int(pi_bridge_module.PI_EVENT_STREAM_TIMEOUT)}s). "
+            "The agent may be processing or stalled."
+        )
 
     @pytest.mark.asyncio
     async def test_stream_prompt_rpc_error_yields_task_error(self):

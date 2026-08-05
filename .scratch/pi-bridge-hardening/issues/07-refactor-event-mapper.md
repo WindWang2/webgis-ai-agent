@@ -4,9 +4,9 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done — verified 2026-08-05 (code + tests)
 
-- [ ] Replace raw string event type comparisons with an Enum or dispatch dict
-- [ ] Extract `_base_sse_payload(task_id, step_id, session_id)` to eliminate Data Clumps
-- [ ] Replace the 7-branch if/elif chain with a dict of `event_type → handler` mappings
-- [ ] Give `step_index: 0` a meaningful name or derive it from actual step metadata
+- [x] Replace raw string event type comparisons with an Enum or dispatch dict
+- [x] Extract `_base_sse_payload(task_id, step_id, session_id)` to eliminate Data Clumps
+- [x] Replace the 7-branch if/elif chain with a dict of `event_type → handler` mappings
+- [x] Give `step_index: 0` a meaningful name or derive it from actual step metadata

@@ -8,16 +8,16 @@ flat raw field bag are deleted; the pure `is_suspicious_result` helper and its t
 
 **Blocked by:** 02 — Migrate Pi path (serial ordering; Pi is the canary per the spec's Q6 decision).
 
-**Status:** ready-for-agent
+**Status:** done — verified 2026-08-05 (code + tests)
 
-- [ ] ChatEngine calls `ToolDispatchService.dispatch()` instead of the legacy `dispatch_tool`
-- [ ] ChatEngine branches on the discriminated result's `status` (ok / repeated / error) rather than
+- [x] ChatEngine calls `ToolDispatchService.dispatch()` instead of the legacy `dispatch_tool`
+- [x] ChatEngine branches on the discriminated result's `status` (ok / repeated / error) rather than
       reassembling a bag of raw booleans/strings — the shallow caller logic is replaced by a clean
       `match` on the outcome
-- [ ] `has_geojson` is no longer read anywhere — callers check `geojson_ref is not None`
-- [ ] The legacy `dispatcher.dispatch_tool` body is removed (its concerns now live in the service);
+- [x] `has_geojson` is no longer read anywhere — callers check `geojson_ref is not None`
+- [x] The legacy `dispatcher.dispatch_tool` body is removed (its concerns now live in the service);
       the file may still temporarily hold `is_suspicious_result` until the contract step
-- [ ] Stale shallow field-assertion tests deleted (the deepening rule: old unit tests on the
+- [x] Stale shallow field-assertion tests deleted (the deepening rule: old unit tests on the
       superseded shape are waste once interface-level tests exist)
-- [ ] `is_suspicious_result` tests retained — that pure helper stays
-- [ ] Full suite green; no caller references the old `dispatch_tool` shape
+- [x] `is_suspicious_result` tests retained — that pure helper stays
+- [x] Full suite green; no caller references the old `dispatch_tool` shape

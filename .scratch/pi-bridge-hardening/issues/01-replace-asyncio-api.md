@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done — verified 2026-08-05 (code + tests)
 
-- [ ] Replace `asyncio.get_event_loop()` with `asyncio.get_running_loop()` in `_read_responses` and `_send_request`
-- [ ] Fix `bufsize=0` with `text=True` in `subprocess.Popen` (change to `bufsize=1` or remove the parameter)
+- [x] Replace `asyncio.get_event_loop()` with `asyncio.get_running_loop()` in `_read_responses` and `_send_request`
+- [x] Fix `bufsize=0` with `text=True` in `subprocess.Popen` (change to `bufsize=1` or remove the parameter)
