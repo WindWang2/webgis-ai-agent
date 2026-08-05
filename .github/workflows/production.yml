@@ -357,6 +357,11 @@ jobs:
           echo "API_PORT=$API_PORT" >> "$GITHUB_ENV"
           echo "FRONTEND_PORT=$FRONTEND_PORT" >> "$GITHUB_ENV"
 
+          # settings.CORS_ORIGINS 是 List[str]，环境变量必须是 JSON 数组格式；
+          # 模板里的纯字符串会让 api 在 pydantic 解析时直接启动失败。对齐
+          # 预览注释里广告的前端地址，允许预览前端跨域访问 api。
+          sed -i "s|^CORS_ORIGINS=.*|CORS_ORIGINS=[\"http://localhost:${FRONTEND_PORT}\"]|" .env.Priv
+
           # redis 加载 deploy/redis.conf（避免 docker compose 在 runner 上把
           # list-form command 合并成单字符串导致的配置解析错误）。requirepass
           # 不存于配置文件中，由容器 entrypoint（deploy/redis-entrypoint.sh）
@@ -419,6 +424,12 @@ jobs:
       contents: read
       packages: read
     steps:
+      - name: Checkout
+        # Deploy to Server via SSH 依赖工作目录里的仓库文件（compose、
+        # deploy/redis.conf、deploy/redis-entrypoint.sh、.env.Priv.example）——
+        # 该 job 之前没有 checkout，导致 scp 找不到文件。
+        uses: actions/checkout@v7
+
       - name: Lowercase IMAGE_NAME
         # 审计：全局 env.IMAGE_NAME = ${{ github.repository }} 是混合大小写
         # （WindWang2/...），但 docker tag/manifest 要求全小写。build job 和
@@ -452,11 +463,18 @@ jobs:
 
       - name: Deploy to Server via SSH
         if: vars.SSH_HOST != ''
-        # ⚠️ 已知限制：此步骤 `scp .env.Priv` 假设 runner 工作目录已存在 .env.Priv，
-        # 但 deploy-prod job 没有 checkout 也没有创建该文件的步骤（preview job 有
-        # `cp .env.Priv.example .env.Priv`）。当前 SSH_HOST 未配置，该路径未执行。
-        # 配置 SSH_HOST 前需先在此 job 加 checkout + .env.Priv 生成步骤。
+        # 前置要求：SSH_HOST var + SSH_PRIVATE_KEY / DB_PWD / REDIS_PASSWORD /
+        # JWT_SECRET_KEY secrets 均已配置。任一凭据缺失时 printf 写出空行，
+        # compose 的 ${DB_PWD:?...} 等插值会在 up 时快速失败——绝不部署弱口令
+        # 或模板占位符。用 printf（而非 sed 替换模板）生成 .env.Priv，避免
+        # secret 值含 | / & 等字符时破坏文件。
         run: |
+          printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nCORS_ORIGINS=%s\n' \
+            "${{ secrets.DB_PWD }}" \
+            "${{ secrets.REDIS_PASSWORD }}" \
+            "${{ secrets.JWT_SECRET_KEY }}" \
+            "${{ secrets.CORS_ORIGINS || '["https://your-domain.com"]' }}" \
+            > .env.Priv
           # redis 服务挂载 deploy/redis.conf + deploy/redis-entrypoint.sh，
           # 必须随 compose 一起推送到主机（否则 bind mount 指向不存在路径，
           # redis 启动失败）。
@@ -598,10 +616,22 @@ jobs:
         if: vars.SSH_HOST != ''
         run: |
           # 与 deploy-prod 一致：把 compose + .env.Priv + redis 配置 + 镜像推到生产主机再 up。
+          # 生产凭据来自 GitHub secrets（缺失时留空行，compose 的 ${VAR:?...} 快速失败）。
+          printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nCORS_ORIGINS=%s\n' \
+            "${{ secrets.DB_PWD }}" \
+            "${{ secrets.REDIS_PASSWORD }}" \
+            "${{ secrets.JWT_SECRET_KEY }}" \
+            "${{ secrets.CORS_ORIGINS || '["https://your-domain.com"]' }}" \
+            > .env.Priv
           docker save ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback > /tmp/rollback-image.tar
           ssh ${{ vars.SSH_HOST }} 'mkdir -p ~/deploy'
           scp docker-compose.prod.secure.yml ${{ vars.SSH_HOST }}:~/
-          scp deploy/redis.conf deploy/redis-entrypoint.sh ${{ vars.SSH_HOST }}:~/deploy/
+          # 回退构建路径（Fallback - Checkout Previous Version）检出的是 PREV_SHA，
+          # 可能早于 redis.conf / redis-entrypoint.sh 的存在（本分支新增），且该
+          # 路径的旧 compose 也不挂载 redis 配置——文件缺失时跳过 scp。
+          for f in deploy/redis.conf deploy/redis-entrypoint.sh; do
+            [ -f "$f" ] && scp "$f" ${{ vars.SSH_HOST }}:~/deploy/
+          done
           scp .env.Priv ${{ vars.SSH_HOST }}:~/
           scp /tmp/rollback-image.tar ${{ vars.SSH_HOST }}:~/
 
