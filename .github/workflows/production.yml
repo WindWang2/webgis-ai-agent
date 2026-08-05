@@ -341,13 +341,17 @@ jobs:
           cp .env.Priv.example .env.Priv
 
           # 预览实例用随机强口令，并隔离 DB 名避免与生产混淆。
+          # LLM_API_KEY 也是必填：config.py 生产模式缺失时会抛 RuntimeError，
+          # api 直接启动失败（预览不做真实 LLM 调用，随机值即可）。
           RANDOM_DB_PWD=$(openssl rand -hex 24)
           RANDOM_REDIS_PWD=$(openssl rand -hex 24)
           RANDOM_JWT=$(openssl rand -hex 32)
+          RANDOM_LLM_KEY=$(openssl rand -hex 24)
           sed -i \
             -e "s|^DB_PWD=.*|DB_PWD=${RANDOM_DB_PWD}|" \
             -e "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=${RANDOM_REDIS_PWD}|" \
             -e "s|^JWT_SECRET_KEY=.*|JWT_SECRET_KEY=${RANDOM_JWT}|" \
+            -e "s|^LLM_API_KEY=.*|LLM_API_KEY=${RANDOM_LLM_KEY}|" \
             .env.Priv
 
           # settings.CORS_ORIGINS 是 List[str]，环境变量必须是 JSON 数组格式
@@ -398,7 +402,11 @@ jobs:
           done
           if [ "$ok" != "1" ]; then
             echo "preview stack not healthy after retries"
-            docker compose -f docker-compose.prod.secure.yml ps
+            docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml ps
+            echo "--- api logs ---"
+            docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml logs --tail=30 api
+            echo "--- nginx logs ---"
+            docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml logs --tail=30 nginx
             exit 1
           fi
           echo "preview stack healthy (nginx + api via https://localhost)"
@@ -484,10 +492,11 @@ jobs:
         # 或模板占位符。用 printf（而非 sed 替换模板）生成 .env.Priv，避免
         # secret 值含 | / & 等字符时破坏文件。
         run: |
-          printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nCORS_ORIGINS=%s\n' \
+          printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nLLM_API_KEY=%s\nCORS_ORIGINS=%s\n' \
             "${{ secrets.DB_PWD }}" \
             "${{ secrets.REDIS_PASSWORD }}" \
             "${{ secrets.JWT_SECRET_KEY }}" \
+            "${{ secrets.LLM_API_KEY }}" \
             "${{ secrets.CORS_ORIGINS || '["https://your-domain.com"]' }}" \
             > .env.Priv
           # redis 服务挂载 deploy/redis.conf + deploy/redis-entrypoint.sh，
@@ -632,10 +641,11 @@ jobs:
         run: |
           # 与 deploy-prod 一致：把 compose + .env.Priv + redis 配置 + 镜像推到生产主机再 up。
           # 生产凭据来自 GitHub secrets（缺失时留空行，compose 的 ${VAR:?...} 快速失败）。
-          printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nCORS_ORIGINS=%s\n' \
+          printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nLLM_API_KEY=%s\nCORS_ORIGINS=%s\n' \
             "${{ secrets.DB_PWD }}" \
             "${{ secrets.REDIS_PASSWORD }}" \
             "${{ secrets.JWT_SECRET_KEY }}" \
+            "${{ secrets.LLM_API_KEY }}" \
             "${{ secrets.CORS_ORIGINS || '["https://your-domain.com"]' }}" \
             > .env.Priv
           docker save ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback > /tmp/rollback-image.tar
