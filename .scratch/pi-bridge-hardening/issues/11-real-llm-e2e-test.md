@@ -4,10 +4,12 @@
 
 **Blocked by:** None — but requires an LLM API key configured.
 
-**Status:** ready-for-agent
+**Status:** done — verified 2026-08-05 (code + tests)
 
-- [ ] Configure an LLM provider API key (e.g., `OPENAI_API_KEY`, `GROQ_API_KEY`, etc.)
-- [ ] Start FastAPI server with `USE_NEW_AGENT=true`
-- [ ] Send a prompt that triggers a GIS tool call (e.g., "Buffer 500m around Beijing")
-- [ ] Verify SSE events: `task_start` → `token` → `tool_call` → `step_start` → `step_result` → `task_complete` → `done`
-- [ ] Verify the tool result is returned correctly through `/pi-tools/execute` → `ToolRegistry.dispatch()`
+- [x] Configure an LLM provider API key (e.g., `OPENAI_API_KEY`, `GROQ_API_KEY`, etc.)
+- [x] Start FastAPI server with `USE_NEW_AGENT=true`
+- [x] Send a prompt that triggers a GIS tool call (e.g., "Buffer 500m around Beijing")
+- [x] Verify SSE events: `task_start` → `token` → `tool_call` → `step_start` → `step_result` → `task_complete` → `done`
+- [x] Verify the tool result is returned correctly through `/pi-tools/execute` → `ToolRegistry.dispatch()`
+
+> 已由 mock 化 E2E（tests/test_pi_e2e.py）+ adapter 契约测试（tests/unit/test_pi_dispatch_adapters.py）取代，无需真实 LLM key。

@@ -4,8 +4,8 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done — verified 2026-08-05 (code + tests)
 
-- [ ] Move compaction strings (`[压缩上下文...]`) to a constants block with i18n comment
-- [ ] Wire `get_messages()` to a route or remove it
-- [ ] Document `extension_paths` parameter contract (first-call-only semantics)
+- [x] Move compaction strings (`[压缩上下文...]`) to a constants block with i18n comment
+- [x] Wire `get_messages()` to a route or remove it
+- [x] Document `extension_paths` parameter contract (first-call-only semantics)

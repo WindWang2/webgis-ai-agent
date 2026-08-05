@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done — verified 2026-08-05 (code + tests)
 
-- [ ] Either add `/api/v1/chat/sessions/{session_id}/messages` route that calls `pi_bridge.get_messages()` when Pi is active
-- [ ] Or remove `get_messages()` from `PiBridge` if the legacy route already covers this need
+- [x] Either add `/api/v1/chat/sessions/{session_id}/messages` route that calls `pi_bridge.get_messages()` when Pi is active
+- [x] Or remove `get_messages()` from `PiBridge` if the legacy route already covers this need
