@@ -94,7 +94,13 @@ async def test_tampered_signature_rejected(client):
     from app.core.signing import sign_path
     rel = "private/secret.txt"
     exp, sig = sign_path(rel)
-    bad = sig[:-2] + "00"
+    # Flip the last hex char so the tampered sig is guaranteed to differ
+    # from the valid one. (sig[:-2] + "00" was flaky: when the real sig
+    # already ended in "00" the "tampered" value was identical -> 200.)
+    last = sig[-1]
+    flipped = "0" if last != "0" else "1"
+    bad = sig[:-1] + flipped
+    assert bad != sig
     resp = await client.get(f"/api/v1/static/{rel}", params={"exp": exp, "sig": bad})
     assert resp.status_code == 404
 
