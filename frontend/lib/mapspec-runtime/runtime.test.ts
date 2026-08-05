@@ -247,4 +247,59 @@ describe("MapSpecRuntime (ADR-0036)", () => {
       expect(map._calls.addLayer.map((c: any) => c.def.id)).toEqual(["L1__point"]);
     });
   });
+
+  describe("reconcileAsync — worker fallback + debounced apply", () => {
+    beforeEach(() => {
+      // No Worker in the test env → the bridge falls back to a sync diff.
+      vi.stubGlobal("Worker", undefined);
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("applies the spec once flushed (fallback diff path)", async () => {
+      const rt = new MapSpecRuntime(map);
+      await rt.reconcileAsync(pointSpec());
+      // appliedSpec is set when the patch is computed; map mutations are
+      // queued on the debouncer until a frame runs (or flush() drains).
+      expect(rt.getAppliedSpec()).toEqual(pointSpec());
+      rt.flush();
+      expect(map._calls.addSource.map((c: any) => c.id)).toEqual(["L1"]);
+      expect(map._calls.addLayer.map((c: any) => c.def.id)).toEqual(["L1__point"]);
+    });
+
+    it("is a no-op for an identical spec (nothing applied after flush)", async () => {
+      const rt = new MapSpecRuntime(map);
+      await rt.reconcileAsync(pointSpec());
+      rt.flush();
+      map._calls.addSource.length = 0;
+      map._calls.addLayer.length = 0;
+
+      await rt.reconcileAsync(pointSpec());
+      rt.flush();
+
+      expect(map._calls.addSource).toEqual([]);
+      expect(map._calls.addLayer).toEqual([]);
+      expect(map._calls.removeLayer).toEqual([]);
+    });
+
+    it("defers until the style is loaded, then applies once", async () => {
+      vi.useFakeTimers();
+      let loaded = false;
+      map.isStyleLoaded = () => loaded;
+      const rt = new MapSpecRuntime(map);
+
+      const pending = rt.reconcileAsync(pointSpec());
+      expect(map._calls.addSource).toEqual([]);
+
+      loaded = true;
+      await vi.advanceTimersByTimeAsync(150);
+      await pending;
+      rt.flush();
+
+      expect(map._calls.addSource.map((c: any) => c.id)).toEqual(["L1"]);
+      expect(map._calls.addLayer.map((c: any) => c.def.id)).toEqual(["L1__point"]);
+      vi.useRealTimers();
+    });
+  });
 });

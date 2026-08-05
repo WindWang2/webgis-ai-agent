@@ -169,12 +169,13 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   }, [currentMapStyle])
 
   // Reconcile whenever the inputs to the derived MapSpec change. The runtime's
-  // internal diff is the no-op fast path for unchanged specs, so no debounce is
-  // needed (the F31 source-ref cache makes repeated setData cheap).
+  // internal diff is the no-op fast path for unchanged specs, and the async
+  // path offloads the diff to a worker and applies the patch through a
+  // frame-budgeted RenderDebouncer (ADR-0036 / issue #227).
   useEffect(() => {
     if (!runtimeRef.current) return
     const spec = hudStateToMapSpec({ layers, processLayers, activeFilters, is3D })
-    runtimeRef.current.reconcile(spec)
+    void runtimeRef.current.reconcileAsync(spec)
   }, [layers, processLayers, activeFilters, is3D, mapReady, currentMapStyle])
 
 
