@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-PROVIDER_NAMES = frozenset({"amap", "baidu", "tianditu"})
+PROVIDER_NAMES = frozenset({"amap", "baidu", "tianditu", "overpass", "nominatim"})
 
 
 @dataclass
@@ -164,18 +164,40 @@ def check_tianditu_status(data: dict) -> tuple[bool, str]:
     return True, ""
 
 
+def check_overpass_status(data: Any) -> tuple[bool, str]:
+    """Overpass 响应业务校验：应含 elements 数组（查询错误时可能只含 remark）。"""
+    if not isinstance(data, dict) or "elements" not in data:
+        return False, "Overpass 响应缺少 elements"
+    return True, ""
+
+
+def check_nominatim_status(data: Any) -> tuple[bool, str]:
+    """Nominatim 响应业务校验：search 返回 list，reverse 返回 dict（无 error 键）。"""
+    if isinstance(data, dict) and "error" in data:
+        return False, str(data["error"])
+    if isinstance(data, list) or isinstance(data, dict):
+        return True, ""
+    return False, "Nominatim 响应格式异常"
+
+
 async def tracked_provider_get(
     provider: str,
     url: str,
     params: dict,
     *,
+    method: str = "GET",
+    data: dict | None = None,
     business_checker: Callable[[dict], tuple[bool, str]] | None = None,
     tracker: ProviderHealthTracker | None = None,
     ssl_context: Any = None,
     proxy: str | None = None,
     timeout: float = 10.0,
 ) -> dict:
-    """Execute a tracked HTTP GET request using get_shared_client() with circuit breaker protection."""
+    """Execute a tracked HTTP request using get_shared_client() with circuit breaker protection.
+
+    `method` 支持 "GET"（默认，用 `params`）与 "POST"（用 `data`）——Overpass 走
+    POST 提交查询体，其余第三方 API 均为 GET。
+    """
     ht = tracker or health_tracker
     if not await ht.record_attempt(provider):
         return {"error": f"{provider.capitalize()} 暂时不可用（频率限制或服务故障），请稍后重试"}
@@ -188,12 +210,14 @@ async def tracked_provider_get(
 
     try:
         session = await get_shared_client()
-        async with session.get(
+        request = session.post if method.upper() == "POST" else session.get
+        kwargs: dict = {"data": data} if method.upper() == "POST" else {"params": params}
+        async with request(
             url,
-            params=params,
             ssl=actual_ssl,
             proxy=actual_proxy,
             timeout=timeout,
+            **kwargs,
         ) as resp:
             if resp.status != 200:
                 await ht.record_error(provider)

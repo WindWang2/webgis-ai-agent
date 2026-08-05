@@ -39,14 +39,6 @@ _RATE_LIMIT_MAX_PER_MINUTE = 30
 _RATE_WINDOW_SECONDS = 60.0
 _rate_window: "deque[float]" = deque()
 
-# Shared aiohttp.ClientSession (/review P2-3). The original code created a
-# fresh ClientSession per call (~200–500ms TLS handshake every time). Reuse
-# one process-level session: lazily created, never explicitly closed (Python
-# process exit reclaims fd's). If you wire app lifespan, call _close_session()
-# on shutdown.
-_aiohttp_session: Optional["aiohttp.ClientSession"] = None  # noqa: F821 (string-only forward ref)
-_aiohttp_session_lock: Optional[asyncio.Lock] = None
-
 
 def _rate_limit_check() -> bool:
     """Return True if the current call is allowed under the token bucket.
@@ -61,31 +53,6 @@ def _rate_limit_check() -> bool:
         return False
     _rate_window.append(now)
     return True
-
-
-async def _get_aiohttp_session():
-    """Lazily create or return the shared aiohttp.ClientSession."""
-    global _aiohttp_session, _aiohttp_session_lock
-    import aiohttp
-    from app.core.network import get_base_headers
-    if _aiohttp_session_lock is None:
-        _aiohttp_session_lock = asyncio.Lock()
-    async with _aiohttp_session_lock:
-        if _aiohttp_session is None or _aiohttp_session.closed:
-            timeout = aiohttp.ClientTimeout(total=_LOOKUP_TIMEOUT_SEC)
-            _aiohttp_session = aiohttp.ClientSession(
-                headers=get_base_headers(),
-                timeout=timeout,
-            )
-    return _aiohttp_session
-
-
-async def _close_session() -> None:
-    """Close the shared session. Call from FastAPI lifespan shutdown if wired."""
-    global _aiohttp_session
-    if _aiohttp_session is not None and not _aiohttp_session.closed:
-        await _aiohttp_session.close()
-    _aiohttp_session = None
 
 
 def _quantize(lng: float, lat: float) -> tuple[float, float]:
@@ -134,11 +101,12 @@ def _format_address(address: dict) -> str:
 async def _fetch_nominatim(lng: float, lat: float) -> Optional[str]:
     """实际调用 Nominatim 反查；失败返回 None。
 
-    /review P2-3: uses a shared ClientSession (reused across calls) to avoid
-    a fresh TCP/TLS handshake per lookup.
+    经 ProviderHealthTracker 统一执行缝（熔断/限流/SSL/代理/超时），复用
+    get_shared_client 的连接池（原共享 session 的等价物），故障快速降级返回 None。
+    超时沿用本模块的 3s（后台预热路径，绝不能阻塞主链路）。
     """
     from app.core.config import settings
-    from app.core.network import get_ssl_context
+    from app.services.provider_health import check_nominatim_status, tracked_provider_get
 
     url = settings.NOMINATIM_URL.replace("/search", "/reverse")
     params = {
@@ -149,18 +117,16 @@ async def _fetch_nominatim(lng: float, lat: float) -> Optional[str]:
         "zoom": 10,  # 城市/区县级精度足矣，不要返回门牌号
     }
     try:
-        session = await _get_aiohttp_session()
-        async with session.get(
+        result = await tracked_provider_get(
+            "nominatim",
             url,
-            params=params,
-            ssl=get_ssl_context(),
-            proxy=settings.HTTPS_PROXY or settings.HTTP_PROXY,
-        ) as resp:
-            if resp.status != 200:
-                return None
-            data = await resp.json()
-        if "error" in data:
+            params,
+            timeout=_LOOKUP_TIMEOUT_SEC,
+            business_checker=check_nominatim_status,
+        )
+        if "error" in result:
             return None
+        data = result
         address = data.get("address") or {}
         if isinstance(address, dict):
             label = _format_address(address)
