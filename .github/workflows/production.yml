@@ -341,26 +341,23 @@ jobs:
           cp .env.Priv.example .env.Priv
 
           # 预览实例用随机强口令，并隔离 DB 名避免与生产混淆。
+          # LLM_API_KEY 也是必填：config.py 生产模式缺失时会抛 RuntimeError，
+          # api 直接启动失败（预览不做真实 LLM 调用，随机值即可）。
           RANDOM_DB_PWD=$(openssl rand -hex 24)
           RANDOM_REDIS_PWD=$(openssl rand -hex 24)
           RANDOM_JWT=$(openssl rand -hex 32)
+          RANDOM_LLM_KEY=$(openssl rand -hex 24)
           sed -i \
             -e "s|^DB_PWD=.*|DB_PWD=${RANDOM_DB_PWD}|" \
             -e "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=${RANDOM_REDIS_PWD}|" \
             -e "s|^JWT_SECRET_KEY=.*|JWT_SECRET_KEY=${RANDOM_JWT}|" \
+            -e "s|^LLM_API_KEY=.*|LLM_API_KEY=${RANDOM_LLM_KEY}|" \
             .env.Priv
 
-          # 修改端口避免与其它实例冲突。写到 $GITHUB_ENV 以便后续步骤
-          # （Comment Preview URL）能读到——跨步骤的 `export` 不会持久化。
-          API_PORT=$((9000 + $RANDOM % 1000))
-          FRONTEND_PORT=$((13000 + $RANDOM % 1000))
-          echo "API_PORT=$API_PORT" >> "$GITHUB_ENV"
-          echo "FRONTEND_PORT=$FRONTEND_PORT" >> "$GITHUB_ENV"
-
-          # settings.CORS_ORIGINS 是 List[str]，环境变量必须是 JSON 数组格式；
-          # 模板里的纯字符串会让 api 在 pydantic 解析时直接启动失败。对齐
-          # 预览注释里广告的前端地址，允许预览前端跨域访问 api。
-          sed -i "s|^CORS_ORIGINS=.*|CORS_ORIGINS=[\"http://localhost:${FRONTEND_PORT}\"]|" .env.Priv
+          # settings.CORS_ORIGINS 是 List[str]，环境变量必须是 JSON 数组格式
+          # （模板默认值已是合法 JSON，纯字符串会让 api 在 pydantic 解析时
+          # 启动失败）。预览仅在一次性 runner 上运行、无外部访问，保留模板
+          # 默认 allow-list 即可，无需 sed。
 
           # redis 加载 deploy/redis.conf（避免 docker compose 在 runner 上把
           # list-form command 合并成单字符串导致的配置解析错误）。requirepass
@@ -388,6 +385,32 @@ jobs:
         env:
           IMAGE_TAG: ${{ github.sha }}
 
+      - name: Verify Preview Stack Health
+        run: |
+          # 预览栈在一次性 runner 上启动，无公网地址（PR 读者浏览器里的
+          # localhost 指向读者本机）。真实验证：在 runner 上经 nginx 发布
+          # 的端口探测——80 强制 301 到 443（自签名证书，curl 用 -k）；
+          # /health 是 nginx 自身端点，/api/v1/health/live 经反代到 api。
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -sfk https://localhost/health >/dev/null 2>&1 && \
+               curl -sfk https://localhost/api/v1/health/live >/dev/null 2>&1; then
+              ok=1
+              break
+            fi
+            sleep 6
+          done
+          if [ "$ok" != "1" ]; then
+            echo "preview stack not healthy after retries"
+            docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml ps
+            echo "--- api logs ---"
+            docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml logs --tail=30 api
+            echo "--- nginx logs ---"
+            docker compose --env-file .env.Priv -f docker-compose.prod.secure.yml logs --tail=30 nginx
+            exit 1
+          fi
+          echo "preview stack healthy (nginx + api via https://localhost)"
+
       - name: Comment Preview URL
         uses: actions/github-script@v7
         env:
@@ -395,10 +418,10 @@ jobs:
         with:
           script: |
             const commentBody = `
-            🚀 **Preview 部署成功**
+            ✅ **Deploy Preview: 栈已启动并通过健康检查**
 
-            - API: http://localhost:${ process.env.API_PORT }
-            - Frontend: http://localhost:${ process.env.FRONTEND_PORT }
+            - 预览栈在一次性 CI runner 上启动，nginx / api 健康检查通过
+            - 仅供 CI 验证，**无公开访问地址**（runner 的 localhost 不指向阅读者本机）
 
             镜像: ${ process.env.IMAGE_TAG }
             `;
@@ -469,10 +492,11 @@ jobs:
         # 或模板占位符。用 printf（而非 sed 替换模板）生成 .env.Priv，避免
         # secret 值含 | / & 等字符时破坏文件。
         run: |
-          printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nCORS_ORIGINS=%s\n' \
+          printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nLLM_API_KEY=%s\nCORS_ORIGINS=%s\n' \
             "${{ secrets.DB_PWD }}" \
             "${{ secrets.REDIS_PASSWORD }}" \
             "${{ secrets.JWT_SECRET_KEY }}" \
+            "${{ secrets.LLM_API_KEY }}" \
             "${{ secrets.CORS_ORIGINS || '["https://your-domain.com"]' }}" \
             > .env.Priv
           # redis 服务挂载 deploy/redis.conf + deploy/redis-entrypoint.sh，
@@ -617,10 +641,11 @@ jobs:
         run: |
           # 与 deploy-prod 一致：把 compose + .env.Priv + redis 配置 + 镜像推到生产主机再 up。
           # 生产凭据来自 GitHub secrets（缺失时留空行，compose 的 ${VAR:?...} 快速失败）。
-          printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nCORS_ORIGINS=%s\n' \
+          printf 'DB_PWD=%s\nREDIS_PASSWORD=%s\nJWT_SECRET_KEY=%s\nLLM_API_KEY=%s\nCORS_ORIGINS=%s\n' \
             "${{ secrets.DB_PWD }}" \
             "${{ secrets.REDIS_PASSWORD }}" \
             "${{ secrets.JWT_SECRET_KEY }}" \
+            "${{ secrets.LLM_API_KEY }}" \
             "${{ secrets.CORS_ORIGINS || '["https://your-domain.com"]' }}" \
             > .env.Priv
           docker save ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:rollback > /tmp/rollback-image.tar
