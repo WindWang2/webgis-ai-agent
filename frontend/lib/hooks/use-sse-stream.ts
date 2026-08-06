@@ -412,7 +412,7 @@ export function useSSEStream(
         )
       );
     },
-    [isLoading, bridge, getMapSnapshot, userLocation]
+    [bridge, getMapSnapshot, userLocation]
   );
 
   useEffect(() => {

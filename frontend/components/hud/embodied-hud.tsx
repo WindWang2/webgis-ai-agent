@@ -1,12 +1,11 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   Cpu, Activity, Compass, Layers, Terminal, Sun, Moon, 
-  ChevronUp, ChevronDown, Database, Play, CheckCircle2, AlertOctagon
+  ChevronUp, ChevronDown, Database, CheckCircle2
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
-import { getThemeColors } from '@/lib/theme';
 
 const BASE_LAYER_LABELS: Record<string, string> = {
   osm: 'OpenStreetMap',
@@ -62,7 +61,6 @@ export function EmbodiedHud() {
   const causalChain = useHudStore((s) => s.causalChain) || [];
   const ragResults = useHudStore((s) => s.ragResults) || [];
 
-  const colors = getThemeColors(theme);
   const isDark = theme === 'dark';
 
   const lng = viewport.center[0];

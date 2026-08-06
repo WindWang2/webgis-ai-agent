@@ -279,7 +279,7 @@ export class MapSpecRuntime {
       // Defensive: a recompile that races with a style swap may find the layer
       // already re-added by the styledata path. Log and continue rather than
       // throwing the whole reconcile.
-      // eslint-disable-next-line no-console
+       
       console.warn(`[MapSpecRuntime] addLayer failed for ${layer.id}:`, err);
     }
   }

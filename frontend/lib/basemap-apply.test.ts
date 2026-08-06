@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { applyBaseline, BasemapPayload } from "./basemap-apply";
-import { TILE_PROVIDERS } from "./providers";
 
 describe("applyBaseline reducer", () => {
   it("vector branch: vectorStyleUrl presence produces vector style spec", () => {

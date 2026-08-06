@@ -168,7 +168,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         }
       }
     },
-    [clearLayers, dispatchAction]
+    [clearLayers, clearAnnotations, clearTask, setSelectedFeature, setAiStatus, dispatchAction]
   );
 
   const startNewSession = useCallback(

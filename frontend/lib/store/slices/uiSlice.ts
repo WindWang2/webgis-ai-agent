@@ -7,7 +7,7 @@
 import type { StateCreator } from 'zustand';
 import type { HudState, AiStatus, LeftTab, SettingsTab, ExportItem } from '../hud-types';
 
-export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = (set, get) => ({
+export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = (set) => ({
   /* ─── HUD Panels (legacy compat) ─── */
   leftPanelOpen: true,
   rightPanelOpen: true,

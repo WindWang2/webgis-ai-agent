@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { getThemeColors } from '@/lib/theme';
@@ -9,7 +9,6 @@ import { useMapAction } from '@/lib/contexts/map-action-context';
 
 // Refactored custom hooks
 import { useWorkspaceSession } from '@/lib/hooks/use-workspace-session';
-import { useMapControl } from '@/lib/hooks/use-map-control';
 import { useSSEStream } from '@/lib/hooks/use-sse-stream';
 
 // New layout components
@@ -56,9 +55,6 @@ export default function Home() {
   const setRagPanelOpen = useHudStore((s) => s.setRagPanelOpen);
   const sidebarWidth = useHudStore((s) => s.sidebarWidth);
 
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-
   const { location: userLocation } = useGeolocation();
 
   // 1. Session and REST Layers Loader Hook
@@ -71,14 +67,6 @@ export default function Home() {
     selectSession,
     startNewSession,
   } = useWorkspaceSession(dispatchAction);
-
-  // 2. Map Control Handlers Hook (zoom, locate, export)
-  const {
-    handleZoomIn,
-    handleZoomOut,
-    handleHome,
-    handleLocate,
-  } = useMapControl(mounted);
 
   // 3. SSE Stream and Event Bridge Hook
   const {

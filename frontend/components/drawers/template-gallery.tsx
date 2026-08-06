@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Layers,
   Map,
@@ -12,7 +12,6 @@ import {
   Check,
   AlertCircle,
   Sparkles,
-  Tag,
   Shield,
   UserCheck,
 } from 'lucide-react';

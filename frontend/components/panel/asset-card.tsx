@@ -29,7 +29,7 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// eslint-disable-next-line jsx-a11y/alt-text
+ 
 function getAssetTypeInfo(asset: any): { icon: React.ReactNode; label: string; color: string } {
   const name = (asset.original_name || '').toLowerCase();
   const format = (asset.format || '').toLowerCase();

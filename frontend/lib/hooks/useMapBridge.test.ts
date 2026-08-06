@@ -3,7 +3,6 @@ import { renderHook, act } from '@testing-library/react';
 import { useMapBridge } from './useMapBridge';
 import * as chatApi from '@/lib/api/chat';
 import type { SSEEvent } from '@/lib/api/chat';
-import type { MapActionPayload } from '@/lib/types';
 
 vi.mock('@/lib/store/useHudStore', () => ({
   useHudStore: {

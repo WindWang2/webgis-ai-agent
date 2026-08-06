@@ -7,15 +7,11 @@ export function SpatialCrosshair() {
   const viewport = useHudStore((s) => s.viewport);
   const aiStatus = useHudStore((s) => s.aiStatus);
   const accentColor = useHudStore((s) => s.accentColor);
-  const is3D = useHudStore((s) => s.is3D);
   const [copied, setCopied] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const lng = viewport.center[0];
   const lat = viewport.center[1];
-  const zoom = viewport.zoom;
-  const bearing = viewport.bearing ?? 0;
-  const pitch = viewport.pitch ?? 0;
 
   const isThinking = aiStatus === 'thinking' || aiStatus === 'acting';
 

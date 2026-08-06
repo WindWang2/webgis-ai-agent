@@ -11,7 +11,7 @@ export function parseFilter(filter: any): any[] | null {
   if (typeof filter === 'string') {
     try {
       return JSON.parse(filter);
-    } catch (e) {
+    } catch {
       devOnly.warn('[MapActionHandler] Failed to parse filter string:', filter);
       return null;
     }

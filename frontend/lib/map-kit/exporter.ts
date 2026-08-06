@@ -587,7 +587,7 @@ function _drawLegend(
     }
 
     if (colors.length > 0 && labels.length > 0) {
-      yOffset += _drawDiscreteLegend(ld, field, colors, labels, yOffset);
+      _drawDiscreteLegend(ld, field, colors, labels, yOffset);
     }
   }
 }

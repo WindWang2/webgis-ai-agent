@@ -20,10 +20,7 @@ export function isStyleMethodObject(val: any): boolean {
   );
 }
 
-export function compileStyleMethod(
-  method: StyleMethod | undefined,
-  propertyType: "color" | "number" | "string" = "string"
-): any {
+export function compileStyleMethod(method: StyleMethod | undefined): any {
   if (method === undefined) return undefined;
   if (!isStyleMethodObject(method)) {
     return method;
@@ -280,40 +277,40 @@ export function compileMapSpec(
     if (layer.paint) {
       if (layerType === "circle") {
         if (layer.paint.color !== undefined)
-          maplibreLayer.paint["circle-color"] = compileStyleMethod(layer.paint.color, "color");
+          maplibreLayer.paint["circle-color"] = compileStyleMethod(layer.paint.color);
         if (layer.paint.radius !== undefined)
-          maplibreLayer.paint["circle-radius"] = compileStyleMethod(layer.paint.radius, "number");
+          maplibreLayer.paint["circle-radius"] = compileStyleMethod(layer.paint.radius);
         if (layer.paint.opacity !== undefined)
-          maplibreLayer.paint["circle-opacity"] = compileStyleMethod(layer.paint.opacity, "number");
+          maplibreLayer.paint["circle-opacity"] = compileStyleMethod(layer.paint.opacity);
         if (layer.paint.strokeColor !== undefined)
-          maplibreLayer.paint["circle-stroke-color"] = compileStyleMethod(layer.paint.strokeColor, "color");
+          maplibreLayer.paint["circle-stroke-color"] = compileStyleMethod(layer.paint.strokeColor);
         if (layer.paint.strokeWidth !== undefined)
-          maplibreLayer.paint["circle-stroke-width"] = compileStyleMethod(layer.paint.strokeWidth, "number");
+          maplibreLayer.paint["circle-stroke-width"] = compileStyleMethod(layer.paint.strokeWidth);
       } else if (layerType === "line") {
         if (layer.paint.color !== undefined)
-          maplibreLayer.paint["line-color"] = compileStyleMethod(layer.paint.color, "color");
+          maplibreLayer.paint["line-color"] = compileStyleMethod(layer.paint.color);
         if (layer.paint.width !== undefined)
-          maplibreLayer.paint["line-width"] = compileStyleMethod(layer.paint.width, "number");
+          maplibreLayer.paint["line-width"] = compileStyleMethod(layer.paint.width);
         if (layer.paint.opacity !== undefined)
-          maplibreLayer.paint["line-opacity"] = compileStyleMethod(layer.paint.opacity, "number");
+          maplibreLayer.paint["line-opacity"] = compileStyleMethod(layer.paint.opacity);
       } else if (layerType === "fill") {
         if (layer.paint.color !== undefined)
-          maplibreLayer.paint["fill-color"] = compileStyleMethod(layer.paint.color, "color");
+          maplibreLayer.paint["fill-color"] = compileStyleMethod(layer.paint.color);
         if (layer.paint.opacity !== undefined)
-          maplibreLayer.paint["fill-opacity"] = compileStyleMethod(layer.paint.opacity, "number");
+          maplibreLayer.paint["fill-opacity"] = compileStyleMethod(layer.paint.opacity);
         if (layer.paint.strokeColor !== undefined)
-          maplibreLayer.paint["fill-outline-color"] = compileStyleMethod(layer.paint.strokeColor, "color");
+          maplibreLayer.paint["fill-outline-color"] = compileStyleMethod(layer.paint.strokeColor);
       } else if (layerType === "heatmap") {
         if (layer.paint.radius !== undefined)
-          maplibreLayer.paint["heatmap-radius"] = compileStyleMethod(layer.paint.radius, "number");
+          maplibreLayer.paint["heatmap-radius"] = compileStyleMethod(layer.paint.radius);
         if (layer.paint.opacity !== undefined)
-          maplibreLayer.paint["heatmap-opacity"] = compileStyleMethod(layer.paint.opacity, "number");
+          maplibreLayer.paint["heatmap-opacity"] = compileStyleMethod(layer.paint.opacity);
       } else if (layerType === "raster") {
         // Raster layer (ADR-0011): colors are baked into the source image; the
         // only paint property is opacity. A raster layer references its
         // (already-emitted) `image` source by id.
         if (layer.paint.opacity !== undefined)
-          maplibreLayer.paint["raster-opacity"] = compileStyleMethod(layer.paint.opacity, "number");
+          maplibreLayer.paint["raster-opacity"] = compileStyleMethod(layer.paint.opacity);
       }
     }
 
@@ -333,11 +330,11 @@ export function compileMapSpec(
         source: layer.source,
         layout: {
           "text-field": ["get", labelSpec.field],
-          "text-size": compileStyleMethod(labelSpec.size ?? layer.layout?.labelSize ?? 12, "number"),
+          "text-size": compileStyleMethod(labelSpec.size ?? layer.layout?.labelSize ?? 12),
           "text-allow-overlap": false,
         },
         paint: {
-          "text-color": compileStyleMethod(labelSpec.color ?? layer.layout?.labelColor ?? "#000000", "color"),
+          "text-color": compileStyleMethod(labelSpec.color ?? layer.layout?.labelColor ?? "#000000"),
         },
       };
 

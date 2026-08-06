@@ -1,4 +1,4 @@
-import { ProviderId, TILE_PROVIDERS } from "./providers";
+import { TILE_PROVIDERS } from "./providers";
 
 export interface RasterFilters {
   brightness?: number;

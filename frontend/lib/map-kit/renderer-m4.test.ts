@@ -6,7 +6,7 @@
  *
  * 用纯 mock map（vi.fn）覆盖每个 helper 的关键行为契约，不依赖真实 MapLibre。
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   addRasterTileSource,
   setLayerStackVisibility,

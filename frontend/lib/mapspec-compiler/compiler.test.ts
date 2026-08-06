@@ -4,7 +4,7 @@ import {
   compileStyleMethod,
   validateMapSpec,
 } from "./compiler";
-import { MapSpec, SpatialMetaProfile } from "./types";
+import { MapSpec } from "./types";
 
 describe("MapSpec Compiler (Seam A)", () => {
   describe("compileStyleMethod", () => {

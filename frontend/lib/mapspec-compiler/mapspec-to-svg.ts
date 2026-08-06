@@ -281,7 +281,6 @@ export function compileMapSpecToSvg(
   }
 
   const rangeX = maxX - minX || 1.0;
-  const rangeY = maxY - minY || 1.0;
 
   const mercMinY = mercY(minY);
   const mercMaxY = mercY(maxY);

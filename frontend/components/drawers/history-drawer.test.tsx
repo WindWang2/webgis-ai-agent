@@ -127,7 +127,6 @@ describe('HistoryDrawer keyboard focus trap', () => {
   });
 
   it('restores focus to the previously-focused element when closed', async () => {
-    const user = userEvent.setup();
     function Harness() {
       const [open, setOpen] = useState(true);
       return (
@@ -143,7 +142,7 @@ describe('HistoryDrawer keyboard focus trap', () => {
       );
     }
     const trigger = userEvent.setup();
-    const { container } = render(<Harness />);
+    render(<Harness />);
     // 先聚焦背景按钮作为「之前焦点」，再关闭 drawer 验证回焦。
     const bg = screen.getByText('触发关闭的背景按钮');
     bg.focus();
