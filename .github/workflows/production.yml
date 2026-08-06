@@ -424,7 +424,7 @@ jobs:
           echo "preview stack healthy (nginx + api via https://localhost)"
 
       - name: Comment Preview URL
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           IMAGE_TAG: ${{ github.sha }}
         with:
