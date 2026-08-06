@@ -32,6 +32,20 @@ async def _override_get_async_db():
         yield s
 
 
+async def _purge_non_builtin_templates(session):
+    """Delete leftover non-builtin templates so each test starts from a clean table.
+
+    Uses is_(False) rather than `not`: Python's `not` on a SQLAlchemy Column
+    object evaluates to the plain bool False, so `where(not col)` compiles to
+    WHERE false and silently deletes nothing (E712 regression from PR #303).
+    """
+    from sqlalchemy import delete
+    await session.execute(
+        delete(CartographyTemplate).where(CartographyTemplate.is_builtin.is_(False))
+    )
+    await session.commit()
+
+
 @pytest.fixture(autouse=True)
 async def setup_db(tmp_path):
     """Create a file-based sqlite engine + tables, clear overrides/templates."""
@@ -46,9 +60,7 @@ async def setup_db(tmp_path):
     async with _test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     async with _TestSession() as s:
-        from sqlalchemy import delete
-        await s.execute(delete(CartographyTemplate).where(not CartographyTemplate.is_builtin))
-        await s.commit()
+        await _purge_non_builtin_templates(s)
     yield
     app.dependency_overrides.clear()
     await _test_engine.dispose()
@@ -203,3 +215,54 @@ async def test_delete_user_template_success(client):
     del_res = await client.delete(f"/api/v1/templates/{tmpl_id}", headers=user_headers)
     assert del_res.status_code == 200
     assert del_res.json()["status"] == "deleted"
+
+
+@pytest.mark.asyncio
+async def test_setup_purge_deletes_non_builtin_templates():
+    """Regression: the setup purge deletes non-builtin rows.
+
+    PR #303's lint fix rewrote `is_builtin == False` as `not is_builtin`;
+    Python `not` on a Column object is the plain bool False, so the delete
+    compiled to WHERE false and cleaned nothing.
+    """
+    from sqlalchemy import select
+
+    # Insert a non-builtin template through the same DB session path the
+    # fixture uses to set up test state.
+    async with _TestSession() as s:
+        s.add(
+            CartographyTemplate(
+                id="tmpl_user_cleanup_probe",
+                name="清理探针模板",
+                kind="symbology",
+                payload={"mode": "single"},
+                is_builtin=False,
+            )
+        )
+        await s.commit()
+
+    # Sanity: the probe row exists before cleanup runs.
+    async with _TestSession() as s:
+        probe = (
+            await s.execute(
+                select(CartographyTemplate).where(
+                    CartographyTemplate.id == "tmpl_user_cleanup_probe"
+                )
+            )
+        ).scalar_one_or_none()
+        assert probe is not None
+
+    # Run the exact cleanup the setup_db fixture runs.
+    async with _TestSession() as s:
+        await _purge_non_builtin_templates(s)
+
+    # The non-builtin row must be gone from the DB.
+    async with _TestSession() as s:
+        probe = (
+            await s.execute(
+                select(CartographyTemplate).where(
+                    CartographyTemplate.id == "tmpl_user_cleanup_probe"
+                )
+            )
+        ).scalar_one_or_none()
+        assert probe is None
