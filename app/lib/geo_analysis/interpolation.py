@@ -54,19 +54,32 @@ def idw_interpolation(points_geojson: dict | str, value_field: str, resolution: 
     # Batch query all H3 cells at once instead of per-cell Python loop
     cell_coords = np.array([h3.cell_to_latlng(cell) for cell in target_cells])
     dist, idx = tree.query(cell_coords, k=k)
+    n_cells = len(target_cells)
+    # cKDTree returns 1-D results when k == 1 (the k axis is squeezed);
+    # normalize to (n_cells, k) so the vectorized math below can rely on it.
+    dist = np.asarray(dist).reshape(n_cells, k)
+    idx = np.asarray(idx).reshape(n_cells, k)
 
-    results = []
-    for i, cell in enumerate(target_cells):
-        d = dist[i]
-        j = idx[i]
-        if np.any(d < 1e-10):
-            val = float(values[j[d < 1e-10][0]])
-        else:
-            weights = 1.0 / (d ** power)
-            val = float(np.sum(weights * values[j]) / np.sum(weights))
-        results.append({"h3_index": cell, "value": val})
-    
-    return results
+    # Vectorized IDW over all cells at once (was a per-cell Python loop).
+    # dist/idx are (n_cells, k); semantics preserved exactly:
+    #   - a cell whose nearest neighbor is < 1e-10 away takes that point's
+    #     value (first such neighbor, in k/distance order — np.argmax),
+    #   - otherwise the inverse-distance weighted mean of the k neighbors.
+    vals = np.empty(n_cells, dtype=np.float64)
+    if n_cells:
+        hit = dist < 1e-10                       # exact-hit mask (n_cells, k)
+        has_exact = hit.any(axis=1)              # cells hitting a point exactly
+        neighbor_vals = values[idx]              # (n_cells, k)
+        if has_exact.any():
+            first_hit = np.argmax(hit, axis=1)
+            rows = np.nonzero(has_exact)[0]
+            vals[rows] = neighbor_vals[rows, first_hit[rows]]
+        non_exact = ~has_exact
+        if non_exact.any():
+            w = 1.0 / (dist[non_exact] ** power)
+            vals[non_exact] = (w * neighbor_vals[non_exact]).sum(axis=1) / w.sum(axis=1)
+
+    return [{"h3_index": cell, "value": float(v)} for cell, v in zip(target_cells, vals)]
 
 
 def h3_to_geojson(results: dict, value_field: str = "value") -> dict:

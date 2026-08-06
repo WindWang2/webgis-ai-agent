@@ -19,6 +19,7 @@ import geopandas as gpd
 from shapely.geometry import box, mapping, Polygon
 
 from app.lib.geo_processor.core import GeoAnalysisResult, to_utm_gdf
+from app.lib.geo_analysis._vector import extract_centroids
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ def voronoi_polygons(
             error_type="ValueError", correction_hint="提供至少 3 个点要素",
         )
 
-    coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
+    coords = extract_centroids(gdf)
 
     xmin, ymin, xmax, ymax = gdf.total_bounds
     margin = max(xmax - xmin, ymax - ymin) * 0.5

@@ -10,6 +10,7 @@ from shapely.geometry import Point, Polygon, mapping
 from scipy.stats import norm
 from app.lib.geo_processor.core import GeoAnalysisResult
 from app.lib.geo_processor.core import to_utm_gdf
+from app.lib.geo_analysis._vector import extract_centroids
 
 def _build_weights(gdf: gpd.GeoDataFrame, k: int = 8) -> sparse.coo_matrix:
     """Build spatial weights matrix using KNN via cKDTree.
@@ -74,9 +75,9 @@ def calculate_sde(geojson: dict) -> GeoAnalysisResult:
     points = gdf[gdf.geometry.type == 'Point']
     if len(points) < 3:
         # Try to use centroids if they aren't all points
-        coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
+        coords = extract_centroids(gdf)
     else:
-        coords = np.array([(g.x, g.y) for g in points.geometry])
+        coords = extract_centroids(points)
         
     n = len(coords)
     mean_x, mean_y = coords.mean(axis=0)
@@ -392,7 +393,7 @@ def calculate_central_feature(geojson: dict, method: str = "mean_center") -> Geo
         return GeoAnalysisResult(False, None, "Invalid input or no features found")
     
     gdf, utm_crs = res
-    coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
+    coords = extract_centroids(gdf)
     
     if method == "mean_center":
         mc = coords.mean(axis=0)
@@ -418,8 +419,7 @@ def calculate_central_feature(geojson: dict, method: str = "mean_center") -> Geo
             end = min(start + batch_size, n)
             dists, _ = tree.query(coords[start:end], k=n)
             # Zero self-distances (first column per row)
-            for offset, i in enumerate(range(start, end)):
-                dists[offset, i] = 0.0
+            dists[np.arange(end - start), np.arange(start, end)] = 0.0
             dist_sums[start:end] = dists.sum(axis=1)
         idx = int(np.argmin(dist_sums))
         center_pt = gdf.geometry.iloc[idx]
@@ -458,14 +458,14 @@ def cluster_narrated(
     if len(gdf) < 3:
         return GeoAnalysisResult(False, None, "At least 3 features required for clustering")
 
-    coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
+    coords = extract_centroids(gdf)
 
     if value_field:
         filtered_gdf = _filter_numeric_gdf(gdf, value_field)
         if filtered_gdf.empty:
             return GeoAnalysisResult(False, None, f"Field '{value_field}' is not numeric or contains only nulls")
         gdf = filtered_gdf
-        coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
+        coords = extract_centroids(gdf)
         vals = gdf[value_field].to_numpy(dtype=float)
         scaler = StandardScaler()
         vals_scaled = scaler.fit_transform(vals.reshape(-1, 1))

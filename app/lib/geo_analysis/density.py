@@ -19,10 +19,12 @@ from typing import Any, Optional
 
 import numpy as np
 import geopandas as gpd
+from shapely import box as sbox
 from shapely.geometry import box, mapping
 
 from app.lib.geo_processor.core import GeoAnalysisResult, to_utm_gdf
 from app.lib.geo_analysis.statistics import _filter_numeric_gdf
+from app.lib.geo_analysis._vector import extract_centroids
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +89,7 @@ def kde_surface(
             error_type="ValueError", correction_hint="提供至少 3 个点要素",
         )
 
-    coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
+    coords = extract_centroids(gdf)
 
     if value_field:
         weights = _extract_numeric_values(gdf, value_field)
@@ -160,27 +162,27 @@ def kde_surface(
     threshold = max_d * 0.1
 
     # 批量构建格网几何体并一次性 reproject 到 WGS84（审计：避免 O(n) 逐单元格 CRS 转换）
-    cell_geoms = []
-    cell_data = []  # (i, j, d_val) tuples
-    for i in range(ny):
-        for j in range(nx):
-            d_val = float(density[i, j])
-            if d_val < threshold:
-                continue
-            x0, x1 = grid_x[j] - cell_size / 2, grid_x[j] + cell_size / 2
-            y0, y1 = grid_y[i] - cell_size / 2, grid_y[i] + cell_size / 2
-            cell_geoms.append(box(x0, y0, x1, y1))
-            cell_data.append((i, j, d_val))
+    # 阈值选择 + box 构造均向量化：np.nonzero 按 (i, j) 行主序返回（与原始双层循环顺序一致），
+    # shapely 2.x 的 sbox() 接受数组，一次 C 级调用构建全部几何。
+    ys, xs = np.nonzero(density >= threshold)
+    if len(ys):
+        half = cell_size / 2
+        cell_geoms = sbox(grid_x[xs] - half, grid_y[ys] - half,
+                          grid_x[xs] + half, grid_y[ys] + half)
+        cell_data = list(zip(ys.tolist(), xs.tolist(), density[ys, xs].tolist()))
+    else:
+        cell_geoms = []
+        cell_data = []
 
-    if cell_geoms:
+    if len(cell_geoms):
         cells_gdf = gpd.GeoSeries(cell_geoms, crs=utm_crs).to_crs("EPSG:4326")
         out_features = [
             {
                 "type": "Feature",
-                "geometry": mapping(cells_gdf.iloc[k]),
-                "properties": {"density": round(cell_data[k][2], 8)},
+                "geometry": mapping(geom),
+                "properties": {"density": round(d_val, 8)},
             }
-            for k in range(len(cell_geoms))
+            for geom, (_, _, d_val) in zip(cells_gdf.geometry, cell_data)
         ]
     else:
         out_features = []
@@ -244,7 +246,7 @@ def kde_contours(
             error_type="ValueError", correction_hint="提供至少 5 个点要素",
         )
 
-    coords = np.array([(g.centroid.x, g.centroid.y) for g in gdf.geometry])
+    coords = extract_centroids(gdf)
     kde_data = coords.T
 
     kde = gaussian_kde(kde_data, bw_method="scott" if bandwidth <= 0 else bandwidth / np.std(kde_data))
