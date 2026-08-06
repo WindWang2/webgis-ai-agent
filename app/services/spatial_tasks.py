@@ -12,7 +12,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.ndimage import gaussian_filter
-from shapely.geometry import box, mapping
+from shapely.geometry import mapping
+from shapely import box as sbox
 
 from app.services.task_queue import celery_app
 from app.services.nature_resource_analyzer import NatureResourceAnalyzer
@@ -69,24 +70,32 @@ def _build_heatmap_grid(xs, ys, cell_size: int):
 
 def _build_grid_features(H, xedges, yedges, max_val: float) -> list[dict]:
     """Build GeoJSON features for non-zero histogram cells."""
-    grid_features = []
     MAX_GRID_FEATURES = 500_000
-    total_cells = int(np.sum(H > 0))
+    nonzero = np.argwhere(H > 0)
+    total_cells = len(nonzero)
     if total_cells > MAX_GRID_FEATURES:
         raise ValueError(f"Grid too dense ({total_cells} cells). Increase cell_size or reduce data extent. Max allowed: {MAX_GRID_FEATURES}")
-    nonzero = np.argwhere(H > 0)
-    for i, j in nonzero:
-        count = int(H[i, j])
-        rect = box(xedges[i], yedges[j], xedges[i + 1], yedges[j + 1])
-        grid_features.append({
+    if total_cells == 0:
+        return []
+
+    # Vectorized cell construction: np.argwhere is row-major (same order as the
+    # scalar loop); shapely 2.x sbox() builds all geometries in one C call.
+    i = nonzero[:, 0]
+    j = nonzero[:, 1]
+    counts = H[i, j]
+    rects = sbox(xedges[i], yedges[j], xedges[i + 1], yedges[j + 1])
+
+    return [
+        {
             "type": "Feature",
             "geometry": mapping(rect),
             "properties": {
-                "count": count,
-                "weight": round(float(count / max_val), 4)
-            }
-        })
-    return grid_features
+                "count": int(count),
+                "weight": round(float(count / max_val), 4),
+            },
+        }
+        for rect, count in zip(rects, counts)
+    ]
 
 
 def _do_heatmap_generation(features: List[Dict], cell_size: int = 500, radius: int = 1000, render_type: str = "raster", palette: str = "classic", callback: Optional[Callable] = None):
