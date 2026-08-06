@@ -242,12 +242,8 @@ def register_osm_tools(registry: ToolRegistry):
         mapped_category = category_map.get(category, category)
 
         # 构造 Overpass 查询 - 查询 bbox 内的 POI
-        # amenity 类型
-        # TODO: amenity_types is defined but has no matching 'if mapped_category in amenity_types'
-        # branch (unlike leisure_types/tourism_types below) — amenity POIs may be misclassified.
-        amenity_types = {"restaurant", "school", "hospital", "bank", "cafe", "bar", "pharmacy",  # noqa: F841 — wire up the branch in a follow-up.
-                         "police", "fire_station", "post_office", "library", "cinema", "theatre",
-                         "parking", "fuel", "bus_station", "university", "college", "kindergarten"}
+        # 分类 tag：leisure / tourism 显式映射，其余全部落 amenity 默认分支
+        # （amenity 类型集合无需单独声明——else 即为其处理分支）。
         # leisure 类型
         leisure_types = {"park", "garden", "playground", "sports_centre", "swimming_pool", "stadium"}
         # tourism 类型
