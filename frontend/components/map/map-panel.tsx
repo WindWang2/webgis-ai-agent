@@ -175,7 +175,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   useEffect(() => {
     if (!runtimeRef.current) return
     const spec = hudStateToMapSpec({ layers, processLayers, activeFilters, is3D })
-    void runtimeRef.current.reconcileAsync(spec)
+    void runtimeRef.current.reconcileAsync(spec).catch((e) => console.error("[map] reconcile failed", e))
   }, [layers, processLayers, activeFilters, is3D, mapReady, currentMapStyle])
 
 
