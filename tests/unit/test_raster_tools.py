@@ -174,7 +174,7 @@ async def test_raster_resample_basic(advanced_tools, tmp_raster):
 
 @pytest.mark.heavy
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)  # PROJ init on first CRS change is slow (~2-3min)
+@pytest.mark.timeout(600)  # PROJ init on first CRS change is slow: ~2-3min isolated, up to 5min+ under full-suite load
 async def test_raster_resample_with_crs_change(advanced_tools, tmp_raster):
     """Resample with CRS change should work (slow: PROJ init overhead)."""
     result = await advanced_tools.dispatch("raster_resample", {
