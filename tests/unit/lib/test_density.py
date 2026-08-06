@@ -146,3 +146,19 @@ def test_kde_contours_too_few_points():
     res = kde_contours(_synthetic_points(4))
     assert not res.success
     assert res.error_type == "ValueError"
+
+
+def test_kde_surface_drops_cells_below_threshold():
+    """Threshold drop is exact: every surviving cell has density >= 10% of max.
+
+    Pins the vectorized grid loop (np.nonzero on density >= threshold) to the
+    original per-cell branch semantics (skip d_val < threshold).
+    """
+    res = kde_surface(_synthetic_points(20), cell_size=2000)
+    assert res.success
+    fc = res.data
+    max_d = fc["stats"]["max_density"]
+    threshold = max_d * 0.1
+    assert len(fc["features"]) == fc["count"]
+    for feat in fc["features"]:
+        assert feat["properties"]["density"] >= threshold - 1e-6
