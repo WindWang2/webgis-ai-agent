@@ -31,6 +31,15 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v7
 
+      - name: Set up Node.js
+        # 与 test-frontend job 保持一致：固定 Node 22（ESLint 9 要求
+        # node ^18.18 || ^20.9 || >=21.1），并启用 npm 缓存。
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
@@ -41,23 +50,25 @@ jobs:
         run: pip install ruff
 
       - name: Run Ruff Check
-        # Blocking gate on production code (app/). The ~275-error unused-import +
-        # style backlog was cleared in the lint-cleanup PR, so this now actually
-        # blocks. Scoped to app/ — tests/ has ~340 pre-existing lint nits that
-        # are a separate cleanup task; linting test code adds churn without much
-        # value. Config lives in pyproject.toml [tool.ruff.lint].
-        run: ruff check --output-format=github app/
+        # Blocking gate on production code, tests, and root entrypoints. The
+        # app/ backlog was cleared in the lint-cleanup PRs and tests/ + root
+        # entrypoints were cleared to 0 in #303, so this actually blocks and
+        # keeps the test suite lint-clean. Config lives in pyproject.toml
+        # [tool.ruff.lint] (E402 ignored globally by policy).
+        run: ruff check --output-format=github app/ tests/ main.py manage.py
 
       - name: Install Frontend Deps
         working-directory: ./frontend
         run: npm ci
 
       - name: ESLint Check
-        # eslint.config.mjs 用了 v9 的 flat config API，但 package.json 锁的是
-        # eslint ^8 -> eslint 8 在 flat config 模式下不接受 --exit-zero flag。
-        # TODO(eslint-upgrade): 升级 eslint 到 9.x + 全量 lint 是独立工作。
+        # ESLint 9 + flat config（eslint.config.mjs）已上线：eslint 升级到 9.x 并
+        # 把全量 lint 清零（--max-warnings 0）。此步骤是阻塞 gate —— 任何 error /
+        # warning 都让 lint job 失败，与上面的 ruff gate 对齐，不再 || true 兜底。
+        # next build 已设 eslint.ignoreDuringBuilds（next 14 内置 lint 在
+        # ESLint 9 下不兼容），构建期 lint 统一由这里把关。
         working-directory: ./frontend
-        run: npx eslint . --max-warnings 0 || true
+        run: npx eslint . --max-warnings 0
 
   # ============ Stage 2: 单元测试 ============
   test-backend:
