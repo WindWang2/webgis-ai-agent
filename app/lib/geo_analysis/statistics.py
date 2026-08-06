@@ -293,21 +293,31 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
     # Batch reproject once (audit S40: O(1) instead of O(n) CRS transforms)
     gdf_wgs84 = gdf.to_crs("EPSG:4326")
     
+    # Vectorized hotspot type / confidence classification (audit S40: same
+    # p-value thresholds 0.05/0.01/0.1, same gi_star sign logic, same priority
+    # order, same confidence tiers as the scalar spec)
+    sig_mask = p_vals < 0.05
+    borderline_mask = p_vals < 0.1
+    hot_mask = gi_stars > 0
+    hotspot_types = np.select(
+        [sig_mask & hot_mask, sig_mask & ~hot_mask,
+         borderline_mask & hot_mask, borderline_mask & ~hot_mask],
+        ["Hot Spot", "Cold Spot", "Hot Spot", "Cold Spot"],
+        default="Not Significant",
+    ).tolist()
+    confidences = np.select(
+        [sig_mask & (p_vals < 0.01), sig_mask, borderline_mask],
+        ["99%", "95%", "90%"],
+        default="Not Significant",
+    ).tolist()
+
     features = []
     for i in range(len(gdf)):
         gi_star = float(gi_stars[i])
         p_val = float(p_vals[i])
+        h_type = hotspot_types[i]
+        confidence = confidences[i]
         
-        h_type = "Not Significant"
-        confidence = "Not Significant"
-        
-        if p_val < 0.05:
-            h_type = "Hot Spot" if gi_star > 0 else "Cold Spot"
-            confidence = "99%" if p_val < 0.01 else "95%"
-        elif p_val < 0.1:
-            h_type = "Hot Spot" if gi_star > 0 else "Cold Spot"
-            confidence = "90%"
-            
         geom_wgs84 = gdf_wgs84.geometry.iloc[i]
         row = gdf.iloc[i]
         props = {k: v for k, v in row.items() if k != "geometry"}
@@ -542,26 +552,30 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
     # Calculate LISA (with seed=42 for deterministic permutations)
     lisa = Moran_Local(values, w, seed=42)
     
-    # Assign clusters
-    clusters = []
-    cluster_counts = {"HH": 0, "LL": 0, "HL": 0, "LH": 0, "NS": 0}
-    for i, p in enumerate(lisa.p_sim):
-        if p < 0.05:
-            q = lisa.q[i]
-            if q == 1:
-                c = "HH"
-            elif q == 2:
-                c = "LH"
-            elif q == 3:
-                c = "LL"
-            elif q == 4:
-                c = "HL"
-            else:
-                c = "NS"
-        else:
-            c = "NS"
-        clusters.append(c)
-        cluster_counts[c] += 1
+    # Vectorized q → cluster label mapping + counts (audit S40: same q → label
+    # mapping — 1=HH, 2=LH, 3=LL, 4=HL, else NS — same p < 0.05 significance
+    # gate, same counts dict shape as the scalar spec)
+    p_sim = np.asarray(lisa.p_sim)
+    q_arr = np.asarray(lisa.q)
+    significant = p_sim < 0.05
+    cluster_labels = ["HH", "LH", "LL", "HL", "NS"]  # label_codes index 0..4
+    label_codes = np.select(
+        [significant & (q_arr == 1),
+         significant & (q_arr == 2),
+         significant & (q_arr == 3),
+         significant & (q_arr == 4)],
+        [0, 1, 2, 3],
+        default=4,
+    )
+    clusters = [cluster_labels[c] for c in label_codes.tolist()]
+    label_counts = np.bincount(label_codes, minlength=5)
+    cluster_counts = {
+        "HH": int(label_counts[0]),
+        "LL": int(label_counts[2]),
+        "HL": int(label_counts[3]),
+        "LH": int(label_counts[1]),
+        "NS": int(label_counts[4]),
+    }
         
     # Batch reproject once (audit S40)
     gdf_wgs84 = gdf.to_crs("EPSG:4326")

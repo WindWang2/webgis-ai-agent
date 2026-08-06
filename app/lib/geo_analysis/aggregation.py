@@ -32,12 +32,16 @@ def generate_fishnet(bounds: tuple[float, float, float, float], cell_size: float
 
     polygons = []
     if type == 'square':
-        cols = list(np.arange(xmin, xmax, cell_size))
-        rows = list(np.arange(ymin, ymax, cell_size))
+        cols = np.arange(xmin, xmax, cell_size)
+        rows = np.arange(ymin, ymax, cell_size)
         
-        for x in cols:
-            for y in rows:
-                polygons.append(box(x, y, x + cell_size, y + cell_size))
+        # Vectorized cell grid, x-major order preserved (for each x, all y).
+        xs = np.repeat(cols, len(rows))
+        ys = np.tile(rows, len(cols))
+        polygons = [
+            box(x, y, x + cell_size, y + cell_size)
+            for x, y in zip(xs, ys)
+        ]
         
     elif type == 'hexagon':
         R = cell_size / np.sqrt(3)
@@ -46,17 +50,24 @@ def generate_fishnet(bounds: tuple[float, float, float, float], cell_size: float
         
         cols = np.arange(xmin - dx, xmax + dx, dx)
         rows = np.arange(ymin - dy, ymax + dy, dy)
+        ncols = len(cols)
+        nrows = len(rows)
         
-        for j, y in enumerate(rows):
-            for x in cols:
-                x_offset = (j % 2) * (dx / 2)
-                cx = x + x_offset
-                angles = np.radians([0, 60, 120, 180, 240, 300, 0])
-                hex_coords = [
-                    (cx + R * np.cos(a), y + R * np.sin(a))
-                    for a in angles
-                ]
-                polygons.append(Polygon(hex_coords))
+        # Precompute the 7 vertex offsets once (identical for every cell)
+        angles = np.radians([0, 60, 120, 180, 240, 300, 0])
+        cos_a = np.cos(angles)
+        sin_a = np.sin(angles)
+        
+        # Center grid, row-major (y-outer / x-inner); j%2 row offset preserved
+        offsets = (np.arange(nrows) % 2) * (dx / 2)
+        cx = cols[None, :] + offsets[:, None]          # (nrows, ncols)
+        cy = np.broadcast_to(rows[:, None], (nrows, ncols))
+        
+        # All vertices at once: (nrows, ncols, 7, 2), flattened in cell order
+        vx = cx[:, :, None] + R * cos_a[None, None, :]
+        vy = cy[:, :, None] + R * sin_a[None, None, :]
+        vertices = np.stack([vx, vy], axis=-1).reshape(-1, 7, 2)
+        polygons = [Polygon(v) for v in vertices]
     else:
         return GeoAnalysisResult(success=False, data=None, summary=f"Unsupported type: {type}")
 
