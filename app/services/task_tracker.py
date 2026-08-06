@@ -160,7 +160,15 @@ class TaskTracker:
         return list(self._tasks.values())
 
     def _evict_if_needed(self):
-        """Evict oldest finished tasks if total exceeds limit."""
+        """Evict oldest tasks if total exceeds limit.
+
+        Finished tasks are evicted first (existing behavior); if the cap is
+        still exceeded — e.g. many running tasks abandoned by streams whose
+        client disconnected mid-turn — the oldest remaining tasks are evicted
+        regardless of status, so the tracker stays bounded. Evicting a running
+        task is safe: _TrackStepContext and start_step/complete_step guard on
+        task existence and no-op for unknown ids.
+        """
         if len(self._tasks) <= self.MAX_TOTAL_TASKS:
             return
         finished_ids = [
@@ -168,11 +176,22 @@ class TaskTracker:
             if t.status in (TaskStatus.completed, TaskStatus.failed, TaskStatus.cancelled)
         ]
         for tid in finished_ids[:len(self._tasks) - self.MAX_TOTAL_TASKS + 50]:
-            self._tasks.pop(tid, None)
-            self._step_counters.pop(tid, None)
-            for sids in self._session_tasks.values():
-                if tid in sids:
-                    sids.remove(tid)
+            self._drop_task(tid)
+
+        # Still over the cap: evict the oldest tasks (dict insertion order)
+        # regardless of status.
+        for tid in list(self._tasks)[:max(0, len(self._tasks) - self.MAX_TOTAL_TASKS)]:
+            self._drop_task(tid)
+
+    def _drop_task(self, tid: str) -> None:
+        """Remove a task and its bookkeeping; drop now-empty session keys."""
+        self._tasks.pop(tid, None)
+        self._step_counters.pop(tid, None)
+        for sid, ids in list(self._session_tasks.items()):
+            if tid in ids:
+                ids.remove(tid)
+                if not ids:
+                    self._session_tasks.pop(sid, None)
 
     def start_step(self, task_id: str, tool: str, params: dict) -> TaskStep:
         """启动步骤"""
