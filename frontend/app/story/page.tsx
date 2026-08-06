@@ -1,8 +1,6 @@
 "use client"
 import { useState, useEffect, useRef, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
-import ReactMarkdown from "react-markdown"
-import remarkGfm from "remark-gfm"
 import dynamic from "next/dynamic"
 import { API_BASE } from '@/lib/api/config';
 
@@ -10,6 +8,8 @@ const MapPanel = dynamic(
   () => import('@/components/map/map-panel').then((m) => ({ default: m.MapPanel })),
   { ssr: false, loading: () => <div className="w-full h-full bg-slate-900 animate-pulse" /> }
 )
+
+const StoryMarkdown = dynamic(() => import('@/components/chat/story-markdown'), { ssr: false })
 
 import { devOnly } from "@/lib/utils/logger";
 import { useHudStore } from "@/lib/store/useHudStore"
@@ -98,9 +98,7 @@ function StoryPageInner() {
               {msg.role === 'user' ? (
                 <p className="m-0 font-mono">USER: {msg.content}</p>
               ) : (
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {msg.content}
-                </ReactMarkdown>
+                <StoryMarkdown text={msg.content} />
               )}
             </div>
           ))}

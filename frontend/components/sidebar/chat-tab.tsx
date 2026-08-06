@@ -1,15 +1,24 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from 'react';
+import dynamic from 'next/dynamic';
 import { Upload, Send, Sparkles, CheckCircle2 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { AiStatus } from '@/lib/store/hud-types';
-import MiniMd from '@/components/chat/mini-md';
 import { ToolCallChain } from '@/components/chat/tool-call-card';
 import { CollapsibleThink } from '@/components/chat/collapsible-think';
 import { PlanProposalCard } from '@/components/chat/plan-proposal-card';
 import { PlanCard } from '@/components/chat/plan-card';
-import { ChartRenderer, adaptChartData } from '@/components/chat/chart-renderer';
+import { adaptChartData } from "@/lib/chart-adapter";
+
+// Bundle-slimming: react-markdown (MiniMd) and recharts (ChartRenderer) load on
+// demand instead of riding the / first-load bundle; the tiny pure adapter stays
+// static so chart message rendering logic is unchanged.
+const MiniMd = dynamic(() => import('@/components/chat/mini-md'), { ssr: false });
+const ChartRenderer = dynamic(
+  () => import('@/components/chat/chart-renderer').then((m) => ({ default: m.ChartRenderer })),
+  { ssr: false }
+);
 
 /* ─── Thinking dots animation ─── */
 const DOT_ANIMS = ['animate-dot-1', 'animate-dot-2', 'animate-dot-3'];
