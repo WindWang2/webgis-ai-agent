@@ -204,24 +204,14 @@ async def test_rate_limit_window_purges_old_entries(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_shared_aiohttp_session_reused(monkeypatch):
-    """/review P2-3: _get_aiohttp_session must return the SAME instance across calls
-    (not a fresh ClientSession per Nominatim lookup)."""
+async def test_fetch_nominatim_positive_path(monkeypatch):
+    """/review P2-3: _fetch_nominatim resolves through ProviderHealthTracker's
+    connection pool (the seam that replaced the old shared aiohttp session)."""
     from app.services import viewport_naming as vn
 
-    vn.clear_cache()
-    # Reset shared session so we're testing a clean state.
-    # Guard against a stale session from a previous event loop (closed loop raises RuntimeError).
-    if vn._aiohttp_session is not None and not vn._aiohttp_session.closed:
-        try:
-            await vn._close_session()
-        except RuntimeError:
-            # Event loop from a previous test was closed; just reset the global.
-            vn._aiohttp_session = None
+    async def fake_tracked(name, url, params, **kwargs):
+        return {"address": {"city": "北京", "district": "海淀区", "road": "中关村大街"}}
 
-    s1 = await vn._get_aiohttp_session()
-    s2 = await vn._get_aiohttp_session()
-    assert s1 is s2, "shared session should be the same instance"
-
-    # Cleanup so we don't leak the connection between test files
-    await vn._close_session()
+    monkeypatch.setattr("app.services.provider_health.tracked_provider_get", fake_tracked)
+    label = await vn._fetch_nominatim(116.4, 39.9)
+    assert label == "北京 海淀区 中关村大街"

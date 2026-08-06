@@ -72,7 +72,8 @@ async def test_compute_vegetation_index_unsupported_type():
 def test_remote_sensing_service_import():
     from app.services.rs import RemoteSensingService
     from app.services.rs.spectral_engine import RemoteSensingService as RSS2
-    from app.services.spatial_tasks import RemoteSensingService as RSS3
+    from app.services.spatial_tasks import SpectralRasterEngine as RSS3
+
     assert RemoteSensingService is SpectralRasterEngine
     assert RSS2 is SpectralRasterEngine
     assert RSS3 is SpectralRasterEngine

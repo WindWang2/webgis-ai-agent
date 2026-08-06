@@ -1,7 +1,7 @@
 """OSM 工具测试"""
 import pytest
 import json
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import patch
 from app.tools.registry import ToolRegistry
 from app.tools.osm import register_osm_tools, _overpass_to_geojson
 
@@ -40,29 +40,16 @@ async def test_query_osm_poi_mock():
     registry = ToolRegistry()
     register_osm_tools(registry)
 
-    # Mock for _geocode_bbox (session.get)
+    # 经 ProviderHealthTracker 统一执行缝（#311）：Nominatim 地理编码 → Overpass 查询
     geo_data = [{"boundingbox": ["39.8","40.0","116.3","116.5"], "importance": 0.9, "lat": "39.9", "lon": "116.4"}]
-    
-    # Mock for Overpass query (session.post)
-    overpass_data = '{"elements": [{"type": "node", "id": 1, "lat": 39.9, "lon": 116.4, "tags": {"name": "Test Restaurant"}}]}'
+    overpass_data = {"elements": [{"type": "node", "id": 1, "lat": 39.9, "lon": 116.4, "tags": {"name": "Test Restaurant"}}]}
 
-    mock_session = MagicMock()
-    
-    # Setup for _geocode_bbox
-    mock_geo_resp = AsyncMock()
-    mock_geo_resp.status = 200
-    mock_geo_resp.json.return_value = geo_data
-    mock_geo_resp.__aenter__.return_value = mock_geo_resp
-    
-    # Setup for _query_overpass
-    mock_overpass_resp = AsyncMock()
-    mock_overpass_resp.status = 200
-    mock_overpass_resp.text.return_value = overpass_data
-    mock_overpass_resp.__aenter__.return_value = mock_overpass_resp
+    async def fake_tracked(name, url, params, **kwargs):
+        if name == "overpass":
+            return overpass_data
+        return geo_data
 
-    mock_session.get.return_value = mock_geo_resp
-    mock_session.post.return_value = mock_overpass_resp
-    with patch("app.tools.osm.get_shared_client", new_callable=AsyncMock, return_value=mock_session):
+    with patch("app.tools.osm.tracked_provider_get", side_effect=fake_tracked):
         result = await registry.dispatch("query_osm_poi", {"area": "北京", "category": "restaurant"})
         assert result["type"] == "poi_query"
         assert result["area"] == "北京"

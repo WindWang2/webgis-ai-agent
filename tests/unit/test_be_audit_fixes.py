@@ -29,20 +29,27 @@ async def _override_get_async_db():
 # ── BE-AUDIT-01: RemoteSensingService Import & Celery Task Verification ──────
 
 def test_be_audit_01_remote_sensing_service_imports():
-    """Verify RemoteSensingService can be imported from spatial_tasks, rs, and spectral_engine."""
-    from app.services.spatial_tasks import RemoteSensingService as RSS_tasks
-    from app.services.rs import RemoteSensingService as RSS_rs
+    """Verify the spectral engine is importable from spatial_tasks, rs, and spectral_engine.
+
+    spatial_tasks now imports the canonical SpectralRasterEngine (previously
+    the RemoteSensingService alias — review m3); the deprecated alias still
+    resolves to the same class for backward compatibility.
+    """
+    from app.services.spatial_tasks import SpectralRasterEngine as SRE_tasks
+    from app.services.rs import SpectralRasterEngine as SRE_rs
+    from app.services.rs.spectral_engine import SpectralRasterEngine as SRE_engine
     from app.services.rs.spectral_engine import RemoteSensingService as RSS_engine
 
-    assert RSS_tasks is RSS_engine
-    assert RSS_rs is RSS_engine
+    assert SRE_tasks is SRE_engine
+    assert SRE_rs is SRE_engine
+    assert RSS_engine is SRE_engine  # deprecated alias kept for compatibility
 
 
 def test_be_audit_01_run_change_detection_uses_remote_sensing_service():
-    """Verify run_change_detection instantiates RemoteSensingService without NameError."""
+    """Verify run_change_detection instantiates the spectral engine without NameError."""
     from app.services.spatial_tasks import run_change_detection
 
-    with patch("app.services.spatial_tasks.RemoteSensingService") as mock_rss, \
+    with patch("app.services.spatial_tasks.SpectralRasterEngine") as mock_rss, \
          patch.object(run_change_detection, "update_state"):  # noqa: F841 — mock handle not used in assertions
         instance = MagicMock()
         mock_rss.return_value = instance
