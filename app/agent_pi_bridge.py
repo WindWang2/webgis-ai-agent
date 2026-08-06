@@ -126,6 +126,9 @@ _dispatch_result_cache: dict[str, "ToolDispatchResult"] = {}
 def cache_dispatch_result(tool_call_id: str, result: "ToolDispatchResult") -> None:
     """缓存一次 dispatch 的结果，供 SSE 适配器按 toolCallId 读取。"""
     _dispatch_result_cache[tool_call_id] = result
+    # 防御上限：turn 末清理兜底正常路径，此上限兜住"无后续 turn"的病态窗口
+    if len(_dispatch_result_cache) > 128:
+        _dispatch_result_cache.pop(next(iter(_dispatch_result_cache)))
 
 
 def get_cached_dispatch_result(tool_call_id: str) -> "Optional[ToolDispatchResult]":
@@ -135,6 +138,22 @@ def get_cached_dispatch_result(tool_call_id: str) -> "Optional[ToolDispatchResul
 
 def _clear_dispatch_cache() -> None:
     """清空所有缓存的 dispatch 结果（新 turn 开始时调用）。"""
+    _dispatch_result_cache.clear()
+
+
+def _cleanup_turn_state(turn_sid: str) -> None:
+    """Turn-end cleanup: dedup sets + dispatch cache.
+
+    The Pi extension posts tool dispatches with sessionId=None, so every
+    dispatch lands in the ``""`` bucket of _session_executed_sets; it must be
+    popped here (alongside the real sid) or it grows by one (tool, args) tuple
+    per dispatch across all sessions forever. Dispatch results written by the
+    HTTP callback but never consumed by the SSE adapter (client disconnected /
+    turn aborted) are dropped too — safe because turns are strictly serial and
+    the mapper only consumes within the turn.
+    """
+    _session_executed_sets.pop(turn_sid, None)
+    _session_executed_sets.pop("", None)
     _dispatch_result_cache.clear()
 
 
@@ -184,6 +203,9 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     service = ToolDispatchService(registry=registry)
     tc = {"id": request.toolCallId, "function": {"name": tool_name, "arguments": request.arguments or {}}}
     executed = _session_executed_sets.setdefault(request.sessionId or "", set())
+    # 防御上限：turn 末清理兜底正常路径，此上限兜住跨会话无 turn 的病态累积
+    if len(_session_executed_sets) > 128:
+        _session_executed_sets.pop(next(iter(_session_executed_sets)))
 
     # P1 fix: time the dispatch, record telemetry on BOTH the success and the
     # exception path (previously an exception skipped recording entirely),
@@ -431,6 +453,7 @@ class PiBridge:
             # Best-effort: drain any leftover events so the next turn starts clean.
             await self._drain_remaining_turn_events()
         finally:
+            _cleanup_turn_state(turn_sid)
             self._lock.release()
 
         return {
@@ -519,6 +542,11 @@ class PiBridge:
             # the next turn. (On a normal agent_end the queue is already empty;
             # this is a no-op there.)
             await self._drain_remaining_turn_events()
+            # Turn-end cleanup: drop this turn's dedup sets (incl. the "" bucket
+            # where sessionId-less Pi dispatches land) and orphaned dispatch
+            # results (written by the HTTP callback, never consumed after a
+            # disconnect). Without this they accumulate across sessions.
+            _cleanup_turn_state(turn_sid)
             self._lock.release()
 
 
