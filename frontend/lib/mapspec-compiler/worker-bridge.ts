@@ -33,6 +33,21 @@ let sharedWorker: Worker | null = null;
 let nextRequestId = 0;
 
 /**
+ * Hard ceiling for how long `diffSpecsAsync` waits on a worker before
+ * resolving with the empty patch. Guards against the worker silently wedging
+ * (script error, OOM) without ever posting — otherwise the reconcile pipeline
+ * would hang with no retry. Exported so tests can advance fake timers by
+ * exactly one window.
+ */
+export const DIFF_WORKER_TIMEOUT_MS = 30_000;
+
+/**
+ * The no-op patch shape: "nothing to apply", identical to what `diffSpecs`
+ * produces for identical specs.
+ */
+const EMPTY_PATCH: SpecPatch = { sources: [], layers: [] };
+
+/**
  * Test-only: drop the cached worker so the next call re-evaluates the
  * environment (e.g. to exercise the fallback path after a worker test).
  */
@@ -69,13 +84,52 @@ export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<Spe
   return new Promise<SpecPatch>((resolve) => {
     const id = `diff-${++nextRequestId}`;
 
+    let settled = false;
+
+    /**
+     * Settle the request exactly once, then discard the worker. The worker is
+     * terminated on every settle (success included) so a wedged worker never
+     * survives to hang a later request; the next call starts fresh.
+     */
+    const finish = (patch: SpecPatch) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      worker.removeEventListener("message", onMessage);
+      worker.onerror = null;
+      worker.onmessageerror = null;
+      workerWithOnexit.onexit = null;
+      worker.terminate();
+      sharedWorker = null;
+      resolve(patch);
+    };
+
     const onMessage = (event: MessageEvent<DiffResponse>) => {
       if (event.data?.id !== id) return;
-      worker.removeEventListener("message", onMessage);
-      resolve(event.data.patch);
+      finish(event.data.patch);
     };
 
     worker.addEventListener("message", onMessage);
+
+    // lib.dom no longer types the deprecated `onexit` (Chrome-only); browsers
+    // still fire it with a CloseEvent whose `code` is the exit status.
+    const workerWithOnexit = worker as unknown as {
+      onexit: ((event: CloseEvent) => void) | null;
+    };
+
+    // Worker died before posting (script error, OOM, ...) — no-op contract.
+    worker.onerror = () => finish(EMPTY_PATCH);
+    // Structured-clone / deserialization failure of the response.
+    worker.onmessageerror = () => finish(EMPTY_PATCH);
+    // Explicit non-zero exit without a response.
+    workerWithOnexit.onexit = (event) => {
+      if (event.code !== 0) finish(EMPTY_PATCH);
+    };
+
+    // All settle paths fire asynchronously, so `timer` is always assigned
+    // before `finish` can run.
+    const timer = setTimeout(() => finish(EMPTY_PATCH), DIFF_WORKER_TIMEOUT_MS);
+
     const request: DiffRequest = { id, prev, next };
     worker.postMessage(request);
   });
