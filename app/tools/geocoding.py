@@ -4,6 +4,12 @@ from app.services.provider_health import check_nominatim_status, tracked_provide
 from app.tools.registry import ToolRegistry, tool
 
 
+def _raise_on_error(result: dict) -> None:
+    """Nominatim 业务错误以 {"error": ...} 形式返回；抛出 RuntimeError（#311 降级接缝）。"""
+    if "error" in result:
+        raise RuntimeError(f"Nominatim API error: {result['error']}")
+
+
 def register_geocoding_tools(registry: ToolRegistry):
     """注册地理编码工具到 registry"""
 
@@ -35,8 +41,7 @@ def register_geocoding_tools(registry: ToolRegistry):
             timeout=30,
             business_checker=check_nominatim_status,
         )
-        if "error" in result:
-            raise RuntimeError(f"Nominatim API error: {result['error']}")
+        _raise_on_error(result)
         results = result
 
         if not results:
@@ -86,8 +91,7 @@ def register_geocoding_tools(registry: ToolRegistry):
             timeout=30,
             business_checker=check_nominatim_status,
         )
-        if "error" in result:
-            raise RuntimeError(f"Nominatim API error: {result['error']}")
+        _raise_on_error(result)
         data = result
 
         return {

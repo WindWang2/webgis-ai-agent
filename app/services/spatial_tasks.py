@@ -16,7 +16,7 @@ from shapely.geometry import box, mapping
 
 from app.services.task_queue import celery_app
 from app.services.nature_resource_analyzer import NatureResourceAnalyzer
-from app.services.rs.spectral_engine import RemoteSensingService
+from app.services.rs.spectral_engine import SpectralRasterEngine
 from app.models.upload import UploadRecord
 from app.tools._utils import db_session
 
@@ -230,11 +230,11 @@ def run_change_detection(
     对同一 bbox 在两个时间窗口分别获取 Sentinel-2 影像并计算指定指数，
     汇总均值差异并按 ±change_threshold 分类为 5 档。
 
-    实现策略：复用 RemoteSensingService.compute_vegetation_index（异步）
+    实现策略：复用 SpectralRasterEngine.compute_vegetation_index（异步）
     通过新建事件循环在 Celery worker 进程内顺序执行两次，避免重复实现
     STAC + 波段读取逻辑。
     """
-    svc = RemoteSensingService()
+    svc = SpectralRasterEngine()
 
     async def compute_both():
         t1 = await svc.compute_vegetation_index(bbox, t1_from, t1_to, index_type=index_type)

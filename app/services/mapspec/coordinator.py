@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _CLI_PATH = PROJECT_ROOT / "frontend" / "lib" / "mapspec-compiler" / "cli.ts"
+_CLI_COMPILE_TIMEOUT_SEC = 45
 
 
 async def compile_via_cli(mapspec_file: Path, target_out_dir: Path) -> Dict[str, Any]:
@@ -43,12 +44,14 @@ async def compile_via_cli(mapspec_file: Path, target_out_dir: Path) -> Dict[str,
             # test_validate_and_compile (it passed on retry) — 45s keeps a real
             # hang detectable while absorbing cold-start + runner variance.
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=45,
+                proc.communicate(), timeout=_CLI_COMPILE_TIMEOUT_SEC,
             )
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
-            raise TimeoutError("MapSpec CLI compilation timed out after 45s")
+            raise TimeoutError(
+                f"MapSpec CLI compilation timed out after {_CLI_COMPILE_TIMEOUT_SEC}s"
+            )
 
         stdout_text = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
         stderr_text = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""

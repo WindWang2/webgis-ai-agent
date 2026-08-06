@@ -210,8 +210,9 @@ async def tracked_provider_get(
 
     try:
         session = await get_shared_client()
-        request = session.post if method.upper() == "POST" else session.get
-        kwargs: dict = {"data": data} if method.upper() == "POST" else {"params": params}
+        is_post = method.upper() == "POST"
+        request = session.post if is_post else session.get
+        kwargs: dict = {"data": data} if is_post else {"params": params}
         async with request(
             url,
             ssl=actual_ssl,
