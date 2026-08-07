@@ -59,6 +59,16 @@ async def test_kde_contours_second_call_cache_hit():
     # Compare JSON serializations (cache returns lists instead of tuples for geometry coords)
     assert json.dumps(r1, sort_keys=True, default=str) == json.dumps(r2, sort_keys=True, default=str)
 
-    lines = [json.loads(line) for line in
-             open(tool_metrics.LOG_PATH).read().strip().splitlines()]
+    import time
+    lines = []
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        try:
+            lines = [json.loads(line) for line in
+                     open(tool_metrics.LOG_PATH).read().strip().splitlines()]
+        except (OSError, json.JSONDecodeError):
+            lines = []
+        if len(lines) >= 2:
+            break
+        time.sleep(0.05)
     assert lines[1]["cache_hit"] is True

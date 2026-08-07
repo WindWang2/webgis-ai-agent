@@ -2,9 +2,15 @@
 
 入口：make_cache_key(name, args)、cached_tool(...) 装饰器（后续 Task 加入）。
 键命名空间 tool_cache:v1:<sha256[:16]>，全量失效一条 SCAN | DEL 即可。
+
+singleflight：cache miss 时先尝试 SET NX 锁（带 token + TTL）；拿到锁的
+caller 计算并写回，其余 caller 轮询等待结果。锁丢失/过期/Redis 故障时
+退化为直接计算（有界重复，等价于无 singleflight），无分布式死锁风险。
 """
+import asyncio
 import hashlib
 import json
+import uuid
 from typing import Optional, Any, Callable
 import logging
 import time
@@ -17,6 +23,14 @@ import redis as _redis
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# singleflight 锁参数：锁 TTL 必须覆盖最坏计算时长（过期即退化为重复计算，
+# 不会死锁）；等待方轮询直到值出现或锁窗口结束。
+_DEFAULT_LOCK_TTL_S = 120
+# 同步路径的等待预算：等待占用 threadpool 线程，30s 上限避免拥塞其它工具。
+_SYNC_WAIT_BUDGET_S = 30
+_POLL_MIN_S = 0.05
+_POLL_MAX_S = 1.0
 
 
 def make_cache_key(tool_name: str, args: dict) -> Optional[str]:
@@ -101,6 +115,99 @@ def set_cached(key: str, value: Any, ttl: int) -> None:
         _warn_throttled(f"[tool_cache] Redis SET failed, dropping cache write: {type(e).__name__}: {e}")
 
 
+# ─── singleflight (cache stampede protection) ────────────────────────────────
+
+def _lock_key(key: str) -> str:
+    return f"{key}:lock"
+
+
+def _acquire_lock(key: str, token: str, lock_ttl_s: int) -> bool:
+    """SET NX PX — 拿到锁的 caller 负责计算。Redis 故障时返回 False → 直接计算。"""
+    try:
+        return bool(_get_redis_client().set(_lock_key(key), token, nx=True, px=lock_ttl_s * 1000))
+    except _redis.RedisError as e:
+        _warn_throttled(f"[tool_cache] lock acquire failed, computing without singleflight: {type(e).__name__}: {e}")
+        return False
+
+
+def _release_lock(key: str, token: str) -> None:
+    """Compare-and-delete：只有锁持有者（token 匹配）才能释放，防止误删他人锁。"""
+    try:
+        _get_redis_client().eval(
+            "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+            1,
+            _lock_key(key),
+            token,
+        )
+    except _redis.RedisError as e:
+        _warn_throttled(f"[tool_cache] lock release failed (TTL will expire it): {type(e).__name__}: {e}")
+
+
+def _lock_exists(key: str) -> bool:
+    """Lock 是否仍被持有。Redis 故障时假定存活（等 deadline 兜底），不抛。"""
+    try:
+        return bool(_get_redis_client().exists(_lock_key(key)))
+    except _redis.RedisError:
+        return True
+
+
+def _wait_for_cached(key: str, budget_s: float, sleep: Callable[[float], None]) -> Optional[Any]:
+    """轮询直到值出现或锁消失（winner 完成/失败释放）或预算耗尽（指数退避）。
+
+    返回 None 表示放弃等待（锁丢失/过期）→ 调用方退化为直接计算。
+    """
+    deadline = time.monotonic() + budget_s
+    interval = _POLL_MIN_S
+    while time.monotonic() < deadline:
+        sleep(interval)
+        cached = get_cached(key)
+        if cached is not None:
+            return cached
+        if not _lock_exists(key):
+            return None  # winner 释放了锁但没发布值（如计算失败）→ 立即接手
+        interval = min(interval * 2, _POLL_MAX_S)
+    return None
+
+
+async def _singleflight_async(key: str, ttl: int, lock_ttl_s: int, compute: Callable[[], Any]) -> Any:
+    """async 版：持有锁者计算并写回；等待者轮询（在线程中，不阻塞事件循环）。
+
+    锁过期/丢失/Redis 故障时退化为直接计算 — 有界重复，无死锁。
+    """
+    token = uuid.uuid4().hex
+    if _acquire_lock(key, token, lock_ttl_s):
+        try:
+            result = await compute()
+            set_cached(key, result, ttl)
+            return result
+        finally:
+            _release_lock(key, token)
+    cached = await asyncio.to_thread(_wait_for_cached, key, float(lock_ttl_s), time.sleep)
+    if cached is not None:
+        return cached
+    result = await compute()
+    set_cached(key, result, ttl)
+    return result
+
+
+def _singleflight_sync(key: str, ttl: int, lock_ttl_s: int, compute: Callable[[], Any]) -> Any:
+    """sync 版：等待预算 _SYNC_WAIT_BUDGET_S，避免长时间占用 threadpool 线程。"""
+    token = uuid.uuid4().hex
+    if _acquire_lock(key, token, lock_ttl_s):
+        try:
+            result = compute()
+            set_cached(key, result, ttl)
+            return result
+        finally:
+            _release_lock(key, token)
+    cached = _wait_for_cached(key, min(float(lock_ttl_s), _SYNC_WAIT_BUDGET_S), time.sleep)
+    if cached is not None:
+        return cached
+    result = compute()
+    set_cached(key, result, ttl)
+    return result
+
+
 # Registry 的 timing wrapper 读此变量判断当前 dispatch 是否命中缓存。
 cache_hit_var: ContextVar[bool] = ContextVar("tool_cache_hit", default=False)
 
@@ -112,15 +219,21 @@ cache_hit_var: ContextVar[bool] = ContextVar("tool_cache_hit", default=False)
 _cache_depth_var: ContextVar[int] = ContextVar("tool_cache_depth", default=0)
 
 
-def cached_tool(ttl: int = 3600, skip_if: Optional[Callable[[dict], bool]] = None):
+def cached_tool(ttl: int = 3600, skip_if: Optional[Callable[[dict], bool]] = None,
+                singleflight: bool = True, lock_ttl: Optional[int] = None):
     """工具函数装饰器：Redis 命中即返回，未命中调内层 + 写回。
 
     Args:
         ttl: 缓存生存时间（秒）。默认 1 小时。
         skip_if: 谓词函数 (kwargs_dict) -> bool。返回真值时双向旁路缓存。
+        singleflight: cache miss 时抑制并发重复计算（SET NX 锁 + 等待者轮询）。
+            默认开启；锁过期/丢失/Redis 故障时退化为直接计算，无死锁。
+        lock_ttl: 单飞锁 TTL（秒）。默认 120s；计算可能超过该时长时按需调大。
 
     内层函数可以是 sync 也可以是 async；通过 inspect.iscoroutinefunction 分支。
     """
+    effective_lock_ttl = lock_ttl or _DEFAULT_LOCK_TTL_S
+
     def decorator(func: Callable) -> Callable:
         is_async = inspect.iscoroutinefunction(func)
         tool_name = getattr(func, "__name__", "anonymous_tool")
@@ -154,6 +267,10 @@ def cached_tool(ttl: int = 3600, skip_if: Optional[Callable[[dict], bool]] = Non
                     # 会保留前一次 hit 的 True 值 -> registry timing 误报 cache_hit。
                     hit_token = cache_hit_var.set(False)
                     try:
+                        if singleflight:
+                            return await _singleflight_async(
+                                key, ttl, effective_lock_ttl, lambda: func(**kwargs)
+                            )
                         result = await func(**kwargs)
                         set_cached(key, result, ttl)
                         return result
@@ -189,6 +306,10 @@ def cached_tool(ttl: int = 3600, skip_if: Optional[Callable[[dict], bool]] = Non
                 # 审计 M10：同 async_wrapper，miss 时显式 set(False)
                 hit_token = cache_hit_var.set(False)
                 try:
+                    if singleflight:
+                        return _singleflight_sync(
+                            key, ttl, effective_lock_ttl, lambda: func(**kwargs)
+                        )
                     result = func(**kwargs)
                     set_cached(key, result, ttl)
                     return result

@@ -53,7 +53,17 @@ async def test_h3_binning_second_call_cache_hit():
     assert len(r1["data"]["features"]) == len(r2["data"]["features"])
 
     import json
-    lines = [json.loads(line) for line in
-             open(tool_metrics.LOG_PATH).read().strip().splitlines()]
+    import time
+    lines = []
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        try:
+            lines = [json.loads(line) for line in
+                     open(tool_metrics.LOG_PATH).read().strip().splitlines()]
+        except (OSError, json.JSONDecodeError):
+            lines = []
+        if len(lines) >= 2:
+            break
+        time.sleep(0.05)
     assert lines[0]["cache_hit"] is False
     assert lines[1]["cache_hit"] is True

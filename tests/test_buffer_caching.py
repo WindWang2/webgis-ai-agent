@@ -42,8 +42,20 @@ async def test_buffer_analysis_second_call_cache_hit():
 
     assert r1 == r2
     # The second dispatch must have set cache_hit=True in its metrics row.
+    # Metrics writes are async (queued writer thread) — poll for the rows.
     import json
-    lines = [json.loads(line) for line in
-             open(tool_metrics.LOG_PATH).read().strip().splitlines()]
+    import time
+    deadline = time.monotonic() + 5.0
+    lines = []
+    while time.monotonic() < deadline:
+        try:
+            lines = [json.loads(line) for line in
+                     open(tool_metrics.LOG_PATH).read().strip().splitlines()]
+        except (OSError, json.JSONDecodeError):
+            lines = []
+        if len(lines) >= 2:
+            break
+        time.sleep(0.05)
+    assert len(lines) >= 2
     assert lines[0]["cache_hit"] is False
     assert lines[1]["cache_hit"] is True
