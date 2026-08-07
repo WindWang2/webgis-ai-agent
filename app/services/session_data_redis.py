@@ -18,6 +18,14 @@ EVENTS_TTL = 4 * 60 * 60
 SESSION_TTL = 4 * 60 * 60
 MAX_EVENTS = 20
 
+# L1 (in-process) cache TTL. Short on purpose: every worker process owns its
+# own L1, so a long TTL would serve stale state written by another worker for
+# too long. 2s is enough to collapse the burst of reads a single chat turn /
+# WS-interaction triggers (context_builder + ws_service + tool dispatch all
+# read map_state within the same request) while bounding cross-worker staleness.
+L1_TTL_SECONDS = 2.0
+L1_MAX_SESSIONS = 512  # bound memory; evict oldest entries beyond this
+
 
 class RedisSessionStore(BaseSessionStore):
 
@@ -45,6 +53,11 @@ class RedisSessionStore(BaseSessionStore):
         self._r: Optional[aioredis.Redis] = redis
         self._bound_loop: Optional[asyncio.AbstractEventLoop] = None
         self.capacity = capacity
+        # L1 in-process cache: { (session_id, kind): (value, expires_at_monotonic) }
+        # kind ∈ {"map_state", "metadata"}. Read-through, write-invalidate.
+        # Per-process (not coordinated across workers) — kept fresh-ish via short TTL.
+        self._l1: dict[tuple[str, str], tuple[Any, float]] = {}
+        self._l1_order: list[tuple[str, str]] = []  # LRU order (MRU at end)
 
     async def _ensure_connected(self) -> aioredis.Redis:
         """懒构造 Redis 客户端，绑定到当前运行中的 event loop。
@@ -93,6 +106,62 @@ class RedisSessionStore(BaseSessionStore):
         """
         client = await self._ensure_connected()
         await client.ping()
+
+    # ─── L1 (in-process) cache helpers ────────────────────────────────────
+    # Read-through: get_* checks L1 first, falls back to Redis, populates L1.
+    # Write-invalidate: every set_*/update_*/remove_* drops the affected
+    # session's L1 entries so the next read sees the fresh Redis value.
+    # Per-process: a second worker writing won't bust THIS process's L1, but
+    # the short L1_TTL_SECONDS bounds the staleness window.
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _l1_get(self, session_id: str, kind: str) -> Optional[Any]:
+        key = (session_id, kind)
+        entry = self._l1.get(key)
+        if entry is None:
+            return None
+        value, expires_at = entry
+        if time.monotonic() >= expires_at:
+            # expired — drop it
+            self._l1.pop(key, None)
+            try:
+                self._l1_order.remove(key)
+            except ValueError:
+                pass
+            return None
+        # MRU bump
+        try:
+            self._l1_order.remove(key)
+            self._l1_order.append(key)
+        except ValueError:
+            pass
+        return value
+
+    def _l1_put(self, session_id: str, kind: str, value: Any) -> None:
+        key = (session_id, kind)
+        if key in self._l1:
+            self._l1_order.remove(key)
+        self._l1[key] = (value, time.monotonic() + L1_TTL_SECONDS)
+        self._l1_order.append(key)
+        # evict oldest beyond capacity
+        while len(self._l1_order) > L1_MAX_SESSIONS:
+            old = self._l1_order.pop(0)
+            self._l1.pop(old, None)
+
+    def _l1_invalidate_session(self, session_id: str) -> None:
+        """Drop all L1 entries for a session (call on every write to that session)."""
+        stale = [k for k in self._l1 if k[0] == session_id]
+        for k in stale:
+            self._l1.pop(k, None)
+            try:
+                self._l1_order.remove(k)
+            except ValueError:
+                pass
+
+    def clear_l1_cache(self) -> None:
+        """Drop all L1 entries (test escape hatch / memory pressure)."""
+        self._l1.clear()
+        self._l1_order.clear()
 
     @staticmethod
     def _data_key(session_id: str, ref_id: str) -> str:
@@ -281,6 +350,8 @@ class RedisSessionStore(BaseSessionStore):
             pipe.sadd(self._active_key(), session_id)
             self._refresh_session_ttl(pipe, session_id)
             await pipe.execute()
+        # Write-through invalidation: drop L1 so next read refetches from Redis.
+        self._l1_invalidate_session(session_id)
 
     async def get_started_at(self, session_id: str) -> Optional[str]:
         await self._ensure_connected()
@@ -311,6 +382,12 @@ class RedisSessionStore(BaseSessionStore):
         return decoded if isinstance(decoded, str) else raw
 
     async def get_map_state(self, session_id: str) -> dict[str, Any]:
+        # L1 hot read — a single chat turn reads map_state several times
+        # (context_builder + ws_service + tool dispatch). Avoid repeated Redis
+        # HGETALL round-trips for the same session within L1_TTL_SECONDS.
+        cached = self._l1_get(session_id, "map_state")
+        if cached is not None:
+            return cached
         await self._ensure_connected()
         raw = await self._r.hgetall(self._state_key(session_id))
         if not raw:
@@ -324,6 +401,7 @@ class RedisSessionStore(BaseSessionStore):
                 out[key] = self._decode_started_at(v)
             else:
                 out[key] = json.loads(v)
+        self._l1_put(session_id, "map_state", out)
         return out
 
     async def update_layer_in_state(self, session_id: str, layer_id: str, updates: dict) -> None:
@@ -356,6 +434,7 @@ class RedisSessionStore(BaseSessionStore):
                     pipe.expire(state_key, STATE_TTL)
                     pipe.sadd(self._active_key(), session_id)
                     await pipe.execute()
+                    self._l1_invalidate_session(session_id)
                     return  # 成功
             except aioredis.WatchError:
                 continue  # 重试
@@ -399,6 +478,7 @@ class RedisSessionStore(BaseSessionStore):
                     pipe.expire(state_key, STATE_TTL)
                     pipe.sadd(self._active_key(), session_id)
                     await pipe.execute()
+                    self._l1_invalidate_session(session_id)
                     return
             except aioredis.WatchError:
                 continue
@@ -452,6 +532,11 @@ class RedisSessionStore(BaseSessionStore):
 
     async def get_session_metadata(self, session_id: str) -> dict[str, Any]:
         """Fetch session metadata in a single async pipeline."""
+        # L1 hot read — this is called at the start of every chat turn and
+        # bundles 4 Redis calls; cache for L1_TTL_SECONDS to collapse repeats.
+        cached = self._l1_get(session_id, "metadata")
+        if cached is not None:
+            return cached
         await self._ensure_connected()
         async with self._r.pipeline() as pipe:
             pipe.hgetall(self._state_key(session_id))
@@ -500,12 +585,14 @@ class RedisSessionStore(BaseSessionStore):
             except (json.JSONDecodeError, TypeError):
                 continue
 
-        return {
+        result = {
             "map_state": map_state,
             "list_refs": list_refs,
             "event_log": event_log,
             "started_at": started_at,
         }
+        self._l1_put(session_id, "metadata", result)
+        return result
 
     async def clear_session(self, session_id: str) -> None:
         await self._ensure_connected()

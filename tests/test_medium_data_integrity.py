@@ -34,6 +34,9 @@ def _make_manager_with_watch_failures(fail_first_n: int):
     manager.capacity = 100
     # __new__ 绕过 __init__，新加的测试注入字段需要手动置 None。
     manager._injected_redis = None
+    # L1 缓存字段（Phase 7）：write 路径会调 _l1_invalidate_session，需初始化。
+    manager._l1 = {}
+    manager._l1_order = []
     try:
         manager._bound_loop = asyncio.get_running_loop()
     except RuntimeError:

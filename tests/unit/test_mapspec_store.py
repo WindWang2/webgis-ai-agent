@@ -376,3 +376,64 @@ async def test_layer_upsert_raster_does_not_profile(clean_session):
   assert "profile" not in persisted["sources"]["rs"]
 
 
+
+
+# ─── Phase 8: revision retention + no-op save guard ──────────────────────
+
+
+@pytest.mark.asyncio
+async def test_save_mapspec_revision_retention_cap(clean_session):
+    """Revision 文件必须裁剪到 MAPSPEC_REV_RETENTION 份，不能无界增长。"""
+    from app.services.mapspec.store import MapSpecStore, MAPSPEC_REV_RETENTION
+
+    raw_store = MapSpecStore()
+    await raw_store.save_mapspec(clean_session, {"version": "1.0", "n": 0})
+
+    # 连续保存远超保留上限的次数
+    for i in range(MAPSPEC_REV_RETENTION + 10):
+        await raw_store.save_mapspec(clean_session, {"version": "1.0", "n": i})
+
+    rev_dir = raw_store.get_session_dir(clean_session) / "revisions"
+    rev_files = sorted(rev_dir.glob("mapspec_rev_*.json"))
+    assert len(rev_files) <= MAPSPEC_REV_RETENTION, (
+        f"revision 数量 {len(rev_files)} 超过保留上限 {MAPSPEC_REV_RETENTION}"
+    )
+    # 最新一次保存的内容必须保留（数据不丢）
+    latest = max(rev_files, key=lambda p: int(p.stem.split("_")[-1]))
+    import json as _json
+    assert _json.loads(latest.read_text())["n"] == MAPSPEC_REV_RETENTION + 9
+
+
+@pytest.mark.asyncio
+async def test_save_mapspec_noop_skips_writes(clean_session):
+    """相同 spec 的重复保存必须跳过三重写入（no-op 保护）。
+
+    验证方式：记录 revision 文件数量与磁盘 mtime，重复保存相同内容后
+    两者都不应变化；修改内容后再保存则产生新 revision。
+    """
+    from app.services.mapspec.store import MapSpecStore
+
+    raw_store = MapSpecStore()
+    spec = {"version": "1.0", "view": {"zoom": 8}, "layers": []}
+    await raw_store.save_mapspec(clean_session, spec)
+
+    rev_dir = raw_store.get_session_dir(clean_session) / "revisions"
+    mapspec_path = raw_store.get_session_dir(clean_session) / "mapspec.json"
+
+    revs_before = sorted(rev_dir.glob("mapspec_rev_*.json"))
+    mtime_before = mapspec_path.stat().st_mtime_ns
+    import time as _t
+    _t.sleep(0.02)  # 确保 mtime 粒度可分辨
+
+    # no-op 保存：不产生新 revision、不重写磁盘
+    await raw_store.save_mapspec(clean_session, spec)
+    revs_after = sorted(rev_dir.glob("mapspec_rev_*.json"))
+    assert len(revs_after) == len(revs_before), "no-op 保存不应产生新 revision"
+    assert mapspec_path.stat().st_mtime_ns == mtime_before, "no-op 保存不应重写磁盘"
+
+    # 内容变化 → 正常写入（新 revision + 磁盘更新）
+    spec2 = {"version": "1.0", "view": {"zoom": 9}, "layers": []}
+    await raw_store.save_mapspec(clean_session, spec2)
+    revs_final = sorted(rev_dir.glob("mapspec_rev_*.json"))
+    assert len(revs_final) == len(revs_before) + 1
+    assert mapspec_path.stat().st_mtime_ns != mtime_before

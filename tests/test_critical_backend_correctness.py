@@ -308,6 +308,10 @@ def _make_manager_with_failing_redis(monkeypatch, fail_method: str):
     # _ensure_connected() 现在读 _injected_redis（测试注入字段），__new__ 跳过
     # __init__ 时需要手动置 None，否则 AttributeError。
     manager._injected_redis = None
+    # L1 缓存字段（Phase 7）：write 成功路径会调 _l1_invalidate_session，
+    # __new__ 绕过 __init__ 时需手动初始化，否则 AttributeError。
+    manager._l1 = {}
+    manager._l1_order = []
     # 审计 TEST-13：_ensure_connected() 引用 _bound_loop（用 __new__ 跳过 __init__
     # 时不会设置）。本 helper 只在 async 测试里调用，把 _bound_loop 指向当前运行
     # loop 让 _ensure_connected 的复用条件成立，从而保留注入的 _FakeRedis。

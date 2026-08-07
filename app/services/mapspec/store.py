@@ -18,6 +18,10 @@ BASE_STORAGE_DIR = PROJECT_ROOT / ".webgis-agent"
 
 LABEL_LAYER_SUFFIX = "-label"
 
+# Revision 保留上限：每次 save 都会生成一份完整快照 mapspec_rev_<ms>.json。
+# 无上限时磁盘随会话生命周期无界增长（审计 Phase 8 发现）。裁剪到最近 N 份。
+MAPSPEC_REV_RETENTION = 20
+
 
 def _should_remove_layer(layer: Dict[str, Any], target_layer_id: str) -> bool:
     """判断图层是否为目标图层或其伴随标签图层"""
@@ -65,12 +69,35 @@ class MapSpecStore:
         rev_dir.mkdir(parents=True, exist_ok=True)
 
         mapspec_path = session_dir / "mapspec.json"
+
+        # No-op 保护（Phase 8）：若磁盘与 Redis 均已持有相同 spec，跳过全部
+        # 三重写入。重复/幂等保存（如快速连续相同意图）因此不产生 IO。
+        if mapspec_path.exists():
+            try:
+                with open(mapspec_path, "r", encoding="utf-8") as f:
+                    if json.load(f) == mapspec:
+                        state = await session_data_manager.get_map_state(session_id)
+                        if state.get("mapspec") == mapspec:
+                            return {"mapspec": mapspec}
+            except Exception as e:
+                logger.warning(f"[mapspec] no-op check failed for {session_id}: {e}")
+
         with open(mapspec_path, "w", encoding="utf-8") as f:
             json.dump(mapspec, f, ensure_ascii=False, indent=2)
 
         rev_filename = f"mapspec_rev_{int(time.time() * 1000)}.json"
         with open(rev_dir / rev_filename, "w", encoding="utf-8") as f:
             json.dump(mapspec, f, ensure_ascii=False, indent=2)
+
+        # Revision 保留上限：裁剪到最近 MAPSPEC_REV_RETENTION 份
+        # （按文件名时间戳排序，删除最旧）。
+        try:
+            rev_files = sorted(rev_dir.glob("mapspec_rev_*.json"))
+            if len(rev_files) > MAPSPEC_REV_RETENTION:
+                for stale in rev_files[:-MAPSPEC_REV_RETENTION]:
+                    stale.unlink(missing_ok=True)
+        except OSError as e:
+            logger.warning(f"[mapspec] revision pruning failed for {session_id}: {e}")
 
         await session_data_manager.set_map_state(session_id, "mapspec", mapspec)
         return {"mapspec": mapspec}
