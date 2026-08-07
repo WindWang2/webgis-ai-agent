@@ -346,3 +346,34 @@ describe("MapSpec Runtime Adapter — hudStateToMapSpec (ADR-0036)", () => {
     });
   });
 });
+
+describe("Data Plane — MVT vector tile source for large ref layers", () => {
+  const tileUrl = "http://x/api/v1/layers/data/ref:geojson-abc/tiles/{z}/{x}/{y}.mvt?session_id=sess";
+
+  function bigSource(n: number): any {
+    return {
+      type: "FeatureCollection",
+      features: Array.from({ length: n }, (_, i) => pointFeature({ i })),
+    };
+  }
+
+  it("emits a vector source when _tileUrl set and features exceed the threshold", () => {
+    const layer = baseLayer({ source: bigSource(6000), _tileUrl: tileUrl });
+    const spec = hudStateToMapSpec({ layers: [layer], processLayers: {}, activeFilters: {}, is3D: false });
+    expect(spec.sources.L1).toEqual({ type: "vector", tiles: [tileUrl], minzoom: 1, maxzoom: 16 });
+  });
+
+  it("keeps the geojson inline path below the threshold", () => {
+    const small = bigSource(100);
+    const layer = baseLayer({ source: small, _tileUrl: tileUrl });
+    const spec = hudStateToMapSpec({ layers: [layer], processLayers: {}, activeFilters: {}, is3D: false });
+    expect(spec.sources.L1).toEqual({ type: "geojson", inlineData: small });
+  });
+
+  it("stays on geojson when _tileUrl is absent even for huge layers", () => {
+    const big = bigSource(10000);
+    const layer = baseLayer({ source: big });
+    const spec = hudStateToMapSpec({ layers: [layer], processLayers: {}, activeFilters: {}, is3D: false });
+    expect(spec.sources.L1).toEqual({ type: "geojson", inlineData: big });
+  });
+});

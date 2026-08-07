@@ -47,6 +47,15 @@ export interface GeoJSONMapSpecSource {
   inlineData?: any;
 }
 
+export interface VectorMapSpecSource {
+  type: "vector";
+  // MVT tile URL templates ({z}/{x}/{y} placeholders), served by the
+  // Data Plane tile endpoint (/api/v1/layers/data/{ref}/tiles/...).
+  tiles: string[];
+  minzoom?: number;
+  maxzoom?: number;
+}
+
 export interface RasterMapSpecSource {
   type: "raster";
   // imageRef is an opaque `ref:raster/<id>` cursor resolved by the session
@@ -57,7 +66,7 @@ export interface RasterMapSpecSource {
   imageSize?: [number, number]; // [width, height] px (informational)
 }
 
-export type MapSpecSource = GeoJSONMapSpecSource | RasterMapSpecSource;
+export type MapSpecSource = GeoJSONMapSpecSource | VectorMapSpecSource | RasterMapSpecSource;
 
 export interface MapSpecLayerLabel {
   field: string;

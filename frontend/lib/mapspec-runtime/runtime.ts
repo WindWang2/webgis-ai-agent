@@ -308,6 +308,9 @@ export class MapSpecRuntime {
         source.imageRef,
         boundsToImageCorners(source.bounds),
       );
+    } else if (source.type === "vector") {
+      // Data Plane: MVT 矢量瓦片源（大 POI 图层显示路径）。
+      renderer.addVectorTileSource(this.map, id, source.tiles, source.minzoom, source.maxzoom);
     } else if (source.inlineData) {
       // Phase 8: pass the current viewport so large inline FeatureCollections
       // are trimmed to the visible area at apply time (further re-filtering
@@ -337,6 +340,11 @@ export class MapSpecRuntime {
       layout: layer.layout || {},
     };
     if (layer.filter) def.filter = layer.filter;
+    // Data Plane: 矢量瓦片源要求 source-layer 字段（编码器固定用 "data"）。
+    const src = this.map.getSource(layer.source);
+    if (src && (src as any).type === "vector") {
+      def["source-layer"] = "data";
+    }
     // Some layer types carry maxzoom (native heatmap). MapSpecLayer doesn't
     // model that today; if needed, extend the type. For now omit.
     try {

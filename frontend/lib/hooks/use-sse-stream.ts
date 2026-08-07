@@ -170,6 +170,10 @@ export function useSSEStream(
               : data.result,
             style: { color: accentColor },
             _refId: data.geojson_ref,
+            // Data Plane: 大要素 ref 图层由 MVT 瓦片端点显示（替代整包 GeoJSON）。
+            _tileUrl: data.geojson_ref
+              ? `${API_BASE}/api/v1/layers/data/${data.geojson_ref}/tiles/{z}/{x}/{y}.mvt?session_id=${sessionIdRef.current}`
+              : undefined,
             legend_spec: legendSpec,
           });
           if (layerMetaTitle) {

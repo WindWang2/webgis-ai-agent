@@ -28,6 +28,8 @@ export interface Layer {
   source?: string | GeoJSONFeatureCollection | HeatmapRasterSource;
   style?: LayerStyle;
   _refId?: string;
+  /** Data Plane: MVT tile URL template ({z}/{x}/{y}) for large ref layers. */
+  _tileUrl?: string;
   created_at?: string;
   updated_at?: string;
   legend_spec?: LegendSpec;

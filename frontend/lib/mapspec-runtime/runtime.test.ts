@@ -384,3 +384,50 @@ describe("MapSpecRuntime (ADR-0036)", () => {
     });
   });
 });
+
+describe("MapSpecRuntime — Data Plane vector tile source", () => {
+  let map: any;
+  beforeEach(() => { map = makeMockMap(); });
+
+  function vectorSpec(): MapSpec {
+    return {
+      version: "1.0",
+      sources: {
+        V1: {
+          type: "vector",
+          tiles: ["http://x/tiles/{z}/{x}/{y}.mvt?session_id=s"],
+          minzoom: 1,
+          maxzoom: 16,
+        } as any,
+      },
+      layers: [
+        { id: "V1__point", source: "V1", type: "circle", paint: { "circle-radius": 6 } },
+      ],
+    };
+  }
+
+  it("adds a vector source and tags sublayers with source-layer data", () => {
+    const rt = new MapSpecRuntime(map);
+    rt.reconcile(vectorSpec());
+
+    const srcCall = map._calls.addSource.find((c: any) => c.id === "V1");
+    expect(srcCall.def.type).toBe("vector");
+    expect(srcCall.def.tiles[0]).toContain("{z}/{x}/{y}");
+    // MapLibre requires source-layer for vector sources
+    const layerCall = map._calls.addLayer.find((c: any) => c.def.id === "V1__point");
+    expect(layerCall.def["source-layer"]).toBe("data");
+  });
+
+  it("replaces a stale geojson source when the same id upgrades to vector", () => {
+    const rt = new MapSpecRuntime(map);
+    rt.reconcile(pointSpec("V1")); // geojson source first (empty pre-fetch FC)
+    map._calls.addSource.length = 0;
+
+    rt.reconcile(vectorSpec()); // big FC arrived → upgrade to vector tiles
+
+    // addVectorTileSource removed the old geojson source then added vector
+    const srcCalls = map._calls.addSource.filter((c: any) => c.id === "V1");
+    expect(srcCalls.length).toBe(1);
+    expect(srcCalls[0].def.type).toBe("vector");
+  });
+});

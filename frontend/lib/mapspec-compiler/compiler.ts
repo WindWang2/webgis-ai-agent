@@ -238,17 +238,19 @@ export function compileMapSpec(
         url: source.imageRef,
         coordinates: boundsToImageCorners(source.bounds),
       };
-    } else if (source.inlineData) {
+    } else if (source.type === "geojson" && source.inlineData) {
       sources[key] = {
         type: "geojson",
         data: source.inlineData,
       };
-    } else if (source.url || source.dataPath) {
+    } else if (source.type === "geojson" && (source.url || source.dataPath)) {
       sources[key] = {
         type: "geojson",
         data: source.url || source.dataPath,
       };
     } else {
+      // vector 源仅由 runtime adapter 发射（Data Plane 瓦片路径），静态编译
+      // 路径用空 geojson 占位。
       sources[key] = {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },

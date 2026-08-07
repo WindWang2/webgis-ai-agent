@@ -486,6 +486,26 @@ export function addRasterTileSource(map: Map, id: string, urls: string | string[
 }
 
 /**
+ * Data Plane: MVT 矢量瓦片源。若同 id 已有非 vector 源（大图层从空
+ * GeoJSON 升级为瓦片），先移除旧源及其依赖图层（reconcile 的 layer ops
+ * 会按新 spec 重建）。
+ */
+export function addVectorTileSource(map: Map, id: string, tiles: string[], minzoom?: number, maxzoom?: number) {
+  const existing = map.getSource(id);
+  if (existing && (existing as any).type === 'vector') return;
+  if (existing) {
+    const style = map.getStyle();
+    for (const l of style?.layers ?? []) {
+      if ((l as any).source === id && map.getLayer(l.id)) {
+        try { map.removeLayer(l.id); } catch { /* already gone */ }
+      }
+    }
+    try { map.removeSource(id); } catch { /* already gone */ }
+  }
+  map.addSource(id, { type: 'vector', tiles, minzoom, maxzoom } as any);
+}
+
+/**
  * 把一组前缀匹配的子图层一次性切换可见性。
  * 等价于：遍历 style.layers，凡 id.startsWith(prefix) 的就 setLayoutProperty。
  */

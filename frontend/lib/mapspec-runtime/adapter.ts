@@ -22,6 +22,9 @@ import type { MapSpec, MapSpecSource, MapSpecLayer, MapSpecLayerPaint } from "@/
 
 export const SUBLAYER_SEP = "__";
 
+/** Data Plane: 超过该要素数的 ref 图层改用 MVT 矢量瓦片显示。 */
+export const VECTOR_TILE_THRESHOLD = 5000;
+
 export interface HudToSpecInput {
   layers: Layer[];
   processLayers: Record<string, GeoJSONFeatureCollection>;
@@ -37,6 +40,16 @@ function isHeatmapRasterSource(source: Layer["source"]): source is HeatmapRaster
 
 function isGeoJSONSource(source: Layer["source"]): source is GeoJSONFeatureCollection {
   return typeof source === "object" && source !== null && "type" in source && (source as any).type === "FeatureCollection";
+}
+
+/** 大 ref 图层（_tileUrl 已配 + 要素数超阈值）→ MVT 矢量瓦片。 */
+function isVectorTileLayer(layer: Layer): boolean {
+  return (
+    !!layer._tileUrl &&
+    isGeoJSONSource(layer.source) &&
+    Array.isArray(layer.source.features) &&
+    layer.source.features.length > VECTOR_TILE_THRESHOLD
+  );
 }
 
 function parseDashArray(dash: string): number[] {
@@ -67,6 +80,9 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
     } else if (isHeatmapRasterSource(layer.source)) {
       const src = layer.source;
       sources[sourceId] = { type: "raster", imageRef: src.image, bounds: src.bbox };
+    } else if (isVectorTileLayer(layer)) {
+      // Data Plane: 大 POI 图层用 MVT 矢量瓦片显示（否则整包 GeoJSON 下发）。
+      sources[sourceId] = { type: "vector", tiles: [layer._tileUrl as string], minzoom: 1, maxzoom: 16 };
     } else if (isGeoJSONSource(layer.source)) {
       sources[sourceId] = { type: "geojson", inlineData: layer.source };
     } else {
