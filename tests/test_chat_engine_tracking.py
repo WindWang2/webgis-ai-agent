@@ -197,3 +197,197 @@ def test_detect_geojson():
 
     assert detect_geojson("string") is False
     assert detect_geojson(None) is False
+
+
+# ─── Phase 8: chat_stream 并行工具分发 ───────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_stream_parallel_dispatch_runs_tools_concurrently(engine, registry, monkeypatch):
+    """多个工具调用必须并发执行：总耗时 < 串行之和（性能不变量）。
+
+    LLM 一轮返回 3 个互不依赖的工具调用；每个工具 sleep 0.2s。
+    串行需要 ~0.6s；并行需要 ~0.2s。阈值 0.45s（< 2× 串行）即证明并发。
+    """
+    import asyncio
+    import time as _t
+
+    @tool(registry, name="slow_echo", description="sleep 后返回")
+    async def slow_echo(tag: str, delay: float = 0.2) -> dict:
+        await asyncio.sleep(delay)
+        return {"success": True, "data": {"tag": tag}}
+
+    msg1 = {
+        "content": None,
+        "tool_calls": [
+            {"id": "call_a", "function": {"name": "slow_echo", "arguments": '{"tag": "a", "delay": 0.2}'}},
+            {"id": "call_b", "function": {"name": "slow_echo", "arguments": '{"tag": "b", "delay": 0.2}'}},
+            {"id": "call_c", "function": {"name": "slow_echo", "arguments": '{"tag": "c", "delay": 0.2}'}},
+        ],
+    }
+    msg2 = {"content": "done", "tool_calls": None}
+
+    with patch.object(engine, "_call_llm_stream", side_effect=[_fake_stream(msg1)(), _fake_stream(msg2)()]):
+        with patch.object(engine, "_save_msg_async", new_callable=AsyncMock):
+            t0 = _t.perf_counter()
+            events = []
+            async for event in engine.chat_stream("并行测试", session_id="test-parallel"):
+                events.append(event)
+            elapsed = _t.perf_counter() - t0
+
+    assert any("step_result" in e for e in events), "should emit step_result"
+    assert elapsed < 0.45, f"未并发执行：3 个 0.2s 工具耗时 {elapsed:.2f}s"
+
+
+@pytest.mark.asyncio
+async def test_stream_parallel_keeps_per_tool_event_order(engine, registry):
+    """每个工具的 step_start 必须先于其 step_result 出现（前端顺序不变量）。"""
+    import asyncio
+
+    @tool(registry, name="slow_echo2", description="sleep 后返回")
+    async def slow_echo2(tag: str, delay: float = 0.1) -> dict:
+        await asyncio.sleep(delay)
+        return {"success": True, "data": {"tag": tag}}
+
+    msg1 = {
+        "content": None,
+        "tool_calls": [
+            {"id": "call_x", "function": {"name": "slow_echo2", "arguments": '{"tag": "x", "delay": 0.1}'}},
+            {"id": "call_y", "function": {"name": "slow_echo2", "arguments": '{"tag": "y", "delay": 0.1}'}},
+        ],
+    }
+    msg2 = {"content": "done", "tool_calls": None}
+
+    with patch.object(engine, "_call_llm_stream", side_effect=[_fake_stream(msg1)(), _fake_stream(msg2)()]):
+        with patch.object(engine, "_save_msg_async", new_callable=AsyncMock):
+            events = []
+            async for event in engine.chat_stream("顺序测试", session_id="test-order"):
+                events.append(event)
+
+    # 解析所有 step_start / step_result 的 step_id
+    starts: dict[str, int] = {}   # step_id -> index
+    results: dict[str, int] = {}  # step_id -> index
+    for i, e in enumerate(events):
+        if "step_start" in e:
+            data = json.loads(e.split("data: ", 1)[1])
+            starts[data["step_id"]] = i
+        elif "step_result" in e:
+            data = json.loads(e.split("data: ", 1)[1])
+            results[data["step_id"]] = i
+
+    assert len(starts) == 2, "should emit 2 step_start"
+    assert len(results) == 2, "should emit 2 step_result"
+    for sid in starts:
+        assert starts[sid] < results[sid], (
+            f"step {sid}: step_start 必须早于 step_result"
+        )
+
+
+@pytest.mark.asyncio
+async def test_stream_parallel_messages_in_original_order(engine, registry):
+    """LLM 上下文消息必须按原始 tool_call 顺序追加（tool_call_id 对齐）。"""
+    import asyncio
+
+    @tool(registry, name="slow_echo3", description="sleep 后返回")
+    async def slow_echo3(tag: str, delay: float = 0.05) -> dict:
+        await asyncio.sleep(delay)
+        return {"success": True, "data": {"tag": tag}}
+
+    # 故意把 call_y 的延迟设得比 call_x 短：完成顺序 y→x，
+    # 但 messages 追加顺序必须仍是 x→y（原始声明顺序）。
+    msg1 = {
+        "content": None,
+        "tool_calls": [
+            {"id": "call_x", "function": {"name": "slow_echo3", "arguments": '{"tag": "x", "delay": 0.1}'}},
+            {"id": "call_y", "function": {"name": "slow_echo3", "arguments": '{"tag": "y", "delay": 0.01}'}},
+        ],
+    }
+    msg2 = {"content": "done", "tool_calls": None}
+
+    captured: list[dict] = []
+
+    async def fake_save_msg_async(session_id, role, content, tool_calls=None,
+                                  tool_result=None, tool_call_id=None, reasoning_content=None):
+        if role == "tool":
+            captured.append({"tool_call_id": tool_call_id, "content": tool_result})
+
+    with patch.object(engine, "_call_llm_stream", side_effect=[_fake_stream(msg1)(), _fake_stream(msg2)()]):
+        with patch.object(engine, "_save_msg_async", new_callable=AsyncMock, side_effect=fake_save_msg_async):
+            events = []
+            async for event in engine.chat_stream("对齐测试", session_id="test-align"):
+                events.append(event)
+
+    ids = [c["tool_call_id"] for c in captured]
+    assert ids == ["call_x", "call_y"], f"messages 必须按原始声明顺序追加，got {ids}"
+
+
+# ─── Phase 8: chat_stream token SSE 批处理 ────────────────────────────
+
+
+def _fake_token_stream(tokens, final_msg):
+    """A fake _call_llm_stream yielding N token events then one done."""
+    async def stream(*args, **kwargs):
+        for t in tokens:
+            yield ("token", {"content": t})
+        yield ("done", {"message": final_msg})
+    return stream
+
+
+@pytest.mark.asyncio
+async def test_stream_token_batching_coalesces_events(engine):
+    """高频 token 事件必须被批处理合并为更少更大的 write。
+
+    40 个 token 超过 max_events=32 → 至少一个 yield 携带多条 token 事件；
+    全部 token 内容必须完整到达（合并不影响完整性）；done 仍逐条到达。
+    """
+    tokens = [f"tok{i}" for i in range(40)]
+    msg2 = {"content": "".join(tokens), "tool_calls": None}
+
+    with patch.object(engine, "_call_llm_stream", return_value=_fake_token_stream(tokens, msg2)()):
+        with patch.object(engine, "_save_msg_async", new_callable=AsyncMock):
+            events = []
+            async for event in engine.chat_stream("批处理测试", session_id="test-batch"):
+                events.append(event)
+
+    multi = [e for e in events if e.count("event: token") > 1]
+    assert len(multi) >= 1, "token 事件应被合并为多事件批次"
+    joined = "".join(events)
+    for i in range(40):
+        assert f"tok{i}" in joined, f"token tok{i} 应完整到达"
+    assert any("event: done" in e for e in events)
+
+
+@pytest.mark.asyncio
+async def test_stream_token_batching_preserves_tokens_before_tool_call(engine, registry):
+    """token 批处理不得影响工具调用路径：token 后跟 tool_call 时，
+    step_start/tool_call 事件仍逐条出现且顺序正确。"""
+    import asyncio
+
+    @tool(registry, name="quick_tool", description="快速工具")
+    async def quick_tool(x: int) -> dict:
+        return {"success": True, "data": {"x": x}}
+
+    async def stream(*args, **kwargs):
+        for i in range(40):
+            yield ("token", {"content": f"t{i}"})
+        yield ("done", {"message": {
+            "content": None,
+            "tool_calls": [{"id": "call_1", "function": {"name": "quick_tool", "arguments": '{"x": 1}'}}],
+        }})
+
+    msg2 = {"content": "done", "tool_calls": None}
+
+    with patch.object(engine, "_call_llm_stream", side_effect=[stream(), _fake_stream(msg2)()]):
+        with patch.object(engine, "_save_msg_async", new_callable=AsyncMock):
+            events = []
+            async for event in engine.chat_stream("批处理+工具测试", session_id="test-batch-tool"):
+                events.append(event)
+
+    step_start_idx = next(i for i, e in enumerate(events) if "step_start" in e)
+    tool_call_idx = next(i for i, e in enumerate(events) if "tool_call" in e)
+    step_result_idx = next(i for i, e in enumerate(events) if "step_result" in e)
+    # 顺序不变量：step_start → tool_call → step_result
+    assert step_start_idx < tool_call_idx < step_result_idx
+    # 所有 token 完整到达
+    joined = "".join(events)
+    assert all(f"t{i}" in joined for i in range(40))

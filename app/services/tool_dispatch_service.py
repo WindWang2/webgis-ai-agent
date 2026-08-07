@@ -28,6 +28,7 @@ legacy 路径在 03 票据迁移、Pi 路径在 02 票据迁移，最后 04 票�
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -137,6 +138,12 @@ class ToolDispatchService:
     ) -> None:
         self._registry = registry
         self._fire_broadcast = fire_broadcast
+        # Dedup set is shared across concurrent dispatches in the parallel path
+        # (chat() gathers multiple tool calls). The in/add on executed_tools must
+        # be atomic or two identical calls can both pass the check before either
+        # adds. Lock is held only for the microsecond check-and-add, released
+        # before the heavy registry dispatch, so it never serializes execution.
+        self._dedup_lock = asyncio.Lock()
 
     async def dispatch(
         self,
@@ -154,19 +161,21 @@ class ToolDispatchService:
         tool_name = normalize_tool_name(raw_tool_name)
         tool_args_raw = tc["function"]["arguments"]
 
-        # 1. 重复调用拦截
+        # 1. 重复调用拦截 (并发安全：check-and-add 在锁内原子完成，否则两条并行
+        #    dispatch 都会通过 in 检查后才 add，重复调用逃逸拦截)。
         tool_key = (tool_name, normalize_tool_args(tool_args_raw))
-        if tool_key in executed_tools:
-            note = _REPEAT_LLMPAYLOAD.format(tool=tool_name)
-            return ToolDispatchResult(
-                status="repeated",
-                llm_payload=note,
-                slim_event={"success": True, "note": "Loop blocked"},
-                geojson_ref=None,
-                raw_result={"success": True, "note": "Loop blocked"},
-                error_msg=None,
-            )
-        executed_tools.add(tool_key)
+        async with self._dedup_lock:
+            if tool_key in executed_tools:
+                note = _REPEAT_LLMPAYLOAD.format(tool=tool_name)
+                return ToolDispatchResult(
+                    status="repeated",
+                    llm_payload=note,
+                    slim_event={"success": True, "note": "Loop blocked"},
+                    geojson_ref=None,
+                    raw_result={"success": True, "note": "Loop blocked"},
+                    error_msg=None,
+                )
+            executed_tools.add(tool_key)
 
         # 2. 执行（registry 内部全权处理 ref 解析、校验、异常捕获与自愈）
         try:

@@ -3,8 +3,8 @@
 覆盖：
 - DAG 校验（未知工具、自引用、缺失依赖、环）
 - 占位符解析（${stepId}、${stepId.path.to.field}、嵌入式字符串、缺失字段）
-- 顺序执行 + 结果聚合
-- 任一步失败中止
+- 波次并行执行（独立步骤并发 + 结果聚合；链式依赖保持拓扑序）
+- 任一步失败中止（不再启动新波次）
 - 拓扑排序（依赖打乱顺序）
 - get_plan_status 状态查询
 """
@@ -191,13 +191,88 @@ async def test_execute_topological_order_with_shuffled_input(registry):
 
 @pytest.mark.asyncio
 async def test_execute_halts_on_first_failure(registry):
-    """中间步失败时立即中止；返回已执行步骤。"""
+    """中间步失败时立即中止；不再启动后续波次。
+
+    链式依赖设计（s3 依赖 s2）：s2 失败后 s3 属于后续波次，确定不会运行
+    —— 与串行语义一致且测试确定性。
+    """
     sid = "sess-plan-fail"
     plan = svc.PlanProposal(
         title="fail-chain",
         steps=[
             svc.PlanStep(id="s1", tool="fake_get_bbox", args={"area": "x"}),
             svc.PlanStep(id="s2", tool="fake_always_fail", args={}),
+            svc.PlanStep(id="s3", tool="fake_hotspot",
+                         args={"points": [1, 2, 3]},
+                         depends_on=["s2"]),
+        ],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+    result = await svc.execute_plan_async(sid, plan_id, registry)
+    assert result["success"] is False
+    assert result["failed_step"] == "s2"
+    assert result["executed"] == ["s1"]  # s1 跑完，s2 失败，s3（依赖 s2）没跑
+    plan_data = await svc.load_plan(sid, plan_id)
+    assert plan_data["__status__"] == "failed"
+    assert plan_data["__failed_step__"] == "s2"
+
+
+@pytest.mark.asyncio
+async def test_execute_parallelizes_independent_steps(registry):
+    """同波次独立步骤必须并发执行（总耗时 ≈ 最慢者，而非三者之和）。
+
+    这是波次并行执行的核心性能不变量：3 个互不依赖的慢工具，
+    串行需要 ~0.6s，并发只需要 ~0.2s。
+    """
+    sid = "sess-plan-parallel"
+
+    @registry.tool(name="fake_slow_ok", description="sleep 后成功返回")
+    async def fake_slow_ok(tag: str, delay: float = 0.2) -> dict:
+        import asyncio as _aio
+        await _aio.sleep(delay)
+        return {"success": True, "data": {"tag": tag}}
+
+    import time as _t
+    plan = svc.PlanProposal(
+        title="parallel",
+        steps=[
+            svc.PlanStep(id="p1", tool="fake_slow_ok", args={"tag": "a", "delay": 0.2}),
+            svc.PlanStep(id="p2", tool="fake_slow_ok", args={"tag": "b", "delay": 0.2}),
+            svc.PlanStep(id="p3", tool="fake_slow_ok", args={"tag": "c", "delay": 0.2}),
+        ],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+    t0 = _t.perf_counter()
+    result = await svc.execute_plan_async(sid, plan_id, registry)
+    elapsed = _t.perf_counter() - t0
+
+    assert result["success"] is True
+    assert sorted(result["executed"]) == ["p1", "p2", "p3"]
+    # 串行 ~0.6s；并发 ~0.2s。阈值取 0.45s：小于 2 倍串行即证明并发。
+    assert elapsed < 0.45, f"未并行执行：3 个 0.2s 步骤耗时 {elapsed:.2f}s"
+
+
+@pytest.mark.asyncio
+async def test_execute_failure_in_wave_keeps_completed_siblings(registry):
+    """同波次内兄弟步骤与失败步骤并行：已完成兄弟计入 executed。
+
+    并行语义的显式契约：s2（延迟 0.2s 后失败）与 s1/s3 无依赖同处一波；
+    s1/s3 瞬时完成、s2 迟到失败 → s1/s3 必然已计入 executed；失败后不再
+    启动新波次。
+    """
+    sid = "sess-plan-wave-fail"
+
+    @registry.tool(name="fake_slow_fail", description="延迟后失败")
+    async def fake_slow_fail(delay: float = 0.2) -> dict:
+        import asyncio as _aio
+        await _aio.sleep(delay)
+        return {"success": False, "code": "TOOL_ERROR", "message": "delayed fail"}
+
+    plan = svc.PlanProposal(
+        title="wave-fail",
+        steps=[
+            svc.PlanStep(id="s1", tool="fake_get_bbox", args={"area": "x"}),
+            svc.PlanStep(id="s2", tool="fake_slow_fail", args={"delay": 0.2}),
             svc.PlanStep(id="s3", tool="fake_hotspot",
                          args={"points": [1, 2, 3]}),
         ],
@@ -206,7 +281,9 @@ async def test_execute_halts_on_first_failure(registry):
     result = await svc.execute_plan_async(sid, plan_id, registry)
     assert result["success"] is False
     assert result["failed_step"] == "s2"
-    assert result["executed"] == ["s1"]  # s1 跑完，s2 失败，s3 没跑
+    assert "s1" in result["executed"]           # 同波兄弟，先于失败完成
+    assert "s3" in result["executed"]           # 同波兄弟，先于失败完成
+    assert "s2" not in result["executed"]       # 失败步骤不计入
     plan_data = await svc.load_plan(sid, plan_id)
     assert plan_data["__status__"] == "failed"
     assert plan_data["__failed_step__"] == "s2"

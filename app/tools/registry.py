@@ -1,4 +1,5 @@
 """FC 工具注册中心"""
+import asyncio
 import inspect
 import json
 import logging
@@ -290,13 +291,33 @@ class ToolRegistry:
             arguments["session_id"] = session_id
 
         try:
-            result = self._tools[name](**arguments)
-            if inspect.isawaitable(result):
-                result = await result
-            
+            # 性能：同步 (CPU-bound) 工具 —— 绝大多数空间分析（ST-DBSCAN /
+            # KDE / Moran's I / hotspot / 聚类 等）—— 在调用前先 offload 到
+            # 线程池，避免阻塞 asyncio 事件循环。否则一次几十秒的聚类会让
+            # 全部 SSE 流 / WebSocket / 其他请求同时卡死。
+            # async 工具直接 await（自身即非阻塞）。
+            tool_func = self._tools[name]
+            if asyncio.iscoroutinefunction(tool_func):
+                result = await tool_func(**arguments)
+            else:
+                # 在线程里跑同步工具。@cached_tool 在线程内 set(cache_hit_var)
+                # 但 asyncio.to_thread 复制 context、set 不回传到当前 Task ——
+                # 因此显式捕获线程内最终值，await 后恢复到本 Task，保证
+                # registry 的 timing 记录正确读到 cache_hit。
+                from app.lib.tool_cache import cache_hit_var
+
+                def _run_sync_with_cache_var():
+                    res = tool_func(**arguments)
+                    return res, cache_hit_var.get()
+
+                result, thread_cache_hit = await asyncio.to_thread(
+                    _run_sync_with_cache_var
+                )
+                cache_hit_var.set(thread_cache_hit)
+
             if isinstance(result, GeoAnalysisResult):
                 return result.to_llm_response()
-                
+
         except ValueError as e:
             return std_error_response(
                 str(e),

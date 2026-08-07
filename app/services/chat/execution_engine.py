@@ -565,11 +565,27 @@ class ChatExecutionEngine:
 
             streamed_content_parts: list[str] = []
             assistant_msg: dict = {}
+            # Phase 8: token 事件批处理。LLM 流式输出每个 token 产生一条 SSE
+            # （= 一次 HTTP write）；SSEBatcher 按 32 条 / 80ms 窗口合并为更少
+            # 更大的 write，降低网络与前端解析开销。只合并 token 热路径——
+            # 结构事件（step_start/step_result/...）保持逐条 yield，前端事件
+            # 语义不变。done 到来时 flush 尾部，保证流式内容完整到达。
+            from app.utils.sse import SSEBatcher
+            token_batcher = SSEBatcher(max_events=32, max_delay_s=0.08)
             async for event_type, event_data in self._call_llm_stream(messages_with_context, tools):
                 if event_type == "token":
                     streamed_content_parts.append(event_data["content"])
-                    yield sse_event("token", {"content": event_data["content"], "is_reasoning": event_data.get("is_reasoning", False), "session_id": session_id})
+                    token_batcher.push(sse_event("token", {
+                        "content": event_data["content"],
+                        "is_reasoning": event_data.get("is_reasoning", False),
+                        "session_id": session_id,
+                    }))
+                    async for chunk in token_batcher.drain():
+                        yield chunk
                 elif event_type == "done":
+                    # 收尾：冲刷尾部 token，保证流式内容完整到达前端
+                    for chunk in token_batcher.flush():
+                        yield chunk
                     assistant_msg = event_data["message"]
 
             standard_calls = assistant_msg.get("tool_calls") or []
@@ -602,6 +618,19 @@ class ChatExecutionEngine:
 
                 tool_result_msgs: list[str] = []
 
+                # ── 并行工具分发 (Phase 8) ─────────────────────────────────────
+                # 原实现按 tc 顺序逐条 await execute_tool_call：LLM 一次返回 N 个
+                # 独立工具调用时串行执行（总耗时 = N 个工具耗时之和）。现在：
+                #   Phase 1: 顺序发出每个工具的 step_start/tool_call（保持前端
+                #            认知顺序），同时为每个工具创建 asyncio.Task 并发执行；
+                #   Phase 2: asyncio.wait 按完成顺序消费结果，完成即流式推送
+                #            step_result/step_error/plan_step_done/tool_result；
+                #   Phase 3: 全部完成后按原始 tc 顺序对齐 LLM 上下文 messages
+                #            + 落库（LLM 按 tool_call_id 对齐，顺序必须与请求一致）。
+                # 取消语义：任一完成事件后检查 is_cancelled（不再启动新任务并
+                # cancel 未完成任务）；生成器被外部取消时 finally 清理全部任务。
+                # ───────────────────────────────────────────────────────────────
+                pending_tools: list[dict] = []  # 保持原始 tc 顺序
                 for tc in tc_list:
                     tool_name = tc["function"]["name"]
                     tool_args_raw = tc["function"]["arguments"]
@@ -626,68 +655,129 @@ class ChatExecutionEngine:
                     pipeline_task = asyncio.create_task(
                         self.tool_pipeline.execute_tool_call(tc, session_id, task.id, executed_tools)
                     )
-                    try:
-                        while not pipeline_task.done():
-                            done, _pending = await asyncio.wait([pipeline_task], timeout=5.0)
-                            if not done:
-                                yield ": keep-alive\n\n"
-                                logger.debug(f"SSE Heartbeat sent for tool: {tool_name}")
-                        exec_res = await pipeline_task
-                    except (asyncio.CancelledError, GeneratorExit):
-                        pipeline_task.cancel()
-                        raise
+                    pending_tools.append({
+                        "tc": tc,
+                        "step": step,
+                        "tool_name": tool_name,
+                        "tool_args_dict": tool_args_dict,
+                        "task": pipeline_task,
+                    })
 
-                    outcome = exec_res.outcome
+                all_tasks = {p["task"] for p in pending_tools}
+                task_to_pending = {p["task"]: p for p in pending_tools}
+                completion_results: dict[str, dict] = {}  # step.id -> {tc, msg_result_str}
 
-                    from app.services.chat import planner as _planner
-                    step_n_matched = _planner.mark_step_done(session_id, tool_name, self.registry)
-                    self._log_tool_decision(
-                        session_id, round_index, message, tool_name,
-                        tool_args_dict, outcome, len(tools or []),
-                        step_n=step_n_matched,
-                    )
-                    try:
-                        if step_n_matched is not None:
-                            yield sse_event("plan_step_done", {
-                                "session_id": session_id,
-                                "task_id": task.id,
-                                "step_n": step_n_matched,
-                            })
-                    except Exception as e:
-                        logger.warning(f"[chat_execution_engine] plan_step_done 发送失败: {e}")
+                try:
+                    remaining: set[asyncio.Task] = set(all_tasks)
+                    while remaining:
+                        done, remaining = await asyncio.wait(remaining, timeout=5.0)
+                        if not done:
+                            yield ": keep-alive\n\n"
+                            logger.debug("SSE Heartbeat sent for parallel tool wave")
+                            continue
+                        for t in done:
+                            p = task_to_pending[t]
+                            step = p["step"]
+                            tool_name = p["tool_name"]
+                            tool_args_dict = p["tool_args_dict"]
 
-                    msg_result_str = outcome.llm_payload
+                            try:
+                                exec_res = t.result()
+                            except asyncio.CancelledError:
+                                continue
+                            except Exception as e:  # noqa: BLE001 防御（execute_tool_call 内部已兜底）
+                                logger.error(f"[chat_execution_engine] tool task raised for {tool_name}: {e}")
+                                self.tracker.fail_step(task.id, step.id, str(e))
+                                yield sse_event("step_error", {
+                                    "task_id": task.id,
+                                    "step_id": step.id,
+                                    "tool": tool_name,
+                                    "error": str(e),
+                                })
+                                continue
 
-                    if outcome.status == "repeated":
-                        yield sse_event("step_result", {
-                            "task_id": task.id,
-                            "step_id": step.id,
-                            "tool": tool_name,
-                            "result": outcome.slim_event,
-                            "session_id": session_id,
-                        })
-                    elif outcome.status == "error":
-                        self.tracker.fail_step(task.id, step.id, outcome.error_msg or "")
-                        yield sse_event("step_error", {
-                            "task_id": task.id,
-                            "step_id": step.id,
-                            "tool": tool_name,
-                            "error": outcome.error_msg,
-                        })
-                        yield sse_event("tool_result", {"name": tool_name, "result": msg_result_str, "session_id": session_id})
-                    else:
-                        self.tracker.complete_step(task.id, step.id, outcome.raw_result)
-                        step_payload = {
-                            "task_id": task.id,
-                            "step_id": step.id,
-                            "tool": tool_name,
-                            "result": outcome.slim_event,
-                            "geojson_ref": outcome.geojson_ref,
-                            "session_id": session_id,
-                        }
-                        yield sse_event("step_result", step_payload)
-                        yield sse_event("tool_result", {"name": tool_name, "result": outcome.slim_event, "session_id": session_id})
+                            outcome = exec_res.outcome
 
+                            from app.services.chat import planner as _planner
+                            step_n_matched = _planner.mark_step_done(session_id, tool_name, self.registry)
+                            self._log_tool_decision(
+                                session_id, round_index, message, tool_name,
+                                tool_args_dict, outcome, len(tools or []),
+                                step_n=step_n_matched,
+                            )
+                            try:
+                                if step_n_matched is not None:
+                                    yield sse_event("plan_step_done", {
+                                        "session_id": session_id,
+                                        "task_id": task.id,
+                                        "step_n": step_n_matched,
+                                    })
+                            except Exception as e:
+                                logger.warning(f"[chat_execution_engine] plan_step_done 发送失败: {e}")
+
+                            msg_result_str = outcome.llm_payload
+
+                            if outcome.status == "repeated":
+                                yield sse_event("step_result", {
+                                    "task_id": task.id,
+                                    "step_id": step.id,
+                                    "tool": tool_name,
+                                    "result": outcome.slim_event,
+                                    "session_id": session_id,
+                                })
+                            elif outcome.status == "error":
+                                self.tracker.fail_step(task.id, step.id, outcome.error_msg or "")
+                                yield sse_event("step_error", {
+                                    "task_id": task.id,
+                                    "step_id": step.id,
+                                    "tool": tool_name,
+                                    "error": outcome.error_msg,
+                                })
+                                yield sse_event("tool_result", {"name": tool_name, "result": msg_result_str, "session_id": session_id})
+                            else:
+                                self.tracker.complete_step(task.id, step.id, outcome.raw_result)
+                                step_payload = {
+                                    "task_id": task.id,
+                                    "step_id": step.id,
+                                    "tool": tool_name,
+                                    "result": outcome.slim_event,
+                                    "geojson_ref": outcome.geojson_ref,
+                                    "session_id": session_id,
+                                }
+                                yield sse_event("step_result", step_payload)
+                                yield sse_event("tool_result", {"name": tool_name, "result": outcome.slim_event, "session_id": session_id})
+
+                            completion_results[step.id] = {
+                                "tc": p["tc"],
+                                "msg_result_str": msg_result_str,
+                                "tool_name": tool_name,
+                            }
+
+                            if self.tracker.is_cancelled(task.id):
+                                for r in remaining:
+                                    r.cancel()
+                                await asyncio.gather(*remaining, return_exceptions=True)
+                                pf = _maybe_plan_finalized_event()
+                                if pf:
+                                    yield pf
+                                yield sse_event("task_cancelled", {"task_id": task.id})
+                                return
+                finally:
+                    # 生成器被外部取消（GeneratorExit/CancelledError）时清理未完成任务
+                    for t in all_tasks:
+                        if not t.done():
+                            t.cancel()
+                    if all_tasks:
+                        await asyncio.gather(*all_tasks, return_exceptions=True)
+
+                # Phase 3: 按原始 tc 顺序对齐 LLM 上下文 + 落库
+                for p in pending_tools:
+                    res = completion_results.get(p["step"].id)
+                    if res is None:
+                        continue  # 极端取消场景：该工具未完成，跳过
+                    tc = res["tc"]
+                    msg_result_str = res["msg_result_str"]
+                    tool_name = res["tool_name"]
                     if standard_calls:
                         messages.append({
                             "role": "tool",
@@ -698,13 +788,6 @@ class ChatExecutionEngine:
                         await self._save_msg_async(session_id, "tool", "", None, db_save_content, tc["id"])
                     else:
                         tool_result_msgs.append(f"{tool_name}: {msg_result_str}")
-
-                    if self.tracker.is_cancelled(task.id):
-                        pf = _maybe_plan_finalized_event()
-                        if pf:
-                            yield pf
-                        yield sse_event("task_cancelled", {"task_id": task.id})
-                        return
 
                 if xml_calls and tool_result_msgs:
                     messages.append({

@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections import deque
@@ -242,6 +243,15 @@ async def execute_plan_async(
 ) -> dict:
     """按拓扑顺序执行计划；任一步失败立即中止。
 
+    性能 (Phase 8)：同一波次内无依赖关系的步骤并发 dispatch
+    (asyncio.as_completed)——例如 3 个独立分析工具一轮内并行跑，
+    总耗时从串行之和降为最慢者。波次间保持严格依赖顺序；失败立即
+    cancel 同波次剩余任务。
+
+    语义差异（与纯串行相比）：同一波次中与失败步骤无依赖关系的兄弟
+    步骤可能已完成（结果计入 executed）——"立即中止" 指不再启动新的
+    波次，已派发的任务允许收尾。
+
     返回汇总 {plan_id, status, executed, results, failed_step, error}。
     """
     plan_data = await load_plan(session_id, plan_id)
@@ -258,70 +268,138 @@ async def execute_plan_async(
         await update_plan_status(session_id, plan_id, __status__="failed", __error__="cycle")
         return {"success": False, "error": "依赖图含环"}
 
+    # 构建邻接表 / 入度，用于波次调度（与 _topological_order 同一依赖口径）
+    topo_idx = {sid: i for i, sid in enumerate(order)}
+    in_degree: dict[str, int] = {s.id: 0 for s in plan.steps}
+    edges: dict[str, list[str]] = {s.id: [] for s in plan.steps}
+    for step in plan.steps:
+        deps = set(step.depends_on) | _extract_refs(step.args)
+        deps.discard(step.id)
+        for dep in deps:
+            if dep in in_degree:
+                edges[dep].append(step.id)
+                in_degree[step.id] += 1
+
     step_by_id = {s.id: s for s in plan.steps}
     step_results: dict[str, Any] = {}
     await update_plan_status(session_id, plan_id, __status__="running")
 
-    for sid in order:
-        step = step_by_id[sid]
-        try:
-            resolved_args = resolve_refs(step.args, step_results)
-            if not isinstance(resolved_args, dict):
+    def _ordered_executed() -> list[str]:
+        """已执行步骤按拓扑序输出（确定性，不依赖并发完成顺序）。"""
+        return sorted(step_results.keys(), key=topo_idx.__getitem__)
+
+    def _fail(sid: str, error: str, last_result: Optional[Any] = None) -> dict:
+        # 失败中止：不再启动新波次；已完成的兄弟步骤保留在 executed 中。
+        ret: dict = {
+            "success": False,
+            "plan_id": plan_id,
+            "failed_step": sid,
+            "tool": step_by_id[sid].tool,
+            "error": error,
+            "executed": _ordered_executed(),
+            "results": step_results,
+        }
+        if last_result is not None:
+            ret["last_result"] = last_result
+        return ret
+
+    ready: list[str] = [sid for sid, d in in_degree.items() if d == 0]
+
+    while ready:
+        # 同一波次：入度均为 0 的独立步骤，按拓扑序确定排布
+        wave = sorted(ready, key=topo_idx.__getitem__)
+        ready = []
+
+        # 波次内 args 解析：只依赖已完成步骤，解析失败即中止本波次
+        resolved_args: dict[str, dict] = {}
+        for sid in wave:
+            step = step_by_id[sid]
+            try:
+                r = resolve_refs(step.args, step_results)
+            except Exception as e:  # noqa: BLE001
                 await update_plan_status(
                     session_id, plan_id,
                     __status__="failed",
                     __failed_step__=sid,
-                    __error__=f"args 解析后不是 dict: {type(resolved_args).__name__}",
+                    __error__=f"args 解析异常: {e}",
                 )
-                return {
-                    "success": False,
-                    "plan_id": plan_id,
-                    "failed_step": sid,
-                    "error": f"步骤 {sid!r} args 解析后不是 dict",
-                    "executed": list(step_results.keys()),
-                    "results": step_results,
-                }
-
-            logger.info(f"[PlanMode] running step {sid} -> {step.tool}")
-            result = await registry.dispatch(step.tool, resolved_args, session_id=session_id)
-
-            # 工具返回 success=False（V3.x Exception As Thought 包装）也视为失败
-            if isinstance(result, dict) and result.get("success") is False:
+                return _fail(sid, f"步骤 {sid!r} args 解析异常: {e}")
+            if not isinstance(r, dict):
                 await update_plan_status(
                     session_id, plan_id,
                     __status__="failed",
                     __failed_step__=sid,
-                    __error__=result.get("message") or result.get("error", "tool failed"),
+                    __error__=f"args 解析后不是 dict: {type(r).__name__}",
                 )
-                return {
-                    "success": False,
-                    "plan_id": plan_id,
-                    "failed_step": sid,
-                    "tool": step.tool,
-                    "error": result.get("message") or result.get("error"),
-                    "executed": list(step_results.keys()),
-                    "results": step_results,
-                    "last_result": result,
-                }
+                return _fail(sid, f"步骤 {sid!r} args 解析后不是 dict")
 
-            step_results[sid] = result
-        except Exception as e:
-            logger.exception(f"[PlanMode] step {sid} raised")
+            resolved_args[sid] = r
+
+        # 并发 dispatch 整个波次。注意：Python 3.12 的 asyncio.as_completed
+        # yield 的是内部 _wait_for_one 协程而非原始 Task，无法映射回 sid；
+        # 因此改用 asyncio.wait(FIRST_COMPLETED)，它返回原始 Task 对象。
+        tasks = {
+            sid: asyncio.create_task(
+                registry.dispatch(
+                    step_by_id[sid].tool, resolved_args[sid], session_id=session_id
+                )
+            )
+            for sid in wave
+        }
+        task_to_sid = {t: sid for sid, t in tasks.items()}
+
+        wave_successes: dict[str, Any] = {}
+        failure: Optional[tuple[str, str, Optional[Any]]] = None  # (sid, error, last_result)
+        pending: set[asyncio.Task] = set(tasks.values())
+        while pending:
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED
+            )
+            for t in done:
+                sid = task_to_sid[t]
+                try:
+                    result = t.result()
+                except asyncio.CancelledError:
+                    continue  # 外部取消（如引擎关闭），忽略该任务
+                except Exception as e:
+                    logger.exception(f"[PlanMode] step {sid} raised")
+                    failure = (sid, str(e), None)
+                    break
+                # 工具返回 success=False（V3.x Exception As Thought 包装）也视为失败
+                if isinstance(result, dict) and result.get("success") is False:
+                    failure = (sid, result.get("message") or result.get("error", "tool failed"), result)
+                    break
+                wave_successes[sid] = result
+            if failure is not None:
+                break
+
+        # 失败 → 取消同波次尚未完成的任务（已完成的兄弟步骤保留结果）
+        for t in pending:
+            t.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+        # 按拓扑序提交成功结果（确定性）
+        for sid in wave:
+            if sid in wave_successes:
+                step_results[sid] = wave_successes[sid]
+
+        if failure is not None:
+            sid, err, last_result = failure
             await update_plan_status(
                 session_id, plan_id,
                 __status__="failed",
                 __failed_step__=sid,
-                __error__=str(e),
+                __error__=err,
             )
-            return {
-                "success": False,
-                "plan_id": plan_id,
-                "failed_step": sid,
-                "tool": step.tool,
-                "error": str(e),
-                "executed": list(step_results.keys()),
-                "results": step_results,
-            }
+            return _fail(sid, err, last_result)
+
+        # 波次完成 → 推进依赖图，解锁下一波次
+        for sid in wave:
+            for nxt in edges[sid]:
+                in_degree[nxt] -= 1
+                if in_degree[nxt] == 0:
+                    ready.append(nxt)
 
     await update_plan_status(
         session_id, plan_id,
@@ -332,6 +410,6 @@ async def execute_plan_async(
         "success": True,
         "plan_id": plan_id,
         "status": "completed",
-        "executed": list(step_results.keys()),
+        "executed": _ordered_executed(),
         "results": step_results,
     }

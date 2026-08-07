@@ -113,7 +113,15 @@ class TestPiBridgeSubprocessFlow:
         async for ev in bridge.stream_prompt("stream me"):
             events.append(ev)
 
-        event_types = [e.split("\n")[0].replace("event: ", "") for e in events if e.strip()]
+        # Coalesced batches may carry multiple events per yielded frame (split
+        # on the SSE \\n\\n boundary). Flatten to the ordered event-type list.
+        event_types: list[str] = []
+        for e in events:
+            if not e.strip():
+                continue
+            for line in e.split("\n"):
+                if line.startswith("event: "):
+                    event_types.append(line[len("event: "):])
         assert "task_start" in event_types
         assert "token" in event_types, f"Expected 'token' in events, got: {event_types}"
         assert "task_complete" in event_types
@@ -133,7 +141,14 @@ class TestPiBridgeSubprocessFlow:
         async for ev in bridge.stream_prompt("slow"):
             events.append(ev)
 
-        event_types = [e.split("\n")[0].replace("event: ", "") for e in events if e.strip()]
+        # Coalesced batches may carry multiple events per yielded frame.
+        event_types: list[str] = []
+        for e in events:
+            if not e.strip():
+                continue
+            for line in e.split("\n"):
+                if line.startswith("event: "):
+                    event_types.append(line[len("event: "):])
         assert event_types[0] == "task_start"
         assert "error" in event_types, f"Expected 'error' event on timeout, got: {event_types}"
         assert event_types[-1] == "done"
