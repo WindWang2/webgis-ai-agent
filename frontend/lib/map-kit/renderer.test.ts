@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { 
   addGeoJsonSource, 
+  refreshGeoJsonSourcesByViewport,
   addVectorLayer, 
   addNativeHeatmap, 
   removeLayerStack, 
@@ -113,6 +114,92 @@ describe('renderer', () => {
 
       expect(sourceMock.setData).toHaveBeenCalledWith(data);
       expect(mapMock.addSource).not.toHaveBeenCalled();
+    });
+
+    // ── Phase 8: viewport-driven filtering ────────────────────────────────
+
+    function bigFC(n: number) {
+      return {
+        type: 'FeatureCollection',
+        features: Array.from({ length: n }, (_, i) => ({
+          type: 'Feature',
+          properties: { id: i },
+          geometry: { type: 'Point', coordinates: [i, i] }, // diagonal
+        })),
+      };
+    }
+
+    it('trims a large FeatureCollection to the viewport on add', () => {
+      mapMock.getSource.mockReturnValue(undefined);
+      const data = bigFC(2000); // points (0,0)..(1999,1999)
+      addGeoJsonSource(mapMock, 'big', data, { viewport: [100, 100, 105, 105] });
+
+      const added = mapMock.addSource.mock.calls[0][1];
+      expect(added.data.features.length).toBe(6); // points 100..105 only
+      // The raw (unfiltered) data must be retained for later re-filtering.
+      expect(mapMock.addSource).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes small collections through unchanged (F31 fast path preserved)', () => {
+      mapMock.getSource.mockReturnValue(undefined);
+      const data = bigFC(100); // below minFilter=1000
+      addGeoJsonSource(mapMock, 'small', data, { viewport: [0, 0, 10, 10] });
+
+      const added = mapMock.addSource.mock.calls[0][1];
+      expect(added.data).toBe(data); // same reference — no copy
+    });
+
+    it('re-filters an existing source on viewport change (setData with trimmed data)', () => {
+      const sourceMock = { setData: vi.fn() };
+      mapMock.getSource.mockReturnValue(sourceMock);
+      mapMock.getStyle.mockReturnValue({
+        sources: { big: { type: 'geojson' } },
+        layers: [],
+      });
+
+      const data = bigFC(2000);
+      addGeoJsonSource(mapMock, 'big', data, { viewport: [0, 0, 10, 10] });
+      expect(sourceMock.setData).toHaveBeenCalledTimes(1);
+      expect(sourceMock.setData.mock.calls[0][0].features.length).toBe(11); // 0..10
+
+      // Viewport moves elsewhere → setData re-runs with the new subset.
+      refreshGeoJsonSourcesByViewport(mapMock, [1000, 1000, 1005, 1005]);
+      expect(sourceMock.setData).toHaveBeenCalledTimes(2);
+      expect(sourceMock.setData.mock.calls[1][0].features.length).toBe(6); // 1000..1005
+    });
+
+    it('does NOT re-setData when the viewport is unchanged (cached result)', () => {
+      const sourceMock = { setData: vi.fn() };
+      mapMock.getSource.mockReturnValue(sourceMock);
+      mapMock.getStyle.mockReturnValue({
+        sources: { big: { type: 'geojson' } },
+        layers: [],
+      });
+
+      const data = bigFC(2000);
+      addGeoJsonSource(mapMock, 'big', data, { viewport: [0, 0, 10, 10] });
+      const callsAfterFirst = sourceMock.setData.mock.calls.length;
+
+      // Same viewport (same floating-point bounds) → cache hit → no setData.
+      refreshGeoJsonSourcesByViewport(mapMock, [0, 0, 10, 10]);
+      expect(sourceMock.setData.mock.calls.length).toBe(callsAfterFirst);
+    });
+
+    it('skips non-inline sources (no raw data registered)', () => {
+      const tileSource = { setData: vi.fn() };
+      mapMock.getSource.mockImplementation((id: string) =>
+        id === 'tiles' ? tileSource : undefined,
+      );
+      mapMock.getStyle.mockReturnValue({
+        sources: {
+          tiles: { type: 'vector', url: 'mapbox://x' },
+          raster: { type: 'raster', tiles: ['https://x/{z}/{x}/{y}.png'] },
+        },
+        layers: [],
+      });
+
+      refreshGeoJsonSourcesByViewport(mapMock, [0, 0, 10, 10]);
+      expect(tileSource.setData).not.toHaveBeenCalled();
     });
   });
 

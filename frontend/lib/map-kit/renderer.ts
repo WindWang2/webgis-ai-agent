@@ -1,5 +1,6 @@
 import type { GeoJSONSource, ImageSource, Map } from 'maplibre-gl';
 import { ThematicStyleDef } from './types';
+import { filterFeaturesByBounds } from '@/lib/utils/geo';
 
 /**
 /**
@@ -16,6 +17,47 @@ const _lastGeoJsonData = new WeakMap<object, unknown>();
  * 用 WeakMap 让 source 被 GC 时自动清理。
  */
 const _lastImageUrl = new WeakMap<object, string>();
+
+/**
+ * Phase 8: viewport-driven feature culling for large inline GeoJSON sources.
+ *
+ * filterFeaturesByBounds (lib/utils/geo.ts) trims a big FeatureCollection to
+ * the features intersecting the visible bounds BEFORE setData, so MapLibre
+ * parses a fraction of the features on each viewport change. Design:
+ *
+ *  - addGeoJsonSource(..., { viewport }) filters on add/update; the ORIGINAL
+ *    (unfiltered) data is kept in _rawDataBySource so a later viewport change
+ *    can re-filter from scratch.
+ *  - refreshGeoJsonSourcesByViewport() re-filters every registered inline
+ *    source against the current bounds — call it from the map's debounced
+ *    move handler (map-panel.tsx).
+ *  - Filtered results are cached per source + exact viewport (floating-point
+ *    equality is fine: the same map state yields the same bounds), so a
+ *    stable viewport never re-runs setData (preserving the F31 fast path).
+ *  - Small sources (< filterFeaturesByBounds' minFilter) pass through
+ *    unchanged — same reference, same F31 skip.
+ */
+export type ViewportBBox = [number, number, number, number];
+
+const _rawDataBySource = new WeakMap<object, unknown>();
+const _filteredBySource = new WeakMap<object, { data: unknown; viewport: ViewportBBox }>();
+
+function sameViewport(a: ViewportBBox, b: ViewportBBox): boolean {
+  return a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3];
+}
+
+function _filterForViewport(source: object | undefined, data: any, viewport: ViewportBBox): unknown {
+  // Before addSource the source object doesn't exist yet — nothing to cache
+  // against (WeakMap keys must be objects), and this only happens once per id.
+  if (!source) return filterFeaturesByBounds(data, viewport);
+  const cached = _filteredBySource.get(source);
+  if (cached && sameViewport(cached.viewport, viewport)) {
+    return cached.data;
+  }
+  const effective = filterFeaturesByBounds(data, viewport);
+  _filteredBySource.set(source, { data: effective, viewport: [...viewport] });
+  return effective;
+}
 
 /**
  * Safely adds or updates an image source.
@@ -48,22 +90,59 @@ export function addImageSource(map: Map, id: string, url: string, coordinates: [
  *
  * 审计 F31：如果 data 引用与上次相同，跳过 setData -- MapLibre 的 setData
  * 即使 data 引用相同也会触发全量重新解析。
+ *
+ * Phase 8: optional `viewport` bounds trim large inline FeatureCollections to
+ * the visible area before setData (see module comment). The ORIGINAL data is
+ * retained in _rawDataBySource for later re-filtering.
  */
-export function addGeoJsonSource(map: Map, id: string, data: any) {
+export function addGeoJsonSource(map: Map, id: string, data: any, options?: { viewport?: ViewportBBox }) {
   const source = map.getSource(id) as GeoJSONSource;
+  const effective = options?.viewport ? _filterForViewport(source, data, options.viewport) : data;
   if (source) {
     // 引用相同则跳过（最常见的优化 -- 大量 layer 重新渲染时）
-    if (_lastGeoJsonData.get(source) === data) return;
-    _lastGeoJsonData.set(source, data);
-    source.setData(data);
+    if (_lastGeoJsonData.get(source) === effective) return;
+    _lastGeoJsonData.set(source, effective);
+    source.setData(effective as any);
+    _rawDataBySource.set(source, data);
   } else {
     map.addSource(id, {
       type: 'geojson',
-      data
+      data: effective
     });
     // 新 source 也记录引用，便于后续比较
     const newSource = map.getSource(id);
-    if (newSource) _lastGeoJsonData.set(newSource, data);
+    if (newSource) {
+      _lastGeoJsonData.set(newSource, effective);
+      _rawDataBySource.set(newSource, data);
+    }
+  }
+}
+
+/**
+ * Re-filter every registered inline GeoJSON source against the current
+ * viewport bounds and setData the trimmed result. Sources added with a
+ * viewport (large inline FeatureCollections) are re-filtered from their
+ * ORIGINAL data; small sources and tile/url sources are skipped (no raw data
+ * registered — and small collections pass through unchanged anyway).
+ *
+ * Call from the map's move handler (debounced, e.g. 100ms) so panning/zooming
+ * keeps the parsed feature count proportional to what's on screen.
+ */
+export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox) {
+  const style = map.getStyle();
+  const sources = (style as any)?.sources;
+  if (!sources) return;
+  for (const [id, src] of Object.entries(sources) as Array<[string, any]>) {
+    if (src?.type !== 'geojson') continue;
+    const source = map.getSource(id) as GeoJSONSource;
+    if (!source) continue;
+    const raw = _rawDataBySource.get(source);
+    if (raw === undefined) continue; // tile/url source — nothing to trim
+    const effective = _filterForViewport(source, raw, viewport);
+    if (_lastGeoJsonData.get(source) !== effective) {
+      _lastGeoJsonData.set(source, effective);
+      source.setData(effective as any);
+    }
   }
 }
 

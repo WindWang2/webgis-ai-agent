@@ -259,24 +259,28 @@ describe("MapSpecRuntime (ADR-0036)", () => {
 
     it("applies the spec once flushed (fallback diff path)", async () => {
       const rt = new MapSpecRuntime(map);
-      await rt.reconcileAsync(pointSpec());
-      // appliedSpec is set when the patch is computed; map mutations are
-      // queued on the debouncer until a frame runs (or flush() drains).
-      expect(rt.getAppliedSpec()).toEqual(pointSpec());
+      const pending = rt.reconcileAsync(pointSpec());
+      // appliedSpec must NOT lead the map: it is only updated once the ops
+      // have actually executed (z-order op). Before flush it stays null.
+      expect(rt.getAppliedSpec()).toBeNull();
       rt.flush();
+      await pending;
+      expect(rt.getAppliedSpec()).toEqual(pointSpec());
       expect(map._calls.addSource.map((c: any) => c.id)).toEqual(["L1"]);
       expect(map._calls.addLayer.map((c: any) => c.def.id)).toEqual(["L1__point"]);
     });
 
     it("is a no-op for an identical spec (nothing applied after flush)", async () => {
       const rt = new MapSpecRuntime(map);
-      await rt.reconcileAsync(pointSpec());
+      let p = rt.reconcileAsync(pointSpec());
       rt.flush();
+      await p;
       map._calls.addSource.length = 0;
       map._calls.addLayer.length = 0;
 
-      await rt.reconcileAsync(pointSpec());
+      p = rt.reconcileAsync(pointSpec());
       rt.flush();
+      await p;
 
       expect(map._calls.addSource).toEqual([]);
       expect(map._calls.addLayer).toEqual([]);
@@ -294,12 +298,89 @@ describe("MapSpecRuntime (ADR-0036)", () => {
 
       loaded = true;
       await vi.advanceTimersByTimeAsync(150);
+      rt.flush(); // drive the debouncer so the z-order completion op runs
       await pending;
-      rt.flush();
 
       expect(map._calls.addSource.map((c: any) => c.id)).toEqual(["L1"]);
       expect(map._calls.addLayer.map((c: any) => c.def.id)).toEqual(["L1__point"]);
       vi.useRealTimers();
+    });
+
+    // ── appliedSpec timing correctness (rapid-edit regression) ─────────────
+
+    it("rapid consecutive reconcileAsync must not drop layer updates", async () => {
+      // Bug: appliedSpec used to be updated at ENQUEUE time while ops execute
+      // next frame. specA then specB (before the debouncer drains) made the
+      // second diff compute against specA (which the map never reflected) and
+      // the debouncer coalesced `source:apply:L1` (B replaced A) — the first
+      // patch's layer add carried specA's paint while appliedSpec already said
+      // specB. The paint update was permanently lost.
+      const specA: MapSpec = {
+        version: "1.0",
+        sources: { L1: { type: "geojson", inlineData: { type: "FeatureCollection", features: [] } } },
+        layers: [{ id: "L1__point", source: "L1", type: "circle", paint: { "circle-radius": 6 } }],
+      };
+      const specB: MapSpec = {
+        ...specA,
+        layers: [{ id: "L1__point", source: "L1", type: "circle", paint: { "circle-radius": 99 } }],
+      };
+
+      const rt = new MapSpecRuntime(map);
+      const p1 = rt.reconcileAsync(specA);
+      const p2 = rt.reconcileAsync(specB);
+      // Drive the debouncer until both requests have fully applied.
+      rt.flush();
+      await p1;
+      rt.flush();
+      await p2;
+
+      // The MAP's final state (not the call log — recompiles remove+re-add)
+      // must reflect specB.
+      const applied = map.getLayer("L1__point");
+      expect(applied.paint["circle-radius"]).toBe(99); // specB wins
+      expect(rt.getAppliedSpec()).toEqual(specB);
+    });
+
+    it("rapid add-then-remove of a layer ends with the layer removed", async () => {
+      const withLayer: MapSpec = {
+        version: "1.0",
+        sources: { L1: { type: "geojson", inlineData: { type: "FeatureCollection", features: [] } } },
+        layers: [{ id: "L1__point", source: "L1", type: "circle", paint: { "circle-radius": 6 } }],
+      };
+      const withoutLayer: MapSpec = {
+        version: "1.0",
+        sources: { L1: withLayer.sources.L1 },
+        layers: [],
+      };
+
+      const rt = new MapSpecRuntime(map);
+      const p1 = rt.reconcileAsync(withLayer);
+      const p2 = rt.reconcileAsync(withoutLayer);
+      rt.flush();
+      await p1;
+      rt.flush();
+      await p2;
+
+      expect(map.getLayer("L1__point")).toBeUndefined();
+      expect(rt.getAppliedSpec()).toEqual(withoutLayer);
+    });
+
+    it("getAppliedSpec stays null until ops drain (first apply)", async () => {
+      const rt = new MapSpecRuntime(map);
+      const pending = rt.reconcileAsync(pointSpec());
+      // Even though diff+enqueue happened, the map does not reflect the spec yet.
+      expect(rt.getAppliedSpec()).toBeNull();
+      rt.flush();
+      await pending;
+      expect(rt.getAppliedSpec()).toEqual(pointSpec());
+    });
+
+    it("dispose during a pending apply releases the in-flight promise", async () => {
+      const rt = new MapSpecRuntime(map);
+      const pending = rt.reconcileAsync(pointSpec());
+      rt.dispose(); // queue dropped → the z-order completion op never runs
+      await pending; // must resolve, not hang
+      expect(rt.getAppliedSpec()).toBeNull();
     });
   });
 });

@@ -33,6 +33,13 @@ export class MapSpecRuntime {
   private pendingTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
   private debouncer: RenderDebouncer | null;
+  // Serialize async reconciles: each request is chained after the previous
+  // one COMPLETES (i.e. after its ops have actually executed on the map).
+  // This keeps the diff basis (`appliedSpec`) equal to the map's real state —
+  // see the appliedSpec note in applyPatchDebounced.
+  private reconcileTail: Promise<void> = Promise.resolve();
+  private applySeq = 0;
+  private currentApplyResolve: (() => void) | null = null;
 
   constructor(map: any) {
     this.map = map;
@@ -79,22 +86,35 @@ export class MapSpecRuntime {
    * MapLibre mutations are coalesced and time-sliced per rAF frame instead of
    * blocking the UI thread (ADR-0036 / issue #227).
    *
+   * Requests are SERIALIZED (each chained after the previous one's ops have
+   * actually executed). This is what makes the diff basis always equal the
+   * map's real state: a rapid specB arriving before specA's ops ran must not
+   * diff against a specA that the map never reflected (see applyPatchDebounced).
+   *
    * Fire-and-forget from callers: `void rt.reconcileAsync(spec)`.
    * `flush()` drains pending operations synchronously (tests / screenshots).
+   * The returned promise resolves once THIS request's ops have executed.
    */
-  async reconcileAsync(nextSpec: MapSpec): Promise<void> {
+  reconcileAsync(nextSpec: MapSpec): Promise<void> {
+    if (this.disposed || !this.map) return Promise.resolve();
+    this.reconcileTail = this.reconcileTail.then(() => this.processOne(nextSpec));
+    return this.reconcileTail;
+  }
+
+  private async processOne(nextSpec: MapSpec): Promise<void> {
     if (this.disposed || !this.map) return;
 
     // Defer until the base style is loaded (mirrors the sync retry loop).
     if (!this.map.isStyleLoaded()) {
       await new Promise((resolve) => setTimeout(resolve, STYLE_RETRY_MS));
       if (this.disposed || !this.map) return;
-      return this.reconcileAsync(nextSpec);
+      return this.processOne(nextSpec);
     }
 
     const patch = await diffSpecsAsync(this.appliedSpec, nextSpec);
     if (this.disposed || !this.map) return;
-    this.applyPatchDebounced(patch, nextSpec);
+    // Resolves when the patch's ops have actually run (last op = z-order).
+    await this.applyPatchDebounced(patch, nextSpec);
   }
 
   /**
@@ -155,8 +175,18 @@ export class MapSpecRuntime {
    * Ordering mirrors applyPatchDirect exactly (layers-remove → sources →
    * layers-add → z-order), all high priority so the sequence within a frame
    * is preserved — MapLibre requires a layer's source to exist first.
+   *
+   * `appliedSpec` is updated only when the LAST op of this patch has actually
+   * executed (the z-order op, always enqueued last with a UNIQUE id so the
+   * debouncer never coalesces two patches' completion markers). Updating it at
+   * enqueue time was a correctness bug: the debouncer coalesces ops by id, so
+   * a rapid second reconcile could merge `source:apply:S` and drop the first
+   * patch's layer add — while appliedSpec already claimed the map reflected
+   * the second spec. The diff basis then permanently diverged from the map.
+   *
+   * Resolves once the patch's ops have run (or immediately if disposed).
    */
-  private applyPatchDebounced(patch: SpecPatch, nextSpec: MapSpec): void {
+  private applyPatchDebounced(patch: SpecPatch, nextSpec: MapSpec): Promise<void> {
     const ops: RenderOperation[] = [];
 
     for (const change of patch.layers) {
@@ -202,17 +232,33 @@ export class MapSpecRuntime {
     }
 
     const orderedIds = nextSpec.layers.map((l) => l.id);
+    const zorderId = `zorder:sync:${++this.applySeq}`; // unique per patch — never coalesced
     ops.push({
-      id: "zorder:sync",
+      id: zorderId,
       type: "SET_STYLE",
       priority: "high",
-      execute: () => renderer.syncLayerZOrder(this.map, "", orderedIds),
+      execute: () => {
+        renderer.syncLayerZOrder(this.map, "", orderedIds);
+        // All ops of this patch have now run (z-order is enqueued last in the
+        // high-priority FIFO). appliedSpec may now legitimately equal the map.
+        this.appliedSpec = nextSpec;
+        const resolve = this.currentApplyResolve;
+        this.currentApplyResolve = null;
+        if (resolve) resolve();
+      },
     });
 
-    for (const op of ops) {
-      this.debouncer?.enqueue(op);
-    }
-    this.appliedSpec = nextSpec;
+    return new Promise<void>((resolve) => {
+      this.currentApplyResolve = resolve;
+      for (const op of ops) {
+        this.debouncer?.enqueue(op);
+      }
+      // No debouncer (already disposed) → ops never run; release immediately.
+      if (!this.debouncer) {
+        this.currentApplyResolve = null;
+        resolve();
+      }
+    });
   }
 
   getAppliedSpec(): MapSpec | null {
@@ -227,11 +273,26 @@ export class MapSpecRuntime {
     }
     this.debouncer?.dispose();
     this.debouncer = null;
+    // Release any in-flight apply: its ops were just dropped from the queue,
+    // so the z-order completion marker will never run.
+    const resolve = this.currentApplyResolve;
+    this.currentApplyResolve = null;
+    if (resolve) resolve();
     this.map = null;
     this.appliedSpec = null;
   }
 
   // ---- source/layer application helpers ----
+
+  /**
+   * Current map viewport as [west, south, east, north], or undefined when the
+   * map has no bounds yet (style not loaded / stub map without getBounds).
+   */
+  private currentViewport(): import("@/lib/map-kit/renderer").ViewportBBox | undefined {
+    const b = this.map?.getBounds?.();
+    if (!b || typeof b.getWest !== "function") return undefined;
+    return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+  }
 
   /**
    * Translate a MapSpecSource into the MapLibre call. Reuses the existing
@@ -248,7 +309,12 @@ export class MapSpecRuntime {
         boundsToImageCorners(source.bounds),
       );
     } else if (source.inlineData) {
-      renderer.addGeoJsonSource(this.map, id, source.inlineData);
+      // Phase 8: pass the current viewport so large inline FeatureCollections
+      // are trimmed to the visible area at apply time (further re-filtering
+      // happens on move via map-panel's refreshGeoJsonSourcesByViewport).
+      renderer.addGeoJsonSource(this.map, id, source.inlineData, {
+        viewport: this.currentViewport(),
+      });
     } else {
       const tileUrl = source.url || source.dataPath;
       if (tileUrl) {

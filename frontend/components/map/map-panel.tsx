@@ -286,6 +286,12 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
         evt.viewState.pitch,
         bounds
       )
+      // Phase 8: 视口稳定后（100ms debounce）对大型内联 GeoJSON source
+      // 重新按视口过滤 + setData —— 只解析屏幕内要素，平移/缩放不掉帧。
+      // 小 source 原样穿透（引用缓存跳过），无原始数据的 tile 源跳过。
+      if (bounds && map) {
+        renderer.refreshGeoJsonSourcesByViewport(map, bounds)
+      }
     }, 100)
     onViewportChange?.(
       [evt.viewState.longitude, evt.viewState.latitude],

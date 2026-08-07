@@ -1,5 +1,5 @@
 import type { CommandEntry } from './types';
-import { MapExporterEngine, type ExportRequest } from '@/lib/map-kit/exporter';
+import type { ExportRequest } from '@/lib/map-kit/exporter';
 import { devOnly } from '@/lib/utils/logger';
 
 /**
@@ -12,6 +12,11 @@ import { devOnly } from '@/lib/utils/logger';
  * The entire export pipeline — DPI management, canvas preparation, layout,
  * format branching, upload, system messages, error handling — lives in the
  * `MapExporter` deep module (`lib/map-exporter/index.ts`).
+ *
+ * Perf: ``MapExporterEngine`` (~1300 lines + canvas/layout/svg deps) is loaded
+ * only when an export actually runs — via dynamic ``import()`` inside the render
+ * callback. This keeps the heavy exporter out of the first-load bundle of any
+ * screen that renders the command catalogue (i.e. every map screen).
  */
 export const exportCommands: Record<string, CommandEntry> = {
   export_map: {
@@ -26,6 +31,9 @@ export const exportCommands: Record<string, CommandEntry> = {
 
       map.once('render', async () => {
         try {
+          // Dynamic import: the exporter engine is heavy (canvas composition,
+          // DPI/oversample, vector SVG/PDF generation, layout). Load on demand.
+          const { MapExporterEngine } = await import('@/lib/map-kit/exporter');
           const outcome = await MapExporterEngine.export(
             { map, getHudState },
             (params || {}) as ExportRequest,

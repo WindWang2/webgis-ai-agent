@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { bboxToFlyTo, isValidBbox } from './geo';
+import { bboxToFlyTo, isValidBbox, geometryBBox, bboxIntersects, filterFeaturesByBounds } from './geo';
 
 describe('bboxToFlyTo', () => {
   it('returns zoom 4 for continent-scale bbox (maxDiff > 10)', () => {
@@ -68,5 +68,114 @@ describe('isValidBbox', () => {
 
   it('returns false for non-finite values', () => {
     expect(isValidBbox([NaN, 0, 10, 10])).toBe(false);
+  });
+});
+
+describe('geometryBBox', () => {
+  it('computes bbox for a Point', () => {
+    expect(geometryBBox({ type: 'Point', coordinates: [116.4, 39.9] })).toEqual([116.4, 39.9, 116.4, 39.9]);
+  });
+
+  it('computes bbox for a Polygon (nested rings)', () => {
+    const poly = {
+      type: 'Polygon',
+      coordinates: [[[0, 0], [10, 0], [10, 20], [0, 20], [0, 0]]],
+    };
+    expect(geometryBBox(poly as any)).toEqual([0, 0, 10, 20]);
+  });
+
+  it('computes bbox for a MultiPolygon (deeply nested)', () => {
+    const mp = {
+      type: 'MultiPolygon',
+      coordinates: [
+        [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]],
+        [[[5, 5], [8, 5], [8, 9], [5, 9], [5, 5]]],
+      ],
+    };
+    expect(geometryBBox(mp as any)).toEqual([0, 0, 8, 9]);
+  });
+
+  it('returns null for null geometry', () => {
+    expect(geometryBBox(null)).toBeNull();
+    expect(geometryBBox(undefined)).toBeNull();
+  });
+
+  it('returns null for empty coordinates', () => {
+    expect(geometryBBox({ type: 'Polygon', coordinates: [] })).toBeNull();
+  });
+
+  it('ignores non-finite coordinates', () => {
+    expect(geometryBBox({ type: 'Point', coordinates: [NaN, NaN] })).toBeNull();
+  });
+});
+
+describe('bboxIntersects', () => {
+  it('returns true for overlapping boxes', () => {
+    expect(bboxIntersects([0, 0, 10, 10], [5, 5, 15, 15])).toBe(true);
+  });
+
+  it('returns true for touching edges (inclusive)', () => {
+    expect(bboxIntersects([0, 0, 10, 10], [10, 10, 20, 20])).toBe(true);
+  });
+
+  it('returns false for disjoint boxes', () => {
+    expect(bboxIntersects([0, 0, 10, 10], [20, 20, 30, 30])).toBe(false);
+  });
+
+  it('returns true for containment', () => {
+    expect(bboxIntersects([0, 0, 100, 100], [40, 40, 60, 60])).toBe(true);
+  });
+});
+
+describe('filterFeaturesByBounds', () => {
+  const fc = (n: number) => ({
+    type: 'FeatureCollection' as const,
+    features: Array.from({ length: n }, (_, i) => ({
+      type: 'Feature' as const,
+      properties: { id: i },
+      geometry: { type: 'Point', coordinates: [i, i] },  // points along y=x diagonal
+    })),
+  });
+
+  it('returns input unchanged below minFilter threshold', () => {
+    const small = fc(100);
+    const out = filterFeaturesByBounds(small, [0, 0, 5, 5]);
+    expect(out).toBe(small);  // same reference — no filtering
+  });
+
+  it('filters to viewport-intersecting features above threshold', () => {
+    const big = fc(2000);  // points at (0,0)...(1999,1999)
+    const out = filterFeaturesByBounds(big, [100, 100, 105, 105], 1000);
+    expect(out.features.length).toBe(6);  // points 100..105
+    expect(out.features[0].properties.id).toBe(100);
+    expect(out.features[5].properties.id).toBe(105);
+  });
+
+  it('does not mutate the input', () => {
+    const big = fc(2000);
+    const origLen = big.features.length;
+    filterFeaturesByBounds(big, [0, 0, 5, 5], 1000);
+    expect(big.features.length).toBe(origLen);
+  });
+
+  it('returns empty collection when nothing intersects', () => {
+    const big = fc(2000);
+    const out = filterFeaturesByBounds(big, [5000, 5000, 6000, 6000], 1000);
+    expect(out.features).toEqual([]);
+  });
+
+  it('drops features with null geometry', () => {
+    const big = {
+      type: 'FeatureCollection' as const,
+      features: [
+        ...Array.from({ length: 1500 }, (_, i) => ({
+          type: 'Feature' as const, properties: { id: i },
+          geometry: { type: 'Point', coordinates: [i, i] },
+        })),
+        { type: 'Feature' as const, properties: { id: 'null' }, geometry: null },
+      ],
+    };
+    const out = filterFeaturesByBounds(big, [0, 0, 10, 10], 1000);
+    expect(out.features.find((f) => f.properties.id === 'null')).toBeUndefined();
   });
 });
