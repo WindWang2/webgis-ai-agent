@@ -456,60 +456,83 @@ def resample_raster(
 
     out_path = _suffix_output_path(raster_path, "_resampled.tif")
 
-    with rasterio.open(raster_path) as src:
-        gcps, gcps_crs = src.gcps if src.gcps else (None, None)
-        src_crs = gcps_crs or src.crs
-        dst_crs = target_crs if target_crs else src_crs
+    # Artifact cache (ADR-0048): resample is the most expensive file-producing
+    # op and fully deterministic. A cache hit returns the stored GeoTIFF path
+    # without recomputing the warp. The compute closure runs only on a miss;
+    # concurrent misses are still singleflighted at the tool_cache layer.
+    from app.lib.artifact_cache import make_artifact_key, publish_artifact
 
-        if gcps:
-            transform, width, height = calculate_default_transform(
-                src_crs, dst_crs, src.width, src.height, gcps=gcps, resolution=target_resolution
+    params = {
+        "target_resolution": target_resolution,
+        "target_crs": target_crs,
+        "resampling": resampling,
+    }
+    cache_key = make_artifact_key(raster_path, "resample", params)
+
+    def _compute() -> str:
+        with rasterio.open(raster_path) as src:
+            gcps, gcps_crs = src.gcps if src.gcps else (None, None)
+            src_crs = gcps_crs or src.crs
+            dst_crs = target_crs if target_crs else src_crs
+
+            if gcps:
+                transform, width, height = calculate_default_transform(
+                    src_crs, dst_crs, src.width, src.height, gcps=gcps, resolution=target_resolution
+                )
+            else:
+                transform, width, height = calculate_default_transform(
+                    src_crs, dst_crs, src.width, src.height, *src.bounds, resolution=target_resolution
+                )
+
+            _guard_output_grid(
+                width, height, src.width * src.height, target_resolution,
+                bands=src.count, dtype=src.dtypes[0],
             )
-        else:
-            transform, width, height = calculate_default_transform(
-                src_crs, dst_crs, src.width, src.height, *src.bounds, resolution=target_resolution
-            )
 
-        _guard_output_grid(
-            width, height, src.width * src.height, target_resolution,
-            bands=src.count, dtype=src.dtypes[0],
-        )
+            profile = _gtiff_profile(src.profile, count=src.count)
+            profile.update({
+                "crs": dst_crs,
+                "transform": transform,
+                "width": width,
+                "height": height,
+            })
+            src_nodata = src.nodata if src.nodata is not None else src.profile.get("nodata")
+            dst_nodata = profile.get("nodata")
 
-        profile = _gtiff_profile(src.profile, count=src.count)
-        profile.update({
-            "crs": dst_crs,
-            "transform": transform,
-            "width": width,
-            "height": height,
-        })
-        src_nodata = src.nodata if src.nodata is not None else src.profile.get("nodata")
-        dst_nodata = profile.get("nodata")
+            with rasterio.open(out_path, "w", **profile) as dst:
+                for i in range(1, src.count + 1):
+                    reproject_kwargs = {
+                        "source": rasterio.band(src, i),
+                        "destination": rasterio.band(dst, i),
+                        "src_crs": src_crs,
+                        "dst_transform": transform,
+                        "dst_crs": dst_crs,
+                        "resampling": resampling_method,
+                        "src_nodata": src_nodata,
+                        "dst_nodata": dst_nodata,
+                    }
+                    if gcps:
+                        reproject_kwargs["gcps"] = gcps
+                        reproject_kwargs["gcps_crs"] = gcps_crs
+                    else:
+                        reproject_kwargs["src_transform"] = src.transform
 
-        with rasterio.open(out_path, "w", **profile) as dst:
-            for i in range(1, src.count + 1):
-                reproject_kwargs = {
-                    "source": rasterio.band(src, i),
-                    "destination": rasterio.band(dst, i),
-                    "src_crs": src_crs,
-                    "dst_transform": transform,
-                    "dst_crs": dst_crs,
-                    "resampling": resampling_method,
-                    "src_nodata": src_nodata,
-                    "dst_nodata": dst_nodata,
-                }
-                if gcps:
-                    reproject_kwargs["gcps"] = gcps
-                    reproject_kwargs["gcps_crs"] = gcps_crs
-                else:
-                    reproject_kwargs["src_transform"] = src.transform
+                    reproject(**reproject_kwargs)
 
-                reproject(**reproject_kwargs)
+            return out_path
+
+    final_path = publish_artifact(cache_key, raster_path, _compute)
+
+    # Read shape back from the (possibly cached) output for the response.
+    with rasterio.open(final_path) as out:
+        cached_height, cached_width = out.height, out.width
+        cached_crs = str(out.crs)
 
     return {
-        "output_path": out_path,
-        "target_crs": str(dst_crs),
+        "output_path": final_path,
+        "target_crs": cached_crs,
         "target_resolution": target_resolution,
-        "new_shape": [height, width],
+        "new_shape": [cached_height, cached_width],
         "resampling": resampling,
     }
 
