@@ -83,7 +83,7 @@ async def test_remove_layer_invalidates_l1():
     assert ("s1", "map_state") not in store._l1
 
     out = await store.get_map_state("s1")
-    assert [l["id"] for l in out["layers"]] == ["L2"]
+    assert [layer["id"] for layer in out["layers"]] == ["L2"]
 
 
 @pytest.mark.asyncio

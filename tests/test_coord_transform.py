@@ -114,6 +114,10 @@ def test_transform_geojson_feature_collection_vectorized():
     assert out["features"][0]["properties"]["id"] == 1
     # Point coords transformed
     assert out["features"][0]["geometry"]["coordinates"][0] != fc["features"][0]["geometry"]["coordinates"][0]
+    # Verify exact parity vs scalar gcj02_to_bd09
+    expected_x, expected_y = gcj02_to_bd09(116.4, 39.9)
+    assert abs(out["features"][0]["geometry"]["coordinates"][0] - expected_x) < 1e-9
+    assert abs(out["features"][0]["geometry"]["coordinates"][1] - expected_y) < 1e-9
     # LineString structure preserved
     assert len(out["features"][1]["geometry"]["coordinates"]) == 2
 

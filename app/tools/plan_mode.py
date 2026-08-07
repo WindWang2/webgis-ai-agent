@@ -9,7 +9,7 @@ import logging
 from typing import Optional
 
 from app.services import plan_mode as plan_svc
-from app.tools.registry import ToolRegistry
+from app.tools.registry import ToolRegistry, ToolExecutionPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,7 @@ def register_plan_mode_tools(registry: ToolRegistry):
             "**约束**：步骤数 1~20；工具名必须是已注册工具；不能有环；不允许自我引用。"
         ),
         args_model=plan_svc.PlanProposal,
+        execution_policy=ToolExecutionPolicy.INLINE,
     )
     async def propose_plan(
         title: str,
@@ -99,6 +100,7 @@ def register_plan_mode_tools(registry: ToolRegistry):
         param_descriptions={
             "plan_id": "由 propose_plan 返回的 plan_id（形如 ref:plan-xxxxxxxxxxxxxxxx）",
         },
+        execution_policy=ToolExecutionPolicy.INLINE,
     )
     async def execute_plan(plan_id: str, session_id: Optional[str] = None) -> dict:
         if not session_id:
@@ -117,6 +119,7 @@ def register_plan_mode_tools(registry: ToolRegistry):
             "用于在长时计划执行后回看哪一步失败 / 检查计划是否已经跑过避免重复执行。"
         ),
         param_descriptions={"plan_id": "propose_plan 返回的 plan_id"},
+        execution_policy=ToolExecutionPolicy.INLINE,
     )
     async def get_plan_status(plan_id: str, session_id: Optional[str] = None) -> dict:
         if not session_id:

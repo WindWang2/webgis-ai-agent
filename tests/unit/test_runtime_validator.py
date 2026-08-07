@@ -174,10 +174,27 @@ async def test_runtime_validator_full_flow(clean_session):
   # and the subprocess fails with `mapLoaded: False`. Skip gracefully rather than
   # fail with a misleading assertion. Mirrors the skipif(weasyprint is None) guard
   # in test_report_service_vector_svg.py.
+  import subprocess
   from app.services.mapspec_store import PROJECT_ROOT
 
   if not (PROJECT_ROOT / "frontend" / "node_modules" / "playwright").exists():
     pytest.skip("requires Playwright (run `npm ci` in frontend/ first)")
+
+  try:
+    check_proc = subprocess.run(
+        [
+            "node",
+            "-e",
+            "const { chromium } = require('playwright'); if (!require('fs').existsSync(chromium.executablePath())) process.exit(1);",
+        ],
+        cwd=str(PROJECT_ROOT / "frontend"),
+        capture_output=True,
+        timeout=5,
+    )
+    if check_proc.returncode != 0:
+      pytest.skip("requires Playwright Chromium binary (run `npx playwright install` in frontend/)")
+  except Exception:
+    pytest.skip("requires Playwright Chromium binary")
 
   from app.services.runtime_validator import runtime_validator
 

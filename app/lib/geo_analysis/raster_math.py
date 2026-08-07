@@ -126,6 +126,9 @@ def _suggested_resolutions(current_resolution: float, out_pixels: int) -> list[s
     return sorted(suggestions, key=float)
 
 
+from app.lib.geo_analysis.raster_guard import RasterResourceGuard
+
+
 def _guard_output_grid(
     width: int,
     height: int,
@@ -134,32 +137,14 @@ def _guard_output_grid(
     bands: int = 1,
     dtype: str = "float32",
 ) -> None:
-    """Reject resample outputs that exceed the resource budget.
-
-    Raises ValueError with an agent-actionable correction hint (estimated grid
-    size + suggested coarser resolutions) instead of attempting a warp that
-    could allocate hundreds of GB or fill the disk.
-    """
-    out_pixels = width * height
-    issues = []
-    if out_pixels > MAX_OUTPUT_PIXELS:
-        issues.append(f"{out_pixels:,} pixels exceeds the {MAX_OUTPUT_PIXELS:,}-pixel limit")
-    if width > MAX_OUTPUT_DIMENSION or height > MAX_OUTPUT_DIMENSION:
-        issues.append(f"grid {width}×{height} exceeds the {MAX_OUTPUT_DIMENSION:,}-pixel-per-side limit")
-    if src_pixels and out_pixels / src_pixels > MAX_OUTPUT_UPSCALE_RATIO:
-        issues.append(f"output is {out_pixels / src_pixels:,.0f}× the input size (max {MAX_OUTPUT_UPSCALE_RATIO:,}×)")
-    if not issues:
-        return
-
-    est_gib = out_pixels * bands * np.dtype(dtype).itemsize / (1024 ** 3)
-    suggestions = _suggested_resolutions(target_resolution, out_pixels)
-    raise ValueError(
-        f"Raster resample would create a {width}×{height} output grid "
-        f"({out_pixels:,} pixels, ~{est_gib:.1f} GiB uncompressed): "
-        + "; ".join(issues)
-        + ". This usually means target_resolution is in the wrong unit "
-        "(e.g. 1.0 m on a degree-based source)."
-        + (f" Suggested target_resolution values: {', '.join(suggestions)}." if suggestions else "")
+    """Reject resample outputs that exceed the resource budget."""
+    bytes_per_pixel = np.dtype(dtype).itemsize
+    RasterResourceGuard.check_grid(
+        width=width,
+        height=height,
+        bytes_per_pixel=bytes_per_pixel,
+        num_bands=bands,
+        input_pixels=src_pixels,
     )
 
 
@@ -313,6 +298,7 @@ def raster_calculator(
                     and src_b.shape == src_a.shape
                 )
                 if not aligned:
+                    RasterResourceGuard.check_grid(src_a.width, src_a.height)
                     fill_b = nodata_b if nodata_b is not None else 0
                     data_b_full = np.full(src_a.shape, fill_value=fill_b, dtype=src_b.dtypes[0])
                     gcps_b, gcps_crs_b = src_b.gcps if src_b.gcps else (None, None)

@@ -672,7 +672,7 @@ class ChatExecutionEngine:
                     while remaining:
                         done, remaining = await asyncio.wait(remaining, timeout=5.0)
                         if not done:
-                            yield ": keep-alive\n\n"
+                            yield sse_event("keep_alive", {"message": "ping"})
                             logger.debug("SSE Heartbeat sent for parallel tool wave")
                             continue
                         for t in done:

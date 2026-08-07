@@ -361,8 +361,6 @@ async def test_stream_token_batching_coalesces_events(engine):
 async def test_stream_token_batching_preserves_tokens_before_tool_call(engine, registry):
     """token 批处理不得影响工具调用路径：token 后跟 tool_call 时，
     step_start/tool_call 事件仍逐条出现且顺序正确。"""
-    import asyncio
-
     @tool(registry, name="quick_tool", description="快速工具")
     async def quick_tool(x: int) -> dict:
         return {"success": True, "data": {"x": x}}

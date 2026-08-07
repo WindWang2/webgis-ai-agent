@@ -470,7 +470,12 @@ def generate_heatmap_raster(features: list, cell_size: int = 500, radius: int = 
             }
     except (ValueError, TypeError, OSError, RuntimeError) as e:
         logger.error(f"Heatmap generation failed: {e}", exc_info=True)
-        return {"error": str(e)}
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "correction_hint": f"热力图生成失败 ({type(e).__name__}): {e}。请检查输入点集的坐标有效性及参数设置。"
+        }
     finally:
         if fig:
             plt.close(fig)

@@ -138,7 +138,6 @@ def test_reclassify_first_match_wins(raster_path):
 
 def test_reclassify_scheme_value_equals_nodata_quirk(raster_path):
     """A rule value equal to out_nodata counts as invalid in stats (preserved quirk)."""
-    scheme = [{"min": -9999, "max": -9999, "value": 0, "label": "zero"}]
     # values >= -9999 with value 0: nodata pixels excluded by assigned mask,
     # but a rule mapping to 0 == out_nodata only matches... none (nodata masked).
     scheme2 = [{"min": 0, "max": 4, "value": 0, "label": "to-zero"}]

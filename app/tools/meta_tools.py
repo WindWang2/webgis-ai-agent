@@ -7,7 +7,7 @@ import logging
 
 from pydantic import BaseModel, Field
 
-from app.tools.registry import ToolRegistry, tool
+from app.tools.registry import ToolRegistry, tool, ToolExecutionPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,7 @@ def register_meta_tools(registry: ToolRegistry) -> None:
         ),
         args_model=ListAvailableToolsArgs,
         tier=1,
+        execution_policy=ToolExecutionPolicy.INLINE,
     )
     async def list_available_tools(domain: str) -> dict:
         descriptions: dict[str, str] = {}

@@ -1,6 +1,4 @@
 """Tests for to_utm_gdf identity-based memoization (Phase 4 perf)."""
-import geopandas as gpd
-
 from app.lib.geo_processor.core import (
     to_utm_gdf,
     clear_utm_cache,
@@ -121,7 +119,6 @@ def test_cache_pins_geojson_reference_preventing_id_reuse():
     assert pinned is fc, "缓存条目必须持有 geojson 引用（防 id 复用）"
 
     # 缓存条目存续期间，对象无法被 GC（引用被钉子持有）
-    ref = fc
     del fc
     gc.collect()
     # pinned 仍指向原对象 —— 地址未被复用，未来新对象的 id 不会与之冲突
@@ -130,7 +127,6 @@ def test_cache_pins_geojson_reference_preventing_id_reuse():
     # LRU 淘汰后钉子释放：旧对象可被 GC，id 可被新对象复用 —— 但此时缓存
     # 条目已不存在，新对象查不到旧条目（未命中 → 正确重算）。
     # 用一个小循环证明：大量不同对象进出缓存不产生错误命中。
-    import json as _json
     for i in range(_UTM_CACHE_MAX * 2):
         obj = _sample_fc()
         obj["features"][0]["properties"]["v"] = i

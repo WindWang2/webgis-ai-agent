@@ -144,11 +144,11 @@ def _release_lock(key: str, token: str) -> None:
 
 
 def _lock_exists(key: str) -> bool:
-    """Lock 是否仍被持有。Redis 故障时假定存活（等 deadline 兜底），不抛。"""
+    """Lock 是否仍被持有。Redis 故障/连不上时假定无锁（退化为直接计算），不抛。"""
     try:
         return bool(_get_redis_client().exists(_lock_key(key)))
     except _redis.RedisError:
-        return True
+        return False
 
 
 def _wait_for_cached(key: str, budget_s: float, sleep: Callable[[float], None]) -> Optional[Any]:

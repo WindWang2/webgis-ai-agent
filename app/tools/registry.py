@@ -7,10 +7,19 @@ import os
 from typing import Any, Callable, Optional, Type, List
 from pydantic import BaseModel, create_model, ValidationError
 
+from enum import Enum
+
 from app.services.session_data import session_data_manager
 from app.lib.geo_processor.core import GeoAnalysisResult
 
 logger = logging.getLogger(__name__)
+
+
+class ToolExecutionPolicy(str, Enum):
+    INLINE = "inline"    # <5ms, immediate execution in event loop task (state mutation/meta/UI JSON response)
+    ASYNC = "async"      # Genuine non-blocking async I/O (httpx, session_data_manager, async DB)
+    THREAD = "thread"    # Sync blocking file I/O or fast CPU/Shapely operations via asyncio.to_thread + semaphore
+    CELERY = "celery"    # Heavy GDAL, raster warps, large spatial joins, KDE/IDW surfaces via Celery background tasks
 
 # 同步工具并发上限（见 _dispatch_impl 的 to_thread 路径）。GIL 下 CPU-bound
 # 工具超过核数无收益；给足核数余量 + 小缓冲，避免并行工具波互相拖累。
@@ -95,7 +104,8 @@ class ToolRegistry:
                  args_model: Optional[Type[BaseModel]] = None,
                  parameters: Optional[dict] = None,
                  tier: int = 1,
-                 domains: Optional[List[str]] = None):
+                 domains: Optional[List[str]] = None,
+                 execution_policy: Optional[ToolExecutionPolicy | str] = None):
         """注册一个工具函数"""
         self._tools[name] = func
         if parameters:
@@ -136,8 +146,21 @@ class ToolRegistry:
         self._schemas = [s for s in self._schemas if s["function"]["name"] != name]
         self._schemas.append(schema)
 
-        # 记录分层元数据
-        self._metadata[name] = {"tier": tier, "domains": list(domains or [])}
+        # 校验并确定执行策略
+        if execution_policy is None:
+            if asyncio.iscoroutinefunction(func):
+                policy = ToolExecutionPolicy.ASYNC
+            else:
+                policy = ToolExecutionPolicy.THREAD
+        else:
+            policy = ToolExecutionPolicy(execution_policy)
+
+        # 记录分层元数据与执行策略
+        self._metadata[name] = {
+            "tier": tier,
+            "domains": list(domains or []),
+            "execution_policy": policy,
+        }
 
     def _generate_model(self, name: str, func: Callable, param_descriptions: Optional[dict[str, str]]) -> Type[BaseModel]:
         """根据函数签名动态推导 Pydantic Model"""
@@ -297,29 +320,38 @@ class ToolRegistry:
             arguments["session_id"] = session_id
 
         try:
-            # 性能：同步 (CPU-bound) 工具 —— 绝大多数空间分析（ST-DBSCAN /
-            # KDE / Moran's I / hotspot / 聚类 等）—— 在调用前先 offload 到
-            # 线程池，避免阻塞 asyncio 事件循环。否则一次几十秒的聚类会让
-            # 全部 SSE 流 / WebSocket / 其他请求同时卡死。
-            # async 工具直接 await（自身即非阻塞）。
             tool_func = self._tools[name]
-            if asyncio.iscoroutinefunction(tool_func):
-                result = await tool_func(**arguments)
+            meta = self._metadata.get(name, {})
+            policy = meta.get("execution_policy", ToolExecutionPolicy.THREAD)
+
+            if policy == ToolExecutionPolicy.INLINE:
+                # 超轻量工具 (<5ms)：直接在当前 Task 执行，不占用线程池信号量
+                if asyncio.iscoroutinefunction(tool_func):
+                    result = await tool_func(**arguments)
+                else:
+                    result = tool_func(**arguments)
+            elif policy == ToolExecutionPolicy.ASYNC:
+                # 纯非阻塞 async I/O：直接 await
+                if asyncio.iscoroutinefunction(tool_func):
+                    result = await tool_func(**arguments)
+                else:
+                    from app.lib.tool_cache import cache_hit_var
+
+                    def _run_sync_with_cache_var():
+                        res = tool_func(**arguments)
+                        return res, cache_hit_var.get()
+
+                    async with _tool_thread_semaphore:
+                        result, thread_cache_hit = await asyncio.to_thread(_run_sync_with_cache_var)
+                    cache_hit_var.set(thread_cache_hit)
             else:
-                # 在线程里跑同步工具。@cached_tool 在线程内 set(cache_hit_var)
-                # 但 asyncio.to_thread 复制 context、set 不回传到当前 Task ——
-                # 因此显式捕获线程内最终值，await 后恢复到本 Task，保证
-                # registry 的 timing 记录正确读到 cache_hit。
+                # THREAD / CELERY：在线程池隔离中运行 CPU / 重运算工具
                 from app.lib.tool_cache import cache_hit_var
 
                 def _run_sync_with_cache_var():
                     res = tool_func(**arguments)
                     return res, cache_hit_var.get()
 
-                # 并发上限：默认线程池 max_workers=min(32, cpu+4)，而并行工具波
-                # 可以一次派发 N 个 CPU-bound 工具 —— GIL 下线程数超过核数只会
-                # 增加切换开销。用信号量把同时在跑的同步工具限制到
-                # _TOOL_THREAD_LIMIT（阻塞 I/O 型工具在线程里等待不影响此上限）。
                 async with _tool_thread_semaphore:
                     result, thread_cache_hit = await asyncio.to_thread(
                         _run_sync_with_cache_var

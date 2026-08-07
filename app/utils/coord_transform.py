@@ -381,7 +381,6 @@ def _make_chinese_array_transform(src: str, dst: str) -> Callable[[np.ndarray, n
                 x, y = gcj02_to_wgs84_array(x, y)
                 return x, y
             if dst == "bd09":
-                x, y = gcj02_to_wgs84_array(x, y)
                 return gcj02_to_bd09_array(x, y)
             return x, y  # src->dst both gcj02-ish, no-op
         # src == wgs84

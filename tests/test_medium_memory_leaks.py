@@ -132,6 +132,8 @@ async def test_m10_cache_hit_var_set_false_on_async_cache_miss(monkeypatch):
     monkeypatch.setattr(tool_cache, "make_cache_key", lambda name, kw: f"key:{name}")
     monkeypatch.setattr(tool_cache, "get_cached", lambda key: None)
     monkeypatch.setattr(tool_cache, "set_cached", lambda key, val, ttl: None)
+    monkeypatch.setattr(tool_cache, "_acquire_lock", lambda key, token, ttl: True)
+    monkeypatch.setattr(tool_cache, "_release_lock", lambda key, token: None)
 
     # 先污染 ContextVar：模拟上一轮命中残留的 True
     token = tool_cache.cache_hit_var.set(True)

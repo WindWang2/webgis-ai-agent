@@ -7,7 +7,7 @@ import logging
 from typing import Any, List, Optional
 from pydantic import BaseModel, Field
 
-from app.tools.registry import ToolRegistry, tool
+from app.tools.registry import ToolRegistry, tool, ToolExecutionPolicy
 from app.services.session_data import session_data_manager
 
 logger = logging.getLogger(__name__)
@@ -83,6 +83,7 @@ def register_map_view_tools(registry: ToolRegistry):
             "\n关键约束：经纬度必须是十进制度数；zoom 推荐 10-14（城市级），16+ 街区级。"
         ),
         args_model=FlyToLocationArgs,
+        execution_policy=ToolExecutionPolicy.INLINE,
     )
     def fly_to_location(
         longitude: float,
@@ -121,6 +122,7 @@ def register_map_view_tools(registry: ToolRegistry):
             "\n关键约束：bbox 必须是经度在前、纬度在后的 4 元素列表；west<east, south<north。"
         ),
         args_model=ZoomToBBoxArgs,
+        execution_policy=ToolExecutionPolicy.INLINE,
     )
     def zoom_to_bbox(bbox: List[float], padding: int = 50) -> dict:
         if not isinstance(bbox, list) or len(bbox) < 4:
@@ -149,6 +151,7 @@ def register_map_view_tools(registry: ToolRegistry):
             "否则从 features 实时计算。"
         ),
         args_model=ZoomToLayerArgs,
+        execution_policy=ToolExecutionPolicy.ASYNC,
     )
     async def zoom_to_layer(layer_ref: str, padding: int = 60, session_id: Optional[str] = None) -> dict:
         if not session_id:
@@ -196,6 +199,7 @@ def register_map_view_tools(registry: ToolRegistry):
             "\n何时用：用户说『回到初始视图』『重置地图』『缩到全国』。"
             "\n何时不用：只是想看某个特定地区 — 用 fly_to_location / zoom_to_layer。"
         ),
+        execution_policy=ToolExecutionPolicy.INLINE,
     )
     def reset_map_view() -> dict:
         return {
@@ -216,6 +220,7 @@ def register_map_view_tools(registry: ToolRegistry):
             "\n关键约束：pitch 范围 0-85；bearing 0-360（0=正北）。"
         ),
         args_model=SetMapViewArgs,
+        execution_policy=ToolExecutionPolicy.INLINE,
     )
     def set_map_view(
         zoom: Optional[float] = None,

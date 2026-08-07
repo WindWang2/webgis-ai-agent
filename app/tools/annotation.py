@@ -10,7 +10,7 @@ import math
 from typing import Any, List, Optional
 from pydantic import BaseModel, Field
 
-from app.tools.registry import ToolRegistry, tool
+from app.tools.registry import ToolRegistry, tool, ToolExecutionPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +112,7 @@ def register_annotation_tools(registry: ToolRegistry):
             "\n关键约束：coordinates 至少 2 个点，每个 [lng, lat]；返回 km 数值 + 前端绘制折线。"
         ),
         args_model=MeasureDistanceArgs,
+        execution_policy=ToolExecutionPolicy.INLINE,
     )
     def measure_distance(coordinates: List[List[float]], label: Optional[str] = None) -> dict:
         err = _validate_coords(coordinates, 2)
@@ -144,6 +145,7 @@ def register_annotation_tools(registry: ToolRegistry):
             "顺/逆时针均返回正值。"
         ),
         args_model=MeasureAreaArgs,
+        execution_policy=ToolExecutionPolicy.INLINE,
     )
     def measure_area(coordinates: List[List[float]], label: Optional[str] = None) -> dict:
         err = _validate_coords(coordinates, 3)
@@ -175,6 +177,7 @@ def register_annotation_tools(registry: ToolRegistry):
             "\n关键约束：经纬度十进制度；color 默认红 #ef4444。多次调用累计添加，用 clear_markers 一次性清空。"
         ),
         args_model=AddMarkerArgs,
+        execution_policy=ToolExecutionPolicy.INLINE,
     )
     def add_marker(
         longitude: float,
