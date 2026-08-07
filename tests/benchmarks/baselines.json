@@ -1,0 +1,18 @@
+{
+  "dispatch_overhead": {
+    "iterations": 7,
+    "median_ms": 0.313
+  },
+  "metrics_enqueue": {
+    "iterations": 7,
+    "median_ms": 0.017
+  },
+  "raster_guard_rejection": {
+    "iterations": 7,
+    "median_ms": 4.801
+  },
+  "ref_resolution_batch": {
+    "iterations": 7,
+    "median_ms": 0.373
+  }
+}
