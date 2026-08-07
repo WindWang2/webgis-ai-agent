@@ -140,7 +140,7 @@ async def get_raster_tile(
         raise HTTPException(status_code=status_code, detail=res.error or "栅格数据不可用")
 
     raster_path = res.data.get("file_path") or res.data.get("path") if isinstance(res.data, dict) else str(res.data)
-    png_bytes = render_raster_tile(raster_path, z, x, y)
+    png_bytes = await asyncio.to_thread(render_raster_tile, raster_path, z, x, y)
     return Response(
         content=png_bytes,
         media_type="image/png",

@@ -26,7 +26,7 @@ import statistics
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from unittest.mock import patch
 
 import numpy as np
@@ -243,30 +243,33 @@ def _artifact_cache_hit_ms() -> float:
         clear_artifact_cache()
 
 
+_PERF_TILE_RASTER_PATH: Optional[Path] = None
+
+
+def _get_perf_tile_raster() -> Path:
+    global _PERF_TILE_RASTER_PATH
+    if _PERF_TILE_RASTER_PATH is None or not _PERF_TILE_RASTER_PATH.exists():
+        data_dir = Path(__file__).parent.parent.parent / "data"
+        _PERF_TILE_RASTER_PATH = data_dir / "test_perf_tile_static.tif"
+        arr = np.ones((1, 200, 200), dtype=np.float32) * 42.0
+        with rasterio.open(
+            _PERF_TILE_RASTER_PATH, "w", driver="GTiff", height=200, width=200, count=1,
+            dtype=np.float32, crs="EPSG:4326", transform=from_origin(116.0, 40.0, 0.005, 0.005),
+        ) as dst:
+            dst.write(arr)
+    return _PERF_TILE_RASTER_PATH
+
+
 def _raster_tile_streaming_ms() -> float:
     """Windowed raster tile rendering: 256x256 PNG generation from GeoTIFF."""
-    import os as _os
-    import uuid as _uuid
-    import rasterio as _rasterio
-    from rasterio.transform import from_bounds as _from_bounds
     from app.services.raster_tile_service import render_raster_tile
 
-    data_dir = Path(__file__).parent.parent.parent / "data"
-    path = data_dir / f"test_perf_tile_{_uuid.uuid4().hex[:8]}.tif"
-    arr = np.ones((1, 200, 200), dtype=np.float32) * 42.0
-    with _rasterio.open(
-        path, "w", driver="GTiff", height=200, width=200, count=1,
-        dtype=np.float32, crs="EPSG:4326", transform=_from_bounds(116.0, 39.0, 117.0, 40.0, 200, 200),
-    ) as dst:
-        dst.write(arr)
-    try:
-        t0 = time.perf_counter()
-        png_bytes = render_raster_tile(str(path), z=8, x=210, y=100, tile_size=256)
-        elapsed = (time.perf_counter() - t0) * 1000
-        assert png_bytes.startswith(b"\x89PNG")
-        return elapsed
-    finally:
-        path.unlink(missing_ok=True)
+    path = _get_perf_tile_raster()
+    t0 = time.perf_counter()
+    png_bytes = render_raster_tile(str(path), z=8, x=210, y=100, tile_size=256)
+    elapsed = (time.perf_counter() - t0) * 1000
+    assert png_bytes.startswith(b"\x89PNG")
+    return elapsed
 
 
 WORKLOADS = {
