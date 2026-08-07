@@ -171,7 +171,7 @@ def test_no_digest_at_99_calls(caplog, _isolated_metrics):
 
 
 def test_snapshot_reports_true_percentiles(_isolated_metrics):
-    """Log2 histogram must yield p50/p95/p99 (bounded bins, no raw retention)."""
+    """Log2 histogram must yield p50/p90/p95/p99 (bounded bins, no raw retention)."""
     for _ in range(80):
         tool_metrics.record_tool_call(
             tool="B", arg_bytes=0, result_bytes=0, duration_ms=100,
@@ -190,11 +190,28 @@ def test_snapshot_reports_true_percentiles(_isolated_metrics):
     assert snap["count"] == 100
     # p50 ≈ 100 (80% of samples at 100ms)
     assert 50 <= snap["p50"] <= 200
+    # p90 ≈ 1000 (90% at ≤1000ms)
+    assert 500 <= snap["p90"] <= 2000
     # p95 ≈ 1000 (95% at ≤1000ms)
     assert 500 <= snap["p95"] <= 2000
     # p99 ≈ 1000
     assert 500 <= snap["p99"] <= 5000
     assert snap["max_ms"] == 10000  # max is max, not a percentile
+
+
+def test_snapshot_aggregates_result_bytes(_isolated_metrics):
+    """Aggregator tracks total_result_bytes per tool (goal §9 result bytes)."""
+    tool_metrics.record_tool_call(
+        tool="C", arg_bytes=10, result_bytes=500, duration_ms=5,
+        cache_hit=False, error=None, session_id=None,
+    )
+    tool_metrics.record_tool_call(
+        tool="C", arg_bytes=10, result_bytes=1500, duration_ms=5,
+        cache_hit=False, error=None, session_id=None,
+    )
+    snap = tool_metrics.aggregator_snapshot()["C"]
+    assert snap["count"] == 2
+    assert snap["total_result_bytes"] == 2000
 
 
 def test_rotation_keeps_backups_bounded(_isolated_metrics):

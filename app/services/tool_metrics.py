@@ -52,6 +52,11 @@ _writer_started = False
 _start_lock = threading.Lock()
 # 尚未落盘的行数（入队 +1，writer 每批落盘 -N）。测试隔离用：_reset_for_tests
 # 等待其归零，避免 in-flight batch 在 LOG_PATH 切换后写入下一个测试的文件。
+#
+# 跨线程记账：_pending_rows 由调用方线程（_enqueue +1）与 writer 线程
+# （_flush_batch -N）共同修改。这里依赖 CPython GIL 让 int 的 += / -=
+# 原子化（无锁安全）；改用 threading.Lock 会引入竞争点且收益为零，因为
+# 该计数仅用于测试 quiescence 等待，非生产正确性路径。
 _pending_rows = 0
 
 
@@ -211,7 +216,7 @@ def record_tool_call(
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[tool_metrics] enqueue failed (dropping row): {type(e).__name__}: {e}")
 
-    _update_aggregator(tool, duration_ms, cache_hit, error)
+    _update_aggregator(tool, duration_ms, cache_hit, error, result_bytes=result_bytes)
 
 
 def record_event(event: ToolCallEvent) -> None:
@@ -233,11 +238,11 @@ def _bin_index(duration_ms: int) -> int:
 
 
 def _percentiles(counts: list[int], total: int) -> dict[str, float]:
-    """从 log2 直方图估计 p50/p95/p99（bin 中点插值），样本不足时返回 0。"""
+    """从 log2 直方图估计 p50/p90/p95/p99（bin 中点插值），样本不足时返回 0。"""
     if total <= 0:
-        return {"p50": 0.0, "p95": 0.0, "p99": 0.0}
+        return {"p50": 0.0, "p90": 0.0, "p95": 0.0, "p99": 0.0}
     out = {}
-    for label, q in (("p50", 0.50), ("p95", 0.95), ("p99", 0.99)):
+    for label, q in (("p50", 0.50), ("p90", 0.90), ("p95", 0.95), ("p99", 0.99)):
         target = q * total
         acc = 0
         est = 0.0
@@ -251,11 +256,12 @@ def _percentiles(counts: list[int], total: int) -> dict[str, float]:
     return out
 
 
-def _update_aggregator(tool: str, duration_ms: int, cache_hit: bool, error: Optional[str]) -> None:
+def _update_aggregator(tool: str, duration_ms: int, cache_hit: bool, error: Optional[str],
+                       result_bytes: int = 0) -> None:
     global _call_counter
     with _lock:
-        slot = _aggregator.setdefault(tool, [0, 0, 0, 0, 0])
-        # [count, total_ms, max_ms, hit_count, error_count]
+        slot = _aggregator.setdefault(tool, [0, 0, 0, 0, 0, 0])
+        # [count, total_ms, max_ms, hit_count, error_count, total_result_bytes]
         slot[0] += 1
         slot[1] += duration_ms
         if duration_ms > slot[2]:
@@ -264,6 +270,7 @@ def _update_aggregator(tool: str, duration_ms: int, cache_hit: bool, error: Opti
             slot[3] += 1
         if error:
             slot[4] += 1
+        slot[5] += result_bytes
         bins = _hist.setdefault(tool, [0] * 33)
         bins[_bin_index(duration_ms)] += 1
         _call_counter += 1
@@ -273,7 +280,12 @@ def _update_aggregator(tool: str, duration_ms: int, cache_hit: bool, error: Opti
 
 
 def aggregator_snapshot() -> dict:
-    """聚合器只读快照（含真实 p50/p95/p99 估计），便于测试 / dashboard."""
+    """聚合器只读快照。
+
+    含真实 p50/p90/p95/p99 估计（log2 直方图，非原始事件）与 max_ms（独立
+    字段，勿与 p99 混淆 -- 后者是 bin 中点估计，max 是观测到的最大值）；
+    result_bytes 为累计值，count 即调用数，二者相除得平均响应字节数。
+    """
     with _lock:
         return {
             t: {
@@ -282,6 +294,7 @@ def aggregator_snapshot() -> dict:
                 "max_ms": v[2],
                 "hit_count": v[3],
                 "error_count": v[4],
+                "total_result_bytes": v[5],
                 **_percentiles(_hist.get(t, []), v[0]),
             }
             for t, v in _aggregator.items()
@@ -306,7 +319,9 @@ def emit_digest() -> None:
 
     def _fmt_stats(tool: str, slot: list[int]) -> str:
         p = _percentiles(_hist.get(tool, []), slot[0])
-        return f'("{tool}",count={slot[0]},total_ms={slot[1]},p50={p["p50"]},p95={p["p95"]},p99={p["p99"]},max={slot[2]},hits={slot[3]},errors={slot[4]})'
+        return (f'("{tool}",count={slot[0]},total_ms={slot[1]},'
+                f'p50={p["p50"]},p90={p["p90"]},p95={p["p95"]},p99={p["p99"]},'
+                f'max={slot[2]},hits={slot[3]},errors={slot[4]},result_bytes={slot[5]})')
 
     cum_str = ",".join(_fmt_stats(t, v) for t, v in top_cum)
     max_str = ",".join(f'("{t}",{v[2]})' for t, v in top_max)

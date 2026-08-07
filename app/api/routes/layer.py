@@ -52,10 +52,11 @@ async def get_session_layer_data(
     return res.data
 
 
-def _extract_points(data) -> list:
+def _extract_points(data) -> list[tuple[tuple[float, float], dict]]:
     """从会话引用数据中提取 Point 要素 [(lon, lat), properties]。
 
     兼容三种形状：裸 FeatureCollection、{"geojson": FC}、{"type":"poi_query", "geojson": FC}。
+    非 Point 要素被跳过（MVT 编码器目前仅支持 Point）。
     """
     fc = data
     if isinstance(data, dict):

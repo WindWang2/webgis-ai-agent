@@ -20,7 +20,12 @@ _VARINT = 0
 _BYTES = 2
 
 # value field tags
-_VAL_STRING, _VAL_FLOAT, _VAL_DOUBLE, _VAL_INT, _VAL_UINT, _VAL_SINT, _VAL_BOOL = range(1, 8)
+# value field tags (MVT Value message: only the types we actually emit are
+# kept; float/uint/sint variants are future-work if non-double numerics land).
+_VAL_STRING = 1
+_VAL_DOUBLE = 3
+_VAL_INT = 4
+_VAL_BOOL = 7
 
 # geometry types (MVT)
 _GT_POINT = 1
