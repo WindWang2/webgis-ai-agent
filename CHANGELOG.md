@@ -137,6 +137,20 @@
   bounds, percentile estimation, and queue-full backpressure
   (`tests/test_tool_metrics.py`).
 
+### Performance — Batched reference/alias resolution (goal §8)
+
+- **One Redis round-trip per dispatch instead of one per string argument**:
+  `ToolRegistry._resolve_references` previously awaited `resolve_alias`
+  (HGET) for every string arg — a 9-string tool call paid 9 serialized RTTs.
+  New `resolve_aliases()` (protocol + memory + Redis stores) resolves the
+  whole arg tree with a single `HMGET`; `ref:`/alias/plain-string semantics,
+  skip keys, and the missing-ref self-healing error are unchanged.
+- **Benchmark** (fakeredis, 9 strings × 2000 dispatches): 1100 ms → 206 ms
+  (**5.3×**; 9 → 1 RTT per dispatch; savings scale with real network RTT).
+- **Regression tests**: `tests/unit/test_ref_resolution_batching.py`
+  (single-call spy, alias/ref/plain semantics, nested args, no-session fast
+  path) — red on pre-fix code.
+
 ## [0.1.3] - 2026-08-03
 
 ### Performance & Remediation
