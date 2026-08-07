@@ -3,6 +3,7 @@
 深入封装 STAC COG 波段检索、带云掩膜的向量化波段代数、Horn 方法地形推导、
 以及与 MapSpec type:"raster" 图层的直接对接。
 """
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 import numpy as np
@@ -74,8 +75,14 @@ class SpectralRasterEngine:
             )
 
         try:
-            arr = compute_index_array(idx, **fetch_res["bands"])
-            stats = compute_raster_stats(arr)
+            # Band algebra on full band arrays is CPU-bound numpy — offload so
+            # multi-million-pixel index math can't block the event loop.
+            def _compute_index():
+                arr = compute_index_array(idx, **fetch_res["bands"])
+                stats = compute_raster_stats(arr)
+                return arr, stats
+
+            arr, stats = await asyncio.to_thread(_compute_index)
 
             # Continuous color ramp specification for live UI map overlay.
             # TODO: legend_spec is computed but not yet attached to the returned
@@ -131,19 +138,26 @@ class SpectralRasterEngine:
 
         try:
             dem = fetch_res["bands"]["dem"]
-            nodata = dem <= -9999
-            dem[nodata] = np.nan
-            cell_size = fetch_res.get("cell_size_m", 30.0)
 
-            stats = compute_raster_stats(dem)
-            if "aspect" in products:
-                target_arr = compute_aspect(dem, cell_size)
-            elif "hillshade" in products:
-                target_arr = compute_hillshade(dem, cell_size)
-            elif "slope" in products:
-                target_arr = compute_slope(dem, cell_size)
-            else:
-                target_arr = dem
+            # Nodata masking + Horn-window derivatives are CPU-bound numpy —
+            # offload so multi-million-pixel terrain math can't block the loop.
+            def _compute_terrain():
+                nodata = dem <= -9999
+                dem[nodata] = np.nan
+                cell_size = fetch_res.get("cell_size_m", 30.0)
+
+                stats = compute_raster_stats(dem)
+                if "aspect" in products:
+                    target_arr = compute_aspect(dem, cell_size)
+                elif "hillshade" in products:
+                    target_arr = compute_hillshade(dem, cell_size)
+                elif "slope" in products:
+                    target_arr = compute_slope(dem, cell_size)
+                else:
+                    target_arr = dem
+                return target_arr, stats
+
+            target_arr, stats = await asyncio.to_thread(_compute_terrain)
 
             return RasterAnalysisResult(
                 index_type="dem",

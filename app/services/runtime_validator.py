@@ -8,6 +8,7 @@ lives in `frontend/lib/mapspec-compiler/runtime-validate.ts` (Seam C). This
 module owns the Python side: invoke it, parse its JSON report, compute the
 5-dimension eval score, and persist report.json.
 """
+import asyncio
 import json
 import logging
 import subprocess
@@ -136,7 +137,10 @@ class RuntimeValidator:
     runtime_dir.mkdir(parents=True, exist_ok=True)
 
     # 2. Drive the headless Playwright validator over the compiled output.
-    report = self._run_headless_validator(out_dir, runtime_dir)
+    # The subprocess can run up to RUNTIME_TIMEOUT_S (90s) — offload to a
+    # thread so Chromium startup doesn't freeze every SSE stream / request
+    # on the event loop.
+    report = await asyncio.to_thread(self._run_headless_validator, out_dir, runtime_dir)
 
     # 3. Enrich + compute the 5-dimension eval score.
     report["timestamp"] = time.time()

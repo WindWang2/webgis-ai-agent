@@ -3,6 +3,7 @@
 向后兼容 Adapter，内部统一委派给 deep `MapSpecLifecycleEngine` (app.services.mapspec)。
 保持所有旧的导出的方法签名与逻辑完全兼容。
 """
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -80,7 +81,9 @@ class MapSpecStore:
             res = await self.init_project(session_id)
             mapspec = res["mapspec"]
 
-        profile = profile_geojson_source(geojson_data)
+        # profile_geojson_source loops every feature in pure Python — offload
+        # so a large inline GeoJSON can't block the event loop.
+        profile = await asyncio.to_thread(profile_geojson_source, geojson_data)
 
         if "sources" not in mapspec:
             mapspec["sources"] = {}
