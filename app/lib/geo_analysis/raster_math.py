@@ -291,19 +291,34 @@ def raster_calculator(
     out_path = _suffix_output_path(raster_a, "_calc.tif")
 
     with rasterio.open(raster_a) as src_a:
-        data_a = src_a.read(1)
         nodata_a = src_a.nodata if src_a.nodata is not None else src_a.profile.get("nodata")
 
-        if raster_b:
-            with rasterio.open(raster_b) as src_b:
+        if nodata is None:
+            out_nodata = nodata_a if nodata_a is not None else 0
+        else:
+            out_nodata = nodata
+
+        # B 输入准备：对齐栅格（同 CRS/transform/shape）走窗口化路径；不对齐
+        # 的 B 需整幅重投影 —— 工具说明已建议先 resample 对齐，保留原实现。
+        src_b = None
+        data_b_full: Optional[np.ndarray] = None
+        aligned = False
+        try:
+            if raster_b:
+                src_b = rasterio.open(raster_b)
                 nodata_b = src_b.nodata if src_b.nodata is not None else src_b.profile.get("nodata", nodata_a)
-                if (src_b.crs != src_a.crs) or (src_b.transform != src_a.transform) or (src_b.shape != src_a.shape):
+                aligned = (
+                    src_b.crs == src_a.crs
+                    and src_b.transform == src_a.transform
+                    and src_b.shape == src_a.shape
+                )
+                if not aligned:
                     fill_b = nodata_b if nodata_b is not None else 0
-                    data_b = np.full(src_a.shape, fill_value=fill_b, dtype=src_b.dtypes[0])
+                    data_b_full = np.full(src_a.shape, fill_value=fill_b, dtype=src_b.dtypes[0])
                     gcps_b, gcps_crs_b = src_b.gcps if src_b.gcps else (None, None)
                     reproject_kwargs = {
                         "source": rasterio.band(src_b, 1),
-                        "destination": data_b,
+                        "destination": data_b_full,
                         "dst_transform": src_a.transform,
                         "dst_crs": src_a.crs,
                         "resampling": Resampling.nearest,
@@ -319,55 +334,93 @@ def raster_calculator(
                         reproject_kwargs["src_crs"] = src_b.crs
 
                     reproject(**reproject_kwargs)
+            else:
+                const_val = constant if constant is not None else 0
+                nodata_b = nodata_a
+
+            def _get_b_window(win: Window, data_a_win: np.ndarray) -> np.ndarray:
+                if src_b is not None and aligned:
+                    return src_b.read(1, window=win)
+                if src_b is not None:
+                    return data_b_full[win.toslices()]
+                return np.full_like(data_a_win, fill_value=const_val, dtype=data_a_win.dtype)
+
+            def _compute_window(data_a_win: np.ndarray, data_b_win: np.ndarray) -> np.ndarray:
+                if nodata_a is not None:
+                    mask_a = (data_a_win != nodata_a)
                 else:
-                    data_b = src_b.read(1)
-        else:
-            const_val = constant if constant is not None else 0
-            data_b = np.full_like(data_a, fill_value=const_val, dtype=data_a.dtype)
-            nodata_b = nodata_a
+                    mask_a = np.ones(data_a_win.shape, dtype=bool)
 
-        if nodata is None:
-            out_nodata = nodata_a if nodata_a is not None else 0
-        else:
-            out_nodata = nodata
+                if raster_b and nodata_b is not None:
+                    mask_b = (data_b_win != nodata_b)
+                else:
+                    mask_b = np.ones(data_a_win.shape, dtype=bool)
 
-        if nodata_a is not None:
-            mask_a = (data_a != nodata_a)
-        else:
-            mask_a = np.ones(src_a.shape, dtype=bool)
+                mask = mask_a & mask_b
 
-        if raster_b and nodata_b is not None:
-            mask_b = (data_b != nodata_b)
-        else:
-            mask_b = np.ones(src_a.shape, dtype=bool)
+                valid_a = np.where(mask, data_a_win, 0)
+                valid_b = np.where(mask, data_b_win, 0)
+                result = ne.evaluate(expression, local_dict={"A": valid_a, "B": valid_b})
 
-        mask = mask_a & mask_b
+                result = np.where(np.isfinite(result), result, out_nodata)
+                return np.where(mask, result, out_nodata)
 
-        valid_a = np.where(mask, data_a, 0)
-        valid_b = np.where(mask, data_b, 0)
-        result = ne.evaluate(expression, local_dict={"A": valid_a, "B": valid_b})
+            def _accumulate(res: np.ndarray) -> None:
+                nonlocal min_v, max_v, total, count
+                if isinstance(out_nodata, float) and np.isnan(out_nodata):
+                    valid = res[~np.isnan(res)]
+                else:
+                    valid = res[res != out_nodata]
+                count += int(valid.size)
+                if valid.size:
+                    total += float(valid.sum())
+                    vmin, vmax = float(valid.min()), float(valid.max())
+                    min_v = vmin if min_v is None else min(min_v, vmin)
+                    max_v = vmax if max_v is None else max(max_v, vmax)
 
-        result = np.where(np.isfinite(result), result, out_nodata)
-        result = np.where(mask, result, out_nodata)
+            # 窗口化：固定 512×512 网格，内存 O(window)（对齐/常数路径）。
+            # 首个窗口先算 dtype，再建 profile 写文件。
+            windows = [
+                Window(
+                    col0, row0,
+                    min(_WINDOW_SIZE, src_a.width - col0),
+                    min(_WINDOW_SIZE, src_a.height - row0),
+                )
+                for row0 in range(0, src_a.height, _WINDOW_SIZE)
+                for col0 in range(0, src_a.width, _WINDOW_SIZE)
+            ]
 
-        profile = _gtiff_profile(src_a.profile, nodata=out_nodata, count=1)
-        profile["dtype"] = result.dtype
+            min_v: Optional[float] = None
+            max_v: Optional[float] = None
+            total = 0.0
+            count = 0
 
-        with rasterio.open(out_path, "w", **profile) as dst:
-            dst.write(result, 1)
+            first_win = windows[0]
+            data_a0 = src_a.read(1, window=first_win)
+            result0 = _compute_window(data_a0, _get_b_window(first_win, data_a0))
 
-    if isinstance(out_nodata, float) and np.isnan(out_nodata):
-        valid = result[~np.isnan(result)]
-    else:
-        valid = result[result != out_nodata]
+            profile = _gtiff_profile(src_a.profile, nodata=out_nodata, count=1)
+            profile["dtype"] = result0.dtype
+
+            with rasterio.open(out_path, "w", **profile) as dst:
+                dst.write(result0, 1, window=first_win)
+                _accumulate(result0)
+                for win in windows[1:]:
+                    data_a_win = src_a.read(1, window=win)
+                    res = _compute_window(data_a_win, _get_b_window(win, data_a_win))
+                    dst.write(res, 1, window=win)
+                    _accumulate(res)
+        finally:
+            if src_b is not None:
+                src_b.close()
 
     stats = {
         "output_path": out_path,
         "expression": expression,
-        "min": float(valid.min()) if valid.size > 0 else 0.0,
-        "max": float(valid.max()) if valid.size > 0 else 0.0,
-        "mean": float(valid.mean()) if valid.size > 0 else 0.0,
-        "pixel_count": int(valid.size),
+        "min": float(min_v) if count > 0 else 0.0,
+        "max": float(max_v) if count > 0 else 0.0,
+        "mean": float(total / count) if count > 0 else 0.0,
+        "pixel_count": count,
     }
     return stats
 
