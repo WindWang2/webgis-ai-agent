@@ -183,6 +183,23 @@
   `PERF_UPDATE_BASELINES=1` after a measured improvement. Median-of-7 +
   absolute floors keep CI noise from flaking.
 
+### Performance — Windowed raster processing (goal §5, Phase D)
+
+- **`reclassify` is now windowed**: fixed 512×512 window grid (immune to
+  single-block sources) so memory is O(window) instead of O(full raster) with
+  several full-size temporaries. 4096×4096 float32 source: peak RSS
+  403,544 KB → 160,320 KB (**−60%**; raster-data portion ~215 MB →
+  window-sized), pixel-identical output + stats vs the full-array reference.
+- **Characterization tests** (`tests/unit/test_raster_reclassify_windowed.py`):
+  pixel-exact equality vs inlined reference, first-match-wins, nodata/NaN
+  isolation, stats quirks, single-block sources, lzw/tiled/dtype preserved.
+- **Fix (metrics writer)**: the writer thread is now crash-proof — a failing
+  batch (`_flush_batch` try/except + finally) can't kill it or wedge the
+  pending-rows counter (surfaced by the disk-failure test under full-suite
+  load); `_reset_for_tests` waits for writer quiescence so an in-flight batch
+  can't leak into the next test's log file. Combined metrics+caching suites:
+  19 passed in 4 s (was 8 failed / 198 s).
+
 ## [0.1.3] - 2026-08-03
 
 ### Performance & Remediation
