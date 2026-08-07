@@ -1,5 +1,78 @@
 # Changelog
 
+## [Unreleased] - 2026-08-07
+
+### Performance — Full-stack optimization (spatial compute / agent dispatch / rendering / storage)
+
+- **Spatial compute offloaded off the event loop**: synchronous CPU-bound tools
+  (ST-DBSCAN, KDE, Moran's I, hotspot, clustering, Voronoi, IDW, ...) now run via
+  `asyncio.to_thread` at the registry dispatch boundary (`app/tools/registry.py`)
+  instead of blocking the asyncio event loop — a 30s cluster analysis no longer
+  freezes every concurrent SSE stream / WebSocket / request. `cache_hit_var`
+  (ContextVar) propagation preserved through the thread boundary.
+- **Vectorized Chinese-CRS transforms**: WGS84/GCJ-02/BD-09 conversions now run as
+  NumPy array ops (`coord_transform.py`) — 100k points: ~180ms → ~36ms (−80%),
+  with 1e-9 numerical parity vs the scalar reference (parity tests added).
+- **`to_utm_gdf` memoization**: identity-keyed, thread-safe LRU cache
+  (64 entries) around parse + UTM reprojection; repeat analysis on the same
+  layer drops from ~98ms → ~0.1ms. Cache hits return defensive copies. Cache
+  entries pin a strong reference to the source object — prevents CPython
+  `id()` address reuse from silently serving another object's cached result
+  (a flaky full-suite failure in hotspot classification).
+- **Plan-mode wave-based parallel execution** (`plan_mode.py`): independent DAG
+  steps now dispatch concurrently per wave via `asyncio.wait(FIRST_COMPLETED)`
+  with fail-fast cancellation of remaining wave tasks. 6 independent 0.3s steps:
+  ~1.8s serial → ~0.33s (5.5×). `executed` remains deterministic (topo order).
+- **Streaming chat tool dispatch parallelized** (`execution_engine.py`):
+  `chat_stream` previously awaited each tool call sequentially. Now a 3-phase
+  pipeline — (1) emit per-tool `step_start`/`tool_call` in declaration order
+  while launching all tools concurrently, (2) stream results as each completes
+  (`asyncio.wait`), (3) append LLM-context messages in original `tool_call_id`
+  order. 4 independent 0.3s tools: ~1.2s serial → ~0.31s (3.9×, −74%).
+  Per-tool SSE ordering (start before result) and cancellation semantics preserved.
+- **Concurrency-safe tool dedup**: check-and-add on `executed_tools` is now
+  atomic (`tool_dispatch_service.py`) — two parallel identical tool calls can no
+  longer both pass the loop guard before either adds.
+- **SSE batching**: `SSEBatcher` (time/count-coalesced flush, terminal event
+  bypass) added to `app/utils/sse.py`, wired into the `chat_stream` token hot
+  path (32 events / 80ms window). 500-token LLM stream: ~500 HTTP writes →
+  ~20 (−96%). Structural events (`step_start`/`step_result`/`done`) stay
+  one-per-write so frontend event semantics are unchanged; fixed Pydantic v1
+  serialization bug (v1 branch called the v2-only `model_dump()`).
+- **L1 memory + L2 Redis two-layer cache** (`session_data_redis.py`):
+  `get_map_state` / `get_session_metadata` read-through an in-process LRU
+  (2s TTL, 512 sessions) and are write-invalidated by every state mutation —
+  collapses repeated Redis round-trips within a chat turn.
+- **MapSpec save path**: revision files now pruned to the newest
+  `MAPSPEC_REV_RETENTION` (20) — unbounded per-session disk growth eliminated;
+  identical re-saves skip all three writes (no-op guard).
+- **Frontend bundle**: `export_map` command now lazy-loads the heavy
+  `MapExporterEngine` (~1300 lines + canvas/layout deps) via dynamic `import()`
+  inside the render callback — removed from first-load bundle of every map screen.
+- **Viewport bbox filtering utilities**: `filterFeaturesByBounds` /
+  `geometryBBox` / `bboxIntersects` in `frontend/lib/utils/geo.ts` — pure
+  pre-`setData` culling for large inline GeoJSON sources (worker-safe, tested).
+- **Viewport filtering wired into the render pipeline**: `renderer.ts`
+  `addGeoJsonSource` accepts an optional `viewport` (trimming large inline
+  FeatureCollections before setData, retaining the raw data for re-filtering);
+  `refreshGeoJsonSourcesByViewport` re-filters every registered inline source
+  on the map's debounced move (map-panel 100ms viewport write), with a
+  per-source + exact-viewport result cache so a stable viewport never re-runs
+  setData (F31 fast path intact) and small sources pass through unchanged;
+  `MapSpecRuntime.applySource` passes the current viewport at apply time.
+  100k-feature layers parse only the visible subset per pan/zoom.
+- **MapSpecRuntime appliedSpec timing fix** (`mapspec-runtime/runtime.ts`):
+  `reconcileAsync` was updating `appliedSpec` at ENQUEUE time while ops run
+  next frame — a rapid second spec could coalesce `source:apply:S` in the
+  RenderDebouncer and drop the first patch's layer add while `appliedSpec`
+  already claimed the map reflected the second spec (silent update loss, and
+  the diff basis permanently diverged from the map). Now requests are
+  serialized (promise chain) and `appliedSpec` is updated only when the
+  patch's last op (unique-id z-order marker) actually executes; dispose
+  releases in-flight applies. TDD: 3 tests fail on old code, 4 added.
+- **Bugfix**: `kde_contours` leaked the final loop `i` into every feature's
+  `level` property — now carries per-polygon level index.
+
 ## [0.1.3] - 2026-08-03
 
 ### Performance & Remediation
