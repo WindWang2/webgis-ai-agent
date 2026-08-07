@@ -231,7 +231,38 @@
 - **Tests**: independent protobuf-decoder round-trips (geometry, properties,
   projection, tile filtering, empty tiles), endpoint auth/404/400/nested
   shapes, frontend adapter threshold x3 + runtime vector apply/source-layer/
-  geojson→vector upgrade. tsc clean, vitest 466 passed, eslint 0.
+  geojson->vector upgrade. tsc clean, vitest 466 passed, eslint 0.
+
+### Performance - Artifact Cache (goal §6, ADR-0048) + §5 windowing decisions
+
+- **Content-addressed artifact cache** (`app/lib/artifact_cache.py`):
+  `resample_raster` (the most expensive file-producing op) now caches its
+  output under `data/artifacts/<key>.tif` keyed by
+  `sha256(source identity, source mtime+size, operation, params, software
+  version namespace)`. A repeat call with identical inputs returns in ~ms
+  (file stat + meta read) instead of minutes - no recompute. Atomic publish
+  (temp file + `os.replace`), LRU eviction (default 5 GiB cap), automatic
+  invalidation on source mtime/size change, manual `ARTIFACT_VERSION_NS`
+  bump for algorithm/rasterio version changes. Sits below the existing
+  singleflight (ADR-0045): a miss here still singleflights the compute.
+- **§5 windowing decisions** (ADR-0048 Part 1): the four remaining raster
+  paths (`resample`, `zonal_stats`, NDVI/spectral, `change_detection`) were
+  audited - **all are already block-streamed by GDAL/rasterstats** (or run
+  on already-materialized band arrays), so no Python-side windowing is
+  needed. Documented rather than refactored.
+- **Tests** (`tests/unit/test_artifact_cache.py`): key determinism,
+  source-change invalidation, hit-skips-recompute, atomic publish, stale
+  miss, LRU eviction, resample_raster integration (identical output on
+  cache hit, different params -> recompute).
+
+### Performance - Harness expansion (goal §10)
+
+- **3 new workloads** added to `tests/benchmarks/test_perf_harness.py`
+  (now 7 total): `reclassify_windowed` (1024² multi-block raster, ~106 ms),
+  `h3_binning_10k` (10k synthetic points, ~21 ms), `artifact_cache_hit`
+  (~0.06 ms). Covers the spec's Vector + Raster-compute + Agent-runtime
+  axes (Frontend workloads remain a follow-up - they need a browser harness).
+  Baselines refreshed; 7/7 stable across 3 runs.
 
 ## [0.1.3] - 2026-08-03
 
