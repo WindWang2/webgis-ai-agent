@@ -172,18 +172,26 @@ async def test_raster_resample_basic(advanced_tools, tmp_raster):
         assert "output_path" in data or "new_shape" in data
 
 
-@pytest.mark.heavy
 @pytest.mark.asyncio
-@pytest.mark.timeout(600)  # PROJ init on first CRS change is slow: ~2-3min isolated, up to 5min+ under full-suite load
 async def test_raster_resample_with_crs_change(advanced_tools, tmp_raster):
-    """Resample with CRS change should work (slow: PROJ init overhead)."""
+    """Resample with CRS change should verify the transform math.
+
+    Uses a 10 km target resolution: the 3°×3° EPSG:4326 fixture maps to a
+    34×34 px EPSG:3857 grid. (This test previously used target_resolution=1.0
+    — 1 m in EPSG:3857 — which produced a 334,035×334,035 px ~111 G-pixel
+    warp, an accidental multi-minute benchmark; the resource guard now
+    rejects such requests, see test_raster_resource_guard.py.)
+    """
     result = await advanced_tools.dispatch("raster_resample", {
         "raster_path": tmp_raster,
-        "target_resolution": 1.0,
+        "target_resolution": 10000.0,
         "target_crs": "EPSG:3857",
         "resampling": "bilinear",
     })
     _assert_ok(result)
+    data = result.get("data", result)
+    assert data["new_shape"] == [34, 34]
+    assert data["target_crs"] == "EPSG:3857"
 
 
 @pytest.mark.asyncio
