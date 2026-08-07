@@ -17,6 +17,7 @@ import logging
 import os
 import queue
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -49,6 +50,9 @@ _STOP = object()
 _writer_thread: Optional[threading.Thread] = None
 _writer_started = False
 _start_lock = threading.Lock()
+# 尚未落盘的行数（入队 +1，writer 每批落盘 -N）。测试隔离用：_reset_for_tests
+# 等待其归零，避免 in-flight batch 在 LOG_PATH 切换后写入下一个测试的文件。
+_pending_rows = 0
 
 
 def _ensure_writer() -> None:
@@ -63,6 +67,17 @@ def _ensure_writer() -> None:
         t.start()
 
 
+def _flush_batch(batch: list[str]) -> None:
+    """Flush one batch; the writer thread must never die on a bad batch."""
+    global _pending_rows
+    try:
+        _append_batch(batch)
+    except Exception as e:  # noqa: BLE001 — 单批失败不能杀死 writer 线程
+        logger.exception(f"[tool_metrics] writer flush failed: {type(e).__name__}: {e}")
+    finally:
+        _pending_rows -= len(batch)
+
+
 def _writer_loop() -> None:
     """Drain the queue in batches; flush partial batches after an idle gap."""
     batch: list[str] = []
@@ -71,16 +86,16 @@ def _writer_loop() -> None:
             line = _queue.get(timeout=_IDLE_FLUSH_S)
         except queue.Empty:
             if batch:
-                _append_batch(batch)
+                _flush_batch(batch)
                 batch = []
             continue
         if line is _STOP:
             if batch:
-                _append_batch(batch)
+                _flush_batch(batch)
             return
         batch.append(line)
         if len(batch) >= _FLUSH_BATCH:
-            _append_batch(batch)
+            _flush_batch(batch)
             batch = []
 
 
@@ -119,27 +134,30 @@ def _rotate_if_needed() -> None:
 
 
 def _append_batch(lines: list[str]) -> None:
-    """Append a batch with a single open; rotation + failures are contained."""
-    try:
-        _rotate_if_needed()
-        _ensure_log_dir()
-        with open(LOG_PATH, "a", encoding="utf-8") as f:
-            f.write("".join(lines))
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"[tool_metrics] write failed (dropping {len(lines)} rows): {type(e).__name__}: {e}")
+    """Append a batch with a single open; rotation + failures are contained.
+
+    Callers (writer loop) wrap this in ``_flush_batch`` so a failure here can
+    never kill the writer thread or wedge the pending-rows counter.
+    """
+    _rotate_if_needed()
+    _ensure_log_dir()
+    with open(LOG_PATH, "a", encoding="utf-8") as f:
+        f.write("".join(lines))
 
 
 def _enqueue(line: str) -> None:
+    global _pending_rows
     _ensure_writer()
     try:
         _queue.put_nowait(line)
+        _pending_rows += 1
     except queue.Full:
         # 背压: 丢弃新行, 绝不阻塞事件循环。
         logger.warning("[tool_metrics] queue full — dropping row")
 
 
 def _reset_for_tests() -> None:
-    global _aggregator, _hist, _call_counter
+    global _aggregator, _hist, _call_counter, _pending_rows
     with _lock:
         _aggregator = {}
         _hist = {}
@@ -147,8 +165,13 @@ def _reset_for_tests() -> None:
     while True:
         try:
             _queue.get_nowait()
+            _pending_rows -= 1
         except queue.Empty:
             break
+    # 等 writer 把已出队但未落盘的 batch 写完，避免跨测试污染下一个 LOG_PATH。
+    deadline = time.monotonic() + 5.0
+    while _pending_rows > 0 and time.monotonic() < deadline:
+        time.sleep(0.01)
 
 
 def record_tool_call(
