@@ -263,7 +263,7 @@ def kde_contours(
 
     out_features = []
     from shapely.geometry import Polygon
-    raw_polys = []  # (poly, val) - batch CRS transform after loop
+    raw_polys = []  # (poly, val, level_idx) - batch CRS transform after loop
     for i, segs in enumerate(cs.allsegs):
         val = float(cs.levels[i])
         for poly_coords in segs:
@@ -272,16 +272,19 @@ def kde_contours(
             poly = Polygon(poly_coords)
             if not poly.is_valid:
                 poly = poly.buffer(0)
-            raw_polys.append((poly, val))
+            raw_polys.append((poly, val, i))
 
     # Batch CRS transform: one GeoSeries instead of N per-polygon calls
     if raw_polys:
-        gs = gpd.GeoSeries([p for p, _ in raw_polys], crs=utm_crs).to_crs("EPSG:4326")
-        for (poly, val), poly_wgs84 in zip(raw_polys, gs):
+        gs = gpd.GeoSeries([p for p, _, _ in raw_polys], crs=utm_crs).to_crs("EPSG:4326")
+        for (poly, val, level_idx), poly_wgs84 in zip(raw_polys, gs):
             out_features.append({
                 "type": "Feature",
                 "geometry": mapping(poly_wgs84),
-                "properties": {"level": i, "density_value": val},
+                # BUGFIX: previously `level: i` leaked the final loop value of
+                # the enumerate(cs.allsegs) loop, assigning the same (last)
+                # level index to every feature. Carry the per-polygon level_idx.
+                "properties": {"level": level_idx, "density_value": val},
             })
 
     # compute continuous legend_spec from contour level values

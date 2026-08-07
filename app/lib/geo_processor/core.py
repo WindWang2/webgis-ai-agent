@@ -1,4 +1,5 @@
 import json
+import threading
 from typing import Any, Optional
 import geopandas as gpd
 from shapely.geometry import shape
@@ -157,16 +158,105 @@ def to_feature_collection(data: Any) -> dict:
 
     return {"type": "FeatureCollection", "features": []}
 
+# ---------------------------------------------------------------------------
+# to_utm_gdf memoization (Phase 4 perf)
+#
+# Multi-step analyses (cluster -> hotspot on the same layer) each call
+# to_utm_gdf and re-pay parse + UTM reprojection. We cache by object identity
+# (id(geojson)). The cache is bounded (LRU) and returns COPIES on hit so caller
+# mutations never poison the cached entry. Identity-keyed (not content-hashed)
+# so hashing a 100k-point FeatureCollection stays O(1).
+#
+# CRITICAL correctness note (found via flaky CI test): the cache entry MUST
+# hold a strong reference to the geojson object. CPython reuses memory
+# addresses: once an object is GC'd, a new object can land on the same id().
+# Without the reference pin, a fresh FeatureCollection from another test can
+# key-collide with an evicted-but-still-live cache entry and silently get the
+# OLD object's cached result. Holding the reference makes id() reuse
+# impossible while the entry is live; LRU eviction releases the pin and only
+# then can the address be reused.
+# ---------------------------------------------------------------------------
+_UTM_CACHE_MAX = 64
+_utm_cache: dict[tuple, tuple] = {}  # key -> (geojson_ref, gdf, utm_crs_str)
+_utm_cache_order: list[tuple] = []   # LRU order (MRU at end)
+_utm_cache_lock = threading.Lock()
+
+
+def clear_utm_cache() -> None:
+    """Drop all cached to_utm_gdf results (tests / memory-pressure escape hatch)."""
+    with _utm_cache_lock:
+        _utm_cache.clear()
+        _utm_cache_order.clear()
+
+
+def get_utm_cache_info() -> dict:
+    """Introspection accessor (size only; hit/miss counters omitted for simplicity)."""
+    with _utm_cache_lock:
+        return {"size": len(_utm_cache), "max": _UTM_CACHE_MAX}
+
+
+def _cache_key_for(geojson: Any, source_crs: Optional[str]) -> Optional[tuple]:
+    """Build an identity-based cache key, or None if input is unhashable-by-identity.
+
+    Only dict / list inputs are cacheable (the common GeoJSON shapes). Strings
+    are parsed-and-discarded so identity caching is unsafe for them.
+    """
+    if isinstance(geojson, (dict, list)):
+        return (id(geojson), source_crs)
+    return None
+
+
+def _cache_get(key: tuple) -> Optional[tuple]:
+    """Return (gdf, utm_crs_str) on hit; None on miss."""
+    with _utm_cache_lock:
+        if key not in _utm_cache:
+            return None
+        # move to MRU
+        _utm_cache_order.remove(key)
+        _utm_cache_order.append(key)
+        _geojson_ref, gdf, utm = _utm_cache[key]
+        return gdf, utm
+
+
+def _cache_put(key: tuple, geojson_ref: Any, value: tuple) -> None:
+    """Store (gdf, utm_crs_str) keyed by id(geojson), pinning geojson_ref alive."""
+    with _utm_cache_lock:
+        if key in _utm_cache:
+            _utm_cache_order.remove(key)
+        gdf, utm = value
+        _utm_cache[key] = (geojson_ref, gdf, utm)  # 引用钉子：防 id 复用
+        _utm_cache_order.append(key)
+        # evict LRU entries beyond capacity
+        while len(_utm_cache_order) > _UTM_CACHE_MAX:
+            old = _utm_cache_order.pop(0)
+            _utm_cache.pop(old, None)
+
+
 def to_utm_gdf(geojson: Any, source_crs: Optional[str] = None) -> tuple[gpd.GeoDataFrame, str] | tuple[None, None]:
     """Convert GeoJSON to UTM GeoDataFrame with automatic zone detection.
-    
+
+    Results are memoized by object identity to amortize parse+reproject across
+    multi-step analyses. Cached hits return a fresh ``.copy()`` so caller
+    mutations (column adds, geometry edits) never corrupt the cache.
+
     Returns:
         tuple[gpd.GeoDataFrame, str]: (projected_gdf, utm_crs_string) or (None, None)
     """
+    # Identity-keyed cache lookup. None-keyed inputs (str/bytes) always recompute.
+    cache_key = _cache_key_for(geojson, source_crs)
+    if cache_key is not None:
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            gdf_cached, utm = cached
+            # Defensive copy: callers may add columns / edit geometry.
+            gdf_copy = gdf_cached.copy()
+            gdf_copy._original_crs = gdf_cached._original_crs
+            return gdf_copy, utm
+
     parsed = safe_parse(geojson)
     if parsed is None:
         return None, None
-        
+
     fc = to_feature_collection(parsed)
     features = fc.get("features", [])
 
@@ -199,44 +289,56 @@ def to_utm_gdf(geojson: Any, source_crs: Optional[str] = None) -> tuple[gpd.GeoD
             rows.append({"geometry": s, **props})
         except (ValueError, TypeError):
             continue
-            
+
     if not rows:
         return None, None
-        
+
     original_crs_explicit = source_crs
     gdf = gpd.GeoDataFrame(rows, crs=source_crs or "EPSG:4326")
     gdf["geometry"] = gdf.geometry.make_valid()
     gdf._original_crs = original_crs_explicit or (str(gdf.crs) if gdf.crs else "EPSG:4326")
-    
-    if gdf.crs and gdf.crs.is_projected:
-        return gdf, str(gdf.crs)
-        
-    utm_crs = None
-    try:
-        utm_crs_obj = gdf.estimate_utm_crs()
-        if utm_crs_obj is not None:
-            utm_crs = str(utm_crs_obj)
-    except Exception:
-        utm_crs = None
 
-    if utm_crs:
+    if gdf.crs and gdf.crs.is_projected:
+        result = (gdf, str(gdf.crs))
+    else:
+        utm_crs = None
         try:
-            projected = gdf.to_crs(utm_crs)
-            projected["geometry"] = projected.geometry.make_valid()
-            projected._original_crs = gdf._original_crs
-            return projected, utm_crs
+            utm_crs_obj = gdf.estimate_utm_crs()
+            if utm_crs_obj is not None:
+                utm_crs = str(utm_crs_obj)
         except Exception:
             utm_crs = None
 
-    centroid = gdf.geometry.union_all().centroid
-    lon = (centroid.x + 180) % 360 - 180
-    zone_number = int((lon + 180) / 6) + 1
-    zone_number = max(1, min(60, zone_number))
-    hemisphere = 32600 if centroid.y >= 0 else 32700
-    utm_crs = f"EPSG:{hemisphere + zone_number}"
-    
-    projected = gdf.to_crs(utm_crs)
-    projected["geometry"] = projected.geometry.make_valid()
-    projected._original_crs = gdf._original_crs
-    return projected, utm_crs
+        if utm_crs:
+            try:
+                projected = gdf.to_crs(utm_crs)
+                projected["geometry"] = projected.geometry.make_valid()
+                projected._original_crs = gdf._original_crs
+                result = (projected, utm_crs)
+            except Exception:
+                utm_crs = None
+
+        if utm_crs is None:
+            centroid = gdf.geometry.union_all().centroid
+            lon = (centroid.x + 180) % 360 - 180
+            zone_number = int((lon + 180) / 6) + 1
+            zone_number = max(1, min(60, zone_number))
+            hemisphere = 32600 if centroid.y >= 0 else 32700
+            utm_crs = f"EPSG:{hemisphere + zone_number}"
+
+            projected = gdf.to_crs(utm_crs)
+            projected["geometry"] = projected.geometry.make_valid()
+            projected._original_crs = gdf._original_crs
+            result = (projected, utm_crs)
+
+    # Cache the canonical result. Callers get copies; the cached gdf itself is
+    # never handed out, so its geometry/columns stay pristine. `parsed` is
+    # pinned as the strong reference that prevents id() reuse collisions.
+    if cache_key is not None:
+        _cache_put(cache_key, parsed, result)
+
+    gdf_out, utm_out = result
+    gdf_copy = gdf_out.copy()
+    gdf_copy._original_crs = gdf_out._original_crs
+    return gdf_copy, utm_out
 
