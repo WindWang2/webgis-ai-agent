@@ -1,5 +1,8 @@
-"""tool_metrics tests — JSONL writer + in-process aggregator + digest emission."""
+"""tool_metrics tests — queued JSONL writer + aggregator + percentiles + rotation."""
 import json
+import os
+import time
+
 import pytest
 
 from app.services import tool_metrics
@@ -7,12 +10,39 @@ from app.services import tool_metrics
 
 @pytest.fixture(autouse=True)
 def _isolated_metrics(tmp_path, monkeypatch):
-    """每个测试用临时日志文件 + 重置聚合器。"""
+    """每个测试用临时日志文件 + 重置聚合器 + 清空待写队列。"""
     log_path = tmp_path / "tool_metrics.jsonl"
     monkeypatch.setattr(tool_metrics, "LOG_PATH", str(log_path))
     tool_metrics._reset_for_tests()
     yield log_path
     tool_metrics._reset_for_tests()
+
+
+def _wait_for_rows(log_path, min_rows=1, timeout=5.0):
+    """Writes are async (writer thread) — poll until rows appear.
+
+    Tolerates torn reads: the writer may be mid-append when we read.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if log_path.exists():
+            try:
+                text = log_path.read_text(encoding="utf-8").strip()
+            except (OSError, UnicodeDecodeError):
+                time.sleep(0.02)
+                continue
+            rows = []
+            for line in text.splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass  # torn line — retry
+            if len(rows) >= min_rows:
+                return rows
+        time.sleep(0.02)
+    raise AssertionError(f"log rows not written within {timeout}s: {log_path}")
 
 
 def test_record_tool_call_writes_one_jsonl_line(_isolated_metrics):
@@ -25,9 +55,8 @@ def test_record_tool_call_writes_one_jsonl_line(_isolated_metrics):
         error=None,
         session_id="sess1",
     )
-    text = _isolated_metrics.read_text().strip()
-    assert text.count("\n") == 0  # exactly one line
-    row = json.loads(text)
+    rows = _wait_for_rows(_isolated_metrics)
+    row = rows[0]
     assert row["tool"] == "heatmap_data"
     assert row["arg_bytes"] == 1234
     assert row["result_bytes"] == 56789
@@ -43,7 +72,7 @@ def test_record_tool_call_cache_hit_true(_isolated_metrics):
         tool="heatmap_data", arg_bytes=10, result_bytes=20,
         duration_ms=1, cache_hit=True, error=None, session_id=None,
     )
-    row = json.loads(_isolated_metrics.read_text().strip())
+    row = _wait_for_rows(_isolated_metrics)[0]
     assert row["cache_hit"] is True
     assert row["session_id"] is None
 
@@ -53,7 +82,7 @@ def test_record_tool_call_error_records_class_name(_isolated_metrics):
         tool="osm_fetch", arg_bytes=100, result_bytes=0,
         duration_ms=2000, cache_hit=False, error="TimeoutError", session_id=None,
     )
-    row = json.loads(_isolated_metrics.read_text().strip())
+    row = _wait_for_rows(_isolated_metrics)[0]
     assert row["error"] == "TimeoutError"
 
 
@@ -61,7 +90,7 @@ def test_record_tool_call_disk_failure_does_not_raise(monkeypatch, _isolated_met
     """写盘失败不能阻塞工具调用。"""
     def boom(*a, **kw):
         raise OSError("disk full")
-    monkeypatch.setattr(tool_metrics, "_write_jsonl_line", boom)
+    monkeypatch.setattr(tool_metrics, "_append_batch", boom)
     # MUST NOT raise
     tool_metrics.record_tool_call(
         tool="x", arg_bytes=0, result_bytes=0, duration_ms=0,
@@ -134,3 +163,80 @@ def test_no_digest_at_99_calls(caplog, _isolated_metrics):
             )
     matching = [r for r in caplog.records if "TOOL_METRICS_DIGEST" in r.getMessage()]
     assert len(matching) == 0
+
+
+# ─── new: real percentiles, rotation, backpressure ───────────────────────────
+
+
+def test_snapshot_reports_true_percentiles(_isolated_metrics):
+    """Log2 histogram must yield p50/p95/p99 (bounded bins, no raw retention)."""
+    for _ in range(80):
+        tool_metrics.record_tool_call(
+            tool="B", arg_bytes=0, result_bytes=0, duration_ms=100,
+            cache_hit=False, error=None, session_id=None,
+        )
+    for _ in range(19):
+        tool_metrics.record_tool_call(
+            tool="B", arg_bytes=0, result_bytes=0, duration_ms=1000,
+            cache_hit=False, error=None, session_id=None,
+        )
+    tool_metrics.record_tool_call(
+        tool="B", arg_bytes=0, result_bytes=0, duration_ms=10000,
+        cache_hit=False, error=None, session_id=None,
+    )
+    snap = tool_metrics.aggregator_snapshot()["B"]
+    assert snap["count"] == 100
+    # p50 ≈ 100 (80% of samples at 100ms)
+    assert 50 <= snap["p50"] <= 200
+    # p95 ≈ 1000 (95% at ≤1000ms)
+    assert 500 <= snap["p95"] <= 2000
+    # p99 ≈ 1000
+    assert 500 <= snap["p99"] <= 5000
+    assert snap["max_ms"] == 10000  # max is max, not a percentile
+
+
+def test_rotation_keeps_backups_bounded(_isolated_metrics):
+    """Filling past MAX_LOG_BYTES must rotate to .1..5 and drop the oldest."""
+    import app.services.tool_metrics as tm
+
+    old = tm._MAX_LOG_BYTES
+    tm._MAX_LOG_BYTES = 100  # each JSONL row is ~150B → every append rotates
+    try:
+        for _ in range(4):
+            tool_metrics.record_tool_call(
+                tool="rot", arg_bytes=0, result_bytes=0, duration_ms=1,
+                cache_hit=False, error=None, session_id=None,
+            )
+            _wait_for_rows(_isolated_metrics)
+        time.sleep(0.3)  # let the writer's rotation finish
+        backups = sorted(
+            p for p in os.listdir(_isolated_metrics.parent)
+            if p.startswith(_isolated_metrics.name) and p != _isolated_metrics.name
+        )
+        assert len(backups) <= tool_metrics._MAX_ROTATIONS
+        assert any(p.endswith(".1") for p in backups)
+        # The live log is bounded by one writer batch (rotation caps growth),
+        # not left to accumulate every row forever.
+        assert os.path.getsize(_isolated_metrics) < 2000
+    finally:
+        tm._MAX_LOG_BYTES = old
+
+
+def test_queue_full_drops_row_without_blocking(_isolated_metrics, monkeypatch):
+    """Backpressure: a full queue must not block or raise in the caller."""
+    monkeypatch.setattr(tool_metrics, "_MAX_QUEUE", 1)
+    # Recreate a tiny queue to honor the patched bound.
+    monkeypatch.setattr(tool_metrics, "_queue", __import__("queue").Queue(maxsize=1))
+    tool_metrics.record_tool_call(
+        tool="A", arg_bytes=0, result_bytes=0, duration_ms=1,
+        cache_hit=False, error=None, session_id=None,
+    )  # fills the queue (writer may not have drained yet)
+    t0 = time.monotonic()
+    tool_metrics.record_tool_call(
+        tool="B", arg_bytes=0, result_bytes=0, duration_ms=1,
+        cache_hit=False, error=None, session_id=None,
+    )  # must drop fast, not block
+    assert time.monotonic() - t0 < 1.0
+    snap = tool_metrics.aggregator_snapshot()
+    assert snap["A"]["count"] == 1
+    assert snap["B"]["count"] == 1  # aggregator updated even if the row dropped
