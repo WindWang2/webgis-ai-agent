@@ -199,6 +199,16 @@
   load); `_reset_for_tests` waits for writer quiescence so an in-flight batch
   can't leak into the next test's log file. Combined metrics+caching suites:
   19 passed in 4 s (was 8 failed / 198 s).
+- **`raster_calculator` is now windowed** (aligned/constant paths): two
+  4096×4096 aligned float32 sources — peak RSS 518,580 KB → 220,048 KB
+  (**−58%**; ~6-8 full-size temporaries → window-sized), pixel-identical
+  output + stats. The unaligned B-reproject path stays full-array (docs
+  advise resampling first). Characterization tests in
+  `tests/unit/test_raster_calculator_windowed.py`.
+- **Sync-tool thread concurrency bound**: registry `to_thread` offload now
+  runs under an `asyncio.Semaphore` (`max(4, min(16, cpu+4))`) — parallel
+  tool waves can't oversubscribe the GIL-bound pool (goal §3 concurrency
+  bound). Regression test: 4 concurrent sync tools peak at ≤ limit.
 
 ## [0.1.3] - 2026-08-03
 
