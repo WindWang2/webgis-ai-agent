@@ -81,6 +81,11 @@ class MemorySessionStore(BaseSessionStore):
         """
         return self._aliases.get(session_id, {}).get(ref_or_alias, ref_or_alias)
 
+    async def resolve_aliases(self, session_id: str, strings: list[str]) -> dict[str, str]:
+        """Batch form of resolve_alias: one call for the whole list."""
+        aliases = self._aliases.get(session_id, {})
+        return {s: aliases.get(s, s) for s in strings}
+
     async def get(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]:
         """根据游标 ID 或别名获取原始数据"""
         session_cache = self._store.get(session_id)

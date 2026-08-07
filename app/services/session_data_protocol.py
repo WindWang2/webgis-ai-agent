@@ -36,6 +36,16 @@ class SessionStoreProtocol(Protocol):
     async def resolve_alias(self, session_id: str, ref_or_alias: str) -> str:
         ...
 
+    async def resolve_aliases(self, session_id: str, strings: List[str]) -> Dict[str, str]:
+        """Batch alias resolution: maps each input string to its canonical
+        ref_id, or the input unchanged when it is not an alias.
+
+        Must cost a single round-trip (one HMGET) for the whole list — the
+        registry's reference-resolution hot path calls this once per dispatch
+        instead of one resolve_alias RTT per string argument.
+        """
+        ...
+
     async def get_ref_data(
         self,
         session_id: str,

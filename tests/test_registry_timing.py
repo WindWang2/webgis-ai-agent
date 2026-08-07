@@ -1,5 +1,6 @@
 """Registry timing wrapper tests — every dispatch records one metrics row."""
 import json
+import time
 import pytest
 
 from app.services import tool_metrics
@@ -19,6 +20,30 @@ def _isolated(tmp_path, monkeypatch):
     _reset_redis_client_for_tests()
 
 
+def _wait_rows(log_path, min_rows=1, timeout=5.0):
+    """Metrics writes are async (queued writer thread) — poll for rows."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if log_path.exists():
+            try:
+                text = log_path.read_text(encoding="utf-8").strip()
+            except (OSError, UnicodeDecodeError):
+                time.sleep(0.02)
+                continue
+            rows = []
+            for line in text.splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass  # torn line — retry
+            if len(rows) >= min_rows:
+                return rows
+        time.sleep(0.02)
+    raise AssertionError(f"log rows not written within {timeout}s: {log_path}")
+
+
 @pytest.mark.asyncio
 async def test_dispatch_records_one_metrics_row(_isolated):
     reg = ToolRegistry()
@@ -29,9 +54,9 @@ async def test_dispatch_records_one_metrics_row(_isolated):
 
     await reg.dispatch("fake_tool", {"x": 3}, session_id="s1")
 
-    lines = _isolated.read_text().strip().splitlines()
-    assert len(lines) == 1
-    row = json.loads(lines[0])
+    rows = _wait_rows(_isolated)
+    assert len(rows) == 1
+    row = rows[0]
     assert row["tool"] == "fake_tool"
     assert row["cache_hit"] is False
     assert row["session_id"] == "s1"
@@ -58,10 +83,10 @@ async def test_dispatch_records_cache_hit_on_second_call(_isolated):
         await reg.dispatch("fake_tool", {"x": 3}, session_id="s1")
         await reg.dispatch("fake_tool", {"x": 3}, session_id="s1")
 
-    lines = _isolated.read_text().strip().splitlines()
-    assert len(lines) == 2
-    row1 = json.loads(lines[0])
-    row2 = json.loads(lines[1])
+    rows = _wait_rows(_isolated, min_rows=2)
+    assert len(rows) == 2
+    row1 = rows[0]
+    row2 = rows[1]
     assert row1["cache_hit"] is False
     assert row2["cache_hit"] is True
 
@@ -77,8 +102,8 @@ async def test_dispatch_records_error_class(_isolated):
     # dispatch catches and returns std_error_response — we still expect a row.
     result = await reg.dispatch("boom_tool", {}, session_id=None)
     assert result.get("success") is False
-    lines = _isolated.read_text().strip().splitlines()
-    assert len(lines) == 1
-    row = json.loads(lines[0])
+    rows = _wait_rows(_isolated)
+    assert len(rows) == 1
+    row = rows[0]
     assert row["tool"] == "boom_tool"
     assert row["error"] == "RuntimeError"

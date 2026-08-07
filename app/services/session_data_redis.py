@@ -282,6 +282,25 @@ class RedisSessionStore(BaseSessionStore):
             return ref_or_alias
         return ref_id.decode() if isinstance(ref_id, bytes) else ref_id
 
+    async def resolve_aliases(self, session_id: str, strings: list[str]) -> dict[str, str]:
+        """Batch alias resolution via a single HMGET round-trip.
+
+        The registry resolves every string argument of a tool call; doing it
+        one resolve_alias (HGET) at a time cost N serialized round-trips per
+        dispatch. One HMGET collapses that to a single round-trip.
+        """
+        if not strings:
+            return {}
+        await self._ensure_connected()
+        ref_ids = await self._r.hmget(self._aliases_key(session_id), strings)
+        out = {}
+        for s, ref in zip(strings, ref_ids):
+            if ref is None:
+                out[s] = s
+            else:
+                out[s] = ref.decode() if isinstance(ref, bytes) else ref
+        return out
+
     async def get(self, session_id: str, ref_id_or_alias: str) -> Optional[Any]:
         """读数据；Redis 不可达时返回 None（cache-miss 语义），让上层工具走自愈路径。
 

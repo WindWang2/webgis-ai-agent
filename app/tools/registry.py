@@ -351,50 +351,82 @@ class ToolRegistry:
         return result
 
     async def _resolve_references(self, session_id: str, arguments: Any, skip_keys: Optional[set[str]] = None) -> Any:
-        """递归解析参数中的数据引用 ref:xxx 或 别名"""
+        """递归解析参数中的数据引用 ref:xxx 或 别名（批量版）。
+
+        原先每个字符串参数都 await 一次 resolve_alias —— 一次 Redis HGET
+        round-trip；N 个字符串参数 = N 次串行 RTT。现在先收集全部字符串
+        叶节点，用一次 resolve_aliases（单个 HMGET）批量判定别名，再递归
+        替换，每次 dispatch 固定 1 次 RTT。
+        """
         if skip_keys is None:
             skip_keys = set()
 
-        if isinstance(arguments, str):
-            # /review P3-5: detect "is this a ref or a known alias?" via the public
-            # resolve_alias accessor — when it returns something different from the
-            # input, the input was a registered alias for this session.
-            _resolved = await session_data_manager.resolve_alias(session_id, arguments) if session_id else arguments
-            if arguments.startswith("ref:") or _resolved != arguments:
-                data = await session_data_manager.get(session_id, arguments)
-                if data is not None:
-                    return data
-
-                # 解引用失败：构造详细错误信息引导 AI 自愈
-                available_refs = await session_data_manager.list_refs(session_id)
-                ref_info = "\n".join([f"- {rid} ({alias})" if alias else f"- {rid}" for rid, alias in available_refs.items()])
-                error_msg = f"无法找到引用数据或别名: '{arguments}'。"
-                if available_refs:
-                    error_msg += f" 当前会话中可用的引用 ID 如下，请检查名称是否正确，并确保在同一次会话生命周期内使用:\n{ref_info}"
-                else:
-                    error_msg += " 当前会话中没有任何可用的数据引用。可能是因为页面刷新导致后端会话重置，请通过查询工具重新获取数据。"
-
-                raise ValueError(error_msg)
-
-            # 如果没找到且不是 ref: 格式，保持原样（可能是普通字符串参数）
+        if not session_id:
             return arguments
 
-        if isinstance(arguments, dict):
-            new_args = {}
-            for k, v in arguments.items():
-                if k in skip_keys:
-                    new_args[k] = v
-                else:
-                    new_args[k] = await self._resolve_references(session_id, v, skip_keys)
-            return new_args
+        if isinstance(arguments, str):
+            strings = [arguments]
+        elif isinstance(arguments, (dict, list)):
+            strings: list[str] = []
 
-        if isinstance(arguments, list):
-            result = []
-            for v in arguments:
-                result.append(await self._resolve_references(session_id, v, skip_keys))
-            return result
+            def _collect(node) -> None:
+                if isinstance(node, str):
+                    strings.append(node)
+                elif isinstance(node, dict):
+                    for k, v in node.items():
+                        if k in skip_keys:
+                            continue
+                        _collect(v)
+                elif isinstance(node, list):
+                    for v in node:
+                        _collect(v)
 
-        return arguments
+            _collect(arguments)
+        else:
+            return arguments
+
+        aliases = await session_data_manager.resolve_aliases(session_id, strings)
+
+        async def _resolve(node):
+            if isinstance(node, str):
+                # /review P3-5: "is this a ref or a known alias?" — when the
+                # batch lookup returns something different from the input, the
+                # input was a registered alias for this session.
+                _resolved = aliases.get(node, node)
+                if node.startswith("ref:") or _resolved != node:
+                    data = await session_data_manager.get(session_id, node)
+                    if data is not None:
+                        return data
+
+                    # 解引用失败：构造详细错误信息引导 AI 自愈
+                    available_refs = await session_data_manager.list_refs(session_id)
+                    ref_info = "\n".join([f"- {rid} ({alias})" if alias else f"- {rid}" for rid, alias in available_refs.items()])
+                    error_msg = f"无法找到引用数据或别名: '{node}'。"
+                    if available_refs:
+                        error_msg += f" 当前会话中可用的引用 ID 如下，请检查名称是否正确，并确保在同一次会话生命周期内使用:\n{ref_info}"
+                    else:
+                        error_msg += " 当前会话中没有任何可用的数据引用。可能是因为页面刷新导致后端会话重置，请通过查询工具重新获取数据。"
+
+                    raise ValueError(error_msg)
+
+                # 如果没找到且不是 ref: 格式，保持原样（可能是普通字符串参数）
+                return node
+
+            if isinstance(node, dict):
+                new_args = {}
+                for k, v in node.items():
+                    if k in skip_keys:
+                        new_args[k] = v
+                    else:
+                        new_args[k] = await _resolve(v)
+                return new_args
+
+            if isinstance(node, list):
+                return [await _resolve(v) for v in node]
+
+            return node
+
+        return await _resolve(arguments)
 
     def list_tools(self) -> list[str]:
         return list(self._tools.keys())

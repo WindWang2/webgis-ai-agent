@@ -25,6 +25,17 @@ async def test_memory_resolve_alias():
     assert resolved == ref
 
 
+async def test_memory_resolve_aliases_batch():
+    """Batch alias resolution: aliases resolved, plain strings unchanged."""
+    sdm = SessionDataManager()
+    ref = await sdm.store("s7", {})
+    await sdm.set_alias("s7", ref, "my-layer")
+    out = await sdm.resolve_aliases("s7", ["my-layer", "data/a.tif", "ref:data-1"])
+    assert out["my-layer"] == ref
+    assert out["data/a.tif"] == "data/a.tif"
+    assert out["ref:data-1"] == "ref:data-1"
+
+
 async def test_memory_get_session_metadata():
     sdm = SessionDataManager()
     await sdm.store("s4", {"a": 1})
@@ -93,6 +104,17 @@ async def test_redis_set_alias_and_resolve(fake_redis_sdm):
     await fake_redis_sdm.set_alias("rs3", ref, "城区")
     resolved = await fake_redis_sdm.resolve_alias("rs3", "城区")
     assert resolved == ref
+
+
+async def test_redis_resolve_aliases_batch(fake_redis_sdm):
+    """Batch form (HMGET) preserves single-item semantics; empty list is a no-op."""
+    ref = await fake_redis_sdm.store("rs7", {})
+    await fake_redis_sdm.set_alias("rs7", ref, "城区")
+    out = await fake_redis_sdm.resolve_aliases("rs7", ["城区", "普通路径.tif", "ref:data-1"])
+    assert out["城区"] == ref
+    assert out["普通路径.tif"] == "普通路径.tif"
+    assert out["ref:data-1"] == "ref:data-1"
+    assert await fake_redis_sdm.resolve_aliases("rs7", []) == {}
 
 
 async def test_redis_get_session_metadata_pipeline(fake_redis_sdm):
