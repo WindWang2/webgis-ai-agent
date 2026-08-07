@@ -7,6 +7,7 @@ from typing import Optional
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
+from rasterio.windows import Window
 from rasterio.warp import reproject, calculate_default_transform
 
 
@@ -57,6 +58,11 @@ MAX_OUTPUT_UPSCALE_RATIO = 10_000  # out px / in px, catches unit confusion on s
 
 # Pixel budgets used to suggest coarser target_resolution values in errors.
 _SUGGESTION_BUDGETS = (1_000_000, 10_000_000, MAX_OUTPUT_PIXELS)
+
+# Windowed processing: raster math iterates a fixed window grid so memory is
+# O(window) — even when the source file has a single giant block — instead of
+# O(full raster) with several full-size temporaries.
+_WINDOW_SIZE = 512
 
 
 
@@ -180,7 +186,6 @@ def reclassify(
     out_path = _suffix_output_path(raster_path, "_reclassified.tif")
 
     with rasterio.open(raster_path) as src:
-        data = src.read(1)
         src_nodata = src.nodata if src.nodata is not None else src.profile.get("nodata")
 
         if nodata is not None:
@@ -190,49 +195,71 @@ def reclassify(
         else:
             out_nodata = 0
 
-        profile = _gtiff_profile(src.profile, nodata=out_nodata, count=1)
-
         scheme_values = [r.get("value", 0) for r in scheme]
         out_dtype = np.result_type(*scheme_values, out_nodata) if scheme_values else np.result_type(out_nodata)
 
+        profile = _gtiff_profile(src.profile, nodata=out_nodata, count=1)
         profile["dtype"] = out_dtype
-        out_data = np.full_like(data, fill_value=out_nodata, dtype=out_dtype)
 
-        assigned = np.zeros(data.shape, dtype=bool)
-        if src_nodata is not None:
-            assigned[data == src_nodata] = True
+        # Windowed: fixed grid so memory stays O(_WINDOW_SIZE²) even for
+        # single-block sources; stats accumulate across windows and are
+        # re-uniqued at the end (identical to the full-array np.unique).
+        pixel_count = 0
+        per_window_uniques: list[np.ndarray] = []
 
-        for rule in scheme:
-            rmin = rule.get("min", -float("inf"))
-            rmax = rule.get("max", float("inf"))
-            rval = rule["value"]
-            rule_mask = (data >= rmin) & (data <= rmax)
-            if src_nodata is not None:
-                rule_mask = rule_mask & (data != src_nodata)
-
-            match_mask = rule_mask & (~assigned)
-            out_data[match_mask] = rval
-            assigned[match_mask] = True
+        def _valid_mask(arr: np.ndarray) -> np.ndarray:
+            if isinstance(out_nodata, float) and np.isnan(out_nodata):
+                return ~np.isnan(arr)
+            return arr != out_nodata
 
         with rasterio.open(out_path, "w", **profile) as dst:
-            dst.write(out_data, 1)
+            for row0 in range(0, src.height, _WINDOW_SIZE):
+                for col0 in range(0, src.width, _WINDOW_SIZE):
+                    win = Window(
+                        col0, row0,
+                        min(_WINDOW_SIZE, src.width - col0),
+                        min(_WINDOW_SIZE, src.height - row0),
+                    )
+                    data = src.read(1, window=win)
+                    out_data = np.full_like(data, fill_value=out_nodata, dtype=out_dtype)
 
-    if isinstance(out_nodata, float) and np.isnan(out_nodata):
-        valid_mask = ~np.isnan(out_data)
+                    assigned = np.zeros(data.shape, dtype=bool)
+                    if src_nodata is not None:
+                        assigned[data == src_nodata] = True
+
+                    for rule in scheme:
+                        rmin = rule.get("min", -float("inf"))
+                        rmax = rule.get("max", float("inf"))
+                        rval = rule["value"]
+                        rule_mask = (data >= rmin) & (data <= rmax)
+                        if src_nodata is not None:
+                            rule_mask = rule_mask & (data != src_nodata)
+
+                        match_mask = rule_mask & (~assigned)
+                        out_data[match_mask] = rval
+                        assigned[match_mask] = True
+
+                    dst.write(out_data, 1, window=win)
+                    valid = out_data[_valid_mask(out_data)]
+                    pixel_count += int(valid.size)
+                    if valid.size:
+                        per_window_uniques.append(np.unique(valid))
+
+    if per_window_uniques:
+        unique_vals = np.unique(np.concatenate(per_window_uniques))
     else:
-        valid_mask = (out_data != out_nodata)
+        unique_vals = np.array([], dtype=out_dtype)
 
-    unique_vals = np.unique(out_data[valid_mask])
     label_map = {rule["value"]: rule.get("label", str(rule["value"])) for rule in scheme}
 
-    if np.issubdtype(out_data.dtype, np.integer):
+    if np.issubdtype(out_dtype, np.integer):
         unique_value_list = [int(v) for v in unique_vals]
     else:
         unique_value_list = [float(v) for v in unique_vals]
 
     stats = {
         "output_path": out_path,
-        "pixel_count": int(valid_mask.sum()),
+        "pixel_count": pixel_count,
         "unique_values": unique_value_list,
         "labels": {str(k): v for k, v in label_map.items() if k in unique_vals},
     }
