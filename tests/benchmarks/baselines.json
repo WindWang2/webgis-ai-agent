@@ -1,30 +1,34 @@
 {
   "artifact_cache_hit": {
     "iterations": 7,
-    "median_ms": 0.059
+    "median_ms": 0.072
   },
   "dispatch_overhead": {
     "iterations": 7,
-    "median_ms": 0.494
+    "median_ms": 1.115
   },
   "h3_binning_10k": {
     "iterations": 7,
-    "median_ms": 20.932
+    "median_ms": 20.28
   },
   "metrics_enqueue": {
     "iterations": 7,
-    "median_ms": 0.016
+    "median_ms": 0.042
   },
   "raster_guard_rejection": {
     "iterations": 7,
-    "median_ms": 5.076
+    "median_ms": 6.247
+  },
+  "raster_tile_streaming": {
+    "iterations": 7,
+    "median_ms": 3.204
   },
   "reclassify_windowed": {
     "iterations": 7,
-    "median_ms": 106.393
+    "median_ms": 115.846
   },
   "ref_resolution_batch": {
     "iterations": 7,
-    "median_ms": 0.474
+    "median_ms": 1.414
   }
 }

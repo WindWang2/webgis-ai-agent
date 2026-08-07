@@ -243,6 +243,32 @@ def _artifact_cache_hit_ms() -> float:
         clear_artifact_cache()
 
 
+def _raster_tile_streaming_ms() -> float:
+    """Windowed raster tile rendering: 256x256 PNG generation from GeoTIFF."""
+    import os as _os
+    import uuid as _uuid
+    import rasterio as _rasterio
+    from rasterio.transform import from_bounds as _from_bounds
+    from app.services.raster_tile_service import render_raster_tile
+
+    data_dir = Path(__file__).parent.parent.parent / "data"
+    path = data_dir / f"test_perf_tile_{_uuid.uuid4().hex[:8]}.tif"
+    arr = np.ones((1, 200, 200), dtype=np.float32) * 42.0
+    with _rasterio.open(
+        path, "w", driver="GTiff", height=200, width=200, count=1,
+        dtype=np.float32, crs="EPSG:4326", transform=_from_bounds(116.0, 39.0, 117.0, 40.0, 200, 200),
+    ) as dst:
+        dst.write(arr)
+    try:
+        t0 = time.perf_counter()
+        png_bytes = render_raster_tile(str(path), z=8, x=210, y=100, tile_size=256)
+        elapsed = (time.perf_counter() - t0) * 1000
+        assert png_bytes.startswith(b"\x89PNG")
+        return elapsed
+    finally:
+        path.unlink(missing_ok=True)
+
+
 WORKLOADS = {
     "raster_guard_rejection": _raster_guard_rejection_ms,
     "ref_resolution_batch": _ref_resolution_batch_ms,
@@ -251,6 +277,7 @@ WORKLOADS = {
     "reclassify_windowed": _reclassify_windowed_ms,
     "h3_binning_10k": _h3_binning_ms,
     "artifact_cache_hit": _artifact_cache_hit_ms,
+    "raster_tile_streaming": _raster_tile_streaming_ms,
 }
 
 
