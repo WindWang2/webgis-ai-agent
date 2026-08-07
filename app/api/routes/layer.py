@@ -115,6 +115,42 @@ async def get_mvt_tile(
     )
 
 
+from app.services.raster_tile_service import render_raster_tile
+
+
+@router.get("/layers/data/{ref_id}/raster-tiles/{z}/{x}/{y}.png", tags=["图层数据"])
+async def get_raster_tile(
+    ref_id: str,
+    z: int,
+    x: int,
+    y: int,
+    session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    _conv: Conversation = Depends(require_owned_session),
+):
+    """以 Web Mercator XYZ PNG 瓦片形式返回栅格图层数据（Data Plane 路径）。"""
+    if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
+        raise HTTPException(status_code=400, detail="非法 ref_id")
+    if not (0 <= z <= 20) or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
+        raise HTTPException(status_code=400, detail="非法瓦片坐标")
+
+    res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
+    if not res.success or not res.data:
+        status_code = 403 if res.error_type == "PermissionDenied" else 404
+        raise HTTPException(status_code=status_code, detail=res.error or "栅格数据不可用")
+
+    raster_path = res.data.get("file_path") or res.data.get("path") if isinstance(res.data, dict) else str(res.data)
+    png_bytes = render_raster_tile(raster_path, z, x, y)
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "private, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @router.get("/layer-types", tags=["元数据"])
 def get_layer_types():
     """获取支持的图层类型列表"""
