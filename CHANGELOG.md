@@ -170,6 +170,19 @@
   synchronously — now poll for the queued writer's rows (ADR-0044 async-write
   contract).
 
+### Performance — Regression harness (goal §10, ADR-0046)
+
+- **Deterministic perf gate** (`tests/benchmarks/test_perf_harness.py`,
+  `-m perf`, ~1.5 s, no network/LLM): fixed workloads for this session's hot
+  paths — raster guard rejection (~4.8 ms median, was 2–5 min warp),
+  10-string batched ref resolution (~0.37 ms, was 10 serial RTTs), metrics
+  enqueue caller cost (~17 µs), dispatch overhead (~0.31 ms).
+- **Three-level gate**: median ≤ baseline × 1.75 passes (warning beyond),
+  > baseline × 4.0 fails as a **hard regression**; baselines committed to
+  `tests/benchmarks/baselines.json`, refreshed with
+  `PERF_UPDATE_BASELINES=1` after a measured improvement. Median-of-7 +
+  absolute floors keep CI noise from flaking.
+
 ## [0.1.3] - 2026-08-03
 
 ### Performance & Remediation
