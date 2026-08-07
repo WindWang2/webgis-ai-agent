@@ -143,11 +143,114 @@ def _dispatch_overhead_ms() -> float:
     return asyncio.run(_run())
 
 
+def _reclassify_windowed_ms() -> float:
+    """Raster-compute workload: windowed reclassify over a multi-block raster."""
+    import os as _os
+    import uuid as _uuid
+    import rasterio as _rasterio
+    from rasterio.transform import from_origin as _from_origin
+    from app.lib.geo_analysis.raster_math import reclassify
+
+    data_dir = Path(__file__).parent.parent.parent / "data"
+    path = data_dir / f"test_perf_recl_{_uuid.uuid4().hex[:8]}.tif"
+    rng = np.random.default_rng(99)
+    arr = rng.integers(0, 20, size=(1024, 1024)).astype(np.float32)
+    with _rasterio.open(
+        path, "w", driver="GTiff", height=1024, width=1024, count=1,
+        dtype=np.float32, crs="EPSG:4326", transform=_from_origin(0, 1024, 1, 1),
+        tiled=True, blockxsize=256, blockysize=256,
+    ) as dst:
+        dst.write(arr, 1)
+    try:
+        scheme = [
+            {"min": 0, "max": 4, "value": 1}, {"min": 5, "max": 9, "value": 2},
+            {"min": 10, "max": 14, "value": 3}, {"min": 15, "max": 19, "value": 4},
+        ]
+        t0 = time.perf_counter()
+        res = reclassify(str(path), scheme)
+        elapsed = (time.perf_counter() - t0) * 1000
+        assert res["pixel_count"] > 0
+        _os.unlink(res["output_path"])
+        return elapsed
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def _h3_binning_ms() -> float:
+    """Vector workload: H3 binning over 10k synthetic points."""
+    from app.tools.spatial_stats import register_spatial_stats_tools
+
+    reg = ToolRegistry()
+    register_spatial_stats_tools(reg)
+
+    rng = np.random.default_rng(7)
+    features = []
+    for _ in range(10_000):
+        lon = float(rng.uniform(116.0, 117.0))
+        lat = float(rng.uniform(39.0, 40.0))
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            "properties": {"v": float(rng.random())},
+        })
+    geojson = {"type": "FeatureCollection", "features": features}
+
+    async def _run():
+        t0 = time.perf_counter()
+        res = await reg.dispatch("h3_binning", {
+            "geojson": geojson, "resolution": 8, "value_field": "v", "aggregation": "mean",
+        }, session_id=None)
+        elapsed = (time.perf_counter() - t0) * 1000
+        assert res.get("success") is True or "data" in res
+        return elapsed
+
+    return asyncio.run(_run())
+
+
+def _artifact_cache_hit_ms() -> float:
+    """Agent-runtime workload: artifact cache hit returns in ~ms (not recompute)."""
+    import os as _os
+    import uuid as _uuid
+    import rasterio as _rasterio
+    from rasterio.transform import from_origin as _from_origin
+    from app.lib.artifact_cache import clear_artifact_cache, make_artifact_key, publish_artifact
+
+    data_dir = Path(__file__).parent.parent.parent / "data"
+    src = data_dir / f"test_perf_art_{_uuid.uuid4().hex[:8]}.tif"
+    arr = np.ones((64, 64), dtype=np.float32)
+    with _rasterio.open(
+        src, "w", driver="GTiff", height=64, width=64, count=1, dtype=np.float32,
+        crs="EPSG:4326", transform=_from_origin(0, 64, 1, 1),
+    ) as dst:
+        dst.write(arr, 1)
+    try:
+        key = make_artifact_key(str(src), "resample", {"target_resolution": 100.0})
+        out = str(data_dir / f"test_perf_art_out_{_uuid.uuid4().hex[:8]}.tif")
+        with _rasterio.open(out, "w", driver="GTiff", height=64, width=64, count=1,
+                            dtype=np.float32, crs="EPSG:3857",
+                            transform=_from_origin(0, 64, 100, 100)) as dst:
+            dst.write(arr, 1)
+        publish_artifact(key, str(src), lambda: out)  # prime the cache
+
+        t0 = time.perf_counter()
+        for _ in range(50):
+            publish_artifact(key, str(src), lambda: (_ for _ in ()).throw(AssertionError("should hit cache")))
+        elapsed = (time.perf_counter() - t0) * 1000 / 50
+        _os.unlink(out)
+        return elapsed
+    finally:
+        src.unlink(missing_ok=True)
+        clear_artifact_cache()
+
+
 WORKLOADS = {
     "raster_guard_rejection": _raster_guard_rejection_ms,
     "ref_resolution_batch": _ref_resolution_batch_ms,
     "metrics_enqueue": _metrics_enqueue_ms,
     "dispatch_overhead": _dispatch_overhead_ms,
+    "reclassify_windowed": _reclassify_windowed_ms,
+    "h3_binning_10k": _h3_binning_ms,
+    "artifact_cache_hit": _artifact_cache_hit_ms,
 }
 
 
