@@ -54,9 +54,15 @@ def _overpass_to_geojson(data: str | dict) -> dict:
     return {"type": "FeatureCollection", "features": features}
 
 
-async def _query_overpass(query: str) -> dict:
-    """执行 Overpass QL 查询，返回 GeoJSON"""
-    full_query = f"[out:json][timeout:30];{query.rstrip(';')};out body geom;"
+async def _query_overpass(query: str, limit: Optional[int] = None) -> dict:
+    """执行 Overpass QL 查询，返回 GeoJSON。
+
+    limit: 可选输出上限 → 追加 ``out body geom <limit>;``，把服务端返回
+    限制在契约范围内（大 bbox 的 POI/道路/建筑查询否则会返回数万要素，
+    产生几十 MB GeoJSON）。None 时不限制（行政边界等场景）。
+    """
+    limit_clause = f"out body geom {limit};" if limit is not None else "out body geom;"
+    full_query = f"[out:json][timeout:30];{query.rstrip(';')};{limit_clause}"
     logger.info("[OSM] Querying Overpass API...")
 
     # 经 ProviderHealthTracker 统一执行缝（熔断/限流/SSL/代理/超时），POST 提交查询体。
@@ -258,7 +264,7 @@ def register_osm_tools(registry: ToolRegistry):
             tag_filter = f'"amenity"="{safe_category}"'
 
         query = f'node[{tag_filter}]({bbox});way[{tag_filter}]({bbox});relation[{tag_filter}]({bbox});'
-        geojson = await _query_overpass(query)
+        geojson = await _query_overpass(query, limit=limit)
 
         # Overpass 失败时，fallback 到 Nominatim 搜索
         if geojson.get("error") or len(geojson.get("features", [])) == 0:
@@ -295,6 +301,9 @@ def register_osm_tools(registry: ToolRegistry):
                 # 依然没找到数据，抛出异常引导 AI 自愈或向用户解释
                 raise ValueError(f"在区域 '{clean_area}' 内找不到类别为 '{category}' 的兴趣点。")
 
+        # limit 契约：服务端已限制 + 防御性截断（Overpass limit 语义差异兜底）
+        geojson["features"] = geojson.get("features", [])[:limit]
+
         return {
             "type": "poi_query",
             "area": area,
@@ -324,11 +333,12 @@ def register_osm_tools(registry: ToolRegistry):
             raise ValueError(f"无法地理编码: {area}")
 
         query = f'way["highway"="{_sanitize_overpass_value(road_type)}"]({bbox});'
-        geojson = await _query_overpass(query)
+        geojson = await _query_overpass(query, limit=limit)
         if geojson.get("error"):
             raise RuntimeError(geojson["error"])
         if len(geojson.get("features", [])) == 0:
             raise ValueError(f"在区域 '{area}' 内找不到类型为 '{road_type}' 的道路数据。")
+        geojson["features"] = geojson.get("features", [])[:limit]
 
         return {
             "type": "road_query",
@@ -359,11 +369,12 @@ def register_osm_tools(registry: ToolRegistry):
             raise ValueError(f"无法地理编码: {area}")
 
         query = f'way["building"]({bbox});'
-        geojson = await _query_overpass(query)
+        geojson = await _query_overpass(query, limit=limit)
         if geojson.get("error"):
             raise RuntimeError(geojson["error"])
         if len(geojson.get("features", [])) == 0:
             raise ValueError(f"在区域 '{area}' 内找不到建筑物数据。")
+        geojson["features"] = geojson.get("features", [])[:limit]
 
         return {
             "type": "building_query",

@@ -55,3 +55,58 @@ async def test_query_osm_poi_mock():
         assert result["area"] == "北京"
         assert result["count"] == 1
         assert len(result["geojson"]["features"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_query_osm_poi_enforces_limit_contract():
+    """limit 必须同时作用于 Overpass 查询与最终返回（大 bbox 否则返回数万要素）。"""
+    registry = ToolRegistry()
+    register_osm_tools(registry)
+
+    geo_data = [{"boundingbox": ["39.8", "40.0", "116.3", "116.5"], "importance": 0.9, "lat": "39.9", "lon": "116.4"}]
+    # Overpass 返回 1000 个点（模拟 limit 失效/服务端语义差异）
+    overpass_data = {"elements": [
+        {"type": "node", "id": i, "lat": 39.9, "lon": 116.4, "tags": {"name": f"p{i}"}}
+        for i in range(1000)
+    ]}
+
+    sent_queries = []
+
+    async def fake_tracked(name, url, params, **kwargs):
+        if name == "overpass":
+            sent_queries.append(kwargs["data"]["data"])
+            return overpass_data
+        return geo_data
+
+    with patch("app.tools.osm.tracked_provider_get", side_effect=fake_tracked):
+        result = await registry.dispatch("query_osm_poi", {"area": "北京", "limit": 50})
+
+    assert result["count"] == 50
+    assert len(result["geojson"]["features"]) == 50
+    # Overpass 查询里必须带输出上限
+    assert "out body geom 50;" in sent_queries[0]
+
+
+@pytest.mark.asyncio
+async def test_query_osm_roads_enforces_limit_contract():
+    """query_osm_roads 同样截断（大区域 + 低等级路极易超量）。"""
+    registry = ToolRegistry()
+    register_osm_tools(registry)
+
+    geo_data = [{"boundingbox": ["39.8", "40.0", "116.3", "116.5"], "importance": 0.9, "lat": "39.9", "lon": "116.4"}]
+    overpass_data = {"elements": [
+        {"type": "way", "id": i, "geometry": [{"lat": 39.9, "lon": 116.4}, {"lat": 39.91, "lon": 116.41}],
+         "tags": {"highway": "residential"}}
+        for i in range(500)
+    ]}
+
+    async def fake_tracked(name, url, params, **kwargs):
+        if name == "overpass":
+            return overpass_data
+        return geo_data
+
+    with patch("app.tools.osm.tracked_provider_get", side_effect=fake_tracked):
+        result = await registry.dispatch("query_osm_roads", {"area": "北京", "limit": 100})
+
+    assert result["count"] == 100
+    assert len(result["geojson"]["features"]) == 100
