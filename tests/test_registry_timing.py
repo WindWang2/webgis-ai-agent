@@ -12,6 +12,8 @@ from unittest.mock import patch, MagicMock
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
     log_path = tmp_path / "tool_metrics.jsonl"
+    # writer 必须先把上一个 LOG_PATH 的 batch 落盘，否则会写入新路径。
+    tool_metrics._wait_idle()
     monkeypatch.setattr(tool_metrics, "LOG_PATH", str(log_path))
     tool_metrics._reset_for_tests()
     _reset_redis_client_for_tests()

@@ -3,6 +3,7 @@ import asyncio
 import inspect
 import json
 import logging
+import os
 from typing import Any, Callable, Optional, Type, List
 from pydantic import BaseModel, create_model, ValidationError
 
@@ -10,6 +11,11 @@ from app.services.session_data import session_data_manager
 from app.lib.geo_processor.core import GeoAnalysisResult
 
 logger = logging.getLogger(__name__)
+
+# 同步工具并发上限（见 _dispatch_impl 的 to_thread 路径）。GIL 下 CPU-bound
+# 工具超过核数无收益；给足核数余量 + 小缓冲，避免并行工具波互相拖累。
+_TOOL_THREAD_LIMIT = max(4, min(16, (os.cpu_count() or 4) + 4))
+_tool_thread_semaphore = asyncio.Semaphore(_TOOL_THREAD_LIMIT)
 
 VALID_GEOMETRY_TYPES = {
     "Point", "MultiPoint",
@@ -310,9 +316,14 @@ class ToolRegistry:
                     res = tool_func(**arguments)
                     return res, cache_hit_var.get()
 
-                result, thread_cache_hit = await asyncio.to_thread(
-                    _run_sync_with_cache_var
-                )
+                # 并发上限：默认线程池 max_workers=min(32, cpu+4)，而并行工具波
+                # 可以一次派发 N 个 CPU-bound 工具 —— GIL 下线程数超过核数只会
+                # 增加切换开销。用信号量把同时在跑的同步工具限制到
+                # _TOOL_THREAD_LIMIT（阻塞 I/O 型工具在线程里等待不影响此上限）。
+                async with _tool_thread_semaphore:
+                    result, thread_cache_hit = await asyncio.to_thread(
+                        _run_sync_with_cache_var
+                    )
                 cache_hit_var.set(thread_cache_hit)
 
             if isinstance(result, GeoAnalysisResult):

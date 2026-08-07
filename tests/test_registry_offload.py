@@ -7,7 +7,6 @@ concurrently while the tool executes in the thread pool.
 import asyncio
 import time
 
-import pytest
 
 from app.tools.registry import ToolRegistry
 
@@ -103,3 +102,45 @@ def test_async_tool_still_awaited_directly():
 
     out = asyncio.run(main())
     assert out == {"async_sum": 42}
+
+
+def test_sync_tool_concurrency_is_bounded():
+    """Parallel sync tools must not exceed the thread limit (GIL protection)."""
+    import asyncio as _asyncio
+    import threading
+
+    import app.tools.registry as reg_mod
+    from app.tools.registry import ToolRegistry
+
+    limit = 2
+    orig_semaphore = reg_mod._tool_thread_semaphore
+    orig_limit = reg_mod._TOOL_THREAD_LIMIT
+    reg_mod._TOOL_THREAD_LIMIT = limit
+    reg_mod._tool_thread_semaphore = _asyncio.Semaphore(limit)
+    try:
+        reg = ToolRegistry()
+        state = {"running": 0, "peak": 0}
+        state_lock = threading.Lock()
+
+        def slow_sync_tool():
+            with state_lock:
+                state["running"] += 1
+                state["peak"] = max(state["peak"], state["running"])
+            time.sleep(0.15)
+            with state_lock:
+                state["running"] -= 1
+            return {"ok": True}
+
+        reg.register("slow_sync", "slow", slow_sync_tool)
+
+        async def main():
+            await _asyncio.gather(
+                *[reg.dispatch("slow_sync", {}, session_id=None) for _ in range(4)]
+            )
+            return state["peak"]
+
+        peak = _asyncio.run(main())
+        assert peak <= limit, f"peak concurrent sync tools {peak} > limit {limit}"
+    finally:
+        reg_mod._tool_thread_semaphore = orig_semaphore
+        reg_mod._TOOL_THREAD_LIMIT = orig_limit

@@ -156,22 +156,32 @@ def _enqueue(line: str) -> None:
         logger.warning("[tool_metrics] queue full — dropping row")
 
 
+def _wait_idle(timeout: float = 5.0) -> None:
+    """Wait until every enqueued row has been flushed by the writer thread.
+
+    Tests switch LOG_PATH between tests; an in-flight writer batch would be
+    appended to the *new* path. Fixtures must call this BEFORE switching the
+    path (then _reset_for_tests), so the batch lands on the old path.
+    """
+    deadline = time.monotonic() + timeout
+    while _pending_rows > 0 and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+
 def _reset_for_tests() -> None:
     global _aggregator, _hist, _call_counter, _pending_rows
     with _lock:
         _aggregator = {}
         _hist = {}
         _call_counter = 0
+    # 先让 writer 把已出队的 batch 落盘（旧 LOG_PATH），再清空队列。
+    _wait_idle()
     while True:
         try:
             _queue.get_nowait()
             _pending_rows -= 1
         except queue.Empty:
             break
-    # 等 writer 把已出队但未落盘的 batch 写完，避免跨测试污染下一个 LOG_PATH。
-    deadline = time.monotonic() + 5.0
-    while _pending_rows > 0 and time.monotonic() < deadline:
-        time.sleep(0.01)
 
 
 def record_tool_call(

@@ -12,6 +12,8 @@ from app.services import tool_metrics
 def _isolated_metrics(tmp_path, monkeypatch):
     """每个测试用临时日志文件 + 重置聚合器 + 清空待写队列。"""
     log_path = tmp_path / "tool_metrics.jsonl"
+    # writer 必须先把上一个 LOG_PATH 的 batch 落盘，否则会写入新路径。
+    tool_metrics._wait_idle()
     monkeypatch.setattr(tool_metrics, "LOG_PATH", str(log_path))
     tool_metrics._reset_for_tests()
     yield log_path
