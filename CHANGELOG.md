@@ -151,6 +151,25 @@
   (single-call spy, alias/ref/plain semantics, nested args, no-session fast
   path) — red on pre-fix code.
 
+### Performance — Tool cache singleflight (goal §7, ADR-0045)
+
+- **Concurrent identical tool calls compute once**: `cached_tool` now takes a
+  Redis `SET NX` lock (random token + TTL, default 120 s, opt-out via
+  `singleflight=False`) on cache miss. The lock winner computes and publishes
+  the value before releasing (Lua compare-and-delete); followers poll the
+  value with backoff and take over if the lock disappears without a value
+  (failed winner). Stale locks expire via TTL; Redis failures degrade to
+  direct compute — **no distributed deadlock, no permanent lock**.
+- **Benchmark**: 5 concurrent identical 0.5 s calls → 5 computes → **1
+  compute**, all callers get the same result. Regression tests:
+  `tests/unit/test_tool_cache_singleflight.py` (async + sync suppression,
+  failed-winner takeover, stale-lock fallback, Redis-down fallback, opt-out,
+  warm-cache fast path).
+- **Test fix**: 4 caching tests (`test_buffer_caching`, `test_h3_binning_caching`,
+  `test_kde_contours_caching`, `test_heatmap_caching`) read the metrics log
+  synchronously — now poll for the queued writer's rows (ADR-0044 async-write
+  contract).
+
 ## [0.1.3] - 2026-08-03
 
 ### Performance & Remediation
