@@ -209,6 +209,29 @@
   runs under an `asyncio.Semaphore` (`max(4, min(16, cpu+4))`) — parallel
   tool waves can't oversubscribe the GIL-bound pool (goal §3 concurrency
   bound). Regression test: 4 concurrent sync tools peak at ≤ limit.
+- **Fix (OSM limit contract)**: `query_osm_poi/roads/buildings` advertised
+  `limit` (1–500) but the Overpass query never applied it — city-wide
+  queries returned 10k–100k features (up to ~26 MB GeoJSON, the Data Plane
+  pain point's root cause). `_query_overpass` now appends
+  `out body geom <limit>;` and tools defensively slice; boundary queries
+  unchanged. Regression tests: 1000-element mock → 50 returned, query
+  contains the limit clause.
+
+### Performance — Data Plane: MVT vector tiles for large POI display (goal Phase G, ADR-0047)
+
+- **Backend**: stdlib-only MVT 2.1 encoder (`app/services/mvt.py`) + tile
+  endpoint `GET /api/v1/layers/data/{ref}/tiles/{z}/{x}/{y}.mvt` (same auth
+  as `/layers/data`, gzip, `private max-age=300`). 100k POI city viewport:
+  GeoJSON 24,788 KiB raw / 2,580 KiB gzip → **4 MVT tiles = 22 KiB gzip**
+  (~1,100× vs raw, 117× vs gzip, ~280 ms encode).
+- **Frontend**: `VectorMapSpecSource` + adapter threshold (5000 features) +
+  runtime/renderer vector-source support; ref layers mint `_tileUrl` and
+  large FeatureCollections render from MVT tiles instead of a whole-file
+  `setData`. GeoJSON path unchanged for small results / LLM context.
+- **Tests**: independent protobuf-decoder round-trips (geometry, properties,
+  projection, tile filtering, empty tiles), endpoint auth/404/400/nested
+  shapes, frontend adapter threshold x3 + runtime vector apply/source-layer/
+  geojson→vector upgrade. tsc clean, vitest 466 passed, eslint 0.
 
 ## [0.1.3] - 2026-08-03
 
