@@ -73,6 +73,29 @@
 - **Bugfix**: `kde_contours` leaked the final loop `i` into every feature's
   `level` property — now carries per-polygon level index.
 
+### Performance & Correctness — Raster resource guard
+
+- **Raster output resource guard** (`raster_math.py`): `resample_raster()`
+  validates the *output* grid before warping — `target_resolution <= 0` is
+  rejected, and a computed output grid exceeding `MAX_OUTPUT_PIXELS` (250 M),
+  `MAX_OUTPUT_DIMENSION` (100k/side), or a 10,000× upscale ratio raises a
+  `ValueError` with estimated pixels/size and *suggested coarser
+  target_resolution values* (agent-actionable correction hint). A
+  unit-confusion request (3°×3° EPSG:4326 → EPSG:3857 @ 1 m) previously
+  produced a 334,035×334,035 px / ~111.6 G-pixel / ~415.7 GiB warp — minutes
+  of CPU + 4.3 GB output; it now fails in **~10 ms** (ADR-0042).
+- **Fixed pathological raster test**: `test_raster_resample_with_crs_change`
+  had been performing that 111.6 G-pixel warp on every run (multi-minute
+  accidental benchmark; the 300→600s timeout bump masked it). It now uses
+  `target_resolution=10000` (→ 34×34 px) and asserts the transform math
+  (`new_shape`, `target_crs`); heavy/timeout markers removed.
+- **Regression tests** (`tests/unit/test_raster_resource_guard.py`): rejection
+  of pixel-explosion warps (CRS-change and in-CRS), zero/negative resolution,
+  no partial output file on rejection, suggestion math, and a sane-warp
+  success path. Raster test suite: minutes → ~2 s.
+- **Cleanup**: removed 45 stale pathological warps (45 × 4.3 GB ≈ 176 GB) from
+  `data/` (gitignored test residue).
+
 ## [0.1.3] - 2026-08-03
 
 ### Performance & Remediation
