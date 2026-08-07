@@ -1,4 +1,5 @@
 """Raster math operations: reclassify, calculator, resample."""
+import math
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
@@ -45,6 +46,18 @@ RESAMPLING_MAP = {
     "q3": Resampling.q3,
 }
 
+# OOM/disk guard for resample output grids: a unit-confusion request
+# (e.g. target_resolution=1 meaning 1 m on a 3°×3° EPSG:4326 source warped
+# to EPSG:3857) would create a ~334k×334k grid — ~111 billion pixels,
+# ~400 GiB uncompressed — and hang or OOM the worker. Mirrors the
+# _MAX_GRID_CELLS guard pattern in density.py.
+MAX_OUTPUT_PIXELS = 250_000_000   # ≈1 GiB float32, single band
+MAX_OUTPUT_DIMENSION = 100_000    # per side, catches extreme aspect ratios
+MAX_OUTPUT_UPSCALE_RATIO = 10_000  # out px / in px, catches unit confusion on small inputs
+
+# Pixel budgets used to suggest coarser target_resolution values in errors.
+_SUGGESTION_BUDGETS = (1_000_000, 10_000_000, MAX_OUTPUT_PIXELS)
+
 
 
 # ─── Shared helpers ──────────────────────────────────────────────
@@ -83,6 +96,65 @@ def _validate_scheme(scheme: list[dict]) -> None:
             raise ValueError(f"scheme[{i}] must have 'min' and/or 'max'")
         if "min" in rule and "max" in rule and rule["min"] > rule["max"]:
             raise ValueError(f"scheme[{i}] 'min' ({rule['min']}) cannot be greater than 'max' ({rule['max']})")
+
+
+def _suggested_resolutions(current_resolution: float, out_pixels: int) -> list[str]:
+    """Pick coarser resolutions that bring a too-large output under budget.
+
+    Pixel count scales ~1/res² for a fixed extent, so each budget tier maps to
+    one resolution; round up to a "nice" value (1/2/5 × 10^k) so the Agent can
+    retry with a sensible number.
+    """
+    suggestions = []
+    for budget in _SUGGESTION_BUDGETS:
+        if budget >= out_pixels:
+            continue
+        res = current_resolution * math.sqrt(out_pixels / budget)
+        k = 10 ** math.floor(math.log10(res))
+        frac = res / k
+        nice = k * (1 if frac <= 1 else 2 if frac <= 2 else 5 if frac <= 5 else 10)
+        label = f"{nice:g}"
+        if label not in suggestions:
+            suggestions.append(label)
+    # Ascending order: closest-to-current resolution first (least data loss).
+    return sorted(suggestions, key=float)
+
+
+def _guard_output_grid(
+    width: int,
+    height: int,
+    src_pixels: int,
+    target_resolution: float,
+    bands: int = 1,
+    dtype: str = "float32",
+) -> None:
+    """Reject resample outputs that exceed the resource budget.
+
+    Raises ValueError with an agent-actionable correction hint (estimated grid
+    size + suggested coarser resolutions) instead of attempting a warp that
+    could allocate hundreds of GB or fill the disk.
+    """
+    out_pixels = width * height
+    issues = []
+    if out_pixels > MAX_OUTPUT_PIXELS:
+        issues.append(f"{out_pixels:,} pixels exceeds the {MAX_OUTPUT_PIXELS:,}-pixel limit")
+    if width > MAX_OUTPUT_DIMENSION or height > MAX_OUTPUT_DIMENSION:
+        issues.append(f"grid {width}×{height} exceeds the {MAX_OUTPUT_DIMENSION:,}-pixel-per-side limit")
+    if src_pixels and out_pixels / src_pixels > MAX_OUTPUT_UPSCALE_RATIO:
+        issues.append(f"output is {out_pixels / src_pixels:,.0f}× the input size (max {MAX_OUTPUT_UPSCALE_RATIO:,}×)")
+    if not issues:
+        return
+
+    est_gib = out_pixels * bands * np.dtype(dtype).itemsize / (1024 ** 3)
+    suggestions = _suggested_resolutions(target_resolution, out_pixels)
+    raise ValueError(
+        f"Raster resample would create a {width}×{height} output grid "
+        f"({out_pixels:,} pixels, ~{est_gib:.1f} GiB uncompressed): "
+        + "; ".join(issues)
+        + ". This usually means target_resolution is in the wrong unit "
+        "(e.g. 1.0 m on a degree-based source)."
+        + (f" Suggested target_resolution values: {', '.join(suggestions)}." if suggestions else "")
+    )
 
 
 # ─── Operations ──────────────────────────────────────────────────
@@ -289,11 +361,18 @@ def resample_raster(
 
     Returns:
         dict with output_path, new_shape, new_transform, and metadata.
+
+    Raises:
+        ValueError: if target_resolution is not positive, or if the output
+            grid would exceed the resource guard (see _guard_output_grid).
     """
     res_key = resampling.lower()
     if res_key not in RESAMPLING_MAP:
         raise ValueError(f"Unsupported resampling method: '{resampling}'. Valid options: {list(RESAMPLING_MAP.keys())}")
     resampling_method = RESAMPLING_MAP[res_key]
+
+    if target_resolution <= 0:
+        raise ValueError(f"target_resolution must be positive, got {target_resolution}")
 
     out_path = _suffix_output_path(raster_path, "_resampled.tif")
 
@@ -310,6 +389,11 @@ def resample_raster(
             transform, width, height = calculate_default_transform(
                 src_crs, dst_crs, src.width, src.height, *src.bounds, resolution=target_resolution
             )
+
+        _guard_output_grid(
+            width, height, src.width * src.height, target_resolution,
+            bands=src.count, dtype=src.dtypes[0],
+        )
 
         profile = _gtiff_profile(src.profile, count=src.count)
         profile.update({
