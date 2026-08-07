@@ -96,6 +96,28 @@
 - **Cleanup**: removed 45 stale pathological warps (45 × 4.3 GB ≈ 176 GB) from
   `data/` (gitignored test residue).
 
+### Performance — Async-tool offload (closes remaining event-loop blockers)
+
+- **`webgis_runtime_validate`**: the headless Chromium/Playwright subprocess
+  (up to `RUNTIME_TIMEOUT_S` = 90s) now runs via `asyncio.to_thread` instead
+  of a sync `subprocess.run` inside the async tool — a slow browser launch no
+  longer freezes every concurrent SSE stream / WebSocket / request
+  (`runtime_validator.py`).
+- **`webgis_source_profile` / `webgis_layer_upsert`**: per-feature GeoJSON
+  profiling now runs in a thread (`mapspec_store.source_profile`) — large
+  inline FeatureCollections no longer block the loop during profiling.
+- **`compute_ndvi` / `fetch_sentinel` / `fetch_dem` / `compute_terrain`**:
+  band-algebra and Horn-window terrain derivatives (slope/aspect/hillshade)
+  now run in a thread (`spectral_engine.py`) — multi-million-pixel numpy math
+  off the loop.
+- **Behavioral regression tests** (`tests/unit/test_execution_offload.py`):
+  4 loop-responsiveness tests fake the slow work with a sync sleep and assert
+  the event loop stays responsive while the tool runs — verified to fail on
+  the pre-fix code and pass post-fix.
+- **ADR-0043**: documents the actual tool execution policy (sync → `to_thread`
+  at the registry seam; async tools must be await-only; Celery reserved for
+  NDVI/change-detection/heatmap), superseding the stale ADR-0003.
+
 ## [0.1.3] - 2026-08-03
 
 ### Performance & Remediation
