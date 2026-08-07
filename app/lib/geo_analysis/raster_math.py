@@ -1,5 +1,4 @@
 """Raster math operations: reclassify, calculator, resample."""
-import math
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
@@ -104,28 +103,6 @@ def _validate_scheme(scheme: list[dict]) -> None:
             raise ValueError(f"scheme[{i}] 'min' ({rule['min']}) cannot be greater than 'max' ({rule['max']})")
 
 
-def _suggested_resolutions(current_resolution: float, out_pixels: int) -> list[str]:
-    """Pick coarser resolutions that bring a too-large output under budget.
-
-    Pixel count scales ~1/res² for a fixed extent, so each budget tier maps to
-    one resolution; round up to a "nice" value (1/2/5 × 10^k) so the Agent can
-    retry with a sensible number.
-    """
-    suggestions = []
-    for budget in _SUGGESTION_BUDGETS:
-        if budget >= out_pixels:
-            continue
-        res = current_resolution * math.sqrt(out_pixels / budget)
-        k = 10 ** math.floor(math.log10(res))
-        frac = res / k
-        nice = k * (1 if frac <= 1 else 2 if frac <= 2 else 5 if frac <= 5 else 10)
-        label = f"{nice:g}"
-        if label not in suggestions:
-            suggestions.append(label)
-    # Ascending order: closest-to-current resolution first (least data loss).
-    return sorted(suggestions, key=float)
-
-
 from app.lib.geo_analysis.raster_guard import RasterResourceGuard
 
 
@@ -144,7 +121,6 @@ def _guard_output_grid(
         height=height,
         bytes_per_pixel=bytes_per_pixel,
         num_bands=bands,
-        input_pixels=src_pixels,
     )
 
 
@@ -277,6 +253,14 @@ def raster_calculator(
 
     with rasterio.open(raster_a) as src_a:
         nodata_a = src_a.nodata if src_a.nodata is not None else src_a.profile.get("nodata")
+        RasterResourceGuard.check_grid(
+            width=src_a.width,
+            height=src_a.height,
+            bytes_per_pixel=np.dtype(src_a.dtypes[0]).itemsize,
+            num_bands=1,
+            input_pixels=src_a.width * src_a.height,
+            bounds=src_a.bounds,
+        )
 
         if nodata is None:
             out_nodata = nodata_a if nodata_a is not None else 0
@@ -298,7 +282,6 @@ def raster_calculator(
                     and src_b.shape == src_a.shape
                 )
                 if not aligned:
-                    RasterResourceGuard.check_grid(src_a.width, src_a.height)
                     fill_b = nodata_b if nodata_b is not None else 0
                     data_b_full = np.full(src_a.shape, fill_value=fill_b, dtype=src_b.dtypes[0])
                     gcps_b, gcps_crs_b = src_b.gcps if src_b.gcps else (None, None)

@@ -207,6 +207,7 @@ def register_annotation_tools(registry: ToolRegistry):
             "\n何时用：用户说『清掉刚才的标记』『把测量线擦了』『重新开始』。"
             "\n何时不用：要保留部分标注 — 当前实现是全清，不支持精细化删除。"
         ),
+        execution_policy=ToolExecutionPolicy.INLINE,
     )
     def clear_annotations() -> dict:
         return {

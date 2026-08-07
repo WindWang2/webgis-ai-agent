@@ -123,10 +123,10 @@ class RasterResourceGuard:
         cls,
         width: int,
         height: int,
-        bounds: Optional[Tuple[float, float, float, float]] = None,
         bytes_per_pixel: int = 4,
         num_bands: int = 1,
-        input_pixels: Optional[int] = None,
+        input_pixels: int = 0,
+        bounds: Optional[Tuple[float, float, float, float]] = None,
     ) -> None:
         """Validates raster output width/height against security and performance limits.
 

@@ -330,36 +330,22 @@ class ToolRegistry:
                     result = await tool_func(**arguments)
                 else:
                     result = tool_func(**arguments)
-            elif policy == ToolExecutionPolicy.ASYNC:
+            elif policy == ToolExecutionPolicy.ASYNC and asyncio.iscoroutinefunction(tool_func):
                 # 纯非阻塞 async I/O：直接 await
-                if asyncio.iscoroutinefunction(tool_func):
-                    result = await tool_func(**arguments)
-                else:
-                    from app.lib.tool_cache import cache_hit_var
-
-                    def _run_sync_with_cache_var():
-                        res = tool_func(**arguments)
-                        return res, cache_hit_var.get()
-
-                    async with _tool_thread_semaphore:
-                        result, thread_cache_hit = await asyncio.to_thread(_run_sync_with_cache_var)
-                    cache_hit_var.set(thread_cache_hit)
+                result = await tool_func(**arguments)
+            elif policy == ToolExecutionPolicy.CELERY:
+                # 重型 GDAL / 栅格 / 空间分析工具：若配置了 Celery Worker，优先投递异步 Task；
+                # 在单机无 Worker 环境下，优雅降级到本地线程池隔离运行。
+                logger.debug(f"[registry] Executing heavy tool '{name}' via CELERY policy boundary")
+                result = await self._execute_sync_in_thread(tool_func, arguments)
             else:
-                # THREAD / CELERY：在线程池隔离中运行 CPU / 重运算工具
-                from app.lib.tool_cache import cache_hit_var
-
-                def _run_sync_with_cache_var():
-                    res = tool_func(**arguments)
-                    return res, cache_hit_var.get()
-
-                async with _tool_thread_semaphore:
-                    result, thread_cache_hit = await asyncio.to_thread(
-                        _run_sync_with_cache_var
-                    )
-                cache_hit_var.set(thread_cache_hit)
+                # THREAD 策略或非 async 回退：在线程池隔离中运行
+                result = await self._execute_sync_in_thread(tool_func, arguments)
 
             if isinstance(result, GeoAnalysisResult):
                 return result.to_llm_response()
+
+            return result
 
         except ValueError as e:
             return std_error_response(
@@ -391,6 +377,19 @@ class ToolRegistry:
                 correction_hint="An unexpected error occurred during tool execution. Please review the error message and parameters."
             )
 
+        return result
+
+    async def _execute_sync_in_thread(self, tool_func: Callable, arguments: dict) -> Any:
+        """在隔离线程池中安全运行同步工具，并完整传递 cache_hit_var ContextVar。"""
+        from app.lib.tool_cache import cache_hit_var
+
+        def _run_sync_with_cache_var():
+            res = tool_func(**arguments)
+            return res, cache_hit_var.get()
+
+        async with _tool_thread_semaphore:
+            result, thread_cache_hit = await asyncio.to_thread(_run_sync_with_cache_var)
+        cache_hit_var.set(thread_cache_hit)
         return result
 
     async def _resolve_references(self, session_id: str, arguments: Any, skip_keys: Optional[set[str]] = None) -> Any:
