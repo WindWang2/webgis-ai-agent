@@ -118,6 +118,25 @@
   at the registry seam; async tools must be await-only; Celery reserved for
   NDVI/change-detection/heatmap), superseding the stale ADR-0003.
 
+### Performance & Correctness — Tool metrics pipeline (ADR-0044)
+
+- **Queued metrics writer** (`tool_metrics.py`): `record_tool_call` no longer
+  does sync `open/write/close` per tool call on the event loop — rows go to a
+  bounded queue (8192; full → drop row, never block) drained by a daemon
+  writer in batches (512 rows / 0.1 s idle flush, single `open` per batch,
+  `atexit` flush). Caller-thread cost ~24 µs → ~23 µs; the I/O syscalls are
+  gone from the loop entirely (robust under disk contention/rotation).
+- **Real log rotation**: the 10 MB × 5-backup rotation promised in the
+  docstring is now implemented (size check + `.1→.5` shift before each
+  append) — the file no longer grows unbounded.
+- **True percentiles**: a bounded log2 histogram (33 bins/tool) now feeds real
+  `p50/p95/p99` estimates into `aggregator_snapshot()` and the digest; the old
+  `top_p99` digest field (actually max latency) is honestly relabeled and
+  reports `max` separately.
+- **Tests**: async-write contract via row polling; new coverage for rotation
+  bounds, percentile estimation, and queue-full backpressure
+  (`tests/test_tool_metrics.py`).
+
 ## [0.1.3] - 2026-08-03
 
 ### Performance & Remediation
