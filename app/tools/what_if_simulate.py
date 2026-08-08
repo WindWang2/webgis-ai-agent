@@ -3,7 +3,7 @@ import asyncio
 import logging
 import math
 import uuid
-from typing import Literal, Optional, Dict, Any
+from typing import Literal
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -307,10 +307,13 @@ async def what_if_simulate_async(
 
         res_dict = result.model_dump()
         if "simulation_geojson" in res_dict:
-            f_cnt = len(res_dict["simulation_geojson"].get("features", []))
+            # Fetch-on-Demand: feature_count + bbox + ref_id descriptor only.
+            from app.tools._utils import _feature_collection_bbox
+            full_fc = res_dict["simulation_geojson"]
             res_dict["simulation_geojson"] = {
                 "type": "FeatureCollection",
-                "features_count": f_cnt,
+                "feature_count": len(full_fc.get("features", [])),
+                "bbox": _feature_collection_bbox(full_fc),
                 "ref_id": dec_result.simulation_ref_id,
                 "note": "Full GeoJSON stored in SessionStore cursor.",
             }
@@ -375,7 +378,13 @@ def register_what_if_simulate(registry: ToolRegistry):
         parameters: dict = None,
         baseline_data_ref: str = "",
         output_format: str = "layer",
+        session_id: str = "",
     ) -> dict:
+        # Forward the registry-injected session_id so the simulation result layer
+        # is actually persisted to the active SessionStore and the emitted ref_id
+        # resolves. Previously this was dropped, leaving a dangling ref:sim-... id
+        # and a false "Full GeoJSON stored in SessionStore cursor" note.
         return await what_if_simulate_async(
-            scenario, target_area, parameters, baseline_data_ref, output_format
+            scenario, target_area, parameters, baseline_data_ref, output_format,
+            session_id=session_id,
         )

@@ -3,7 +3,6 @@ MapSpec & Cartography Integration for Spatial Decision Intelligence V2.
 Binds SpatialDecisionResult and ScenarioComparisonResult directly to MapSpecLifecycleEngine.
 Ensures simulation layers (baseline, impact, comparison, difference, uncertainty) use canonical MapSpec path.
 """
-import asyncio
 import logging
 from typing import Dict, Any, Optional
 
@@ -92,15 +91,22 @@ async def apply_comparison_to_mapspec(
     layer_id = f"cmp_layer_{comparison.comparison_id}"
     layer_title = "多方案情景模拟对比图层"
 
+    # The comparison engine tags each feature's properties with the scenario's
+    # scenario_id (a scen_<uuid> value), plus a deterministic per-scenario color.
+    # Build the match stops from the actual scenario_ids so the categorical fill
+    # resolves — a previous version matched on a non-existent "scenario" field
+    # with hardcoded scenario_a/b/c stops, which never matched scenario_id and
+    # always fell through to the default color.
+    _scenario_palette = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6"]
+    color_stops = [
+        [res.scenario.scenario_id, _scenario_palette[i % len(_scenario_palette)]]
+        for i, res in enumerate(comparison.scenarios)
+    ]
     style_spec = {
         "color": {
             "method": "match",
-            "field": "scenario",
-            "stops": [
-                ["scenario_a", "#3B82F6"],
-                ["scenario_b", "#10B981"],
-                ["scenario_c", "#F59E0B"],
-            ],
+            "field": "scenario_id",
+            "stops": color_stops,
             "default": "#8B5CF6",
         },
         "opacity": 0.5,

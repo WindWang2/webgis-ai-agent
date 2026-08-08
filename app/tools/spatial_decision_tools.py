@@ -3,7 +3,7 @@ Spatial Decision Intelligence V2 Tool Registration & Catalog Seam.
 Registers spatial_decision_v2 and scenario_compare tools into ToolRegistry and ToolCatalog.
 """
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
@@ -83,9 +83,14 @@ def register_spatial_decision_tools(registry: ToolRegistry):
             if session_id:
                 mapspec_state = await apply_decision_to_mapspec(session_id, result)
                 try:
+                    # The validator's API is the async `validate_runtime`, which
+                    # returns a dict with a `success`/`valid` flag (it drives a
+                    # headless browser). The previous call used a non-existent
+                    # `validate_session_state` sync method, whose AttributeError was
+                    # swallowed — so validation_passed was always silently True.
                     from app.services.runtime_validator import runtime_validator
-                    val_res = runtime_validator.validate_session_state(session_id)
-                    validation_passed = val_res.passed if hasattr(val_res, "passed") else True
+                    val_res = await runtime_validator.validate_runtime(session_id)
+                    validation_passed = bool(val_res.get("success"))
                 except Exception as ve:
                     logger.debug(f"[spatial_decision_v2] Runtime validation warning: {ve}")
 
@@ -95,12 +100,17 @@ def register_spatial_decision_tools(registry: ToolRegistry):
             res_dict["mapspec_applied"] = bool(mapspec_state)
             res_dict["runtime_validated"] = validation_passed
             
-            # Fetch-on-Demand payload trimming for LLM context optimization
+            # Fetch-on-Demand payload trimming for LLM context optimization.
+            # Replace the full simulation GeoJSON with a metadata descriptor
+            # (feature_count + bbox + ref_id) so the tool_result stays well under
+            # the 50k DB/LLM-context cap; the full payload lives in SessionStore.
             if "simulation_geojson" in res_dict:
-                features_cnt = len(res_dict["simulation_geojson"].get("features", []))
+                from app.tools._utils import _feature_collection_bbox
+                full_fc = res_dict["simulation_geojson"]
                 res_dict["simulation_geojson"] = {
                     "type": "FeatureCollection",
-                    "features_count": features_cnt,
+                    "feature_count": len(full_fc.get("features", [])),
+                    "bbox": _feature_collection_bbox(full_fc),
                     "ref_id": result.simulation_ref_id,
                     "note": "Full GeoJSON stored in SessionStore cursor.",
                 }

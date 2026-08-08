@@ -6,8 +6,8 @@ into unified TargetAreaSpec value objects without hardcoded default coordinate f
 import json
 import re
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Union
-from shapely.geometry import shape, MultiPolygon, Polygon, Point
+from typing import Any, Dict, List, Optional, Tuple
+from shapely.geometry import shape
 
 from app.services.spatial_decision.models import TargetAreaSpec
 
@@ -39,8 +39,11 @@ class TargetAreaResolver:
     def _get_session_store(self) -> Any:
         if self._session_store is not None:
             return self._session_store
-        from app.services.session_data import session_data_manager
-        return session_data_manager
+        # Use the active-provider protocol seam (ADR-0035), not the concrete
+        # in-memory manager — otherwise this resolver reads from the wrong store
+        # when Redis/asyncpg is the active session backend.
+        from app.services.session_data_protocol import get_session_store
+        return get_session_store()
 
     def _get_geocode_provider(self) -> Any:
         if self._geocode_provider is not None:

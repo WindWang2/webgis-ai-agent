@@ -3,7 +3,7 @@ Metric Evaluator V2.
 Evaluates quantitative baseline & simulated metrics, propagates uncertainty ranges (MetricRange),
 integrates rule interval bounds, and calculates overall decision confidence.
 """
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 from app.services.spatial_decision.models import (
     MetricDeltaV2,
     MetricRange,
@@ -114,7 +114,13 @@ class MetricEvaluator:
 
         gap_note = None
         if missing_baseline:
-            gap_note = f"Baseline for '{metric_name}' was missing or estimated from default models."
+            # Prefer the caller-supplied evidence_gap_note (e.g. the rule-pack's
+            # specific "未找到实测基线数据…" or "Missing baseline for <key>" detail)
+            # over the generic fallback. The parameter was previously accepted
+            # but never read, so callers' notes were silently discarded.
+            gap_note = evidence_gap_note or (
+                f"Baseline for '{metric_name}' was missing or estimated from default models."
+            )
 
         return MetricDeltaV2(
             metric_key=metric_key,
