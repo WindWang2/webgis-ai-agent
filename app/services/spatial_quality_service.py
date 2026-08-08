@@ -57,7 +57,7 @@ class SpatialQualityReport(BaseModel):
 
 class SpatialQualityEngine:
     @classmethod
-    async def audit_dataset(
+    def audit_dataset(
         cls,
         geojson_data: Dict[str, Any],
         crs: str = "EPSG:4326",

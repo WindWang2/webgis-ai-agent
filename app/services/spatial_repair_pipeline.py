@@ -24,9 +24,8 @@ logger = logging.getLogger(__name__)
 
 
 class SpatialRepairPipeline:
-    @classmethod
-    async def repair_dataset(
-        cls,
+    @staticmethod
+    def repair_dataset(
         geojson_data: Dict[str, Any],
         ops: Optional[List[str]] = None,
         tolerance: float = 1e-5,

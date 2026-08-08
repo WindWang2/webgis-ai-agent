@@ -178,9 +178,9 @@ class ArtifactLineage(Base):
         Index("idx_lineage_workflow_run_id", "workflow_run_id"),
     )
 
-    artifact = relationship("Artifact", foreign_keys=[artifact_id], back_populates="lineages")
-    parent_artifact = relationship("Artifact", foreign_keys=[parent_artifact_id], back_populates="parent_lineages")
-    workflow_run = relationship("WorkflowRun", foreign_keys=[workflow_run_id], back_populates="lineages")
+    artifact = relationship("Artifact", foreign_keys=[artifact_id], back_populates="lineages", lazy="selectin")
+    parent_artifact = relationship("Artifact", foreign_keys=[parent_artifact_id], back_populates="parent_lineages", lazy="selectin")
+    workflow_run = relationship("WorkflowRun", foreign_keys=[workflow_run_id], back_populates="lineages", lazy="selectin")
 
 
 __all__ = [

@@ -26,6 +26,7 @@ class ProjectService:
         org_id: Optional[int] = None,
         owner_id: Optional[str] = None,
         metadata_json: Optional[Dict[str, Any]] = None,
+        commit: bool = True,
     ) -> Project:
         project_id = f"proj_{uuid.uuid4().hex[:16]}"
         project = Project(
@@ -40,8 +41,9 @@ class ProjectService:
             updated_at=datetime.now(timezone.utc),
         )
         db.add(project)
-        db.commit()
-        db.refresh(project)
+        if commit:
+            db.commit()
+            db.refresh(project)
         return project
 
     @staticmethod
