@@ -8,10 +8,106 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
+from app.tools._utils import trim_features
 from app.services.network.engine import NetworkGraphEngine
 from app.services.network.models import TravelProfile
 
 logger = logging.getLogger(__name__)
+
+
+def _geometry_descriptor(geom: Any, max_features: int = 500) -> Dict[str, Any]:
+    """Collapse a heavy geometry field into a Fetch-on-Demand descriptor.
+
+    Network results embed isochrone polygons, reachable-edge MultiLineStrings and
+    full accessibility layers — inlining these into tool_result blows past the
+    50k DB/LLM-context cap. We keep the geometry *shape* (so the caller can render
+    a preview) but trim coordinates/features, and always record a count.
+    """
+    if not isinstance(geom, dict):
+        return {"present": bool(geom)}
+    gtype = geom.get("type")
+    if gtype == "FeatureCollection":
+        trimmed = trim_features(geom, max_features=max_features)
+        return {
+            "type": gtype,
+            "feature_count": len(geom.get("features", [])),
+            "preview": trimmed,
+        }
+    # Bare geometry (Point/LineString/Polygon/Multi*). Keep type + coord arity so
+    # the caller knows the shape without the full coordinate payload.
+    coords = geom.get("coordinates")
+    coord_count = _count_coords(coords)
+    return {
+        "type": gtype,
+        "coordinate_count": coord_count,
+        "preview": {**geom, "coordinates": _trim_coords(coords)},
+    }
+
+
+def _count_coords(coords: Any) -> int:
+    """Count leaf coordinate positions in a nested coordinate array."""
+    if not isinstance(coords, list):
+        return 0
+    if coords and isinstance(coords[0], (int, float)):
+        return len(coords)
+    return sum(_count_coords(c) for c in coords)
+
+
+def _trim_coords(coords: Any, limit: int = 50) -> Any:
+    """Truncate a coordinate array to its first `limit` leaf positions per ring."""
+    if not isinstance(coords, list):
+        return coords
+    if coords and isinstance(coords[0], (int, float)):
+        return coords[:limit]
+    return [_trim_coords(c, limit) for c in coords[:limit]]
+
+
+def trim_network_result(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply Fetch-on-Demand trimming to a network analysis result dict.
+
+    Replaces the heaviest geometry-bearing fields with descriptors, keeping the
+    metrics / route summaries the LLM actually reasons over.
+    """
+    if not isinstance(payload, dict):
+        return payload
+
+    out = dict(payload)
+
+    for sa in out.get("service_areas", []) or []:
+        if not isinstance(sa, dict):
+            continue
+        for brk in sa.get("breaks", []) or []:
+            if not isinstance(brk, dict):
+                continue
+            if brk.get("geometry"):
+                brk["geometry"] = _geometry_descriptor(brk["geometry"])
+            if brk.get("reachable_network_geometry"):
+                brk["reachable_network_geometry"] = _geometry_descriptor(
+                    brk["reachable_network_geometry"]
+                )
+        if sa.get("overall_geometry"):
+            sa["overall_geometry"] = _geometry_descriptor(sa["overall_geometry"])
+
+    for brk in out.get("service_area_breaks", []) or []:
+        if not isinstance(brk, dict):
+            continue
+        if brk.get("geometry"):
+            brk["geometry"] = _geometry_descriptor(brk["geometry"])
+        if brk.get("reachable_network_geometry"):
+            brk["reachable_network_geometry"] = _geometry_descriptor(
+                brk["reachable_network_geometry"]
+            )
+
+    accessibility = out.get("accessibility")
+    if isinstance(accessibility, dict) and accessibility.get("accessibility_layer_geojson"):
+        accessibility["accessibility_layer_geojson"] = _geometry_descriptor(
+            accessibility["accessibility_layer_geojson"]
+        )
+
+    if out.get("result_geojson"):
+        out["result_geojson"] = _geometry_descriptor(out["result_geojson"])
+
+    return out
 
 
 # --- Pydantic Args Models ---
@@ -103,7 +199,7 @@ def register_network_tools(registry: ToolRegistry):
                 barriers=barriers,
                 session_id=session_id,
             )
-            return res.model_dump()
+            return trim_network_result(res.model_dump())
         except Exception as e:
             logger.error(f"[network_shortest_path] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"路网最短路径计算失败: {str(e)}"}
@@ -134,7 +230,7 @@ def register_network_tools(registry: ToolRegistry):
                 cutoff_s=cutoff_s,
                 session_id=session_id,
             )
-            return res.model_dump()
+            return trim_network_result(res.model_dump())
         except Exception as e:
             logger.error(f"[network_od_matrix] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"OD 矩阵计算失败: {str(e)}"}
@@ -165,7 +261,7 @@ def register_network_tools(registry: ToolRegistry):
                 number_to_find=number_to_find,
                 session_id=session_id,
             )
-            return res.model_dump()
+            return trim_network_result(res.model_dump())
         except Exception as e:
             logger.error(f"[network_closest_facility] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"最近设施查找失败: {str(e)}"}
@@ -196,7 +292,7 @@ def register_network_tools(registry: ToolRegistry):
                 profile=travel_profile,
                 session_id=session_id,
             )
-            return res.model_dump()
+            return trim_network_result(res.model_dump())
         except Exception as e:
             logger.error(f"[network_service_area] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"路网服务区等时圈计算失败: {str(e)}"}
@@ -227,7 +323,7 @@ def register_network_tools(registry: ToolRegistry):
                 profile=travel_profile,
                 session_id=session_id,
             )
-            return res.model_dump()
+            return trim_network_result(res.model_dump())
         except Exception as e:
             logger.error(f"[network_accessibility] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"空间可达性评估失败: {str(e)}"}
@@ -260,7 +356,7 @@ def register_network_tools(registry: ToolRegistry):
                 profile=travel_profile,
                 session_id=session_id,
             )
-            return res.model_dump()
+            return trim_network_result(res.model_dump())
         except Exception as e:
             logger.error(f"[location_allocation] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"设施选址优化失败: {str(e)}"}
@@ -289,7 +385,7 @@ def register_network_tools(registry: ToolRegistry):
                 profile=travel_profile,
                 session_id=session_id,
             )
-            return res.model_dump()
+            return trim_network_result(res.model_dump())
         except Exception as e:
             logger.error(f"[optimize_route] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"路线巡航优化失败: {str(e)}"}

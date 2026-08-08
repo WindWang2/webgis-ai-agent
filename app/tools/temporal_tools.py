@@ -8,10 +8,73 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
+from app.tools._utils import trim_features
 from app.services.temporal.engine import TemporalEngine
 from app.services.temporal.models import TemporalFilter, TemporalAggregation
 
 logger = logging.getLogger(__name__)
+
+
+def trim_temporal_result(payload: Any, max_features: int = 500) -> Any:
+    """Apply Fetch-on-Demand trimming to a temporal analysis result.
+
+    Temporal results embed filtered/aggregate FeatureCollections, per-feature
+    change records, and clustered point features — inlining these into tool_result
+    can exceed the 50k DB/LLM-context cap. We keep summary metrics the LLM reasons
+    over and collapse the heavy geometry-bearing fields to descriptors.
+    """
+    if not isinstance(payload, dict):
+        return payload
+
+    out = dict(payload)
+
+    # result_geojson: full filtered/aggregate FeatureCollection -> trimmed preview.
+    rg = out.get("result_geojson")
+    if isinstance(rg, dict):
+        feature_count = len(rg.get("features", [])) if rg.get("type") == "FeatureCollection" else 0
+        out["result_geojson"] = {
+            "type": rg.get("type"),
+            "feature_count": feature_count,
+            "preview": trim_features(rg, max_features=max_features),
+        }
+
+    # Nested models that can carry their own result_geojson (e.g. TemporalAnalysisResult).
+    profile = out.get("profile")
+    if isinstance(profile, dict) and isinstance(profile.get("result_geojson"), dict):
+        profile = dict(profile)
+        nested_rg = profile["result_geojson"]
+        profile["result_geojson"] = {
+            "type": nested_rg.get("type"),
+            "feature_count": len(nested_rg.get("features", []))
+            if nested_rg.get("type") == "FeatureCollection" else 0,
+            "preview": trim_features(nested_rg, max_features=max_features),
+        }
+        out["profile"] = profile
+
+    # feature_changes / clustered features: cap the list length.
+    for list_key in ("feature_changes",):
+        items = out.get(list_key)
+        if isinstance(items, list) and len(items) > max_features:
+            out[list_key] = items[:max_features]
+            out[f"_{list_key}_trimmed"] = {"original_count": len(items), "kept_count": max_features}
+
+    # Hotspot clustered point features can be very large.
+    hotspots = out.get("hotspots")
+    if isinstance(hotspots, list):
+        trimmed_hotspots = []
+        for hs in hotspots:
+            if not isinstance(hs, dict):
+                trimmed_hotspots.append(hs)
+                continue
+            hs = dict(hs)
+            feats = hs.get("features")
+            if isinstance(feats, list) and len(feats) > max_features:
+                hs["features"] = feats[:max_features]
+                hs["_features_trimmed"] = {"original_count": len(feats), "kept_count": max_features}
+            trimmed_hotspots.append(hs)
+        out["hotspots"] = trimmed_hotspots
+
+    return out
 
 
 # --- Pydantic Args Models ---
@@ -80,7 +143,7 @@ def register_temporal_tools(registry: ToolRegistry):
     ) -> dict:
         try:
             profile = await engine.profile_dataset(dataset=dataset, session_id=session_id)
-            return profile.model_dump()
+            return trim_temporal_result(profile.model_dump())
         except Exception as e:
             logger.error(f"[temporal_profile] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"时间数据集探查失败: {str(e)}"}
@@ -114,7 +177,7 @@ def register_temporal_tools(registry: ToolRegistry):
                 t_filter=t_filter,
                 session_id=session_id,
             )
-            return res.model_dump()
+            return trim_temporal_result(res.model_dump())
         except Exception as e:
             logger.error(f"[temporal_filter] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"时间维度筛选失败: {str(e)}"}
@@ -149,7 +212,7 @@ def register_temporal_tools(registry: ToolRegistry):
                 agg_spec=agg_spec,
                 session_id=session_id,
             )
-            return res.model_dump()
+            return trim_temporal_result(res.model_dump())
         except Exception as e:
             logger.error(f"[temporal_aggregate] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"时间维度统计汇总失败: {str(e)}"}
@@ -177,7 +240,7 @@ def register_temporal_tools(registry: ToolRegistry):
                 metric_fields=metric_fields,
                 session_id=session_id,
             )
-            return res.model_dump()
+            return trim_temporal_result(res.model_dump())
         except Exception as e:
             logger.error(f"[temporal_change] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"多时刻变化对比失败: {str(e)}"}
@@ -203,7 +266,7 @@ def register_temporal_tools(registry: ToolRegistry):
                 temporal_field=temporal_field,
                 session_id=session_id,
             )
-            return res.model_dump()
+            return trim_temporal_result(res.model_dump())
         except Exception as e:
             logger.error(f"[temporal_trend] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"时间序列趋势分析失败: {str(e)}"}
@@ -233,7 +296,7 @@ def register_temporal_tools(registry: ToolRegistry):
                 min_samples=min_samples,
                 session_id=session_id,
             )
-            return res.model_dump()
+            return trim_temporal_result(res.model_dump())
         except Exception as e:
             logger.error(f"[spatiotemporal_hotspot] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"时空热点分析失败: {str(e)}"}
@@ -259,7 +322,7 @@ def register_temporal_tools(registry: ToolRegistry):
                 operation=operation,
                 session_id=session_id,
             )
-            return res.model_dump()
+            return trim_temporal_result(res.model_dump())
         except Exception as e:
             logger.error(f"[temporal_raster] Failed: {e}", exc_info=True)
             return {"type": "error", "message": f"栅格时间序列分析失败: {str(e)}"}
