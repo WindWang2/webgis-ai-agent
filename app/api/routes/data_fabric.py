@@ -2,7 +2,7 @@
 Enterprise Geospatial Data Fabric REST Routes
 """
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -11,10 +11,7 @@ from app.core.database import get_db
 from app.models.data_fabric import DataSourceModel, CatalogItemModel
 from app.schemas.data_fabric_schema import (
     ConnectionProfile,
-    DatasetDescriptor,
     QuerySpec,
-    QueryResult,
-    DataFabricHealth,
 )
 from app.services.data_fabric.manager import data_fabric_manager
 from app.services.data_fabric.security import DataFabricSecurity
@@ -29,7 +26,6 @@ class CreateDataSourceRequest(BaseModel):
     source_type: str = Field(..., description="Source adapter type (postgis, ogc_api, wfs, wms, wmts, arcgis)")
     endpoint_url: str = Field(..., description="Endpoint URL or database connection string")
     options: Dict[str, Any] = Field(default_factory=dict, description="Additional protocol options")
-    allow_private: bool = Field(False, description="Allow private subnets/loopback connection (SSRF exception)")
 
 
 class MaterializeRequest(BaseModel):
@@ -45,13 +41,17 @@ async def create_data_source(
 ):
     """注册新的地理空间数据源连接配置"""
     try:
+        # SSRF is always enforced at registration (ADR-0050 §5 P0). A previous
+        # `allow_private` request field let any caller disable all private/loopback/
+        # metadata blocking — a privilege escalation. Private endpoints must be
+        # allow-listed server-side, never via the public request body.
         source = data_fabric_manager.create_data_source(
             db=db,
             name=req.name,
             source_type=req.source_type,
             endpoint_url=req.endpoint_url,
             profile_options=req.options,
-            allow_private=req.allow_private,
+            allow_private=False,
         )
         return {
             "success": True,

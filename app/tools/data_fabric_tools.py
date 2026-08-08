@@ -4,7 +4,7 @@ Geospatial Data Fabric: Unified AI Tools
 and health-monitoring Data Fabric geospatial data sources.
 """
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Optional
 from app.tools.registry import ToolRegistry, tool, ToolExecutionPolicy
 from app.schemas.data_fabric_schema import (
     ConnectionProfile,
@@ -260,7 +260,26 @@ def register_data_fabric_tools(registry: ToolRegistry):
         )
 
         query_result = materialization_service.execute_query(adapter, dataset_id, spec)
-        return query_result.model_dump()
+        # Fetch-on-Demand: the full features list (up to MAX_QUERY_LIMIT) can blow
+        # past the 50k tool_result/DB cap and dump raw geometry into LLM context.
+        # Return the summary fields the LLM reasons over (counts, pushdown flags,
+        # schema_info, metadata) and replace `features` with a descriptor. Callers
+        # that need the actual rows use materialize_dataset, which persists to
+        # SessionStore and returns only a ref_id.
+        result_dict = query_result.model_dump()
+        features = result_dict.get("features") or []
+        if isinstance(features, list):
+            from app.tools._utils import _feature_collection_bbox
+            fc = {"type": "FeatureCollection", "features": features}
+            result_dict["features"] = {
+                "feature_count": len(features),
+                "bbox": _feature_collection_bbox(fc),
+                "note": (
+                    "Features omitted from tool_result (Fetch-on-Demand). Use "
+                    "materialize_dataset to obtain a ref_id cursor for the rows."
+                ),
+            }
+        return result_dict
 
     @tool(
         registry,
