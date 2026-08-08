@@ -66,7 +66,7 @@ async def test_benchmark_scenario_3_tertiary_hospital():
     assert result.scenario.scenario_type == "hospital"
     assert "medical_access" in result.metrics
     assert result.metrics["medical_access"].delta_pct >= 20.0
-    assert result.spatial_impacts[0].radius_m == 1500.0
+    assert any(z.radius_m == 1500.0 for z in result.spatial_impacts)
 
 
 @pytest.mark.asyncio

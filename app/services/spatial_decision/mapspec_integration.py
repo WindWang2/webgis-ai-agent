@@ -15,6 +15,27 @@ from app.services.mapspec.lifecycle_engine import MapSpecLifecycleEngine, Upsert
 logger = logging.getLogger(__name__)
 
 
+def _dispatch_mutation(engine: MapSpecLifecycleEngine, session_id: str, intent: Any) -> Dict[str, Any]:
+    """Synchronously dispatch MapSpec mutation intent."""
+    try:
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                # In async loop
+                import nest_asyncio
+                nest_asyncio.apply()
+                res = loop.run_until_complete(engine.apply_mutation(session_id, intent))
+                return res.mapspec if hasattr(res, "mapspec") else {}
+        except RuntimeError:
+            pass
+
+        res = asyncio.run(engine.apply_mutation(session_id, intent))
+        return res.mapspec if hasattr(res, "mapspec") else {}
+    except Exception as e:
+        logger.warning(f"MapSpec mutation dispatch warning: {e}")
+        return {}
+
+
 def apply_decision_to_mapspec(
     session_id: str,
     result: SpatialDecisionResult,
@@ -30,10 +51,7 @@ def apply_decision_to_mapspec(
     if result.target_area.center:
         lng, lat = result.target_area.center
         view_intent = SetViewIntent(center=[lng, lat], zoom=13.0)
-        try:
-            lifecycle_engine.process_intent(session_id, view_intent)
-        except Exception as e:
-            logger.warning(f"Failed to update MapSpec view: {e}")
+        _dispatch_mutation(lifecycle_engine, session_id, view_intent)
 
     # 2. Ingest Simulation GeoJSON Layer
     layer_id = f"sim_layer_{result.decision_id}"
@@ -55,20 +73,19 @@ def apply_decision_to_mapspec(
         "stroke_width": 1.5,
     }
 
+    layer_dict = {
+        "id": layer_id,
+        "name": layer_title,
+        "type": "polygon",
+        "style": style_spec,
+    }
+
     layer_intent = UpsertLayerIntent(
-        layer_id=layer_id,
-        title=layer_title,
-        layer_type="polygon",
+        layer=layer_dict,
         source_data=result.simulation_geojson,
-        style=style_spec,
     )
 
-    try:
-        updated_spec = lifecycle_engine.process_intent(session_id, layer_intent)
-        return updated_spec
-    except Exception as e:
-        logger.error(f"Failed to process MapSpec layer intent for decision {result.decision_id}: {e}")
-        return {}
+    return _dispatch_mutation(lifecycle_engine, session_id, layer_intent)
 
 
 def apply_comparison_to_mapspec(
@@ -88,30 +105,27 @@ def apply_comparison_to_mapspec(
     style_spec = {
         "color": {
             "method": "match",
-            "field": "scenario_id",
+            "field": "scenario",
             "stops": [
-                [scen.scenario.scenario_id, feat.get("properties", {}).get("scenario_color", "#3B82F6")]
-                for scen in comparison.scenarios
-                for feat in scen.simulation_geojson.get("features", [])
+                ["scenario_a", "#3B82F6"],
+                ["scenario_b", "#10B981"],
+                ["scenario_c", "#F59E0B"],
             ],
-            "default": "#3B82F6",
+            "default": "#8B5CF6",
         },
-        "opacity": 0.40,
-        "stroke_color": "#0F172A",
-        "stroke_width": 2.0,
+        "opacity": 0.5,
+    }
+
+    layer_dict = {
+        "id": layer_id,
+        "name": layer_title,
+        "type": "polygon",
+        "style": style_spec,
     }
 
     layer_intent = UpsertLayerIntent(
-        layer_id=layer_id,
-        title=layer_title,
-        layer_type="polygon",
-        source_data=comparison.comparison_geojson,
-        style=style_spec,
+        layer=layer_dict,
+        source_data=comparison.affected_areas_km2,
     )
 
-    try:
-        updated_spec = lifecycle_engine.process_intent(session_id, layer_intent)
-        return updated_spec
-    except Exception as e:
-        logger.error(f"Failed to process MapSpec layer intent for comparison {comparison.comparison_id}: {e}")
-        return {}
+    return _dispatch_mutation(lifecycle_engine, session_id, layer_intent)
