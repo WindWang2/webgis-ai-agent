@@ -296,6 +296,8 @@ class MetricEvaluator:
             elif m_key in default_baselines:
                 def_val, base_unit, base_name = default_baselines[m_key]
                 base_val = def_val
+                is_missing = True
+                gap_note = f"未找到实测基线数据，基于地段估算基准值 ({base_val} {base_unit}) 进行推算。"
                 assumptions.append(f"基线指标 [{base_name}] 缺少精确实时数据，按地段基准值 {base_val} {base_unit} 进行估算。")
             else:
                 base_name = m_key.replace("_", " ").title()

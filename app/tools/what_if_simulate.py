@@ -305,7 +305,16 @@ async def what_if_simulate_async(
             simulation_geojson=dec_result.simulation_geojson,
         )
 
-        return result.model_dump()
+        res_dict = result.model_dump()
+        if "simulation_geojson" in res_dict:
+            f_cnt = len(res_dict["simulation_geojson"].get("features", []))
+            res_dict["simulation_geojson"] = {
+                "type": "FeatureCollection",
+                "features_count": f_cnt,
+                "ref_id": dec_result.simulation_ref_id,
+                "note": "Full GeoJSON stored in SessionStore cursor.",
+            }
+        return res_dict
 
     except Exception as e:
         logger.error(f"[WhatIfSimulateV2] Failed: {e}", exc_info=True)
@@ -323,16 +332,24 @@ def what_if_simulate(
     try:
         loop = asyncio.get_running_loop()
         if loop.is_running():
-            # If already in async loop (e.g. FastAPI / agent execution loop)
-            import nest_asyncio
-            nest_asyncio.apply()
-            return loop.run_until_complete(
-                what_if_simulate_async(
-                    scenario, target_area, parameters, baseline_data_ref, output_format
+            # If in async loop, schedule or run in thread
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    what_if_simulate_async(
+                        scenario, target_area, parameters, baseline_data_ref, output_format
+                    )
                 )
-            )
+                return future.result()
     except RuntimeError:
         pass
+
+    return asyncio.run(
+        what_if_simulate_async(
+            scenario, target_area, parameters, baseline_data_ref, output_format
+        )
+    )
 
     return asyncio.run(
         what_if_simulate_async(

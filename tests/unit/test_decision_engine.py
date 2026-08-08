@@ -96,7 +96,7 @@ async def test_scenario_comparison_engine():
         target_area_text="杭州市余杭区",
     )
 
-    cmp_result = cmp_engine.compare_scenarios(
+    cmp_result = await cmp_engine.compare_scenarios(
         results=[res_a, res_b, res_c]
     )
 

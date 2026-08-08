@@ -2,6 +2,8 @@
 Domain Rule Packs & RAG Grounding Integration for Spatial Decision Intelligence V2.
 Provides versioned domain rules, registry, applicability matching, RAG search, and evidence chain composition.
 """
+import asyncio
+import inspect
 import logging
 import uuid
 from typing import Any, Dict, List, Optional, Union
@@ -281,6 +283,19 @@ def _build_default_domain_rules() -> List[DomainRule]:
             confidence=0.96,
             jurisdiction="Nature Reserve Management Regulations",
         ),
+        # --- 6. Custom & General Decisions ---
+        DomainRule(
+            id="rule_custom_general_001",
+            domain="urban_planning",
+            name="Custom Spatial Decision General Rule (自定义空间决策通用评估规则)",
+            statement="Custom spatial decision scenarios evaluate spatial metrics, accessibility deltas, and land use impacts based on specified target bounds.",
+            applicability_conditions={"scenario_type": ["custom", "general", "other"]},
+            parameters={"general_evaluation": True},
+            source="domain_rule_pack",
+            version="v2.0",
+            confidence=0.80,
+            jurisdiction="General Spatial Decision Framework",
+        ),
     ]
     return rules
 
@@ -461,7 +476,11 @@ async def retrieve_evidence_from_rag(
 
     engine = knowledge_engine or get_knowledge_engine()
     try:
-        results = await engine.search(query=query, tenant=tenant, top_k=top_k)
+        res_or_coro = engine.search(query=query, tenant=tenant, top_k=top_k)
+        if inspect.isawaitable(res_or_coro):
+            results = await asyncio.wait_for(res_or_coro, timeout=2.0)
+        else:
+            results = res_or_coro
     except Exception as e:
         logger.warning(f"RAG search grounding fallback triggered for query '{query}': {e}")
         return []

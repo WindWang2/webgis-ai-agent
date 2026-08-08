@@ -65,8 +65,8 @@ class BaselineResolver:
     def _get_session_store(self) -> Any:
         if self._session_store is not None:
             return self._session_store
-        from app.services.session_data import session_data_manager
-        return session_data_manager
+        from app.services.session_data_protocol import get_session_store
+        return get_session_store()
 
     async def resolve_baseline(
         self,

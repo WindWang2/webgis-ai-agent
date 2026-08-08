@@ -19,7 +19,27 @@ logger = logging.getLogger(__name__)
 class ScenarioComparisonEngine:
     """Multi-Scenario Comparison Engine."""
 
-    def compare_scenarios(
+    def _infer_optimization_goals(self, metric_matrix: Dict[str, Dict[str, float]]) -> Dict[str, str]:
+        """Infer default optimization direction ('maximize' vs 'minimize') for metric keys."""
+        default_goals = {
+            "housing_price": "maximize",
+            "rent": "maximize",
+            "commercial_vitality": "maximize",
+            "education_access": "maximize",
+            "medical_access": "maximize",
+            "living_quality": "maximize",
+            "air_quality": "maximize",
+            "public_transit_usage": "maximize",
+            "commute_time": "minimize",
+            "traffic_load": "minimize",
+            "road_saturation": "minimize",
+        }
+        goals = {}
+        for m_key in metric_matrix:
+            goals[m_key] = default_goals.get(m_key, "maximize")
+        return goals
+
+    async def compare_scenarios(
         self,
         results: List[SpatialDecisionResult],
         session_id: str = "",
@@ -50,37 +70,24 @@ class ScenarioComparisonEngine:
             total_area = sum(zone.area_km2 for zone in res.spatial_impacts)
             affected_area_comparison[scen_id] = round(total_area, 2)
 
-            for m_key, m_val in res.metrics.items():
+            for m_key, m_delta in res.metrics.items():
                 if m_key not in metric_matrix:
                     metric_matrix[m_key] = {}
-                metric_matrix[m_key][scen_id] = m_val.simulated
+                metric_matrix[m_key][scen_id] = m_delta.simulated
 
-        # 2. Optimization Goals & Pareto Analysis
-        if optimization_goals is None:
-            # Default optimization heuristics
-            optimization_goals = {
-                "housing_price": "maximize",
-                "rent": "maximize",
-                "commercial_vitality": "maximize",
-                "education_access": "maximize",
-                "medical_access": "maximize",
-                "living_quality": "maximize",
-                "air_quality": "maximize",
-                "public_transit_usage": "maximize",
-                "commute_time": "minimize",
-                "traffic_load": "minimize",
-                "road_saturation": "minimize",
-            }
+        # Default optimization goals if unspecified
+        goals = optimization_goals or self._infer_optimization_goals(metric_matrix)
 
-        pareto_scenarios = self._find_pareto_optimal(results, optimization_goals)
-        trade_offs = self._analyze_trade_offs(results, metric_matrix, optimization_goals)
-        
-        # 3. Best Scenario Selection & Recommendation Rationale
+        # 2. Pareto Optimal Analysis
+        pareto_scenarios = self._find_pareto_optimal(results, goals)
+        trade_offs = self._analyze_trade_offs(results, metric_matrix, goals)
+
+        # 3. Trade-off Analysis & Recommendation
         recommended_id, rationale = self._select_recommended_scenario(
-            results, pareto_scenarios, trade_offs, optimization_goals
+            results, pareto_scenarios, trade_offs, goals
         )
 
-        # 4. Merge GeoJSON Features for Map Display
+        # 4. Generate Merged Comparison GeoJSON
         merged_features = []
         scenario_colors = [
             "#3B82F6",  # Blue
@@ -114,13 +121,9 @@ class ScenarioComparisonEngine:
         if session_id:
             try:
                 store = get_session_store()
-                # Use sync store or store in background loop
-                import asyncio
-                try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(store.store(session_id, comparison_geojson, prefix="cmp"))
-                except RuntimeError:
-                    pass
+                stored_ref = await store.store(session_id, comparison_geojson, prefix="cmp")
+                if stored_ref:
+                    comparison_ref_id = stored_ref
             except Exception as e:
                 logger.warning(f"Failed to store comparison GeoJSON to SessionStore: {e}")
 

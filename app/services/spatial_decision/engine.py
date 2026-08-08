@@ -152,7 +152,9 @@ class DecisionEngine:
         if session_id:
             try:
                 store = get_session_store()
-                await store.store(session_id, simulation_geojson, prefix="sim")
+                stored_ref = await store.store(session_id, simulation_geojson, prefix="sim")
+                if stored_ref:
+                    simulation_ref_id = stored_ref
             except Exception as e:
                 logger.warning(f"Failed to register simulation GeoJSON to SessionStore: {e}")
 

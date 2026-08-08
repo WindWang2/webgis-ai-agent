@@ -200,9 +200,15 @@ class SpatialImpactEngine:
         """Step decay function across direct/indirect zones or interval lists."""
         if isinstance(direct_radius_m, (list, tuple)):
             intervals = direct_radius_m
-            for max_dist, delta_val in intervals:
-                if distance_m <= max_dist:
-                    return float(delta_val)
+            for item in intervals:
+                if len(item) == 3:
+                    min_dist, max_dist, delta_val = item
+                    if min_dist <= distance_m <= max_dist:
+                        return float(delta_val)
+                elif len(item) == 2:
+                    max_dist, delta_val = item
+                    if distance_m <= max_dist:
+                        return float(delta_val)
             return 0.0
 
         if distance_m <= direct_radius_m:

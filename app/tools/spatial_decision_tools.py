@@ -81,7 +81,7 @@ def register_spatial_decision_tools(registry: ToolRegistry):
             mapspec_state = {}
             validation_passed = True
             if session_id:
-                mapspec_state = apply_decision_to_mapspec(session_id, result)
+                mapspec_state = await apply_decision_to_mapspec(session_id, result)
                 try:
                     from app.services.runtime_validator import runtime_validator
                     val_res = runtime_validator.validate_session_state(session_id)
@@ -94,6 +94,16 @@ def register_spatial_decision_tools(registry: ToolRegistry):
             res_dict["report_markdown"] = report_md
             res_dict["mapspec_applied"] = bool(mapspec_state)
             res_dict["runtime_validated"] = validation_passed
+            
+            # Fetch-on-Demand payload trimming for LLM context optimization
+            if "simulation_geojson" in res_dict:
+                features_cnt = len(res_dict["simulation_geojson"].get("features", []))
+                res_dict["simulation_geojson"] = {
+                    "type": "FeatureCollection",
+                    "features_count": features_cnt,
+                    "ref_id": result.simulation_ref_id,
+                    "note": "Full GeoJSON stored in SessionStore cursor.",
+                }
             return res_dict
 
         except Exception as e:
@@ -144,7 +154,7 @@ def register_spatial_decision_tools(registry: ToolRegistry):
                 )
                 evaluated_results.append(res)
 
-            cmp_res = cmp_engine.compare_scenarios(
+            cmp_res = await cmp_engine.compare_scenarios(
                 results=evaluated_results,
                 session_id=session_id,
                 optimization_goals=optimization_goals,
@@ -153,12 +163,30 @@ def register_spatial_decision_tools(registry: ToolRegistry):
             # Ingest comparison layer into MapSpec
             mapspec_state = {}
             if session_id:
-                mapspec_state = apply_comparison_to_mapspec(session_id, cmp_res)
+                mapspec_state = await apply_comparison_to_mapspec(session_id, cmp_res)
 
             report_md = generate_comparison_report_markdown(cmp_res)
             res_dict = cmp_res.model_dump()
             res_dict["report_markdown"] = report_md
             res_dict["mapspec_applied"] = bool(mapspec_state)
+
+            # Fetch-on-Demand payload trimming for LLM context optimization
+            if "comparison_geojson" in res_dict:
+                features_cnt = len(res_dict["comparison_geojson"].get("features", []))
+                res_dict["comparison_geojson"] = {
+                    "type": "FeatureCollection",
+                    "features_count": features_cnt,
+                    "ref_id": cmp_res.comparison_ref_id,
+                    "note": "Full comparison GeoJSON stored in SessionStore cursor.",
+                }
+            for scen in res_dict.get("scenarios", []):
+                if isinstance(scen, dict) and "simulation_geojson" in scen:
+                    f_cnt = len(scen["simulation_geojson"].get("features", []))
+                    scen["simulation_geojson"] = {
+                        "type": "FeatureCollection",
+                        "features_count": f_cnt,
+                        "ref_id": scen.get("simulation_ref_id", ""),
+                    }
             return res_dict
 
         except Exception as e:

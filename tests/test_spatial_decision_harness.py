@@ -130,7 +130,7 @@ async def test_benchmark_scenario_7_dual_site_comparison():
         target_area_text="杭州市余杭区",
     )
 
-    cmp_result = cmp_engine.compare_scenarios(
+    cmp_result = await cmp_engine.compare_scenarios(
         results=[site_a, site_b],
         optimization_goals={"housing_price": "maximize", "commute_time": "minimize"}
     )
@@ -168,7 +168,7 @@ async def test_benchmark_scenario_9_mapspec_cartography_integration():
     )
 
     session_id = "test_session_mapspec_001"
-    mapspec = apply_decision_to_mapspec(session_id, result)
+    mapspec = await apply_decision_to_mapspec(session_id, result)
     assert mapspec != {}
     assert "layers" in mapspec or "sources" in mapspec
 

@@ -124,9 +124,8 @@ class TargetAreaResolver:
             source="unresolved",
             confidence=0.0,
             correction_hint=(
-                f"Unable to resolve target area '{query_str}'. "
-                "Please specify a valid administrative district name (e.g. '海淀区'), "
-                "a BBOX string '[west,south,east,north]', a GeoJSON object, or a valid session reference ID."
+                f"无法解析目标区域 '{query_str}' (Unable to resolve target area)。"
+                "建议提供有效的行政区划名称（如 '海淀区'）、BBOX 字符串 '[west,south,east,north]'、GeoJSON 对象或 SessionStore ref ID。"
             )
         )
 
@@ -220,60 +219,58 @@ class TargetAreaResolver:
 
     async def _try_geocode(self, address_query: str) -> Optional[TargetAreaSpec]:
         provider = self._get_geocode_provider()
-        if not provider:
-            return None
+        if provider:
+            # 1. Try district geocoding if provider supports district()
+            if hasattr(provider, "district") and callable(getattr(provider, "district")):
+                try:
+                    res = await provider.district(keywords=address_query, level="", return_geometry="polygon")
+                    if isinstance(res, dict) and res.get("features"):
+                        feature = res["features"][0]
+                        geom = feature.get("geometry")
+                        props = feature.get("properties", {})
+                        name = props.get("name", address_query)
+                        if geom:
+                            geom_dict, geom_type, center, bbox = _process_shapely_geometry(geom)
+                            return TargetAreaSpec(
+                                query=address_query,
+                                geometry_type=geom_type if geom_type in ("Point", "Polygon", "MultiPolygon") else "Polygon",
+                                center=center,
+                                geometry=geom_dict,
+                                bbox=bbox,
+                                resolved_name=name,
+                                source="geocode",
+                                confidence=0.95,
+                                correction_hint=None
+                            )
+                except Exception as e:
+                    logger.debug(f"District geocode call failed for '{address_query}': {e}")
 
-        # 1. Try district geocoding if provider supports district()
-        if hasattr(provider, "district") and callable(getattr(provider, "district")):
-            try:
-                res = await provider.district(keywords=address_query, level="", return_geometry="polygon")
-                if isinstance(res, dict) and res.get("features"):
-                    feature = res["features"][0]
-                    geom = feature.get("geometry")
-                    props = feature.get("properties", {})
-                    name = props.get("name", address_query)
-                    if geom:
-                        geom_dict, geom_type, center, bbox = _process_shapely_geometry(geom)
-                        return TargetAreaSpec(
-                            query=address_query,
-                            geometry_type=geom_type if geom_type in ("Point", "Polygon", "MultiPolygon") else "Polygon",
-                            center=center,
-                            geometry=geom_dict,
-                            bbox=bbox,
-                            resolved_name=name,
-                            source="geocode",
-                            confidence=0.95,
-                            correction_hint=None
-                        )
-            except Exception as e:
-                logger.debug(f"District geocode call failed for '{address_query}': {e}")
+            # 2. Try standard geocode()
+            if hasattr(provider, "geocode") and callable(getattr(provider, "geocode")):
+                try:
+                    res = await provider.geocode(address=address_query, city="")
+                    if isinstance(res, dict) and res.get("results"):
+                        first = res["results"][0]
+                        loc = first.get("location")
+                        if loc and isinstance(loc, (list, tuple)) and len(loc) == 2:
+                            lng, lat = float(loc[0]), float(loc[1])
+                            formatted_addr = first.get("formatted_address") or address_query
+                            point_geom = {"type": "Point", "coordinates": [lng, lat]}
+                            return TargetAreaSpec(
+                                query=address_query,
+                                geometry_type="Point",
+                                center=(lng, lat),
+                                geometry=point_geom,
+                                bbox=[lng, lat, lng, lat],
+                                resolved_name=formatted_addr,
+                                source="geocode",
+                                confidence=0.90,
+                                correction_hint=None
+                            )
+                except Exception as e:
+                    logger.debug(f"Geocode call failed for '{address_query}': {e}")
 
-        # 2. Try standard geocode()
-        if hasattr(provider, "geocode") and callable(getattr(provider, "geocode")):
-            try:
-                res = await provider.geocode(address=address_query, city="")
-                if isinstance(res, dict) and res.get("results"):
-                    first = res["results"][0]
-                    loc = first.get("location")
-                    if loc and isinstance(loc, (list, tuple)) and len(loc) == 2:
-                        lng, lat = float(loc[0]), float(loc[1])
-                        formatted_addr = first.get("formatted_address") or address_query
-                        point_geom = {"type": "Point", "coordinates": [lng, lat]}
-                        return TargetAreaSpec(
-                            query=address_query,
-                            geometry_type="Point",
-                            center=(lng, lat),
-                            geometry=point_geom,
-                            bbox=[lng, lat, lng, lat],
-                            resolved_name=formatted_addr,
-                            source="geocode",
-                            confidence=0.90,
-                            correction_hint=None
-                        )
-            except Exception as e:
-                logger.debug(f"Geocode call failed for '{address_query}': {e}")
-
-        # 3. Fallback: Offline dictionary lookup for standard cities & districts (for test/offline mode)
+        # 3. Fallback: Check offline dictionary for standard cities & districts (for test/offline performance)
         OFFLINE_DISTRICTS = {
             "海淀": ([116.31, 39.98], "北京市海淀区"),
             "中关村": ([116.31, 39.98], "北京市海淀区中关村"),
