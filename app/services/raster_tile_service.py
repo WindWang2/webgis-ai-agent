@@ -6,7 +6,8 @@ Only reads the requested spatial window from disk.
 """
 import io
 import collections
-from typing import Tuple, Dict
+import threading
+from typing import Tuple, Dict, Optional
 import numpy as np
 from PIL import Image
 import rasterio
@@ -54,6 +55,22 @@ def _normalize_channel(arr: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
 
 _RASTER_TILE_CACHE: Dict[Tuple[str, int, int, int, int, str], bytes] = collections.OrderedDict()
 _MAX_RASTER_CACHE_ENTRIES = 2048
+_RASTER_CACHE_LOCK = threading.Lock()
+
+
+def _get_cached_tile(key: Tuple[str, int, int, int, int, str]) -> Optional[bytes]:
+    with _RASTER_CACHE_LOCK:
+        if key in _RASTER_TILE_CACHE:
+            _RASTER_TILE_CACHE.move_to_end(key)
+            return _RASTER_TILE_CACHE[key]
+    return None
+
+
+def _set_cached_tile(key: Tuple[str, int, int, int, int, str], tile_bytes: bytes) -> None:
+    with _RASTER_CACHE_LOCK:
+        _RASTER_TILE_CACHE[key] = tile_bytes
+        if len(_RASTER_TILE_CACHE) > _MAX_RASTER_CACHE_ENTRIES:
+            _RASTER_TILE_CACHE.popitem(last=False)
 
 
 def render_raster_tile(
@@ -69,9 +86,9 @@ def render_raster_tile(
         return _transparent_tile_png(tile_size)
 
     key = (raster_path, z, x, y, tile_size, cmap_name)
-    if key in _RASTER_TILE_CACHE:
-        _RASTER_TILE_CACHE.move_to_end(key)
-        return _RASTER_TILE_CACHE[key]
+    cached = _get_cached_tile(key)
+    if cached is not None:
+        return cached
 
     bounds_3857 = tile_bounds_3857(z, x, y)
     dst_transform = rasterio.transform.from_bounds(*bounds_3857, tile_size, tile_size)
@@ -88,9 +105,7 @@ def render_raster_tile(
 
             if win.width <= 0 or win.height <= 0:
                 res = _transparent_tile_png(tile_size)
-                _RASTER_TILE_CACHE[key] = res
-                if len(_RASTER_TILE_CACHE) > _MAX_RASTER_CACHE_ENTRIES:
-                    _RASTER_TILE_CACHE.popitem(last=False)
+                _set_cached_tile(key, res)
                 return res
 
             # Perform windowed read from source file (O(win_size) memory)
@@ -131,9 +146,7 @@ def render_raster_tile(
 
                 if not valid_mask.any():
                     res = _transparent_tile_png(tile_size)
-                    _RASTER_TILE_CACHE[key] = res
-                    if len(_RASTER_TILE_CACHE) > _MAX_RASTER_CACHE_ENTRIES:
-                        _RASTER_TILE_CACHE.popitem(last=False)
+                    _set_cached_tile(key, res)
                     return res
 
                 gray = _normalize_channel(arr, valid_mask)
@@ -145,9 +158,7 @@ def render_raster_tile(
             img.save(buf, format="PNG", compress_level=1)
             png_bytes = buf.getvalue()
 
-            _RASTER_TILE_CACHE[key] = png_bytes
-            if len(_RASTER_TILE_CACHE) > _MAX_RASTER_CACHE_ENTRIES:
-                _RASTER_TILE_CACHE.popitem(last=False)
+            _set_cached_tile(key, png_bytes)
             return png_bytes
 
     except Exception as err:

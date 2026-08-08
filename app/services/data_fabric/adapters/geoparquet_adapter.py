@@ -343,7 +343,7 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
         return QueryResult(
             dataset_id=dataset_id,
             features=result_features,
-            data={"type": "FeatureCollection", "features": result_features},
+            data={"type": "FeatureCollection", "feature_count": len(result_features)},
             total_count=len(filtered_features),
             returned_count=len(result_features),
             schema_info={"columns": cols_returned},

@@ -93,7 +93,9 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         pool = _get_or_create_postgis_pool(self.host, self.port or 5432, self.database, self.username, self.password)
         if pool:
             try:
-                return pool.getconn()
+                conn = pool.getconn()
+                setattr(conn, "_is_pooled", True)
+                return conn
             except Exception as pe:
                 logger.debug(f"Pool getconn failed: {pe}, fallback to direct connection")
 
@@ -125,16 +127,17 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             )
 
     def _release_connection(self, conn: Any) -> None:
-        """Release connection back to pool or close it."""
+        """Release connection back to pool or close direct connection."""
         if not conn:
             return
-        pool = _get_or_create_postgis_pool(self.host, self.port or 5432, self.database, self.username, self.password)
-        if pool:
-            try:
-                pool.putconn(conn)
-                return
-            except Exception:
-                pass
+        if getattr(conn, "_is_pooled", False):
+            pool = _get_or_create_postgis_pool(self.host, self.port or 5432, self.database, self.username, self.password)
+            if pool:
+                try:
+                    pool.putconn(conn)
+                    return
+                except Exception:
+                    pass
         try:
             conn.close()
         except Exception:

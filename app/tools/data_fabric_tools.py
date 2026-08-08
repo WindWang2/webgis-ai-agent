@@ -124,7 +124,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
             caps = adapter.capabilities()
             datasets = adapter.list_datasets()
 
-            return {
+            res = {
                 "status": "inspected",
                 "profile_id": profile_id,
                 "health": health.model_dump(),
@@ -132,6 +132,14 @@ def register_data_fabric_tools(registry: ToolRegistry):
                 "datasets_count": len(datasets),
                 "datasets": datasets,
             }
+            try:
+                import json
+                if len(json.dumps(res)) > 40000:
+                    res["datasets"] = datasets[:10]
+                    res["_payload_notice"] = "Payload capped for context safety (>40,000 chars)."
+            except Exception:
+                pass
+            return res
 
         return await asyncio.to_thread(_sync_run)
 
@@ -164,7 +172,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
         offset: int = 0,
     ) -> dict:
         """空间目录综合检索"""
-        return spatial_catalog_service.search(
+        res = spatial_catalog_service.search(
             query=query,
             bbox=bbox,
             crs=crs,
@@ -173,6 +181,14 @@ def register_data_fabric_tools(registry: ToolRegistry):
             limit=limit,
             offset=offset,
         )
+        try:
+            import json
+            if len(json.dumps(res)) > 40000 and "items" in res and isinstance(res["items"], list):
+                res["items"] = res["items"][:10]
+                res["_payload_notice"] = "Payload capped for context safety (>40,000 chars)."
+        except Exception:
+            pass
+        return res
 
     @tool(
         registry,
