@@ -345,9 +345,20 @@ time (not data-driven); a parallel `legend_spec` (continuous: min/max + palette)
 (ADR-0007). Multi-resolution zoom (XYZ/COG) and the upload-raster `UploadRecord` path remain out of
 scope.
 
-### SpectralRasterEngine & RasterAnalysisResult
-The deep remote sensing engine (`app/services/rs/spectral_engine.py`) and value object dataclass (`RasterAnalysisResult`).
-Encapsulates spectral index formulas (NDVI, NDWI, EVI, NBR), terrain surface modeling (slope, aspect, hillshade), GDAL/Rasterio context reuse (`rasterio_env`), and PNG colormap rendering into an atomic, testable domain service.
+### Enterprise Geospatial Data Fabric V1
+The unified enterprise spatial data access architecture (`app/services/data_fabric/`). Connects remote and local enterprise spatial data sources (PostGIS, OGC API Features, WFS, WMS/WMTS, ArcGIS REST, STAC, GeoParquet, FlatGeobuf, PMTiles, S3) behind a standard contract pipeline (`DataSource → Capability Discovery → Spatial Catalog → DatasetDescriptor → Lazy Pushdown Query → ref_id Materialization → MapSpec`).
+
+- **DataSource**: Represents an enterprise spatial data provider instance (`data_sources` table).
+- **ConnectionProfile**: Configuration holding endpoint URLs, option flags, and secret references (zero plain password logging).
+- **DataSourceCapability**: Standard capability flags (`pushdown_bbox`, `pushdown_filter`, `raster_tile`, `vector_features`).
+- **CatalogItem**: Lightweight index entry in `SpatialCatalog` (`spatial_catalog_items` table) for fast searching without feature payload bloat.
+- **DatasetDescriptor**: The standardized metadata contract (fields, geometry, CRS, bbox, temporal extent, freshness, query capabilities) across all sources.
+- **SpatialMetaProfile**: Bridge between Agent planning and MapSpec source profiling.
+- **QuerySpec**: Pushdown query specification (bbox, field projection, structured filter, limit, offset).
+- **QueryResult**: Uniform query execution response holding GeoJSON features or opaque `ref_id` cursors.
+- **DatasetFingerprint**: Low-overhead change detection hash (ETag, modified time, version).
+- **Materialization**: Explicit local snapshot provenance recording parent source, query, fingerprint, timestamp, and `ref_id` in `materializations` table.
+- **SyncState**: Source reachability and diagnostic health status (`DataFabricHealth`).
 
 ## Key Relationships
 

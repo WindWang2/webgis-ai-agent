@@ -39,7 +39,9 @@ _TOOL_MODULES = [
     ("app.tools.meta_tools", "register_meta_tools"),
     ("app.tools.cartography_tools", "register_mapspec_cartography_tools"),
     ("app.tools.templates", "register_template_tools"),
+    ("app.tools.data_fabric_tools", "register_data_fabric_tools"),
 ]
+
 
 
 def init_tools(registry: "ToolRegistry") -> None:

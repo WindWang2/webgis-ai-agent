@@ -1,5 +1,19 @@
-"""
-数据模型模块
-"""
+from app.models.data_fabric import (
+    DataSource,
+    DataFabricDataset,
+    DataMaterializationRecord,
+    DataSourceModel,
+    CatalogItemModel,
+    MaterializationModel,
+    DataFabricAuditLog,
+)
 
-# Legacy models exports removed - use direct imports
+__all__ = [
+    "DataSource",
+    "DataFabricDataset",
+    "DataMaterializationRecord",
+    "DataSourceModel",
+    "CatalogItemModel",
+    "MaterializationModel",
+    "DataFabricAuditLog",
+]

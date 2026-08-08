@@ -2,6 +2,7 @@
 API 路由模块
 """
 
-from app.api.routes import health, map, layer, chat, report, task, upload, knowledge, ws, templates, metrics
+from app.api.routes import health, map, layer, chat, report, task, upload, knowledge, ws, templates, metrics, data_fabric
 
-__all__ = ["health", "map", "layer", "chat", "report", "task", "upload", "knowledge", "ws", "templates", "metrics"]
+__all__ = ["health", "map", "layer", "chat", "report", "task", "upload", "knowledge", "ws", "templates", "metrics", "data_fabric"]
+

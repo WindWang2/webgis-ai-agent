@@ -66,7 +66,7 @@ export interface CausalEntry {
   mapState?: Record<string, unknown>;
 }
 
-export type LeftTab = 'chat' | 'layers' | 'analysis' | 'ops' | 'exports' | 'assets' | 'export_layout';
+export type LeftTab = 'chat' | 'layers' | 'analysis' | 'ops' | 'exports' | 'assets' | 'export_layout' | 'data_sources';
 export type SettingsTab = 'llm' | 'skills' | 'rag' | 'layers' | 'map' | 'system';
 
 export interface SkillEntry {

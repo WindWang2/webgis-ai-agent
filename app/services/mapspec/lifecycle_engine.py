@@ -195,6 +195,13 @@ class MapSpecLifecycleEngine:
                             break
                     if not updated:
                         layers.append(processed_layer)
+
+                    # Keep Redis map_state dual-write in sync for runtime state
+                    await session_data_manager.update_layer_in_state(
+                        session_id,
+                        processed_layer.get("id", "layer"),
+                        processed_layer,
+                    )
                     auto_checkpoint = True
 
                 elif isinstance(intent, RemoveLayerIntent):
