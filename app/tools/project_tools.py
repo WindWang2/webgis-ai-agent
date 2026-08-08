@@ -4,7 +4,7 @@ Project Workspace, Workflow & Spatial Quality Agent Tools
 import logging
 from typing import Dict, Any, List, Optional
 
-from app.tools.registry import ToolRegistry
+from app.tools.registry import ToolRegistry, tool
 from app.tools._utils import trim_features
 from app.core.database import SessionLocal
 from app.services.project_service import ProjectService
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 def register_project_tools(registry: ToolRegistry) -> None:
 
-    @registry.register(
+    @tool(registry, 
         name="save_plan_as_workflow",
         description="Save a successful execution plan or steps into a persistent, reusable Project Workflow.",
         parameters={
@@ -78,7 +78,7 @@ def register_project_tools(registry: ToolRegistry) -> None:
                 "message": f"Saved workflow '{workflow_name}' to project {project_id}",
             }
 
-    @registry.register(
+    @tool(registry, 
         name="rerun_workflow",
         description="Re-run a persistent workflow with updated inputs, AOI, or parameters.",
         parameters={
@@ -121,7 +121,7 @@ def register_project_tools(registry: ToolRegistry) -> None:
                 "error_message": run.error_message,
             }
 
-    @registry.register(
+    @tool(registry, 
         name="audit_spatial_quality",
         description="Audit spatial dataset quality across Geometry, Topology, CRS, Attributes, and Sanity dimensions.",
         parameters={
@@ -149,7 +149,7 @@ def register_project_tools(registry: ToolRegistry) -> None:
         )
         return report.to_dict()
 
-    @registry.register(
+    @tool(registry, 
         name="repair_spatial_dataset",
         description="Perform non-destructive safe remediation on a spatial dataset and create a clean derived output.",
         parameters={
