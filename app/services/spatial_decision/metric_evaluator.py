@@ -79,6 +79,7 @@ class MetricEvaluator:
         custom_delta_pct: Optional[Tuple[float, float, float]] = None,
         custom_delta_abs: Optional[Tuple[float, float, float]] = None,
         missing_baseline: bool = False,
+        evidence_gap_note: str = "",
     ) -> MetricDeltaV2:
         """
         Calculates baseline, simulated expected, absolute delta, percentage delta, and MetricRange.
