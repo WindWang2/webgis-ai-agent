@@ -26,6 +26,24 @@ The deep RAG knowledge retrieval and vector indexing engine (`app/services/rag/e
 Encapsulates document chunking, embedding generation, multi-tenant security isolation (`TenantContext`),
 and automatic FAISS vector index compaction (`compact_index`).
 
+### Project Workspace
+The root domain workspace (`Project`) managing datasets, persistent workflows, execution runs, spatial artifacts, map revisions, and reports for a given tenant/user. Decouples long-term GIS workspace management from transient `Session`/`Conversation` runtime states.
+
+### ProjectDataset
+Logical dataset attachment inside a `Project`, pointing to source layers or upload records without duplicating raw payloads. Tracks schema profile, CRS, quality status, and dataset version fingerprints.
+
+### Workflow & WorkflowRun
+A `Workflow` is a persistent, versioned DAG recipe composed of tool steps, parameter templates, input bindings, dependency edges, and execution policies. Can be created from a successful `Plan`. A `WorkflowRun` is an immutable execution record producing versioned output artifacts and metrics.
+
+### Artifact & ArtifactLineage
+`Artifact` is the unified logical representation for datasets, raster analysis, maps, and reports produced in a Project. `ArtifactLineage` tracks the DAG execution provenance graph (`parents -> artifact -> consumers`), recording producing tool, parameters, CRS, quality state, and execution run IDs.
+
+### SpatialQualityEngine
+The deep spatial data validation engine (`app/services/spatial_quality_service.py`) performing multi-dimensional quality auditing across Geometry, Topology, CRS, Attributes, and Spatial Sanity. Emits structured `SpatialQualityReport`s with explicit severity levels (`info`, `warning`, `error`, `blocking`).
+
+### SpatialRepairPipeline
+The safe spatial data remediation engine (`app/services/spatial_repair_pipeline.py`) providing non-destructive repairs (`make_valid`, `remove_empty`, `normalize_geometry_type`, `deduplicate`, `snap_within_tolerance`, `crs_transform`, `attribute_type_normalization`) to produce clean `Derived Artifacts` with explicit provenance.
+
 ### ChatContextAssembler
 The deep prompt context composition engine (`app/services/chat/context_assembler.py`).
 Encapsulates map state ambient summaries, history token budget truncation, XML security fencing,

@@ -1,5 +1,47 @@
 """
 数据模型模块
+导出系统包含的所有 SQLAlchemy ORM 数据模型
 """
+from app.models.db_model import (
+    Organization,
+    User,
+    Layer,
+    AnalysisTask,
+    LayerPermission,
+    Conversation,
+    Message,
+    CartographyTemplate,
+)
+from app.models.upload import UploadRecord
+from app.models.report import Report
+from app.models.knowledge_base import Document, Chunk
+from app.models.project import (
+    Project,
+    ProjectDataset,
+    Workflow,
+    WorkflowRun,
+    Artifact,
+    ArtifactLineage,
+)
 
-# Legacy models exports removed - use direct imports
+__all__ = [
+    "Organization",
+    "User",
+    "Layer",
+    "AnalysisTask",
+    "LayerPermission",
+    "Conversation",
+    "Message",
+    "CartographyTemplate",
+    "UploadRecord",
+    "Report",
+    "Document",
+    "Chunk",
+    "Project",
+    "ProjectDataset",
+    "Workflow",
+    "WorkflowRun",
+    "Artifact",
+    "ArtifactLineage",
+]
+
