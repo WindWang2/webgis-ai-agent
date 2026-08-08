@@ -11,24 +11,20 @@ Emits structured SpatialQualityReport with explicit severity levels (info, warni
 
 import math
 import logging
-import copy
 from typing import List, Dict, Any, Optional, Set, Tuple
 from pydantic import BaseModel, Field
 import numpy as np
 
 from shapely.geometry import (
     shape,
-    mapping,
     Polygon,
     MultiPolygon,
     LineString,
     MultiLineString,
     Point,
-    MultiPoint,
 )
 from shapely.validation import explain_validity
 from shapely.strtree import STRtree
-import shapely
 
 logger = logging.getLogger(__name__)
 

@@ -3,7 +3,7 @@ Project Workspace, Persistent Workflow, Spatial Data Quality & Lineage API Endpo
 """
 import logging
 from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -19,8 +19,7 @@ from app.schemas.project_schema import (
     DatasetAttach, ProjectDatasetResponse,
     WorkflowCreate, WorkflowResponse,
     WorkflowRunRequest, WorkflowRunResponse,
-    ArtifactResponse, ArtifactLineageResponse,
-    RunComparisonResponse
+    ArtifactResponse, RunComparisonResponse
 )
 
 logger = logging.getLogger(__name__)

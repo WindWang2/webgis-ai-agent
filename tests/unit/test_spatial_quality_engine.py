@@ -3,9 +3,8 @@ Unit tests for SpatialQualityEngine and SpatialRepairPipeline.
 Tests cover 5 quality dimensions and safe non-destructive spatial repairs.
 """
 
-import pytest
 import copy
-from app.services.spatial_quality_service import SpatialQualityEngine, SpatialQualityReport, QualityIssue
+from app.services.spatial_quality_service import SpatialQualityEngine, SpatialQualityReport
 from app.services.spatial_repair_pipeline import SpatialRepairPipeline
 
 

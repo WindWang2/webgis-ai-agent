@@ -2,7 +2,6 @@
 Unit tests for Project Workspace domain SQLAlchemy models:
 Project, ProjectDataset, Workflow, WorkflowRun, Artifact, ArtifactLineage.
 """
-import uuid
 import pytest
 from datetime import datetime, timezone
 from sqlalchemy import create_engine, event

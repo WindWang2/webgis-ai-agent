@@ -10,11 +10,8 @@ from typing import List, Dict, Any, Tuple, Optional
 from shapely.geometry import (
     shape,
     mapping,
-    Polygon,
     MultiPolygon,
-    LineString,
     MultiLineString,
-    Point,
     MultiPoint,
 )
 from shapely.validation import make_valid

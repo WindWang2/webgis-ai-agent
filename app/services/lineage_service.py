@@ -6,9 +6,9 @@ import logging
 from typing import Optional, List, Dict, Any, Set
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-from sqlalchemy import select, or_
+from sqlalchemy import select
 
-from app.models.project import Artifact, ArtifactLineage
+from app.models.project import ArtifactLineage
 
 logger = logging.getLogger(__name__)
 

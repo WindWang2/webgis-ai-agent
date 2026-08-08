@@ -3,7 +3,7 @@ Unit tests for Workflow Engine, DAG validation, and Run Comparison
 """
 import pytest
 from app.services.workflow_engine import WorkflowEngine
-from app.schemas.project_schema import WorkflowStepSpec, WorkflowRunResponse
+from app.schemas.project_schema import WorkflowStepSpec
 from app.models.project import WorkflowRun
 
 

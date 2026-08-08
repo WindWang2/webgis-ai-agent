@@ -66,9 +66,9 @@ class ChatContextAssembler:
             list_refs = metadata.get("list_refs") or {}
             event_log = metadata.get("event_log") or []
             started_at = metadata.get("started_at")
+            env_summary = await build_map_state_summary(session_id)
 
             project_id = metadata.get("project_id")
-            project_block = ""
             if project_id:
                 try:
                     from app.core.database import SessionLocal
@@ -85,10 +85,10 @@ class ChatContextAssembler:
                                 f"Workflows ({len(wfs)}): {', '.join([w.name for w in wfs[:5]])}\n"
                                 f"</active_project_workspace>"
                             )
+                            env_summary += project_block
                 except Exception as ex:
                     logger.warning(f"Failed to assemble project context block: {ex}")
 
-            env_summary = (env_summary or "") + project_block
             overview = await build_session_overview(
                 session_id,
                 messages,

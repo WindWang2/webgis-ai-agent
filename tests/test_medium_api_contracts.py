@@ -8,7 +8,6 @@ import os
 import pytest
 from httpx import ASGITransport, AsyncClient
 from fastapi import FastAPI
-import importlib.util
 
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-api-contracts-32-chars")
 os.environ.setdefault("ENV", "development")

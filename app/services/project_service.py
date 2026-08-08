@@ -9,8 +9,8 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import select, and_, or_
 
-from app.models.project import Project, ProjectDataset, Workflow, WorkflowRun, Artifact, ArtifactLineage
-from app.schemas.project_schema import ProjectCreate, ProjectUpdate, DatasetAttach, WorkflowCreate
+from app.models.project import Project, ProjectDataset, Workflow, WorkflowRun, Artifact
+from app.schemas.project_schema import ProjectUpdate, DatasetAttach, WorkflowCreate
 
 logger = logging.getLogger(__name__)
 
