@@ -1,12 +1,13 @@
 'use client';
 
-import { MessageCircle, Layers, Printer, Triangle } from 'lucide-react';
+import { MessageCircle, Layers, Printer, Triangle, Folder } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { ChatTab } from '@/components/sidebar/chat-tab';
 import { LayersTab } from '@/components/sidebar/layers-tab';
 import { AnalysisTab } from '@/components/sidebar/analysis-tab';
 import { MapStudioTab } from '@/components/sidebar/map-studio-tab';
+import { ProjectTab } from '@/components/sidebar/project-tab';
 import type { AiStatus, LeftTab } from '@/lib/store/hud-types';
 
 export interface LeftSidebarProps {
@@ -34,6 +35,7 @@ interface TabDef {
 
 const TAB_DEFS: TabDef[] = [
   { key: 'chat', icon: MessageCircle, label: '对话' },
+  { key: 'project', icon: Folder, label: '项目' },
   { key: 'layers', icon: Layers, label: '图层' },
   { key: 'analysis', icon: Triangle, label: '分析' },
   { key: 'export_layout', icon: Printer, label: '制图工坊' },
@@ -112,6 +114,7 @@ export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#
         {activeTab === 'chat' && (
           <ChatTab messages={messages} aiStatus={aiStatus} onSend={onSend} accentColor={accentColor} onPlanAction={onPlanAction} />
         )}
+        {activeTab === 'project' && <ProjectTab />}
         {activeTab === 'layers' && <LayersTab />}
         {activeTab === 'analysis' && <AnalysisTab onSend={onSend} />}
         {(activeTab === 'export_layout' || activeTab === 'exports') && <MapStudioTab />}
