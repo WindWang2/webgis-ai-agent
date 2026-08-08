@@ -283,6 +283,22 @@ def repair_spatial_dataset(
 
 
 @router.get("/artifacts/{artifact_id}/lineage")
-def get_artifact_lineage(artifact_id: str, db: Session = Depends(get_db)):
+def get_artifact_lineage(
+    artifact_id: str,
+    db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
+    user_id = user.get("id") if user else None
+    org_id = user.get("org_id") if user else None
+    from app.models.project import Artifact
+    from sqlalchemy import select
+    artifact = db.execute(select(Artifact).where(Artifact.id == artifact_id)).scalar_one_or_none()
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    project = ProjectService.get_project_with_auth(db=db, project_id=artifact.project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Artifact or project not found")
+
     graph = LineageService.get_lineage_graph(db=db, artifact_id=artifact_id)
     return graph

@@ -56,6 +56,7 @@ class ProjectDataset(Base):
     __table_args__ = (
         Index("idx_project_dataset_project_id", "project_id"),
         Index("idx_project_dataset_source_type", "source_type"),
+        Index("idx_project_dataset_pid_created", "project_id", "created_at"),
         CheckConstraint(
             "quality_status IN ('unchecked', 'valid', 'invalid', 'warning', 'unknown', 'pending', 'verified')",
             name="ck_project_dataset_quality_status",
@@ -110,6 +111,7 @@ class WorkflowRun(Base):
     __table_args__ = (
         Index("idx_workflow_run_workflow_id", "workflow_id"),
         Index("idx_workflow_run_status", "status"),
+        Index("idx_workflow_run_wid_created", "workflow_id", "created_at"),
         CheckConstraint(
             "status IN ('pending', 'running', 'completed', 'failed', 'cancelled')",
             name="ck_workflow_run_status",

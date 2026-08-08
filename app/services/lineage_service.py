@@ -3,7 +3,7 @@ Artifact Lineage Provenance Service: Manages execute lineage graphs (parents -> 
 """
 import uuid
 import logging
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_
@@ -45,39 +45,64 @@ class LineageService:
         return lineage_records
 
     @staticmethod
-    def get_lineage_graph(db: Session, artifact_id: str) -> Dict[str, Any]:
+    def get_lineage_graph(db: Session, artifact_id: str, max_depth: int = 5) -> Dict[str, Any]:
         """
-        Returns full upstream parents and downstream consumers for an artifact.
+        Returns full multi-hop upstream parents and downstream consumers for an artifact safely.
         """
-        stmt = select(ArtifactLineage).where(
-            or_(
-                ArtifactLineage.artifact_id == artifact_id,
-                ArtifactLineage.parent_artifact_id == artifact_id,
-            )
-        )
-        records = list(db.execute(stmt).scalars().all())
+        parents: List[Dict[str, Any]] = []
+        consumers: List[Dict[str, Any]] = []
 
-        parents = []
-        consumers = []
-        for rec in records:
-            if rec.artifact_id == artifact_id and rec.parent_artifact_id:
-                parents.append({
-                    "lineage_id": rec.id,
-                    "parent_artifact_id": rec.parent_artifact_id,
-                    "producing_tool": rec.producing_tool,
-                    "workflow_run_id": rec.workflow_run_id,
-                    "parameters": rec.parameters,
-                    "created_at": rec.created_at.isoformat() if rec.created_at else None,
-                })
-            elif rec.parent_artifact_id == artifact_id:
-                consumers.append({
-                    "lineage_id": rec.id,
-                    "consumer_artifact_id": rec.artifact_id,
-                    "producing_tool": rec.producing_tool,
-                    "workflow_run_id": rec.workflow_run_id,
-                    "parameters": rec.parameters,
-                    "created_at": rec.created_at.isoformat() if rec.created_at else None,
-                })
+        # Upstream recursive traversal
+        visited_up: Set[str] = set()
+        queue_up = [(artifact_id, 0)]
+
+        while queue_up:
+            curr_id, depth = queue_up.pop(0)
+            if depth >= max_depth or curr_id in visited_up:
+                continue
+            visited_up.add(curr_id)
+
+            stmt = select(ArtifactLineage).where(ArtifactLineage.artifact_id == curr_id)
+            records = list(db.execute(stmt).scalars().all())
+            for rec in records:
+                if rec.parent_artifact_id and rec.parent_artifact_id not in visited_up:
+                    parents.append({
+                        "lineage_id": rec.id,
+                        "artifact_id": rec.artifact_id,
+                        "parent_artifact_id": rec.parent_artifact_id,
+                        "producing_tool": rec.producing_tool,
+                        "workflow_run_id": rec.workflow_run_id,
+                        "parameters": rec.parameters,
+                        "depth": depth + 1,
+                        "created_at": rec.created_at.isoformat() if rec.created_at else None,
+                    })
+                    queue_up.append((rec.parent_artifact_id, depth + 1))
+
+        # Downstream recursive traversal
+        visited_down: Set[str] = set()
+        queue_down = [(artifact_id, 0)]
+
+        while queue_down:
+            curr_id, depth = queue_down.pop(0)
+            if depth >= max_depth or curr_id in visited_down:
+                continue
+            visited_down.add(curr_id)
+
+            stmt = select(ArtifactLineage).where(ArtifactLineage.parent_artifact_id == curr_id)
+            records = list(db.execute(stmt).scalars().all())
+            for rec in records:
+                if rec.artifact_id and rec.artifact_id not in visited_down:
+                    consumers.append({
+                        "lineage_id": rec.id,
+                        "consumer_artifact_id": rec.artifact_id,
+                        "parent_artifact_id": rec.parent_artifact_id,
+                        "producing_tool": rec.producing_tool,
+                        "workflow_run_id": rec.workflow_run_id,
+                        "parameters": rec.parameters,
+                        "depth": depth + 1,
+                        "created_at": rec.created_at.isoformat() if rec.created_at else None,
+                    })
+                    queue_down.append((rec.artifact_id, depth + 1))
 
         return {
             "artifact_id": artifact_id,

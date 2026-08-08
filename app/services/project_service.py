@@ -7,12 +7,10 @@ import logging
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_
 
 from app.models.project import Project, ProjectDataset, Workflow, WorkflowRun, Artifact, ArtifactLineage
-from app.models.upload import UploadRecord
-from app.models.db_model import Layer
-from app.schemas.project_schema import ProjectCreate, ProjectUpdate, DatasetAttach, WorkflowCreate, WorkflowStepSpec
+from app.schemas.project_schema import ProjectCreate, ProjectUpdate, DatasetAttach, WorkflowCreate
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +78,7 @@ class ProjectService:
         if org_id:
             stmt = stmt.where(Project.org_id == org_id)
         elif user_id:
-            stmt = stmt.where(Project.owner_id == user_id)
+            stmt = stmt.where(or_(Project.owner_id == user_id, Project.owner_id.is_(None)))
 
         stmt = stmt.order_by(Project.updated_at.desc())
         return list(db.execute(stmt).scalars().all())
@@ -104,7 +102,8 @@ class ProjectService:
         if data.status is not None:
             project.status = data.status
         if data.metadata_json is not None:
-            project.metadata_json = {**project.metadata_json, **data.metadata_json}
+            existing_meta = project.metadata_json or {}
+            project.metadata_json = {**existing_meta, **data.metadata_json}
 
         project.updated_at = datetime.now(timezone.utc)
         db.commit()
@@ -131,7 +130,7 @@ class ProjectService:
             project_id=project_id,
             name=attach_data.name,
             source_type=attach_data.source_type,
-            source_ref=attach_data.source_ref,
+            source_ref=attach_data.source_ref or "",
             schema_profile=attach_data.schema_profile or {},
             crs=attach_data.crs,
             quality_status="unchecked",

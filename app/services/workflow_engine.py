@@ -101,6 +101,7 @@ class WorkflowEngine:
         db.commit()
 
         step_outputs: Dict[str, Any] = {}
+        step_artifacts: Dict[str, str] = {}  # step_id -> artifact_id
         execution_trace = []
         bound_inputs = input_bindings or {}
 
@@ -119,8 +120,12 @@ class WorkflowEngine:
                         # Value from a previous step output
                         source_step = bind_val.split(".")[0]
                         out_key = bind_val.split(".")[1] if "." in bind_val else "result"
-                        if source_step in step_outputs and out_key in step_outputs[source_step]:
-                            tool_args[param_key] = step_outputs[source_step][out_key]
+                        if source_step in step_outputs:
+                            step_res = step_outputs[source_step]
+                            if isinstance(step_res, dict) and out_key in step_res:
+                                tool_args[param_key] = step_res[out_key]
+                            else:
+                                tool_args[param_key] = step_res
                     elif param_key in bound_inputs:
                         tool_args[param_key] = bound_inputs[param_key]
 
@@ -143,6 +148,9 @@ class WorkflowEngine:
                 execution_trace.append(trace_entry)
 
                 # Produce Artifact & Lineage if step produces geographical output
+                res_dict = tool_result if isinstance(tool_result, dict) else {}
+                storage_ref = str(res_dict.get("ref_id") or res_dict.get("layer_id") or "")
+
                 artifact_id = f"art_{uuid.uuid4().hex[:16]}"
                 artifact = Artifact(
                     id=artifact_id,
@@ -151,17 +159,24 @@ class WorkflowEngine:
                     artifact_type="analysis",
                     format="geojson",
                     crs="EPSG:4326",
-                    storage_ref=str(tool_result.get("ref_id") or tool_result.get("layer_id") or ""),
+                    storage_ref=storage_ref,
                     metadata_json={"step_id": step_id, "tool_name": tool_name},
                     created_at=datetime.now(timezone.utc),
                 )
                 db.add(artifact)
+                step_artifacts[step_id] = artifact_id
+
+                # Collect parent artifact IDs from step dependencies
+                parent_artifact_ids = [
+                    step_artifacts[dep] for dep in step_spec.dependencies if dep in step_artifacts
+                ]
 
                 LineageService.record_lineage(
                     db=db,
                     artifact_id=artifact_id,
                     producing_tool=tool_name,
                     tool_version="1.0",
+                    parent_artifact_ids=parent_artifact_ids,
                     workflow_run_id=run_id,
                     parameters=tool_args,
                 )
@@ -169,7 +184,7 @@ class WorkflowEngine:
             run.status = "completed"
             run.completed_at = datetime.now(timezone.utc)
             run.execution_trace = execution_trace
-            run.outputs = {step_id: str(res.get("result", ""))[:500] for step_id, res in step_outputs.items()}
+            run.outputs = {step_id: str(res.get("result", ""))[:500] if isinstance(res, dict) else str(res)[:500] for step_id, res in step_outputs.items()}
             run.cost_perf_summary = {
                 "total_steps": len(execution_order),
                 "total_duration_seconds": sum(t["duration_seconds"] for t in execution_trace),

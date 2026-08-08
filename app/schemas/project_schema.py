@@ -36,7 +36,7 @@ class ProjectResponse(BaseModel):
 class DatasetAttach(BaseModel):
     name: str = Field(..., max_length=255)
     source_type: str = Field(..., description="upload / layer / external / vector / raster")
-    source_ref: str = Field(..., description="UploadRecord ID or Layer ID or URL")
+    source_ref: Optional[str] = Field(None, description="UploadRecord ID or Layer ID or URL")
     schema_profile: Optional[Dict[str, Any]] = Field(default_factory=dict)
     crs: str = Field(default="EPSG:4326")
 
@@ -48,11 +48,11 @@ class ProjectDatasetResponse(BaseModel):
     project_id: str
     name: str
     source_type: str
-    source_ref: str
+    source_ref: Optional[str] = None
     schema_profile: Dict[str, Any] = Field(default_factory=dict)
-    crs: str
-    quality_status: str
-    version_fingerprint: str
+    crs: Optional[str] = "EPSG:4326"
+    quality_status: Optional[str] = "unchecked"
+    version_fingerprint: Optional[str] = None
     created_at: datetime
 
 
@@ -124,8 +124,8 @@ class ArtifactResponse(BaseModel):
     project_id: str
     name: str
     artifact_type: str
-    format: str
-    crs: str
+    format: Optional[str] = None
+    crs: Optional[str] = "EPSG:4326"
     storage_ref: Optional[str] = None
     upload_record_id: Optional[int] = None
     layer_id: Optional[int] = None
@@ -140,7 +140,7 @@ class ArtifactLineageResponse(BaseModel):
     artifact_id: str
     parent_artifact_id: Optional[str] = None
     producing_tool: str
-    tool_version: str
+    tool_version: Optional[str] = "1.0"
     workflow_run_id: Optional[str] = None
     parameters: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
