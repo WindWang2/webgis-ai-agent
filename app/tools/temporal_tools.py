@@ -15,7 +15,7 @@ from app.services.temporal.models import TemporalFilter, TemporalAggregation
 logger = logging.getLogger(__name__)
 
 
-def trim_temporal_result(payload: Any, max_features: int = 500) -> Any:
+def trim_temporal_result(payload: Any, max_features: int = 50) -> Any:
     """Apply Fetch-on-Demand trimming to a temporal analysis result.
 
     Temporal results embed filtered/aggregate FeatureCollections, per-feature
@@ -73,6 +73,25 @@ def trim_temporal_result(payload: Any, max_features: int = 500) -> Any:
                 hs["_features_trimmed"] = {"original_count": len(feats), "kept_count": max_features}
             trimmed_hotspots.append(hs)
         out["hotspots"] = trimmed_hotspots
+
+    try:
+        import json
+        if len(json.dumps(out)) > 40000:
+            out["_payload_notice"] = "Payload truncated for context safety (>40,000 chars). Use layer endpoints for full GeoJSON access."
+            def _truncate_features(obj: Any):
+                if isinstance(obj, dict):
+                    if "features" in obj and isinstance(obj["features"], list):
+                        obj["features"] = []
+                    if "feature_changes" in obj and isinstance(obj["feature_changes"], list):
+                        obj["feature_changes"] = []
+                    for v in obj.values():
+                        _truncate_features(v)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        _truncate_features(item)
+            _truncate_features(out)
+    except Exception:
+        pass
 
     return out
 

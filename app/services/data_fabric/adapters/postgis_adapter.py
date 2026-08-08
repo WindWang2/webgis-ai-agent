@@ -5,6 +5,7 @@ import re
 import time
 import json
 import logging
+from contextlib import contextmanager
 from typing import List, Dict, Any, Tuple
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.schemas.data_fabric_schema import (
@@ -139,20 +140,28 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         except Exception:
             pass
 
-    def probe(self) -> bool:
-        """Lightweight database connectivity probe."""
+    @contextmanager
+    def _connection_context(self):
+        """Context manager for safely acquiring and releasing connection."""
         conn = None
         try:
             conn = self._get_connection()
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1")
-                res = cur.fetchone()
-                return res is not None and res[0] == 1
+            yield conn
+        finally:
+            if conn:
+                self._release_connection(conn)
+
+    def probe(self) -> bool:
+        """Lightweight database connectivity probe."""
+        try:
+            with self._connection_context() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+                    res = cur.fetchone()
+                    return res is not None and res[0] == 1
         except Exception as e:
             logger.debug(f"PostGIS probe failed: {e}")
             return False
-        finally:
-            self._release_connection(conn)
 
     def capabilities(self) -> List[str]:
         """List PostGIS adapter capabilities."""
@@ -167,8 +176,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
     def list_datasets(self) -> List[Dict[str, Any]]:
         """Discover available spatial tables/views in PostGIS database."""
         try:
-            conn = self._get_connection()
-            try:
+            with self._connection_context() as conn:
                 with conn.cursor() as cur:
                     # Query geometry_columns catalog first
                     sql = """
@@ -213,8 +221,6 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                             }
                             for r in rows
                         ]
-            finally:
-                conn.close()
         except Exception as e:
             logger.warning(f"PostGIS list_datasets fallback due to error: {e}")
             return [
@@ -232,8 +238,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         schema_name, table_name = self._sanitize_identifier(dataset_id)
         
         try:
-            conn = self._get_connection()
-            try:
+            with self._connection_context() as conn:
                 with conn.cursor() as cur:
                     # 1. Fetch column attributes
                     col_sql = """
@@ -289,8 +294,6 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                         fields=fields,
                         metadata={"schema": schema_name, "table": table_name},
                     )
-            finally:
-                conn.close()
         except Exception as e:
             logger.warning(f"PostGIS describe fallback for '{dataset_id}': {e}")
             # Fallback descriptor to avoid pipeline breakdown
@@ -314,8 +317,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         schema_name, table_name = self._sanitize_identifier(dataset_id)
 
         try:
-            conn = self._get_connection()
-            try:
+            with self._connection_context() as conn:
                 with conn.cursor() as cur:
                     # Discover geometry column name
                     cur.execute(
@@ -366,8 +368,6 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                         "features": features,
                         "bbox": [-180.0, -90.0, 180.0, 90.0],
                     }
-            finally:
-                conn.close()
         except Exception as e:
             logger.warning(f"PostGIS preview error for '{dataset_id}': {e}")
             return {
@@ -388,8 +388,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         where_clauses: List[str] = []
 
         try:
-            conn = self._get_connection()
-            try:
+            with self._connection_context() as conn:
                 with conn.cursor() as cur:
                     # Find geometry column
                     cur.execute(
@@ -447,8 +446,6 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                         schema_info={"columns": [c for c in columns if c != "_geojson"]},
                         metadata={"exec_time_ms": exec_time, "pushdown_bbox": bool(query_spec.bbox)},
                     )
-            finally:
-                conn.close()
         except Exception as e:
             exec_time = round((time.time() - start_time) * 1000, 2)
             logger.warning(f"PostGIS query execution fallback for '{dataset_id}': {e}")
@@ -474,8 +471,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         """Diagnostic health check object for PostGIS endpoint."""
         start_time = time.time()
         try:
-            conn = self._get_connection()
-            try:
+            with self._connection_context() as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT PostGIS_Full_Version();")
                     ver_row = cur.fetchone()
@@ -486,8 +482,6 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                         details={"version": ver_row[0] if ver_row else "Unknown", "host": self.host, "database": self.database},
                         latency_ms=latency,
                     )
-            finally:
-                conn.close()
         except Exception as e:
             latency = round((time.time() - start_time) * 1000, 2)
             return DataFabricHealth(

@@ -15,7 +15,7 @@ from app.services.network.models import TravelProfile
 logger = logging.getLogger(__name__)
 
 
-def _geometry_descriptor(geom: Any, max_features: int = 500) -> Dict[str, Any]:
+def _geometry_descriptor(geom: Any, max_features: int = 50) -> Dict[str, Any]:
     """Collapse a heavy geometry field into a Fetch-on-Demand descriptor.
 
     Network results embed isochrone polygons, reachable-edge MultiLineStrings and
@@ -62,7 +62,7 @@ def _trim_coords(coords: Any, limit: int = 50) -> Any:
     return [_trim_coords(c, limit) for c in coords[:limit]]
 
 
-def trim_network_result(payload: Dict[str, Any]) -> Dict[str, Any]:
+def trim_network_result(payload: Dict[str, Any], max_features: int = 50) -> Dict[str, Any]:
     """Apply Fetch-on-Demand trimming to a network analysis result dict.
 
     Replaces the heaviest geometry-bearing fields with descriptors, keeping the
@@ -80,32 +80,49 @@ def trim_network_result(payload: Dict[str, Any]) -> Dict[str, Any]:
             if not isinstance(brk, dict):
                 continue
             if brk.get("geometry"):
-                brk["geometry"] = _geometry_descriptor(brk["geometry"])
+                brk["geometry"] = _geometry_descriptor(brk["geometry"], max_features=max_features)
             if brk.get("reachable_network_geometry"):
                 brk["reachable_network_geometry"] = _geometry_descriptor(
-                    brk["reachable_network_geometry"]
+                    brk["reachable_network_geometry"], max_features=max_features
                 )
         if sa.get("overall_geometry"):
-            sa["overall_geometry"] = _geometry_descriptor(sa["overall_geometry"])
+            sa["overall_geometry"] = _geometry_descriptor(sa["overall_geometry"], max_features=max_features)
 
     for brk in out.get("service_area_breaks", []) or []:
         if not isinstance(brk, dict):
             continue
         if brk.get("geometry"):
-            brk["geometry"] = _geometry_descriptor(brk["geometry"])
+            brk["geometry"] = _geometry_descriptor(brk["geometry"], max_features=max_features)
         if brk.get("reachable_network_geometry"):
             brk["reachable_network_geometry"] = _geometry_descriptor(
-                brk["reachable_network_geometry"]
+                brk["reachable_network_geometry"], max_features=max_features
             )
 
     accessibility = out.get("accessibility")
     if isinstance(accessibility, dict) and accessibility.get("accessibility_layer_geojson"):
         accessibility["accessibility_layer_geojson"] = _geometry_descriptor(
-            accessibility["accessibility_layer_geojson"]
+            accessibility["accessibility_layer_geojson"], max_features=max_features
         )
 
     if out.get("result_geojson"):
-        out["result_geojson"] = _geometry_descriptor(out["result_geojson"])
+        out["result_geojson"] = _geometry_descriptor(out["result_geojson"], max_features=max_features)
+
+    try:
+        import json
+        if len(json.dumps(out)) > 40000:
+            out["_payload_notice"] = "Payload truncated for context safety (>40,000 chars). Use layer endpoints for full GeoJSON access."
+            def _truncate_features(obj: Any):
+                if isinstance(obj, dict):
+                    if "features" in obj and isinstance(obj["features"], list):
+                        obj["features"] = []
+                    for v in obj.values():
+                        _truncate_features(v)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        _truncate_features(item)
+            _truncate_features(out)
+    except Exception:
+        pass
 
     return out
 

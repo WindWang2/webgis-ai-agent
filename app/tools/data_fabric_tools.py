@@ -51,7 +51,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "allow_private": "是否放宽 SSRF 限制允许内网/本地回环连接，默认 False",
         },
         domains=["data_fabric", "spatial_catalog", "dataset"],
-        execution_policy=ToolExecutionPolicy.THREAD,
+        execution_policy=ToolExecutionPolicy.ASYNC,
     )
     async def connect_data_source(
         profile_id: str,
@@ -107,7 +107,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "profile_id": "要检查的数据源连接 profile_id",
         },
         domains=["data_fabric", "spatial_catalog", "dataset"],
-        execution_policy=ToolExecutionPolicy.THREAD,
+        execution_policy=ToolExecutionPolicy.ASYNC,
     )
     async def inspect_data_source(profile_id: str) -> dict:
         """检查数据源健康度与能力清单"""
@@ -237,7 +237,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "profile_id": "可选的数据源 profile_id",
         },
         domains=["data_fabric", "spatial_catalog", "dataset"],
-        execution_policy=ToolExecutionPolicy.THREAD,
+        execution_policy=ToolExecutionPolicy.ASYNC,
     )
     async def query_dataset(
         dataset_id: str,
@@ -303,7 +303,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "profile_id": "可选的数据源 profile_id",
         },
         domains=["data_fabric", "spatial_catalog", "dataset"],
-        execution_policy=ToolExecutionPolicy.THREAD,
+        execution_policy=ToolExecutionPolicy.ASYNC,
     )
     async def materialize_dataset(
         dataset_id: str,
@@ -349,7 +349,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "profile_id": "要刷新的数据源 profile_id",
         },
         domains=["data_fabric", "spatial_catalog", "dataset"],
-        execution_policy=ToolExecutionPolicy.THREAD,
+        execution_policy=ToolExecutionPolicy.ASYNC,
     )
     async def refresh_data_source(profile_id: str) -> dict:
         """刷新数据源缓存与 Catalog 索引"""

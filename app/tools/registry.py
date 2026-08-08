@@ -235,8 +235,16 @@ class ToolRegistry:
 
         requested_policy = self._metadata.get(name, {}).get("execution_policy")
         req_policy_str = requested_policy.value if requested_policy else "THREAD"
-        actual_mode = "ASYNC" if requested_policy == ToolExecutionPolicy.ASYNC else ("INLINE" if requested_policy == ToolExecutionPolicy.INLINE else ("CELERY" if requested_policy == ToolExecutionPolicy.CELERY else "THREAD"))
-
+        
+        tool_func = self._tools.get(name)
+        if not tool_func:
+            actual_mode = "UNKNOWN"
+        elif requested_policy == ToolExecutionPolicy.INLINE:
+            actual_mode = "INLINE"
+        elif requested_policy == ToolExecutionPolicy.ASYNC and asyncio.iscoroutinefunction(tool_func):
+            actual_mode = "ASYNC"
+        else:
+            actual_mode = "THREAD"
         try:
             result = await self._dispatch_impl(name, arguments, session_id)
         except Exception as e:  # noqa: BLE001
