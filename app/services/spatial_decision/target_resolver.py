@@ -46,6 +46,9 @@ class TargetAreaResolver:
         if self._geocode_provider is not None:
             return self._geocode_provider
         try:
+            from app.tools.chinese_maps.http import _has_provider
+            if not _has_provider("amap"):
+                return None
             from app.tools.chinese_maps.amap import AmapProvider
             return AmapProvider()
         except Exception as e:

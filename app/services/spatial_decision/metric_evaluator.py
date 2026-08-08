@@ -130,15 +130,24 @@ class MetricEvaluator:
 
     def calculate_decision_confidence(
         self,
-        evidence_chain: List[EvidenceItem],
-        baseline_available: bool,
-        rules_applied: List[DomainRule],
+        evidence_chain: Optional[List[EvidenceItem]] = None,
+        baseline_available: bool = True,
+        rules_applied: Optional[List[DomainRule]] = None,
         target_resolution_confidence: float = 1.0,
+        baseline_deltas: Optional[Dict[str, MetricDeltaV2]] = None,
+        **kwargs,
     ) -> float:
         """
         Calculates overall decision confidence score in [0.0, 1.0] based on
         evidence completeness, baseline resolution, and rule reliability.
         """
+        if evidence_chain is None:
+            evidence_chain = []
+        if rules_applied is None:
+            rules_applied = []
+        if baseline_deltas is not None:
+            baseline_available = not any(m.missing_baseline for m in baseline_deltas.values())
+
         # 1. Baseline resolution score
         baseline_score = target_resolution_confidence * (1.0 if baseline_available else 0.5)
 

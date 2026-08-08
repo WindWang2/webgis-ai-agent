@@ -192,16 +192,23 @@ class SpatialImpactEngine:
     def evaluate_step_decay(
         self,
         distance_m: float,
-        direct_radius_m: float,
-        indirect_radius_m: float,
-        direct_delta: float,
-        indirect_delta: float,
+        direct_radius_m: Union[float, List[Tuple[float, float]]] = 500.0,
+        indirect_radius_m: float = 1500.0,
+        direct_delta: float = 20.0,
+        indirect_delta: float = 10.0,
     ) -> float:
-        """Step decay function across direct/indirect zones."""
+        """Step decay function across direct/indirect zones or interval lists."""
+        if isinstance(direct_radius_m, (list, tuple)):
+            intervals = direct_radius_m
+            for max_dist, delta_val in intervals:
+                if distance_m <= max_dist:
+                    return float(delta_val)
+            return 0.0
+
         if distance_m <= direct_radius_m:
-            return direct_delta
+            return float(direct_delta)
         elif distance_m <= indirect_radius_m:
-            return indirect_delta
+            return float(indirect_delta)
         return 0.0
 
     def calculate_impacts(

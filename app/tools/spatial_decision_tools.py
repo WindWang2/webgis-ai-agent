@@ -79,13 +79,21 @@ def register_spatial_decision_tools(registry: ToolRegistry):
 
             # Ingest layer into MapSpec if session_id is active
             mapspec_state = {}
+            validation_passed = True
             if session_id:
                 mapspec_state = apply_decision_to_mapspec(session_id, result)
+                try:
+                    from app.services.runtime_validator import runtime_validator
+                    val_res = runtime_validator.validate_session_state(session_id)
+                    validation_passed = val_res.passed if hasattr(val_res, "passed") else True
+                except Exception as ve:
+                    logger.debug(f"[spatial_decision_v2] Runtime validation warning: {ve}")
 
             report_md = generate_decision_report_markdown(result)
             res_dict = result.model_dump()
             res_dict["report_markdown"] = report_md
             res_dict["mapspec_applied"] = bool(mapspec_state)
+            res_dict["runtime_validated"] = validation_passed
             return res_dict
 
         except Exception as e:
