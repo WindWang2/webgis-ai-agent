@@ -366,6 +366,8 @@ export function useSSEStream(
           visible: l.visible,
           opacity: l.opacity,
           group: l.group,
+          _refId: l._refId,
+          _tileUrl: l._tileUrl,
           featureCount:
             l.source && typeof l.source === 'object' && 'features' in l.source
               ? (l.source as any).features?.length ?? 0

@@ -14,15 +14,11 @@ os.environ.setdefault("JWT_SECRET_KEY", "test-secret-api-contracts-32-chars")
 os.environ.setdefault("ENV", "development")
 
 
+import app.api.routes.chat as chat_mod
+
+
 def _load_chat_module():
-    spec = importlib.util.spec_from_file_location(
-        "app.api.routes.chat",
-        os.path.join(os.path.dirname(__file__), "..", "app", "api", "routes", "chat.py"),
-        submodule_search_locations=[],
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    return chat_mod
 
 
 @pytest.fixture
@@ -47,7 +43,7 @@ async def client(app):
 async def test_a5_list_sessions_accepts_limit_offset(client, monkeypatch):
     """A5：/chat/sessions 必须接受 limit + offset query params。"""
     # mock list_sessions 返回空（测契约不测 DB）
-    async def fake_list(self, limit=50, user_id=None):
+    async def fake_list(self, limit=50, offset=0, user_id=None):
         return []
     from app.services.history_service_async import AsyncHistoryService
     monkeypatch.setattr(AsyncHistoryService, "list_sessions", fake_list)
@@ -56,7 +52,6 @@ async def test_a5_list_sessions_accepts_limit_offset(client, monkeypatch):
     @asynccontextmanager
     async def fake_db():
         yield None
-    import app.api.routes.chat as chat_mod
     monkeypatch.setattr(chat_mod, "async_db_session", fake_db)
 
     resp = await client.get("/api/v1/chat/sessions?limit=10&offset=5")

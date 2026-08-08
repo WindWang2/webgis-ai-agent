@@ -147,7 +147,7 @@ export function useMapBridge(
           onEvent(event);
         }
       } catch (err: unknown) {
-        if (err instanceof DOMException && err.name === 'AbortError') return;
+        if ((err as Error)?.name === 'AbortError') return;
         setAiStatus('error');
         devOnly.error('[useMapBridge] SSE stream error:', err);
         onEvent({ event: 'error', data: { error: err instanceof Error ? err.message : String(err) } as unknown as Record<string, unknown> });

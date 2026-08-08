@@ -12,9 +12,10 @@ from app.api.routes import upload as upload_module
 @pytest.mark.asyncio
 async def test_delete_upload_preserves_file_when_db_fails(tmp_path, monkeypatch):
     """DB commit 失败时，物理文件不应被删除（顺序正确性）。"""
+    monkeypatch.setattr(upload_module.settings, "DATA_DIR", str(tmp_path))
     # 准备一个真实的上传目录和文件
-    upload_dir = tmp_path / "upload-1"
-    upload_dir.mkdir()
+    upload_dir = tmp_path / "uploads" / "upload-1"
+    upload_dir.mkdir(parents=True)
     fake_file = upload_dir / "data.geojson"
     fake_file.write_text('{"type":"FeatureCollection"}')
 
@@ -58,8 +59,9 @@ async def test_delete_upload_preserves_file_when_db_fails(tmp_path, monkeypatch)
 @pytest.mark.asyncio
 async def test_delete_upload_removes_file_when_db_succeeds(tmp_path, monkeypatch):
     """DB 成功时，物理文件应被删除。"""
-    upload_dir = tmp_path / "upload-2"
-    upload_dir.mkdir()
+    monkeypatch.setattr(upload_module.settings, "DATA_DIR", str(tmp_path))
+    upload_dir = tmp_path / "uploads" / "upload-2"
+    upload_dir.mkdir(parents=True)
     fake_file = upload_dir / "data.geojson"
     fake_file.write_text('{"type":"FeatureCollection"}')
 

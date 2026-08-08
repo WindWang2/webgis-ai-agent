@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { STitle, SField, SButton } from '@/components/shared/section-title';
 import ToggleSwitch from '@/components/shared/toggle-switch';
@@ -19,19 +19,38 @@ export function RagConfig() {
   >('idle');
   const [saved, setSaved] = useState(false);
 
+  const timersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+
+  useEffect(() => {
+    const timers = timersRef.current;
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+    };
+  }, []);
+
+  const addTimer = (cb: () => void, ms: number) => {
+    const id = setTimeout(() => {
+      timersRef.current.delete(id);
+      cb();
+    }, ms);
+    timersRef.current.add(id);
+    return id;
+  };
+
   const handleSave = () => {
     setRagConfig({ vectorDb, collection });
     setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    addTimer(() => setSaved(false), 2000);
   };
 
   const handleTestConnection = () => {
     setTesting(true);
     setTestResult('idle');
-    setTimeout(() => {
+    addTimer(() => {
       setTesting(false);
       setTestResult('success');
-      setTimeout(() => setTestResult('idle'), 3000);
+      addTimer(() => setTestResult('idle'), 3000);
     }, 1200);
   };
 

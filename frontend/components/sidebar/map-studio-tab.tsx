@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { ExportItem } from '@/lib/store/hud-types';
 import { useMapAction } from '@/lib/contexts/map-action-context';
@@ -20,6 +20,15 @@ export function MapStudioTab() {
   const [activeSubTab, setActiveSubTab] = useState<'layout' | 'history'>('layout');
   // 审计 findings.md：清空列表是破坏性操作，加确认状态防误触。
   const [confirmingClear, setConfirmingClear] = useState(false);
+  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (confirmTimerRef.current) {
+        clearTimeout(confirmTimerRef.current);
+      }
+    };
+  }, []);
   const exportSettings = useHudStore((s) => s.exportSettings);
   const updateExportSettings = useHudStore((s) => s.updateExportSettings);
   const { dispatchAction } = useMapAction();
@@ -357,10 +366,15 @@ export function MapStudioTab() {
                     if (confirmingClear) {
                       setExports([]);
                       setConfirmingClear(false);
+                      if (confirmTimerRef.current) {
+                        clearTimeout(confirmTimerRef.current);
+                        confirmTimerRef.current = null;
+                      }
                     } else {
                       setConfirmingClear(true);
                       // 3 秒后自动取消确认状态，避免用户误点后永久停留在"确认"文字
-                      setTimeout(() => setConfirmingClear(false), 3000);
+                      if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+                      confirmTimerRef.current = setTimeout(() => setConfirmingClear(false), 3000);
                     }
                   }}
                   onBlur={() => setConfirmingClear(false)}

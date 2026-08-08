@@ -42,3 +42,15 @@ def test_low_confidence_query():
         session_history=[],
     )
     assert result.decision == "skip"
+
+
+def test_empty_triggers_no_zero_division():
+    detector = IntentDetector()
+    detector.EXPLORATION_TRIGGERS["empty_trigger_set"] = []
+    result = detector.detect(
+        user_query="测试查询",
+        current_layers=[],
+        session_history=[],
+    )
+    assert result is not None
+

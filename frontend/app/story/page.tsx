@@ -31,7 +31,9 @@ function StoryPageInner() {
   const [loading, setLoading] = useState(true)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  const { layers, removeLayer, toggleLayer } = useHudStore()
+  const layers = useHudStore((s) => s.layers)
+  const removeLayer = useHudStore((s) => s.removeLayer)
+  const toggleLayer = useHudStore((s) => s.toggleLayer)
 
   useEffect(() => {
     if (sessionId) {

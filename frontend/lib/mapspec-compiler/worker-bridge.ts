@@ -31,6 +31,7 @@ interface DiffResponse {
 
 let sharedWorker: Worker | null = null;
 let nextRequestId = 0;
+let activeRequestsCount = 0;
 
 /**
  * Hard ceiling for how long `diffSpecsAsync` waits on a worker before
@@ -54,6 +55,7 @@ const EMPTY_PATCH: SpecPatch = { sources: [], layers: [] };
 export function _resetWorkerBridgeForTests(): void {
   sharedWorker = null;
   nextRequestId = 0;
+  activeRequestsCount = 0;
 }
 
 function createWorker(): Worker | null {
@@ -81,15 +83,16 @@ export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<Spe
     return Promise.resolve(diffSpecs(prev, next));
   }
 
+  activeRequestsCount++;
+
   return new Promise<SpecPatch>((resolve) => {
     const id = `diff-${++nextRequestId}`;
 
     let settled = false;
 
     /**
-     * Settle the request exactly once, then discard the worker. The worker is
-     * terminated on every settle (success included) so a wedged worker never
-     * survives to hang a later request; the next call starts fresh.
+     * Settle the request exactly once. Decrement active requests count;
+     * terminate the worker only when no requests are pending.
      */
     const finish = (patch: SpecPatch) => {
       if (settled) return;
@@ -99,8 +102,11 @@ export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<Spe
       worker.onerror = null;
       worker.onmessageerror = null;
       workerWithOnexit.onexit = null;
-      worker.terminate();
-      sharedWorker = null;
+      activeRequestsCount = Math.max(0, activeRequestsCount - 1);
+      if (activeRequestsCount === 0) {
+        worker.terminate();
+        sharedWorker = null;
+      }
       resolve(patch);
     };
 

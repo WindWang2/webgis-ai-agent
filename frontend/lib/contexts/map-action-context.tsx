@@ -38,10 +38,10 @@ export function MapActionProvider({ children }: { children: React.ReactNode }) {
     try {
       const persistedName = useHudStore.getState().baseLayer;
       // TILE_PROVIDERS 通过顶部 ESM import 引入；providers.ts 是叶子模块无循环依赖。
-      const idx = TILE_PROVIDERS.findIndex(
-        (p: any) => p.name === persistedName || p.name === 'Carto 深色'
-      );
-      return idx >= 0 ? idx : 1;
+      const idx = TILE_PROVIDERS.findIndex((p: any) => p.name === persistedName);
+      if (idx >= 0) return idx;
+      const fallbackIdx = TILE_PROVIDERS.findIndex((p: any) => p.name === 'Carto 深色');
+      return fallbackIdx >= 0 ? fallbackIdx : 1;
     } catch {
       return 1;
     }

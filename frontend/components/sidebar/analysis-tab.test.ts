@@ -10,6 +10,8 @@ function buildAnalysisPrompt(tool: string, params: Record<string, string>): stri
   const layerName = (id: string) => id;
 
   if (tool === 'buffer') {
+    const dist = parseFloat(params.distance);
+    if (!params.layer || isNaN(dist) || dist <= 0) return '';
     return `对图层 "${layerName(params.layer)}" 进行缓冲区分析，缓冲距离为 ${params.distance} 米`;
   }
   if (tool === 'overlay') {
@@ -28,6 +30,12 @@ describe('buildAnalysisPrompt', () => {
     expect(prompt).toContain('缓冲区');
     expect(prompt).toContain('500');
     expect(prompt).toContain('roads');
+  });
+
+  it('rejects invalid or non-positive buffer distance', () => {
+    expect(buildAnalysisPrompt('buffer', { layer: 'roads', distance: '0' })).toBe('');
+    expect(buildAnalysisPrompt('buffer', { layer: 'roads', distance: '-10' })).toBe('');
+    expect(buildAnalysisPrompt('buffer', { layer: 'roads', distance: 'abc' })).toBe('');
   });
 
   it('builds overlay prompt with operation type', () => {

@@ -108,4 +108,37 @@ describe("diffSpecsAsync", () => {
     const patch = await pending;
     expect(patch).toEqual({ sources: [], layers: [] });
   });
+
+  it("only terminates worker when no requests are pending", async () => {
+    let terminateCalls = 0;
+    const listeners: Array<(event: { data: { id: string; patch: ReturnType<typeof diffSpecs> } }) => void> = [];
+    class MultiWorker {
+      constructor(_url: URL, _opts?: { type?: string }) {}
+      postMessage(msg: { id: string; prev: MapSpec | null; next: MapSpec }) {
+        const { id, prev, next } = msg;
+        queueMicrotask(() => {
+          const patch = diffSpecs(prev, next);
+          for (const cb of listeners) cb({ data: { id, patch } });
+        });
+      }
+      addEventListener(_type: string, cb: any) {
+        listeners.push(cb);
+      }
+      removeEventListener(_type: string, cb: any) {
+        const idx = listeners.indexOf(cb);
+        if (idx >= 0) listeners.splice(idx, 1);
+      }
+      terminate() {
+        terminateCalls++;
+      }
+    }
+    vi.stubGlobal("Worker", MultiWorker as unknown as typeof Worker);
+
+    const p1 = diffSpecsAsync(null, spec);
+    const p2 = diffSpecsAsync(null, spec);
+    const [patch1, patch2] = await Promise.all([p1, p2]);
+    expect(patch1).toBeDefined();
+    expect(patch2).toBeDefined();
+    expect(terminateCalls).toBe(1);
+  });
 });

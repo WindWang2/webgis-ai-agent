@@ -91,6 +91,7 @@ export function AssetCard({ asset, onLoad, onDelete, onRename }: AssetCardProps)
                   type="text"
                   value={tempName}
                   onChange={(e) => setTempName(e.target.value)}
+                  aria-label="重命名资产"
                   className="w-full text-[15px] bg-white/[0.06] border border-hud-cyan/30 rounded px-1.5 py-0.5 text-white/90 focus:outline-none focus:border-hud-cyan/60 transition-colors"
                   autoFocus
                   onKeyDown={(e) => e.key === "Enter" && handleSaveRename()}
@@ -124,6 +125,7 @@ export function AssetCard({ asset, onLoad, onDelete, onRename }: AssetCardProps)
           <div className="flex items-center gap-1 mt-2.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
             <button
               onClick={() => onLoad(asset)}
+              aria-label={`加载资产 ${asset.original_name || ''}`}
               className="px-2 py-1 rounded-md bg-hud-cyan/[0.08] text-hud-cyan/80 text-[15px] font-semibold uppercase tracking-wider hover:bg-hud-cyan/15 hover:text-hud-cyan transition-all flex items-center gap-1"
             >
               <MapIcon size={10} /> 加载
@@ -133,13 +135,15 @@ export function AssetCard({ asset, onLoad, onDelete, onRename }: AssetCardProps)
 
             <button
               onClick={() => { setTempName(asset.original_name); setIsEditing(true); }}
+              aria-label="重命名资产"
               className="p-1.5 rounded-md hover:bg-white/[0.04] text-white/20 hover:text-white/50 transition-all"
               title="重命名"
             >
               <Edit size={11} />
             </button>
             <button
-              onClick={() => window.open(`${API_BASE}/api/v1/layers/data/${asset.id}?download=true`)}
+              onClick={() => window.open(`${API_BASE}/api/v1/layers/data/${encodeURIComponent(asset.id)}?download=true`)}
+              aria-label="下载资产"
               className="p-1.5 rounded-md hover:bg-white/[0.04] text-white/20 hover:text-white/50 transition-all"
               title="下载"
             >
@@ -147,6 +151,7 @@ export function AssetCard({ asset, onLoad, onDelete, onRename }: AssetCardProps)
             </button>
             <button
               onClick={() => onDelete(asset.id)}
+              aria-label="删除资产"
               className="p-1.5 rounded-md hover:bg-red-500/10 text-white/15 hover:text-red-400 transition-all"
               title="删除"
             >

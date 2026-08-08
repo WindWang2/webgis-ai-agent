@@ -18,6 +18,7 @@ export const SortControls = memo(function SortControls({
   defaultField = 'name',
   defaultOrder = 'asc',
 }: SortControlsProps) {
+  const radioName = React.useId();
   const [sort, setSort] = useState<SortOption>({
     field: defaultField,
     order: defaultOrder,
@@ -44,7 +45,7 @@ export const SortControls = memo(function SortControls({
       <label className="flex items-center gap-1.5 cursor-pointer">
         <input
           type="radio"
-          name="sort-order"
+          name={radioName}
           checked={sort.order === 'asc'}
           onChange={() => handleSort({ order: 'asc' })}
           className="accent-blue-600"
@@ -54,7 +55,7 @@ export const SortControls = memo(function SortControls({
       <label className="flex items-center gap-1.5 cursor-pointer">
         <input
           type="radio"
-          name="sort-order"
+          name={radioName}
           checked={sort.order === 'desc'}
           onChange={() => handleSort({ order: 'desc' })}
           className="accent-blue-600"

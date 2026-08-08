@@ -1,4 +1,5 @@
 """context_builder 计划注入测试。"""
+import pytest
 from app.services.chat.context_builder import build_plan_block, compose_request_messages
 from app.services.chat.planner import Plan, PlanStep, set_plan, clear_plan
 
@@ -29,6 +30,7 @@ def test_build_plan_block_all_done_no_warning():
     assert "未完成" not in build_plan_block(plan)
 
 
+@pytest.mark.asyncio
 async def test_compose_request_messages_injects_plan_when_present():
     msgs = [
         {"role": "system", "content": "SYS"},
@@ -43,6 +45,7 @@ async def test_compose_request_messages_injects_plan_when_present():
         clear_plan("ctx-sess")
 
 
+@pytest.mark.asyncio
 async def test_compose_request_messages_no_plan_no_block():
     msgs = [
         {"role": "system", "content": "SYS"},

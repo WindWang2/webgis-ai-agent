@@ -11,14 +11,19 @@ from app.services.spatial_analyzer import SpatialAnalyzer
 client = TestClient(app)
 
 
+from app.core.auth import require_admin
+
+
 @pytest.fixture(autouse=True)
 def cleanup_metrics():
     """Reset global metrics and cache state before and after each test."""
     tool_metrics._reset_for_tests()
     SpatialAnalyzer.clear_st_dbscan_cache()
+    app.dependency_overrides[require_admin] = lambda: {"user_id": "admin_test", "role": "admin"}
     yield
     tool_metrics._reset_for_tests()
     SpatialAnalyzer.clear_st_dbscan_cache()
+    app.dependency_overrides.pop(require_admin, None)
 
 
 def test_metrics_digest_endpoint():

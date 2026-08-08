@@ -222,10 +222,13 @@ export function polygonAreaKm2(coords: [number, number][]): number {
   const n = coords.length;
   if (n < 3) return 0;
 
+  const isClosed = coords[0][0] === coords[n - 1][0] && coords[0][1] === coords[n - 1][1];
+  const count = isClosed ? n - 1 : n;
+
   let total = 0;
-  for (let i = 0; i < n - 1; i++) {
+  for (let i = 0; i < count; i++) {
     const [lon1, lat1] = coords[i];
-    const [lon2, lat2] = coords[i + 1];
+    const [lon2, lat2] = coords[(i + 1) % n];
     total += (lon2 - lon1) * (Math.PI / 180) *
       (2 + Math.sin(lat1 * Math.PI / 180) + Math.sin(lat2 * Math.PI / 180));
   }

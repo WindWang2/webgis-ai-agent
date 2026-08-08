@@ -72,7 +72,8 @@ export function AnalysisTab({ onSend }: AnalysisTabProps) {
   const handleSubmit = () => {
     let prompt = '';
     if (activeTool === 'buffer') {
-      if (!bufferLayer || !bufferDistance) return;
+      const dist = parseFloat(bufferDistance);
+      if (!bufferLayer || isNaN(dist) || dist <= 0) return;
       prompt = `对图层 "${layerName(bufferLayer)}" 进行缓冲区分析，缓冲距离为 ${bufferDistance} 米`;
     } else if (activeTool === 'overlay') {
       if (!overlayLayerA || !overlayLayerB) return;

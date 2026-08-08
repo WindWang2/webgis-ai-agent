@@ -80,3 +80,31 @@ def test_optional_params_not_required():
     required = schemas[0]["function"]["parameters"]["required"]
     assert "query" in required
     assert "limit" not in required
+
+
+def test_tool_decorator_execution_policy_and_kwargs():
+    from app.tools.registry import ToolExecutionPolicy
+    registry = ToolRegistry()
+
+    @registry.tool(
+        name="tool_a",
+        description="Tool A",
+        execution_policy=ToolExecutionPolicy.INLINE,
+        extra_option="foo",
+    )
+    def tool_a(x: int) -> int:
+        return x
+
+    @tool(
+        registry,
+        name="tool_b",
+        description="Tool B",
+        execution_policy=ToolExecutionPolicy.ASYNC,
+        custom_param=123,
+    )
+    async def tool_b(y: int) -> int:
+        return y
+
+    assert registry.metadata("tool_a")["execution_policy"] == ToolExecutionPolicy.INLINE
+    assert registry.metadata("tool_b")["execution_policy"] == ToolExecutionPolicy.ASYNC
+

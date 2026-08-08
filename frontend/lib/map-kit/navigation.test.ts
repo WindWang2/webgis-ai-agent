@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { flyTo, fitBounds, jumpTo, validateCoordinate, calculateBBox, calculateBBoxAsync } from './navigation';
+import { flyTo, fitBounds, jumpTo, validateCoordinate, calculateBBox, calculateBBoxAsync, polygonAreaKm2 } from './navigation';
 import type { ViewportParams } from './types';
 import type { Map } from 'maplibre-gl';
 
@@ -139,6 +139,23 @@ describe('navigation', () => {
       };
       const bbox = await calculateBBoxAsync(geojson);
       expect(bbox).toEqual([10, 10, 20, 20]);
+    });
+  });
+
+  describe('polygonAreaKm2', () => {
+    it('should return 0 for fewer than 3 coordinates', () => {
+      expect(polygonAreaKm2([[0, 0], [1, 1]])).toBe(0);
+    });
+
+    it('should calculate equal area for closed and unclosed polygon coordinate arrays', () => {
+      const unclosed: [number, number][] = [[116, 39], [117, 39], [117, 40], [116, 40]];
+      const closed: [number, number][] = [[116, 39], [117, 39], [117, 40], [116, 40], [116, 39]];
+
+      const areaUnclosed = polygonAreaKm2(unclosed);
+      const areaClosed = polygonAreaKm2(closed);
+
+      expect(areaUnclosed).toBeGreaterThan(0);
+      expect(areaUnclosed).toBeCloseTo(areaClosed, 5);
     });
   });
 });

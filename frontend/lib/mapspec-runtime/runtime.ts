@@ -97,7 +97,11 @@ export class MapSpecRuntime {
    */
   reconcileAsync(nextSpec: MapSpec): Promise<void> {
     if (this.disposed || !this.map) return Promise.resolve();
-    this.reconcileTail = this.reconcileTail.then(() => this.processOne(nextSpec));
+    this.reconcileTail = this.reconcileTail
+      .then(() => this.processOne(nextSpec))
+      .catch((err) => {
+        console.warn("[MapSpecRuntime] reconcileAsync error:", err);
+      });
     return this.reconcileTail;
   }
 

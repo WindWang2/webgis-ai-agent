@@ -4,12 +4,14 @@ import pytest
 from app.services.session_data import SessionDataManager
 
 
+@pytest.mark.asyncio
 async def test_memory_store_returns_ref():
     sdm = SessionDataManager()
     ref = await sdm.store("s1", {"x": 1})
     assert ref.startswith("ref:")
 
 
+@pytest.mark.asyncio
 async def test_memory_get_returns_stored_data():
     sdm = SessionDataManager()
     ref = await sdm.store("s2", {"hello": "world"})
@@ -17,6 +19,7 @@ async def test_memory_get_returns_stored_data():
     assert data == {"hello": "world"}
 
 
+@pytest.mark.asyncio
 async def test_memory_resolve_alias():
     sdm = SessionDataManager()
     ref = await sdm.store("s3", {})
@@ -25,6 +28,7 @@ async def test_memory_resolve_alias():
     assert resolved == ref
 
 
+@pytest.mark.asyncio
 async def test_memory_resolve_aliases_batch():
     """Batch alias resolution: aliases resolved, plain strings unchanged."""
     sdm = SessionDataManager()
@@ -36,6 +40,7 @@ async def test_memory_resolve_aliases_batch():
     assert out["ref:data-1"] == "ref:data-1"
 
 
+@pytest.mark.asyncio
 async def test_memory_get_session_metadata():
     sdm = SessionDataManager()
     await sdm.store("s4", {"a": 1})
@@ -46,6 +51,7 @@ async def test_memory_get_session_metadata():
     assert "started_at" in meta
 
 
+@pytest.mark.asyncio
 async def test_memory_append_and_get_event_log():
     sdm = SessionDataManager()
     await sdm.append_event("s5", "click", {"x": 1})
@@ -54,6 +60,7 @@ async def test_memory_append_and_get_event_log():
     assert log[0]["event"] == "click"
 
 
+@pytest.mark.asyncio
 async def test_memory_clear_session():
     sdm = SessionDataManager()
     await sdm.store("s6", {})
@@ -88,17 +95,20 @@ async def fake_redis_sdm():
     return sdm
 
 
+@pytest.mark.asyncio
 async def test_redis_store_returns_ref(fake_redis_sdm):
     ref = await fake_redis_sdm.store("rs1", {"val": 42})
     assert ref.startswith("ref:")
 
 
+@pytest.mark.asyncio
 async def test_redis_get_returns_stored_data(fake_redis_sdm):
     ref = await fake_redis_sdm.store("rs2", {"hello": "redis"})
     data = await fake_redis_sdm.get("rs2", ref)
     assert data == {"hello": "redis"}
 
 
+@pytest.mark.asyncio
 async def test_redis_set_alias_and_resolve(fake_redis_sdm):
     ref = await fake_redis_sdm.store("rs3", {})
     await fake_redis_sdm.set_alias("rs3", ref, "城区")
@@ -106,6 +116,7 @@ async def test_redis_set_alias_and_resolve(fake_redis_sdm):
     assert resolved == ref
 
 
+@pytest.mark.asyncio
 async def test_redis_resolve_aliases_batch(fake_redis_sdm):
     """Batch form (HMGET) preserves single-item semantics; empty list is a no-op."""
     ref = await fake_redis_sdm.store("rs7", {})
@@ -117,6 +128,7 @@ async def test_redis_resolve_aliases_batch(fake_redis_sdm):
     assert await fake_redis_sdm.resolve_aliases("rs7", []) == {}
 
 
+@pytest.mark.asyncio
 async def test_redis_get_session_metadata_pipeline(fake_redis_sdm):
     await fake_redis_sdm.store("rs4", {"a": 1})
     await fake_redis_sdm.set_map_state("rs4", "zoom", 10)
@@ -131,6 +143,7 @@ async def test_redis_get_session_metadata_pipeline(fake_redis_sdm):
     assert meta["started_at"] is not None
 
 
+@pytest.mark.asyncio
 async def test_redis_clear_session(fake_redis_sdm):
     await fake_redis_sdm.store("rs5", {})
     await fake_redis_sdm.clear_session("rs5")
@@ -138,6 +151,7 @@ async def test_redis_clear_session(fake_redis_sdm):
     assert refs == {}
 
 
+@pytest.mark.asyncio
 async def test_redis_get_started_at_records_started_at(fake_redis_sdm):
     sid = "rs_start"
     assert await fake_redis_sdm.get_started_at(sid) is None
@@ -151,6 +165,7 @@ async def test_redis_get_started_at_records_started_at(fake_redis_sdm):
     await fake_redis_sdm.clear_session(sid)
 
 
+@pytest.mark.asyncio
 async def test_redis_started_at_set_by_store(fake_redis_sdm):
     sid = "rs_store_only"
     assert await fake_redis_sdm.get_started_at(sid) is None

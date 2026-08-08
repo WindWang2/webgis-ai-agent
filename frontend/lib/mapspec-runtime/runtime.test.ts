@@ -382,6 +382,17 @@ describe("MapSpecRuntime (ADR-0036)", () => {
       await pending; // must resolve, not hang
       expect(rt.getAppliedSpec()).toBeNull();
     });
+
+    it("continues promise chain even if processOne throws an error", async () => {
+      const rt = new MapSpecRuntime(map);
+      vi.spyOn(rt as any, "processOne").mockRejectedValueOnce(new Error("processOne error"));
+      await rt.reconcileAsync(pointSpec("L1"));
+
+      const p2 = rt.reconcileAsync(pointSpec("L2"));
+      rt.flush();
+      await p2;
+      expect(rt.getAppliedSpec()).toEqual(pointSpec("L2"));
+    });
   });
 });
 

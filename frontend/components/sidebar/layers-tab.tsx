@@ -77,7 +77,11 @@ export function LayersTab() {
       const current = [...layers];
       const fromIdx = current.findIndex((l) => l.id === dragId);
       const toIdx = current.findIndex((l) => l.id === targetId);
-      if (fromIdx === -1 || toIdx === -1) return;
+      if (fromIdx === -1 || toIdx === -1) {
+        setDragId(null);
+        setOverId(null);
+        return;
+      }
       const [moved] = current.splice(fromIdx, 1);
       current.splice(toIdx, 0, moved);
       reorderLayers(current);
