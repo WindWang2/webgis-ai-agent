@@ -54,7 +54,7 @@ class WorkflowEngine:
         return topo_order
 
     @staticmethod
-    def execute_workflow_run(
+    async def execute_workflow_run(
         db: Session,
         workflow_id: str,
         tool_registry: ToolRegistry,
@@ -62,14 +62,27 @@ class WorkflowEngine:
         start_from_step: Optional[str] = None,
         user_id: Optional[str] = None,
         org_id: Optional[int] = None,
+        expected_project_id: Optional[str] = None,
     ) -> WorkflowRun:
         """
         Executes a workflow run, enforcing tool security policy and producing immutable run outputs & lineage.
+
+        ``expected_project_id`` enforces that the workflow belongs to the caller's project —
+        blocks cross-project (IDOR) execution. ``user_id``/``org_id`` are forwarded to
+        ``tool_registry.dispatch`` so each step re-authorizes through the Tool Execution Policy.
         """
         stmt = select(Workflow).where(Workflow.id == workflow_id)
         workflow = db.execute(stmt).scalar_one_or_none()
         if not workflow:
             raise ValueError(f"Workflow {workflow_id} not found")
+
+        # IDOR guard: when the caller names a project, the workflow must belong to it.
+        if expected_project_id and workflow.project_id and workflow.project_id != expected_project_id:
+            logger.warning(
+                f"[WorkflowEngine] IDOR attempt: workflow {workflow_id} (project {workflow.project_id}) "
+                f"invoked under project {expected_project_id} by user {user_id}"
+            )
+            raise ValueError(f"Workflow {workflow_id} does not belong to project {expected_project_id}")
 
         graph_spec = workflow.graph_spec
         raw_steps = graph_spec.get("steps", [])
@@ -129,9 +142,13 @@ class WorkflowEngine:
                     elif param_key in bound_inputs:
                         tool_args[param_key] = bound_inputs[param_key]
 
-                # Run tool with Security Policy re-authorization via ToolRegistry
+                # Run tool with Security Policy re-authorization via ToolRegistry.
+                # dispatch is async; awaiting it is what actually executes the tool
+                # (an un-awaited coroutine used to silently mark every run "completed"
+                # without ever running the tool). The Tool Execution Policy inside dispatch
+                # re-authorizes the call against the registry's allow-list.
                 logger.info(f"[WorkflowEngine] Executing step '{step_id}' using tool '{tool_name}' with args {tool_args}")
-                tool_result = tool_registry.dispatch(tool_name, tool_args)
+                tool_result = await tool_registry.dispatch(tool_name, tool_args)
 
                 step_duration = (datetime.now(timezone.utc) - step_start_time).total_seconds()
                 step_output = {"result": tool_result}

@@ -98,4 +98,8 @@ def test_spatial_quality_and_repair_api():
         "operations": ["make_valid", "remove_empty"]
     })
     assert repair_res.status_code == 200
-    assert "repaired_geojson" in repair_res.json()
+    # Fetch-on-Demand: the repaired geometry is trimmed out of the inline
+    # response (kept under the 50k tool_result cap); only a preview + count remain.
+    repair_body = repair_res.json()
+    assert "repaired_geojson_preview" in repair_body
+    assert "feature_count" in repair_body

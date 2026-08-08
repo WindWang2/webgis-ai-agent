@@ -5,6 +5,7 @@ import logging
 from typing import Dict, Any, List, Optional
 
 from app.tools.registry import ToolRegistry
+from app.tools._utils import trim_features
 from app.core.database import SessionLocal
 from app.services.project_service import ProjectService
 from app.services.workflow_engine import WorkflowEngine
@@ -93,19 +94,25 @@ def register_project_tools(registry: ToolRegistry) -> None:
         tier=1,
         tags=["project", "workflow"],
     )
-    def rerun_workflow(
+    async def rerun_workflow(
         project_id: str,
         workflow_id: str,
         input_bindings: Optional[Dict[str, Any]] = None,
         start_from_step: Optional[str] = None,
     ) -> Dict[str, Any]:
+        # Project authz: refuse to run a workflow that isn't owned by this project,
+        # and re-authorize each step via Tool Execution Policy inside dispatch.
         with SessionLocal() as db:
-            run = WorkflowEngine.execute_workflow_run(
+            project = ProjectService.get_project_with_auth(db=db, project_id=project_id)
+            if not project:
+                return {"status": "error", "message": f"Project {project_id} not found or permission denied"}
+            run = await WorkflowEngine.execute_workflow_run(
                 db=db,
                 workflow_id=workflow_id,
                 tool_registry=registry,
                 input_bindings=input_bindings or {},
                 start_from_step=start_from_step,
+                expected_project_id=project_id,
             )
             return {
                 "status": run.status,
@@ -134,7 +141,12 @@ def register_project_tools(registry: ToolRegistry) -> None:
         dataset_id: str = "ds_agent",
         crs: str = "EPSG:4326",
     ) -> Dict[str, Any]:
-        report = SpatialQualityEngine.audit_dataset(geojson, dataset_id, crs)
+        # audit_dataset signature is (geojson_data, crs, dataset_id); earlier this
+        # call passed args positionally as (geojson, dataset_id, crs), which fed
+        # the CRS check a dataset id and labelled the report with the CRS string.
+        report = SpatialQualityEngine.audit_dataset(
+            geojson_data=geojson, crs=crs, dataset_id=dataset_id
+        )
         return report.to_dict()
 
     @registry.register(
@@ -159,11 +171,20 @@ def register_project_tools(registry: ToolRegistry) -> None:
         geojson: Dict[str, Any],
         operations: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
+        # repair_dataset is a synchronous, non-destructive CPU op; run it off the
+        # event loop. Earlier this awaited a sync function, which raised TypeError.
         ops = operations or ["make_valid", "remove_empty", "deduplicate"]
-        repaired, logs = await SpatialRepairPipeline.repair_dataset(geojson, ops)
+        import asyncio
+        repaired, logs = await asyncio.to_thread(
+            SpatialRepairPipeline.repair_dataset, geojson, ops
+        )
+        feature_count = len(repaired.get("features", []) if isinstance(repaired, dict) else [])
+        # Fetch-on-Demand: never inline a full repaired FeatureCollection into the
+        # tool_result (persisted to DB + fed to the LLM). Trim heavy geometry.
         return {
             "status": "success",
             "operations_applied": ops,
             "logs_count": len(logs),
-            "repaired_geojson": repaired,
+            "feature_count": feature_count,
+            "repaired_geojson_preview": trim_features(repaired, max_features=50),
         }

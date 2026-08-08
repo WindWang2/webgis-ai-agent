@@ -13,7 +13,7 @@ from app.services.workflow_engine import WorkflowEngine
 from app.services.lineage_service import LineageService
 from app.services.spatial_quality_service import SpatialQualityEngine
 from app.services.spatial_repair_pipeline import SpatialRepairPipeline
-from app.tools.registry import ToolRegistry
+from app.agent_pi_bridge import get_tool_registry
 from app.schemas.project_schema import (
     ProjectCreate, ProjectUpdate, ProjectResponse,
     DatasetAttach, ProjectDatasetResponse,
@@ -169,7 +169,7 @@ def list_workflows(
 
 
 @router.post("/{project_id}/workflows/{workflow_id}/run", response_model=WorkflowRunResponse)
-def run_workflow(
+async def run_workflow(
     project_id: str,
     workflow_id: str,
     req: WorkflowRunRequest,
@@ -182,10 +182,12 @@ def run_workflow(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    tool_registry = ToolRegistry()
+    # Use the shared, fully-initialized registry rather than a fresh empty one
+    # (a fresh ToolRegistry() registers no tools, so dispatch would always 404).
+    tool_registry = get_tool_registry()
 
     try:
-        run = WorkflowEngine.execute_workflow_run(
+        run = await WorkflowEngine.execute_workflow_run(
             db=db,
             workflow_id=workflow_id,
             tool_registry=tool_registry,
@@ -193,8 +195,11 @@ def run_workflow(
             start_from_step=req.start_from_step,
             user_id=user_id,
             org_id=org_id,
+            expected_project_id=project_id,
         )
         return run
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"Workflow execution failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -273,11 +278,18 @@ def repair_spatial_dataset(
         raise HTTPException(status_code=400, detail="Missing 'geojson' in payload")
 
     repaired_geojson, logs = SpatialRepairPipeline.repair_dataset(geojson_data, operations)
+    feature_count = (
+        len(repaired_geojson.get("features", []))
+        if isinstance(repaired_geojson, dict) else 0
+    )
+    # Fetch-on-Demand: trim the repaired geometry out of the inline response.
+    from app.tools._utils import trim_features
     return {
         "project_id": project_id,
         "operations_applied": operations,
         "repair_logs": logs,
-        "repaired_geojson": repaired_geojson,
+        "feature_count": feature_count,
+        "repaired_geojson_preview": trim_features(repaired_geojson, max_features=50),
     }
 
 
