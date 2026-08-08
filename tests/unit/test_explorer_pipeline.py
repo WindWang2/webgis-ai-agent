@@ -137,6 +137,9 @@ class MockAdapter:
             fields=[FieldInfo(name="name", data_type="string"), FieldInfo(name="address", data_type="string")],
         )
 
+    async def batch_geocode(self, addresses: list, *args, **kwargs) -> dict:
+        return {"results": [{"index": i, "status": "success", "lat": 39.9, "lng": 116.4} for i in range(len(addresses))]}
+
 
 @pytest.mark.asyncio
 async def test_explorer_pipeline_in_process():
@@ -155,6 +158,6 @@ async def test_orchestrator_in_process_mode():
     orchestrator = ExplorerOrchestrator()
     ctx = SearchContext(query="parks", city="Shanghai")
     task_id = await orchestrator.start_exploration(
-        "parks", ctx, session_id="sess_123", mode="in_process"
+        "parks", ctx, session_id="sess_123", mode="in_process", adapter=MockAdapter()
     )
     assert task_id.startswith("exp_sess_123_")

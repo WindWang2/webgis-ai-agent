@@ -1,7 +1,7 @@
 """探索任务编排器"""
 import logging
 import asyncio
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional, Any
 from celery import chain
 from app.services.explorer.models import SearchContext, ExplorerPerceptionEvent
 from app.services.explorer.intent_detector import IntentDetector, ExploreDecision
@@ -34,6 +34,7 @@ class ExplorerOrchestrator:
         session_id: str = "",
         user_id: str = "",
         mode: str = "celery",
+        adapter: Optional[Any] = None,
     ) -> str:
         """启动探索任务，返回 task_id"""
         task_id = f"exp_{session_id}_{asyncio.get_running_loop().time():.0f}"
@@ -41,7 +42,7 @@ class ExplorerOrchestrator:
         if mode == "in_process":
             from app.services.explorer.pipeline import ExplorerPipeline
             pipeline = ExplorerPipeline()
-            res = await pipeline.run_in_process(task_id, query, context)
+            res = await pipeline.run_in_process(task_id, query, context, adapter=adapter)
             logger.info(f"[Explorer] Finished in-process task {task_id} (success={res.success})")
             return task_id
 

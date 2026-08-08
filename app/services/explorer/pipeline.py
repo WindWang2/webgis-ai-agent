@@ -86,10 +86,11 @@ class ExplorerPipelineRunner:
         async with self.tracker.track_step(task_id, "explorer_geocode", {}):
             logger.info(f"[ExplorerPipelineRunner:{task_id}] Stage 4: Geocode")
             parsed_results = parse_res.data.get("parsed_results", []) if parse_res.data else []
+            _bg_func = getattr(adapter, "batch_geocode", None) or batch_geocode_cn
             geo_stage_res = await geocode_stage(
                 parsed_results,
                 load_ref=_load,
-                batch_geocode=batch_geocode_cn,
+                batch_geocode=_bg_func,
                 on_progress=lambda p: on_progress("geocode", p) if on_progress else None,
             )
             if geo_stage_res.rows or geo_stage_res.summary.total:
