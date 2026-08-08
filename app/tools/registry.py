@@ -92,10 +92,24 @@ class ToolRegistry:
         # domains: tier 2 工具属于哪些主题，用于关键词触发
         self._metadata: dict[str, dict[str, Any]] = {}
 
-    def tool(self, name: str, description: str, **kwargs: Any) -> Callable:
+    def tool(self, name: str, description: str,
+             param_descriptions: Optional[dict[str, str]] = None,
+             args_model: Optional[Type[BaseModel]] = None,
+             tier: int = 1,
+             domains: Optional[List[str]] = None,
+             execution_policy: Optional[ToolExecutionPolicy | str] = None,
+             **kwargs: Any) -> Callable:
         """装饰器：注册工具到此 registry 实例"""
         def decorator(func: Callable):
-            self.register(name, description, func, **kwargs)
+            self.register(
+                name, description, func,
+                param_descriptions=param_descriptions,
+                args_model=args_model,
+                tier=tier,
+                domains=domains,
+                execution_policy=execution_policy,
+                **kwargs,
+            )
             return func
         return decorator
 
@@ -105,7 +119,8 @@ class ToolRegistry:
                  parameters: Optional[dict] = None,
                  tier: int = 1,
                  domains: Optional[List[str]] = None,
-                 execution_policy: Optional[ToolExecutionPolicy | str] = None):
+                 execution_policy: Optional[ToolExecutionPolicy | str] = None,
+                 **kwargs: Any):
         """注册一个工具函数"""
         self._tools[name] = func
         if parameters:
@@ -478,7 +493,9 @@ def tool(registry: ToolRegistry, name: str, description: str,
          param_descriptions: Optional[dict[str, str]] = None,
          args_model: Optional[Type[BaseModel]] = None,
          tier: int = 1,
-         domains: Optional[List[str]] = None):
+         domains: Optional[List[str]] = None,
+         execution_policy: Optional[ToolExecutionPolicy | str] = None,
+         **kwargs: Any):
     """装饰器：注册工具到 registry.
 
     tier / domains 见 ToolRegistry.register 文档。未提供时默认 tier=1 always-on。
@@ -490,6 +507,9 @@ def tool(registry: ToolRegistry, name: str, description: str,
             args_model=args_model,
             tier=tier,
             domains=domains,
+            execution_policy=execution_policy,
+            **kwargs,
         )
         return func
     return decorator
+

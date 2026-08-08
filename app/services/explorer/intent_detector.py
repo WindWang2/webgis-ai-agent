@@ -96,7 +96,8 @@ class IntentDetector:
         best_score = 0.0
 
         for data_type, triggers in self.EXPLORATION_TRIGGERS.items():
-            score = sum(1 for t in triggers if t in query) / len(triggers)
+            num_triggers = len(triggers) if triggers else 0
+            score = (sum(1 for t in triggers if t in query) / num_triggers) if num_triggers > 0 else 0.0
             if score > best_score:
                 best_score = score
                 best_type = data_type

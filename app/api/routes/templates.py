@@ -92,12 +92,15 @@ async def list_templates(
     result = await db.execute(stmt)
     db_templates = result.scalars().all()
     
-    if db_templates:
-        results = [_template_to_dict(t) for t in db_templates]
-    else:
-        results = list(SEED_TEMPLATES)
-        if kind:
-            results = [t for t in results if t.get("kind") == kind]
+    db_dicts = [_template_to_dict(t) for t in db_templates]
+    db_ids = {t["id"] for t in db_dicts}
+
+    seed_list = list(SEED_TEMPLATES)
+    if kind:
+        seed_list = [t for t in seed_list if t.get("kind") == kind]
+    seed_dicts = [t for t in seed_list if t.get("id") not in db_ids]
+
+    results = seed_dicts + db_dicts
 
     if q:
         keyword = q.lower()
@@ -186,7 +189,7 @@ async def delete_template(
 
     user_id = _user.get("user_id") if isinstance(_user, dict) else None
     role = _user.get("role") if isinstance(_user, dict) else None
-    if tmpl.creator_id and tmpl.creator_id != user_id and role != "admin":
+    if (tmpl.creator_id != user_id or tmpl.creator_id is None) and role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not authorized to delete this template"

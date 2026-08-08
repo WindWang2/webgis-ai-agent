@@ -321,7 +321,10 @@ async def delete_upload(upload_id: int, _user: dict = Depends(get_current_user))
     # File cleanup AFTER DB commit succeeds
     upload_dir = file_path.parent
     if upload_dir.exists():
-        import shutil
-        shutil.rmtree(upload_dir, ignore_errors=True)
+        resolved = upload_dir.resolve()
+        uploads_root = Path(settings.DATA_DIR, "uploads").resolve()
+        if uploads_root in resolved.parents:
+            import shutil
+            shutil.rmtree(upload_dir, ignore_errors=True)
 
     return {"success": True, "message": "已删除"}

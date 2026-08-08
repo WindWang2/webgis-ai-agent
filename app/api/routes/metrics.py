@@ -2,9 +2,10 @@
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from app.agent_pi_bridge import get_harness
+from app.core.auth import require_admin
 from app.services import tool_metrics
 from app.services.spatial_analyzer import SpatialAnalyzer
 
@@ -14,7 +15,7 @@ router = APIRouter()
 
 
 @router.get("/metrics/digest")
-async def get_metrics_digest() -> Dict[str, Any]:
+async def get_metrics_digest(_user: dict = Depends(require_admin)) -> Dict[str, Any]:
     """Return production tool call metrics, SpatialAnalyzer cache stats, and harness info."""
     snapshot = tool_metrics.aggregator_snapshot()
     spatial_info = SpatialAnalyzer.get_st_dbscan_cache_info()

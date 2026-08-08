@@ -287,10 +287,14 @@ def register_osm_tools(registry: ToolRegistry):
                 "bus_station": ["bus station", "公交站"], "parking": ["parking", "停车场"],
                 "fuel": ["fuel", "加油站"],
             }
-            search_terms = category_names.get(mapped_category, [mapped_category])
+            search_terms = category_names.get(mapped_category, [mapped_category] if mapped_category else [])
+            if not search_terms:
+                search_terms = [category] if category else ["poi"]
             nom_geojson = {"type": "FeatureCollection", "features": []}
+            num_terms = max(1, len(search_terms))
+            term_limit = max(1, limit // num_terms)
             for term in search_terms:
-                nom_geojson = await _nominatim_search_poi(term, bbox, limit // len(search_terms))
+                nom_geojson = await _nominatim_search_poi(term, bbox, term_limit)
                 if len(nom_geojson.get("features", [])) > 0:
                     break
 

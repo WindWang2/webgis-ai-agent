@@ -157,12 +157,13 @@ async def chat_stream(
 
     if _use_pi_bridge():
         async def pi_event_generator():
-            try:
-                async for event in pi_bridge.stream_prompt(req.message, session_id=req.session_id):
-                    yield event
-            except Exception as e:
-                logger.error(f"Pi bridge stream error: {e}", exc_info=True)
-                yield sse_event("error", {"error": "Internal server error"})
+            async with async_db_session():
+                try:
+                    async for event in pi_bridge.stream_prompt(req.message, session_id=req.session_id):
+                        yield event
+                except Exception as e:
+                    logger.error(f"Pi bridge stream error: {e}", exc_info=True)
+                    yield sse_event("error", {"error": "Internal server error"})
 
         return StreamingResponse(
             pi_event_generator(),
@@ -172,18 +173,19 @@ async def chat_stream(
 
     # Legacy path: 使用 ChatEngine
     async def event_generator():
-        try:
-            async for event in get_engine().chat_stream(
-                req.message,
-                session_id=req.session_id,
-                map_state=req.map_state,
-                skill_name=req.skill_name,
-                user_id=user_id,
-            ):
-                yield event
-        except Exception as e:
-            logger.error(f"Stream error: {e}", exc_info=True)
-            yield sse_event("error", {"error": "Internal server error"})
+        async with async_db_session():
+            try:
+                async for event in get_engine().chat_stream(
+                    req.message,
+                    session_id=req.session_id,
+                    map_state=req.map_state,
+                    skill_name=req.skill_name,
+                    user_id=user_id,
+                ):
+                    yield event
+            except Exception as e:
+                logger.error(f"Stream error: {e}", exc_info=True)
+                yield sse_event("error", {"error": "Internal server error"})
 
     return StreamingResponse(
         event_generator(),
@@ -200,19 +202,13 @@ async def list_sessions(
 ):
     """列出当前用户的历史会话；匿名调用方返回空列表（A2）。
 
-    审计 A5：之前无 pagination，活跃用户可能积累数千 session 全量返回。
-    加 limit (默认 50, 上限 200) + offset。注意：list_sessions 内部按
-    updated_at desc，但当前 AsyncHistoryService.list_sessions 不支持 offset；
-    简化处理：客户端用 limit 控制批次，offset 由客户端切页。
+    审计 A5：加 limit (默认 50, 上限 200) + offset 分页，直接传递至 DB 查询。
     """
     user_id = _user.get("user_id")
     async with async_db_session() as db:
-        sessions = await AsyncHistoryService(db).list_sessions(limit=limit, user_id=user_id)
-        # 审计 P1：offset=0 是合法的分页请求，不应跳过切片。
-        # 之前 `if offset` 把 0 当 falsy 处理，导致第一页返回全量数据。
-        paginated = sessions[offset:offset + limit]
+        sessions = await AsyncHistoryService(db).list_sessions(limit=limit, offset=offset, user_id=user_id)
         return {
-            "total": len(sessions),  # 本次 query 的总数（不含 offset）
+            "total": len(sessions),
             "limit": limit,
             "offset": offset,
             "sessions": [
@@ -222,7 +218,7 @@ async def list_sessions(
                     "createdAt": s.created_at.timestamp() * 1000,
                     "updatedAt": s.updated_at.timestamp() * 1000,
                 }
-                for s in paginated
+                for s in sessions
             ],
         }
 

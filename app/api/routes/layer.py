@@ -9,6 +9,7 @@
 - 空间分析任务端点已移除 — Agent 通过 tool calling 驱动分析，不再走 REST CRUD。
 """
 
+import asyncio
 import gzip
 from typing import Optional
 

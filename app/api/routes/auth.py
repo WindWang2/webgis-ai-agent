@@ -52,6 +52,14 @@ def _allow_public_register() -> bool:
     return os.getenv("ALLOW_PUBLIC_REGISTER", "").lower() == "true"
 
 
+def _get_client_ip(request: Request) -> str:
+    """从请求中提取客户端 IP，优先尝试 X-Forwarded-For 头（代理感知）。"""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
 class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=40)
     email: str = Field(..., max_length=255)
@@ -131,7 +139,7 @@ async def register(
         )
 
     # 限速：每 IP 每小时最多 5 次注册（防账号农场 + 减少攻击面）
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _get_client_ip(request)
     limiter = await get_rate_limiter()
     if not await limiter.is_allowed(f"auth_register:{client_ip}", max_requests=5, window_seconds=3600):
         raise HTTPException(status_code=429, detail="注册过于频繁，请稍后再试")
@@ -178,7 +186,7 @@ async def login(
     # 限速：每 IP 5 分钟最多 5 次失败 -- 防 password spraying + 避免 NAT 下锁正常用户。
     # 审计 P1：之前 key 包含 identifier（用户名），攻击者可在同一 NAT 下用
     # 受害者的用户名发起失败登录，导致受害者被锁。改为纯 IP 限速。
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _get_client_ip(request)
     limiter = await get_rate_limiter()
     if not await limiter.is_allowed(
         f"auth_login:{client_ip}",

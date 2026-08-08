@@ -218,6 +218,7 @@ class AsyncHistoryService(HistoryStoreProtocol):
         self,
         limit: int = MAX_SESSIONS,
         user_id: Optional[str] = None,
+        offset: int = 0,
     ) -> list[Conversation]:
         """匿名调用方拿不到列表；认证用户只看自己的会话。"""
         if _is_anonymous(user_id):
@@ -227,6 +228,7 @@ class AsyncHistoryService(HistoryStoreProtocol):
             .where(Conversation.user_id == user_id)
             .order_by(Conversation.updated_at.desc())
             .options(selectinload(Conversation.messages))
+            .offset(offset)
             .limit(limit)
         )
         result = await self.db.execute(stmt)

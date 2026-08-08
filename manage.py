@@ -49,16 +49,16 @@ def cmd_create_admin(username: str, email: str, password: str):
         console.print("[red]password 至少 8 位[/red]")
         sys.exit(2)
 
-    from app.core.database import init_db, Engine
+    from app.core.database import init_db, SessionLocal
     from app.models.db_model import User
     from app.core.auth import hash_password
     from sqlalchemy import select, or_
 
     init_db()  # 幂等；确保表存在
 
-    with Engine.begin() as conn:
+    with SessionLocal() as db:
         # 检查唯一性
-        existing = conn.execute(
+        existing = db.execute(
             select(User).where(or_(User.username == username, User.email == email))
         ).scalar_one_or_none()
         if existing is not None:
@@ -72,8 +72,8 @@ def cmd_create_admin(username: str, email: str, password: str):
             role="admin",
             is_active=True,
         )
-        conn.add(user)
-        conn.commit()
+        db.add(user)
+        db.commit()
     console.print(f"[bold green]✓[/bold green] Admin 创建成功: username={username} email={email} id={user.id}")
     console.print("[dim]使用 POST /api/v1/auth/login 获取 JWT。[/dim]")
 
@@ -102,6 +102,7 @@ async def check_infrastructure():
         import redis
         r = redis.from_url(settings.REDIS_URL, socket_connect_timeout=2)
         r.ping()
+        r.close()
         table.add_row("Redis", "[green]Healthy[/green]", f"Connected to {settings.REDIS_URL}")
     except Exception as e:
         table.add_row("Redis", "[red]Failed[/red]", f"Ensure redis-server is running. ({e})")
@@ -148,6 +149,7 @@ def run_dev():
         try:
             r = redis.from_url(settings.REDIS_URL, socket_connect_timeout=1)
             r.ping()
+            r.close()
         except Exception:
             # Catch broad redis/network exceptions, but let KeyboardInterrupt/SystemExit
             # propagate so the user can ctrl-C a dev server start.

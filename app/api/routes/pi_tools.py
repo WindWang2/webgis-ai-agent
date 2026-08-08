@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 import os
 import secrets
 
@@ -21,16 +22,37 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 
 from app.agent_pi_bridge import PiToolRequest, PiToolResponse, dispatch_tool
 
+logger = logging.getLogger(__name__)
+
+from pathlib import Path
+
+from app.core.config import settings
+
 router = APIRouter(prefix="/pi-tools", tags=["pi-tools"])
 
-# 共享密钥：启动时生成（每个进程唯一），注入 Pi subprocess env。
-# 也可通过环境变量 WEBGIS_BRIDGE_SECRET 固定（多副本部署需固定）。
-_BRIDGE_SECRET = os.getenv("WEBGIS_BRIDGE_SECRET") or secrets.token_urlsafe(32)
-
-
+# 共享密钥：若环境变量 WEBGIS_BRIDGE_SECRET 未提供，在 DATA_DIR 读写共享 secret 文件，
+# 确保多 worker 进程间密钥一致。
 def get_bridge_secret() -> str:
-    """返回当前 bridge 共享密钥（供 PiBridge.start 注入 subprocess env）。"""
-    return _BRIDGE_SECRET
+    """返回当前 bridge 共享密钥（供 PiBridge.start 注入 subprocess env），确保多 worker 进程一致。"""
+    secret = os.getenv("WEBGIS_BRIDGE_SECRET")
+    if secret:
+        return secret
+    secret_file = Path(settings.DATA_DIR) / ".pi_bridge_secret"
+    if secret_file.exists():
+        try:
+            val = secret_file.read_text(encoding="utf-8").strip()
+            if val:
+                return val
+        except Exception:
+            pass
+    new_secret = secrets.token_urlsafe(32)
+    try:
+        secret_file.parent.mkdir(parents=True, exist_ok=True)
+        secret_file.write_text(new_secret, encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"Failed to write bridge secret file: {e}")
+    os.environ["WEBGIS_BRIDGE_SECRET"] = new_secret
+    return new_secret
 
 
 async def verify_bridge_secret(
@@ -40,7 +62,8 @@ async def verify_bridge_secret(
 
     用 hmac.compare_digest 防时序侧信道。
     """
-    if not x_pi_bridge_secret or not hmac.compare_digest(x_pi_bridge_secret, _BRIDGE_SECRET):
+    secret = get_bridge_secret()
+    if not x_pi_bridge_secret or not hmac.compare_digest(x_pi_bridge_secret, secret):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing bridge secret",

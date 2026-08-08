@@ -41,6 +41,33 @@ _MEDIA_TYPES = {
 _EXPORT_OWNERS: dict[str, str] = {}
 
 
+def _set_export_owner(filename: str, user_id: str) -> None:
+    """记录文件所有权，并在 EXPORT_DIR 下持久化 .owner 侧车文件以支持多 worker 进程环境。"""
+    _EXPORT_OWNERS[filename] = user_id
+    meta_path = os.path.join(EXPORT_DIR, f"{filename}.owner")
+    try:
+        with open(meta_path, "w", encoding="utf-8") as f:
+            f.write(user_id)
+    except Exception as e:
+        logger.warning(f"Failed to write export owner sidecar: {e}")
+
+
+def _get_export_owner(filename: str) -> Optional[str]:
+    """读取文件所有者，优先从内存 _EXPORT_OWNERS 获取，没有则读取 .owner 侧车文件。"""
+    if filename in _EXPORT_OWNERS:
+        return _EXPORT_OWNERS[filename]
+    meta_path = os.path.join(EXPORT_DIR, f"{filename}.owner")
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                owner = f.read().strip()
+                _EXPORT_OWNERS[filename] = owner
+                return owner
+        except Exception:
+            pass
+    return None
+
+
 # ─── SVG sanitization (/review P1-5) ─────────────────────────────────────
 # SVG content can contain <script>, <foreignObject>, on* event attributes,
 # and javascript: href references — i.e. arbitrary code execution if a
@@ -144,7 +171,7 @@ async def upload_map_export(
         raise HTTPException(status_code=500, detail="保存导出图失败")
 
     # 审计 P0：记录文件所有权，防止 IDOR
-    _EXPORT_OWNERS[filename] = _user.get("user_id", "unknown")
+    _set_export_owner(filename, _user.get("user_id", "unknown"))
 
     download_url = f"/api/v1/export/download/{filename}"
     return {
@@ -202,7 +229,7 @@ async def export_map_as_pdf(
         raise HTTPException(status_code=500, detail="PDF 生成失败")
 
     # 审计 P0：记录文件所有权
-    _EXPORT_OWNERS[pdf_filename] = _user.get("user_id", "unknown")
+    _set_export_owner(pdf_filename, _user.get("user_id", "unknown"))
 
     return {
         "success": True,
@@ -226,7 +253,7 @@ def download_map_export(filename: str, _user: dict = Depends(get_current_user)):
     # 此时无法证明归属，但端点已要求认证 (get_current_user)，因此允许
     # 任意 *已认证* 用户下载，并依赖文件名高熵（48 位）阻止枚举。
     # TODO: 迁移到 DB-backed 所有权 (exports.user_id)，届时移除此兜底。
-    owner = _EXPORT_OWNERS.get(safe_filename)
+    owner = _get_export_owner(safe_filename)
     if owner is not None and owner != _user.get("user_id"):
         raise HTTPException(status_code=403, detail="无权下载此文件")
 
@@ -272,7 +299,7 @@ async def export_geojson(req: GeoJSONExportRequest, _user: dict = Depends(get_cu
         f.write(content)
 
     # 审计 P0：记录文件所有权
-    _EXPORT_OWNERS[filename] = _user.get("user_id", "unknown")
+    _set_export_owner(filename, _user.get("user_id", "unknown"))
 
     return {
         "filename": filename,
