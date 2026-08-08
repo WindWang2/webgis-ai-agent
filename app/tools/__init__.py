@@ -43,7 +43,9 @@ _TOOL_MODULES = [
     ("app.tools.network_tools", "register_network_tools"),
     ("app.tools.temporal_tools", "register_temporal_tools"),
     ("app.tools.spatial_decision_tools", "register_spatial_decision_tools"),
+    ("app.tools.data_fabric_tools", "register_data_fabric_tools"),
 ]
+
 
 
 def init_tools(registry: "ToolRegistry") -> None:

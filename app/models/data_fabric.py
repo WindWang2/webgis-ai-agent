@@ -1,0 +1,95 @@
+"""
+PostgreSQL + PostGIS Domain Models for Enterprise Geospatial Data Fabric.
+"""
+from datetime import datetime, timezone
+from sqlalchemy import (
+    Column, Integer, String, Text, DateTime, ForeignKey, Index, JSON
+)
+from sqlalchemy.orm import relationship
+from app.core.database import Base
+
+
+class DataSource(Base):
+    """数据源配置与连接注册表"""
+    __tablename__ = "data_sources"
+
+    id = Column(String(255), primary_key=True)
+    org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)
+    owner_id = Column(String(255), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    name = Column(String(255), nullable=False)
+    source_type = Column(String(50), nullable=False, index=True)
+    endpoint_url = Column(Text, nullable=False)
+    connection_profile = Column(JSON, nullable=False, default=dict)
+    capabilities_json = Column(JSON, nullable=False, default=list)
+    status = Column(String(50), default="active", index=True)
+    last_health_check = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("idx_datasource_org_type", "org_id", "source_type"),
+        Index("idx_datasource_status", "status"),
+    )
+
+
+class DataFabricDataset(Base):
+    """Spatial Catalog Lightweight Metadata Index table."""
+    __tablename__ = "spatial_catalog_items"
+
+    id = Column(String(255), primary_key=True)
+    source_id = Column(String(255), ForeignKey("data_sources.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(255), nullable=False, index=True)
+    title = Column(String(255), nullable=True)
+    description = Column(Text, nullable=True)
+    geometry_type = Column(String(50), nullable=True, index=True)
+    feature_type = Column(String(50), default="vector", index=True)
+    crs = Column(String(50), default="EPSG:4326")
+    bbox_json = Column(JSON, nullable=True)
+    tags_json = Column(JSON, nullable=False, default=list)
+    descriptor_json = Column(JSON, nullable=False, default=dict)
+    meta_profile_json = Column(JSON, nullable=False, default=dict)
+    fingerprint = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("idx_catalog_source_name", "source_id", "name"),
+        Index("idx_catalog_geom_feature", "geometry_type", "feature_type"),
+    )
+
+    data_source = relationship("DataSource", backref="catalog_items", lazy="selectin")
+
+
+class DataMaterializationRecord(Base):
+    """Materialization Audit & Provenance table."""
+    __tablename__ = "materializations"
+
+    id = Column(String(255), primary_key=True)
+    dataset_id = Column(String(255), nullable=False, index=True)
+    source_id = Column(String(255), ForeignKey("data_sources.id", ondelete="SET NULL"), nullable=True)
+    ref_id = Column(String(255), nullable=False, index=True)
+    query_spec_json = Column(JSON, nullable=False, default=dict)
+    fingerprint = Column(String(255), nullable=True)
+    record_count = Column(Integer, nullable=True)
+    materialized_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("idx_mat_dataset_ref", "dataset_id", "ref_id"),
+    )
+
+
+# Aliases for backwards compatibility
+DataSourceModel = DataSource
+CatalogItemModel = DataFabricDataset
+MaterializationModel = DataMaterializationRecord
+DataFabricAuditLog = DataMaterializationRecord
+
+__all__ = [
+    "DataSource",
+    "DataFabricDataset",
+    "DataMaterializationRecord",
+    "DataFabricAuditLog",
+    "DataSourceModel",
+    "CatalogItemModel",
+    "MaterializationModel",
+]

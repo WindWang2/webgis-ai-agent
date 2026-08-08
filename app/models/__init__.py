@@ -23,6 +23,15 @@ from app.models.project import (
     Artifact,
     ArtifactLineage,
 )
+from app.models.data_fabric import (
+    DataSource,
+    DataFabricDataset,
+    DataMaterializationRecord,
+    DataSourceModel,
+    CatalogItemModel,
+    MaterializationModel,
+    DataFabricAuditLog,
+)
 
 __all__ = [
     "Organization",
@@ -43,5 +52,11 @@ __all__ = [
     "WorkflowRun",
     "Artifact",
     "ArtifactLineage",
+    "DataSource",
+    "DataFabricDataset",
+    "DataMaterializationRecord",
+    "DataSourceModel",
+    "CatalogItemModel",
+    "MaterializationModel",
+    "DataFabricAuditLog",
 ]
-

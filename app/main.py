@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.core.database import Engine
 from app.core.exception import global_exception_handler
 from app.core.rate_limiter import get_rate_limiter
-from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes
+from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric
 from app.tools.registry import ToolRegistry
 from app.tools import init_tools
 from app.services.chat_engine import ChatEngine
@@ -220,6 +220,7 @@ app.include_router(explorer.router, prefix="/api/v1", tags=["探索引擎"])
 app.include_router(templates.router, prefix="/api/v1", tags=["地图制图模板"])
 app.include_router(raster_routes.router, prefix="/api/v1", tags=["栅格图层"])
 app.include_router(project_routes.router, prefix="/api/v1", tags=["项目工作区"])
+app.include_router(data_fabric.router, prefix="/api/v1", tags=["Data Fabric / 数据织网"])
 app.include_router(metrics.router, prefix="/api/v1", tags=["性能遥测"])
 app.include_router(pi_tools.router, tags=["PI工具"])
 
