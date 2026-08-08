@@ -4,9 +4,9 @@ Verifies spatial decision target area resolution and baseline metric resolution.
 """
 import json
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
-from app.services.spatial_decision.models import TargetAreaSpec, MetricDeltaV2
+from app.services.spatial_decision.models import TargetAreaSpec
 from app.services.spatial_decision.target_resolver import TargetAreaResolver, resolve_target_area
 from app.services.spatial_decision.baseline_resolver import BaselineResolver, resolve_baseline_metrics
 

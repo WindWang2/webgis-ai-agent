@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from app.services.temporal.models import (
     TimeInstant,
     TimeInterval,
-    TemporalExtent,
     TemporalDatasetProfile,
     TemporalGranularity,
     TemporalFieldType,

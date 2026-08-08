@@ -4,12 +4,11 @@ Generalized STAC adapter supporting multi-collection discovery, item search,
 spatial/temporal pushdown filtering, and lazy streaming.
 """
 import time
-import json
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from urllib.parse import urljoin
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
-from app.services.data_fabric.security import DataFabricSecurity, DataFabricSecurityError
+from app.services.data_fabric.security import DataFabricSecurity
 from app.schemas.data_fabric_schema import (
     DatasetDescriptor,
     QuerySpec,

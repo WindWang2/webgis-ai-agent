@@ -11,7 +11,6 @@ Tests all 8 core components:
 8. TemporalEngine (engine.py)
 """
 
-import math
 from datetime import datetime, timezone, timedelta
 import pytest
 
@@ -26,11 +25,8 @@ from app.services.temporal import (
     TemporalEngine,
     TemporalGranularity,
     TemporalFieldType,
-    TemporalOperator,
     TemporalUnit,
     TemporalMetric,
-    TemporalFilter,
-    TemporalAggregation,
     SpatiotemporalHotspotResult,
     TemporalChangeResult,
     TemporalTrendResult,

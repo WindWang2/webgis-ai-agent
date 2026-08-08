@@ -4,7 +4,7 @@ Implements P-Median and Max Coverage facility location allocation models.
 """
 from __future__ import annotations
 import itertools
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 import networkx as nx
 

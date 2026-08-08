@@ -6,8 +6,7 @@ attribute numeric deltas, and geometry/spatial centroid displacement.
 
 import math
 import logging
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.temporal.models import TemporalChangeResult
 from app.services.temporal.profiler import parse_value_to_instant
@@ -198,7 +197,6 @@ class TemporalChangeEngine:
                 fid = props_end.get(id_field) or f_end.get("id")
                 if fid is not None and str(fid) in id_map_s1:
                     f_start = id_map_s1[str(fid)]
-                    props_start = f_start.get("properties", f_start) if isinstance(f_start, dict) else {}
 
                     # Check centroid shift
                     geom1 = f_start.get("geometry") if isinstance(f_start, dict) else None

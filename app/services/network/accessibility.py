@@ -4,7 +4,7 @@ Implements spatial accessibility metrics including 15-minute life circle coverag
 served/unserved population calculation, and 2SFCA (Two-Step Floating Catchment Area).
 """
 from __future__ import annotations
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 import networkx as nx
 

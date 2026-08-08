@@ -5,10 +5,10 @@ Ensures evidence gaps are explicitly flagged (missing_baseline=True) and auto-he
 """
 import math
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 from shapely.geometry import shape
 
-from app.services.spatial_decision.models import TargetAreaSpec, MetricDeltaV2, MetricRange
+from app.services.spatial_decision.models import TargetAreaSpec, MetricDeltaV2
 
 logger = logging.getLogger(__name__)
 

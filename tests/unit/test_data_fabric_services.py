@@ -12,15 +12,12 @@ from app.schemas.data_fabric_schema import (
     DatasetDescriptor,
     QuerySpec,
     QueryResult,
-    DataFabricHealth,
 )
 from app.services.data_fabric.spatial_catalog import SpatialCatalogService
 from app.services.data_fabric.fingerprint import DatasetFingerprintService
 from app.services.data_fabric.materialization_service import MaterializationService
 from app.services.data_fabric.health import DataFabricHealthCheck
-from app.services.data_fabric.security import DataFabricSecurity, DataFabricSecurityError
 from app.services.data_fabric.connection_manager import (
-    DataFabricConnectionManager,
     GenericDataSourceAdapter,
 )
 

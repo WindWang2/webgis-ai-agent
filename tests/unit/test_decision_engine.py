@@ -3,11 +3,9 @@ Unit and Integration Tests for DecisionEngine and ScenarioComparisonEngine.
 Verifies Data-Grounded Spatial Decision Intelligence V2 end-to-end.
 """
 import pytest
-import json
 from app.services.spatial_decision.models import (
     SpatialDecisionResult,
     ScenarioComparisonResult,
-    TargetAreaSpec,
 )
 from app.services.spatial_decision.engine import DecisionEngine
 from app.services.spatial_decision.comparison_engine import ScenarioComparisonEngine

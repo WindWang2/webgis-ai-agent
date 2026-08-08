@@ -8,7 +8,7 @@ import time
 import json
 import struct
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.security import DataFabricSecurity
 from app.schemas.data_fabric_schema import (
@@ -144,7 +144,10 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
                 if not magic.startswith(b"fgb"):
                     raise ValueError("Invalid FlatGeobuf magic header")
                 header_size = struct.unpack("<I", f.read(4))[0]
-                header_bytes = f.read(header_size)
+                # Read (and discard) the header bytes to advance the file
+                # pointer; full header parsing is handled via the geopandas
+                # fallback below.
+                f.read(header_size)
                 # Parse basic info from header or metadata fallback
                 file_size = os.path.getsize(self.endpoint)
 

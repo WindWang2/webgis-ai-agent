@@ -7,7 +7,7 @@ import os
 import time
 import json
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.security import DataFabricSecurity
 from app.schemas.data_fabric_schema import (

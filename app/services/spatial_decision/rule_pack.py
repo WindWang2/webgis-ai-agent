@@ -6,7 +6,7 @@ import asyncio
 import inspect
 import logging
 import uuid
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from app.services.spatial_decision.models import DomainRule, EvidenceItem
 from app.services.rag.engine import TenantContext, KnowledgeEngine, get_knowledge_engine

@@ -6,7 +6,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import select
 
 from app.schemas.data_fabric_schema import (
     ConnectionProfile,

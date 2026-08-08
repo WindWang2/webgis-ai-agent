@@ -6,7 +6,6 @@ computing statistical metrics (count, sum, mean, min, max, std) on target numeri
 
 import math
 import logging
-from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Union
 

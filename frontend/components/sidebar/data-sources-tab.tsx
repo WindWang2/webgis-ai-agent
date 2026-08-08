@@ -10,7 +10,6 @@ import {
   Layers,
   Search,
   Info,
-  Play,
   CheckCircle2,
   AlertTriangle,
   XCircle,
@@ -187,7 +186,7 @@ export function DataSourcesTab() {
         visible: true,
         opacity: 1,
         group: 'reference',
-        refId: res.ref_id,
+        _refId: res.ref_id,
         style: { color: '#16a34a' },
       });
 

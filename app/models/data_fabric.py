@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, ForeignKey, Index, JSON
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, backref
 from app.core.database import Base
 
 
@@ -57,7 +57,14 @@ class DataFabricDataset(Base):
         Index("idx_catalog_geom_feature", "geometry_type", "feature_type"),
     )
 
-    data_source = relationship("DataSource", backref="catalog_items", lazy="selectin")
+    # cascade="all, delete-orphan" mirrors the FK's ondelete="CASCADE": deleting a
+    # DataSource removes its catalog items. Without it, SQLAlchemy's default
+    # null-out-on-parent-delete trips the NOT NULL constraint on source_id.
+    data_source = relationship(
+        "DataSource",
+        backref=backref("catalog_items", cascade="all, delete-orphan"),
+        lazy="selectin",
+    )
 
 
 class DataMaterializationRecord(Base):

@@ -8,7 +8,7 @@ import math
 from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import geopandas as gpd
-from shapely.geometry import shape, mapping, Point, Polygon, MultiPolygon, box
+from shapely.geometry import shape, Point, MultiPolygon, box
 from app.lib.geo_processor.core import to_utm_gdf
 from app.services.spatial_decision.models import TargetAreaSpec, SpatialImpactZone
 

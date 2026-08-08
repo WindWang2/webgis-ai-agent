@@ -12,10 +12,8 @@ from app.services.spatial_decision.models import (
     SpatialDecisionResult,
     ScenarioSpec,
     TargetAreaSpec,
-    EvidenceItem,
     MetricDeltaV2,
     DomainRule,
-    SpatialImpactZone,
 )
 from app.services.spatial_decision.target_resolver import TargetAreaResolver
 from app.services.spatial_decision.baseline_resolver import BaselineResolver

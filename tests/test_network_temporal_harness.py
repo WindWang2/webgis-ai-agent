@@ -6,11 +6,11 @@ route optimization VRP, temporal profiling, temporal filtering, temporal trend,
 spatiotemporal hotspots, and network + temporal combined slice.
 """
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime
 from app.services.network.engine import NetworkGraphEngine
 from app.services.network.models import TravelProfile
 from app.services.temporal.engine import TemporalEngine
-from app.services.temporal.models import TemporalFilter, TemporalAggregation
+from app.services.temporal.models import TemporalFilter
 
 
 # Sample grid road network in WGS84 around Beijing (approx 0.01 deg ~ 1.1km)

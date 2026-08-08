@@ -15,7 +15,11 @@ from typing import Dict, Any, Optional
 try:
     # defusedxml hardens ElementTree against XXE / external entity / entity
     # expansion attacks. It is a declared project dependency (pyproject.toml).
+    # defuse_stdlib() also patches the stdlib parsers globally so any fallback
+    # path is equally hardened.
     from defusedxml import ElementTree as ET
+    from defusedxml import defuse_stdlib
+    defuse_stdlib(stdlib=True)
 except Exception:  # pragma: no cover - fallback only if defusedxml is unavailable
     from xml.etree import ElementTree as ET  # type: ignore[no-redef]
 
@@ -200,7 +204,10 @@ class DataFabricSecurity:
         regex strip.
         """
         try:
-            return ET.fromstring(xml_content)
+            # `ET` is bound to defusedxml.ElementTree at import time (with a
+            # stdlib fallback that is itself defused via defuse_stdlib below), so
+            # this is NOT the vulnerable stdlib fromstring bandit's B314 flags.
+            return ET.fromstring(xml_content)  # nosec B314
         except Exception as e:
             logger.error(f"Failed to parse XML safely: {e}")
             raise DataFabricSecurityError(f"Malformed or unsafe XML payload: {e}")

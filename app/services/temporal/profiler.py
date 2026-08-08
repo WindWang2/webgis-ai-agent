@@ -107,9 +107,6 @@ def parse_value_to_instant(val: Any, field_name_hint: str = "") -> Optional[Tupl
 
     # 3. Numeric values (epoch or integer year)
     if isinstance(val, (int, float)) and not isinstance(val, bool):
-        # Prevent treating generic floats/IDs as epoch unless field name matches or value is in epoch range
-        is_name_temporal = bool(TEMPORAL_NAME_REGEX.search(field_name_hint))
-
         # Year check (1800 - 2100)
         if isinstance(val, int) and 1800 <= val <= 2100:
             dt = datetime(val, 1, 1, tzinfo=timezone.utc)

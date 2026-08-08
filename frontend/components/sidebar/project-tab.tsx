@@ -5,19 +5,14 @@ import {
   Folder,
   Play,
   CheckCircle,
-  AlertTriangle,
-  XCircle,
   Plus,
-  RefreshCw,
   Layers,
   Activity,
-  FileCheck
 } from "lucide-react";
 import {
   Project,
   ProjectDataset,
   Workflow,
-  WorkflowRun,
   fetchProjects,
   createProject,
   fetchProjectDatasets,
@@ -30,12 +25,14 @@ export function ProjectTab() {
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [datasets, setDatasets] = useState<ProjectDataset[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
+  const [, setLoading] = useState<boolean>(false);
   const [newProjName, setNewProjName] = useState<string>("");
   const [showCreate, setShowCreate] = useState<boolean>(false);
 
+  // Load once on mount; loadProjects is a stable component function.
   useEffect(() => {
     loadProjects();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

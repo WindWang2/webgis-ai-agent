@@ -2,8 +2,7 @@
 Unit Tests for All 10 Data Fabric Adapters Interface Contracts
 (PostGIS, OGC API Features, WFS, WMS/WMTS, ArcGIS REST, STAC, GeoParquet, FlatGeobuf, PMTiles, S3)
 """
-import pytest
-from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec
+from app.schemas.data_fabric_schema import ConnectionProfile
 from app.services.data_fabric.adapters import (
     PostGISAdapter,
     OGCApiFeaturesAdapter,

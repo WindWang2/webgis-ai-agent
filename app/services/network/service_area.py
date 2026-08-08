@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import networkx as nx
-from shapely.geometry import Point, MultiPoint, Polygon, MultiPolygon, LineString, MultiLineString, shape, mapping
+from shapely.geometry import Point, MultiPoint, LineString, MultiLineString, shape, mapping
 
 from app.services.network.models import (
     NetworkDataset,

@@ -7,7 +7,7 @@ or relative windows (e.g. 'last_7_days', 'past_3_months').
 import re
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional, Union
 
 from app.services.temporal.models import (
     TemporalFilter,

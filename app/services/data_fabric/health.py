@@ -4,7 +4,7 @@ Provides diagnostic health checks and monitoring for Data Fabric endpoints with 
 """
 import time
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict
 from app.schemas.data_fabric_schema import DataFabricHealth, ConnectionProfile
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.security import DataFabricSecurity, DataFabricSecurityError

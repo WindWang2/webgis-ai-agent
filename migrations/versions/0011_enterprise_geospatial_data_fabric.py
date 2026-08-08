@@ -23,7 +23,10 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '0011_enterprise_geospatial_data_fabric'
-down_revision: Union[str, Sequence[str], None] = 'd3e4f5a6b7c8'
+# Chain after 0010 (project workspace) to keep a single head — both migrations
+# previously pointed at d3e4f5a6b7c8, creating a divergent two-head history that
+# broke `alembic upgrade head`.
+down_revision: Union[str, Sequence[str], None] = '0010_project_workspace_workflow'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

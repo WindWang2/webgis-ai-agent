@@ -6,15 +6,13 @@ error recovery, and MapSpec validity.
 """
 import pytest
 from app.services.spatial_decision.models import (
-    SpatialDecisionResult,
     ScenarioComparisonResult,
 )
 from app.services.spatial_decision.engine import DecisionEngine
 from app.services.spatial_decision.comparison_engine import ScenarioComparisonEngine
-from app.services.spatial_decision.mapspec_integration import apply_decision_to_mapspec, apply_comparison_to_mapspec
+from app.services.spatial_decision.mapspec_integration import apply_decision_to_mapspec
 from app.services.spatial_decision.report_integration import (
     generate_decision_report_markdown,
-    generate_comparison_report_markdown,
 )
 
 

@@ -4,12 +4,9 @@ Tests graph building, snapping, routing, OD matrix, closest facility,
 service area, accessibility, location-allocation, VRP optimization, and the unified engine facade.
 """
 import pytest
-import math
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 from app.services.network.models import (
-    Node,
-    Edge,
     NetworkDataset,
     TravelProfile,
     Impedance,
@@ -19,7 +16,6 @@ from app.services.network.models import (
     PointSnappingResult,
     Route,
     ODPair,
-    ServiceArea,
     AccessibilityResult,
     NetworkAnalysisResult,
 )

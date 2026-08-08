@@ -4,7 +4,7 @@ Adapts space-time clustering (ST-DBSCAN) into structured SpatiotemporalHotspotRe
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from app.services.temporal.models import SpatiotemporalHotspotResult
 from app.lib.geo_analysis.statistics import st_dbscan_narrated

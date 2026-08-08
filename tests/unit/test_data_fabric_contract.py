@@ -4,11 +4,9 @@ Verifies that all adapters comply with the GeospatialDataSourceAdapter lifecycle
 probe, capabilities, describe, preview, query, health.
 """
 import pytest
-from typing import Dict, Any
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.security import DataFabricSecurity, DataFabricSecurityError
 from app.schemas.data_fabric_schema import (
-    ConnectionProfile,
     DatasetDescriptor,
     QuerySpec,
     QueryResult,

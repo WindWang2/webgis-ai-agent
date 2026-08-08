@@ -9,7 +9,7 @@ import math
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import networkx as nx
-from shapely.geometry import Point, LineString, Polygon, shape
+from shapely.geometry import LineString, shape
 
 from app.services.network.models import (
     NetworkDataset,
@@ -101,7 +101,7 @@ class NetworkRoutingService:
                 path_nodes = nx.astar_path(graph_view, start_node_id, end_node_id, heuristic=heuristic, weight=weight_func)
             else:
                 path_nodes = nx.dijkstra_path(graph_view, start_node_id, end_node_id, weight=weight_func)
-        except (nx.NetworkXNoPath, nx.NodeNotFound) as exc:
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
             # Fallback empty route when no path exists
             return Route(
                 route_id="r_none",
@@ -197,8 +197,7 @@ class NetworkRoutingService:
             b_geom = shape(barrier.geometry)
             factor = barrier.impedance_factor
 
-            # Identify nodes / edges intersecting barrier
-            nodes_to_remove = set()
+            # Identify edges intersecting barrier (penalize their impedance).
             edges_to_penalize = []
 
             for u, v, data in graph_copy.edges(data=True):
@@ -252,7 +251,6 @@ class NetworkRoutingService:
             })
 
         # Add arrival step
-        last_node = path_nodes[-1]
         directions.append({
             "step": len(path_nodes),
             "action": "Arrive",

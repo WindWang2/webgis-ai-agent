@@ -4,12 +4,11 @@ Provides secure s3:// URI resolution, credential sanitization (no secret logging
 bounded memory stream reading, and multi-cloud object store reachability checks.
 """
 import time
-import json
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Tuple
 from urllib.parse import urlparse
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
-from app.services.data_fabric.security import DataFabricSecurity, DataFabricSecurityError
+from app.services.data_fabric.security import DataFabricSecurity
 from app.schemas.data_fabric_schema import (
     DatasetDescriptor,
     QuerySpec,

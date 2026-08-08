@@ -3,8 +3,8 @@ Geospatial Data Fabric: Materialization Service
 Pipeline for executing QuerySpec pushdown queries and materializing remote data into local session store emitting ref_id.
 """
 import logging
-from typing import Dict, Any, Optional, List
-from app.schemas.data_fabric_schema import QuerySpec, QueryResult, DatasetDescriptor
+from typing import Dict, Any, Optional
+from app.schemas.data_fabric_schema import QuerySpec, QueryResult
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.fingerprint import dataset_fingerprint_service
 from app.services.session_data import session_data_manager

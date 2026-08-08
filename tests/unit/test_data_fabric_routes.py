@@ -7,8 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core.database import SessionLocal, init_db, Base, Engine
-from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec, DataFabricHealth, QueryResult, DatasetDescriptor
-from app.services.data_fabric.manager import data_fabric_manager
+from app.schemas.data_fabric_schema import DataFabricHealth, QueryResult
 from app.services.mapspec.lifecycle_engine import mapspec_lifecycle_engine, UpsertLayerIntent
 from app.services.mapspec_source import is_data_fabric_entry
 
@@ -34,7 +33,6 @@ def test_data_fabric_rest_routes():
         "source_type": "ogc_api",
         "endpoint_url": "https://example.com/ogc/collections",
         "options": {},
-        "allow_private": False,
     }
 
     with patch("app.services.data_fabric.manager.DataFabricManager.probe_profile") as mock_probe, \
@@ -76,8 +74,11 @@ def test_data_fabric_rest_routes():
 
     # 7. Materialize catalog item / query to session ref_id
     with SessionLocal() as db:
-        from app.models.data_fabric import CatalogItemModel, DataSourceModel
-        ds = db.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
+        from app.models.data_fabric import CatalogItemModel
+        # Insert a fresh catalog row. Use db.add (not merge) — merge on a new
+        # object with the data_source relationship set was resetting source_id to
+        # None during autoflush, tripping the NOT NULL constraint. source_id is
+        # set explicitly, so the relationship assignment is redundant here.
         item = CatalogItemModel(
             id=f"cat_{source_id}_default",
             source_id=source_id,
@@ -90,9 +91,7 @@ def test_data_fabric_rest_routes():
             tags_json=["ogc_api"],
             descriptor_json={"id": "default_layer", "title": "Default Layer", "source_type": "ogc_api"},
         )
-        if ds:
-            item.data_source = ds
-        db.merge(item)
+        db.add(item)
         db.commit()
 
     with patch("app.services.data_fabric.manager.DataFabricManager.query_catalog_item") as mock_q:

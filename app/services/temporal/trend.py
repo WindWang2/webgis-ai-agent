@@ -85,7 +85,6 @@ class TemporalTrendEngine:
         sum_y = sum(y)
         sum_xy = sum(x[i] * y[i] for i in range(n))
         sum_xx = sum(x[i] ** 2 for i in range(n))
-        sum_yy = sum(y[i] ** 2 for i in range(n))
 
         denom = n * sum_xx - sum_x ** 2
         if denom == 0:

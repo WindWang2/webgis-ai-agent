@@ -6,7 +6,6 @@ Unit tests for Cloud-Native Geospatial Data Fabric Adapters:
 4. PMTiles Adapter (tile source registration, metadata bounds, no full GeoJSON conversion)
 5. S3 / MinIO Object Storage Seam (s3:// URI support, secret reference security)
 """
-import pytest
 from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec
 from app.services.data_fabric.adapters import (
     STACAdapter,

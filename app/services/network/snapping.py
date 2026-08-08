@@ -5,13 +5,12 @@ Computes snapped coordinate, nearest edge/node ID, fraction along edge, perpendi
 confidence score, and tolerance breach correction hints.
 """
 from __future__ import annotations
-import math
-from typing import List, Optional, Tuple, Union
+from typing import List, Tuple
 
 from shapely.geometry import Point, LineString, shape
 from shapely.strtree import STRtree
 
-from app.services.network.models import NetworkDataset, PointSnappingResult, Node, Edge
+from app.services.network.models import NetworkDataset, PointSnappingResult, Edge
 from app.services.network.graph_builder import haversine_distance
 
 

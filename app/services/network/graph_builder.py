@@ -128,7 +128,7 @@ class NetworkGraphBuilder:
         if not line_items:
             g = nx.DiGraph()
             ds = NetworkDataset(
-                dataset_id=f"net_{hashlib.md5(b'empty').hexdigest()[:8]}",
+                dataset_id=f"net_{hashlib.md5(b'empty', usedforsecurity=False).hexdigest()[:8]}",
                 nodes=[],
                 edges=[],
             )

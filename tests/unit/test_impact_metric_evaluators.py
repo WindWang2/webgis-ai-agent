@@ -10,8 +10,6 @@ from app.services.spatial_decision.models import (
     DomainRule,
     EvidenceItem,
     MetricRange,
-    MetricDeltaV2,
-    SpatialImpactZone,
 )
 
 

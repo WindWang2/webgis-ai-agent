@@ -2,7 +2,7 @@
 Spatial Decision Intelligence V2 Domain Models & Value Objects.
 Defines unified SpatialDecisionResult, Scenario, Baseline, Evidence, Rule, Metric, and Comparison schemas.
 """
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple
 from pydantic import BaseModel, Field
 
 

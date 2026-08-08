@@ -5,7 +5,7 @@ Computes metric comparison matrix, affected area comparison, trade-offs, Pareto 
 """
 import uuid
 import logging
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from app.services.spatial_decision.models import (
     SpatialDecisionResult,

@@ -5,7 +5,6 @@ raster difference, and raster trend analysis) without loading full rasters into 
 """
 
 import os
-import math
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
