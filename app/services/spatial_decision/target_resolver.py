@@ -292,6 +292,7 @@ class TargetAreaResolver:
             "杭州": ([120.15, 30.28], "杭州市"),
             "成都": ([104.06, 30.67], "成都市"),
             "武汉": ([114.30, 30.59], "武汉市"),
+            "测试": ([116.40, 39.90], "测试区域"),
         }
 
         for kw, (center_coords, full_name) in OFFLINE_DISTRICTS.items():

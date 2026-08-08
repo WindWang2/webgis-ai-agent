@@ -285,7 +285,7 @@ async def what_if_simulate_async(
 
         summary = {
             "scenario_type": scenario_type,
-            "scenario_name": dec_result.scenario.name,
+            "scenario_name": scenario,
             "direct_area_km2": round(direct_area, 2),
             "indirect_area_km2": round(indirect_area, 2),
             "affected_metrics": list(legacy_metrics.keys()),
