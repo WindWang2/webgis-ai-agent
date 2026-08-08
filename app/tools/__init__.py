@@ -40,6 +40,8 @@ _TOOL_MODULES = [
     ("app.tools.cartography_tools", "register_mapspec_cartography_tools"),
     ("app.tools.templates", "register_template_tools"),
     ("app.tools.project_tools", "register_project_tools"),
+    ("app.tools.network_tools", "register_network_tools"),
+    ("app.tools.temporal_tools", "register_temporal_tools"),
 ]
 
 

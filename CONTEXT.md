@@ -363,9 +363,31 @@ time (not data-driven); a parallel `legend_spec` (continuous: min/max + palette)
 (ADR-0007). Multi-resolution zoom (XYZ/COG) and the upload-raster `UploadRecord` path remain out of
 scope.
 
-### SpectralRasterEngine & RasterAnalysisResult
-The deep remote sensing engine (`app/services/rs/spectral_engine.py`) and value object dataclass (`RasterAnalysisResult`).
-Encapsulates spectral index formulas (NDVI, NDWI, EVI, NBR), terrain surface modeling (slope, aspect, hillshade), GDAL/Rasterio context reuse (`rasterio_env`), and PNG colormap rendering into an atomic, testable domain service.
+### NetworkGraphEngine
+The deep topological graph construction, caching, snapping, and network routing engine (`app/services/network/engine.py`).
+Encapsulates NetworkDataset parsing (LineString/MultiLineString topology, intersection splitting, endpoint snapping, one-way direction, cost attributes), TravelProfile impedances (walking, driving, cycling, custom), point snapping with tolerance confidence, shortest path routing, OD cost matrix, closest facility V2, service area / isochrone polygons, network accessibility, location-allocation optimization, and route optimization (VRP).
+
+### TravelProfile
+A structured value object (`app/services/network/models.py`) defining network traversal rules including mode (`walking`, `driving`, `cycling`, `custom`), default speed ($km/h$), impedance field name (`length_m`, `travel_time_s`, `cost`), allowed edge types, direction constraints (`one_way`), and turn/intersection penalties.
+
+### NetworkDataset
+A topological network data structure containing Nodes, Edges, Junctions, CRS metadata, spatial index, and TravelProfile graph caches built from vector road networks or OSM fetches. Encapsulates fingerprint-based LRU graph caching (`network_fingerprint + profile_hash + params_hash`).
+
+### PointSnappingResult
+The result of snapping a point feature (facility or demand) onto the nearest valid network edge/node, returning the snapped WGS84 coordinate, edge ID, fractional position Along-Edge ($[0.0, 1.0]$), perpendicular distance ($meters$), and snapping confidence score ($[0.0, 1.0]$) with structured correction hints on tolerance breach.
+
+### AccessibilityResult
+A data-grounded accessibility evaluation result (`app/services/network/models.py`) calculating 15-minute or target-break coverage of demand/population layers over facilities via network distance. Contains served population, unserved population, coverage percentage, average network travel cost, zone metrics, and derived MapSpec spatial layer.
+
+### TemporalDatasetProfile
+An automated temporal profiling value object (`app/services/temporal/models.py`) analyzing vector/raster datasets to identify temporal timestamp/datetime fields, time types (`instant`, `interval`), temporal extents ($[T_{\text{min}}, T_{\text{max}}]$), resolution (`hour`, `day`, `month`, `year`), record counts, timezone metadata, temporal gaps, and profiling confidence score ($[0.0, 1.0]$).
+
+### TemporalEngine
+The deep temporal GIS computation runtime (`app/services/temporal/engine.py`).
+Encapsulates `temporal_filter` (instant, range, relative window), `temporal_aggregate` (hourly, daily, monthly, yearly stats), `temporal_change` ($T_1$ vs $T_2$ count/attribute/geometry deltas), `temporal_trend` (Sen's slope, moving averages, anomalies), `spatiotemporal_hotspot` (space-time window clustering), and windowed `temporal_raster` time series analysis without reading entire rasters into memory.
+
+### MapSpec Time Dimension
+The declarative time extension section in MapSpec schema (`app/services/mapspec/models.py`), adding optional `time` parameters (`enabled`, `field`, `type`, `extent`, `current`, `window`, `playback`, `step`, `speed`). Preserves 100% backward compatibility for non-temporal MapSpec documents while powering interactive timeline UI sliders and zero-reconstruct feature/raster filtering in the map runtime.
 
 ## Key Relationships
 
@@ -382,4 +404,8 @@ Conversation 1 ── * TaskInfo
 Layer (result_layer_id) ◄── AnalysisTask
 UploadRecord (session_id) ──── Conversation
 Document 1 ── * Chunk
+NetworkDataset 1 ── * Node / Edge (Spatial & Graph Topology)
+NetworkGraphEngine ── 1 LRU GraphCache (Fingerprint + Profile)
+TemporalDatasetProfile ◄── TemporalEngine (Time Analysis & Raster Sequences)
+MapSpec 1 ── 0..1 MapSpec Time Dimension (Timeline UI & Temporal Rendering)
 ```
