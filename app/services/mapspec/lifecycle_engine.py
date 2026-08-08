@@ -238,7 +238,7 @@ class MapSpecLifecycleEngine:
                 elif isinstance(intent, RollbackIntent):
                     session_dir = self.store.get_session_dir(session_id)
                     rb_res = await rollback_checkpoint(
-                        session_dir, session_data_manager, intent.checkpoint_id
+                        session_dir, intent.checkpoint_id, session_data_manager
                     )
                     if not rb_res.get("success"):
                         return MapSpecResult(

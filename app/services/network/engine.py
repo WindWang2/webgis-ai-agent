@@ -254,11 +254,93 @@ class NetworkGraphEngine:
             impedance=impedance,
         )
 
+    # --- Private Input Parsing Helpers (S3/S4 dedup, W1 fail-fast) ---
+
+    @staticmethod
+    def _parse_point(raw: Any, label: str = "point") -> Tuple[float, float]:
+        """Parses raw input into (lng, lat) tuple. Raises ValueError instead of falling back to [0,0]."""
+        if isinstance(raw, (list, tuple)) and len(raw) >= 2:
+            return (float(raw[0]), float(raw[1]))
+        if isinstance(raw, dict):
+            if "coordinates" in raw:
+                coords = raw["coordinates"]
+                if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                    return (float(coords[0]), float(coords[1]))
+            # GeoJSON Feature with geometry
+            geom = raw.get("geometry", {})
+            if isinstance(geom, dict) and "coordinates" in geom:
+                coords = geom["coordinates"]
+                if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                    return (float(coords[0]), float(coords[1]))
+        raise ValueError(
+            f"Cannot parse {label} to (lng, lat) coordinate. "
+            f"Expected [lng, lat] array, {{coordinates: [lng, lat]}} dict, "
+            f"or GeoJSON Feature. Got: {type(raw).__name__}"
+        )
+
+    @staticmethod
+    def _to_facility(raw: Any, idx: int) -> Facility:
+        """Converts raw input to a Facility domain object."""
+        if isinstance(raw, Facility):
+            return raw
+        if isinstance(raw, dict) and "coordinates" in raw:
+            fac_id = str(raw.get("id", f"fac_{idx}"))
+            geom = {"type": "Point", "coordinates": raw["coordinates"]}
+            return Facility(facility_id=fac_id, geometry=geom,
+                            capacity=float(raw.get("capacity", 1.0)),
+                            name=str(raw.get("name", "")))
+        if isinstance(raw, (list, tuple)) and len(raw) >= 2:
+            return Facility(
+                facility_id=f"fac_{idx}",
+                geometry={"type": "Point", "coordinates": [float(raw[0]), float(raw[1])]},
+            )
+        raise ValueError(
+            f"Cannot parse facility at index {idx}. "
+            f"Expected [lng, lat], {{coordinates: [lng, lat]}} dict, or Facility object. "
+            f"Got: {type(raw).__name__}"
+        )
+
+    @staticmethod
+    def _to_demand(raw: Any, idx: int) -> DemandPoint:
+        """Converts raw input to a DemandPoint domain object."""
+        if isinstance(raw, DemandPoint):
+            return raw
+        if isinstance(raw, dict):
+            d_id = str(raw.get("id", f"d_{idx}"))
+            weight = float(raw.get("weight", 1.0))
+            coords = raw.get("coordinates")
+            if coords and isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                geom = {"type": "Point", "coordinates": [float(coords[0]), float(coords[1])]}
+            else:
+                raise ValueError(
+                    f"Demand point at index {idx} missing valid 'coordinates' field."
+                )
+            return DemandPoint(demand_id=d_id, weight=weight, geometry=geom)
+        if isinstance(raw, (list, tuple)) and len(raw) >= 2:
+            return DemandPoint(
+                demand_id=f"d_{idx}",
+                weight=1.0,
+                geometry={"type": "Point", "coordinates": [float(raw[0]), float(raw[1])]},
+            )
+        raise ValueError(
+            f"Cannot parse demand point at index {idx}. "
+            f"Expected [lng, lat], {{coordinates: [lng, lat], weight: N}} dict, or DemandPoint. "
+            f"Got: {type(raw).__name__}"
+        )
+
+    def _ensure_graph(
+        self,
+        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
+        profile: Optional[TravelProfile] = None,
+    ) -> Tuple[nx.DiGraph, NetworkDataset]:
+        """Builds or fetches cached graph, ensuring a non-None graph is returned."""
+        return self.builder.build_graph(network, profile=profile)
+
     # --- High-level Async Tool/Harness Seam Interfaces ---
 
     async def solve_shortest_path(
         self,
-        network: Any,
+        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
         origin: Any,
         destination: Any,
         profile: Optional[TravelProfile] = None,
@@ -267,13 +349,11 @@ class NetworkGraphEngine:
     ) -> NetworkAnalysisResult:
         """High level shortest path solver working with raw GeoJSON/dict inputs."""
         profile = profile or TravelProfile()
-        graph, net_ds = self.builder.build_graph(network, profile=profile)
+        graph, net_ds = self._ensure_graph(network, profile)
 
-        # Parse origin & destination
-        orig_pt = origin if isinstance(origin, (list, tuple)) else origin.get("coordinates", [0, 0]) if isinstance(origin, dict) else [0, 0]
-        dest_pt = destination if isinstance(destination, (list, tuple)) else destination.get("coordinates", [0, 0]) if isinstance(destination, dict) else [0, 0]
+        orig_pt = self._parse_point(origin, "origin")
+        dest_pt = self._parse_point(destination, "destination")
 
-        # Process barriers
         barrier_objs = []
         if barriers:
             for idx, b in enumerate(barriers):
@@ -281,8 +361,8 @@ class NetworkGraphEngine:
                 barrier_objs.append(Barrier(barrier_id=f"b_{idx}", geometry=geom))
 
         route = self.shortest_path(
-            origin=tuple(orig_pt),
-            destination=tuple(dest_pt),
+            origin=orig_pt,
+            destination=dest_pt,
             network_dataset=net_ds,
             graph=graph,
             profile=profile,
@@ -301,7 +381,7 @@ class NetworkGraphEngine:
 
     async def solve_od_matrix(
         self,
-        network: Any,
+        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
         origins: List[Any],
         destinations: List[Any],
         profile: Optional[TravelProfile] = None,
@@ -310,14 +390,14 @@ class NetworkGraphEngine:
     ) -> NetworkAnalysisResult:
         """High level OD matrix solver working with raw GeoJSON/dict inputs."""
         profile = profile or TravelProfile()
-        graph, net_ds = self.builder.build_graph(network, profile=profile)
+        graph, net_ds = self._ensure_graph(network, profile)
 
-        orig_pts = [p if isinstance(p, (list, tuple)) else p.get("coordinates", [0, 0]) for p in origins]
-        dest_pts = [p if isinstance(p, (list, tuple)) else p.get("coordinates", [0, 0]) for p in destinations]
+        orig_pts = [self._parse_point(p, f"origin[{i}]") for i, p in enumerate(origins)]
+        dest_pts = [self._parse_point(p, f"destination[{i}]") for i, p in enumerate(destinations)]
 
         pairs = self.od_matrix(
-            origins=[tuple(p) for p in orig_pts],
-            destinations=[tuple(p) for p in dest_pts],
+            origins=orig_pts,
+            destinations=dest_pts,
             network_dataset=net_ds,
             graph=graph,
             profile=profile,
@@ -331,7 +411,7 @@ class NetworkGraphEngine:
 
     async def solve_closest_facility(
         self,
-        network: Any,
+        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
         incidents: List[Any],
         facilities: List[Any],
         profile: Optional[TravelProfile] = None,
@@ -340,25 +420,13 @@ class NetworkGraphEngine:
     ) -> NetworkAnalysisResult:
         """High level closest facility solver working with raw GeoJSON/dict inputs."""
         profile = profile or TravelProfile()
-        graph, net_ds = self.builder.build_graph(network, profile=profile)
+        graph, net_ds = self._ensure_graph(network, profile)
 
-        inc_pts = [p if isinstance(p, (list, tuple)) else p.get("coordinates", [0, 0]) for p in incidents]
-
-        fac_objs = []
-        for idx, f in enumerate(facilities):
-            if isinstance(f, dict) and "coordinates" in f:
-                fac_id = str(f.get("id", f"fac_{idx}"))
-                geom = {"type": "Point", "coordinates": f["coordinates"]}
-            elif isinstance(f, (list, tuple)):
-                fac_id = f"fac_{idx}"
-                geom = {"type": "Point", "coordinates": list(f)}
-            else:
-                fac_id = str(f)
-                geom = {"type": "Point", "coordinates": [0, 0]}
-            fac_objs.append(Facility(facility_id=fac_id, geometry=geom))
+        inc_pts = [self._parse_point(p, f"incident[{i}]") for i, p in enumerate(incidents)]
+        fac_objs = [self._to_facility(f, i) for i, f in enumerate(facilities)]
 
         fac_res = self.closest_facility(
-            demand_points=[tuple(p) for p in inc_pts],
+            demand_points=inc_pts,
             facilities=fac_objs,
             network_dataset=net_ds,
             graph=graph,
@@ -373,7 +441,7 @@ class NetworkGraphEngine:
 
     async def solve_service_area(
         self,
-        network: Any,
+        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
         facilities: List[Any],
         breaks_minutes: Optional[List[float]] = None,
         profile: Optional[TravelProfile] = None,
@@ -382,20 +450,9 @@ class NetworkGraphEngine:
         """High level service area solver working with raw GeoJSON/dict inputs."""
         profile = profile or TravelProfile()
         breaks_minutes = breaks_minutes or [5.0, 10.0, 15.0]
-        graph, net_ds = self.builder.build_graph(network, profile=profile)
+        graph, net_ds = self._ensure_graph(network, profile)
 
-        fac_objs = []
-        for idx, f in enumerate(facilities):
-            if isinstance(f, dict) and "coordinates" in f:
-                fac_id = str(f.get("id", f"fac_{idx}"))
-                geom = {"type": "Point", "coordinates": f["coordinates"]}
-            elif isinstance(f, (list, tuple)):
-                fac_id = f"fac_{idx}"
-                geom = {"type": "Point", "coordinates": list(f)}
-            else:
-                fac_id = str(f)
-                geom = {"type": "Point", "coordinates": [0, 0]}
-            fac_objs.append(Facility(facility_id=fac_id, geometry=geom))
+        fac_objs = [self._to_facility(f, i) for i, f in enumerate(facilities)]
 
         sa_breaks = self.service_area(
             facilities=fac_objs,
@@ -421,7 +478,7 @@ class NetworkGraphEngine:
 
     async def solve_accessibility(
         self,
-        network: Any,
+        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
         demand_layer: Any,
         facilities: List[Any],
         cutoff_minutes: float = 15.0,
@@ -430,34 +487,14 @@ class NetworkGraphEngine:
     ) -> NetworkAnalysisResult:
         """High level accessibility solver working with raw GeoJSON/dict inputs."""
         profile = profile or TravelProfile()
-        graph, net_ds = self.builder.build_graph(network, profile=profile)
+        graph, net_ds = self._ensure_graph(network, profile)
 
         demands = []
-        if isinstance(demand_layer, list):
-            for idx, d in enumerate(demand_layer):
-                if isinstance(d, dict):
-                    d_id = str(d.get("id", f"d_{idx}"))
-                    weight = float(d.get("weight", 1.0))
-                    coords = d.get("coordinates", [0, 0])
-                    geom = {"type": "Point", "coordinates": coords}
-                else:
-                    d_id = f"d_{idx}"
-                    weight = 1.0
-                    geom = {"type": "Point", "coordinates": list(d)}
-                demands.append(DemandPoint(demand_id=d_id, weight=weight, geometry=geom))
+        raw_demands = demand_layer if isinstance(demand_layer, list) else []
+        for idx, d in enumerate(raw_demands):
+            demands.append(self._to_demand(d, idx))
 
-        fac_objs = []
-        for idx, f in enumerate(facilities):
-            if isinstance(f, dict) and "coordinates" in f:
-                fac_id = str(f.get("id", f"fac_{idx}"))
-                geom = {"type": "Point", "coordinates": f["coordinates"]}
-            elif isinstance(f, (list, tuple)):
-                fac_id = f"fac_{idx}"
-                geom = {"type": "Point", "coordinates": list(f)}
-            else:
-                fac_id = str(f)
-                geom = {"type": "Point", "coordinates": [0, 0]}
-            fac_objs.append(Facility(facility_id=fac_id, geometry=geom))
+        fac_objs = [self._to_facility(f, i) for i, f in enumerate(facilities)]
 
         acc_res = self.accessibility(
             demand_points=demands,
@@ -476,7 +513,7 @@ class NetworkGraphEngine:
 
     async def solve_location_allocation(
         self,
-        network: Any,
+        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
         candidate_facilities: List[Any],
         demand_points: List[Any],
         n_to_choose: int = 2,
@@ -486,33 +523,10 @@ class NetworkGraphEngine:
     ) -> NetworkAnalysisResult:
         """High level location-allocation solver working with raw GeoJSON/dict inputs."""
         profile = profile or TravelProfile()
-        graph, net_ds = self.builder.build_graph(network, profile=profile)
+        graph, net_ds = self._ensure_graph(network, profile)
 
-        cand_objs = []
-        for idx, c in enumerate(candidate_facilities):
-            if isinstance(c, dict) and "coordinates" in c:
-                c_id = str(c.get("id", f"cand_{idx}"))
-                geom = {"type": "Point", "coordinates": c["coordinates"]}
-            elif isinstance(c, (list, tuple)):
-                c_id = f"cand_{idx}"
-                geom = {"type": "Point", "coordinates": list(c)}
-            else:
-                c_id = str(c)
-                geom = {"type": "Point", "coordinates": [0, 0]}
-            cand_objs.append(Facility(facility_id=c_id, geometry=geom))
-
-        demands = []
-        for idx, d in enumerate(demand_points):
-            if isinstance(d, dict):
-                d_id = str(d.get("id", f"d_{idx}"))
-                weight = float(d.get("weight", 1.0))
-                coords = d.get("coordinates", [0, 0])
-                geom = {"type": "Point", "coordinates": coords}
-            else:
-                d_id = f"d_{idx}"
-                weight = 1.0
-                geom = {"type": "Point", "coordinates": list(d)}
-            demands.append(DemandPoint(demand_id=d_id, weight=weight, geometry=geom))
+        cand_objs = [self._to_facility(c, i) for i, c in enumerate(candidate_facilities)]
+        demands = [self._to_demand(d, i) for i, d in enumerate(demand_points)]
 
         res = self.location_allocation(
             candidate_facilities=cand_objs,
@@ -527,7 +541,7 @@ class NetworkGraphEngine:
 
     async def solve_optimize_route(
         self,
-        network: Any,
+        network: Union[Dict[str, Any], NetworkDataset, List[Dict[str, Any]]],
         depot: Any,
         stops: List[Any],
         profile: Optional[TravelProfile] = None,
@@ -535,14 +549,14 @@ class NetworkGraphEngine:
     ) -> NetworkAnalysisResult:
         """High level route optimization solver working with raw GeoJSON/dict inputs."""
         profile = profile or TravelProfile()
-        graph, net_ds = self.builder.build_graph(network, profile=profile)
+        graph, net_ds = self._ensure_graph(network, profile)
 
-        depot_pt = depot if isinstance(depot, (list, tuple)) else depot.get("coordinates", [0, 0]) if isinstance(depot, dict) else [0, 0]
-        stop_pts = [s if isinstance(s, (list, tuple)) else s.get("coordinates", [0, 0]) if isinstance(s, dict) else [0, 0] for s in stops]
+        depot_pt = self._parse_point(depot, "depot")
+        stop_pts = [self._parse_point(s, f"stop[{i}]") for i, s in enumerate(stops)]
 
         route = self.optimize_route(
-            stops=[tuple(p) for p in stop_pts],
-            depot=tuple(depot_pt),
+            stops=stop_pts,
+            depot=depot_pt,
             network_dataset=net_ds,
             graph=graph,
             profile=profile,
@@ -553,3 +567,4 @@ class NetworkGraphEngine:
             status="success",
             routes=[route],
         )
+

@@ -188,19 +188,16 @@ class TemporalEngine:
         """High level temporal filter wrapper."""
         from app.services.temporal.models import TemporalAnalysisResult
         features = dataset.get("features", []) if isinstance(dataset, dict) else dataset
-        
-        op = None
-        inst = None
-        st = None
-        et = None
-        rw = None
+
+        # Derive operator and parameters from filter spec
+        op, inst, st, et, rw = None, None, None, None, None
         if t_filter:
             st = t_filter.start_time
             et = t_filter.end_time
             rw = t_filter.relative_window
-            if t_filter.filter_type == "range":
+            if t_filter.filter_type == "range" or (st or et):
                 op = "BETWEEN"
-            elif t_filter.filter_type == "relative_window":
+            elif t_filter.filter_type == "relative_window" or rw:
                 op = "RELATIVE_WINDOW"
 
         filtered_feats = self.filter(
@@ -251,7 +248,10 @@ class TemporalEngine:
         return TemporalAnalysisResult(
             analysis_type="temporal_aggregate",
             status="success",
-            change_summary={"aggregated_buckets": len(aggregated_records)},
+            change_summary={
+                "aggregated_buckets": len(aggregated_records),
+                "records": aggregated_records,
+            },
         )
 
     async def execute_change(

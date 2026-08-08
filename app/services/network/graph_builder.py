@@ -116,11 +116,12 @@ class NetworkGraphBuilder:
         Returns:
             Tuple of (nx.DiGraph, NetworkDataset)
         """
+        fp = self.compute_fingerprint(data, profile, snap_tolerance, split_intersections) if use_cache else ""
         if use_cache:
-            fp = self.compute_fingerprint(data, profile, snap_tolerance, split_intersections)
-            if fp in self._cache:
-                self._cache.move_to_end(fp)
-                return self._cache[fp]
+            with self._cache_lock:
+                if fp in self._cache:
+                    self._cache.move_to_end(fp)
+                    return self._cache[fp]
 
         # Extract features and raw line geometries
         line_items = self._extract_line_items(data)
@@ -287,10 +288,10 @@ class NetworkGraphBuilder:
         )
 
         if use_cache:
-            fp = self.compute_fingerprint(data, profile, snap_tolerance, split_intersections)
-            self._cache[fp] = (graph, dataset)
-            if len(self._cache) > self.max_cache_size:
-                self._cache.popitem(last=False)
+            with self._cache_lock:
+                self._cache[fp] = (graph, dataset)
+                if len(self._cache) > self.max_cache_size:
+                    self._cache.popitem(last=False)
 
         return graph, dataset
 
