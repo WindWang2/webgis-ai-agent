@@ -158,7 +158,49 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
                 metadata={"geo": {"version": "1.0.0", "primary_column": "geometry"}},
             )
 
-        # Attempt geopandas / pyarrow inspection if file exists
+        # Attempt fast pyarrow inspection if file exists
+        if self.endpoint and os.path.exists(self.endpoint):
+            try:
+                import pyarrow.parquet as pq
+
+                pf = pq.ParquetFile(self.endpoint)
+                num_rows = pf.metadata.num_rows
+                schema = pf.schema_arrow
+                schema_fields = {field.name: str(field.type) for field in schema}
+                fields = [{"name": field.name, "type": str(field.type)} for field in schema]
+
+                geo_meta = {}
+                if pf.metadata.metadata and b"geo" in pf.metadata.metadata:
+                    try:
+                        geo_meta = json.loads(pf.metadata.metadata[b"geo"].decode("utf-8"))
+                    except Exception:
+                        pass
+
+                primary_geom = geo_meta.get("primary_column", "geometry")
+                columns_meta = geo_meta.get("columns", {}).get(primary_geom, {})
+                bbox = columns_meta.get("bbox", [-180.0, -90.0, 180.0, 90.0])
+                crs_info = columns_meta.get("crs")
+                crs_str = crs_info.get("name") if isinstance(crs_info, dict) else "EPSG:4326"
+                geom_types = columns_meta.get("geometry_types", ["Polygon"])
+                geom_type = geom_types[0] if geom_types else "Polygon"
+
+                return DatasetDescriptor(
+                    id=dataset_id,
+                    title=os.path.basename(self.endpoint),
+                    description=f"GeoParquet table with {num_rows} records",
+                    source_type="geoparquet",
+                    geometry_type=geom_type,
+                    srs=crs_str or "EPSG:4326",
+                    bbox=bbox,
+                    feature_count=num_rows,
+                    fields=fields,
+                    schema_fields=schema_fields,
+                    metadata={"geo": geo_meta, "num_row_groups": pf.metadata.num_row_groups},
+                )
+            except Exception as pe:
+                logger.debug(f"Fast pyarrow ParquetFile inspect failed: {pe}, fallback to geopandas")
+
+        # Attempt geopandas inspection fallback
         try:
             import geopandas as gpd
 
@@ -226,12 +268,19 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
                 if read_cols and "geometry" not in read_cols:
                     read_cols = list(read_cols) + ["geometry"]
 
-                gdf = gpd.read_parquet(self.endpoint, columns=read_cols)
+                kwargs = {}
+                if read_cols:
+                    kwargs["columns"] = read_cols
+                if query_spec.bbox and len(query_spec.bbox) == 4:
+                    kwargs["bbox"] = tuple(query_spec.bbox)
 
-                # Pushdown spatial bbox filter
-                if query_spec.bbox and len(query_spec.bbox) == 4 and not gdf.empty:
-                    minx, miny, maxx, maxy = query_spec.bbox
-                    gdf = gdf.cx[minx:maxx, miny:maxy]
+                try:
+                    gdf = gpd.read_parquet(self.endpoint, **kwargs)
+                except Exception:
+                    gdf = gpd.read_parquet(self.endpoint, columns=read_cols)
+                    if query_spec.bbox and len(query_spec.bbox) == 4 and not gdf.empty:
+                        minx, miny, maxx, maxy = query_spec.bbox
+                        gdf = gdf.cx[minx:maxx, miny:maxy]
 
                 sliced = gdf.iloc[:bounded_limit]
                 geojson_str = sliced.to_json()

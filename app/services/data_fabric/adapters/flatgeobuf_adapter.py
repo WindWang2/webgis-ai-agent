@@ -151,6 +151,31 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
                 # Parse basic info from header or metadata fallback
                 file_size = os.path.getsize(self.endpoint)
 
+            # Fast pyogrio metadata inspect if available
+            try:
+                import pyogrio
+
+                info = pyogrio.read_info(self.endpoint)
+                fields = [{"name": name, "type": str(dtype)} for name, dtype in zip(info["fields"], info["dtypes"])]
+                schema_fields = {name: str(dtype) for name, dtype in zip(info["fields"], info["dtypes"])}
+                bbox = list(info["total_bounds"]) if info.get("total_bounds") is not None else [-180.0, -90.0, 180.0, 90.0]
+
+                return DatasetDescriptor(
+                    id=dataset_id,
+                    title=os.path.basename(self.endpoint),
+                    description=f"FlatGeobuf dataset ({info.get('features_count', 0)} records)",
+                    source_type="flatgeobuf",
+                    geometry_type=info.get("geometry_type") or "Point",
+                    srs=str(info.get("crs")) if info.get("crs") else "EPSG:4326",
+                    bbox=bbox,
+                    feature_count=info.get("features_count", 0),
+                    fields=fields,
+                    schema_fields=schema_fields,
+                    metadata={"file_size": file_size, "spatial_index": "packed_rtree"},
+                )
+            except Exception as pie:
+                logger.debug(f"Fast pyogrio read_info failed for '{dataset_id}': {pie}, fallback to geopandas")
+
             # Try geopandas if fiona / pyogrio or geopandas supports flatgeobuf
             import geopandas as gpd
 

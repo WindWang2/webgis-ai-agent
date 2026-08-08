@@ -57,6 +57,7 @@ def register_spatial_decision_tools(registry: ToolRegistry):
         tier=3,
         domains=["what_if"],
         args_model=SpatialDecisionV2Args,
+        execution_policy=ToolExecutionPolicy.THREAD,
     )
     async def spatial_decision_v2(
         scenario: str,
@@ -130,6 +131,7 @@ def register_spatial_decision_tools(registry: ToolRegistry):
         tier=3,
         domains=["what_if"],
         args_model=ScenarioCompareArgs,
+        execution_policy=ToolExecutionPolicy.THREAD,
     )
     async def scenario_compare(
         scenarios: List[dict],

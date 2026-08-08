@@ -198,6 +198,10 @@ def record_tool_call(
     cache_hit: bool,
     error: Optional[str],
     session_id: Optional[str],
+    requested_execution_policy: Optional[str] = None,
+    actual_execution_mode: Optional[str] = None,
+    compute_ms: Optional[int] = None,
+    queue_wait_ms: Optional[int] = None,
 ) -> None:
     """落一行 JSONL（入队，异步落盘）+ 更新聚合器。失败不抛。"""
     row = {
@@ -209,6 +213,10 @@ def record_tool_call(
         "duration_ms": duration_ms,
         "cache_hit": cache_hit,
         "error": error,
+        "requested_execution_policy": requested_execution_policy,
+        "actual_execution_mode": actual_execution_mode,
+        "compute_ms": compute_ms,
+        "queue_wait_ms": queue_wait_ms,
     }
     line = json.dumps(row, separators=(",", ":")) + "\n"
     try:

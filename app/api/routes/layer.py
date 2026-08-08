@@ -102,9 +102,12 @@ async def get_mvt_tile(
         status_code = 403 if res.error_type == "PermissionDenied" else 404
         raise HTTPException(status_code=status_code, detail=res.error or "数据不可用")
 
-    points = _extract_points(res.data)
-    tile = encode_point_tile(points, z, x, y)
-    body = gzip.compress(tile)
+    def _sync_mvt_encode():
+        points = _extract_points(res.data)
+        tile = encode_point_tile(points, z, x, y)
+        return gzip.compress(tile)
+
+    body = await asyncio.to_thread(_sync_mvt_encode)
     return Response(
         content=body,
         media_type="application/x-protobuf",
@@ -114,6 +117,48 @@ async def get_mvt_tile(
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+@router.get("/layers/descriptor/{ref_id}", tags=["图层数据"])
+async def get_layer_descriptor(
+    ref_id: str,
+    session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    _conv: Conversation = Depends(require_owned_session),
+):
+    """返回轻量级图层元数据描述符 (Count, Bounds, Geometry Types, MVT Capability, Est Bytes)."""
+    if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
+        raise HTTPException(status_code=400, detail="非法 ref_id")
+
+    res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
+    if not res.success or not res.data:
+        status_code = 403 if res.error_type == "PermissionDenied" else 404
+        raise HTTPException(status_code=status_code, detail=res.error or "数据不可用")
+
+    data = res.data
+    points = _extract_points(data)
+    fc = data if isinstance(data, dict) and data.get("type") == "FeatureCollection" else (data.get("geojson") if isinstance(data, dict) else {})
+    features = fc.get("features", []) if isinstance(fc, dict) else []
+
+    geom_types = set()
+    for f in features:
+        if isinstance(f, dict) and "geometry" in f and isinstance(f["geometry"], dict):
+            geom_types.add(f["geometry"].get("type", "Unknown"))
+
+    from app.tools._utils import _feature_collection_bbox
+    bbox = _feature_collection_bbox(fc if isinstance(fc, dict) else {"type": "FeatureCollection", "features": []})
+
+    return {
+        "ref_id": ref_id,
+        "session_id": session_id,
+        "feature_count": len(features),
+        "point_count": len(points),
+        "geometry_types": list(geom_types),
+        "bbox": bbox,
+        "mvt_capable": len(points) > 0,
+        "raster_capable": isinstance(data, dict) and ("file_path" in data or "path" in data),
+        "estimated_bytes": len(str(data)),
+    }
 
 
 from app.services.raster_tile_service import render_raster_tile

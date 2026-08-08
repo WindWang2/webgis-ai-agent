@@ -136,6 +136,7 @@ def register_temporal_tools(registry: ToolRegistry):
         tier=2,
         domains=["temporal"],
         args_model=TemporalProfileArgs,
+        execution_policy=ToolExecutionPolicy.THREAD,
     )
     async def temporal_profile(
         dataset: Any,
@@ -155,6 +156,7 @@ def register_temporal_tools(registry: ToolRegistry):
         tier=2,
         domains=["temporal"],
         args_model=TemporalFilterArgs,
+        execution_policy=ToolExecutionPolicy.THREAD,
     )
     async def temporal_filter(
         dataset: Any,
@@ -189,6 +191,7 @@ def register_temporal_tools(registry: ToolRegistry):
         tier=2,
         domains=["temporal"],
         args_model=TemporalAggregateArgs,
+        execution_policy=ToolExecutionPolicy.THREAD,
     )
     async def temporal_aggregate(
         dataset: Any,
@@ -224,6 +227,7 @@ def register_temporal_tools(registry: ToolRegistry):
         tier=2,
         domains=["temporal"],
         args_model=TemporalChangeArgs,
+        execution_policy=ToolExecutionPolicy.THREAD,
     )
     async def temporal_change(
         dataset_t1: Any,
@@ -252,6 +256,7 @@ def register_temporal_tools(registry: ToolRegistry):
         tier=2,
         domains=["temporal"],
         args_model=TemporalTrendArgs,
+        execution_policy=ToolExecutionPolicy.THREAD,
     )
     async def temporal_trend(
         dataset: Any,
@@ -278,6 +283,7 @@ def register_temporal_tools(registry: ToolRegistry):
         tier=3,
         domains=["temporal", "statistics"],
         args_model=SpatiotemporalHotspotArgs,
+        execution_policy=ToolExecutionPolicy.CELERY,
     )
     async def spatiotemporal_hotspot(
         dataset: Any,

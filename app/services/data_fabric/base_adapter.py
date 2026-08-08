@@ -57,5 +57,18 @@ class GeospatialDataSourceAdapter(ABC):
         pass
 
     def sync(self) -> Dict[str, Any]:
-        """Optional metadata sync / cache refresh routine."""
-        return {"status": "synced"}
+        """Metadata sync / cache refresh routine registering discovered datasets into SpatialCatalogService."""
+        from app.services.data_fabric.spatial_catalog import spatial_catalog_service
+        datasets = self.list_datasets()
+        synced_count = 0
+        for d in datasets:
+            did = d.get("id") if isinstance(d, dict) else str(d)
+            if did:
+                try:
+                    desc = self.describe(did)
+                    if desc:
+                        spatial_catalog_service.register_dataset(desc, profile_id=self.profile.id)
+                        synced_count += 1
+                except Exception:
+                    pass
+        return {"status": "synced", "count": synced_count, "profile_id": self.profile.id}

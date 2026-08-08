@@ -3,6 +3,7 @@ Geospatial Data Fabric: Unified AI Tools
 7 Unified AI Tools for managing, inspecting, catalog searching, querying, materializing,
 and health-monitoring Data Fabric geospatial data sources.
 """
+import asyncio
 import logging
 from typing import Optional
 from app.tools.registry import ToolRegistry, tool, ToolExecutionPolicy
@@ -50,7 +51,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "allow_private": "是否放宽 SSRF 限制允许内网/本地回环连接，默认 False",
         },
         domains=["data_fabric", "spatial_catalog", "dataset"],
-        execution_policy=ToolExecutionPolicy.ASYNC,
+        execution_policy=ToolExecutionPolicy.THREAD,
     )
     async def connect_data_source(
         profile_id: str,
@@ -65,32 +66,35 @@ def register_data_fabric_tools(registry: ToolRegistry):
         allow_private: bool = False,
     ) -> dict:
         """连接与注册数据源"""
-        profile = ConnectionProfile(
-            id=profile_id,
-            name=f"Connection {profile_id}",
-            source_type=source_type,
-            url=url,
-            host=host,
-            port=port,
-            database=database,
-            username=username,
-            password=password,
-            options=options or {},
-            allow_private=allow_private,
-        )
+        def _sync_run():
+            profile = ConnectionProfile(
+                id=profile_id,
+                name=f"Connection {profile_id}",
+                source_type=source_type,
+                url=url,
+                host=host,
+                port=port,
+                database=database,
+                username=username,
+                password=password,
+                options=options or {},
+                allow_private=allow_private,
+            )
 
-        connected_profile, adapter = connection_manager.connect(profile)
-        sanitized_profile = DataFabricSecurity.sanitize_profile_dict(connected_profile.model_dump())
-        health = data_fabric_health_check.check_health(adapter)
-        datasets = adapter.list_datasets()
+            connected_profile, adapter = connection_manager.connect(profile)
+            sanitized_profile = DataFabricSecurity.sanitize_profile_dict(connected_profile.model_dump())
+            health = data_fabric_health_check.check_health(adapter)
+            datasets = adapter.list_datasets()
 
-        return {
-            "status": "connected",
-            "connection_profile": sanitized_profile,
-            "health": health.model_dump(),
-            "datasets_count": len(datasets),
-            "discovered_datasets": [d.get("id") for d in datasets],
-        }
+            return {
+                "status": "connected",
+                "connection_profile": sanitized_profile,
+                "health": health.model_dump(),
+                "datasets_count": len(datasets),
+                "discovered_datasets": [d.get("id") for d in datasets],
+            }
+
+        return await asyncio.to_thread(_sync_run)
 
     @tool(
         registry,
@@ -103,30 +107,33 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "profile_id": "要检查的数据源连接 profile_id",
         },
         domains=["data_fabric", "spatial_catalog", "dataset"],
-        execution_policy=ToolExecutionPolicy.ASYNC,
+        execution_policy=ToolExecutionPolicy.THREAD,
     )
     async def inspect_data_source(profile_id: str) -> dict:
         """检查数据源健康度与能力清单"""
-        adapter = connection_manager.get_adapter(profile_id)
-        if not adapter:
-            profile = connection_manager.get_profile(profile_id)
-            if profile:
-                adapter = GenericDataSourceAdapter(profile)
-            else:
-                raise RuntimeError(f"Data source connection profile '{profile_id}' not found. Please connect first.")
+        def _sync_run():
+            adapter = connection_manager.get_adapter(profile_id)
+            if not adapter:
+                profile = connection_manager.get_profile(profile_id)
+                if profile:
+                    adapter = GenericDataSourceAdapter(profile)
+                else:
+                    raise RuntimeError(f"Data source connection profile '{profile_id}' not found. Please connect first.")
 
-        health = data_fabric_health_check.check_health(adapter)
-        caps = adapter.capabilities()
-        datasets = adapter.list_datasets()
+            health = data_fabric_health_check.check_health(adapter)
+            caps = adapter.capabilities()
+            datasets = adapter.list_datasets()
 
-        return {
-            "status": "inspected",
-            "profile_id": profile_id,
-            "health": health.model_dump(),
-            "capabilities": caps,
-            "datasets_count": len(datasets),
-            "datasets": datasets,
-        }
+            return {
+                "status": "inspected",
+                "profile_id": profile_id,
+                "health": health.model_dump(),
+                "capabilities": caps,
+                "datasets_count": len(datasets),
+                "datasets": datasets,
+            }
+
+        return await asyncio.to_thread(_sync_run)
 
     @tool(
         registry,
@@ -230,7 +237,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "profile_id": "可选的数据源 profile_id",
         },
         domains=["data_fabric", "spatial_catalog", "dataset"],
-        execution_policy=ToolExecutionPolicy.ASYNC,
+        execution_policy=ToolExecutionPolicy.THREAD,
     )
     async def query_dataset(
         dataset_id: str,
@@ -243,43 +250,40 @@ def register_data_fabric_tools(registry: ToolRegistry):
         profile_id: Optional[str] = None,
     ) -> dict:
         """执行 QuerySpec 下推查询"""
-        pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id)
-        adapter = connection_manager.get_adapter(pid) if pid else None
+        def _sync_run():
+            pid = profile_id or spatial_catalog_service.get_profile_id(dataset_id)
+            adapter = connection_manager.get_adapter(pid) if pid else None
 
-        if not adapter:
-            profile = ConnectionProfile(id=pid or "default-profile", source_type="geojson")
-            adapter = GenericDataSourceAdapter(profile)
+            if not adapter:
+                profile = ConnectionProfile(id=pid or "default-profile", source_type="geojson")
+                adapter = GenericDataSourceAdapter(profile)
 
-        spec = QuerySpec(
-            limit=limit,
-            offset=offset,
-            bbox=bbox,
-            where=where,
-            fields=fields,
-            srs=srs or "EPSG:4326",
-        )
+            spec = QuerySpec(
+                limit=limit,
+                offset=offset,
+                bbox=bbox,
+                where=where,
+                fields=fields,
+                srs=srs or "EPSG:4326",
+            )
 
-        query_result = materialization_service.execute_query(adapter, dataset_id, spec)
-        # Fetch-on-Demand: the full features list (up to MAX_QUERY_LIMIT) can blow
-        # past the 50k tool_result/DB cap and dump raw geometry into LLM context.
-        # Return the summary fields the LLM reasons over (counts, pushdown flags,
-        # schema_info, metadata) and replace `features` with a descriptor. Callers
-        # that need the actual rows use materialize_dataset, which persists to
-        # SessionStore and returns only a ref_id.
-        result_dict = query_result.model_dump()
-        features = result_dict.get("features") or []
-        if isinstance(features, list):
-            from app.tools._utils import _feature_collection_bbox
-            fc = {"type": "FeatureCollection", "features": features}
-            result_dict["features"] = {
-                "feature_count": len(features),
-                "bbox": _feature_collection_bbox(fc),
-                "note": (
-                    "Features omitted from tool_result (Fetch-on-Demand). Use "
-                    "materialize_dataset to obtain a ref_id cursor for the rows."
-                ),
-            }
-        return result_dict
+            query_result = materialization_service.execute_query(adapter, dataset_id, spec)
+            result_dict = query_result.model_dump()
+            features = result_dict.get("features") or []
+            if isinstance(features, list):
+                from app.tools._utils import _feature_collection_bbox
+                fc = {"type": "FeatureCollection", "features": features}
+                result_dict["features"] = {
+                    "feature_count": len(features),
+                    "bbox": _feature_collection_bbox(fc),
+                    "note": (
+                        "Features omitted from tool_result (Fetch-on-Demand). Use "
+                        "materialize_dataset to obtain a ref_id cursor for the rows."
+                    ),
+                }
+            return result_dict
+
+        return await asyncio.to_thread(_sync_run)
 
     @tool(
         registry,
@@ -299,7 +303,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "profile_id": "可选的数据源 profile_id",
         },
         domains=["data_fabric", "spatial_catalog", "dataset"],
-        execution_policy=ToolExecutionPolicy.ASYNC,
+        execution_policy=ToolExecutionPolicy.THREAD,
     )
     async def materialize_dataset(
         dataset_id: str,
@@ -345,20 +349,23 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "profile_id": "要刷新的数据源 profile_id",
         },
         domains=["data_fabric", "spatial_catalog", "dataset"],
-        execution_policy=ToolExecutionPolicy.ASYNC,
+        execution_policy=ToolExecutionPolicy.THREAD,
     )
     async def refresh_data_source(profile_id: str) -> dict:
         """刷新数据源缓存与 Catalog 索引"""
-        adapter = connection_manager.get_adapter(profile_id)
-        if not adapter:
-            raise RuntimeError(f"Connection profile '{profile_id}' not found. Cannot refresh.")
+        def _sync_run():
+            adapter = connection_manager.get_adapter(profile_id)
+            if not adapter:
+                raise RuntimeError(f"Connection profile '{profile_id}' not found. Cannot refresh.")
 
-        sync_details = adapter.sync()
-        health = data_fabric_health_check.check_health(adapter)
+            sync_details = adapter.sync()
+            health = data_fabric_health_check.check_health(adapter)
 
-        return {
-            "status": "refreshed",
-            "profile_id": profile_id,
-            "sync_details": sync_details,
-            "health": health.model_dump(),
-        }
+            return {
+                "status": "refreshed",
+                "profile_id": profile_id,
+                "sync_details": sync_details,
+                "health": health.model_dump(),
+            }
+
+        return await asyncio.to_thread(_sync_run)

@@ -5,7 +5,7 @@ using windowed reads (rasterio.windows.from_bounds) and reprojection on the fly.
 Only reads the requested spatial window from disk.
 """
 import io
-from typing import Tuple
+from typing import Tuple, Dict
 import numpy as np
 from PIL import Image
 import rasterio
@@ -51,6 +51,10 @@ def _normalize_channel(arr: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
     return (norm * 255).astype(np.uint8)
 
 
+_RASTER_TILE_CACHE: Dict[Tuple[str, int, int, int, int, str], bytes] = {}
+_MAX_RASTER_CACHE_ENTRIES = 2048
+
+
 def render_raster_tile(
     raster_path: str,
     z: int,
@@ -62,6 +66,10 @@ def render_raster_tile(
     """Render a 256x256 PNG tile for the given XYZ coordinates from a GeoTIFF."""
     if z < 0 or z > 22 or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
         return _transparent_tile_png(tile_size)
+
+    key = (raster_path, z, x, y, tile_size, cmap_name)
+    if key in _RASTER_TILE_CACHE:
+        return _RASTER_TILE_CACHE[key]
 
     bounds_3857 = tile_bounds_3857(z, x, y)
     dst_transform = rasterio.transform.from_bounds(*bounds_3857, tile_size, tile_size)
@@ -77,7 +85,9 @@ def render_raster_tile(
             win = win.intersection(rasterio.windows.Window(0, 0, src.width, src.height))
 
             if win.width <= 0 or win.height <= 0:
-                return _transparent_tile_png(tile_size)
+                res = _transparent_tile_png(tile_size)
+                _RASTER_TILE_CACHE[key] = res
+                return res
 
             # Perform windowed read from source file (O(win_size) memory)
             count = min(src.count, 3)
@@ -116,7 +126,9 @@ def render_raster_tile(
                 valid_mask = np.isfinite(arr) & (arr != nodata_val)
 
                 if not valid_mask.any():
-                    return _transparent_tile_png(tile_size)
+                    res = _transparent_tile_png(tile_size)
+                    _RASTER_TILE_CACHE[key] = res
+                    return res
 
                 gray = _normalize_channel(arr, valid_mask)
                 alpha = np.where(valid_mask, 255, 0).astype(np.uint8)
@@ -125,7 +137,12 @@ def render_raster_tile(
 
             buf = io.BytesIO()
             img.save(buf, format="PNG", compress_level=1)
-            return buf.getvalue()
+            png_bytes = buf.getvalue()
+
+            if len(_RASTER_TILE_CACHE) > _MAX_RASTER_CACHE_ENTRIES:
+                _RASTER_TILE_CACHE.clear()
+            _RASTER_TILE_CACHE[key] = png_bytes
+            return png_bytes
 
     except Exception as err:
         logger.warning(f"[raster_tile_service] Failed to render tile z={z} x={x} y={y} for {raster_path}: {err}")

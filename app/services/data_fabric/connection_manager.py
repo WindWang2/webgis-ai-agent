@@ -212,6 +212,52 @@ class GenericDataSourceAdapter(GeospatialDataSourceAdapter):
         return {"status": "synced", "count": synced_count, "profile_id": self.profile.id}
 
 
+def create_adapter_for_profile(profile: ConnectionProfile) -> GeospatialDataSourceAdapter:
+    """Factory function mapping ConnectionProfile source_type to concrete GeospatialDataSourceAdapter."""
+    try:
+        from app.services.data_fabric.adapters import (
+            PostGISAdapter,
+            OGCAPIAdapter,
+            WFSAdapter,
+            WMSWMTSAdapter,
+            ArcGISAdapter,
+            STACAdapter,
+            GeoParquetAdapter,
+            FlatGeobufAdapter,
+            PMTilesAdapter,
+            S3StorageAdapter,
+        )
+
+        adapter_map = {
+            "postgis": PostGISAdapter,
+            "postgres": PostGISAdapter,
+            "postgresql": PostGISAdapter,
+            "geoparquet": GeoParquetAdapter,
+            "parquet": GeoParquetAdapter,
+            "flatgeobuf": FlatGeobufAdapter,
+            "fgb": FlatGeobufAdapter,
+            "stac": STACAdapter,
+            "ogc_api": OGCAPIAdapter,
+            "ogc_api_features": OGCAPIAdapter,
+            "wfs": WFSAdapter,
+            "wms": WMSWMTSAdapter,
+            "wmts": WMSWMTSAdapter,
+            "arcgis": ArcGISAdapter,
+            "arcgis_rest": ArcGISAdapter,
+            "pmtiles": PMTilesAdapter,
+            "s3": S3StorageAdapter,
+        }
+
+        st = (profile.source_type or "").lower().strip()
+        adapter_cls = adapter_map.get(st)
+        if adapter_cls:
+            return adapter_cls(profile)
+    except Exception as e:
+        logger.warning(f"[ConnectionManager] Factory lookup for source_type='{profile.source_type}' failed: {e}")
+
+    return GenericDataSourceAdapter(profile)
+
+
 class DataFabricConnectionManager:
     """
     Connection Manager for Data Fabric profiles and adapters.
@@ -230,13 +276,13 @@ class DataFabricConnectionManager:
         if profile.url:
             DataFabricSecurity.validate_url(profile.url, allow_private=profile.allow_private)
 
-        adapter = GenericDataSourceAdapter(profile)
+        adapter = create_adapter_for_profile(profile)
         adapter.sync()  # Registers dataset descriptors in catalog
 
         self._profiles[profile.id] = profile
         self._adapters[profile.id] = adapter
 
-        logger.info(f"[ConnectionManager] Connected profile '{profile.id}' (source_type={profile.source_type})")
+        logger.info(f"[ConnectionManager] Connected profile '{profile.id}' (source_type={profile.source_type}, adapter={adapter.__class__.__name__})")
         return profile, adapter
 
     def get_adapter(self, profile_id: str) -> Optional[GeospatialDataSourceAdapter]:

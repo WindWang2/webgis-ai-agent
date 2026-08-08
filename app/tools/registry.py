@@ -233,6 +233,10 @@ class ToolRegistry:
         except Exception:
             arg_bytes = 0
 
+        requested_policy = self._metadata.get(name, {}).get("execution_policy")
+        req_policy_str = requested_policy.value if requested_policy else "THREAD"
+        actual_mode = "ASYNC" if requested_policy == ToolExecutionPolicy.ASYNC else ("INLINE" if requested_policy == ToolExecutionPolicy.INLINE else ("CELERY" if requested_policy == ToolExecutionPolicy.CELERY else "THREAD"))
+
         try:
             result = await self._dispatch_impl(name, arguments, session_id)
         except Exception as e:  # noqa: BLE001
@@ -255,6 +259,9 @@ class ToolRegistry:
                 cache_hit=cache_hit,
                 error=error_cls,
                 session_id=session_id,
+                requested_execution_policy=req_policy_str,
+                actual_execution_mode=actual_mode,
+                compute_ms=duration_ms if not cache_hit else 0,
             )
             cache_hit_var.reset(token)
 

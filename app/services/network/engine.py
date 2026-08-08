@@ -5,6 +5,7 @@ OD matrix calculation, closest facility search, service areas, accessibility, lo
 and VRP route optimization.
 """
 from __future__ import annotations
+import asyncio
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import networkx as nx
@@ -348,36 +349,38 @@ class NetworkGraphEngine:
         session_id: str = "",
     ) -> NetworkAnalysisResult:
         """High level shortest path solver working with raw GeoJSON/dict inputs."""
-        profile = profile or TravelProfile()
-        graph, net_ds = self._ensure_graph(network, profile)
+        def _sync_solve():
+            prof = profile or TravelProfile()
+            graph, net_ds = self._ensure_graph(network, prof)
+            orig_pt = self._parse_point(origin, "origin")
+            dest_pt = self._parse_point(destination, "destination")
 
-        orig_pt = self._parse_point(origin, "origin")
-        dest_pt = self._parse_point(destination, "destination")
+            barrier_objs = []
+            if barriers:
+                for idx, b in enumerate(barriers):
+                    geom = b if isinstance(b, dict) and "type" in b else {"type": "Point", "coordinates": b}
+                    barrier_objs.append(Barrier(barrier_id=f"b_{idx}", geometry=geom))
 
-        barrier_objs = []
-        if barriers:
-            for idx, b in enumerate(barriers):
-                geom = b if isinstance(b, dict) and "type" in b else {"type": "Point", "coordinates": b}
-                barrier_objs.append(Barrier(barrier_id=f"b_{idx}", geometry=geom))
+            route = self.shortest_path(
+                origin=orig_pt,
+                destination=dest_pt,
+                network_dataset=net_ds,
+                graph=graph,
+                profile=prof,
+                barriers=barrier_objs,
+            )
 
-        route = self.shortest_path(
-            origin=orig_pt,
-            destination=dest_pt,
-            network_dataset=net_ds,
-            graph=graph,
-            profile=profile,
-            barriers=barrier_objs,
-        )
+            return NetworkAnalysisResult(
+                analysis_type="shortest_path",
+                status="success",
+                routes=[route],
+                result_geojson={
+                    "type": "FeatureCollection",
+                    "features": [{"type": "Feature", "properties": {"distance_m": route.total_distance_m, "time_s": route.total_time_s}, "geometry": route.geometry}]
+                }
+            )
 
-        return NetworkAnalysisResult(
-            analysis_type="shortest_path",
-            status="success",
-            routes=[route],
-            result_geojson={
-                "type": "FeatureCollection",
-                "features": [{"type": "Feature", "properties": {"distance_m": route.total_distance_m, "time_s": route.total_time_s}, "geometry": route.geometry}]
-            }
-        )
+        return await asyncio.to_thread(_sync_solve)
 
     async def solve_od_matrix(
         self,
@@ -389,25 +392,27 @@ class NetworkGraphEngine:
         session_id: str = "",
     ) -> NetworkAnalysisResult:
         """High level OD matrix solver working with raw GeoJSON/dict inputs."""
-        profile = profile or TravelProfile()
-        graph, net_ds = self._ensure_graph(network, profile)
+        def _sync_solve():
+            prof = profile or TravelProfile()
+            graph, net_ds = self._ensure_graph(network, prof)
+            orig_pts = [self._parse_point(p, f"origin[{i}]") for i, p in enumerate(origins)]
+            dest_pts = [self._parse_point(p, f"destination[{i}]") for i, p in enumerate(destinations)]
 
-        orig_pts = [self._parse_point(p, f"origin[{i}]") for i, p in enumerate(origins)]
-        dest_pts = [self._parse_point(p, f"destination[{i}]") for i, p in enumerate(destinations)]
+            pairs = self.od_matrix(
+                origins=orig_pts,
+                destinations=dest_pts,
+                network_dataset=net_ds,
+                graph=graph,
+                profile=prof,
+            )
 
-        pairs = self.od_matrix(
-            origins=orig_pts,
-            destinations=dest_pts,
-            network_dataset=net_ds,
-            graph=graph,
-            profile=profile,
-        )
+            return NetworkAnalysisResult(
+                analysis_type="od_matrix",
+                status="success",
+                od_matrix=pairs,
+            )
 
-        return NetworkAnalysisResult(
-            analysis_type="od_matrix",
-            status="success",
-            od_matrix=pairs,
-        )
+        return await asyncio.to_thread(_sync_solve)
 
     async def solve_closest_facility(
         self,
@@ -419,25 +424,27 @@ class NetworkGraphEngine:
         session_id: str = "",
     ) -> NetworkAnalysisResult:
         """High level closest facility solver working with raw GeoJSON/dict inputs."""
-        profile = profile or TravelProfile()
-        graph, net_ds = self._ensure_graph(network, profile)
+        def _sync_solve():
+            prof = profile or TravelProfile()
+            graph, net_ds = self._ensure_graph(network, prof)
+            inc_pts = [self._parse_point(p, f"incident[{i}]") for i, p in enumerate(incidents)]
+            fac_objs = [self._to_facility(f, i) for i, f in enumerate(facilities)]
 
-        inc_pts = [self._parse_point(p, f"incident[{i}]") for i, p in enumerate(incidents)]
-        fac_objs = [self._to_facility(f, i) for i, f in enumerate(facilities)]
+            fac_res = self.closest_facility(
+                demand_points=inc_pts,
+                facilities=fac_objs,
+                network_dataset=net_ds,
+                graph=graph,
+                target_facility_count=number_to_find,
+                profile=prof,
+            )
+            return fac_res if isinstance(fac_res, NetworkAnalysisResult) else NetworkAnalysisResult(
+                analysis_type="closest_facility",
+                status="success",
+                routes=fac_res if isinstance(fac_res, list) else [],
+            )
 
-        fac_res = self.closest_facility(
-            demand_points=inc_pts,
-            facilities=fac_objs,
-            network_dataset=net_ds,
-            graph=graph,
-            target_facility_count=number_to_find,
-            profile=profile,
-        )
-        return fac_res if isinstance(fac_res, NetworkAnalysisResult) else NetworkAnalysisResult(
-            analysis_type="closest_facility",
-            status="success",
-            routes=fac_res if isinstance(fac_res, list) else [],
-        )
+        return await asyncio.to_thread(_sync_solve)
 
     async def solve_service_area(
         self,
@@ -448,33 +455,35 @@ class NetworkGraphEngine:
         session_id: str = "",
     ) -> NetworkAnalysisResult:
         """High level service area solver working with raw GeoJSON/dict inputs."""
-        profile = profile or TravelProfile()
-        breaks_minutes = breaks_minutes or [5.0, 10.0, 15.0]
-        graph, net_ds = self._ensure_graph(network, profile)
+        def _sync_solve():
+            prof = profile or TravelProfile()
+            b_minutes = breaks_minutes or [5.0, 10.0, 15.0]
+            graph, net_ds = self._ensure_graph(network, prof)
+            fac_objs = [self._to_facility(f, i) for i, f in enumerate(facilities)]
 
-        fac_objs = [self._to_facility(f, i) for i, f in enumerate(facilities)]
+            sa_breaks = self.service_area(
+                facilities=fac_objs,
+                breaks=b_minutes,
+                network_dataset=net_ds,
+                graph=graph,
+                profile=prof,
+            )
 
-        sa_breaks = self.service_area(
-            facilities=fac_objs,
-            breaks=breaks_minutes,
-            network_dataset=net_ds,
-            graph=graph,
-            profile=profile,
-        )
+            breaks_list = []
+            if isinstance(sa_breaks, list):
+                for sa in sa_breaks:
+                    if hasattr(sa, "breaks"):
+                        breaks_list.extend(sa.breaks)
+                    elif hasattr(sa, "break_value"):
+                        breaks_list.append(sa)
 
-        breaks_list = []
-        if isinstance(sa_breaks, list):
-            for sa in sa_breaks:
-                if hasattr(sa, "breaks"):
-                    breaks_list.extend(sa.breaks)
-                elif hasattr(sa, "break_value"):
-                    breaks_list.append(sa)
+            return NetworkAnalysisResult(
+                analysis_type="service_area",
+                status="success",
+                service_area_breaks=breaks_list,
+            )
 
-        return NetworkAnalysisResult(
-            analysis_type="service_area",
-            status="success",
-            service_area_breaks=breaks_list,
-        )
+        return await asyncio.to_thread(_sync_solve)
 
     async def solve_accessibility(
         self,
@@ -486,30 +495,33 @@ class NetworkGraphEngine:
         session_id: str = "",
     ) -> NetworkAnalysisResult:
         """High level accessibility solver working with raw GeoJSON/dict inputs."""
-        profile = profile or TravelProfile()
-        graph, net_ds = self._ensure_graph(network, profile)
+        def _sync_solve():
+            prof = profile or TravelProfile()
+            graph, net_ds = self._ensure_graph(network, prof)
 
-        demands = []
-        raw_demands = demand_layer if isinstance(demand_layer, list) else []
-        for idx, d in enumerate(raw_demands):
-            demands.append(self._to_demand(d, idx))
+            demands = []
+            raw_demands = demand_layer if isinstance(demand_layer, list) else []
+            for idx, d in enumerate(raw_demands):
+                demands.append(self._to_demand(d, idx))
 
-        fac_objs = [self._to_facility(f, i) for i, f in enumerate(facilities)]
+            fac_objs = [self._to_facility(f, i) for i, f in enumerate(facilities)]
 
-        acc_res = self.accessibility(
-            demand_points=demands,
-            facilities=fac_objs,
-            network_dataset=net_ds,
-            graph=graph,
-            cutoff_minutes=cutoff_minutes,
-            profile=profile,
-        )
+            acc_res = self.accessibility(
+                demand_points=demands,
+                facilities=fac_objs,
+                network_dataset=net_ds,
+                graph=graph,
+                cutoff_minutes=cutoff_minutes,
+                profile=prof,
+            )
 
-        return NetworkAnalysisResult(
-            analysis_type="accessibility",
-            status="success",
-            accessibility=acc_res,
-        )
+            return NetworkAnalysisResult(
+                analysis_type="accessibility",
+                status="success",
+                accessibility=acc_res,
+            )
+
+        return await asyncio.to_thread(_sync_solve)
 
     async def solve_location_allocation(
         self,
@@ -522,22 +534,24 @@ class NetworkGraphEngine:
         session_id: str = "",
     ) -> NetworkAnalysisResult:
         """High level location-allocation solver working with raw GeoJSON/dict inputs."""
-        profile = profile or TravelProfile()
-        graph, net_ds = self._ensure_graph(network, profile)
+        def _sync_solve():
+            prof = profile or TravelProfile()
+            graph, net_ds = self._ensure_graph(network, prof)
 
-        cand_objs = [self._to_facility(c, i) for i, c in enumerate(candidate_facilities)]
-        demands = [self._to_demand(d, i) for i, d in enumerate(demand_points)]
+            cand_objs = [self._to_facility(c, i) for i, c in enumerate(candidate_facilities)]
+            demands = [self._to_demand(d, i) for i, d in enumerate(demand_points)]
 
-        res = self.location_allocation(
-            candidate_facilities=cand_objs,
-            demand_points=demands,
-            p_count=n_to_choose,
-            problem_type="p_median" if objective == "minimize_cost" else "max_coverage",
-            network_dataset=net_ds,
-            graph=graph,
-            profile=profile,
-        )
-        return res
+            return self.location_allocation(
+                candidate_facilities=cand_objs,
+                demand_points=demands,
+                p_count=n_to_choose,
+                problem_type="p_median" if objective == "minimize_cost" else "max_coverage",
+                network_dataset=net_ds,
+                graph=graph,
+                profile=prof,
+            )
+
+        return await asyncio.to_thread(_sync_solve)
 
     async def solve_optimize_route(
         self,
@@ -548,23 +562,26 @@ class NetworkGraphEngine:
         session_id: str = "",
     ) -> NetworkAnalysisResult:
         """High level route optimization solver working with raw GeoJSON/dict inputs."""
-        profile = profile or TravelProfile()
-        graph, net_ds = self._ensure_graph(network, profile)
+        def _sync_solve():
+            prof = profile or TravelProfile()
+            graph, net_ds = self._ensure_graph(network, prof)
 
-        depot_pt = self._parse_point(depot, "depot")
-        stop_pts = [self._parse_point(s, f"stop[{i}]") for i, s in enumerate(stops)]
+            depot_pt = self._parse_point(depot, "depot")
+            stop_pts = [self._parse_point(s, f"stop[{i}]") for i, s in enumerate(stops)]
 
-        route = self.optimize_route(
-            stops=stop_pts,
-            depot=depot_pt,
-            network_dataset=net_ds,
-            graph=graph,
-            profile=profile,
-        )
+            route = self.optimize_route(
+                stops=stop_pts,
+                depot=depot_pt,
+                network_dataset=net_ds,
+                graph=graph,
+                profile=prof,
+            )
 
-        return NetworkAnalysisResult(
-            analysis_type="optimize_route",
-            status="success",
-            routes=[route],
-        )
+            return NetworkAnalysisResult(
+                analysis_type="optimize_route",
+                status="success",
+                routes=[route],
+            )
+
+        return await asyncio.to_thread(_sync_solve)
 

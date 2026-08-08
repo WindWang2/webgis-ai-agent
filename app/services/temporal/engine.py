@@ -4,6 +4,7 @@ Provides a single entry point seam for profiling, filtering, aggregating, change
 trend analysis, spatiotemporal clustering, and windowed raster series processing.
 """
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
@@ -175,8 +176,10 @@ class TemporalEngine:
         session_id: str = "",
     ) -> TemporalDatasetProfile:
         """High level temporal profile wrapper."""
-        features = dataset.get("features", []) if isinstance(dataset, dict) else dataset
-        return self.profile(features_or_records=features)
+        def _sync_run():
+            features = dataset.get("features", []) if isinstance(dataset, dict) else dataset
+            return self.profile(features_or_records=features)
+        return await asyncio.to_thread(_sync_run)
 
     async def execute_filter(
         self,
@@ -186,41 +189,44 @@ class TemporalEngine:
         session_id: str = "",
     ) -> Any:
         """High level temporal filter wrapper."""
-        from app.services.temporal.models import TemporalAnalysisResult
-        features = dataset.get("features", []) if isinstance(dataset, dict) else dataset
+        def _sync_run():
+            from app.services.temporal.models import TemporalAnalysisResult
+            features = dataset.get("features", []) if isinstance(dataset, dict) else dataset
 
-        # Derive operator and parameters from filter spec
-        op, inst, st, et, rw = None, None, None, None, None
-        if t_filter:
-            st = t_filter.start_time
-            et = t_filter.end_time
-            rw = t_filter.relative_window
-            if t_filter.filter_type == "range" or (st or et):
-                op = "BETWEEN"
-            elif t_filter.filter_type == "relative_window" or rw:
-                op = "RELATIVE_WINDOW"
+            # Derive operator and parameters from filter spec
+            op, inst, st, et, rw = None, None, None, None, None
+            if t_filter:
+                st = t_filter.start_time
+                et = t_filter.end_time
+                rw = t_filter.relative_window
+                if t_filter.filter_type == "range" or (st or et):
+                    op = "BETWEEN"
+                elif t_filter.filter_type == "relative_window" or rw:
+                    op = "RELATIVE_WINDOW"
 
-        filtered_feats = self.filter(
-            features_or_records=features,
-            time_field=temporal_field,
-            operator=op,
-            instant=inst,
-            start=st,
-            end=et,
-            relative_window=rw,
-            filter_spec=t_filter,
-        )
+            filtered_feats = self.filter(
+                features_or_records=features,
+                time_field=temporal_field,
+                operator=op,
+                instant=inst,
+                start=st,
+                end=et,
+                relative_window=rw,
+                filter_spec=t_filter,
+            )
 
-        result_geojson = {
-            "type": "FeatureCollection",
-            "features": filtered_feats if isinstance(filtered_feats, list) else []
-        }
+            result_geojson = {
+                "type": "FeatureCollection",
+                "features": filtered_feats if isinstance(filtered_feats, list) else []
+            }
 
-        return TemporalAnalysisResult(
-            analysis_type="temporal_filter",
-            status="success",
-            result_geojson=result_geojson,
-        )
+            return TemporalAnalysisResult(
+                analysis_type="temporal_filter",
+                status="success",
+                result_geojson=result_geojson,
+            )
+
+        return await asyncio.to_thread(_sync_run)
 
     async def execute_aggregate(
         self,
@@ -230,29 +236,32 @@ class TemporalEngine:
         session_id: str = "",
     ) -> Any:
         """High level temporal aggregate wrapper."""
-        from app.services.temporal.models import TemporalAnalysisResult
-        features = dataset.get("features", []) if isinstance(dataset, dict) else dataset
-        unit = agg_spec.interval_unit if agg_spec else "day"
-        metrics = [agg_spec.aggregation_func] if agg_spec else ["count"]
-        targets = agg_spec.metric_fields if agg_spec else []
+        def _sync_run():
+            from app.services.temporal.models import TemporalAnalysisResult
+            features = dataset.get("features", []) if isinstance(dataset, dict) else dataset
+            unit = agg_spec.interval_unit if agg_spec else "day"
+            metrics = [agg_spec.aggregation_func] if agg_spec else ["count"]
+            targets = agg_spec.metric_fields if agg_spec else []
 
-        aggregated_records = self.aggregate(
-            features_or_records=features,
-            time_field=temporal_field,
-            group_by_unit=unit,
-            metrics=metrics,
-            target_fields=targets,
-            agg_spec=agg_spec,
-        )
+            aggregated_records = self.aggregate(
+                features_or_records=features,
+                time_field=temporal_field,
+                group_by_unit=unit,
+                metrics=metrics,
+                target_fields=targets,
+                agg_spec=agg_spec,
+            )
 
-        return TemporalAnalysisResult(
-            analysis_type="temporal_aggregate",
-            status="success",
-            change_summary={
-                "aggregated_buckets": len(aggregated_records),
-                "records": aggregated_records,
-            },
-        )
+            return TemporalAnalysisResult(
+                analysis_type="temporal_aggregate",
+                status="success",
+                change_summary={
+                    "aggregated_buckets": len(aggregated_records),
+                    "records": aggregated_records,
+                },
+            )
+
+        return await asyncio.to_thread(_sync_run)
 
     async def execute_change(
         self,
@@ -262,20 +271,23 @@ class TemporalEngine:
         session_id: str = "",
     ) -> Any:
         """High level temporal change wrapper."""
-        from app.services.temporal.models import TemporalAnalysisResult
-        feats_t1 = dataset_t1.get("features", []) if isinstance(dataset_t1, dict) else dataset_t1
-        feats_t2 = dataset_t2.get("features", []) if isinstance(dataset_t2, dict) else dataset_t2
+        def _sync_run():
+            from app.services.temporal.models import TemporalAnalysisResult
+            feats_t1 = dataset_t1.get("features", []) if isinstance(dataset_t1, dict) else dataset_t1
+            feats_t2 = dataset_t2.get("features", []) if isinstance(dataset_t2, dict) else dataset_t2
 
-        change_res = self.change_engine.compare_snapshots(
-            snapshots=[feats_t1, feats_t2],
-            numeric_fields=metric_fields,
-        )
+            change_res = self.change_engine.compare_snapshots(
+                snapshots=[feats_t1, feats_t2],
+                numeric_fields=metric_fields,
+            )
 
-        return TemporalAnalysisResult(
-            analysis_type="temporal_change",
-            status="success",
-            change_summary=change_res.model_dump(),
-        )
+            return TemporalAnalysisResult(
+                analysis_type="temporal_change",
+                status="success",
+                change_summary=change_res.model_dump(),
+            )
+
+        return await asyncio.to_thread(_sync_run)
 
     async def execute_trend(
         self,
@@ -285,25 +297,28 @@ class TemporalEngine:
         session_id: str = "",
     ) -> Any:
         """High level temporal trend wrapper."""
-        from app.services.temporal.models import TemporalAnalysisResult
-        features = dataset.get("features", []) if isinstance(dataset, dict) else dataset
+        def _sync_run():
+            from app.services.temporal.models import TemporalAnalysisResult
+            features = dataset.get("features", []) if isinstance(dataset, dict) else dataset
 
-        trend_res = self.analyze_trend(
-            data=features,
-            metric_name=value_field or "value",
-            time_field=temporal_field,
-        )
+            trend_res = self.analyze_trend(
+                data=features,
+                metric_name=value_field or "value",
+                time_field=temporal_field,
+            )
 
-        return TemporalAnalysisResult(
-            analysis_type="temporal_trend",
-            status="success",
-            trend_metrics={
-                "slope": trend_res.slope,
-                "intercept": trend_res.intercept,
-                "r_squared": trend_res.r_squared,
-                "direction": getattr(trend_res, "direction", getattr(trend_res, "trend_direction", "stable")),
-            },
-        )
+            return TemporalAnalysisResult(
+                analysis_type="temporal_trend",
+                status="success",
+                trend_metrics={
+                    "slope": trend_res.slope,
+                    "intercept": trend_res.intercept,
+                    "r_squared": trend_res.r_squared,
+                    "direction": getattr(trend_res, "direction", getattr(trend_res, "trend_direction", "stable")),
+                },
+            )
+
+        return await asyncio.to_thread(_sync_run)
 
     async def execute_spatiotemporal_hotspot(
         self,
@@ -315,22 +330,25 @@ class TemporalEngine:
         session_id: str = "",
     ) -> Any:
         """High level spatiotemporal hotspot wrapper."""
-        from app.services.temporal.models import TemporalAnalysisResult
-        geojson = dataset if isinstance(dataset, dict) and "features" in dataset else {"type": "FeatureCollection", "features": dataset}
+        def _sync_run():
+            from app.services.temporal.models import TemporalAnalysisResult
+            geojson = dataset if isinstance(dataset, dict) and "features" in dataset else {"type": "FeatureCollection", "features": dataset}
 
-        hotspot_res = self.cluster_spatiotemporal(
-            geojson=geojson,
-            eps1_spatial_meters=eps_spatial_m,
-            eps2_temporal_seconds=eps_temporal_days * 86400.0,
-            min_samples=min_samples,
-            timestamp_field=temporal_field or "timestamp",
-        )
+            hotspot_res = self.cluster_spatiotemporal(
+                geojson=geojson,
+                eps1_spatial_meters=eps_spatial_m,
+                eps2_temporal_seconds=eps_temporal_days * 86400.0,
+                min_samples=min_samples,
+                timestamp_field=temporal_field or "timestamp",
+            )
 
-        return TemporalAnalysisResult(
-            analysis_type="spatiotemporal_hotspot",
-            status="success",
-            hotspots=[hotspot_res],
-        )
+            return TemporalAnalysisResult(
+                analysis_type="spatiotemporal_hotspot",
+                status="success",
+                hotspots=[hotspot_res],
+            )
+
+        return await asyncio.to_thread(_sync_run)
 
     async def execute_temporal_raster(
         self,
@@ -340,14 +358,17 @@ class TemporalEngine:
         session_id: str = "",
     ) -> Any:
         """High level temporal raster wrapper."""
-        from app.services.temporal.models import TemporalAnalysisResult
-        raster_res = self.analyze_raster_series(
-            raster_series=raster_series,
-            aoi_geometry=aoi_geometry,
-        )
+        def _sync_run():
+            from app.services.temporal.models import TemporalAnalysisResult
+            raster_res = self.analyze_raster_series(
+                raster_series=raster_series,
+                aoi_geometry=aoi_geometry,
+            )
 
-        return TemporalAnalysisResult(
-            analysis_type="temporal_raster",
-            status="success",
-            raster_series=[raster_res.model_dump()],
-        )
+            return TemporalAnalysisResult(
+                analysis_type="temporal_raster",
+                status="success",
+                raster_series=[raster_res.model_dump()],
+            )
+
+        return await asyncio.to_thread(_sync_run)

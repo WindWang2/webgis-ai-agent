@@ -65,11 +65,21 @@ async def test_connect_and_inspect_tools(registry):
 
 @pytest.mark.asyncio
 async def test_search_describe_query_materialize_tools(registry):
+    conn_func = registry._tools["connect_data_source"]
     search_func = registry._tools["search_spatial_catalog"]
     desc_func = registry._tools["describe_dataset"]
     query_func = registry._tools["query_dataset"]
     mat_func = registry._tools["materialize_dataset"]
     refresh_func = registry._tools["refresh_data_source"]
+
+    await conn_func(
+        profile_id="unit_pg_test",
+        source_type="postgis",
+        url="https://gis.example.com/api",
+        database="geodb",
+        username="admin",
+        password="secret_password_123",
+    )
 
     # 1. Search
     search_res = search_func(query="unit_pg_test")
