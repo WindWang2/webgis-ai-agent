@@ -1,15 +1,17 @@
-"""What-if scenario simulation engine and tool registration."""
+"""What-if scenario simulation engine and tool registration (V2 Data-Grounded)."""
+import asyncio
 import logging
 import math
 import uuid
 from typing import Literal
 
 import numpy as np
-
 from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
 from app.tools.what_if_rules import get_rule
+from app.services.spatial_decision.engine import DecisionEngine
+from app.services.spatial_decision.models import SpatialDecisionResult
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +46,6 @@ class WhatIfSimulationResult(BaseModel):
     simulation_geojson: dict = Field(..., description="模拟 GeoJSON")
 
 
-# --- Scenario detection ---
-
 KEYWORD_MAP = {
     "subway": ["地铁", "地铁站", "轨道交通", "地铁线"],
     "school": ["学校", "小学", "中学", "学区", "教育"],
@@ -64,8 +64,6 @@ def _detect_scenario_type(scenario: str) -> str | None:
                 return scenario_type
     return None
 
-
-# --- Impact calculation ---
 
 def _sample_midpoint(interval: tuple) -> float:
     """Return midpoint of interval for deterministic simulation."""
@@ -88,7 +86,6 @@ def _calculate_impact(scenario_type: str, parameters: dict) -> dict:
         for metric, interval in rule.get("impact", {}).items():
             impact[metric] = _sample_midpoint(interval)
     else:
-        # Spatial scenarios with direct/indirect zones
         for metric, zones in rule.get("impact", {}).items():
             impact[metric] = {}
             for zone, interval in zones.items():
@@ -96,8 +93,6 @@ def _calculate_impact(scenario_type: str, parameters: dict) -> dict:
 
     return impact
 
-
-# --- GeoJSON generation ---
 
 def _generate_circle_polygon(center_lng: float, center_lat: float, radius_m: float, num_points: int = 32) -> list:
     """Generate approximate circle polygon in GeoJSON coordinates using numpy."""
@@ -137,7 +132,6 @@ def _generate_simulation_geojson(scenario_type: str, target_center: tuple, impac
     features = []
 
     if direct_radius is not None and indirect_radius is not None:
-        # Direct zone: circle polygon
         direct_ring = _generate_circle_polygon(
             target_center[0], target_center[1], direct_radius
         )
@@ -146,7 +140,6 @@ def _generate_simulation_geojson(scenario_type: str, target_center: tuple, impac
             "impact_level": _impact_level_from_deltas(impact),
             "radius_m": direct_radius,
         }
-        # Add metric deltas for direct zone
         for metric, value in impact.items():
             direct_props[metric] = (
                 value.get("direct", value) if isinstance(value, dict) else value
@@ -161,7 +154,6 @@ def _generate_simulation_geojson(scenario_type: str, target_center: tuple, impac
             "properties": direct_props,
         })
 
-        # Indirect zone: ring with hole (reuse direct_ring as inner boundary, reversed)
         outer_ring = _generate_circle_polygon(
             target_center[0], target_center[1], indirect_radius
         )
@@ -188,7 +180,6 @@ def _generate_simulation_geojson(scenario_type: str, target_center: tuple, impac
             "properties": indirect_props,
         })
     else:
-        # Non-spatial scenario: single point feature
         point_props = {
             "zone": "general",
             "impact_level": _impact_level_from_deltas(impact),
@@ -211,54 +202,13 @@ def _generate_simulation_geojson(scenario_type: str, target_center: tuple, impac
     }
 
 
-# --- Tool registration ---
-
-def _build_metrics(impact: dict) -> dict[str, MetricDelta]:
-    """Build MetricDelta dict from impact deltas with placeholder baselines."""
-    metrics = {}
-    for metric, value in impact.items():
-        if isinstance(value, dict):
-            delta = value.get("direct", 0.0)
-        else:
-            delta = value
-        baseline = 100.0
-        simulated = baseline * (1 + delta)
-        delta_pct = round(((simulated - baseline) / baseline) * 100, 2)
-        metrics[metric] = MetricDelta(
-            baseline=round(baseline, 2),
-            simulated=round(simulated, 2),
-            delta_pct=delta_pct,
-        )
-    return metrics
-
-
-def _build_impact_summary(
-    metrics: dict[str, MetricDelta],
-    rule_name: str,
-    scenario_type: str,
-    rule: dict,
+def _empty_result(
+    scenario: str,
+    target_area: str,
+    scenario_type: str = "error",
+    scenario_name: str = "执行错误",
+    uncertainty: str = "无法计算影响",
 ) -> dict:
-    """Build impact summary from metrics."""
-    direct_r = rule.get("direct_radius_m")
-    indirect_r = rule.get("indirect_radius_m")
-    direct_area = round(math.pi * (direct_r / 1000) ** 2, 2) if direct_r else 0.0
-    indirect_area = (
-        round(math.pi * ((indirect_r / 1000) ** 2 - (direct_r / 1000) ** 2), 2)
-        if indirect_r and direct_r
-        else 0.0
-    )
-
-    return {
-        "scenario_type": scenario_type,
-        "scenario_name": rule_name,
-        "direct_area_km2": direct_area,
-        "indirect_area_km2": indirect_area,
-        "affected_metrics": list(metrics.keys()),
-    }
-
-
-def _empty_result(scenario: str, target_area: str, scenario_type: str = "error",
-                   scenario_name: str = "执行错误", uncertainty: str = "无法计算影响") -> dict:
     """构建统一的空/错误结果，避免重复构造 WhatIfSimulationResult。"""
     return WhatIfSimulationResult(
         type="what_if_simulation",
@@ -279,6 +229,101 @@ def _empty_result(scenario: str, target_area: str, scenario_type: str = "error",
     ).model_dump()
 
 
+async def what_if_simulate_async(
+    scenario: str,
+    target_area: str,
+    parameters: dict = None,
+    baseline_data_ref: str = "",
+    output_format: str = "layer",
+    session_id: str = "",
+) -> dict:
+    """Core async What-if scenario simulation powered by DecisionEngine V2."""
+    if parameters is None:
+        parameters = {}
+
+    scenario_type = _detect_scenario_type(scenario)
+    if scenario_type is None:
+        return _empty_result(
+            scenario,
+            target_area,
+            scenario_type="unknown",
+            scenario_name="未知场景",
+            uncertainty="无法计算影响：未识别的场景类型",
+        )
+
+    try:
+        engine = DecisionEngine()
+        dec_result: SpatialDecisionResult = await engine.evaluate_decision(
+            scenario_text=scenario,
+            target_area_text=target_area,
+            parameters=parameters,
+            baseline_data_ref=baseline_data_ref,
+            session_id=session_id,
+        )
+
+        if dec_result.target_area.confidence == 0.0 and dec_result.target_area.correction_hint:
+            return _empty_result(
+                scenario,
+                target_area,
+                scenario_type=scenario_type,
+                scenario_name="区域解析失败",
+                uncertainty=dec_result.target_area.correction_hint,
+            )
+
+        # Convert V2 MetricDeltaV2 to legacy MetricDelta dictionary for 100% backward compatibility
+        legacy_metrics = {}
+        for m_key, m_v2 in dec_result.metrics.items():
+            legacy_metrics[m_key] = MetricDelta(
+                baseline=round(m_v2.baseline, 2),
+                simulated=round(m_v2.simulated, 2),
+                delta_pct=round(m_v2.delta_pct, 2),
+            )
+
+        # Calculate area metrics from spatial impacts
+        direct_area = next((z.area_km2 for z in dec_result.spatial_impacts if z.zone_type == "direct"), 0.0)
+        indirect_area = next((z.area_km2 for z in dec_result.spatial_impacts if z.zone_type == "indirect"), 0.0)
+
+        summary = {
+            "scenario_type": scenario_type,
+            "scenario_name": scenario,
+            "direct_area_km2": round(direct_area, 2),
+            "indirect_area_km2": round(indirect_area, 2),
+            "affected_metrics": list(legacy_metrics.keys()),
+        }
+
+        rules_applied_str = [f"{r.domain}: {r.name}" for r in dec_result.rules_applied]
+
+        result = WhatIfSimulationResult(
+            type="what_if_simulation",
+            scenario=scenario,
+            target_area=dec_result.target_area.resolved_name or target_area,
+            simulation_ref_id=dec_result.simulation_ref_id,
+            impact_summary=summary,
+            metrics=legacy_metrics,
+            uncertainty=dec_result.uncertainty_description,
+            rules_applied=rules_applied_str,
+            simulation_geojson=dec_result.simulation_geojson,
+        )
+
+        res_dict = result.model_dump()
+        if "simulation_geojson" in res_dict:
+            # Fetch-on-Demand: feature_count + bbox + ref_id descriptor only.
+            from app.tools._utils import _feature_collection_bbox
+            full_fc = res_dict["simulation_geojson"]
+            res_dict["simulation_geojson"] = {
+                "type": "FeatureCollection",
+                "feature_count": len(full_fc.get("features", [])),
+                "bbox": _feature_collection_bbox(full_fc),
+                "ref_id": dec_result.simulation_ref_id,
+                "note": "Full GeoJSON stored in SessionStore cursor.",
+            }
+        return res_dict
+
+    except Exception as e:
+        logger.error(f"[WhatIfSimulateV2] Failed: {e}", exc_info=True)
+        return _empty_result(scenario, target_area, uncertainty=f"错误: {str(e)}")
+
+
 def what_if_simulate(
     scenario: str,
     target_area: str,
@@ -286,48 +331,34 @@ def what_if_simulate(
     baseline_data_ref: str = "",
     output_format: str = "layer",
 ) -> dict:
-    """What-if scenario simulation core logic."""
-    if parameters is None:
-        parameters = {}
-
+    """Synchronous entry point for legacy callers and tool registry dispatch."""
     try:
-        scenario_type = _detect_scenario_type(scenario)
-        if scenario_type is None:
-            return _empty_result(scenario, target_area, scenario_type="unknown",
-                                  scenario_name="未知场景",
-                                  uncertainty="无法计算影响：未识别的场景类型")
+        loop = asyncio.get_running_loop()
+        if loop.is_running():
+            # If in async loop, schedule or run in thread
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    what_if_simulate_async(
+                        scenario, target_area, parameters, baseline_data_ref, output_format
+                    )
+                )
+                return future.result()
+    except RuntimeError:
+        pass
 
-        rule = get_rule(scenario_type)
-        if not rule:
-            return _empty_result(scenario, target_area, scenario_type=scenario_type,
-                                  scenario_name="规则缺失",
-                                  uncertainty="无法计算影响：规则不存在")
-
-        impact = _calculate_impact(scenario_type, parameters)
-        metrics = _build_metrics(impact)
-
-        # Placeholder target center (Beijing)
-        target_center = [116.4, 39.9]
-        geojson = _generate_simulation_geojson(scenario_type, target_center, impact)
-
-        summary = _build_impact_summary(metrics, rule["name"], scenario_type, rule)
-
-        result = WhatIfSimulationResult(
-            type="what_if_simulation",
-            scenario=scenario,
-            target_area=target_area,
-            simulation_ref_id=uuid.uuid4().hex[:12],
-            impact_summary=summary,
-            metrics=metrics,
-            uncertainty="基于规则库的中点估计，实际影响可能因具体地段、市场条件而异",
-            rules_applied=[f"{scenario_type}: {rule['name']}"],
-            simulation_geojson=geojson,
+    return asyncio.run(
+        what_if_simulate_async(
+            scenario, target_area, parameters, baseline_data_ref, output_format
         )
+    )
 
-        return result.model_dump()
-    except (ValueError, TypeError, KeyError, RuntimeError) as e:
-        logger.error(f"[WhatIfSimulate] Failed: {e}")
-        return _empty_result(scenario, target_area, uncertainty=f"错误: {str(e)}").model_dump()
+    return asyncio.run(
+        what_if_simulate_async(
+            scenario, target_area, parameters, baseline_data_ref, output_format
+        )
+    )
 
 
 def register_what_if_simulate(registry: ToolRegistry):
@@ -336,18 +367,24 @@ def register_what_if_simulate(registry: ToolRegistry):
     @tool(
         registry,
         name="what_if_simulate",
-        description="What-if 场景模拟：基于规则库对城市规划、交通、人口等场景进行影响模拟，输出指标变化与模拟 GeoJSON。",
-        tier=3,  # 仅在用户显式触发 what-if / 情景 / 模拟时由 catalog 注入
+        description="What-if 场景模拟 V2：基于真实 GIS 空间数据、工程规则与 RAG 证据链，开展动态情景影响推演与指标变化计算。",
+        tier=3,
         domains=["what_if"],
         args_model=WhatIfArgs,
     )
-    def _what_if_simulate_wrapper(
+    async def _what_if_simulate_wrapper(
         scenario: str,
         target_area: str,
         parameters: dict = None,
         baseline_data_ref: str = "",
         output_format: str = "layer",
+        session_id: str = "",
     ) -> dict:
-        return what_if_simulate(
-            scenario, target_area, parameters, baseline_data_ref, output_format
+        # Forward the registry-injected session_id so the simulation result layer
+        # is actually persisted to the active SessionStore and the emitted ref_id
+        # resolves. Previously this was dropped, leaving a dangling ref:sim-... id
+        # and a false "Full GeoJSON stored in SessionStore cursor" note.
+        return await what_if_simulate_async(
+            scenario, target_area, parameters, baseline_data_ref, output_format,
+            session_id=session_id,
         )

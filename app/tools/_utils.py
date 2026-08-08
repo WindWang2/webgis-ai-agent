@@ -239,3 +239,51 @@ def _round_coords(coords: list, precision: int) -> list:
     if isinstance(coords, list):
         return [_round_coords(c, precision) for c in coords]
     return coords
+
+
+def _feature_collection_bbox(fc: dict, max_features: int = 5000) -> Optional[list]:
+    """Compute a GeoJSON bbox [west, south, east, north] for a FeatureCollection.
+
+    Scans at most ``max_features`` features (a safety cap for huge collections)
+    and returns ``None`` if no usable coordinates are found. Used by the
+    Fetch-on-Demand descriptors so the LLM gets the spatial extent without the
+    full geometry payload.
+    """
+    if not isinstance(fc, dict):
+        return None
+    feats = fc.get("features", []) or []
+    min_x = min_y = float("inf")
+    max_x = max_y = float("-inf")
+    found = False
+    for feat in feats[:max_features]:
+        if not isinstance(feat, dict):
+            continue
+        geom = feat.get("geometry")
+        if not isinstance(geom, dict):
+            continue
+        for x, y in _iter_coords(geom.get("coordinates")):
+            found = True
+            if x < min_x:
+                min_x = x
+            if x > max_x:
+                max_x = x
+            if y < min_y:
+                min_y = y
+            if y > max_y:
+                max_y = y
+    if not found:
+        return None
+    return [round(min_x, 6), round(min_y, 6), round(max_x, 6), round(max_y, 6)]
+
+
+def _iter_coords(coordinates):
+    """Yield (x, y) leaf positions from a nested GeoJSON coordinate array."""
+    if not isinstance(coordinates, list):
+        return
+    if coordinates and isinstance(coordinates[0], (int, float)):
+        # Leaf: [x, y] (or [x, y, z])
+        if len(coordinates) >= 2:
+            yield coordinates[0], coordinates[1]
+        return
+    for child in coordinates:
+        yield from _iter_coords(child)
