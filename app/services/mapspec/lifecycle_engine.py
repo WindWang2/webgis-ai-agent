@@ -89,6 +89,19 @@ class RollbackIntent:
     checkpoint_id: str
 
 
+@dataclass
+class SetTimeIntent:
+    enabled: Optional[bool] = None
+    field: Optional[str] = None
+    type: Optional[str] = None
+    extent: Optional[List[Any]] = None
+    current: Optional[Any] = None
+    window: Optional[Any] = None
+    playback: Optional[Dict[str, Any]] = None
+    step: Optional[float] = None
+    speed: Optional[float] = None
+
+
 MutationIntent = Union[
     InitProjectIntent,
     SetViewIntent,
@@ -97,6 +110,7 @@ MutationIntent = Union[
     SetLayoutIntent,
     CheckpointIntent,
     RollbackIntent,
+    SetTimeIntent,
 ]
 
 
@@ -224,7 +238,7 @@ class MapSpecLifecycleEngine:
                 elif isinstance(intent, RollbackIntent):
                     session_dir = self.store.get_session_dir(session_id)
                     rb_res = await rollback_checkpoint(
-                        session_dir, intent.checkpoint_id, session_data_manager
+                        session_dir, session_data_manager, intent.checkpoint_id
                     )
                     if not rb_res.get("success"):
                         return MapSpecResult(
@@ -232,6 +246,35 @@ class MapSpecLifecycleEngine:
                             error_msg=rb_res.get("message", "Rollback failed"),
                         )
                     mapspec = rb_res["mapspec"]
+
+                elif isinstance(intent, SetTimeIntent):
+                    time_cfg = mapspec.setdefault("time", {
+                        "enabled": True,
+                        "field": "timestamp",
+                        "type": "continuous",
+                        "extent": [],
+                        "current": None,
+                        "step": 1.0,
+                        "speed": 1.0,
+                    })
+                    if intent.enabled is not None:
+                        time_cfg["enabled"] = intent.enabled
+                    if intent.field is not None:
+                        time_cfg["field"] = intent.field
+                    if intent.type is not None:
+                        time_cfg["type"] = intent.type
+                    if intent.extent is not None:
+                        time_cfg["extent"] = intent.extent
+                    if intent.current is not None:
+                        time_cfg["current"] = intent.current
+                    if intent.window is not None:
+                        time_cfg["window"] = intent.window
+                    if intent.playback is not None:
+                        time_cfg.setdefault("playback", {}).update(intent.playback)
+                    if intent.step is not None:
+                        time_cfg["step"] = intent.step
+                    if intent.speed is not None:
+                        time_cfg["speed"] = intent.speed
 
                 # 3. Pre-compile 校验
                 validation = validate_mapspec(mapspec)

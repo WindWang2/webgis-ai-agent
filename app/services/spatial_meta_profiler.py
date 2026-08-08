@@ -77,9 +77,9 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
   bbox = geojson_bbox(data) if isinstance(data, dict) else None
 
   geom_types = sorted({
-      f.get("geometry", {}).get("type")
+      (f.get("geometry") or {}).get("type")
       for f in features
-      if isinstance(f, dict) and f.get("geometry", {}).get("type")
+      if isinstance(f, dict) and (f.get("geometry") or {}).get("type")
   })
 
   # Empty source → no bbox → no suggestedView. Previously this returned
@@ -140,6 +140,10 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
           "sampleValues": sample,
       }
 
+  # Temporal profiling
+  from app.services.temporal.profiler import profile_temporal_dataset
+  temporal_profile = profile_temporal_dataset(features)
+
   return {
       "bbox": bbox,
       "crs": "EPSG:4326",
@@ -147,4 +151,6 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
       "geometryTypes": geom_types,
       "fields": fields_profile,
       "suggestedView": suggested_view,
+      "temporalProfile": temporal_profile.model_dump() if temporal_profile.overall_confidence > 0 else None,
   }
+
