@@ -66,14 +66,29 @@ class ChatContextAssembler:
             list_refs = metadata.get("list_refs") or {}
             event_log = metadata.get("event_log") or []
             started_at = metadata.get("started_at")
+            env_summary = await build_map_state_summary(session_id)
 
-            env_summary = await build_map_state_summary(
-                session_id,
-                state=map_state,
-                inventory=list_refs,
-                event_log=event_log,
-                _fetched=True,
-            )
+            project_id = metadata.get("project_id")
+            if project_id:
+                try:
+                    from app.core.database import SessionLocal
+                    from app.services.project_service import ProjectService
+                    with SessionLocal() as db:
+                        proj = ProjectService.get_project_with_auth(db, project_id)
+                        if proj:
+                            datasets = ProjectService.list_project_datasets(db, project_id)
+                            wfs = ProjectService.list_project_workflows(db, project_id)
+                            project_block = (
+                                f"\n<active_project_workspace>\n"
+                                f"Project: {proj.name} (ID: {proj.id})\n"
+                                f"Datasets attached ({len(datasets)}): {', '.join([d.name for d in datasets[:5]])}\n"
+                                f"Workflows ({len(wfs)}): {', '.join([w.name for w in wfs[:5]])}\n"
+                                f"</active_project_workspace>"
+                            )
+                            env_summary += project_block
+                except Exception as ex:
+                    logger.warning(f"Failed to assemble project context block: {ex}")
+
             overview = await build_session_overview(
                 session_id,
                 messages,
