@@ -34,8 +34,17 @@ async def test_decision_engine_subway_scenario():
     assert "housing_price" in result.metrics
     hp_metric = result.metrics["housing_price"]
     assert hp_metric.simulated != 100.0 or hp_metric.baseline != 100.0  # Not hardcoded 100.0 default
-    assert hp_metric.range is not None
-    assert hp_metric.range.min_val <= hp_metric.simulated <= hp_metric.range.max_val
+    # GIS-03 (deep-audit): no fabricated values. If the metric has no real
+    # baseline it is honestly unsimulated (None fields + gap note); otherwise
+    # the uncertainty range must contain the simulated value.
+    if hp_metric.missing_baseline:
+        assert hp_metric.baseline is None
+        assert hp_metric.simulated is None
+        assert hp_metric.delta_pct is None
+        assert hp_metric.evidence_gap_note is not None
+    else:
+        assert hp_metric.range is not None
+        assert hp_metric.range.min_val <= hp_metric.simulated <= hp_metric.range.max_val
 
     # Check spatial impact zones (direct & indirect)
     assert len(result.spatial_impacts) >= 1

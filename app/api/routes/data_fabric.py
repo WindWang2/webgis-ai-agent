@@ -22,6 +22,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+_ANONYMOUS_USER_IDS = {"anonymous", "anon"}
+
+
+def _real_user_id(user: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Extract a real user id from the auth dependency result.
+
+    ``get_current_user_optional`` returns ``{"user_id": "anonymous"}`` for
+    unauthenticated requests, NOT None — treating "anonymous" as a real owner
+    id breaks FK constraints (no users row with id='anonymous') and silently
+    scopes rows to a fake owner. Normalize sentinel ids to None here.
+    """
+    if not user:
+        return None
+    uid = user.get("user_id") or user.get("id") or user.get("sub")
+    if uid is None or str(uid) in _ANONYMOUS_USER_IDS:
+        return None
+    return str(uid)
+
+
 def _tenant_filter(query, user: Optional[Dict[str, Any]]):
     """Apply org_id tenant scoping to a DataSourceModel query (SEC-03/DATA-02).
 
@@ -31,18 +50,18 @@ def _tenant_filter(query, user: Optional[Dict[str, Any]]):
     owner-less rows (legacy/global sources); authenticated callers are scoped to their
     org. Private endpoints remain allow-listed server-side only (SEC-01).
     """
-    if user is None:
+    if user is None or _real_user_id(user) is None:
         # Anonymous callers may only see truly global (un-owned) sources.
         return query.filter(DataSourceModel.org_id.is_(None))
     org_id = user.get("org_id")
     if org_id is not None:
         return query.filter(DataSourceModel.org_id == org_id)
-    user_id = user.get("user_id") or user.get("id") or user.get("sub")
+    user_id = _real_user_id(user)
     if user_id is not None:
         # Authenticated user with no org: see their own + global sources.
         from sqlalchemy import or_
         return query.filter(
-            or_(DataSourceModel.owner_id == str(user_id), DataSourceModel.org_id.is_(None))
+            or_(DataSourceModel.owner_id == user_id, DataSourceModel.org_id.is_(None))
         )
     return query.filter(DataSourceModel.org_id.is_(None))
 
@@ -54,14 +73,14 @@ def _require_tenant_owned(s: Optional[DataSourceModel], user: Optional[Dict[str,
     """
     if s is None:
         raise HTTPException(status_code=404, detail="Data source not found")
-    if user is None:
+    if user is None or _real_user_id(user) is None:
         if s.org_id is not None:
             raise HTTPException(status_code=404, detail="Data source not found")
         return s
     org_id = user.get("org_id")
+    user_id = _real_user_id(user)
     if org_id is not None and s.org_id != org_id:
-        user_id = user.get("user_id") or user.get("id") or user.get("sub")
-        if s.owner_id is None or (user_id is not None and s.owner_id != str(user_id)):
+        if s.owner_id is None or (user_id is not None and s.owner_id != user_id):
             raise HTTPException(status_code=404, detail="Data source not found")
     return s
 
@@ -92,7 +111,10 @@ async def create_data_source(
         # metadata blocking — a privilege escalation. Private endpoints must be
         # allow-listed server-side, never via the public request body.
         org_id = user.get("org_id") if user else None
-        user_id = (user.get("user_id") or user.get("id") or user.get("sub")) if user else None
+        # "anonymous" is the sentinel returned by get_current_user_optional for
+        # unauthenticated requests — never persist it as an owner_id (no users
+        # row with that id → FK violation on Postgres).
+        user_id = _real_user_id(user)
         source = data_fabric_manager.create_data_source(
             db=db,
             name=req.name,
@@ -101,7 +123,7 @@ async def create_data_source(
             profile_options=req.options,
             allow_private=False,
             org_id=org_id,
-            owner_id=str(user_id) if user_id is not None else None,
+            owner_id=user_id,
         )
         return {
             "success": True,

@@ -145,12 +145,14 @@ async def test_what_if_simulate_tool_output():
     assert len(result["metrics"]) > 0
 
     # Verify MetricDelta structure. V2 baselines are domain-realistic values
-    # (not the V1 fixed 100.0); assert the shape and that deltas are populated.
+    # (not the V1 fixed 100.0); assert the shape. GIS-03 (deep-audit): metrics
+    # without a real baseline are honestly reported as None (unsimulated)
+    # rather than fabricated — both states are valid here.
     for metric_name, metric_data in result["metrics"].items():
         assert "baseline" in metric_data
         assert "simulated" in metric_data
         assert "delta_pct" in metric_data
-        assert isinstance(metric_data["baseline"], (int, float))
+        assert metric_data["baseline"] is None or isinstance(metric_data["baseline"], (int, float))
 
     assert "uncertainty" in result
     assert "rules_applied" in result

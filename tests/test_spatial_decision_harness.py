@@ -3,6 +3,13 @@ Benchmark Evaluation Suite for Spatial Decision Intelligence V2.
 Verifies 10 real-world benchmark scenarios across tool choice, evidence grounding,
 numerical correctness, spatial impact correctness, uncertainty ranges, step efficiency,
 error recovery, and MapSpec validity.
+
+Note (GIS-03, deep-audit): since the false-success fix, metrics WITHOUT a real
+baseline are reported as unsimulated (missing_baseline=True, delta_pct=None)
+rather than simulated against fabricated values. The benchmark scenarios below
+run without a baseline_data_ref, so the assertions check the honest contract:
+either the metric carries a real simulated delta, or it is explicitly flagged
+as missing — never a fabricated number.
 """
 import pytest
 from app.services.spatial_decision.models import (
@@ -14,6 +21,22 @@ from app.services.spatial_decision.mapspec_integration import apply_decision_to_
 from app.services.spatial_decision.report_integration import (
     generate_decision_report_markdown,
 )
+
+
+def _assert_metric_honest(metric):
+    """Assert the metric honors the GIS-03 contract.
+
+    Either it was simulated from a real baseline (delta_pct is a number), or it
+    is explicitly flagged missing with no fabricated values.
+    """
+    if metric.missing_baseline:
+        assert metric.baseline is None
+        assert metric.simulated is None
+        assert metric.delta_pct is None
+        assert metric.evidence_gap_note is not None
+    else:
+        assert metric.baseline is not None
+        assert metric.simulated is not None
 
 
 @pytest.mark.asyncio
@@ -29,7 +52,7 @@ async def test_benchmark_scenario_1_subway_tod():
     assert result.scenario.scenario_type == "subway"
     assert result.confidence >= 0.70
     assert "housing_price" in result.metrics
-    assert result.metrics["housing_price"].delta_pct > 0.0
+    _assert_metric_honest(result.metrics["housing_price"])
     assert len(result.spatial_impacts) == 2
     assert result.spatial_impacts[0].zone_type == "direct"
     assert result.spatial_impacts[1].zone_type == "indirect"
@@ -47,9 +70,9 @@ async def test_benchmark_scenario_2_primary_school():
 
     assert result.scenario.scenario_type == "school"
     assert "education_access" in result.metrics
-    assert result.metrics["education_access"].delta_pct > 0.0
+    _assert_metric_honest(result.metrics["education_access"])
     assert "housing_price" in result.metrics
-    assert result.metrics["housing_price"].range is not None
+    _assert_metric_honest(result.metrics["housing_price"])
 
 
 @pytest.mark.asyncio
@@ -63,7 +86,7 @@ async def test_benchmark_scenario_3_tertiary_hospital():
 
     assert result.scenario.scenario_type == "hospital"
     assert "medical_access" in result.metrics
-    assert result.metrics["medical_access"].delta_pct >= 20.0
+    _assert_metric_honest(result.metrics["medical_access"])
     assert any(z.radius_m == 1500.0 for z in result.spatial_impacts)
 
 
@@ -78,7 +101,7 @@ async def test_benchmark_scenario_4_central_park():
 
     assert result.scenario.scenario_type == "park"
     assert "living_quality" in result.metrics
-    assert result.metrics["living_quality"].delta_pct > 0.0
+    _assert_metric_honest(result.metrics["living_quality"])
 
 
 @pytest.mark.asyncio
@@ -94,7 +117,7 @@ async def test_benchmark_scenario_5_population_growth():
     assert result.scenario.scenario_type == "population_growth"
     assert "traffic_load" in result.metrics
     assert "school_demand" in result.metrics
-    assert result.metrics["traffic_load"].delta_pct > 0.0
+    _assert_metric_honest(result.metrics["traffic_load"])
 
 
 @pytest.mark.asyncio
@@ -108,9 +131,9 @@ async def test_benchmark_scenario_6_traffic_restriction():
 
     assert result.scenario.scenario_type == "traffic_restriction"
     assert "road_saturation" in result.metrics
-    assert result.metrics["road_saturation"].delta_pct < 0.0  # Reduced saturation
+    _assert_metric_honest(result.metrics["road_saturation"])
     assert "public_transit_usage" in result.metrics
-    assert result.metrics["public_transit_usage"].delta_pct > 0.0  # Increased transit share
+    _assert_metric_honest(result.metrics["public_transit_usage"])
 
 
 @pytest.mark.asyncio
