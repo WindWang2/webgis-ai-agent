@@ -175,4 +175,35 @@ All new and existing relevant suites green at commit time:
 - Perf: `test_perf_optimizations.py` (6), `test_perf_harness.py` (11 workloads), `test_network_analyst.py`, `test_spatial_analyzer_module.py`.
 - Frontend: 481 tests pass, typecheck clean.
 
-(Final full-suite numbers and any CI-flagged items are in the PR description.)
+## 7b. CI loop learnings (PR #319)
+
+The CI loop surfaced real issues that local runs could not see; all fixed and the PR is green:
+
+1. **Perf harness under `--cov` is meaningless.** Coverage tracing slows pure-Python
+   hot paths 2-4× (h3_binning_10k: 173.9 ms under `--cov` vs 40 ms no-cov on the same
+   box), tripping the 4× gate. The Backend Tests job now runs `-m "not perf"`; a new
+   `test-perf` job (Performance Regression Gate) runs the harness alone with `--no-cov`.
+   The perf gate requires `pytest-cov` installed (pytest.ini addopts declares `--cov`),
+   and the harness must `mkdir` the gitignored `data/` scratch dir on fresh checkouts.
+2. **The GIS-03 honest-metric contract broke 8 tests** whose assertions assumed
+   fabricated baselines (numeric `delta_pct`/`range` on missing-baseline metrics):
+   `test_spatial_decision_harness.py` (6), `test_what_if_simulate.py`,
+   `test_decision_engine.py`. Assertions now verify either a real simulated value OR
+   the explicit missing-baseline state — never a fabricated number.
+3. **`get_current_user_optional` returns `{"user_id": "anonymous"}`** (not None) for
+   unauthenticated requests; persisting that sentinel as `owner_id` violated the
+   `users` FK on Postgres CI (SQLite locally was lenient). `_real_user_id()`
+   normalizes the sentinel to None in the Data Fabric tenant-scoping helpers.
+4. **Pre-existing ruff failures** (F821 `ToolExecutionPolicy` unimported in 3 tool
+   modules; F401/F841 in the v2 perf harness) blocked the required Code Quality gate;
+   fixed (they were latent on master, surfaced by any new PR).
+5. **Benchmark noise on a loaded machine:** the dev box peaked at load 22 (ZCode
+   AppImage + clang builds), inflating all workloads 2-5×. Baselines for the 3 new
+   CPU-bound workloads get `floor_ms ≈ baseline × 3.5-4.0` so warn-band fires only
+   for near-hard-fail regressions; the 4× hard gate remains authoritative. Floors
+   should be tightened once CI baselines settle (CI runner measured h3_binning at
+   173.9 ms under coverage ≈ 60-90 ms no-cov, vs 40 ms locally).
+
+Final CI state (PR #319): all 4 required checks green (Backend Tests, Frontend Tests,
+Code Quality Check, Security Scan) plus the Performance Regression Gate; Docker build
+and deploy-preview jobs are optional and not merge-blocking.
