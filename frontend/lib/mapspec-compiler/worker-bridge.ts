@@ -1,5 +1,5 @@
 import { diffSpecs, SpecPatch } from "./reconciler";
-import type { MapSpec } from "./types";
+import type { GeoJSONMapSpecSource, MapSpec, MapSpecSource } from "./types";
 
 /**
  * WorkerReconcilerBridge — offload `diffSpecs` to a Web Worker so large-spec
@@ -43,6 +43,17 @@ let activeRequestsCount = 0;
 export const DIFF_WORKER_TIMEOUT_MS = 30_000;
 
 /**
+ * FE-01: how long the worker is kept warm after the last in-flight diff
+ * settles. Reconciles serialize (reconcileTail in runtime.ts), so the active
+ * request count almost always returns to 0 between two reconciles. Terminating
+ * at 0 made the next reconcile pay the full module-worker boot cost. The idle
+ * timeout keeps the worker warm across the typical reconcile gap; only an
+ * explicit `disposeWorker()` (called from MapSpecRuntime.dispose) tears it down
+ * immediately. Exported so tests can advance fake timers by exactly one window.
+ */
+export const DIFF_WORKER_IDLE_MS = 10_000;
+
+/**
  * The no-op patch shape: "nothing to apply", identical to what `diffSpecs`
  * produces for identical specs.
  */
@@ -50,12 +61,167 @@ const EMPTY_PATCH: SpecPatch = { sources: [], layers: [] };
 
 /**
  * Test-only: drop the cached worker so the next call re-evaluates the
- * environment (e.g. to exercise the fallback path after a worker test).
+ * environment (e.g. to exercise the fallback path after a worker test). Also
+ * cancels any pending idle-termination timer and clears the inlineData
+ * identity cache so tests start from a clean slate.
  */
 export function _resetWorkerBridgeForTests(): void {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
+  if (sharedWorker) {
+    try { sharedWorker.terminate(); } catch { /* already gone */ }
+  }
   sharedWorker = null;
   nextRequestId = 0;
   activeRequestsCount = 0;
+  inlineTokenCache = new WeakMap();
+  lastInlineDataBySource = new Map();
+}
+
+// ── FE-02: inline GeoJSON stripping ────────────────────────────────────────
+//
+// postMessage clones its payload via structured clone. Inline GeoJSON
+// FeatureCollections (large POI layers) were crossing that boundary twice per
+// reconcile — as `prev` and as `next` — even though `diffSpecs` only needs to
+// compare data IDENTITY, not contents. We strip `inlineData` to a stable
+// identity token before posting; the worker's deep-equality check then runs on
+// a tiny token instead of megabytes of coordinates.
+//
+// Identity contract (must match diffSpecs' previous behavior):
+//  - same object reference as a previously-seen payload → same token (the
+//    common case: hudStateToMapSpec reuses `layer.source` by reference across
+//    reconciles, so unchanged layers diff to "no change").
+//  - a new object that is deep-equal to the last payload for that source →
+//    reuse the last token (preserves the prior "no change" outcome).
+//  - otherwise → a fresh token (a real data change → "update").
+//
+// The patch returned by the worker carries the STRIPPED source objects in
+// `next`; `rehydratePatch` maps them back to the original (unstripped) source
+// from the `next` spec the caller passed in, so MapSpecRuntime.applySource
+// still sees the real `inlineData`.
+
+let inlineTokenSeq = 0;
+let inlineTokenCache: WeakMap<object, number> = new WeakMap();
+// Per source id: the last inlineData object + the token assigned to it, so a
+// new-but-equal payload can reuse the same token (deep-equal fallback).
+let lastInlineDataBySource: Map<string, { data: object; token: number }> = new Map();
+
+/**
+ * Return a stable identity token for an inlineData payload. Two payloads that
+ * should be considered "the same data" yield the same number.
+ */
+function inlineIdentityToken(sourceId: string, data: object): number {
+  // 1. Same reference → cached token (fast path; the overwhelmingly common
+  //    case because the adapter reuses `layer.source` by reference).
+  const cached = inlineTokenCache.get(data);
+  if (cached !== undefined) return cached;
+
+  // 2. New reference — is it deep-equal to the last payload for this source?
+  //    If so, reuse the existing token so the diff still reports "no change".
+  const last = lastInlineDataBySource.get(sourceId);
+  if (last && isDeepEqualInline(last.data, data)) {
+    inlineTokenCache.set(data, last.token);
+    return last.token;
+  }
+
+  // 3. Genuinely new data → fresh monotonic token.
+  const token = ++inlineTokenSeq;
+  inlineTokenCache.set(data, token);
+  lastInlineDataBySource.set(sourceId, { data, token });
+  return token;
+}
+
+/**
+ * Shallow-ish deep equality for the identity fallback. Mirrors the subset of
+ * `reconciler.isDeepEqual` behavior that matters for FeatureCollections
+ * (recurses, handles arrays + plain objects). Kept local so this module stays
+ * dependency-free; the fallback only runs on a new reference per changed
+ * source, so its cost is negligible versus the structured-clone savings.
+ */
+function isDeepEqualInline(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!isDeepEqualInline(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  const oa = a as Record<string, unknown>;
+  const ob = b as Record<string, unknown>;
+  const ka = Object.keys(oa);
+  const kb = Object.keys(ob);
+  if (ka.length !== kb.length) return false;
+  for (const k of ka) {
+    if (!Object.prototype.hasOwnProperty.call(ob, k)) return false;
+    if (!isDeepEqualInline(oa[k], ob[k])) return false;
+  }
+  return true;
+}
+
+/**
+ * Produce a copy of `spec` whose geojson sources carry only an identity token
+ * in place of `inlineData`. Non-inline sources and all layers pass through
+ * untouched. Returns the original spec reference when it has no inline data
+ * (avoids an allocation in the common no-inline case).
+ */
+function stripInlineForTransfer(spec: MapSpec | null): MapSpec | null {
+  if (!spec) return null;
+  const sources = spec.sources;
+  if (!sources) return spec;
+  const ids = Object.keys(sources);
+  let anyInline = false;
+  for (const id of ids) {
+    const s = sources[id];
+    if (s && (s as GeoJSONMapSpecSource).type === "geojson" && (s as GeoJSONMapSpecSource).inlineData) {
+      anyInline = true;
+      break;
+    }
+  }
+  if (!anyInline) return spec;
+
+  // Shallow-clone the spec + sources map; only the inline-bearing source
+  // entries are replaced (everything else is shared by reference).
+  const strippedSources: Record<string, MapSpecSource> = { ...sources };
+  for (const id of ids) {
+    const s = sources[id];
+    const geo = s as GeoJSONMapSpecSource;
+    if (geo.type === "geojson" && geo.inlineData && typeof geo.inlineData === "object") {
+      const token = inlineIdentityToken(id, geo.inlineData as object);
+      strippedSources[id] = {
+        type: "geojson",
+        ...(geo.dataPath !== undefined ? { dataPath: geo.dataPath } : {}),
+        ...(geo.url !== undefined ? { url: geo.url } : {}),
+        inlineData: { __inlineToken: token } as any,
+      } as MapSpecSource;
+    }
+  }
+  return { ...spec, sources: strippedSources };
+}
+
+/**
+ * Map stripped source objects in a worker-produced patch back to the real
+ * (unstripped) source definition from `fullSpec`. Without this, the runtime's
+ * `applySource` would receive `{ inlineData: { __inlineToken: N } }` and try
+ * to add an empty GeoJSON source.
+ */
+function rehydratePatch(patch: SpecPatch, prevFull: MapSpec | null, nextFull: MapSpec): SpecPatch {
+  if (patch.sources.length === 0) return patch;
+  const nextSources = nextFull.sources || {};
+  const prevSources = prevFull?.sources || {};
+  const rehydrated = patch.sources.map((change) => {
+    if (change.kind === "remove" || !change.next) return change;
+    const original = (change.id in nextSources)
+      ? nextSources[change.id]
+      : prevSources[change.id];
+    if (!original) return change;
+    return { ...change, next: original };
+  });
+  return { ...patch, sources: rehydrated };
 }
 
 function createWorker(): Worker | null {
@@ -72,10 +238,60 @@ function createWorker(): Worker | null {
   }
 }
 
+// FE-01: pending idle-termination handle. Set when activeRequestsCount returns
+// to 0; cleared (and re-armed) whenever a new request starts or disposeWorker
+// runs. Keeping the worker warm across the gap between two serialized
+// reconciles avoids re-booting the module worker on every spec change.
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * FE-01: schedule the worker to terminate after DIFF_WORKER_IDLE_MS of
+ * inactivity. Cancels any previously-armed idle timer first.
+ */
+function scheduleIdleTermination(worker: Worker): void {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
+  idleTimer = setTimeout(() => {
+    idleTimer = null;
+    // Only terminate if this is still the active worker (disposeWorker or a
+    // test reset may have already torn it down).
+    if (sharedWorker === worker) {
+      try { worker.terminate(); } catch { /* already gone */ }
+      sharedWorker = null;
+    }
+  }, DIFF_WORKER_IDLE_MS);
+}
+
+/**
+ * FE-01: explicitly tear down the shared worker immediately. Called from
+ * MapSpecRuntime.dispose() so an unmounting map doesn't leak a warm worker.
+ * Cancels the idle timer. Safe to call when no worker exists.
+ */
+export function disposeWorker(): void {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
+  if (sharedWorker) {
+    try { sharedWorker.terminate(); } catch { /* already gone */ }
+    sharedWorker = null;
+  }
+}
+
 /**
  * Diff two specs, off the main thread when a Worker is available.
  * Resolves with the SpecPatch (or an empty patch on worker error — the caller
  * treats that as "nothing to apply", same as diffSpecs' no-op contract).
+ *
+ * FE-01: the worker is kept warm (see DIFF_WORKER_IDLE_MS) instead of being
+ * terminated the moment the active request count hits 0, so two back-to-back
+ * reconciles don't each pay the module-worker boot cost.
+ *
+ * FE-02: inline GeoJSON is stripped to an identity token before posting (see
+ * stripInlineForTransfer); the returned patch is rehydrated so callers still
+ * receive the real source definitions.
  */
 export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<SpecPatch> {
   const worker = createWorker();
@@ -83,6 +299,12 @@ export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<Spe
     return Promise.resolve(diffSpecs(prev, next));
   }
 
+  // Starting a new request cancels any pending idle termination (the worker is
+  // about to be busy again) and re-arms it only when this request settles.
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
   activeRequestsCount++;
 
   return new Promise<SpecPatch>((resolve) => {
@@ -91,8 +313,9 @@ export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<Spe
     let settled = false;
 
     /**
-     * Settle the request exactly once. Decrement active requests count;
-     * terminate the worker only when no requests are pending.
+     * Settle the request exactly once. Decrement the active request count;
+     * arm the idle-termination timer when none remain (FE-01) instead of
+     * terminating immediately.
      */
     const finish = (patch: SpecPatch) => {
       if (settled) return;
@@ -103,11 +326,10 @@ export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<Spe
       worker.onmessageerror = null;
       workerWithOnexit.onexit = null;
       activeRequestsCount = Math.max(0, activeRequestsCount - 1);
-      if (activeRequestsCount === 0) {
-        worker.terminate();
-        sharedWorker = null;
+      if (activeRequestsCount === 0 && sharedWorker === worker) {
+        scheduleIdleTermination(worker);
       }
-      resolve(patch);
+      resolve(rehydratePatch(patch, prev, next));
     };
 
     const onMessage = (event: MessageEvent<DiffResponse>) => {
@@ -136,7 +358,14 @@ export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<Spe
     // before `finish` can run.
     const timer = setTimeout(() => finish(EMPTY_PATCH), DIFF_WORKER_TIMEOUT_MS);
 
-    const request: DiffRequest = { id, prev, next };
+    // FE-02: post a stripped copy (inline GeoJSON → identity token). Keep the
+    // full `prev`/`next` references for rehydrating the response patch.
+    const strippedNext = stripInlineForTransfer(next) as MapSpec;
+    const request: DiffRequest = {
+      id,
+      prev: stripInlineForTransfer(prev),
+      next: strippedNext,
+    };
     worker.postMessage(request);
   });
 }
