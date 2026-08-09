@@ -11,7 +11,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
-from app.models.db_model import Organization, User
+from app.models.db_model import Organization
 from app.models.project import Project, Artifact
 from app.services.lineage_service import LineageService
 

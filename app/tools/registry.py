@@ -266,7 +266,6 @@ class ToolRegistry:
         内 ContextVar 自动跨 await 边界传播，无需 copy_context()。
         """
         import time as _time
-        import json as _json
 
         from app.services import tool_metrics
         from app.lib.tool_cache import cache_hit_var

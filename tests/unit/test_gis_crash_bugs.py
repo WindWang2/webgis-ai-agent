@@ -5,8 +5,6 @@ These are P0 correctness bugs where invalid / empty inputs crashed instead of
 returning the intended structured failure result, or where a None crs reached
 .upper() in the quality auditor.
 """
-import pytest
-
 from app.lib.geo_analysis.statistics import cluster_narrated
 from app.lib.geo_analysis.network import calculate_isochrones
 from app.lib.geo_analysis.aggregation import spatial_aggregate

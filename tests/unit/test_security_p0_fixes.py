@@ -6,7 +6,6 @@ Covers:
 - SEC-02: ``checkpoint_id`` path traversal — snapshot/rollback reject unsafe ids.
 - SEC-05: ``web_crawler`` untrusted-content fence must not be forgeable.
 """
-import asyncio
 import inspect
 
 import pytest

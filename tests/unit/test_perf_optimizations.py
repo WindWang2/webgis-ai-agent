@@ -8,10 +8,8 @@ These guard the perf fixes against silent regressions:
 - PERF-03: RoutingService._apply_barriers skips graph.copy() when no barriers.
 """
 import json
-import time
 
 import networkx as nx
-import pytest
 
 from app.services.network.models import NetworkDataset, Node, Edge
 from app.services.network.snapping import PointSnappingService
