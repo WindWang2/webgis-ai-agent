@@ -169,7 +169,10 @@ jobs:
 
       - name: Install Dependencies
         # 只装 harness 需要的依赖（无需 Postgres/Redis service containers）。
-        run: pip install -r requirements.txt pytest pytest-timeout
+        # pytest-cov 必须安装：pytest.ini 的 addopts 声明了 --cov=app，缺它则
+        # 整个 pytest 启动直接报 "unrecognized arguments: --cov"。--no-cov 在
+        # 命令行覆盖 addopts，确保 harness 在无覆盖率下运行。
+        run: pip install -r requirements.txt pytest pytest-timeout pytest-cov
 
       - name: Run Performance Harness (no coverage)
         # 性能门控：在无 coverage 干扰的环境下跑确定性 harness（11 workloads，
