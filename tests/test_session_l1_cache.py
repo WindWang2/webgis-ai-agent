@@ -99,6 +99,47 @@ async def test_metadata_l1_hit_then_invalidate():
 
 
 @pytest.mark.asyncio
+async def test_store_invalidates_metadata_l1():
+    """RUN-06: store() must invalidate the metadata L1 bundle.
+
+    get_session_metadata caches list_refs + event_log under the "metadata" key
+    (2s TTL). If store() doesn't invalidate it, a freshly-stored ref is invisible
+    to the next round for up to 2s — the cached bundle still has the old list_refs.
+    """
+    store = _store()
+    await store.get_session_metadata("s1")  # populate L1 (empty list_refs)
+    assert ("s1", "metadata") in store._l1
+
+    ref = await store.store("s1", {"x": 1})
+    # store() must drop the stale metadata bundle so the next read refetches
+    assert ("s1", "metadata") not in store._l1
+
+    meta = await store.get_session_metadata("s1")
+    # New ref visible immediately, WITHOUT waiting out the 2s TTL.
+    assert ref in meta["list_refs"]
+
+
+@pytest.mark.asyncio
+async def test_append_event_invalidates_metadata_l1():
+    """RUN-06: append_event() must invalidate the metadata L1 bundle.
+
+    The metadata bundle includes event_log; a cached copy hides newly-appended
+    events from the next round for up to 2s.
+    """
+    store = _store()
+    await store.get_session_metadata("s1")  # populate L1 (empty event_log)
+    assert ("s1", "metadata") in store._l1
+
+    await store.append_event("s1", "tool_executed", {"tool": "buffer_analysis"})
+    assert ("s1", "metadata") not in store._l1
+
+    meta = await store.get_session_metadata("s1")
+    # New event visible immediately, WITHOUT waiting out the 2s TTL.
+    assert len(meta["event_log"]) == 1
+    assert meta["event_log"][0]["data"]["tool"] == "buffer_analysis"
+
+
+@pytest.mark.asyncio
 async def test_l1_expires_after_ttl(monkeypatch):
     store = _store()
     await store.set_map_state("s1", "v", 1)

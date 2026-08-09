@@ -239,6 +239,11 @@ class RedisSessionStore(BaseSessionStore):
                 session_id, prefix, e,
             )
             return f"ref:redis-unavailable-{uuid.uuid4().hex[:16]}"
+        # RUN-06: a new ref must be visible to the next get_session_metadata /
+        # list_refs round within the same chat turn. The metadata L1 bundle
+        # caches list_refs + event_log (2s TTL); drop it so we don't serve the
+        # stale bundle. (set_map_state/update_layer/remove_layer already do this.)
+        self._l1_invalidate_session(session_id)
         return ref_id
 
     async def overwrite(self, session_id: str, ref_id: str, data: Any) -> bool:
@@ -540,6 +545,12 @@ class RedisSessionStore(BaseSessionStore):
                 "Redis append_event failed for session %s event %s: %s — event dropped",
                 session_id, event, e,
             )
+            return
+        # RUN-06: a newly-appended event must be visible to the next
+        # get_session_metadata round within the same chat turn. The metadata L1
+        # bundle caches event_log (2s TTL); drop it so we don't serve a stale
+        # bundle missing this event.
+        self._l1_invalidate_session(session_id)
 
     async def get_event_log(self, session_id: str) -> list[dict]:
         await self._ensure_connected()

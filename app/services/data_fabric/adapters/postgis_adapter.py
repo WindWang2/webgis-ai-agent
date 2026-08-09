@@ -127,17 +127,38 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             )
 
     def _release_connection(self, conn: Any) -> None:
-        """Release connection back to pool or close direct connection."""
+        """Release connection back to pool or close direct connection.
+
+        DATA-04: ``pool.putconn`` failures must NOT be swallowed silently. If
+        putconn raises, the pool's internal bookkeeping is already
+        inconsistent, so we explicitly ``conn.close()`` to reclaim the
+        underlying socket/slot (otherwise the dangling connection drifts the
+        pool toward maxconn exhaustion) and log the failure at WARNING so it
+        is observable.
+        """
         if not conn:
             return
+        # _is_pooled is set by _get_connection on connections handed out by the
+        # pool; honor it so pooled conns go back through putconn and direct
+        # conns are simply closed.
         if getattr(conn, "_is_pooled", False):
             pool = _get_or_create_postgis_pool(self.host, self.port or 5432, self.database, self.username, self.password)
             if pool:
                 try:
                     pool.putconn(conn)
                     return
-                except Exception:
-                    pass
+                except Exception as pe:
+                    logger.warning(
+                        f"[PostGISAdapter] pool.putconn failed ({pe}); "
+                        "closing connection to reclaim the pool slot"
+                    )
+                    # Explicit reclaim: putconn could not return it, so close it
+                    # ourselves rather than leaking the open connection.
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    return
         try:
             conn.close()
         except Exception:
