@@ -99,8 +99,10 @@ def spatial_aggregate(
         # Use geo_processor for pre-processing (alignment)
         res_points = to_utm_gdf(points_geojson)
         res_polys = to_utm_gdf(polygons_geojson)
-        
-        if not res_points or not res_polys:
+
+        # GIS-13: to_utm_gdf returns (None, None) on failure but a non-empty
+        # tuple is always truthy, so `if not res_*` never fired. See network.py.
+        if res_points is None or res_points[0] is None or res_polys is None or res_polys[0] is None:
             return GeoAnalysisResult(False, None, "Invalid input GeoJSON")
             
         points, utm_crs = res_points

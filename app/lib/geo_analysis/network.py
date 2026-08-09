@@ -16,8 +16,12 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
         # Use geo_processor for pre-processing
         res_net = to_utm_gdf(network_geojson)
         res_fac = to_utm_gdf(facility_points)
-        
-        if not res_net or not res_fac:
+
+        # GIS-13: to_utm_gdf returns (None, None) on failure. A non-empty tuple
+        # is always truthy, so `if not res_net` never fires — unpacking then
+        # crashed on the next .iterrows()/.geometry access. Match density.py /
+        # geometry_ops.py's `if result is None` pattern.
+        if res_net is None or res_net[0] is None or res_fac is None or res_fac[0] is None:
             return GeoAnalysisResult(False, None, "Invalid input GeoJSON")
             
         gdf_network, utm_crs = res_net

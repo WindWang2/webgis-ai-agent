@@ -76,7 +76,16 @@ class SpatialQualityEngine:
         # Dimension 3: CRS Checks
         # ----------------------------------------------------
         geojson_crs = geojson_data.get("crs")
-        if not geojson_crs and (not crs or crs.upper() in ["UNKNOWN", "MISSING"]):
+        # GIS-15: if the caller passed crs=None but the GeoJSON carries a `crs`
+        # member, fall back to that before any .upper() call. The GeoJSON spec
+        # default when no crs is declared anywhere is EPSG:4326.
+        if not crs:
+            if isinstance(geojson_crs, dict):
+                props = geojson_crs.get("properties") or {}
+                crs = props.get("name") or props.get("code") or "EPSG:4326"
+            else:
+                crs = "EPSG:4326"
+        if not geojson_crs and crs.upper() in ["UNKNOWN", "MISSING"]:
             issues.append(
                 QualityIssue(
                     dimension="crs",
@@ -87,7 +96,7 @@ class SpatialQualityEngine:
             )
             crs = "EPSG:4326"
 
-        is_geographic = crs.upper() in ["EPSG:4326", "WGS84", "CRS84"]
+        is_geographic = crs.upper() in ["EPSG:4326", "WGS84", "CRS84", "EPSG:4490"]
         if is_geographic:
             issues.append(
                 QualityIssue(
