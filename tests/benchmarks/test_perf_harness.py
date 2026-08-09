@@ -41,6 +41,13 @@ from app.tools.registry import ToolRegistry
 BASELINES_PATH = Path(__file__).parent / "baselines.json"
 UPDATE_BASELINES = os.environ.get("PERF_UPDATE_BASELINES") == "1"
 
+# The raster workloads write temp .tif files under <repo>/data/. That dir is
+# gitignored and does not exist on a fresh CI checkout (the main Backend Tests
+# job creates it via fixtures; the isolated perf gate job does not). Ensure it
+# exists once at import so rasterio.open("w", ...) works in both environments.
+_PERF_DATA_DIR = Path(__file__).parent.parent.parent / "data"
+_PERF_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
 # Regression gates: measured <= max(floor_ms, baseline * factor)
 WARN_FACTOR = 1.75
 FAIL_FACTOR = 4.0
