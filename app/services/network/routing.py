@@ -189,9 +189,12 @@ class NetworkRoutingService:
 
     def _apply_barriers(self, graph: nx.DiGraph, barriers: Optional[List[Barrier]]) -> nx.DiGraph:
         """Applies barriers to a graph copy, removing or penalizing blocked edges."""
-        graph_copy = graph.copy()
+        # PERF-03: the common case (no barriers) previously paid a full graph
+        # deep-copy (nodes + per-edge geometry dicts) per routing call. Return
+        # the original graph directly when there is nothing to apply.
         if not barriers:
-            return graph_copy
+            return graph
+        graph_copy = graph.copy()
 
         for barrier in barriers:
             b_geom = shape(barrier.geometry)

@@ -35,6 +35,53 @@ VALID_GEOMETRY_TYPES = {
 VALID_GEOJSON_TYPES = VALID_GEOMETRY_TYPES | {"Feature", "FeatureCollection"}
 
 
+def _estimate_json_bytes(obj: Any, _depth: int = 0) -> int:
+    """Cheap structural estimate of the JSON byte length of ``obj``.
+
+    PERF-01: ``json.dumps`` of a large tool result (e.g. a 10k-feature
+    GeoJSON FeatureCollection) just to record a byte metric duplicates the
+    serialization the dispatch path already performs. This walker estimates
+    the serialized size without materializing the full string — accurate to
+    within a few percent for typical JSON and bounded by ``_depth`` to avoid
+    pathological cycles. Used only for metrics; never for correctness.
+    """
+    if _depth > 12:
+        return 64  # deep nested: stop walking, small placeholder
+    if obj is None:
+        return 4
+    if isinstance(obj, bool):
+        return 4 if obj else 5
+    if isinstance(obj, (int, float)):
+        return len(str(obj))
+    if isinstance(obj, str):
+        # +2 for the quotes; escape overhead is minor for typical strings.
+        return len(obj) + 2
+    if isinstance(obj, dict):
+        # {"k":v,...} → 2 braces + per-entry overhead (4: `","` and `:`).
+        total = 2
+        first = True
+        for k, v in obj.items():
+            if not first:
+                total += 1  # comma
+            first = False
+            total += len(str(k)) + 4 + _estimate_json_bytes(v, _depth + 1)
+        return total
+    if isinstance(obj, (list, tuple)):
+        total = 2
+        first = True
+        for item in obj:
+            if not first:
+                total += 1
+            first = False
+            total += _estimate_json_bytes(item, _depth + 1)
+        return total
+    # Fallback: stringify (rare; non-JSON-native types default-str in dumps).
+    try:
+        return len(str(obj))
+    except Exception:
+        return 32
+
+
 def validate_geojson_structure(obj: Any) -> None:
     """GeoJSON 结构校验辅助函数 (BE-AUDIT-08)。
     在调用空间分析等工具函数前校验参数中的 GeoJSON 几何/要素/要素集合结构。
@@ -228,14 +275,13 @@ class ToolRegistry:
         start = _time.perf_counter()
         error_cls: Optional[str] = None
         result: Any = None
-        try:
-            arg_bytes = len(_json.dumps(arguments, default=str))
-        except Exception:
-            arg_bytes = 0
+        # PERF-01: arg_bytes is a small dict (tool args). A cheap size estimate
+        # avoids a full json.dumps on every dispatch just to measure bytes.
+        arg_bytes = _estimate_json_bytes(arguments)
 
         requested_policy = self._metadata.get(name, {}).get("execution_policy")
         req_policy_str = requested_policy.value if requested_policy else "THREAD"
-        
+
         tool_func = self._tools.get(name)
         if not tool_func:
             actual_mode = "UNKNOWN"
@@ -254,10 +300,12 @@ class ToolRegistry:
             duration_ms = int((_time.perf_counter() - start) * 1000)
             if isinstance(result, dict) and result.get("success") is False:
                 error_cls = error_cls or result.get("error_type") or result.get("code")
-            try:
-                result_bytes = len(_json.dumps(result, default=str)) if result is not None else 0
-            except Exception:
-                result_bytes = 0
+            # PERF-01: avoid a second full json.dumps of large tool results
+            # (e.g. a 10k-feature GeoJSON) purely to record a byte metric. The
+            # dispatch service already serializes for the LLM payload; here we
+            # use a cheap structural estimate that is accurate to within a few
+            # percent for typical JSON, never materializing the full string.
+            result_bytes = _estimate_json_bytes(result) if result is not None else 0
             cache_hit = cache_hit_var.get()
             tool_metrics.record_tool_call(
                 tool=name,
