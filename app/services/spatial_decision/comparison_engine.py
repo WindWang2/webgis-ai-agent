@@ -166,7 +166,12 @@ class ScenarioComparisonEngine:
                     if m_key in a.metrics and m_key in b.metrics:
                         val_a = a.metrics[m_key].simulated
                         val_b = b.metrics[m_key].simulated
-                        
+                        # GIS-03: metrics without a real baseline are unsimulated
+                        # (simulated=None). They carry no comparative signal and
+                        # must not dominate / be dominated by None comparisons.
+                        if val_a is None or val_b is None:
+                            continue
+
                         if goal == "maximize":
                             if val_b > val_a:
                                 b_strictly_better = True
@@ -197,9 +202,13 @@ class ScenarioComparisonEngine:
 
         for m_key, scenario_values in metric_matrix.items():
             if len(scenario_values) > 1:
-                vals = scenario_values.values()
-                max_scen = max(scenario_values, key=scenario_values.get)
-                min_scen = min(scenario_values, key=scenario_values.get)
+                # GIS-03: drop unsimulated (None) values before comparing.
+                finite = {sid: v for sid, v in scenario_values.items() if v is not None}
+                if len(finite) < 2:
+                    continue
+                vals = list(finite.values())
+                max_scen = max(finite, key=finite.get)
+                min_scen = min(finite, key=finite.get)
                 diff_pct = round(((max(vals) - min(vals)) / max(abs(min(vals)), 1.0)) * 100, 1)
                 
                 if diff_pct > 5.0:
@@ -232,6 +241,10 @@ class ScenarioComparisonEngine:
             for m_key, m_val in res.metrics.items():
                 goal = goals.get(m_key, "maximize")
                 delta_pct = m_val.delta_pct
+                # GIS-03: unsimulated metrics (delta_pct is None) contribute 0
+                # to the composite score — they carry no signal.
+                if delta_pct is None:
+                    continue
                 if goal == "maximize":
                     score += delta_pct
                 else:
@@ -255,6 +268,10 @@ class ScenarioComparisonEngine:
         ]
         
         for m_key, m_val in best_res.metrics.items():
+            # GIS-03: skip unsimulated metrics (delta_pct is None) — they have
+            # no real change to report and would crash abs(None).
+            if m_val.delta_pct is None:
+                continue
             if abs(m_val.delta_pct) > 2.0:
                 direction = "提升" if m_val.delta_pct > 0 else "降低"
                 rationale_lines.append(f"  - {m_val.metric_name}: {direction} {abs(m_val.delta_pct)}% (基线: {m_val.baseline} -> 模拟: {m_val.simulated})")

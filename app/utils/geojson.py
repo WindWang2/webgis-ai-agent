@@ -58,6 +58,15 @@ def geojson_bbox(data: Any) -> Optional[List[float]]:
             # mirrors how "coordinates" is walked structurally, not by type tag.
             if "geometry" in node and isinstance(node["geometry"], dict):
                 walk(node["geometry"], depth + 1)
+            # GIS-10: handle GeometryCollection — it has a ``geometries`` member
+            # (not ``coordinates``), so the walker previously descended into none
+            # of its children and the bbox silently excluded them. This is the
+            # canonical bbox walker per CONTEXT.md; it must cover every GeoJSON
+            # type. coord_transform._transform_geometry_tree already handles this
+            # branch — this mirrors it.
+            if node.get("type") == "GeometryCollection" and isinstance(node.get("geometries"), list):
+                for g in node["geometries"]:
+                    walk(g, depth + 1)
 
     walk(data)
     return bounds if found else None

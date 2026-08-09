@@ -48,13 +48,21 @@ class MetricRange(BaseModel):
 
 
 class MetricDeltaV2(BaseModel):
-    """Quantitative metric evaluated across baseline and simulated states."""
+    """Quantitative metric evaluated across baseline and simulated states.
+
+    GIS-03: ``baseline`` / ``simulated`` / ``delta_abs`` / ``delta_pct`` are
+    Optional because a metric without real baseline evidence must NOT be
+    simulated against fabricated default values (CONTEXT.md: "Never defaults
+    to arbitrary dummy values"). When ``missing_baseline`` is True, these are
+    ``None`` and ``evidence_gap_note`` explains the gap — the metric is
+    reported as unsimulated rather than dressed up as a computed forecast.
+    """
     metric_key: str = Field(..., description="Metric key identifier")
     metric_name: str = Field(..., description="Human-readable metric name")
-    baseline: float = Field(..., description="Baseline value")
-    simulated: float = Field(..., description="Simulated expected value")
-    delta_abs: float = Field(..., description="Absolute change (simulated - baseline)")
-    delta_pct: float = Field(..., description="Percentage change")
+    baseline: Optional[float] = Field(default=None, description="Baseline value (None if no real evidence)")
+    simulated: Optional[float] = Field(default=None, description="Simulated expected value (None if unsimulated)")
+    delta_abs: Optional[float] = Field(default=None, description="Absolute change (simulated - baseline)")
+    delta_pct: Optional[float] = Field(default=None, description="Percentage change (None when baseline is 0 or missing)")
     range: Optional[MetricRange] = Field(default=None, description="Uncertainty range bounds")
     unit: str = Field(default="", description="Metric unit, e.g., RMB/m2, %, min")
     missing_baseline: bool = Field(default=False, description="Whether real baseline was missing")
@@ -120,7 +128,9 @@ class ScenarioComparisonResult(BaseModel):
     type: Literal["scenario_comparison_result"] = Field(default="scenario_comparison_result", description="Schema type tag")
     comparison_id: str = Field(..., description="Unique comparison run ID")
     scenarios: List[SpatialDecisionResult] = Field(..., description="Evaluated scenario results")
-    metric_matrix: Dict[str, Dict[str, float]] = Field(..., description="Metric key -> {scenario_id: simulated_value}")
+    # GIS-03: simulated values are Optional[float] because a metric without a
+    # real baseline is unsimulated (None). Consumers must tolerate None here.
+    metric_matrix: Dict[str, Dict[str, Optional[float]]] = Field(..., description="Metric key -> {scenario_id: simulated_value (None if unsimulated)}")
     affected_area_comparison: Dict[str, float] = Field(..., description="Scenario ID -> total affected area km2")
     trade_offs: List[str] = Field(default_factory=list, description="Trade-off analysis notes")
     pareto_optimal_scenarios: List[str] = Field(default_factory=list, description="IDs of Pareto non-dominated scenarios")

@@ -97,14 +97,19 @@ class MetricEvaluator:
             expected_val = baseline * (1.0 + val_exp)
             max_val = baseline * (1.0 + val_max)
             delta_abs = expected_val - baseline
-            delta_pct = val_exp * 100.0 if baseline != 0.0 else val_exp * 100.0
+            # GIS-20: the previous branch was a tautology
+            # (`val_exp * 100.0 if baseline != 0.0 else val_exp * 100.0`).
+            # delta_pct is the relative change; for a non-zero baseline it is
+            # val_exp*100. When baseline == 0 a relative percentage is undefined;
+            # report None instead of a misleading number.
+            delta_pct = val_exp * 100.0 if baseline != 0.0 else None
         else:
             # interval_type == "abs": val_min, val_exp, val_max are direct deltas
             min_val = baseline + val_min
             expected_val = baseline + val_exp
             max_val = baseline + val_max
             delta_abs = val_exp
-            delta_pct = (delta_abs / baseline * 100.0) if baseline != 0.0 else 0.0
+            delta_pct = (delta_abs / baseline * 100.0) if baseline != 0.0 else None
 
         metric_range = MetricRange(
             min_val=round(min_val, 4),
@@ -128,7 +133,8 @@ class MetricEvaluator:
             baseline=round(baseline, 4),
             simulated=round(expected_val, 4),
             delta_abs=round(delta_abs, 4),
-            delta_pct=round(delta_pct, 4),
+            # GIS-20: delta_pct is None when baseline == 0 (undefined % change).
+            delta_pct=(round(delta_pct, 4) if delta_pct is not None else None),
             range=metric_range,
             unit=unit,
             missing_baseline=missing_baseline,
@@ -299,17 +305,46 @@ class MetricEvaluator:
                 base_val = bm.baseline
                 base_unit = bm.unit
                 base_name = bm.metric_name
-            elif m_key in default_baselines:
-                def_val, base_unit, base_name = default_baselines[m_key]
-                base_val = def_val
-                is_missing = True
-                gap_note = f"未找到实测基线数据，基于地段估算基准值 ({base_val} {base_unit}) 进行推算。"
-                assumptions.append(f"基线指标 [{base_name}] 缺少精确实时数据，按地段基准值 {base_val} {base_unit} 进行估算。")
             else:
-                base_name = m_key.replace("_", " ").title()
+                # GIS-03: NO synthetic baseline. CONTEXT.md contract: "Baseline
+                # ... Derived from real GeoJSON datasets, POI layers, raster
+                # surfaces, network accessibility outputs, or session assets.
+                # Never defaults to arbitrary dummy values." Previously this
+                # branch substituted hardcoded defaults (housing_price=45000,
+                # etc.) and computed a fabricated `simulated` forecast, which
+                # was presented to users as a real analysis result. Now the
+                # metric is reported as unsimulated (baseline/simulated=None)
+                # with an explicit evidence-gap note. The default_baselines /
+                # default_pct_ranges tables are retained only to label the
+                # metric's unit/name where known, never to fabricate values.
+                base_name = (
+                    default_baselines.get(m_key, (None, "", m_key.replace("_", " ").title()))[2]
+                    if m_key in default_baselines
+                    else m_key.replace("_", " ").title()
+                )
+                base_unit = default_baselines.get(m_key, ("", "", ""))[1] if m_key in default_baselines else ""
                 is_missing = True
-                gap_note = f"Missing baseline for {m_key}"
-                assumptions.append(f"基线指标 [{base_name}] 缺失。")
+                gap_note = (
+                    f"指标 [{base_name}] 缺少实测基线数据，无法可靠推算影响值；"
+                    f"需提供该区域的真实 {base_name} 数据后才能模拟。"
+                )
+                assumptions.append(
+                    f"基线指标 [{base_name}] 缺失实测数据 —— 该指标未参与定量模拟（未伪造基线值）。"
+                )
+                # Report as unsimulated and move on; do NOT call evaluate_metric
+                # against a fabricated baseline.
+                evaluated_metrics[m_key] = MetricDeltaV2(
+                    metric_key=m_key,
+                    metric_name=base_name,
+                    baseline=None,
+                    simulated=None,
+                    delta_abs=None,
+                    delta_pct=None,
+                    unit=base_unit,
+                    missing_baseline=True,
+                    evidence_gap_note=gap_note,
+                )
+                continue
 
             # Find matching rule for metric
             rule_for_m = next((r for r in rules if r.parameters and (m_key in r.parameters or f"pct_{m_key}" in r.parameters)), None)

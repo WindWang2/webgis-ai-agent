@@ -146,21 +146,34 @@ class SpectralRasterEngine:
                 dem[nodata] = np.nan
                 cell_size = fetch_res.get("cell_size_m", 30.0)
 
-                stats = compute_raster_stats(dem)
-                if "aspect" in products:
-                    target_arr = compute_aspect(dem, cell_size)
-                elif "hillshade" in products:
-                    target_arr = compute_hillshade(dem, cell_size)
-                elif "slope" in products:
-                    target_arr = compute_slope(dem, cell_size)
-                else:
+                # GIS-06: the default products = ["slope", "aspect", "hillshade"]
+                # but the previous if/elif chain (in a fixed branch order) only
+                # ever returned ONE product ("aspect", the first matching branch),
+                # silently dropping the others, and mislabeled it as "dem".
+                # Derivatives map to a single label deterministically: iterate
+                # the requested products in order and pick the first supported.
+                derivators = {
+                    "slope": lambda d: compute_slope(d, cell_size),
+                    "aspect": lambda d: compute_aspect(d, cell_size),
+                    "hillshade": lambda d: compute_hillshade(d, cell_size),
+                }
+                chosen = next((p for p in products if p in derivators), None)
+                if chosen is None:
                     target_arr = dem
-                return target_arr, stats
+                    label = "dem"
+                else:
+                    target_arr = derivators[chosen](dem)
+                    label = chosen
 
-            target_arr, stats = await asyncio.to_thread(_compute_terrain)
+                # Stats must describe the returned array, not the raw DEM.
+                stats = compute_raster_stats(target_arr)
+                stats.setdefault("terrain_product", label)
+                return target_arr, label, stats
+
+            target_arr, label, stats = await asyncio.to_thread(_compute_terrain)
 
             return RasterAnalysisResult(
-                index_type="dem",
+                index_type=label,
                 array=target_arr,
                 bounds=list(bbox),
                 stats=stats,
