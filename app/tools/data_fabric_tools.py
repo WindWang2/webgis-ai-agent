@@ -48,7 +48,6 @@ def register_data_fabric_tools(registry: ToolRegistry):
             "username": "认证用户名",
             "password": "认证密码",
             "options": "协议特定配置选项 key-value 字典",
-            "allow_private": "是否放宽 SSRF 限制允许内网/本地回环连接，默认 False",
         },
         domains=["data_fabric", "spatial_catalog", "dataset"],
         execution_policy=ToolExecutionPolicy.ASYNC,
@@ -63,9 +62,15 @@ def register_data_fabric_tools(registry: ToolRegistry):
         username: Optional[str] = None,
         password: Optional[str] = None,
         options: Optional[dict] = None,
-        allow_private: bool = False,
     ) -> dict:
-        """连接与注册数据源"""
+        """连接与注册数据源
+
+        Security: the SSRF private-endpoint bypass (``allow_private``) is
+        intentionally NOT exposed as a tool parameter — it was previously
+        prompt-injectable. Private endpoints must be allow-listed server-side
+        (mirrors the REST route in app/api/routes/data_fabric.py). See
+        docs/research/deep-audit-performance-convergence.md SEC-01.
+        """
         def _sync_run():
             profile = ConnectionProfile(
                 id=profile_id,
@@ -78,7 +83,7 @@ def register_data_fabric_tools(registry: ToolRegistry):
                 username=username,
                 password=password,
                 options=options or {},
-                allow_private=allow_private,
+                allow_private=False,
             )
 
             connected_profile, adapter = connection_manager.connect(profile)

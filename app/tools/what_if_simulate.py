@@ -3,7 +3,7 @@ import asyncio
 import logging
 import math
 import uuid
-from typing import Literal
+from typing import Literal, Optional
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -29,9 +29,11 @@ class WhatIfArgs(BaseModel):
 
 
 class MetricDelta(BaseModel):
-    baseline: float = Field(..., description="基线值")
-    simulated: float = Field(..., description="模拟后值")
-    delta_pct: float = Field(..., description="变化百分比")
+    # GIS-03: fields are Optional to carry unsimulated metrics (no real
+    # baseline) through the legacy conversion without crashing.
+    baseline: Optional[float] = Field(default=None, description="基线值")
+    simulated: Optional[float] = Field(default=None, description="模拟后值")
+    delta_pct: Optional[float] = Field(default=None, description="变化百分比")
 
 
 class WhatIfSimulationResult(BaseModel):
@@ -270,13 +272,15 @@ async def what_if_simulate_async(
                 uncertainty=dec_result.target_area.correction_hint,
             )
 
-        # Convert V2 MetricDeltaV2 to legacy MetricDelta dictionary for 100% backward compatibility
+        # Convert V2 MetricDeltaV2 to legacy MetricDelta dictionary for 100% backward compatibility.
+        # GIS-03: V2 metrics may be unsimulated (None fields) when no real
+        # baseline evidence exists; pass None through rather than crashing on round(None).
         legacy_metrics = {}
         for m_key, m_v2 in dec_result.metrics.items():
             legacy_metrics[m_key] = MetricDelta(
-                baseline=round(m_v2.baseline, 2),
-                simulated=round(m_v2.simulated, 2),
-                delta_pct=round(m_v2.delta_pct, 2),
+                baseline=round(m_v2.baseline, 2) if m_v2.baseline is not None else None,
+                simulated=round(m_v2.simulated, 2) if m_v2.simulated is not None else None,
+                delta_pct=round(m_v2.delta_pct, 2) if m_v2.delta_pct is not None else None,
             )
 
         # Calculate area metrics from spatial impacts

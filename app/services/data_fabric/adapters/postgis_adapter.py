@@ -127,17 +127,53 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
             )
 
     def _release_connection(self, conn: Any) -> None:
-        """Release connection back to pool or close direct connection."""
+        """Release connection back to pool or close direct connection.
+
+        DATA-04 (reviewer-confirmed): ``pool.putconn`` failures must NOT be
+        swallowed silently. The first putconn attempt can raise mid-way (e.g.
+        reading ``conn.info.transaction_status`` on a dead backend), which
+        leaves the connection in the pool's ``_used`` bookkeeping even though
+        the socket is broken. Calling ``conn.close()`` alone reclaims the
+        socket but does NOT remove the ``_used`` entry, so the pool still
+        counts it against ``maxconn`` and drifts toward exhaustion.
+
+        The correct reclaim is ``pool.putconn(conn, close=True)``: psycopg2's
+        own branch (pool.py close=True path) runs ``del _used[key]`` /
+        ``del _rused[id(conn)]`` AND closes the connection, restoring both the
+        socket and the pool's internal accounting. We fall back to a plain
+        ``conn.close()`` only if that also raises, and log at WARNING so the
+        degradation is observable.
+        """
         if not conn:
             return
+        # _is_pooled is set by _get_connection on connections handed out by the
+        # pool; honor it so pooled conns go back through putconn and direct
+        # conns are simply closed.
         if getattr(conn, "_is_pooled", False):
             pool = _get_or_create_postgis_pool(self.host, self.port or 5432, self.database, self.username, self.password)
             if pool:
                 try:
                     pool.putconn(conn)
                     return
-                except Exception:
-                    pass
+                except Exception as pe:
+                    logger.warning(
+                        f"[PostGISAdapter] pool.putconn failed ({pe}); "
+                        "reclaiming the slot via putconn(close=True)"
+                    )
+                    # putconn(close=True) asks psycopg2 to both close the conn
+                    # AND remove it from _used/_rused — the only way to keep the
+                    # pool's maxconn accounting consistent after a failure.
+                    try:
+                        pool.putconn(conn, close=True)
+                        return
+                    except Exception:
+                        # Last resort: close the socket ourselves. The pool's
+                        # _used entry may still leak, but we have no other handle.
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+                        return
         try:
             conn.close()
         except Exception:

@@ -7,7 +7,7 @@ import logging
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
-from app.tools.registry import ToolRegistry, tool
+from app.tools.registry import ToolRegistry, ToolExecutionPolicy, tool
 from app.tools._utils import trim_features
 from app.services.temporal.engine import TemporalEngine
 from app.services.temporal.models import TemporalFilter, TemporalAggregation

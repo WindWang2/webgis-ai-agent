@@ -7,13 +7,28 @@
     "iterations": 7,
     "median_ms": 0.897
   },
+  "geojson_bbox_large": {
+    "floor_ms": 47.7,
+    "iterations": 7,
+    "median_ms": 11.936
+  },
   "h3_binning_10k": {
     "iterations": 7,
-    "median_ms": 19.512
+    "median_ms": 43.253
+  },
+  "metric_byte_estimate": {
+    "floor_ms": 143.0,
+    "iterations": 7,
+    "median_ms": 40.861
   },
   "metrics_enqueue": {
     "iterations": 7,
     "median_ms": 0.041
+  },
+  "network_snapping_cached": {
+    "floor_ms": 113.9,
+    "iterations": 7,
+    "median_ms": 32.552
   },
   "raster_guard_rejection": {
     "iterations": 7,

@@ -1,5 +1,5 @@
 import { diffSpecs, type SpecPatch } from "@/lib/mapspec-compiler/reconciler";
-import { diffSpecsAsync } from "@/lib/mapspec-compiler/worker-bridge";
+import { diffSpecsAsync, disposeWorker } from "@/lib/mapspec-compiler/worker-bridge";
 import type { MapSpec, MapSpecSource, MapSpecLayer } from "@/lib/mapspec-compiler/types";
 import { RenderDebouncer, type RenderOperation } from "@/lib/map-kit/render-debouncer";
 import * as renderer from "@/lib/map-kit/renderer";
@@ -277,6 +277,11 @@ export class MapSpecRuntime {
     }
     this.debouncer?.dispose();
     this.debouncer = null;
+    // FE-01: the worker-bridge keeps its module worker warm for
+    // DIFF_WORKER_IDLE_MS after the last diff. When the runtime (and thus the
+    // map) is being torn down, tear the warm worker down immediately rather
+    // than letting it idle until the timeout.
+    disposeWorker();
     // Release any in-flight apply: its ops were just dropped from the queue,
     // so the z-order completion marker will never run.
     const resolve = this.currentApplyResolve;

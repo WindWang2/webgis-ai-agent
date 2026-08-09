@@ -472,9 +472,16 @@ def cluster_narrated(
 
     if value_field:
         filtered_gdf = _filter_numeric_gdf(gdf, value_field)
-        if filtered_gdf.empty:
-            return GeoAnalysisResult(False, None, f"Field '{value_field}' is not numeric or contains only nulls")
-        gdf = filtered_gdf
+        # GIS-12: _filter_numeric_gdf returns None (field missing) or a
+        # (gdf, values) tuple — never an empty GeoDataFrame. The previous
+        # `filtered_gdf.empty` check raised AttributeError on both shapes
+        # (None.empty / tuple.empty), masking the helpful error and crashing.
+        # It can also return a 0-row tuple when the field is all-null.
+        if filtered_gdf is None or len(filtered_gdf[0]) == 0:
+            return GeoAnalysisResult(
+                False, None, f"Field '{value_field}' is not numeric or contains only nulls"
+            )
+        gdf, _ = filtered_gdf
         coords = extract_centroids(gdf)
         vals = gdf[value_field].to_numpy(dtype=float)
         scaler = StandardScaler()

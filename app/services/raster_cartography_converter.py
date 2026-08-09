@@ -112,12 +112,24 @@ def render_array_to_png(array: np.ndarray, palette: str = DEFAULT_RASTER_PALETTE
   colors = COLOR_PALETTES.get(palette) or COLOR_PALETTES[DEFAULT_RASTER_PALETTE]
   rgb_stops = np.array([_hex_to_rgb(c) for c in colors], dtype=float)
 
-  a_min, a_max = float(arr.min()), float(arr.max())
+  # GIS-05: compute min/max over finite values only. NaN is the established
+  # nodata convention (compute_raster_stats uses ~np.isnan masking); calling
+  # arr.min()/arr.max() raw returns NaN when any nodata is present, which
+  # propagates NaN through normalization and renders a flat single-color PNG.
+  finite = arr[np.isfinite(arr)]
+  if finite.size == 0:
+    # Entirely nodata → single-color transparent-ish tile.
+    a_min, a_max = 0.0, 0.0
+  else:
+    a_min, a_max = float(finite.min()), float(finite.max())
   if a_max == a_min:
     # Constant field → first palette color everywhere.
     norm = np.zeros_like(arr)
   else:
     norm = (arr - a_min) / (a_max - a_min)
+  # NaN/nodata cells render as transparent (alpha=0) instead of leaking
+  # palette[0] garbage from floor(NaN).
+  nodata_mask = ~np.isfinite(arr)
 
   # Map normalized [0,1] → index into rgb_stops, with linear interp between stops.
   n_stops = len(rgb_stops)
@@ -127,9 +139,12 @@ def render_array_to_png(array: np.ndarray, palette: str = DEFAULT_RASTER_PALETTE
   frac = (scaled - lower)[..., None]  # broadcast over RGB
   rgb = rgb_stops[lower] * (1 - frac) + rgb_stops[upper] * frac
   rgb = np.clip(rgb, 0, 255).astype(np.uint8)
+  # Alpha channel: opaque for valid cells, transparent for nodata.
+  alpha = np.where(nodata_mask, 0, 255).astype(np.uint8)
+  rgba = np.dstack([rgb, alpha])
 
   # PIL expects (width, height); array is (rows=height, cols=width).
-  img = Image.fromarray(rgb, mode="RGB")
+  img = Image.fromarray(rgba, mode="RGBA")
   buf = io.BytesIO()
   img.save(buf, format="PNG")
   return buf.getvalue()

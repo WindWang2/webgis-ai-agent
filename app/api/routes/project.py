@@ -311,5 +311,6 @@ def get_artifact_lineage(
     if not project:
         raise HTTPException(status_code=404, detail="Artifact or project not found")
 
-    graph = LineageService.get_lineage_graph(db=db, artifact_id=artifact_id)
+    # DATA-01: pass project.id so the traversal filters cross-tenant neighbors.
+    graph = LineageService.get_lineage_graph(db=db, artifact_id=artifact_id, project_id=project.id)
     return graph

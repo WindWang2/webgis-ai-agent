@@ -32,6 +32,55 @@ export function LayersTab() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
 
+  // FE-03: in-flight opacity value per layer while the slider is being dragged.
+  // The range `<input>` fires onChange on every drag tick; writing to the store
+  // each tick rebuilt the whole layers array → map-panel's reconcile effect
+  // fired on every tick → worker spin-up + clone + layer re-add. Instead,
+  // onChange only updates this local state (cheap, no store churn) and the
+  // store is written once on commit (onPointerUp / onBlur) when the value has
+  // actually changed.
+  const [opacityDraft, setOpacityDraft] = useState<Record<string, number | undefined>>({});
+
+  /**
+   * Read the opacity percentage the slider should display: the in-flight draft
+   * while dragging, otherwise the layer's committed opacity.
+   */
+  const sliderPercent = useCallback(
+    (layer: Layer): number => {
+      const draft = opacityDraft[layer.id];
+      return draft !== undefined ? draft : Math.round((layer.opacity ?? 1) * 100);
+    },
+    [opacityDraft]
+  );
+
+  const handleOpacityChange = useCallback(
+    (layer: Layer, pct: number) => {
+      // Only local state here — do NOT touch the store per tick.
+      setOpacityDraft((prev) => ({ ...prev, [layer.id]: pct }));
+    },
+    []
+  );
+
+  const commitOpacity = useCallback(
+    (layer: Layer) => {
+      setOpacityDraft((prev) => {
+        const pct = prev[layer.id];
+        if (pct === undefined) return prev; // nothing drafted (no drag happened)
+        const next = pct / 100;
+        const current = layer.opacity ?? 1;
+        // Only write when the committed value actually differs — avoids a
+        // redundant store update (and reconcile) on grab-without-drag.
+        if (Math.abs(next - current) > 1e-9) {
+          updateLayer(layer.id, { opacity: next });
+        }
+        const nextDraft = { ...prev };
+        delete nextDraft[layer.id];
+        return nextDraft;
+      });
+    },
+    [updateLayer]
+  );
+
   const visibleCount = useMemo(
     () => layers.filter((l) => l.visible).length,
     [layers]
@@ -248,10 +297,12 @@ export function LayersTab() {
                             type="range"
                             min={0}
                             max={100}
-                            value={Math.round((layer.opacity ?? 1) * 100)}
+                            value={sliderPercent(layer)}
                             onChange={(e) =>
-                              updateLayer(layer.id, { opacity: parseInt(e.target.value, 10) / 100 })
+                              handleOpacityChange(layer, parseInt(e.target.value, 10))
                             }
+                            onPointerUp={() => commitOpacity(layer)}
+                            onBlur={() => commitOpacity(layer)}
                             style={{
                               flex: 1, height: 4,
                               appearance: 'none',
@@ -260,7 +311,7 @@ export function LayersTab() {
                             }}
                           />
                           <span style={{ fontSize: 11, color: 'var(--theme-text-muted)', width: 28, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                            {Math.round((layer.opacity ?? 1) * 100)}%
+                            {sliderPercent(layer)}%
                           </span>
                         </div>
                       </div>

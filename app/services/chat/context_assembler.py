@@ -66,7 +66,17 @@ class ChatContextAssembler:
             list_refs = metadata.get("list_refs") or {}
             event_log = metadata.get("event_log") or []
             started_at = metadata.get("started_at")
-            env_summary = await build_map_state_summary(session_id)
+            # RUN-04 / PERF-08: get_session_metadata already fetched map_state +
+            # list_refs + event_log in one pipeline. Pass them into
+            # build_map_state_summary with _fetched=True so it reuses them
+            # instead of issuing redundant Redis/L1 reads every chat round.
+            env_summary = await build_map_state_summary(
+                session_id,
+                state=map_state,
+                inventory=list_refs,
+                event_log=event_log,
+                _fetched=True,
+            )
 
             project_id = metadata.get("project_id")
             if project_id:

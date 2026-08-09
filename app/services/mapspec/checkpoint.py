@@ -5,11 +5,33 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from app.services.mapspec_source import ref as source_ref
+
+# SEC-02: checkpoint_id is an LLM/user-supplied string that is joined directly
+# into a filesystem path. A value containing ``..`` or path separators could
+# read or write outside the session's ``checkpoints/`` directory (path
+# traversal). Restrict to a safe charset; caller-controlled structure is never
+# permitted. See docs/research/deep-audit-performance-convergence.md SEC-02.
+_SAFE_CHECKPOINT_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _validate_checkpoint_id(ckpt_id: str) -> str:
+    """Reject checkpoint ids that are not safe filesystem segment names.
+
+    Allows alphanumerics, underscore, dash, dot — enough for the default
+    ``ckpt_<millis>`` ids and human-friendly labels, while forbidding path
+    separators and ``..`` traversal.
+    """
+    if not ckpt_id or not _SAFE_CHECKPOINT_ID.match(ckpt_id) or ckpt_id in (".", ".."):
+        raise ValueError(
+            f"Invalid checkpoint_id '{ckpt_id}': must match {_SAFE_CHECKPOINT_ID.pattern}"
+        )
+    return ckpt_id
 
 
 async def snapshot(
@@ -20,6 +42,7 @@ async def snapshot(
 ) -> Dict[str, Any]:
     """生成 MapSpec Checkpoint Snapshot 及其引用的 ref 数据物理副本"""
     ckpt_id = checkpoint_id or f"ckpt_{int(time.time() * 1000)}"
+    _validate_checkpoint_id(ckpt_id)
     ckpt_dir = session_dir / "checkpoints" / ckpt_id
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
@@ -61,6 +84,7 @@ async def rollback(
     session_data_manager,
 ) -> Dict[str, Any]:
     """回滚恢复 Checkpoint Snapshot"""
+    _validate_checkpoint_id(checkpoint_id)
     ckpt_dir = session_dir / "checkpoints" / checkpoint_id
     if not ckpt_dir.exists():
         return {"success": False, "message": f"Checkpoint '{checkpoint_id}' not found"}

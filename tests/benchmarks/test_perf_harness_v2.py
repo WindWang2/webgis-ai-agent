@@ -11,7 +11,7 @@ Validates:
 
 import asyncio
 import time
-from typing import Dict, Any, List
+from typing import Dict, List
 import pytest
 
 from app.tools.registry import ToolRegistry, ToolExecutionPolicy, tool
@@ -19,7 +19,6 @@ from app.services.network.engine import NetworkGraphEngine, TravelProfile
 from app.services.temporal.engine import TemporalEngine
 from app.services.data_fabric.connection_manager import (
     DataFabricConnectionManager,
-    create_adapter_for_profile,
     GenericDataSourceAdapter,
 )
 from app.services.data_fabric.adapters import (
@@ -30,7 +29,7 @@ from app.services.data_fabric.adapters import (
     WFSAdapter,
 )
 from app.schemas.data_fabric_schema import ConnectionProfile
-from app.services.raster_tile_service import render_raster_tile, _RASTER_TILE_CACHE
+from app.services.raster_tile_service import render_raster_tile
 
 
 class EventLoopLagMonitor:
@@ -82,7 +81,6 @@ async def test_network_event_loop_lag_offload():
     engine = NetworkGraphEngine()
 
     # Generate synthetic 1000-edge network
-    nodes = [{"type": "Feature", "properties": {"node_id": f"n_{i}"}, "geometry": {"type": "Point", "coordinates": [116.3 + (i % 50) * 0.001, 39.9 + (i // 50) * 0.001]}} for i in range(200)]
     edges = []
     for i in range(190):
         edges.append({

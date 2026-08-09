@@ -6,7 +6,7 @@ import logging
 from typing import Dict, List, Any
 from pydantic import BaseModel, Field
 
-from app.tools.registry import ToolRegistry, tool
+from app.tools.registry import ToolRegistry, ToolExecutionPolicy, tool
 from app.services.spatial_decision.engine import DecisionEngine
 from app.services.spatial_decision.comparison_engine import ScenarioComparisonEngine
 from app.services.spatial_decision.mapspec_integration import (

@@ -133,7 +133,13 @@ jobs:
         # 注意：session_data_manager 的 asyncio event loop 隔离问题已通过懒加载
         # Redis 连接修复（见 app/services/session_data_redis.py），不再在 import 时
         # 绑定 event loop。
-        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=10 --timeout=60 --timeout-method=thread -v
+        #
+        # 性能回归 harness（tests/benchmarks/*，@pytest.mark.perf）从覆盖率运行中
+        # 排除：coverage 追踪会把纯 Python 热路径拖慢 2-4 倍，使基线判定失真
+        # （PR #319 首次 CI 暴露：h3_binning_10k 在 --cov 下 173.9ms vs 无 cov
+        # 40ms，被误判为 HARD REGRESSION）。perf 门控由独立 test-perf job 在无
+        # coverage 环境下执行（见下）。
+        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=10 --timeout=60 --timeout-method=thread -m "not perf" -v
 
       - name: Upload Coverage Report
         uses: codecov/codecov-action@v5.5.5
@@ -147,6 +153,33 @@ jobs:
           name: coverage-report
           path: coverage.xml
           retention-days: 7
+
+  test-perf:
+    name: Performance Regression Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Dependencies
+        # 只装 harness 需要的依赖（无需 Postgres/Redis service containers）。
+        # pytest-cov 必须安装：pytest.ini 的 addopts 声明了 --cov=app，缺它则
+        # 整个 pytest 启动直接报 "unrecognized arguments: --cov"。--no-cov 在
+        # 命令行覆盖 addopts，确保 harness 在无覆盖率下运行。
+        run: pip install -r requirements.txt pytest pytest-timeout pytest-cov
+
+      - name: Run Performance Harness (no coverage)
+        # 性能门控：在无 coverage 干扰的环境下跑确定性 harness（11 workloads，
+        # tests/benchmarks/test_perf_harness.py）。warn 区间（1.75x-4x）即失败，
+        # 让真实回归在 CI 可见；基线刷新需显式 PERF_UPDATE_BASELINES=1。
+        # 与主测试 job 的 `-m "not perf"` 互斥，避免双重执行 + 覆盖率失真。
+        run: pytest tests/benchmarks/test_perf_harness.py -m perf --no-cov --timeout=180 --timeout-method=thread -q
 
   test-frontend:
     name: Frontend Tests
