@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.auth import get_current_user_optional
 from app.models.data_fabric import DataSourceModel, CatalogItemModel
 from app.schemas.data_fabric_schema import (
     ConnectionProfile,
@@ -19,6 +20,50 @@ from app.services.data_fabric.security import DataFabricSecurity
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _tenant_filter(query, user: Optional[Dict[str, Any]]):
+    """Apply org_id tenant scoping to a DataSourceModel query (SEC-03/DATA-02).
+
+    Before this fix, every Data Fabric route queried DataSourceModel / CatalogItemModel
+    with no tenant scoping — any caller could enumerate, read, delete, or query every
+    data source across all orgs. Anonymous callers (no user) now see only org-less /
+    owner-less rows (legacy/global sources); authenticated callers are scoped to their
+    org. Private endpoints remain allow-listed server-side only (SEC-01).
+    """
+    if user is None:
+        # Anonymous callers may only see truly global (un-owned) sources.
+        return query.filter(DataSourceModel.org_id.is_(None))
+    org_id = user.get("org_id")
+    if org_id is not None:
+        return query.filter(DataSourceModel.org_id == org_id)
+    user_id = user.get("user_id") or user.get("id") or user.get("sub")
+    if user_id is not None:
+        # Authenticated user with no org: see their own + global sources.
+        from sqlalchemy import or_
+        return query.filter(
+            or_(DataSourceModel.owner_id == str(user_id), DataSourceModel.org_id.is_(None))
+        )
+    return query.filter(DataSourceModel.org_id.is_(None))
+
+
+def _require_tenant_owned(s: Optional[DataSourceModel], user: Optional[Dict[str, Any]]):
+    """Authorize a single DataSource belongs to the caller's tenant (or 404).
+
+    Returns 404 (not 403) to avoid leaking the existence of cross-tenant rows.
+    """
+    if s is None:
+        raise HTTPException(status_code=404, detail="Data source not found")
+    if user is None:
+        if s.org_id is not None:
+            raise HTTPException(status_code=404, detail="Data source not found")
+        return s
+    org_id = user.get("org_id")
+    if org_id is not None and s.org_id != org_id:
+        user_id = user.get("user_id") or user.get("id") or user.get("sub")
+        if s.owner_id is None or (user_id is not None and s.owner_id != str(user_id)):
+            raise HTTPException(status_code=404, detail="Data source not found")
+    return s
 
 
 class CreateDataSourceRequest(BaseModel):
@@ -38,6 +83,7 @@ class MaterializeRequest(BaseModel):
 async def create_data_source(
     req: CreateDataSourceRequest,
     db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """注册新的地理空间数据源连接配置"""
     try:
@@ -45,6 +91,8 @@ async def create_data_source(
         # `allow_private` request field let any caller disable all private/loopback/
         # metadata blocking — a privilege escalation. Private endpoints must be
         # allow-listed server-side, never via the public request body.
+        org_id = user.get("org_id") if user else None
+        user_id = (user.get("user_id") or user.get("id") or user.get("sub")) if user else None
         source = data_fabric_manager.create_data_source(
             db=db,
             name=req.name,
@@ -52,6 +100,8 @@ async def create_data_source(
             endpoint_url=req.endpoint_url,
             profile_options=req.options,
             allow_private=False,
+            org_id=org_id,
+            owner_id=str(user_id) if user_id is not None else None,
         )
         return {
             "success": True,
@@ -74,9 +124,11 @@ async def create_data_source(
 async def list_data_sources(
     source_type: Optional[str] = Query(None, description="Filter by source type"),
     db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """获取所有已注册的地理空间数据源列表"""
     query = db.query(DataSourceModel)
+    query = _tenant_filter(query, user)
     if source_type:
         query = query.filter(DataSourceModel.source_type == source_type)
 
@@ -102,11 +154,11 @@ async def list_data_sources(
 async def get_data_source(
     source_id: str,
     db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """获取指定数据源详情"""
     s = db.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
-    if not s:
-        raise HTTPException(status_code=404, detail=f"Data source '{source_id}' not found")
+    _require_tenant_owned(s, user)
 
     return {
         "id": s.id,
@@ -124,11 +176,11 @@ async def get_data_source(
 async def delete_data_source(
     source_id: str,
     db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """删除指定数据源及其关联目录项"""
     s = db.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
-    if not s:
-        raise HTTPException(status_code=404, detail=f"Data source '{source_id}' not found")
+    _require_tenant_owned(s, user)
 
     db.delete(s)
     db.commit()
@@ -139,11 +191,11 @@ async def delete_data_source(
 async def probe_data_source(
     source_id: str,
     db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """探查数据源健康状况与连通性"""
     s = db.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
-    if not s:
-        raise HTTPException(status_code=404, detail=f"Data source '{source_id}' not found")
+    _require_tenant_owned(s, user)
 
     profile = ConnectionProfile(
         id=s.id,
@@ -165,8 +217,11 @@ async def probe_data_source(
 async def sync_data_source_catalog(
     source_id: str,
     db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """主动刷新/同步数据源图层元数据至 Spatial Catalog"""
+    s = db.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
+    _require_tenant_owned(s, user)
     try:
         items = data_fabric_manager.sync_catalog(db, source_id)
         return {

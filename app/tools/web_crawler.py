@@ -122,17 +122,42 @@ _UNTRUSTED_WARN = (
 )
 
 
+def _escape_untrusted(text: str) -> str:
+    """Escape untrusted text so it cannot forge the sentinel fence.
+
+    SEC-05: previously title/snippet/date were spliced raw into the
+    ``<UNTRUSTED_WEB_CONTENT>`` block. A snippet containing
+    ``</UNTRUSTED_WEB_CONTENT>`` would close the fence early and let the
+    trailing text be interpreted as agent instructions. HTML-escape the
+    content (consistent with app/services/chat/context/formatters.py) and
+    neutralize any literal fence markers.
+    """
+    if not text:
+        return ""
+    escaped = (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+    # Neutralize embedded fence markers so attacker content cannot break out.
+    escaped = escaped.replace(_UNTRUSTED_OPEN, "&lt;UNTRUSTED_WEB_CONTENT&gt;")
+    escaped = escaped.replace(_UNTRUSTED_CLOSE, "&lt;/UNTRUSTED_WEB_CONTENT&gt;")
+    return escaped
+
+
 def _wrap_untrusted(item: dict) -> dict:
     """对单条搜索结果用 sentinel 标签包裹文本字段，缓解 prompt injection。
 
     保留 title/snippet/link/date 原始键供前端展示，同时把内容塞进
     untrusted_block —— LLM 看 tool_result 时只会读到这块标签内容，
-    标签本身是强信号。
+    标签本身是强信号。所有字段先经 _escape_untrusted 转义，防止
+    fence 伪造（SEC-05）。
     """
-    title = item.get("title") or ""
-    snippet = item.get("snippet") or ""
-    link = item.get("link") or item.get("url") or ""
-    date = item.get("date") or ""
+    title = _escape_untrusted(item.get("title"))
+    snippet = _escape_untrusted(item.get("snippet"))
+    link = _escape_untrusted(item.get("link") or item.get("url"))
+    date = _escape_untrusted(item.get("date"))
     block = (
         f"{_UNTRUSTED_OPEN}\n"
         f"source: {link}\n"
