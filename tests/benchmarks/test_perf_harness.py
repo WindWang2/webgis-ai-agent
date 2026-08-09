@@ -260,6 +260,101 @@ def _get_perf_tile_raster() -> Path:
     return _PERF_TILE_RASTER_PATH
 
 
+def _network_snapping_cached_ms() -> float:
+    """Network PERF-02 workload: STRtree + node-lookup cached across many snaps.
+
+    Builds a synthetic grid network, then snaps 50 points. The first snap
+    builds the spatial index; the remaining 49 reuse the cache. Guards the
+    PERF-02 fix (PointSnappingService STRtree caching) against a regression
+    that rebuilds the tree per snap.
+    """
+    from app.services.network.snapping import PointSnappingService
+    from app.services.network.models import NetworkDataset, Node, Edge
+
+    n = 24  # → ~1100 edges
+    nodes, edges = [], []
+    nid = 0
+    node_map = {}
+    for r in range(n):
+        for c in range(n):
+            node_map[(r, c)] = nid
+            nodes.append(Node(id=nid, x=116.0 + c * 0.001, y=39.0 + r * 0.001))
+            nid += 1
+    eid = 0
+    for r in range(n):
+        for c in range(n):
+            if c < n - 1:
+                edges.append(Edge(id=eid, u=node_map[(r, c)], v=node_map[(r, c + 1)],
+                                  length_m=100.0, travel_time_s=60.0))
+                eid += 1
+            if r < n - 1:
+                edges.append(Edge(id=eid, u=node_map[(r, c)], v=node_map[(r + 1, c)],
+                                  length_m=100.0, travel_time_s=60.0))
+                eid += 1
+    ds = NetworkDataset(dataset_id="perf_grid", nodes=nodes, edges=edges, crs="EPSG:4326")
+    svc = PointSnappingService()
+    pts = [(116.005 + i * 0.0004, 39.005 + i * 0.0004) for i in range(50)]
+
+    t0 = time.perf_counter()
+    for p in pts:
+        svc.snap_point(p, ds)
+    return (time.perf_counter() - t0) * 1000
+
+
+def _geojson_bbox_large_ms() -> float:
+    """GIS-10 workload: canonical bbox walker over a large FeatureCollection.
+
+    Guards the geojson_bbox walker (used for Spatial Meta Profile + auto
+    view.center injection) against a regression that reintroduces per-feature
+    overhead or mishandles GeometryCollection.
+    """
+    from app.utils.geojson import geojson_bbox
+
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"id": i, "name": "pt"},
+                "geometry": {"type": "Point", "coordinates": [116.0 + i * 0.0001, 39.0]},
+            }
+            for i in range(10000)
+        ],
+    }
+    t0 = time.perf_counter()
+    bbox = geojson_bbox(fc)
+    dt = (time.perf_counter() - t0) * 1000
+    assert bbox is not None and bbox[2] > bbox[0]
+    return dt
+
+
+def _metric_byte_estimate_ms() -> float:
+    """PERF-01 workload: _estimate_json_bytes over a large tool-result dict.
+
+    Guards the cheap byte estimate (which replaced a second full json.dumps on
+    every dispatch) against a regression that makes it O(N²) or re-enables the
+    full serialization.
+    """
+    from app.tools.registry import _estimate_json_bytes
+
+    big = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"id": i, "name": "x" * 20, "v": i * 1.5},
+                "geometry": {"type": "Point", "coordinates": [116.0 + i * 0.001, 39.0]},
+            }
+            for i in range(10000)
+        ],
+    }
+    t0 = time.perf_counter()
+    est = _estimate_json_bytes(big)
+    dt = (time.perf_counter() - t0) * 1000
+    assert est > 1_000_000  # ~1.4MB
+    return dt
+
+
 def _raster_tile_streaming_ms() -> float:
     """Windowed raster tile rendering: 256x256 PNG generation from GeoTIFF."""
     from app.services.raster_tile_service import render_raster_tile
@@ -281,6 +376,10 @@ WORKLOADS = {
     "h3_binning_10k": _h3_binning_ms,
     "artifact_cache_hit": _artifact_cache_hit_ms,
     "raster_tile_streaming": _raster_tile_streaming_ms,
+    # deep-audit-performance-convergence additions (PERF-01/02 + GIS-10 coverage)
+    "network_snapping_cached": _network_snapping_cached_ms,
+    "geojson_bbox_large": _geojson_bbox_large_ms,
+    "metric_byte_estimate": _metric_byte_estimate_ms,
 }
 
 
@@ -332,7 +431,17 @@ def test_perf_workload(name):
             f"Run PERF_UPDATE_BASELINES=1 only after a measured improvement."
         )
     if measured > warn_at:
-        pytest.skip(f"WARNING: '{name}' median {measured:.3f} ms vs baseline {baseline_ms:.3f} ms")
-        return
+        # TEST-01: the previous behavior was `pytest.skip(...)`, which silently
+        # hid 1.75x–4x regressions from CI ("N skipped" reads as fine). A perf
+        # regression in the warn band must be observable so it can be
+        # investigated or the baseline deliberately refreshed. Fail (soft) with
+        # a clear message distinguishing it from a hard (>4x) regression.
+        pytest.fail(
+            f"PERF REGRESSION (warn band): '{name}' median {measured:.3f} ms "
+            f"is {measured/baseline_ms:.2f}x baseline {baseline_ms:.3f} ms "
+            f"(warn at {warn_at:.3f} ms, hard-fail at {fail_at:.3f} ms). "
+            f"Investigate or refresh the baseline with PERF_UPDATE_BASELINES=1.",
+            pytrace=False,
+        )
 
     assert measured <= warn_at, f"'{name}' {measured:.3f} ms vs {warn_at:.3f} ms"
