@@ -47,7 +47,15 @@ def generate_decision_report_markdown(result: SpatialDecisionResult) -> str:
     for m_key, m in result.metrics.items():
         rng_str = f"[{m.range.min_val:.1f}, {m.range.max_val:.1f}]" if m.range else "-"
         status_str = "⚠️ 数据缺失" if m.missing_baseline else "✅ 真实基线"
-        lines.append(f"| {m.metric_name} ({m.unit}) | {m.baseline:.2f} | {m.simulated:.2f} | {rng_str} | {m.delta_pct:+.2f}% | {status_str} |")
+        # GIS-03: metrics without a real baseline are unsimulated (None).
+        # Render "—" for the numeric cells instead of crashing on f"{None:.2f}".
+        if m.missing_baseline or m.baseline is None:
+            base_str = "—" if m.baseline is None else f"{m.baseline:.2f}"
+            sim_str = "—" if m.simulated is None else f"{m.simulated:.2f}"
+            delta_str = "—" if m.delta_pct is None else f"{m.delta_pct:+.2f}%"
+            lines.append(f"| {m.metric_name} ({m.unit}) | {base_str} | {sim_str} | {rng_str} | {delta_str} | {status_str} |")
+        else:
+            lines.append(f"| {m.metric_name} ({m.unit}) | {m.baseline:.2f} | {m.simulated:.2f} | {rng_str} | {m.delta_pct:+.2f}% | {status_str} |")
     lines.append("")
 
     lines.append("## 4. 规则应用与证据链 (Evidence Chain)")

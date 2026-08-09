@@ -104,6 +104,56 @@ def test_snapping_batch_does_not_rebuild_index_per_point():
     assert len(svc._index_cache) == 1
 
 
+def test_snapping_cache_does_not_collide_across_distinct_datasets():
+    """Reviewer B/A BLOCKING fix: two datasets with equal cardinality but
+    different geometry must NOT share a cached STRtree. The previous key was
+    (dataset_id, edge_count, node_count) where dataset_id is itself only a
+    hash of edge_count — so two different networks with the same counts
+    collided and snapped to the WRONG network's edges.
+    """
+    # Two grids of identical cardinality but different spatial location.
+    ds_a = _grid_dataset(8)  # ~112 edges around (116, 39)
+    # Build ds_b with the same node/edge counts but shifted ~10 degrees east.
+    nodes_b, edges_b = [], []
+    nid = 0
+    node_map = {}
+    n = 8
+    for r in range(n):
+        for c in range(n):
+            node_map[(r, c)] = nid
+            nodes_b.append(Node(id=nid, x=126.0 + c * 0.001, y=39.0 + r * 0.001))
+            nid += 1
+    eid = 0
+    for r in range(n):
+        for c in range(n):
+            if c < n - 1:
+                edges_b.append(Edge(id=eid, u=node_map[(r, c)], v=node_map[(r, c + 1)],
+                                    length_m=100.0, travel_time_s=60.0))
+                eid += 1
+            if r < n - 1:
+                edges_b.append(Edge(id=eid, u=node_map[(r, c)], v=node_map[(r + 1, c)],
+                                    length_m=100.0, travel_time_s=60.0))
+                eid += 1
+    ds_b = NetworkDataset(dataset_id="grid_shifted", nodes=nodes_b, edges=edges_b, crs="EPSG:4326")
+    assert len(ds_a.edges) == len(ds_b.edges)
+    assert len(ds_a.nodes) == len(ds_b.nodes)
+
+    svc = PointSnappingService()
+    # Snap a point in dataset A's region.
+    res_a = svc.snap_point((116.005, 39.005), ds_a)
+    # Snap a point in dataset B's region (far from A).
+    res_b = svc.snap_point((126.005, 39.005), ds_b)
+    # Both datasets are cached (2 distinct identity keys).
+    assert len(svc._index_cache) == 2
+    # The snapped points must be in their respective regions — NOT crossed.
+    # If the cache collided, res_b would snap to ds_a's edges near (116, 39).
+    assert res_a.snapped_point[0] < 117.0, f"res_a snapped to wrong region: {res_a.snapped_point}"
+    assert res_b.snapped_point[0] > 125.0, (
+        f"CACHE COLLISION: res_b snapped to {res_b.snapped_point} (ds_a's region) "
+        f"instead of ds_b's region near (126, 39)"
+    )
+
+
 # ---------------------------------------------------------------------------
 # PERF-03 — no graph.copy() when barriers absent
 # ---------------------------------------------------------------------------
