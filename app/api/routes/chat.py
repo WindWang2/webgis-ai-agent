@@ -57,8 +57,21 @@ def get_registry() -> ToolRegistry:
 
 
 def _use_pi_bridge() -> bool:
-    """Return True when the Pi agent path is enabled and ready."""
-    return USE_NEW_AGENT and pi_bridge is not None
+    """Return True when the Pi agent path is enabled and the subprocess is alive.
+
+    C-F15: the Pi subprocess can die (crash, OOM, bad extension). Previously
+    ``_use_pi_bridge`` only checked ``USE_NEW_AGENT and pi_bridge is not None``
+    and ignored ``process_died``, so after a Pi crash every /chat request
+    yielded task_error forever (PiRpcError "Pi process not started") — the
+    legacy ChatEngine fallback the docstrings claimed did not exist. Now a dead
+    bridge falls through to the always-initialised legacy ChatEngine so the
+    service degrades instead of hard-failing until a restart.
+    """
+    return (
+        USE_NEW_AGENT
+        and pi_bridge is not None
+        and not getattr(pi_bridge, "_process_died", False)
+    )
 
 
 class ChatRequest(BaseModel):
