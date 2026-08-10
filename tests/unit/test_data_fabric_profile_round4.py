@@ -7,7 +7,6 @@
 - The create REST response must sanitize the profile too (a password leak that
   existed because the stored profile was previously already sanitized).
 """
-import pytest
 
 from app.services.data_fabric.manager import DataFabricManager
 from app.services.data_fabric.security import DataFabricSecurity
