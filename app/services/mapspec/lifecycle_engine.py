@@ -22,6 +22,7 @@ from app.services.mapspec.store import mapspec_store_instance, _should_remove_la
 from app.services.mapspec.pipeline import process_layer_ingestion
 from app.services.mapspec.coordinator import validate as validate_mapspec
 from app.services.mapspec.checkpoint import snapshot as create_checkpoint, rollback as rollback_checkpoint
+from app.services.distributed_lock import session_lock_registry
 
 logger = logging.getLogger(__name__)
 
@@ -162,9 +163,17 @@ class MapSpecLifecycleEngine:
         session_id: str,
         intent: MutationIntent,
     ) -> MapSpecResult:
-        """原子执行 MapSpec 意图变迁，带 per-session 互斥锁 + 事务 rollback。"""
+        """原子执行 MapSpec 意图变迁，带 per-session 互斥锁 + 事务 rollback。
+
+        双层锁：外层 distributed lock（Redis，跨 pod 互斥；单 worker/测试降级为
+        in-process），内层 asyncio.Lock（同进程内协程序列化）。两层都持有才能
+        避免跨 pod 的同 session 并发 mutation 产生 lost update。
+        """
         lock = self._get_lock(session_id)
-        async with lock:
+        # Two independent locks acquired in one async-with (no extra indent):
+        # outer = distributed (Redis, cross-pod; falls back to in-process),
+        # inner = asyncio (in-process coroutine serialization).
+        async with session_lock_registry.lock(session_id), lock:
             # 事务快照：失败时回滚 mapspec + redis layers 到此刻状态。
             old_map_state = await session_data_manager.get_map_state(session_id)
             old_layers = list(old_map_state.get("layers", []) or [])

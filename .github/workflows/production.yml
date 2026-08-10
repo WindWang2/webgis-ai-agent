@@ -232,6 +232,44 @@ jobs:
         # 完整 Playwright runtime + 5~6 类 E2E 场景在 nightly cartography-matrix。
         run: pytest -m cartography --no-cov --timeout=120 --timeout-method=thread -q
 
+  # ============ Nightly 重矩阵（schedule / 手动；非 PR-blocking）============
+  # 审计 REL-01：PR 路径只跑确定性 fast gate（cartography-smoke）。更重的矩阵
+  # （全量 cartography + perf + event-loop lag + 并发负载 + 未来 Playwright runtime）
+  # 放到 nightly，不阻塞 PR，但能在 schedule 暴露慢漂移 / 间歇性故障。
+  nightly-matrix:
+    name: Nightly Heavy Matrix
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: [6379:6379]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      - run: pip install -r requirements-dev.txt
+      - name: Set Environment Variables
+        run: |
+          echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV
+          echo "JWT_SECRET_KEY=ci-test-secret-key-32-chars-ok" >> $GITHUB_ENV
+          echo "ENV=development" >> $GITHUB_ENV
+          echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
+      - name: Full cartography + perf + event-loop matrix
+        # Nightly 跑完整确定性矩阵：cartography（含并发 + 故障注入）+ perf
+        # （11 microbenchmarks + 3 e2e）+ perf_harness_v2 event-loop lag。无 Node
+        # 依赖部分全跑；需要 Node/Playwright 的 runtime 验证 self-skip（待 future）。
+        run: pytest -m "cartography or perf" --no-cov --timeout=180 --timeout-method=thread -q
+      - name: Event-loop lag & data-plane v2
+        run: pytest tests/benchmarks/test_perf_harness_v2.py --no-cov --timeout=120 -q
+
   test-frontend:
     name: Frontend Tests
     runs-on: ubuntu-latest
