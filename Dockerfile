@@ -14,6 +14,9 @@ FROM node:22-alpine AS frontend-builder
 WORKDIR /app/frontend
 COPY --from=frontend-deps /app/frontend/node_modules ./node_modules
 COPY frontend/. .
+# transport goal E-F-2 (P0): inject the API base at build time (see Dockerfile.prod).
+ARG NEXT_PUBLIC_API_URL=""
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
