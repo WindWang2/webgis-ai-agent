@@ -79,13 +79,11 @@ class NetworkODMatrixService:
             barrier_factor = edge_data.get("_barrier_factor", 1.0)
             return max(0.0001, float(base_w * barrier_factor))
 
-        def dist_weight_func(u: Any, v: Any, edge_data: Dict[str, Any]) -> float:
-            return float(edge_data.get("length_m", 0.0))
-
-        def time_weight_func(u: Any, v: Any, edge_data: Dict[str, Any]) -> float:
-            return float(edge_data.get("travel_time_s", 0.0))
-
-        # Single-source Dijkstra for unique origin nodes
+        # GIS-19: one Dijkstra per unique origin with the impedance weight, then
+        # recover distance and time by walking the shortest-path predecessor
+        # tree summing length_m / travel_time_s along each edge. The previous
+        # code ran THREE full Dijkstra passes per origin (cost, distance, time)
+        # even though distance and time accumulate along the same shortest path.
         unique_orig_nodes = set(n_id for n_id, _ in orig_nodes)
         dijkstra_results: Dict[str, Dict[str, float]] = {}
         dijkstra_dist: Dict[str, Dict[str, float]] = {}
@@ -93,12 +91,28 @@ class NetworkODMatrixService:
 
         for o_node in unique_orig_nodes:
             if o_node in graph_view:
-                costs = nx.single_source_dijkstra_path_length(graph_view, o_node, weight=weight_func)
-                dijkstra_results[o_node] = costs
+                # nx.single_source_dijkstra returns (dist_dict, path_dict);
+                # path_dict maps each reachable node to its FULL path list
+                # ([origin, ..., node]). Sum length_m / travel_time_s along each
+                # path in one O(path-length) pass per node — no extra Dijkstra.
+                dists, paths = nx.single_source_dijkstra(graph_view, o_node, weight=weight_func)
+                dijkstra_results[o_node] = dists
 
-                # Also calculate explicit dist and time lengths
-                distances = nx.single_source_dijkstra_path_length(graph_view, o_node, weight=dist_weight_func)
-                times = nx.single_source_dijkstra_path_length(graph_view, o_node, weight=time_weight_func)
+                distances: Dict[str, float] = {}
+                times: Dict[str, float] = {}
+                for node, path in paths.items():
+                    if node == o_node or len(path) < 2:
+                        distances[node] = 0.0
+                        times[node] = 0.0
+                        continue
+                    dist_acc = 0.0
+                    time_acc = 0.0
+                    for i in range(len(path) - 1):
+                        edge_data = graph_view[path[i]][path[i + 1]]
+                        dist_acc += float(edge_data.get("length_m", 0.0))
+                        time_acc += float(edge_data.get("travel_time_s", 0.0))
+                    distances[node] = dist_acc
+                    times[node] = time_acc
                 dijkstra_dist[o_node] = distances
                 dijkstra_time[o_node] = times
             else:
