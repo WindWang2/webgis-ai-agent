@@ -433,26 +433,6 @@ class PiBridge:
         except Exception as e:  # noqa: BLE001 — abort failure must not break cleanup
             logger.warning("[PiBridge] abort-on-disconnect failed (turn=%s): %s", turn_sid, e)
 
-    @staticmethod
-    def _schedule_abort_on_disconnect(turn_sid: str, bridge: "PiBridge") -> None:
-        """Fire-and-forget the abort as a detached loop task.
-
-        Awaiting the abort inside the generator's ``finally`` during a
-        ``CancelledError``/``GeneratorExit`` is fragile (each await is a
-        cancellation point; the outer cancellation can escalate and re-raise
-        inside the abort, leaving Pi running). Scheduling it as an independent
-        task on the running loop lets generator cleanup proceed immediately
-        while the abort runs concurrently. The module-level ``_abort_tasks``
-        set prevents the GC from reaping the task before it completes.
-        """
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return  # no running loop (sync generator close) — cannot schedule
-        task = loop.create_task(bridge._abort_on_disconnect(turn_sid))
-        _abort_tasks.add(task)
-        task.add_done_callback(_abort_tasks.discard)
-
     async def prompt(self, message: str, session_id: Optional[str] = None) -> dict:
         """Send a prompt to Pi agent (non-streaming).
 
@@ -612,10 +592,22 @@ class PiBridge:
             raise
         finally:
             if cancelled:
-                # Fire-and-forget: stop Pi generating + executing tools. Must
-                # not block generator cleanup or be re-cancelled by the outer
-                # cancellation (see _schedule_abort_on_disconnect).
-                self._schedule_abort_on_disconnect(turn_sid, self)
+                # Tell Pi to stop generating tokens / executing tools. Awaiting
+                # inline (shielded + bounded) rather than fire-and-forget so no
+                # detached task retains the bridge (transport goal leak test).
+                # On GeneratorExit (aclose) the driving task is not cancelled, so
+                # this completes normally; on CancelledError the shield keeps the
+                # abort running while wait_for returns promptly. A failure or
+                # timeout here must never raise into generator cleanup.
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(self._abort_on_disconnect(turn_sid)),
+                        timeout=5.0,
+                    )
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("[PiBridge] abort-on-disconnect failed (turn=%s): %s", turn_sid, e)
             # Drain any leftover events so a timeout/disconnect doesn't poison
             # the next turn. (On a normal agent_end the queue is already empty;
             # this is a no-op there.)
@@ -626,12 +618,6 @@ class PiBridge:
             # disconnect). Without this they accumulate across sessions.
             _cleanup_turn_state(turn_sid)
             self._lock.release()
-
-
-# Detached abort-on-disconnect tasks (transport goal B-P0-1). Kept in a module
-# set so the GC cannot reap a fire-and-forget abort before it runs; each task
-# removes itself on completion via a done-callback.
-_abort_tasks: set[asyncio.Task] = set()
 
 
 # Global bridge instance
