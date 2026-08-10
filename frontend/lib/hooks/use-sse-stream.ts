@@ -310,10 +310,27 @@ export function useSSEStream(
         event.event === 'step_error' ||
         event.event === 'task_error'
       ) {
+        // B-P2-13: previously any error/step_error/task_error replaced the
+        // ENTIRE message with a generic string, discarding whatever had
+        // already streamed and the server's real error detail. Preserve the
+        // partial answer and append the actual error (or a fallback note).
+        const raw = data?.error;
+        const detail =
+          typeof raw === "string" && raw.trim()
+            ? raw
+            : event.event === "step_error"
+              ? "工具执行失败。"
+              : "请求失败，请重试。";
         setMessages((prev) =>
-          prev.map((m) =>
-            m.id === thinkingId ? { ...m, content: '请求失败，请重试。', isThinking: false } : m
-          )
+          prev.map((m) => {
+            if (m.id !== thinkingId) return m;
+            const existing = m.content && !m.isThinking ? m.content : "";
+            return {
+              ...m,
+              content: existing ? `${existing}\n\n⚠️ ${detail}` : `⚠️ ${detail}`,
+              isThinking: false,
+            };
+          }),
         );
       } else if (event.event === 'explorer_progress') {
         const taskId = data.task_id as string;

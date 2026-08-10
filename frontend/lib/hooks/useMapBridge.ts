@@ -78,6 +78,12 @@ export function useMapBridge(
 
       setAiStatus('thinking');
 
+      // B-P2-9: track whether the stream ended with a proper terminal event.
+      // An abrupt close (server died / proxy cut / dropped connection with no
+      // final event) used to be reported as 'done' — the user saw partial
+      // content as a complete answer. Any of these events marks a real end.
+      let gotTerminal = false;
+
       try {
         // SEC-08：把当前持有的 owner_token 附在请求头，匿名会话后端据此放行。
         for await (const event of streamChat(content, sessionId, mapSnapshot, controller.signal, undefined, sessionTokenRef?.current ?? null)) {
@@ -95,12 +101,20 @@ export function useMapBridge(
           // aiStatus transitions
           if (event.event === 'thinking') setAiStatus('thinking');
           else if (event.event === 'acting' || event.event === 'step_start') setAiStatus('acting');
-          else if (event.event === 'done' || event.event === 'task_complete') setAiStatus('done');
-          else if (event.event === 'error' || event.event === 'step_error' || event.event === 'task_error') setAiStatus('error');
+          else if (event.event === 'done' || event.event === 'task_complete') {
+            gotTerminal = true;
+            setAiStatus('done');
+          } else if (event.event === 'error' || event.event === 'step_error' || event.event === 'task_error') {
+            gotTerminal = true;
+            setAiStatus('error');
+          }
           // /review P2-7: backend emits task_cancelled when the user aborts a
           // streaming response (commit 2b978de). Without this branch, aiStatus
           // stays stuck in 'thinking' / 'acting' and the composer never frees.
-          else if (event.event === 'task_cancelled') setAiStatus('idle');
+          else if (event.event === 'task_cancelled') {
+            gotTerminal = true;
+            setAiStatus('idle');
+          }
 
           // step_result: command-wins-over-bbox priority; dispatch before forwarding to onEvent
           if (event.event === 'step_result') {
@@ -157,7 +171,21 @@ export function useMapBridge(
           if (controller.signal.aborted) {
             setAiStatus('idle');
           } else if (aiStatusRef.current === 'thinking' || aiStatusRef.current === 'acting') {
-            setAiStatus('done');
+            // B-P2-9: the stream ended while still thinking/acting. If a real
+            // terminal event (done/task_complete/task_cancelled/error) arrived
+            // it already set the status; landing here means the stream was cut
+            // without one (server died, proxy dropped, network blip). Surface
+            // it as an error instead of silently showing partial content as
+            // a complete answer.
+            if (gotTerminal) {
+              setAiStatus('done');
+            } else {
+              setAiStatus('error');
+              onEvent({
+                event: 'error',
+                data: { error: '连接已断开（未收到完成信号）。' } as unknown as Record<string, unknown>,
+              });
+            }
           }
           abortControllerRef.current = null;
         }
