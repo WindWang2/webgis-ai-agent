@@ -262,10 +262,24 @@ _session_executed_sets: dict[str, set[tuple[str, str]]] = {}
 
 
 # ── Optional evaluation harness (opt-in via PI_HARNESS_ENABLED=true) ──
+# V2（HARNESS-V2）：注入真实证据 resolver —— ref 解析走 SessionStore，
+# MapSpec 校验走真实 validate()，杜绝"没报错=100%有效"的假成功。
 _harness: Optional[PiAgentHarness] = None
 if os.getenv("PI_HARNESS_ENABLED", "").lower() in ("true", "1", "yes"):
-    _harness = PiAgentHarness(session_id="production")
-    logger.info("[PiBridge] Evaluation harness enabled for production telemetry")
+    try:
+        from app.services.session_data import session_data_manager as _sdm
+        from app.services.mapspec.coordinator import validate as _validate_mapspec
+        from app.lib.harness.ref_resolver import make_session_store_resolver
+
+        _harness = PiAgentHarness(
+            session_id="production",
+            ref_resolver=make_session_store_resolver(_sdm),
+            mapspec_validator=_validate_mapspec,
+        )
+        logger.info("[PiBridge] Evaluation harness V2 enabled (real SessionStore ref resolver)")
+    except Exception as _harness_err:  # noqa: BLE001 - never block startup on telemetry
+        logger.warning(f"[PiBridge] Harness V2 wiring failed, degrading to no harness: {_harness_err}")
+        _harness = None
 
 
 def get_harness() -> Optional[PiAgentHarness]:
