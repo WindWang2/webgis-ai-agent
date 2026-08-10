@@ -450,8 +450,16 @@ class SpatialQualityEngine:
                             )
 
                     # Topology: Gap check (adjacent polygons with tiny gap)
+                    # GIS-16 (deep-audit round 4): the thresholds were absolute
+                    # DEGREES (1e-5 ≈ 1.1 m at the equator), which became a
+                    # no-op for projected CRS (1e-5 m = 10 microns never
+                    # matches). Scale by CRS: geographic keeps degree
+                    # thresholds (~1.1 m gap / ~0.11 m near-duplicate); a
+                    # projected CRS uses the equivalent METER thresholds.
                     dist = geom_i.distance(geom_j)
-                    if 0 < dist < 1e-5:
+                    gap_threshold = 1e-5 if is_geographic else 1.0  # ~1.1 m at equator
+                    dup_threshold = 1e-6 if is_geographic else 0.1  # ~0.11 m at equator
+                    if 0 < dist < gap_threshold:
                         issues.append(
                             QualityIssue(
                                 dimension="topology",
@@ -464,7 +472,7 @@ class SpatialQualityEngine:
                         )
 
                     # Topology: Near-duplicate vertices between features
-                    if 0 < dist < 1e-6:
+                    if 0 < dist < dup_threshold:
                         issues.append(
                             QualityIssue(
                                 dimension="topology",
@@ -480,6 +488,8 @@ class SpatialQualityEngine:
             if line_endpoints:
                 pt_geoms = [pt for pt, _ in line_endpoints]
                 pt_tree = STRtree(pt_geoms)
+                # GIS-16: same CRS-aware threshold as the gap checks.
+                dup_threshold = 1e-6 if is_geographic else 0.1
                 for pt_idx, (pt, f_idx) in enumerate(line_endpoints):
                     near_pts = pt_tree.query(pt)
                     connected = False
@@ -487,7 +497,7 @@ class SpatialQualityEngine:
                         cand_idx_int = int(candidate_idx)
                         if cand_idx_int == pt_idx:
                             continue
-                        if pt.distance(pt_geoms[cand_idx_int]) < 1e-6:
+                        if pt.distance(pt_geoms[cand_idx_int]) < dup_threshold:
                             connected = True
                             break
                     if not connected:
