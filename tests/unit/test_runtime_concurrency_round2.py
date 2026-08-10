@@ -176,6 +176,45 @@ async def test_chat_holds_session_lock_during_turn(monkeypatch):
     assert len(acquired) == 2
 
 
+@pytest.mark.asyncio
+async def test_chat_no_deadlock_on_session_creation(monkeypatch):
+    """CI regression (PR #320): chat() used to acquire the turn lock BEFORE
+    _get_or_create_session — which acquires the SAME per-session lock for the
+    DB-load path. asyncio.Lock is not reentrant → deadlock on a fresh session.
+    This test drives a real ChatEngine.chat() with a mocked LLM and asserts it
+    completes (no hang) for a session that needs DB loading."""
+    from app.services.chat.execution_engine import ChatExecutionEngine
+    from app.tools.registry import ToolRegistry
+    from unittest.mock import AsyncMock, patch
+
+    # Minimal engine construction (mirrors test_engine_holds_single_shared_dispatch_service).
+    import app.services.chat.execution_engine as ee_mod
+
+    class _FakeSettings:
+        LLM_BASE_URL = "http://localhost:9999"
+        LLM_MODEL = "m"
+        LLM_API_KEY = "k"
+        LLM_PROMPT_CACHING_ENABLED = False
+
+    orig_settings = ee_mod.settings
+    try:
+        ee_mod.settings = _FakeSettings()
+        engine = ChatExecutionEngine(ToolRegistry())
+    finally:
+        ee_mod.settings = orig_settings
+
+    # Force the DB-load path: a session not yet in _sessions.
+    engine._sessions = {}
+    engine._session_locks = {}
+
+    mock_response = {"choices": [{"message": {"content": "你好！", "tool_calls": None}}]}
+    with patch.object(engine, "_call_llm", new_callable=AsyncMock, return_value=mock_response):
+        with patch.object(engine, "_load_session_from_db", new_callable=AsyncMock, return_value=[]):
+            # Must complete — the old code deadlocked here on the fresh session.
+            result = await engine.chat("你好")
+    assert result["content"] == "你好！"
+
+
 def test_chat_stream_lock_scope_comment():
     """Assert the chat_stream source actually wraps the loop in the lock (a
     structural guard against future refactors moving the lock back)."""

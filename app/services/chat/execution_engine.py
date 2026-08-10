@@ -400,22 +400,26 @@ class ChatExecutionEngine:
         # messages.append / executed_tools writes and duplicated tool
         # execution. chat_stream only locked around map_state setup. Both paths
         # now hold the session lock for the duration of the turn.
+        #
+        # NOTE: _get_or_create_session must run BEFORE acquiring the turn lock —
+        # it acquires the SAME per-session lock internally for the DB-load path
+        # (asyncio.Lock is not reentrant; acquiring it twice deadlocks).
+        messages = await self._get_or_create_session(session_id, user_id=user_id)
         lock = self._get_session_lock(session_id)
         async with lock:
             return await self._chat_locked(
-                message, session_id, map_state, skill_name, user_id,
+                message, session_id, messages, skill_name, user_id,
             )
 
     async def _chat_locked(
         self,
         message: str,
         session_id: str,
-        map_state: Optional[dict] = None,
+        messages: list[dict],
         skill_name: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> dict:
         """Non-streaming chat turn body, executed under the session lock."""
-        messages = await self._get_or_create_session(session_id, user_id=user_id)
 
         self._apply_skill(messages, skill_name)
         messages.append({"role": "user", "content": message})
@@ -539,6 +543,11 @@ class ChatExecutionEngine:
         # racing between two turns. Holding an asyncio.Lock across yield is
         # safe: the lock is released via async-with __aexit__ when the
         # generator is closed (aclose) or when the turn ends.
+        #
+        # NOTE: _get_or_create_session must run BEFORE acquiring the turn lock —
+        # it acquires the SAME per-session lock internally for the DB-load path
+        # (asyncio.Lock is not reentrant; acquiring it twice deadlocks).
+        messages = await self._get_or_create_session(session_id, user_id=user_id)
         lock = self._get_session_lock(session_id)
         async with lock:
             if map_state:
@@ -546,8 +555,6 @@ class ChatExecutionEngine:
                     await session_data_manager.set_map_state(session_id, k, v)
                 from app.services.viewport_naming import schedule_populate_from_map_state
                 schedule_populate_from_map_state(map_state)
-
-            messages = await self._get_or_create_session(session_id, user_id=user_id)
 
             self._apply_skill(messages, skill_name)
             messages.append({"role": "user", "content": message})
