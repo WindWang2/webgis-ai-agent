@@ -134,7 +134,10 @@ async def create_data_source(
                 "endpoint_url": source.endpoint_url,
                 "status": source.status,
                 "capabilities": source.capabilities_json,
-                "connection_profile": source.connection_profile,
+                # SEC-07: the stored profile now carries the REAL credentials
+                # (needed for later probe/sync/query) — always sanitize on
+                # egress, including this create response.
+                "connection_profile": DataFabricSecurity.sanitize_profile_dict(source.connection_profile or {}),
             },
         }
     except Exception as e:
