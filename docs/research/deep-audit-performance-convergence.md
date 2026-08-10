@@ -515,6 +515,20 @@ SQLite DB.
   real password (probe/sync/query succeed), the API response is redacted, and
   the egress sanitizer covers every credential field — no path returns the
   real password.
+- **SEC-07 adversarial catch (blocking, fixed before merge):** the round-4
+  reviewer traced the actual credential path and found that
+  `create_data_source` has **no top-level `password` parameter** — callers
+  supply credentials via `profile_options={"password": ...}`, which lands in
+  `ConnectionProfile.options`. The original `sanitize_profile_dict` redacted
+  only **top-level** keys, so `options.password` was returned in plaintext on
+  every egress response (create/list/get) — the very leak SEC-07 set out to
+  close. The sanitizer was rewritten to **recurse** into nested dicts (and
+  lists of dicts) so `options.password` and `metadata.api_key` are redacted
+  while non-sensitive siblings survive. Regression test
+  `test_sanitize_profile_dict_redacts_nested_options_password` encodes the
+  actual call path and fails on the shallow redact (`'realpass' == '********'`).
+  The persistence half of SEC-07 (store `model_dump()` not the sanitized dict)
+  remains correct and is now paired with a working egress redact.
 - **Reviewer verified** DATA-09's migration is idempotent on both dialects and
   chains correctly off `0011_enterprise_geospatial_data_fabric` (alembic
   `heads` reports a single head).

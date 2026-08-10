@@ -103,3 +103,37 @@ def test_sanitize_profile_dict_redacts_credentials():
     assert sanitized["password"] == "********"
     assert sanitized["access_key"] == "********"
     assert sanitized["secret_key"] == "********"
+
+
+def test_sanitize_profile_dict_redacts_nested_options_password():
+    """SEC-07 egress: the sanitizer must recurse into nested dicts.
+
+    ``create_data_source`` has no top-level ``password`` parameter, so callers
+    supply credentials via the ``options`` dict (e.g.
+    ``profile_options={"password": "realpass"}``). The previous shallow redact
+    left ``options.password`` in plaintext on every egress response — a direct
+    credential leak. The recursive redact must cover ``options`` (and a list of
+    credential dicts) too.
+    """
+    profile = {
+        "id": "ds_x",
+        "source_type": "postgis",
+        "url": "https://db.example.com",
+        "password": None,
+        "options": {"password": "realpass", "ssl": True, "user": "u"},
+        # A nested dict whose own keys carry credentials (not a key named
+        # "credentials" — that's already caught by the top-level scan).
+        "metadata": {"api_key": "leak", "note": "keep"},
+    }
+    sanitized = DataFabricSecurity.sanitize_profile_dict(profile)
+    # Nested dict: options.password redacted, non-sensitive options preserved.
+    assert sanitized["options"]["password"] == "********", (
+        "options.password must be redacted — this is the actual credential path"
+    )
+    assert sanitized["options"]["ssl"] is True
+    assert sanitized["options"]["user"] == "u"
+    # Nested metadata dict: api_key redacted, note preserved.
+    assert sanitized["metadata"]["api_key"] == "********"
+    assert sanitized["metadata"]["note"] == "keep"
+    # Non-sensitive top-level value untouched.
+    assert sanitized["url"] == "https://db.example.com"
