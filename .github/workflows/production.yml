@@ -240,14 +240,16 @@ jobs:
 
       - name: Validate nginx config syntax (nginx -t)
         # E-F-1/E-F-7：SSE location 正则、keepalive map、超时配置都必须语法合法。
-        # nginx -t 会校验被引用的文件存在（ssl 证书/key、mime.types），所以用
-        # 一次性自签证书挂进 /etc/nginx/ssl，让 443 ssl 块也能通过校验。
+        # nginx -t 在加载配置时会校验被引用的文件存在（ssl 证书/key）并解析 upstream
+        # 主机名，所以：挂一次性自签证书到 /etc/nginx/ssl；用 --add-host 让 compose
+        # service 名 `api` 可解析（nginx -t 只解析不连接，指向 127.0.0.1 即可）。
         run: |
           mkdir -p .nginx-ssl
           openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
             -keyout .nginx-ssl/server.key -out .nginx-ssl/server.crt \
             -subj "/CN=localhost" 2>/dev/null
           docker run --rm \
+            --add-host api:127.0.0.1 \
             -v "$PWD/deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" \
             -v "$PWD/.nginx-ssl:/etc/nginx/ssl:ro" \
             nginx:alpine nginx -t
