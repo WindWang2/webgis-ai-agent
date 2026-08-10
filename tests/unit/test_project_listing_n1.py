@@ -6,7 +6,7 @@ lazy="select" — serializing N artifacts fired ~N×(1 selectin + 2 select)
 queries. With explicit selectinload, the total query count is constant.
 """
 import pytest
-from sqlalchemy import create_engine, event, select, func
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
