@@ -502,20 +502,22 @@ def transform_geojson(geojson: Dict[str, Any], from_crs: str, to_crs: str) -> Di
     else:
         data = apply_vectorized(data)
 
-    # GIS-22 (deep-audit round 3): the top-level `crs` member must be updated
-    # after reprojection. It previously kept the SOURCE CRS name, so downstream
-    # consumers that read geojson["crs"] (e.g. zonal_statistics deciding whether
-    # to reproject) silently reprojected ALREADY-transformed coordinates —
-    # moving them by a degrees-vs-meters factor. SpatialRepairPipeline already
-    # updates its crs member; this mirrors that pattern.
-    if isinstance(data, dict) and ("crs" in data or geo_type in ("FeatureCollection", "Feature")):
+    # GIS-22 (deep-audit round 3): if the input carries a top-level `crs`
+    # member, it must be UPDATED after reprojection — previously it kept the
+    # SOURCE CRS name, so downstream consumers reading geojson["crs"] (e.g.
+    # zonal_statistics deciding whether to reproject) silently reprojected
+    # ALREADY-transformed coordinates. Only update when the member already
+    # exists: callers that use transform_geojson purely for coordinate
+    # normalization (e.g. chinese_maps _shaping GCJ-02→WGS84) contract that the
+    # envelope keys are preserved, so adding a crs key out of nowhere would
+    # break them.
+    if isinstance(data, dict) and "crs" in data:
         to_crs_name = to_crs
         if not isinstance(to_crs_name, str):
             try:
                 to_crs_name = str(to_crs)
             except Exception:
                 to_crs_name = "EPSG:4326"
-        # Normalize "EPSG:4326"-style names; keep authority:code casing.
         data["crs"] = {"type": "name", "properties": {"name": to_crs_name}}
 
     return data

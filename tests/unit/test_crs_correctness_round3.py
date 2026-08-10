@@ -55,6 +55,24 @@ def test_transform_geojson_4326_to_4326_keeps_name():
     assert out.get("crs", {}).get("properties", {}).get("name") == "EPSG:4326"
 
 
+def test_transform_geojson_does_not_add_crs_to_plain_envelope():
+    """Regression guard: callers that use transform_geojson purely for
+    coordinate normalization (chinese_maps _shaping GCJ-02→WGS84) contract
+    that the envelope keys are preserved — a crs key must NOT be added when
+    the input had none (would break set(fc.keys()) assertions)."""
+    from app.utils.coord_transform import transform_geojson
+
+    geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {}, "geometry": {"type": "Point", "coordinates": [116.0, 39.0]}}
+        ],
+    }
+    out = transform_geojson(geojson, from_crs="gcj02", to_crs="EPSG:4326")
+    assert "crs" not in out, "crs key must not be added to a crs-less envelope"
+    assert set(out.keys()) == {"type", "features"}
+
+
 # ---------------------------------------------------------------------------
 # GIS-23 — zonal_statistics fails loudly on reprojection failure
 # ---------------------------------------------------------------------------
