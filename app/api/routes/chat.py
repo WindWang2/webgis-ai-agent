@@ -151,19 +151,44 @@ async def chat_stream(
     owner_token: Optional[str] = Depends(get_owner_token),
     db: AsyncSession = Depends(get_async_db),
 ):
-    """SSE 流式对话接口"""
+    """SSE 流式对话接口
+
+    DB-session lifecycle (transport goal C-F2): FastAPI keeps yield-dependencies
+    alive until the response body completes, which for a StreamingResponse is
+    the end of a multi-second LLM turn. That used to pin a Postgres connection
+    for the whole turn doing nothing after the ownership guard. With
+    ``pool_size=10 + max_overflow=20``, ~15 concurrent streams exhausted the
+    pool (30s ``pool_timeout`` → 500s on unrelated requests) and
+    ``_save_msg_async`` silently dropped history.
+
+    We still take ``Depends(get_async_db)`` — it is the override point tests use
+    to isolate the DB — but close it *immediately* after the guard so the
+    connection returns to the pool before any event is yielded. ``close()`` is
+    idempotent; the dependency's later teardown ``close()`` is a no-op. Neither
+    streaming path needs a session across the stream: the legacy engine
+    persists via its own short-lived ``_save_msg_async`` sessions and the Pi
+    path writes nothing during the stream. The inner ``async with
+    async_db_session()`` that used to wrap each generator was never consumed
+    either, so it is removed (that change alone cuts held connections 2→1 per
+    stream; the early close takes it to 0 during streaming).
+    """
     user_id = _user.get("user_id")
-    await _guard_body_session(db, req.session_id, user_id, owner_token)
+    try:
+        await _guard_body_session(db, req.session_id, user_id, owner_token)
+    finally:
+        # Release the connection NOW, not when the stream ends. The guard is
+        # the only consumer; nothing downstream uses ``db``.
+        if db is not None:
+            await db.close()
 
     if _use_pi_bridge():
         async def pi_event_generator():
-            async with async_db_session():
-                try:
-                    async for event in pi_bridge.stream_prompt(req.message, session_id=req.session_id):
-                        yield event
-                except Exception as e:
-                    logger.error(f"Pi bridge stream error: {e}", exc_info=True)
-                    yield sse_event("error", {"error": "Internal server error"})
+            try:
+                async for event in pi_bridge.stream_prompt(req.message, session_id=req.session_id):
+                    yield event
+            except Exception as e:
+                logger.error(f"Pi bridge stream error: {e}", exc_info=True)
+                yield sse_event("error", {"error": "Internal server error"})
 
         return StreamingResponse(
             pi_event_generator(),
@@ -173,19 +198,18 @@ async def chat_stream(
 
     # Legacy path: 使用 ChatEngine
     async def event_generator():
-        async with async_db_session():
-            try:
-                async for event in get_engine().chat_stream(
-                    req.message,
-                    session_id=req.session_id,
-                    map_state=req.map_state,
-                    skill_name=req.skill_name,
-                    user_id=user_id,
-                ):
-                    yield event
-            except Exception as e:
-                logger.error(f"Stream error: {e}", exc_info=True)
-                yield sse_event("error", {"error": "Internal server error"})
+        try:
+            async for event in get_engine().chat_stream(
+                req.message,
+                session_id=req.session_id,
+                map_state=req.map_state,
+                skill_name=req.skill_name,
+                user_id=user_id,
+            ):
+                yield event
+        except Exception as e:
+            logger.error(f"Stream error: {e}", exc_info=True)
+            yield sse_event("error", {"error": "Internal server error"})
 
     return StreamingResponse(
         event_generator(),
