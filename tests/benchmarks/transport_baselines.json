@@ -1,0 +1,18 @@
+{
+  "concurrent_stream_p95_8": {
+    "iterations": 7,
+    "median_ms": 5.959
+  },
+  "sse_batcher_coalesce_500": {
+    "iterations": 7,
+    "median_ms": 3.168
+  },
+  "sse_serialization_10k": {
+    "iterations": 7,
+    "median_ms": 43.379
+  },
+  "stream_first_event_pi": {
+    "iterations": 7,
+    "median_ms": 7.689
+  }
+}
