@@ -103,7 +103,13 @@ class DataFabricManager:
         except Exception:
             pass
 
-        sanitized_profile = DataFabricSecurity.sanitize_profile_dict(conn_profile.model_dump())
+        # SEC-07 (deep-audit round 4): persist the REAL profile. The previous
+        # code stored the SANITIZED dict (password -> "********"), so every
+        # later probe/sync/query rebuilt the ConnectionProfile with a fake
+        # password and failed to connect — a registered source could never be
+        # used again. Sanitization belongs on EGRESS only (the REST routes
+        # already sanitize before returning profiles to callers).
+        stored_profile = conn_profile.model_dump()
 
         ds_model = DataSourceModel(
             id=source_id,
@@ -112,7 +118,7 @@ class DataFabricManager:
             name=name,
             source_type=source_type,
             endpoint_url=clean_url,
-            connection_profile=sanitized_profile,
+            connection_profile=stored_profile,
             capabilities_json=capabilities,
             status=health_res.status,
             last_health_check=datetime.now(timezone.utc),

@@ -181,17 +181,31 @@ class DataFabricSecurity:
 
     @staticmethod
     def sanitize_profile_dict(profile_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Redacts credentials before returning a profile to LLM or frontend.
+
+        Recurses into nested dicts (``options``, ``credentials``, …) so that a
+        password supplied via ``options={"password": ...}`` — the path used by
+        ``create_data_source`` (its signature has no top-level password field) —
+        is redacted too. The previous shallow redaction left ``options.password``
+        in plaintext on every egress response. Lists of dicts are recursed per
+        element; non-dict values are left untouched.
         """
-        Redacts credentials and passwords before returning ConnectionProfile to LLM or frontend.
-        """
-        sanitized = dict(profile_dict)
         sensitive_keys = {"password", "secret", "secret_key", "token", "api_key", "access_key", "credential"}
 
-        for k, v in list(sanitized.items()):
-            if any(s in k.lower() for s in sensitive_keys):
-                sanitized[k] = "********"
+        def _redact(value: Any) -> Any:
+            if isinstance(value, dict):
+                out: Dict[str, Any] = {}
+                for k, v in value.items():
+                    if any(s in k.lower() for s in sensitive_keys):
+                        out[k] = "********"
+                    else:
+                        out[k] = _redact(v)
+                return out
+            if isinstance(value, list):
+                return [_redact(v) for v in value]
+            return value
 
-        return sanitized
+        return _redact(profile_dict)
 
     @staticmethod
     def parse_safe_xml(xml_content: bytes) -> "ET.Element":

@@ -33,6 +33,11 @@ class SpatialRepairPipeline:
         """
         Remediates GeoJSON dataset without mutating original input.
         Returns (repaired_geojson, audit_logs).
+
+        Note: when ``crs_transform`` is active, ``snap_within_tolerance`` is
+        applied AFTER reprojection, so ``tolerance`` is interpreted in the
+        TARGET CRS units (e.g. meters for a projected CRS, degrees for
+        EPSG:4326) — not in the source CRS units.
         """
         active_ops = ops if ops is not None else (operations or ["make_valid", "remove_empty"])
 
@@ -119,18 +124,13 @@ class SpatialRepairPipeline:
                     logs.append(f"normalize_geometry_type: Converted Point to MultiPoint at feature index {idx}")
 
             # ----------------------------------------------------
-            # Operation: snap_within_tolerance
-            # ----------------------------------------------------
-            if "snap_within_tolerance" in active_ops:
-                try:
-                    geom = shapely.set_precision(geom, grid_size=tolerance)
-                    logs.append(f"snap_within_tolerance: Snapped vertices of feature index {idx} with grid precision {tolerance}")
-                except Exception as e:
-                    logs.append(f"snap_within_tolerance: Snapping failed for feature index {idx}: {e}")
-
-            # ----------------------------------------------------
             # Operation: crs_transform (Coordinate Reprojection)
             # ----------------------------------------------------
+            # Run BEFORE snapping so grid precision is interpreted in the
+            # TARGET CRS units (audit GIS-17). Snapping in source units first
+            # (e.g. degrees) then reprojecting would apply a geodesically
+            # meaningless grid and leave vertices that snap to the wrong
+            # coordinate in the target CRS.
             if transformer is not None:
                 try:
                     from shapely.ops import transform
@@ -138,6 +138,18 @@ class SpatialRepairPipeline:
                     logs.append(f"crs_transform: Reprojected geometry at feature index {idx}")
                 except Exception as e:
                     logs.append(f"crs_transform: Failed to reproject feature index {idx}: {e}")
+
+            # ----------------------------------------------------
+            # Operation: snap_within_tolerance
+            # ----------------------------------------------------
+            if "snap_within_tolerance" in active_ops:
+                try:
+                    geom = shapely.set_precision(geom, grid_size=tolerance)
+                    logs.append(
+                        f"snap_within_tolerance: Snapped vertices of feature index {idx} with grid precision {tolerance} (target CRS units)"
+                    )
+                except Exception as e:
+                    logs.append(f"snap_within_tolerance: Snapping failed for feature index {idx}: {e}")
 
             feat["geometry"] = mapping(geom)
             cleaned_features.append(feat)

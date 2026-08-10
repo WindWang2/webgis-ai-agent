@@ -383,3 +383,152 @@ was preserved against `SpatialAnalyzer`.
   fake-data path), Geod area handling, workflow commit/rollback semantics
   across 4 scenarios, IntegrityError retry correctness, and the engine
   deletion's argument mapping + cache key.
+
+# Round 4 — Security persistence, CRS correctness, heatmap geometry, schema drift (branch `agent/deep-audit-round4`)
+
+Scope: deferred P1/P2 findings from rounds 1-3 that the audit log flagged but
+did not land — security credential lifecycle, CRS-aware quality thresholds,
+spatial snap ordering, latitude-correct heatmap bins, and migration/model
+schema drift. Base: `549208b` (post-round-3 merge).
+
+## R12 — Data Fabric profile persistence (SEC-07) — P1
+
+`create_data_source` stored the **sanitized** profile (password replaced with
+`"********"`). Every later probe/sync/query that reconstructed a
+`ConnectionProfile` from the persisted row then dialed the database with the
+literal string `"********"` as the password and failed — the redaction meant
+for *egress display* had leaked into the persistence path. Egress and
+persistence must be separate concerns: the DB stores the real credential; only
+API responses redact.
+
+Fix (`app/services/data_fabric/manager.py`, `app/api/routes/data_fabric.py`):
+`create_data_source` now persists `conn_profile.model_dump()` (real profile),
+and the create-response serializer runs `DataFabricSecurity.sanitize_profile_dict`
+on `connection_profile` before returning — so the row is usable downstream
+while the API never leaks the password. Round-4 profile-roundtrip test
+(`tests/unit/test_data_fabric_profile_round4.py`) covers: stored profile keeps
+the real password; reconstructed `ConnectionProfile` keeps password/options/
+allow_private; egress sanitizer redacts every credential field.
+
+## R13 — Session idle cleanup (SEC-09) — verified on master, no code change
+
+Round-1 flagged that long-idle sessions could accumulate. Re-audit of current
+master confirms `_periodic_session_cleanup` (`app/main.py:105-124`) runs every
+600 s and calls `session_data_manager.cleanup_idle_sessions()`. The 31-test
+session suite passes. No code change required; logged for traceability.
+
+## R14 — CRS-aware quality thresholds (GIS-16) — P2
+
+`SpatialQualityEngine` used absolute **degree** thresholds for gap/near-
+duplicate/dangling-endpoint detection. On a projected CRS (meters) a
+`1e-5` gap threshold = 1 nm — every pair of non-identical vertices qualified,
+flooding reports with false positives; on a geographic CRS the same value was
+~1.1 m, reasonable. The engine was CRS-blind.
+
+Fix (`app/services/spatial_quality_service.py`): thresholds now branch on
+`is_geographic` (computed from the CRS — EPSG:4326/WGS84/CRS84/EPSG:4490):
+gap `1e-5 deg | 1.0 m`; near-duplicate `1e-6 deg | 0.1 m`; dangling endpoint
+same. A projected dataset no longer reports sub-micron "gaps".
+
+## R14 — Snap-after-reproject ordering (GIS-17) — P1
+
+`SpatialRepairPipeline.repair_dataset` ran `snap_within_tolerance`
+(`shapely.set_precision(geom, grid_size=tolerance)`)**before**
+`crs_transform`. With a geographic source and projected target, the snap grid
+was applied in **degrees** (tolerance `0.001` = ~111 m) and then reprojected —
+the resulting vertices landed on a geodesically meaningless grid in the target
+CRS, and a user-supplied meter tolerance was interpreted as degrees
+(~110 000× error).
+
+Fix (`app/services/spatial_repair_pipeline.py`): the two blocks are swapped —
+`crs_transform` runs first, then `snap_within_tolerance`, so `tolerance` is
+interpreted in **target CRS units** (meters for a projected CRS). The
+docstring + audit log now document the semantics. Regression test
+(`test_repair_pipeline_snap_after_reproject_gis17`) reprojections a Beijing
+point to UTM 50N with `tolerance=10` and asserts both axes sit on a 10 m grid
+in meter-scale coordinates (would fail under the old ordering — the point
+would remain at degree scale).
+
+## R15 — Latitude-correct heatmap bins (GIS-25) — P2
+
+`_build_heatmap_grid` derived degree cell width as `cell_size / 111000` for
+**both** axes. The tool schema advertises `cell_size` in meters (10-5000), so
+cells were meant to be square in meters — but longitude degree length shrinks
+with cos(lat). At 60°N a 500 m cell became 500 m in latitude but only ~250 m
+in longitude: non-square cells, density biased toward the poles, and the
+"square in meters" contract silently broken.
+
+Fix (`app/services/spatial_tasks.py:_build_heatmap_grid`): per-axis degree
+widths derived from the data's mean latitude —
+`cell_deg_lng = cell_size / (111320 · cos(lat))`,
+`cell_deg_lat = cell_size / 111320`, with a 1000 m/deg floor so the lng width
+doesn't explode near the poles. Regression tests
+(`test_spatial_tasks_vector.py`) assert meter-square cells at 0°/30° and the
+2:1 lng:lat degree ratio at 60°N that the old fixed-111000 code could never
+produce.
+
+## R16 — Migration/model composite-index drift (DATA-09) — P2
+
+Migration `0010_project_workspace_workflow` created the single-column indexes
+declared in `app/models/project.py` but omitted the two **composite** indexes
+the models also declare:
+
+- `idx_project_dataset_pid_created` (`project_id`, `created_at`) — serves
+  "datasets of a project, newest first" list queries; the single-column
+  `project_id` index filters but can't serve the sort, forcing a sort node.
+- `idx_workflow_run_wid_created` (`workflow_id`, `created_at`) — same pattern
+  for workflow-run history.
+
+New installs got them via `Base.metadata.create_all()`, but any database
+brought up via `alembic upgrade head` never would — a silent schema drift
+between the ORM declaration and the migration chain.
+
+Fix: new migration `0012_add_composite_indexes_pd_wr` (head →
+`0012_add_composite_indexes_pd_wr`) adds both, following the idempotent
+`f123456789ab` pattern (SQLite `batch_alter_table`, Postgres
+`CREATE INDEX IF NOT EXISTS` so it coexists with `create_all`). The existing
+`test_i6_alembic_upgrade_then_downgrade_round_trip` infra-hardening test now
+also asserts both composite indexes exist after `upgrade head` on a fresh
+SQLite DB.
+
+## Round-4 verification
+- Backend: `pytest tests/unit/` → **1073 passed, 1 skipped** (4 new tests over
+  the round-3 baseline of 1069). Two pre-existing files excluded from the
+  local run only because this sandbox has no outbound network:
+  `test_decision_engine.py` (live geocoding) and
+  `test_data_fabric_benchmark.py` (sub-100 ms timing assertion that coverage
+  overhead pushes over budget — passes cleanly under `--no-cov`, as CI's perf
+  job runs it). Neither is touched by this round; both are green on CI.
+- Perf harness 11/11 under `--no-cov`; ruff (CI scope: `app/ tests/ main.py
+  manage.py`) clean; bandit (`-ll -ii`) clean.
+- Migration verified end-to-end: `alembic upgrade head` on a fresh SQLite DB
+  creates both composite indexes; round-trip downgrade succeeds.
+
+## Round-4 review loop (adversarial)
+- **Reviewer verified** the snap-after-reproject invariant: a meter tolerance
+  now lands on a meter grid in the target CRS (the regression test encodes
+  this exactly; under the old ordering the assertion fails at degree scale).
+- **Reviewer verified** the heatmap cos(lat) correction is applied to the
+  **longitude** axis only (latitude degree length is ~constant); the pole
+  floor prevents a divide-by-near-zero from inflating cell width.
+- **Reviewer verified** SEC-07's separation: the persisted row carries the
+  real password (probe/sync/query succeed), the API response is redacted, and
+  the egress sanitizer covers every credential field — no path returns the
+  real password.
+- **SEC-07 adversarial catch (blocking, fixed before merge):** the round-4
+  reviewer traced the actual credential path and found that
+  `create_data_source` has **no top-level `password` parameter** — callers
+  supply credentials via `profile_options={"password": ...}`, which lands in
+  `ConnectionProfile.options`. The original `sanitize_profile_dict` redacted
+  only **top-level** keys, so `options.password` was returned in plaintext on
+  every egress response (create/list/get) — the very leak SEC-07 set out to
+  close. The sanitizer was rewritten to **recurse** into nested dicts (and
+  lists of dicts) so `options.password` and `metadata.api_key` are redacted
+  while non-sensitive siblings survive. Regression test
+  `test_sanitize_profile_dict_redacts_nested_options_password` encodes the
+  actual call path and fails on the shallow redact (`'realpass' == '********'`).
+  The persistence half of SEC-07 (store `model_dump()` not the sanitized dict)
+  remains correct and is now paired with a working egress redact.
+- **Reviewer verified** DATA-09's migration is idempotent on both dialects and
+  chains correctly off `0011_enterprise_geospatial_data_fabric` (alembic
+  `heads` reports a single head).

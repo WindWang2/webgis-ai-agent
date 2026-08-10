@@ -160,3 +160,43 @@ def test_repair_pipeline_non_destructive():
     assert len(repaired["features"]) == 1
     assert repaired["features"][0]["geometry"]["type"] == "MultiPolygon"
     assert len(logs) > 0
+
+
+def test_repair_pipeline_snap_after_reproject_gis17():
+    """GIS-17 regression: snap_within_tolerance must run AFTER crs_transform.
+
+    When snapping runs in the source CRS (degrees) and the target is a
+    projected CRS, a tolerance like 10 would be applied as 10 degrees
+    (~1100 km) instead of 10 meters. After the fix, the output vertex
+    coordinates must sit on a 10-meter grid in the target CRS.
+    """
+    geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"id": 1},
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [116.39123, 39.90745],  # Beijing, off-grid on purpose
+                },
+            },
+        ],
+    }
+
+    repaired, logs = SpatialRepairPipeline.repair_dataset(
+        geojson,
+        ops=["crs_transform", "snap_within_tolerance"],
+        tolerance=10.0,
+        source_crs="EPSG:4326",
+        target_crs="EPSG:32650",  # UTM zone 50N — meters
+    )
+
+    x, y = repaired["features"][0]["geometry"]["coordinates"]
+    # Reprojected coordinates are at the ~1e6 meter scale, NOT degrees (~1e2).
+    # Snapping happened in target CRS units: both axes on a 10 m grid.
+    assert x > 1e5, f"expected projected meter-scale x, got {x}"
+    assert y > 1e5, f"expected projected meter-scale y, got {y}"
+    assert abs(round(x / 10.0) * 10.0 - x) < 1e-6, f"x={x} not on 10 m grid"
+    assert abs(round(y / 10.0) * 10.0 - y) < 1e-6, f"y={y} not on 10 m grid"
+    assert any("target CRS units" in log for log in logs), "log should document target-CRS tolerance semantics"
