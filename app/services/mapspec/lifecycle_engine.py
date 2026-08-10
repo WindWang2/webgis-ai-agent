@@ -176,8 +176,13 @@ class MapSpecLifecycleEngine:
                 # snapshot (aliasing) and mask newly-introduced blocking errors.
                 # The Redis backend already returns fresh copies; deepcopy is a
                 # no-op-equivalent safety there. prior_mapspec stays un-mutated.
+                # Offload the deepcopy: for a large inline-GeoJSON mapspec this is
+                # O(features) and must not block the event loop (REL-07).
                 prior_mapspec = loaded
-                mapspec = copy.deepcopy(loaded) if loaded is not None else None
+                mapspec = (
+                    await asyncio.to_thread(copy.deepcopy, loaded)
+                    if loaded is not None else None
+                )
 
                 # 1. 针对未初始化会话自动构建根框架
                 if not mapspec and not isinstance(intent, (InitProjectIntent, RollbackIntent)):

@@ -130,6 +130,20 @@ def _write_ref_blobs_sync(
     return ref_blob_map
 
 
+def _write_blobs_and_hash_sync(
+    blob_dir: Path, materialized_refs: Dict[str, Any], mapspec: Dict[str, Any]
+) -> tuple:
+    """Offloaded: write ref blobs AND compute the whole-checkpoint content hash.
+
+    Both are O(payload size); running them on the event loop would block for a
+    large inline-GeoJSON mapspec. Combined into one thread call to avoid two
+    separate offloads over the same data.
+    """
+    ref_blob_map = _write_ref_blobs_sync(blob_dir, materialized_refs)
+    content_h = _content_hash(mapspec, ref_blob_map)
+    return ref_blob_map, content_h
+
+
 async def snapshot(
     mapspec: Dict[str, Any],
     session_dir: Path,
@@ -152,14 +166,13 @@ async def snapshot(
         mapspec, session_id_for_refs, session_data_manager
     )
 
-    # 2. ref blob 去重写入（卸载到线程）。返回 ref_id -> blob_hash 映射。
+    # 2. ref blob 去重写入 + 内容哈希（整体卸载到线程）。
     blob_dir = _blob_dir(session_dir)
-    ref_blob_map = await asyncio.to_thread(
-        _write_ref_blobs_sync, blob_dir, materialized_refs
+    ref_blob_map, content_h = await asyncio.to_thread(
+        _write_blobs_and_hash_sync, blob_dir, materialized_refs, mapspec
     )
 
     # 3. 整 checkpoint 内容哈希。
-    content_h = _content_hash(mapspec, ref_blob_map)
     manifest = await asyncio.to_thread(_load_manifest, session_dir)
 
     # 去重契约：
