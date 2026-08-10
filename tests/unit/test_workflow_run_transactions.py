@@ -15,9 +15,8 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
 from app.models.db_model import Organization
-from app.models.project import Project, Workflow, WorkflowRun, Artifact
+from app.models.project import Project, Workflow, Artifact
 from app.services.workflow_engine import WorkflowEngine
-from app.schemas.project_schema import WorkflowStepSpec
 
 
 @pytest.fixture
