@@ -198,6 +198,16 @@ class WorkflowEngine:
                     parameters=tool_args,
                 )
 
+                # DATA-10 (deep-audit round 3): commit after EVERY step instead
+                # of holding one long transaction across the whole multi-step
+                # tool loop. Previously the pooled connection stayed checked out
+                # for the entire run (pool exhaustion under concurrent runs) and
+                # a mid-loop failure committed ALL prior steps' artifacts as an
+                # indistinguishable "partial" batch. Now each step's artifact +
+                # lineage is durably committed before the next tool dispatch,
+                # and a failure only affects the current (uncommitted) step.
+                db.commit()
+
             run.status = "completed"
             run.completed_at = datetime.now(timezone.utc)
             run.execution_trace = execution_trace
@@ -209,10 +219,19 @@ class WorkflowEngine:
 
         except Exception as e:
             logger.error(f"[WorkflowEngine] Step failed during workflow execution: {e}", exc_info=True)
+            # DATA-10: roll back the current step's uncommitted artifact/lineage
+            # (prior steps are already durable via per-step commits) before
+            # marking the run failed — the run record itself is committed below.
+            try:
+                db.rollback()
+            except Exception:
+                logger.warning("[WorkflowEngine] rollback after step failure failed", exc_info=True)
             run.status = "failed"
             run.error_message = str(e)
             run.completed_at = datetime.now(timezone.utc)
             run.execution_trace = execution_trace
+            # Re-attach the run (rollback may have expired it) and persist.
+            run = db.merge(run)
 
         db.commit()
         db.refresh(run)
