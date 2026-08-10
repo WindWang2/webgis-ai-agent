@@ -166,7 +166,19 @@ class AsyncHistoryService(HistoryStoreProtocol):
                 result = await self.db.execute(stmt)
                 return result.scalar_one()
             except Exception as e:
-                if "locked" in str(e).lower() and attempt < 2:
+                # SEC-10 (deep-audit round 3): two concurrent first-messages for
+                # the same session both see "absent", both INSERT, and the loser
+                # gets a PRIMARY KEY IntegrityError — previously unhandled here
+                # (only "locked" strings were retried), surfacing as an HTTP 500
+                # on double-submit. The standard upsert pattern: on integrity
+                # conflict, roll back and re-SELECT the winner's row.
+                from sqlalchemy.exc import IntegrityError
+
+                is_conflict = isinstance(e, IntegrityError) or (
+                    isinstance(e, Exception) and "integrityerror" in str(type(e).__name__).lower()
+                )
+                is_locked = "locked" in str(e).lower()
+                if (is_conflict or is_locked) and attempt < 2:
                     await anyio.sleep(0.1 * (attempt + 1))
                     await self.db.rollback()
                     continue

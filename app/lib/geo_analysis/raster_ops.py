@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from typing import Optional, Union
 import rasterio
@@ -6,13 +7,20 @@ from rasterstats import zonal_stats
 
 from app.utils.coord_transform import transform_geojson
 
+logger = logging.getLogger(__name__)
+
 
 def zonal_statistics(
     polygons_geojson: Union[dict, str],
     raster_path: str,
     stats: Optional[list[str]] = None,
 ) -> list[dict]:
-    """Compute zonal statistics for polygons against a raster."""
+    """Compute zonal statistics for polygons against a raster.
+
+    Raises ValueError when polygon reprojection to the raster CRS fails — the
+    previous behavior silently fed source-CRS polygons to a projected raster,
+    producing plausible-looking zero statistics (GIS-23, deep-audit round 3).
+    """
     if stats is None:
         stats = ['mean', 'sum', 'max', 'min']
 
@@ -35,8 +43,18 @@ def zonal_statistics(
         try:
             reprojected_geojson = transform_geojson(geojson_obj, from_crs=src_crs, to_crs=target_crs_str)
             polygons_input = reprojected_geojson
-        except Exception:
-            polygons_input = geojson_obj
+        except Exception as e:
+            # GIS-23: do NOT silently fall back to source-CRS polygons — a
+            # WGS84 polygon fed to a projected raster yields all-zero stats
+            # that look like real "no data". Fail loudly with both CRS strings.
+            logger.warning(
+                "zonal_statistics reprojection failed (%s -> %s): %s",
+                src_crs, target_crs_str, e,
+            )
+            raise ValueError(
+                f"Polygon reprojection {src_crs} -> {target_crs_str} failed: {e}. "
+                "Refusing to compute zonal stats with mismatched CRS."
+            ) from e
     else:
         polygons_input = polygons_geojson
 

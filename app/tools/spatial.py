@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
 from app.tools._utils import cached_tool, trim_features
-from app.services.spatial_analyzer import spatial_analysis_engine
+from app.services.spatial_analyzer import SpatialAnalyzer
 from app.lib.geo_analysis.density import generate_heatmap_raster
 from app.lib.geo_processor.core import safe_parse as safe_parse_geojson
 
@@ -64,7 +64,11 @@ def register_spatial_tools(registry: ToolRegistry):
     def buffer_analysis(geojson: Any, distance: float, unit: str = "m") -> dict:
         data = safe_parse_geojson(geojson)
         features = data.get("features", [])
-        return spatial_analysis_engine.buffer(features, distance, unit)
+        # ARCH-01 (deep-audit round 3): SpatialAnalysisEngine (a name-dispatch
+        # seam ADR-0013 deleted) was removed; call SpatialAnalyzer directly like
+        # every other spatial tool.
+        res = SpatialAnalyzer.buffer(features, distance, unit)
+        return res.to_llm_response()
 
     @tool(registry, name="spatial_stats",
            description=(
@@ -79,7 +83,8 @@ def register_spatial_tools(registry: ToolRegistry):
     def spatial_stats(geojson: Any) -> dict:
         data = safe_parse_geojson(geojson)
         features = data.get("features", [])
-        return spatial_analysis_engine.statistics(features)
+        res = SpatialAnalyzer.statistics(features)
+        return res.to_llm_response()
 
     @tool(registry, name="nearest_neighbor",
            description=(
@@ -94,7 +99,8 @@ def register_spatial_tools(registry: ToolRegistry):
     def nearest_neighbor(geojson: Any) -> dict:
         data = safe_parse_geojson(geojson)
         features = data.get("features", [])
-        return spatial_analysis_engine.nearest(features)
+        res = SpatialAnalyzer.nearest(features)
+        return res.to_llm_response()
 
     @tool(registry, name="heatmap_data",
            description=(

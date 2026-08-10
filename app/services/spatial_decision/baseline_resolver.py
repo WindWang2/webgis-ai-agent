@@ -34,7 +34,14 @@ def _humanize_metric(key: str) -> tuple[str, str]:
 
 
 def _calculate_geometry_area_km2(geometry_dict: Optional[Dict[str, Any]]) -> float:
-    """Calculates spatial area in square kilometers for a GeoJSON geometry."""
+    """Calculates spatial area in square kilometers for a GeoJSON geometry.
+
+    GIS-24 (deep-audit round 3): the previous planar 111.32·cos(lat)°-cell
+    approximation degrades near the poles and for polygons spanning latitude
+    bands. pyproj.Geod computes the exact ellipsoidal (geodesic) area for any
+    polygon — same cost, exact. Falls back to the planar approximation only if
+    pyproj is unavailable (it is a declared dependency, so this is defensive).
+    """
     if not geometry_dict:
         return 0.0
     try:
@@ -42,13 +49,42 @@ def _calculate_geometry_area_km2(geometry_dict: Optional[Dict[str, Any]]) -> flo
         if geom.is_empty or geom.area == 0:
             return 0.0
 
+        if geom.geom_type == "Polygon":
+            geoms = [geom]
+        elif geom.geom_type == "MultiPolygon":
+            geoms = list(geom.geoms)
+        else:
+            geoms = []
+
+        total_m2 = 0.0
+        try:
+            from pyproj import Geod
+
+            geod = Geod(ellps="WGS84")
+            for poly in geoms:
+                if poly.exterior is None:
+                    continue
+                ext = list(poly.exterior.coords)
+                area_abs, _perimeter = geod.polygon_area_perimeter(
+                    [c[0] for c in ext], [c[1] for c in ext]
+                )
+                total_m2 += abs(area_abs)
+                for ring in poly.interiors:
+                    ring_coords = list(ring.coords)
+                    ring_area, _ = geod.polygon_area_perimeter(
+                        [c[0] for c in ring_coords], [c[1] for c in ring_coords]
+                    )
+                    total_m2 -= abs(ring_area)
+            if total_m2 > 0.0:
+                return round(total_m2 / 1.0e6, 4)
+        except Exception as e:
+            logger.warning(f"Geodesic area calculation failed, falling back: {e}")
+
+        # Defensive fallback: planar cos(lat) approximation.
         centroid_lat = geom.centroid.y
         lat_rad = math.radians(centroid_lat)
-        
-        # Approx 1 deg lat ~ 111.32 km, 1 deg lng ~ 111.32 * cos(lat) km
         km_per_deg_lat = 111.32
         km_per_deg_lng = 111.32 * math.cos(lat_rad)
-        
         area_km2 = geom.area * km_per_deg_lat * km_per_deg_lng
         return round(float(area_km2), 4)
     except Exception as e:
