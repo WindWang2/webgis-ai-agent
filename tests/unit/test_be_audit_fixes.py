@@ -135,38 +135,49 @@ async def test_be_audit_02_template_creation_auth_and_deletion_ownership():
         assert res_del_user1.json()["status"] == "deleted"
 
 
-# ── BE-AUDIT-03: SpatialAnalysisEngine Parameter Keywords Verification ────────
+# ── BE-AUDIT-03: SpatialAnalyzer Parameter Keywords Verification ─────────────
 
-def test_be_audit_03_spatial_analysis_engine_parameter_mapping():
-    """Verify SpatialAnalysisEngine passes right_features for spatial_join and raster_path for zonal_stats."""
-    from app.services.spatial_analyzer import spatial_analysis_engine, SpatialAnalyzer
+def test_be_audit_03_spatial_analyzer_parameter_mapping():
+    """Verify SpatialAnalyzer passes right_features for spatial_join and
+    raster_path for zonal_stats.
+
+    ARCH-01 (deep-audit round 3): the SpatialAnalysisEngine name-dispatch seam
+    (which ADR-0013 deleted) was removed; tools call SpatialAnalyzer directly.
+    The parameter-mapping contract it verified is preserved here.
+    """
+    from app.services.spatial_analyzer import SpatialAnalyzer
 
     with patch.object(SpatialAnalyzer, "spatial_join") as mock_sjoin:
         mock_sjoin.return_value.to_llm_response.return_value = {"success": True, "type": "FeatureCollection"}
-        
-        spatial_analysis_engine.spatial_join(
-            target_features={"type": "FeatureCollection", "features": []},
-            join_features={"type": "FeatureCollection", "features": []},
-            how="inner",
+
+        SpatialAnalyzer.spatial_join(
+            {"type": "FeatureCollection", "features": []},
+            {"type": "FeatureCollection", "features": []},
+            join_type="inner",
             predicate="intersects",
         )
         mock_sjoin.assert_called_once()
-        _, kwargs = mock_sjoin.call_args
-        assert "right_features" in kwargs
-        assert kwargs["join_type"] == "inner"
-        assert kwargs["predicate"] == "intersects"
+        args, kwargs = mock_sjoin.call_args
+        # right_features is a positional arg (left, right); join_type/predicate
+        # are keywords — verify the full parameter mapping.
+        sentinel = {"type": "FeatureCollection", "features": []}
+        assert args[0] == sentinel  # left_features
+        assert args[1] == sentinel  # right_features
+        assert kwargs.get("join_type") == "inner"
+        assert kwargs.get("predicate") == "intersects"
 
     with patch.object(SpatialAnalyzer, "zonal_stats") as mock_zstats:
         mock_zstats.return_value.to_llm_response.return_value = {"success": True}
 
-        spatial_analysis_engine.zonal_stats(
-            raster_data="/data/test.tif",
-            polygon_features={"type": "FeatureCollection", "features": []},
+        SpatialAnalyzer.zonal_stats(
+            {"type": "FeatureCollection", "features": []},
+            "/data/test.tif",
         )
         mock_zstats.assert_called_once()
         args, kwargs = mock_zstats.call_args
         assert args[0] == {"type": "FeatureCollection", "features": []}
-        assert kwargs.get("raster_path") == "/data/test.tif"
+        # raster_path is the second POSITIONAL arg of SpatialAnalyzer.zonal_stats.
+        assert args[1] == "/data/test.tif"
 
 
 # ── BE-AUDIT-04: Distance Matrix Maxsize Verification ───────────────────────
