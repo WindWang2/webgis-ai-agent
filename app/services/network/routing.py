@@ -6,6 +6,7 @@ route GeoJSON line generation, and turn-by-turn directions.
 """
 from __future__ import annotations
 import math
+import uuid
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import networkx as nx
@@ -30,6 +31,227 @@ class NetworkRoutingService:
 
     def __init__(self, snapper: Optional[PointSnappingService] = None):
         self.snapper = snapper or PointSnappingService()
+
+    # --- GIS-01: snapped-point routing (deep-audit round 2) ---
+    #
+    # Previously, a (lng, lat) origin/destination was resolved to the NEAREST
+    # NODE (an endpoint of the snapped edge), so every route silently began/ended
+    # up to a full edge-length away from the true location. The snapped point
+    # (with fraction_along_edge) was computed but never used.
+    #
+    # Now the snapped edge is SPLIT at the snapped point: a virtual node is
+    # inserted on a working copy of the graph, the edge is divided into two
+    # sub-edges with proportionally-divided length_m / travel_time_s, and the
+    # route runs node-to-node through the virtual node. The returned geometry
+    # therefore starts/ends exactly at the snapped location.
+
+    _VIRTUAL_NODE_PREFIX = "vt_"
+
+    def _split_edge_at_fraction(
+        self,
+        graph: nx.DiGraph,
+        edge_u: Any,
+        edge_v: Any,
+        fraction: float,
+        snapped_coord: Tuple[float, float],
+    ) -> str:
+        """Split edge (u→v) at ``fraction`` [0,1], inserting a virtual node.
+
+        Mutates ``graph`` in place (callers pass a working copy). Handles both
+        directions when the edge is bidirectional. Returns the virtual node id.
+
+        Handles the case where the target edge was ALREADY split by an earlier
+        virtual-node insertion (origin and destination snapping to the same
+        edge): the walk follows the sub-edge chain from u to v, accumulates
+        length, and splits at the position matching the fraction of the ORIGINAL
+        edge, so the second split lands on the correct sub-edge.
+        """
+        vt_id = f"{self._VIRTUAL_NODE_PREFIX}{uuid.uuid4().hex[:12]}"
+        graph.add_node(vt_id, x=snapped_coord[0], y=snapped_coord[1], properties={})
+
+        fraction = max(0.0, min(1.0, fraction))
+
+        for u, v in ((edge_u, edge_v), (edge_v, edge_u)):
+            if not graph.has_edge(u, v):
+                continue
+            data = graph[u][v]
+            length_m = float(data.get("length_m", 0.0))
+            time_s = float(data.get("travel_time_s", 0.0))
+
+            sub_len_1 = length_m * fraction
+            sub_len_2 = length_m * (1.0 - fraction)
+            sub_time_1 = time_s * fraction
+            sub_time_2 = time_s * (1.0 - fraction)
+
+            # Subdivide the geometry (if present) at the split point.
+            geom_dict = data.get("geometry")
+            geom1 = None
+            geom2 = None
+            if geom_dict:
+                try:
+                    geom = shape(geom_dict)
+                    if isinstance(geom, LineString):
+                        coords = list(geom.coords)
+                        split_pt = geom.interpolate(fraction, normalized=True)
+                        # Split the coordinate sequence at the projected split
+                        # point: vertices before it go to sub1, the split point
+                        # joins them, and the remainder goes to sub2.
+                        sub1 = [coords[0]]
+                        inserted = False
+                        for i in range(1, len(coords)):
+                            if not inserted:
+                                seg = LineString([coords[i - 1], coords[i]])
+                                if split_pt.distance(seg) < 1e-9:
+                                    sub1.append((split_pt.x, split_pt.y))
+                                    inserted = True
+                                    break
+                                sub1.append(coords[i])
+                            else:
+                                break
+                        if len(sub1) >= 2:
+                            geom1 = LineString(sub1)
+                        sub2 = [sub1[-1]] + list(coords[len(sub1) - 1:]) if len(sub1) >= 1 else list(coords)
+                        if len(sub2) >= 2:
+                            geom2 = LineString(sub2)
+                except Exception:
+                    geom1 = None
+                    geom2 = None
+
+            # Remove the original edge and add the two sub-edges.
+            graph.remove_edge(u, v)
+            for sub_u, sub_v, sub_len, sub_time, sub_geom in (
+                (u, vt_id, sub_len_1, sub_time_1, geom1),
+                (vt_id, v, sub_len_2, sub_time_2, geom2),
+            ):
+                edge_attrs = dict(data)
+                edge_attrs["u"] = sub_u
+                edge_attrs["v"] = sub_v
+                edge_attrs["length_m"] = sub_len
+                edge_attrs["travel_time_s"] = sub_time
+                edge_attrs["id"] = f"{data.get('id', 'e')}_sp{vt_id[-6:]}_{sub_u}_{sub_v}"
+                if sub_geom is not None:
+                    edge_attrs["geometry"] = {
+                        "type": "LineString",
+                        "coordinates": [list(c) for c in sub_geom.coords],
+                    }
+                graph.add_edge(sub_u, sub_v, **edge_attrs)
+
+        return vt_id
+
+    def _split_edge_chain(
+        self,
+        graph: nx.DiGraph,
+        network_dataset: NetworkDataset,
+        edge_id: Union[int, str],
+        fraction: float,
+        snapped_coord: Tuple[float, float],
+    ) -> Optional[str]:
+        """Split the edge identified by ``edge_id``, even if already split.
+
+        GIS-01 edge case: when origin and destination snap to the SAME edge,
+        the first split replaces the original (u→v) edge with a sub-edge chain
+        (u→vt1→v). The second snap's fraction refers to the ORIGINAL edge, so
+        we walk the chain from u toward v, accumulate length, locate the
+        sub-edge containing ``fraction * orig_length``, and split THAT
+        sub-edge at the local fraction. Returns the virtual node id, or None
+        if the chain cannot be walked.
+        """
+        edge_info = self._find_edge_by_id(network_dataset, edge_id)
+        if edge_info is None:
+            return None
+        orig_u, orig_v = edge_info
+
+        # Total original length (from the dataset edge, authoritative).
+        orig_length = 0.0
+        for edge in network_dataset.edges:
+            if str(edge.id) == str(edge_id):
+                orig_length = float(edge.length_m or 0.0)
+                break
+
+        fraction = max(0.0, min(1.0, fraction))
+        target_dist = orig_length * fraction
+
+        for start_u, start_v in ((orig_u, orig_v), (orig_v, orig_u)):
+            if not graph.has_edge(start_u, start_v) and start_u not in graph:
+                continue
+            # Walk the sub-edge chain from start_u toward start_v.
+            accumulated = 0.0
+            current = start_u
+            prev: Any = None
+            while current != start_v:
+                nbrs = [n for n in graph.successors(current) if n != prev]
+                nxt = None
+                for n in nbrs:
+                    if n == start_v or (n in graph and nx.has_path(graph, n, start_v)):
+                        nxt = n
+                        break
+                if nxt is None:
+                    break  # chain broken in this direction; try the other
+                data = graph[current][nxt]
+                e_len = float(data.get("length_m", 0.0))
+                if accumulated + e_len >= target_dist:
+                    local_frac = (target_dist - accumulated) / e_len if e_len > 0 else 0.0
+                    return self._split_edge_at_fraction(
+                        graph, current, nxt, local_frac, snapped_coord
+                    )
+                accumulated += e_len
+                prev = current
+                current = nxt
+        return None
+
+    def _resolve_with_snap(
+        self,
+        target: Union[Tuple[float, float], str, PointSnappingResult],
+        network_dataset: NetworkDataset,
+        graph: Optional[nx.DiGraph] = None,
+    ) -> Tuple[str, str, Optional[PointSnappingResult]]:
+        """Resolve a target into (graph_node_id, label, snap_result).
+
+        For (lng, lat) tuples this snaps and — when a working ``graph`` is
+        provided — inserts a virtual node at the snapped point so the route
+        truly starts/ends there (GIS-01). For node ids and pre-snapped
+        PointSnappingResults the existing node is used (callers that already
+        have a snapped result should pass it to avoid a second snap).
+        """
+        if isinstance(target, str):
+            return target, target, None
+        if isinstance(target, PointSnappingResult):
+            if graph is not None and target.nearest_edge_id is not None:
+                # Insert the virtual node on the graph copy so routing honors
+                # the snapped location even when a pre-snapped result is given.
+                if 1e-6 < target.fraction_along_edge < 1.0 - 1e-6:
+                    vt = self._split_edge_chain(
+                        graph, network_dataset, target.nearest_edge_id,
+                        target.fraction_along_edge, target.snapped_point,
+                    )
+                    if vt is not None:
+                        return vt, f"pt_{target.snapped_point[0]:.4f}_{target.snapped_point[1]:.4f}", target
+            return str(target.nearest_node_id), (
+                f"pt_{target.snapped_point[0]:.4f}_{target.snapped_point[1]:.4f}"
+            ), target
+        if isinstance(target, (tuple, list)) and len(target) >= 2:
+            snap_res = self.snapper.snap_point((float(target[0]), float(target[1])), network_dataset)
+            if graph is not None and snap_res.nearest_edge_id is not None:
+                # Skip degenerate splits at edge endpoints (fraction ≈ 0/1).
+                if 1e-6 < snap_res.fraction_along_edge < 1.0 - 1e-6:
+                    vt = self._split_edge_chain(
+                        graph, network_dataset, snap_res.nearest_edge_id,
+                        snap_res.fraction_along_edge, snap_res.snapped_point,
+                    )
+                    if vt is not None:
+                        return vt, f"pt_{target[0]:.4f}_{target[1]:.4f}", snap_res
+            return str(snap_res.nearest_node_id), f"pt_{target[0]:.4f}_{target[1]:.4f}", snap_res
+        raise ValueError(f"Invalid target location format: {target}")
+
+    @staticmethod
+    def _find_edge_by_id(
+        network_dataset: NetworkDataset, edge_id: Union[int, str]
+    ) -> Optional[Tuple[Any, Any]]:
+        """Return (u, v) node ids of the edge with the given id, or None."""
+        for edge in network_dataset.edges:
+            if str(edge.id) == str(edge_id):
+                return edge.u, edge.v
+        return None
 
     def network_shortest_path(
         self,
@@ -58,12 +280,27 @@ class NetworkRoutingService:
         Returns:
             Route object.
         """
-        # Resolve start and end node IDs
-        start_node_id, origin_id_str = self._resolve_node(origin, network_dataset)
-        end_node_id, dest_id_str = self._resolve_node(destination, network_dataset)
+        # GIS-01: for coordinate / PointSnappingResult inputs, work on a copy of
+        # the graph with virtual nodes inserted at the snapped locations, so the
+        # route truly starts/ends at the snapped point rather than at an edge
+        # endpoint. Node-id inputs (str) use the graph as-is (no copy).
+        needs_snap = isinstance(origin, (tuple, list, PointSnappingResult)) or isinstance(
+            destination, (tuple, list, PointSnappingResult)
+        )
+        if needs_snap:
+            graph_work = graph.copy()
+        else:
+            graph_work = graph
+
+        start_node_id, origin_id_str, _ = self._resolve_with_snap(
+            origin, network_dataset, graph=graph_work
+        )
+        end_node_id, dest_id_str, _ = self._resolve_with_snap(
+            destination, network_dataset, graph=graph_work
+        )
 
         # Apply barriers to graph copy
-        graph_view = self._apply_barriers(graph, barriers)
+        graph_view = self._apply_barriers(graph_work, barriers)
 
         # Determine weight field
         cost_field = "travel_time_s"
@@ -177,15 +414,13 @@ class NetworkRoutingService:
         target: Union[Tuple[float, float], str, PointSnappingResult],
         network_dataset: NetworkDataset,
     ) -> Tuple[str, str]:
-        """Resolves target input into (graph_node_id, identifier_label)."""
-        if isinstance(target, str):
-            return target, target
-        if isinstance(target, PointSnappingResult):
-            return str(target.nearest_node_id), f"pt_{target.snapped_point[0]:.4f}_{target.snapped_point[1]:.4f}"
-        if isinstance(target, (tuple, list)) and len(target) >= 2:
-            snap_res = self.snapper.snap_point((float(target[0]), float(target[1])), network_dataset)
-            return str(snap_res.nearest_node_id), f"pt_{target[0]:.4f}_{target[1]:.4f}"
-        raise ValueError(f"Invalid target location format: {target}")
+        """Resolves target input into (graph_node_id, identifier_label).
+
+        DEPRECATED for routing: kept for legacy callers that resolve without a
+        working graph. New code should use ``_resolve_with_snap`` which inserts
+        virtual nodes at snapped locations (GIS-01).
+        """
+        return self._resolve_with_snap(target, network_dataset, graph=None)[:2]
 
     def _apply_barriers(self, graph: nx.DiGraph, barriers: Optional[List[Barrier]]) -> nx.DiGraph:
         """Applies barriers to a graph copy, removing or penalizing blocked edges."""
