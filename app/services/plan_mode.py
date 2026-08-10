@@ -373,11 +373,22 @@ async def execute_plan_async(
             if failure is not None:
                 break
 
-        # 失败 → 取消同波次尚未完成的任务（已完成的兄弟步骤保留结果）
-        for t in pending:
-            t.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+        # 失败处理：按本函数契约（见 docstring / line 252），同波次已 dispatch 的
+        # 兄弟步骤应跑到完成、其成功结果计入 executed；"立即中止"指不再启动 *新波次*。
+        # 此前这里 cancel 了 pending 兄弟，在较慢的 runner 上 s2 快速失败会 race 掉
+        # 即将完成的 s1，导致 flaky executed=[]（master CI 间歇性失败）。
+        if failure is not None and pending:
+            done_siblings, _ = await asyncio.wait(pending)  # 不 cancel，让兄弟完成
+            for t in done_siblings:
+                sid_sib = task_to_sid.get(t)
+                if sid_sib is None:
+                    continue
+                try:
+                    r_sib = t.result()
+                except Exception:
+                    continue  # 兄弟也失败；已记录首个 failure，忽略
+                if isinstance(r_sib, dict) and r_sib.get("success") is not False:
+                    wave_successes[sid_sib] = r_sib
 
         # 按拓扑序提交成功结果（确定性）
         for sid in wave:
