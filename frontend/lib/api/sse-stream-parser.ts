@@ -133,7 +133,9 @@ export async function* parseSSEStream(
   // resolves the pending read; for a real fetch stream the body is also errored
   // by the abort and read() rejects — caught below as a clean stop.
   const onAbort = () => {
-    reader.cancel().catch(() => {
+    // Promise.resolve wraps cancel() so this works whether the reader returns
+    // a Promise (real ReadableStream) or undefined (test doubles / vi.fn).
+    Promise.resolve(reader.cancel()).catch(() => {
       /* already closed */
     });
   };

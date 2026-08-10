@@ -27,13 +27,11 @@ import os
 import statistics
 import time
 from pathlib import Path
-from typing import Any, AsyncIterator
-from unittest.mock import AsyncMock, MagicMock
+from typing import AsyncIterator
 
 import httpx
 import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient  # noqa: F401  (kept for parity/ref)
 
 from app.api.routes import chat as chat_route
 from app.core.auth import get_current_user_optional, get_owner_token
