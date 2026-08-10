@@ -75,9 +75,23 @@ def test_i6_alembic_upgrade_then_downgrade_round_trip(tmp_path):
     import sqlite3
     conn = sqlite3.connect(str(db_path))
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    # DATA-09: 0012 迁移必须补齐 model 声明的复合索引（含 0011 之后新增的表）
+    indexes = {
+        r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name IN "
+            "('project_datasets', 'workflow_runs', 'layers', 'analysis_tasks')"
+        ).fetchall()
+    }
     conn.close()
     expected = {"users", "conversations", "messages", "layers", "reports"}
     assert expected.issubset(tables), f"缺少表: {expected - tables}; 实际={tables}"
+    expected_composite = {
+        "idx_project_dataset_pid_created",
+        "idx_workflow_run_wid_created",
+    }
+    assert expected_composite.issubset(indexes), (
+        f"缺少复合索引: {expected_composite - indexes}; 实际={indexes}"
+    )
 
     # downgrade base
     result = subprocess.run(
