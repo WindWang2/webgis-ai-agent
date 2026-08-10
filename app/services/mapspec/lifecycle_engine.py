@@ -12,6 +12,7 @@
   卸载，不阻塞 event loop（大 inline GeoJSON 不再冻结所有 session 的 I/O）。
 """
 import asyncio
+import copy
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -169,7 +170,14 @@ class MapSpecLifecycleEngine:
             old_layers = list(old_map_state.get("layers", []) or [])
 
             try:
-                mapspec = await self.store.get_mapspec(session_id)
+                loaded = await self.store.get_mapspec(session_id)
+                # Deep-copy before mutating: the in-memory session store returns
+                # REFERENCES, so in-place mutation would also mutate the "prior"
+                # snapshot (aliasing) and mask newly-introduced blocking errors.
+                # The Redis backend already returns fresh copies; deepcopy is a
+                # no-op-equivalent safety there. prior_mapspec stays un-mutated.
+                prior_mapspec = loaded
+                mapspec = copy.deepcopy(loaded) if loaded is not None else None
 
                 # 1. 针对未初始化会话自动构建根框架
                 if not mapspec and not isinstance(intent, (InitProjectIntent, RollbackIntent)):
@@ -184,7 +192,8 @@ class MapSpecLifecycleEngine:
                         },
                         "thresholds": {"maxFeatures": 50000, "timeoutMs": 30000},
                     })
-                    mapspec = init_res["mapspec"]
+                    mapspec = copy.deepcopy(init_res["mapspec"])
+                    prior_mapspec = None
 
                 # 2. 在内存构建 candidate；记录 deferred redis layer 操作。
                 #    重 IO/CPU 的 process_layer_ingestion 卸载到线程，不阻塞 event loop。
@@ -327,10 +336,9 @@ class MapSpecLifecycleEngine:
                 warnings = [e["message"] for e in validation.get("errors", [])] + validation.get("warnings", [])
 
                 if not is_rollback:
-                    prior = await self.store.get_mapspec(session_id)
                     prior_blocking = (
-                        self._blocking_error_codes(validate_mapspec(prior))
-                        if prior else set()
+                        self._blocking_error_codes(validate_mapspec(prior_mapspec))
+                        if prior_mapspec else set()
                     )
                     new_blocking = self._blocking_error_codes(validation) - prior_blocking
                     if new_blocking:

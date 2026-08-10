@@ -123,8 +123,13 @@ def validate(mapspec: Dict[str, Any]) -> Dict[str, Any]:
                 m_type = method.get("method")
                 if m_type in ("interpolate", "step"):
                     stops = method.get("stops", [])
-                    if len(stops) < 2:
-                        errors.append({"code": "INVALID_STOPS_COUNT", "message": f"Property '{prop}' in layer '{layer.get('id')}' requires at least 2 stops"})
+                    # Method-aware minimum: interpolate needs a range (>=2 stops);
+                    # a MapLibre `step` with a single threshold + default is valid,
+                    # so step needs >=1. Requiring >=2 for step was a false positive
+                    # that rejected legitimate graduated classifications.
+                    min_stops = 2 if m_type == "interpolate" else 1
+                    if len(stops) < min_stops:
+                        errors.append({"code": "INVALID_STOPS_COUNT", "message": f"Property '{prop}' in layer '{layer.get('id')}' requires at least {min_stops} stops for {m_type}"})
                     else:
                         for i in range(len(stops) - 1):
                             if stops[i][0] >= stops[i + 1][0]:

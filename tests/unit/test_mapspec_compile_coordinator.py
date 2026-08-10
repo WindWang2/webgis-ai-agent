@@ -49,13 +49,26 @@ def test_validate_flags_non_increasing_stops():
 
 
 def test_validate_flags_too_few_stops():
+  # Method-aware minimum: a `step` with ZERO stops is degenerate (flagged);
+  # a `step` with ONE threshold + default is a valid MapLibre step (NOT flagged).
   mapspec = {
       "sources": {"s1": {"type": "geojson"}},
       "layers": [{
           "id": "l1", "source": "s1", "type": "circle",
-          "paint": {"color": {"method": "step", "field": "mag", "stops": [[5, "#f00"]]}},
+          "paint": {"color": {"method": "step", "field": "mag", "default": "#000", "stops": []}},
       }],
   }
   result = validate(mapspec)
   assert result["success"] is False
   assert any(e["code"] == "INVALID_STOPS_COUNT" for e in result["errors"])
+
+  # A single-threshold step is a valid graduated classification — must NOT be flagged.
+  valid = {
+      "sources": {"s1": {"type": "geojson"}},
+      "layers": [{
+          "id": "l1", "source": "s1", "type": "circle",
+          "paint": {"color": {"method": "step", "field": "mag", "default": "#000", "stops": [[5, "#f00"]]}},
+      }],
+  }
+  ok = validate(valid)
+  assert ok["success"] is True, ok["errors"]

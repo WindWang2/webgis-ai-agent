@@ -92,7 +92,7 @@ def test_cursor_resolution_no_resolver_is_zero_not_hundred():
     """Without a real resolver, refs are syntactically-valid only → NOT resolved.
     No resolver + a ref present → 0.0, not 100.0."""
     harness = PiAgentHarness(session_id="s5")  # no ref_resolver wired
-    harness.record_tool_call("c1", "st_dbscan", {"geojson": "ref:geojson:12345"})
+    harness.record_tool_call("c1", "st_dbscan", {"geojson": "ref:geojson-12345"})
     harness.record_tool_result("c1", "st_dbscan", {"success": True})
     assert harness.compute_cursor_resolution_rate() == 0.0
 
@@ -105,14 +105,14 @@ def test_cursor_resolution_no_refs_is_zero_not_hundred():
 @pytest.mark.asyncio
 async def test_cursor_resolution_real_resolver_resolved_and_missing():
     """A real resolver resolves an existing ref but NOT a missing one."""
-    store = _FakeStore({"ref:geojson:exists": {"type": "FeatureCollection", "features": []}})
+    store = _FakeStore({"ref:geojson-exists": {"type": "FeatureCollection", "features": []}})
     harness = PiAgentHarness(
         session_id="s7",
         ref_resolver=_build_resolver(store),
     )
     harness.record_tool_call("c1", "st_dbscan", {
-        "a": "ref:geojson:exists",      # present
-        "b": "ref:geojson:missing",     # absent
+        "a": "ref:geojson-exists",      # present
+        "b": "ref:geojson-missing",     # absent
     })
     harness.record_tool_result("c1", "st_dbscan", {"success": True})
 
@@ -124,11 +124,11 @@ async def test_cursor_resolution_real_resolver_resolved_and_missing():
 @pytest.mark.asyncio
 async def test_cursor_resolution_type_mismatch_not_resolved():
     """A ref whose payload type contradicts its prefix is TYPE_MISMATCH, not resolved."""
-    store = _FakeStore({"ref:raster:x": {"type": "FeatureCollection", "features": []}})
+    store = _FakeStore({"ref:raster-x": {"type": "FeatureCollection", "features": []}})
     harness = PiAgentHarness(
         session_id="s8", ref_resolver=_build_resolver(store),
     )
-    harness.record_tool_call("c1", "render", {"data": "ref:raster:x"})
+    harness.record_tool_call("c1", "render", {"data": "ref:raster-x"})
     harness.record_tool_result("c1", "render", {"success": True})
     await harness.evaluate_with_evidence(expected_tools=["render"], ideal_step_count=1)
     assert harness.compute_cursor_resolution_rate() == 0.0
@@ -153,15 +153,15 @@ def test_evidence_carries_correlation_fields():
 async def test_two_runs_do_not_cross_contaminate():
     """Concurrent sessions pool into separate correlation scopes; evidence is
     not shared across runs (no pollution)."""
-    store = _FakeStore({"ref:geojson:own": {"type": "FeatureCollection", "features": []}})
+    store = _FakeStore({"ref:geojson-own": {"type": "FeatureCollection", "features": []}})
     h1 = PiAgentHarness(session_id="sess_A", ref_resolver=_build_resolver(store))
     h2 = PiAgentHarness(session_id="sess_B", ref_resolver=_build_resolver(store))
 
     h1.set_correlation(run_id="run_A")
     h2.set_correlation(run_id="run_B")
 
-    h1.record_tool_call("a1", "st_dbscan", {"data": "ref:geojson:own"})
-    h2.record_tool_call("b1", "st_dbscan", {"data": "ref:geojson:missing"})
+    h1.record_tool_call("a1", "st_dbscan", {"data": "ref:geojson-own"})
+    h2.record_tool_call("b1", "st_dbscan", {"data": "ref:geojson-missing"})
 
     assert h1.tool_calls[0]["run_id"] == "run_A"
     assert h2.tool_calls[0]["run_id"] == "run_B"
@@ -171,9 +171,9 @@ async def test_two_runs_do_not_cross_contaminate():
 
 @pytest.mark.asyncio
 async def test_evaluate_with_evidence_builds_structured_trail():
-    store = _FakeStore({"ref:geojson:ok": {"type": "FeatureCollection", "features": []}})
+    store = _FakeStore({"ref:geojson-ok": {"type": "FeatureCollection", "features": []}})
     harness = PiAgentHarness(session_id="s9", ref_resolver=_build_resolver(store))
-    harness.record_tool_call("c1", "webgis_layer_upsert", {"src": "ref:geojson:ok"})
+    harness.record_tool_call("c1", "webgis_layer_upsert", {"src": "ref:geojson-ok"})
     harness.record_tool_result("c1", "webgis_layer_upsert", {"success": True, "is_compiled": True})
 
     result = await harness.evaluate_with_evidence(
@@ -184,7 +184,7 @@ async def test_evaluate_with_evidence_builds_structured_trail():
     assert ev["tool_name"] == "webgis_layer_upsert"
     assert ev["mapspec_validity"]["tier"] == "SEMANTIC_VALID"
     assert ev["mapspec_validity"]["is_valid"] is True
-    assert result["ref_resolutions"]["ref:geojson:ok"]["status"] == "resolved"
+    assert result["ref_resolutions"]["ref:geojson-ok"]["status"] == "resolved"
 
 
 # ── V2: evaluate_evidence gate policy — missing evidence is NOT success ──

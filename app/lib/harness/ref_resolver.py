@@ -14,11 +14,13 @@ from app.lib.harness.evidence import RefResolution, RefResolutionStatus
 
 logger = logging.getLogger(__name__)
 
-_REF_RE = re.compile(r"^ref:(geojson|raster|table):([a-zA-Z0-9_-]+)$")
+_REF_RE = re.compile(r"^ref:([a-z][a-z0-9]*)-([a-zA-Z0-9_-]+)$")
 
 # Map ref type prefix to the expected top-level payload shape keyword. A resolved
 # payload whose shape contradicts the prefix is a TYPE_MISMATCH (not resolved).
-_TYPE_SHAPE_HINT = {
+# Only the typed prefixes are type-checked; "data" / "redis-unavailable" etc.
+# resolve on existence alone (no type contract).
+_TYPED_PREFIXES = {
     "geojson": ("type", "FeatureCollection"),
     "raster": ("raster", True),
     "table": ("columns", None),
@@ -66,7 +68,8 @@ def make_session_store_resolver(session_store: Any):
         # would have returned None above.
         actual_type = _infer_payload_type(payload)
         resolution.actual_type = actual_type
-        if actual_type is not None and actual_type != expected_type:
+        # Only typed prefixes (geojson/raster/table) carry a type contract.
+        if expected_type in _TYPED_PREFIXES and actual_type is not None and actual_type != expected_type:
             resolution.status = RefResolutionStatus.TYPE_MISMATCH
             resolution.detail = f"expected {expected_type}, got {actual_type}"
             return resolution

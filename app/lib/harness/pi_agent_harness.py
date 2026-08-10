@@ -28,7 +28,10 @@ from app.lib.harness.tool_call_event import ToolCallEvent
 
 logger = logging.getLogger(__name__)
 
-REF_CURSOR_PATTERN = re.compile(r"ref:(?:geojson|raster|table):[a-zA-Z0-9_-]+")
+# Real ref format produced by SessionStore is ``ref:<prefix>-<id>`` (DASH), e.g.
+# ``ref:geojson-abc123``. The legacy colon pattern never matched real refs, so
+# CursorResolutionRate was structurally always 100 (no refs ever detected).
+REF_CURSOR_PATTERN = re.compile(r"ref:(?:geojson|raster|table|data)-[a-zA-Z0-9_-]+")
 
 MAPSPEC_MUTATION_TOOLS = {
     "webgis_project_init",
