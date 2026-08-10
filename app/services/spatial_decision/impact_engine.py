@@ -92,9 +92,16 @@ class SpatialImpactEngine:
         # Project to UTM
         gdf_utm, utm_crs = to_utm_gdf(gdf_wgs84.__geo_interface__)
         if gdf_utm is None or gdf_utm.empty or utm_crs is None:
-            # Fallback if UTM resolution fails
-            utm_crs = "EPSG:3857"
-            gdf_utm = gdf_wgs84.to_crs(utm_crs)
+            # GIS-24 (deep-audit round 3): the previous fallback was
+            # EPSG:3857 (Web Mercator), which inflates areas by ~1/cos²(lat)
+            # — ~1.7× at Beijing's 40°N — silently corrupting every impact
+            # zone area. A failed UTM resolution is a real error (invalid
+            # geometry / empty input); surface it instead of computing with a
+            # distorted projection.
+            raise ValueError(
+                "Unable to resolve a projected CRS for the target area; "
+                "refusing to compute impact zones in a distorted projection."
+            )
 
         target_utm = gdf_utm.geometry.iloc[0]
 
