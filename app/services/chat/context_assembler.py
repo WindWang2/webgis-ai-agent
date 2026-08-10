@@ -5,6 +5,7 @@ Encapsulates map state ambient summaries, history token budget management,
 XML security fencing, and execution plan blocks behind a unified assembly seam.
 """
 from dataclasses import dataclass
+import asyncio
 import logging
 from typing import List, Optional
 
@@ -12,6 +13,36 @@ from app.services.session_data import session_data_manager
 from app.services.session_data_protocol import SessionStoreProtocol
 
 logger = logging.getLogger(__name__)
+
+
+def _build_project_context_block(project_id: str) -> Optional[str]:
+    """Sync DB read of the active project workspace (runs OFF the event loop).
+
+    Transport goal C-F4 (P0): ``ProjectService.get_project_with_auth`` /
+    ``list_project_datasets`` / ``list_project_workflows`` use the sync
+    ``SessionLocal``. Calling them inside the async ``assemble`` blocked the
+    event loop for the duration of three Postgres queries every LLM round;
+    under N concurrent streams that is N×3 queries of loop-blocking I/O
+    contending on the sync pool (each can stall up to ``pool_timeout=30s``).
+    This helper is the sync body, meant to be invoked via
+    ``asyncio.to_thread`` so it runs in the default executor instead of on the
+    loop.
+    """
+    from app.core.database import SessionLocal
+    from app.services.project_service import ProjectService
+    with SessionLocal() as db:
+        proj = ProjectService.get_project_with_auth(db, project_id)
+        if not proj:
+            return None
+        datasets = ProjectService.list_project_datasets(db, project_id)
+        wfs = ProjectService.list_project_workflows(db, project_id)
+        return (
+            f"\n<active_project_workspace>\n"
+            f"Project: {proj.name} (ID: {proj.id})\n"
+            f"Datasets attached ({len(datasets)}): {', '.join([d.name for d in datasets[:5]])}\n"
+            f"Workflows ({len(wfs)}): {', '.join([w.name for w in wfs[:5]])}\n"
+            f"</active_project_workspace>"
+        )
 
 
 @dataclass(frozen=True)
@@ -80,22 +111,14 @@ class ChatContextAssembler:
 
             project_id = metadata.get("project_id")
             if project_id:
+                # C-F4: offload the sync Postgres reads to a worker thread so
+                # they no longer block the event loop every LLM round.
                 try:
-                    from app.core.database import SessionLocal
-                    from app.services.project_service import ProjectService
-                    with SessionLocal() as db:
-                        proj = ProjectService.get_project_with_auth(db, project_id)
-                        if proj:
-                            datasets = ProjectService.list_project_datasets(db, project_id)
-                            wfs = ProjectService.list_project_workflows(db, project_id)
-                            project_block = (
-                                f"\n<active_project_workspace>\n"
-                                f"Project: {proj.name} (ID: {proj.id})\n"
-                                f"Datasets attached ({len(datasets)}): {', '.join([d.name for d in datasets[:5]])}\n"
-                                f"Workflows ({len(wfs)}): {', '.join([w.name for w in wfs[:5]])}\n"
-                                f"</active_project_workspace>"
-                            )
-                            env_summary += project_block
+                    project_block = await asyncio.to_thread(
+                        _build_project_context_block, project_id
+                    )
+                    if project_block:
+                        env_summary += project_block
                 except Exception as ex:
                     logger.warning(f"Failed to assemble project context block: {ex}")
 
