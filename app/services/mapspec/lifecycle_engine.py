@@ -139,17 +139,12 @@ class MapSpecLifecycleEngine:
 
     def __init__(self):
         self.store = mapspec_store_instance
-        self._session_locks: Dict[str, asyncio.Lock] = {}
-        self._MAX_LOCKS = 200
-
-    def _get_lock(self, session_id: str) -> asyncio.Lock:
-        if len(self._session_locks) > self._MAX_LOCKS:
-            evict_count = self._MAX_LOCKS // 4
-            for sid in list(self._session_locks.keys())[:evict_count]:
-                lock_to_evict = self._session_locks[sid]
-                if not lock_to_evict.locked():
-                    self._session_locks.pop(sid, None)
-        return self._session_locks.setdefault(session_id, asyncio.Lock())
+        # Per-session serialization is provided by session_lock_registry
+        # (Redis-backed in prod → cross-pod; in-process fallback in tests).
+        # The previous in-engine asyncio.Lock table evicted "unlocked" locks,
+        # which could hand two concurrent same-session coroutines different lock
+        # objects (lost update) — review P1-2. The registry lock is the sole
+        # serializer; no in-engine lock table.
 
     @staticmethod
     def _blocking_error_codes(validation: Dict[str, Any]) -> set:
@@ -163,25 +158,23 @@ class MapSpecLifecycleEngine:
         session_id: str,
         intent: MutationIntent,
     ) -> MapSpecResult:
-        """原子执行 MapSpec 意图变迁，带 per-session 互斥锁 + 事务 rollback。
+        """原子执行 MapSpec 意图变迁，带 per-session 分布式锁 + 事务 rollback。
 
-        双层锁：外层 distributed lock（Redis，跨 pod 互斥；单 worker/测试降级为
-        in-process），内层 asyncio.Lock（同进程内协程序列化）。两层都持有才能
-        避免跨 pod 的同 session 并发 mutation 产生 lost update。
+        锁：session_lock_registry.lock(session_id) — Redis 跨 pod 互斥（生产），
+        in-process asyncio.Lock（单 worker / 测试）。该锁序列化同 session 的并发
+        mutation，避免 lost update。
         """
-        lock = self._get_lock(session_id)
-        # Two independent locks acquired in one async-with (no extra indent):
-        # outer = distributed (Redis, cross-pod; falls back to in-process),
-        # inner = asyncio (in-process coroutine serialization).
-        async with session_lock_registry.lock(session_id), lock:
-            # 事务快照：失败时回滚 mapspec + redis layers 到此刻状态。
-            old_map_state = await session_data_manager.get_map_state(session_id)
-            old_layers = list(old_map_state.get("layers", []) or [])
-
+        async with session_lock_registry.lock(session_id):
+            # 事务快照（deepcopy，避免 in-memory store 的引用别名）：失败时回滚
+            # mapspec + redis layers 到此刻状态。Review P1-1: 此前快照捕获的是
+            # live 引用 + 在 load 之前，导致 rollback 静默 no-op / 半提交残留。
+            pre_state = await session_data_manager.get_map_state(session_id)
+            old_layers_snapshot = copy.deepcopy(pre_state.get("layers", []) or [])
             try:
                 loaded = await self.store.get_mapspec(session_id)
+                old_mapspec_snapshot = copy.deepcopy(loaded) if loaded is not None else None
                 # Deep-copy before mutating: the in-memory session store returns
-                # REFERENCES, so in-place mutation would also mutate the "prior"
+                # REFERENCES, so in-place mutation would also mutate the prior
                 # snapshot (aliasing) and mask newly-introduced blocking errors.
                 # The Redis backend already returns fresh copies; deepcopy is a
                 # no-op-equivalent safety there. prior_mapspec stays un-mutated.
@@ -193,9 +186,10 @@ class MapSpecLifecycleEngine:
                     if loaded is not None else None
                 )
 
-                # 1. 针对未初始化会话自动构建根框架
+                # 1. 针对未初始化会话自动构建根框架（仅内存；commit 阶段才落盘 —
+                #    Review P2-3: 此前在 reject 前就 save_mapspec，reject 会残留骨架）
                 if not mapspec and not isinstance(intent, (InitProjectIntent, RollbackIntent)):
-                    init_res = await self.store.save_mapspec(session_id, {
+                    mapspec = {
                         "version": "1.0",
                         "view": {},
                         "sources": {},
@@ -205,8 +199,8 @@ class MapSpecLifecycleEngine:
                             "controls": [{"type": "navigation", "position": "top-right"}],
                         },
                         "thresholds": {"maxFeatures": 50000, "timeoutMs": 30000},
-                    })
-                    mapspec = copy.deepcopy(init_res["mapspec"])
+                    }
+                    prior_mapspec = None
                     prior_mapspec = None
 
                 # 2. 在内存构建 candidate；记录 deferred redis layer 操作。
@@ -405,7 +399,9 @@ class MapSpecLifecycleEngine:
             except Exception as e:
                 logger.error(f"MapSpec mutation failed for session {session_id}: {e}", exc_info=True)
                 # 事务 rollback：恢复 mapspec + redis layers 到 mutation 前。
-                await self._rollback_to_snapshot(session_id, old_map_state, old_layers)
+                await self._rollback_to_snapshot(
+                    session_id, old_mapspec_snapshot, old_layers_snapshot
+                )
                 return MapSpecResult(
                     is_error=True,
                     error_msg=f"MapSpec 意图更新失败: {e}",
@@ -415,12 +411,17 @@ class MapSpecLifecycleEngine:
     async def _rollback_to_snapshot(
         self,
         session_id: str,
-        old_map_state: Dict[str, Any],
+        old_mapspec: Optional[Dict[str, Any]],
         old_layers: List[Any],
     ) -> None:
-        """恢复 mutation 前的 mapspec + redis layers，避免半提交。"""
+        """恢复 mutation 前的 mapspec + redis layers，避免半提交。
+
+        ``old_mapspec`` / ``old_layers`` are deep-copied snapshots captured at
+        load time (review P1-1): they are independent of the live store state, so
+        restoring them is not a silent no-op even under the in-memory backend's
+        reference aliasing.
+        """
         try:
-            old_mapspec = old_map_state.get("mapspec")
             if old_mapspec is not None:
                 await self.store.save_mapspec(session_id, old_mapspec)
             await session_data_manager.set_map_state(session_id, "layers", old_layers)

@@ -313,6 +313,73 @@ async def test_save_failure_triggers_rollback(clean_session):
 
 @pytest.mark.cartography
 @pytest.mark.asyncio
+async def test_post_save_failure_rolls_back_mutation(clean_session):
+    """Regression for review P1-1: a failure AFTER save_mapspec succeeds (e.g.
+    update_layer_in_state raises) must roll the mapspec back to pre-mutation
+    state. Previously the rollback snapshot aliased the live store, so restoring
+    was a silent no-op and the half-commit survived."""
+    engine = MapSpecLifecycleEngine()
+    await engine.apply_mutation(clean_session, InitProjectIntent())
+    # Establish a known-good baseline with one valid layer.
+    await engine.apply_mutation(
+        clean_session,
+        UpsertLayerIntent(layer={"id": "base", "source": "sb", "type": "circle",
+                                 "paint": {"circle-color": "#000"}},
+                          source_data=_geojson([
+                              {"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]},
+                               "properties": {}}]))
+    )
+    baseline = await mapspec_store_instance.get_mapspec(clean_session)
+    assert any(lyr["id"] == "base" for lyr in baseline["layers"])
+
+    # Now mutate again; save succeeds, but the post-save redis-layers sync fails.
+    with patch.object(
+        session_data_manager, "update_layer_in_state",
+        new=AsyncMock(side_effect=RuntimeError("redis down")),
+    ):
+        res = await engine.apply_mutation(
+            clean_session,
+            UpsertLayerIntent(layer={"id": "extra", "source": "se", "type": "circle",
+                                     "paint": {"circle-color": "#fff"}},
+                              source_data=_geojson())
+        )
+    assert res.is_error is True
+    # The "extra" layer must NOT have survived (rollback restored the baseline).
+    after = await mapspec_store_instance.get_mapspec(clean_session)
+    ids = {lyr["id"] for lyr in after["layers"]}
+    assert "base" in ids
+    assert "extra" not in ids, "post-save failure must roll back, not half-commit"
+
+
+@pytest.mark.cartography
+@pytest.mark.asyncio
+async def test_validity_evidence_flows_through_adapter(clean_session):
+    """Regression for review P1-3: the MapSpecStore adapter (and thus the
+    production dispatch path) must carry real is_compiled evidence so the harness
+    MapSpecValidity ladder isn't starved (every run scoring 0%)."""
+    from app.services.mapspec_store import mapspec_store
+
+    res = await mapspec_store.layer_upsert(
+        clean_session,
+        layer={"id": "L", "source": "s", "type": "circle", "paint": {"circle-color": "#0f0"}},
+        source_data=_geojson([
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]},
+             "properties": {}}
+        ]),
+    )
+    # The adapter must forward real evidence, not just success/mapspec/layer.
+    assert res["success"] is True
+    assert res["is_compiled"] is True, "adapter must forward is_compiled evidence"
+
+    # And the harness, fed the adapter shape (not res.to_dict()), scores validity.
+    harness = PiAgentHarness(session_id=clean_session)
+    harness.record_tool_call("c1", "webgis_layer_upsert", {"layer": {"id": "L"}})
+    harness.record_tool_result("c1", "webgis_layer_upsert", res)
+    assert harness.compute_mapspec_validity() == 100.0
+
+
+@pytest.mark.cartography
+@pytest.mark.asyncio
 async def test_checkpoint_dedup_no_write_amplification(clean_session):
     """Repeated unchanged auto-checkpoints must not rewrite identical payloads.
     Two identical upserts → the second checkpoint dedups."""
