@@ -9,6 +9,7 @@ import type { ToolCallEntry, PlanProposalPayload } from '@/lib/store/hud-types';
 import type { AgentPlanState } from '@/lib/types/agent-plan';
 import type { MapActionPayload } from '@/lib/types';
 import { createMessageIdGenerator } from './use-message-id';
+import { TokenBatcher } from './token-batcher';
 
 
 import { devOnly } from "@/lib/utils/logger";
@@ -46,9 +47,44 @@ export function useSSEStream(
   ]);
 
   const thinkingMsgIdRef = useRef<string>('');
-  const rawContentRef = useRef<string>('');
   const msgIdGen = useRef(createMessageIdGenerator());
   const layerFetchAbortRef = useRef<AbortController | null>(null);
+
+  // Transport goal §21 / F-FE-1 / D-F8: coalesce token chunks into at most one
+  // setMessages per animation frame instead of one per token. The batcher owns
+  // the accumulated content/reasoning (snapshot semantics, like the prior
+  // rawContentRef) and fires onFlush on rAF; onFlush applies the snapshot with
+  // a single setMessages. Created once; reset() is called per turn.
+  const tokenBatcherRef = useRef<TokenBatcher | null>(null);
+  if (tokenBatcherRef.current === null) {
+    const hasRaf =
+      typeof window !== "undefined" &&
+      typeof window.requestAnimationFrame === "function";
+    const schedule = hasRaf
+      ? (cb: () => void) => window.requestAnimationFrame(cb)
+      : (cb: () => void) => window.setTimeout(() => cb(), 16) as unknown as number;
+    const cancel = hasRaf
+      ? (id: number) => window.cancelAnimationFrame(id)
+      : (id: number) => window.clearTimeout(id);
+    tokenBatcherRef.current = new TokenBatcher({ schedule, cancel }, (snapshot) => {
+      const thinkingId = thinkingMsgIdRef.current;
+      if (!thinkingId) return;
+      const parsed = parseThink(snapshot.content);
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === thinkingId);
+        if (idx === -1) return prev;
+        const target = prev[idx];
+        const updated = [...prev];
+        updated[idx] = {
+          ...target,
+          content: parsed.content,
+          think: parsed.thinking || snapshot.reasoning || target.think,
+          isThinking: false,
+        };
+        return updated;
+      });
+    });
+  }
 
   // Reset abort controller on session change to cancel in-flight layer fetches
   useEffect(() => {
@@ -94,35 +130,20 @@ export function useSSEStream(
 
       const thinkingId = thinkingMsgIdRef.current;
 
-      if (event.event === 'token' || event.event === 'content') {
-        const chunk = data.content || '';
-        if (data.is_reasoning || data.type === 'reasoning') {
-          setMessages((prev) => {
-            const idx = prev.findIndex((m) => m.id === thinkingId);
-            if (idx === -1) return prev;
-            const updated = [...prev];
-            const target = updated[idx];
-            updated[idx] = { ...target, think: (target.think || '') + chunk, isThinking: false };
-            return updated;
-          });
-        } else {
-          rawContentRef.current += chunk;
-          const parsed = parseThink(rawContentRef.current);
-          setMessages((prev) => {
-            const idx = prev.findIndex((m) => m.id === thinkingId);
-            if (idx === -1) return prev;
-            const updated = [...prev];
-            const target = updated[idx];
-            updated[idx] = {
-              ...target,
-              content: parsed.content,
-              think: parsed.thinking || target.think,
-              isThinking: false,
-            };
-            return updated;
-          });
-        }
-      } else if (event.event === 'step_result') {
+      const isTokenLike = event.event === "token" || event.event === "content";
+      if (!isTokenLike) {
+        // Apply any pending batched tokens before a non-token event (status
+        // change, layer add, plan, error) so the final streamed text lands
+        // first. No-op when nothing is pending.
+        tokenBatcherRef.current?.flush();
+      }
+      if (isTokenLike) {
+        const chunk = data.content || "";
+        tokenBatcherRef.current?.push(
+          chunk,
+          !!(data.is_reasoning || data.type === "reasoning"),
+        );
+      } else if (event.event === "step_result") {
         // Plan Mode：propose_plan 返回的 plan 摘要挂到当前消息，由 PlanProposalCard 渲染
         if (data.tool === 'propose_plan' && data.result?.success && data.result?.plan_id) {
           const plan: PlanProposalPayload = {
@@ -313,7 +334,7 @@ export function useSSEStream(
         });
       }
     },
-    [parseThink, setSessionId, sessionIdRef, sessionTokenRef]
+    [setSessionId, sessionIdRef, sessionTokenRef]
   );
 
   const bridge = useMapBridge(sessionId, dispatchAction, onEvent, sessionTokenRef);
@@ -396,7 +417,7 @@ export function useSSEStream(
 
       const thinkingMsgId = msgIdGen.current.next();
       thinkingMsgIdRef.current = thinkingMsgId;
-      rawContentRef.current = '';
+      tokenBatcherRef.current?.reset();
       setMessages((prev) => [
         ...prev,
         {
@@ -409,6 +430,10 @@ export function useSSEStream(
       ]);
 
       await bridge.send(userMsg, mapState);
+
+      // Flush any tokens still pending in the current frame so the final
+      // streamed text is applied before the thinking→done transition.
+      tokenBatcherRef.current?.flush();
 
       setMessages((prev) =>
         prev.map((m) =>
