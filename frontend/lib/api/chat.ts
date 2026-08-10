@@ -4,6 +4,7 @@
 
 import type { ToolResult } from '@/lib/types';
 import { API_BASE } from './config';
+import { parseSSEStream } from './sse-stream-parser';
 
 export interface ChatMessage {
   role: "user" | "assistant" | "tool";
@@ -84,65 +85,16 @@ export async function* streamChat(
     throw new Error(`Chat API error: ${response.status}`);
   }
 
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("No response body");
+  if (!response.body) throw new Error("No response body");
 
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let currentEvent = "";
-  let currentData = "";
-
-  while (true) {
-    if (signal?.aborted) {
-      reader.cancel();
-      break;
-    }
-    const { done, value } = await reader.read();
-    if (done) {
-      // 审计 F22/F23：流结束时若还有未 dispatch 的事件（没遇到结尾空行），
-      // 必须补 flush。否则最后一个事件会被静默丢弃。
-      if (currentEvent && currentData) {
-        // 审计 F23：OpenAI 风格的 [DONE] 哨兵 -- 不应作为 JSON parse
-        if (currentData.trim() === "[DONE]") {
-          break;
-        }
-        try {
-          yield { event: currentEvent as SSEEventType, data: JSON.parse(currentData) };
-        } catch {
-          yield { event: currentEvent as SSEEventType, data: currentData };
-        }
-      }
-      break;
-    }
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      if (line.startsWith("event: ")) {
-        currentEvent = line.slice(7).trim();
-      } else if (line.startsWith("data: ")) {
-        // 审计 F22：多行 data: 字段按 SSE 规范应用 \n 连接，不是直接拼接
-        if (currentData) currentData += "\n";
-        currentData += line.slice(6);
-      } else if (line === "" && currentEvent && currentData) {
-        // 审计 F23：[DONE] 哨兵 -- OpenAI 风格的流终止标记，不作为事件 dispatch
-        if (currentData.trim() === "[DONE]") {
-          currentEvent = "";
-          currentData = "";
-          break;
-        }
-        // Empty line = end of event
-        try {
-          yield { event: currentEvent as SSEEventType, data: JSON.parse(currentData) };
-        } catch {
-          yield { event: currentEvent as SSEEventType, data: currentData };
-        }
-        currentEvent = "";
-        currentData = "";
-      }
-    }
+  // transport goal §9 / B-P2-10/11: delegate to the shared, spec-correct
+  // parser (CRLF incl. cross-chunk, partial-UTF-8 EOF flush, [DONE] sentinel,
+  // comment lines, data/event with or without leading space, abort). The
+  // inline parser that lived here had two latent bugs (a `data:` line split
+  // across a CRLF chunk boundary was dropped, and the TextDecoder was never
+  // flushed at EOF so a trailing partial multi-byte char was lost).
+  for await (const ev of parseSSEStream(response.body, signal, { doneSentinel: "[DONE]" })) {
+    yield { event: ev.event as SSEEventType, data: ev.data as Record<string, unknown> | string };
   }
 }
 

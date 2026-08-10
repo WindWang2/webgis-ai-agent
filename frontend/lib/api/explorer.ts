@@ -1,4 +1,5 @@
 import { API_BASE } from "./config";
+import { parseSSEStream } from "./sse-stream-parser";
 
 export interface StartExploreRequest {
   query: string;
@@ -42,38 +43,19 @@ export async function* streamExplorerProgress(taskId: string, signal?: AbortSign
   const response = await fetch(`${API_BASE}/api/v1/explorer/stream/${taskId}`, { signal });
   if (!response.ok) throw new Error(`Explorer stream error: ${response.status}`);
 
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("No response body");
+  if (!response.body) throw new Error("No response body");
 
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let currentEvent = "";
-  let currentData = "";
-
-  while (true) {
-    if (signal?.aborted) break;
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      if (line.startsWith("event: ")) {
-        currentEvent = line.slice(7).trim();
-      } else if (line.startsWith("data: ")) {
-        if (currentData) currentData += "\n";
-        currentData += line.slice(6);
-      } else if (line === "" && currentEvent && currentData) {
-        try {
-          yield { event: currentEvent, data: JSON.parse(currentData) };
-        } catch {
-          yield { event: currentEvent, data: { raw: currentData } };
-        }
-        currentEvent = "";
-        currentData = "";
-      }
-    }
+  // transport goal A-F-06: use the shared parser. The inline copy here had
+  // diverged from chat.ts: it never flushed a final unterminated event (a
+  // trailing progress event with no blank line was silently dropped) and on
+  // abort it `break`ed without reader.cancel(), leaking the connection until
+  // the server closed it. The shared parser flushes at EOF and cancels the
+  // reader in a finally on abort/exception.
+  for await (const ev of parseSSEStream(response.body, signal)) {
+    const data =
+      typeof ev.data === "string"
+        ? { raw: ev.data }
+        : (ev.data as Record<string, unknown>);
+    yield { event: ev.event, data };
   }
 }
