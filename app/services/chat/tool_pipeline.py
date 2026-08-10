@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Optional, Callable
 
 from app.tools.registry import ToolRegistry
-from app.services.task_tracker import TaskTracker
+from app.services.task_tracker import TaskTracker, TaskStep
 from app.services.tool_dispatch_service import ToolDispatchService, ToolDispatchResult
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,7 @@ class ToolExecutionPipeline:
         session_id: str,
         task_id: Optional[str] = None,
         executed_tools: Optional[set[tuple[str, str]]] = None,
+        pre_created_step: Optional[TaskStep] = None,
     ) -> ToolExecutionResult:
         """
         Execute a single tool call dictionary from LLM assistant message.
@@ -57,6 +58,11 @@ class ToolExecutionPipeline:
             session_id: Active conversation session ID
             task_id: Active TaskTracker task ID (optional)
             executed_tools: Set of (tool_name, args_str) sentinels for duplicate loop protection
+            pre_created_step: Step already opened by the caller (chat_stream emits
+                step_start SSE before dispatch). When provided, the pipeline does
+                NOT open a second track_step — RUN-02 (deep-audit round 2) fixed
+                double step tracking that inflated task.steps 2x and desynced
+                step_id between SSE events and the tracker.
 
         Returns:
             ToolExecutionResult with raw_result (for frontend/events) and llm_payload (for LLM history)
@@ -81,16 +87,20 @@ class ToolExecutionPipeline:
         # 2. Sentinel check / fallback
         sentinels = executed_tools if executed_tools is not None else set()
 
-        # 3. Execute tool dispatch inside TaskTracker step context
+        # 3. Execute tool dispatch inside TaskTracker step context.
+        # RUN-02: when the caller already opened a step (and emitted step_start),
+        # use it directly instead of opening a second track_step.
         outcome: ToolDispatchResult
         is_error = False
 
-        async with self.tracker.track_step(task_id, tool_name, args_dict) as step:
+        async def _dispatch() -> ToolDispatchResult:
+            if self.dispatch_fn is not None:
+                return await self.dispatch_fn(tc, session_id, sentinels)
+            return await self.dispatch_service.dispatch(tc, session_id, sentinels)
+
+        if pre_created_step is not None:
             try:
-                if self.dispatch_fn is not None:
-                    outcome = await self.dispatch_fn(tc, session_id, sentinels)
-                else:
-                    outcome = await self.dispatch_service.dispatch(tc, session_id, sentinels)
+                outcome = await _dispatch()
             except Exception as e:
                 logger.error(f"[ToolPipeline] Dispatch error for {tool_name}: {e}", exc_info=True)
                 err_msg = f"工具执行异常 ({type(e).__name__}): {e}"
@@ -102,12 +112,31 @@ class ToolExecutionPipeline:
                     raw_result={"error": err_msg},
                     error_msg=err_msg,
                 )
-
             is_error = (outcome.status == "error")
-            if step is not None:
-                step.result = outcome.raw_result
-                if is_error:
-                    step.error = str(outcome.raw_result)
+            pre_created_step.result = outcome.raw_result
+            if is_error:
+                pre_created_step.error = str(outcome.raw_result)
+        else:
+            async with self.tracker.track_step(task_id, tool_name, args_dict) as step:
+                try:
+                    outcome = await _dispatch()
+                except Exception as e:
+                    logger.error(f"[ToolPipeline] Dispatch error for {tool_name}: {e}", exc_info=True)
+                    err_msg = f"工具执行异常 ({type(e).__name__}): {e}"
+                    outcome = ToolDispatchResult(
+                        status="error",
+                        llm_payload=err_msg,
+                        slim_event={"error": err_msg},
+                        geojson_ref=None,
+                        raw_result={"error": err_msg},
+                        error_msg=err_msg,
+                    )
+
+                is_error = (outcome.status == "error")
+                if step is not None:
+                    step.result = outcome.raw_result
+                    if is_error:
+                        step.error = str(outcome.raw_result)
 
         elapsed_ms = (time.time() - start_time) * 1000
         return ToolExecutionResult(

@@ -207,3 +207,115 @@ The CI loop surfaced real issues that local runs could not see; all fixed and th
 Final CI state (PR #319): all 4 required checks green (Backend Tests, Frontend Tests,
 Code Quality Check, Security Scan) plus the Performance Regression Gate; Docker build
 and deploy-preview jobs are optional and not merge-blocking.
+
+---
+
+# Round 2 — Deferred Findings Remediation (branch `agent/deep-audit-round2`)
+
+**Date:** 2026-08-09 (merged via PR #320)
+**Method:** the deferred P0/P1 findings from Round 1 were revisited with the same
+evidence discipline. Each fix has TDD regression tests + benchmark evidence.
+
+## R1 — Network routing correctness (GIS-01, GIS-02) — P0
+
+- **GIS-01** routes started/ended at the NEAREST NODE (an edge endpoint) instead
+  of the snapped location — every route silently added up to a full edge-length
+  of spurious travel at both ends. `fraction_along_edge` was computed but never
+  used. Now the snapped edge is SPLIT at the snapped point: a virtual node is
+  inserted on a working graph copy, the edge becomes two sub-edges with
+  proportionally divided `length_m`/`travel_time_s` and subdivided geometry, and
+  the route runs through the virtual node. Same-edge origin+destination is
+  handled by walking the sub-edge chain created by the first split. Node-id
+  inputs use the graph as-is (no copy).
+- **GIS-02** the STRtree nearest-edge query ran in raw WGS84 degrees, so
+  "nearest" was nearest-in-degrees not meters (a longitude degree is ~85 km at
+  40°N vs ~111 km of latitude — wrong edge, wrong distance, wrong confidence).
+  Edges are now projected to a local UTM zone (from the dataset bbox) and the
+  tree is built in meters; query points are projected before the query. Output
+  stays WGS84; falls back to degrees when UTM is undefined (>84°N / <-80°S).
+
+**Benchmark:** single-edge test — origin at fraction 0.5 now routes ~173 m
+(before: ~850 m full edge). 8 new tests incl. degree-vs-meter selection.
+
+## R2 — location_allocation brute force (GIS-11) — P0 hang
+
+`itertools.combinations` over C(m,p) materialized the full list — C(50,5) ≈
+2.1M, C(100,10) ≈ 1.7e13 — a "choose 5 of 80 sites" request hung indefinitely.
+Instances ≤ 20,000 combinations keep the EXACT solver; beyond that p-median
+uses Teitz-Bart vertex substitution and max-coverage uses greedy-add. Result
+summary now reports `solver: exact | heuristic`.
+
+**Benchmark:** 60-candidate p=5 completes < 0.5 s (previously non-terminating).
+
+## R3 — OD matrix triple Dijkstra (GIS-19) — P1 perf
+
+Three full `single_source_dijkstra_path_length` passes per origin (cost,
+distance, time) — distance/time accumulate along the same impedance path. Now
+one `single_source_dijkstra` per origin recovers distance/time from the returned
+path lists. **Benchmark:** 20×20 OD (400 pairs, ~800-edge grid) = 121 ms.
+
+## R4 — Security (SEC-04/06/08) — P1
+
+- **SEC-04** explorer `GovDataAdapter.fetch` issued GET to attacker-influenced
+  URLs with no SSRF guard; now validated through `DataFabricSecurity` policy.
+- **SEC-06** PostGIS where-pushdown passed the where text as a SQL VALUE literal
+  (silent no-op filter); new `_parse_safe_where` accepts only
+  `<column> <op> <literal>` with allowlisted identifiers/operators, parameter-
+  bound values, and loud rejection of SQL structure. The query ERROR path
+  previously returned a FABRICATED Beijing sample polygon — now empty features +
+  explicit error metadata (no false-success).
+- **SEC-08** raster tile route opened ref-controlled paths with no validation;
+  now `validate_data_path`-checked inside the data root.
+
+## R5 — selectin N+1 (DATA-08) — P1 perf
+
+`list_project_artifacts` / `list_workflow_runs` fired ~N×(1 selectin + 2 select)
+queries. Explicit `selectinload` batches → constant query count. Test asserts
+20 artifacts ≤ 8 queries (was ~60+).
+
+## R6 — Runtime concurrency (RUN-01/02/03) — P1
+
+- **RUN-01** `_dispatch_tool` built a fresh `ToolDispatchService` (fresh
+  asyncio.Lock) per call → dedup check-and-add not atomic across the parallel
+  wave. Engine now holds ONE shared service injected into the pipeline.
+- **RUN-02** every tool in `chat_stream` produced TWO steps (manual start_step +
+  pipeline track_step) — step_count doubled, step_id desynced. Pipeline now
+  accepts `pre_created_step` and skips track_step when provided.
+- **RUN-03** `chat()` had no session lock; `chat_stream` only locked map_state
+  setup. Both paths now hold the session lock for the whole turn.
+
+## Round-2 verification
+
+- Backend: `pytest tests/unit/` → **1043 passed, 1 skipped** (44 new tests).
+- Perf harness: 11/11 green. Ruff + bandit (-ll -ii) clean on all changed files.
+- New test files: `test_network_snap_correctness.py` (8), `test_allocation_scaling.py`
+  (5), `test_od_matrix_correctness.py` (3), `test_security_round2.py` (21),
+  `test_project_listing_n1.py` (2), `test_runtime_concurrency_round2.py` (5).
+
+## Round-2 review loop (adversarial)
+
+An independent adversarial review of the round-2 diff found 2 blocking bugs
+and 2 secondary issues, all fixed in `1a17be8`:
+
+1. **GIS-01 chain-walk junction bug (blocking):** `_split_edge_chain` walked
+   into UNRELATED roads at junctions — any successor reachable to the target
+   node was followed, so the second virtual node landed on the wrong street
+   (repro: destination snapped to 116.008 routed to 116.012, ~400 m off). The
+   walk now follows only the target node and virtual nodes (`vt_*`).
+2. **RUN-02 stuck repeated steps (blocking):** deduped ("repeated") tool steps
+   never got a terminal transition once `pre_created_step` skipped the
+   pipeline's `track_step` — steps stayed `running` forever. `chat_stream`
+   now `complete_step`s the repeated branch.
+3. **SEC-06 LIKE wildcards:** the `%S` token check rejected legitimate LIKE
+   patterns (`'%Street%'`); removed (values are always bound parameters).
+   Unquoted SQL keywords in bare values are still rejected; quoted values are
+   exempt.
+4. Zero-length sub-edge cosmetic issue noted; non-blocking.
+
+Reviewer also verified as correct: UTM projection roundtrip + index
+correspondence, legacy `_resolve_node` paths, allocation heuristic bounds,
+OD path-walk accumulation, SSRF (decimal/hex IPv4, IPv6, metadata), data-path
+symlink rejection, and the whole-turn lock release on generator close.
+
+**Final verification:** 1052 unit tests pass (1 pre-existing skip), network
+30/30, perf harness 11/11, ruff + bandit clean.

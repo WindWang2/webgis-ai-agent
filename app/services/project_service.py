@@ -190,7 +190,24 @@ class ProjectService:
         if not project:
             return []
 
-        stmt = select(Artifact).where(Artifact.project_id == project_id).order_by(Artifact.created_at.desc())
+        # DATA-08 (deep-audit round 2): Artifact.upload_record / .layer are
+        # lazy="selectin" and .lineages / .parent_lineages are lazy="select" —
+        # returning N artifacts without eager loading fired N×(selectin +
+        # 2×select) queries. Explicit selectinload batches all four into a
+        # constant number of queries regardless of N.
+        from sqlalchemy.orm import selectinload
+
+        stmt = (
+            select(Artifact)
+            .where(Artifact.project_id == project_id)
+            .options(
+                selectinload(Artifact.upload_record),
+                selectinload(Artifact.layer),
+                selectinload(Artifact.lineages),
+                selectinload(Artifact.parent_lineages),
+            )
+            .order_by(Artifact.created_at.desc())
+        )
         return list(db.execute(stmt).scalars().all())
 
     @staticmethod
@@ -249,9 +266,16 @@ class ProjectService:
         if not project:
             return []
 
+        # DATA-08: WorkflowRun.workflow / .lineages are lazy="select" — eager
+        # load them in bulk so N runs don't fire N×2 extra queries.
+        from sqlalchemy.orm import selectinload
+
         stmt = select(WorkflowRun).join(Workflow).where(Workflow.project_id == project_id)
         if workflow_id:
             stmt = stmt.where(WorkflowRun.workflow_id == workflow_id)
 
-        stmt = stmt.order_by(WorkflowRun.created_at.desc())
+        stmt = stmt.options(
+            selectinload(WorkflowRun.workflow),
+            selectinload(WorkflowRun.lineages),
+        ).order_by(WorkflowRun.created_at.desc())
         return list(db.execute(stmt).scalars().all())

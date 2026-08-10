@@ -11,6 +11,7 @@
 
 import asyncio
 import gzip
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
@@ -21,6 +22,8 @@ from app.services.mvt import encode_point_tile
 from app.services.session_data import session_data_manager
 from app.services.task_tracker import TaskTracker  # noqa: F401  (typing aid)
 from app.tools._utils import async_db_session
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -186,7 +189,24 @@ async def get_raster_tile(
         raise HTTPException(status_code=status_code, detail=res.error or "栅格数据不可用")
 
     raster_path = res.data.get("file_path") or res.data.get("path") if isinstance(res.data, dict) else str(res.data)
-    png_bytes = await asyncio.to_thread(render_raster_tile, raster_path, z, x, y)
+    if not isinstance(raster_path, str) or not raster_path:
+        raise HTTPException(status_code=400, detail="栅格数据缺少有效路径")
+
+    # SEC-08 (deep-audit round 2): raster_path comes from session ref data that
+    # a user can populate via materialize_dataset / skill results. Validate it
+    # resolves inside the allowed data roots before rasterio.open — previously a
+    # ref could point at any GeoTIFF the process can read (another session's
+    # upload, cached artifacts), crossing the per-session isolation boundary.
+    from app.utils.path import validate_data_path
+    from app.core.config import settings
+
+    try:
+        safe_path = validate_data_path(raster_path, settings.DATA_DIR)
+    except ValueError as e:
+        logger.warning(f"[layer] raster tile path rejected: {e}")
+        raise HTTPException(status_code=400, detail="非法栅格路径")
+
+    png_bytes = await asyncio.to_thread(render_raster_tile, safe_path, z, x, y)
     return Response(
         content=png_bytes,
         media_type="image/png",
