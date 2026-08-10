@@ -129,12 +129,18 @@ class TestPiBridgeSubprocessFlow:
 
     @pytest.mark.asyncio
     async def test_stream_prompt_timeout_yields_error_event(self, monkeypatch):
-        """When no events arrive within timeout, stream_prompt yields error SSE + done."""
+        """When no events arrive within the stall budget, stream_prompt yields error SSE + done.
+
+        B-P1-3: the stall detector is now activity-based with heartbeats, so
+        the test pins BOTH the heartbeat interval (per-wait) and the stall
+        budget (continuous silence) low to keep it fast.
+        """
         rpc = MagicMock()
         rpc.events = asyncio.Queue()
         rpc.request = AsyncMock()
         bridge = PiBridge(rpc=rpc)
 
+        monkeypatch.setattr("app.agent_pi_bridge.PI_HEARTBEAT_INTERVAL", 0.01)
         monkeypatch.setattr("app.agent_pi_bridge.PI_EVENT_STREAM_TIMEOUT", 0.01)
 
         events = []
@@ -153,13 +159,56 @@ class TestPiBridgeSubprocessFlow:
         assert "error" in event_types, f"Expected 'error' event on timeout, got: {event_types}"
         assert event_types[-1] == "done"
 
-        # 超时错误消息必须引用常量（而不是硬编码的 "30s"）：随常量调优而更新。
+        # The stall message must reference the constant (no hardcoded "30s").
         error_event = next(e for e in events if e.startswith("event: error"))
         error_data = json.loads(error_event.split("data: ", 1)[1])
         assert error_data["error"] == (
-            f"Pi agent response timed out ({int(pi_bridge_module.PI_EVENT_STREAM_TIMEOUT)}s). "
-            "The agent may be processing or stalled."
+            f"Pi agent stalled — no events for "
+            f"{int(pi_bridge_module.PI_EVENT_STREAM_TIMEOUT)}s. "
+            "The agent may be stuck; please retry."
         )
+
+    @pytest.mark.asyncio
+    async def test_stream_prompt_emits_heartbeats_during_silence(self, monkeypatch):
+        """B-P1-3: silent phases emit SSE keepalive comments up to the stall budget.
+
+        Heartbeats keep the connection alive through proxies/LBs and signal
+        progress to the browser without entering chat history (comment lines
+        are ignored by the client parser). A normal event arriving after a
+        heartbeat must still be delivered and reset the silence accumulator.
+        """
+        rpc = MagicMock()
+        rpc.events = asyncio.Queue()
+        rpc.request = AsyncMock()
+        bridge = PiBridge(rpc=rpc)
+
+        monkeypatch.setattr("app.agent_pi_bridge.PI_HEARTBEAT_INTERVAL", 0.02)
+        # Stall budget large enough for several heartbeats before agent_end.
+        monkeypatch.setattr("app.agent_pi_bridge.PI_EVENT_STREAM_TIMEOUT", 10.0)
+
+        async def feed_after_delay():
+            await asyncio.sleep(0.07)  # ~3 heartbeat intervals of silence
+            await rpc.events.put({
+                "type": "message_update",
+                "assistantMessageEvent": {"type": "text_delta", "content": "ok"},
+            })
+            await rpc.events.put({"type": "agent_end"})
+
+        asyncio.create_task(feed_after_delay())
+
+        events = []
+        async for ev in bridge.stream_prompt("hi", session_id="s"):
+            events.append(ev)
+
+        joined = "\n".join(events)
+        assert ": keepalive" in joined, (
+            f"expected at least one heartbeat comment during silence; got:\n{joined}"
+        )
+        # The real token event after the silent phase is still delivered.
+        assert "event: token" in joined or "event: content" in joined, (
+            f"post-heartbeat token event missing; got:\n{joined}"
+        )
+        assert joined.rstrip().endswith("event: done") or "event: done" in joined
 
     @pytest.mark.asyncio
     async def test_stream_prompt_rpc_error_yields_task_error(self):

@@ -57,7 +57,21 @@ def _env_float_drain(name: str, default: float) -> float:
 # These stay in the bridge because they're about draining the event queue into SSE,
 # not about the RPC transport itself (which has its own PI_RPC_TIMEOUT in pi_rpc_client).
 PI_EVENT_DRAIN_TIMEOUT = _env_float_drain("PI_EVENT_DRAIN_TIMEOUT", 2.0)    # prompt() 非流式 drain 超时
-PI_EVENT_STREAM_TIMEOUT = _env_float_drain("PI_EVENT_STREAM_TIMEOUT", 30.0)  # stream_prompt 等待下一个 event 的超时
+
+# transport goal B-P1-3: how often to emit an SSE keepalive comment when Pi is
+# silent (long GIS tool, compaction, slow first token). Keeps the connection
+# alive through proxies/LBs with shorter idle timeouts than the chat-SSE
+# nginx budget (3600s) and tells the browser the turn is still progressing.
+PI_HEARTBEAT_INTERVAL = _env_float_drain("PI_HEARTBEAT_INTERVAL", 8.0)
+
+# Max CONTINUOUS silence before a turn is declared stalled. Previously 30s,
+# which false-failed any healthy turn whose tool phase produced no SSE event
+# for >30s (the tool kept running server-side while the user saw an error +
+# retried → duplicate execution). With heartbeats the connection stays alive,
+# so this now only needs to catch a true Pi hang; bumped to 180s to tolerate
+# long toolchains (still well under PI_RPC_TIMEOUT=300s that bounds one RPC).
+# Operators may tune via the env var.
+PI_EVENT_STREAM_TIMEOUT = _env_float_drain("PI_EVENT_STREAM_TIMEOUT", 180.0)
 
 
 # ── Pi tool dispatch models (owned by bridge, not pi_tools route) ──
@@ -557,9 +571,13 @@ class PiBridge:
             yield sse_event("task_start", {"task_id": turn_sid, "session_id": turn_sid})
 
             timed_out = False
+            silence_seconds = 0.0
             while True:
                 try:
-                    event = await asyncio.wait_for(self._rpc.events.get(), timeout=PI_EVENT_STREAM_TIMEOUT)
+                    event = await asyncio.wait_for(
+                        self._rpc.events.get(), timeout=PI_HEARTBEAT_INTERVAL
+                    )
+                    silence_seconds = 0.0
                     sse = map_event_to_sse(event, turn_sid, cache_lookup=get_cached_dispatch_result)
                     if _harness is not None:
                         _harness.record_sse_event(event)
@@ -568,13 +586,21 @@ class PiBridge:
                     if event.get("type") == "agent_end":
                         break
                 except asyncio.TimeoutError:
-                    timed_out = True
-                    break
+                    silence_seconds += PI_HEARTBEAT_INTERVAL
+                    if silence_seconds >= PI_EVENT_STREAM_TIMEOUT:
+                        # True stall: no Pi event for the whole stall budget.
+                        timed_out = True
+                        break
+                    # Keepalive: an SSE comment line (``: ...``) is ignored by
+                    # the client parser and never enters chat history or the
+                    # LLM context, but it produces bytes on the wire so proxies
+                    # and browsers see activity and don't drop the connection.
+                    yield ": keepalive\n\n"
 
             if timed_out:
                 yield sse_event("error", {
                     "session_id": turn_sid,
-                    "error": f"Pi agent response timed out ({int(PI_EVENT_STREAM_TIMEOUT)}s). The agent may be processing or stalled.",
+                    "error": f"Pi agent stalled — no events for {int(PI_EVENT_STREAM_TIMEOUT)}s. The agent may be stuck; please retry.",
                 })
 
             yield sse_event("done", {"session_id": turn_sid})
