@@ -112,3 +112,6 @@ screenshot-*.png
 .webgis-agent/
 
 .agents/
+
+# Git bare-repo conversion backups (kept on disk for safety, never committed)
+.git.backup-*
