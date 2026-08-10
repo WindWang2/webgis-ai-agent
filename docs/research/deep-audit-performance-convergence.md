@@ -291,3 +291,31 @@ queries. Explicit `selectinload` batches → constant query count. Test asserts
 - New test files: `test_network_snap_correctness.py` (8), `test_allocation_scaling.py`
   (5), `test_od_matrix_correctness.py` (3), `test_security_round2.py` (21),
   `test_project_listing_n1.py` (2), `test_runtime_concurrency_round2.py` (5).
+
+## Round-2 review loop (adversarial)
+
+An independent adversarial review of the round-2 diff found 2 blocking bugs
+and 2 secondary issues, all fixed in `1a17be8`:
+
+1. **GIS-01 chain-walk junction bug (blocking):** `_split_edge_chain` walked
+   into UNRELATED roads at junctions — any successor reachable to the target
+   node was followed, so the second virtual node landed on the wrong street
+   (repro: destination snapped to 116.008 routed to 116.012, ~400 m off). The
+   walk now follows only the target node and virtual nodes (`vt_*`).
+2. **RUN-02 stuck repeated steps (blocking):** deduped ("repeated") tool steps
+   never got a terminal transition once `pre_created_step` skipped the
+   pipeline's `track_step` — steps stayed `running` forever. `chat_stream`
+   now `complete_step`s the repeated branch.
+3. **SEC-06 LIKE wildcards:** the `%S` token check rejected legitimate LIKE
+   patterns (`'%Street%'`); removed (values are always bound parameters).
+   Unquoted SQL keywords in bare values are still rejected; quoted values are
+   exempt.
+4. Zero-length sub-edge cosmetic issue noted; non-blocking.
+
+Reviewer also verified as correct: UTM projection roundtrip + index
+correspondence, legacy `_resolve_node` paths, allocation heuristic bounds,
+OD path-walk accumulation, SSRF (decimal/hex IPv4, IPv6, metadata), data-path
+symlink rejection, and the whole-turn lock release on generator close.
+
+**Final verification:** 1052 unit tests pass (1 pre-existing skip), network
+30/30, perf harness 11/11, ruff + bandit clean.
