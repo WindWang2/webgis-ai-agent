@@ -174,19 +174,30 @@ class NetworkRoutingService:
         for start_u, start_v in ((orig_u, orig_v), (orig_v, orig_u)):
             if not graph.has_edge(start_u, start_v) and start_u not in graph:
                 continue
-            # Walk the sub-edge chain from start_u toward start_v.
+            # If the original edge still exists directly, split it — the common
+            # first-snap case.
+            if graph.has_edge(start_u, start_v):
+                return self._split_edge_at_fraction(
+                    graph, start_u, start_v, fraction, snapped_coord
+                )
+            # Otherwise walk the sub-edge chain created by a previous split.
+            # REVIEWER BLOCKING FIX: the previous walk used nx.has_path on
+            # arbitrary successors, which at a junction follows ANY road that
+            # can reach start_v — inserting the virtual node on the wrong edge.
+            # The chain consists ONLY of the target node and virtual nodes
+            # (vt_*); never follow a real junction neighbor.
             accumulated = 0.0
             current = start_u
             prev: Any = None
             while current != start_v:
-                nbrs = [n for n in graph.successors(current) if n != prev]
-                nxt = None
-                for n in nbrs:
-                    if n == start_v or (n in graph and nx.has_path(graph, n, start_v)):
-                        nxt = n
-                        break
-                if nxt is None:
+                nbrs = [
+                    n for n in graph.successors(current)
+                    if n != prev
+                    and (n == start_v or str(n).startswith(self._VIRTUAL_NODE_PREFIX))
+                ]
+                if not nbrs:
                     break  # chain broken in this direction; try the other
+                nxt = nbrs[0]
                 data = graph[current][nxt]
                 e_len = float(data.get("length_m", 0.0))
                 if accumulated + e_len >= target_dist:

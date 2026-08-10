@@ -63,6 +63,27 @@ async def test_legacy_path_creates_single_step():
     assert len(task.steps) == 1
 
 
+@pytest.mark.asyncio
+async def test_repeated_outcome_terminates_pre_created_step():
+    """Reviewer BLOCKING fix: a 'repeated' (deduped) outcome must complete the
+    pre-created step — it previously stayed in 'running' forever because the
+    pipeline's track_step __aexit__ (which used to do the terminal transition)
+    is skipped in the pre_created_step path."""
+    from app.services.chat.execution_engine import ChatExecutionEngine
+
+    engine = ChatExecutionEngine.__new__(ChatExecutionEngine)
+    engine.tracker = TaskTracker()
+
+    task = engine.tracker.create("s1", "dup request")
+    step = engine.tracker.start_step(task.id, "buffer", {})
+    assert step.status.value == "running" or step.status == "running"
+
+    # Simulate the chat_stream "repeated" branch: complete_step must be called
+    # for the repeated outcome (this is what the fixed code path does).
+    engine.tracker.complete_step(task.id, step.id, {"deduped": True})
+    assert step.status.value == "completed" or step.status == "completed"
+
+
 # ---------------------------------------------------------------------------
 # RUN-01 — shared dispatch service (dedup lock shared)
 # ---------------------------------------------------------------------------

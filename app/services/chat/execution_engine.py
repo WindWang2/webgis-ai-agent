@@ -769,6 +769,14 @@ class ChatExecutionEngine:
                                 msg_result_str = outcome.llm_payload
 
                                 if outcome.status == "repeated":
+                                    # Reviewer BLOCKING fix (RUN-02): chat_stream
+                                    # owns the step lifecycle now (pre_created_step
+                                    # skips the pipeline's track_step, whose
+                                    # __aexit__ used to complete the step). The
+                                    # "repeated" branch previously left the step
+                                    # in "running" forever. Terminal transition
+                                    # is required here too.
+                                    self.tracker.complete_step(task.id, step.id, outcome.raw_result)
                                     yield sse_event("step_result", {
                                         "task_id": task.id,
                                         "step_id": step.id,

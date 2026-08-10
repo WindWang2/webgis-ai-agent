@@ -105,21 +105,49 @@ def test_parse_safe_where_valid(expr, expected_sql, expected_param):
 @pytest.mark.parametrize(
     "expr",
     [
+        "name LIKE '%Street%'",   # % wildcards with 's' — reviewer fix
+        "name LIKE '%s'",
+        "name LIKE 'S%'",
+        "name LIKE '%S%'",
+    ],
+)
+def test_parse_safe_where_accepts_like_wildcards(expr):
+    """Reviewer fix: LIKE patterns containing %s/%S are legitimate wildcards,
+    not placeholder injection (values are always bound parameters)."""
+    sql, params = _parse_safe_where(expr)
+    assert sql == '"name" LIKE %s'
+    assert params == [expr.split("'")[1]]
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
         "1=1",                      # injection attempt
         "type = 'x' OR 1=1",        # conjunction
         "name; DROP TABLE users",   # statement injection
-        "type=(SELECT 1)",          # subquery
+        "type=(SELECT 1)",          # unquoted subquery
+        "x = (SELECT 1)",           # unquoted subquery with spaces
         "col == 5",                 # invalid operator
         "",                         # empty
         "= 5",                      # missing column
         "col >",                    # missing value
         "co l > 5",                 # space in identifier
-        "name LIKE %s",             # placeholder injection
+        "x = 1 UNION SELECT 2",     # unquoted union
+        "x = DROP",                 # unquoted keyword
     ],
 )
 def test_parse_safe_where_rejects_unsafe(expr):
     with pytest.raises(ValueError):
         _parse_safe_where(expr)
+
+
+def test_parse_safe_where_binds_literal_percent_s():
+    """'name LIKE %s' (bare, unquoted) is bound as the STRING '%s' — values are
+    always parameters, so this is safe, not injection. It must parse (reviewer
+    fix: previously rejected via the %S token check)."""
+    sql, params = _parse_safe_where("name LIKE %s")
+    assert sql == '"name" LIKE %s'
+    assert params == ["%s"]
 
 
 def test_postgis_query_failure_returns_empty_not_fabricated(monkeypatch):

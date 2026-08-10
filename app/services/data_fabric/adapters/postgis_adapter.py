@@ -73,8 +73,25 @@ def _parse_safe_where(expr: str) -> Tuple[str, List[Any]]:
     # placeholders, additional operators) is rejected — a silent mis-parse here
     # would either no-op the filter or, worse, become injection surface.
     value_upper = value_raw.upper()
-    if any(tok in value_upper for tok in (" OR ", " AND ", "SELECT ", " UNION ", "--", "/*", "*/", "%S")):
+    # Reviewer note: "%S" is NOT checked here — LIKE patterns legitimately
+    # contain '%s'/'%S' (e.g. LIKE '%Street%'). Since values are always bound as
+    # parameters, a "%s" cannot splice SQL; the placeholder-injection risk does
+    # not exist in this grammar.
+    if any(tok in value_upper for tok in (" OR ", " AND ", " SELECT ", " UNION ", "--", "/*", "*/")):
         raise ValueError(f"Unsupported where value '{value_raw}': single literal only")
+    # Reject SQL keywords in UNQUOTED values (e.g. "type=(SELECT 1)" — the
+    # value token "(SELECT 1)" is not a plain literal). Quoted values are bound
+    # parameters and may legitimately contain any text (street names, LIKE
+    # patterns), so they are exempt.
+    is_quoted = (
+        len(value_raw) >= 2
+        and value_raw[0] == value_raw[-1]
+        and value_raw[0] in ("'", '"')
+    )
+    if not is_quoted:
+        for kw in ("SELECT", "UNION", "DROP", "INSERT", "DELETE", "UPDATE", "AND", "OR"):
+            if kw in value_upper:
+                raise ValueError(f"Unsupported where value '{value_raw}': single literal only")
     # The column side must not contain anything beyond the identifier either
     # (e.g. "col == 5" would parse column "col " and op "=" leaving "= 5" as
     # value — reject the stray operator).

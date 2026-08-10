@@ -131,6 +131,62 @@ def test_same_edge_origin_and_destination(single_edge_network):
     )
 
 
+def test_junction_chain_walk_does_not_enter_unrelated_road():
+    """Reviewer BLOCKING fix (GIS-01): when an edge is already split, the
+    second snap must walk ONLY the sub-edge chain (target node + virtual
+    nodes), never an unrelated road leaving the junction.
+
+    Layout: n0 -- e1 -- n1 -- e2 -- n2 (collinear), both two-way. Origin and
+    destination both snap to e1. The second split must land on e1's remaining
+    sub-edge, NOT on e2.
+    """
+    geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"id": "e1", "speed_kmh": 60.0, "one_way": False},
+                "geometry": {"type": "LineString", "coordinates": [[116.0, 39.0], [116.01, 39.0]]},
+            },
+            {
+                "type": "Feature",
+                "properties": {"id": "e2", "speed_kmh": 60.0, "one_way": False},
+                "geometry": {"type": "LineString", "coordinates": [[116.01, 39.0], [116.02, 39.0]]},
+            },
+        ],
+    }
+    builder = NetworkGraphBuilder()
+    graph, dataset = builder.build_graph(geojson, profile=TravelProfile())
+    router = NetworkRoutingService()
+
+    origin = (116.005, 39.0)  # fraction ~0.5 on e1
+    dest = (116.008, 39.0)    # fraction ~0.8 on e1
+
+    route = router.network_shortest_path(
+        graph=graph,
+        network_dataset=dataset,
+        origin=origin,
+        destination=dest,
+        profile=TravelProfile(),
+    )
+    coords = route.geometry["coordinates"]
+    # The route must stay within e1's span: start ~116.005, end ~116.008.
+    # A chain-walk bug put the destination virtual node on e2 (~116.012+).
+    # Tolerance is relaxed to ±0.002° (~170 m) because the snapped fraction is
+    # measured in UTM while edge lengths are haversine — small projection
+    # rounding is expected. The buggy behavior was ~400 m off (on e2).
+    assert abs(coords[0][0] - 116.005) < 0.002, f"start {coords[0]}"
+    assert abs(coords[-1][0] - 116.008) < 0.002, (
+        f"reviewer-blocking regression: route ends at {coords[-1]} — expected "
+        f"~116.008 on e1, not on e2"
+    )
+    # Must NOT land on e2 (>= 116.012): the e1 span is [116.0, 116.01].
+    assert coords[-1][0] < 116.012, f"route end on e2: {coords[-1]}"
+    assert 150.0 < route.total_distance_m < 500.0, (
+        f"route distance {route.total_distance_m:.1f} m — expected ~260-350 m within e1"
+    )
+
+
 def test_node_id_routing_still_works(single_edge_network):
     """Explicit node-id origins/destinations must not insert virtual nodes."""
     graph, dataset = single_edge_network
