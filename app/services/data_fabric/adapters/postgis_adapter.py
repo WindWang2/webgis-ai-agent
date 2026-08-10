@@ -21,6 +21,87 @@ logger = logging.getLogger(__name__)
 MAX_PREVIEW_LIMIT = 100
 MAX_QUERY_LIMIT = 10000
 
+# SEC-06: allowlisted operators for the safe where-expression parser. Values are
+# always bound as SQL parameters; only the column identifier and operator are
+# parsed (identifier allowlisted to [A-Za-z0-9_]+). This is the ONLY supported
+# filter grammar — anything else is rejected with a clear error instead of
+# silently degrading to a no-op filter or splicing raw SQL.
+_SAFE_WHERE_OPS = ("LIKE", ">=", "<=", "!=", ">", "<", "=")
+_SAFE_WHERE_COLUMN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _parse_safe_where(expr: str) -> Tuple[str, List[Any]]:
+    """Parse ``<column> <op> <value>`` into (sql_fragment, params).
+
+    Raises ValueError for any expression that is not exactly
+    ``identifier operator literal`` — no function calls, no conjunctions, no
+    string splicing. ``LIKE`` values are bound as parameters; callers pass
+    exact patterns (no backslash-escape processing is applied here).
+    """
+    if not isinstance(expr, str) or not expr.strip():
+        raise ValueError("Empty where expression")
+
+    stripped = expr.strip()
+    # Find the operator by scanning left-to-right for the FIRST token that is
+    # an allowlisted operator. This avoids regex ambiguity with value content.
+    op_found = None
+    op_pos = None
+    for op in sorted(_SAFE_WHERE_OPS, key=len, reverse=True):
+        idx = stripped.find(op)
+        if idx > 0:
+            op_found = op
+            op_pos = idx
+            break
+    if op_found is None or op_pos is None:
+        raise ValueError(
+            f"Unsupported where expression '{expr}': expected '<column> <op> <value>' "
+            f"with op in {_SAFE_WHERE_OPS}"
+        )
+
+    column = stripped[:op_pos].strip()
+    value_raw = stripped[op_pos + len(op_found):].strip()
+
+    if not _SAFE_WHERE_COLUMN.match(column):
+        raise ValueError(
+            f"Unsafe column name '{column}' in where expression: only [A-Za-z0-9_]+ allowed"
+        )
+    if not value_raw:
+        raise ValueError(f"Missing value in where expression '{expr}'")
+
+    # SEC-06 hardening: the value token must be a SINGLE literal. Anything
+    # containing SQL structure (conjunctions, subqueries, comment markers,
+    # placeholders, additional operators) is rejected — a silent mis-parse here
+    # would either no-op the filter or, worse, become injection surface.
+    value_upper = value_raw.upper()
+    if any(tok in value_upper for tok in (" OR ", " AND ", "SELECT ", " UNION ", "--", "/*", "*/", "%S")):
+        raise ValueError(f"Unsupported where value '{value_raw}': single literal only")
+    # The column side must not contain anything beyond the identifier either
+    # (e.g. "col == 5" would parse column "col " and op "=" leaving "= 5" as
+    # value — reject the stray operator).
+    if op_found == "=" and value_raw.startswith("="):
+        raise ValueError(f"Invalid operator in where expression '{expr}'")
+
+    # Normalize the value: strip surrounding quotes and infer a typed literal.
+    value: Any = value_raw
+    if len(value_raw) >= 2 and value_raw[0] == value_raw[-1] and value_raw[0] in ("'", '"'):
+        value = value_raw[1:-1]
+    elif value_raw.lower() == "null":
+        value = None
+    elif value_raw.lower() in ("true", "false"):
+        value = value_raw.lower() == "true"
+    else:
+        try:
+            value = int(value_raw)
+        except ValueError:
+            try:
+                value = float(value_raw)
+            except ValueError:
+                value = value_raw  # bare word → string parameter
+
+    if op_found == "LIKE":
+        return f'"{column}" LIKE %s', [value]
+    return f'"{column}" {op_found} %s', [value]
+
 
 _POSTGIS_POOLS: Dict[str, Any] = {}
 
@@ -447,9 +528,20 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
 
                     where_text = getattr(query_spec, "where", None) or getattr(query_spec, "filter_expr", None) or getattr(query_spec, "filter", None)
                     if where_text and isinstance(where_text, str):
-                        # Simple column expression check or parameter pushdown
-                        where_clauses.append("%s")
-                        params.append(where_text)
+                        # SEC-06 (deep-audit round 2): the previous code passed
+                        # where_text as a SQL VALUE literal (WHERE '%s'), which
+                        # PostgreSQL evaluates as a boolean string — always true —
+                        # so the documented attribute filter was a silent no-op.
+                        # Implement a SAFE parameterized expression parser:
+                        #   <identifier> <op> <value>
+                        # where <identifier> is allowlisted [A-Za-z0-9_]+ and
+                        # <op> ∈ {=, !=, <, <=, >, >=, LIKE}. The value is always
+                        # bound as a parameter, never spliced into SQL. Anything
+                        # else is rejected loudly instead of degrading to a
+                        # no-op filter.
+                        where_clause, where_params = _parse_safe_where(where_text)
+                        where_clauses.append(where_clause)
+                        params.extend(where_params)
 
                     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
@@ -486,23 +578,22 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                         metadata={"exec_time_ms": exec_time, "pushdown_bbox": bool(query_spec.bbox)},
                     )
         except Exception as e:
+            # SEC-06 (deep-audit round 2): the previous error path returned a
+            # FABRICATED Beijing polygon sample as if the query had succeeded —
+            # a false-success that made the agent think a failed PostGIS query
+            # returned real data. Failure must remain observable: empty result
+            # + explicit error metadata. No synthetic features, ever.
             exec_time = round((time.time() - start_time) * 1000, 2)
-            logger.warning(f"PostGIS query execution fallback for '{dataset_id}': {e}")
-            sample_feats = [
-                {
-                    "type": "Feature",
-                    "geometry": {"type": "Polygon", "coordinates": [[[116.3, 39.9], [116.4, 39.9], [116.4, 40.0], [116.3, 40.0], [116.3, 39.9]]]},
-                    "properties": {"id": 1, "name": dataset_id},
-                }
-            ]
+            logger.warning(f"PostGIS query failed for '{dataset_id}': {e}")
             return QueryResult(
                 dataset_id=dataset_id,
-                features=sample_feats,
-                total_count=len(sample_feats),
-                schema_info={"columns": ["id", "name"]},
+                features=[],
+                total_count=0,
+                schema_info={"columns": []},
                 metadata={
                     "exec_time_ms": exec_time,
                     "error_hint": f"PostGIS query error: {e}.",
+                    "success": False,
                 },
             )
 

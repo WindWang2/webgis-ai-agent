@@ -124,6 +124,21 @@ class GovDataAdapter(BaseDataAdapter):
         if not source.url:
             raise ValueError("Source URL is empty")
 
+        # SEC-04 (deep-audit round 2): source.url originates from remote gov
+        # platform search responses ("link" fields) that are attacker-influenced
+        # (a compromised platform, or a search keyword steered toward a crafted
+        # listing). The Data Fabric SSRF policy module already blocks
+        # private/loopback/metadata targets — reuse it here instead of fetching
+        # arbitrary server-side URLs. Private endpoints are never allowed from
+        # this path (mirrors the Data Fabric REST gate).
+        try:
+            from app.services.data_fabric.security import DataFabricSecurity
+
+            DataFabricSecurity.validate_url(source.url, allow_private=False)
+        except Exception as e:
+            logger.warning(f"[GovDataAdapter] SSRF block for URL {source.url}: {e}")
+            raise ValueError(f"Unsafe or invalid source URL blocked: {e}") from e
+
         MAX_SIZE = 50 * 1024 * 1024  # 50MB
 
         async with aiohttp.ClientSession(headers=get_base_headers()) as session:
