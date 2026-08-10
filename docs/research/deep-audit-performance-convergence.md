@@ -319,3 +319,67 @@ symlink rejection, and the whole-turn lock release on generator close.
 
 **Final verification:** 1052 unit tests pass (1 pre-existing skip), network
 30/30, perf harness 11/11, ruff + bandit clean.
+
+---
+
+# Round 3 — Remaining P2/P3 remediation (branch `agent/deep-audit-round3`)
+
+**Date:** merged via PR #321
+**Method:** the remaining high-value deferred findings (network correctness
+cluster, CRS correctness, workflow transactions, conversation TOCTOU, dead
+seam) were implemented with TDD regression tests; an adversarial reviewer
+verified all five fixes with no blocking findings.
+
+## R7 — Service-area isochrone smoothing (GIS-08/09) — P0/P1
+- **GIS-08** the isochrone buffer was 0.005 DEGREES — at 40°N the longitude
+  component is ~425 m but ~555 m at the equator, so smoothing varied
+  non-uniformly by latitude. Buffers are now a fixed 150 m radius in a local
+  UTM zone (from the dataset bbox), projected back to WGS84.
+- **GIS-09** the polygon was the CONVEX HULL of reachable nodes (bridges
+  unreachable gaps, overstating coverage). Coverage now follows the actual
+  reachable edges: buffered unary-union in meter space (concave,
+  gap-preserving). Falls back to the old point-buffer only when no projection
+  is available.
+
+## R8 — CRS correctness (GIS-22/23/24)
+- **GIS-22** `transform_geojson` left the top-level `crs` member stale after
+  reprojection (downstream double-reprojection). Updated when present; a
+  follow-up guard added so pure-coordinate-normalization callers (chinese_maps
+  `_shaping`) keep their envelope keys unchanged.
+- **GIS-23** `zonal_statistics` silently fed source-CRS polygons to projected
+  rasters on transform failure (all-zero "no data"). Now raises ValueError.
+- **GIS-24** impact zones fell back to Web Mercator (~1.7× area inflation at
+  40°N) on UTM failure — now raises. Baseline geometry area switched from
+  planar `111.32·cos(lat)` to exact geodesic (`pyproj.Geod`, handles
+  MultiPolygon interiors).
+
+## R9 — Workflow per-step commits (DATA-10) — P1
+`execute_workflow_run` held one DB transaction across the whole multi-step
+tool loop (pool exhaustion under concurrency; a mid-loop failure committed
+all prior artifacts as an indistinguishable partial batch). Each step now
+commits its Artifact + lineage before the next dispatch; a failure rolls
+back the current step and marks the run failed. Adversarial review verified
+the 3-step success, mid-loop failure, and commit-time-failure paths.
+
+## R10 — Conversation create TOCTOU (SEC-10) — P1
+`get_or_create_conversation` retried only "locked" errors — a concurrent
+double-submit surfaced as a PRIMARY KEY IntegrityError → HTTP 500. The retry
+now also catches IntegrityError and re-SELECTs the winner (standard upsert).
+
+## R11 — Delete dead SpatialAnalysisEngine seam (ARCH-01) — P2
+Deleted the name-dispatch class (ADR-0013 pattern) whose persistence hook
+referenced a non-existent `session_store`. Three tools now call
+`SpatialAnalyzer` directly; `__all__` trimmed; the parameter-mapping test
+was preserved against `SpatialAnalyzer`.
+
+## Round-3 verification
+- Backend: `pytest tests/unit/` → **1069 passed, 1 skipped** (16 new tests;
+  one pre-existing timing-sensitive `test_plan_mode` flake observed once under
+  load, green on isolated + full re-runs).
+- Perf harness 11/11; ruff (full CI scope) + bandit clean.
+- **Adversarial review: no blocking findings.** Reviewer verified UTM buffer
+  roundtrip, empty/fallback paths, GCJ-02 envelope preservation, zonal-stats
+  caller behavior (the one swallowing caller is strictly better than the old
+  fake-data path), Geod area handling, workflow commit/rollback semantics
+  across 4 scenarios, IntegrityError retry correctness, and the engine
+  deletion's argument mapping + cache key.
