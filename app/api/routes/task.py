@@ -138,9 +138,21 @@ async def cancel_task(
     db: AsyncSession = Depends(get_async_db),
     _user: dict = Depends(get_current_user),
 ) -> TaskCancelResponse:
-    """取消正在执行的任务"""
+    """取消正在执行的任务。
+
+    ADR-0052：除了点燃 agent task 的 token，这里也把该 turn 派生的 durable job 的
+    取消请求**落库** —— 否则跨进程 worker 观察不到取消，后台 GIS 计算会一路跑完。
+    行为与新的 ``DELETE /tasks/jobs/{job_id}`` 端点一致。
+    """
     await _verify_task_owner(db, task_id, _user.get("user_id"))
-    cancelled = get_engine().tracker.cancel(task_id)
+    tracker = get_engine().tracker
+    task_info = tracker.get(task_id)
+    background_job_ids = list(task_info.background_job_ids) if task_info else []
+    cancelled = tracker.cancel(task_id)
+    for job_id in background_job_ids:
+        await DurableJobStore.request_cancel(db, job_id)
+    if background_job_ids:
+        await db.commit()
     return TaskCancelResponse(cancelled=cancelled)
 
 

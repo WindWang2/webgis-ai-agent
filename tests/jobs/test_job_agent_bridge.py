@@ -9,7 +9,13 @@ import asyncio
 import pytest
 
 from app.services.chat.tool_pipeline import ToolExecutionPipeline
-from app.services.jobs.cancellation import checkpoint, current_token
+from app.services.jobs.cancellation import (
+    CancellationToken,
+    OperationCancelled,
+    checkpoint,
+    current_token,
+    use_token,
+)
 from app.services.jobs.context import JobOrigin, current_origin, use_origin
 from app.services.task_tracker import TaskTracker
 from app.services.tool_dispatch_service import ToolDispatchResult
@@ -303,3 +309,92 @@ async def test_parallel_tools_share_task_token():
 
     assert all(r.cancelled for r in results)
     assert executed["a"] < 100 and executed["b"] < 100
+
+
+# ── 真实 registry 路径的取消（round-3 审计） ────────────────────────
+# 上面的测试都注入了 dispatch_fn，因此绕过了 ToolRegistry 与 ToolDispatchService
+# 的异常兜底。生产路径不是这样：真实工具经 registry → to_thread 执行，两层通用
+# ``except Exception`` 曾把 OperationCancelled 降级成 TOOL_ERROR —— 取消于是被
+# 当成「工具坏了」，管道的取消分支永远不触发。这些测试守住真实路径。
+
+
+@pytest.mark.asyncio
+async def test_cancellation_propagates_through_real_registry():
+    """同步工具在工作线程里被取消时，取消必须穿透 registry 的异常兜底。"""
+    from app.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    executed: list[int] = []
+    token = CancellationToken("job-registry")
+
+    def heavy_tool(chunks: int = 100) -> dict:
+        # 真实同步工具：registry 会用 asyncio.to_thread 执行它
+        for i in range(chunks):
+            checkpoint()
+            executed.append(i)
+            if i == 3:
+                token.cancel("cancelled by user")
+        return {"done": True}
+
+    registry.register(
+        name="heavy_tool",
+        description="test tool",
+        func=heavy_tool,
+        parameters={"type": "object", "properties": {"chunks": {"type": "integer"}}},
+    )
+
+    with use_token(token):
+        with pytest.raises(OperationCancelled):
+            await registry.dispatch("heavy_tool", {"chunks": 100})
+
+    assert len(executed) <= 5, f"取消后仍执行了 {len(executed)}/100 个 chunk"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_marks_registry_cancellation_as_cancelled_not_error():
+    """经真实 ToolDispatchService 时，取消必须被记成「已取消」而非工具故障。"""
+    from app.services.tool_dispatch_service import ToolDispatchService
+    from app.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+
+    def cancelled_tool() -> dict:
+        checkpoint()
+        return {"unreachable": True}
+
+    registry.register(
+        name="cancelled_tool",
+        description="test tool",
+        func=cancelled_tool,
+        parameters={"type": "object", "properties": {}},
+    )
+
+    tracker = TaskTracker()
+    task = tracker.create("sess-1", "req")
+    tracker.cancel(task.id)  # 取消先到
+
+    pipeline = ToolExecutionPipeline(
+        registry=registry,
+        tracker=tracker,
+        dispatch_service=ToolDispatchService(registry=registry),
+    )
+    result = await pipeline.execute_tool_call(_tc("cancelled_tool"), "sess-1", task.id)
+
+    assert result.cancelled is True, "真实 registry 路径下取消必须被识别"
+    assert "取消" in result.llm_payload
+    assert "OperationCancelled" not in result.llm_payload
+
+
+def test_cancel_cascades_to_derived_durable_jobs():
+    """agent turn 取消必须级联到它派生的 durable job（进程内 token）。"""
+    from app.services.jobs.cancellation import registry as cancellation_registry
+
+    tracker = TaskTracker()
+    task = tracker.create("sess-1", "req")
+    step = tracker.start_step(task.id, "analyze_vegetation_index", {})
+    step.background_job_ids = ["4242"]
+    child = cancellation_registry.register("4242")
+
+    assert child.cancelled is False
+    tracker.cancel(task.id)
+    assert child.cancelled is True, "派生 durable job 的 token 未被级联取消"

@@ -12,6 +12,8 @@ from enum import Enum
 from app.services.session_data import session_data_manager
 from app.lib.geo_processor.core import GeoAnalysisResult
 
+from app.services.jobs.cancellation import OperationCancelled
+
 logger = logging.getLogger(__name__)
 
 
@@ -445,6 +447,12 @@ class ToolRegistry:
                 error_type="FileNotFoundError",
                 correction_hint=f"Error: File {str(e)} not found. Please ensure the path is correct."
             )
+        except OperationCancelled:
+            # ADR-0052：用户取消不是「工具坏了」。这里必须上抛，否则通用兜底会把它
+            # 变成一个 TOOL_ERROR 结果 —— 工具管道的取消分支永远不会触发，LLM 会
+            # 收到「工具执行异常」而不是「已被用户取消」，且取消有可能被当作可重试
+            # 的失败对待。
+            raise
         except Exception as e:
             logger.exception(f"Tool execution failed: {name}")
             return std_error_response(

@@ -41,6 +41,8 @@ from app.tools.registry import ToolRegistry
 from app.utils.security import sanitize_error_msg
 from app.utils.geojson import geojson_bbox
 
+from app.services.jobs.cancellation import OperationCancelled
+
 logger = logging.getLogger(__name__)
 
 
@@ -218,6 +220,9 @@ class ToolDispatchService:
         # 2. 执行（registry 内部全权处理 ref 解析、校验、异常捕获与自愈）
         try:
             result = await self._registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
+        except OperationCancelled:
+            # ADR-0052：取消上抛给工具管道处理（它会记成「已取消」而非工具故障）
+            raise
         except Exception as e:
             from app.tools._utils import std_error_response
             error_msg = sanitize_error_msg(str(e))

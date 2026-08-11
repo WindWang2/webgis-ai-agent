@@ -299,7 +299,12 @@ class TaskTracker:
             asyncio 工具任务（见 execution_engine 的并行 wave 循环）；
           * token 经 contextvar 传入同步 GIS 代码（asyncio.to_thread 会复制
             context），长循环在 ``jobs.checkpoint()`` 处协作退出；
-          * token 级联到本 turn 派生的 durable job，worker 侧也会观察到取消。
+          * 本 turn 派生的 durable job 的**进程内** token 一并点燃，所以同进程的
+            执行体（eager Celery、线程池工具）立即感知。
+
+        注意：跨进程 worker 依赖的是 DB 里的 ``cancel_requested_at``，那需要一次
+        数据库写入，不在本方法职责内 —— 由 Task API 的取消端点负责持久化，worker
+        的看门狗从 DB 读到它。
 
         幂等：重复取消返回 True 但不重复点燃 token（规范 §5）。
         """
@@ -313,6 +318,9 @@ class TaskTracker:
         token = task.cancel_token or cancellation_registry.register(task_id)
         task.cancel_token = token
         token.cancel("cancelled by user")
+        # 级联到本 turn 派生的 durable job（仅进程内 token；持久化见上方说明）
+        for job_id in task.background_job_ids:
+            cancellation_registry.cancel(job_id, "parent agent task cancelled")
         return True
 
     def cancel_token_for(self, task_id: str) -> CancellationToken | None:
