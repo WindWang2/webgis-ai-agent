@@ -7,7 +7,6 @@ Create Date: 2026-07-21
 from typing import Sequence, Union
 
 from alembic import op, context
-import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
@@ -24,7 +23,6 @@ def _is_sqlite() -> bool:
 
 def upgrade() -> None:
     """Upgrade schema."""
-    bind = op.get_bind()
     is_sqlite = _is_sqlite()
 
     if is_sqlite:
