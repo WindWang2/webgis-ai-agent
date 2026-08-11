@@ -97,6 +97,11 @@ class ChatExecutionEngine:
         import os as _os
         _SESSION_CACHE_SIZE = int(_os.getenv("SESSION_CACHE_SIZE", "200"))
         self._sessions: LRUCache = LRUCache(capacity=_SESSION_CACHE_SIZE)
+        # C-F12: the LRU above bounds the session COUNT; this bounds how many
+        # messages one resident session may hold. Every append is persisted via
+        # _save_msg_async, so the DB is the source of truth — the cache only
+        # needs the recent tail (see _trim_session_tail).
+        self._session_message_cap = max(1, int(_os.getenv("SESSION_MESSAGE_CAP", "200")))
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._MAX_LOCKS = 200
         self._session_owner_tokens: LRUCache = LRUCache(capacity=_SESSION_CACHE_SIZE)
@@ -260,6 +265,48 @@ class ChatExecutionEngine:
             if not (m.get("role") == "system" and isinstance(m.get("content"), str) and m["content"].startswith(marker))
         ]
         messages.append({"role": "system", "content": f"{marker}\n\n{skill['body']}"})
+
+    def _trim_session_tail(self, messages: list[dict]) -> None:
+        """C-F12: bound the in-memory per-session message tail.
+
+        ``_sessions`` caches the conversation as a mutable list that grows by
+        2-N messages every turn and was never trimmed — a long-lived streaming
+        session accumulates hundreds of turns in memory (tens of MB) while the
+        LLM only ever reads the recent tail (``truncate_history_by_budget``,
+        ~6000-token budget). Every append is also persisted via
+        ``_save_msg_async``, so the DB is the source of truth; the cache only
+        needs the recent tail.
+
+        Keeps ``messages[0]`` (the system prompt — the context assembler reads
+        it unconditionally) plus the newest turns that fit within
+        ``_session_message_cap``. Turns are grouped the same way
+        ``truncate_history_by_budget`` groups them (a turn = one user message
+        plus its following assistant/tool messages), so a user/assistant/tool
+        chain is never split — the LLM API rejects an orphaned assistant
+        ``tool_calls`` or a ``tool`` message without its ``tool_call``. An
+        oversized newest turn is kept whole (the bound degrades to one turn).
+        """
+        cap = self._session_message_cap
+        if len(messages) <= cap:
+            return
+        tail = messages[1:]
+        turns: list[list[dict]] = []
+        current: list[dict] = []
+        for msg in tail:
+            if msg.get("role") == "user" and current:
+                turns.append(current)
+                current = [msg]
+            else:
+                current.append(msg)
+        if current:
+            turns.append(current)
+        slots = cap - 1
+        kept: list[dict] = []
+        for turn in reversed(turns):
+            if kept and len(kept) + len(turn) > slots:
+                break
+            kept = turn + kept
+        messages[:] = [messages[0], *kept]
 
     async def _save_msg_async(self, session_id: str, role: str, content: str, tool_calls=None, tool_result=None, tool_call_id=None, reasoning_content=None):
         """异步保存消息到数据库"""
@@ -430,9 +477,14 @@ class ChatExecutionEngine:
         messages = await self._get_or_create_session(session_id, user_id=user_id)
         lock = self._get_session_lock(session_id)
         async with lock:
-            return await self._chat_locked(
-                message, session_id, messages, skill_name, user_id,
-            )
+            try:
+                return await self._chat_locked(
+                    message, session_id, messages, skill_name, user_id,
+                )
+            finally:
+                # C-F12: bound the in-memory tail once the turn's appends are
+                # complete (every exit path — return, exception, cancel).
+                self._trim_session_tail(messages)
 
     async def _chat_locked(
         self,
@@ -929,6 +981,11 @@ class ChatExecutionEngine:
                 if task_info is not None and task_info.status == TaskStatus.running:
                     self.tracker.fail_task(task.id, "chat_stream exception")
                 raise
+            finally:
+                # C-F12: bound the in-memory tail once the turn's appends
+                # are complete (every exit path — done, cancelled, max rounds,
+                # disconnect/exception via generator close).
+                self._trim_session_tail(messages)
 
     async def _dispatch_tool(
         self,
