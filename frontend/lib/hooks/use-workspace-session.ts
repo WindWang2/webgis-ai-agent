@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { API_BASE } from '@/lib/api/config';
+import { apiFetch } from '@/lib/api/transport';
 import type { ChatSession } from '@/lib/types/chat';
 import type { MapActionPayload } from '@/lib/types';
 
@@ -95,11 +96,15 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       // 旧会话 / 认证会话 token 为 null，头不发送，后端按 grandfather/认证放行。
       const token = sessionTokenRef.current;
       try {
-        const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}`, {
-          signal,
-          headers: token ? { 'X-Session-Token': token } : {},
-        });
-        const data = await res.json();
+        // F-09：会话恢复必须校验 HTTP 状态。旧实现 res.json() 不检查 res.ok，
+        // 404/500 的错误体被当作成功消费（JSON detail → 静默无消息；HTML 错误
+        // 页 → SyntaxError 被外层 catch 吞掉）。改用统一 transport：非 2xx 抛
+        // 类型化 ApiError（携带 FastAPI detail），并短路后续的 map-state / 图层
+        // / 分析资产恢复——失败会话的状态不会写入 UI。
+        const data = await apiFetch<{ messages?: any[]; title?: string }>(
+          `/api/v1/chat/sessions/${sid}`,
+          { signal, ownerToken: token }
+        );
         if (signal.aborted) return;
 
         if (data.messages && data.messages.length > 0) {
