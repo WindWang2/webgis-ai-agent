@@ -12,11 +12,15 @@ import { ensureAnnotationLayers, refreshAnnotations } from './annotationHelpers'
  */
 export const annotationCommands: Record<string, CommandEntry> = {
   add_marker: {
-    requiredParams: (p) => Array.isArray(p.center) || Array.isArray(p.coordinate),
+    // run body reads longitude/latitude (backend add_marker emission)
+    requiredParams: (p) => typeof p.longitude === 'number' && typeof p.latitude === 'number',
     run(ctx) {
       const { map, params, getHudState } = ctx;
       const { longitude, latitude, label, color } = params || {};
-      if (typeof longitude !== 'number' || typeof latitude !== 'number') return;
+      // V3: missing payload data → explicit failed result (was a silent return).
+      if (typeof longitude !== 'number' || typeof latitude !== 'number') {
+        return { status: 'failed', error: 'invalid_params' };
+      }
       ensureAnnotationLayers(map);
       getHudState().addAnnotation({
         type: 'Feature',
@@ -32,7 +36,10 @@ export const annotationCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { map, params, getHudState } = ctx;
       const { shape, coordinates, label } = params || {};
-      if (!Array.isArray(coordinates) || coordinates.length < 2) return;
+      // V3: missing payload data → explicit failed result (was a silent return).
+      if (!Array.isArray(coordinates) || coordinates.length < 2) {
+        return { status: 'failed', error: 'invalid_params' };
+      }
       ensureAnnotationLayers(map);
       const store = getHudState();
       if (shape === 'polygon') {

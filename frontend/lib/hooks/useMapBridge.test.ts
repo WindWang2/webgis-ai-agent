@@ -1,9 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import React from 'react';
 import { renderHook, act } from '@testing-library/react';
 import { useMapBridge } from './useMapBridge';
 import { resetViewportSeq } from '@/lib/utils/viewport-seq';
 import * as chatApi from '@/lib/api/chat';
 import type { SSEEvent } from '@/lib/api/chat';
+import { MapActionContext } from '@/lib/contexts/map-action-context';
+import type { MapActionContextType } from '@/lib/contexts/map-action-context';
+import type { MapActionAckSink } from '@/lib/api/map-action-acks';
+import { devOnly } from '@/lib/utils/logger';
 
 vi.mock('@/lib/store/useHudStore', () => ({
   useHudStore: {
@@ -24,6 +29,35 @@ function makeAsyncGen(events: SSEEvent[]): AsyncGenerator<SSEEvent> {
     for (const e of events) yield e;
   }
   return gen();
+}
+
+// V3: a minimal MapActionContext value that captures the registered ACK sink
+// (registerAckSink) and records clearActions() calls. The context upgrade
+// (FE-1) lands these on the real provider — the test injects them via the
+// mock value so the bridge's V3 wiring can be exercised without it.
+function makeAckWrapper(
+  sinkHolder: { current: MapActionAckSink | null },
+  clearActions: () => void,
+) {
+  return function AckWrapper({ children }: { children: React.ReactNode }) {
+    const value = {
+      actions: [],
+      dispatchAction: vi.fn(),
+      popAction: vi.fn(),
+      selectedBaseLayer: 0,
+      setSelectedBaseLayer: vi.fn(),
+      registerSnapshotFn: vi.fn(),
+      getMapSnapshot: vi.fn(() => null),
+      registerAckSink: (sink: MapActionAckSink) => {
+        sinkHolder.current = sink;
+        return () => {
+          sinkHolder.current = null;
+        };
+      },
+      clearActions,
+    } as MapActionContextType;
+    return React.createElement(MapActionContext.Provider, { value }, children);
+  };
 }
 
 describe('useMapBridge', () => {
@@ -97,6 +131,8 @@ describe('useMapBridge', () => {
     expect(dispatchAction).toHaveBeenCalledWith({
       command: 'fly_to',
       params: { center: [116, 39], zoom: 12 },
+      // V3: every step_result dispatch now carries the session correlation
+      correlation: { session_id: 's1' },
     });
   });
 
@@ -274,6 +310,8 @@ describe('useMapBridge', () => {
         bbox: [116.0, 39.0, 117.0, 40.0],
         legend_spec: { type: 'continuous', min: 0, max: 1 },
       }),
+      // V3: every step_result dispatch now carries the session correlation
+      correlation: { session_id: 's1' },
     });
   });
 
@@ -297,6 +335,8 @@ describe('useMapBridge', () => {
       params: expect.objectContaining({
         metadata: { render_type: 'native', point_count: 50, radius: 2000, palette: 'classic' },
       }),
+      // V3: every step_result dispatch now carries the session correlation
+      correlation: { session_id: 's1' },
     });
   });
 
@@ -440,5 +480,228 @@ describe('useMapBridge', () => {
     await act(async () => { await result.current.send('q', {}); });
     expect(mockStreamChat).toHaveBeenCalledTimes(1);
     expect(result.current.aiStatus).toBe('error');
+  });
+
+  // ─── V3: correlation + action_id passthrough (design §6) ──────────────────
+
+  it('passes backend action_id + full correlation through for a single command (V3)', async () => {
+    mockStreamChat.mockReturnValue(makeAsyncGen([{
+      event: 'step_result',
+      data: {
+        result: { command: 'fly_to', params: { center: [116, 39], zoom: 12 }, action_id: 'ma-abc123' },
+        step_id: 'step-1',
+        turn_id: 'turn-1',
+        task_id: 'task-9',
+      },
+      id: '7',
+    }]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent)
+    );
+    await act(async () => { await result.current.send('q', {}); });
+    expect(dispatchAction).toHaveBeenCalledWith({
+      command: 'fly_to',
+      params: { center: [116, 39], zoom: 12 },
+      action_id: 'ma-abc123',
+      correlation: {
+        session_id: 's1',
+        task_id: 'task-9',
+        step_id: 'step-1',
+        turn_id: 'turn-1',
+        sse_event_id: '7',
+      },
+    });
+  });
+
+  it('passes per-command action_id + correlation for batch commands (V3)', async () => {
+    mockStreamChat.mockReturnValue(makeAsyncGen([{
+      event: 'step_result',
+      data: {
+        result: {
+          commands: [
+            { command: 'add_layer', params: { id: 'a' }, action_id: 'ma-111' },
+            { command: 'remove_layer', params: { id: 'b' }, action_id: 'ma-222' },
+          ],
+        },
+        step_id: 'step-2',
+        turn_id: 'turn-1',
+      },
+      id: '8',
+    }]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent)
+    );
+    await act(async () => { await result.current.send('q', {}); });
+    expect(dispatchAction).toHaveBeenCalledTimes(2);
+    expect(dispatchAction).toHaveBeenNthCalledWith(1, {
+      command: 'add_layer',
+      params: { id: 'a' },
+      action_id: 'ma-111',
+      correlation: { session_id: 's1', step_id: 'step-2', turn_id: 'turn-1', sse_event_id: '8' },
+    });
+    expect(dispatchAction).toHaveBeenNthCalledWith(2, {
+      command: 'remove_layer',
+      params: { id: 'b' },
+      action_id: 'ma-222',
+      correlation: { session_id: 's1', step_id: 'step-2', turn_id: 'turn-1', sse_event_id: '8' },
+    });
+  });
+
+  it('bbox fallback mints a client fe- action_id + correlation (V3)', async () => {
+    mockStreamChat.mockReturnValue(makeAsyncGen([{
+      event: 'step_result',
+      data: { bbox: [116, 39, 117, 40], step_id: 'step-3', turn_id: 'turn-2' },
+      id: '9',
+    }]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent)
+    );
+    await act(async () => { await result.current.send('q', {}); });
+    expect(dispatchAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'fly_to',
+        action_id: expect.stringMatching(/^fe-\d+$/),
+        correlation: { session_id: 's1', step_id: 'step-3', turn_id: 'turn-2', sse_event_id: '9' },
+      })
+    );
+  });
+
+  it('does NOT re-dispatch replayed step_result ids on reconnect (DUP-1)', async () => {
+    async function* firstTurn(): AsyncGenerator<SSEEvent> {
+      yield {
+        event: 'step_result',
+        data: { result: { command: 'fly_to', params: { center: [1, 2], zoom: 10 } }, step_id: 's1', turn_id: 't1' },
+        id: '5',
+      };
+      throw new TypeError('network dropped');
+    }
+    async function* resumedTurn(): AsyncGenerator<SSEEvent> {
+      // The server replays id '5' (stale Last-Event-ID) — must be skipped.
+      yield {
+        event: 'step_result',
+        data: { result: { command: 'fly_to', params: { center: [1, 2], zoom: 10 } }, step_id: 's1', turn_id: 't1' },
+        id: '5',
+      };
+      yield {
+        event: 'step_result',
+        data: { result: { command: 'fly_to', params: { center: [3, 4], zoom: 11 } }, step_id: 's2', turn_id: 't1' },
+        id: '6',
+      };
+      yield { event: 'done', data: {} };
+    }
+    mockStreamChat
+      .mockImplementationOnce(() => firstTurn())
+      .mockImplementationOnce(() => resumedTurn());
+
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent, undefined, { maxAttempts: 2, baseDelayMs: 500 })
+    );
+    act(() => { result.current.send('q', {}); });
+    await act(async () => {});
+    await act(async () => { vi.advanceTimersByTime(500); });
+    await act(async () => {});
+
+    // Exactly two dispatches: the original id '5' and the new id '6' — the
+    // replayed '5' must NOT re-dispatch.
+    expect(dispatchAction).toHaveBeenCalledTimes(2);
+    expect(dispatchAction.mock.calls.map((c) => c[0].correlation?.sse_event_id)).toEqual(['5', '6']);
+  });
+
+  // ─── V3: ACK sender wiring (design §6) ────────────────────────────────────
+
+  it('batches terminal acks into one debounced POST (V3)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchMock);
+    const sinkHolder: { current: MapActionAckSink | null } = { current: null };
+    const wrapper = makeAckWrapper(sinkHolder, vi.fn());
+
+    mockStreamChat.mockReturnValue(makeAsyncGen([{ event: 'done', data: {} }]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent),
+      { wrapper }
+    );
+    await act(async () => { await result.current.send('q', {}); });
+
+    const sink = sinkHolder.current;
+    expect(sink).toBeTruthy();
+    act(() => {
+      sink!({ action_id: 'ma-1', command: 'fly_to', status: 'succeeded' });
+      sink!({ action_id: 'ma-2', command: 'fly_to', status: 'succeeded' });
+      sink!({ action_id: 'ma-3', command: 'fly_to', status: 'succeeded' });
+    });
+    expect(fetchMock).not.toHaveBeenCalled(); // 500ms debounce not elapsed
+    await act(async () => { vi.advanceTimersByTime(500); });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1); // coalesced into one POST
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://localhost:8000/api/v1/chat/sessions/s1/map-action-ack');
+    expect(JSON.parse(init.body as string).acks).toHaveLength(3);
+    vi.unstubAllGlobals();
+  });
+
+  it('ACK POST failure is fire-and-forget: devOnly log, batch dropped, stream unaffected (V3)', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('network down'));
+    vi.stubGlobal('fetch', fetchMock);
+    const warnSpy = vi.spyOn(devOnly, 'warn');
+    const sinkHolder: { current: MapActionAckSink | null } = { current: null };
+    const wrapper = makeAckWrapper(sinkHolder, vi.fn());
+
+    mockStreamChat.mockReturnValue(makeAsyncGen([{ event: 'done', data: {} }]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent),
+      { wrapper }
+    );
+    await act(async () => { await result.current.send('q', {}); });
+
+    act(() => {
+      sinkHolder.current!({ action_id: 'ma-1', command: 'fly_to', status: 'failed', error: 'boom' });
+    });
+    await act(async () => { vi.advanceTimersByTime(500); });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalled();
+
+    // The map/stream loop is unaffected: a fresh turn still dispatches actions.
+    mockStreamChat.mockReturnValue(makeAsyncGen([{
+      event: 'step_result',
+      data: { result: { command: 'fly_to', params: { center: [1, 2], zoom: 10 } }, step_id: 's9', turn_id: 't9' },
+      id: '10',
+    }]));
+    await act(async () => { await result.current.send('q2', {}); });
+    expect(dispatchAction).toHaveBeenCalledTimes(1);
+
+    warnSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it('session switch calls clearActions and flushes the pending ACK queue (V3)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchMock);
+    const clearActions = vi.fn();
+    const sinkHolder: { current: MapActionAckSink | null } = { current: null };
+    const wrapper = makeAckWrapper(sinkHolder, clearActions);
+
+    mockStreamChat.mockReturnValue(makeAsyncGen([{ event: 'done', data: {} }]));
+    const { result, rerender } = renderHook(
+      ({ sid }: { sid: string }) => useMapBridge(sid, dispatchAction, onEvent),
+      { wrapper, initialProps: { sid: 's1' } }
+    );
+    await act(async () => { await result.current.send('q', {}); });
+
+    // One terminal ack queued (debounce not elapsed yet).
+    act(() => {
+      sinkHolder.current!({ action_id: 'ma-1', command: 'fly_to', status: 'succeeded' });
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // Switch session → pending actions cancelled + ACK queue flushed.
+    act(() => { rerender({ sid: 's2' }); });
+
+    expect(clearActions).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain('/sessions/s1/map-action-ack');
+    expect(JSON.parse(init.body as string).acks[0].action_id).toBe('ma-1');
+    vi.unstubAllGlobals();
   });
 });

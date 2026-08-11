@@ -1,6 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, act } from '@testing-library/react';
 import { MapActionHandler } from './map-action-handler';
+import {
+  notifyUserGestureStart,
+  _resetCameraArbitrationForTests,
+} from '@/lib/map-commands/camera-arbitration';
 
 const mockFlyTo = vi.fn();
 const mapMockInstance = {
@@ -24,12 +28,15 @@ const mapMockInstance = {
   setFilter: vi.fn(),
   setLayoutProperty: vi.fn(),
   setPaintProperty: vi.fn(),
+  // V3 camera commands call map.stop() before starting a new animation (design §6)
+  stop: vi.fn(),
 };
 
 const mockGetMap = vi.fn(() => mapMockInstance);
 
 let popAction: ReturnType<typeof vi.fn>;
 let dispatchActionFn: ReturnType<typeof vi.fn>;
+let reportTerminalFn: ReturnType<typeof vi.fn>;
 let actions: Array<{ command: string; params: Record<string, unknown> }>;
 const mockSetSelectedBaseLayer = vi.fn();
 
@@ -39,6 +46,8 @@ vi.mock('@/lib/contexts/map-action-context', () => ({
     dispatchAction: dispatchActionFn,
     popAction,
     setSelectedBaseLayer: mockSetSelectedBaseLayer,
+    // V3: the handler reports every terminal state through the context
+    reportTerminal: reportTerminalFn,
   }),
 }));
 
@@ -66,6 +75,7 @@ const mockSetBaseLayer = vi.fn();
 const mockSetPendingSystemMessage = vi.fn();
 const mockRemoveLayer = vi.fn();
 const mockUpdateLayer = vi.fn();
+const mockExport = vi.fn(async () => ({ ok: true }));
 const mockAddAnnotation = vi.fn((feature) => {
   mockAnnotationsStore.push(feature);
 });
@@ -103,14 +113,26 @@ vi.mock('@/lib/store/useHudStore', () => {
   return { useHudStore };
 });
 
+// export_map's run dynamically imports the heavy exporter engine; mock it so the
+// V3 promise-returning export path can be exercised without the real engine.
+vi.mock('@/lib/map-kit/exporter', () => ({
+  MapExporterEngine: { export: mockExport },
+}));
+
 describe('MapActionHandler', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     actions = [];
     popAction = vi.fn();
     dispatchActionFn = vi.fn((action) => { actions = [action]; });
+    reportTerminalFn = vi.fn();
     mockLayersStore = [];
     mockAnnotationsStore = [];
+    _resetCameraArbitrationForTests();
+  });
+
+  afterEach(() => {
+    _resetCameraArbitrationForTests();
   });
 
   it('forwards bearing and pitch to map.flyTo()', async () => {
@@ -624,5 +646,176 @@ describe('MapActionHandler', () => {
     });
 
     expect(map.setFilter).toHaveBeenCalledWith('custom-layer', ['==', 'density', 10]);
+  });
+
+  // ─── V3 terminal states (Harness–Map Interaction Closed Loop, design §6) ──
+  // Every action settles exactly once: queued → running → terminal. The handler
+  // reports the terminal through reportTerminal (→ context ack sink) and then pops.
+
+  it('V3: unknown command → failed ack unknown_command (was warn + silent pop)', async () => {
+    actions = [{ command: 'not_a_real_command', params: {} }];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'not_a_real_command' }),
+      'failed',
+      expect.objectContaining({ error: 'unknown_command' }),
+    );
+    expect(popAction).toHaveBeenCalled();
+  });
+
+  it('V3: requiredParams now gates the SSE path → failed ack invalid_params', async () => {
+    // fly_to requires a center; the SSE path now rejects param failures as terminal
+    actions = [{ command: 'fly_to', params: { zoom: 12 } }];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'fly_to' }),
+      'failed',
+      expect.objectContaining({ error: 'invalid_params' }),
+    );
+    // rejected before dispatch — the map never moved
+    expect(mockFlyTo).not.toHaveBeenCalled();
+    expect(popAction).toHaveBeenCalled();
+  });
+
+  it('V3: void run → succeeded ack', async () => {
+    actions = [{ command: 'clear_annotations', params: {} }];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'clear_annotations' }),
+      'succeeded',
+      expect.any(Object),
+    );
+    expect(popAction).toHaveBeenCalled();
+  });
+
+  it('V3: ack metadata carries started_at/finished_at/duration_ms', async () => {
+    actions = [{ command: 'clear_annotations', params: {} }];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    const details = reportTerminalFn.mock.calls[0][2] as Record<string, unknown>;
+    expect(typeof details.startedAt).toBe('string');
+    expect(details.startedAt).toBeTruthy();
+    expect(typeof details.finishedAt).toBe('string');
+    expect(typeof details.durationMs).toBe('number');
+    expect(details.durationMs as number).toBeGreaterThanOrEqual(0);
+  });
+
+  it('V3: camera command settles succeeded with the settled viewport as actual', async () => {
+    actions = [{ command: 'fly_to', params: { center: [116, 39], zoom: 12 } }];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'fly_to' }),
+      'succeeded',
+      expect.objectContaining({
+        actual: { center: [116.4, 39.9], zoom: 10, bearing: 0, pitch: 0 },
+      }),
+    );
+    expect(popAction).toHaveBeenCalled();
+  });
+
+  it('V3: user gesture mid-flight → cancelled ack superseded_by_user', async () => {
+    // Hold moveend back so the camera promise stays pending; then a user gesture
+    // supersedes the in-flight animation.
+    let capturedMoveend: (() => void) | undefined;
+    (mapMockInstance.once as any).mockImplementationOnce((_e: string, cb: () => void) => {
+      capturedMoveend = cb;
+    });
+    actions = [{ command: 'fly_to', params: { center: [116, 39], zoom: 12 } }];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+    expect(mockFlyTo).toHaveBeenCalled();
+    expect(reportTerminalFn).not.toHaveBeenCalled(); // still running
+
+    await act(async () => {
+      notifyUserGestureStart();
+    });
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'fly_to' }),
+      'cancelled',
+      expect.objectContaining({ error: 'superseded_by_user' }),
+    );
+    expect(popAction).toHaveBeenCalled();
+    expect(capturedMoveend).toBeDefined(); // the stale moveend never fired
+  });
+
+  it('V3: throw inside run → failed ack + user system message preserved', async () => {
+    mockClearAnnotations.mockImplementationOnce(() => {
+      throw new Error('boom');
+    });
+    actions = [{ command: 'clear_annotations', params: {} }];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'clear_annotations' }),
+      'failed',
+      expect.objectContaining({ error: 'boom' }),
+    );
+    // /review C10: user-facing system message kept for unexpected throws
+    expect(mockSetPendingSystemMessage).toHaveBeenCalledWith(expect.stringContaining('boom'));
+    expect(popAction).toHaveBeenCalled();
+  });
+
+  it('V3: export_map returns a promise — succeeds + pops only after the render-callback work', async () => {
+    actions = [{
+      command: 'export_map',
+      params: { format: 'png' },
+    }];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    // exporter engine invoked with the real map + params
+    expect(mockExport).toHaveBeenCalledWith(
+      expect.objectContaining({ map: mapMockInstance }),
+      expect.objectContaining({ format: 'png' }),
+    );
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'export_map' }),
+      'succeeded',
+      expect.any(Object),
+    );
+    expect(popAction).toHaveBeenCalled();
+  });
+
+  it('V3: export_map failure → failed ack export_failed', async () => {
+    mockExport.mockResolvedValueOnce({ ok: false, error: 'canvas busy' });
+    actions = [{ command: 'export_map', params: {} }];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'export_map' }),
+      'failed',
+      expect.objectContaining({ error: 'export_failed' }),
+    );
+    expect(popAction).toHaveBeenCalled();
   });
 });

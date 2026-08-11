@@ -1,14 +1,18 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { streamChat } from '@/lib/api/chat';
 import type { SSEEvent } from '@/lib/api/chat';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { AiStatus } from '@/lib/store/hud-types';
-import type { MapActionPayload } from '@/lib/types';
+import type { MapActionCorrelation, MapActionPayload } from '@/lib/types';
 import { bboxToFlyTo, isValidBbox } from '@/lib/utils/geo';
 import { API_BASE } from '@/lib/api/config';
 import type { StepResultEvent } from '@/lib/types/agent-events';
+import { MapActionContext } from '@/lib/contexts/map-action-context';
+import type { MapActionContextType } from '@/lib/contexts/map-action-context';
+import { createMapActionAckSender } from '@/lib/api/map-action-acks';
+import type { MapActionAckSender, MapActionAckSink } from '@/lib/api/map-action-acks';
 
 
 import { devOnly } from "@/lib/utils/logger";
@@ -20,6 +24,41 @@ import {
 const MAP_STATE_THROTTLE_MS = 2000;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+// V3 (design §6): client-minted fallback action ids. Locally synthesized
+// actions (bbox-fallback fly_to) have no backend `ma-…` id, so mint a
+// deterministic `fe-<counter>` — dependency-free (no crypto/uuid) and unique
+// within the hook lifecycle.
+let feActionCounter = 0;
+const mintFeActionId = (): string => `fe-${++feActionCounter}`;
+
+/**
+ * V3 correlation for a step_result dispatch (design §6): session + step
+ * identity + the per-turn SSE event id, so the backend can match ACKs back to
+ * issued actions. Fields are additive — undefined ones are omitted so legacy
+ * SSE payloads (no step_id/turn_id/task_id/event id) still dispatch cleanly.
+ */
+function buildMapActionCorrelation(
+  sessionId: string | undefined,
+  stepData: { step_id?: string; turn_id?: string; task_id?: string },
+  event: { id?: string },
+): MapActionCorrelation {
+  return {
+    session_id: sessionId,
+    ...(stepData.task_id ? { task_id: stepData.task_id } : {}),
+    ...(stepData.step_id ? { step_id: stepData.step_id } : {}),
+    ...(stepData.turn_id ? { turn_id: stepData.turn_id } : {}),
+    ...(event.id ? { sse_event_id: event.id } : {}),
+  };
+}
+
+// V3: registerAckSink/clearActions land on MapActionContextType with the
+// context upgrade (FE-1's slice). The type here mirrors the landed API but
+// keeps both optional so the bridge stays safe if the upgrade is mid-flight.
+type MapActionContextWithAck = MapActionContextType & {
+  registerAckSink?: (fn: MapActionAckSink) => () => void;
+  clearActions?: () => void;
+};
 
 /**
  * DUP-1 auto-reconnect policy. Opt-in and bounded: at most `maxAttempts`
@@ -71,6 +110,23 @@ export function useMapBridge(
   const lastMapStatePushRef = useRef<number>(0);
   const prevSessionIdRef = useRef(sessionId);
 
+  // V3: map-action context — supplies the ACK sink registration + clearActions
+  // (both optional until FE-1's context upgrade lands).
+  const mapActionCtx = useContext(MapActionContext) as MapActionContextWithAck | undefined;
+  const sessionIdRef = useRef(sessionId);
+
+  // V3 ACK sender: created once per hook instance. Session + token are read
+  // through refs so a session switch re-routes acks without recreating the
+  // sink (each ack is keyed to its own session via correlation.session_id).
+  const ackSenderRef = useRef<MapActionAckSender | null>(null);
+  if (ackSenderRef.current === null) {
+    ackSenderRef.current = createMapActionAckSender({
+      getSessionId: () => sessionIdRef.current,
+      getToken: () => sessionTokenRef?.current ?? null,
+    });
+  }
+  const ackSender = ackSenderRef.current;
+
   const setAiStatus = useCallback((status: AiStatus) => {
     aiStatusRef.current = status;
     setAiStatusLocal(status);
@@ -81,6 +137,9 @@ export function useMapBridge(
   // F4: the viewport seq tracker is per-session (server seqs are session-scoped),
   // so reset it whenever the active session changes — including a fresh
   // undefined→assigned assignment.
+  // V3: pending map actions belong to the previous session — mark them cancelled
+  // + ACKed (mirror resetViewportSeq), then flush the ACK queue so the tail of
+  // the old session is not lost.
   useEffect(() => {
     if (prevSessionIdRef.current !== sessionId) {
       if (prevSessionIdRef.current !== undefined && sessionId !== undefined) {
@@ -88,15 +147,32 @@ export function useMapBridge(
         abortControllerRef.current?.abort();
       }
       resetViewportSeq();
+      mapActionCtx?.clearActions?.();
+      ackSender.flush();
     }
     prevSessionIdRef.current = sessionId;
-  }, [sessionId]);
+    sessionIdRef.current = sessionId;
+  }, [sessionId, mapActionCtx, ackSender]);
 
   useEffect(() => {
     return () => {
       abortControllerRef.current?.abort();
     };
   }, []);
+
+  // V3: register the batched ACK sender into the map-action context. The sink
+  // is stable (created once above), so this registers once; the cleanup
+  // unregisters + flush+dispose runs only on unmount so the session's tail
+  // ACKs are POSTed and no sink leaks into the context.
+  useEffect(() => {
+    const unsubscribe = mapActionCtx?.registerAckSink?.(ackSender.sink);
+    return () => {
+      ackSender.flush();
+      ackSender.dispose();
+      unsubscribe?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- ackSender is stable; mapActionCtx is intentionally omitted (register is idempotent and re-running on provider-value churn would flush mid-session)
+  }, [ackSender]);
 
   const send = useCallback(
     async (content: string, mapSnapshot: Record<string, unknown>): Promise<void> => {
@@ -190,23 +266,32 @@ export function useMapBridge(
 
               // step_result: command-wins-over-bbox priority; dispatch before forwarding to onEvent
               if (event.event === 'step_result') {
-                const stepData = data as unknown as StepResultEvent;
+                const stepData = data as unknown as StepResultEvent & {
+                  step_id?: string;
+                  turn_id?: string;
+                  task_id?: string;
+                  result?: StepResultEvent['result'] & {
+                    action_id?: string;
+                    commands?: Array<{ command: string; params?: Record<string, unknown>; action_id?: string }>;
+                  };
+                };
                 const commandFired = !!stepData.result?.command;
-                const batchCommands = (stepData.result as any)?.commands as
-                  | Array<{ command: string; params?: Record<string, unknown> }>
-                  | undefined;
+                const batchCommands = stepData.result?.commands;
                 if (commandFired) {
                   // Heatmap tools put data (image, bbox, geojson, palette…) at the
                   // top level of the result — NOT under a `params` sub-key.
                   // Destructure to separate the command from the rest, then pass
                   // the rest as params so map-action-handler can use them.
-                  const { command: _cmd, params: _explicitParams, ...rest } = stepData.result!;
+                  const { command: _cmd, params: _explicitParams, action_id: actionId, ...rest } = stepData.result!;
                   const actionParams = (_explicitParams && Object.keys(_explicitParams).length > 0)
                     ? _explicitParams
                     : rest;
                   dispatchAction({
                     command: stepData.result!.command as MapActionPayload['command'],
                     params: actionParams as MapActionPayload['params'],
+                    // V3: pass through the backend-minted action_id + correlation (§6)
+                    ...(actionId ? { action_id: actionId } : {}),
+                    correlation: buildMapActionCorrelation(sessionId, stepData, event),
                   });
                 } else if (Array.isArray(batchCommands) && batchCommands.length > 0) {
                   // Batch tool emits a sequence of commands (e.g. export_batch_maps).
@@ -216,13 +301,21 @@ export function useMapBridge(
                     dispatchAction({
                       command: cmd.command as MapActionPayload['command'],
                       params: (cmd.params || {}) as MapActionPayload['params'],
+                      ...(cmd.action_id ? { action_id: cmd.action_id } : {}),
+                      correlation: buildMapActionCorrelation(sessionId, stepData, event),
                     });
                   }
                 } else {
                   const bbox = stepData.result?.bbox ?? stepData.bbox;
                   if (isValidBbox(bbox)) {
                     try {
-                      dispatchAction({ command: 'fly_to', params: bboxToFlyTo(bbox) });
+                      dispatchAction({
+                        command: 'fly_to',
+                        params: bboxToFlyTo(bbox),
+                        // V3: no backend-minted id for a client-synthesized fly_to → fe-…
+                        action_id: mintFeActionId(),
+                        correlation: buildMapActionCorrelation(sessionId, stepData, event),
+                      });
                     } catch {
                       // invalid bbox (e.g. degenerate after isValidBbox — defensive)
                     }

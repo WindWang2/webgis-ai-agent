@@ -16,7 +16,9 @@ export const heatmapCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { map, params } = ctx;
       const { image, bbox, opacity, layerId } = params || {};
-      if (!image || !bbox) return;
+      // V3: missing payload data → explicit failed result (was a silent return).
+      if (!image) return { status: 'failed', error: 'invalid_params' };
+      if (!bbox) return { status: 'failed', error: 'invalid_params' };
 
       const id = `custom-${layerId || 'heatmap-' + Date.now()}`;
 
@@ -46,7 +48,8 @@ export const heatmapCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { map, params } = ctx;
       const { geojson, layerId, palette, radius } = params || {};
-      if (!geojson) return;
+      // V3: missing payload data → explicit failed result (was a silent return).
+      if (!geojson) return { status: 'failed', error: 'invalid_params' };
 
       const id = `custom-${layerId || 'native-heatmap-' + Date.now()}`;
 
@@ -72,7 +75,8 @@ export const heatmapCommands: Record<string, CommandEntry> = {
       const { geojson, layerId, style, field } = (params || {}) as {
         geojson?: any; layerId?: string; style?: ThematicStyleDef; field?: string;
       };
-      if (!geojson || !style) return;
+      // V3: missing payload data → explicit failed result (was a silent return).
+      if (!geojson || !style) return { status: 'failed', error: 'invalid_params' };
 
       const id = `custom-${layerId || 'thematic-' + (field || Date.now())}`;
       renderer.addGeoJsonSource(map, id, geojson);

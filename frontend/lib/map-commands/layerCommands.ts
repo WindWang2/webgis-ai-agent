@@ -20,11 +20,15 @@ import { parseFilter } from './parseFilter';
  */
 export const layerCommands: Record<string, CommandEntry> = {
   add_layer: {
-    requiredParams: (p) => typeof p.id === 'string',
+    // run body reads `layerId` (tests + AI emissions); `id` tolerated for legacy emissions
+    requiredParams: (p) => typeof p.layerId === 'string' || typeof p.id === 'string',
     run(ctx) {
       const { map, params } = ctx;
       const { layerId, type, geojson, style, flyTo } = params;
-      if (!layerId || !geojson) return;
+      // V3: silent no-ops become explicit failed results (design §6) — missing
+      // target → target_not_found, missing payload data → invalid_params.
+      if (!layerId) return { status: 'failed', error: 'target_not_found' };
+      if (!geojson) return { status: 'failed', error: 'invalid_params' };
 
       const id = `custom-${layerId}`;
       renderer.addGeoJsonSource(map, id, geojson);
@@ -55,7 +59,9 @@ export const layerCommands: Record<string, CommandEntry> = {
       const { map, params } = ctx;
       const { id, url, image, bbox, opacity = 1.0 } = params;
       const imageUrl = image || url;
-      if (!imageUrl || !bbox || !id) return;
+      // V3: silent no-ops become explicit failed results (design §6).
+      if (!id) return { status: 'failed', error: 'target_not_found' };
+      if (!imageUrl || !bbox) return { status: 'failed', error: 'invalid_params' };
 
       const sourceId = `custom-${id}`;
       const layerId = `${sourceId}-layer`;
@@ -84,12 +90,14 @@ export const layerCommands: Record<string, CommandEntry> = {
   },
 
   remove_layer: {
-    requiredParams: (p) => typeof p.id === 'string' || typeof p.layer_id === 'string',
+    // run body reads `layer_id || layerId`; `id` tolerated for legacy emissions
+    requiredParams: (p) => typeof p.layer_id === 'string' || typeof p.layerId === 'string' || typeof p.id === 'string',
     run(ctx) {
       const { map, params, getHudState } = ctx;
       const { layer_id, layerId } = params || {};
       const target = layer_id || layerId;
-      if (!target) return;
+      // V3: missing target → explicit failed result (was a silent return).
+      if (!target) return { status: 'failed', error: 'target_not_found' };
       renderer.removeLayerStack(map, `custom-${target}`, true);
       // Sync removal to store so LayersTab stays in sync
       getHudState().removeLayer(target);
@@ -101,7 +109,8 @@ export const layerCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { params, setSelectedBaseLayer, getHudState } = ctx;
       const name = params?.name as string | undefined;
-      if (!name) return;
+      // V3: a missing name is a param failure, not a target miss.
+      if (!name) return { status: 'failed', error: 'invalid_params' };
       const search = name.toLowerCase();
 
       // 1. Exact name match (case-insensitive)
@@ -130,6 +139,9 @@ export const layerCommands: Record<string, CommandEntry> = {
         getHudState().setBaseLayer(TILE_PROVIDERS[idx].name);
       } else {
         devOnly.warn('[MapActionHandler] Could not match base layer name:', name);
+        // V3: no provider matched → explicit failed result (was a silent no-op
+        // with only a dev warning).
+        return { status: 'failed', error: 'target_not_found' };
       }
     },
   },
@@ -139,7 +151,8 @@ export const layerCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { map, params, getHudState } = ctx;
       const { layer_id, visible, opacity, name, color } = params || {};
-      if (!layer_id) return;
+      // V3: missing target → explicit failed result (was a silent return).
+      if (!layer_id) return { status: 'failed', error: 'target_not_found' };
 
       const style = map.getStyle();
       style.layers?.forEach((l: any) => {
@@ -168,7 +181,9 @@ export const layerCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { map, params, getHudState } = ctx;
       const { layer_id, style } = params || {};
-      if (!layer_id || !style) return;
+      // V3: silent no-ops become explicit failed results (design §6).
+      if (!layer_id) return { status: 'failed', error: 'target_not_found' };
+      if (!style) return { status: 'failed', error: 'invalid_params' };
       const mapStyle = map.getStyle();
       const s = style as any;
       mapStyle.layers?.forEach((l: any) => {
@@ -198,17 +213,23 @@ export const layerCommands: Record<string, CommandEntry> = {
   },
 
   reorder_layer: {
-    requiredParams: (p) => Array.isArray(p.layers) || Array.isArray(p.order),
+    // run body reads `layer_id` + `position` (backend REORDER_LAYER emission);
+    // the old validator (layers/order arrays) matched no actual run contract
+    requiredParams: (p) => typeof p.layer_id === 'string' && typeof p.position === 'string',
     run(ctx) {
       const { map, params } = ctx;
       const { layer_id, position, before_id } = params || {};
-      if (!layer_id || typeof layer_id !== 'string' || !layer_id.trim() || layer_id === 'ref:' || layer_id === 'custom-' || !position) return;
+      // V3: silent no-ops become explicit failed results (design §6).
+      if (!layer_id || typeof layer_id !== 'string' || !layer_id.trim() || layer_id === 'ref:' || layer_id === 'custom-') {
+        return { status: 'failed', error: 'target_not_found' };
+      }
+      if (!position) return { status: 'failed', error: 'invalid_params' };
       const style = map.getStyle();
       const allLayers = style.layers || [];
       const subIds = allLayers
         .map((l: any) => l.id as string)
         .filter((id: string) => id === `custom-${layer_id}` || id.startsWith(`custom-${layer_id}-`));
-      if (subIds.length === 0) return;
+      if (subIds.length === 0) return { status: 'failed', error: 'target_not_found' };
 
       // Snapshot custom layer IDs only (we ignore base style layers)
       const customIds = allLayers
@@ -259,7 +280,8 @@ export const layerCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { map, params } = ctx;
       const { layer_id, filter } = params || {};
-      if (!layer_id) return;
+      // V3: missing target → explicit failed result (was a silent return).
+      if (!layer_id) return { status: 'failed', error: 'target_not_found' };
       // Apply MapLibre filter with fallback parser for simple string filters
       map.setFilter(layer_id, parseFilter(filter) as any);
     },
