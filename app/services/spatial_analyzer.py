@@ -55,7 +55,7 @@ class SpatialAnalyzer:
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
         res = to_utm_gdf(features)
-        if not res:
+        if res is None or res[0] is None:
              return GeoAnalysisResult(False, None, "Invalid vector data")
         
         gdf, utm_crs = res

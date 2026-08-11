@@ -14,9 +14,15 @@ from app.lib.geo_analysis._vector import extract_centroids
 
 def _build_weights(gdf: gpd.GeoDataFrame, k: int = 8) -> sparse.coo_matrix:
     """Build spatial weights matrix using KNN via cKDTree.
-    
+
     Returns a sparse COO matrix (n×n) with 1.0 for K-nearest neighbors.
     Uses O(n log n) cKDTree query instead of O(n²) distance_matrix.
+
+    Self-exclusion is explicit (E-4): the previous code assumed column 0 of
+    the query result was always self and dropped it, but with duplicate
+    coordinates a coincident point can tie-break ahead of self and land in
+    column 0 — inserting a self-loop (w_ii=1) and dropping a real neighbour.
+    We now drop the actual self column per row instead.
     """
     from scipy.spatial import cKDTree
     coords = np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values))
@@ -25,11 +31,14 @@ def _build_weights(gdf: gpd.GeoDataFrame, k: int = 8) -> sparse.coo_matrix:
         return sparse.coo_matrix((0, 0))
     k_actual = min(k, n - 1) if n > 1 else 1
     tree = cKDTree(coords)
-    # query returns k+1 neighbors including self at index 0
+    # Query one extra neighbour so dropping self always leaves k_actual.
     _, idx = tree.query(coords, k=k_actual + 1)
-    # Build sparse matrix: skip self (column 0)
     rows = np.repeat(np.arange(n), k_actual)
-    cols = idx[:, 1:].ravel()
+    cols = np.empty(n * k_actual, dtype=np.int64)
+    for i in range(n):
+        # first k_actual neighbours that are NOT this row (distance-sorted)
+        nb = idx[i][idx[i] != i][:k_actual]
+        cols[i * k_actual:(i + 1) * k_actual] = nb
     data = np.ones(len(rows), dtype=float)
     return sparse.coo_matrix((data, (rows, cols)), shape=(n, n))
 
@@ -53,9 +62,12 @@ def _filter_numeric_gdf(
     series = gdf[value_field]
     if not np.issubdtype(series.dtype, np.number):
         series = pd.to_numeric(series, errors="coerce")
-    valid_mask = series.notna()
+    # Drop NaN AND non-finite (±inf) values: inf poisons mean/std and yields
+    # NaN-laden autocorrelation statistics silently labelled significant
+    # (audit E-11 / E-2 / E-6).
+    valid_mask = series.notna() & np.isfinite(series.astype(float))
     gdf_valid = gdf[valid_mask].reset_index(drop=True)
-    values = series[valid_mask].values
+    values = series[valid_mask].astype(float).values
     return gdf_valid, values
 
 def calculate_sde(geojson: dict) -> GeoAnalysisResult:
@@ -64,7 +76,7 @@ def calculate_sde(geojson: dict) -> GeoAnalysisResult:
     Returns a GeoAnalysisResult with the ellipse polygon and a directional insight.
     """
     res = to_utm_gdf(geojson)
-    if not res:
+    if res is None or res[0] is None:
         return GeoAnalysisResult(False, None, "Invalid input or no features found", error_type="ValueError")
     
     gdf, utm_crs = res
@@ -152,7 +164,7 @@ def moran_i_narrated(geojson: dict, value_field: str) -> GeoAnalysisResult:
     Global Moran's I spatial autocorrelation test with narrative summary.
     """
     res = to_utm_gdf(geojson)
-    if not res:
+    if res is None or res[0] is None:
         return GeoAnalysisResult(False, None, "Invalid GeoJSON or no features found")
 
     gdf, _ = res
@@ -168,6 +180,16 @@ def moran_i_narrated(geojson: dict, value_field: str) -> GeoAnalysisResult:
     n = len(values)
     if n < 3:
         return GeoAnalysisResult(False, None, "At least 3 features required for Moran's I")
+
+    # Constant-value guard (E-2): a zero-variance field makes the Moran's I
+    # denominator zero and previously produced I=0.0 / p=1.0 / "random" — a
+    # fabricated result. (inf is already dropped by _filter_numeric_gdf.)
+    if float(np.ptp(values)) == 0.0:
+        return GeoAnalysisResult(
+            False, None,
+            f"All '{value_field}' values are identical; Moran's I is undefined.",
+            error_type="ValueError",
+        )
 
     w = _build_weights(gdf, k=min(8, n-1))
     w_sum = float(w.sum())
@@ -205,7 +227,12 @@ def moran_i_narrated(geojson: dict, value_field: str) -> GeoAnalysisResult:
         p_den = np.sum(pz**2)
         perm_is.append((n / s0) * (p_num / p_den) if p_den > 0 else 0)
     
-    p_value = float(np.mean(np.abs(np.array(perm_is) - expected_i) >= np.abs(moran_i_val - expected_i)))
+    # Permutation p-value with the +1 correction (E-8): the raw fraction can
+    # return exactly 0.0, implying certainty. The standard (count+1)/(perms+1)
+    # form bounds it away from zero. Two-sided: |I_perm - E| >= |I_obs - E|.
+    perm_arr = np.abs(np.array(perm_is) - expected_i)
+    ge_count = int(np.sum(perm_arr >= np.abs(moran_i_val - expected_i)))
+    p_value = (ge_count + 1) / (perms + 1)
     
     if p_value < 0.05:
         pattern = "clustering" if moran_i_val > expected_i else "dispersion"
@@ -234,7 +261,7 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
     Getis-Ord Gi* local spatial autocorrelation (hotspot analysis) with narrative summary.
     """
     res = to_utm_gdf(geojson)
-    if not res:
+    if res is None or res[0] is None:
         return GeoAnalysisResult(False, None, "Invalid GeoJSON or no features found")
 
     gdf, utm_crs = res
@@ -254,11 +281,16 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
     coords = np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values))
     
     if distance_band <= 0:
-        # Auto-calculate distance band using cKDTree (O(n log n) instead of O(n²))
+        # Auto-calculate distance band using the k-th nearest-neighbour
+        # distance (E-7): the mean 1st-NN distance is the scale where each
+        # point has ~1 neighbour, leaving ~half the points disconnected and
+        # silently finding no hotspots on clustered data. The 8th-NN band
+        # ensures most points have several neighbours.
         from scipy.spatial import cKDTree
         tree = cKDTree(coords)
-        nn_dist, _ = tree.query(coords, k=2)
-        bw = float(nn_dist[:, 1].mean())
+        k_band = min(8, n - 1)
+        nn_dist, _ = tree.query(coords, k=k_band + 1)
+        bw = float(nn_dist[:, k_band].mean())
         if bw <= 0:
             bw = 1.0
     else:
@@ -354,7 +386,7 @@ def calculate_nearest(geojson: dict) -> GeoAnalysisResult:
     """Nearest neighbor analysis with narrative summary (O(n log n) via cKDTree)."""
     from scipy.spatial import cKDTree
     res = to_utm_gdf(geojson)
-    if not res:
+    if res is None or res[0] is None:
         return GeoAnalysisResult(False, None, "Invalid input or no features found")
     
     gdf, _ = res
@@ -399,7 +431,7 @@ def calculate_nearest(geojson: dict) -> GeoAnalysisResult:
 def calculate_central_feature(geojson: dict, method: str = "mean_center") -> GeoAnalysisResult:
     """Find the central feature or mean center."""
     res = to_utm_gdf(geojson)
-    if not res:
+    if res is None or res[0] is None:
         return GeoAnalysisResult(False, None, "Invalid input or no features found")
     
     gdf, utm_crs = res
@@ -461,7 +493,7 @@ def cluster_narrated(
         return GeoAnalysisResult(False, None, "scikit-learn not installed")
 
     res = to_utm_gdf(geojson)
-    if not res:
+    if res is None or res[0] is None:
         return GeoAnalysisResult(False, None, "Invalid input or no features found")
     
     gdf, utm_crs = res
@@ -491,10 +523,18 @@ def cluster_narrated(
         features = coords
 
     if method == "kmeans":
-        model = KMeans(n_clusters=min(n_clusters, len(gdf)), random_state=42, n_init=10)
+        # Guard (E-10): n_clusters<=0 or > n raises an opaque sklearn error.
+        nk = max(1, min(int(n_clusters or 1), len(gdf)))
+        model = KMeans(n_clusters=nk, random_state=42, n_init=10)
         labels = model.fit_predict(features)
         summary = f"K-Means clustering identified {len(set(labels))} groups."
     else:
+        if eps <= 0 or min_samples <= 0:
+            return GeoAnalysisResult(
+                False, None,
+                f"DBSCAN requires eps>0 and min_samples>0 (got eps={eps}, min_samples={min_samples})",
+                error_type="ValueError",
+            )
         model = DBSCAN(eps=eps, min_samples=min_samples)
         labels = model.fit_predict(features)
         n_clusters_found = len(set(labels)) - (1 if -1 in labels else 0)
@@ -516,7 +556,10 @@ def cluster_narrated(
             "properties": props,
         })
 
-    cluster_counts = dict(zip(*np.unique(labels, return_counts=True)))
+    # JSON-safe cluster counts (E-1): np.int64 dict keys crash json.dumps in
+    # the dispatch layer; coerce both keys and counts to native int.
+    _uniq_labels, _uniq_counts = np.unique(labels, return_counts=True)
+    cluster_counts = {int(k): int(v) for k, v in zip(_uniq_labels, _uniq_counts)}
 
     data_out = {
         "type": "FeatureCollection",
@@ -539,7 +582,7 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
         return GeoAnalysisResult(False, None, "libpysal or esda not installed", error_type="ImportError")
 
     res = to_utm_gdf(h3_geojson)
-    if not res:
+    if res is None or res[0] is None:
         return GeoAnalysisResult(False, None, "Invalid GeoJSON or no features found", error_type="ValueError")
     
     gdf, utm_crs = res
@@ -549,6 +592,16 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
     gdf, values = aligned
     if len(values) < 3:
         return GeoAnalysisResult(False, None, "At least 3 features required for LISA", error_type="InsufficientData")
+
+    # Constant-value guard (E-3): esda's Moran_Local returns Is=NaN but q=3 /
+    # p_sim=0.001 on constant input, which the classifier then labelled as
+    # "significant LL coldspots" for every cell — a wholly fabricated result.
+    if float(np.ptp(values)) == 0.0:
+        return GeoAnalysisResult(
+            False, None,
+            f"All '{value_field}' values are identical; LISA is undefined.",
+            error_type="ValueError",
+        )
 
     # Use original geometries (hexagons) to build weights
     # We must ensure there is no index duplication
@@ -737,7 +790,7 @@ def st_dbscan_narrated(
         return GeoAnalysisResult(False, None, "scikit-learn not installed", error_type="ImportError")
 
     res = to_utm_gdf(geojson)
-    if not res:
+    if res is None or res[0] is None:
         return GeoAnalysisResult(False, None, "Invalid GeoJSON or no features found", error_type="ValueError")
 
     gdf, utm_crs = res
