@@ -232,4 +232,9 @@ def test_s46_lifespan_starts_cleanup_task():
     source = inspect.getsource(main_module.lifespan)
     assert "_periodic_session_cleanup" in source, "lifespan 未启动 cleanup 任务"
     assert "create_task" in source, "lifespan 未用 create_task 启动后台任务"
-    assert "cleanup_task.cancel()" in source, "lifespan 未在退出时 cancel cleanup 任务"
+    # ADR-0052 起 lifespan 管理多个后台任务（session cleanup + stale job sweep），
+    # 退出时在一个循环里统一 cancel。这里断言「cleanup_task 会被 cancel」这个
+    # 不变式，而不是某一行的字面写法 —— 否则每加一个后台任务都要改这个测试。
+    assert "cleanup_task" in source, "lifespan 未持有 cleanup 任务句柄"
+    assert ".cancel()" in source, "lifespan 未在退出时 cancel 后台任务"
+    assert "CancelledError" in source, "lifespan 未在退出时 await 被 cancel 的任务"
