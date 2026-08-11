@@ -360,3 +360,139 @@ describe("diffSpecsAsync", () => {
     expect((patch.sources[0].next as any)?.inlineData).toBe(dataB);
   });
 });
+
+// ── FE-12: strip inline raster images (base64 heatmaps) ────────────────────
+//
+// Raster heatmap sources carry the full base64 image as `imageRef`
+// (data:image/png;base64,<multi-MB body>). Unlike geojson inlineData (FE-02)
+// these used to pass through stripInlineForTransfer, so postMessage
+// structured-cloned the whole image on EVERY reconcile — as `prev` AND `next`.
+// FE-12 tokenizes `imageRef` by content so the payload boundary carries only
+// a stable identity token and unchanged images diff to a no-op.
+
+const MEGABYTE = 1024 * 1024;
+const HEATMAP_BODY = "a".repeat(2 * MEGABYTE);
+const HEATMAP_IMAGE = `data:image/png;base64,${HEATMAP_BODY}`;
+
+function rasterSpec(imageRef: string, bounds: [number, number, number, number] = [116.2, 39.8, 116.6, 40.1]): MapSpec {
+  return {
+    version: "1.0",
+    sources: {
+      H: { type: "raster", imageRef, bounds } as any,
+    },
+    layers: [
+      { id: "H__raster", source: "H", type: "raster", paint: { "raster-opacity": 0.85 } as any },
+    ],
+  };
+}
+
+/** Fake worker that records every postMessage payload and replies with the sync diff. */
+class RecordingWorker {
+  static instances: RecordingWorker[] = [];
+  captured: Array<{ id: string; prev: MapSpec | null; next: MapSpec }> = [];
+  private listeners: Array<(event: { data: { id: string; patch: ReturnType<typeof diffSpecs> } }) => void> = [];
+  constructor(_url: URL, _opts?: { type?: string }) {
+    RecordingWorker.instances.push(this);
+  }
+  postMessage(msg: { id: string; prev: MapSpec | null; next: MapSpec }) {
+    this.captured.push(msg);
+    const { id, prev, next } = msg;
+    queueMicrotask(() => {
+      const patch = diffSpecs(prev, next);
+      for (const cb of this.listeners) cb({ data: { id, patch } });
+    });
+  }
+  addEventListener(_type: string, cb: (event: { data: { id: string; patch: ReturnType<typeof diffSpecs> } }) => void) {
+    this.listeners.push(cb);
+  }
+  removeEventListener() {}
+  terminate() {}
+}
+
+/** The single RecordingWorker instance created by the current test. */
+function latestRecorder(): RecordingWorker {
+  return RecordingWorker.instances[RecordingWorker.instances.length - 1];
+}
+
+describe("diffSpecsAsync raster images (FE-12)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    _resetWorkerBridgeForTests();
+  });
+
+  it("does NOT send the base64 image bytes across postMessage (FE-12)", async () => {
+    vi.stubGlobal("Worker", RecordingWorker as unknown as typeof Worker);
+
+    const patch = await diffSpecsAsync(null, rasterSpec(HEATMAP_IMAGE));
+
+    // The posted `next` source must carry an identity token, not the image.
+    expect(latestRecorder().captured[0].next.sources.H.imageRef).toEqual({ __inlineToken: expect.any(Number) });
+    // The multi-MB base64 body must not appear anywhere in the payload.
+    const serialized = JSON.stringify(latestRecorder().captured[0]);
+    expect(serialized).not.toContain(HEATMAP_BODY);
+    // Rehydration: the resolved patch carries the REAL imageRef back so
+    // MapSpecRuntime.applySource can add the image source.
+    const addChange = patch.sources.find((c) => c.id === "H");
+    expect(addChange?.kind).toBe("add");
+    expect((addChange?.next as any)?.imageRef).toBe(HEATMAP_IMAGE);
+  });
+
+  it("an unchanged image crosses as a tiny token-only payload on every reconcile (FE-12)", async () => {
+    vi.stubGlobal("Worker", RecordingWorker as unknown as typeof Worker);
+
+    // Three reconciles with the same image content — fresh spec objects each
+    // time, exactly like hudStateToMapSpec rebuilds the spec per reconcile.
+    const spec1 = rasterSpec(HEATMAP_IMAGE);
+    await diffSpecsAsync(null, spec1);
+    const spec2 = rasterSpec(HEATMAP_IMAGE);
+    const patch2 = await diffSpecsAsync(spec1, spec2);
+    const spec3 = rasterSpec(HEATMAP_IMAGE);
+    const patch3 = await diffSpecsAsync(spec2, spec3);
+
+    // Unchanged image → no source change on either subsequent reconcile.
+    expect(patch2.sources).toEqual([]);
+    expect(patch3.sources).toEqual([]);
+
+    // None of the three payloads ever carries the image bytes, and each stays
+    // tiny (a token + bounds + the one layer), never multi-MB.
+    const captured = latestRecorder().captured;
+    expect(captured).toHaveLength(3);
+    for (let i = 0; i < captured.length; i++) {
+      const serialized = JSON.stringify(captured[i]);
+      expect(serialized, `reconcile ${i + 1} inline-shipped the image in ${serialized.length} bytes`).not.toContain(HEATMAP_BODY);
+      expect(serialized.length, `reconcile ${i + 1} shipped ${serialized.length} bytes`).toBeLessThan(16 * 1024);
+    }
+  });
+
+  it("a changed image invalidates the token and reports a source update (FE-12)", async () => {
+    vi.stubGlobal("Worker", RecordingWorker as unknown as typeof Worker);
+
+    const spec1 = rasterSpec(HEATMAP_IMAGE);
+    await diffSpecsAsync(null, spec1);
+    const newBody = "b".repeat(2 * MEGABYTE);
+    const spec2 = rasterSpec(`data:image/png;base64,${newBody}`);
+    const patch = await diffSpecsAsync(spec1, spec2);
+
+    expect(patch.sources).toHaveLength(1);
+    expect(patch.sources[0].kind).toBe("update");
+    // Rehydrated next carries the NEW image — the runtime applies fresh bytes.
+    expect((patch.sources[0].next as any)?.imageRef).toBe(spec2.sources.H.imageRef);
+    // The new bytes never cross postMessage either.
+    expect(JSON.stringify(latestRecorder().captured[1])).not.toContain(newBody);
+  });
+
+  it("bounds changes still produce an update when only the image bytes are tokenized (FE-12)", async () => {
+    vi.stubGlobal("Worker", RecordingWorker as unknown as typeof Worker);
+
+    const spec1 = rasterSpec(HEATMAP_IMAGE, [116.2, 39.8, 116.6, 40.1]);
+    await diffSpecsAsync(null, spec1);
+    const spec2 = rasterSpec(HEATMAP_IMAGE, [116.2, 39.7, 116.6, 40.2]);
+    const patch = await diffSpecsAsync(spec1, spec2);
+
+    expect(patch.sources).toHaveLength(1);
+    expect(patch.sources[0].kind).toBe("update");
+    expect((patch.sources[0].next as any)?.imageRef).toBe(HEATMAP_IMAGE);
+    expect((patch.sources[0].next as any)?.bounds).toEqual([116.2, 39.7, 116.6, 40.2]);
+  });
+});
