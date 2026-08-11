@@ -10,7 +10,8 @@ interface MiniMdProps {
 
 // 审计 F36：默认 urlTransform 已经过滤 javascript:，但 data: 在某些浏览器
 // 仍可执行（image/svg+xml）。显式白名单只允许 http/https/mailto/相对路径。
-// FE-06：导出供 chat-panel.tsx 复用，避免第二个 ReactMarkdown 实例绕过防护。
+// FE-06：导出供其它 ReactMarkdown 消费者复用（如 sidebar/chat-tab 的
+// MiniMd），避免第二个 ReactMarkdown 实例绕过防护。
 export const safeUrlTransform: UrlTransform = (url) => {
   if (!url) return url;
   const trimmed = url.trim();
