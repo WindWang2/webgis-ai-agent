@@ -332,7 +332,9 @@ describe('useMapBridge', () => {
       action_id: 'ma-raster',
       command: 'add_heatmap_raster',
       status: 'succeeded',
-      actual: { confirmed: true },
+      // ROUND-2: marker is store_mounted (not confirmed) — the mount is trusted
+      // but not convergence-verifiable; and the ack fires only AFTER the mount.
+      actual: { store_mounted: true },
       correlation: { session_id: 's1' },
     }));
   });
@@ -609,10 +611,30 @@ describe('useMapBridge', () => {
     expect(dispatchAction).toHaveBeenCalledWith(
       expect.objectContaining({
         command: 'fly_to',
-        action_id: expect.stringMatching(/^fe-\d+$/),
+        // ROUND-2: fe-<uuid> (crypto.randomUUID, Date.now+random fallback) —
+        // NOT a counter that resets on reload and collides with the same
+        // session's earlier acks (backend first-terminal-wins).
+        action_id: expect.stringMatching(/^fe-[0-9a-z-]{4,}$/),
         correlation: { session_id: 's1', step_id: 'step-3', turn_id: 'turn-2', sse_event_id: '9' },
       })
     );
+  });
+
+  it('mints a UNIQUE fe- id per synthesized action (no counter reset collisions after reload)', async () => {
+    mockStreamChat.mockReturnValue(makeAsyncGen([
+      { event: 'step_result', data: { bbox: [116, 39, 117, 40], step_id: 's1', turn_id: 't1' }, id: '9' },
+      { event: 'step_result', data: { bbox: [110, 20, 111, 21], step_id: 's2', turn_id: 't1' }, id: '10' },
+    ]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent)
+    );
+    await act(async () => { await result.current.send('q', {}); });
+
+    expect(dispatchAction).toHaveBeenCalledTimes(2);
+    const ids = dispatchAction.mock.calls.map((c) => c[0].action_id);
+    expect(ids[0]).toMatch(/^fe-[0-9a-z-]{4,}$/);
+    expect(ids[1]).toMatch(/^fe-[0-9a-z-]{4,}$/);
+    expect(ids[0]).not.toBe(ids[1]);
   });
 
   it('does NOT re-dispatch replayed step_result ids on reconnect (DUP-1)', async () => {
@@ -792,11 +814,15 @@ describe('useMapBridge', () => {
     expect(dispatchAction).not.toHaveBeenCalled();
     const sink = sinkHolder.current;
     expect(sink).toBeTruthy();
+    // ROUND-2: the ack is reported only AFTER onEvent (the mount) returned —
+    // never claims success BEFORE the mount ran.
+    expect(onEvent.mock.invocationCallOrder[0]).toBeLessThan(sink.mock.invocationCallOrder[0]);
     expect(sink).toHaveBeenCalledWith(expect.objectContaining({
       action_id: 'ma-heat',
       command: 'add_native_heatmap',
       status: 'succeeded',
-      actual: { confirmed: true },
+      // ROUND-2: store_mounted (not confirmed) — not convergence-verifiable
+      actual: { store_mounted: true },
       correlation: {
         session_id: 's1',
         step_id: 'step-4',
@@ -836,7 +862,8 @@ describe('useMapBridge', () => {
       action_id: 'ma-raster',
       command: 'add_heatmap_raster',
       status: 'succeeded',
-      actual: { confirmed: true },
+      // ROUND-2: store_mounted (not confirmed) — not convergence-verifiable
+      actual: { store_mounted: true },
       correlation: { session_id: 's1', step_id: 'step-5', turn_id: 'turn-3', sse_event_id: '12' },
     }));
   });
@@ -861,5 +888,50 @@ describe('useMapBridge', () => {
     expect(dispatchAction).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'fly_to', action_id: 'ma-fly' }),
     );
+  });
+
+  it('store-mounted ack is FAILED (never succeeded/confirmed) when the mount (onEvent) throws (ROUND-2)', async () => {
+    const sinkHolder: { current: MapActionAckSink | null } = { current: null };
+    const wrapper = makeAckWrapper(sinkHolder, vi.fn());
+    // The store mount throws → the work did NOT happen; claiming success would
+    // be a fake ack. The bridge must report failed instead.
+    const mountOnEvent = vi.fn((e: SSEEvent) => {
+      if (e.event === 'step_result') throw new Error('mount exploded');
+    });
+
+    mockStreamChat.mockReturnValue(makeAsyncGen([{
+      event: 'step_result',
+      data: {
+        result: {
+          command: 'add_native_heatmap',
+          type: 'FeatureCollection',
+          action_id: 'ma-heat',
+        },
+        geojson_ref: 'ref-heat-1',
+        step_id: 'step-4',
+        turn_id: 'turn-3',
+      },
+      id: '11',
+    }]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, mountOnEvent),
+      { wrapper },
+    );
+    await act(async () => { await result.current.send('q', {}); });
+
+    expect(dispatchAction).not.toHaveBeenCalled();
+    // The bridge rethrows → the stream error path synthesizes an error event.
+    expect(mountOnEvent.mock.calls.map((c) => c[0].event)).toContain('error');
+    expect(sinkHolder.current).toHaveBeenCalledWith(expect.objectContaining({
+      action_id: 'ma-heat',
+      command: 'add_native_heatmap',
+      status: 'failed',
+      error: 'mount exploded',
+    }));
+    // never a fake succeeded/confirmed
+    expect(sinkHolder.current).not.toHaveBeenCalledWith(expect.objectContaining({
+      action_id: 'ma-heat',
+      status: 'succeeded',
+    }));
   });
 });

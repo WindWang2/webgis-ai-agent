@@ -27,16 +27,22 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 
 // V3 (design §6): client-minted fallback action ids. Locally synthesized
 // actions (bbox-fallback fly_to) have no backend `ma-…` id, so mint a
-// deterministic `fe-<counter>` — dependency-free (no crypto/uuid) and unique
-// within the hook lifecycle.
-let feActionCounter = 0;
-const mintFeActionId = (): string => `fe-${++feActionCounter}`;
+// collision-safe `fe-<uuid>` — mirroring map-action-context's mintActionId
+// (crypto.randomUUID, with a Date.now+random fallback). A counter-based id
+// would reset on page reload and collide with the same session's earlier acks
+// in the backend's first-terminal-wins log (ROUND-2 finding).
+function mintFeActionId(): string {
+  if (globalThis.crypto?.randomUUID) return `fe-${globalThis.crypto.randomUUID()}`;
+  return `fe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 // V3 (design §6): commands whose execution IS the use-sse-stream store mount.
 // When the step_result payload was already mounted into the HUD store (carries
 // `geojson_ref` or `result.image`), the handler must not re-run them — it would
 // either double-mount or fail (invalid_params / target_not_found) for work that
-// already succeeded. The bridge acks them succeeded directly instead.
+// already succeeded. The bridge acks them succeeded directly INSTEAD — reported
+// only after the mount (onEvent) returned without throwing, with a
+// `store_mounted` marker (not `confirmed`, which implies convergence).
 const STORE_MOUNTED_COMMANDS = new Set(['add_native_heatmap', 'add_heatmap_raster', 'add_layer']);
 
 /**
@@ -271,6 +277,14 @@ export function useMapBridge(
                 setAiStatus('idle');
               }
 
+              // ROUND-2: store-mounted commands are executed by use-sse-stream's
+              // onEvent — the store mount IS the execution. The direct ack must
+              // NOT claim success BEFORE the mount: collect them here and report
+              // only after onEvent(event) returned without throwing (if onEvent
+              // throws, the mount may not have happened → report failed instead
+              // of a fake confirmed).
+              let deferredStoreMounted: Array<{ action: MapActionPayload }> = [];
+
               // step_result: command-wins-over-bbox priority; dispatch before forwarding to onEvent
               if (event.event === 'step_result') {
                 const stepData = data as unknown as StepResultEvent & {
@@ -301,18 +315,17 @@ export function useMapBridge(
                   const command = stepData.result!.command as MapActionPayload['command'];
                   if (storeMounted && STORE_MOUNTED_COMMANDS.has(command.toLowerCase())) {
                     // The store mount IS the execution — ack succeeded directly
-                    // with the correlation (verifiable marker included) instead of
-                    // dispatching a handler run that would fail or double-mount.
-                    mapActionCtx?.reportTerminal?.(
-                      {
+                    // with the correlation instead of dispatching a handler run
+                    // that would fail or double-mount. The ack is DEFERRED: it
+                    // reports only after onEvent(event) (the mount) returns.
+                    deferredStoreMounted.push({
+                      action: {
                         command,
                         params: actionParams as MapActionPayload['params'],
                         ...(actionId ? { action_id: actionId } : { action_id: mintFeActionId() }),
                         correlation: buildMapActionCorrelation(sessionId, stepData, event),
                       } as MapActionPayload,
-                      'succeeded',
-                      { actual: { confirmed: true } },
-                    );
+                    });
                   } else {
                     dispatchAction({
                       command,
@@ -329,16 +342,16 @@ export function useMapBridge(
                     if (!cmd?.command) continue;
                     const command = cmd.command as MapActionPayload['command'];
                     if (storeMounted && STORE_MOUNTED_COMMANDS.has(command.toLowerCase())) {
-                      mapActionCtx?.reportTerminal?.(
-                        {
+                      // Store-mounted batch command — same deferred-ack semantics
+                      // as the single-command path (report after the mount).
+                      deferredStoreMounted.push({
+                        action: {
                           command,
                           params: (cmd.params || {}) as MapActionPayload['params'],
                           ...(cmd.action_id ? { action_id: cmd.action_id } : { action_id: mintFeActionId() }),
                           correlation: buildMapActionCorrelation(sessionId, stepData, event),
                         } as MapActionPayload,
-                        'succeeded',
-                        { actual: { confirmed: true } },
-                      );
+                      });
                     } else {
                       dispatchAction({
                         command,
@@ -366,7 +379,33 @@ export function useMapBridge(
                 }
               }
 
-              onEvent(event);
+              // Forward the event (for store-mounted step_results this runs the
+              // actual mount), then report any deferred store-mounted acks —
+              // succeeded only if the mount returned without throwing.
+              if (deferredStoreMounted.length > 0) {
+                try {
+                  onEvent(event);
+                } catch (e) {
+                  // The mount may not have happened — never claim success. Report
+                  // failed and rethrow so the existing stream error handling
+                  // (abort/reconnect semantics) is preserved.
+                  const errMsg = e instanceof Error ? e.message : String(e);
+                  for (const d of deferredStoreMounted) {
+                    mapActionCtx?.reportTerminal?.(d.action, 'failed', { error: errMsg });
+                  }
+                  throw e;
+                }
+                // ROUND-2: marker is store_mounted, NOT confirmed — the backend
+                // treats store_mounted as not convergence-verifiable (the mount
+                // path is trusted but cannot be re-verified against a viewport).
+                for (const d of deferredStoreMounted) {
+                  mapActionCtx?.reportTerminal?.(d.action, 'succeeded', {
+                    actual: { store_mounted: true },
+                  });
+                }
+              } else {
+                onEvent(event);
+              }
             }
             if (controller.signal.aborted) break;
           } catch (err: unknown) {

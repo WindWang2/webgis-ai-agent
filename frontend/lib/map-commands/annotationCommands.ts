@@ -27,7 +27,12 @@ export const annotationCommands: Record<string, CommandEntry> = {
         geometry: { type: 'Point', coordinates: [longitude, latitude] },
         properties: { label: label || null, color: color || '#ef4444', kind: 'marker' },
       });
-      refreshAnnotations(map);
+      // ROUND-2: only claim a confirmed mutation when the data actually landed
+      // on the map — refreshAnnotations no-ops when the annotation source is
+      // absent, and a confirmed:true for a no-op is a fake ack.
+      if (!refreshAnnotations(map)) {
+        return { status: 'failed', error: 'target_not_found' };
+      }
       // V3: verifiable marker (annotation mutation — harness convergence).
       return { status: 'succeeded', result: { confirmed: true } };
     },
@@ -83,7 +88,10 @@ export const annotationCommands: Record<string, CommandEntry> = {
           });
         }
       }
-      refreshAnnotations(map);
+      // ROUND-2: confirmed only when the data actually reached the map source.
+      if (!refreshAnnotations(map)) {
+        return { status: 'failed', error: 'target_not_found' };
+      }
       // V3: verifiable marker (annotation mutation — harness convergence).
       return { status: 'succeeded', result: { confirmed: true } };
     },
@@ -94,7 +102,11 @@ export const annotationCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { map, getHudState } = ctx;
       getHudState().clearAnnotations();
-      refreshAnnotations(map);
+      // ROUND-2: the store cleared, but the map source must actually receive the
+      // empty FeatureCollection before we can claim the map converged.
+      if (!refreshAnnotations(map)) {
+        return { status: 'failed', error: 'target_not_found' };
+      }
       // V3: verifiable marker (annotation mutation — harness convergence).
       return { status: 'succeeded', result: { confirmed: true } };
     },

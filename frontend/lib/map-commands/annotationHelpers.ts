@@ -82,12 +82,19 @@ export function ensureAnnotationLayers(map: Map) {
 /**
  * Pushes the latest annotation FeatureCollection into the map source.
  *
+ * Returns whether the annotation source existed. When the source is absent the
+ * push silently no-ops — callers must NOT claim a confirmed mutation in that
+ * case (ROUND-2: annotation commands fail `target_not_found` instead of
+ * returning a `confirmed: true` the map never earned).
+ *
  * Extracted verbatim from map-action-handler.tsx. Shared between the annotation
  * slice and the component's annotation-refresh useEffect.
  */
-export function refreshAnnotations(map: Map) {
+export function refreshAnnotations(map: Map): boolean {
   const src = map.getSource(ANNOTATION_SOURCE_ID) as GeoJSONSource | undefined;
   if (src && typeof (src as any).setData === 'function') {
     src.setData(annotationFC() as any);
+    return true;
   }
+  return false;
 }

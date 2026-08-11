@@ -66,6 +66,11 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
   const layers: Array<Record<string, any>> = [];
   const onceListeners = new Map<string, Set<(...args: any[]) => void>>();
   const onListeners = new Map<string, Set<(...args: any[]) => void>>();
+  // ROUND-2: track whether a camera animation is in flight so stop() can model
+  // MapLibre reality — stopping an in-flight animation fires moveend
+  // SYNCHRONOUSLY (HandlerManager._stop → _afterEase → moveend). flyTo/fitBounds/
+  // easeTo start an animation; jumpTo/moveend end it.
+  let animating = false;
 
   const calls: MockMapCallLog = {
     flyTo: [],
@@ -82,6 +87,7 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
   };
 
   const emit = (event: string, payload?: unknown) => {
+    if (event === 'moveend') animating = false;
     const once = onceListeners.get(event);
     if (once) {
       // once handlers are deleted as they fire (MapLibre semantics); Array.from
@@ -142,14 +148,33 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
     // ─── Camera ────────────────────────────────────────────────────────────
     flyTo: vi.fn((opts: any) => {
       calls.flyTo.push(opts);
+      animating = true;
     }),
     fitBounds: vi.fn((bbox: [number, number, number, number], opts?: any) => {
       calls.fitBounds.push({ bbox, options: opts });
+      animating = true;
     }),
-    jumpTo: vi.fn(),
-    easeTo: vi.fn(),
+    jumpTo: vi.fn((opts: any = {}) => {
+      // Instant move — applies the target immediately and fires moveend
+      // synchronously (real MapLibre jumpTo ends the camera state + moveend).
+      if (Array.isArray(opts.center)) viewport.center = opts.center;
+      if (opts.zoom !== undefined) viewport.zoom = opts.zoom;
+      if (opts.bearing !== undefined) viewport.bearing = opts.bearing;
+      if (opts.pitch !== undefined) viewport.pitch = opts.pitch;
+      emit('moveend');
+    }),
+    easeTo: vi.fn(() => {
+      animating = true;
+    }),
     stop: vi.fn(() => {
       calls.stop.push(1);
+      // Model MapLibre reality: stop() during an in-flight animation fires
+      // moveend SYNCHRONOUSLY — the interrupt moveend a user grab produces
+      // mid-flyTo (HandlerManager._stop(true) → _afterEase → moveend).
+      if (animating) {
+        animating = false;
+        emit('moveend');
+      }
     }),
 
     // ─── Events ────────────────────────────────────────────────────────────
