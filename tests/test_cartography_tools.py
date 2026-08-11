@@ -118,7 +118,14 @@ async def test_h3_binning_emits_graduated_legend_spec(advanced_registry):
     assert spec is not None
     assert spec["type"] == "graduated"
     assert len(spec["breaks"]) >= 2
-    assert len(spec["palette_colors"]) >= 2
+    # ADR-0052 canonical contract: palette_colors count MUST track the class
+    # count (len(breaks) - 1), not be padded independently. The old h3_binning
+    # path took resolve_palette_colors(palette)[:5] verbatim — always 5 colors
+    # regardless of how many classes the data actually produced, so breaks and
+    # colors silently disagreed. This degenerate cluster legitimately yields
+    # few classes; what matters is that colors and breaks now agree by
+    # construction.
+    assert len(spec["palette_colors"]) == max(1, len(spec["breaks"]) - 1)
 
 
 from app.tools.spatial_stats import register_spatial_stats_tools
