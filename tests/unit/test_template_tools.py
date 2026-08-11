@@ -17,22 +17,31 @@ def registry():
 
 @pytest.mark.asyncio
 async def test_list_templates_all(registry):
-    """Test list_templates returning all built-in templates when no filter is provided."""
-    result = await registry.dispatch("list_templates", {})
+    """Test list_templates returning all built-in templates when no filter is provided.
+
+    F-FE-TPL: V2 expanded the library to 60+ entries (incl. 22 composites);
+    a 20-row default page only samples a subset of kinds, so the test
+    explicitly requests a full-library scan.
+    """
+    result = await registry.dispatch("list_templates", {"limit": 100})
     assert "templates" in result
     templates = result["templates"]
-    assert len(templates) >= 16
+    assert len(templates) >= 70
     kinds = {t["kind"] for t in templates}
-    assert kinds == {"basemap", "symbology", "layout", "thematic"}
+    assert kinds == {"basemap", "symbology", "layout", "thematic", "composite"}
 
 
 @pytest.mark.asyncio
 async def test_list_templates_filter_by_kind(registry):
-    """Test list_templates filtering by kind."""
+    """Test list_templates filtering by kind.
+
+    F-FE-TPL: V2 expanded the symbology library from 5 to 16 entries; the
+    lower bound is 15 to enforce the expansion.
+    """
     result = await registry.dispatch("list_templates", {"kind": "symbology"})
     assert "templates" in result
     templates = result["templates"]
-    assert len(templates) == 5
+    assert len(templates) >= 15
     for t in templates:
         assert t["kind"] == "symbology"
 

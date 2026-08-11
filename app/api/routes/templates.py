@@ -6,10 +6,10 @@ import logging
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, TypeAdapter
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, get_current_user_optional
 from app.core.database import get_async_db
 from app.models.db_model import CartographyTemplate
 from app.schemas.template_schema import (
@@ -78,29 +78,79 @@ def _template_to_dict(tmpl: CartographyTemplate) -> dict:
 
 @router.get("/templates", summary="查询地图制图模板列表")
 async def list_templates(
-    kind: Optional[str] = Query(None, description="按类别过滤: basemap, symbology, layout, thematic"),
+    kind: Optional[str] = Query(None, description="按类别过滤: basemap, symbology, layout, thematic, composite"),
     q: Optional[str] = Query(None, description="搜索关键词 (匹配名称、描述或关键字)"),
+    source: Optional[str] = Query(
+        None,
+        description="按来源过滤: builtin (内置), user (用户自建), all (默认, 全部)",
+    ),
+    limit: int = Query(100, ge=1, le=200, description="最大返回数量"),
+    offset: int = Query(0, ge=0, description="分页偏移"),
+    summary: bool = Query(
+        True,
+        description="True (默认) 返回 summary DTO (无 payload); False 返回完整模板 (含 payload JSON)",
+    ),
+    _user: Optional[dict] = Depends(get_current_user_optional),
     db: AsyncSession = Depends(get_async_db),
 ):
     """
-    获取模板列表 (合并数据库内置与用户保存的模板)
+    获取模板列表 (合并数据库内置与用户保存的模板, 受 auth + 租户隔离保护).
+
+    Security: previously this endpoint was unauthenticated AND had no
+    org_id filter, leaking every tenant's user template payload (incl.
+    org_id, creator_id). Now requires an auth user and restricts user
+    templates to the caller's org + built-ins.
+
+    Summary: by default the list strips the heavy `payload` field (kB-scale
+    JSON per row). Gallery UIs render name/description/keywords only; the
+    detail endpoint returns the full payload.
     """
+    from app.schemas.pagination import Page, clamp_pagination
+
+    limit, offset = clamp_pagination(limit, offset)
+    user_org_id = _user.get("org_id") if isinstance(_user, dict) else None
+
+    # DB-stored templates: scope to caller's org (built-ins + their own).
     stmt = select(CartographyTemplate)
     if kind:
         stmt = stmt.where(CartographyTemplate.kind == kind)
-    
-    result = await db.execute(stmt)
-    db_templates = result.scalars().all()
-    
+
+    if user_org_id is not None:
+        # Built-ins (org_id IS NULL) are always visible. User templates are
+        # scoped to the caller's org.
+        stmt = stmt.where(
+            (CartographyTemplate.org_id.is_(None)) | (CartographyTemplate.org_id == user_org_id)
+        )
+    # Unauthenticated callers see only built-in seeds (defense in depth).
+
+    if source == "builtin":
+        stmt = stmt.where(CartographyTemplate.is_builtin.is_(True))
+    elif source == "user":
+        stmt = stmt.where(CartographyTemplate.is_builtin.is_(False))
+
+    # Apply pagination at the DB level (no Python .all()).
+    page_stmt = stmt.limit(limit).offset(offset)
+    result = await db.execute(page_stmt)
+    db_templates = list(result.scalars().all())
+    total_stmt = select(func.count()).select_from(stmt.subquery())
+    total = (await db.execute(total_stmt)).scalar_one() or 0
+
     db_dicts = [_template_to_dict(t) for t in db_templates]
     db_ids = {t["id"] for t in db_dicts}
 
+    # SEED_TEMPLATES are global built-ins; merge in (deduped) so the gallery
+    # always shows the full set even when the DB row is missing.
     seed_list = list(SEED_TEMPLATES)
     if kind:
         seed_list = [t for t in seed_list if t.get("kind") == kind]
     seed_dicts = [t for t in seed_list if t.get("id") not in db_ids]
 
     results = seed_dicts + db_dicts
+    if source == "user":
+        # When the caller asks for user templates only, drop the seeds.
+        results = [t for t in results if not t.get("is_builtin")]
+    elif source == "builtin":
+        results = [t for t in results if t.get("is_builtin")]
 
     if q:
         keyword = q.lower()
@@ -111,7 +161,67 @@ async def list_templates(
             or any(keyword in kw.lower() for kw in t.get("keywords", []))
         ]
 
-    return results
+    # Final post-pagination slice so the merged list doesn't exceed the
+    # requested page (built-in seeds are pre-DB and out of `total`).
+    page_slice = results[offset:offset + limit]
+
+    if summary:
+        page_slice = [_to_summary(t) for t in page_slice]
+
+    return Page(
+        items=page_slice,
+        total=total,
+        limit=limit,
+        offset=offset,
+        has_more=(offset + limit) < total,
+    )
+
+
+def _to_summary(t: dict) -> dict:
+    """Strip the heavy `payload` (and `org_id` / `creator_id`) for list views."""
+    out = {
+        "id": t["id"],
+        "kind": t["kind"],
+        "name": t["name"],
+        "category": t.get("category"),
+        "keywords": t.get("keywords", []),
+        "description": t.get("description"),
+        "is_builtin": t.get("is_builtin", False),
+        "version": t.get("version", 1),
+    }
+    # Preserve timestamps for sort/UX; drop org/creator IDs to avoid leaks.
+    for k in ("created_at", "updated_at", "thumbnail_url"):
+        if t.get(k) is not None:
+            out[k] = t[k]
+    return out
+
+
+@router.get("/templates/{template_id}", summary="获取模板详情 (含 payload)")
+async def get_template(
+    template_id: str,
+    _user: Optional[dict] = Depends(get_current_user_optional),
+    db: AsyncSession = Depends(get_async_db),
+):
+    """返回模板完整 DTO (含 payload JSON)。
+
+    Gallery V2 在用户点击模板卡时调用；列表路径不再下发 payload。
+    Built-in seed 也走这条 — 找不到时回退到 SEED_TEMPLATES。
+    """
+    stmt = select(CartographyTemplate).where(CartographyTemplate.id == template_id)
+    result = await db.execute(stmt)
+    tmpl = result.scalar_one_or_none()
+    if tmpl is not None:
+        return _template_to_dict(tmpl)
+
+    # Fall back to built-in seed.
+    seed = next((s for s in SEED_TEMPLATES if s.get("id") == template_id), None)
+    if seed is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Template '{template_id}' not found",
+        )
+    # Strip seed-internal-only fields the schema doesn't expose.
+    return seed
 
 
 @router.post("/templates", status_code=status.HTTP_201_CREATED, summary="另存为新模板 (Save as Template)")
@@ -126,10 +236,12 @@ async def create_template(
     _validate_payload(req.kind, req.payload)
 
     user_id = _user.get("user_id") if isinstance(_user, dict) else None
+    user_org_id = _user.get("org_id") if isinstance(_user, dict) else None
     template_id = f"tmpl_user_{uuid.uuid4().hex[:8]}"
     tmpl = CartographyTemplate(
         id=template_id,
         creator_id=user_id,
+        org_id=user_org_id,
         kind=req.kind,
         name=req.name,
         category=req.kind,

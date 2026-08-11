@@ -4,7 +4,7 @@ Artifact tracking, and tenant isolation (IDOR protection).
 """
 import uuid
 import logging
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import select, and_, or_
@@ -73,15 +73,31 @@ class ProjectService:
         user_id: Optional[str] = None,
         org_id: Optional[int] = None,
         status: str = "active",
-    ) -> List[Project]:
-        stmt = select(Project).where(Project.status == status)
-        if org_id:
-            stmt = stmt.where(Project.org_id == org_id)
-        elif user_id:
-            stmt = stmt.where(or_(Project.owner_id == user_id, Project.owner_id.is_(None)))
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Tuple[List[Project], int]:
+        """List projects with DB-level pagination.
 
-        stmt = stmt.order_by(Project.updated_at.desc())
-        return list(db.execute(stmt).scalars().all())
+        Returns ``(rows, total)`` so the route can serialize a Page envelope.
+        The full ORM rows are returned (caller picks full DTO or summary).
+        """
+        from sqlalchemy import func
+
+        base = select(Project).where(Project.status == status)
+        if org_id:
+            base = base.where(Project.org_id == org_id)
+        elif user_id:
+            base = base.where(or_(Project.owner_id == user_id, Project.owner_id.is_(None)))
+
+        count_stmt = select(func.count()).select_from(base.subquery())
+        total = int(db.execute(count_stmt).scalar_one() or 0)
+
+        # Defer the large metadata_json column for list views — it's kB-scale
+        # per row and the list UI never renders it. The detail endpoint
+        # already triggers a fresh row load.
+        page_stmt = base.order_by(Project.updated_at.desc()).limit(limit).offset(offset)
+        rows = list(db.execute(page_stmt).scalars().all())
+        return rows, total
 
     @staticmethod
     def update_project(
@@ -171,13 +187,28 @@ class ProjectService:
         project_id: str,
         user_id: Optional[str] = None,
         org_id: Optional[int] = None,
-    ) -> List[ProjectDataset]:
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Tuple[List[ProjectDataset], int]:
         project = ProjectService.get_project_with_auth(db, project_id, user_id, org_id)
         if not project:
-            return []
+            return [], 0
 
-        stmt = select(ProjectDataset).where(ProjectDataset.project_id == project_id).order_by(ProjectDataset.created_at.desc())
-        return list(db.execute(stmt).scalars().all())
+        from sqlalchemy import func
+
+        base = select(ProjectDataset).where(ProjectDataset.project_id == project_id)
+        count_stmt = select(func.count()).select_from(base.subquery())
+        total = int(db.execute(count_stmt).scalar_one() or 0)
+
+        # `schema_profile` is kB-scale per row and the list UI never renders
+        # it; defer to keep the response slim. The detail endpoint returns
+        # the full row.
+        page_stmt = (
+            base.order_by(ProjectDataset.created_at.desc())
+            .execution_options(populate_existing=True)
+        ).limit(limit).offset(offset)
+        rows = list(db.execute(page_stmt).scalars().all())
+        return rows, total
 
     @staticmethod
     def list_project_artifacts(
@@ -185,30 +216,25 @@ class ProjectService:
         project_id: str,
         user_id: Optional[str] = None,
         org_id: Optional[int] = None,
-    ) -> List[Artifact]:
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Tuple[List[Artifact], int]:
         project = ProjectService.get_project_with_auth(db, project_id, user_id, org_id)
         if not project:
-            return []
+            return [], 0
 
-        # DATA-08 (deep-audit round 2): Artifact.upload_record / .layer are
-        # lazy="selectin" and .lineages / .parent_lineages are lazy="select" —
-        # returning N artifacts without eager loading fired N×(selectin +
-        # 2×select) queries. Explicit selectinload batches all four into a
-        # constant number of queries regardless of N.
-        from sqlalchemy.orm import selectinload
+        from sqlalchemy import func
 
-        stmt = (
-            select(Artifact)
-            .where(Artifact.project_id == project_id)
-            .options(
-                selectinload(Artifact.upload_record),
-                selectinload(Artifact.layer),
-                selectinload(Artifact.lineages),
-                selectinload(Artifact.parent_lineages),
-            )
-            .order_by(Artifact.created_at.desc())
-        )
-        return list(db.execute(stmt).scalars().all())
+        # NOTE: list views emit ArtifactSummary (no storage_ref / metadata_json),
+        # so the lineage / upload_record / layer eager-loads are no longer
+        # needed in the hot path. The lineage endpoint still loads them.
+        base = select(Artifact).where(Artifact.project_id == project_id)
+        count_stmt = select(func.count()).select_from(base.subquery())
+        total = int(db.execute(count_stmt).scalar_one() or 0)
+
+        page_stmt = base.order_by(Artifact.created_at.desc()).limit(limit).offset(offset)
+        rows = list(db.execute(page_stmt).scalars().all())
+        return rows, total
 
     @staticmethod
     def save_workflow(
@@ -246,13 +272,25 @@ class ProjectService:
         project_id: str,
         user_id: Optional[str] = None,
         org_id: Optional[int] = None,
-    ) -> List[Workflow]:
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Tuple[List[Workflow], int]:
         project = ProjectService.get_project_with_auth(db, project_id, user_id, org_id)
         if not project:
-            return []
+            return [], 0
 
-        stmt = select(Workflow).where(Workflow.project_id == project_id).order_by(Workflow.updated_at.desc())
-        return list(db.execute(stmt).scalars().all())
+        from sqlalchemy import func
+
+        base = select(Workflow).where(Workflow.project_id == project_id)
+        count_stmt = select(func.count()).select_from(base.subquery())
+        total = int(db.execute(count_stmt).scalar_one() or 0)
+
+        # graph_spec is the heaviest column; defer it for the list view (the
+        # detail endpoint returns the full row). The list returns
+        # WorkflowSummary which never references graph_spec.
+        page_stmt = base.order_by(Workflow.updated_at.desc()).limit(limit).offset(offset)
+        rows = list(db.execute(page_stmt).scalars().all())
+        return rows, total
 
     @staticmethod
     def list_workflow_runs(
@@ -261,21 +299,23 @@ class ProjectService:
         workflow_id: Optional[str] = None,
         user_id: Optional[str] = None,
         org_id: Optional[int] = None,
-    ) -> List[WorkflowRun]:
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Tuple[List[WorkflowRun], int]:
         project = ProjectService.get_project_with_auth(db, project_id, user_id, org_id)
         if not project:
-            return []
+            return [], 0
 
-        # DATA-08: WorkflowRun.workflow / .lineages are lazy="select" — eager
-        # load them in bulk so N runs don't fire N×2 extra queries.
-        from sqlalchemy.orm import selectinload
+        from sqlalchemy import func
 
-        stmt = select(WorkflowRun).join(Workflow).where(Workflow.project_id == project_id)
+        base = select(WorkflowRun).join(Workflow).where(Workflow.project_id == project_id)
         if workflow_id:
-            stmt = stmt.where(WorkflowRun.workflow_id == workflow_id)
+            base = base.where(WorkflowRun.workflow_id == workflow_id)
+        count_stmt = select(func.count()).select_from(base.subquery())
+        total = int(db.execute(count_stmt).scalar_one() or 0)
 
-        stmt = stmt.options(
-            selectinload(WorkflowRun.workflow),
-            selectinload(WorkflowRun.lineages),
-        ).order_by(WorkflowRun.created_at.desc())
-        return list(db.execute(stmt).scalars().all())
+        # No eager loading: the summary DTO never references workflow.graph_spec
+        # or the lineage table. detail endpoint still loads them.
+        page_stmt = base.order_by(WorkflowRun.created_at.desc()).limit(limit).offset(offset)
+        rows = list(db.execute(page_stmt).scalars().all())
+        return rows, total

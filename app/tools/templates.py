@@ -91,35 +91,60 @@ def register_template_tools(registry: ToolRegistry):
     def list_templates(
         kind: Optional[str] = None, q: Optional[str] = None, limit: int = 20
     ) -> dict:
-        all_tmpls = _get_all_templates()
+        # F-FE-TPL: the registry's ``search`` does the same kind/q filter
+        # but on an indexed in-memory structure (no per-call DB query, no
+        # Python linear scan of the merged list). The DB path is kept as
+        # a fallback for user-saved templates, then merged in front of
+        # the registry result.
+        from app.services.templates.intent_resolver import list_templates_v2
 
-        filtered = []
-        q_lower = q.lower().strip() if q else None
+        page, total = list_templates_v2(kind=kind, q=q, limit=limit, offset=0)
+        registry_results = page
 
-        for t in all_tmpls:
-            if kind and t["kind"] != kind:
-                continue
+        # Also pull user-saved templates from the DB (not in registry).
+        try:
+            from app.core.database import SessionLocal
+            from app.models.db_model import CartographyTemplate
+            from sqlalchemy import select as _sel
 
-            if q_lower:
-                name_match = q_lower in t["name"].lower()
-                desc_match = bool(t.get("description") and q_lower in t["description"].lower())
-                cat_match = bool(t.get("category") and q_lower in t["category"].lower())
-                kw_match = any(q_lower in k.lower() for k in t.get("keywords", []))
+            db = SessionLocal()
+            try:
+                stmt = _sel(CartographyTemplate)
+                if kind:
+                    stmt = stmt.where(CartographyTemplate.kind == kind)
+                user_results = list(db.execute(stmt).scalars().all())
+            finally:
+                db.close()
+        except Exception:
+            user_results = []
 
-                if not (name_match or desc_match or cat_match or kw_match):
-                    continue
+        user_dicts = [
+            {
+                "id": r.id,
+                "kind": r.kind,
+                "name": r.name,
+                "category": r.category,
+                "keywords": r.keywords or [],
+                "description": r.description,
+                "is_builtin": r.is_builtin,
+                "version": r.version,
+            }
+            for r in user_results
+        ]
+        seen_ids = {t["id"] for t in registry_results}
+        merged = list(registry_results) + [u for u in user_dicts if u["id"] not in seen_ids]
 
-            filtered.append(
-                {
-                    "id": t["id"],
-                    "kind": t["kind"],
-                    "name": t["name"],
-                    "category": t.get("category"),
-                    "keywords": t.get("keywords", []),
-                    "description": t.get("description"),
-                    "is_builtin": t.get("is_builtin", False),
-                }
-            )
+        if q:
+            q_lower = q.lower().strip()
+            filtered = [
+                t for t in merged
+                if q_lower in t["name"].lower()
+                or (t.get("description") and q_lower in t["description"].lower())
+                or (t.get("category") and q_lower in t["category"].lower())
+                or any(q_lower in k.lower() for k in t.get("keywords", []))
+            ]
+        else:
+            filtered = merged
 
         return {"templates": filtered[:limit], "count": len(filtered[:limit])}
 
@@ -139,8 +164,17 @@ def register_template_tools(registry: ToolRegistry):
         field: Optional[str] = None,
         layer_id: Optional[str] = None,
     ) -> dict:
-        all_tmpls = _get_all_templates()
-        target_tmpl = next((t for t in all_tmpls if t["id"] == template_id), None)
+        # F-FE-TPL: O(1) registry lookup (was: linear scan over the merged
+        # SEED + DB list per call). DB templates still need a DB query,
+        # but the registry short-circuits the common case (built-in or
+        # composite id) without touching the database at all.
+        from app.services.templates.intent_resolver import get_template_or_composite
+
+        target_tmpl = get_template_or_composite(template_id)
+        if target_tmpl is None:
+            # Fall through to DB lookup (user-saved templates).
+            all_tmpls = _get_all_templates()
+            target_tmpl = next((t for t in all_tmpls if t["id"] == template_id), None)
 
         if not target_tmpl:
             return {"error": f"Template not found: {template_id}"}

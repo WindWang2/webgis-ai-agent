@@ -120,8 +120,12 @@ def test_cartography_template_multi_tenancy(db_session):
 
 
 def test_seed_templates_count_and_kinds():
-    """Test that SEED_TEMPLATES contains ~18 templates across all 4 kinds."""
-    assert len(SEED_TEMPLATES) >= 16
+    """Test that SEED_TEMPLATES contains the V2 expanded set across all 4 kinds.
+
+    F-FE-TPL: V2 expanded the built-in library from 18 to 62 entries; the
+    lower bound is now 50 to enforce the V2 contract from the goal.
+    """
+    assert len(SEED_TEMPLATES) >= 50
     kinds = {tmpl["kind"] for tmpl in SEED_TEMPLATES}
     assert kinds == {"basemap", "symbology", "layout", "thematic"}
 
@@ -130,6 +134,49 @@ def test_seed_templates_count_and_kinds():
         assert tmpl["id"].startswith("tmpl_")
         assert "name" in tmpl
         assert "payload" in tmpl
+
+
+def test_template_registry_v2_loads_all_builtins():
+    """F-FE-TPL: V2 registry contains all SEED_TEMPLATES + composites.
+
+    The registry exposes O(1) by-id and by-kind lookups, and validates
+    every composite pipeline reference resolves to a known template.
+    """
+    from app.schemas.template_registry import get_template_registry
+
+    r = get_template_registry()
+    # All SEED_TEMPLATES must be in the registry.
+    for t in SEED_TEMPLATES:
+        assert t["id"] in r, f"missing from registry: {t['id']}"
+
+    # The V2 contract: at least 50 built-in templates + ≥20 composites.
+    assert r.count() >= 70
+    assert len(r.by_kind("composite")) >= 20
+
+    # No validation errors out of the box.
+    errs = r.validate()
+    assert errs == [], f"registry validation failed: {errs[:3]}"
+
+    # O(1) lookups return the right shape.
+    sample = r.get("tmpl_th_pop_choro")
+    assert sample is not None
+    assert sample["kind"] == "thematic"
+
+    # Search hits at least the canonical population density entry.
+    page, total = r.search(q="population", kind="thematic")
+    assert total >= 1
+
+
+def test_composite_pipeline_refs_resolve():
+    """F-FE-TPL: every composite template's pipeline reference exists."""
+    from app.schemas.template_registry import get_template_registry, COMPOSITE_TEMPLATES
+
+    r = get_template_registry()
+    for composite in COMPOSITE_TEMPLATES:
+        for slot, ref in (composite.get("pipeline") or {}).items():
+            assert r.get(ref) is not None, (
+                f"composite {composite['id']} pipeline.{slot} -> {ref} is missing"
+            )
 
 
 from pydantic import TypeAdapter
@@ -218,16 +265,18 @@ def test_alembic_seed_data_in_db(db_session):
     builtins = db_session.query(CartographyTemplate).filter_by(is_builtin=True).all()
     assert len(builtins) == len(SEED_TEMPLATES)
 
-    # Verify counts per kind
+    # Verify counts per kind — V2 expanded the library, so assert ranges
+    # that track the F-FE-TPL contract (>=10 basemap, >=16 symbology,
+    # >=8 layout, >=28 thematic).
     basemaps = db_session.query(CartographyTemplate).filter_by(kind="basemap", is_builtin=True).all()
-    assert len(basemaps) == 4
+    assert len(basemaps) >= 10
 
     symbology_tmpls = db_session.query(CartographyTemplate).filter_by(kind="symbology", is_builtin=True).all()
-    assert len(symbology_tmpls) == 5
+    assert len(symbology_tmpls) >= 16
 
     layouts = db_session.query(CartographyTemplate).filter_by(kind="layout", is_builtin=True).all()
-    assert len(layouts) == 4
+    assert len(layouts) >= 8
 
     thematics = db_session.query(CartographyTemplate).filter_by(kind="thematic", is_builtin=True).all()
-    assert len(thematics) == 5
+    assert len(thematics) >= 28
 

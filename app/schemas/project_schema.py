@@ -154,3 +154,86 @@ class RunComparisonResponse(BaseModel):
     output_artifacts_changed: Dict[str, Any]
     metrics_changed: Dict[str, Any]
     warnings_changed: Dict[str, Any]
+
+
+# =====================================================================
+# Summary DTOs (F-FE-SD — list endpoints use these to slim payloads)
+#
+# The full `*Response` models above include heavy columns
+# (graph_spec, execution_trace, schema_profile, etc.) that the list UI
+# never renders. List endpoints serialize the *Summary variants and the
+# detail endpoint returns the full model. Both come from the same ORM
+# row — the field set is the only difference.
+# =====================================================================
+
+
+class ProjectSummary(BaseModel):
+    """Slim project card — what the project list UI actually renders."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    description: Optional[str] = None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProjectDatasetSummary(BaseModel):
+    """Slim dataset row — schema_profile is moved to the detail endpoint."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+    name: str
+    source_type: str
+    crs: Optional[str] = "EPSG:4326"
+    quality_status: Optional[str] = "unchecked"
+    created_at: datetime
+
+
+class WorkflowSummary(BaseModel):
+    """Slim workflow row — graph_spec is moved to the detail endpoint."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+    name: str
+    description: Optional[str] = None
+    version: int
+    step_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorkflowRunSummary(BaseModel):
+    """Slim run row — execution_trace/outputs are moved to the detail
+    endpoint. The list UI only needs status + a few metadata fields."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    workflow_id: str
+    workflow_version: int
+    status: str
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+
+
+class ArtifactSummary(BaseModel):
+    """Slim artifact row — storage_ref / metadata_json live on detail."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+    name: str
+    artifact_type: str
+    format: Optional[str] = None
+    crs: Optional[str] = "EPSG:4326"
+    created_at: datetime
