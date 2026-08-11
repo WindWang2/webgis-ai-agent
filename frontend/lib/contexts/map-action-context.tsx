@@ -81,8 +81,46 @@ export const MapActionContext = createContext<MapActionContextType | undefined>(
 // running head); terminal acks are kept in a bounded ring for tests/dev.
 const MAX_PENDING_ACTIONS = 32;
 const MAX_COMPLETED_ACTIONS = 100;
+// Terminal-id dedup set cap: action ids are globally unique, so only the most
+// recent 2000 need remembering for first-terminal-wins (bounded memory).
+const MAX_TERMINAL_IDS = 2000;
 // Camera commands coalesce: a new one supersedes still-QUEUED camera actions.
 const CAMERA_COMMANDS = new Set(['fly_to', 'set_map_view', 'zoom_to_bbox']);
+
+// ACK snapshot (requested/actual) guard — the backend caps each serialized ack
+// at 16KB (422 beyond). Heatmap/layer params carry base64 images / inline
+// geojson that would blow the cap and drop the WHOLE debounced batch, so:
+// 1) drop data-dump keys outright; 2) keep only scalar / array-of-scalars
+// values; 3) cap the serialized snapshot at ~2KB (mirrors backend
+// `_cap_requested_snapshot` in app/services/tool_dispatch_service.py).
+const ACK_DROP_KEYS = new Set(['geojson', 'image', 'features', 'data']);
+const ACK_SNAPSHOT_MAX_CHARS = 2048;
+
+function isScalarSnapshotValue(v: unknown): boolean {
+  if (v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return true;
+  return Array.isArray(v) && v.every((x) => x === null || ['string', 'number', 'boolean'].includes(typeof x));
+}
+
+/** Sanitize an ack `requested`/`actual` snapshot: scalars + arrays of scalars
+ * only, data-dump keys dropped, serialized size capped (mirrors backend
+ * `_cap_requested_snapshot`). Keeps every ack far under the 16KB per-ack cap. */
+function capAckSnapshot(params: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return null;
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(params)) {
+    if (ACK_DROP_KEYS.has(k)) continue;
+    const v = params[k];
+    if (!isScalarSnapshotValue(v)) continue;
+    const probe = { ...out, [k]: v };
+    try {
+      if (JSON.stringify(probe).length > ACK_SNAPSHOT_MAX_CHARS) break;
+    } catch {
+      continue; // unserializable value (e.g. cyclic) — skip the key
+    }
+    out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
 
 /** Client-side action id fallback when the backend didn't mint one (e.g. bbox-fallback fly_to). */
 function mintActionId(): string {
@@ -115,7 +153,9 @@ export function MapActionProvider({ children }: { children: React.ReactNode }) {
   const [droppedCount, setDroppedCount] = useState(0);
   const [completedActions, setCompletedActions] = useState<CompletedMapAction[]>([]);
   const completedRingRef = useRef<CompletedMapAction[]>([]);
-  const terminalIdsRef = useRef<Set<string>>(new Set());
+  // First-terminal-wins dedup. A Map (insertion-ordered) so the oldest entry can
+  // be evicted when the set exceeds MAX_TERMINAL_IDS (bounded memory, P3).
+  const terminalIdsRef = useRef<Map<string, true>>(new Map());
   const ackSinksRef = useRef<Set<MapActionAckSink>>(new Set());
 
   // Last fly_to tracking for physical throttling.
@@ -138,7 +178,7 @@ export function MapActionProvider({ children }: { children: React.ReactNode }) {
 
   // First-terminal-wins per action_id (mirrors the backend's idempotent ack log):
   // supersede/clear mark actions terminal; a late in-flight settle must not
-  // double-report the same action.
+  // double-report the same action. The dedup set is capped (bounded memory).
   const reportTerminal = useCallback((
     action: MapActionPayload,
     status: MapActionTerminalStatus,
@@ -146,8 +186,18 @@ export function MapActionProvider({ children }: { children: React.ReactNode }) {
   ) => {
     const id = action.action_id;
     if (!id || terminalIdsRef.current.has(id)) return;
-    terminalIdsRef.current.add(id);
+    terminalIdsRef.current.set(id, true);
+    // Cap the dedup set: keep the most recent MAX_TERMINAL_IDS ids (a Map keeps
+    // insertion order, so the oldest id is the first key).
+    if (terminalIdsRef.current.size > MAX_TERMINAL_IDS) {
+      const oldest = terminalIdsRef.current.keys().next().value;
+      if (oldest !== undefined) terminalIdsRef.current.delete(oldest);
+    }
 
+    // V3: requested/actual go through capAckSnapshot — heatmap base64 images /
+    // inline geojson in params must never blow the backend 16KB per-ack cap
+    // (a 422 drops the whole debounced batch). Scalar keys (center/zoom/bbox/
+    // confirmed) survive.
     const ack: MapActionAck = {
       action_id: id,
       command: action.command,
@@ -157,9 +207,9 @@ export function MapActionProvider({ children }: { children: React.ReactNode }) {
       finished_at: details.finishedAt,
       duration_ms: details.durationMs ?? null,
       correlation: action.correlation ?? null,
-      requested: (action.params ?? {}) as Record<string, unknown> | null,
+      requested: capAckSnapshot(action.params as Record<string, unknown>) ?? {},
       actual: details.actual !== undefined
-        ? (details.actual as Record<string, unknown> | null)
+        ? capAckSnapshot(details.actual as Record<string, unknown>)
         : null,
     };
 
@@ -212,7 +262,10 @@ export function MapActionProvider({ children }: { children: React.ReactNode }) {
             last.centerKey === centerKey &&
             last.zoom === zoom &&
             (now - last.timestamp) < 2000) {
-          return;  // 节流：2 秒内同地点+同 zoom 的 fly_to 丢弃
+          // 节流：2 秒内同地点+同 zoom 的 fly_to 丢弃。被丢弃的动作必须有终态 ack，
+          // 否则后端永远等不到它的 terminal（harness 覆盖率受损）。
+          reportTerminal(normalized, 'superseded', { error: 'throttled' });
+          return;
         }
         lastFlyToRef.current = { centerKey, zoom, timestamp: now };
       }
@@ -240,13 +293,17 @@ export function MapActionProvider({ children }: { children: React.ReactNode }) {
     }
 
     // MAX_PENDING_ACTIONS overflow: drop the oldest QUEUED action (never the
-    // running head) and count it.
+    // running head) and count it. The dropped action still reaches a terminal
+    // ack — a silent drop would leave the backend waiting forever.
     if (queue.length >= MAX_PENDING_ACTIONS) {
       const head = queue[0];
       const rest = queue.slice(1);
       const dropped = rest[0];
       const kept = dropped ? [head, ...rest.slice(1)] : head ? [head] : [];
       setDroppedCount((c) => c + 1);
+      if (dropped) {
+        reportTerminal(dropped, 'cancelled', { error: 'queue_overflow' });
+      }
       setQueue([...kept, normalized]);
       return;
     }
@@ -276,6 +333,9 @@ export function MapActionProvider({ children }: { children: React.ReactNode }) {
     }
     setQueue([]);
     setDroppedCount(0);
+    // The fly_to throttle window is session-scoped: a fresh session's first
+    // fly_to must not be dropped just because the previous session flew there.
+    lastFlyToRef.current = null;
     completedRingRef.current = [];
     setCompletedActions([]);
   }, [reportTerminal, setQueue]);

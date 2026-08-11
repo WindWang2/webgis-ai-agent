@@ -47,7 +47,7 @@ function stubFakeWorker(): void {
   vi.stubGlobal("Worker", FakeWorker as unknown as typeof Worker);
 }
 
-describe("worker-bridge inline-data registry LRU (FE-3)", () => {
+describe("worker-bridge inline-data registry FIFO cap (FE-3)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     _resetWorkerBridgeForTests();

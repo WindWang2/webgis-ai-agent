@@ -32,6 +32,13 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 let feActionCounter = 0;
 const mintFeActionId = (): string => `fe-${++feActionCounter}`;
 
+// V3 (design §6): commands whose execution IS the use-sse-stream store mount.
+// When the step_result payload was already mounted into the HUD store (carries
+// `geojson_ref` or `result.image`), the handler must not re-run them — it would
+// either double-mount or fail (invalid_params / target_not_found) for work that
+// already succeeded. The bridge acks them succeeded directly instead.
+const STORE_MOUNTED_COMMANDS = new Set(['add_native_heatmap', 'add_heatmap_raster', 'add_layer']);
+
 /**
  * V3 correlation for a step_result dispatch (design §6): session + step
  * identity + the per-turn SSE event id, so the backend can match ACKs back to
@@ -277,6 +284,11 @@ export function useMapBridge(
                 };
                 const commandFired = !!stepData.result?.command;
                 const batchCommands = stepData.result?.commands;
+                // V3: store-mount condition mirrored from use-sse-stream's onEvent
+                // (it calls useHudStore.addLayer when the payload carries
+                // `geojson_ref` or `result.image`). Commands mounted by that path
+                // are executed BY the mount — the handler must not re-run them.
+                const storeMounted = !!(stepData.geojson_ref || stepData.result?.image);
                 if (commandFired) {
                   // Heatmap tools put data (image, bbox, geojson, palette…) at the
                   // top level of the result — NOT under a `params` sub-key.
@@ -286,24 +298,55 @@ export function useMapBridge(
                   const actionParams = (_explicitParams && Object.keys(_explicitParams).length > 0)
                     ? _explicitParams
                     : rest;
-                  dispatchAction({
-                    command: stepData.result!.command as MapActionPayload['command'],
-                    params: actionParams as MapActionPayload['params'],
-                    // V3: pass through the backend-minted action_id + correlation (§6)
-                    ...(actionId ? { action_id: actionId } : {}),
-                    correlation: buildMapActionCorrelation(sessionId, stepData, event),
-                  });
+                  const command = stepData.result!.command as MapActionPayload['command'];
+                  if (storeMounted && STORE_MOUNTED_COMMANDS.has(command.toLowerCase())) {
+                    // The store mount IS the execution — ack succeeded directly
+                    // with the correlation (verifiable marker included) instead of
+                    // dispatching a handler run that would fail or double-mount.
+                    mapActionCtx?.reportTerminal?.(
+                      {
+                        command,
+                        params: actionParams as MapActionPayload['params'],
+                        ...(actionId ? { action_id: actionId } : { action_id: mintFeActionId() }),
+                        correlation: buildMapActionCorrelation(sessionId, stepData, event),
+                      } as MapActionPayload,
+                      'succeeded',
+                      { actual: { confirmed: true } },
+                    );
+                  } else {
+                    dispatchAction({
+                      command,
+                      params: actionParams as MapActionPayload['params'],
+                      // V3: pass through the backend-minted action_id + correlation (§6)
+                      ...(actionId ? { action_id: actionId } : {}),
+                      correlation: buildMapActionCorrelation(sessionId, stepData, event),
+                    });
+                  }
                 } else if (Array.isArray(batchCommands) && batchCommands.length > 0) {
                   // Batch tool emits a sequence of commands (e.g. export_batch_maps).
                   // The MapActionHandler queue processes one-at-a-time via popAction.
                   for (const cmd of batchCommands) {
                     if (!cmd?.command) continue;
-                    dispatchAction({
-                      command: cmd.command as MapActionPayload['command'],
-                      params: (cmd.params || {}) as MapActionPayload['params'],
-                      ...(cmd.action_id ? { action_id: cmd.action_id } : {}),
-                      correlation: buildMapActionCorrelation(sessionId, stepData, event),
-                    });
+                    const command = cmd.command as MapActionPayload['command'];
+                    if (storeMounted && STORE_MOUNTED_COMMANDS.has(command.toLowerCase())) {
+                      mapActionCtx?.reportTerminal?.(
+                        {
+                          command,
+                          params: (cmd.params || {}) as MapActionPayload['params'],
+                          ...(cmd.action_id ? { action_id: cmd.action_id } : { action_id: mintFeActionId() }),
+                          correlation: buildMapActionCorrelation(sessionId, stepData, event),
+                        } as MapActionPayload,
+                        'succeeded',
+                        { actual: { confirmed: true } },
+                      );
+                    } else {
+                      dispatchAction({
+                        command,
+                        params: (cmd.params || {}) as MapActionPayload['params'],
+                        ...(cmd.action_id ? { action_id: cmd.action_id } : {}),
+                        correlation: buildMapActionCorrelation(sessionId, stepData, event),
+                      });
+                    }
                   }
                 } else {
                   const bbox = stepData.result?.bbox ?? stepData.bbox;

@@ -35,6 +35,8 @@ function makeAsyncGen(events: SSEEvent[]): AsyncGenerator<SSEEvent> {
 // (registerAckSink) and records clearActions() calls. The context upgrade
 // (FE-1) lands these on the real provider — the test injects them via the
 // mock value so the bridge's V3 wiring can be exercised without it.
+// reportTerminal mirrors the real provider's ack shape so store-mounted
+// emissions that the bridge acks directly can be asserted on the sink.
 function makeAckWrapper(
   sinkHolder: { current: MapActionAckSink | null },
   clearActions: () => void,
@@ -49,12 +51,28 @@ function makeAckWrapper(
       registerSnapshotFn: vi.fn(),
       getMapSnapshot: vi.fn(() => null),
       registerAckSink: (sink: MapActionAckSink) => {
-        sinkHolder.current = sink;
+        // Wrap in a spy so tests can assert on acks the bridge emits through
+        // reportTerminal (store-mounted direct acks); the real sink still runs.
+        sinkHolder.current = vi.fn(sink);
         return () => {
           sinkHolder.current = null;
         };
       },
       clearActions,
+      reportTerminal: (action, status, details) => {
+        sinkHolder.current?.({
+          action_id: action.action_id!,
+          command: action.command,
+          status,
+          error: details?.error,
+          started_at: details?.startedAt,
+          finished_at: details?.finishedAt,
+          duration_ms: details?.durationMs ?? null,
+          correlation: action.correlation ?? null,
+          requested: (action.params ?? {}) as Record<string, unknown> | null,
+          actual: details?.actual !== undefined ? (details.actual as Record<string, unknown> | null) : null,
+        });
+      },
     } as MapActionContextType;
     return React.createElement(MapActionContext.Provider, { value }, children);
   };
@@ -287,7 +305,11 @@ describe('useMapBridge', () => {
   // Heatmap tools put data at the top level of result, not under result.params.
   // The bridge must destructure result → {command, ...rest} and pass rest as params.
 
-  it('heatmap raster: dispatches image + bbox as params (not result.params)', async () => {
+  it('heatmap raster with result.image is store-mounted: acks succeeded directly, no re-dispatch (V3 FIX-2)', async () => {
+    // use-sse-stream mounts the layer from result.image; the handler must not
+    // re-run it (double mount / ack FAILED for work that succeeded).
+    const sinkHolder: { current: MapActionAckSink | null } = { current: null };
+    const wrapper = makeAckWrapper(sinkHolder, vi.fn());
     mockStreamChat.mockReturnValue(makeAsyncGen([{
       event: 'step_result',
       data: {
@@ -296,6 +318,36 @@ describe('useMapBridge', () => {
           image: 'data:image/png;base64,ABC123',
           bbox: [116.0, 39.0, 117.0, 40.0],
           legend_spec: { type: 'continuous', min: 0, max: 1 },
+          action_id: 'ma-raster',
+        },
+      },
+    }]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent),
+      { wrapper },
+    );
+    await act(async () => { await result.current.send('q', {}); });
+    expect(dispatchAction).not.toHaveBeenCalled();
+    expect(sinkHolder.current).toHaveBeenCalledWith(expect.objectContaining({
+      action_id: 'ma-raster',
+      command: 'add_heatmap_raster',
+      status: 'succeeded',
+      actual: { confirmed: true },
+      correlation: { session_id: 's1' },
+    }));
+  });
+
+  it('heatmap raster with image under explicit params (not store-mounted) still dispatches', async () => {
+    // No result.image / geojson_ref at payload top level → nothing store-mounted
+    // → the bridge destructures result and passes params to the handler as before.
+    mockStreamChat.mockReturnValue(makeAsyncGen([{
+      event: 'step_result',
+      data: {
+        result: {
+          command: 'add_heatmap_raster',
+          params: { image: 'data:image/png;base64,ABC123', bbox: [116.0, 39.0, 117.0, 40.0] },
+          legend_spec: { type: 'continuous', min: 0, max: 1 },
+          action_id: 'ma-raster-params',
         },
       },
     }]));
@@ -305,11 +357,8 @@ describe('useMapBridge', () => {
     await act(async () => { await result.current.send('q', {}); });
     expect(dispatchAction).toHaveBeenCalledWith({
       command: 'add_heatmap_raster',
-      params: expect.objectContaining({
-        image: 'data:image/png;base64,ABC123',
-        bbox: [116.0, 39.0, 117.0, 40.0],
-        legend_spec: { type: 'continuous', min: 0, max: 1 },
-      }),
+      params: { image: 'data:image/png;base64,ABC123', bbox: [116.0, 39.0, 117.0, 40.0] },
+      action_id: 'ma-raster-params',
       // V3: every step_result dispatch now carries the session correlation
       correlation: { session_id: 's1' },
     });
@@ -703,5 +752,114 @@ describe('useMapBridge', () => {
     expect(url).toContain('/sessions/s1/map-action-ack');
     expect(JSON.parse(init.body as string).acks[0].action_id).toBe('ma-1');
     vi.unstubAllGlobals();
+  });
+
+  // ─── V3 review FIX-2 (7) [P2]: store-mounted data emissions ────────────
+  // use-sse-stream's onEvent mounts a HUD layer when the step_result payload
+  // carries `geojson_ref` or `result.image`. Dispatching those commands to the
+  // handler afterwards would double-mount or fail (invalid_params /
+  // target_not_found) for work that already succeeded — the store mount IS the
+  // execution. The bridge must ack succeeded directly with the correlation.
+
+  it('store-mounted step_result acks succeeded directly instead of dispatching (V3, P2)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchMock);
+    const sinkHolder: { current: MapActionAckSink | null } = { current: null };
+    const wrapper = makeAckWrapper(sinkHolder, vi.fn());
+
+    mockStreamChat.mockReturnValue(makeAsyncGen([{
+      event: 'step_result',
+      data: {
+        result: {
+          command: 'add_native_heatmap',
+          metadata: { render_type: 'native', point_count: 50, radius: 2000, palette: 'classic' },
+          type: 'FeatureCollection',
+          action_id: 'ma-heat',
+        },
+        geojson_ref: 'ref-heat-1',
+        step_id: 'step-4',
+        turn_id: 'turn-3',
+      },
+      id: '11',
+    }]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent),
+      { wrapper },
+    );
+    await act(async () => { await result.current.send('q', {}); });
+
+    // handler NOT invoked — the store mount already executed the work
+    expect(dispatchAction).not.toHaveBeenCalled();
+    const sink = sinkHolder.current;
+    expect(sink).toBeTruthy();
+    expect(sink).toHaveBeenCalledWith(expect.objectContaining({
+      action_id: 'ma-heat',
+      command: 'add_native_heatmap',
+      status: 'succeeded',
+      actual: { confirmed: true },
+      correlation: {
+        session_id: 's1',
+        step_id: 'step-4',
+        turn_id: 'turn-3',
+        sse_event_id: '11',
+      },
+    }));
+    vi.unstubAllGlobals();
+  });
+
+  it('store-mounted add_heatmap_raster (result.image) acks succeeded directly (V3, P2)', async () => {
+    const sinkHolder: { current: MapActionAckSink | null } = { current: null };
+    const wrapper = makeAckWrapper(sinkHolder, vi.fn());
+
+    mockStreamChat.mockReturnValue(makeAsyncGen([{
+      event: 'step_result',
+      data: {
+        result: {
+          command: 'add_heatmap_raster',
+          image: 'data:image/png;base64,ABC123',
+          bbox: [116.0, 39.0, 117.0, 40.0],
+          action_id: 'ma-raster',
+        },
+        step_id: 'step-5',
+        turn_id: 'turn-3',
+      },
+      id: '12',
+    }]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent),
+      { wrapper },
+    );
+    await act(async () => { await result.current.send('q', {}); });
+
+    expect(dispatchAction).not.toHaveBeenCalled();
+    expect(sinkHolder.current).toHaveBeenCalledWith(expect.objectContaining({
+      action_id: 'ma-raster',
+      command: 'add_heatmap_raster',
+      status: 'succeeded',
+      actual: { confirmed: true },
+      correlation: { session_id: 's1', step_id: 'step-5', turn_id: 'turn-3', sse_event_id: '12' },
+    }));
+  });
+
+  it('does NOT skip non-mount commands even when the payload is store-mounted (V3, P2)', async () => {
+    // A fly_to riding on a store-mounted payload must still dispatch — the store
+    // mount only mounts layers, it never moves the camera.
+    mockStreamChat.mockReturnValue(makeAsyncGen([{
+      event: 'step_result',
+      data: {
+        result: { command: 'fly_to', params: { center: [116, 39], zoom: 12 }, action_id: 'ma-fly' },
+        geojson_ref: 'ref-x',
+        step_id: 's1',
+        turn_id: 't1',
+      },
+      id: '13',
+    }]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent)
+    );
+    await act(async () => { await result.current.send('q', {}); });
+    expect(dispatchAction).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'fly_to', action_id: 'ma-fly' }),
+    );
   });
 });

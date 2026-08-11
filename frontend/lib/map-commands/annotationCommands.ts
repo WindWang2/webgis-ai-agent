@@ -28,6 +28,8 @@ export const annotationCommands: Record<string, CommandEntry> = {
         properties: { label: label || null, color: color || '#ef4444', kind: 'marker' },
       });
       refreshAnnotations(map);
+      // V3: verifiable marker (annotation mutation — harness convergence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 
@@ -82,6 +84,8 @@ export const annotationCommands: Record<string, CommandEntry> = {
         }
       }
       refreshAnnotations(map);
+      // V3: verifiable marker (annotation mutation — harness convergence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 
@@ -91,6 +95,8 @@ export const annotationCommands: Record<string, CommandEntry> = {
       const { map, getHudState } = ctx;
       getHudState().clearAnnotations();
       refreshAnnotations(map);
+      // V3: verifiable marker (annotation mutation — harness convergence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 };

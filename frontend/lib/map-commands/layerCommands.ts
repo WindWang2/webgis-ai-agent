@@ -27,10 +27,13 @@ export const layerCommands: Record<string, CommandEntry> = {
       const { layerId, type, geojson, style, flyTo } = params;
       // V3: silent no-ops become explicit failed results (design §6) — missing
       // target → target_not_found, missing payload data → invalid_params.
-      if (!layerId) return { status: 'failed', error: 'target_not_found' };
+      // Legacy emissions use `id` — read it as the layerId fallback (the
+      // validator already accepts both forms).
+      const targetId = (layerId as string | undefined) ?? (params.id as string | undefined);
+      if (!targetId) return { status: 'failed', error: 'target_not_found' };
       if (!geojson) return { status: 'failed', error: 'invalid_params' };
 
-      const id = `custom-${layerId}`;
+      const id = `custom-${targetId}`;
       renderer.addGeoJsonSource(map, id, geojson);
 
       if (style && ((style as any).type === 'choropleth' || (style as any).type === 'lisa')) {
@@ -50,6 +53,8 @@ export const layerCommands: Record<string, CommandEntry> = {
           navigation.fitBounds(map, bbox, 50);
         }
       }
+      // V3: verifiable marker so the harness convergence metric has evidence.
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 
@@ -86,6 +91,8 @@ export const layerCommands: Record<string, CommandEntry> = {
       });
 
       navigation.fitBounds(map, bbox, 80);
+      // V3: verifiable marker (layer add — harness convergence evidence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 
@@ -98,9 +105,24 @@ export const layerCommands: Record<string, CommandEntry> = {
       const target = layer_id || layerId;
       // V3: missing target → explicit failed result (was a silent return).
       if (!target) return { status: 'failed', error: 'target_not_found' };
+      // V3: a genuinely-missing target — no `custom-…` stack on the map AND no
+      // store layer — is a failure, not a void success. Detecting it also stops
+      // the old path from issuing removeLayer/removeSource calls against ids
+      // that were never mounted (fabricated-id map mutations).
+      const style = map.getStyle();
+      const hasStack = (style?.layers ?? [])
+        .map((l: any) => l.id as string)
+        .some((id: string) =>
+          id === `custom-${target}` ||
+          id.startsWith(`custom-${target}-`) ||
+          id.startsWith(`custom-${target}_`));
+      const storeHasLayer = getHudState().layers?.some?.((l: any) => l.id === target) ?? false;
+      if (!hasStack && !storeHasLayer) return { status: 'failed', error: 'target_not_found' };
       renderer.removeLayerStack(map, `custom-${target}`, true);
       // Sync removal to store so LayersTab stays in sync
       getHudState().removeLayer(target);
+      // V3: verifiable marker (layer remove — harness convergence evidence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 
@@ -155,15 +177,24 @@ export const layerCommands: Record<string, CommandEntry> = {
       if (!layer_id) return { status: 'failed', error: 'target_not_found' };
 
       const style = map.getStyle();
+      const matched: string[] = [];
       style.layers?.forEach((l: any) => {
-        if (l.id.startsWith(`custom-${layer_id}-`)) {
-          renderer.updateLayerStyle(map, l.id, {
-            visibility: visible !== undefined ? (visible ? 'visible' : 'none') : undefined,
-            opacity,
-            color: color as string | undefined,
-          });
+        if (l.id === `custom-${layer_id}` || l.id.startsWith(`custom-${layer_id}-`) || l.id.startsWith(`custom-${layer_id}_`)) {
+          matched.push(l.id);
         }
       });
+      // V3: no matching map layer AND no store layer → genuine miss → failed
+      // result (was: silent no-op forEach + void success).
+      const storeHasLayer = getHudState().layers?.some?.((l: any) => l.id === layer_id) ?? false;
+      if (matched.length === 0 && !storeHasLayer) return { status: 'failed', error: 'target_not_found' };
+
+      for (const id of matched) {
+        renderer.updateLayerStyle(map, id, {
+          visibility: visible !== undefined ? (visible ? 'visible' : 'none') : undefined,
+          opacity,
+          color: color as string | undefined,
+        });
+      }
       // Sync visibility/opacity/name/color back to store so LayersTab stays in sync
       const storeUpdates: Record<string, unknown> = {};
       if (visible !== undefined) storeUpdates.visible = visible;
@@ -173,6 +204,8 @@ export const layerCommands: Record<string, CommandEntry> = {
       if (Object.keys(storeUpdates).length > 0) {
         getHudState().updateLayer(layer_id, storeUpdates);
       }
+      // V3: verifiable marker (layer style/visibility update — harness convergence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 
@@ -186,18 +219,27 @@ export const layerCommands: Record<string, CommandEntry> = {
       if (!style) return { status: 'failed', error: 'invalid_params' };
       const mapStyle = map.getStyle();
       const s = style as any;
+      const matched: string[] = [];
       mapStyle.layers?.forEach((l: any) => {
-        if (l.id.startsWith(`custom-${layer_id}-`)) {
-          renderer.updateLayerStyle(map, l.id, {
-            color: s.color,
-            strokeColor: s.strokeColor,
-            strokeWidth: s.strokeWidth,
-            pointSize: s.pointSize,
-            dashArray: s.dashArray,
-            fill: s.fill,
-          });
+        if (l.id === `custom-${layer_id}` || l.id.startsWith(`custom-${layer_id}-`) || l.id.startsWith(`custom-${layer_id}_`)) {
+          matched.push(l.id);
         }
       });
+      // V3: no matching map layer AND no store layer → genuine miss → failed
+      // result (was: silent no-op forEach + void success).
+      const storeHasLayer = getHudState().layers?.some?.((l: any) => l.id === layer_id) ?? false;
+      if (matched.length === 0 && !storeHasLayer) return { status: 'failed', error: 'target_not_found' };
+
+      for (const id of matched) {
+        renderer.updateLayerStyle(map, id, {
+          color: s.color,
+          strokeColor: s.strokeColor,
+          strokeWidth: s.strokeWidth,
+          pointSize: s.pointSize,
+          dashArray: s.dashArray,
+          fill: s.fill,
+        });
+      }
       // Sync style changes back to store so LayersTab swatch stays in sync
       const styleUpdates: Record<string, any> = {};
       for (const key of ['color', 'strokeColor', 'strokeWidth', 'pointSize', 'dashArray', 'fill']) {
@@ -209,6 +251,8 @@ export const layerCommands: Record<string, CommandEntry> = {
           style: { ...(existing?.style ?? {}), ...styleUpdates },
         });
       }
+      // V3: verifiable marker (layer style update — harness convergence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 
@@ -271,7 +315,10 @@ export const layerCommands: Record<string, CommandEntry> = {
         }
       } catch (e) {
         devOnly.warn('[MapActionHandler] REORDER_LAYER failed:', e);
+        return { status: 'failed', error: 'reorder_failed' };
       }
+      // V3: verifiable marker (layer reorder — harness convergence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 

@@ -330,4 +330,148 @@ describe('MapActionProvider (V3 queue + lifecycle)', () => {
     const superseded = sink.mock.calls.map((c) => c[0]).filter((a: MapActionAck) => a.status === 'superseded');
     expect(superseded.length).toBe(198);
   });
+
+  // ─── V3 review FIX-2 ────────────────────────────────────────────────────
+  // (1) [P1] ack snapshots sanitized: heatmap base64 images / inline geojson in
+  // params must never blow the backend 16KB per-ack cap (422 → whole debounced
+  // batch dropped). requested/actual keep only scalars + arrays of scalars,
+  // drop data-dump keys, and stay far under the cap.
+  it('caps ack requested/actual: drops data-dump keys and stays under the 16KB cap (P1)', () => {
+    const { result } = renderCtx();
+    const sink = vi.fn();
+    act(() => { result.current.registerAckSink(sink); });
+    const bigImage = 'data:image/png;base64,' + 'A'.repeat(50000);
+    const bigGeojson = {
+      type: 'FeatureCollection',
+      features: Array.from({ length: 5000 }, (_, i) => ({
+        id: i, geometry: { type: 'Point', coordinates: [i, i] }, properties: { i },
+      })),
+    };
+    const action = makeAction({
+      action_id: 'ma-big',
+      command: 'add_heatmap_raster',
+      params: {
+        image: bigImage,
+        geojson: bigGeojson,
+        features: bigGeojson.features,
+        data: { raw: 'payload' },
+        bbox: [116.0, 39.0, 117.0, 40.0],
+        center: [116.5, 39.5],
+        zoom: 12,
+      },
+    });
+    act(() => { result.current.dispatchAction(action); });
+    act(() => { result.current.reportTerminal(action, 'succeeded'); });
+
+    const ack = sink.mock.calls[0][0] as MapActionAck;
+    // whole serialized ack stays far under the backend's 16KB per-ack cap
+    expect(JSON.stringify(ack).length).toBeLessThan(3000);
+    // data-dump keys dropped; scalar keys (bbox/center/zoom) preserved
+    expect(ack.requested).toEqual({
+      bbox: [116.0, 39.0, 117.0, 40.0],
+      center: [116.5, 39.5],
+      zoom: 12,
+    });
+  });
+
+  it('sanitizes ack actual the same way (nested/oversized values dropped, scalars kept)', () => {
+    const { result } = renderCtx();
+    const sink = vi.fn();
+    act(() => { result.current.registerAckSink(sink); });
+    const action = makeAction({ action_id: 'ma-act' });
+    act(() => { result.current.dispatchAction(action); });
+    act(() => {
+      result.current.reportTerminal(action, 'succeeded', {
+        actual: {
+          confirmed: true,
+          geometry: { type: 'Point', coordinates: [1, 2] },
+          stats: { a: 1 },
+          bbox: [116, 39, 117, 40],
+        },
+      });
+    });
+    const ack = sink.mock.calls[0][0] as MapActionAck;
+    expect(ack.actual).toEqual({ confirmed: true, bbox: [116, 39, 117, 40] });
+  });
+
+  // (2) [P2] the 2s fly_to throttle used to silently drop a backend-minted
+  // action with no terminal ack — the harness would wait forever. It now acks
+  // superseded('throttled') before returning.
+  it('acks a throttled fly_to as superseded(throttled) instead of a silent drop (P2)', () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const { result } = renderCtx();
+    const sink = vi.fn();
+    act(() => { result.current.registerAckSink(sink); });
+    const action = () => makeAction({ command: 'fly_to', params: { center: [116, 39], zoom: 12 } });
+    act(() => { result.current.dispatchAction(action()); });
+    act(() => { result.current.dispatchAction(action()); });
+    expect(result.current.actions).toHaveLength(1); // second one throttled
+    expect(sink).toHaveBeenCalledWith(expect.objectContaining({
+      command: 'fly_to',
+      status: 'superseded',
+      error: 'throttled',
+    }));
+  });
+
+  // (3) [P2] MAX_PENDING_ACTIONS overflow used to drop the oldest QUEUED action
+  // silently — no terminal ack. It now acks cancelled('queue_overflow').
+  it('acks the overflow-dropped action as cancelled(queue_overflow) (P2)', () => {
+    const { result } = renderCtx();
+    const sink = vi.fn();
+    act(() => { result.current.registerAckSink(sink); });
+    act(() => {
+      for (let i = 0; i < 32; i++) {
+        result.current.dispatchAction(makeAction({ command: 'add_marker', action_id: `ma-${i}` }));
+      }
+    });
+    act(() => {
+      result.current.dispatchAction(makeAction({ command: 'add_marker', action_id: 'ma-overflow' }));
+    });
+    expect(result.current.droppedCount).toBe(1);
+    expect(sink).toHaveBeenCalledWith(expect.objectContaining({
+      action_id: 'ma-1',
+      command: 'add_marker',
+      status: 'cancelled',
+      error: 'queue_overflow',
+    }));
+  });
+
+  // (4) [P3] terminalIdsRef was unbounded — now capped at the most recent 2000
+  // (a Map keeps insertion order, so the oldest id is evicted first). The evicted
+  // id can be reported again; memory stays bounded.
+  it('caps the terminal-id dedup set at 2000 (oldest evicted, P3)', () => {
+    const { result } = renderCtx();
+    const sink = vi.fn();
+    act(() => { result.current.registerAckSink(sink); });
+    act(() => {
+      for (let i = 0; i < 2100; i++) {
+        result.current.reportTerminal(
+          makeAction({ command: 'add_marker', action_id: `ma-t-${i}` }),
+          'succeeded',
+        );
+      }
+    });
+    expect(sink).toHaveBeenCalledTimes(2100);
+    // the oldest id (ma-t-0) was evicted from the cap — a late duplicate
+    // terminal for it is allowed through again
+    act(() => {
+      result.current.reportTerminal(makeAction({ command: 'add_marker', action_id: 'ma-t-0' }), 'succeeded');
+    });
+    expect(sink).toHaveBeenCalledTimes(2101);
+  });
+
+  // (4b) [P3] clearActions resets the fly_to throttle window: a fresh session's
+  // first fly_to must not be dropped because the previous session flew there.
+  it('clearActions resets the fly_to throttle window (P3)', () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const { result } = renderCtx();
+    const action = () => makeAction({ command: 'fly_to', params: { center: [116, 39], zoom: 12 } });
+    act(() => { result.current.dispatchAction(action()); });
+    act(() => { result.current.dispatchAction(action()); }); // throttled
+    expect(result.current.actions).toHaveLength(1);
+    act(() => { result.current.clearActions(); });
+    // without the reset the identical fly_to would still be inside the 2s window
+    act(() => { result.current.dispatchAction(action()); });
+    expect(result.current.actions).toHaveLength(1);
+  });
 });
