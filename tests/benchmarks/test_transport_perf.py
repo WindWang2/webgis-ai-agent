@@ -9,6 +9,9 @@ frontend↔backend *transport* hot paths this goal targets:
   4. concurrent_stream_p95_8     — p95 first-event across 8 concurrent streams
                                    (surfaces the Pi singleton-lock serialization
                                    and DB-session-hold behaviour)
+  5. pi_token_batch_coalesce_200 — yielded-chunk count for a 200-token Pi turn
+                                   (D-F6 route-boundary batching gate; the
+                                   baseline hard-fails if batching is reverted)
 
 All workloads mock at the model/Pi boundary (no real LLM, no subprocess) so
 they are deterministic and CI-safe. Same gate semantics as the compute harness:
@@ -100,24 +103,30 @@ class _MockPiBridge:
     """Deterministic Pi bridge stand-in.
 
     Yields a ``task_start`` immediately (no RPC), then ``n_tokens`` token
-    events, then a terminal ``done``. Used to measure transport/framework
-    overhead (auth → guard → StreamingResponse → first yield) in isolation
-    from real model latency.
+    events — with an optional ``step_result`` after every ``step_result_every``
+    tokens (structural events interspersed, as a real turn produces) — then a
+    terminal ``done``. Used to measure transport/framework overhead
+    (auth → guard → StreamingResponse → first yield) in isolation from real
+    model latency.
     """
 
-    def __init__(self, n_tokens: int = 30) -> None:
+    def __init__(self, n_tokens: int = 30, step_result_every: int | None = None) -> None:
         self.n_tokens = n_tokens
+        self.step_result_every = step_result_every
 
     async def stream_prompt(
         self, message: str, session_id: str | None = None
     ) -> AsyncIterator[str]:
-        yield sse_event("task_start", {"task_id": "t", "session_id": session_id or "s"})
+        sid = session_id or "s"
+        yield sse_event("task_start", {"task_id": "t", "session_id": sid})
         for i in range(self.n_tokens):
             yield sse_event("token", _token_payload(i))
-        yield sse_event("done", {"session_id": session_id or "s"})
+            if self.step_result_every and (i + 1) % self.step_result_every == 0:
+                yield sse_event("step_result", _step_result_payload(i, 500))
+        yield sse_event("done", {"session_id": sid})
 
 
-def _build_transport_app(n_tokens: int = 30) -> FastAPI:
+def _build_transport_app(n_tokens: int = 30, step_result_every: int | None = None) -> FastAPI:
     """Minimal app exposing only the chat router with mocked boundaries.
 
     Dep overrides drop auth/DB so the workload measures the streaming
@@ -129,7 +138,7 @@ def _build_transport_app(n_tokens: int = 30) -> FastAPI:
 
     # Force the Pi path with a deterministic bridge.
     chat_route.USE_NEW_AGENT = True
-    chat_route.pi_bridge = _MockPiBridge(n_tokens=n_tokens)
+    chat_route.pi_bridge = _MockPiBridge(n_tokens=n_tokens, step_result_every=step_result_every)
 
     # Anonymous caller, no owner token, no DB session held by the dependency.
     async def _anon_user():
@@ -171,9 +180,9 @@ def _sse_serialization_ms() -> float:
 def _sse_batcher_coalesce_ms() -> float:
     """Push 500 token events through SSEBatcher(32, 0.08) and drain; total ms.
 
-    Exercises the coalescing path used by the legacy streaming generator. The
-    Pi path currently bypasses the batcher (finding D-F6); this workload
-    protects the batcher's own throughput.
+    Exercises the coalescing path used by the streaming generators (legacy
+    engine and — since D-F6 — the Pi route). This workload protects the
+    batcher's own throughput.
     """
     async def _run() -> float:
         batcher = SSEBatcher(max_events=32, max_delay_s=0.08)
@@ -243,11 +252,66 @@ def _concurrent_stream_p95_8_ms() -> float:
     return asyncio.run(_run())
 
 
+def _pi_token_batch_coalesce_200() -> float:
+    """200-token Pi turn: count coalesced SSE chunks (D-F6 batching gate).
+
+    Metric is the number of yielded chunks per turn (each = one HTTP write),
+    NOT milliseconds. A 200-token turn with step_results every 50 tokens
+    (task_start + 200 tokens + 4 step_results + done) yields ~206 chunks when
+    every event is written straight through; with the route-boundary
+    SSEBatcher (32 events / 80ms) it coalesces to ~14. The baseline gate
+    therefore hard-fails if the batching is ever reverted (206 >> 14*4).
+
+    Also asserts first-event latency: ``task_start`` is structural and must
+    yield immediately, so the "thinking" indicator's TTFE must not regress.
+
+    Measured via ``StreamingResponse.body_iterator``: httpx's ASGITransport
+    coalesces every body part into a single stream, so per-write granularity
+    is only observable at the body iterator (the exact sequence of writes the
+    wire would carry).
+    """
+    _build_transport_app(n_tokens=200, step_result_every=50)  # injects the mock
+    req = chat_route.ChatRequest(message="hi", session_id=None, map_state=None)
+
+    async def _once() -> tuple[int, float]:
+        t0 = time.perf_counter()
+        ttfe_ms: float | None = None
+        chunks = 0
+        resp = await chat_route.chat_stream(req, _user={}, owner_token=None, db=None)
+        async for _chunk in resp.body_iterator:
+            if ttfe_ms is None:
+                ttfe_ms = (time.perf_counter() - t0) * 1000
+            chunks += 1
+        return chunks, ttfe_ms if ttfe_ms is not None else 0.0
+
+    async def _run() -> tuple[float, float]:
+        chunk_counts: list[int] = []
+        ttfe_samples: list[float] = []
+        for _ in range(ITERATIONS):
+            c, ttfe = await _once()
+            chunk_counts.append(c)
+            ttfe_samples.append(ttfe)
+        return statistics.median(chunk_counts), statistics.median(ttfe_samples)
+
+    chunks, ttfe_ms = asyncio.run(_run())
+    # Nominal AFTER is 14 chunks (see above); ≤16 leaves slack for 80ms-window
+    # trips on loaded hosts. Unbatched this workload yields ~206.
+    assert chunks <= 16, (
+        f"D-F6 batching regressed: {chunks} chunks for 200 tokens "
+        f"(expected <= ~14; unbatched would be ~206)"
+    )
+    # task_start is structural → first-byte latency must not regress (generous
+    # absolute bound; stream_first_event_pi guards the HTTP-level number).
+    assert ttfe_ms < 100, f"D-F6 first-event latency regressed: {ttfe_ms:.1f} ms"
+    return chunks
+
+
 WORKLOADS = {
     "sse_serialization_10k": _sse_serialization_ms,
     "sse_batcher_coalesce_500": _sse_batcher_coalesce_ms,
     "stream_first_event_pi": _stream_first_event_pi_ms,
     "concurrent_stream_p95_8": _concurrent_stream_p95_8_ms,
+    "pi_token_batch_coalesce_200": _pi_token_batch_coalesce_200,
 }
 
 

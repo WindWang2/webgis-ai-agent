@@ -88,6 +88,22 @@ _TERMINAL_EVENTS = frozenset({
 _COMMENT_PREFIX = ":"
 
 
+def sse_event_type(event_str: str) -> str:
+    """Return the event type carried by an SSE string; "" for comment lines.
+
+    Parsed defensively: the event name is read from the first line, which for
+    a typed event is exactly ``event: <name>\\n``. Comment/keepalive lines
+    (``: ...``) and anything not shaped as ``event: `` return "" — matching
+    how :func:`_is_terminal_event` avoids substring-matching payloads (a
+    ``step_result`` whose data contains the word "done" must not read as a
+    "done" event). Callers use this to classify events without re-parsing.
+    """
+    first_line = event_str.split("\n", 1)[0]
+    if not first_line.startswith("event: "):
+        return ""
+    return first_line[len("event: "):].strip()
+
+
 def _is_terminal_event(event_str: str) -> bool:
     """True if this SSE string carries a terminal event type.
 
@@ -96,11 +112,7 @@ def _is_terminal_event(event_str: str) -> bool:
     substring-match the whole payload (a ``step_result`` whose data happens to
     contain the word "done" must not be treated as terminal).
     """
-    first_line = event_str.split("\n", 1)[0]
-    if not first_line.startswith("event: "):
-        return False
-    name = first_line[len("event: "):].strip()
-    return name in _TERMINAL_EVENTS
+    return sse_event_type(event_str) in _TERMINAL_EVENTS
 
 
 class SSEBatcher:

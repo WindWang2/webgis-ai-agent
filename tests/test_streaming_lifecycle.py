@@ -273,3 +273,208 @@ async def test_dead_pi_bridge_falls_back_to_legacy_engine(monkeypatch):
     # The legacy engine handled the turn; the dead Pi bridge was NOT called.
     assert dead_bridge.stream_prompt.call_count == 0
     assert b"task_start" in body
+
+
+# ─── D-F6: Pi-path SSE token batching (route boundary) ───────────────────────
+#
+# The Pi route used to yield every bridge event straight to StreamingResponse —
+# one HTTP write per token (~200 writes/turn). The route now coalesces
+# high-frequency events (token/content) through the shared SSEBatcher, mirroring
+# the legacy engine. These tests prove the batching contract at the seam that
+# actually observes per-write granularity: StreamingResponse.body_iterator.
+# (httpx's ASGITransport coalesces every body part into a single stream, so
+# HTTP-level chunk counts are unobservable there.)
+
+
+def _chunk_event_types(chunk: str | bytes) -> list[str]:
+    """Event types carried by one yielded SSE chunk (possibly coalesced)."""
+    text = chunk.decode() if isinstance(chunk, bytes) else chunk
+    types: list[str] = []
+    for block in text.split("\n\n"):
+        for line in block.split("\n"):
+            if line.startswith("event: "):
+                types.append(line[len("event: "):].strip())
+    return types
+
+
+class _BurstPiBridge:
+    """Deterministic Pi bridge with configurable token bursts + step_results.
+
+    Yields ``task_start``, then each burst of tokens followed by a
+    ``step_result``, then ``done``. With bursts=(96, 104) that is 200 tokens
+    with a structural ``step_result`` between token runs — the D-F6 scenario.
+    """
+
+    def __init__(self, bursts: tuple[int, ...]) -> None:
+        self.bursts = bursts
+
+    async def stream_prompt(
+        self, message: str, session_id: str | None = None
+    ) -> AsyncIterator[str]:
+        sid = session_id or "s"
+        yield sse_event("task_start", {"task_id": "t", "session_id": sid})
+        i = 0
+        for burst in self.bursts:
+            for _ in range(burst):
+                yield sse_event("token", {"content": f"tok{i} ", "session_id": sid})
+                i += 1
+            yield sse_event(
+                "step_result",
+                {"tool": "search_poi", "result": {"ok": True}, "session_id": sid},
+            )
+        yield sse_event("done", {"session_id": sid})
+
+
+class _ExplodingPiBridge:
+    """Bridge that yields ``n_tokens`` tokens, then raises mid-stream."""
+
+    def __init__(self, n_tokens: int = 40) -> None:
+        self.n_tokens = n_tokens
+
+    async def stream_prompt(
+        self, message: str, session_id: str | None = None
+    ) -> AsyncIterator[str]:
+        sid = session_id or "s"
+        yield sse_event("task_start", {"task_id": "t", "session_id": sid})
+        for i in range(self.n_tokens):
+            yield sse_event("token", {"content": f"tok{i} ", "session_id": sid})
+        raise RuntimeError("bridge exploded")
+
+
+async def _collect_route_chunks(monkeypatch, bridge) -> list[str]:
+    """Stream one turn through the Pi route; return the per-write SSE chunks.
+
+    The chunk sequence is exactly what StreamingResponse would put on the wire
+    (one write per generator yield) — the seam at which batching is observable.
+    """
+    monkeypatch.setattr(chat_route, "USE_NEW_AGENT", True)
+    monkeypatch.setattr(chat_route, "pi_bridge", bridge)
+    resp = await chat_route.chat_stream(
+        chat_route.ChatRequest(message="hi", session_id=None, map_state=None),
+        _user={},
+        owner_token=None,
+        db=None,
+    )
+    return [chunk async for chunk in resp.body_iterator]
+
+
+@pytest.mark.asyncio
+async def test_pi_stream_batches_200_tokens_into_few_chunks(monkeypatch):
+    """D-F6: route-boundary batching collapses ~200 token writes into ~10.
+
+    Unbatched, a 200-token turn emits one write per event
+    (task_start + 200 tokens + 2 step_results + done = 204 chunks). With the
+    route batcher (max 32 events / 80ms) the same stream coalesces to 11
+    chunks, while every structural event (task_start, step_result, done) still
+    lands in its own chunk with any buffered tokens flushed before it.
+    """
+    chunks = await _collect_route_chunks(monkeypatch, _BurstPiBridge(bursts=(96, 104)))
+    assert len(chunks) <= 12, f"expected ~10 coalesced chunks, got {len(chunks)}"
+
+    all_types = [t for chunk in chunks for t in _chunk_event_types(chunk)]
+    assert all_types.count("token") == 200
+    assert all_types.count("step_result") == 2
+    assert all_types.count("task_start") == 1
+    assert all_types.count("done") == 1
+
+    # task_start and done each arrive in their own chunk: first-byte latency
+    # for the "thinking" indicator must not regress, and terminal events must
+    # never be coalesced (the frontend closes on them).
+    assert _chunk_event_types(chunks[0]) == ["task_start"]
+    assert _chunk_event_types(chunks[-1]) == ["done"]
+
+    # A structural step_result between token bursts flushes the *partial*
+    # buffered tail (< 32 tokens — a threshold flush would be exactly 32)
+    # before it, so the frontend sees content strictly before the step_result.
+    partial_flush_before_structural = False
+    for i, chunk in enumerate(chunks):
+        types = _chunk_event_types(chunk)
+        assert types.count("step_result") <= 1, "step_result must be its own chunk"
+        if types == ["step_result"] and i > 0:
+            prev_types = _chunk_event_types(chunks[i - 1])
+            if (
+                prev_types
+                and all(t == "token" for t in prev_types)
+                and 0 < len(prev_types) < 32
+            ):
+                partial_flush_before_structural = True
+    assert partial_flush_before_structural, (
+        "a structural event between token bursts must flush the partial "
+        "buffered tail (0 < n < 32 tokens) before it (D-F6)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_pi_stream_flushes_buffered_tokens_before_error(monkeypatch):
+    """D-F6: on an upstream failure, buffered tokens precede the error event.
+
+    The bridge raises after 40 tokens; the route batcher has flushed 32 and
+    holds 8. The exception path flushes those 8 as their own chunk, then the
+    route yields the ``error`` event — the frontend never loses buffered
+    content before an error, and never sees content after it.
+    """
+    chunks = await _collect_route_chunks(monkeypatch, _ExplodingPiBridge(n_tokens=40))
+    types_by_chunk = [_chunk_event_types(c) for c in chunks]
+    # task_start | 32 tokens | 8 tokens (exception flush) | error
+    assert len(chunks) == 4, f"expected 4 chunks, got {types_by_chunk}"
+    assert types_by_chunk[0] == ["task_start"]
+    assert types_by_chunk[-1] == ["error"]
+    token_chunks = [t for t in types_by_chunk if all(x == "token" for x in t)]
+    assert sum(len(t) for t in token_chunks) == 40
+    assert any(0 < len(t) < 32 for t in token_chunks), (
+        "the partial tail must flush as its own chunk before the error event"
+    )
+
+
+@pytest.mark.asyncio
+async def test_pi_batched_stream_disconnect_drops_buffered_tokens():
+    """D-F6: disconnect mid-batch cancels cleanly; buffered tokens are dropped.
+
+    We pick "deterministically dropped" over "flushed" for disconnects: the
+    client is gone, so writing buffered tokens to a dead connection is
+    pointless (and yielding during cancellation handling can itself raise).
+    CancelledError is a BaseException, so it bypasses the exception-flush path
+    and unwinds the generator — the bridge stream's finally (abort/drain/
+    cleanup) still runs. Driven at the batched-wrapper seam because that is
+    where the real StreamingResponse cancellation delivers CancelledError.
+    """
+    pushed_tokens = 0
+    parked = asyncio.Event()
+    bridge_unwound = asyncio.Event()
+
+    async def _stream(
+        message: str, session_id: str | None = None
+    ) -> AsyncIterator[str]:
+        sid = session_id or "s"
+        yield sse_event("task_start", {"task_id": "t", "session_id": sid})
+        try:
+            for i in range(34):
+                yield sse_event("token", {"content": f"tok{i} ", "session_id": sid})
+                nonlocal pushed_tokens
+                pushed_tokens += 1
+            parked.set()
+            await asyncio.sleep(3600)  # parked awaiting the next Pi event
+        finally:
+            bridge_unwound.set()
+
+    gen = chat_route._sse_batched(_stream("hi", session_id="s"))
+    first = await gen.__anext__()
+    assert _chunk_event_types(first) == ["task_start"]
+    second = await gen.__anext__()
+    assert _chunk_event_types(second) == ["token"] * 32
+
+    # Pull once more as a task: it consumes tok32..33 (2 tokens buffered
+    # mid-batch) and parks inside the bridge stream awaiting the next event.
+    pull = asyncio.ensure_future(gen.__anext__())
+    await asyncio.wait_for(parked.wait(), timeout=2.0)
+    assert pushed_tokens == 34, "must be mid-batch with tokens buffered"
+
+    # Client disconnect: cancel the reader task (StreamingResponse does the
+    # same on disconnect). Only CancelledError may surface; the bridge stream
+    # unwinds cleanly and no error event is emitted.
+    pull.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pull
+    assert bridge_unwound.is_set(), (
+        "the bridge stream must unwind on disconnect (abort/drain/cleanup)"
+    )

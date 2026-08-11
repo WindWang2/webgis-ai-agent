@@ -14,7 +14,7 @@ from app.services.history_service_async import AsyncHistoryService
 from app.tools._utils import async_db_session
 from app.tools.registry import ToolRegistry
 
-from app.utils.sse import sse_event
+from app.utils.sse import SSEBatcher, sse_event, sse_event_type
 
 from app.agent_pi_bridge import PiRpcError, USE_NEW_AGENT
 
@@ -31,6 +31,15 @@ SSE_HEADERS = {
     "Connection": "keep-alive",
     "X-Accel-Buffering": "no",
 }
+
+# D-F6: Pi 路径的 token 批处理（P1）。Pi 桥逐事件产出，若逐条 yield 到
+# StreamingResponse 就是每 token 一次 HTTP write（~200 writes/turn）。这里在
+# 路由边界用 SSEBatcher 合并高频事件（token/content），与 legacy 引擎一致；
+# 结构事件（task_start/step_*/done/...）与 keepalive 注释仍逐条透传，缓冲的
+# token 总是先于结构事件 flush，保证前端事件顺序不变。
+_PI_BATCHABLE_EVENTS = frozenset({"token", "content"})
+_PI_BATCH_MAX_EVENTS = 32
+_PI_BATCH_MAX_DELAY_S = 0.08
 
 # Feature flag: 通过环境变量切换新旧 Agent 系统
 # true/1/yes 时使用 Pi 开源 agent (vendor/pi) 通过 RPC 调用
@@ -72,6 +81,49 @@ def _use_pi_bridge() -> bool:
         and pi_bridge is not None
         and not getattr(pi_bridge, "_process_died", False)
     )
+
+
+async def _sse_batched(stream, max_events=_PI_BATCH_MAX_EVENTS, max_delay_s=_PI_BATCH_MAX_DELAY_S):
+    """Wrap an SSE event stream with route-boundary token batching (D-F6).
+
+    Coalesces high-frequency events (``token`` / ``content``) through a shared
+    :class:`SSEBatcher`, mirroring the legacy engine. Structural events
+    (``task_start`` / ``step_*`` / ``tool_*`` / ``task_complete`` / ``done`` /
+    ``error``) and keepalive comments (``: ...``) pass through in order, with
+    any buffered tokens flushed first so the frontend event order is
+    preserved.
+
+    Lifecycle: on normal stream end the tail is flushed; on an upstream
+    exception buffered tokens are flushed and the exception is re-raised (the
+    caller yields the error event after them). A client disconnect
+    (GeneratorExit / CancelledError — BaseException) deliberately bypasses the
+    exception flush: the connection is gone, so buffered tokens are
+    deterministically dropped with the generator frame instead of attempting
+    writes to a dead connection, and the underlying bridge stream still
+    unwinds (its finally runs abort/drain/cleanup).
+
+    Batching stays at this route boundary on purpose — ``stream_prompt`` owns
+    bridge lifecycle concerns (lock, stall, abort) and must not coalesce.
+    """
+    batcher = SSEBatcher(max_events=max_events, max_delay_s=max_delay_s)
+    try:
+        async for event in stream:
+            if sse_event_type(event) in _PI_BATCHABLE_EVENTS:
+                batcher.push(event)
+                async for chunk in batcher.drain():
+                    yield chunk
+            else:
+                for chunk in batcher.flush():
+                    yield chunk
+                yield event
+        for chunk in batcher.flush():
+            yield chunk
+    except Exception:
+        # Upstream failure: emit buffered tokens before the error the caller
+        # yields, preserving order. Disconnect (BaseException) skips this.
+        for chunk in batcher.flush():
+            yield chunk
+        raise
 
 
 class ChatRequest(BaseModel):
@@ -197,8 +249,10 @@ async def chat_stream(
     if _use_pi_bridge():
         async def pi_event_generator():
             try:
-                async for event in pi_bridge.stream_prompt(req.message, session_id=req.session_id):
-                    yield event
+                async for chunk in _sse_batched(
+                    pi_bridge.stream_prompt(req.message, session_id=req.session_id)
+                ):
+                    yield chunk
             except Exception as e:
                 logger.error(f"Pi bridge stream error: {e}", exc_info=True)
                 yield sse_event("error", {"error": "Internal server error"})
