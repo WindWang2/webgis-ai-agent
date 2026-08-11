@@ -100,14 +100,45 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
             )
 
             # Collect reachable EDGE geometry (network-constrained), not the
-            # convex hull of reachable point samples. An edge qualifies if
-            # either endpoint is within the travel budget.
+            # convex hull of reachable point samples. Partially-reachable
+            # edges (one endpoint beyond the cutoff) are clipped at the
+            # travel-budget fraction so the polygon does not over-extend past
+            # the last reachable point (review C).
+            from shapely.ops import substring
             reachable_edges = []
             for u, v, edata in G.edges(data=True):
                 eg = edata.get("geometry")
                 if eg is None:
                     continue
-                if (u in lengths) or (v in lengths):
+                du = lengths.get(u)
+                dv = lengths.get(v)
+                if du is None and dv is None:
+                    continue
+                du_ok = du is not None and du <= max_dist
+                dv_ok = dv is not None and dv <= max_dist
+                if du_ok and dv_ok:
+                    reachable_edges.append(eg)  # fully within budget
+                    continue
+                # Partially reachable: clip at the budget fraction(s).
+                try:
+                    w = edata.get("weight") or eg.length
+                    if w <= 0:
+                        w = eg.length or 1.0
+                    if du_ok:
+                        frac = min(1.0, max(0.0, (max_dist - du) / w))
+                        if frac > 0:
+                            seg = substring(eg, 0.0, frac, normalized=True)
+                            if not seg.is_empty:
+                                reachable_edges.append(seg)
+                    if dv_ok:
+                        frac = min(1.0, max(0.0, (max_dist - dv) / w))
+                        if frac > 0:
+                            seg = substring(eg, 1.0 - frac, 1.0, normalized=True)
+                            if not seg.is_empty:
+                                reachable_edges.append(seg)
+                except Exception:
+                    # Clipping failed (degenerate geometry / topology): fall
+                    # back to the full edge rather than drop it.
                     reachable_edges.append(eg)
 
             reachable = True

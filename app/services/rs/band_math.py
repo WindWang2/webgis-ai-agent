@@ -41,26 +41,30 @@ class RasterAnalysisResult:
         }
 
 
-# Pure index formulas for Sentinel-2 bands
+# Pure index formulas for Sentinel-2 bands.
+# Where-guarded divide: pixels where the denominator is <= 0 (notably
+# Sentinel-2 L2A nodata, where bands are 0) are left at NaN, not 0, so they
+# are excluded by compute_raster_stats instead of diluting vegetation/water
+# coverage as plausible-looking 0.0 indices (audit B-F09).
 INDEX_FORMULAS: Dict[str, Tuple[List[str], Callable[..., np.ndarray]]] = {
     "ndvi": (["red", "nir"], lambda r, nir: np.divide(
         nir - r, nir + r,
-        out=np.zeros_like(nir - r, dtype=float),
+        out=np.full_like(nir - r, np.nan, dtype=float),
         where=(nir + r) > 0,
     )),
     "ndwi": (["green", "nir"], lambda g, nir: np.divide(
         g - nir, g + nir,
-        out=np.zeros_like(g - nir, dtype=float),
+        out=np.full_like(g - nir, np.nan, dtype=float),
         where=(g + nir) > 0,
     )),
     "nbr": (["nir", "swir12"], lambda nir, swir: np.divide(
         nir - swir, nir + swir,
-        out=np.zeros_like(nir - swir, dtype=float),
+        out=np.full_like(nir - swir, np.nan, dtype=float),
         where=(nir + swir) > 0,
     )),
     "evi": (["blue", "red", "nir"], lambda b, r, nir: 2.5 * np.divide(
         nir - r, nir + 6 * r - 7.5 * b + 1,
-        out=np.zeros_like(nir - r, dtype=float),
+        out=np.full_like(nir - r, np.nan, dtype=float),
         where=(nir + 6 * r - 7.5 * b + 1) > 0,
     )),
 }

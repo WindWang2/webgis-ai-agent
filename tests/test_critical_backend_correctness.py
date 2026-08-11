@@ -57,10 +57,12 @@ def test_c1_ndvi_formula_masks_zero_denominator():
 
 
 def test_c1_rs_service_formula_masks_negative_reflectance():
-    """C1：植被指数公式对负反射率像元（nir+red<=0）必须返回 0，而非伪值。
+    """C1：植被指数公式对负反射率像元（nir+red<=0）必须返回 NaN，而非伪值或 0。
 
     直接测试 app.services.rs_service 中导出的 INDEX_FORMULAS 契约，
-    验证生产公式的 mask 语义：分母 <=0 的像元取 out 数组的 0。
+    验证生产公式的 mask 语义：分母 <=0 的像元取 NaN（审计 B-F09）——
+    0 是一个看似合法的指数值（如裸土 NDVI≈0），会稀释植被/水体覆盖度并被
+    compute_raster_stats 计为有效；NaN 才能被正确排除。
     """
     import numpy as np
     from app.services.rs.band_math import INDEX_FORMULAS
@@ -72,14 +74,16 @@ def test_c1_rs_service_formula_masks_negative_reflectance():
     nir = np.array([3000.0, -800.0, -100.0, -200.0])
 
     result = ndvi_formula(red, nir)
-    # nir+red <= 0 的位置（下标 1/2/3）必须 mask 为 0
-    assert result[1] == 0.0, f"负分母像元应被 mask 为 0，实际 {result[1]}"
-    assert result[2] == 0.0
-    assert result[3] == 0.0
     # 正常像元（nir+red>0，下标 0）应是真实 NDVI 值
     np.testing.assert_allclose(result[0], (3000 - 1000) / (3000 + 1000), rtol=1e-6)
-    # 关键回归断言：mask 像元不能是旧 bug 的几千伪值（(nir-r)/1）
-    assert abs(result[1]) < 1.0, "负分母像元返回了伪值（旧 np.where(...,1) bug 回归）"
+    # nir+red <= 0 的位置（下标 1/2/3）必须 mask 为 NaN（B-F09）。
+    # 关键回归断言：既不能是旧 bug 的几千伪值（(nir-r)/1），
+    # 也不能是会污染统计的合法值 0.0 —— 必须是 NaN 才会被 compute_raster_stats 排除。
+    for i in (1, 2, 3):
+        assert np.isnan(result[i]), (
+            f"下标 {i} 负分母像元应为 NaN，实际 {result[i]} "
+            "（旧 np.where(...,1) 伪值回归或被错误 mask 为 0）"
+        )
 
 
 
