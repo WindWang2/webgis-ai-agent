@@ -1,5 +1,5 @@
 import { diffSpecs, SpecPatch } from "./reconciler";
-import type { GeoJSONMapSpecSource, MapSpec, MapSpecSource } from "./types";
+import type { GeoJSONMapSpecSource, MapSpec, MapSpecSource, RasterMapSpecSource } from "./types";
 
 /**
  * WorkerReconcilerBridge — offload `diffSpecs` to a Web Worker so large-spec
@@ -62,8 +62,8 @@ const EMPTY_PATCH: SpecPatch = { sources: [], layers: [] };
 /**
  * Test-only: drop the cached worker so the next call re-evaluates the
  * environment (e.g. to exercise the fallback path after a worker test). Also
- * cancels any pending idle-termination timer and clears the inlineData
- * identity cache so tests start from a clean slate.
+ * cancels any pending idle-termination timer and clears the inlineData /
+ * imageRef identity caches so tests start from a clean slate.
  */
 export function _resetWorkerBridgeForTests(): void {
   if (idleTimer) {
@@ -78,6 +78,7 @@ export function _resetWorkerBridgeForTests(): void {
   activeRequestsCount = 0;
   inlineTokenCache = new WeakMap();
   lastInlineDataBySource = new Map();
+  imageTokenByContent.clear();
 }
 
 // ── FE-02: inline GeoJSON stripping ────────────────────────────────────────
@@ -163,26 +164,73 @@ function isDeepEqualInline(a: unknown, b: unknown): boolean {
   return true;
 }
 
+// ── FE-12: inline raster image stripping ───────────────────────────────────
+//
+// Raster heatmap sources carry the full base64 image as `imageRef`
+// (data:image/png;base64,<multi-MB body>). Unlike geojson inlineData (FE-02)
+// these used to pass through stripInlineForTransfer, so postMessage
+// structured-cloned the whole image on EVERY reconcile — as `prev` AND `next`
+// — even when the image never changed. We strip `imageRef` to a stable
+// identity token exactly like geojson, and the worker's deep-equality check
+// then compares a tiny token instead of megabytes of base64.
+//
+// Token identity contract (mirrors inlineIdentityToken's observable behavior):
+//  - same imageRef CONTENT (same string value, whether the same reference or
+//    a freshly-built string with equal bytes) → same token. The token is keyed
+//    on the string VALUE, so content-addressed lookup replaces the WeakMap +
+//    deep-equal fallback FE-02 needs for objects — a JS Map hashes its string
+//    keys internally, so there is zero collision risk and invalidation on
+//    content change is automatic (new bytes → new token → diff reports
+//    "update").
+//  - the registry is FIFO-bounded (IMAGE_TOKEN_CACHE_MAX) so a long session
+//    that regenerates many heatmaps can't retain every past image. An evicted
+//    image that reappears gets a fresh token and diffs as "update" — harmless:
+//    the runtime re-applies the same bytes idempotently (renderer F28).
+
+const IMAGE_TOKEN_CACHE_MAX = 16;
+let imageTokenSeq = 0;
+// Content → token. Insertion-ordered so the oldest entry can be evicted.
+const imageTokenByContent: Map<string, number> = new Map();
+
+/**
+ * Return a stable identity token for an imageRef payload. Two payloads that
+ * should be considered "the same image" yield the same number.
+ */
+function imageRefIdentityToken(imageRef: string): number {
+  const cached = imageTokenByContent.get(imageRef);
+  if (cached !== undefined) return cached;
+  const token = ++imageTokenSeq;
+  imageTokenByContent.set(imageRef, token);
+  if (imageTokenByContent.size > IMAGE_TOKEN_CACHE_MAX) {
+    const oldest = imageTokenByContent.keys().next().value;
+    if (oldest !== undefined) imageTokenByContent.delete(oldest);
+  }
+  return token;
+}
+
 /**
  * Produce a copy of `spec` whose geojson sources carry only an identity token
- * in place of `inlineData`. Non-inline sources and all layers pass through
- * untouched. Returns the original spec reference when it has no inline data
- * (avoids an allocation in the common no-inline case).
+ * in place of `inlineData` and whose raster sources carry only an identity
+ * token in place of the base64 `imageRef` (FE-12). Non-inline sources and all
+ * layers pass through untouched. Returns the original spec reference when it
+ * has nothing to strip (avoids an allocation in the common no-inline case).
  */
 function stripInlineForTransfer(spec: MapSpec | null): MapSpec | null {
   if (!spec) return null;
   const sources = spec.sources;
   if (!sources) return spec;
   const ids = Object.keys(sources);
-  let anyInline = false;
+  let anyStrippable = false;
   for (const id of ids) {
     const s = sources[id];
-    if (s && (s as GeoJSONMapSpecSource).type === "geojson" && (s as GeoJSONMapSpecSource).inlineData) {
-      anyInline = true;
+    const geo = s as GeoJSONMapSpecSource;
+    const ras = s as RasterMapSpecSource;
+    if (s && ((geo.type === "geojson" && geo.inlineData) || (ras.type === "raster" && typeof ras.imageRef === "string"))) {
+      anyStrippable = true;
       break;
     }
   }
-  if (!anyInline) return spec;
+  if (!anyStrippable) return spec;
 
   // Shallow-clone the spec + sources map; only the inline-bearing source
   // entries are replaced (everything else is shared by reference).
@@ -197,6 +245,16 @@ function stripInlineForTransfer(spec: MapSpec | null): MapSpec | null {
         ...(geo.dataPath !== undefined ? { dataPath: geo.dataPath } : {}),
         ...(geo.url !== undefined ? { url: geo.url } : {}),
         inlineData: { __inlineToken: token } as any,
+      } as MapSpecSource;
+    }
+    const ras = s as RasterMapSpecSource;
+    if (ras.type === "raster" && typeof ras.imageRef === "string") {
+      const token = imageRefIdentityToken(ras.imageRef);
+      strippedSources[id] = {
+        type: "raster",
+        imageRef: { __inlineToken: token } as any,
+        bounds: ras.bounds,
+        ...(ras.imageSize !== undefined ? { imageSize: ras.imageSize } : {}),
       } as MapSpecSource;
     }
   }
@@ -289,7 +347,8 @@ export function disposeWorker(): void {
  * terminated the moment the active request count hits 0, so two back-to-back
  * reconciles don't each pay the module-worker boot cost.
  *
- * FE-02: inline GeoJSON is stripped to an identity token before posting (see
+ * FE-02/FE-12: inline GeoJSON (`inlineData`) and inline raster images
+ * (`imageRef`) are stripped to identity tokens before posting (see
  * stripInlineForTransfer); the returned patch is rehydrated so callers still
  * receive the real source definitions.
  */
