@@ -84,7 +84,14 @@ class NetworkGraphBuilder:
             if isinstance(data, dict):
                 data_str = json.dumps(data, sort_keys=True)
             elif isinstance(data, NetworkDataset):
-                data_str = data.dataset_id
+                # Object-identity fingerprint for NetworkDataset: dataset_id
+                # alone collides (it historically hashed only the edge count,
+                # so two different networks with equal edge counts shared a
+                # cached graph — N-F05). The cache stores a strong reference
+                # to the dataset, so id() cannot be reused while an entry is
+                # live (same pinning argument as PointSnappingService). A
+                # distinct dataset object always fingerprints distinctly.
+                data_str = f"nds:{id(data)}:{data.edge_count}:{data.node_count}"
             else:
                 data_str = str(data)
         except Exception:
