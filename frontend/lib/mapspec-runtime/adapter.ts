@@ -61,6 +61,56 @@ function parseDashArray(dash: string): number[] {
   }
 }
 
+// ---- FE-3: geometry-mix memo ----
+//
+// hudStateToMapSpec runs O(features) geometry scans per layer per reconcile
+// (findings E2: the hasPolygons/hasLines/hasPoints scans + the weight scan).
+// Layer sources are reused BY REFERENCE across reconciles — the worker-bridge's
+// identity contract depends on that (FE-02), and the adapter emits
+// `inlineData: layer.source` unchanged — so a WeakMap keyed on the
+// FeatureCollection reference turns repeated scans into cache hits. A fresh FC
+// object (new data) rescans exactly once; in-place mutation of a cached FC
+// would be missed, which matches the worker-bridge's documented identity
+// contract (sources are replaced, not mutated).
+
+interface GeometryProfile {
+  hasPolygons: boolean;
+  hasLines: boolean;
+  hasPoints: boolean;
+  hasWeight: boolean;
+}
+
+const EMPTY_PROFILE: GeometryProfile = { hasPolygons: false, hasLines: false, hasPoints: false, hasWeight: false };
+
+// Reassigned by _resetGeometryProfileCacheForTests (WeakMap has no clear()).
+let geometryProfileCache: WeakMap<object, GeometryProfile> = new WeakMap();
+
+/** Test-only: number of actual geometry scans performed since the last reset. */
+export const _geometryProfileStats = { scanCount: 0 };
+
+/** Test-only: drop the cache so tests start from a clean slate. */
+export function _resetGeometryProfileCacheForTests(): void {
+  geometryProfileCache = new WeakMap();
+  _geometryProfileStats.scanCount = 0;
+}
+
+function geometryProfileOf(layer: Layer): GeometryProfile {
+  const src = isGeoJSONSource(layer.source) ? layer.source : null;
+  if (!src) return EMPTY_PROFILE;
+  const cached = geometryProfileCache.get(src);
+  if (cached) return cached;
+  const features = src.features || [];
+  const profile: GeometryProfile = {
+    hasPolygons: features.some((f) => f.geometry?.type?.includes("Polygon")),
+    hasLines: features.some((f) => f.geometry?.type?.includes("Line")),
+    hasPoints: features.some((f) => f.geometry?.type?.includes("Point")),
+    hasWeight: features.some((f) => (f as any).properties?.weight != null),
+  };
+  geometryProfileCache.set(src, profile);
+  _geometryProfileStats.scanCount += 1;
+  return profile;
+}
+
 // ---- the adapter ----
 
 export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
@@ -123,10 +173,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
 
     // GeoJSON-source layers: introspect geometry mix (map-panel.tsx:246-253)
     const src = isGeoJSONSource(layer.source) ? layer.source : null;
-    const features = src?.features || [];
-    const hasPolygons = features.some((f) => f.geometry?.type?.includes("Polygon"));
-    const hasLines = features.some((f) => f.geometry?.type?.includes("Line"));
-    const hasPoints = features.some((f) => f.geometry?.type?.includes("Point"));
+    const { hasPolygons, hasLines, hasPoints, hasWeight } = geometryProfileOf(layer);
     const isNativeHeatmap = layer.type === "heatmap" && src && !isHeatmapRasterSource(layer.source);
     const isHeatmapMode = layer.type === "heatmap" || layer.style?.renderType === "heatmap" || layer.style?.renderType === "grid";
 
@@ -239,7 +286,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
     if (hasPoints && !isNativeHeatmap) {
       const radius = layer.style?.pointSize != null
         ? layer.style.pointSize
-        : features.some((f) => (f as any).properties?.weight != null)
+        : hasWeight
           ? ["interpolate", ["linear"], ["get", "weight"], 0, 4, 1, 8]
           : 6;
       pushLayer("point", "circle", {

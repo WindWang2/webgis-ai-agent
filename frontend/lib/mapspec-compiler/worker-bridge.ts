@@ -107,7 +107,22 @@ let inlineTokenSeq = 0;
 let inlineTokenCache: WeakMap<object, number> = new WeakMap();
 // Per source id: the last inlineData object + the token assigned to it, so a
 // new-but-equal payload can reuse the same token (deep-equal fallback).
+// FE-3: FIFO-bounded (INLINE_TOKEN_CACHE_MAX) — a long session that swaps many
+// distinct GeoJSON payloads can't retain every past object (findings E4).
 let lastInlineDataBySource: Map<string, { data: object; token: number }> = new Map();
+
+/**
+ * FE-3: max entries in the per-source inline-data registry. Evicted sources
+ * re-seen with deep-equal data get a fresh token and diff as "update" —
+ * harmless: the runtime re-applies the same bytes idempotently (mirrors the
+ * imageRef registry's documented eviction behavior).
+ */
+export const INLINE_TOKEN_CACHE_MAX = 32;
+
+/** Test-only: current size of the per-source inline-data registry. */
+export function _inlineTokenRegistrySizeForTests(): number {
+  return lastInlineDataBySource.size;
+}
 
 /**
  * Return a stable identity token for an inlineData payload. Two payloads that
@@ -127,10 +142,14 @@ function inlineIdentityToken(sourceId: string, data: object): number {
     return last.token;
   }
 
-  // 3. Genuinely new data → fresh monotonic token.
+  // 3. Genuinely new data → fresh monotonic token, registry FIFO-bounded.
   const token = ++inlineTokenSeq;
   inlineTokenCache.set(data, token);
   lastInlineDataBySource.set(sourceId, { data, token });
+  if (lastInlineDataBySource.size > INLINE_TOKEN_CACHE_MAX) {
+    const oldest = lastInlineDataBySource.keys().next().value;
+    if (oldest !== undefined) lastInlineDataBySource.delete(oldest);
+  }
   return token;
 }
 

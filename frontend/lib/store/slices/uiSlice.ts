@@ -7,6 +7,11 @@
 import type { StateCreator } from 'zustand';
 import type { HudState, AiStatus, LeftTab, SettingsTab, ExportItem } from '../hud-types';
 
+/**
+ * FE-3: 操作日志队列上限（队首最新，超限丢最旧）。
+ */
+export const MAX_OPS_LOG = 200;
+
 export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = (set) => ({
   /* ─── HUD Panels (legacy compat) ─── */
   leftPanelOpen: true,
@@ -115,7 +120,12 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
 
   /* ─── v2 Feature Data ─── */
   opsLog: [],
-  pushOpLog: (entry) => set((s) => ({ opsLog: [entry, ...s.opsLog] })),
+  // FE-3: 上限 200 —— 操作日志只做近期活动展示，长会话无界增长无意义
+  // （findings E4）。超限丢最旧的（队首是最新，保留前 200）。
+  pushOpLog: (entry) => set((s) => {
+    const next = [entry, ...s.opsLog];
+    return { opsLog: next.length > MAX_OPS_LOG ? next.slice(0, MAX_OPS_LOG) : next };
+  }),
   clearOpsLog: () => set({ opsLog: [] }),
   ragResults: [],
   setRagResults: (results) => set({ ragResults: results }),

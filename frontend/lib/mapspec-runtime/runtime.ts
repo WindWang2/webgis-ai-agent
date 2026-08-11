@@ -3,6 +3,7 @@ import { diffSpecsAsync, disposeWorker } from "@/lib/mapspec-compiler/worker-bri
 import type { MapSpec, MapSpecSource, MapSpecLayer } from "@/lib/mapspec-compiler/types";
 import { RenderDebouncer, type RenderOperation } from "@/lib/map-kit/render-debouncer";
 import * as renderer from "@/lib/map-kit/renderer";
+import { recordDebounceFrame } from "@/lib/utils/perf-counters";
 
 /**
  * MapSpecRuntime — the deep module that reconciles a declarative MapSpec
@@ -43,7 +44,11 @@ export class MapSpecRuntime {
 
   constructor(map: any) {
     this.map = map;
-    this.debouncer = new RenderDebouncer(map);
+    // FE-3: wire the debouncer's FrameStats instrument to the dev/test counter
+    // sink (was constructed with no options — findings E5).
+    this.debouncer = new RenderDebouncer(map, {
+      onFrameStats: (stats) => recordDebounceFrame(stats),
+    });
   }
 
   /**
@@ -267,6 +272,17 @@ export class MapSpecRuntime {
 
   getAppliedSpec(): MapSpec | null {
     return this.appliedSpec;
+  }
+
+  /**
+   * True while a debounced patch's ops are enqueued but not all executed yet.
+   * During that window the map may be in a partially-patched state that
+   * `appliedSpec` cannot describe (appliedSpec advances only on the final
+   * z-order op). Interactive-id derivation (FE-3) falls back to scanning the
+   * live style while this is true.
+   */
+  isPatchInFlight(): boolean {
+    return this.currentApplyResolve !== null;
   }
 
   dispose(): void {
