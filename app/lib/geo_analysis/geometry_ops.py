@@ -86,6 +86,19 @@ def voronoi_polygons(
 
     out_features = []
     clip_box = box(xmin - margin, ymin - margin, xmax + margin, ymax + margin)
+    # V-F02: honor an explicit clip_bounds (WGS84) when provided — previously
+    # the documented parameter was accepted but silently ignored, so callers
+    # believed they controlled the output extent and didn't.
+    if clip_bounds is not None:
+        try:
+            user_box = gpd.GeoSeries(
+                [box(float(clip_bounds[0]), float(clip_bounds[1]),
+                     float(clip_bounds[2]), float(clip_bounds[3]))],
+                crs="EPSG:4326",
+            ).to_crs(utm_crs).iloc[0]
+            clip_box = clip_box.intersection(user_box)
+        except (ValueError, TypeError, IndexError) as e:
+            logger.warning("voronoi: invalid clip_bounds %s ignored: %s", clip_bounds, e)
     raw_polys = []  # (poly, props) - batch CRS after loop
 
     for i in range(len(coords)):
@@ -160,7 +173,16 @@ def convex_hull(
         for name, group in gdf.groupby(group_by):
             try:
                 hull = group.geometry.union_all().convex_hull
-                if hull.is_empty:
+                # V-F03: hull of <3 non-collinear features collapses to a
+                # Point/LineString. The tool contract promises "输出始终
+                # Polygon"; skip degenerate groups rather than emit a
+                # different geometry type that corrupts downstream layers.
+                if hull.is_empty or hull.geom_type not in ("Polygon", "MultiPolygon"):
+                    logger.warning(
+                        "convex_hull: group '%s' has %d feature(s) — hull is %s, "
+                        "skipped (need ≥3 non-collinear points for a polygon).",
+                        name, len(group), hull.geom_type,
+                    )
                     continue
                 hull_wgs84 = gpd.GeoSeries([hull], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
                 out_features.append({
@@ -176,6 +198,15 @@ def convex_hull(
                 continue
     else:
         hull = gdf.geometry.union_all().convex_hull
+        # V-F03 (ungrouped path): same degenerate guard as the group_by path —
+        # <3 non-collinear features collapse to a Point/LineString.
+        if hull.is_empty or hull.geom_type not in ("Polygon", "MultiPolygon"):
+            return GeoAnalysisResult(
+                False, None,
+                f"凸包需要 ≥3 个非共线的点要素才能形成多边形（当前结果几何类型 {hull.geom_type}）",
+                error_type="ValueError",
+                correction_hint="提供至少 3 个非共线的点要素。",
+            )
         hull_wgs84 = gpd.GeoSeries([hull], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
         out_features.append({
             "type": "Feature",
@@ -227,6 +258,17 @@ def multi_ring_buffer(
         return GeoAnalysisResult(
             False, None, "需要至少一个缓冲距离",
             error_type="ValueError", correction_hint="提供至少一个缓冲距离",
+        )
+
+    # V-F10: reject non-positive distances. A negative value silently eroded
+    # the geometry instead of producing a ring; zero produced empty rings.
+    bad = [d for d in distances if float(d) <= 0]
+    if bad:
+        return GeoAnalysisResult(
+            False, None,
+            f"缓冲距离必须为正数（米），得到 {bad}",
+            error_type="ValueError",
+            correction_hint="提供正数的缓冲距离（米）",
         )
 
     distances = sorted([float(d) for d in distances])

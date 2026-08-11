@@ -60,7 +60,13 @@ class NetworkGraphBuilder:
 
     def __init__(self, max_cache_size: int = 32):
         self.max_cache_size = max_cache_size
-        self._cache: OrderedDict[str, Tuple[nx.DiGraph, NetworkDataset]] = OrderedDict()
+        # The third slot pins the *input* NetworkDataset alive so its id()
+        # (used in the fingerprint) cannot be reused by CPython while the
+        # entry is live — the cache value itself is the freshly-built dataset,
+        # not the keyed input, so without this pin a freed input's address
+        # could be reused by a later dataset and silently return the wrong
+        # cached graph (review N-F05-regression).
+        self._cache: OrderedDict[str, Tuple[nx.DiGraph, NetworkDataset, Any]] = OrderedDict()
         self._cache_lock = threading.Lock()
 
     def clear_cache(self) -> None:
@@ -84,7 +90,14 @@ class NetworkGraphBuilder:
             if isinstance(data, dict):
                 data_str = json.dumps(data, sort_keys=True)
             elif isinstance(data, NetworkDataset):
-                data_str = data.dataset_id
+                # Object-identity fingerprint for NetworkDataset: dataset_id
+                # alone collides (it historically hashed only the edge count,
+                # so two different networks with equal edge counts shared a
+                # cached graph — N-F05). The cache stores a strong reference
+                # to the dataset, so id() cannot be reused while an entry is
+                # live (same pinning argument as PointSnappingService). A
+                # distinct dataset object always fingerprints distinctly.
+                data_str = f"nds:{id(data)}:{data.edge_count}:{data.node_count}"
             else:
                 data_str = str(data)
         except Exception:
@@ -121,7 +134,8 @@ class NetworkGraphBuilder:
             with self._cache_lock:
                 if fp in self._cache:
                     self._cache.move_to_end(fp)
-                    return self._cache[fp]
+                    graph, dataset, _pin = self._cache[fp]
+                    return graph, dataset
 
         # Extract features and raw line geometries
         line_items = self._extract_line_items(data)
@@ -289,7 +303,10 @@ class NetworkGraphBuilder:
 
         if use_cache:
             with self._cache_lock:
-                self._cache[fp] = (graph, dataset)
+                # Pin the input NetworkDataset so its id() (in the fingerprint)
+                # cannot be reused while this entry is live.
+                pin = data if isinstance(data, NetworkDataset) else None
+                self._cache[fp] = (graph, dataset, pin)
                 if len(self._cache) > self.max_cache_size:
                     self._cache.popitem(last=False)
 

@@ -6,7 +6,20 @@ and NetworkAnalysisResult.
 """
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple, Union
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
+
+
+# Default cruise speeds per mode (km/h). Used when a TravelProfile is built
+# from a mode name without an explicit speed — previously every mode
+# defaulted to 40 km/h, making walking isochrones/routes ~8x too large
+# (audit N-F04). Speeds reflect typical planning-grade cruise speeds.
+DEFAULT_MODE_SPEEDS_KMH: Dict[str, float] = {
+    "walking": 4.8,      # ~4.8 km/h (80 m/min)
+    "cycling": 15.0,
+    "driving": 40.0,
+    "transit": 25.0,
+    "heavy_truck": 30.0,
+}
 
 
 class Cost(BaseModel):
@@ -35,12 +48,21 @@ class TravelProfile(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     name: str = Field(default="driving", description="Mode name: walking, driving, cycling, transit, heavy_truck")
-    speed_kmh: float = Field(default=40.0, description="Default speed in km/h")
+    # 0.0 is the "derive from mode name" sentinel; the validator below resolves
+    # it from DEFAULT_MODE_SPEEDS_KMH so ``TravelProfile(name="walking")`` gets
+    # ~4.8 km/h instead of the old catch-all 40 km/h (N-F04).
+    speed_kmh: float = Field(default=0.0, description="Speed in km/h; 0 = derive from mode name")
     impedance_field: str = Field(default="travel_time_s", description="Field used for cost: length_m, travel_time_s, custom")
     allowed_highway_types: Optional[List[str]] = Field(default=None, description="Allowed OSM highway or road types")
     one_way_strict: bool = Field(default=True, description="Enforce one-way directions")
     turn_penalty_s: float = Field(default=0.0, description="Penalty for turns in seconds")
     max_slope_pct: Optional[float] = Field(default=None, description="Max grade percentage for walking/cycling")
+
+    @model_validator(mode="after")
+    def _resolve_default_speed(self) -> "TravelProfile":
+        if self.speed_kmh <= 0:
+            self.speed_kmh = DEFAULT_MODE_SPEEDS_KMH.get(self.name, 40.0)
+        return self
 
 
 class Node(BaseModel):

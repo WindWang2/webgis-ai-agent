@@ -124,6 +124,35 @@ def _guard_output_grid(
     )
 
 
+def _nodata_valid_mask(arr: np.ndarray, nodata) -> np.ndarray:
+    """Boolean mask of *valid* (non-nodata) pixels.
+
+    Handles the NaN-nodata case correctly: ``arr != NaN`` is all-True
+    (``NaN != NaN``), so a naive value comparison would treat every pixel as
+    valid. Mirrors reclassify's ``_valid_mask``. (R-F03)
+    """
+    if nodata is None:
+        return np.ones(arr.shape, dtype=bool)
+    if isinstance(nodata, float) and np.isnan(nodata):
+        return ~np.isnan(arr)
+    return arr != nodata
+
+
+def _compute_dtype(arr: np.ndarray) -> np.ndarray:
+    """Return ``arr`` promoted to float64 when it is integer, else unchanged.
+
+    numexpr evaluates integer expressions in int32 and silently wraps on
+    overflow — e.g. ``uint16 * uint16`` with values >~46340 yields large
+    negative numbers written as valid data (R-F01). Promoting integer inputs
+    to float64 before evaluation makes arithmetic overflow impossible for any
+    realistic raster value range. Float inputs are left as-is (float32 overflow
+    to inf is caught downstream by the ``np.isfinite`` guard).
+    """
+    if np.issubdtype(arr.dtype, np.integer):
+        return arr.astype(np.float64)
+    return arr
+
+
 # ─── Operations ──────────────────────────────────────────────────
 
 
@@ -282,6 +311,18 @@ def raster_calculator(
                     and src_b.shape == src_a.shape
                 )
                 if not aligned:
+                    # Guard raster B's own footprint before the full-band
+                    # reproject: the A-grid guard above does not see B, so a
+                    # huge B paired with a small A would otherwise pass and the
+                    # reproject reads all of B. (R-F04)
+                    RasterResourceGuard.check_grid(
+                        width=src_b.width,
+                        height=src_b.height,
+                        bytes_per_pixel=np.dtype(src_b.dtypes[0]).itemsize,
+                        num_bands=1,
+                        input_pixels=src_a.width * src_a.height,
+                        bounds=src_b.bounds,
+                    )
                     fill_b = nodata_b if nodata_b is not None else 0
                     data_b_full = np.full(src_a.shape, fill_value=fill_b, dtype=src_b.dtypes[0])
                     gcps_b, gcps_crs_b = src_b.gcps if src_b.gcps else (None, None)
@@ -315,20 +356,23 @@ def raster_calculator(
                 return np.full_like(data_a_win, fill_value=const_val, dtype=data_a_win.dtype)
 
             def _compute_window(data_a_win: np.ndarray, data_b_win: np.ndarray) -> np.ndarray:
-                if nodata_a is not None:
-                    mask_a = (data_a_win != nodata_a)
-                else:
-                    mask_a = np.ones(data_a_win.shape, dtype=bool)
-
-                if raster_b and nodata_b is not None:
-                    mask_b = (data_b_win != nodata_b)
-                else:
-                    mask_b = np.ones(data_a_win.shape, dtype=bool)
+                mask_a = _nodata_valid_mask(data_a_win, nodata_a)
+                mask_b = (
+                    _nodata_valid_mask(data_b_win, nodata_b)
+                    if (raster_b and nodata_b is not None)
+                    else np.ones(data_a_win.shape, dtype=bool)
+                )
 
                 mask = mask_a & mask_b
 
                 valid_a = np.where(mask, data_a_win, 0)
                 valid_b = np.where(mask, data_b_win, 0)
+                # Promote integer rasters to float64 before numexpr: integer
+                # arithmetic wraps on overflow (uint16*uint16 -> negative
+                # garbage), and the NaN-nodata mask above is now correct so
+                # genuine nodata pixels are zeroed before evaluation. (R-F01)
+                valid_a = _compute_dtype(valid_a)
+                valid_b = _compute_dtype(valid_b)
                 result = ne.evaluate(expression, local_dict={"A": valid_a, "B": valid_b})
 
                 result = np.where(np.isfinite(result), result, out_nodata)

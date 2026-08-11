@@ -97,15 +97,18 @@ def _reference_hotspot(geojson, value_field, distance_band):
     coords = np.column_stack((gdf.centroid.x.values, gdf.centroid.y.values))
 
     if distance_band <= 0:
-        best = np.full(n, np.inf)
+        # 8th nearest-neighbour distance per point (E-7), matching the
+        # implementation's auto band: the mean 1st-NN distance left ~half the
+        # points with <=1 neighbour and found no hotspots on clustered data.
+        k_band = min(8, n - 1)
+        kth = np.empty(n)
         for i in range(n):
-            for j in range(n):
-                if i == j:
-                    continue
-                d = float(np.hypot(coords[i, 0] - coords[j, 0], coords[i, 1] - coords[j, 1]))
-                if d < best[i]:
-                    best[i] = d
-        bw = float(best.mean())
+            ds = sorted(
+                float(np.hypot(coords[i, 0] - coords[j, 0], coords[i, 1] - coords[j, 1]))
+                for j in range(n) if j != i
+            )
+            kth[i] = ds[min(k_band, len(ds)) - 1]
+        bw = float(kth.mean())
         if bw <= 0:
             bw = 1.0
     else:
@@ -341,7 +344,10 @@ def test_moran_i_pvalue_matches_seeded_scalar_reference():
         p_num = np.sum(w.data * pz[w.row] * pz[w.col])
         p_den = np.sum(pz ** 2)
         perm_is.append((n_pts / s0) * (p_num / p_den) if p_den > 0 else 0)
-    p_value = float(np.mean(np.abs(np.array(perm_is) - expected_i) >= np.abs(moran_i - expected_i)))
+    # Permutation p-value with the (count+1)/(perms+1) correction (E-8):
+    # bounds the p-value away from the spurious 0.0 the raw fraction returns.
+    ge = np.abs(np.array(perm_is) - expected_i) >= np.abs(moran_i - expected_i)
+    p_value = (int(np.sum(ge)) + 1) / (len(perm_is) + 1)
 
     assert res.data["moran_i"] == pytest.approx(moran_i, abs=1e-12)
     assert res.data["p_value"] == pytest.approx(p_value, abs=1e-12)

@@ -9,74 +9,99 @@ from app.lib.geo_processor.core import to_utm_gdf
 logger = logging.getLogger(__name__)
 
 def generate_fishnet(bounds: tuple[float, float, float, float], cell_size: float, type: str = 'square') -> GeoAnalysisResult:
+    """Generate a square or hexagonal grid over specified bounds.
+
+    GIS contract (V-F01): ``bounds`` are WGS84 degrees and ``cell_size`` is in
+    **metres** (matching the ``fishnet_grid`` tool description). The grid is
+    built in a projected metric CRS (UTM, or polar stereographic beyond 84°)
+    and reprojected back to EPSG:4326, so a 500 m request yields ~500 m cells
+    on the ground. Previously the metre value was applied directly in degree
+    space, producing a single polygon spanning hundreds of degrees. Includes
+    OOM protection (50 000-cell estimate).
     """
-    Generate a square or hexagonal grid over specified bounds.
-    Includes OOM protection.
-    """
+    if cell_size <= 0:
+        return GeoAnalysisResult(
+            False, None, f"cell_size must be positive (metres), got {cell_size}",
+            error_type="ValueError",
+        )
+
     xmin, ymin, xmax, ymax = bounds
-    
-    # OOM Protection: Cap at 50,000 cells
-    width = xmax - xmin
-    height = ymax - ymin
-    
-    # Square cell area: cell_size * cell_size
-    # We use a simple estimate for now
-    estimated_cells = (width / cell_size) * (height / cell_size)
-    
+
+    # Pick a metric CRS for the (WGS84) bounds: UTM, or polar stereographic.
+    abs_max_lat = max(abs(float(ymin)), abs(float(ymax)))
+    if abs_max_lat > 84.0:
+        metric_crs = "EPSG:3413" if (float(ymin) + float(ymax)) / 2 >= 0 else "EPSG:3031"
+    else:
+        try:
+            metric_crs = str(
+                gpd.GeoDataFrame(geometry=[box(xmin, ymin, xmax, ymax)], crs="EPSG:4326")
+                .estimate_utm_crs()
+            )
+        except Exception:
+            clon = (float(xmin) + float(xmax)) / 2
+            lon = (clon + 180.0) % 360.0 - 180.0
+            zone = max(1, min(60, int((lon + 180) / 6) + 1))
+            metric_crs = f"EPSG:{32600 if (float(ymin)+float(ymax))/2 >= 0 else 32700}{zone}"
+
+    # Project the bounds to the metric CRS and build the grid there.
+    bounds_m = (
+        gpd.GeoDataFrame(geometry=[box(xmin, ymin, xmax, ymax)], crs="EPSG:4326")
+        .to_crs(metric_crs)
+    )
+    mxmin, mymin, mxmax, mymax = (float(v) for v in bounds_m.total_bounds)
+    m_width = mxmax - mxmin
+    m_height = mymax - mymin
+
+    estimated_cells = (m_width / cell_size) * (m_height / cell_size)
     warning = ""
     if estimated_cells > 50000:
-        # Calculate a safe cell_size
-        new_cell_size = np.sqrt((width * height) / 50000)
-        warning = f"Warning: Grid too dense ({int(estimated_cells)} cells). Cell size adjusted from {cell_size} to {new_cell_size:.4f}."
+        new_cell_size = float(np.sqrt((m_width * m_height) / 50000))
+        warning = (
+            f"Warning: Grid too dense ({int(estimated_cells)} cells). "
+            f"Cell size adjusted from {cell_size}m to {new_cell_size:.4f}m."
+        )
         cell_size = new_cell_size
 
-    polygons = []
+    metric_polys = []
     if type == 'square':
-        cols = np.arange(xmin, xmax, cell_size)
-        rows = np.arange(ymin, ymax, cell_size)
-        
+        cols = np.arange(mxmin, mxmax, cell_size)
+        rows = np.arange(mymin, mymax, cell_size)
         # Vectorized cell grid, x-major order preserved (for each x, all y).
         xs = np.repeat(cols, len(rows))
         ys = np.tile(rows, len(cols))
-        polygons = [
-            box(x, y, x + cell_size, y + cell_size)
-            for x, y in zip(xs, ys)
-        ]
-        
+        metric_polys = [box(x, y, x + cell_size, y + cell_size) for x, y in zip(xs, ys)]
+
     elif type == 'hexagon':
         R = cell_size / np.sqrt(3)
         dx = cell_size
         dy = 1.5 * R
-        
-        cols = np.arange(xmin - dx, xmax + dx, dx)
-        rows = np.arange(ymin - dy, ymax + dy, dy)
-        ncols = len(cols)
+
+        cols = np.arange(mxmin - dx, mxmax + dx, dx)
+        rows = np.arange(mymin - dy, mymax + dy, dy)
         nrows = len(rows)
-        
-        # Precompute the 7 vertex offsets once (identical for every cell)
+
         angles = np.radians([0, 60, 120, 180, 240, 300, 0])
         cos_a = np.cos(angles)
         sin_a = np.sin(angles)
-        
-        # Center grid, row-major (y-outer / x-inner); j%2 row offset preserved
+
         offsets = (np.arange(nrows) % 2) * (dx / 2)
-        cx = cols[None, :] + offsets[:, None]          # (nrows, ncols)
-        cy = np.broadcast_to(rows[:, None], (nrows, ncols))
-        
-        # All vertices at once: (nrows, ncols, 7, 2), flattened in cell order
+        cx = cols[None, :] + offsets[:, None]
+        cy = np.broadcast_to(rows[:, None], (nrows, len(cols)))
+
         vx = cx[:, :, None] + R * cos_a[None, None, :]
         vy = cy[:, :, None] + R * sin_a[None, None, :]
         vertices = np.stack([vx, vy], axis=-1).reshape(-1, 7, 2)
-        polygons = [Polygon(v) for v in vertices]
+        metric_polys = [Polygon(v) for v in vertices]
     else:
         return GeoAnalysisResult(success=False, data=None, summary=f"Unsupported type: {type}")
 
-    grid = gpd.GeoDataFrame({'geometry': polygons}, crs="EPSG:4326")
-    
+    # Reproject the metric grid back to WGS84 for the response.
+    grid = gpd.GeoDataFrame({'geometry': metric_polys}, crs=metric_crs).to_crs("EPSG:4326")
+
     return GeoAnalysisResult(
         success=True,
         data=grid.__geo_interface__,
-        summary=f"Generated {len(polygons)} {type} cells. {warning}".strip()
+        summary=f"Generated {len(metric_polys)} {type} cells. {warning}".strip()
     )
 
 def spatial_aggregate(
