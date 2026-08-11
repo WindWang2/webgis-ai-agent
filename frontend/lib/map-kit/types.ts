@@ -28,8 +28,13 @@ export interface GeoAnalysisResult {
 }
 
 // ─── Legend Spec contract (backend → frontend) ───────────────────────────────
+// ADR-0052: legend_spec is the canonical thematic style — the single source
+// both the live MapSpec paint (thematic-paint.ts) and <ThematicLegend> derive
+// from. The optional fields below (method/labels/nodata/title) are additive and
+// produced by the canonical builders; legacy payloads omit them cleanly.
 
 export type LegendCategoryEntry = { key: string; color: string; label: string };
+export type NoDataRule = { color: string; label: string };
 
 export type GraduatedLegendSpec = {
   type: 'graduated';
@@ -37,7 +42,11 @@ export type GraduatedLegendSpec = {
   breaks: number[];
   palette: string;
   palette_colors: string[];
+  method?: string;        // classification method (quantiles/equal_interval/natural_breaks)
+  labels?: string[];      // per-class labels (count == breaks.length - 1)
+  nodata?: NoDataRule;    // no-data rule (null/missing → nodata color on the live map)
   unit?: string;
+  title?: string;
   format?: 'number' | 'percent' | 'currency';
 };
 
@@ -48,12 +57,17 @@ export type ContinuousLegendSpec = {
   max: number;
   palette: string;
   palette_colors: string[];
+  nodata?: NoDataRule;
+  unit?: string;
 };
 
 export type CategoricalLegendSpec = {
   type: 'categorical';
   field: string;
   categories: LegendCategoryEntry[];
+  palette?: string;
+  nodata?: NoDataRule;
+  title?: string;
 };
 
 export type DivergentLegendSpec = {
@@ -64,6 +78,8 @@ export type DivergentLegendSpec = {
   max: number;
   palette: string;
   palette_colors: string[];
+  nodata?: NoDataRule;
+  unit?: string;
 };
 
 export type LegendSpec =

@@ -6,9 +6,6 @@ from typing import List, Dict, Any, Optional
 import numpy as np
 
 from app.lib.cartography.palettes import get_color_from_palette
-# COLOR_PALETTES re-exported for app.lib.geo_analysis.density (KDE legend_spec).
-# noqa: F401 — deliberate cross-module re-export.
-from app.lib.cartography.palettes import COLOR_PALETTES  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +101,10 @@ class CartographyService:
                 if val in ["HH", "LL", "HL", "LH", "NS"]:
                     lisa_values.append(val)
             else:
-                if isinstance(val, (int, float)):
+                # Filter NaN/Inf/bool once at the value-collection seam so a
+                # stray null in the column can no longer poison the quantile/
+                # Jenks breaks (ADR-0052 no-data semantics).
+                if isinstance(val, (int, float)) and not isinstance(val, bool) and np.isfinite(val):
                     values.append(float(val))
 
         if method == "lisa":
@@ -136,20 +136,13 @@ class CartographyService:
         # 计算间断点
         breaks = cls.classify(values, method, k)
         min_val, max_val = min(values), max(values)
-        val_range = max_val - min_val if max_val > min_val else 1.0
 
-        colors = []
-        legend_labels = []
-        for i in range(len(breaks) - 1):
-            # 获取颜色
-            b_min = breaks[i]
-            b_max = breaks[i+1]
-            # 用区间的中间值来取颜色
-            mid_val = (b_min + b_max) / 2.0
-            normalized = (mid_val - min_val) / val_range
-            color = cls.get_color_from_palette(palette, normalized)
-            colors.append(color)
-            legend_labels.append(f"{b_min:.2f} - {b_max:.2f}")
+        # ADR-0052: resolve palette colors through the single midpoint-sampling
+        # path (resolve_thematic_colors) so build_thematic_style, build_graduated_spec
+        # and h3_binning all share one palette-resolution implementation.
+        from app.lib.cartography.thematic_spec import resolve_thematic_colors
+        colors = resolve_thematic_colors(palette, len(breaks) - 1, breaks, min_val, max_val)
+        legend_labels = [f"{breaks[i]:.2f} - {breaks[i + 1]:.2f}" for i in range(len(breaks) - 1)]
 
         return {
             "type": "choropleth",

@@ -330,20 +330,20 @@ def kde_contours(
         level_vals = [
             float(f.get("properties", {}).get("density_value", 0.0))
             for f in out_features
+            if isinstance(f.get("properties", {}).get("density_value"), (int, float))
         ]
-        level_vals = [v for v in level_vals if v is not None]
         if level_vals:
             try:
-                from app.services.cartography_service import COLOR_PALETTES
-                palette = "Viridis"
-                palette_colors = list(COLOR_PALETTES.get(palette, []))
-                legend_spec = {
-                    "type": "continuous",
-                    "min": min(level_vals),
-                    "max": max(level_vals),
-                    "palette": palette,
-                    "palette_colors": palette_colors[:5] if palette_colors else ["#440154", "#21908c", "#fde725"],
-                }
+                # ADR-0052: route through the canonical continuous builder so the
+                # legend carries `field` (the live map's interpolate needs it) and
+                # the ramp resolves through one path — replacing the hand-built
+                # palette_colors[:5] truncation + missing-field drift. The builder
+                # accepts a flat domain (min==max) so a degenerate KDE still gets
+                # a legend overlay (paint falls back to constant).
+                from app.lib.cartography.thematic_spec import build_continuous_spec
+                legend_spec = build_continuous_spec(
+                    min(level_vals), max(level_vals), "Viridis", field="density_value",
+                )
             except Exception:  # noqa: BLE001
                 legend_spec = None
 

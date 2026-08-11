@@ -109,22 +109,42 @@ def register_cartography_tools(registry: ToolRegistry):
             data = _safe_parse_geojson(geojson)
             if not data:
                 return {"error": "Invalid GeoJSON input"}
-            
+
             from app.services.cartography_service import CartographyService
-            style_def = CartographyService.build_thematic_style(
-                geojson=data,
-                field=field,
-                method=method,
-                k=k,
-                palette=palette
-            )
-            
+            from app.lib.cartography.thematic_spec import build_graduated_spec
+
+            # ADR-0052: legend_spec is the canonical thematic style — the single
+            # source both the live MapSpec paint and the <ThematicLegend> overlay
+            # derive from. Built through ONE classification (CartographyService
+            # stays the engine; the canonical builder delegates to classify, then
+            # resolves palette + filters finite values once). For non-lisa we
+            # classify exactly once via build_graduated_spec and synthesize the
+            # legacy `style_def` view from it (no double Jenks pass).
+            legend_spec = None
+            style_def = None
+            if method == "lisa":
+                style_def = CartographyService.build_thematic_style(
+                    geojson=data, field=field, method="lisa", k=k, palette=palette
+                )
+                legend_spec = CartographyService.build_legend_spec(style_def, palette=palette)
+            else:
+                legend_spec = build_graduated_spec(
+                    data, field=field, method=method, k=k, palette=palette,
+                )
+                if legend_spec is not None:
+                    style_def = {
+                        "type": "choropleth",
+                        "field": field,
+                        "breaks": legend_spec.get("breaks", []),
+                        "colors": legend_spec.get("palette_colors", []),
+                        "legend_labels": legend_spec.get("labels", []),
+                    }
+
             return_dict = {
                 "geojson": data,  # return unmodified geojson
                 "group": group,
                 "style": style_def,
             }
-            legend_spec = CartographyService.build_legend_spec(style_def, palette=palette)
             if legend_spec is not None:
                 return_dict["legend_spec"] = legend_spec
                 return_dict["layer_meta"] = {

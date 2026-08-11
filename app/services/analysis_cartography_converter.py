@@ -5,9 +5,10 @@ Converts spatial analysis results (GeoAnalysisResult output) into MapSpec layer 
 from collections import Counter
 from datetime import datetime, timezone
 import logging
-import math
 import re
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+from app.lib.cartography.thematic_spec import spec_to_paint
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +35,6 @@ DEFAULT_CONSTANT_PAINTS = {
 
 
 # ─── small shared helpers (extracted to kill duplicated logic shape) ────────
-
-
-def _is_number(val: Any) -> bool:
-    """Check if val is a valid finite number (int/float, excluding bool and NaN/Inf)."""
-    return isinstance(val, (int, float)) and not isinstance(val, bool) and math.isfinite(val)
 
 
 def _slugify(name: str) -> str:
@@ -185,119 +181,12 @@ def _infer_geometry_category(geojson: Optional[Dict[str, Any]]) -> Tuple[str, Li
     return majority_cat, warnings
 
 
-# ─── legend_spec -> StyleMethod converters ─────────────────────────────────
-# Each returns (style_method_or_None, warnings). None signals "fall back to constant".
-
-
-def _convert_graduated_legend(legend_spec: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], List[str]]:
-    """Converts a graduated legend_spec into a step StyleMethod."""
-    warnings: List[str] = []
-    field = legend_spec.get("field", "")
-    breaks = legend_spec.get("breaks", [])
-    palette_colors = legend_spec.get("palette_colors") or legend_spec.get("colors") or []
-
-    valid_breaks = isinstance(breaks, list) and len(breaks) >= 2 and all(_is_number(b) for b in breaks)
-    valid_colors = isinstance(palette_colors, list) and len(palette_colors) >= 1
-
-    if field and valid_breaks and valid_colors:
-        default_color = palette_colors[0]
-        stops = []
-        for i in range(1, len(breaks) - 1):
-            color_i = palette_colors[i] if i < len(palette_colors) else palette_colors[-1]
-            stops.append([float(breaks[i]), color_i])
-
-        return {
-            "method": "step",
-            "field": field,
-            "default": default_color,
-            "stops": stops,
-        }, warnings
-
-    warnings.append("graduated_legend_invalid: insufficient breaks or palette_colors")
-    return None, warnings
-
-
-def _convert_continuous_legend(legend_spec: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], List[str]]:
-    """Converts a continuous legend_spec into an interpolate StyleMethod."""
-    warnings: List[str] = []
-    field = legend_spec.get("field", "")
-    min_val = legend_spec.get("min")
-    max_val = legend_spec.get("max")
-    palette_colors = legend_spec.get("palette_colors") or legend_spec.get("colors") or []
-
-    if (
-        field
-        and _is_number(min_val)
-        and _is_number(max_val)
-        and float(min_val) < float(max_val)
-        and isinstance(palette_colors, list)
-        and len(palette_colors) >= 2
-    ):
-        n = len(palette_colors)
-        step = (float(max_val) - float(min_val)) / (n - 1)
-        stops = [
-            [round(float(min_val) + i * step, 6), palette_colors[i]]
-            for i in range(n)
-        ]
-
-        return {
-            "method": "interpolate",
-            "field": field,
-            "stops": stops,
-        }, warnings
-
-    warnings.append("continuous_legend_invalid: missing field, palette_colors (min 2), or min must be strictly less than max")
-    return None, warnings
-
-
-def _convert_categorical_legend(
-    legend_spec: Dict[str, Any], default_fallback: str = "#999999"
-) -> Tuple[Optional[Dict[str, Any]], List[str]]:
-    """Converts a categorical legend_spec into a match StyleMethod.
-
-    Per the legend_spec contract the categorical variant carries only
-    `categories: [{key, color, label}]`; the match default is the last
-    category color (falling back to `default_fallback` if a category lacks one).
-    """
-    warnings: List[str] = []
-    field = legend_spec.get("field", "")
-    categories = legend_spec.get("categories", [])
-
-    if field and isinstance(categories, list) and len(categories) >= 1:
-        cases = []
-        for cat in categories:
-            if isinstance(cat, dict):
-                key = cat.get("key")
-                color = cat.get("color")
-                if key is not None and color:
-                    cases.append([key, color])
-            elif isinstance(cat, (list, tuple)) and len(cat) >= 2:
-                cases.append([cat[0], cat[1]])
-
-        if cases:
-            # Spec contract: default = last category color.
-            default_color = cases[-1][1] or default_fallback
-            return {
-                "method": "match",
-                "field": field,
-                "cases": cases,
-                "default": default_color,
-            }, warnings
-
-        warnings.append("categorical_legend_invalid: no valid category entries")
-        return None, warnings
-
-    warnings.append("categorical_legend_invalid: missing field or categories")
-    return None, warnings
-
-
-# Dispatch table: drives the legend arms from one map so the converter body
-# doesn't repeat the same convert→extend→flag shape per type.
-_LEGEND_CONVERTERS: Dict[str, Callable[[Dict[str, Any], str], Tuple[Optional[Dict[str, Any]], List[str]]]] = {
-    "graduated": lambda spec, fallback: _convert_graduated_legend(spec),
-    "continuous": lambda spec, fallback: _convert_continuous_legend(spec),
-    "categorical": _convert_categorical_legend,
-}
+# ─── legend_spec -> StyleMethod paint.color (single projection) ─────────────
+# Paint derivation delegates to ``thematic_spec.spec_to_paint`` — the ONE
+# construction site shared with the frontend adapter and the semantic checks
+# (ADR-0052). Keeping a single projection is what guarantees the live map's
+# paint and the legend can never diverge: both are deterministic functions of
+# the same canonical ``legend_spec``.
 
 
 def _resolve_paint_color(
@@ -309,21 +198,7 @@ def _resolve_paint_color(
     is absent/malformed, paint_color stays None and the caller applies the
     constant default.
     """
-    warnings: List[str] = []
-    if legend_spec is None:
-        return None, False, warnings
-    if not isinstance(legend_spec, dict):
-        warnings.append("invalid_legend_spec: legend_spec must be a dictionary")
-        return None, False, warnings
-
-    legend_type = legend_spec.get("type")
-    converter = _LEGEND_CONVERTERS.get(legend_type)
-    if converter is None:
-        warnings.append(f"unrecognized_legend_type: {legend_type}")
-        return None, False, warnings
-
-    paint_color, legend_warns = converter(legend_spec, _default_color(layer_type))
-    warnings.extend(legend_warns)
+    paint_color, warnings = spec_to_paint(legend_spec, _default_color(layer_type))
     return paint_color, paint_color is not None, warnings
 
 
@@ -421,6 +296,14 @@ def convert_analysis_to_mapspec_layer(
         source_id = base_layer.get("source") or f"{layer_id}_source"
 
         res_layer = _build_layer(base_layer, layer_id, source_id, layer_type, paint, provenance)
+        # ADR-0052: attach the canonical legend_spec onto the output layer so the
+        # cartography semantic checks can verify paint ↔ legend equivalence on
+        # the SAME MapSpec (previously the vector path dropped legend_spec while
+        # the raster path kept it — an asymmetry that made drift undetectable).
+        # Extra keys are ignored by the compiler/runtime (they forward only
+        # id/type/source/paint/layout/filter to MapLibre).
+        if isinstance(legend_spec, dict):
+            res_layer["legend_spec"] = legend_spec
         return res_layer, inline_geojson, unique_warnings
 
     except Exception as e:
