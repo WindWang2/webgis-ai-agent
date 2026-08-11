@@ -239,5 +239,43 @@ describe('Chat API', () => {
       expect(body.session_id).toBe('sess-1');
       expect(body.map_state).toEqual({ zoom: 10 });
     });
+
+    it('sends Last-Event-ID header when lastEventId is provided (DUP-1 resume)', async () => {
+      mockFetch.mockResolvedValueOnce(makeSSEStream([]));
+      for await (const _ of streamChat('hello', 's1', {}, undefined, undefined, null, 42)) { /* drain */ }
+      const headers = mockFetch.mock.calls[0][1].headers;
+      expect(headers['Last-Event-ID']).toBe('42');
+    });
+
+    it('sends Last-Event-ID header as "0" for a drop-before-first-event resume', async () => {
+      mockFetch.mockResolvedValueOnce(makeSSEStream([]));
+      for await (const _ of streamChat('hello', 's1', {}, undefined, undefined, null, 0)) { /* drain */ }
+      expect(mockFetch.mock.calls[0][1].headers['Last-Event-ID']).toBe('0');
+    });
+
+    it('omits Last-Event-ID header on the first (non-resume) attempt', async () => {
+      mockFetch.mockResolvedValueOnce(makeSSEStream([]));
+      for await (const _ of streamChat('hello')) { /* drain */ }
+      expect(mockFetch.mock.calls[0][1].headers['Last-Event-ID']).toBeUndefined();
+    });
+
+    it('yields the id: field on SSE events (DUP-1)', async () => {
+      mockFetch.mockResolvedValueOnce(makeSSEStream([
+        'event: token',
+        'id: 3',
+        'data: {"content":"a"}',
+        '',
+        'event: done',
+        'id: 4',
+        'data: {}',
+        '',
+      ]));
+      const events: SSEEvent[] = [];
+      for await (const e of streamChat('hello')) {
+        events.push(e);
+      }
+      expect(events[0]).toMatchObject({ event: 'token', id: '3' });
+      expect(events[1]).toMatchObject({ event: 'done', id: '4' });
+    });
   });
 });

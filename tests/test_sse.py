@@ -1,7 +1,15 @@
 """Tests for SSE serialization + the batching/throttling buffer."""
 import pytest
 
-from app.utils.sse import sse_event, SSEBatcher, _serialize_sse_data, _is_terminal_event
+from app.utils.sse import (
+    sse_event,
+    SSEBatcher,
+    _serialize_sse_data,
+    _is_terminal_event,
+    sse_event_id,
+    sse_event_id_scope,
+    sse_event_type,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -19,6 +27,72 @@ def test_sse_event_utf8():
     # 中文 must round-trip (ensure_ascii=False)
     s = sse_event("content", {"content": "你好"})
     assert "你好" in s
+
+
+# ---------------------------------------------------------------------------
+# DUP-1: per-turn monotonic event ids (sse_event_id / sse_event_id_scope)
+# ---------------------------------------------------------------------------
+
+def test_sse_event_no_id_outside_scope():
+    # Backward compat: calls outside a turn scope emit no id: line (unit tests,
+    # non-chat streams like explorer are unchanged).
+    s = sse_event("token", {"content": "x"})
+    assert "id:" not in s
+    assert sse_event_id(s) is None
+
+
+def test_sse_event_ids_monotonic_inside_scope():
+    with sse_event_id_scope():
+        ids = [sse_event_id(sse_event("token", {"i": i})) for i in range(5)]
+    assert ids == [1, 2, 3, 4, 5]
+
+
+def test_sse_event_id_scope_resets_on_exit():
+    with sse_event_id_scope():
+        sse_event("token", {})
+    assert sse_event_id(sse_event("token", {})) is None
+
+
+def test_sse_event_explicit_event_id_overrides_scope():
+    with sse_event_id_scope():
+        s = sse_event("token", {"c": 1}, event_id=7)
+    assert sse_event_id(s) == 7
+
+
+def test_sse_event_id_parses_comment_as_none():
+    assert sse_event_id(": keepalive\n\n") is None
+
+
+def test_sse_event_ids_monotonic_across_mixed_events_and_comments():
+    """Ids stay monotonic across batched tokens, structural events AND the Pi
+    keepalive comments interleaved between them; comments consume no id."""
+    with sse_event_id_scope():
+        a = sse_event("task_start", {"session_id": "s"})
+        b = sse_event("token", {"content": "t"})
+        c = ": keepalive\n\n"  # heartbeat — raw comment, no id
+        d = sse_event("step_result", {"tool": "t", "result": {}})
+        e = sse_event("done", {"session_id": "s"})
+    assert sse_event_id(a) == 1
+    assert sse_event_id(b) == 2
+    assert sse_event_id(c) is None
+    assert sse_event_id(d) == 3
+    assert sse_event_id(e) == 4
+
+
+def test_sse_event_id_line_keeps_event_type_and_terminal_detection():
+    with sse_event_id_scope():
+        done = sse_event("done", {"session_id": "s"})
+        token = sse_event("token", {"content": "x"})
+        keep = ": keepalive\n\n"
+    # sse_event_type/_is_terminal_event parse the FIRST line (event: X), which
+    # the id: line must not disturb (event: X is emitted before id: N).
+    assert sse_event_type(done) == "done"
+    assert _is_terminal_event(done) is True
+    assert sse_event_type(token) == "token"
+    assert _is_terminal_event(token) is False
+    assert sse_event_type(keep) == ""
+    # ... and with no scope the event type parsing is unchanged too.
+    assert _is_terminal_event(sse_event("done", {})) is True
 
 
 def test_serialize_dict():
