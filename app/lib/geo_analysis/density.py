@@ -91,41 +91,55 @@ def kde_surface(
 
     coords = extract_centroids(gdf)
 
+    kde_weights = None
     if value_field:
-        weights = _extract_numeric_values(gdf, value_field)
-        if weights is None:
+        # Align coords with the (NaN/inf-filtered) weights: previously coords
+        # came from the full gdf while weights came from the filtered gdf, so
+        # a single bad value crashed the repeat/broadcast (C-6).
+        aligned = _filter_numeric_gdf(gdf, value_field)
+        if aligned is None:
             numeric_cols = [c for c in gdf.columns if c != "geometry" and gdf[c].dtype in ("float64", "int64", "float32", "int32")]
             return GeoAnalysisResult(
                 False, None, f"字段 '{value_field}' 不是数值类型。可用字段: {numeric_cols}",
                 error_type="TypeError",
                 correction_hint=f"使用以下数值字段之一: {numeric_cols}",
             )
-        weights = np.abs(weights)
-        # Weighted: repeat points by weight (clamped to avoid OOM)
-        min_w = float(weights.min())
-        if min_w == 0:
-            min_w = 1e-10
-        repeat_factors = np.clip(np.maximum((weights / min_w).astype(int), 1), 1, _MAX_REPEAT_FACTOR)
-        weighted_coords = np.repeat(coords, repeat_factors, axis=0)
-        kde_data = weighted_coords.T
-    else:
-        kde_data = coords.T
+        gdf_w, weights = aligned
+        coords = extract_centroids(gdf_w)
+        # gaussian_kde supports weights natively. Use them directly instead
+        # of repeating points: repetition forced integer ratios and clamped
+        # large dynamic ranges (1e6 -> 100x), silently distorting the density
+        # (C-7), and built a bloated array.
+        kde_weights = np.abs(weights.astype(float))
+
+    kde_data = coords.T
 
     # Bandwidth - always compute in CRS units (meters)
     from scipy.stats import gaussian_kde
 
-    data_std = np.mean(np.std(kde_data, axis=1))
+    data_std = float(np.mean(np.std(kde_data, axis=1)))
     if data_std == 0:
         data_std = 1.0
 
-    if bandwidth <= 0:
-        kde = gaussian_kde(kde_data, bw_method="scott")
-        scott_factor = kde.factor
-        bw = float(scott_factor * data_std)
-    else:
-        bw_factor = float(bandwidth / data_std)
-        kde = gaussian_kde(kde_data, bw_method=bw_factor)
-        bw = bandwidth
+    try:
+        if bandwidth <= 0:
+            kde = gaussian_kde(kde_data, bw_method="scott", weights=kde_weights)
+            bw = float(kde.factor * data_std)
+        else:
+            kde = gaussian_kde(
+                kde_data, bw_method=float(bandwidth / data_std), weights=kde_weights
+            )
+            bw = bandwidth
+    except np.linalg.LinAlgError as e:
+        # Degenerate input (all-coincident / collinear points) yields a
+        # singular covariance matrix (C-5). Surface it as a structured error
+        # instead of crashing.
+        return GeoAnalysisResult(
+            False, None,
+            f"KDE 失败：数据退化（点重合或共线），无法估计核密度。{e}",
+            error_type="NumericalError",
+            correction_hint="提供空间上更分散的点，或增大 bandwidth。",
+        )
 
     # Bounds
     if bounds and len(bounds) == 4:
@@ -249,7 +263,23 @@ def kde_contours(
     coords = extract_centroids(gdf)
     kde_data = coords.T
 
-    kde = gaussian_kde(kde_data, bw_method="scott" if bandwidth <= 0 else bandwidth / np.std(kde_data))
+    data_std = float(np.std(kde_data))
+    if data_std == 0:
+        data_std = 1.0
+    try:
+        kde = gaussian_kde(
+            kde_data,
+            bw_method="scott" if bandwidth <= 0 else float(bandwidth / data_std),
+        )
+    except np.linalg.LinAlgError as e:
+        # Degenerate input (coincident/collinear points) -> singular
+        # covariance (C-5). Surface a structured error.
+        return GeoAnalysisResult(
+            False, None,
+            f"等值面 KDE 失败：数据退化（点重合或共线）。{e}",
+            error_type="NumericalError",
+            correction_hint="提供空间上更分散的点，或增大 bandwidth。",
+        )
 
     xmin, ymin, xmax, ymax = gdf.total_bounds
     buf_x, buf_y = (xmax - xmin) * 0.2, (ymax - ymin) * 0.2
