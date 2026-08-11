@@ -8,7 +8,6 @@ Cartography Template System (tk1 #185):
 - Creates `cartography_templates` table supporting 4 template kinds: basemap, symbology, layout, thematic.
 - Seeds ~18 built-in templates (is_builtin=True).
 """
-import json
 from datetime import datetime, timezone
 from typing import Sequence, Union
 
