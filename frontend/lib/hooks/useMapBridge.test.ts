@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useMapBridge } from './useMapBridge';
+import { resetViewportSeq } from '@/lib/utils/viewport-seq';
 import * as chatApi from '@/lib/api/chat';
 import type { SSEEvent } from '@/lib/api/chat';
 
@@ -32,6 +33,7 @@ describe('useMapBridge', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
+    resetViewportSeq();
   });
 
   afterEach(() => {
@@ -47,7 +49,7 @@ describe('useMapBridge', () => {
       await result.current.send('hello', {});
     });
     expect(mockStreamChat).toHaveBeenCalledWith(
-      'hello', undefined, {}, expect.any(AbortSignal), undefined, null
+      'hello', undefined, { viewport_seq: 1 }, expect.any(AbortSignal), undefined, null
     );
   });
 
@@ -60,7 +62,7 @@ describe('useMapBridge', () => {
       await result.current.send('hello', { zoom: 10 });
     });
     expect(mockStreamChat).toHaveBeenCalledWith(
-      'hello', 'sid-123', { zoom: 10 }, expect.any(AbortSignal), undefined, null
+      'hello', 'sid-123', { zoom: 10, viewport_seq: 1 }, expect.any(AbortSignal), undefined, null
     );
   });
 
@@ -194,6 +196,55 @@ describe('useMapBridge', () => {
     const first = result.current.onViewportChange;
     rerender({ sid: 's2' });
     expect(result.current.onViewportChange).not.toBe(first);
+  });
+
+  it('map-state POSTs and send() snapshot carry a monotonic seq (F4)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+    vi.stubGlobal('fetch', fetchMock);
+    // 'thinking' → aiStatus gate allows viewport POSTs during the turn.
+    // The generator never ends, so the turn stays in 'thinking'.
+    async function* hangingTurn(): AsyncGenerator<SSEEvent> {
+      yield { event: 'thinking', data: {} };
+      await new Promise(() => {});
+    }
+    mockStreamChat.mockReturnValue(hangingTurn());
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent)
+    );
+    act(() => { result.current.send('q', {}); });
+
+    // send() stamp comes first (seq 1) — the turn-start write outranks any
+    // in-flight POST that predates it.
+    expect(mockStreamChat).toHaveBeenCalledWith(
+      'q', 's1', expect.objectContaining({ viewport_seq: 1 }), expect.any(AbortSignal), undefined, null
+    );
+
+    // throttled POST #1 → seq 2
+    act(() => { result.current.onViewportChange([1, 2], 10, 0, 0); });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body1 = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body1.seq).toBe(2);
+    expect(body1.viewport).toEqual({ center: [1, 2], zoom: 10, bearing: 0, pitch: 0 });
+
+    // advance past the 2s throttle → POST #2 → seq 3
+    act(() => { vi.advanceTimersByTime(2100); });
+    act(() => { result.current.onViewportChange([3, 4], 11, 0, 0); });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const body2 = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+    expect(body2.seq).toBe(3);
+
+    // session switch resets the counter so the next session starts fresh
+    const { result: result2, rerender: rerender2 } = renderHook(
+      ({ sid }: { sid: string }) => useMapBridge(sid, dispatchAction, onEvent),
+      { initialProps: { sid: 's1' } }
+    );
+    rerender2({ sid: 's2' });
+    mockStreamChat.mockReturnValue(hangingTurn());
+    act(() => { result2.current.send('x', {}); });
+    expect(mockStreamChat).toHaveBeenLastCalledWith(
+      'x', 's2', expect.objectContaining({ viewport_seq: 1 }), expect.any(AbortSignal), undefined, null
+    );
+    vi.unstubAllGlobals();
   });
 
   // ─── Heatmap command dispatch (RC1 regression tests) ───

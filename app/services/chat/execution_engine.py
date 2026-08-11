@@ -383,14 +383,30 @@ class ChatExecutionEngine:
     def _call_llm_stream(self, messages: list[dict], tools: Optional[list] = None):
         return call_llm_stream(self._llm_config(), messages, tools)
 
+    async def _persist_map_state(self, session_id: str, map_state: dict) -> None:
+        """F4: persist the turn-start map_state snapshot.
+
+        The viewport key has two writers (this snapshot + the client's
+        throttled POST). The client stamps the snapshot with its monotonic
+        ``viewport_seq``; we pass it through so an older in-flight POST that
+        lands after this write is rejected as stale instead of clobbering the
+        newer snapshot. Other keys are unsequenced (always apply).
+        """
+        viewport_seq = map_state.get("viewport_seq")
+        for k, v in map_state.items():
+            if k == "viewport_seq":
+                continue
+            await session_data_manager.set_map_state(
+                session_id, k, v, seq=viewport_seq if k == "viewport" else None
+            )
+
     async def chat(self, message: str, session_id: Optional[str] = None, map_state: Optional[dict] = None, skill_name: Optional[str] = None, user_id: Optional[str] = None) -> dict:
         """非流式对话"""
         if not session_id:
             session_id = str(uuid.uuid4())
 
         if map_state:
-            for k, v in map_state.items():
-                await session_data_manager.set_map_state(session_id, k, v)
+            await self._persist_map_state(session_id, map_state)
             from app.services.viewport_naming import schedule_populate_from_map_state
             schedule_populate_from_map_state(map_state)
 
@@ -551,8 +567,7 @@ class ChatExecutionEngine:
         lock = self._get_session_lock(session_id)
         async with lock:
             if map_state:
-                for k, v in map_state.items():
-                    await session_data_manager.set_map_state(session_id, k, v)
+                await self._persist_map_state(session_id, map_state)
                 from app.services.viewport_naming import schedule_populate_from_map_state
                 schedule_populate_from_map_state(map_state)
 

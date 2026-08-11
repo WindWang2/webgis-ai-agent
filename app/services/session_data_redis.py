@@ -360,22 +360,58 @@ class RedisSessionStore(BaseSessionStore):
         }
         return {rid: ref_to_alias.get(rid, "") for rid in ref_ids}
 
-    async def set_map_state(self, session_id: str, key: str, value: Any) -> None:
+    async def set_map_state(self, session_id: str, key: str, value: Any, seq: Optional[int] = None) -> bool:
         await self._ensure_connected()
-        async with self._r.pipeline() as pipe:
-            pipe.hsetnx(
-                self._state_key(session_id),
-                "_started_at",
-                # BUG-09：直接存 ISO 字符串，不双重编码。
-                datetime.now(timezone.utc).isoformat(),
-            )
-            pipe.hset(self._state_key(session_id), key, json.dumps(value, ensure_ascii=False))
-            pipe.expire(self._state_key(session_id), STATE_TTL)
-            pipe.sadd(self._active_key(), session_id)
-            self._refresh_session_ttl(pipe, session_id)
-            await pipe.execute()
-        # Write-through invalidation: drop L1 so next read refetches from Redis.
-        self._l1_invalidate_session(session_id)
+        # F4: same dual-writer sequencing as the memory store. The seq check is
+        # a read-modify-write, so guard it with WATCH/MULTI (like
+        # update_layer_in_state) — otherwise two in-flight POSTs could both pass
+        # the check and the older one land last.
+        state_key = self._state_key(session_id)
+        for attempt in range(3):
+            try:
+                async with self._r.pipeline(transaction=True) as pipe:
+                    await pipe.watch(state_key)
+                    stored_raw = await pipe.hget(state_key, f"_{key}_seq")
+                    stored_seq = int(stored_raw) if stored_raw is not None else 0
+                    if seq is not None and seq <= stored_seq:
+                        return False  # stale out-of-order write — resolve to latest seq
+                    pipe.multi()
+                    pipe.hsetnx(
+                        state_key,
+                        "_started_at",
+                        # BUG-09：直接存 ISO 字符串，不双重编码。
+                        datetime.now(timezone.utc).isoformat(),
+                    )
+                    pipe.hset(state_key, key, json.dumps(value, ensure_ascii=False))
+                    if seq is not None:
+                        # Unsequenced writes (server-side truth) leave the
+                        # stored seq untouched so the client's next write passes.
+                        pipe.hset(state_key, f"_{key}_seq", seq)
+                    pipe.hset(state_key, f"_{key}_updated_at", datetime.now(timezone.utc).isoformat())
+                    pipe.expire(state_key, STATE_TTL)
+                    pipe.sadd(self._active_key(), session_id)
+                    self._refresh_session_ttl(pipe, session_id)
+                    await pipe.execute()
+                # Write-through invalidation: drop L1 so next read refetches from Redis.
+                self._l1_invalidate_session(session_id)
+                return True
+            except aioredis.WatchError:
+                continue  # 重试
+            except (TypeError, ValueError, json.JSONDecodeError) as e:
+                # 损坏的 seq 值 —— 降级，不抛。
+                logger.warning("set_map_state corrupt seq for %s %s: %s", session_id, key, e)
+                return False
+            except aioredis.RedisError as e:
+                logger.warning(
+                    "set_map_state Redis failed for %s %s: %s",
+                    session_id, key, e,
+                )
+                return False
+        logger.warning(
+            "set_map_state gave up after 3 retries for %s %s (concurrent contention)",
+            session_id, key,
+        )
+        return False
 
     async def get_started_at(self, session_id: str) -> Optional[str]:
         await self._ensure_connected()
@@ -419,9 +455,10 @@ class RedisSessionStore(BaseSessionStore):
         out: dict[str, Any] = {}
         for k, v in raw.items():
             key = k.decode() if isinstance(k, bytes) else k
-            if key == "_started_at":
-                # BUG-09: _started_at is now stored as a bare ISO string (not
-                # JSON). Use the tolerant decoder to also handle legacy values.
+            if key == "_started_at" or key.endswith("_updated_at"):
+                # BUG-09: _started_at is stored as a bare ISO string (not
+                # JSON). F4: _<key>_updated_at timestamps are stored the same
+                # way. Use the tolerant decoder to also handle legacy values.
                 out[key] = self._decode_started_at(v)
             else:
                 out[key] = json.loads(v)

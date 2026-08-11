@@ -165,3 +165,71 @@ class TestCleanupIdleSessions:
         await mgr.cleanup_idle_sessions(max_sessions=10)
         # Should have cleaned up some sessions
         assert len(mgr._store) <= 10
+
+
+class TestMapStateSequencing:
+    """F4: viewport has two unsequenced writers (turn-start + throttled POST).
+
+    The fix adds a monotonic per-key `seq` to set_map_state: a sequenced write
+    is accepted only when its seq is strictly newer than the stored one, so
+    out-of-order arrivals resolve to the latest seq instead of last-write-wins.
+    Unsequenced writes (server-side truth: ws_service, layer_manager) always
+    apply and never invalidate the client's outstanding seq.
+    """
+
+    async def test_newer_seq_write_wins_over_stale_replay(self, mgr):
+        # newer write lands first
+        assert await mgr.set_map_state("s1", "viewport", {"zoom": 12}, seq=2) is True
+        # stale write arrives after — must be rejected, not clobber
+        assert await mgr.set_map_state("s1", "viewport", {"zoom": 5}, seq=1) is False
+        state = await mgr.get_map_state("s1")
+        assert state["viewport"] == {"zoom": 12}
+        assert state["_viewport_seq"] == 2
+
+    async def test_out_of_order_writes_resolve_to_latest_seq(self, mgr):
+        await mgr.set_map_state("s1", "viewport", {"zoom": 5}, seq=1)
+        await mgr.set_map_state("s1", "viewport", {"zoom": 12}, seq=2)
+        # stale replay of seq 1 after seq 2 is already stored
+        assert await mgr.set_map_state("s1", "viewport", {"zoom": 5}, seq=1) is False
+        state = await mgr.get_map_state("s1")
+        assert state["viewport"] == {"zoom": 12}
+        assert state["_viewport_seq"] == 2
+
+    async def test_jump_ahead_seq_is_accepted(self, mgr):
+        await mgr.set_map_state("s1", "viewport", {"zoom": 5}, seq=1)
+        assert await mgr.set_map_state("s1", "viewport", {"zoom": 12}, seq=3) is True
+        assert (await mgr.get_map_state("s1"))["viewport"] == {"zoom": 12}
+
+    async def test_unsequenced_write_applies_without_bumping_seq(self, mgr):
+        # turn-start write carries the client's send-time seq
+        await mgr.set_map_state("s1", "viewport", {"zoom": 5}, seq=3)
+        # unsequenced server-side write (ws_service / layer_manager path) —
+        # always applies, but leaves the stored seq untouched so the client's
+        # NEXT sequenced write (seq 4) still passes.
+        await mgr.set_map_state("s1", "viewport", {"zoom": 6})
+        state = await mgr.get_map_state("s1")
+        assert state["viewport"] == {"zoom": 6}
+        assert state["_viewport_seq"] == 3
+        # a stale sequenced write still loses against it
+        assert await mgr.set_map_state("s1", "viewport", {"zoom": 5}, seq=3) is False
+        # and the next client write with a newer seq wins
+        assert await mgr.set_map_state("s1", "viewport", {"zoom": 7}, seq=4) is True
+        assert (await mgr.get_map_state("s1"))["viewport"] == {"zoom": 7}
+
+    async def test_updated_at_metadata_is_recorded(self, mgr):
+        await mgr.set_map_state("s1", "viewport", {"zoom": 5}, seq=1)
+        state = await mgr.get_map_state("s1")
+        assert state["_viewport_updated_at"]  # non-empty ISO timestamp
+        # unsequenced write also refreshes the timestamp
+        await mgr.set_map_state("s1", "viewport", {"zoom": 6})
+        assert (await mgr.get_map_state("s1"))["_viewport_updated_at"] >= state["_viewport_updated_at"]
+
+    async def test_seq_metadata_is_per_key(self, mgr):
+        await mgr.set_map_state("s1", "viewport", {"zoom": 5}, seq=1)
+        await mgr.set_map_state("s1", "layers", [{"id": "l1"}], seq=1)
+        # stale viewport replay must not affect the layers key
+        assert await mgr.set_map_state("s1", "viewport", {"zoom": 5}, seq=1) is False
+        assert await mgr.set_map_state("s1", "layers", [{"id": "l2"}], seq=2) is True
+        state = await mgr.get_map_state("s1")
+        assert state["layers"] == [{"id": "l2"}]
+        assert state["_layers_seq"] == 2

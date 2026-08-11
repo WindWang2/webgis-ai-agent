@@ -12,6 +12,11 @@ import type { StepResultEvent } from '@/lib/types/agent-events';
 
 
 import { devOnly } from "@/lib/utils/logger";
+import {
+  nextViewportSeq,
+  resetViewportSeq,
+  viewportSeqTracker,
+} from "@/lib/utils/viewport-seq";
 const MAP_STATE_THROTTLE_MS = 2000;
 
 /**
@@ -54,11 +59,17 @@ export function useMapBridge(
     useHudStore.getState().setAiStatus(status);
   }, []);
 
-  // [DX1] Auto-abort on sessionId change and unmount — AbortController is fully internal
+  // [DX1] Auto-abort on sessionId change and unmount — AbortController is fully internal.
+  // F4: the viewport seq tracker is per-session (server seqs are session-scoped),
+  // so reset it whenever the active session changes — including a fresh
+  // undefined→assigned assignment.
   useEffect(() => {
-    if (prevSessionIdRef.current !== undefined && sessionId !== undefined && prevSessionIdRef.current !== sessionId) {
-      // Abort only on explicit session switch, not on server assignment for a new session
-      abortControllerRef.current?.abort();
+    if (prevSessionIdRef.current !== sessionId) {
+      if (prevSessionIdRef.current !== undefined && sessionId !== undefined) {
+        // Abort only on explicit session switch, not on server assignment for a new session
+        abortControllerRef.current?.abort();
+      }
+      resetViewportSeq();
     }
     prevSessionIdRef.current = sessionId;
   }, [sessionId]);
@@ -86,7 +97,17 @@ export function useMapBridge(
 
       try {
         // SEC-08：把当前持有的 owner_token 附在请求头，匿名会话后端据此放行。
-        for await (const event of streamChat(content, sessionId, mapSnapshot, controller.signal, undefined, sessionTokenRef?.current ?? null)) {
+        // F4: stamp the snapshot with the client's monotonic viewport seq so
+        // the backend turn-start write outranks any older in-flight throttled
+        // POST that may land after it.
+        for await (const event of streamChat(
+          content,
+          sessionId,
+          { ...mapSnapshot, viewport_seq: nextViewportSeq(viewportSeqTracker) },
+          controller.signal,
+          undefined,
+          sessionTokenRef?.current ?? null
+        )) {
           if (controller.signal.aborted) break;
 
           // Skip unparseable data — streamChat yields raw string on JSON.parse failure
@@ -204,6 +225,8 @@ export function useMapBridge(
       lastMapStatePushRef.current = now;
       if (!sessionId) return;
       // SEC-08：匿名会话的 map-state 写入同样受 owner_token 保护。
+      // F4: the POST carries a monotonic seq so the backend can reject it as
+      // stale if a newer write (e.g. the next turn's snapshot) lands first.
       const token = sessionTokenRef?.current ?? null;
       fetch(`${API_BASE}/api/v1/chat/sessions/${sessionId}/map-state`, {
         method: 'POST',
@@ -211,7 +234,10 @@ export function useMapBridge(
           'Content-Type': 'application/json',
           ...(token ? { 'X-Session-Token': token } : {}),
         },
-        body: JSON.stringify({ viewport: { center, zoom, bearing, pitch } }),
+        body: JSON.stringify({
+          viewport: { center, zoom, bearing, pitch },
+          seq: nextViewportSeq(viewportSeqTracker),
+        }),
       }).catch((e) => devOnly.warn('[useMapBridge] map-state POST failed:', e));
     },
     [sessionId, sessionTokenRef]
