@@ -661,13 +661,15 @@ class RedisSessionStore(BaseSessionStore):
             except aioredis.WatchError:
                 continue  # 重试
             except aioredis.RedisError as e:
+                # action_id 是客户端可控值（可含换行等控制字符），日志用 %r
+                # repr 转义，防 log injection。
                 logger.warning(
-                    "Redis append_map_action_event failed for session %s action %s: %s — event dropped",
+                    "Redis append_map_action_event failed for session %s action %r: %s — event dropped",
                     session_id, action_id, e,
                 )
                 return False
         logger.warning(
-            "append_map_action_event gave up after 3 retries for %s action %s (concurrent contention)",
+            "append_map_action_event gave up after 3 retries for %s action %r (concurrent contention)",
             session_id, action_id,
         )
         return False

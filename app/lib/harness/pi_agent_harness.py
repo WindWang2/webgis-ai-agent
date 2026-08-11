@@ -357,7 +357,13 @@ class PiAgentHarness:
 
         ``requested`` 为请求目标参数快照（ToolDispatchService 铸 action_id 时已
         按 ~2KB 封顶），供后端重算相机收敛。
+
+        session_id 为空时不记录 —— 无法归属到具体会话的 issued 记录在评估时
+        无法按 session_id 隔离（map_action_reader 是 session-scoped），记下来
+        只会污染其它会话的评估。
         """
+        if not session_id:
+            return {}
         entry = {
             "action_id": action_id,
             "command": command,
@@ -507,8 +513,18 @@ class PiAgentHarness:
     async def _build_map_action_evidence(
         self, map_action_reader: Optional[MapActionReader]
     ) -> List[MapActionEvidence]:
-        """把 issued 记录与 session store ACK 合并成 MapActionEvidence 列表。"""
-        issued = self.map_actions_issued
+        """把 issued 记录与 session store ACK 合并成 MapActionEvidence 列表。
+
+        会话隔离：harness 单例会跨 session 累积 issued 记录，而 map_action_reader
+        是 session-scoped（只返回当前 session 的 ACK）。这里按 session_id 过滤
+        issued 侧，只保留当前评估会话的动作 —— 其它会话的 issued/ack 绝不能算进
+        本次 coverage（前端 action_id 是随机 mint，但跨会话重名/重放时首达终态
+        幂等只按 action_id，必须先在 issued 侧隔离）。
+        """
+        issued = [
+            rec for rec in self.map_actions_issued
+            if rec.get("session_id") == self.session_id
+        ]
         if not issued:
             return []
         acks_by_id: Dict[str, Dict[str, Any]] = {}
@@ -535,6 +551,8 @@ class PiAgentHarness:
 
         无 ACK（或 ACK 的 status 无法解析）→ 保持 ISSUED = 缺失终态证据。
         ACK 侧 correlation（run/turn/sse_event_id）优先于 issued 记录的缺省值。
+        requested 相反：issued 快照带相机状态时优先（防客户端假快照自证收敛），
+        ACK 侧 requested 仅兜底。
         """
         status = MapActionStatus.ISSUED
         actual: Dict[str, Any] = {}
@@ -556,7 +574,11 @@ class PiAgentHarness:
                     status = MapActionStatus.ISSUED
             if isinstance(ack.get("actual"), dict):
                 actual = ack["actual"]
-            if isinstance(ack.get("requested"), dict):
+            # 收敛防伪：requested 以后端铸造的 issued 快照为准 —— 它带相机状态
+            # （center/zoom）时绝不能被客户端 ACK 声称的 requested 覆盖（否则
+            # 客户端可上报 requested==actual 的假快照"自证收敛"，后端重算形同
+            # 虚设）。ACK 侧 requested 仅在 issued 快照无相机状态时兜底。
+            if not _has_camera_state(requested) and isinstance(ack.get("requested"), dict):
                 requested = ack["requested"]
             error = str(ack.get("error") or "")
             started_at = str(ack.get("started_at") or "")
@@ -786,15 +808,24 @@ class PiAgentHarness:
     def evaluate_all(
         self, expected_tools: List[str], ideal_step_count: int
     ) -> Dict[str, float]:
-        return {
+        metrics: Dict[str, float] = {
             "ToolChoiceAccuracy": round(self.compute_tool_choice_accuracy(expected_tools), 2),
             "MapSpecValidity": round(self.compute_mapspec_validity(), 2),
             "CursorResolutionRate": round(self.compute_cursor_resolution_rate(), 2),
             "StepEfficiency": round(self.compute_step_efficiency(ideal_step_count), 2),
             "ErrorRecoveryRate": round(self.compute_error_recovery_rate(), 2),
-            # V3 新增（additive）：地图交互闭环指标。缺失证据一律 0.0，绝不为 100。
-            "InteractionEvidenceCoverage": round(self.compute_interaction_evidence_coverage(), 2),
-            "MapCommandExecutionSuccessRate": round(self.compute_map_command_execution_success_rate(), 2),
-            "InteractionStateConvergenceRate": round(self.compute_interaction_state_convergence_rate(), 2),
-            "InteractionRecoveryRate": round(self.compute_interaction_recovery_rate(), 2),
         }
+        # V3 交互维度（additive）：仅当本次会话确实有 issued 交互证据时才输出，
+        # 镜像 evaluate_evidence 的 'evaluated = issued > 0'。无交互证据时省略这
+        # 4 个键 —— 同步 evaluate_session 对缺失的交互维度直接跳过，避免 0.0
+        # 把无交互 run 的 V2 gate 拖垮（harness_runner run_benchmark_scenario
+        # 全量走 evaluate_all→evaluate_session，此前每跑必 fail）。缺失证据本身
+        # 仍是诚实的 0.0（有 issued 记录但无 ACK 时照常输出 0.0），绝不为 100。
+        if self._map_action_evidence:
+            metrics.update({
+                "InteractionEvidenceCoverage": round(self.compute_interaction_evidence_coverage(), 2),
+                "MapCommandExecutionSuccessRate": round(self.compute_map_command_execution_success_rate(), 2),
+                "InteractionStateConvergenceRate": round(self.compute_interaction_state_convergence_rate(), 2),
+                "InteractionRecoveryRate": round(self.compute_interaction_recovery_rate(), 2),
+            })
+        return metrics

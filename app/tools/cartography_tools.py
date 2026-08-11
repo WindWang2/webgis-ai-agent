@@ -159,9 +159,13 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
         fly_params["bearing"] = bearing
       if fly_params:
         current = (await session_data_manager.get_map_state(session_id)).get("viewport") or {}
-        await session_data_manager.set_map_state(session_id, "viewport", {**current, **fly_params})
+        merged = {**current, **fly_params}
+        await session_data_manager.set_map_state(session_id, "viewport", merged)
         out["command"] = "fly_to"
-        out["params"] = fly_params
+        # P2 fix: 下发合并后的完整视口（当前视口 ∪ 本次参数）。此前只透传
+        # fly_params —— 部分参数（如仅 pitch）会产出 center-less 的 fly_to，
+        # 前端按缺 center 判 invalid_params，相机永不移动、viewport 失步。
+        out["params"] = merged
     return _forward_evidence(res, out)
 
   @tool(

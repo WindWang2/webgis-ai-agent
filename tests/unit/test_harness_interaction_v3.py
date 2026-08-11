@@ -33,14 +33,26 @@ from app.lib.harness.pi_agent_harness import (
     _camera_match,
     _is_verifiable_ack,
 )
+from app.lib.harness.ref_resolver import make_session_store_resolver
 from app.services.tool_dispatch_service import (
     MAP_ACTION_ID_PREFIX,
     REQUESTED_SNAPSHOT_MAX_BYTES,
     ToolDispatchResult,
     ToolDispatchService,
 )
+from app.tools.harness_runner import run_benchmark_scenario
 
 import app.agent_pi_bridge as bridge_mod
+
+
+class _FakeStore:
+    """Minimal async session store for ref-resolution tests (mirror test_pi_harness)."""
+
+    def __init__(self, data: dict | None = None):
+        self._data = data or {}
+
+    async def get(self, session_id, ref):
+        return self._data.get(ref)
 
 
 # ── shared fixtures ──────────────────────────────────────────────────────
@@ -414,14 +426,157 @@ async def test_interaction_metrics_math():
     assert m["InteractionRecoveryRate"] == 66.67
 
 
-def test_interaction_metrics_no_evidence_zero_not_hundred():
-    """无 issued 记录 → 4 个交互指标全 0.0（缺失证据，绝不为 100）。"""
+def test_evaluate_all_omits_interaction_metrics_without_issued_evidence():
+    """无 issued 交互证据 → evaluate_all 省略 4 个交互键（而非报 0.0）。
+
+    缺失证据绝不伪装成 100；同时省略比 0.0 更诚实 —— 同步 gate evaluate_session
+    对缺失的交互维度直接跳过，无交互 run 的 V2 gate 不会被 0.0 恒定拉垮
+    （等价 evaluate_evidence 的 not_applicable_exempt）。"""
     harness = PiAgentHarness(session_id="s6")
     metrics = harness.evaluate_all(expected_tools=[], ideal_step_count=0)
-    assert metrics["InteractionEvidenceCoverage"] == 0.0
-    assert metrics["MapCommandExecutionSuccessRate"] == 0.0
-    assert metrics["InteractionStateConvergenceRate"] == 0.0
-    assert metrics["InteractionRecoveryRate"] == 0.0
+    assert all(name not in metrics for name in INTERACTION_METRICS)
+
+
+# ── V2 sync gate regression（P1）：evaluate_all→evaluate_session 真实组合 ──
+
+
+def test_sync_gate_run_benchmark_scenario_omits_interaction_dims():
+    """harness_runner.run_benchmark_scenario（evaluate_all→evaluate_session 真实
+    组合）在无交互场景下：metrics/checks 均不含 interaction 4 键，reported
+    overall_passed 与只用 5 个 V2 维度评估一致（此前 interaction 恒为 0.0 会把
+    gate 恒定拉垮，V2 调用方无交互 run 每跑必 fail）。"""
+    res = run_benchmark_scenario(
+        scenario_id="scenario_no_interaction",
+        expected_tools=["webgis_layer_upsert"],
+        ideal_step_count=1,
+        simulated_tool_calls=[{
+            "id": "c1", "name": "webgis_layer_upsert",
+            "arguments": {"layer": {"id": "L"}},
+        }],
+        simulated_tool_results=[{
+            "id": "c1", "name": "webgis_layer_upsert",
+            "result": {"success": True, "is_compiled": True},
+        }],
+    )
+    assert all(name not in res["metrics"] for name in INTERACTION_METRICS)
+    assert all(name not in res["evaluation"]["checks"] for name in INTERACTION_METRICS)
+    v2_only = {k: v for k, v in res["metrics"].items() if k not in INTERACTION_METRICS}
+    assert res["evaluation"]["overall_passed"] == HarnessEvaluator().evaluate_session(v2_only)["overall_passed"]
+
+
+@pytest.mark.asyncio
+async def test_sync_gate_full_pass_with_real_composition():
+    """5 个 V2 维度全部通过的无交互场景：真实 evaluate_with_evidence（内部
+    evaluate_all）→ evaluate_session 组合必须 overall_passed=True —— 回归前
+    interaction 0.0 会把一个本该通过的 run 拉成 False。"""
+    store = _FakeStore({"ref:geojson-ok": {"type": "FeatureCollection", "features": []}})
+    harness = PiAgentHarness(
+        session_id="sync-gate-pass",
+        ref_resolver=make_session_store_resolver(store),
+    )
+    harness.record_tool_call("c1", "webgis_layer_upsert", {"src": "ref:geojson-ok"})
+    harness.record_tool_result(
+        "c1", "webgis_layer_upsert", {"success": True, "is_compiled": True}
+    )
+    ev_result = await harness.evaluate_with_evidence(
+        expected_tools=["webgis_layer_upsert"], ideal_step_count=1,
+    )
+    # 无交互 → interaction 段存在但 metrics 不含 interaction 键
+    assert all(name not in ev_result["metrics"] for name in INTERACTION_METRICS)
+    metrics = harness.evaluate_all(
+        expected_tools=["webgis_layer_upsert"], ideal_step_count=1,
+    )
+    result = HarnessEvaluator().evaluate_session(metrics)
+    assert all(name not in result["checks"] for name in INTERACTION_METRICS)
+    assert result["overall_passed"] is True
+
+
+# ── V3: harness 会话隔离（issued 侧按 session_id 过滤） ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_map_action_evidence_session_isolation():
+    """共享 harness 跨 session 累积 issued 时，评估只匹配当前 session：
+    map_action_reader 是 session-scoped（只返回 A 的 ack），issued 侧必须按
+    session_id 过滤 —— B 的 issued（哪怕 action_id 与 A 重名）绝不参与 A 的
+    coverage/action 列表。"""
+    harness = PiAgentHarness(session_id="sessA")
+    # session A：2 个动作，其中 ma-a1 有 ACK
+    harness.record_map_action_issued(
+        session_id="sessA", tool_call_id="a1", turn_id="t1",
+        action_id="ma-a1", command="fly_to",
+        requested={"center": [116.0, 39.0], "zoom": 12},
+    )
+    harness.record_map_action_issued(
+        session_id="sessA", tool_call_id="a2", turn_id="t1",
+        action_id="ma-a2", command="fly_to",
+        requested={"center": [116.0, 39.0], "zoom": 12},
+    )
+    # session B：同 action_id 的 issued（跨会话重名/重放场景）—— 绝不能算进 A
+    harness.record_map_action_issued(
+        session_id="sessB", tool_call_id="b1", turn_id="t9",
+        action_id="ma-a1", command="fly_to",
+        requested={"center": [1.0, 2.0], "zoom": 3},
+    )
+
+    acks = [{
+        "action_id": "ma-a1", "status": "succeeded",
+        "actual": {"center": [116.0001, 39.0001], "zoom": 12.01},
+    }]
+    result = await harness.evaluate_with_evidence(
+        expected_tools=[], ideal_step_count=0, map_action_reader=_make_reader(acks),
+    )
+    inter = result["interaction"]
+    assert inter["issued"] == 2
+    assert {a["action_id"] for a in inter["actions"]} == {"ma-a1", "ma-a2"}
+    assert all(a["session_id"] == "sessA" for a in inter["actions"])
+    assert inter["acked"] == 1
+    # coverage 只按 A 的 issued 计算：1 终态 / 2 issued
+    assert result["metrics"]["InteractionEvidenceCoverage"] == 50.0
+    # B 的动作完全不出现
+    assert all(a["tool_call_id"] != "b1" for a in inter["actions"])
+
+
+def test_record_map_action_issued_skips_empty_session():
+    """session_id 为空 → 不记录（无法按 session 隔离的 issued 会污染评估）。"""
+    harness = PiAgentHarness(session_id="s")
+    entry = harness.record_map_action_issued(
+        session_id="", tool_call_id="c1", action_id="ma-x", command="fly_to",
+    )
+    assert entry == {}
+    assert harness.map_actions_issued == []
+
+
+# ── V3: 收敛防伪 —— ACK 声称的 requested 不能覆盖后端快照 ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_client_ack_cannot_spoof_requested_to_flip_convergence():
+    """客户端 ACK 声称 requested==actual（与后端铸造的 issued 快照不同）时，
+    收敛判定必须仍用 issued 快照 —— 后端重算否决假自证，convergence 如实 0。"""
+    harness = PiAgentHarness(session_id="s-spoof")
+    harness.record_map_action_issued(
+        session_id="s-spoof", tool_call_id="c1", turn_id="t1",
+        action_id="ma-spoof", command="fly_to",
+        # 后端铸造（ToolDispatchService mint）时截取的 requested 快照
+        requested={"center": [116.0, 39.0], "zoom": 12},
+    )
+    acks = [{
+        "action_id": "ma-spoof",
+        "status": "succeeded",
+        # 客户端试图用 requested==actual 的假快照"自证收敛"
+        "requested": {"center": [116.05, 39.0], "zoom": 12},
+        "actual": {"center": [116.05, 39.0], "zoom": 12, "converged": True},
+    }]
+    result = await harness.evaluate_with_evidence(
+        expected_tools=[], ideal_step_count=0, map_action_reader=_make_reader(acks),
+    )
+    action = result["interaction"]["actions"][0]
+    assert action["status"] == "succeeded"
+    assert action["requested"]["center"] == [116.0, 39.0]  # issued 快照优先
+    assert action["verifiable"] is True
+    assert action["converged"] is False
+    assert result["metrics"]["InteractionStateConvergenceRate"] == 0.0
 
 
 # ── evaluate_evidence gate: require_interaction strict vs exempt ─────────

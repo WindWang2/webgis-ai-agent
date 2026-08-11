@@ -2,13 +2,14 @@
 import logging
 from typing import Annotated, Literal, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_optional, get_owner_token, require_admin, require_owned_session
 from app.core.database import get_async_db
+from app.core.rate_limiter import get_rate_limiter
 from app.models.db_model import Conversation
 from app.services.chat.event_resume import TurnEventBuffer, TurnResumeRegistry
 from app.services.chat_engine import ChatEngine
@@ -53,6 +54,11 @@ _PI_BATCH_MAX_DELAY_S = 0.08
 # true/1/yes 时使用 Pi 开源 agent (vendor/pi) 通过 RPC 调用
 # (imported from app.agent_pi_bridge to avoid duplication)
 pi_bridge = None  # type: ignore[assignment]  # 由 lifespan 初始化
+
+# map-action-ack 限速（per client IP，同 ws.py/auth.py 模式）：前端 500ms
+# debounce 批量上报，正常单会话峰值远低于此；防单 IP 轮换 session_id 的遥测洪泛。
+_ACK_RATE_LIMIT_MAX = 300
+_ACK_RATE_LIMIT_WINDOW = 60
 
 
 def get_engine() -> ChatEngine:
@@ -534,9 +540,11 @@ class MapActionAck(BaseModel):
     command: str = Field(max_length=64)
     status: Literal["succeeded", "failed", "cancelled", "superseded"]
     error: str = Field(default="", max_length=500)
-    started_at: str = ""
-    finished_at: str = ""
-    duration_ms: Optional[float] = Field(default=None, ge=0)
+    started_at: str = Field(default="", max_length=64)
+    finished_at: str = Field(default="", max_length=64)
+    # le=1e15 拒绝 Infinity/超大值（json.loads("1e999") 会解析成 inf，存进
+    # duration_ms 会在序列化/聚合时产生非有限值）。
+    duration_ms: Optional[float] = Field(default=None, ge=0, le=1e15)
     correlation: Optional[dict] = None
     requested: Optional[dict] = None
     actual: Optional[dict] = None
@@ -560,6 +568,7 @@ class MapActionAckRequest(BaseModel):
 async def push_map_action_acks(
     session_id: str,
     req: MapActionAckRequest,
+    request: Request,
     _conv: Conversation = Depends(require_owned_session),
 ):
     """接收前端上报的地图动作终态 ACK（V3 闭环）。
@@ -569,7 +578,16 @@ async def push_map_action_acks(
     重复 ACK 计入 duplicates。fire-and-forget 遥测：存储层自带降级（Redis
     不可达仅丢事件），端点成败不影响地图交互。harness 评估时直接从 session
     存储读取 ACK（单一事实源），此处不再另写 harness。
+
+    限速 per client IP（同 ws.py/auth.py）：Redis 不可达时 is_allowed fail-open
+    放行，不阻断正常交互。
     """
+    client_ip = request.client.host if request.client else "unknown"
+    limiter = await get_rate_limiter()
+    if not await limiter.is_allowed(
+        f"map_action_ack:{client_ip}", _ACK_RATE_LIMIT_MAX, _ACK_RATE_LIMIT_WINDOW
+    ):
+        raise HTTPException(status_code=429, detail="Too many map action acks")
     from app.services.session_data import session_data_manager
     accepted = 0
     for ack in req.acks:

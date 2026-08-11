@@ -201,7 +201,9 @@ async def test_view_set_no_command_without_view_params(registry, clean_session):
 @pytest.mark.asyncio
 async def test_view_set_partial_params_merge_viewport(registry, clean_session):
     """Partial view_set (pitch only) must merge into the existing viewport, not
-    clobber the previously-set center/zoom."""
+    clobber the previously-set center/zoom — and the emitted fly_to params must
+    carry the merged full viewport (a center-less fly_to is rejected by the
+    frontend as invalid_params, camera never moves)."""
     await registry.dispatch(
         "webgis_view_set",
         {"center": [116.4, 39.9], "zoom": 12.0},
@@ -209,7 +211,7 @@ async def test_view_set_partial_params_merge_viewport(registry, clean_session):
     )
     res = await registry.dispatch("webgis_view_set", {"pitch": 45.0}, session_id=clean_session)
     assert res["command"] == "fly_to"
-    assert res["params"] == {"pitch": 45.0}
+    assert res["params"] == {"center": [116.4, 39.9], "zoom": 12.0, "pitch": 45.0}
     state = await session_data_manager.get_map_state(clean_session)
     assert state["viewport"]["center"] == [116.4, 39.9]
     assert state["viewport"]["zoom"] == 12.0

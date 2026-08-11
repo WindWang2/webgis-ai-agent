@@ -3,10 +3,11 @@
 覆盖设计 §3/§4：
 - 双后端协议对齐（Memory + Redis-via-fakeredis，同 test_session_store_contract 的注入缝）：
   追加/读取回环、action_id 幂等（首达终态获胜）、200 上限淘汰最旧、session 隔离、
-  clear_session 清理、Redis TTL。
-- 端点：schema 校验边界（422）、所有权拒绝（404）、重复 ACK 幂等、乱序 ACK、
-  批量 >50 拒绝、单条 >16KB 拒绝。
+  clear_session 清理、Redis TTL、并发写（WATCH 重试循环）。
+- 端点：schema 校验边界（422）、所有权拒绝（404，含 owner_token 不匹配）、
+  重复 ACK 幂等、乱序 ACK、批量 >50 拒绝、单条 >16KB 拒绝、per-IP 限速（429）。
 """
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -170,6 +171,72 @@ async def test_map_action_redis_arrival_order_same_tick():
     assert ids == ["ma-b", "ma-a"]
 
 
+@pytest.mark.asyncio
+async def test_map_action_redis_concurrent_duplicate_writers(monkeypatch):
+    """并发写同一 action_id（asyncio.gather）→ 恰好 1 个成功，其余被判重复。
+
+    fakeredis 的 async 命令路径在单事件循环内同步完成（不 yield），gather 下
+    事务实际是串行的 —— 为真实命中 WATCH/MULTI 重试循环，这里在 execute 前
+    强制让出事件循环，使多个事务在 watch 之后、execute 之前交错：后提交者触发
+    WatchError → 重试 → hexists 判重返回 False。回归防护：若 WATCH 失效，
+    并发事务会同时通过判重（sum>1）或后写覆盖先写（首达终态被篡改）。
+    """
+    import redis.asyncio.client as rclient
+
+    store = _redis_store_factory()
+    sid = "ack_sess_concurrent"
+    n = 8
+
+    orig_execute = rclient.Pipeline.execute
+
+    async def _yielding_execute(self, *args, **kwargs):
+        # 让出事件循环：所有事务都停在 execute 前 → watch 之后真实交错
+        await asyncio.sleep(0)
+        return await orig_execute(self, *args, **kwargs)
+
+    monkeypatch.setattr(rclient.Pipeline, "execute", _yielding_execute)
+    event = _ack("ma-concurrent")
+    results = await asyncio.gather(
+        *[store.append_map_action_event(sid, dict(event)) for _ in range(n)]
+    )
+    assert sum(results) == 1
+    events = await store.get_map_action_events(sid)
+    assert len(events) == 1
+    assert events[0]["action_id"] == "ma-concurrent"
+    assert events[0]["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_map_action_redis_concurrent_distinct_writers(monkeypatch):
+    """并发写 N 个不同 action_id → 全部接受，读回完整（WATCH 重试恢复合法写）。
+
+    与重复写测试一样在 execute 前强制让出事件循环制造真实竞争：后提交者触发
+    WatchError → 重试 → 重新判重（不同 id 不重复）→ 提交成功。若 WATCH 重试
+    失效（WatchError 落到 RedisError→drop），后写者会被丢弃（accepted < N）——
+    本测试即重试恢复的判别用例（2 个写者，无 3 次上限耗尽的竞争）。
+    """
+    import redis.asyncio.client as rclient
+
+    store = _redis_store_factory()
+    sid = "ack_sess_concurrent_distinct"
+    n = 2
+
+    orig_execute = rclient.Pipeline.execute
+
+    async def _yielding_execute(self, *args, **kwargs):
+        await asyncio.sleep(0)
+        return await orig_execute(self, *args, **kwargs)
+
+    monkeypatch.setattr(rclient.Pipeline, "execute", _yielding_execute)
+    results = await asyncio.gather(*[
+        store.append_map_action_event(sid, _ack(f"ma-c{i:02d}")) for i in range(n)
+    ])
+    assert results == [True] * n
+    events = await store.get_map_action_events(sid)
+    assert len(events) == n
+    assert sorted(e["action_id"] for e in events) == [f"ma-c{i:02d}" for i in range(n)]
+
+
 # ─── schema 校验（直接 model 层） ──────────────────────────────────────────
 
 
@@ -229,6 +296,24 @@ def _pass_ownership():
 
 def _url(session_id: str) -> str:
     return f"/api/v1/chat/sessions/{session_id}/map-action-ack"
+
+
+def _make_limiter(allowed: bool):
+    """构造一个按固定结果应答的限速器 stub（同 test_token_refresh 的做法）。"""
+    async def _is_allowed(key, max_requests, window_seconds):
+        return allowed
+    limiter = MagicMock()
+    limiter.is_allowed = _is_allowed
+    return limiter
+
+
+@pytest.fixture(autouse=True)
+def _stub_ack_rate_limiter(monkeypatch):
+    """ack 路由默认限速放行 —— 真实 get_rate_limiter() 首次调用会尝试连 Redis
+    （单测禁止网络）。限速本身由 test_ack_endpoint_rate_limited 单独覆盖。"""
+    async def _get_stub():
+        return _make_limiter(True)
+    monkeypatch.setattr(_chat_mod, "get_rate_limiter", _get_stub)
 
 
 @pytest.mark.asyncio
@@ -298,8 +383,56 @@ async def test_ack_endpoint_rejects_foreign_session(client):
 
 
 @pytest.mark.asyncio
+async def test_ack_endpoint_owner_token_mismatch_rejected(client):
+    """SEC-08 匿名会话 owner_token 不匹配（会话存在但 token 错误）→ 404 拒绝写入，
+    与"会话不存在"同样处理（不泄漏存在性）；正确 token 放行。"""
+    store = MemorySessionStore()
+    conv = MagicMock()
+
+    async def _get_session(self_or_db, session_id, *, user_id=None, owner_token=None):
+        # 模拟 AsyncHistoryService：仅携带匹配的 owner_token 才视为已授权
+        return conv if owner_token == "correct-token" else None
+
+    with patch("app.services.session_data.session_data_manager", new=store), patch.object(
+        _chat_mod.AsyncHistoryService, "get_session", _get_session
+    ):
+        wrong = await client.post(
+            _url("sess-owner"),
+            json={"acks": [_ack("ma-1")]},
+            headers={"X-Session-Token": "wrong-token"},
+        )
+        assert wrong.status_code == 404
+        assert await store.get_map_action_events("sess-owner") == []
+
+        right = await client.post(
+            _url("sess-owner"),
+            json={"acks": [_ack("ma-1")]},
+            headers={"X-Session-Token": "correct-token"},
+        )
+        assert right.status_code == 200
+        assert right.json() == {"accepted": 1, "duplicates": 0}
+        assert (await store.get_map_action_events("sess-owner"))[0]["action_id"] == "ma-1"
+
+
+@pytest.mark.asyncio
+async def test_ack_endpoint_rate_limited(client, monkeypatch):
+    """per-IP 限速：limiter 拒绝 → 429，ACK 不入库。"""
+    store = MemorySessionStore()
+
+    async def _get_stub():
+        return _make_limiter(False)
+
+    monkeypatch.setattr(_chat_mod, "get_rate_limiter", _get_stub)
+    with patch("app.services.session_data.session_data_manager", new=store), _pass_ownership():
+        resp = await client.post(_url("sess-a"), json={"acks": [_ack("ma-1")]})
+    assert resp.status_code == 429
+    assert await store.get_map_action_events("sess-a") == []
+
+
+@pytest.mark.asyncio
 async def test_ack_endpoint_schema_edges(client):
-    """schema 边界：空/超长 action_id、超长 command、非法 status、超长 error、负 duration。"""
+    """schema 边界：空/超长 action_id、超长 command、非法 status、超长 error、
+    负 duration、超长 started_at/finished_at、Infinity duration。"""
     store = MemorySessionStore()
     base = _ack("ma-1")
     bad_payloads = [
@@ -309,12 +442,29 @@ async def test_ack_endpoint_schema_edges(client):
         {**base, "status": "exploded"},
         {**base, "error": "e" * 501},
         {**base, "duration_ms": -1},
+        {**base, "started_at": "s" * 65},
+        {**base, "finished_at": "f" * 65},
     ]
     with patch("app.services.session_data.session_data_manager", new=store), _pass_ownership():
         for bad in bad_payloads:
             resp = await client.post(_url("sess-a"), json={"acks": [bad]})
             assert resp.status_code == 422, bad
     assert await store.get_map_action_events("sess-a") == []
+
+
+def test_map_action_ack_rejects_non_finite_duration():
+    """duration_ms 拒绝 Infinity/NaN（ge=0, le=1e15）：非有限值不得入库。
+
+    json.loads("1e999")/Infinity 会解析成 inf —— 在模型层拦截（HTTP 层 FastAPI
+    的 422 响应序列化无法内嵌 inf 输入值，故端点级 inf 用例不做）。"""
+    with pytest.raises(ValidationError):
+        MapActionAck(action_id="ma-inf", command="fly_to", status="succeeded", duration_ms=float("inf"))
+    with pytest.raises(ValidationError):
+        MapActionAck(action_id="ma-nan", command="fly_to", status="succeeded", duration_ms=float("nan"))
+    with pytest.raises(ValidationError):
+        MapActionAck(action_id="ma-big", command="fly_to", status="succeeded", duration_ms=1e16)
+    # 边界内（le=1e15）正常接受
+    MapActionAck(action_id="ma-ok", command="fly_to", status="succeeded", duration_ms=1e15)
 
 
 @pytest.mark.parametrize("status", ["succeeded", "failed", "cancelled", "superseded"])
