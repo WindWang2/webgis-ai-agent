@@ -14,14 +14,16 @@ describe('Chat API', () => {
     it('makes POST to correct endpoint', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ content: 'hi', session_id: 's1' }),
+        status: 200,
+        statusText: 'OK',
+        text: () => Promise.resolve(JSON.stringify({ content: 'hi', session_id: 's1' })),
       });
       const result = await sendChat('hello');
       expect(mockFetch).toHaveBeenCalledWith(
         expect.stringContaining('/api/v1/chat/completions'),
         expect.objectContaining({
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
           body: expect.stringContaining('"message":"hello"'),
         })
       );
@@ -36,7 +38,9 @@ describe('Chat API', () => {
     it('includes sessionId in request body', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ content: 'hi', session_id: 's1' }),
+        status: 200,
+        statusText: 'OK',
+        text: () => Promise.resolve(JSON.stringify({ content: 'hi', session_id: 's1' })),
       });
       await sendChat('hello', 'sess-123');
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
@@ -48,10 +52,16 @@ describe('Chat API', () => {
     it('fetches sessions from correct endpoint', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve([{ id: 's1' }]),
+        status: 200,
+        statusText: 'OK',
+        text: () => Promise.resolve(JSON.stringify([{ id: 's1' }])),
       });
       const result = await getSessionList();
-      expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('/api/v1/chat/sessions'));
+      // transport 现在总是带 init（含 X-Request-ID 头），因此断言第二个参数。
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/chat/sessions'),
+        expect.objectContaining({ method: 'GET' })
+      );
       expect(result).toEqual([{ id: 's1' }]);
     });
 
@@ -84,7 +94,7 @@ describe('Chat API', () => {
         expect.stringContaining('/api/v1/chat/sessions/s1'),
         expect.objectContaining({
           method: 'DELETE',
-          headers: { 'X-Session-Token': 'tok-123' },
+          headers: expect.objectContaining({ 'X-Session-Token': 'tok-123' }),
         })
       );
     });
@@ -93,7 +103,10 @@ describe('Chat API', () => {
       mockFetch.mockResolvedValueOnce({ ok: true });
       await deleteSession('s1');
       const callArgs = mockFetch.mock.calls[0][1];
-      expect(callArgs.headers).toEqual({});
+      // F-FE-3: transport 现在总是注入 X-Request-ID 头，因此这里只断言不携带
+      // X-Session-Token（而不是 headers 为空对象）。
+      expect(callArgs.headers).toEqual({ 'X-Request-ID': expect.any(String) });
+      expect(callArgs.headers['X-Session-Token']).toBeUndefined();
     });
   });
 
@@ -104,7 +117,9 @@ describe('Chat API', () => {
     it('sends POST with tool and arguments (复数，匹配后端 ToolExecuteRequest)', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ type: 'result' }),
+        status: 200,
+        statusText: 'OK',
+        text: () => Promise.resolve(JSON.stringify({ type: 'result' })),
       });
       const result = await executeToolDirect('query_osm_poi', { query: 'school' });
       expect(mockFetch).toHaveBeenCalledWith(
