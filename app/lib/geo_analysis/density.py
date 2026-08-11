@@ -121,6 +121,13 @@ def kde_surface(
     if data_std == 0:
         data_std = 1.0
 
+    # All-zero weights make gaussian_kde's weighted covariance singular (sum
+    # of weights = 0 -> division by zero). Fall back to unweighted rather
+    # than crash (review finding).
+    if kde_weights is not None and float(kde_weights.sum()) == 0.0:
+        logger.warning("kde_surface: all weights are zero; falling back to unweighted KDE.")
+        kde_weights = None
+
     try:
         if bandwidth <= 0:
             kde = gaussian_kde(kde_data, bw_method="scott", weights=kde_weights)

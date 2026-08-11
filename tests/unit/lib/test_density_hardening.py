@@ -89,3 +89,12 @@ def test_kde_surface_unweighted_works():
     res = kde_surface(_pt_fc(_scattered(15)))
     assert res.success
     assert res.data["count"] >= 1
+
+
+def test_kde_surface_all_zero_weights_falls_back():
+    """All-zero weights make gaussian_kde's weighted covariance singular
+    (review G); fall back to unweighted instead of crashing."""
+    pts = _scattered(12, w=0.0)  # every point has w=0.0
+    res = kde_surface(_pt_fc(pts), value_field="w")
+    assert res.success
+    assert np.isfinite(res.data["stats"]["max_density"])

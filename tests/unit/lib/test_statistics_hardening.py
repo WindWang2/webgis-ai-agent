@@ -66,8 +66,12 @@ def test_moran_inf_values_filtered_not_nan():
     pts = [((116.0 + i * 0.001, 39.0), v) for i, v in enumerate([1, 2, 3, 4, float("inf"), 6, 7, 8])]
     res = moran_i_narrated(_points_fc(pts), "val")
     assert res.success
+    # Discriminating (review F): the buggy path kept inf, poisoning std -> I=0.
+    # With inf filtered, the remaining 7 ascending values show real negative
+    # autocorrelation on this near-linear layout (I well away from 0).
     assert np.isfinite(res.data["moran_i"])
     assert np.isfinite(res.data["p_value"])
+    assert abs(res.data["moran_i"]) > 0.05, res.data["moran_i"]
 
 
 # --------------------------------------------------------------------------- #

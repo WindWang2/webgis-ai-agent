@@ -198,6 +198,15 @@ def convex_hull(
                 continue
     else:
         hull = gdf.geometry.union_all().convex_hull
+        # V-F03 (ungrouped path): same degenerate guard as the group_by path —
+        # <3 non-collinear features collapse to a Point/LineString.
+        if hull.is_empty or hull.geom_type not in ("Polygon", "MultiPolygon"):
+            return GeoAnalysisResult(
+                False, None,
+                f"凸包需要 ≥3 个非共线的点要素才能形成多边形（当前结果几何类型 {hull.geom_type}）",
+                error_type="ValueError",
+                correction_hint="提供至少 3 个非共线的点要素。",
+            )
         hull_wgs84 = gpd.GeoSeries([hull], crs=utm_crs).to_crs("EPSG:4326").iloc[0]
         out_features.append({
             "type": "Feature",

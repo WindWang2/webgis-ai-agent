@@ -184,9 +184,12 @@ def test_idw_uses_metric_not_degree_distance():
     result = idw_interpolation(geojson, value_field="val", resolution=9)
     by_cell = {r["h3_index"]: r["value"] for r in result}
     assert center_cell in by_cell, "center cell should be in the surface"
-    # Metric: E/W (0.0) are closer → pull the centre below the 50 midpoint.
-    assert by_cell[center_cell] < 50.0, (
-        f"expected metric IDW < 50 at lat 60, got {by_cell[center_cell]}"
+    # Metric: E/W (0.0) are closer → pull the centre well below the 50
+    # midpoint. The buggy degree-space IDW returned ~49.9999 (float noise
+    # off 50.0); a < 40 threshold clearly discriminates the metric fix
+    # (HEAD ≈ 20).
+    assert by_cell[center_cell] < 40.0, (
+        f"expected metric IDW < 40 at lat 60, got {by_cell[center_cell]}"
     )
 
 

@@ -38,6 +38,23 @@ def test_convex_hull_skips_degenerate_groups():
     assert "a" not in groups and "b" not in groups
 
 
+def test_convex_hull_ungrouped_degenerate_rejected():
+    """The degenerate guard also covers the ungrouped path (review A): <3
+    non-collinear points must not emit a Point/LineString as a 'hull'."""
+    # 2 distinct points -> LineString hull
+    fc = _pt_fc([(116.40, 39.90, "g"), (116.41, 39.90, "g")])
+    res = convex_hull(fc)
+    assert not res.success
+    assert res.error_type == "ValueError"
+
+
+def test_convex_hull_ungrouped_valid_succeeds():
+    fc = _pt_fc([(116.40, 39.90, "g"), (116.45, 39.90, "g"), (116.42, 39.95, "g")])
+    res = convex_hull(fc)
+    assert res.success
+    assert res.data["features"][0]["geometry"]["type"] == "Polygon"
+
+
 # --------------------------------------------------------------------------- #
 # V-F02: voronoi clip_bounds is honored
 # --------------------------------------------------------------------------- #

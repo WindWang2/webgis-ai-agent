@@ -97,18 +97,55 @@ def test_build_graph_no_cross_dataset_contamination():
     builder.clear_cache()
 
 
+def test_build_graph_networkdataset_no_contamination():
+    """The id()-fingerprinted NetworkDataset path must not let two distinct
+    datasets with equal edge_count share a cached graph (the cache now pins
+    the input so its id() cannot be reused while the entry is live)."""
+    import math
+    from app.services.network.models import Edge, Node
+
+    def _ds(x1, y1, x2, y2, dsid):
+        e = Edge(
+            id="e1", u="n1", v="n2",
+            length_m=math.hypot(x2 - x1, y2 - y1),
+            geometry={"type": "LineString", "coordinates": [[x1, y1], [x2, y2]]},
+        )
+        return NetworkDataset(
+            dataset_id=dsid, edges=[e], edge_count=1,
+            nodes=[Node(id="n1", x=x1, y=y1), Node(id="n2", x=x2, y=y2)], node_count=2,
+        )
+
+    builder = NetworkGraphBuilder()
+    builder.clear_cache()
+    g_a, _ = builder.build_graph(_ds(0, 0, 0.01, 0, "net_a"), use_cache=True)
+    g_b, _ = builder.build_graph(_ds(5, 5, 5.01, 5, "net_b"), use_cache=True)
+    assert g_a is not g_b
+    a_nodes = {round(n[1]["x"], 5) for n in g_a.nodes(data=True)}
+    b_nodes = {round(n[1]["x"], 5) for n in g_b.nodes(data=True)}
+    assert a_nodes != b_nodes
+    builder.clear_cache()
+
+
 # --------------------------------------------------------------------------- #
 # Legacy isochrone: edge-buffer, not convex hull (N-F01, N-F08)
 # --------------------------------------------------------------------------- #
 def test_isochrone_collinear_road_is_polygon_not_linestring():
     """A single straight road previously collapsed MultiPoint.convex_hull to a
-    LineString. The edge-buffer must emit a 2D Polygon."""
+    LineString. The edge-buffer must emit a 2D Polygon of meaningful area
+    (not the 10 m fallback disc, which is also a Polygon)."""
     net = _fc([_line_feature(0.0, 0.0, 0.02, 0.0, "road")])  # ~2 km east-west
     fac = _fc([_point_feature(0.001, 0.0, "f1")])
     res = calculate_isochrones(net, fac, travel_time_min=5, mode="walking")
     assert res.success
     geom = res.data["features"][0]["geometry"]
     assert geom["type"] in ("Polygon", "MultiPolygon"), geom["type"]
+    # Discriminating (review F): the real edge buffer is a ~30 m band over the
+    # reachable road (wide lon extent), while the old fabricated fallback was a
+    # 10 m disc (~0.0001 deg wide). Check the polygon's lon extent in WGS84.
+    from shapely.geometry import shape
+    xs = [c[0] for c in shape(geom).exterior.coords]
+    lon_span = max(xs) - min(xs)
+    assert lon_span > 0.002, lon_span  # road band, not the 10 m fallback disc
 
 
 def test_isochrone_does_not_enclose_unreachable_ring_interior():

@@ -29,7 +29,11 @@ def _build_weights(gdf: gpd.GeoDataFrame, k: int = 8) -> sparse.coo_matrix:
     n = len(coords)
     if n == 0:
         return sparse.coo_matrix((0, 0))
-    k_actual = min(k, n - 1) if n > 1 else 1
+    if n == 1:
+        # No neighbours possible; return a 1x1 zero matrix (avoids leaving the
+        # cols array uninitialized — review finding).
+        return sparse.coo_matrix((np.zeros(0), (np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64))), shape=(1, 1))
+    k_actual = min(k, n - 1)
     tree = cKDTree(coords)
     # Query one extra neighbour so dropping self always leaves k_actual.
     _, idx = tree.query(coords, k=k_actual + 1)
