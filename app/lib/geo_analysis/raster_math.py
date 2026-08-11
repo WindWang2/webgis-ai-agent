@@ -130,12 +130,21 @@ def _nodata_valid_mask(arr: np.ndarray, nodata) -> np.ndarray:
     Handles the NaN-nodata case correctly: ``arr != NaN`` is all-True
     (``NaN != NaN``), so a naive value comparison would treat every pixel as
     valid. Mirrors reclassify's ``_valid_mask``. (R-F03)
+
+    Float arrays also exclude *undeclared* NaN pixels — where the declared
+    nodata is a scalar (or None) but the data still contains NaN — so a
+    ``where(A > 0, A, 0)``-style expression cannot turn an undeclared NaN into
+    a valid-looking 0 (review B). Integer arrays cannot hold NaN.
     """
     if nodata is None:
-        return np.ones(arr.shape, dtype=bool)
-    if isinstance(nodata, float) and np.isnan(nodata):
-        return ~np.isnan(arr)
-    return arr != nodata
+        base = np.ones(arr.shape, dtype=bool)
+    elif isinstance(nodata, float) and np.isnan(nodata):
+        base = ~np.isnan(arr)
+    else:
+        base = arr != nodata
+    if np.issubdtype(arr.dtype, np.floating):
+        base = base & ~np.isnan(arr)
+    return base
 
 
 def _compute_dtype(arr: np.ndarray) -> np.ndarray:

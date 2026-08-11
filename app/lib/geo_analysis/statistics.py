@@ -37,12 +37,14 @@ def _build_weights(gdf: gpd.GeoDataFrame, k: int = 8) -> sparse.coo_matrix:
     tree = cKDTree(coords)
     # Query one extra neighbour so dropping self always leaves k_actual.
     _, idx = tree.query(coords, k=k_actual + 1)
+    # Vectorized self-exclusion (E-4): each row's k_actual+1 nearest contains
+    # self exactly once (self is distance 0), so masking self out leaves
+    # exactly k_actual neighbours per row, in distance order. Boolean-index
+    # flattens row-major with column order preserved — O(n·k), no Python loop
+    # (review G: the per-row loop was a 46x stage regression at n=10k).
+    mask = idx != np.arange(n)[:, None]
+    cols = idx[mask]  # (n·k_actual,) row-major, each row's k_actual non-self
     rows = np.repeat(np.arange(n), k_actual)
-    cols = np.empty(n * k_actual, dtype=np.int64)
-    for i in range(n):
-        # first k_actual neighbours that are NOT this row (distance-sorted)
-        nb = idx[i][idx[i] != i][:k_actual]
-        cols[i * k_actual:(i + 1) * k_actual] = nb
     data = np.ones(len(rows), dtype=float)
     return sparse.coo_matrix((data, (rows, cols)), shape=(n, n))
 

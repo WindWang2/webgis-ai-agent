@@ -120,3 +120,27 @@ def test_compute_dtype_promotes_integers_to_float64():
 def test_compute_dtype_preserves_float():
     arr = np.array([1.0, 2.0], dtype=np.float32)
     assert _compute_dtype(arr).dtype == np.float32
+
+
+def test_nodata_valid_mask_excludes_undeclared_nan():
+    """A float raster whose declared nodata is None / a scalar but which still
+    contains NaN must exclude those NaN pixels (review B silent-correctness)."""
+    arr = np.array([1.0, float("nan"), 3.0])
+    # nodata=None: NaN must still be masked out
+    assert _nodata_valid_mask(arr, None).tolist() == [True, False, True]
+    # nodata=-9999 scalar: NaN is not the declared nodata but still invalid
+    assert _nodata_valid_mask(arr, -9999.0).tolist() == [True, False, True]
+
+
+def test_calculator_undeclared_nan_becomes_nodata(_data_dir):
+    """An undeclared NaN pixel (nodata=None) must not pass through a where()
+    expression as a valid 0; it must become output nodata (review B)."""
+    a = np.array([[10.0, float("nan")], [3.0, 4.0]], dtype=np.float32)
+    pa = _write_raster(os.path.join(_data_dir, "undeclared.tif"), a)  # nodata=None
+    stats = raster_calculator(pa, raster_b=None, expression="A * B", constant=1.0)
+    # Only the 3 finite pixels count; the NaN pixel is excluded.
+    assert stats["pixel_count"] == 3
+    with rasterio.open(stats["output_path"]) as out:
+        arr = out.read(1)
+    # The NaN position is the output nodata (0 by default), not a computed value.
+    assert arr[0, 1] == 0
