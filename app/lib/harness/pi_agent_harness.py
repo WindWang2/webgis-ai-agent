@@ -194,7 +194,21 @@ class PiAgentHarness:
                     )
                     mutation["is_valid"] = semantic_valid  # SEMANTIC_VALID tier
                     mutation["mutation_accepted"] = mutation_accepted
-                    mutation["semantic_errors"] = result.get("warnings", [])
+                    # ADR-0052: semantic_errors carries BOTH the structural
+                    # validate() warnings AND the deterministic cartography
+                    # findings (paint↔legend drift, cardinality, domain, …) so
+                    # "structurally valid but thematically inconsistent" is
+                    # surfaced as evidence. Tier logic is unchanged — structural
+                    # validity (is_compiled) ≠ thematic correctness; the findings
+                    # are the evidence channel. Profile-dependent cartography
+                    # checks report NOT_EVALUATED (never a fake pass).
+                    cartography_errors = [
+                        f"{f.get('check')}: {f.get('message')}"
+                        for f in (result.get("cartography_findings") or [])
+                        if isinstance(f, dict) and f.get("severity") == "error"
+                        and f.get("evaluated", True)
+                    ]
+                    mutation["semantic_errors"] = result.get("warnings", []) + cartography_errors
                     break
         return result_entry
 

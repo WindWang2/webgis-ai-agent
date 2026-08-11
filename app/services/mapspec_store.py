@@ -44,6 +44,12 @@ def _with_evidence(res, base: Dict[str, Any]) -> Dict[str, Any]:
         base["warnings"] = res.warnings
     if res.checkpoint_id:
         base["checkpoint_id"] = res.checkpoint_id
+    # ADR-0052: forward deterministic cartography-semantic findings (paint↔legend
+    # drift, cardinality, domain, …) so the Harness semantic_errors evidence
+    # channel is not starved in production. Structural validity (is_compiled) ≠
+    # thematic correctness; these findings are what make drift detectable.
+    if getattr(res, "cartography_findings", None):
+        base["cartography_findings"] = res.cartography_findings
     if res.is_error:
         base["message"] = res.error_msg
         if res.correction_hint:
