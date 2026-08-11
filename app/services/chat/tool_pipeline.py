@@ -6,10 +6,12 @@ sentinel duplicate-loop protection, and LLM payload slimming.
 import json
 import time
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional, Callable
 
 from app.tools.registry import ToolRegistry
+from app.services.jobs.cancellation import OperationCancelled, use_token
+from app.services.jobs.context import JobOrigin, use_origin
 from app.services.task_tracker import TaskTracker, TaskStep
 from app.services.tool_dispatch_service import ToolDispatchService, ToolDispatchResult
 
@@ -25,6 +27,11 @@ class ToolExecutionResult:
     is_error: bool = False
     execution_time_ms: float = 0.0
     outcome: Optional[ToolDispatchResult] = None
+    #: ADR-0052：本次工具执行期间创建的 durable job id。执行引擎把它放进
+    #: step_result SSE，前端据此把后台 GIS job 挂到该 tool step 下。
+    background_job_ids: list[str] = field(default_factory=list)
+    #: 工具是否因取消而中止（区别于普通错误 —— 取消绝不触发 retry，规范 §17）
+    cancelled: bool = False
 
 
 class ToolExecutionPipeline:
@@ -49,6 +56,8 @@ class ToolExecutionPipeline:
         task_id: Optional[str] = None,
         executed_tools: Optional[set[tuple[str, str]]] = None,
         pre_created_step: Optional[TaskStep] = None,
+        owner_id: Optional[str] = None,
+        owner_token: Optional[str] = None,
     ) -> ToolExecutionResult:
         """
         Execute a single tool call dictionary from LLM assistant message.
@@ -63,6 +72,8 @@ class ToolExecutionPipeline:
                 NOT open a second track_step — RUN-02 (deep-audit round 2) fixed
                 double step tracking that inflated task.steps 2x and desynced
                 step_id between SSE events and the tracker.
+            owner_id: 已认证用户 id（ADR-0052：工具派生的 durable job 归属）
+            owner_token: 匿名会话归属令牌（同上，匿名路径）
 
         Returns:
             ToolExecutionResult with raw_result (for frontend/events) and llm_payload (for LLM history)
@@ -92,51 +103,89 @@ class ToolExecutionPipeline:
         # use it directly instead of opening a second track_step.
         outcome: ToolDispatchResult
         is_error = False
+        cancelled = False
+
+        # ADR-0052: 取消 token 与 job 来源都通过 contextvar 传递。asyncio.to_thread
+        # （registry 执行同步工具的路径）会复制 context，所以 token 自动穿到工具
+        # 线程里，几十个 GIS 工具签名不用改。origin 让工具内部创建的 durable job
+        # 自动带上 session/owner/agent step 关联。
+        cancel_token = self.tracker.cancel_token_for(task_id) if task_id else None
+        origin = JobOrigin(
+            session_id=session_id or None,
+            owner_id=owner_id,
+            owner_token=owner_token,
+            agent_task_id=task_id,
+            agent_step_id=(pre_created_step.id if pre_created_step is not None else None),
+            tool_call_id=tool_call_id or None,
+            tool_name=tool_name,
+        )
 
         async def _dispatch() -> ToolDispatchResult:
-            if self.dispatch_fn is not None:
-                return await self.dispatch_fn(tc, session_id, sentinels)
-            return await self.dispatch_service.dispatch(tc, session_id, sentinels)
+            with use_token(cancel_token), use_origin(origin):
+                if self.dispatch_fn is not None:
+                    return await self.dispatch_fn(tc, session_id, sentinels)
+                return await self.dispatch_service.dispatch(tc, session_id, sentinels)
+
+        def _error_outcome(exc: BaseException) -> ToolDispatchResult:
+            err_msg = f"工具执行异常 ({type(exc).__name__}): {exc}"
+            return ToolDispatchResult(
+                status="error",
+                llm_payload=err_msg,
+                slim_event={"error": err_msg},
+                geojson_ref=None,
+                raw_result={"error": err_msg},
+                error_msg=err_msg,
+            )
+
+        def _cancelled_outcome() -> ToolDispatchResult:
+            # 取消不是「工具坏了」：给 LLM 一个明确的取消说明，且不产生 traceback
+            msg = "工具执行已被用户取消"
+            return ToolDispatchResult(
+                status="error",
+                llm_payload=msg,
+                slim_event={"cancelled": True, "message": msg},
+                geojson_ref=None,
+                raw_result={"cancelled": True, "message": msg},
+                error_msg=msg,
+            )
 
         if pre_created_step is not None:
             try:
                 outcome = await _dispatch()
+            except OperationCancelled:
+                # 协作式取消在 GIS 循环的 checkpoint 处抛出 —— 这是预期路径，
+                # 不打 error 日志、不当作工具故障
+                logger.info(f"[ToolPipeline] {tool_name} cancelled by user")
+                cancelled = True
+                outcome = _cancelled_outcome()
             except Exception as e:
                 logger.error(f"[ToolPipeline] Dispatch error for {tool_name}: {e}", exc_info=True)
-                err_msg = f"工具执行异常 ({type(e).__name__}): {e}"
-                outcome = ToolDispatchResult(
-                    status="error",
-                    llm_payload=err_msg,
-                    slim_event={"error": err_msg},
-                    geojson_ref=None,
-                    raw_result={"error": err_msg},
-                    error_msg=err_msg,
-                )
+                outcome = _error_outcome(e)
             is_error = (outcome.status == "error")
             pre_created_step.result = outcome.raw_result
             if is_error:
                 pre_created_step.error = str(outcome.raw_result)
+            pre_created_step.background_job_ids = list(origin.created_job_ids)
         else:
             async with self.tracker.track_step(task_id, tool_name, args_dict) as step:
+                if step is not None:
+                    origin.agent_step_id = step.id
                 try:
                     outcome = await _dispatch()
+                except OperationCancelled:
+                    logger.info(f"[ToolPipeline] {tool_name} cancelled by user")
+                    cancelled = True
+                    outcome = _cancelled_outcome()
                 except Exception as e:
                     logger.error(f"[ToolPipeline] Dispatch error for {tool_name}: {e}", exc_info=True)
-                    err_msg = f"工具执行异常 ({type(e).__name__}): {e}"
-                    outcome = ToolDispatchResult(
-                        status="error",
-                        llm_payload=err_msg,
-                        slim_event={"error": err_msg},
-                        geojson_ref=None,
-                        raw_result={"error": err_msg},
-                        error_msg=err_msg,
-                    )
+                    outcome = _error_outcome(e)
 
                 is_error = (outcome.status == "error")
                 if step is not None:
                     step.result = outcome.raw_result
                     if is_error:
                         step.error = str(outcome.raw_result)
+                    step.background_job_ids = list(origin.created_job_ids)
 
         elapsed_ms = (time.time() - start_time) * 1000
         return ToolExecutionResult(
@@ -147,5 +196,7 @@ class ToolExecutionPipeline:
             is_error=is_error,
             execution_time_ms=elapsed_ms,
             outcome=outcome,
+            background_job_ids=list(origin.created_job_ids),
+            cancelled=cancelled,
         )
 

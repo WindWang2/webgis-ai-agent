@@ -9,6 +9,11 @@ from rasterio.enums import Resampling
 from rasterio.windows import Window
 from rasterio.warp import reproject, calculate_default_transform
 
+# ADR-0052: 窗口写入循环现在（a）在窗口边界检查取消，（b）写临时文件再原子
+# os.replace —— 取消/崩溃不再留下半个 GeoTIFF（规范 §12 raster window / §23）。
+from app.services.jobs.artifacts import atomic_output
+from app.services.jobs.cancellation import checkpoint
+
 
 # ─── Shared GDAL environment ────────────────────────────────────
 
@@ -211,9 +216,10 @@ def reclassify(
                 return ~np.isnan(arr)
             return arr != out_nodata
 
-        with rasterio.open(out_path, "w", **profile) as dst:
+        with atomic_output(out_path) as _tmp_out, rasterio.open(_tmp_out, "w", **profile) as dst:
             for row0 in range(0, src.height, _WINDOW_SIZE):
                 for col0 in range(0, src.width, _WINDOW_SIZE):
+                    checkpoint()
                     win = Window(
                         col0, row0,
                         min(_WINDOW_SIZE, src.width - col0),
@@ -424,10 +430,11 @@ def raster_calculator(
             profile = _gtiff_profile(src_a.profile, nodata=out_nodata, count=1)
             profile["dtype"] = result0.dtype
 
-            with rasterio.open(out_path, "w", **profile) as dst:
+            with atomic_output(out_path) as _tmp_out, rasterio.open(_tmp_out, "w", **profile) as dst:
                 dst.write(result0, 1, window=first_win)
                 _accumulate(result0)
                 for win in windows[1:]:
+                    checkpoint()
                     data_a_win = src_a.read(1, window=win)
                     res = _compute_window(data_a_win, _get_b_window(win, data_a_win))
                     dst.write(res, 1, window=win)

@@ -31,6 +31,10 @@ import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
 from shapely.geometry import Polygon, mapping
+# ADR-0052: 协作式取消检查点。cancellable() 在 chunk 边界读一次 contextvar，
+# 未绑定 token 时开销为零；用户取消后长循环立即抛 OperationCancelled 退出，
+# 真正释放 CPU 而不是只改 UI 状态。
+from app.services.jobs.cancellation import cancellable
 
 logger = logging.getLogger(__name__)
 
@@ -334,7 +338,7 @@ def h3_to_geojson(results: list[dict], value_field: str = "value") -> dict:
     than re-implementing cell-to-polygon conversion.
     """
     features = []
-    for res in results:
+    for res in cancellable(results, every=512):
         cell = res["h3_index"]
         val = res["value"]
         boundary = h3.cell_to_boundary(cell)  # [(lat, lng), ...]

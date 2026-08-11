@@ -545,13 +545,19 @@ class ChatExecutionEngine:
                     tool_result_msgs: list[str] = []
                     if len(tc_list) > 1:
                         tasks = [
-                            self.tool_pipeline.execute_tool_call(tc, session_id, task.id, executed_tools)
+                            self.tool_pipeline.execute_tool_call(
+                                tc, session_id, task.id, executed_tools,
+                                owner_id=user_id, owner_token=owner_token,
+                            )
                             for tc in tc_list
                         ]
                         exec_results = await asyncio.gather(*tasks, return_exceptions=True)
                     else:
                         exec_results = [
-                            await self.tool_pipeline.execute_tool_call(tc_list[0], session_id, task.id, executed_tools)
+                            await self.tool_pipeline.execute_tool_call(
+                                tc_list[0], session_id, task.id, executed_tools,
+                                owner_id=user_id, owner_token=owner_token,
+                            )
                         ]
 
                     for tc, exec_res in zip(tc_list, exec_results):
@@ -786,6 +792,8 @@ class ChatExecutionEngine:
                                 self.tool_pipeline.execute_tool_call(
                                     tc, session_id, task.id, executed_tools,
                                     pre_created_step=step,
+                                    owner_id=user_id,
+                                    owner_token=owner_token,
                                 )
                             )
                             pending_tools.append({
@@ -800,15 +808,43 @@ class ChatExecutionEngine:
                         task_to_pending = {p["task"]: p for p in pending_tools}
                         completion_results: dict[str, dict] = {}  # step.id -> {tc, msg_result_str}
 
+                        # ADR-0052 抢占式取消：以前只在「某个工具跑完之后」才检查
+                        # is_cancelled，所以用户点 Cancel 要等当前工具自然结束
+                        # （长 GIS 计算 30–60s）。现在把 token.wait() 一起放进
+                        # asyncio.wait —— 取消到达即刻 cancel 全部在飞任务，
+                        # CPU/worker 立即释放，而不是只把 UI 状态改成已取消。
+                        cancel_watch: Optional[asyncio.Task] = None
+                        if task.cancel_token is not None:
+                            cancel_watch = asyncio.create_task(task.cancel_token.wait())
+
                         try:
                             remaining: set[asyncio.Task] = set(all_tasks)
                             while remaining:
-                                done, remaining = await asyncio.wait(remaining, timeout=5.0)
-                                if not done:
+                                wait_set = set(remaining)
+                                if cancel_watch is not None:
+                                    wait_set.add(cancel_watch)
+                                done, _pending = await asyncio.wait(
+                                    wait_set, timeout=5.0, return_when=asyncio.FIRST_COMPLETED
+                                )
+
+                                if cancel_watch is not None and cancel_watch in done:
+                                    for r in remaining:
+                                        r.cancel()
+                                    await asyncio.gather(*remaining, return_exceptions=True)
+                                    remaining = set()
+                                    pf = _maybe_plan_finalized_event()
+                                    if pf:
+                                        yield pf
+                                    yield sse_event("task_cancelled", {"task_id": task.id})
+                                    return
+
+                                done_tools = done & remaining
+                                remaining -= done_tools
+                                if not done_tools:
                                     yield sse_event("keep_alive", {"message": "ping"})
                                     logger.debug("SSE Heartbeat sent for parallel tool wave")
                                     continue
-                                for t in done:
+                                for t in done_tools:
                                     p = task_to_pending[t]
                                     step = p["step"]
                                     tool_name = p["tool_name"]
@@ -885,6 +921,13 @@ class ChatExecutionEngine:
                                             "geojson_ref": outcome.geojson_ref,
                                             "session_id": session_id,
                                         }
+                                        # ADR-0052: 本步骤派生的后台 durable job —— 前端
+                                        # 据此把 GIS job 挂到该 tool step 下，而不是让
+                                        # agent task 与 Celery task 变成两条毫无关联的
+                                        # UI 条目。
+                                        bg_jobs = getattr(exec_res, "background_job_ids", None)
+                                        if bg_jobs:
+                                            step_payload["background_job_ids"] = list(bg_jobs)
                                         yield sse_event("step_result", step_payload)
                                         yield sse_event("tool_result", {"name": tool_name, "result": outcome.slim_event, "session_id": session_id})
 
@@ -910,6 +953,11 @@ class ChatExecutionEngine:
                                     t.cancel()
                             if all_tasks:
                                 await asyncio.gather(*all_tasks, return_exceptions=True)
+                            # ADR-0052: cancel_watch 是纯等待任务，正常路径永不完成，
+                            # 必须显式回收，否则每个工具 wave 泄漏一个 pending task。
+                            if cancel_watch is not None and not cancel_watch.done():
+                                cancel_watch.cancel()
+                                await asyncio.gather(cancel_watch, return_exceptions=True)
 
                         # Phase 3: 按原始 tc 顺序对齐 LLM 上下文 + 落库
                         for p in pending_tools:
