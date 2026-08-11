@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect } from 'react';
+import { memo, useCallback, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { getThemeColors } from '@/lib/theme';
@@ -38,6 +38,15 @@ const MapPanel = dynamic(
     ),
   }
 );
+
+// D-F8: `messages` 是页面级状态，每个 SSE token 批次都会重渲染 Home。
+// 这些兄弟面板的 props 在流式期间稳定（layers / handlers / store 内部订阅
+// 不受 memo 影响，状态变更仍会触发重渲染），memo 让它们跳过逐批重渲染。
+const MemoTopBar = memo(TopBar);
+const MemoMapPanel = memo(MapPanel);
+const MemoEmbodiedHud = memo(EmbodiedHud);
+const MemoSpatialCrosshair = memo(SpatialCrosshair);
+const MemoFloatingLegend = memo(FloatingLegend);
 
 export default function Home() {
   const { getMapSnapshot, dispatchAction } = useMapAction();
@@ -140,7 +149,7 @@ export default function Home() {
         fontSize: `${fontSize}px`,
       }}
     >
-      <TopBar
+      <MemoTopBar
         sessionName={currentSessionTitle}
         onNewSession={handleNewSession}
       />
@@ -149,14 +158,14 @@ export default function Home() {
         {/* Map Panel */}
         <div style={{ position: 'absolute', inset: 0 }}>
           <MapErrorBoundary>
-            <MapPanel
+            <MemoMapPanel
               layers={layers}
               onRemoveLayer={removeLayer}
               onToggleLayer={toggleLayer}
               onViewportChange={bridge.onViewportChange}
             />
             <ExportMask />
-            <SpatialCrosshair />
+            <MemoSpatialCrosshair />
           </MapErrorBoundary>
         </div>
 
@@ -171,7 +180,7 @@ export default function Home() {
               zIndex: 10,
             }}
           >
-            <FloatingLegend />
+            <MemoFloatingLegend />
           </div>
         )}
 
@@ -209,7 +218,7 @@ export default function Home() {
         </div>
       </div>
 
-      <EmbodiedHud />
+      <MemoEmbodiedHud />
 
       <HistoryDrawer
         open={historyOpen}
