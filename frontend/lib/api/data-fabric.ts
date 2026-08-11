@@ -157,6 +157,7 @@ export const dataFabricApi = {
     feature_type?: string;
     limit?: number;
     offset?: number;
+    signal?: AbortSignal;
   }): Promise<{ total: number; limit: number; offset: number; items: CatalogItem[] }> {
     const url = new URL(`${API_BASE}/api/v1/data-fabric/catalog`);
     if (params?.q) url.searchParams.append('q', params.q);
@@ -166,7 +167,7 @@ export const dataFabricApi = {
     if (params?.limit) url.searchParams.append('limit', String(params.limit));
     if (params?.offset) url.searchParams.append('offset', String(params.offset));
 
-    const res = await fetch(url.toString(), { credentials: 'include' });
+    const res = await fetch(url.toString(), { credentials: 'include', signal: params?.signal });
     if (!res.ok) throw new Error(`获取空间目录失败: ${res.statusText}`);
     return res.json();
   },
