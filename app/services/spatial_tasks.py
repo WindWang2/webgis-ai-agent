@@ -20,6 +20,14 @@ from app.services.nature_resource_analyzer import NatureResourceAnalyzer
 from app.services.rs.spectral_engine import SpectralRasterEngine
 from app.models.upload import UploadRecord
 from app.tools._utils import db_session
+from app.services.jobs.worker import AlreadyFinished, durable_job, finish_job
+from app.services.jobs.cancellation import OperationCancelled
+from app.services.jobs.store import DurableJobStore
+from celery.exceptions import SoftTimeLimitExceeded
+# ADR-0052: 协作式取消检查点。cancellable() 在 chunk 边界读一次 contextvar，
+# 未绑定 token 时开销为零；用户取消后长循环立即抛 OperationCancelled 退出，
+# 真正释放 CPU 而不是只改 UI 状态。
+from app.services.jobs.cancellation import cancellable
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +40,7 @@ logger = logging.getLogger(__name__)
 def _extract_heatmap_points(features: List[Dict]) -> tuple[list, list]:
     """Extract valid (lon, lat) points from GeoJSON features."""
     points = []
-    for f in features or []:
+    for f in cancellable(features or [], every=512):
         if not isinstance(f, dict):
             continue
         geom = f.get("geometry") or {}
@@ -181,15 +189,121 @@ def run_ndvi_analysis(
     nir_band: Optional[int] = None,
     red_band: Optional[int] = None,
     session_id: Optional[str] = None,
+    job_id: Optional[int] = None,
 ):
     """从本地 GeoTIFF 计算 NDVI 并持久化为资产。
 
     薄包装层，所有计算下沉到 NatureResourceAnalyzer.calculate_ndvi。
     NDVI 是 CPU 密集型操作（大栅格 reproject + 数组运算），
     严格走 Celery worker 隔离，遵循 V2.0 计算隔离不变式。
+
+    ADR-0052：``job_id`` 存在时走 durable job 运行时 —— 进度落库（节流）、取消从
+    DB 读取并在 checkpoint 处生效、终态由状态机守卫（cancelling 期间的 late
+    success 收敛为 cancelled）、重复投递被入口守卫拒绝。``job_id=None`` 保留旧
+    行为，兼容未迁移的调用方。
+    """
+    if job_id is None:
+        return _run_ndvi_legacy(self, raster_path, nir_band, red_band, session_id)
+
+    try:
+        with durable_job(job_id, celery_task=self) as job:
+            job.progress(10, "校验路径并读取影像元信息", phase="read")
+            job.checkpoint()
+            result = NatureResourceAnalyzer.calculate_ndvi(
+                tif_path=raster_path,
+                red_band=red_band,
+                nir_band=nir_band,
+            )
+            if not result.get("success"):
+                raise RuntimeError(result.get("error", "NDVI calculation failed"))
+
+            # 取消可能在计算期间到达。注册资产是不可逆副作用，所以这里用
+            # ensure_not_cancelled（强制读一次 DB）而不是 checkpoint（只读内存
+            # token）—— 否则「取消已落库但看门狗还没轮询到」的瞬间会给一个已取消
+            # 的 job 留下资产记录（规范 §23）。
+            job.ensure_not_cancelled()
+            job.progress(80, "入库登记分析资产", phase="persist")
+            # job_id 传进去，让「取消检查」与「资产 INSERT」落在同一个事务里 ——
+            # 否则取消可能挤在检查与 commit 之间，给已取消的 job 留下一条 ready 资产。
+            asset_id = _persist_ndvi_asset(result, session_id, job_id=job_id)
+            payload = {
+                "asset_id": asset_id,
+                "result_path": result["result_path"],
+                "filename": result["filename"],
+                "stats": result.get("stats", {}),
+                "bbox": result.get("bbox"),
+            }
+
+        status = finish_job(job_id, result=payload, result_ref=result["result_path"])
+        return {
+            "success": status.value == "completed",
+            "job_id": str(job_id),
+            "status": status.value,
+            "data": payload,
+            "status_desc": "NDVI 分析完成，结果已入库。可通过 list_analysis_assets 查询。",
+        }
+    except AlreadyFinished as e:
+        # 重复投递（acks_late 下 broker 可能重投）或提交前已被取消
+        logger.info(f"run_ndvi_analysis skipped: {e}")
+        return {"success": False, "skipped": True, "job_id": str(job_id), "error": str(e)}
+    except OperationCancelled:
+        logger.info(f"run_ndvi_analysis cancelled job_id={job_id}")
+        return {"success": False, "cancelled": True, "job_id": str(job_id)}
+    except SoftTimeLimitExceeded:
+        # durable_job 已在 finally 里清掉临时产物并把 job 标成 failed。这里必须
+        # 重新抛出：SoftTimeLimitExceeded 是 Exception 的子类，被下面的通用分支
+        # 吞掉会让 Celery 以为任务正常返回，超时语义与统计全部失效。
+        logger.warning(f"run_ndvi_analysis soft time limit exceeded job_id={job_id}")
+        raise
+    except Exception as e:
+        logger.error(f"run_ndvi_analysis failed: {e}", exc_info=True)
+        return {"success": False, "job_id": str(job_id), "error": str(e)}
+
+
+def _persist_ndvi_asset(
+    result: dict, session_id: Optional[str], job_id: Optional[int] = None
+) -> Optional[int]:
+    """把 NDVI 产物登记进 UploadRecord 资产表。失败不阻断任务（file-only 降级）。
+
+    ``job_id`` 给定时，在**同一个事务内**先确认没有取消请求再插入 —— 资产登记是
+    不可逆副作用，规范 §23 要求已取消的任务不得留下 status=ready 的资产。
     """
     try:
-        self.update_state(state='PROGRESS', meta={'progress': 10, 'message': '校验路径并读取影像元信息'})
+        with db_session() as db:
+            if job_id is not None and DurableJobStore.is_cancel_requested_sync(db, job_id):
+                raise OperationCancelled("cancelled before asset registration", job_id=job_id)
+            record = UploadRecord(
+                filename=result["result_path"],
+                original_name=result["filename"],
+                file_type="raster",
+                format="geotiff",  # ck_upload_format 不接受 "tif"
+                crs=result.get("crs", "EPSG:4326"),
+                geometry_type="raster_analysis",
+                feature_count=0,
+                bbox=result.get("bbox"),
+                file_size=os.path.getsize(result["result_path"]) if os.path.exists(result["result_path"]) else 0,
+                session_id=session_id,
+            )
+            db.add(record)
+            db.flush()
+            return record.id
+    except OperationCancelled:
+        raise  # 取消不是「登记失败」—— 必须上抛让 durable_job 收敛为 cancelled
+    except Exception as db_err:
+        logger.warning(f"NDVI asset persist failed (continuing with file-only): {db_err}")
+        return None
+
+
+def _run_ndvi_legacy(
+    task,
+    raster_path: str,
+    nir_band: Optional[int],
+    red_band: Optional[int],
+    session_id: Optional[str],
+):
+    """ADR-0052 之前的 NDVI 路径。无 durable job 时的兼容分支。"""
+    try:
+        task.update_state(state='PROGRESS', meta={'progress': 10, 'message': '校验路径并读取影像元信息'})
         result = NatureResourceAnalyzer.calculate_ndvi(
             tif_path=raster_path,
             red_band=red_band,
@@ -199,7 +313,7 @@ def run_ndvi_analysis(
         if not result.get("success"):
             return {"success": False, "error": result.get("error", "NDVI calculation failed")}
 
-        self.update_state(state='PROGRESS', meta={'progress': 80, 'message': '入库登记分析资产'})
+        task.update_state(state='PROGRESS', meta={'progress': 80, 'message': '入库登记分析资产'})
 
         # 将分析结果落入 UploadRecord 资产表，便于 list_analysis_assets 查询
         try:
@@ -208,7 +322,7 @@ def run_ndvi_analysis(
                     filename=result["result_path"],
                     original_name=result["filename"],
                     file_type="raster",
-                    format="tif",
+                    format="geotiff",  # ck_upload_format 不接受 "tif"
                     crs=result.get("crs", "EPSG:4326"),
                     geometry_type="raster_analysis",
                     feature_count=0,

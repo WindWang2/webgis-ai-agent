@@ -29,6 +29,18 @@ celery_app.conf.update(
     enable_utc=True,
     task_track_started=True,
     task_time_limit=3600,  # 1小时超时
+    # ADR-0052: worker 崩溃语义。
+    #   acks_late=True             → 执行完成后才 ack
+    #   reject_on_worker_lost=False→ 不主动 requeue：重投会重复执行不可逆的 GIS
+    #                                操作。durable job 的入口守卫拒绝重复投递
+    #                                （已终态直接跳过），stale 清扫负责把「worker
+    #                                没了但状态仍是 running」的 job 收敛为 stale，
+    #                                用户因此不会永远看到 running。
+    task_acks_late=True,
+    task_reject_on_worker_lost=False,
+    # 软超时留出清理窗口：任务体能在 SoftTimeLimitExceeded 时删掉临时产物，
+    # 而不是被硬杀后留下半个 GeoTIFF。
+    task_soft_time_limit=3300,
 )
 
 # 自动发现任务
@@ -88,15 +100,25 @@ class TaskQueueService:
 
     @staticmethod
     def get_task_status(task_id: str) -> dict:
-        """查询任务状态（审计 S34：不返回 traceback 给客户端）"""
-        result = celery_app.AsyncResult(task_id)
-        info = result.info
-        return {
-            "task_id": task_id,
-            "status": result.status,
-            "result": result.result if result.ready() else None,
-            "progress": info.get("progress", 0) if isinstance(info, dict) else 0,
-        }
+        """查询任务状态（审计 S34：不返回 traceback 给客户端）。
+
+        ADR-0052：结果后端不可用时优雅降级。没有 Redis 时 backend 是
+        DisabledBackend，读 AsyncResult 会抛 AttributeError —— 之前这会让
+        `/tasks/status/{id}` 直接 500。现在返回 UNKNOWN，让调用方（以及新任务中心）
+        改用 durable job 行作为事实源。
+        """
+        try:
+            result = celery_app.AsyncResult(task_id)
+            info = result.info
+            return {
+                "task_id": task_id,
+                "status": result.status,
+                "result": result.result if result.ready() else None,
+                "progress": info.get("progress", 0) if isinstance(info, dict) else 0,
+            }
+        except Exception as e:  # noqa: BLE001 —— 后端不可用不应让端点 500
+            logger.warning(f"Celery result backend unavailable for {task_id}: {e}")
+            return {"task_id": task_id, "status": "UNKNOWN", "result": None, "progress": 0}
 
     @staticmethod
     def revoke_task(task_id: str) -> bool:
