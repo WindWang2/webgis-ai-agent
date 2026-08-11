@@ -1,20 +1,22 @@
 """Chat API Route - SSE 流式对话"""
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Annotated, Optional
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
 
 from app.core.auth import get_current_user_optional, get_owner_token, require_admin, require_owned_session
 from app.core.database import get_async_db
 from app.models.db_model import Conversation
+from app.services.chat.event_resume import TurnEventBuffer, TurnResumeRegistry
 from app.services.chat_engine import ChatEngine
 from app.services.history_service_async import AsyncHistoryService
 from app.tools._utils import async_db_session
 from app.tools.registry import ToolRegistry
 
-from app.utils.sse import sse_event
+from app.utils.sse import SSEBatcher, sse_event, sse_event_id, sse_event_id_scope, sse_event_type
 
 from app.agent_pi_bridge import PiRpcError, USE_NEW_AGENT
 
@@ -25,12 +27,27 @@ router = APIRouter(prefix="/chat", tags=["对话"])
 registry: ToolRegistry = None  # type: ignore[assignment]
 engine: ChatEngine = None  # type: ignore[assignment]
 
+# DUP-1: process-local SSE turn-resume buffer. One ring buffer per session key
+# (most recent turn only; LRU-capped), filled by the route as events are
+# emitted. A POST with Last-Event-ID / last_event_id replays from it without
+# starting a new turn. Cross-restart persistence is a non-goal.
+_turn_resume_registry = TurnResumeRegistry()
+
 # SSE 流式响应头（Pi 和 legacy 路径共用）
 SSE_HEADERS = {
     "Cache-Control": "no-cache",
     "Connection": "keep-alive",
     "X-Accel-Buffering": "no",
 }
+
+# D-F6: Pi 路径的 token 批处理（P1）。Pi 桥逐事件产出，若逐条 yield 到
+# StreamingResponse 就是每 token 一次 HTTP write（~200 writes/turn）。这里在
+# 路由边界用 SSEBatcher 合并高频事件（token/content），与 legacy 引擎一致；
+# 结构事件（task_start/step_*/done/...）与 keepalive 注释仍逐条透传，缓冲的
+# token 总是先于结构事件 flush，保证前端事件顺序不变。
+_PI_BATCHABLE_EVENTS = frozenset({"token", "content"})
+_PI_BATCH_MAX_EVENTS = 32
+_PI_BATCH_MAX_DELAY_S = 0.08
 
 # Feature flag: 通过环境变量切换新旧 Agent 系统
 # true/1/yes 时使用 Pi 开源 agent (vendor/pi) 通过 RPC 调用
@@ -57,8 +74,151 @@ def get_registry() -> ToolRegistry:
 
 
 def _use_pi_bridge() -> bool:
-    """Return True when the Pi agent path is enabled and ready."""
-    return USE_NEW_AGENT and pi_bridge is not None
+    """Return True when the Pi agent path is enabled and the subprocess is alive.
+
+    C-F15: the Pi subprocess can die (crash, OOM, bad extension). Previously
+    ``_use_pi_bridge`` only checked ``USE_NEW_AGENT and pi_bridge is not None``
+    and ignored ``process_died``, so after a Pi crash every /chat request
+    yielded task_error forever (PiRpcError "Pi process not started") — the
+    legacy ChatEngine fallback the docstrings claimed did not exist. Now a dead
+    bridge falls through to the always-initialised legacy ChatEngine so the
+    service degrades instead of hard-failing until a restart.
+    """
+    return (
+        USE_NEW_AGENT
+        and pi_bridge is not None
+        and not getattr(pi_bridge, "_process_died", False)
+    )
+
+
+async def _sse_batched(stream, max_events=_PI_BATCH_MAX_EVENTS, max_delay_s=_PI_BATCH_MAX_DELAY_S):
+    """Wrap an SSE event stream with route-boundary token batching (D-F6).
+
+    Coalesces high-frequency events (``token`` / ``content``) through a shared
+    :class:`SSEBatcher`, mirroring the legacy engine. Structural events
+    (``task_start`` / ``step_*`` / ``tool_*`` / ``task_complete`` / ``done`` /
+    ``error``) and keepalive comments (``: ...``) pass through in order, with
+    any buffered tokens flushed first so the frontend event order is
+    preserved.
+
+    Lifecycle: on normal stream end the tail is flushed; on an upstream
+    exception buffered tokens are flushed and the exception is re-raised (the
+    caller yields the error event after them). A client disconnect
+    (GeneratorExit / CancelledError — BaseException) deliberately bypasses the
+    exception flush: the connection is gone, so buffered tokens are
+    deterministically dropped with the generator frame instead of attempting
+    writes to a dead connection, and the underlying bridge stream still
+    unwinds (its finally runs abort/drain/cleanup).
+
+    Batching stays at this route boundary on purpose — ``stream_prompt`` owns
+    bridge lifecycle concerns (lock, stall, abort) and must not coalesce.
+    """
+    batcher = SSEBatcher(max_events=max_events, max_delay_s=max_delay_s)
+    try:
+        async for event in stream:
+            if sse_event_type(event) in _PI_BATCHABLE_EVENTS:
+                batcher.push(event)
+                async for chunk in batcher.drain():
+                    yield chunk
+            else:
+                for chunk in batcher.flush():
+                    yield chunk
+                yield event
+        for chunk in batcher.flush():
+            yield chunk
+    except Exception:
+        # Upstream failure: emit buffered tokens before the error the caller
+        # yields, preserving order. Disconnect (BaseException) skips this.
+        for chunk in batcher.flush():
+            yield chunk
+        raise
+
+
+def _split_sse_events(chunk: str) -> list[str]:
+    """Split a (possibly coalesced) SSE chunk into individual event blocks.
+
+    Every block built by :func:`sse_event` ends with ``\\n\\n`` and its JSON
+    ``data:`` payload never contains a literal blank line (json.dumps escapes
+    newlines), so splitting on ``\\n\\n`` is lossless — for both the legacy
+    engine's internal SSEBatcher coalescing and the route-boundary batcher.
+    """
+    return [part for part in chunk.split("\n\n") if part]
+
+
+async def _recorded(stream, buffer: TurnEventBuffer):
+    """Wrap an SSE event stream, recording each event into the resume buffer
+    before it is yielded (DUP-1). Handles coalesced chunks transparently so the
+    buffer holds individual events (WITH their ``\\n\\n`` block terminator — the
+    buffer stores exact wire blocks, and a resume replays them verbatim) in
+    emission order, ids and all.
+    """
+    async for chunk in stream:
+        for event in _split_sse_events(chunk):
+            # _split_sse_events strips the terminator; restore it so a replay
+            # yields spec-correct, independently-framed SSE events.
+            buffer.record(event + "\n\n")
+        yield chunk
+
+
+async def _resume_generator(
+    session_key: str,
+    last_event_id: int,
+    message: str,
+):
+    """DUP-1 resume stream: replay missed events, then terminate cleanly.
+
+    A POST /chat/stream carrying ``Last-Event-ID`` / ``last_event_id`` is a
+    RESUME — a read, never a new execution. The route sends no prompt RPC and
+    dispatches no tool; it replays what the dropped connection missed from the
+    per-session ring buffer and then ends:
+
+      * buffer hit + message match → replay every buffered event with
+        ``id > last_event_id`` in order; then terminate with the buffered
+        terminal event if it was replayed, a synthesized ``done {resumed:
+        true}`` if the client already consumed the terminal (``last_event_id >=
+        terminal id`` — the stream must never hang), or a synthesized ``error``
+        if the turn was interrupted (aborted on disconnect; no terminal exists).
+      * buffer miss (server restart / LRU eviction / message mismatch) → a
+        terminal ``error {resumed: false}``; no new turn starts, so a stale
+        reconnect can never double-execute the message. The client stops
+        auto-retrying on any terminal event.
+
+    Synthesized terminal events carry no ``id:`` (they are not part of the
+    original turn's id sequence); the client consumes them for status and
+    stops, so ids are not needed for dedup there.
+    """
+    buffered = _turn_resume_registry.get(session_key)
+    if buffered is None or buffered.message != message:
+        yield sse_event("error", {
+            "error": (
+                "Resume unavailable: the turn buffer is gone (server restarted "
+                "or the session expired). Please resend your message."
+            ),
+            "resumed": False,
+        })
+        return
+
+    for event in buffered.replay_after(last_event_id):
+        yield event
+
+    if buffered.terminal_event is not None:
+        terminal_id = sse_event_id(buffered.terminal_event)
+        if terminal_id is None or terminal_id <= last_event_id:
+            # Client already consumed the terminal; reconnect for nothing but
+            # a clean close — synthesize one so the stream terminates.
+            yield sse_event("done", {"session_id": session_key, "resumed": True})
+    elif buffered.aborted:
+        # Turn was cut by a client disconnect (server aborted the prompt):
+        # replaying the partial content must NOT look like a complete answer.
+        yield sse_event("error", {
+            "session_id": session_key,
+            "error": "连接已中断，本轮未完成且不会自动续跑；请重新发送消息。",
+            "resumed": True,
+        })
+    else:
+        # Buffered turn still streaming (a resume racing the live turn):
+        # nothing more to add — terminate cleanly.
+        yield sse_event("done", {"session_id": session_key, "resumed": True})
 
 
 class ChatRequest(BaseModel):
@@ -150,20 +310,85 @@ async def chat_stream(
     _user: dict = Depends(get_current_user_optional),
     owner_token: Optional[str] = Depends(get_owner_token),
     db: AsyncSession = Depends(get_async_db),
+    # DUP-1 resume contract: the client re-POSTs the same turn with the last
+    # event id it received. The id comes back as the SSE-spec `Last-Event-ID`
+    # header (preferred) or the `last_event_id` query param. Annotated + real
+    # None default keeps direct (non-FastAPI) callers working — a plain
+    # `= Header(None)` default would leak the Header marker object into
+    # route-level tests that invoke the function directly.
+    last_event_id_header: Annotated[Optional[int], Header(alias="Last-Event-ID")] = None,
+    last_event_id_query: Annotated[Optional[int], Query(alias="last_event_id")] = None,
 ):
-    """SSE 流式对话接口"""
+    """SSE 流式对话接口
+
+    DB-session lifecycle (transport goal C-F2): FastAPI keeps yield-dependencies
+    alive until the response body completes, which for a StreamingResponse is
+    the end of a multi-second LLM turn. That used to pin a Postgres connection
+    for the whole turn doing nothing after the ownership guard. With
+    ``pool_size=10 + max_overflow=20``, ~15 concurrent streams exhausted the
+    pool (30s ``pool_timeout`` → 500s on unrelated requests) and
+    ``_save_msg_async`` silently dropped history.
+
+    We still take ``Depends(get_async_db)`` — it is the override point tests use
+    to isolate the DB — but close it *immediately* after the guard so the
+    connection returns to the pool before any event is yielded. ``close()`` is
+    idempotent; the dependency's later teardown ``close()`` is a no-op. Neither
+    streaming path needs a session across the stream: the legacy engine
+    persists via its own short-lived ``_save_msg_async`` sessions and the Pi
+    path writes nothing during the stream. The inner ``async with
+    async_db_session()`` that used to wrap each generator was never consumed
+    either, so it is removed (that change alone cuts held connections 2→1 per
+    stream; the early close takes it to 0 during streaming).
+    """
     user_id = _user.get("user_id")
-    await _guard_body_session(db, req.session_id, user_id, owner_token)
+    try:
+        await _guard_body_session(db, req.session_id, user_id, owner_token)
+    finally:
+        # Release the connection NOW, not when the stream ends. The guard is
+        # the only consumer; nothing downstream uses ``db``.
+        if db is not None:
+            await db.close()
+
+    session_key = req.session_id or ""
+    last_event_id = (
+        last_event_id_header
+        if last_event_id_header is not None
+        else last_event_id_query
+    )
+
+    if last_event_id is not None:
+        # DUP-1: a POST carrying Last-Event-ID is a RESUME (read) — never a
+        # new execution. Replay the buffered turn's missed events and
+        # terminate; do NOT send a prompt RPC.
+        return StreamingResponse(
+            _resume_generator(session_key, last_event_id, req.message),
+            media_type="text/event-stream",
+            headers=SSE_HEADERS,
+        )
 
     if _use_pi_bridge():
         async def pi_event_generator():
-            async with async_db_session():
+            buffer = TurnEventBuffer(session_key, req.message)
+            _turn_resume_registry.register(session_key, buffer)
+            # One id scope per turn: ids stay monotonic across batched token
+            # events and structural events, in emission order (see sse.py).
+            with sse_event_id_scope():
                 try:
-                    async for event in pi_bridge.stream_prompt(req.message, session_id=req.session_id):
-                        yield event
+                    async for chunk in _sse_batched(
+                        _recorded(
+                            pi_bridge.stream_prompt(req.message, session_id=req.session_id),
+                            buffer,
+                        )
+                    ):
+                        yield chunk
                 except Exception as e:
                     logger.error(f"Pi bridge stream error: {e}", exc_info=True)
-                    yield sse_event("error", {"error": "Internal server error"})
+                    err = sse_event("error", {"error": "Internal server error"})
+                    buffer.record(err, force_terminal=True)
+                    yield err
+                finally:
+                    if not buffer.ended:
+                        buffer.mark_ended(aborted=True)
 
         return StreamingResponse(
             pi_event_generator(),
@@ -173,19 +398,29 @@ async def chat_stream(
 
     # Legacy path: 使用 ChatEngine
     async def event_generator():
-        async with async_db_session():
+        buffer = TurnEventBuffer(session_key, req.message)
+        _turn_resume_registry.register(session_key, buffer)
+        with sse_event_id_scope():
             try:
-                async for event in get_engine().chat_stream(
-                    req.message,
-                    session_id=req.session_id,
-                    map_state=req.map_state,
-                    skill_name=req.skill_name,
-                    user_id=user_id,
+                async for event in _recorded(
+                    get_engine().chat_stream(
+                        req.message,
+                        session_id=req.session_id,
+                        map_state=req.map_state,
+                        skill_name=req.skill_name,
+                        user_id=user_id,
+                    ),
+                    buffer,
                 ):
                     yield event
             except Exception as e:
                 logger.error(f"Stream error: {e}", exc_info=True)
-                yield sse_event("error", {"error": "Internal server error"})
+                err = sse_event("error", {"error": "Internal server error"})
+                buffer.record(err, force_terminal=True)
+                yield err
+            finally:
+                if not buffer.ended:
+                    buffer.mark_ended(aborted=True)
 
     return StreamingResponse(
         event_generator(),
@@ -267,6 +502,9 @@ class MapStatePushRequest(BaseModel):
     viewport: Optional[dict] = None
     layers: Optional[list] = None
     base_layer: Optional[str] = None
+    # F4: monotonic client seq for the viewport write — an out-of-order older
+    # POST landing after the turn-start write is rejected as stale.
+    seq: Optional[int] = None
 
 
 @router.post("/sessions/{session_id}/map-state", status_code=204)
@@ -282,7 +520,7 @@ async def push_session_map_state(
     """
     from app.services.session_data import session_data_manager
     if req.viewport:
-        await session_data_manager.set_map_state(session_id, "viewport", req.viewport)
+        await session_data_manager.set_map_state(session_id, "viewport", req.viewport, seq=req.seq)
     if req.layers is not None:
         await session_data_manager.set_map_state(session_id, "layers", req.layers)
     if req.base_layer:

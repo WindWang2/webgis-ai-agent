@@ -65,7 +65,21 @@ async def create_client_session(**kwargs) -> aiohttp.ClientSession:
 # ── 共享连接池（供 chinese_maps.py 的多 provider 共用）───────────────────────
 
 _shared_session: aiohttp.ClientSession | None = None
+_shared_session_loop: asyncio.AbstractEventLoop | None = None
 _pool_lock: asyncio.Lock = asyncio.Lock()
+
+
+def _shared_session_usable() -> bool:
+    """缓存 session 只有在「未关闭」且其事件循环仍存活时才可复用。
+
+    session 是在创建它的那个 event loop 上工作的；若该 loop 已被关闭（例如前一个
+    测试的函数级 loop），继续复用或 close 它都会在已关闭的 loop 上调度任务并抛出
+    ``RuntimeError: Event loop is closed``。此时必须当作不可用并重新创建。
+    """
+    if _shared_session is None or _shared_session.closed:
+        return False
+    loop = _shared_session_loop
+    return loop is not None and not loop.is_closed()
 
 
 async def get_shared_client() -> aiohttp.ClientSession:
@@ -76,22 +90,30 @@ async def get_shared_client() -> aiohttp.ClientSession:
     - 为 ProviderHealthTracker 提供统一的速率计数注入点
     注意：并发量由调用方的 Semaphore / rate limiter 另行约束，非此模块负责。
     """
-    global _shared_session
+    global _shared_session, _shared_session_loop
     async with _pool_lock:
-        if _shared_session is None or _shared_session.closed:
+        if not _shared_session_usable():
+            _shared_session = None
+            _shared_session_loop = None
             conn = aiohttp.TCPConnector(ttl_dns_cache=300, limit=20, limit_per_host=10)
             _shared_session = aiohttp.ClientSession(
                 connector=conn,
                 timeout=aiohttp.ClientTimeout(total=10),
                 headers=get_base_headers(),
             )
+            _shared_session_loop = asyncio.get_running_loop()
         return _shared_session
 
 
 async def close_shared_client() -> None:
     """服务关闭时释放共享 session。应在 FastAPI lifespan shutdown 事件中调用。"""
-    global _shared_session
+    global _shared_session, _shared_session_loop
     async with _pool_lock:
         if _shared_session is not None and not _shared_session.closed:
-            await _shared_session.close()
+            # 若 session 绑定的 loop 已关闭，直接丢弃引用即可，不能再 await close()，
+            # 否则会在已关闭的 loop 上调度任务而抛 RuntimeError: Event loop is closed。
+            loop = _shared_session_loop
+            if loop is not None and not loop.is_closed():
+                await _shared_session.close()
         _shared_session = None
+        _shared_session_loop = None

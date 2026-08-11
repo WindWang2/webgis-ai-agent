@@ -14,7 +14,6 @@
 ```
 frontend/components/
 ├── chat/                    # 对话组件
-│   ├── chat-panel.tsx       # 主聊天面板
 │   ├── collapsible-think.tsx # 可折叠思考链
 │   ├── map-action-renderer.tsx # AI 地图指令渲染器
 │   ├── plan-card.tsx        # 执行计划卡片

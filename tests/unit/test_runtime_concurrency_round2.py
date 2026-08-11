@@ -129,10 +129,13 @@ def test_engine_holds_single_shared_dispatch_service():
     # The pipeline must receive the SAME shared service (RUN-01: one dedup
     # lock across the whole parallel wave).
     assert captured.get("dispatch_service") is engine.dispatch_service
-    # dispatch_fn must be the engine's _dispatch_tool (which uses the shared
-    # service), not a lambda that builds a fresh service. Compare the
-    # underlying function (bound methods compare by identity, not equality).
-    assert captured.get("dispatch_fn").__func__ is engine._dispatch_tool.__func__
+    # dispatch_fn must route through the engine's _pipeline_dispatch, which
+    # resolves _dispatch_tool at CALL time (late binding). Freezing the
+    # construction-time bound method here would bypass later overrides of
+    # engine._dispatch_tool (test seams, subclass overrides); late binding
+    # keeps the shared-service guarantee — _dispatch_tool always routes to
+    # self.dispatch_service — while honoring those overrides.
+    assert captured.get("dispatch_fn").__func__ is engine._pipeline_dispatch.__func__
     # The dedup lock must exist and be a single object.
     assert engine.dispatch_service._dedup_lock is not None
 

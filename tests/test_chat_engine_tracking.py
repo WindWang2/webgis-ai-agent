@@ -1,10 +1,11 @@
 """ChatEngine Task Tracking 测试 - TDD"""
+import asyncio
 import json
 import pytest
 from unittest.mock import AsyncMock, patch
 
 from app.services.chat_engine import ChatEngine
-from app.services.task_tracker import TaskTracker, detect_geojson
+from app.services.task_tracker import TaskStatus, TaskTracker, detect_geojson
 from app.tools.registry import ToolRegistry, tool
 
 
@@ -389,3 +390,70 @@ async def test_stream_token_batching_preserves_tokens_before_tool_call(engine, r
     # 所有 token 完整到达
     joined = "".join(events)
     assert all(f"t{i}" in joined for i in range(40))
+
+
+# ─── B-P2-17: 断连 / 取消时 tracker 任务必须终止 ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_stream_disconnect_fails_tracker_task(engine):
+    """B-P2-17: 流式对话中途断连（生成器被 aclose）后，tracker 任务不得停留在
+    running。
+
+    fix 前 chat_stream 没有 GeneratorExit/CancelledError 处理：客户端断连
+    （Starlette 对 StreamingResponse 调用 aclose）会让任务一直 running，
+    直到 MAX_TOTAL_TASKS 上限才被逐出。fix 后任务应转为 failed（原因
+    cancelled）。
+    """
+    with patch.object(engine, "_save_msg_async", new_callable=AsyncMock):
+        gen = engine.chat_stream("断连测试", session_id="test-disc")
+        first = await gen.__anext__()
+        assert "task_start" in first
+        task_id = json.loads(first.split("data: ", 1)[1])["task_id"]
+
+        # 模拟客户端断连：turn 尚未结束就关闭生成器（GeneratorExit）
+        await gen.aclose()
+
+        task = engine.tracker.get(task_id)
+        assert task is not None, "任务应仍存在于 tracker"
+        assert task.status == TaskStatus.failed, (
+            f"断连后任务应为 failed，实际 {task.status}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_stream_cancelled_mid_turn_fails_tracker_task(engine):
+    """B-P2-17 (CancelledError 分支)：流式对话中途被取消时任务也必须转为 failed。
+
+    StreamingResponse 在客户端断连时对生成器投递的正是 CancelledError（不是
+    GeneratorExit），因此两个分支都要终止任务。fix 前任务停留在 running（泄漏）。
+    """
+    token_consumed = asyncio.Event()
+    parked = asyncio.Event()
+
+    async def slow_stream(*args, **kwargs):
+        yield ("token", {"content": "partial"})
+        token_consumed.set()
+        await parked.wait()  # 保持 turn 打开，等待取消
+
+    with patch.object(engine, "_call_llm_stream", return_value=slow_stream()):
+        with patch.object(engine, "_save_msg_async", new_callable=AsyncMock):
+            gen = engine.chat_stream("取消测试", session_id="test-cancel")
+            first = await gen.__anext__()
+            assert "task_start" in first
+            task_id = json.loads(first.split("data: ", 1)[1])["task_id"]
+
+            # 消费 token 后生成器停在 _call_llm_stream 内部
+            pull = asyncio.ensure_future(gen.__anext__())
+            await asyncio.wait_for(token_consumed.wait(), timeout=2.0)
+
+            # 模拟断连：取消正在驱动生成器的读取任务
+            pull.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pull
+
+            task = engine.tracker.get(task_id)
+            assert task is not None, "任务应仍存在于 tracker"
+            assert task.status == TaskStatus.failed, (
+                f"取消后任务应为 failed，实际 {task.status}"
+            )

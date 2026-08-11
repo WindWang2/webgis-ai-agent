@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 from app.core.config import settings
 from app.tools.registry import ToolRegistry
-from app.services.task_tracker import TaskTracker
+from app.services.task_tracker import TaskStatus, TaskTracker
 from app.services.session_data import session_data_manager
 from app.services.ws_service import broadcast_ws_event
 from app.tools._utils import async_db_session
@@ -83,13 +83,25 @@ class ChatExecutionEngine:
         self.tool_pipeline = ToolExecutionPipeline(
             self.registry,
             self.tracker,
-            dispatch_fn=self._dispatch_tool,
+            # Late-bind the dispatch entry point: the pipeline task outlives
+            # __init__, and freezing self._dispatch_tool as a bound method here
+            # would silently bypass later overrides (test seams, subclass
+            # overrides) — the pipeline would dispatch through the stale
+            # original method. _pipeline_dispatch resolves _dispatch_tool at
+            # call time; the shared ToolDispatchService (RUN-01) is preserved
+            # because _dispatch_tool always routes to self.dispatch_service.
+            dispatch_fn=self._pipeline_dispatch,
             dispatch_service=self.dispatch_service,
         )
 
         import os as _os
         _SESSION_CACHE_SIZE = int(_os.getenv("SESSION_CACHE_SIZE", "200"))
         self._sessions: LRUCache = LRUCache(capacity=_SESSION_CACHE_SIZE)
+        # C-F12: the LRU above bounds the session COUNT; this bounds how many
+        # messages one resident session may hold. Every append is persisted via
+        # _save_msg_async, so the DB is the source of truth — the cache only
+        # needs the recent tail (see _trim_session_tail).
+        self._session_message_cap = max(1, int(_os.getenv("SESSION_MESSAGE_CAP", "200")))
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._MAX_LOCKS = 200
         self._session_owner_tokens: LRUCache = LRUCache(capacity=_SESSION_CACHE_SIZE)
@@ -254,6 +266,48 @@ class ChatExecutionEngine:
         ]
         messages.append({"role": "system", "content": f"{marker}\n\n{skill['body']}"})
 
+    def _trim_session_tail(self, messages: list[dict]) -> None:
+        """C-F12: bound the in-memory per-session message tail.
+
+        ``_sessions`` caches the conversation as a mutable list that grows by
+        2-N messages every turn and was never trimmed — a long-lived streaming
+        session accumulates hundreds of turns in memory (tens of MB) while the
+        LLM only ever reads the recent tail (``truncate_history_by_budget``,
+        ~6000-token budget). Every append is also persisted via
+        ``_save_msg_async``, so the DB is the source of truth; the cache only
+        needs the recent tail.
+
+        Keeps ``messages[0]`` (the system prompt — the context assembler reads
+        it unconditionally) plus the newest turns that fit within
+        ``_session_message_cap``. Turns are grouped the same way
+        ``truncate_history_by_budget`` groups them (a turn = one user message
+        plus its following assistant/tool messages), so a user/assistant/tool
+        chain is never split — the LLM API rejects an orphaned assistant
+        ``tool_calls`` or a ``tool`` message without its ``tool_call``. An
+        oversized newest turn is kept whole (the bound degrades to one turn).
+        """
+        cap = self._session_message_cap
+        if len(messages) <= cap:
+            return
+        tail = messages[1:]
+        turns: list[list[dict]] = []
+        current: list[dict] = []
+        for msg in tail:
+            if msg.get("role") == "user" and current:
+                turns.append(current)
+                current = [msg]
+            else:
+                current.append(msg)
+        if current:
+            turns.append(current)
+        slots = cap - 1
+        kept: list[dict] = []
+        for turn in reversed(turns):
+            if kept and len(kept) + len(turn) > slots:
+                break
+            kept = turn + kept
+        messages[:] = [messages[0], *kept]
+
     async def _save_msg_async(self, session_id: str, role: str, content: str, tool_calls=None, tool_result=None, tool_call_id=None, reasoning_content=None):
         """异步保存消息到数据库"""
         try:
@@ -383,14 +437,30 @@ class ChatExecutionEngine:
     def _call_llm_stream(self, messages: list[dict], tools: Optional[list] = None):
         return call_llm_stream(self._llm_config(), messages, tools)
 
+    async def _persist_map_state(self, session_id: str, map_state: dict) -> None:
+        """F4: persist the turn-start map_state snapshot.
+
+        The viewport key has two writers (this snapshot + the client's
+        throttled POST). The client stamps the snapshot with its monotonic
+        ``viewport_seq``; we pass it through so an older in-flight POST that
+        lands after this write is rejected as stale instead of clobbering the
+        newer snapshot. Other keys are unsequenced (always apply).
+        """
+        viewport_seq = map_state.get("viewport_seq")
+        for k, v in map_state.items():
+            if k == "viewport_seq":
+                continue
+            await session_data_manager.set_map_state(
+                session_id, k, v, seq=viewport_seq if k == "viewport" else None
+            )
+
     async def chat(self, message: str, session_id: Optional[str] = None, map_state: Optional[dict] = None, skill_name: Optional[str] = None, user_id: Optional[str] = None) -> dict:
         """非流式对话"""
         if not session_id:
             session_id = str(uuid.uuid4())
 
         if map_state:
-            for k, v in map_state.items():
-                await session_data_manager.set_map_state(session_id, k, v)
+            await self._persist_map_state(session_id, map_state)
             from app.services.viewport_naming import schedule_populate_from_map_state
             schedule_populate_from_map_state(map_state)
 
@@ -407,9 +477,14 @@ class ChatExecutionEngine:
         messages = await self._get_or_create_session(session_id, user_id=user_id)
         lock = self._get_session_lock(session_id)
         async with lock:
-            return await self._chat_locked(
-                message, session_id, messages, skill_name, user_id,
-            )
+            try:
+                return await self._chat_locked(
+                    message, session_id, messages, skill_name, user_id,
+                )
+            finally:
+                # C-F12: bound the in-memory tail once the turn's appends are
+                # complete (every exit path — return, exception, cancel).
+                self._trim_session_tail(messages)
 
     async def _chat_locked(
         self,
@@ -551,8 +626,7 @@ class ChatExecutionEngine:
         lock = self._get_session_lock(session_id)
         async with lock:
             if map_state:
-                for k, v in map_state.items():
-                    await session_data_manager.set_map_state(session_id, k, v)
+                await self._persist_map_state(session_id, map_state)
                 from app.services.viewport_naming import schedule_populate_from_map_state
                 schedule_populate_from_map_state(map_state)
 
@@ -561,338 +635,357 @@ class ChatExecutionEngine:
             await self._save_msg_async(session_id, "user", message)
 
             task = self.tracker.create(session_id, message)
-            owner_token = self.get_session_owner_token(session_id)
-            task_start_data = {"task_id": task.id, "session_id": session_id}
-            if owner_token:
-                task_start_data["owner_token"] = owner_token
-            yield sse_event("task_start", task_start_data)
-
-            plan = await self._maybe_plan(session_id, message, messages)
             try:
-                if plan is not None:
-                    yield sse_event("plan_ready", {
-                        "session_id": session_id,
-                        "task_id": task.id,
-                        "intent": plan.intent,
-                        "domains": plan.domains,
-                        "steps": [
-                            {"n": s.n, "goal": s.goal, "tool_family": s.tool_family, "done": False}
-                            for s in plan.steps
-                        ],
-                    })
-            except Exception as e:
-                logger.warning(f"[chat_execution_engine] plan_ready 发送失败: {e}")
+                owner_token = self.get_session_owner_token(session_id)
+                task_start_data = {"task_id": task.id, "session_id": session_id}
+                if owner_token:
+                    task_start_data["owner_token"] = owner_token
+                yield sse_event("task_start", task_start_data)
 
-            def _maybe_plan_finalized_event():
+                plan = await self._maybe_plan(session_id, message, messages)
                 try:
-                    from app.services.chat import planner as _planner
-                    plan_obj = _planner.get_plan(session_id)
-                    if plan_obj is None:
-                        return None
-                    skipped = [s.n for s in plan_obj.steps if not s.done]
-                    return sse_event("plan_finalized", {
-                        "session_id": session_id,
-                        "task_id": task.id,
-                        "skipped": skipped,
-                    })
-                except Exception as e:
-                    logger.warning(f"[chat_execution_engine] plan_finalized 构造失败: {e}")
-                    return None
-
-            executed_tools = set()
-
-            for round_index in range(self.max_rounds):
-                messages_with_context = await self._compose_request_messages(session_id, messages)
-
-                if self.tracker.is_cancelled(task.id):
-                    pf = _maybe_plan_finalized_event()
-                    if pf:
-                        yield pf
-                    yield sse_event("task_cancelled", {"task_id": task.id})
-                    return
-
-                tools = self._select_tools(session_id, messages)
-
-                streamed_content_parts: list[str] = []
-                assistant_msg: dict = {}
-                # Phase 8: token 事件批处理。LLM 流式输出每个 token 产生一条 SSE
-                # （= 一次 HTTP write）；SSEBatcher 按 32 条 / 80ms 窗口合并为更少
-                # 更大的 write，降低网络与前端解析开销。只合并 token 热路径——
-                # 结构事件（step_start/step_result/...）保持逐条 yield，前端事件
-                # 语义不变。done 到来时 flush 尾部，保证流式内容完整到达。
-                from app.utils.sse import SSEBatcher
-                token_batcher = SSEBatcher(max_events=32, max_delay_s=0.08)
-                async for event_type, event_data in self._call_llm_stream(messages_with_context, tools):
-                    if event_type == "token":
-                        streamed_content_parts.append(event_data["content"])
-                        token_batcher.push(sse_event("token", {
-                            "content": event_data["content"],
-                            "is_reasoning": event_data.get("is_reasoning", False),
+                    if plan is not None:
+                        yield sse_event("plan_ready", {
                             "session_id": session_id,
-                        }))
-                        async for chunk in token_batcher.drain():
-                            yield chunk
-                    elif event_type == "done":
-                        # 收尾：冲刷尾部 token，保证流式内容完整到达前端
-                        for chunk in token_batcher.flush():
-                            yield chunk
-                        assistant_msg = event_data["message"]
+                            "task_id": task.id,
+                            "intent": plan.intent,
+                            "domains": plan.domains,
+                            "steps": [
+                                {"n": s.n, "goal": s.goal, "tool_family": s.tool_family, "done": False}
+                                for s in plan.steps
+                            ],
+                        })
+                except Exception as e:
+                    logger.warning(f"[chat_execution_engine] plan_ready 发送失败: {e}")
 
-                standard_calls = assistant_msg.get("tool_calls") or []
-                xml_calls: list[dict] = []
+                def _maybe_plan_finalized_event():
+                    try:
+                        from app.services.chat import planner as _planner
+                        plan_obj = _planner.get_plan(session_id)
+                        if plan_obj is None:
+                            return None
+                        skipped = [s.n for s in plan_obj.steps if not s.done]
+                        return sse_event("plan_finalized", {
+                            "session_id": session_id,
+                            "task_id": task.id,
+                            "skipped": skipped,
+                        })
+                    except Exception as e:
+                        logger.warning(f"[chat_execution_engine] plan_finalized 构造失败: {e}")
+                        return None
+
+                executed_tools = set()
+
+                for round_index in range(self.max_rounds):
+                    messages_with_context = await self._compose_request_messages(session_id, messages)
+
+                    if self.tracker.is_cancelled(task.id):
+                        pf = _maybe_plan_finalized_event()
+                        if pf:
+                            yield pf
+                        yield sse_event("task_cancelled", {"task_id": task.id})
+                        return
+
+                    tools = self._select_tools(session_id, messages)
+
+                    streamed_content_parts: list[str] = []
+                    assistant_msg: dict = {}
+                    # Phase 8: token 事件批处理。LLM 流式输出每个 token 产生一条 SSE
+                    # （= 一次 HTTP write）；SSEBatcher 按 32 条 / 80ms 窗口合并为更少
+                    # 更大的 write，降低网络与前端解析开销。只合并 token 热路径——
+                    # 结构事件（step_start/step_result/...）保持逐条 yield，前端事件
+                    # 语义不变。done 到来时 flush 尾部，保证流式内容完整到达。
+                    from app.utils.sse import SSEBatcher
+                    token_batcher = SSEBatcher(max_events=32, max_delay_s=0.08)
+                    async for event_type, event_data in self._call_llm_stream(messages_with_context, tools):
+                        if event_type == "token":
+                            streamed_content_parts.append(event_data["content"])
+                            token_batcher.push(sse_event("token", {
+                                "content": event_data["content"],
+                                "is_reasoning": event_data.get("is_reasoning", False),
+                                "session_id": session_id,
+                            }))
+                            async for chunk in token_batcher.drain():
+                                yield chunk
+                        elif event_type == "done":
+                            # 收尾：冲刷尾部 token，保证流式内容完整到达前端
+                            for chunk in token_batcher.flush():
+                                yield chunk
+                            assistant_msg = event_data["message"]
+
+                    standard_calls = assistant_msg.get("tool_calls") or []
+                    xml_calls: list[dict] = []
             
-                raw_content = assistant_msg.get("content") or ""
-                reasoning = assistant_msg.get("reasoning") or assistant_msg.get("reasoning_content") or ""
+                    raw_content = assistant_msg.get("content") or ""
+                    reasoning = assistant_msg.get("reasoning") or assistant_msg.get("reasoning_content") or ""
 
-                if not standard_calls:
-                    if "minimax:tool_call" in raw_content:
-                        xml_calls = _parse_minimax_xml_tool_calls(raw_content)
+                    if not standard_calls:
+                        if "minimax:tool_call" in raw_content:
+                            xml_calls = _parse_minimax_xml_tool_calls(raw_content)
 
-                tc_list = standard_calls or xml_calls
+                    tc_list = standard_calls or xml_calls
 
-                if tc_list:
-                    content_text = raw_content
-                    if xml_calls:
-                        content_text = re.sub(r'\s*minimax:tool_call[\s\S]*', '', content_text).strip()
+                    if tc_list:
+                        content_text = raw_content
+                        if xml_calls:
+                            content_text = re.sub(r'\s*minimax:tool_call[\s\S]*', '', content_text).strip()
                 
-                    if content_text:
-                        yield sse_event("content", {"content": "\n", "session_id": session_id})
+                        if content_text:
+                            yield sse_event("content", {"content": "\n", "session_id": session_id})
 
-                    entry: dict = {"role": "assistant", "content": content_text}
-                    if reasoning:
-                        entry["reasoning_content"] = reasoning
-                    if standard_calls:
-                        entry["tool_calls"] = standard_calls
-                    messages.append(entry)
-                    await self._save_msg_async(session_id, "assistant", content_text, tc_list, reasoning_content=reasoning)
+                        entry: dict = {"role": "assistant", "content": content_text}
+                        if reasoning:
+                            entry["reasoning_content"] = reasoning
+                        if standard_calls:
+                            entry["tool_calls"] = standard_calls
+                        messages.append(entry)
+                        await self._save_msg_async(session_id, "assistant", content_text, tc_list, reasoning_content=reasoning)
 
-                    tool_result_msgs: list[str] = []
+                        tool_result_msgs: list[str] = []
 
-                    # ── 并行工具分发 (Phase 8) ─────────────────────────────────────
-                    # 原实现按 tc 顺序逐条 await execute_tool_call：LLM 一次返回 N 个
-                    # 独立工具调用时串行执行（总耗时 = N 个工具耗时之和）。现在：
-                    #   Phase 1: 顺序发出每个工具的 step_start/tool_call（保持前端
-                    #            认知顺序），同时为每个工具创建 asyncio.Task 并发执行；
-                    #   Phase 2: asyncio.wait 按完成顺序消费结果，完成即流式推送
-                    #            step_result/step_error/plan_step_done/tool_result；
-                    #   Phase 3: 全部完成后按原始 tc 顺序对齐 LLM 上下文 messages
-                    #            + 落库（LLM 按 tool_call_id 对齐，顺序必须与请求一致）。
-                    # 取消语义：任一完成事件后检查 is_cancelled（不再启动新任务并
-                    # cancel 未完成任务）；生成器被外部取消时 finally 清理全部任务。
-                    # ───────────────────────────────────────────────────────────────
-                    pending_tools: list[dict] = []  # 保持原始 tc 顺序
-                    for tc in tc_list:
-                        tool_name = tc["function"]["name"]
-                        tool_args_raw = tc["function"]["arguments"]
+                        # ── 并行工具分发 (Phase 8) ─────────────────────────────────────
+                        # 原实现按 tc 顺序逐条 await execute_tool_call：LLM 一次返回 N 个
+                        # 独立工具调用时串行执行（总耗时 = N 个工具耗时之和）。现在：
+                        #   Phase 1: 顺序发出每个工具的 step_start/tool_call（保持前端
+                        #            认知顺序），同时为每个工具创建 asyncio.Task 并发执行；
+                        #   Phase 2: asyncio.wait 按完成顺序消费结果，完成即流式推送
+                        #            step_result/step_error/plan_step_done/tool_result；
+                        #   Phase 3: 全部完成后按原始 tc 顺序对齐 LLM 上下文 messages
+                        #            + 落库（LLM 按 tool_call_id 对齐，顺序必须与请求一致）。
+                        # 取消语义：任一完成事件后检查 is_cancelled（不再启动新任务并
+                        # cancel 未完成任务）；生成器被外部取消时 finally 清理全部任务。
+                        # ───────────────────────────────────────────────────────────────
+                        pending_tools: list[dict] = []  # 保持原始 tc 顺序
+                        for tc in tc_list:
+                            tool_name = tc["function"]["name"]
+                            tool_args_raw = tc["function"]["arguments"]
+
+                            try:
+                                tool_args_dict = json.loads(tool_args_raw) if isinstance(tool_args_raw, str) else tool_args_raw
+                            except (json.JSONDecodeError, TypeError) as e:
+                                _arg_preview = tool_args_raw[:200] if isinstance(tool_args_raw, (str, bytes)) else tool_args_raw
+                                logger.warning(f"工具参数解析失败 tool={tool_name} raw={repr(_arg_preview)}: {e}")
+                                tool_args_dict = {}
+
+                            step = self.tracker.start_step(task.id, tool_name, tool_args_dict)
+                            yield sse_event("step_start", {
+                                "task_id": task.id,
+                                "step_id": step.id,
+                                "step_index": len(task.steps),
+                                "tool": tool_name,
+                                "session_id": session_id,
+                            })
+                            yield sse_event("tool_call", {"name": tool_name, "arguments": tool_args_raw})
+
+                            pipeline_task = asyncio.create_task(
+                                # RUN-02: chat_stream already opened the step (start_step
+                                # above) and owns its terminal transition via
+                                # complete_step/fail_step — pass it in so the pipeline
+                                # does NOT open a second track_step (which previously
+                                # doubled task.steps and desynced step_id in SSE).
+                                self.tool_pipeline.execute_tool_call(
+                                    tc, session_id, task.id, executed_tools,
+                                    pre_created_step=step,
+                                )
+                            )
+                            pending_tools.append({
+                                "tc": tc,
+                                "step": step,
+                                "tool_name": tool_name,
+                                "tool_args_dict": tool_args_dict,
+                                "task": pipeline_task,
+                            })
+
+                        all_tasks = {p["task"] for p in pending_tools}
+                        task_to_pending = {p["task"]: p for p in pending_tools}
+                        completion_results: dict[str, dict] = {}  # step.id -> {tc, msg_result_str}
 
                         try:
-                            tool_args_dict = json.loads(tool_args_raw) if isinstance(tool_args_raw, str) else tool_args_raw
-                        except (json.JSONDecodeError, TypeError) as e:
-                            _arg_preview = tool_args_raw[:200] if isinstance(tool_args_raw, (str, bytes)) else tool_args_raw
-                            logger.warning(f"工具参数解析失败 tool={tool_name} raw={repr(_arg_preview)}: {e}")
-                            tool_args_dict = {}
-
-                        step = self.tracker.start_step(task.id, tool_name, tool_args_dict)
-                        yield sse_event("step_start", {
-                            "task_id": task.id,
-                            "step_id": step.id,
-                            "step_index": len(task.steps),
-                            "tool": tool_name,
-                            "session_id": session_id,
-                        })
-                        yield sse_event("tool_call", {"name": tool_name, "arguments": tool_args_raw})
-
-                        pipeline_task = asyncio.create_task(
-                            # RUN-02: chat_stream already opened the step (start_step
-                            # above) and owns its terminal transition via
-                            # complete_step/fail_step — pass it in so the pipeline
-                            # does NOT open a second track_step (which previously
-                            # doubled task.steps and desynced step_id in SSE).
-                            self.tool_pipeline.execute_tool_call(
-                                tc, session_id, task.id, executed_tools,
-                                pre_created_step=step,
-                            )
-                        )
-                        pending_tools.append({
-                            "tc": tc,
-                            "step": step,
-                            "tool_name": tool_name,
-                            "tool_args_dict": tool_args_dict,
-                            "task": pipeline_task,
-                        })
-
-                    all_tasks = {p["task"] for p in pending_tools}
-                    task_to_pending = {p["task"]: p for p in pending_tools}
-                    completion_results: dict[str, dict] = {}  # step.id -> {tc, msg_result_str}
-
-                    try:
-                        remaining: set[asyncio.Task] = set(all_tasks)
-                        while remaining:
-                            done, remaining = await asyncio.wait(remaining, timeout=5.0)
-                            if not done:
-                                yield sse_event("keep_alive", {"message": "ping"})
-                                logger.debug("SSE Heartbeat sent for parallel tool wave")
-                                continue
-                            for t in done:
-                                p = task_to_pending[t]
-                                step = p["step"]
-                                tool_name = p["tool_name"]
-                                tool_args_dict = p["tool_args_dict"]
-
-                                try:
-                                    exec_res = t.result()
-                                except asyncio.CancelledError:
+                            remaining: set[asyncio.Task] = set(all_tasks)
+                            while remaining:
+                                done, remaining = await asyncio.wait(remaining, timeout=5.0)
+                                if not done:
+                                    yield sse_event("keep_alive", {"message": "ping"})
+                                    logger.debug("SSE Heartbeat sent for parallel tool wave")
                                     continue
-                                except Exception as e:  # noqa: BLE001 防御（execute_tool_call 内部已兜底）
-                                    logger.error(f"[chat_execution_engine] tool task raised for {tool_name}: {e}")
-                                    self.tracker.fail_step(task.id, step.id, str(e))
-                                    yield sse_event("step_error", {
-                                        "task_id": task.id,
-                                        "step_id": step.id,
-                                        "tool": tool_name,
-                                        "error": str(e),
-                                    })
-                                    continue
+                                for t in done:
+                                    p = task_to_pending[t]
+                                    step = p["step"]
+                                    tool_name = p["tool_name"]
+                                    tool_args_dict = p["tool_args_dict"]
 
-                                outcome = exec_res.outcome
-
-                                from app.services.chat import planner as _planner
-                                step_n_matched = _planner.mark_step_done(session_id, tool_name, self.registry)
-                                self._log_tool_decision(
-                                    session_id, round_index, message, tool_name,
-                                    tool_args_dict, outcome, len(tools or []),
-                                    step_n=step_n_matched,
-                                )
-                                try:
-                                    if step_n_matched is not None:
-                                        yield sse_event("plan_step_done", {
-                                            "session_id": session_id,
+                                    try:
+                                        exec_res = t.result()
+                                    except asyncio.CancelledError:
+                                        continue
+                                    except Exception as e:  # noqa: BLE001 防御（execute_tool_call 内部已兜底）
+                                        logger.error(f"[chat_execution_engine] tool task raised for {tool_name}: {e}")
+                                        self.tracker.fail_step(task.id, step.id, str(e))
+                                        yield sse_event("step_error", {
                                             "task_id": task.id,
-                                            "step_n": step_n_matched,
+                                            "step_id": step.id,
+                                            "tool": tool_name,
+                                            "error": str(e),
                                         })
-                                except Exception as e:
-                                    logger.warning(f"[chat_execution_engine] plan_step_done 发送失败: {e}")
+                                        continue
 
-                                msg_result_str = outcome.llm_payload
+                                    outcome = exec_res.outcome
 
-                                if outcome.status == "repeated":
-                                    # Reviewer BLOCKING fix (RUN-02): chat_stream
-                                    # owns the step lifecycle now (pre_created_step
-                                    # skips the pipeline's track_step, whose
-                                    # __aexit__ used to complete the step). The
-                                    # "repeated" branch previously left the step
-                                    # in "running" forever. Terminal transition
-                                    # is required here too.
-                                    self.tracker.complete_step(task.id, step.id, outcome.raw_result)
-                                    yield sse_event("step_result", {
-                                        "task_id": task.id,
-                                        "step_id": step.id,
-                                        "tool": tool_name,
-                                        "result": outcome.slim_event,
-                                        "session_id": session_id,
-                                    })
-                                elif outcome.status == "error":
-                                    self.tracker.fail_step(task.id, step.id, outcome.error_msg or "")
-                                    yield sse_event("step_error", {
-                                        "task_id": task.id,
-                                        "step_id": step.id,
-                                        "tool": tool_name,
-                                        "error": outcome.error_msg,
-                                    })
-                                    yield sse_event("tool_result", {"name": tool_name, "result": msg_result_str, "session_id": session_id})
-                                else:
-                                    self.tracker.complete_step(task.id, step.id, outcome.raw_result)
-                                    step_payload = {
-                                        "task_id": task.id,
-                                        "step_id": step.id,
-                                        "tool": tool_name,
-                                        "result": outcome.slim_event,
-                                        "geojson_ref": outcome.geojson_ref,
-                                        "session_id": session_id,
+                                    from app.services.chat import planner as _planner
+                                    step_n_matched = _planner.mark_step_done(session_id, tool_name, self.registry)
+                                    self._log_tool_decision(
+                                        session_id, round_index, message, tool_name,
+                                        tool_args_dict, outcome, len(tools or []),
+                                        step_n=step_n_matched,
+                                    )
+                                    try:
+                                        if step_n_matched is not None:
+                                            yield sse_event("plan_step_done", {
+                                                "session_id": session_id,
+                                                "task_id": task.id,
+                                                "step_n": step_n_matched,
+                                            })
+                                    except Exception as e:
+                                        logger.warning(f"[chat_execution_engine] plan_step_done 发送失败: {e}")
+
+                                    msg_result_str = outcome.llm_payload
+
+                                    if outcome.status == "repeated":
+                                        # Reviewer BLOCKING fix (RUN-02): chat_stream
+                                        # owns the step lifecycle now (pre_created_step
+                                        # skips the pipeline's track_step, whose
+                                        # __aexit__ used to complete the step). The
+                                        # "repeated" branch previously left the step
+                                        # in "running" forever. Terminal transition
+                                        # is required here too.
+                                        self.tracker.complete_step(task.id, step.id, outcome.raw_result)
+                                        yield sse_event("step_result", {
+                                            "task_id": task.id,
+                                            "step_id": step.id,
+                                            "tool": tool_name,
+                                            "result": outcome.slim_event,
+                                            "session_id": session_id,
+                                        })
+                                    elif outcome.status == "error":
+                                        self.tracker.fail_step(task.id, step.id, outcome.error_msg or "")
+                                        yield sse_event("step_error", {
+                                            "task_id": task.id,
+                                            "step_id": step.id,
+                                            "tool": tool_name,
+                                            "error": outcome.error_msg,
+                                        })
+                                        yield sse_event("tool_result", {"name": tool_name, "result": msg_result_str, "session_id": session_id})
+                                    else:
+                                        self.tracker.complete_step(task.id, step.id, outcome.raw_result)
+                                        step_payload = {
+                                            "task_id": task.id,
+                                            "step_id": step.id,
+                                            "tool": tool_name,
+                                            "result": outcome.slim_event,
+                                            "geojson_ref": outcome.geojson_ref,
+                                            "session_id": session_id,
+                                        }
+                                        yield sse_event("step_result", step_payload)
+                                        yield sse_event("tool_result", {"name": tool_name, "result": outcome.slim_event, "session_id": session_id})
+
+                                    completion_results[step.id] = {
+                                        "tc": p["tc"],
+                                        "msg_result_str": msg_result_str,
+                                        "tool_name": tool_name,
                                     }
-                                    yield sse_event("step_result", step_payload)
-                                    yield sse_event("tool_result", {"name": tool_name, "result": outcome.slim_event, "session_id": session_id})
 
-                                completion_results[step.id] = {
-                                    "tc": p["tc"],
-                                    "msg_result_str": msg_result_str,
-                                    "tool_name": tool_name,
-                                }
+                                    if self.tracker.is_cancelled(task.id):
+                                        for r in remaining:
+                                            r.cancel()
+                                        await asyncio.gather(*remaining, return_exceptions=True)
+                                        pf = _maybe_plan_finalized_event()
+                                        if pf:
+                                            yield pf
+                                        yield sse_event("task_cancelled", {"task_id": task.id})
+                                        return
+                        finally:
+                            # 生成器被外部取消（GeneratorExit/CancelledError）时清理未完成任务
+                            for t in all_tasks:
+                                if not t.done():
+                                    t.cancel()
+                            if all_tasks:
+                                await asyncio.gather(*all_tasks, return_exceptions=True)
 
-                                if self.tracker.is_cancelled(task.id):
-                                    for r in remaining:
-                                        r.cancel()
-                                    await asyncio.gather(*remaining, return_exceptions=True)
-                                    pf = _maybe_plan_finalized_event()
-                                    if pf:
-                                        yield pf
-                                    yield sse_event("task_cancelled", {"task_id": task.id})
-                                    return
-                    finally:
-                        # 生成器被外部取消（GeneratorExit/CancelledError）时清理未完成任务
-                        for t in all_tasks:
-                            if not t.done():
-                                t.cancel()
-                        if all_tasks:
-                            await asyncio.gather(*all_tasks, return_exceptions=True)
+                        # Phase 3: 按原始 tc 顺序对齐 LLM 上下文 + 落库
+                        for p in pending_tools:
+                            res = completion_results.get(p["step"].id)
+                            if res is None:
+                                continue  # 极端取消场景：该工具未完成，跳过
+                            tc = res["tc"]
+                            msg_result_str = res["msg_result_str"]
+                            tool_name = res["tool_name"]
+                            if standard_calls:
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tc["id"],
+                                    "content": msg_result_str,
+                                })
+                                db_save_content = msg_result_str[:100000] if len(msg_result_str) > 100000 else msg_result_str
+                                await self._save_msg_async(session_id, "tool", "", None, db_save_content, tc["id"])
+                            else:
+                                tool_result_msgs.append(f"{tool_name}: {msg_result_str}")
 
-                    # Phase 3: 按原始 tc 顺序对齐 LLM 上下文 + 落库
-                    for p in pending_tools:
-                        res = completion_results.get(p["step"].id)
-                        if res is None:
-                            continue  # 极端取消场景：该工具未完成，跳过
-                        tc = res["tc"]
-                        msg_result_str = res["msg_result_str"]
-                        tool_name = res["tool_name"]
-                        if standard_calls:
+                        if xml_calls and tool_result_msgs:
                             messages.append({
-                                "role": "tool",
-                                "tool_call_id": tc["id"],
-                                "content": msg_result_str,
+                                "role": "user",
+                                "content": "[工具执行结果]\n" + "\n".join(tool_result_msgs),
                             })
-                            db_save_content = msg_result_str[:100000] if len(msg_result_str) > 100000 else msg_result_str
-                            await self._save_msg_async(session_id, "tool", "", None, db_save_content, tc["id"])
-                        else:
-                            tool_result_msgs.append(f"{tool_name}: {msg_result_str}")
 
-                    if xml_calls and tool_result_msgs:
-                        messages.append({
-                            "role": "user",
-                            "content": "[工具执行结果]\n" + "\n".join(tool_result_msgs),
-                        })
-
-                    continue
-                else:
-                    content = raw_content
+                        continue
+                    else:
+                        content = raw_content
                 
-                    entry = {"role": "assistant", "content": content}
-                    if reasoning:
-                        entry["reasoning_content"] = reasoning
-                    messages.append(entry)
-                    await self._save_msg_async(session_id, "assistant", content, reasoning_content=reasoning)
+                        entry = {"role": "assistant", "content": content}
+                        if reasoning:
+                            entry["reasoning_content"] = reasoning
+                        messages.append(entry)
+                        await self._save_msg_async(session_id, "assistant", content, reasoning_content=reasoning)
 
-                    yield sse_event("content", {"content": "", "session_id": session_id, "streaming_done": True})
+                        yield sse_event("content", {"content": "", "session_id": session_id, "streaming_done": True})
 
-                    pf = _maybe_plan_finalized_event()
-                    if pf:
-                        yield pf
-                    self.tracker.complete_task(task.id)
-                    yield sse_event("task_complete", {
-                        "task_id": task.id,
-                        "step_count": len(task.steps),
-                        "summary": content[:100],
-                    })
-                    yield sse_event("done", {"session_id": session_id})
-                    self._fire_and_forget(self._generate_title, session_id, message)
-                    return
+                        pf = _maybe_plan_finalized_event()
+                        if pf:
+                            yield pf
+                        self.tracker.complete_task(task.id)
+                        yield sse_event("task_complete", {
+                            "task_id": task.id,
+                            "step_count": len(task.steps),
+                            "summary": content[:100],
+                        })
+                        yield sse_event("done", {"session_id": session_id})
+                        self._fire_and_forget(self._generate_title, session_id, message)
+                        return
 
-            self.tracker.fail_task(task.id, "达到最大工具调用轮数")
-            pf = _maybe_plan_finalized_event()
-            if pf:
-                yield pf
-            yield sse_event("task_error", {"task_id": task.id, "error": "达到最大轮数"})
-            yield sse_event("content", {"content": "达到最大工具调用轮数", "session_id": session_id})
-            yield sse_event("done", {"session_id": session_id})
+                self.tracker.fail_task(task.id, "达到最大工具调用轮数")
+                pf = _maybe_plan_finalized_event()
+                if pf:
+                    yield pf
+                yield sse_event("task_error", {"task_id": task.id, "error": "达到最大轮数"})
+                yield sse_event("content", {"content": "达到最大工具调用轮数", "session_id": session_id})
+                yield sse_event("done", {"session_id": session_id})
+            except (asyncio.CancelledError, GeneratorExit):
+                # B-P2-17: 客户端断连/生成器被关闭时终止 tracker 任务，
+                # 避免任务永远停留在 running（直到 MAX_TOTAL_TASKS 逐出）。
+                task_info = self.tracker.get(task.id)
+                if task_info is not None and task_info.status == TaskStatus.running:
+                    self.tracker.fail_task(task.id, "cancelled")
+                raise
+            except Exception:
+                # B-P2-17: 流中异常同样终止任务（与 _chat_locked 一致）。
+                task_info = self.tracker.get(task.id)
+                if task_info is not None and task_info.status == TaskStatus.running:
+                    self.tracker.fail_task(task.id, "chat_stream exception")
+                raise
+            finally:
+                # C-F12: bound the in-memory tail once the turn's appends
+                # are complete (every exit path — done, cancelled, max rounds,
+                # disconnect/exception via generator close).
+                self._trim_session_tail(messages)
 
     async def _dispatch_tool(
         self,
@@ -903,6 +996,23 @@ class ChatExecutionEngine:
         # RUN-01: reuse the engine's single ToolDispatchService so the dedup
         # lock is shared across the parallel tool wave.
         return await self.dispatch_service.dispatch(tc, session_id, executed_tools)
+
+    async def _pipeline_dispatch(
+        self,
+        tc: dict,
+        session_id: str,
+        executed_tools: set[tuple[str, str]],
+    ) -> ToolDispatchResult:
+        """Pipeline dispatch entry point — resolves _dispatch_tool at call time.
+
+        Passed to ToolExecutionPipeline as dispatch_fn so the pipeline task
+        dispatches through the engine's CURRENT _dispatch_tool instead of the
+        method frozen at __init__ time: overrides (test seams, subclass
+        overrides) take effect at dispatch time, while the RUN-01 shared
+        ToolDispatchService guarantee holds because _dispatch_tool always
+        routes to self.dispatch_service.
+        """
+        return await self._dispatch_tool(tc, session_id, executed_tools)
 
     async def clear_session(
         self,

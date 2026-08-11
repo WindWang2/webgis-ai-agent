@@ -172,3 +172,25 @@ async def test_redis_started_at_set_by_store(fake_redis_sdm):
     await fake_redis_sdm.store(sid, {"type": "FeatureCollection", "features": []}, prefix="t")
     assert await fake_redis_sdm.get_started_at(sid) is not None
     await fake_redis_sdm.clear_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_redis_map_state_seq_rejects_stale_writes(fake_redis_sdm):
+    """F4: Redis backend — out-of-order viewport writes resolve to latest seq."""
+    sid = "rs_seq"
+    # newer write lands first
+    assert await fake_redis_sdm.set_map_state(sid, "viewport", {"zoom": 12}, seq=2) is True
+    # stale replay must be rejected, not clobber the newer value
+    assert await fake_redis_sdm.set_map_state(sid, "viewport", {"zoom": 5}, seq=1) is False
+    state = await fake_redis_sdm.get_map_state(sid)
+    assert state["viewport"] == {"zoom": 12}
+    assert state["_viewport_seq"] == 2
+    assert state["_viewport_updated_at"]
+    # next client write with a newer seq still passes
+    assert await fake_redis_sdm.set_map_state(sid, "viewport", {"zoom": 7}, seq=3) is True
+    assert (await fake_redis_sdm.get_map_state(sid))["viewport"] == {"zoom": 7}
+    # unsequenced server-side write always applies and leaves seq untouched
+    await fake_redis_sdm.set_map_state(sid, "viewport", {"zoom": 8})
+    assert (await fake_redis_sdm.get_map_state(sid))["viewport"] == {"zoom": 8}
+    assert (await fake_redis_sdm.get_map_state(sid))["_viewport_seq"] == 3
+    await fake_redis_sdm.clear_session(sid)

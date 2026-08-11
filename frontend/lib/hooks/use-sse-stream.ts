@@ -9,6 +9,8 @@ import type { ToolCallEntry, PlanProposalPayload } from '@/lib/store/hud-types';
 import type { AgentPlanState } from '@/lib/types/agent-plan';
 import type { MapActionPayload } from '@/lib/types';
 import { createMessageIdGenerator } from './use-message-id';
+import { TokenBatcher } from './token-batcher';
+import { IncrementalThinkParser, parseThink } from './incremental-think';
 
 
 import { devOnly } from "@/lib/utils/logger";
@@ -46,9 +48,56 @@ export function useSSEStream(
   ]);
 
   const thinkingMsgIdRef = useRef<string>('');
-  const rawContentRef = useRef<string>('');
   const msgIdGen = useRef(createMessageIdGenerator());
   const layerFetchAbortRef = useRef<AbortController | null>(null);
+
+  // D-F7 / F-FE-4: incremental think-block tracking. The batcher still
+  // delivers full snapshots per flush, but instead of re-parsing the whole
+  // accumulated content each time (O(n²) over a turn) the parser scans only
+  // the delta since the last flush and carries the <think>/</think> state.
+  // reset() is called per turn, alongside the batcher's.
+  const thinkParserRef = useRef<IncrementalThinkParser | null>(null);
+  if (thinkParserRef.current === null) {
+    thinkParserRef.current = new IncrementalThinkParser();
+  }
+
+  // Transport goal §21 / F-FE-1 / D-F8: coalesce token chunks into at most one
+  // setMessages per animation frame instead of one per token. The batcher owns
+  // the accumulated content/reasoning (snapshot semantics, like the prior
+  // rawContentRef) and fires onFlush on rAF; onFlush applies the snapshot with
+  // a single setMessages. Created once; reset() is called per turn.
+  const tokenBatcherRef = useRef<TokenBatcher | null>(null);
+  if (tokenBatcherRef.current === null) {
+    const hasRaf =
+      typeof window !== "undefined" &&
+      typeof window.requestAnimationFrame === "function";
+    const schedule = hasRaf
+      ? (cb: () => void) => window.requestAnimationFrame(cb)
+      : (cb: () => void) => window.setTimeout(() => cb(), 16) as unknown as number;
+    const cancel = hasRaf
+      ? (id: number) => window.cancelAnimationFrame(id)
+      : (id: number) => window.clearTimeout(id);
+    tokenBatcherRef.current = new TokenBatcher({ schedule, cancel }, (snapshot) => {
+      const thinkingId = thinkingMsgIdRef.current;
+      if (!thinkingId) return;
+      const parser = thinkParserRef.current;
+      parser?.append(snapshot.content.slice(parser.consumedLength));
+      const parsed = parser?.getResult() ?? parseThink(snapshot.content);
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === thinkingId);
+        if (idx === -1) return prev;
+        const target = prev[idx];
+        const updated = [...prev];
+        updated[idx] = {
+          ...target,
+          content: parsed.content,
+          think: parsed.thinking || snapshot.reasoning || target.think,
+          isThinking: false,
+        };
+        return updated;
+      });
+    });
+  }
 
   // Reset abort controller on session change to cancel in-flight layer fetches
   useEffect(() => {
@@ -60,21 +109,6 @@ export function useSSEStream(
       layerFetchAbortRef.current?.abort();
     };
   }, [sessionId]);
-
-  const parseThink = useCallback((raw: string) => {
-    const start = raw.indexOf('<think>');
-    const end = raw.indexOf('</think>');
-    if (start !== -1 && end !== -1 && end > start) {
-      return {
-        thinking: raw.slice(start + 7, end),
-        content: raw.slice(0, start) + raw.slice(end + 8).trimStart(),
-      };
-    }
-    if (start !== -1) {
-      return { thinking: raw.slice(start + 7), content: raw.slice(0, start) };
-    }
-    return { thinking: '', content: raw };
-  }, []);
 
   const onEvent = useCallback(
     (event: SSEEvent) => {
@@ -94,35 +128,20 @@ export function useSSEStream(
 
       const thinkingId = thinkingMsgIdRef.current;
 
-      if (event.event === 'token' || event.event === 'content') {
-        const chunk = data.content || '';
-        if (data.is_reasoning || data.type === 'reasoning') {
-          setMessages((prev) => {
-            const idx = prev.findIndex((m) => m.id === thinkingId);
-            if (idx === -1) return prev;
-            const updated = [...prev];
-            const target = updated[idx];
-            updated[idx] = { ...target, think: (target.think || '') + chunk, isThinking: false };
-            return updated;
-          });
-        } else {
-          rawContentRef.current += chunk;
-          const parsed = parseThink(rawContentRef.current);
-          setMessages((prev) => {
-            const idx = prev.findIndex((m) => m.id === thinkingId);
-            if (idx === -1) return prev;
-            const updated = [...prev];
-            const target = updated[idx];
-            updated[idx] = {
-              ...target,
-              content: parsed.content,
-              think: parsed.thinking || target.think,
-              isThinking: false,
-            };
-            return updated;
-          });
-        }
-      } else if (event.event === 'step_result') {
+      const isTokenLike = event.event === "token" || event.event === "content";
+      if (!isTokenLike) {
+        // Apply any pending batched tokens before a non-token event (status
+        // change, layer add, plan, error) so the final streamed text lands
+        // first. No-op when nothing is pending.
+        tokenBatcherRef.current?.flush();
+      }
+      if (isTokenLike) {
+        const chunk = data.content || "";
+        tokenBatcherRef.current?.push(
+          chunk,
+          !!(data.is_reasoning || data.type === "reasoning"),
+        );
+      } else if (event.event === "step_result") {
         // Plan Mode：propose_plan 返回的 plan 摘要挂到当前消息，由 PlanProposalCard 渲染
         if (data.tool === 'propose_plan' && data.result?.success && data.result?.plan_id) {
           const plan: PlanProposalPayload = {
@@ -289,10 +308,27 @@ export function useSSEStream(
         event.event === 'step_error' ||
         event.event === 'task_error'
       ) {
+        // B-P2-13: previously any error/step_error/task_error replaced the
+        // ENTIRE message with a generic string, discarding whatever had
+        // already streamed and the server's real error detail. Preserve the
+        // partial answer and append the actual error (or a fallback note).
+        const raw = data?.error;
+        const detail =
+          typeof raw === "string" && raw.trim()
+            ? raw
+            : event.event === "step_error"
+              ? "工具执行失败。"
+              : "请求失败，请重试。";
         setMessages((prev) =>
-          prev.map((m) =>
-            m.id === thinkingId ? { ...m, content: '请求失败，请重试。', isThinking: false } : m
-          )
+          prev.map((m) => {
+            if (m.id !== thinkingId) return m;
+            const existing = m.content && !m.isThinking ? m.content : "";
+            return {
+              ...m,
+              content: existing ? `${existing}\n\n⚠️ ${detail}` : `⚠️ ${detail}`,
+              isThinking: false,
+            };
+          }),
         );
       } else if (event.event === 'explorer_progress') {
         const taskId = data.task_id as string;
@@ -313,10 +349,17 @@ export function useSSEStream(
         });
       }
     },
-    [parseThink, setSessionId, sessionIdRef, sessionTokenRef]
+    [setSessionId, sessionIdRef, sessionTokenRef]
   );
 
-  const bridge = useMapBridge(sessionId, dispatchAction, onEvent, sessionTokenRef);
+  // DUP-1: bounded auto-reconnect for the chat stream. Opt-in by explicit
+  // config; the backend treats a re-POST carrying Last-Event-ID as a read-only
+  // resume (replays missed events, never re-executes the turn), and replayed
+  // events are deduped by id in useMapBridge. 2 attempts, 500ms→1s backoff.
+  const bridge = useMapBridge(sessionId, dispatchAction, onEvent, sessionTokenRef, {
+    maxAttempts: 2,
+    baseDelayMs: 500,
+  });
   const isLoading = bridge.aiStatus === 'thinking' || bridge.aiStatus === 'acting';
 
   const handlePlanAction = useCallback((planId: string, action: 'approve' | 'revise' | 'reject') => {
@@ -396,7 +439,8 @@ export function useSSEStream(
 
       const thinkingMsgId = msgIdGen.current.next();
       thinkingMsgIdRef.current = thinkingMsgId;
-      rawContentRef.current = '';
+      tokenBatcherRef.current?.reset();
+      thinkParserRef.current?.reset();
       setMessages((prev) => [
         ...prev,
         {
@@ -409,6 +453,10 @@ export function useSSEStream(
       ]);
 
       await bridge.send(userMsg, mapState);
+
+      // Flush any tokens still pending in the current frame so the final
+      // streamed text is applied before the thinking→done transition.
+      tokenBatcherRef.current?.flush();
 
       setMessages((prev) =>
         prev.map((m) =>

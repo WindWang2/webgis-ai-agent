@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from 'react';
+import { memo, useState, useRef, useEffect, useCallback, type KeyboardEvent } from 'react';
 import dynamic from 'next/dynamic';
 import { Upload, Send, Sparkles, CheckCircle2 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
@@ -103,6 +103,145 @@ interface ChatTabProps {
   onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
 }
 
+/* ─── Memoized message bubble ───
+ * D-F8: `messages` is page-level state, so every SSE token batch re-renders
+ * the whole app. use-sse-stream replaces ONLY the streaming message object
+ * per batch (prior messages keep their identity). Without a memo boundary
+ * here, every batch re-rendered ALL messages and re-parsed every MiniMd /
+ * react-markdown body: O(messages × batches) parses per turn. React.memo with
+ * stable props keeps unchanged messages from re-rendering at all.
+ */
+const ChatMessageItem = memo(function ChatMessageItem({
+  message: msg,
+  accentColor,
+  isDark,
+  mounted,
+  thinkingText,
+  onPlanAction,
+}: {
+  message: ChatMessage;
+  accentColor: string;
+  isDark: boolean;
+  mounted: boolean;
+  thinkingText: string;
+  onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
+}) {
+  const isUser = msg.role === 'user';
+  const time = (mounted && msg.timestamp)
+    ? new Date(msg.timestamp).toLocaleTimeString('zh-CN', {
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : '';
+
+  return isUser ? (
+    /* ── User message: right-aligned bubble ── */
+    <div className="flex justify-end">
+      <div className="max-w-[85%]">
+        <div className="flex items-center justify-end gap-1.5 mb-0.5">
+          {time && <span className="text-[15px]" style={{ color: 'var(--theme-text-subtle)' }}>{time}</span>}
+          <span className="text-[14px] font-semibold" style={{ color: accentColor }}>You</span>
+        </div>
+        <div
+          style={{
+            borderTopRightRadius: 4, borderTopLeftRadius: 16,
+            borderBottomLeftRadius: 16, borderBottomRightRadius: 16,
+            padding: '8px 12px', fontSize: 14.5, lineHeight: 1.6, color: '#fff',
+            backgroundColor: accentColor
+          }}
+        >
+          <div className="whitespace-pre-wrap">{msg.content}</div>
+        </div>
+      </div>
+    </div>
+  ) : (
+    /* ── Assistant message: left-aligned with avatar ── */
+    <div className="flex gap-2">
+      <div className="shrink-0 mt-0.5">
+        <div
+          className="w-6 h-6 rounded-full flex items-center justify-center"
+          style={{ backgroundColor: `${accentColor}15` }}
+        >
+          <Sparkles size={11} style={{ color: accentColor }} />
+        </div>
+      </div>
+
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-0.5">
+          <span className="text-[14px] font-semibold" style={{ color: accentColor }}>GeoAgent</span>
+          {time && <span className="text-[15px]" style={{ color: 'var(--theme-text-subtle)' }}>{time}</span>}
+        </div>
+
+        {msg.layerAdded && (
+          <div
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px',
+              borderRadius: 999, fontSize: 12, fontWeight: 500, color: '#fff',
+              backgroundColor: accentColor, marginBottom: 6
+            }}
+          >
+            <CheckCircle2 size={10} />
+            感知图层已挂载：{msg.layerAdded}
+          </div>
+        )}
+
+        {msg.isThinking ? (
+          <ThinkingDots text={thinkingText} accentColor={accentColor} isDark={isDark} />
+        ) : msg.content || msg.think || msg.toolCalls?.length ? (
+          <div style={{
+            borderTopLeftRadius: 4, borderTopRightRadius: 16,
+            borderBottomLeftRadius: 16, borderBottomRightRadius: 16,
+            backgroundColor: 'var(--theme-bg-subtle)',
+            borderWidth: 1, borderStyle: 'solid',
+            borderColor: 'var(--theme-border-subtle)',
+            padding: '8px 12px'
+          }}>
+            {msg.think && (
+              <CollapsibleThink
+                content={msg.think}
+                isDark={isDark}
+                accentColor={accentColor}
+              />
+            )}
+            {msg.agentPlan && (
+              <PlanCard plan={msg.agentPlan} />
+            )}
+            {msg.content && <MiniMd text={msg.content} />}
+            {msg.toolCalls && msg.toolCalls.length > 0 && (
+              <ToolCallChain calls={msg.toolCalls} />
+            )}
+            {msg.plan && (
+              <PlanProposalCard
+                planId={msg.plan.plan_id}
+                title={msg.plan.title}
+                summary={msg.plan.summary}
+                stepCount={msg.plan.step_count}
+                destructiveSteps={msg.plan.destructive_steps}
+                stepsPreview={msg.plan.steps_preview}
+                status={msg.plan.status}
+                isDark={isDark}
+                accentColor={accentColor}
+                onApprove={(pid) => onPlanAction?.(pid, 'approve')}
+                onRevise={(pid) => onPlanAction?.(pid, 'revise')}
+                onReject={(pid) => onPlanAction?.(pid, 'reject')}
+              />
+            )}
+            {msg.charts?.map((raw: unknown, idx: number) => {
+              const chart = adaptChartData(raw);
+              if (!chart) return null;
+              return (
+                <div key={`chart-${idx}`} style={{ marginTop: 8, borderRadius: 8, overflow: 'hidden', border: `1px solid ${accentColor}22`, backgroundColor: 'var(--theme-bg-input)' }}>
+                  <ChartRenderer chart={chart} />
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+});
+
 export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction }: ChatTabProps) {
   const theme = useHudStore((s) => s.theme);
   const isDark = theme === 'dark';
@@ -179,122 +318,18 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
 
         {/* Message list */}
         <div className="px-3 py-3 space-y-3">
-          {messages.map((msg, idx) => {
-            const isUser = msg.role === 'user';
-            const time = (mounted && msg.timestamp)
-              ? new Date(msg.timestamp).toLocaleTimeString('zh-CN', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })
-              : '';
+          {messages.map((msg, idx) => (
+            <ChatMessageItem
+              key={msg.id ?? `msg-${idx}`}
+              message={msg}
+              accentColor={accentColor}
+              isDark={isDark}
+              mounted={mounted}
+              thinkingText={thinkingText}
+              onPlanAction={onPlanAction}
+            />
+          ))}
 
-            return isUser ? (
-              /* ── User message: right-aligned bubble ── */
-              <div key={msg.id ?? `msg-${idx}`} className="flex justify-end">
-                <div className="max-w-[85%]">
-                  <div className="flex items-center justify-end gap-1.5 mb-0.5">
-                    {time && <span className="text-[15px]" style={{ color: 'var(--theme-text-subtle)' }}>{time}</span>}
-                    <span className="text-[14px] font-semibold" style={{ color: accentColor }}>You</span>
-                  </div>
-                  <div
-                    style={{
-                      borderTopRightRadius: 4, borderTopLeftRadius: 16,
-                      borderBottomLeftRadius: 16, borderBottomRightRadius: 16,
-                      padding: '8px 12px', fontSize: 14.5, lineHeight: 1.6, color: '#fff',
-                      backgroundColor: accentColor
-                    }}
-                  >
-                    <div className="whitespace-pre-wrap">{msg.content}</div>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              /* ── Assistant message: left-aligned with avatar ── */
-              <div key={msg.id ?? `msg-${idx}`} className="flex gap-2">
-                <div className="shrink-0 mt-0.5">
-                  <div
-                    className="w-6 h-6 rounded-full flex items-center justify-center"
-                    style={{ backgroundColor: `${accentColor}15` }}
-                  >
-                    <Sparkles size={11} style={{ color: accentColor }} />
-                  </div>
-                </div>
-
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-[14px] font-semibold" style={{ color: accentColor }}>GeoAgent</span>
-                    {time && <span className="text-[15px]" style={{ color: 'var(--theme-text-subtle)' }}>{time}</span>}
-                  </div>
-
-                  {msg.layerAdded && (
-                    <div
-                      style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px',
-                        borderRadius: 999, fontSize: 12, fontWeight: 500, color: '#fff',
-                        backgroundColor: accentColor, marginBottom: 6
-                      }}
-                    >
-                      <CheckCircle2 size={10} />
-                      感知图层已挂载：{msg.layerAdded}
-                    </div>
-                  )}
-
-                  {msg.isThinking ? (
-                    <ThinkingDots text={thinkingText} accentColor={accentColor} isDark={isDark} />
-                  ) : msg.content || msg.think || msg.toolCalls?.length ? (
-                    <div style={{
-                      borderTopLeftRadius: 4, borderTopRightRadius: 16,
-                      borderBottomLeftRadius: 16, borderBottomRightRadius: 16,
-                      backgroundColor: 'var(--theme-bg-subtle)',
-                      borderWidth: 1, borderStyle: 'solid',
-                      borderColor: 'var(--theme-border-subtle)',
-                      padding: '8px 12px'
-                    }}>
-                      {msg.think && (
-                        <CollapsibleThink
-                          content={msg.think}
-                          isDark={isDark}
-                          accentColor={accentColor}
-                        />
-                      )}
-                      {msg.agentPlan && (
-                        <PlanCard plan={msg.agentPlan} />
-                      )}
-                      {msg.content && <MiniMd text={msg.content} />}
-                      {msg.toolCalls && msg.toolCalls.length > 0 && (
-                        <ToolCallChain calls={msg.toolCalls} />
-                      )}
-                      {msg.plan && (
-                        <PlanProposalCard
-                          planId={msg.plan.plan_id}
-                          title={msg.plan.title}
-                          summary={msg.plan.summary}
-                          stepCount={msg.plan.step_count}
-                          destructiveSteps={msg.plan.destructive_steps}
-                          stepsPreview={msg.plan.steps_preview}
-                          status={msg.plan.status}
-                          isDark={isDark}
-                          accentColor={accentColor}
-                          onApprove={(pid) => onPlanAction?.(pid, 'approve')}
-                          onRevise={(pid) => onPlanAction?.(pid, 'revise')}
-                          onReject={(pid) => onPlanAction?.(pid, 'reject')}
-                        />
-                      )}
-                      {msg.charts?.map((raw: unknown, idx: number) => {
-                        const chart = adaptChartData(raw);
-                        if (!chart) return null;
-                        return (
-                          <div key={`chart-${idx}`} style={{ marginTop: 8, borderRadius: 8, overflow: 'hidden', border: `1px solid ${accentColor}22`, backgroundColor: 'var(--theme-bg-input)' }}>
-                            <ChartRenderer chart={chart} />
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            );
-          })}
 
           {/* Thinking indicator at end of messages */}
           {isBusy && messages.length > 0 && !messages[messages.length - 1]?.isThinking && (

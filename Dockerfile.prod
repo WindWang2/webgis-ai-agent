@@ -19,6 +19,16 @@ WORKDIR /app/frontend
 COPY --from=frontend-deps /app/frontend/node_modules ./node_modules
 COPY frontend/ ./
 
+# transport goal E-F-2 (P0): NEXT_PUBLIC_* is inlined into the browser bundle
+# at BUILD time. Without this ARG the bundle defaulted to http://localhost:8001,
+# so in any standard deployment every API call (incl. chat SSE) hit the user's
+# own machine and the app was dead. Default "" -> same-origin (relative) URLs,
+# which is correct behind the bundled nginx reverse proxy; override for a
+# cross-origin backend. config.ts uses ?? so an explicit empty string wins over
+# the dev fallback.
+ARG NEXT_PUBLIC_API_URL=""
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NEXT_RUNTIME=nodejs
 RUN npm run build

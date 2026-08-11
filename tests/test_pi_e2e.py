@@ -217,10 +217,18 @@ class TestFeatureFlag:
             chat_mod.pi_bridge = None
             assert _use_pi_bridge() is False
 
-            # Test: flag on, bridge set -> True
+            # Test: flag on, bridge set, subprocess alive -> True
             chat_mod.USE_NEW_AGENT = True
-            chat_mod.pi_bridge = MagicMock()
+            alive_bridge = MagicMock()
+            alive_bridge._process_died = False
+            chat_mod.pi_bridge = alive_bridge
             assert _use_pi_bridge() is True
+
+            # C-F15: flag on, bridge set but subprocess died -> False (legacy fallback)
+            dead_bridge = MagicMock()
+            dead_bridge._process_died = True
+            chat_mod.pi_bridge = dead_bridge
+            assert _use_pi_bridge() is False
         finally:
             chat_mod.USE_NEW_AGENT = original_flag
             chat_mod.pi_bridge = original_bridge

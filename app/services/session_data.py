@@ -131,13 +131,29 @@ class MemorySessionStore(BaseSessionStore):
             for k in to_delete:
                 del aliases[k]
 
-    async def set_map_state(self, session_id: str, key: str, value: Any) -> None:
-        """设置地图状态元数据"""
+    async def set_map_state(self, session_id: str, key: str, value: Any, seq: Optional[int] = None) -> bool:
+        """设置地图状态元数据
+
+        F4: ``viewport`` 有两个写入方（turn-start 快照 + 前端节流 POST），
+        无序号时按到达顺序 last-write-wins，慢速旧 POST 会覆盖新状态。这里为
+        每个 key 维护单调 ``seq``：带 ``seq`` 的写入仅在严格新于已存 seq 时
+        生效（否则拒绝并返回 False），乱序到达统一收敛到最新 seq。不带 seq
+        的写入（服务端真相：ws_service / layer_manager / mapspec）总是生效，
+        且不推进已存 seq —— 客户端下一次带 seq 的写入不会被误拒。
+        """
         if session_id not in self._map_state:
             self._map_state[session_id] = {}
             # 首次写入即视为 session 起点（避免单独维护"创建"路径）
             self._map_state[session_id].setdefault("_started_at", datetime.now(timezone.utc).isoformat())
-        self._map_state[session_id][key] = value
+        state = self._map_state[session_id]
+        if seq is not None:
+            stored_seq = state.get(f"_{key}_seq", 0)
+            if seq <= stored_seq:
+                return False  # stale out-of-order write — resolve to latest seq
+            state[f"_{key}_seq"] = seq
+        state[key] = value
+        state[f"_{key}_updated_at"] = datetime.now(timezone.utc).isoformat()
+        return True
 
     async def get_started_at(self, session_id: str) -> Optional[str]:
         """返回 session 首次接触时间 (ISO 字符串)，未存在则 None。"""

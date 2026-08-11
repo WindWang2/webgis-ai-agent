@@ -449,11 +449,12 @@ async def test_c5_dispatch_task_cancelled_on_disconnect(monkeypatch):
     monkeypatch.setattr(engine, "_dispatch_tool",
                         blocking_dispatch.__get__(engine, type(engine)))
 
-    # 捕获 chat_stream 内部 create_task 创建的 dispatch_task。
-    # chat_stream 在派发工具时调用 asyncio.create_task(self._dispatch_tool(...))，
-    # 然后用 asyncio.wait 轮询。我们 patch asyncio.create_task 记录该任务，
-    # 再 patch asyncio.wait 让它立即返回（不阻塞 5s），这样生成器进入等待后
-    # 我们能重新拿到控制权去模拟客户端断开。
+    # 捕获 chat_stream 内部 create_task 创建的 pipeline_task。
+    # chat_stream 在派发工具时调用 asyncio.create_task(
+    # self.tool_pipeline.execute_tool_call(...))，pipeline 内部经 dispatch_fn
+    # （late-bound 到 engine._dispatch_tool）执行工具。我们 patch
+    # asyncio.create_task 记录该任务，再 patch asyncio.wait 让它立即返回
+    # （不阻塞 5s），这样生成器进入等待后我们能重新拿到控制权去模拟客户端断开。
     real_create_task = asyncio.create_task
     captured_tasks: list[asyncio.Task] = []
 

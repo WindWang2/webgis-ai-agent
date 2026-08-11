@@ -179,11 +179,12 @@ jobs:
         run: pip install -r requirements.txt pytest pytest-timeout pytest-cov
 
       - name: Run Performance Harness (no coverage)
-        # 性能门控：在无 coverage 干扰的环境下跑确定性 harness（11 workloads，
-        # tests/benchmarks/test_perf_harness.py）。warn 区间（1.75x-4x）即失败，
-        # 让真实回归在 CI 可见；基线刷新需显式 PERF_UPDATE_BASELINES=1。
-        # 与主测试 job 的 `-m "not perf"` 互斥，避免双重执行 + 覆盖率失真。
-        run: pytest tests/benchmarks/test_perf_harness.py -m perf --no-cov --timeout=180 --timeout-method=thread -q
+        # 性能门控：在无 coverage 干扰的环境下跑确定性 harness（compute 11 个
+        # workload + transport 4 个 streaming workload，全部 -m perf）。warn 区间
+        # （1.75x-4x）即失败，让真实回归在 CI 可见；基线刷新需显式
+        # PERF_UPDATE_BASELINES=1。与主测试 job 的 `-m "not perf"` 互斥，避免双重
+        # 执行 + 覆盖率失真。
+        run: pytest tests/benchmarks/test_perf_harness.py tests/benchmarks/test_transport_perf.py -m perf --no-cov --timeout=180 --timeout-method=thread -q
 
   # ============ Stage 2c: 制图 / Harness 闭环 smoke（确定性，release-blocking）============
   cartography-smoke:
@@ -313,6 +314,34 @@ jobs:
           files: ./frontend/coverage/coverage-final.json
           flags: frontend
           fail_ci_if_error: false
+
+  # ============ Stage 2b: 部署传输配置门控 ============
+  # transport goal E-F-9：之前 CI 没有校验 nginx 配置语法。一个坏掉的 SSE
+  # location 正则、keepalive map 或超时指令可以 invisibly 合入 master。这个
+  # job 在 PR 阶段把 nginx 语法回归前移到快速反馈环。（API base 的 ?? 语义由
+  # frontend/lib/api/config.test.ts 在 test-frontend job 覆盖。）
+  deploy-config:
+    name: Deploy Transport Config Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Validate nginx config syntax (nginx -t)
+        # E-F-1/E-F-7：SSE location 正则、keepalive map、超时配置都必须语法合法。
+        # nginx -t 在加载配置时会校验被引用的文件存在（ssl 证书/key）并解析 upstream
+        # 主机名，所以：挂一次性自签证书到 /etc/nginx/ssl；用 --add-host 让 compose
+        # service 名 `api` 可解析（nginx -t 只解析不连接，指向 127.0.0.1 即可）。
+        run: |
+          mkdir -p .nginx-ssl
+          openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
+            -keyout .nginx-ssl/server.key -out .nginx-ssl/server.crt \
+            -subj "/CN=localhost" 2>/dev/null
+          docker run --rm \
+            --add-host api:127.0.0.1 \
+            -v "$PWD/deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" \
+            -v "$PWD/.nginx-ssl:/etc/nginx/ssl:ro" \
+            nginx:alpine nginx -t
 
   # ============ Stage 3: 安全扫描 ============
   security:

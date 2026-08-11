@@ -96,7 +96,15 @@ async def stream_progress(task_id: str, _user: dict = Depends(get_current_user))
         async for event in orchestrator.stream_progress(task_id):
             yield event
 
+    # transport goal E-F-1：补齐 SSE 响应头。之前只设 media_type，缺
+    # Cache-Control（浏览器/中间代理可能缓存 SSE）和 X-Accel-Buffering（nginx
+    # 即使关了 proxy_buffering，这个响应头也是显式声明，避免被某些代理聚合）。
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )

@@ -55,6 +55,13 @@ class RedisRateLimiter:
         self._redis = aioredis.from_url(
             settings.REDIS_URL,
             socket_connect_timeout=2,
+            # C-F10: a read timeout is mandatory on the hot-path client. Without
+            # it, a half-open Redis connection (up but not responding) makes
+            # pipe.execute() hang indefinitely; RateLimitMiddleware awaits this
+            # on EVERY request (incl. SSE starts), so one stalled Redis op halts
+            # the whole API. 1s keeps the worst case bounded and lets
+            # is_allowed fail open fast.
+            socket_timeout=1,
             decode_responses=True,
         )
         self._bound_loop = loop
@@ -69,7 +76,14 @@ class RedisRateLimiter:
         pipe.zadd(key, {str(now): now})
         pipe.zcard(key)
         pipe.expire(key, window_seconds + 1)
-        _, _, count, _ = await pipe.execute()
+        try:
+            _, _, count, _ = await pipe.execute()
+        except Exception as exc:
+            # C-F10: rate limiting is best-effort. A Redis blip must NEVER block
+            # or fail every request (the middleware runs this per-request on the
+            # hot path). Fail open: allow the request, log the degrade.
+            logger.warning("[RateLimiter] Redis op failed (%s); failing open", exc)
+            return True
         return count <= max_requests
 
 
@@ -126,6 +140,7 @@ async def get_rate_limiter() -> RateLimiter:
         client = aioredis.from_url(
             settings.REDIS_URL,
             socket_connect_timeout=2,
+            socket_timeout=1,  # C-F10: bound read latency on the hot-path client
             decode_responses=True,
         )
         await client.ping()

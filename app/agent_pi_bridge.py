@@ -57,7 +57,21 @@ def _env_float_drain(name: str, default: float) -> float:
 # These stay in the bridge because they're about draining the event queue into SSE,
 # not about the RPC transport itself (which has its own PI_RPC_TIMEOUT in pi_rpc_client).
 PI_EVENT_DRAIN_TIMEOUT = _env_float_drain("PI_EVENT_DRAIN_TIMEOUT", 2.0)    # prompt() 非流式 drain 超时
-PI_EVENT_STREAM_TIMEOUT = _env_float_drain("PI_EVENT_STREAM_TIMEOUT", 30.0)  # stream_prompt 等待下一个 event 的超时
+
+# transport goal B-P1-3: how often to emit an SSE keepalive comment when Pi is
+# silent (long GIS tool, compaction, slow first token). Keeps the connection
+# alive through proxies/LBs with shorter idle timeouts than the chat-SSE
+# nginx budget (3600s) and tells the browser the turn is still progressing.
+PI_HEARTBEAT_INTERVAL = _env_float_drain("PI_HEARTBEAT_INTERVAL", 8.0)
+
+# Max CONTINUOUS silence before a turn is declared stalled. Previously 30s,
+# which false-failed any healthy turn whose tool phase produced no SSE event
+# for >30s (the tool kept running server-side while the user saw an error +
+# retried → duplicate execution). With heartbeats the connection stays alive,
+# so this now only needs to catch a true Pi hang; bumped to 180s to tolerate
+# long toolchains (still well under PI_RPC_TIMEOUT=300s that bounds one RPC).
+# Operators may tune via the env var.
+PI_EVENT_STREAM_TIMEOUT = _env_float_drain("PI_EVENT_STREAM_TIMEOUT", 180.0)
 
 
 # ── Pi tool dispatch models (owned by bridge, not pi_tools route) ──
@@ -424,6 +438,24 @@ class PiBridge:
             if isinstance(event, dict) and event.get("type") == "agent_end":
                 break
 
+    async def _abort_on_disconnect(self, turn_sid: str) -> None:
+        """Send the abort RPC after a client disconnect (transport goal B-P0-1).
+
+        Without this, a client disconnect (page close / new send / session
+        switch) leaves the Pi subprocess generating tokens and — critically —
+        executing GIS tools via the ``/pi-tools/execute`` HTTP callback (DB/ref
+        writes, possibly destructive ops) against a session the user has
+        already left. ``abort()`` is lock-free by design (see its docstring) so
+        it is safe to call from the turn's finally while the lock is still
+        held. Best-effort: the vendor must honour the abort; a failure here
+        must never raise into the generator-cleanup path.
+        """
+        try:
+            await self.abort()
+            logger.info("[PiBridge] abort sent on client disconnect (turn=%s)", turn_sid)
+        except Exception as e:  # noqa: BLE001 — abort failure must not break cleanup
+            logger.warning("[PiBridge] abort-on-disconnect failed (turn=%s): %s", turn_sid, e)
+
     async def prompt(self, message: str, session_id: Optional[str] = None) -> dict:
         """Send a prompt to Pi agent (non-streaming).
 
@@ -514,9 +546,12 @@ class PiBridge:
         # Hold the lock across send + drain + cleanup so turns are strictly
         # serial on the singleton bridge (Pi processes one prompt at a time).
         # try/finally ensures a client-disconnect GeneratorExit/CancelledError
-        # at the yield still releases the lock and drains residual events.
+        # at the yield still releases the lock, drains residual events, AND
+        # (transport goal B-P0-1) sends an abort RPC so Pi stops generating
+        # tokens and executing tools against an abandoned session.
         # Abort deliberately bypasses this lock (see abort()).
         await self._lock.acquire()
+        cancelled = False
         try:
             # Drop residual events from a prior turn so they can't be dequeued
             # and attributed to this session.
@@ -539,9 +574,13 @@ class PiBridge:
             yield sse_event("task_start", {"task_id": turn_sid, "session_id": turn_sid})
 
             timed_out = False
+            silence_seconds = 0.0
             while True:
                 try:
-                    event = await asyncio.wait_for(self._rpc.events.get(), timeout=PI_EVENT_STREAM_TIMEOUT)
+                    event = await asyncio.wait_for(
+                        self._rpc.events.get(), timeout=PI_HEARTBEAT_INTERVAL
+                    )
+                    silence_seconds = 0.0
                     sse = map_event_to_sse(event, turn_sid, cache_lookup=get_cached_dispatch_result)
                     if _harness is not None:
                         _harness.record_sse_event(event)
@@ -550,17 +589,48 @@ class PiBridge:
                     if event.get("type") == "agent_end":
                         break
                 except asyncio.TimeoutError:
-                    timed_out = True
-                    break
+                    silence_seconds += PI_HEARTBEAT_INTERVAL
+                    if silence_seconds >= PI_EVENT_STREAM_TIMEOUT:
+                        # True stall: no Pi event for the whole stall budget.
+                        timed_out = True
+                        break
+                    # Keepalive: an SSE comment line (``: ...``) is ignored by
+                    # the client parser and never enters chat history or the
+                    # LLM context, but it produces bytes on the wire so proxies
+                    # and browsers see activity and don't drop the connection.
+                    yield ": keepalive\n\n"
 
             if timed_out:
                 yield sse_event("error", {
                     "session_id": turn_sid,
-                    "error": f"Pi agent response timed out ({int(PI_EVENT_STREAM_TIMEOUT)}s). The agent may be processing or stalled.",
+                    "error": f"Pi agent stalled — no events for {int(PI_EVENT_STREAM_TIMEOUT)}s. The agent may be stuck; please retry.",
                 })
 
             yield sse_event("done", {"session_id": turn_sid})
+        except (asyncio.CancelledError, GeneratorExit):
+            # Client disconnected (page close / new send / session switch /
+            # network drop). Re-raise after flagging so the finally sends the
+            # abort RPC — otherwise Pi keeps running against an abandoned turn.
+            cancelled = True
+            raise
         finally:
+            if cancelled:
+                # Tell Pi to stop generating tokens / executing tools. Awaiting
+                # inline (shielded + bounded) rather than fire-and-forget so no
+                # detached task retains the bridge (transport goal leak test).
+                # On GeneratorExit (aclose) the driving task is not cancelled, so
+                # this completes normally; on CancelledError the shield keeps the
+                # abort running while wait_for returns promptly. A failure or
+                # timeout here must never raise into generator cleanup.
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(self._abort_on_disconnect(turn_sid)),
+                        timeout=5.0,
+                    )
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("[PiBridge] abort-on-disconnect failed (turn=%s): %s", turn_sid, e)
             # Drain any leftover events so a timeout/disconnect doesn't poison
             # the next turn. (On a normal agent_end the queue is already empty;
             # this is a no-op there.)
