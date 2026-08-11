@@ -395,6 +395,17 @@ class MapSpecLifecycleEngine:
                         session_id, "layers", list(mapspec.get("layers", []))
                     )
 
+                # ADR-0052: attach thematic-consistency evidence (no source
+                # profile available here → profile-dependent checks report
+                # NOT_EVALUATED; profile-free checks like LEGEND_STYLE_EQUIVALENCE
+                # still fire on layers carrying a legend_spec). Wrapped in its own
+                # try/except so a cartography-check failure on an edge-case spec
+                # can NEVER roll back an already-committed valid mutation — these
+                # are evidence for the Harness, not a commit gate.
+                try:
+                    cartography_findings = evaluate_cartography_semantics(mapspec).to_dict().get("findings", [])
+                except Exception:  # noqa: BLE001 — evidence must never block commit
+                    cartography_findings = []
                 return MapSpecResult(
                     mapspec=mapspec,
                     warnings=warnings,
@@ -402,13 +413,7 @@ class MapSpecLifecycleEngine:
                     checkpoint_id=checkpoint_id_created,
                     ref_count=ckpt_ref_count,
                     is_error=False,
-                    # ADR-0052: attach thematic-consistency evidence (no source
-                    # profile available here → profile-dependent checks report
-                    # NOT_EVALUATED; profile-free checks like
-                    # LEGEND_STYLE_EQUIVALENCE still fire on layers carrying a
-                    # legend_spec). Never blocks commit — structural validate()
-                    # remains the gate; these are evidence for the Harness.
-                    cartography_findings=evaluate_cartography_semantics(mapspec).to_dict().get("findings", []),
+                    cartography_findings=cartography_findings,
                 )
 
             except Exception as e:
