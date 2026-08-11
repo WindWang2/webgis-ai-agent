@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { streamChat } from '@/lib/api/chat';
 import type { SSEEvent } from '@/lib/api/chat';
+import { apiFetch } from '@/lib/api/transport';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { AiStatus } from '@/lib/store/hud-types';
 import type { MapActionPayload } from '@/lib/types';
 import { bboxToFlyTo, isValidBbox } from '@/lib/utils/geo';
-import { API_BASE } from '@/lib/api/config';
 import type { StepResultEvent } from '@/lib/types/agent-events';
 
 
@@ -312,16 +312,19 @@ export function useMapBridge(
       // F4: the POST carries a monotonic seq so the backend can reject it as
       // stale if a newer write (e.g. the next turn's snapshot) lands first.
       const token = sessionTokenRef?.current ?? null;
-      fetch(`${API_BASE}/api/v1/chat/sessions/${sessionId}/map-state`, {
+      // Fire-and-forget by design (throttled viewport state). Goes through
+      // the shared transport so failures carry request id and respect the
+      // caller cancellation contract (no timeout on the long body).
+      apiFetch<void>(`/api/v1/chat/sessions/${sessionId}/map-state`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'X-Session-Token': token } : {}),
-        },
-        body: JSON.stringify({
+        body: {
           viewport: { center, zoom, bearing, pitch },
           seq: nextViewportSeq(viewportSeqTracker),
-        }),
+        },
+        ownerToken: token,
+        parseJson: false,
+        timeoutMs: 0, // fire-and-forget; no connect-timeout
+        label: 'Map state POST',
       }).catch((e) => devOnly.warn('[useMapBridge] map-state POST failed:', e));
     },
     [sessionId, sessionTokenRef]

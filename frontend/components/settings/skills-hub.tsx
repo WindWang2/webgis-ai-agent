@@ -4,7 +4,8 @@ import React, { useEffect } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { STitle } from '@/components/shared/section-title';
 import ToggleSwitch from '@/components/shared/toggle-switch';
-import { API_BASE } from '@/lib/api/config';
+import { getSkills } from '@/lib/api/skills';
+import { isApiError } from '@/lib/api/transport';
 
 export function SkillsHub() {
   const skills = useHudStore((s) => s.skills);
@@ -12,14 +13,14 @@ export function SkillsHub() {
   const setSkills = useHudStore((s) => s.setSkills);
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/v1/chat/skills`)
-      .then((r) => r.json())
-      .then((data: { skills?: Array<{ name: string; description: string }> }) => {
-        if (!data.skills?.length) return;
+    const controller = new AbortController();
+    getSkills({ signal: controller.signal })
+      .then((skillsList) => {
+        if (!skillsList.length) return;
         const existing = useHudStore.getState().skills;
         const existingMap = Object.fromEntries(existing.map((s) => [s.id, s]));
         setSkills(
-          data.skills.map((sk) => ({
+          skillsList.map((sk) => ({
             id: sk.name,
             name: sk.name,
             desc: sk.description,
@@ -29,7 +30,13 @@ export function SkillsHub() {
           }))
         );
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        // AbortError on unmount is expected; log real failures only.
+        if (isApiError(err) || (err instanceof Error && err.name !== 'AbortError')) {
+          console.warn('SkillsHub: failed to load skills', err);
+        }
+      });
+    return () => controller.abort();
   }, [setSkills]);
 
   /* Group skills by category */

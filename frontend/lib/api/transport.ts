@@ -40,6 +40,14 @@ export interface ApiFetchOptions {
   headers?: Record<string, string>;
   /** JSON-serializable body; sets Content-Type: application/json. */
   body?: unknown;
+  /**
+   * Pre-built body (FormData / Blob / URLSearchParams / ArrayBuffer) — bypasses
+   * the JSON.stringify path. Use this for file uploads, FormData posts, and any
+   * payload where the platform must set Content-Type itself (e.g. multipart
+   * boundary). Mutually exclusive with `body`; do not also set a JSON
+   * Content-Type header in `headers` when using this.
+   */
+  rawBody?: BodyInit;
   /** External abort signal (session switch, unmount, user stop). */
   signal?: AbortSignal;
   /**
@@ -55,6 +63,12 @@ export interface ApiFetchOptions {
   label?: string;
   /** False → do not read the response body (204 deletes); resolves undefined. */
   parseJson?: boolean;
+  /**
+   * Request credentials mode. Defaults to "same-origin" (browser default);
+   * cross-origin cookie-bearing endpoints (data-fabric, layer types) pass
+   * "include" to ship the session cookie.
+   */
+  credentials?: RequestCredentials;
   /**
    * Opt-in retries for transient failures. IGNORED for non-idempotent methods:
    * POST/PATCH/CONNECT are never re-sent (F-FE-3 hard constraint).
@@ -109,6 +123,16 @@ export class ApiTimeoutError extends Error {
   }
 }
 
+/** Type guard for ApiError. */
+export function isApiError(err: unknown): err is ApiError {
+  return err instanceof ApiError;
+}
+
+/** Type guard for ApiTimeoutError. */
+export function isApiTimeoutError(err: unknown): err is ApiTimeoutError {
+  return err instanceof ApiTimeoutError;
+}
+
 /** Fresh unique request id (crypto.randomUUID with a non-secure fallback). */
 function newRequestId(): string {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -130,7 +154,12 @@ function buildRequest(
   if (options.ownerToken) headers['X-Session-Token'] = options.ownerToken;
   const init: RequestInit = { method, headers };
   if (options.signal) init.signal = options.signal;
-  if (options.body !== undefined) {
+  if (options.credentials) init.credentials = options.credentials;
+  if (options.rawBody !== undefined) {
+    // Caller-supplied body: do not set Content-Type — the platform chooses the
+    // correct value (multipart boundary, etc) when a BodyInit is passed.
+    init.body = options.rawBody;
+  } else if (options.body !== undefined) {
     headers['Content-Type'] = 'application/json';
     init.body = JSON.stringify(options.body);
   }
@@ -207,9 +236,19 @@ async function toApiError(
 /** Parse a success body, treating 204 / empty bodies as undefined (A-F-14). */
 async function parseBody<T>(response: Response): Promise<T> {
   if (response.status === 204) return undefined as T;
-  const text = await response.text();
-  if (!text) return undefined as T;
-  return JSON.parse(text) as T;
+  // Prefer .text() so the same parse path handles both JSON and non-JSON
+  // success bodies (the spec'd Response always has it). Some test doubles
+  // (e.g. map-exporter's mockFetchSuccess) only stub .json()/.blob() — fall
+  // back to .json() in that case so test fidelity matches production.
+  if (typeof response.text === 'function') {
+    const text = await response.text();
+    if (!text) return undefined as T;
+    return JSON.parse(text) as T;
+  }
+  if (typeof response.json === 'function') {
+    return (await response.json()) as T;
+  }
+  return undefined as T;
 }
 
 function isRetryable(err: unknown, method: string): boolean {

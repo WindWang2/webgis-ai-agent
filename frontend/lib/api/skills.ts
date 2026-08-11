@@ -1,13 +1,27 @@
-import { API_BASE } from './config';
+/**
+ * Skills API client.
+ *
+ * F-FE-3 migration: previously raw fetch + plain Error. Now uses the Fast
+ * Path (in-flight dedup + 5s LRU) since the skills list is mount-time state
+ * shared by every panel that surfaces skill metadata.
+ */
+
+import { fastGet } from './get-fast-path';
 
 export interface Skill {
   name: string;
   description: string;
 }
 
-export async function getSkills(): Promise<Skill[]> {
-  const res = await fetch(`${API_BASE}/api/v1/chat/skills`);
-  if (!res.ok) throw new Error(`Failed to fetch skills: ${res.status}`);
-  const data = await res.json();
-  return data.skills || [];
+interface SkillsResponse {
+  skills: Skill[];
+}
+
+export async function getSkills(opts?: { forceRefresh?: boolean; signal?: AbortSignal }): Promise<Skill[]> {
+  const result = await fastGet<SkillsResponse>('/api/v1/chat/skills', {
+    forceRefresh: opts?.forceRefresh,
+    signal: opts?.signal,
+    label: 'Skills API error',
+  });
+  return result.data.skills || [];
 }

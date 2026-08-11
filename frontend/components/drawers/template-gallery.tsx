@@ -21,6 +21,8 @@ import { applyBaseline } from '@/lib/basemap-apply';
 import { applySymbology } from '@/lib/symbology-apply';
 import { resolveThematicPreset } from '@/lib/thematic-apply';
 import { resolveStyle } from '@/lib/map-kit/layout-style';
+import { templatesApi } from '@/lib/api/templates';
+import { isApiError } from '@/lib/api/transport';
 
 export type TemplateKind = 'basemap' | 'symbology' | 'thematic' | 'layout';
 export type SourceFilter = 'all' | 'builtin' | 'user';
@@ -253,19 +255,24 @@ export function TemplateGallery({ open, onClose, onApplyTemplate }: TemplateGall
   // Twin seam: the gallery emits the SAME commands as backend apply_template.
   const dispatchAction = useMapAction().dispatchAction;
 
-  // Fetch templates from GET /api/v1/templates or fall back to BUILTIN_TEMPLATES
+  // Fetch templates via the unified client (Fast Path: in-flight dedup + 5s LRU).
+  // Abort on drawer close so the response can't write into a stale state.
   useEffect(() => {
     if (!open) return;
-    fetch('/api/v1/templates')
-      .then((res) => (res.ok ? res.json() : null))
+    const controller = new AbortController();
+    templatesApi
+      .list({ limit: 200, signal: controller.signal })
       .then((data) => {
         if (Array.isArray(data) && data.length > 0) {
-          setTemplates(data);
+          setTemplates(data as unknown as TemplateItem[]);
         }
       })
-      .catch(() => {
-        // Keep BUILTIN_TEMPLATES fallback
+      .catch((err: unknown) => {
+        if (isApiError(err) || (err instanceof Error && err.name !== 'AbortError')) {
+          console.warn('[TemplateGallery] list failed:', err);
+        }
       });
+    return () => controller.abort();
   }, [open]);
 
   const filteredTemplates = useMemo(() => {
@@ -378,23 +385,21 @@ export function TemplateGallery({ open, onClose, onApplyTemplate }: TemplateGall
     };
 
     try {
-      const res = await fetch('/api/v1/templates', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(reqData),
-      });
-
-      if (res.ok) {
-        const created = await res.json();
-        setTemplates((prev) => [created, ...prev]);
-        setSaveSuccessMsg(`已成功保存模板 "${created.name}"`);
-        setShowSaveModal(false);
-        setNewTmplName('');
-        setNewTmplDesc('');
-        setSourceFilter('user');
+      // templatesApi.create: typed ApiError + invalidates the list cache so the
+      // next list() picks up the new template.
+      const created = await templatesApi.create(reqData);
+      setTemplates((prev) => [created as unknown as TemplateItem, ...prev]);
+      setSaveSuccessMsg(`已成功保存模板 "${created.name}"`);
+      setShowSaveModal(false);
+      setNewTmplName('');
+      setNewTmplDesc('');
+      setSourceFilter('user');
+    } catch (err: unknown) {
+      if (isApiError(err)) {
+        setPromptMessage(`保存模板失败: ${err.status} ${typeof err.body === 'object' && err.body && 'detail' in err.body ? (err.body as { detail: string }).detail : ''}`.trim());
+      } else {
+        setPromptMessage('保存模板失败');
       }
-    } catch {
-      setPromptMessage('保存模板失败');
     }
   };
 

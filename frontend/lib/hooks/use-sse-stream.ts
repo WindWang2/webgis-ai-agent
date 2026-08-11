@@ -3,7 +3,9 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useMapBridge } from './useMapBridge';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { apiFetch, isApiError } from '@/lib/api/transport';
 import { API_BASE } from '@/lib/api/config';
+import type { GeoJSONFeatureCollection } from '@/lib/types';
 import type { SSEEvent } from '@/lib/api/chat';
 import type { ToolCallEntry, PlanProposalPayload } from '@/lib/store/hud-types';
 import type { AgentPlanState } from '@/lib/types/agent-plan';
@@ -205,21 +207,28 @@ export function useSSEStream(
             const fetchRef = data.geojson_ref;
             // SEC-08：匿名会话的图层引用数据受 owner_token 保护。
             const token = sessionTokenRef.current;
-            fetch(`${API_BASE}/api/v1/layers/data/${fetchRef}?session_id=${sid}`, {
-              signal: layerFetchAbortRef.current?.signal,
-              headers: token ? { 'X-Session-Token': token } : {},
-            })
-              .then((r) => (r.ok ? r.json() : null))
+            apiFetch<GeoJSONFeatureCollection>(
+              `/api/v1/layers/data/${encodeURIComponent(fetchRef)}?session_id=${encodeURIComponent(sid ?? '')}`,
+              {
+                signal: layerFetchAbortRef.current?.signal,
+                ownerToken: token,
+                label: 'Layer data error',
+              }
+            )
               .then((geojson) => {
                 if (geojson && (geojson.type === 'FeatureCollection' || geojson.features)) {
                   // Guard: only write if the layer still exists with this ref (not removed and re-added with different data)
                   const current = useHudStore.getState().layers.find((l) => l.id === fetchRef);
-                  if (current) useHudStore.getState().updateLayer(fetchRef, { source: geojson });
+                  if (current) {
+                    useHudStore.getState().updateLayer(fetchRef, { source: geojson });
+                  }
                 }
               })
-              .catch((err) =>
-                devOnly.error('[LiveLayerFetch] Failed to fetch geojson_ref:', err)
-              );
+              .catch((err) => {
+                if (!isApiError(err)) {
+                  devOnly.error('[LiveLayerFetch] Failed to fetch geojson_ref:', err);
+                }
+              });
           }
 
           setMessages((prev) =>

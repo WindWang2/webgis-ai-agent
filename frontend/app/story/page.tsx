@@ -2,7 +2,6 @@
 import { useState, useEffect, useRef, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import dynamic from "next/dynamic"
-import { API_BASE } from '@/lib/api/config';
 
 const MapPanel = dynamic(
   () => import('@/components/map/map-panel').then((m) => ({ default: m.MapPanel })),
@@ -13,6 +12,7 @@ const StoryMarkdown = dynamic(() => import('@/components/chat/story-markdown'), 
 
 import { devOnly } from "@/lib/utils/logger";
 import { useHudStore } from "@/lib/store/useHudStore"
+import { apiFetch, isApiError } from "@/lib/api/transport"
 import { Play, SkipBack, Share2 } from "lucide-react"
 
 export default function StoryPage() {
@@ -36,23 +36,33 @@ function StoryPageInner() {
   const toggleLayer = useHudStore((s) => s.toggleLayer)
 
   useEffect(() => {
+    const controller = new AbortController();
     if (sessionId) {
-      fetch(`${API_BASE}/api/v1/chat/sessions/${sessionId}`)
-        .then((res) => res.json())
+      // 走统一 transport：超时/中止/类型化错误；切换 sessionId 时旧请求被 abort
+      // 避免 stale 响应覆盖新会话消息。
+      apiFetch<{ messages?: any[] }>(`/api/v1/chat/sessions/${encodeURIComponent(sessionId)}`, {
+        signal: controller.signal,
+        label: 'Story session error',
+      })
         .then((data) => {
           if (data.messages && data.messages.length > 0) {
-            setMessages(data.messages)
+            setMessages(data.messages);
           }
         })
-        .catch((err) => devOnly.error("Restore session history failed:", err))
-        .finally(() => setLoading(false))
+        .catch((err) => {
+          if (!isApiError(err) && err instanceof Error && err.name !== 'AbortError') {
+            devOnly.error('Restore session history failed:', err);
+          }
+        })
+        .finally(() => setLoading(false));
     } else {
-      setLoading(false)
+      setLoading(false);
       setMessages([
         { role: "assistant", content: "# StoryMap 回放模式\n以叙事形式重现 GeoAgent 的分析推演过程。" },
         { role: "assistant", content: "您可以尝试在 URL 中追加 `?session_id=您的会话ID` 来回放之前的分析推演。" },
-      ])
+      ]);
     }
+    return () => controller.abort();
   }, [sessionId])
 
   // ScrollSpy - Parse specific locations from markdown text and fly to them
