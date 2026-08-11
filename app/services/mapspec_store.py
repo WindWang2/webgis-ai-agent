@@ -29,6 +29,28 @@ from app.services.mapspec.store import (
 logger = logging.getLogger(__name__)
 
 
+def _with_evidence(res, base: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge real MapSpec-result evidence into an adapter return dict.
+
+    HARNESS-V2 / CARTO-LOOP: the harness MapSpecValidity ladder reads
+    ``is_compiled`` (real validate() outcome) and ``success`` from the recorded
+    tool result. Without this forwarding the harness is starved of evidence and
+    every production run scores 0% validity. Also surfaces ``correction_hint`` /
+    ``message`` on rejection so the agent gets actionable guidance (not a bare
+    failure). Review P1-3 / P2-2.
+    """
+    base["is_compiled"] = res.is_compiled
+    if res.warnings:
+        base["warnings"] = res.warnings
+    if res.checkpoint_id:
+        base["checkpoint_id"] = res.checkpoint_id
+    if res.is_error:
+        base["message"] = res.error_msg
+        if res.correction_hint:
+            base["correction_hint"] = res.correction_hint
+    return base
+
+
 class MapSpecStore:
     """MapSpecStore 兼容 Adapter 代理"""
 
@@ -116,19 +138,19 @@ class MapSpecStore:
                     processed_layer = existing_layer
                     break
 
-        return {
+        return _with_evidence(res, {
             "success": not res.is_error,
             "mapspec": res.mapspec,
             "layer": processed_layer,
-        }
+        })
 
     async def layer_remove(self, session_id: str, layer_id: str) -> Dict[str, Any]:
         res = await self.engine.apply_mutation(session_id, RemoveLayerIntent(layer_id=layer_id))
-        return {
+        return _with_evidence(res, {
             "success": not res.is_error,
             "mapspec": res.mapspec,
             "removed_id": layer_id,
-        }
+        })
 
     async def compile_mapspec_cli(self, session_id: str, out_dir: Optional[Path] = None) -> Dict[str, Any]:
         mapspec = await self.get_mapspec(session_id)
@@ -157,29 +179,29 @@ class MapSpecStore:
         res = await self.engine.apply_mutation(
             session_id, SetLayoutIntent(legend=legend, controls=controls, margins=margins)
         )
-        return {
+        return _with_evidence(res, {
             "success": not res.is_error,
             "layout": res.mapspec.get("layout", {}) if res.mapspec else {},
             "mapspec": res.mapspec,
-        }
+        })
 
     async def checkpoint(self, session_id: str, checkpoint_id: Optional[str] = None) -> Dict[str, Any]:
         res = await self.engine.apply_mutation(session_id, CheckpointIntent(checkpoint_id=checkpoint_id))
-        return {
+        return _with_evidence(res, {
             "success": not res.is_error,
             "checkpoint_id": res.checkpoint_id,
             "ref_count": res.ref_count,
             "summary": f"Checkpoint '{res.checkpoint_id}' created",
-        }
+        })
 
     async def rollback(self, session_id: str, checkpoint_id: str) -> Dict[str, Any]:
         res = await self.engine.apply_mutation(session_id, RollbackIntent(checkpoint_id=checkpoint_id))
-        return {
+        return _with_evidence(res, {
             "success": not res.is_error,
             "checkpoint_id": checkpoint_id,
             "mapspec": res.mapspec,
             "summary": f"Rolled back to checkpoint '{checkpoint_id}'",
-        }
+        })
 
 
 mapspec_store = MapSpecStore()

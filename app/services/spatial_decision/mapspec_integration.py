@@ -45,7 +45,7 @@ async def apply_decision_to_mapspec(
     # 2. Ingest Simulation GeoJSON Layer
     layer_id = f"sim_layer_{result.decision_id}"
     layer_title = f"{result.scenario.name} - 空间影响图层"
-    
+
     # Thematic style method: color by zone (direct vs indirect)
     style_spec = {
         "color": {
@@ -66,6 +66,11 @@ async def apply_decision_to_mapspec(
         "id": layer_id,
         "name": layer_title,
         "type": "polygon",
+        # The layer must reference its source explicitly. process_layer_ingestion
+        # creates sources[layer.source] from source_data; without a source ref the
+        # structural validator flags INVALID_SOURCE_REF and the transaction rejects
+        # the mutation (previously warn-and-saved an invalid spec).
+        "source": layer_id,
         "style": style_spec,
     }
 
@@ -116,6 +121,8 @@ async def apply_comparison_to_mapspec(
         "id": layer_id,
         "name": layer_title,
         "type": "polygon",
+        # See apply_decision_to_mapspec: source must reference the ingested source.
+        "source": layer_id,
         "style": style_spec,
     }
 
