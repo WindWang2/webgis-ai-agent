@@ -74,7 +74,10 @@ class MapSpecStore:
         thresholds: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         res = await self.engine.apply_mutation(session_id, InitProjectIntent(view=view, thresholds=thresholds))
-        return {"mapspec": res.mapspec}
+        return _with_evidence(res, {
+            "success": not res.is_error,
+            "mapspec": res.mapspec,
+        })
 
     async def set_view(
         self,
@@ -87,7 +90,10 @@ class MapSpecStore:
         res = await self.engine.apply_mutation(
             session_id, SetViewIntent(center=center, zoom=zoom, pitch=pitch, bearing=bearing)
         )
-        return {"mapspec": res.mapspec}
+        return _with_evidence(res, {
+            "success": not res.is_error,
+            "mapspec": res.mapspec,
+        })
 
     async def source_profile(
         self,
