@@ -83,7 +83,14 @@ class ChatExecutionEngine:
         self.tool_pipeline = ToolExecutionPipeline(
             self.registry,
             self.tracker,
-            dispatch_fn=self._dispatch_tool,
+            # Late-bind the dispatch entry point: the pipeline task outlives
+            # __init__, and freezing self._dispatch_tool as a bound method here
+            # would silently bypass later overrides (test seams, subclass
+            # overrides) — the pipeline would dispatch through the stale
+            # original method. _pipeline_dispatch resolves _dispatch_tool at
+            # call time; the shared ToolDispatchService (RUN-01) is preserved
+            # because _dispatch_tool always routes to self.dispatch_service.
+            dispatch_fn=self._pipeline_dispatch,
             dispatch_service=self.dispatch_service,
         )
 
@@ -903,6 +910,23 @@ class ChatExecutionEngine:
         # RUN-01: reuse the engine's single ToolDispatchService so the dedup
         # lock is shared across the parallel tool wave.
         return await self.dispatch_service.dispatch(tc, session_id, executed_tools)
+
+    async def _pipeline_dispatch(
+        self,
+        tc: dict,
+        session_id: str,
+        executed_tools: set[tuple[str, str]],
+    ) -> ToolDispatchResult:
+        """Pipeline dispatch entry point — resolves _dispatch_tool at call time.
+
+        Passed to ToolExecutionPipeline as dispatch_fn so the pipeline task
+        dispatches through the engine's CURRENT _dispatch_tool instead of the
+        method frozen at __init__ time: overrides (test seams, subclass
+        overrides) take effect at dispatch time, while the RUN-01 shared
+        ToolDispatchService guarantee holds because _dispatch_tool always
+        routes to self.dispatch_service.
+        """
+        return await self._dispatch_tool(tc, session_id, executed_tools)
 
     async def clear_session(
         self,
