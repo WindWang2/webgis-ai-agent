@@ -10,6 +10,7 @@ import type { AgentPlanState } from '@/lib/types/agent-plan';
 import type { MapActionPayload } from '@/lib/types';
 import { createMessageIdGenerator } from './use-message-id';
 import { TokenBatcher } from './token-batcher';
+import { IncrementalThinkParser, parseThink } from './incremental-think';
 
 
 import { devOnly } from "@/lib/utils/logger";
@@ -50,6 +51,16 @@ export function useSSEStream(
   const msgIdGen = useRef(createMessageIdGenerator());
   const layerFetchAbortRef = useRef<AbortController | null>(null);
 
+  // D-F7 / F-FE-4: incremental think-block tracking. The batcher still
+  // delivers full snapshots per flush, but instead of re-parsing the whole
+  // accumulated content each time (O(n²) over a turn) the parser scans only
+  // the delta since the last flush and carries the <think>/</think> state.
+  // reset() is called per turn, alongside the batcher's.
+  const thinkParserRef = useRef<IncrementalThinkParser | null>(null);
+  if (thinkParserRef.current === null) {
+    thinkParserRef.current = new IncrementalThinkParser();
+  }
+
   // Transport goal §21 / F-FE-1 / D-F8: coalesce token chunks into at most one
   // setMessages per animation frame instead of one per token. The batcher owns
   // the accumulated content/reasoning (snapshot semantics, like the prior
@@ -69,7 +80,9 @@ export function useSSEStream(
     tokenBatcherRef.current = new TokenBatcher({ schedule, cancel }, (snapshot) => {
       const thinkingId = thinkingMsgIdRef.current;
       if (!thinkingId) return;
-      const parsed = parseThink(snapshot.content);
+      const parser = thinkParserRef.current;
+      parser?.append(snapshot.content.slice(parser.consumedLength));
+      const parsed = parser?.getResult() ?? parseThink(snapshot.content);
       setMessages((prev) => {
         const idx = prev.findIndex((m) => m.id === thinkingId);
         if (idx === -1) return prev;
@@ -96,21 +109,6 @@ export function useSSEStream(
       layerFetchAbortRef.current?.abort();
     };
   }, [sessionId]);
-
-  const parseThink = useCallback((raw: string) => {
-    const start = raw.indexOf('<think>');
-    const end = raw.indexOf('</think>');
-    if (start !== -1 && end !== -1 && end > start) {
-      return {
-        thinking: raw.slice(start + 7, end),
-        content: raw.slice(0, start) + raw.slice(end + 8).trimStart(),
-      };
-    }
-    if (start !== -1) {
-      return { thinking: raw.slice(start + 7), content: raw.slice(0, start) };
-    }
-    return { thinking: '', content: raw };
-  }, []);
 
   const onEvent = useCallback(
     (event: SSEEvent) => {
@@ -435,6 +433,7 @@ export function useSSEStream(
       const thinkingMsgId = msgIdGen.current.next();
       thinkingMsgIdRef.current = thinkingMsgId;
       tokenBatcherRef.current?.reset();
+      thinkParserRef.current?.reset();
       setMessages((prev) => [
         ...prev,
         {
