@@ -427,7 +427,7 @@ describe("diffSpecsAsync raster images (FE-12)", () => {
     const patch = await diffSpecsAsync(null, rasterSpec(HEATMAP_IMAGE));
 
     // The posted `next` source must carry an identity token, not the image.
-    expect(latestRecorder().captured[0].next.sources.H.imageRef).toEqual({ __inlineToken: expect.any(Number) });
+    expect((latestRecorder().captured[0].next.sources.H as any).imageRef).toEqual({ __inlineToken: expect.any(Number) });
     // The multi-MB base64 body must not appear anywhere in the payload.
     const serialized = JSON.stringify(latestRecorder().captured[0]);
     expect(serialized).not.toContain(HEATMAP_BODY);
@@ -477,7 +477,7 @@ describe("diffSpecsAsync raster images (FE-12)", () => {
     expect(patch.sources).toHaveLength(1);
     expect(patch.sources[0].kind).toBe("update");
     // Rehydrated next carries the NEW image — the runtime applies fresh bytes.
-    expect((patch.sources[0].next as any)?.imageRef).toBe(spec2.sources.H.imageRef);
+    expect((patch.sources[0].next as any)?.imageRef).toBe((spec2.sources.H as any).imageRef);
     // The new bytes never cross postMessage either.
     expect(JSON.stringify(latestRecorder().captured[1])).not.toContain(newBody);
   });
