@@ -16,7 +16,8 @@
     "median_ms": 41.169
   },
   "stream_first_event_pi": {
+    "floor_ms": 8.0,
     "iterations": 7,
-    "median_ms": 1.176
+    "median_ms": 3.0
   }
 }

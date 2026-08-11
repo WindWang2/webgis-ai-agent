@@ -205,19 +205,36 @@ def _stream_first_event_pi_ms() -> float:
     resolution, StreamingResponse setup, first generator yield. This is the
     KPI for the "first-event acknowledgement" work and the DB-session-hold
     fix (fewer session setups → lower TTFE).
+
+    The ``httpx.AsyncClient`` + ``ASGITransport`` are constructed **once** and
+    warmed up before the timed sample, mirroring ``_concurrent_stream_p95_8_ms``.
+    Constructing a fresh client/transport/event-loop per request (the previous
+    approach) made each sample dominated by one-time httpx+ASGI setup cost,
+    which is highly machine-dependent (~1 ms on a fast workstation, ~13 ms on a
+    shared CI runner) and therefore non-deterministic. With a warm client the
+    returned sample reflects the intended steady-state framework-dispatch TTFE;
+    the outer harness then takes the median over ITERATIONS calls for stability.
     """
     app = _build_transport_app(n_tokens=5)
 
-    async def _once() -> float:
+    async def _run() -> float:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            t0 = time.perf_counter()
-            async with client.stream("POST", "/api/v1/chat/stream", json=_post_body()) as resp:
-                async for _chunk in resp.aiter_bytes():
-                    return (time.perf_counter() - t0) * 1000
-            return (time.perf_counter() - t0) * 1000
+            async def _once() -> float:
+                t0 = time.perf_counter()
+                async with client.stream(
+                    "POST", "/api/v1/chat/stream", json=_post_body()
+                ) as resp:
+                    async for _chunk in resp.aiter_bytes():
+                        return (time.perf_counter() - t0) * 1000
+                return (time.perf_counter() - t0) * 1000
 
-    return asyncio.run(_once())
+            # Warm up the ASGI app + client so the timed sample measures
+            # steady-state first-event dispatch, not first-request construction.
+            await _once()
+            return await _once()
+
+    return asyncio.run(_run())
 
 
 def _concurrent_stream_p95_8_ms() -> float:
