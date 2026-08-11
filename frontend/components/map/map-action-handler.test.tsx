@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, act } from '@testing-library/react';
 import { MapActionHandler } from './map-action-handler';
+import { makeMockMaplibreMap } from '@/test/__mocks__/maplibre-map';
 import {
   notifyUserGestureStart,
   _resetCameraArbitrationForTests,
@@ -84,6 +85,9 @@ const mockClearAnnotations = vi.fn(() => {
 });
 let mockLayersStore: Array<{ id: string; name?: string; style?: any }> = [];
 let mockAnnotationsStore: any[] = [];
+// Round-2 FIX-B: mirrors useHudStore.baseLayer so base_layer_change can detect
+// an unchanged base layer (no style swap needed) and resolve immediately.
+let mockBaseLayerName: string | undefined;
 
 // External-store plumbing for the useHudStore hook mock: lets tests force a
 // re-render (e.g. to simulate a mapInstance identity change mid-flight) by
@@ -108,6 +112,7 @@ vi.mock('@/lib/store/useHudStore', async () => {
   const buildState = () => ({
     // Lazy getters so test mutations to mockLayersStore/mockAnnotationsStore are seen live
     get layers() { return mockLayersStore; },
+    get baseLayer() { return mockBaseLayerName; },
     setBaseLayer: mockSetBaseLayer,
     setPendingSystemMessage: mockSetPendingSystemMessage,
     removeLayer: mockRemoveLayer,
@@ -142,6 +147,21 @@ vi.mock('@/lib/map-kit/exporter', () => ({
   MapExporterEngine: { export: mockExport },
 }));
 
+/**
+ * Shared MapLibre mock + per-layer layout bookkeeping so the round-2 FIX-B
+ * visibility verification (getLayoutProperty reflecting setLayoutProperty) can
+ * be exercised end to end.
+ */
+function mapWithLayoutBookkeeping() {
+  const map = makeMockMaplibreMap();
+  const layouts: Record<string, Record<string, unknown>> = {};
+  map.setLayoutProperty = vi.fn((id: string, prop: string, value: unknown) => {
+    layouts[id] = { ...(layouts[id] || {}), [prop]: value };
+  });
+  map.getLayoutProperty = vi.fn((id: string, prop: string) => layouts[id]?.[prop] ?? null);
+  return map;
+}
+
 describe('MapActionHandler', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -151,6 +171,11 @@ describe('MapActionHandler', () => {
     reportTerminalFn = vi.fn();
     mockLayersStore = [];
     mockAnnotationsStore = [];
+    mockBaseLayerName = undefined;
+    // Per-test overrides of mockGetMap (round-2 FIX-B tests use the shared
+    // makeMockMaplibreMap) must not leak into later tests: clearAllMocks does
+    // not reset implementations, so re-establish the default explicitly.
+    mockGetMap.mockImplementation(() => mapMockInstance);
     _resetCameraArbitrationForTests();
   });
 
@@ -196,6 +221,12 @@ describe('MapActionHandler', () => {
 
     await act(async () => {
       render(<MapActionHandler />);
+    });
+    // round-2 FIX-B: camera settles one frame after moveend (deferred settle so
+    // a just-arriving user drag can cancel first) — flush that macrotask so the
+    // assertion observes the terminal state deterministically instead of racing.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
     expect(popAction).toHaveBeenCalled();
@@ -262,7 +293,8 @@ describe('MapActionHandler', () => {
       params: { layerId: 'test-layer', type: 'fill', geojson },
     }];
 
-    const map = mockGetMap();
+    const map = makeMockMaplibreMap();
+    mockGetMap.mockImplementation(() => map);
 
     await act(async () => {
       render(<MapActionHandler />);
@@ -272,6 +304,12 @@ describe('MapActionHandler', () => {
     expect(map.addLayer).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'custom-test-layer', source: 'custom-test-layer' }),
       undefined
+    );
+    // round-2 FIX-B: confirmed only after the source actually exists on the map
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'add_layer' }),
+      'succeeded',
+      expect.objectContaining({ actual: { confirmed: true } }),
     );
   });
 
@@ -289,7 +327,8 @@ describe('MapActionHandler', () => {
       params: { layerId: 'thematic-layer', geojson, style },
     }];
 
-    const map = mockGetMap();
+    const map = makeMockMaplibreMap();
+    mockGetMap.mockImplementation(() => map);
 
     await act(async () => {
       render(<MapActionHandler />);
@@ -305,6 +344,11 @@ describe('MapActionHandler', () => {
         })
       }),
       undefined
+    );
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'add_layer' }),
+      'succeeded',
+      expect.objectContaining({ actual: { confirmed: true } }),
     );
   });
 
@@ -349,11 +393,10 @@ describe('MapActionHandler', () => {
       params: { layerId: 'target-layer' },
     }];
 
-    const map = mockGetMap();
-    (map.getStyle as any).mockReturnValue({
-      layers: [{ id: 'custom-target-layer' }]
-    });
-    (map.getSource as any).mockReturnValue(true);
+    const map = makeMockMaplibreMap();
+    mockGetMap.mockImplementation(() => map);
+    map.addSource('custom-target-layer', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    map.addLayer({ id: 'custom-target-layer', type: 'fill', source: 'custom-target-layer' });
 
     await act(async () => {
       render(<MapActionHandler />);
@@ -362,6 +405,12 @@ describe('MapActionHandler', () => {
     expect(map.removeLayer).toHaveBeenCalledWith('custom-target-layer');
     expect(map.removeSource).toHaveBeenCalledWith('custom-target-layer');
     expect(mockRemoveLayer).toHaveBeenCalledWith('target-layer');
+    // round-2 FIX-B: the stack is actually gone from the map → confirmed
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'remove_layer' }),
+      'succeeded',
+      expect.objectContaining({ actual: { confirmed: true } }),
+    );
   });
 
   it('calls map.moveLayer correctly when executing REORDER_LAYER to top', async () => {
@@ -479,16 +528,22 @@ describe('MapActionHandler', () => {
     }];
 
     mockLayersStore = [{ id: 'vis-layer', name: 'Visibility Layer' }];
-    const map = mockGetMap();
-    (map.getStyle as any).mockReturnValue({
-      layers: [{ id: 'custom-vis-layer-fill' }]
-    });
+    const map = mapWithLayoutBookkeeping();
+    mockGetMap.mockImplementation(() => map);
+    map._layers.push({ id: 'custom-vis-layer-fill', type: 'fill', source: 'custom-vis-layer' });
 
     await act(async () => {
       render(<MapActionHandler />);
     });
 
     expect(mockUpdateLayer).toHaveBeenCalledWith('vis-layer', { visible: false, opacity: 0.5 });
+    // round-2 FIX-B: the visibility change is applied AND verified on the map
+    expect(map.setLayoutProperty).toHaveBeenCalledWith('custom-vis-layer-fill', 'visibility', 'none');
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'LAYER_VISIBILITY_UPDATE' }),
+      'succeeded',
+      expect.objectContaining({ actual: { confirmed: true } }),
+    );
   });
 
   it('handles LAYER_STYLE_UPDATE correctly', async () => {
@@ -498,16 +553,22 @@ describe('MapActionHandler', () => {
     }];
 
     mockLayersStore = [{ id: 'style-layer', name: 'Style Layer', style: { color: '#ff0000' } }];
-    const map = mockGetMap();
-    (map.getStyle as any).mockReturnValue({
-      layers: [{ id: 'custom-style-layer-fill' }]
-    });
+    const map = makeMockMaplibreMap();
+    mockGetMap.mockImplementation(() => map);
+    map._layers.push({ id: 'custom-style-layer-fill', type: 'fill', source: 'custom-style-layer' });
 
     await act(async () => {
       render(<MapActionHandler />);
     });
 
     expect(mockUpdateLayer).toHaveBeenCalledWith('style-layer', { style: { color: '#00ff00', strokeWidth: 2 } });
+    // round-2 FIX-B: the style update is applied to a layer that exists on the map
+    expect(map.setPaintProperty).toHaveBeenCalledWith('custom-style-layer-fill', 'fill-color', '#00ff00');
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'LAYER_STYLE_UPDATE' }),
+      'succeeded',
+      expect.objectContaining({ actual: { confirmed: true } }),
+    );
   });
 
   it('handles add_marker and updates annotation layer', async () => {
@@ -740,16 +801,30 @@ describe('MapActionHandler', () => {
 
   it('V3: camera command settles succeeded with the settled viewport as actual', async () => {
     actions = [{ command: 'fly_to', params: { center: [116, 39], zoom: 12 } }];
+    const map = makeMockMaplibreMap();
+    mockGetMap.mockImplementation(() => map);
+    // Simulate the animation actually reaching the requested target: the round-2
+    // convergence check only acks succeeded when the settled viewport reached
+    // the target within tolerance (a success the map did not earn is a fake ack)
+    // — the old static mock viewport would settle `interrupted`.
+    map.flyTo.mockImplementation(() => map._setViewport({ center: [116, 39], zoom: 12 }));
 
     await act(async () => {
       render(<MapActionHandler />);
+    });
+    // moveend (from the mock emitter) + the one-frame deferred settle
+    await act(async () => {
+      map._fire('moveend');
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'fly_to' }),
       'succeeded',
       expect.objectContaining({
-        actual: { center: [116.4, 39.9], zoom: 10, bearing: 0, pitch: 0 },
+        actual: { center: [116, 39], zoom: 12, bearing: 0, pitch: 0 },
       }),
     );
     expect(popAction).toHaveBeenCalled();
@@ -809,6 +884,10 @@ describe('MapActionHandler', () => {
     // first run completes normally → single terminal report + single pop
     await act(async () => {
       capturedMoveend?.();
+    });
+    // deferred settle one frame after moveend (round-2 camera settle)
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(reportTerminalFn).toHaveBeenCalledTimes(1);
     expect(popAction).toHaveBeenCalledTimes(1);
@@ -981,7 +1060,8 @@ describe('MapActionHandler', () => {
   it('V3 FIX-2: add_layer legacy {id} params work and ack confirmed (id → layerId fallback)', async () => {
     const geojson = { type: 'FeatureCollection', features: [] };
     actions = [{ command: 'add_layer', params: { id: 'legacy-layer', type: 'fill', geojson } }];
-    const map = mockGetMap();
+    const map = makeMockMaplibreMap();
+    mockGetMap.mockImplementation(() => map);
 
     await act(async () => {
       render(<MapActionHandler />);
@@ -992,7 +1072,8 @@ describe('MapActionHandler', () => {
       expect.objectContaining({ id: 'custom-legacy-layer', source: 'custom-legacy-layer' }),
       undefined,
     );
-    // (6) [P2] layer add now carries a verifiable marker
+    // (6) [P2] layer add now carries a verifiable marker — confirmed only after
+    // the source is actually present on the map (round-2 FIX-B).
     expect(reportTerminalFn).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'add_layer' }),
       'succeeded',
@@ -1024,9 +1105,10 @@ describe('MapActionHandler', () => {
 
   it('V3 FIX-2: remove_layer success ack carries actual {confirmed:true}', async () => {
     actions = [{ command: 'remove_layer', params: { layerId: 'target-layer' } }];
-    const map = mockGetMap();
-    (map.getStyle as any).mockReturnValue({ layers: [{ id: 'custom-target-layer' }] });
-    (map.getSource as any).mockReturnValue(true);
+    const map = makeMockMaplibreMap();
+    mockGetMap.mockImplementation(() => map);
+    map.addSource('custom-target-layer', { type: 'geojson', data: {} });
+    map.addLayer({ id: 'custom-target-layer', type: 'fill', source: 'custom-target-layer' });
 
     await act(async () => {
       render(<MapActionHandler />);
@@ -1062,5 +1144,319 @@ describe('MapActionHandler', () => {
       'succeeded',
       expect.objectContaining({ actual: { confirmed: true } }),
     );
+  });
+
+  // ─── V3 round-2 FIX-B (layer-command truthfulness) ───────────────────────
+  // (1) [P1] `confirmed:true` must follow a REAL post-mutation map check —
+  // add_* verifies getSource, remove/visibility/style verify the map state.
+  // (2) [P1] remove/visibility/style resolve store layers keyed `${id}__${sub}`
+  // (MapSpecRuntime reconcile); sublayers that cannot be verified synchronously
+  // ack `store_updated:true` (backend treats it as non-converging) — never a
+  // fabricated `confirmed`.
+
+  it('V3 FIX-B: add_layer acks mutation_failed (never confirmed) when the source is not on the map', async () => {
+    const geojson = { type: 'FeatureCollection', features: [] };
+    actions = [{ command: 'add_layer', params: { layerId: 'ghost-source', type: 'fill', geojson } }];
+    const map = makeMockMaplibreMap();
+    mockGetMap.mockImplementation(() => map);
+    // The add call is swallowed (e.g. mid style swap) — the source never appears.
+    map.addSource.mockImplementation(() => {});
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'add_layer' }),
+      'failed',
+      expect.objectContaining({ error: 'mutation_failed' }),
+    );
+    // no confirmed claim without a map-side check
+    expect(reportTerminalFn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'add_layer' }),
+      'succeeded',
+      expect.objectContaining({ actual: expect.objectContaining({ confirmed: true }) }),
+    );
+  });
+
+  it('V3 FIX-B: add_raster_layer confirms only when the image source exists on the map', async () => {
+    actions = [{
+      command: 'add_raster_layer',
+      params: { id: 'raster-layer', image: 'https://example.com/img.png', bbox: [116, 39, 117, 40] },
+    }];
+    const map = makeMockMaplibreMap();
+    mockGetMap.mockImplementation(() => map);
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(map.addSource).toHaveBeenCalledWith('custom-raster-layer', expect.anything());
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'add_raster_layer' }),
+      'succeeded',
+      expect.objectContaining({ actual: { confirmed: true } }),
+    );
+  });
+
+  it('V3 FIX-B: add_raster_layer with a swallowed source add → mutation_failed', async () => {
+    actions = [{
+      command: 'add_raster_layer',
+      params: { id: 'raster-layer', image: 'https://example.com/img.png', bbox: [116, 39, 117, 40] },
+    }];
+    const map = makeMockMaplibreMap();
+    mockGetMap.mockImplementation(() => map);
+    map.addSource.mockImplementation(() => {});
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'add_raster_layer' }),
+      'failed',
+      expect.objectContaining({ error: 'mutation_failed' }),
+    );
+  });
+
+  it('V3 FIX-B: remove_layer resolves a __-keyed store layer and removes all matched sublayers', async () => {
+    actions = [{ command: 'remove_layer', params: { layer_id: 'poi' } }];
+    mockLayersStore = [{ id: 'poi', name: 'POI Layer' }];
+    const map = makeMockMaplibreMap();
+    mockGetMap.mockImplementation(() => map);
+    map._sources['poi'] = { type: 'geojson', data: {} };
+    map._layers.push({ id: 'poi__main', type: 'circle', source: 'poi' });
+    map._layers.push({ id: 'poi__label', type: 'symbol', source: 'poi' });
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(map.removeLayer).toHaveBeenCalledWith('poi__main');
+    expect(map.removeLayer).toHaveBeenCalledWith('poi__label');
+    expect(map.removeSource).toHaveBeenCalledWith('poi');
+    expect(mockRemoveLayer).toHaveBeenCalledWith('poi');
+    // every matched sublayer is gone from the map → confirmed
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'remove_layer' }),
+      'succeeded',
+      expect.objectContaining({ actual: { confirmed: true } }),
+    );
+  });
+
+  it('V3 FIX-B: remove_layer on a store layer with no applied sublayers acks store_updated, not confirmed', async () => {
+    actions = [{ command: 'remove_layer', params: { layer_id: 'poi' } }];
+    mockLayersStore = [{ id: 'poi', name: 'POI Layer' }];
+    const map = makeMockMaplibreMap(); // store layer exists but no sublayers applied yet
+    mockGetMap.mockImplementation(() => map);
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(mockRemoveLayer).toHaveBeenCalledWith('poi');
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'remove_layer' }),
+      'succeeded',
+      expect.objectContaining({ actual: { store_updated: true } }),
+    );
+    expect(reportTerminalFn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'remove_layer' }),
+      'succeeded',
+      expect.objectContaining({ actual: expect.objectContaining({ confirmed: true }) }),
+    );
+  });
+
+  it('V3 FIX-B: layer_visibility_update on a __-keyed store layer updates and verifies the sublayer', async () => {
+    actions = [{ command: 'LAYER_VISIBILITY_UPDATE', params: { layer_id: 'poi', visible: false } }];
+    mockLayersStore = [{ id: 'poi', name: 'POI Layer', visible: true }];
+    const map = mapWithLayoutBookkeeping();
+    mockGetMap.mockImplementation(() => map);
+    map._layers.push({ id: 'poi__main', type: 'circle', source: 'poi' });
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(map.setLayoutProperty).toHaveBeenCalledWith('poi__main', 'visibility', 'none');
+    expect(mockUpdateLayer).toHaveBeenCalledWith('poi', expect.objectContaining({ visible: false }));
+    // getLayoutProperty reflects the new value → confirmed
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'LAYER_VISIBILITY_UPDATE' }),
+      'succeeded',
+      expect.objectContaining({ actual: { confirmed: true } }),
+    );
+  });
+
+  it('V3 FIX-B: visibility update on a store layer with no applied sublayers acks store_updated', async () => {
+    actions = [{ command: 'LAYER_VISIBILITY_UPDATE', params: { layer_id: 'poi', visible: false } }];
+    mockLayersStore = [{ id: 'poi', name: 'POI Layer' }];
+    const map = makeMockMaplibreMap();
+    mockGetMap.mockImplementation(() => map);
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(mockUpdateLayer).toHaveBeenCalledWith('poi', expect.objectContaining({ visible: false }));
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'LAYER_VISIBILITY_UPDATE' }),
+      'succeeded',
+      expect.objectContaining({ actual: { store_updated: true } }),
+    );
+  });
+
+  it('V3 FIX-B: visibility update that cannot be verified on a store layer → store_updated', async () => {
+    actions = [{ command: 'LAYER_VISIBILITY_UPDATE', params: { layer_id: 'poi', visible: false } }];
+    mockLayersStore = [{ id: 'poi', name: 'POI Layer' }];
+    const map = makeMockMaplibreMap(); // no getLayoutProperty bookkeeping → verification fails
+    mockGetMap.mockImplementation(() => map);
+    map._layers.push({ id: 'poi__main', type: 'circle', source: 'poi' });
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'LAYER_VISIBILITY_UPDATE' }),
+      'succeeded',
+      expect.objectContaining({ actual: { store_updated: true } }),
+    );
+    expect(reportTerminalFn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'LAYER_VISIBILITY_UPDATE' }),
+      'succeeded',
+      expect.objectContaining({ actual: expect.objectContaining({ confirmed: true }) }),
+    );
+  });
+
+  it('V3 FIX-B: layer_style_update on a __-keyed store layer verifies getLayer before confirming', async () => {
+    actions = [{ command: 'LAYER_STYLE_UPDATE', params: { layer_id: 'poi', style: { color: '#ff0000' } } }];
+    mockLayersStore = [{ id: 'poi', style: {} }];
+    const map = makeMockMaplibreMap();
+    mockGetMap.mockImplementation(() => map);
+    map._layers.push({ id: 'poi__main', type: 'circle', source: 'poi' });
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(map.setPaintProperty).toHaveBeenCalledWith('poi__main', 'circle-color', '#ff0000');
+    expect(mockUpdateLayer).toHaveBeenCalledWith('poi', { style: { color: '#ff0000' } });
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'LAYER_STYLE_UPDATE' }),
+      'succeeded',
+      expect.objectContaining({ actual: { confirmed: true } }),
+    );
+  });
+
+  // (3) [P1] base_layer_change must not ack succeeded before the async style
+  // swap starts — resolve on the next map `style.load`, fail on style error or
+  // 15s timeout; an unchanged base layer resolves immediately.
+
+  it('V3 FIX-B: base_layer_change resolves succeeded only after map style.load', async () => {
+    actions = [{ command: 'base_layer_change', params: { name: 'Carto Dark' } }];
+    const map = makeMockMaplibreMap();
+    mockGetMap.mockImplementation(() => map);
+
+    render(<MapActionHandler />);
+    // The store writes happen immediately, but the ack must wait for the swap.
+    expect(mockSetSelectedBaseLayer).toHaveBeenCalledWith(1);
+    expect(mockSetBaseLayer).toHaveBeenCalledWith('Carto Dark');
+    expect(reportTerminalFn).not.toHaveBeenCalled();
+
+    await act(async () => {
+      map._fire('style.load');
+    });
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'base_layer_change' }),
+      'succeeded',
+      expect.any(Object),
+    );
+    expect(popAction).toHaveBeenCalled();
+  });
+
+  it('V3 FIX-B: base_layer_change fails with timeout when style.load never fires', async () => {
+    actions = [{ command: 'base_layer_change', params: { name: 'Carto Dark' } }];
+    const map = makeMockMaplibreMap();
+    mockGetMap.mockImplementation(() => map);
+
+    vi.useFakeTimers();
+    try {
+      render(<MapActionHandler />);
+      expect(reportTerminalFn).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15000);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'base_layer_change' }),
+      'failed',
+      expect.objectContaining({ error: 'timeout' }),
+    );
+    expect(popAction).toHaveBeenCalled();
+  });
+
+  it('V3 FIX-B: base_layer_change fails on a style error event', async () => {
+    actions = [{ command: 'base_layer_change', params: { name: 'Carto Dark' } }];
+    const map = makeMockMaplibreMap();
+    mockGetMap.mockImplementation(() => map);
+
+    render(<MapActionHandler />);
+    await act(async () => {
+      map._fire('error', { error: new Error('Style parse error: unsupported layer type') });
+    });
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'base_layer_change' }),
+      'failed',
+      expect.objectContaining({ error: 'style_error' }),
+    );
+  });
+
+  it('V3 FIX-B: a tile fetch error does not fail the base layer swap', async () => {
+    actions = [{ command: 'base_layer_change', params: { name: 'Carto Dark' } }];
+    const map = makeMockMaplibreMap();
+    mockGetMap.mockImplementation(() => map);
+
+    render(<MapActionHandler />);
+    await act(async () => {
+      map._fire('error', { tile: {}, error: new Error('Tile load failed') });
+    });
+    expect(reportTerminalFn).not.toHaveBeenCalled();
+
+    await act(async () => {
+      map._fire('style.load');
+    });
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'base_layer_change' }),
+      'succeeded',
+      expect.any(Object),
+    );
+  });
+
+  it('V3 FIX-B: base_layer_change with an unchanged base layer resolves immediately, no style wait', async () => {
+    mockBaseLayerName = 'Carto Dark';
+    actions = [{ command: 'base_layer_change', params: { name: 'Carto Dark' } }];
+    const map = makeMockMaplibreMap();
+    mockGetMap.mockImplementation(() => map);
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(mockSetSelectedBaseLayer).not.toHaveBeenCalled();
+    expect(mockSetBaseLayer).not.toHaveBeenCalled();
+    expect(map.once).not.toHaveBeenCalledWith('style.load', expect.any(Function));
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'base_layer_change' }),
+      'succeeded',
+      expect.any(Object),
+    );
+    expect(popAction).toHaveBeenCalled();
   });
 });

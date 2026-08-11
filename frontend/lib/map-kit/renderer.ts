@@ -315,8 +315,13 @@ export function addNativeHeatmap(map: Map, options: HeatmapOptions) {
  * Safely removes a layer stack and its corresponding source(s) and image texture(s).
  * Ensures all dependent layers are detached before sources are removed.
  * If prefix is true, removes all layers and sources matching or starting with the id.
+ *
+ * Returns `false` when any removal call threw (round-2 FIX-B: callers use this
+ * to distinguish a real removal failure from a no-op, instead of the old silent
+ * swallow). Layers/sources that are already gone are skipped, not counted as
+ * failures — MapLibre throws on removeLayer/removeSource of a missing id.
  */
-export function removeLayerStack(map: Map, id: string, prefix: boolean = false) {
+export function removeLayerStack(map: Map, id: string, prefix: boolean = false): boolean {
   const style = map.getStyle();
   const targetLayerIds = new Set<string>();
   const targetSourceIds = new Set<string>();
@@ -354,18 +359,30 @@ export function removeLayerStack(map: Map, id: string, prefix: boolean = false) 
     }
   });
 
+  // A layer/source is "present" when the live map reports it OR the style index
+  // lists it (they can disagree mid style swap). MapLibre throws on
+  // removeLayer/removeSource of a missing id, so never attempt removals for ids
+  // that are not known to exist — that also keeps `ok` meaningful (only real
+  // removal failures flip it, never no-op attempts).
+  const styleLayerIds = new Set((style?.layers ?? []).map((l: any) => l.id as string));
+  const styleSourceIds = new Set(Object.keys(style?.sources ?? {}));
+
   // 1. Remove all dependent layers first to detach from sources
+  let ok = true;
   targetLayerIds.forEach((lid) => {
-    try { map.removeLayer(lid); } catch { /* silent */ }
+    if (!map.getLayer?.(lid) && !styleLayerIds.has(lid)) return; // already gone
+    try { map.removeLayer(lid); } catch { ok = false; }
   });
 
   // 2. Remove target sources and cleanup any registered image textures
   targetSourceIds.forEach((sid) => {
-    try { map.removeSource(sid); } catch { /* silent */ }
+    if (!map.getSource?.(sid) && !styleSourceIds.has(sid)) return;
+    try { map.removeSource(sid); } catch { ok = false; }
     if (typeof map.hasImage === 'function' && map.hasImage(sid)) {
-      try { map.removeImage(sid); } catch { /* silent */ }
+      try { map.removeImage(sid); } catch { ok = false; }
     }
   });
+  return ok;
 }
 
 export interface StyleUpdateOptions {
