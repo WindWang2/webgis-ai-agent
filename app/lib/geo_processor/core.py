@@ -1,10 +1,13 @@
 import json
+import logging
 import threading
 from typing import Any, Optional
 import geopandas as gpd
 from shapely.geometry import shape
 
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 # Re-export coordinate transform functions from the canonical module
 # (app/utils/coord_transform.py). Duplicate implementations removed below.
@@ -301,13 +304,27 @@ def to_utm_gdf(geojson: Any, source_crs: Optional[str] = None) -> tuple[gpd.GeoD
     if gdf.crs and gdf.crs.is_projected:
         result = (gdf, str(gdf.crs))
     else:
+        # Bounds-driven CRS selection. UTM is the right tool for local metric
+        # work, but two pathological cases previously produced silent garbage
+        # (audit V-F04/F05/F06): (a) polar data — estimate_utm_crs() raises
+        # beyond 84N/80S and the manual fallback assigned a UTM zone that is
+        # not defined there; (b) continental spans where a single zone
+        # distorts distances/areas near the edges. We keep UTM for the common
+        # case, switch to polar stereographic at the poles, and warn loudly
+        # when a single zone cannot represent the extent honestly.
+        minx, miny, maxx, maxy = gdf.total_bounds
+        lon_span = float(maxx - minx)
+        abs_max_lat = max(abs(float(miny)), abs(float(maxy)))
+        polar = abs_max_lat > 84.0
+
         utm_crs = None
-        try:
-            utm_crs_obj = gdf.estimate_utm_crs()
-            if utm_crs_obj is not None:
-                utm_crs = str(utm_crs_obj)
-        except Exception:
-            utm_crs = None
+        if not polar:
+            try:
+                utm_crs_obj = gdf.estimate_utm_crs()
+                if utm_crs_obj is not None:
+                    utm_crs = str(utm_crs_obj)
+            except Exception:
+                utm_crs = None
 
         if utm_crs:
             try:
@@ -320,16 +337,41 @@ def to_utm_gdf(geojson: Any, source_crs: Optional[str] = None) -> tuple[gpd.GeoD
 
         if utm_crs is None:
             centroid = gdf.geometry.union_all().centroid
-            lon = (centroid.x + 180) % 360 - 180
-            zone_number = int((lon + 180) / 6) + 1
-            zone_number = max(1, min(60, zone_number))
-            hemisphere = 32600 if centroid.y >= 0 else 32700
-            utm_crs = f"EPSG:{hemisphere + zone_number}"
+            # Normalize longitude to [-180, 180] so a centroid at, e.g., 200°
+            # does not pick a zone on the far side of the globe.
+            lon = (centroid.x + 180.0) % 360.0 - 180.0
+            if polar:
+                # UTM is undefined poleward of 84N/80S; polar stereographic
+                # (NSIDC) is the correct metric frame there.
+                utm_crs = "EPSG:3413" if centroid.y >= 0 else "EPSG:3031"
+                logger.warning(
+                    "to_utm_gdf: data reaches |lat| %.1f (polar); UTM is "
+                    "undefined there, using polar stereographic %s. Metric "
+                    "results are approximate at the extremes.",
+                    abs_max_lat, utm_crs,
+                )
+            else:
+                zone_number = int((lon + 180) / 6) + 1
+                zone_number = max(1, min(60, zone_number))
+                hemisphere = 32600 if centroid.y >= 0 else 32700
+                utm_crs = f"EPSG:{hemisphere + zone_number}"
 
             projected = gdf.to_crs(utm_crs)
             projected["geometry"] = projected.geometry.make_valid()
             projected._original_crs = gdf._original_crs
             result = (projected, utm_crs)
+
+        # Honesty signal for multi-zone/continental extents: a single UTM zone
+        # (~6° wide) introduces growing scale error toward the edges. Does not
+        # change the projection; lets callers/results disclose the limitation.
+        if lon_span > 6.0 and not polar:
+            logger.warning(
+                "to_utm_gdf: longitudinal span %.1f° exceeds one UTM zone "
+                "(~6°); single-zone %s distorts distances/areas near the "
+                "edges. For survey-grade work use an equal-area CRS or "
+                "geodesic distances.",
+                lon_span, result[1],
+            )
 
     # Cache the canonical result. Callers get copies; the cached gdf itself is
     # never handed out, so its geometry/columns stay pristine. `parsed` is

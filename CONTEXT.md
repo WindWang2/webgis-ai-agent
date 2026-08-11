@@ -250,7 +250,22 @@ Two sources with distinct responsibilities — **currently connected headless-on
 
 ### MapSpecLifecycleEngine
 The deep cartographic intent engine (`app/services/mapspec/lifecycle_engine.py`).
-Consolidates MapSpec document mutations (`InitProjectIntent`, `SetViewIntent`, `UpsertLayerIntent`, `RemoveLayerIntent`), source profiling, compiler coordination, and checkpoint generation behind an atomic `apply_mutation(session_id, intent)` seam.
+Consolidates MapSpec document mutations (`InitProjectIntent`, `SetViewIntent`, `UpsertLayerIntent`, `RemoveLayerIntent`, `SetLayoutIntent`, `SetTimeIntent`, `CheckpointIntent`, `RollbackIntent`) behind an atomic `apply_mutation(session_id, intent)` seam. Transaction semantics (ADR-0051): build candidate in memory → semantic-validate → reject mutations that introduce NEW blocking errors (`INVALID_SOURCE_REF`, `INVALID_STOPS_COUNT`, `NON_INCREASING_STOPS`) → checkpoint → save (atomic temp+replace, disk-before-Redis) → sync Redis layers, with rollback-to-snapshot on any failure. Per-session mutual exclusion via `SessionLockRegistry` (Redis cross-pod; in-process fallback). Heavy work (`process_layer_ingestion`, deepcopy, content-hash, file IO) offloaded via `asyncio.to_thread`.
+
+### SessionLockRegistry
+The distributed per-session lock registry (`app/services/distributed_lock.py`, ADR-0051). Provides `session_lock_registry.lock(session_id)` — a Redis-backed lock (`SET NX` + TTL + token-checked Lua release + best-effort renewal) for cross-pod mutual exclusion, with a resilient fallback to an in-process `asyncio.Lock` when Redis is unavailable or errors at acquire time (never blocks the request). Bounded fallback table with waiter-aware eviction.
+
+### PiAgentHarness (V2)
+The evidence-driven evaluation harness (`app/lib/harness/pi_agent_harness.py`, ADR-0051). Records tool calls with `run_id`/`session_id`/`turn_id`/`tool_call_id` correlation and computes metrics from REAL evidence, not "didn't error": `MapSpecValidity` is a tiered ladder (`NOT_EVALUATED → MUTATION_REJECTED → MUTATION_ACCEPTED → SEMANTIC_VALID → COMPILE_VALID → RUNTIME_VALID`); `CursorResolutionRate` resolves refs against the real `SessionStore`. Missing evidence → 0.0, never 100.0. `evaluate_with_evidence()` is the async seam that does real ref resolution; `evaluate_evidence()` is the gate policy (unevaluated dimensions fail under `require_evaluated=True`).
+
+### EvaluationEvidence
+The unified evidence model (`app/lib/harness/evidence.py`) connecting the Harness ↔ GIS ↔ MapSpec ↔ Cartography loop: `RefResolution` (status: malformed/syntactically_valid/not_found/wrong_session/type_mismatch/resolved), `MapSpecValidityEvidence` (the validity ladder), `ToolCallEvidence` (per-call correlation + refs + validity + runtime path), `EvaluationRun`.
+
+### CartographySemanticChecks
+Deterministic cartographic semantic checks (`app/lib/cartography/semantic_checks.py`, ADR-0051) connecting the GIS data profile ↔ MapSpec: `SOURCE_LAYER_REF`/`EMPTY_DATA` (errors), `GEOMETRY_LAYER_TYPE`/`STOPS_DATA_RANGE`/`INTERPOLATE_NUMERIC_FIELD`/`LEGEND_FIELD_CONSISTENCY` (warnings). Missing profile → `not_evaluated`, never a fake pass. Empty-data (zero features) is an error, not a silent map success.
+
+### MapSpec Checkpoint Store
+The content-addressed checkpoint store (`app/services/mapspec/checkpoint.py`, ADR-0051). Each ref payload is stored once as a content-addressed blob (`blobs/<sha>.json`); a checkpoint descriptor maps `ref_id → blob_hash`. Auto checkpoints (no explicit id) dedup on whole-checkpoint content hash (a repeated identical checkpoint writes 0 new bytes). Explicit checkpoint ids always materialize (rollback-by-name contract). Backward-compatible rollback handles both the new descriptor+blob layout and the legacy `materialized_refs.json` layout.
 
 ### MapSpec Compiler
 Deterministic, framework-agnostic TS module (`frontend/lib/mapspec-compiler/`) that turns a

@@ -17,14 +17,16 @@ def test_harness_records_tool_call_via_record_event():
         tool_call_id="tc_1",
         tool_name="webgis_layer_upsert",
         arguments={"layer": {"id": "test"}},
-        result={"success": True},
+        result={"success": True, "is_compiled": True},
         is_error=False,
     )
     harness.record_event(event)
-    
+
     assert len(harness.tool_calls) == 1
     assert len(harness.tool_results) == 1
     assert harness.tool_calls[0]["name"] == "webgis_layer_upsert"
+    # V2: is_valid requires real semantic-validity evidence (is_compiled), not
+    # merely "didn't error".
     assert harness.mapspec_mutations[0]["is_valid"] is True
 
 

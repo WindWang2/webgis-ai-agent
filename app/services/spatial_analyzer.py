@@ -55,7 +55,7 @@ class SpatialAnalyzer:
         callback: Optional[Callable] = None
     ) -> GeoAnalysisResult:
         res = to_utm_gdf(features)
-        if not res:
+        if res is None or res[0] is None:
              return GeoAnalysisResult(False, None, "Invalid vector data")
         
         gdf, utm_crs = res
@@ -156,13 +156,38 @@ class SpatialAnalyzer:
              else:
                  return calculate_sde(features)
         
-        feat_list = features.get("features", [])
+        feat_list = features.get("features", []) if isinstance(features, dict) else (features if isinstance(features, list) else [])
         import pandas as pd
-        df = pd.DataFrame([f["properties"] for f in feat_list if isinstance(f, dict) and "properties" in f])
+        df = pd.DataFrame([f.get("properties", {}) for f in feat_list if isinstance(f, dict)])
         if field and field in df.columns:
             stats = df[field].describe().to_dict()
             return GeoAnalysisResult(True, {"stats": stats}, f"Statistics for {field}: {stats}")
-        return GeoAnalysisResult(True, {"count": len(feat_list)}, f"Total features: {len(feat_list)}")
+        # Geometry-level summary — the always-on report the spatial_stats tool
+        # documents as {total_area_m2, total_length_m, count, bbox, centroid}.
+        # Previously only `count` was returned, so the agent confidently
+        # reported area/length/bbox/centroid that did not exist. (F / C-F02)
+        result: Dict[str, Any] = {"count": len(feat_list)}
+        try:
+            res_utm = to_utm_gdf(features)
+        except Exception:
+            res_utm = None
+        if res_utm is not None and res_utm[0] is not None and len(res_utm[0]) > 0:
+            gdf_u, _ = res_utm
+            geoms = gdf_u.geometry
+            polys = geoms[geoms.geom_type.isin(["Polygon", "MultiPolygon"])]
+            lines = geoms[geoms.geom_type.isin(["LineString", "MultiLineString"])]
+            # area/length in UTM metres (metric); bbox/centroid in WGS84 (readable)
+            result["total_area_m2"] = float(polys.area.sum()) if len(polys) else 0.0
+            result["total_length_m"] = float(lines.length.sum()) if len(lines) else 0.0
+            try:
+                wgs = gdf_u.to_crs("EPSG:4326")
+                wminx, wminy, wmaxx, wmaxy = wgs.total_bounds
+                result["bbox"] = [float(wminx), float(wminy), float(wmaxx), float(wmaxy)]
+                ctr = wgs.geometry.union_all().centroid
+                result["centroid"] = [float(ctr.x), float(ctr.y)]
+            except Exception:
+                pass
+        return GeoAnalysisResult(True, result, f"Total features: {len(feat_list)}")
 
     @classmethod
     @spatial_operator(name="cluster")

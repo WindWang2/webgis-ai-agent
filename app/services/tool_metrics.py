@@ -198,15 +198,27 @@ def record_tool_call(
     cache_hit: bool,
     error: Optional[str],
     session_id: Optional[str],
+    tool_call_id: Optional[str] = None,
+    run_id: Optional[str] = None,
+    turn_id: Optional[str] = None,
     requested_execution_policy: Optional[str] = None,
     actual_execution_mode: Optional[str] = None,
     compute_ms: Optional[int] = None,
     queue_wait_ms: Optional[int] = None,
 ) -> None:
-    """落一行 JSONL（入队，异步落盘）+ 更新聚合器。失败不抛。"""
+    """落一行 JSONL（入队，异步落盘）+ 更新聚合器。失败不抛。
+
+    Correlation fields (tool_call_id / run_id / turn_id) tie a tool call across
+    the harness evidence trail, this metrics log, and MapSpec/runtime evidence,
+    so a single map's full chain (tool → ref → mapspec revision → checkpoint →
+    compile → runtime) is reconstructable from logs (OBSERVABILITY-V2).
+    """
     row = {
         "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
         "tool": tool,
+        "tool_call_id": tool_call_id,
+        "run_id": run_id,
+        "turn_id": turn_id,
         "session_id": session_id,
         "arg_bytes": arg_bytes,
         "result_bytes": result_bytes,
@@ -237,6 +249,7 @@ def record_event(event: ToolCallEvent) -> None:
         cache_hit=event.cache_hit,
         error=event.error_msg if event.is_error else None,
         session_id=event.session_id,
+        tool_call_id=event.tool_call_id,
     )
 
 

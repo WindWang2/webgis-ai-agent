@@ -250,6 +250,15 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
 
     if _harness is not None:
         is_error = result.status == "error"
+        # HARNESS-V2: forward real MapSpec mutation evidence (is_compiled /
+        # success / warnings / checkpoint_id) from raw_result so the validity
+        # ladder isn't starved in production. Slim to evidence fields only — the
+        # full mapspec is fetched via fetch-on-demand, never logged wholesale.
+        ev = {"status": result.status, "llm_payload_len": len(result.llm_payload)}
+        raw = result.raw_result if isinstance(result.raw_result, dict) else {}
+        for k in ("success", "is_compiled", "warnings", "checkpoint_id", "message", "correction_hint"):
+            if k in raw:
+                ev[k] = raw[k]
         event = ToolCallEvent(
             tool_call_id=request.toolCallId,
             tool_name=request.name,
@@ -258,7 +267,7 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
             is_error=is_error,
             # P1 fix: truncate to a short message rather than the full payload.
             error_msg=(result.llm_payload[:200] if is_error else ""),
-            result={"status": result.status, "llm_payload_len": len(result.llm_payload)},
+            result=ev,
             session_id=request.sessionId,
         )
         _harness.record_event(event)
@@ -276,10 +285,24 @@ _session_executed_sets: dict[str, set[tuple[str, str]]] = {}
 
 
 # ── Optional evaluation harness (opt-in via PI_HARNESS_ENABLED=true) ──
+# V2（HARNESS-V2）：注入真实证据 resolver —— ref 解析走 SessionStore，
+# MapSpec 校验走真实 validate()，杜绝"没报错=100%有效"的假成功。
 _harness: Optional[PiAgentHarness] = None
 if os.getenv("PI_HARNESS_ENABLED", "").lower() in ("true", "1", "yes"):
-    _harness = PiAgentHarness(session_id="production")
-    logger.info("[PiBridge] Evaluation harness enabled for production telemetry")
+    try:
+        from app.services.session_data import session_data_manager as _sdm
+        from app.services.mapspec.coordinator import validate as _validate_mapspec
+        from app.lib.harness.ref_resolver import make_session_store_resolver
+
+        _harness = PiAgentHarness(
+            session_id="production",
+            ref_resolver=make_session_store_resolver(_sdm),
+            mapspec_validator=_validate_mapspec,
+        )
+        logger.info("[PiBridge] Evaluation harness V2 enabled (real SessionStore ref resolver)")
+    except Exception as _harness_err:  # noqa: BLE001 - never block startup on telemetry
+        logger.warning(f"[PiBridge] Harness V2 wiring failed, degrading to no harness: {_harness_err}")
+        _harness = None
 
 
 def get_harness() -> Optional[PiAgentHarness]:

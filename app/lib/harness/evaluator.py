@@ -1,5 +1,11 @@
 """
-HarnessEvaluator - 5-Dimensional Evaluation Metric Calculator & Quality Gate
+HarnessEvaluator - 5-Dimensional Evaluation Metric Calculator & Quality Gate.
+
+V2 gate policy（HARNESS-V2）：缺失证据不等于成功。
+- MapSpecValidity / CursorResolutionRate 在 V2 harness 下从真实证据计算；无证据
+  返回 0.0 而非 100.0，因此缺证据的 run 会真正 fail gate（除非显式豁免）。
+- 新增 evaluate_evidence()：消费 evaluate_with_evidence() 的结构化结果，对每个
+  维度给出 score / target / passed / evaluated（区分"未评估"与"失败"）。
 """
 import logging
 from typing import Any, Dict
@@ -17,7 +23,7 @@ DEFAULT_THRESHOLDS = {
 
 
 class HarnessEvaluator:
-    """Evaluates telemetry from PiAgentHarness against 5 quality gate thresholds."""
+    """Evaluates telemetry from PiAgentHarness against quality gate thresholds."""
 
     def __init__(self, thresholds: Dict[str, float] | None = None):
         self.thresholds = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
@@ -54,6 +60,69 @@ class HarnessEvaluator:
             "checks": checks,
         }
 
+    def evaluate_evidence(
+        self,
+        evidence_result: Dict[str, Any],
+        *,
+        require_evaluated: bool = True,
+    ) -> Dict[str, Any]:
+        """Evaluate a structured ``evaluate_with_evidence`` result.
+
+        Per gate policy, unevaluated dimensions are treated as FAILURE rather than
+        success: ``require_evaluated=True`` (default) makes a dimension with no
+        evidence (e.g. zero mutations for MapSpecValidity, zero refs for
+        CursorResolutionRate) fail its check. Set ``require_evaluated=False`` to
+        instead exempt dimensions that had nothing to evaluate (useful for runs
+        that legitimately perform no cartography).
+        """
+        metrics: Dict[str, float] = evidence_result.get("metrics", {})
+        evidence = evidence_result.get("evidence", [])
+
+        had_mutation = any(e.get("mapspec_validity") for e in evidence)
+        had_ref = any(len(e.get("refs", [])) > 0 for e in evidence)
+        dims_evaluated = {
+            "MapSpecValidity": had_mutation,
+            "CursorResolutionRate": had_ref,
+            "ToolChoiceAccuracy": True,
+            "StepEfficiency": True,
+            "ErrorRecoveryRate": True,
+        }
+
+        checks: Dict[str, Dict[str, Any]] = {}
+        all_passed = True
+        for metric_name, target in self.thresholds.items():
+            evaluated = dims_evaluated[metric_name]
+            score = metrics.get(metric_name, 0.0)
+            if not evaluated and require_evaluated:
+                # No evidence to evaluate → policy: FAIL (not success).
+                passed = False
+                reason = "not_evaluated_policy_fail"
+            elif not evaluated and not require_evaluated:
+                # Legitimately nothing to evaluate → exempt.
+                passed = True
+                reason = "not_applicable_exempt"
+            else:
+                passed = score >= target
+                reason = "evaluated"
+            if not passed:
+                all_passed = False
+            checks[metric_name] = {
+                "score": score,
+                "target": target,
+                "passed": passed,
+                "evaluated": evaluated,
+                "reason": reason,
+            }
+
+        return {
+            "overall_passed": all_passed,
+            "metrics": metrics,
+            "thresholds": self.thresholds,
+            "checks": checks,
+            "run_id": evidence_result.get("run_id"),
+            "session_id": evidence_result.get("session_id"),
+        }
+
     def generate_markdown_report(
         self,
         session_id: str,
@@ -73,7 +142,12 @@ class HarnessEvaluator:
         ]
 
         for name, chk in evaluation_result["checks"].items():
-            status_icon = "🟢 PASS" if chk["passed"] else "🔴 FAIL"
+            if chk.get("passed"):
+                status_icon = "🟢 PASS"
+            elif chk.get("reason") == "not_evaluated_policy_fail":
+                status_icon = "⚫ NOT EVALUATED"
+            else:
+                status_icon = "🔴 FAIL"
             lines.append(
                 f"| {name} | {chk['score']}% | {chk['target']}% | {status_icon} |"
             )

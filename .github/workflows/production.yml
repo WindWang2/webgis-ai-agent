@@ -139,7 +139,11 @@ jobs:
         # （PR #319 首次 CI 暴露：h3_binning_10k 在 --cov 下 173.9ms vs 无 cov
         # 40ms，被误判为 HARD REGRESSION）。perf 门控由独立 test-perf job 在无
         # coverage 环境下执行（见下）。
-        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=10 --timeout=60 --timeout-method=thread -m "not perf" -v
+        #
+        # 审计 REL-01：cartography marker（@pytest.mark.cartography）同样排除 ——
+        # 该集合由独立 cartography-smoke job（确定性 release-blocking gate）拥有，
+        # 避免双重执行 + 让 gate scope 显式。
+        run: pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=10 --timeout=60 --timeout-method=thread -m "not perf and not cartography" -v
 
       - name: Upload Coverage Report
         uses: codecov/codecov-action@v7.0.0
@@ -181,6 +185,91 @@ jobs:
         # PERF_UPDATE_BASELINES=1。与主测试 job 的 `-m "not perf"` 互斥，避免双重
         # 执行 + 覆盖率失真。
         run: pytest tests/benchmarks/test_perf_harness.py tests/benchmarks/test_transport_perf.py -m perf --no-cov --timeout=180 --timeout-method=thread -q
+
+  # ============ Stage 2c: 制图 / Harness 闭环 smoke（确定性，release-blocking）============
+  cartography-smoke:
+    name: Cartography & Harness Closed-Loop Gate
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Dependencies
+        # 仅装核心依赖 + 测试工具（无需 Postgres service）。cartography smoke
+        # 走纯 Python 语义校验 + Harness V2 evidence model + ref 真实解析，
+        # 不依赖 Node / Chromium（那部分在 nightly cartography-matrix）。
+        run: pip install -r requirements-dev.txt
+
+      - name: Set Environment Variables
+        run: |
+          echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV
+          echo "JWT_SECRET_KEY=ci-test-secret-key-32-chars-ok" >> $GITHUB_ENV
+          echo "ENV=development" >> $GITHUB_ENV
+          echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
+
+      - name: Run Cartography & Harness Closed-Loop Smoke
+        # 确定性 release-blocking gate（无 Node / 无 Chromium / 无 LLM / 无外网）：
+        #   - MapSpec transaction 语义（invalid mutation 不污染 last-known-good）
+        #   - ref cursor 真实解析（跨 session / 不存在 → fail，而非 100%）
+        #   - MapSpecValidity evidence ladder（no evidence ≠ success）
+        #   - 制图语义 deterministic checks（bbox overlap / geom-type / field-stops / legend）
+        #   - 故障注入子集（Redis/compiler/checkpoint failure 不产生 false-success）
+        # 完整 Playwright runtime + 5~6 类 E2E 场景在 nightly cartography-matrix。
+        run: pytest -m cartography --no-cov --timeout=120 --timeout-method=thread -q
+
+  # ============ Nightly 重矩阵（schedule / 手动；非 PR-blocking）============
+  # 审计 REL-01：PR 路径只跑确定性 fast gate（cartography-smoke）。更重的矩阵
+  # （全量 cartography + perf + event-loop lag + 并发负载 + 未来 Playwright runtime）
+  # 放到 nightly，不阻塞 PR，但能在 schedule 暴露慢漂移 / 间歇性故障。
+  nightly-matrix:
+    name: Nightly Heavy Matrix
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: [6379:6379]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      - run: pip install -r requirements-dev.txt
+      - name: Set Environment Variables
+        run: |
+          echo "REDIS_URL=redis://localhost:6379/0" >> $GITHUB_ENV
+          echo "JWT_SECRET_KEY=ci-test-secret-key-32-chars-ok" >> $GITHUB_ENV
+          echo "ENV=development" >> $GITHUB_ENV
+          echo "LLM_API_KEY=test-key-not-real" >> $GITHUB_ENV
+      - name: Full cartography + perf + event-loop matrix
+        # Nightly 跑完整确定性矩阵：cartography（含并发 + 故障注入）+ perf
+        # （11 microbenchmarks + 3 e2e）+ perf_harness_v2 event-loop lag。无 Node
+        # 依赖部分全跑；需要 Node/Playwright 的 runtime 验证 self-skip（待 future）。
+        run: pytest -m "cartography or perf" --no-cov --timeout=180 --timeout-method=thread -q
+      - name: Event-loop lag & data-plane v2
+        run: pytest tests/benchmarks/test_perf_harness_v2.py --no-cov --timeout=120 -q
 
   test-frontend:
     name: Frontend Tests
@@ -273,31 +362,73 @@ jobs:
         # bandit 跑，等效。
         # -ll = MEDIUM severity 及以上；-ii = MEDIUM confidence 及以上。
         # exit code 0 = 无 MEDIUM+ 告警；CI 不被 LOW 噪声阻断。
+        #
+        # 审计 REL-02：bandit 是 release-blocking security gate，必须真正阻断 ——
+        # 此 job 处于 build→deploy 依赖链上，不能 || true。依赖 CVE 扫描
+        # (pip-audit / npm audit) 现已拆到独立 dependency-audit job（见下），
+        # 该 job 诚实标注为 informational / 非 release-blocking，而不是在
+        # blocking 的 security job 内用 || true 把失败伪装成成功。
         run: |
           pip install bandit
           bandit -r app/ -ll -ii
 
+  # ============ Stage 3b: 依赖 CVE 扫描（informational，非 release-blocking）============
+  # 审计 REL-02：此前 pip-audit / npm audit 用 `|| true` 兜底在 blocking 的
+  # security job 内，使"required job 失败被伪装成成功"。已知 starlette / ecdsa
+  # 等传递依赖 CVE 需 FastAPI / PyJWT 上游升级，无法在任意 PR 内即时修复，
+  # 故无法作为 blocking gate。将其拆为独立 job 并明确标注非阻塞：信号可见、
+  # 诚实，且不再污染 blocking 的 security gate。major-version 依赖升级 PR
+  # 仍需通过下方完整的 blocking 链（backend/frontend/perf/cartography/build）。
+  dependency-audit:
+    name: Dependency CVE Audit (non-blocking)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
       - name: Dependency Audit (Backend)
         # pip-audit 抓到多个传递依赖 CVE（starlette 0.38.6 的 PYSEC-2026-161/1941/
         # 1943/2280/2281/248/249 + ecdsa 0.19.2 的 PYSEC-2026-1325）。这些需要升级
-        # FastAPI / PyJWT 上游依赖，是独立工作。
-        # 审计 P1：去掉 --fix 防止 CI 自动修改依赖版本（未经 review 的变更可能引入回归）。
-        # || true 兜底因为 pip-audit 不像 ruff 没有 --exit-zero 选项。
+        # FastAPI / PyJWT 上游依赖，是独立工作。本 job 非 release-blocking，
+        # 仅输出告警；无需 || true —— 它本身不在 build/release 依赖链上。
+        continue-on-error: true
         run: |
           pip install pip-audit
-          pip-audit -r requirements.txt --desc --progress-spinner off || true
+          pip-audit -r requirements.txt --desc --progress-spinner off
 
       - name: Dependency Audit (Frontend)
-        # npm audit 在 JS 生态经常有 moderate 级传递依赖告警。
-        # --audit-level=moderate 阻断 moderate+；|| true 兜底防止 npm 自身 bug 阻断。
+        # npm audit 在 JS 生态经常有 moderate 级传递依赖告警。同上：本 job
+        # 整体非 release-blocking（continue-on-error 在 step 级，job 不在依赖链）。
+        continue-on-error: true
         working-directory: ./frontend
-        run: npm audit --audit-level=moderate || true
+        run: npm audit --audit-level=moderate
+
+  # ============ Stage 3c: Release Gate 聚合（显式 release DAG）============
+  # 审计 REL-01：此前 build 直接 needs [lint, test-backend, test-frontend, security]，
+  # 而 test-perf（"Performance Regression Gate"）与任何 cartography smoke 均不在
+  # 依赖链上 —— 性能 HARD REGRESSION 与制图回归可直达 build→deploy-prod。
+  # 现以单一聚合 job 把 release-blocking 检查收敛为显式 DAG：
+  #   quality + backend + frontend + security + perf + cartography → release-gate → build → deploy
+  # 该 job 无 step（只做 needs 聚合），任何被依赖 job 失败即整体失败，
+  # 杜绝 continue-on-error / || true / skip 把 required 失败伪装成成功。
+  release-gate:
+    name: Release Gate
+    runs-on: ubuntu-latest
+    needs: [lint, test-backend, test-frontend, security, test-perf, cartography-smoke]
+    steps:
+      - name: Release gate passed
+        run: echo "All release-blocking checks (quality, backend, frontend, security, perf, cartography) passed."
 
   # ============ Stage 4: 构建镜像 ============
   build:
     name: Build Docker Image
     runs-on: ubuntu-latest
-    needs: [lint, test-backend, test-frontend, security]
+    needs: [release-gate]
     permissions:
       contents: read
       packages: write
