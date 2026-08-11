@@ -12,7 +12,11 @@ import * as renderer from "@/lib/map-kit/renderer"
 import { fitBounds as navFitBounds, calculateBBox, calculateBBoxAsync } from "@/lib/map-kit/navigation"
 import { MapSpecRuntime, hudStateToMapSpec } from "@/lib/mapspec-runtime"
 import { computeInteractiveIds, resolveParentLayerId } from "@/lib/map-kit/interactive-ids"
-import { setSelectionHighlight, clearSelectionHighlight } from "@/lib/map-kit/selection-highlight"
+import {
+  setSelectionHighlight,
+  clearSelectionHighlight,
+  SELECTION_HIGHLIGHT_SOURCE_ID,
+} from "@/lib/map-kit/selection-highlight"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
 import { devOnly } from "@/lib/utils/logger"
 
@@ -207,6 +211,33 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
     syncInteractiveIds()
   }, [currentMapStyle, syncInteractiveIds])
 
+  // FIX-3-2: runtime.syncLayerZOrder moves spec sublayers to the TOP of the
+  // z-order after every reconcile, burying the ephemeral selection highlight
+  // (its layers were added imperatively and never re-positioned). Re-raise the
+  // highlight above the top spec layer whenever a reconcile completes. Guarded:
+  // no-op when the highlight isn't mounted, and moveLayer is wrapped so a layer
+  // that vanished mid-reconcile is skipped silently.
+  const raiseSelectionHighlight = useCallback(() => {
+    const map = mapRef.current?.getMap()
+    if (!map || !mapReady) return
+    const highlightIds = [
+      `${SELECTION_HIGHLIGHT_SOURCE_ID}-fill`,
+      `${SELECTION_HIGHLIGHT_SOURCE_ID}-line`,
+      `${SELECTION_HIGHLIGHT_SOURCE_ID}-circle`,
+    ]
+    if (!highlightIds.some((id) => map.getLayer(id))) return
+    for (const id of highlightIds) {
+      if (!map.getLayer(id)) continue
+      try {
+        // moveLayer without beforeId → end of the layer order (top), i.e.
+        // directly above every spec layer syncLayerZOrder just stacked.
+        map.moveLayer(id)
+      } catch {
+        // Layer vanished mid-reconcile — nothing to re-raise.
+      }
+    }
+  }, [mapReady])
+
   // Reconcile whenever the inputs to the derived MapSpec change. The runtime's
   // internal diff is the no-op fast path for unchanged specs, and the async
   // path offloads the diff to a worker and applies the patch through a
@@ -217,9 +248,14 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
     // FE-3: recompute interactive ids once this patch has actually applied
     // (reconcileAsync resolves when its last op ran → appliedSpec advanced).
     void runtimeRef.current.reconcileAsync(spec)
-      .then(() => syncInteractiveIds())
+      .then(() => {
+        syncInteractiveIds()
+        // FIX-3-2: syncLayerZOrder buried the selection highlight under the
+        // spec sublayers — put it back on top now that the reconcile settled.
+        raiseSelectionHighlight()
+      })
       .catch((e) => console.error("[map] reconcile failed", e))
-  }, [layers, processLayers, activeFilters, is3D, mapReady, currentMapStyle, syncInteractiveIds])
+  }, [layers, processLayers, activeFilters, is3D, mapReady, currentMapStyle, syncInteractiveIds, raiseSelectionHighlight])
 
 
   const setViewport = useHudStore((s: HudState) => s.setViewport)
@@ -379,16 +415,59 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
     }
   }, [flushHover])
 
+  // FIX-3-3: the hover tooltip must clear when the cursor leaves the map —
+  // previously only mousemove updated it, so it lingered after mouseout. Also
+  // drop the pending hover event + cancel any scheduled flush so a stale rAF
+  // can't re-set hoverInfo after the cursor is gone.
+  const handleMapMouseOut = useCallback(() => {
+    hoverPendingRef.current = null
+    if (hoverTimerRef.current !== null) {
+      if (typeof cancelAnimationFrame !== 'undefined') {
+        cancelAnimationFrame(hoverTimerRef.current)
+      } else {
+        clearTimeout(hoverTimerRef.current)
+      }
+      hoverTimerRef.current = null
+    }
+    setHoverInfo(null)
+  }, [])
+
+  // FIX-3-4: clear the selection (store + highlight + popup) when the layer it
+  // belongs to is removed from the HUD layers — otherwise a stale highlight and
+  // popup point at a sublayer the map no longer has. `process-*` overlay
+  // selections are skipped: they never live in the project `layers` list (no
+  // removable panel entry), so "not in layers" is their steady state, not a
+  // removal.
+  useEffect(() => {
+    if (!selectedFeature) return
+    const layerId = selectedFeature.layerId
+    if (layerId.startsWith('process-')) return
+    const stillPresent =
+      layers.some((l) => l.id === layerId) ||
+      layers.some((l) => layerId.startsWith(l.id + '__'))
+    if (stillPresent) return
+    pendingSelectionGeometryRef.current = null
+    setOverlapFeatures(null)
+    setSelectedFeature(null)
+    const map = mapRef.current?.getMap()
+    if (map) clearSelectionHighlight(map)
+  }, [layers, selectedFeature, setSelectedFeature])
+
   // FE-3: user gesture arbitration — report to camera-arbitration ONLY when the
   // event carries an originalEvent (programmatic camera moves have none).
-  // Ends are unguarded: a gesture that started must always decrement.
+  // FIX-3-1: ENDS are gated on originalEvent too. An unguarded end let a
+  // programmatic zoomend/pitchend (flyTo completion, map.stop) decrement the
+  // counter mid-gesture, so arbitration released early and the next AI camera
+  // command fought the user. Ends must only decrement gestures that started.
   useEffect(() => {
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
     const gestureStart = (evt: any) => {
       if (evt?.originalEvent) notifyUserGestureStart()
     }
-    const gestureEnd = () => notifyUserGestureEnd()
+    const gestureEnd = (evt: any) => {
+      if (evt?.originalEvent) notifyUserGestureEnd()
+    }
     map.on('dragstart', gestureStart)
     map.on('zoomstart', gestureStart)
     map.on('rotatestart', gestureStart)
@@ -398,6 +477,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
     map.on('rotateend', gestureEnd)
     map.on('pitchend', gestureEnd)
     map.on('mousemove', handleMapMouseMove)
+    map.on('mouseout', handleMapMouseOut)
     return () => {
       map.off('dragstart', gestureStart)
       map.off('zoomstart', gestureStart)
@@ -408,8 +488,9 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
       map.off('rotateend', gestureEnd)
       map.off('pitchend', gestureEnd)
       map.off('mousemove', handleMapMouseMove)
+      map.off('mouseout', handleMapMouseOut)
     }
-  }, [mapReady, handleMapMouseMove])
+  }, [mapReady, handleMapMouseMove, handleMapMouseOut])
 
   // FE-3: cancel any pending hover flush on unmount.
   useEffect(() => {

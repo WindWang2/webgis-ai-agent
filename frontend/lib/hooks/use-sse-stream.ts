@@ -36,6 +36,16 @@ const FEATURE_ID_KEYS = ['id', 'OBJECTID', 'fid', 'osm_id', '@id'];
 const MAX_SNAPSHOT_PROPS = 5;
 const MAX_PROP_VALUE_LEN = 60;
 
+// FIX-3-5: feature identity must stay bounded — a raw multi-KB property (e.g.
+// a WKT string) must never ride the prompt path. Truncation keeps the id
+// stable (same feature → same prefix), which is all the backend correlation
+// needs; the content-hash fallback below is already ≤10 chars.
+const MAX_FEATURE_ID_LEN = 64;
+
+function truncateFeatureId(v: string): string {
+  return v.length > MAX_FEATURE_ID_LEN ? v.slice(0, MAX_FEATURE_ID_LEN) : v;
+}
+
 /**
  * Resolve the parent project-layer id from a possibly-sublayer id via
  * longest-prefix match against the project's layer ids (`__`-boundary aware,
@@ -100,11 +110,11 @@ function resolveFeatureId(
   sel: SelectedFeatureInfo,
   props: Record<string, string | number | boolean>,
 ): string | number {
-  if (typeof sel.featureId === 'string' && sel.featureId) return sel.featureId;
+  if (typeof sel.featureId === 'string' && sel.featureId) return truncateFeatureId(sel.featureId);
   if (typeof sel.featureId === 'number') return sel.featureId;
   for (const k of FEATURE_ID_KEYS) {
     const v = sel.properties?.[k];
-    if (typeof v === 'string' && v) return v;
+    if (typeof v === 'string' && v) return truncateFeatureId(v);
     if (typeof v === 'number') return v;
   }
   return shortContentHash(JSON.stringify({ p: props, pt: sel.point }));

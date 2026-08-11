@@ -60,6 +60,28 @@ export const DIFF_WORKER_IDLE_MS = 10_000;
 const EMPTY_PATCH: SpecPatch = { sources: [], layers: [] };
 
 /**
+ * FIX-3-6: set when `diffSpecsAsync` resolves EMPTY_PATCH because the worker
+ * failed/timed out (not because the specs are actually equal). The runtime
+ * consults this via `consumeDiffLastFailed()`: an empty patch + this flag means
+ * "the diff is unknown", so it must NOT advance `appliedSpec` — interactive
+ * ids derive from appliedSpec, and advancing would claim the map reflects
+ * layers it never received. Reset on any successful diff (the flag can never
+ * leak into a later reconcile, whose success clears it).
+ */
+let lastDiffFailed = false;
+
+/**
+ * FIX-3-6: read and clear the failed-diff flag atomically. Used by
+ * MapSpecRuntime.applyPatchDebounced to detect a worker-failure empty patch;
+ * exported for the runtime test suite as well.
+ */
+export function consumeDiffLastFailed(): boolean {
+  const v = lastDiffFailed;
+  lastDiffFailed = false;
+  return v;
+}
+
+/**
  * Test-only: drop the cached worker so the next call re-evaluates the
  * environment (e.g. to exercise the fallback path after a worker test). Also
  * cancels any pending idle-termination timer and clears the inlineData /
@@ -79,6 +101,7 @@ export function _resetWorkerBridgeForTests(): void {
   inlineTokenCache = new WeakMap();
   lastInlineDataBySource = new Map();
   imageTokenByContent.clear();
+  lastDiffFailed = false;
 }
 
 // ── FE-02: inline GeoJSON stripping ────────────────────────────────────────
@@ -109,6 +132,20 @@ let inlineTokenCache: WeakMap<object, number> = new WeakMap();
 // new-but-equal payload can reuse the same token (deep-equal fallback).
 // FE-3: FIFO-bounded (INLINE_TOKEN_CACHE_MAX) — a long session that swaps many
 // distinct GeoJSON payloads can't retain every past object (findings E4).
+//
+// FIX-3-8: eviction is INSERTION-ORDER FIFO (`keys().next()` = oldest insert),
+// NOT LRU — nothing here tracks access recency, and the registry never mutates
+// an entry once written (same-reference payloads hit the WeakMap fast path, so
+// re-registration never happens for live data). This deliberately mirrors the
+// imageRef registry's documented eviction below. (The design doc's "LRU" label
+// for this registry is a misnomer — FIFO is the implemented contract.)
+//
+// Immutable-FC contract: like the geometry-mix memo in mapspec-runtime/adapter.ts
+// (geometryProfileCache, WeakMap keyed on the FeatureCollection reference),
+// this identity cache assumes sources are REPLACED, never mutated in place —
+// a same-reference FC that is mutated would keep its stale token and diff as
+// "no change". The adapter honors this by emitting `inlineData: layer.source`
+// unchanged across reconciles.
 let lastInlineDataBySource: Map<string, { data: object; token: number }> = new Map();
 
 /**
@@ -374,7 +411,11 @@ export function disposeWorker(): void {
 export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<SpecPatch> {
   const worker = createWorker();
   if (!worker) {
-    return Promise.resolve(diffSpecs(prev, next));
+    // Sync fallback computes a REAL diff — no failure-mode empty patch here.
+    // Clear any stale failure flag so a prior worker error can't leak.
+    const patch = diffSpecs(prev, next);
+    lastDiffFailed = false;
+    return Promise.resolve(patch);
   }
 
   // Starting a new request cancels any pending idle termination (the worker is
@@ -398,6 +439,11 @@ export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<Spe
     const finish = (patch: SpecPatch) => {
       if (settled) return;
       settled = true;
+      // FIX-3-6: distinguish a genuine no-op patch (worker replied with an
+      // empty patch object) from a failure empty patch (we resolved the shared
+      // EMPTY_PATCH constant ourselves). Reference equality does that: real
+      // worker responses always post a freshly-constructed object.
+      lastDiffFailed = patch === EMPTY_PATCH;
       clearTimeout(timer);
       worker.removeEventListener("message", onMessage);
       worker.onerror = null;

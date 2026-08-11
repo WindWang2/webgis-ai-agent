@@ -136,6 +136,27 @@ describe('buildSelectedFeatureSnapshot (FE-4 design §7)', () => {
     );
     expect(snap.bbox).toBeNull();
   });
+
+  it('truncates an oversized feature_id to ≤64 chars, still stable', () => {
+    const hugeId = 'x'.repeat(5000);
+    const snap = buildSelectedFeatureSnapshot({ ...base, featureId: hugeId }, []);
+    expect(snap.feature_id).toBe('x'.repeat(64)); // capped, never multi-KB
+    // Stable: the same huge id always maps to the same truncated value.
+    expect(buildSelectedFeatureSnapshot({ ...base, featureId: hugeId }, []).feature_id).toBe(
+      snap.feature_id,
+    );
+
+    // The id-like property fallback is bounded the same way.
+    const byProp = buildSelectedFeatureSnapshot(
+      { ...base, properties: { OBJECTID: 'y'.repeat(200), name: 'n' } },
+      [],
+    );
+    expect(byProp.feature_id).toBe('y'.repeat(64));
+
+    // Short ids and numbers pass through untouched.
+    expect(buildSelectedFeatureSnapshot({ ...base, featureId: 'abc' }, []).feature_id).toBe('abc');
+    expect(buildSelectedFeatureSnapshot({ ...base, featureId: 42 }, []).feature_id).toBe(42);
+  });
 });
 
 describe('useSSEStream mapState snapshot (FE-4 design §7)', () => {

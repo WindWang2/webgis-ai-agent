@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MapSpecRuntime } from "./runtime";
 import type { MapSpec } from "@/lib/mapspec-compiler/types";
+import { consumeDiffLastFailed, _resetWorkerBridgeForTests } from "@/lib/mapspec-compiler/worker-bridge";
+import { getPerfCounters, resetPerfCounters } from "@/lib/utils/perf-counters";
 
 // ADR-0036: MapSpecRuntime — applies a SpecPatch to a live (here: mocked) map.
 // House style: do NOT vi.mock('maplibre-gl'); hand-roll a stub map that records
@@ -392,6 +394,72 @@ describe("MapSpecRuntime (ADR-0036)", () => {
       rt.flush();
       await p2;
       expect(rt.getAppliedSpec()).toEqual(pointSpec("L2"));
+    });
+
+    // ── FIX-3-6: a failed worker diff must NOT advance appliedSpec ─────────
+
+    it("does not advance appliedSpec when the worker diff fails (empty patch)", async () => {
+      _resetWorkerBridgeForTests(); // drop any stale worker from a prior test
+      consumeDiffLastFailed(); // clear any leftover failed-diff flag
+      class FailingWorker {
+        onerror: ((event: ErrorEvent) => void) | null = null;
+        constructor(_url: URL, _opts?: { type?: string }) {}
+        postMessage() {
+          // Fail like a crashed worker: fire `onerror` and never post a response.
+          queueMicrotask(() => this.onerror?.({ type: "error" } as ErrorEvent));
+        }
+        addEventListener() {}
+        removeEventListener() {}
+        terminate() {}
+      }
+      vi.stubGlobal("Worker", FailingWorker as unknown as typeof Worker);
+
+      const rt = new MapSpecRuntime(map);
+      await rt.reconcileAsync(pointSpec());
+
+      // The failed diff resolved as the EMPTY patch, which the runtime must
+      // NOT treat as "specs equal": advancing appliedSpec would make
+      // interactive ids reference layers the map never received.
+      expect(rt.getAppliedSpec()).toBeNull();
+      expect(map._calls.addSource).toEqual([]);
+      expect(map._calls.addLayer).toEqual([]);
+      expect(consumeDiffLastFailed()).toBe(false); // flag was consumed
+    });
+
+    // ── FIX-3-7: perf counters count real work, not no-op churn ────────────
+
+    it("perf counters stay flat across no-op reconciles (count only real work)", async () => {
+      _resetWorkerBridgeForTests(); // drop any stale worker from a prior test
+      resetPerfCounters();
+      const rt = new MapSpecRuntime(map);
+
+      const p1 = rt.reconcileAsync(pointSpec());
+      rt.flush();
+      await p1;
+      await new Promise((r) => setTimeout(r, 0)); // drain any stray debouncer frame
+
+      const afterFirst = getPerfCounters();
+      // First apply = source + layer + z-order ops — real work IS counted.
+      expect(afterFirst.executedRenderOps).toBeGreaterThanOrEqual(3);
+      expect(afterFirst.debounceFrames).toBeGreaterThanOrEqual(1);
+
+      // N no-op reconciles of the SAME spec must not re-apply anything: each
+      // only enqueues the unique z-order completion marker (exactly 1 op).
+      const N = 5;
+      for (let i = 0; i < N; i++) {
+        const p = rt.reconcileAsync(pointSpec());
+        rt.flush();
+        await p;
+      }
+      await new Promise((r) => setTimeout(r, 0)); // drain trailing stray frames
+
+      const afterNoops = getPerfCounters();
+      const deltaOps = afterNoops.executedRenderOps - afterFirst.executedRenderOps;
+      const deltaFrames = afterNoops.debounceFrames - afterFirst.debounceFrames;
+      expect(deltaOps).toBe(N); // one marker op per no-op — no re-apply work
+      // Frame count stays bounded too (a stray empty rAF frame may add ≤1 per op).
+      expect(deltaFrames).toBeLessThanOrEqual(N * 3);
+      resetPerfCounters();
     });
   });
 });

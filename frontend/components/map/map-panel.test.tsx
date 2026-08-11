@@ -196,7 +196,7 @@ function featureOn(layerId: string, props: Record<string, unknown> = {}, geometr
 const clickPoint = { point: [10, 20], lngLat: { lng: 116.4, lat: 39.9 } };
 
 async function renderPanel(layers: Layer[]) {
-  render(
+  const view = render(
     <MapPanel layers={layers} onRemoveLayer={noop} onToggleLayer={noop} onViewportChange={noop} />,
   );
   // onLoad fires inside the mount effect → mapReady flips within render's act,
@@ -205,6 +205,21 @@ async function renderPanel(layers: Layer[]) {
   // Drain the runtime's debounced apply chain (setTimeout/rAF macrotask) inside
   // act so the reconcile's completion (appliedSpec → interactive ids) never
   // lands outside an act window.
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 100));
+  });
+  return view;
+}
+
+/** Re-render MapPanel with a new layer list (triggers a runtime reconcile). */
+function rerenderPanel(view: ReturnType<typeof render>, layers: Layer[]) {
+  view.rerender(
+    <MapPanel layers={layers} onRemoveLayer={noop} onToggleLayer={noop} onViewportChange={noop} />,
+  );
+}
+
+/** Drain the runtime's debounced apply chain after a rerender. */
+async function drainRuntime() {
   await act(async () => {
     await new Promise((r) => setTimeout(r, 100));
   });
@@ -366,12 +381,100 @@ describe('MapPanel — FE-3 interaction UX', () => {
     expect(isUserGesturing()).toBe(false);
     act(() => map._fire('dragstart', { originalEvent: {} }));
     expect(isUserGesturing()).toBe(true);
-    act(() => map._fire('dragend'));
+    // A real drag end carries originalEvent → decrements.
+    act(() => map._fire('dragend', { originalEvent: {} }));
     expect(isUserGesturing()).toBe(false);
 
     // Programmatic camera moves fire zoomstart WITHOUT originalEvent → ignored.
     act(() => map._fire('zoomstart', {}));
     expect(isUserGesturing()).toBe(false);
+  });
+
+  // FIX-3-1: programmatic end events (flyTo completion / map.stop) fire
+  // zoomend/pitchend/... WITHOUT originalEvent while the user is mid-gesture.
+  // An unguarded end handler decremented the counter and released the
+  // arbitration early, so the next AI camera command fought the user. Ends must
+  // only decrement gestures that started.
+  it('programmatic end events (no originalEvent) never release a user gesture mid-flight', async () => {
+    await renderPanel([]);
+    await settleInteractive([]);
+
+    const map = rmg.map;
+    act(() => map._fire('dragstart', { originalEvent: {} }));
+    expect(isUserGesturing()).toBe(true);
+
+    // A flyTo completion / map.stop fires end events WITHOUT originalEvent.
+    act(() => map._fire('dragend'));
+    act(() => map._fire('zoomend', {}));
+    act(() => map._fire('pitchend', { type: 'pitchend' }));
+    expect(isUserGesturing()).toBe(true); // still held — the user is dragging
+
+    // The REAL drag end (originalEvent present) finally releases it.
+    act(() => map._fire('dragend', { originalEvent: {} }));
+    expect(isUserGesturing()).toBe(false);
+  });
+
+  it('clears the hover tooltip when the cursor leaves the map (mouseout)', async () => {
+    renderPanel([pointLayer('poi', 'POI')]);
+    await settleInteractive(['poi__point']);
+
+    rmg.queryResults = [featureOn('poi__point', { a: 1, b: 2 })];
+    act(() => rmg.map._fire('mousemove', clickPoint));
+    expect(await screen.findByText('POI')).toBeTruthy();
+    expect(screen.getByText('a:')).toBeTruthy();
+
+    act(() => rmg.map._fire('mouseout', {}));
+    await waitFor(() => expect(screen.queryByText('POI')).toBeNull());
+    expect(screen.queryByText('a:')).toBeNull();
+  });
+
+  it('re-raises the selection highlight above spec layers after a reconcile', async () => {
+    const view = await renderPanel([pointLayer('poi', 'POI')]);
+    await settleInteractive(['poi__point']);
+
+    const geometry = { type: 'Point', coordinates: [116.4, 39.9] };
+    rmg.queryResults = [featureOn('poi__point', { name: 'X' }, geometry)];
+    act(() => rmg.lastOnClick?.(clickPoint));
+    await waitFor(() => expect(hud.state.selectedFeature).toBeTruthy());
+    await waitFor(() =>
+      expect(
+        rmg.map._calls.setData.some(
+          (c: { id: string }) => c.id === 'claude-selection-highlight',
+        ),
+      ).toBe(true),
+    );
+
+    // Reconcile with an added layer — syncLayerZOrder stacks the spec sublayers
+    // on top, burying the highlight; the panel must move it back to the top.
+    rerenderPanel(view, [pointLayer('poi', 'POI'), pointLayer('poi2', 'POI2')]);
+    await drainRuntime();
+
+    const hlMoves = rmg.map._calls.moveLayer.filter((c: { id: string }) =>
+      c.id.startsWith('claude-selection-highlight-'),
+    );
+    expect(hlMoves.length).toBeGreaterThan(0);
+    // moveLayer without beforeId → end of the layer order (top of the z-order).
+    expect(hlMoves[hlMoves.length - 1].beforeId).toBeNull();
+  });
+
+  it('clears selection + highlight when the selected layer is removed', async () => {
+    const view = await renderPanel([pointLayer('poi', 'POI')]);
+    await settleInteractive(['poi__point']);
+
+    rmg.queryResults = [featureOn('poi__point', { name: 'X' })];
+    act(() => rmg.lastOnClick?.(clickPoint));
+    await waitFor(() => expect(hud.state.selectedFeature).toBeTruthy());
+
+    // Remove the layer → the selection references a sublayer the map no longer
+    // has; the store selection + imperative highlight must both be cleared.
+    rerenderPanel(view, []);
+    await waitFor(() => expect(hud.state.selectedFeature).toBeNull());
+    await waitFor(() => {
+      const hlCalls = rmg.map._calls.setData.filter(
+        (c: { id: string }) => c.id === 'claude-selection-highlight',
+      );
+      expect((hlCalls[hlCalls.length - 1].data as any).features).toEqual([]);
+    });
   });
 
   it('move storm: memoized overlays do not re-render per frame', async () => {

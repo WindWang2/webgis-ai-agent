@@ -1,5 +1,5 @@
 import { diffSpecs, type SpecPatch } from "@/lib/mapspec-compiler/reconciler";
-import { diffSpecsAsync, disposeWorker } from "@/lib/mapspec-compiler/worker-bridge";
+import { diffSpecsAsync, disposeWorker, consumeDiffLastFailed } from "@/lib/mapspec-compiler/worker-bridge";
 import type { MapSpec, MapSpecSource, MapSpecLayer } from "@/lib/mapspec-compiler/types";
 import { RenderDebouncer, type RenderOperation } from "@/lib/map-kit/render-debouncer";
 import * as renderer from "@/lib/map-kit/renderer";
@@ -196,6 +196,22 @@ export class MapSpecRuntime {
    * Resolves once the patch's ops have run (or immediately if disposed).
    */
   private applyPatchDebounced(patch: SpecPatch, nextSpec: MapSpec): Promise<void> {
+    // FIX-3-6: a worker error/timeout resolves as the EMPTY patch, which is
+    // content-identical to a genuine no-op diff — but a failed diff is NOT a
+    // proof of equality, so the map never received `nextSpec`'s layers.
+    // Advancing appliedSpec here would make interactive ids claim layers that
+    // don't exist (the runtime's id registry derives from appliedSpec). When
+    // the worker-bridge flags a failure, skip advancement, clear the flag and
+    // resolve so the serialized reconcile chain keeps flowing (the caller's
+    // style-scan fallback then yields correct ids from the live map).
+    if (
+      patch.sources.length === 0 &&
+      patch.layers.length === 0 &&
+      consumeDiffLastFailed()
+    ) {
+      return Promise.resolve();
+    }
+
     const ops: RenderOperation[] = [];
 
     for (const change of patch.layers) {
