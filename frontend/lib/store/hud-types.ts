@@ -9,6 +9,10 @@ export interface SelectedFeatureInfo {
   point: [number, number];  // 鼠标点击的 [lng, lat]
   properties: Record<string, unknown>;
   selectedAt: number;       // epoch ms
+  // FE-4 (design §7)：稳定要素标识（id 属性或内容哈希）；缺省时由快照构造器回退
+  featureId?: string | number;
+  // FE-4 (design §7)：要素外接矩形 [W,S,E,N]，可算时给出（prompt 路径有界）
+  bbox?: [number, number, number, number] | null;
 }
 
 export type AiStatus = 'idle' | 'thinking' | 'acting' | 'done' | 'error';
