@@ -19,6 +19,13 @@ export const MapActionHandler = React.memo(function MapActionHandler() {
   const annotations = useHudStore((s) => s.annotations);
   const action = actions[0];
 
+  // V3: re-run guard. The effect re-runs when mapInstance identity changes
+  // mid-flight (e.g. MapProvider remounts while an action is at the queue head);
+  // without this guard it would re-execute run() for the same head action. The
+  // first run owns the settle; the ref is only overwritten when a *different*
+  // action takes the head. Keep the per-action pop guard (popAction is id-guarded).
+  const runningActionIdRef = React.useRef<string | null | undefined>(null);
+
   // Refresh annotation layers on map when annotations change in Zustand store
   useEffect(() => {
     if (!mapInstance) return;
@@ -31,6 +38,12 @@ export const MapActionHandler = React.memo(function MapActionHandler() {
   useEffect(() => {
     if (!action) return;
 
+    // Skip re-execution when this action is already being run by an earlier
+    // effect pass (the first run owns the settle). Production actions always
+    // carry an id (backend `ma-*` or client `fe-*` fallback); the ref is
+    // initialized to null so the very first run always proceeds.
+    if (runningActionIdRef.current === action.action_id) return;
+
     if (!mapInstance) {
       devOnly.warn('[MapActionHandler] No map instance found! (Is MapProvider missing or Map ID mismatch?)');
       return;
@@ -38,6 +51,8 @@ export const MapActionHandler = React.memo(function MapActionHandler() {
 
     const map = mapInstance.getMap();
     if (!map) return;
+
+    runningActionIdRef.current = action.action_id;
 
     // V3 (design §6): the handler owns dequeuing and terminal reporting. Every
     // action settles exactly once: queued → running → terminal (succeeded /

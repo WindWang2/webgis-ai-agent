@@ -21,6 +21,8 @@ import { devOnly } from '@/lib/utils/logger';
  * callback. This keeps the heavy exporter out of the first-load bundle of any
  * screen that renders the command catalogue (i.e. every map screen).
  */
+const EXPORT_RENDER_TIMEOUT_MS = 30_000;
+
 export const exportCommands: Record<string, CommandEntry> = {
   export_map: {
     requiredParams: () => true,
@@ -28,6 +30,25 @@ export const exportCommands: Record<string, CommandEntry> = {
       const { map, params, getHudState } = ctx;
 
       return new Promise<MapCommandResult>((resolve) => {
+        let settled = false;
+        // Holder object instead of `let` bindings (matches runCameraCommand's
+        // pattern): `timer` is assigned after `settle` is defined.
+        const handles: { timer?: ReturnType<typeof setTimeout> } = {};
+
+        const settle = (result: MapCommandResult) => {
+          if (settled) return;
+          settled = true;
+          if (handles.timer) clearTimeout(handles.timer);
+          resolve(result);
+        };
+
+        // Safety timeout: if `render` never fires (e.g. the canvas is hidden or
+        // the GL context is gone), the queue must not stall forever — same
+        // holder pattern as runCameraCommand.
+        handles.timer = setTimeout(() => {
+          settle({ status: 'failed', error: 'timeout' });
+        }, EXPORT_RENDER_TIMEOUT_MS);
+
         // F5: 异步 export 必须等 map.once('render') 真正回调完再 settle，否则
         // 连续触发 export 会让后一次在前一次还没合成完时覆盖 canvas。Handler
         // 在 promise settle 后才 popAction（设计 §6）。
@@ -42,9 +63,9 @@ export const exportCommands: Record<string, CommandEntry> = {
             );
             if (!outcome.ok) {
               devOnly.error('[export_map] Export failed:', outcome.error);
-              resolve({ status: 'failed', error: 'export_failed' });
+              settle({ status: 'failed', error: 'export_failed' });
             } else {
-              resolve({ status: 'succeeded' });
+              settle({ status: 'succeeded' });
             }
           } catch (e) {
             devOnly.error('[export_map] Unexpected error:', e);
@@ -55,7 +76,7 @@ export const exportCommands: Record<string, CommandEntry> = {
             } catch {
               /* defensive */
             }
-            resolve({ status: 'failed', error: 'export_error' });
+            settle({ status: 'failed', error: 'export_error' });
           }
         });
         map.triggerRepaint();

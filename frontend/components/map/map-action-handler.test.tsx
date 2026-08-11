@@ -85,6 +85,17 @@ const mockClearAnnotations = vi.fn(() => {
 let mockLayersStore: Array<{ id: string; name?: string; style?: any }> = [];
 let mockAnnotationsStore: any[] = [];
 
+// External-store plumbing for the useHudStore hook mock: lets tests force a
+// re-render (e.g. to simulate a mapInstance identity change mid-flight) by
+// emitting a change that the hook subscription observes. `mock`-prefixed so the
+// vi.mock factory below may reference them (vitest hoisting rule).
+const mockHudListeners = new Set<() => void>();
+let mockHudVersion = 0;
+const mockEmitHudChange = () => {
+  mockHudVersion += 1;
+  for (const listener of Array.from(mockHudListeners)) listener();
+};
+
 // Zustand stores are callable as hooks AND expose .getState().
 // MapActionHandler uses both shapes:
 //   - `useHudStore((s) => s.annotations)` at render (hook subscription)
@@ -92,7 +103,8 @@ let mockAnnotationsStore: any[] = [];
 // The mock factory builds the store inside itself (so the binding exists when the
 // hoisted vi.mock runs); the module-level mock fns (mockSetBaseLayer etc.) are
 // referenced by closure and resolve at call time.
-vi.mock('@/lib/store/useHudStore', () => {
+vi.mock('@/lib/store/useHudStore', async () => {
+  const React = await import('react');
   const buildState = () => ({
     // Lazy getters so test mutations to mockLayersStore/mockAnnotationsStore are seen live
     get layers() { return mockLayersStore; },
@@ -104,10 +116,21 @@ vi.mock('@/lib/store/useHudStore', () => {
     addAnnotation: mockAddAnnotation,
     clearAnnotations: mockClearAnnotations,
   });
-  // Callable as a hook: useHudStore(selector) → selector(state).
+  // Callable as a hook: useHudStore(selector) → selector(state), subscribing so
+  // mockEmitHudChange() re-renders subscribers.
   // Also exposes .getState() for imperative reads.
   const useHudStore = Object.assign(
-    (selector?: (s: any) => any) => (selector ? selector(buildState()) : buildState()),
+    (selector?: (s: any) => any) => {
+      React.useSyncExternalStore(
+        (listener) => {
+          mockHudListeners.add(listener);
+          return () => mockHudListeners.delete(listener);
+        },
+        () => mockHudVersion,
+        () => mockHudVersion,
+      );
+      return selector ? selector(buildState()) : buildState();
+    },
     { getState: buildState },
   );
   return { useHudStore };
@@ -760,6 +783,37 @@ describe('MapActionHandler', () => {
     expect(capturedMoveend).toBeDefined(); // the stale moveend never fired
   });
 
+  it('V3: effect re-run with the same head action does not re-execute run() (runningActionIdRef guard)', async () => {
+    // Hold moveend back so the camera promise stays pending while we re-render.
+    let capturedMoveend: (() => void) | undefined;
+    (mapMockInstance.once as any).mockImplementationOnce((_e: string, cb: () => void) => {
+      capturedMoveend = cb;
+    });
+    actions = [{ command: 'fly_to', params: { center: [116, 39], zoom: 12 } }];
+
+    render(<MapActionHandler />);
+    expect(mockFlyTo).toHaveBeenCalledTimes(1);
+    expect(reportTerminalFn).not.toHaveBeenCalled(); // still running
+
+    // mapInstance identity changes on every useMap() call — force a re-render
+    // via the HUD store subscription (simulates MapProvider remount mid-flight
+    // with the same action at the queue head). The runningActionIdRef guard must
+    // skip the duplicate execution: the first run owns the settle.
+    await act(async () => {
+      mockEmitHudChange();
+    });
+
+    expect(mockFlyTo).toHaveBeenCalledTimes(1); // NOT re-executed
+    expect(reportTerminalFn).not.toHaveBeenCalled(); // first run still owns the settle
+
+    // first run completes normally → single terminal report + single pop
+    await act(async () => {
+      capturedMoveend?.();
+    });
+    expect(reportTerminalFn).toHaveBeenCalledTimes(1);
+    expect(popAction).toHaveBeenCalledTimes(1);
+  });
+
   it('V3: throw inside run → failed ack + user system message preserved', async () => {
     mockClearAnnotations.mockImplementationOnce(() => {
       throw new Error('boom');
@@ -817,5 +871,196 @@ describe('MapActionHandler', () => {
       expect.objectContaining({ error: 'export_failed' }),
     );
     expect(popAction).toHaveBeenCalled();
+  });
+
+  // ─── V3 review FIX-2 ────────────────────────────────────────────────────
+  // (5) [P1] missing-layer acks: remove_layer / layer_visibility_update /
+  // layer_style_update returned void (succeeded) when the target layer does not
+  // exist (silent no-op forEach). They now fail with target_not_found and the
+  // map is NOT mutated with fabricated ids.
+
+  it('V3 FIX-2: remove_layer with a missing target → failed ack target_not_found, no fabricated-id map mutation', async () => {
+    actions = [{ command: 'remove_layer', params: { layerId: 'ghost-layer' } }];
+    const map = mockGetMap();
+    (map.getStyle as any).mockReturnValue({ layers: [] }); // no custom-ghost-layer anywhere
+    mockLayersStore = []; // and not in the store either
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'remove_layer' }),
+      'failed',
+      expect.objectContaining({ error: 'target_not_found' }),
+    );
+    expect(map.removeLayer).not.toHaveBeenCalled();
+    expect(map.removeSource).not.toHaveBeenCalled();
+    expect(mockRemoveLayer).not.toHaveBeenCalled();
+    expect(popAction).toHaveBeenCalled();
+  });
+
+  it('V3 FIX-2: layer_visibility_update with a missing target → failed ack target_not_found, no store update', async () => {
+    actions = [{ command: 'LAYER_VISIBILITY_UPDATE', params: { layer_id: 'ghost-layer', visible: false } }];
+    const map = mockGetMap();
+    (map.getStyle as any).mockReturnValue({ layers: [] });
+    mockLayersStore = [];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'LAYER_VISIBILITY_UPDATE' }),
+      'failed',
+      expect.objectContaining({ error: 'target_not_found' }),
+    );
+    expect(mockUpdateLayer).not.toHaveBeenCalled();
+    expect(popAction).toHaveBeenCalled();
+  });
+
+  it('V3 FIX-2: layer_style_update with a missing target → failed ack target_not_found', async () => {
+    actions = [{ command: 'LAYER_STYLE_UPDATE', params: { layer_id: 'ghost-layer', style: { color: '#f00' } } }];
+    const map = mockGetMap();
+    (map.getStyle as any).mockReturnValue({ layers: [] });
+    mockLayersStore = [];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'LAYER_STYLE_UPDATE' }),
+      'failed',
+      expect.objectContaining({ error: 'target_not_found' }),
+    );
+    expect(popAction).toHaveBeenCalled();
+  });
+
+  // (8) [P2] base_layer_change no-match + reorder_layer missing-layer reach
+  // explicit failed acks (target_not_found) — tests pin the failed terminal.
+
+  it('V3 FIX-2: BASE_LAYER_CHANGE with no matching provider → failed ack target_not_found', async () => {
+    actions = [{ command: 'BASE_LAYER_CHANGE', params: { name: 'NonExistentLayer' } }];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'BASE_LAYER_CHANGE' }),
+      'failed',
+      expect.objectContaining({ error: 'target_not_found' }),
+    );
+    expect(mockSetSelectedBaseLayer).not.toHaveBeenCalled();
+    expect(mockSetBaseLayer).not.toHaveBeenCalled();
+    expect(popAction).toHaveBeenCalled();
+  });
+
+  it('V3 FIX-2: REORDER_LAYER with a missing layer → failed ack target_not_found, moveLayer NOT called', async () => {
+    actions = [{ command: 'REORDER_LAYER', params: { layer_id: 'ghost', position: 'top' } }];
+    const map = mockGetMap();
+    (map.getStyle as any).mockReturnValue({ layers: [{ id: 'custom-other' }] });
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'REORDER_LAYER' }),
+      'failed',
+      expect.objectContaining({ error: 'target_not_found' }),
+    );
+    expect(map.moveLayer).not.toHaveBeenCalled();
+    expect(popAction).toHaveBeenCalled();
+  });
+
+  // (8) [P2] add_layer legacy {id} form: the run body now reads `id` as the
+  // layerId fallback (the validator already accepted it — the run didn't).
+
+  it('V3 FIX-2: add_layer legacy {id} params work and ack confirmed (id → layerId fallback)', async () => {
+    const geojson = { type: 'FeatureCollection', features: [] };
+    actions = [{ command: 'add_layer', params: { id: 'legacy-layer', type: 'fill', geojson } }];
+    const map = mockGetMap();
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(map.addSource).toHaveBeenCalledWith('custom-legacy-layer', expect.anything());
+    expect(map.addLayer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'custom-legacy-layer', source: 'custom-legacy-layer' }),
+      undefined,
+    );
+    // (6) [P2] layer add now carries a verifiable marker
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'add_layer' }),
+      'succeeded',
+      expect.objectContaining({ actual: { confirmed: true } }),
+    );
+    expect(popAction).toHaveBeenCalled();
+  });
+
+  // (6) [P2] verifiable `actual` for layer/annotation commands — the harness
+  // InteractionStateConvergenceRate needs actual.confirmed after a mutation.
+
+  it('V3 FIX-2: REORDER_LAYER success ack carries actual {confirmed:true}', async () => {
+    actions = [{ command: 'REORDER_LAYER', params: { layer_id: 'reorder-layer', position: 'top' } }];
+    const map = mockGetMap();
+    (map.getStyle as any).mockReturnValue({
+      layers: [{ id: 'custom-other-layer' }, { id: 'custom-reorder-layer' }],
+    });
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'REORDER_LAYER' }),
+      'succeeded',
+      expect.objectContaining({ actual: { confirmed: true } }),
+    );
+  });
+
+  it('V3 FIX-2: remove_layer success ack carries actual {confirmed:true}', async () => {
+    actions = [{ command: 'remove_layer', params: { layerId: 'target-layer' } }];
+    const map = mockGetMap();
+    (map.getStyle as any).mockReturnValue({ layers: [{ id: 'custom-target-layer' }] });
+    (map.getSource as any).mockReturnValue(true);
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(map.removeLayer).toHaveBeenCalledWith('custom-target-layer');
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'remove_layer' }),
+      'succeeded',
+      expect.objectContaining({ actual: { confirmed: true } }),
+    );
+  });
+
+  it('V3 FIX-2: add_marker success ack carries actual {confirmed:true}', async () => {
+    actions = [{ command: 'add_marker', params: { longitude: 116.4, latitude: 39.9, label: 'M' } }];
+    const map = mockGetMap();
+    const mockSetData = vi.fn();
+    let sourceExists = false;
+    (map.getSource as any).mockImplementation((id: string) =>
+      id === 'claude-annotations' && sourceExists ? { setData: mockSetData } : null,
+    );
+    (map.addSource as any).mockImplementation((id: string) => {
+      if (id === 'claude-annotations') sourceExists = true;
+    });
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(mockSetData).toHaveBeenCalled();
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'add_marker' }),
+      'succeeded',
+      expect.objectContaining({ actual: { confirmed: true } }),
+    );
   });
 });

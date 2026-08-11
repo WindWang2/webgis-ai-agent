@@ -70,20 +70,25 @@ function runCameraCommand(
         settle({ status: 'failed', error: 'timeout' });
       }, CAMERA_SAFETY_TIMEOUT_MS);
 
-      // User gesture mid-flight → the human owns the camera now; MapLibre has
-      // already stopped the animation (design §6) — resolve superseded.
+      // User gesture mid-flight → the human owns the camera now (design §6).
+      // Settle superseded FIRST and never call map.stop() ourselves: in real
+      // MapLibre stop() fires moveend synchronously, so the once('moveend')
+      // settle would win and the action would ack SUCCEEDED — and stop() would
+      // also reset the user's active gesture handlers. MapLibre stops the
+      // in-flight animation itself when a user gesture begins.
       handles.offGesture = onUserGestureStart(() => {
-        try {
-          map.stop();
-        } catch {
-          /* defensive */
-        }
         settle({ status: 'failed', error: 'superseded_by_user' });
       });
 
       // Settled viewport = the actual state the backend can verify convergence
       // against (requested center/zoom vs actual within tolerance).
       map.once('moveend', () => {
+        // dragstart can fire after the interrupt moveend — if the user already
+        // owns the camera at this moment, never ack SUCCEEDED.
+        if (isUserGesturing()) {
+          settle({ status: 'failed', error: 'superseded_by_user' });
+          return;
+        }
         settle({
           status: 'succeeded',
           result: settledViewport(map),
@@ -147,10 +152,16 @@ export const viewCommands: Record<string, CommandEntry> = {
   set_map_view: {
     requiredParams: (p) => Array.isArray(p.center) || typeof p.zoom === 'number',
     run(ctx) {
-      return runCameraCommand(ctx, (c) => {
-        const { map, params } = c;
-        const { zoom, bearing, pitch } = params || {};
-        if (zoom === undefined && bearing === undefined && pitch === undefined) return;
+      const { map, params } = ctx;
+      const { zoom, bearing, pitch } = params || {};
+      if (zoom === undefined && bearing === undefined && pitch === undefined) {
+        // No effective camera params (e.g. only `center`) → nothing would move,
+        // so no moveend will ever fire. Settle succeeded immediately with the
+        // current camera as actual — otherwise the queue would stall 10s and ack
+        // `timeout` for a no-op request.
+        return { status: 'succeeded', result: settledViewport(map) };
+      }
+      return runCameraCommand(ctx, () => {
         const center = map.getCenter();
         navigation.flyTo(map, {
           center: [center.lng, center.lat],
