@@ -43,10 +43,13 @@ from typing import Optional
 
 from app.utils.sse import _is_terminal_event, sse_event_id
 
-# Ring-buffer depth per turn: the tail a dropped client missed. 64 events ≈ two
-# batched token bursts + their structural events, comfortably more than a
-# reconnect backoff window (500ms–2s) can produce.
-RESUME_MAX_EVENTS = 64
+# Ring-buffer depth per turn: the tail a dropped client missed. 256 events is
+# comfortably larger than any single turn can plausibly emit (token bursts +
+# structural events + a tool loop of map commands), so a dropped client never
+# misses un-replayed step_results / commands merely because the ring was too
+# small — while staying bounded per turn (Round-2 P3: was 64, which could
+# silently evict un-replayed step_results under a long multi-command turn).
+RESUME_MAX_EVENTS = 256
 # Process-wide cap on buffered turns (one per session); oldest evicted first.
 RESUME_MAX_SESSIONS = 32
 

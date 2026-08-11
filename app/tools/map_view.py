@@ -108,7 +108,8 @@ def register_map_view_tools(registry: ToolRegistry):
             "success": True,
             "command": "fly_to",
             "params": params,
-            "message": f"地图已飞行至 ({longitude:.4f}, {latitude:.4f}) zoom={zoom}",
+            # 审计 R2：不得在收到前端 ACK 前声称相机已移动 —— 这里只确认指令已下发。
+            "message": f"飞行指令已下发 ({longitude:.4f}, {latitude:.4f}) zoom={zoom}，等待前端执行",
         }
 
     @tool(

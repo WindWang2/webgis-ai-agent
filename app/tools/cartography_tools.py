@@ -144,7 +144,11 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
     view = (res.get("mapspec") or {}).get("view", {})
     out: Dict[str, Any] = {"view": view}
     if res.get("success"):
-      out["summary"] = f"View updated to {view}"
+      # Round-2 P2：LLM 可见文本绝不声称相机已移动 —— 工具层只完成了 mapspec.view
+      # 写入 + 下发 fly_to 指令，前端是否真正落定相机由 ACK 证据闭环判定
+      # （后端 _is_verifiable_ack 从 actual 重算收敛）。此前 "View updated to …"
+      # 在没有任何实时 ACK 前就向 LLM 宣称更新完成，属于"假成功"自我表扬。
+      out["summary"] = "视图指令已下发，等待前端执行"
       # HARNESS-V3 / BE-3: 此前只写 mapspec.view，实时相机从不动。这里在调用方
       # 确实传了视图参数时，同步 runtime map_state.viewport（无 seq 的服务端真相
       # 写入，同 ws_service 的 viewport 契约），并下发 fly_to 命令让前端相机移动。

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from app.lib.harness.evidence import (
     EvaluationRun,
@@ -98,26 +98,34 @@ def _camera_match(requested: Any, actual: Any) -> bool:
 
 
 def _is_verifiable_ack(ev: MapActionEvidence) -> bool:
-    """ACK 是否可验证收敛：
+    """ACK 是否可验证收敛（Round-2 P1：存储侧直接 ACK 不可验证）：
     - 相机类：requested 与 actual 都带 center+zoom → 后端可重算；
-    - 图层增删等：actual.confirmed 存在；
-    - 其它：仅当 actual 显式携带 converged 提示。
+    - 图层增删等：actual.confirmed 必须为 True（键存在不算，False 不算）；
+    - store_mounted / store_updated 等"存储侧直接 ACK"只证明挂载/写入成功，
+      不证明地图状态收敛 → 无论是否带 converged hint 都不可验证（排除出
+      InteractionStateConvergenceRate 分母，但仍计终态 ACK：coverage/success 照算）；
+    - 其它：仅当 actual 显式携带 converged 提示（无数据可重算时的兜底）。
     """
     actual = ev.actual or {}
     if _has_camera_state(ev.requested) and _has_camera_state(actual):
         return True
-    return "confirmed" in actual or "converged" in actual
+    if actual.get("store_mounted") or actual.get("store_updated"):
+        return False
+    return actual.get("confirmed") is True or actual.get("converged") is True
 
 
 def _ack_converged(ev: MapActionEvidence) -> bool:
     """单条 ACK 是否收敛（design §5）。
 
     数据优先：相机数据齐全时后端重算（hint 仅供参考，绝不单独采信）；
-    confirmed/converged 提示仅在无数据可重算时兜底。
+    confirmed/converged 提示仅在无数据可重算时兜底；store_mounted /
+    store_updated 存储侧 ACK 永不判收敛（挂载成功 ≠ 地图状态收敛）。
     """
     actual = ev.actual or {}
     if _has_camera_state(ev.requested) and _has_camera_state(actual):
         return _camera_match(ev.requested, actual)
+    if actual.get("store_mounted") or actual.get("store_updated"):
+        return False
     if "confirmed" in actual:
         return actual.get("confirmed") is True
     return actual.get("converged") is True
@@ -166,8 +174,10 @@ class PiAgentHarness:
         self.mapspec_mutations: List[Dict[str, Any]] = []
         self.ref_cursors: List[Dict[str, Any]] = []
         self.exceptions: List[Dict[str, Any]] = []
-        self.recovered_exceptions_count: int = 0
-        self._in_error_state: bool = False
+        # Round-2 P2：单例 harness 跨 session 累积时，错误状态必须按 session
+        # 隔离 —— session A 的错误绝不能被 session B 的后续成功"恢复"。
+        self._recovered_exceptions_count: Dict[str, int] = {}
+        self._in_error_state: set = set()
 
         # V3: 已发出的地图动作（issued 侧证据，FIFO 上限与其它累积面一致）。
         # 终态 ACK 由前端经 session store 上报；evaluate_with_evidence 通过
@@ -182,7 +192,9 @@ class PiAgentHarness:
         self._active_turn_id: str = ""
         # Cached real resolutions from the last evaluate_with_evidence() pass;
         # lets the sync compute_* surface reflect real data instead of faking.
-        self._resolved_refs: Dict[str, RefResolution] = {}
+        # Round-2 P2：以 (session_id, ref) 为键 —— 单例跨 session 时同一 ref
+        # 字符串在两个会话的解析结果不得互相污染。
+        self._resolved_refs: Dict[Tuple[str, str], RefResolution] = {}
         self._validity_cache: Dict[str, MapSpecValidityEvidence] = {}
 
     # ── FIFO cap + correlation stamping ──────────────────────────────────
@@ -213,8 +225,8 @@ class PiAgentHarness:
         self._map_action_evidence.clear()
         self._resolved_refs.clear()
         self._validity_cache.clear()
-        self.recovered_exceptions_count = 0
-        self._in_error_state = False
+        self._recovered_exceptions_count.clear()
+        self._in_error_state.clear()
 
     # ── Raw event recording (sync, legacy-compatible) ────────────────────
 
@@ -226,25 +238,30 @@ class PiAgentHarness:
         *,
         run_id: str = "",
         turn_id: str = "",
+        session_id: str = "",
     ) -> Dict[str, Any]:
         """记录一次工具调用。
 
         V3 新增可选 per-record run_id/turn_id：显式透传（生产路径绝不调用全局
         set_correlation —— 单例 harness 跨 session 累积，全局 correlation 会互相
         污染）。缺省回退到当前 _active_run_id/_active_turn_id（向后兼容）。
+        Round-2 新增可选 per-record session_id：record_event 从事件显式透传真实
+        session（绝不改写 self.session_id —— 那是评估目标）；缺省回退
+        self.session_id（向后兼容）。
         """
         eff_run_id = run_id or self._active_run_id
         eff_turn_id = turn_id or self._active_turn_id
+        eff_session_id = session_id or self.session_id
         call_entry = {
             "tool_call_id": tool_call_id,
             "name": name,
             "arguments": arguments or {},
             "run_id": eff_run_id,
             "turn_id": eff_turn_id,
-            "session_id": self.session_id,
+            "session_id": eff_session_id,
         }
         self._append_capped(self.tool_calls, call_entry)
-        self._scan_and_record_ref_cursors(tool_call_id, arguments)
+        self._scan_and_record_ref_cursors(tool_call_id, arguments, eff_session_id)
 
         if name in MAPSPEC_MUTATION_TOOLS:
             self._append_capped(self.mapspec_mutations, {
@@ -254,7 +271,7 @@ class PiAgentHarness:
                 "is_valid": False,
                 "run_id": eff_run_id,
                 "turn_id": eff_turn_id,
-                "session_id": self.session_id,
+                "session_id": eff_session_id,
             })
         return call_entry
 
@@ -268,13 +285,18 @@ class PiAgentHarness:
         *,
         run_id: str = "",
         turn_id: str = "",
+        session_id: str = "",
     ) -> Dict[str, Any]:
         """记录一次工具结果。
 
         V3 新增可选 per-record run_id/turn_id（语义同 record_tool_call）。
+        Round-2 新增可选 per-record session_id：结果/异常条目按真实 session 归属，
+        错误恢复状态（_in_error_state / _recovered_exceptions_count）按 session
+        隔离 —— 单例 harness 跨 session 时，A 的错误绝不被 B 的成功"恢复"。
         """
         eff_run_id = run_id or self._active_run_id
         eff_turn_id = turn_id or self._active_turn_id
+        eff_session_id = session_id or self.session_id
         result_entry = {
             "tool_call_id": tool_call_id,
             "name": name,
@@ -283,6 +305,7 @@ class PiAgentHarness:
             "error_msg": error_msg or "",
             "run_id": eff_run_id,
             "turn_id": eff_turn_id,
+            "session_id": eff_session_id,
         }
         self._append_capped(self.tool_results, result_entry)
 
@@ -293,12 +316,15 @@ class PiAgentHarness:
                 "error_msg": error_msg or "",
                 "run_id": eff_run_id,
                 "turn_id": eff_turn_id,
+                "session_id": eff_session_id,
             })
-            self._in_error_state = True
+            self._in_error_state.add(eff_session_id)
         else:
-            if self._in_error_state:
-                self.recovered_exceptions_count += 1
-                self._in_error_state = False
+            if eff_session_id in self._in_error_state:
+                self._recovered_exceptions_count[eff_session_id] = (
+                    self._recovered_exceptions_count.get(eff_session_id, 0) + 1
+                )
+                self._in_error_state.discard(eff_session_id)
 
         if name in MAPSPEC_MUTATION_TOOLS:
             # V2: MapSpec validity derives from REAL evidence — the tool result
@@ -306,7 +332,10 @@ class PiAgentHarness:
             # from MapSpecLifecycleEngine) and ``success``. "Didn't error" alone
             # is mutation_accepted, NOT semantic validity.
             for mutation in reversed(self.mapspec_mutations):
-                if mutation["tool_call_id"] == tool_call_id:
+                if (
+                    mutation["tool_call_id"] == tool_call_id
+                    and mutation.get("session_id") == eff_session_id
+                ):
                     mutation_accepted = (
                         not is_error and result.get("success", True) is not False
                     )
@@ -321,16 +350,22 @@ class PiAgentHarness:
         return result_entry
 
     def record_sse_event(self, event: Dict[str, Any]) -> None:
+        """记录一条 SSE 事件。Round-2 P2：补 session_id 归属戳（事件本身不携带
+        session 时回退评估目标），使 sse_events 可被 session 过滤/审计。"""
+        if not event.get("session_id"):
+            event["session_id"] = self.session_id
         self._append_capped(self.sse_events, event)
 
     def record_event(self, event: ToolCallEvent) -> None:
-        # Honour any session_id carried on the event for correlation.
-        if getattr(event, "session_id", None):
-            self.session_id = event.session_id  # type: ignore[assignment]
+        # Round-2 P2：绝不改写 self.session_id —— 那是本 harness 的评估目标
+        # （单例跨 session 时被 event 轮番改写会让"评估哪个 session"失去锚点）。
+        # 事件携带的真实 session 通过 per-record 参数显式透传，记录按真实
+        # session 归属，评估读取按 self.session_id 过滤，互不污染。
         self.record_tool_call(
             tool_call_id=event.tool_call_id,
             name=event.tool_name,
             arguments=event.arguments,
+            session_id=event.session_id,
         )
         self.record_tool_result(
             tool_call_id=event.tool_call_id,
@@ -338,6 +373,7 @@ class PiAgentHarness:
             result=event.result,
             is_error=event.is_error,
             error_msg=event.error_msg,
+            session_id=event.session_id,
         )
 
     def record_map_action_issued(
@@ -378,7 +414,9 @@ class PiAgentHarness:
 
     # ── Ref cursor scanning ──────────────────────────────────────────────
 
-    def _scan_and_record_ref_cursors(self, tool_call_id: str, args: Dict[str, Any]) -> None:
+    def _scan_and_record_ref_cursors(
+        self, tool_call_id: str, args: Dict[str, Any], session_id: str = ""
+    ) -> None:
         args_str = str(args)
         found_refs = set(REF_CURSOR_PATTERN.findall(args_str))
         for ref in found_refs:
@@ -391,7 +429,7 @@ class PiAgentHarness:
                 "is_resolved": False,
                 "status": RefResolutionStatus.SYNTACTICALLY_VALID.value,
                 "run_id": self._active_run_id,
-                "session_id": self.session_id,
+                "session_id": session_id or self.session_id,
             })
 
     # ── V2: real async evaluation against the SessionStore / validator ──
@@ -424,9 +462,14 @@ class PiAgentHarness:
             ideal_step_count=ideal_step_count,
         )
 
-        # 1. Resolve every recorded ref cursor against the real SessionStore.
+        # 1. Resolve every recorded ref cursor against the real SessionStore —
+        #    Round-2 P2：仅当前评估 session 的 refs（单例 harness 跨 session 时，
+        #    其它会话的 refs 不得用本 session 的 store 解析，也不得写坏它们的
+        #    状态位）；解析结果按 (session_id, ref) 缓存，避免同 ref 跨会话污染。
         if self.ref_resolver is not None:
             for rc in self.ref_cursors:
+                if rc.get("session_id") != self.session_id:
+                    continue
                 ref = rc["ref_cursor"]
                 try:
                     resolution = await self.ref_resolver(self.session_id, ref)
@@ -437,7 +480,7 @@ class PiAgentHarness:
                         status=RefResolutionStatus.NOT_FOUND,
                         detail=f"resolver error: {e}",
                     )
-                self._resolved_refs[ref] = resolution
+                self._resolved_refs[(self.session_id, ref)] = resolution
                 rc["is_resolved"] = resolution.is_resolved
                 rc["status"] = resolution.status.value
         # If no resolver wired: refs remain SYNTACTICALLY_VALID (not resolved) —
@@ -449,16 +492,25 @@ class PiAgentHarness:
         )
 
         # 2. Build per-tool-call evidence with correlation + validity ladder.
-        results_by_id = {r["tool_call_id"]: r for r in self.tool_results}
+        #    Round-2 P2：所有读取面按 session_id === self.session_id 过滤（镜像
+        #    _build_map_action_evidence 的 issued 侧隔离）—— 单例 harness 跨
+        #    session 累积时，非交互表面同样不得混入其它会话的工具/结果/refs。
+        results_by_id = {
+            r["tool_call_id"]: r for r in self.tool_results
+            if r.get("session_id") == self.session_id
+        }
         mutation_results = {
             m["tool_call_id"]: m for m in self.mapspec_mutations
+            if m.get("session_id") == self.session_id
         }
 
         for tc in self.tool_calls:
+            if tc.get("session_id") != self.session_id:
+                continue
             tcid = tc["tool_call_id"]
             res = results_by_id.get(tcid, {})
             refs_for_call = [
-                self._resolved_refs.get(rc["ref_cursor"])
+                self._resolved_refs.get((self.session_id, rc["ref_cursor"]))
                 or RefResolution(
                     ref=rc["ref_cursor"],
                     session_id=self.session_id,
@@ -466,6 +518,7 @@ class PiAgentHarness:
                 )
                 for rc in self.ref_cursors
                 if rc["tool_call_id"] == tcid
+                and rc.get("session_id") == self.session_id
             ]
 
             validity: Optional[MapSpecValidityEvidence] = None
@@ -502,7 +555,8 @@ class PiAgentHarness:
             "metrics": float_metrics,
             "ref_resolutions": {
                 ref: {"status": r.status.value, "resolved": r.is_resolved}
-                for ref, r in self._resolved_refs.items()
+                for (sid, ref), r in self._resolved_refs.items()
+                if sid == self.session_id
             },
             # V3: 交互段（issued 侧 vs 终态 acked 侧）。
             "interaction": self._interaction_section(),
@@ -702,7 +756,10 @@ class PiAgentHarness:
     def compute_tool_choice_accuracy(self, expected_tools: List[str]) -> float:
         if not expected_tools:
             return 100.0
-        invoked_tools = [tc["name"] for tc in self.tool_calls]
+        invoked_tools = [
+            tc["name"] for tc in self.tool_calls
+            if tc.get("session_id") == self.session_id
+        ]
         expected_remaining = list(expected_tools)
         correct = 0
         for tool in invoked_tools:
@@ -721,8 +778,14 @@ class PiAgentHarness:
         """
         if not self.mapspec_mutations:
             return 0.0
-        valid_count = sum(1 for m in self.mapspec_mutations if m.get("is_valid", False))
-        validity = (valid_count / len(self.mapspec_mutations)) * 100.0
+        mutations = [
+            m for m in self.mapspec_mutations
+            if m.get("session_id") == self.session_id
+        ]
+        if not mutations:
+            return 0.0
+        valid_count = sum(1 for m in mutations if m.get("is_valid", False))
+        validity = (valid_count / len(mutations)) * 100.0
         return min(100.0, max(0.0, validity))
 
     def compute_cursor_resolution_rate(self) -> float:
@@ -731,24 +794,35 @@ class PiAgentHarness:
         V2: syntactic-only refs (no resolver run, or resolver returned not-found /
         wrong-session) do NOT count. No refs recorded → 0.0 (no evidence), not 100.0.
         """
-        if not self.ref_cursors:
+        cursors = [
+            c for c in self.ref_cursors
+            if c.get("session_id") == self.session_id
+        ]
+        if not cursors:
             return 0.0
-        resolved_count = sum(1 for c in self.ref_cursors if c.get("is_resolved", False))
-        rate = (resolved_count / len(self.ref_cursors)) * 100.0
+        resolved_count = sum(1 for c in cursors if c.get("is_resolved", False))
+        rate = (resolved_count / len(cursors)) * 100.0
         return min(100.0, max(0.0, rate))
 
     def compute_step_efficiency(self, ideal_step_count: int) -> float:
-        actual_step_count = len(self.tool_calls)
+        actual_step_count = sum(
+            1 for tc in self.tool_calls
+            if tc.get("session_id") == self.session_id
+        )
         if actual_step_count == 0:
             return 100.0 if ideal_step_count == 0 else 0.0
         efficiency = (ideal_step_count / actual_step_count) * 100.0
         return min(100.0, max(0.0, efficiency))
 
     def compute_error_recovery_rate(self) -> float:
-        total_exceptions = len(self.exceptions)
+        total_exceptions = sum(
+            1 for e in self.exceptions
+            if e.get("session_id") == self.session_id
+        )
         if total_exceptions == 0:
             return 100.0
-        rate = (self.recovered_exceptions_count / total_exceptions) * 100.0
+        recovered = self._recovered_exceptions_count.get(self.session_id, 0)
+        rate = (recovered / total_exceptions) * 100.0
         return min(100.0, max(0.0, rate))
 
     # ── V3: 地图交互闭环指标（design §5，缺失证据 → 0.0，绝不为 100）────────
@@ -800,8 +874,14 @@ class PiAgentHarness:
                 "ErrorRecoveryRate": round(self.compute_error_recovery_rate(), 2),
             },
             "counts": {
-                "ToolCallsCount": float(len(self.tool_calls)),
-                "ExceptionsCount": float(len(self.exceptions)),
+                "ToolCallsCount": float(sum(
+                    1 for tc in self.tool_calls
+                    if tc.get("session_id") == self.session_id
+                )),
+                "ExceptionsCount": float(sum(
+                    1 for e in self.exceptions
+                    if e.get("session_id") == self.session_id
+                )),
             },
         }
 

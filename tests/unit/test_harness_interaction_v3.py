@@ -34,6 +34,7 @@ from app.lib.harness.pi_agent_harness import (
     _is_verifiable_ack,
 )
 from app.lib.harness.ref_resolver import make_session_store_resolver
+from app.lib.harness.tool_call_event import ToolCallEvent
 from app.services.tool_dispatch_service import (
     MAP_ACTION_ID_PREFIX,
     REQUESTED_SNAPSHOT_MAX_BYTES,
@@ -268,6 +269,30 @@ def test_convergence_layer_confirmed_and_hint_fallback():
     assert _is_verifiable_ack(nothing) is False
 
 
+def test_store_direct_acks_not_verifiable_even_with_converged_hint():
+    """Round-2 P1：存储侧直接 ACK（store_mounted / store_updated）只证明挂载/写入
+    成功，不证明地图状态收敛 —— 即使前端附带 converged:true hint 也不可验证（否则
+    前端可凭"store 挂上了"自我表扬收敛）。confirmed 必须为 True 才算（键存在不算）。"""
+    store_mounted = _ev(
+        command="store_load", requested={},
+        actual={"store_mounted": True, "converged": True},
+    )
+    assert _is_verifiable_ack(store_mounted) is False
+    assert _ack_converged(store_mounted) is False
+
+    store_updated = _ev(
+        command="store_write", requested={},
+        actual={"store_updated": True, "converged": True},
+    )
+    assert _is_verifiable_ack(store_updated) is False
+    assert _ack_converged(store_updated) is False
+
+    # confirmed 键存在但为 False → 不算可验证（键存在 ≠ 收敛证据）。
+    confirmed_false = _ev(command="add_layer", requested={}, actual={"confirmed": False})
+    assert _is_verifiable_ack(confirmed_false) is False
+    assert _ack_converged(confirmed_false) is False
+
+
 def test_ack_is_well_formed():
     """非成功终态恢复证据：具名 status + error/reason 才结构完整。"""
     failed_named = _ev(status=MapActionStatus.FAILED, error="target_not_found", actual={})
@@ -426,6 +451,50 @@ async def test_interaction_metrics_math():
     assert m["InteractionRecoveryRate"] == 66.67
 
 
+@pytest.mark.asyncio
+async def test_store_mounted_ack_counts_terminal_but_excluded_from_convergence():
+    """Round-2 P1：前端 store 挂载直接 ACK（actual.store_mounted，FIX-A 形态）是
+    终态 ACK —— InteractionEvidenceCoverage / MapCommandExecutionSuccessRate 照算；
+    但不可验证（无相机状态、非 confirmed，即使带 converged:true hint）→ 排除出
+    InteractionStateConvergenceRate 分母。"""
+    harness = PiAgentHarness(session_id="s-store")
+    for action_id, cmd in [
+        ("ma-cam1", "fly_to"), ("ma-cam2", "fly_to"), ("ma-store", "store_load"),
+    ]:
+        harness.record_map_action_issued(
+            session_id="s-store", tool_call_id="c1", turn_id="t1",
+            action_id=action_id, command=cmd,
+            requested=(
+                {"center": [116.0, 39.0], "zoom": 12}
+                if cmd == "fly_to" else {}
+            ),
+        )
+    acks = [
+        # 相机 1：succeeded + 收敛（可验证）
+        {"action_id": "ma-cam1", "status": "succeeded",
+         "actual": {"center": [116.0005, 39.0004], "zoom": 12.01}},
+        # 相机 2：succeeded 但未收敛（可验证，分母在）
+        {"action_id": "ma-cam2", "status": "succeeded",
+         "actual": {"center": [116.05, 39.0], "zoom": 12}},
+        # store：succeeded + 仅 store_mounted（附 converged hint 也无效）→ 终态但不可验证
+        {"action_id": "ma-store", "status": "succeeded",
+         "actual": {"store_mounted": True, "converged": True}},
+    ]
+    result = await harness.evaluate_with_evidence(
+        expected_tools=[], ideal_step_count=0, map_action_reader=_make_reader(acks),
+    )
+    m = result["metrics"]
+    # 终态 3/3；成功 3/3；收敛 1/2（store 不在分母 —— 若算入分母并采信 hint 会是 3/3 假 100）
+    assert m["InteractionEvidenceCoverage"] == 100.0
+    assert m["MapCommandExecutionSuccessRate"] == 100.0
+    assert m["InteractionStateConvergenceRate"] == 50.0
+
+    actions = {a["action_id"]: a for a in result["interaction"]["actions"]}
+    assert actions["ma-store"]["status"] == "succeeded"
+    assert actions["ma-store"]["verifiable"] is False
+    assert actions["ma-store"]["converged"] is None
+
+
 def test_evaluate_all_omits_interaction_metrics_without_issued_evidence():
     """无 issued 交互证据 → evaluate_all 省略 4 个交互键（而非报 0.0）。
 
@@ -545,6 +614,85 @@ def test_record_map_action_issued_skips_empty_session():
     )
     assert entry == {}
     assert harness.map_actions_issued == []
+
+
+@pytest.mark.asyncio
+async def test_two_sessions_isolated_on_all_read_surfaces():
+    """Round-2 P2：单例 harness 跨 session 累积时，所有读取面按 session 隔离 ——
+    evaluate_with_evidence 的 evidence 只含 A 的工具调用；五个 compute_* 指标全部
+    只按 A 的证据计算（B 的无证据 mutation / 缺失 ref / 错误绝不混入）；record_event
+    不再改写 self.session_id（评估目标保持 A）。"""
+    store = _FakeStore({"ref:geojson-ok": {"type": "FeatureCollection", "features": []}})
+    harness = PiAgentHarness(
+        session_id="sessA",
+        ref_resolver=make_session_store_resolver(store),
+    )
+
+    # session A：mutation（is_compiled 证据）+ ref + 错误→恢复
+    harness.record_event(ToolCallEvent(
+        tool_call_id="a1", tool_name="webgis_layer_upsert",
+        arguments={"src": "ref:geojson-ok"},
+        result={"success": True, "is_compiled": True},
+        session_id="sessA",
+    ))
+    harness.record_event(ToolCallEvent(
+        tool_call_id="a2", tool_name="st_dbscan",
+        arguments={}, is_error=True, error_msg="a-fail",
+        result={}, session_id="sessA",
+    ))
+    # session B 交错（同一共享 harness）：无证据 mutation + 缺失 ref + 错误
+    harness.record_event(ToolCallEvent(
+        tool_call_id="b1", tool_name="webgis_layer_upsert",
+        arguments={"src": "ref:geojson-missing"},
+        result={"success": True},
+        session_id="sessB",
+    ))
+    harness.record_event(ToolCallEvent(
+        tool_call_id="b2", tool_name="st_dbscan",
+        arguments={}, is_error=True, error_msg="b-fail",
+        result={}, session_id="sessB",
+    ))
+    # A 恢复成功 —— B 的错误插在中间不得清除 A 的错误状态，也不得计入 A
+    harness.record_event(ToolCallEvent(
+        tool_call_id="a3", tool_name="st_dbscan",
+        arguments={"crs": "EPSG:4326"},
+        result={"success": True},
+        session_id="sessA",
+    ))
+
+    # record_event 不得把评估目标改写成最后一个事件的 session
+    assert harness.session_id == "sessA"
+    # 记录按真实 session 归属（tool_results 同样带 session 戳）
+    assert {t["session_id"] for t in harness.tool_calls} == {"sessA", "sessB"}
+    assert all(t["session_id"] in ("sessA", "sessB") for t in harness.tool_results)
+    # 两个 session 各有一次错误：异常条目按真实 session 归属
+    assert {e["session_id"] for e in harness.exceptions} == {"sessA", "sessB"}
+
+    ev_result = await harness.evaluate_with_evidence(
+        expected_tools=["webgis_layer_upsert", "st_dbscan"], ideal_step_count=1,
+    )
+    # evidence 只含 A 的工具调用
+    assert [e["tool_call_id"] for e in ev_result["evidence"]] == ["a1", "a2", "a3"]
+    assert all(e["session_id"] == "sessA" for e in ev_result["evidence"])
+    # A 的 mutation 带 is_compiled 证据 → SEMANTIC_VALID（B 的无证据 mutation 不算）
+    assert ev_result["evidence"][0]["mapspec_validity"]["tier"] == "SEMANTIC_VALID"
+
+    # 五个 V2 指标全部只按 A 的证据计算
+    assert harness.compute_tool_choice_accuracy(["webgis_layer_upsert", "st_dbscan"]) == 100.0
+    assert harness.compute_mapspec_validity() == 100.0   # 1 valid / 1 mutation（A）
+    assert harness.compute_cursor_resolution_rate() == 100.0  # A 的 ref 解析成功（B 的缺失 ref 不计）
+    assert harness.compute_step_efficiency(1) == pytest.approx(33.33, abs=0.01)  # 1 ideal / 3 A 步（B 的 2 步不计）
+    assert harness.compute_error_recovery_rate() == 100.0  # A: 1 异常 1 恢复（B 的错误不计）
+
+
+def test_record_sse_event_stamps_session_id():
+    """Round-2 P2：record_sse_event 补 session_id 归属戳（事件自带则保留，否则
+    回退评估目标），sse_events 可被 session 过滤/审计。"""
+    harness = PiAgentHarness(session_id="sse-sess")
+    harness.record_sse_event({"type": "token", "content": "hi"})
+    harness.record_sse_event({"type": "step_result", "session_id": "other-sess"})
+    assert harness.sse_events[0]["session_id"] == "sse-sess"
+    assert harness.sse_events[1]["session_id"] == "other-sess"
 
 
 # ── V3: 收敛防伪 —— ACK 声称的 requested 不能覆盖后端快照 ─────────────────
@@ -771,3 +919,24 @@ async def test_stream_prompt_mints_turn_id_and_threads_into_records(monkeypatch)
         assert ev["run_id"] == "turn-sess"
     # 同一 turn 内 turn_id 一致
     assert len({ev["turn_id"] for ev in harness.sse_events}) == 1
+
+
+@pytest.mark.asyncio
+async def test_view_set_summary_does_not_claim_camera_moved(clean_session):
+    """Round-2 P2：webgis_view_set 的 LLM 可见 summary 不得断言相机已移动 ——
+    工具层只完成了 mapspec.view 写入 + 下发 fly_to 指令（success 只指写入本身），
+    实时相机是否落定由前端 ACK 证据闭环判定（后端 _is_verifiable_ack 重算收敛）。"""
+    from app.tools.registry import ToolRegistry
+    from app.tools.cartography_tools import register_mapspec_cartography_tools
+
+    reg = ToolRegistry()
+    register_mapspec_cartography_tools(reg)
+    await reg.dispatch("webgis_project_init", {}, session_id=clean_session)
+    res = await reg.dispatch(
+        "webgis_view_set",
+        {"center": [116.4, 39.9], "zoom": 12.0},
+        session_id=clean_session,
+    )
+    assert res["success"] is True            # 写入成功本身是真的
+    assert res["command"] == "fly_to"        # 指令仍在（前端据此执行）
+    assert res["summary"] == "视图指令已下发，等待前端执行"
