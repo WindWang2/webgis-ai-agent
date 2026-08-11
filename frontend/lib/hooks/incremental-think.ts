@@ -62,10 +62,19 @@ export class IncrementalThinkParser {
   // delta so markers split across a delta boundary are not missed.
   private openCarry = '';
   private closeCarry = '';
+  // Characters actually examined by the marker searches (the delta plus any
+  // carry re-scan). A deterministic work metric: O(n) over a turn, whereas a
+  // full-buffer re-parse per append would make this O(n²).
+  private scanned = 0;
 
   /** Characters consumed so far — used to compute the next delta. */
   get consumedLength(): number {
     return this.totalLen;
+  }
+
+  /** Characters examined by the marker searches so far — deterministic work metric. */
+  get scannedChars(): number {
+    return this.scanned;
   }
 
   reset(): void {
@@ -75,12 +84,14 @@ export class IncrementalThinkParser {
     this.end = -1;
     this.openCarry = '';
     this.closeCarry = '';
+    this.scanned = 0;
   }
 
   append(delta: string): void {
     const base = this.totalLen;
     if (this.start === -1) {
       const region = this.openCarry + delta;
+      this.scanned += region.length;
       const idx = region.indexOf(THINK_OPEN);
       if (idx !== -1) {
         this.start = base - this.openCarry.length + idx;
@@ -90,6 +101,7 @@ export class IncrementalThinkParser {
     }
     if (this.end === -1) {
       const region = this.closeCarry + delta;
+      this.scanned += region.length;
       const idx = region.indexOf(THINK_CLOSE);
       if (idx !== -1) {
         this.end = base - this.closeCarry.length + idx;
