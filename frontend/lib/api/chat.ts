@@ -54,6 +54,9 @@ export type SSEEventType =
 export interface SSEEvent {
   event: SSEEventType;
   data: Record<string, unknown> | string;
+  /** Per-turn monotonic SSE event id (DUP-1). Absent on events the server
+   * synthesized without an `id:` (e.g. resume terminal events). */
+  id?: string;
 }
 
 /**
@@ -64,6 +67,11 @@ export interface SSEEvent {
  *
  * 超时模型：openStream 只对"连接阶段"（拿到响应头之前）计时，一旦开始
  * 流式输出，时长由调用方的 signal 控制 —— 长 Agent turn 不会被计时器杀掉。
+ *
+ * DUP-1 resume：lastEventId（上一次收到的 SSE 事件 id）在重连时以
+ * `Last-Event-ID` 头回传。后端把带该头的 POST 视为"续读"（replay 错过的
+ * 事件，绝不重新执行 turn），而不是新 turn。未收到任何事件时传 "0"，
+ * 表示"从缓冲开头重放"。
  */
 export async function* streamChat(
   message: string,
@@ -71,7 +79,8 @@ export async function* streamChat(
   mapState?: Record<string, unknown>,
   signal?: AbortSignal,
   skillName?: string,
-  ownerToken?: string | null
+  ownerToken?: string | null,
+  lastEventId?: string | number | null
 ): AsyncGenerator<SSEEvent> {
   const response = await openStream('/api/v1/chat/stream', {
     method: "POST",
@@ -84,18 +93,25 @@ export async function* streamChat(
     signal,
     ownerToken,
     label: "Chat API error",
+    ...(lastEventId !== undefined && lastEventId !== null
+      ? { headers: { 'Last-Event-ID': String(lastEventId) } }
+      : {}),
   });
 
   if (!response.body) throw new Error("No response body");
 
   // transport goal §9 / B-P2-10/11: delegate to the shared, spec-correct
   // parser (CRLF incl. cross-chunk, partial-UTF-8 EOF flush, [DONE] sentinel,
-  // comment lines, data/event with or without leading space, abort). The
-  // inline parser that lived here had two latent bugs (a `data:` line split
+  // comment lines, data/event with or without leading space, abort, id:).
+  // The inline parser that lived here had two latent bugs (a `data:` line split
   // across a CRLF chunk boundary was dropped, and the TextDecoder was never
   // flushed at EOF so a trailing partial multi-byte char was lost).
   for await (const ev of parseSSEStream(response.body, signal, { doneSentinel: "[DONE]" })) {
-    yield { event: ev.event as SSEEventType, data: ev.data as Record<string, unknown> | string };
+    yield {
+      event: ev.event as SSEEventType,
+      data: ev.data as Record<string, unknown> | string,
+      ...(ev.id !== undefined ? { id: ev.id } : {}),
+    };
   }
 }
 

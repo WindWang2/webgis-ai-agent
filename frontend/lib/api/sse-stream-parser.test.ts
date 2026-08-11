@@ -19,9 +19,13 @@ async function collect(
   opts?: ParseSSEOptions,
   signal?: AbortSignal,
 ) {
-  const out: { event: string; data: unknown }[] = [];
+  const out: { event: string; data: unknown; id?: string }[] = [];
   for await (const ev of parseSSEStream(streamFromChunks(chunks), signal, opts)) {
-    out.push({ event: ev.event, data: ev.data });
+    out.push({
+      event: ev.event,
+      data: ev.data,
+      ...(ev.id !== undefined ? { id: ev.id } : {}),
+    });
   }
   return out;
 }
@@ -134,5 +138,45 @@ describe("parseSSEStream", () => {
     // "data:  x" -> " x" (only one leading space stripped), not "x"
     const evs = await collect(["event: e\ndata:  x\n\n"]);
     expect(evs[0].data).toBe(" x");
+  });
+
+  // ─── DUP-1: id: parsing for Last-Event-ID resume ─────────────────────────
+
+  it("exposes the id: field on the dispatched event (DUP-1)", async () => {
+    const evs = await collect([
+      "event: token\nid: 7\ndata: {\"content\":\"a\"}\n\nevent: done\nid: 8\ndata: {}\n\n",
+    ]);
+    expect(evs).toEqual([
+      { event: "token", data: { content: "a" }, id: "7" },
+      { event: "done", data: {}, id: "8" },
+    ]);
+  });
+
+  it("takes the LAST id: line when multiple are present (spec)", async () => {
+    const evs = await collect(["event: token\nid: 3\nid: 9\ndata: {\"c\":1}\n\n"]);
+    expect(evs[0].id).toBe("9");
+  });
+
+  it("omits id when the event has no id: line", async () => {
+    const evs = await collect(["event: done\ndata: {}\n\n"]);
+    expect(evs[0]).toEqual({ event: "done", data: {} });
+    expect(evs[0].id).toBeUndefined();
+  });
+
+  it("reassembles an id: line split across chunks", async () => {
+    const evs = await collect([
+      "event: token\nid: 1",
+      "2\ndata: {\"c\":1}\n\n",
+    ]);
+    expect(evs[0].id).toBe("12");
+  });
+
+  it("does not reset the event when an id: line appears (id is a field)", async () => {
+    // The id line belongs to the in-flight event; a comment or id line must not
+    // dispatch or reset it.
+    const evs = await collect([
+      "event: token\nid: 5\ndata: {\"c\":1}\n: keepalive\n\n",
+    ]);
+    expect(evs).toEqual([{ event: "token", data: { c: 1 }, id: "5" }]);
   });
 });

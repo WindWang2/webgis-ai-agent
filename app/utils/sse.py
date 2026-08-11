@@ -11,11 +11,62 @@
 
 前端类型定义见 frontend/lib/types/agent-plan.ts::AgentPlanState
 """
+import contextvars
 import json
 import logging
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# DUP-1: turn-scoped monotonic event ids (SSE `id:` field) + resume support.
+#
+# SSE events carry an optional `id:` line. The browser's EventSource sends the
+# last-seen id back as `Last-Event-ID` on reconnect, which lets a server replay
+# missed events instead of restarting the turn. This module assigns every event
+# of a chat turn a per-turn monotonic integer id when the route wraps the
+# stream in :func:`sse_event_id_scope`. Callers outside a scope (unit tests,
+# non-chat streams like explorer) get no `id:` line — behavior unchanged.
+#
+# The id counter lives in a ContextVar so the many call sites of
+# :func:`sse_event` (execution_engine, pi_event_mapper, agent_pi_bridge, ...)
+# stay untouched: the route opens one scope per stream, and every async
+# generator created inside it (the whole chat_stream/stream_prompt pipeline)
+# shares that counter, so ids are assigned in emission order across batched
+# token events, structural events and the Pi keepalive comments (comments are
+# raw strings and consume no id).
+# ---------------------------------------------------------------------------
+_SSE_EVENT_ID: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "_sse_event_id", default=None
+)
+
+
+@contextmanager
+def sse_event_id_scope(start: int = 1) -> Iterator[None]:
+    """Open a per-turn event-id scope; every :func:`sse_event` call inside
+    (including calls made by async generators created inside) is stamped with
+    the next monotonic integer. Resets on exit.
+    """
+    token = _SSE_EVENT_ID.set(start)
+    try:
+        yield
+    finally:
+        _SSE_EVENT_ID.reset(token)
+
+
+def sse_event_id(event_str: str) -> int | None:
+    """Return the integer carried by an event's ``id:`` line, or None.
+
+    Used by the resume buffer to order/compare events and to filter replays.
+    """
+    for line in event_str.split("\n"):
+        if line.startswith("id: "):
+            try:
+                return int(line[len("id: "):].strip())
+            except (TypeError, ValueError):
+                return None
+    return None
 
 def _serialize_sse_data(data: Any) -> str:
     """
@@ -50,16 +101,23 @@ def _serialize_sse_data(data: Any) -> str:
         }, ensure_ascii=False)
 
 
-def sse_event(event_type: str, data: Any) -> str:
+def sse_event(event_type: str, data: Any, event_id: int | None = None) -> str:
     """
     构造标准 SSE 格式事件字符串。
 
     格式:
     event: {event_type}
+    id: {event_id}          # DUP-1: 仅当处于 sse_event_id_scope() 内或显式传入时
     data: {json_string}
     \n\n
     """
-    return f"event: {event_type}\ndata: {_serialize_sse_data(data)}\n\n"
+    if event_id is None:
+        current = _SSE_EVENT_ID.get()
+        if current is not None:
+            event_id = current
+            _SSE_EVENT_ID.set(current + 1)
+    id_line = f"id: {event_id}\n" if event_id is not None else ""
+    return f"event: {event_type}\n{id_line}data: {_serialize_sse_data(data)}\n\n"
 
 
 # ---------------------------------------------------------------------------

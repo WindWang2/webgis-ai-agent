@@ -23,7 +23,13 @@
  *   - comment lines (`:`) ignored — never dispatched, never reset the event
  *   - `data:` / `event:` with OR without the optional single leading space
  *   - an event with no `data:` line is still dispatched (data === "")
- *   - unknown fields (`id:`, `retry:`, ...) are ignored per spec
+ *   - unknown fields (`retry:`, ...) are ignored per spec
+ *   - `id:` parsing (DUP-1): an `id:` line is exposed on the dispatched event
+ *     (last `id:` wins per spec). The server stamps every chat event with a
+ *     per-turn monotonic integer id, which the consumer tracks and sends back
+ *     as `Last-Event-ID` on reconnect to resume a dropped stream. Events
+ *     without an `id:` line (comments, terminal events synthesized by the
+ *     server) expose `id: undefined`.
  *   - AbortSignal: cancels the reader and stops promptly (interrupts a pending
  *     read, and swallows the read() rejection that a real fetch abort produces,
  *     so cancellation is clean rather than thrown into the consumer)
@@ -33,6 +39,8 @@ export interface SSEStreamEvent {
   event: string;
   /** Parsed JSON value, or the raw string if it was not valid JSON / empty. */
   data: Record<string, unknown> | unknown[] | string;
+  /** Value of the `id:` field, when present (DUP-1: per-turn event id). */
+  id?: string;
 }
 
 export interface ParseSSEOptions {
@@ -61,6 +69,7 @@ export async function* parseSSEStream(
   let buffer = "";
   let currentEvent = "";
   let currentData = "";
+  let currentId: string | undefined;
   let haveData = false; // a `data:` line was seen (distinct from empty data)
 
   /** Process one physical line, pushing any dispatched event into `out`.
@@ -75,6 +84,7 @@ export async function* parseSSEStream(
         if (doneSentinel && currentData.trim() === doneSentinel) {
           currentEvent = "";
           currentData = "";
+          currentId = undefined;
           haveData = false;
           return true; // terminator — do not yield
         }
@@ -88,8 +98,10 @@ export async function* parseSSEStream(
       }
       currentEvent = "";
       currentData = "";
+      const id = currentId;
+      currentId = undefined;
       haveData = false;
-      out.push({ event, data });
+      out.push(id !== undefined ? { event, data, id } : { event, data });
       return false;
     }
     if (line.charCodeAt(0) === 58) return false; // ':' comment line — ignore
@@ -105,8 +117,12 @@ export async function* parseSSEStream(
       if (haveData) currentData += "\n";
       currentData += valuePart;
       haveData = true;
+    } else if (field === "id") {
+      // DUP-1: last `id:` wins for the event being dispatched (per spec the
+      // value must not contain a null byte — we take it verbatim otherwise).
+      currentId = valuePart;
     }
-    // id: / retry: / unknown → ignored
+    // retry: / unknown → ignored
     return false;
   };
 

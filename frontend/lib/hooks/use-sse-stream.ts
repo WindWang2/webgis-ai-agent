@@ -352,7 +352,14 @@ export function useSSEStream(
     [setSessionId, sessionIdRef, sessionTokenRef]
   );
 
-  const bridge = useMapBridge(sessionId, dispatchAction, onEvent, sessionTokenRef);
+  // DUP-1: bounded auto-reconnect for the chat stream. Opt-in by explicit
+  // config; the backend treats a re-POST carrying Last-Event-ID as a read-only
+  // resume (replays missed events, never re-executes the turn), and replayed
+  // events are deduped by id in useMapBridge. 2 attempts, 500ms→1s backoff.
+  const bridge = useMapBridge(sessionId, dispatchAction, onEvent, sessionTokenRef, {
+    maxAttempts: 2,
+    baseDelayMs: 500,
+  });
   const isLoading = bridge.aiStatus === 'thinking' || bridge.aiStatus === 'acting';
 
   const handlePlanAction = useCallback((planId: string, action: 'approve' | 'revise' | 'reject') => {
