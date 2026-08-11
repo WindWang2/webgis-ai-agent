@@ -44,3 +44,38 @@ class TestSessionMapStateAPI:
             resp = client.get("/api/v1/chat/sessions/sess-404/map-state")
         assert resp.status_code == 200
         assert resp.json()["map_state"] == {}
+
+    @patch("app.services.session_data.session_data_manager")
+    def test_push_map_state_forwards_viewport_seq(self, mock_sdm, client):
+        """F4: the throttled POST forwards its monotonic seq to set_map_state,
+        so the backend can reject an out-of-order older POST that lands after
+        the turn-start write."""
+        mock_sdm.set_map_state = AsyncMock(return_value=True)
+        mock_conv = MagicMock()
+        with patch.object(_chat_mod.AsyncHistoryService, "get_session", AsyncMock(return_value=mock_conv)):
+            resp = client.post(
+                "/api/v1/chat/sessions/sess-123/map-state",
+                json={"viewport": {"center": [116.4, 39.9], "zoom": 10, "bearing": 0, "pitch": 0}, "seq": 3},
+            )
+        assert resp.status_code == 204
+        mock_sdm.set_map_state.assert_awaited_once_with(
+            "sess-123", "viewport",
+            {"center": [116.4, 39.9], "zoom": 10, "bearing": 0, "pitch": 0},
+            seq=3,
+        )
+
+    @patch("app.services.session_data.session_data_manager")
+    def test_push_map_state_without_seq_is_still_accepted(self, mock_sdm, client):
+        """Backward compat: a client that predates the seq contract still gets
+        an unsequenced (always-apply) write."""
+        mock_sdm.set_map_state = AsyncMock(return_value=True)
+        mock_conv = MagicMock()
+        with patch.object(_chat_mod.AsyncHistoryService, "get_session", AsyncMock(return_value=mock_conv)):
+            resp = client.post(
+                "/api/v1/chat/sessions/sess-123/map-state",
+                json={"viewport": {"center": [116.4, 39.9], "zoom": 10}},
+            )
+        assert resp.status_code == 204
+        mock_sdm.set_map_state.assert_awaited_once_with(
+            "sess-123", "viewport", {"center": [116.4, 39.9], "zoom": 10}, seq=None
+        )

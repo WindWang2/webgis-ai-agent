@@ -8,6 +8,11 @@ import type { MapActionPayload } from '@/lib/types';
 
 
 import { devOnly } from "@/lib/utils/logger";
+import {
+  coalesceViewportState,
+  resetViewportSeq,
+  viewportSeqTracker,
+} from "@/lib/utils/viewport-seq";
 export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) => void) {
   const [sessionId, setSessionId] = useState<string>();
   const sessionIdRef = useRef<string | undefined>(undefined);
@@ -78,6 +83,10 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       setSelectedFeature(null);
       setAiStatus('idle');
       clearTask();
+      // F4: the viewport seq tracker is per-session (server seqs are
+      // session-scoped) — reset before the restore GET so the coalesce below
+      // compares against a fresh counter, not the previous session's.
+      resetViewportSeq();
       // 审计 F38：之前 setSessionId(sid) 在 fetch 完成后才调，期间 sessionIdRef
       // 仍是旧值 -> 若用户在窗口内点 send，消息会发到旧 session。改为同步先 set。
       setSessionId(sid);
@@ -122,15 +131,25 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
           if (state) {
             const store = useHudStore.getState();
             if (state.viewport) {
-              dispatchAction({
-                command: 'fly_to',
-                params: {
-                  center: state.viewport.center,
-                  zoom: state.viewport.zoom,
-                  bearing: state.viewport.bearing,
-                  pitch: state.viewport.pitch,
-                },
-              });
+              // F4: ignore stale/older-seq viewport state — an in-flight
+              // throttled POST the client already sent outranks the persisted
+              // value, so a restore must never fly the map back to an older view.
+              const coalesced = coalesceViewportState(
+                viewportSeqTracker,
+                state._viewport_seq,
+                state.viewport
+              );
+              if (coalesced.viewport) {
+                dispatchAction({
+                  command: 'fly_to',
+                  params: {
+                    center: coalesced.viewport.center,
+                    zoom: coalesced.viewport.zoom,
+                    bearing: coalesced.viewport.bearing,
+                    pitch: coalesced.viewport.pitch,
+                  },
+                });
+              }
             }
             if (state.base_layer) store.setBaseLayer(state.base_layer);
             for (const layer of state.layers || []) {
@@ -184,6 +203,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       setSelectedFeature(null);
       setAiStatus('idle');
       clearTask();
+      // F4: per-session viewport seq tracker — fresh session, fresh counter.
+      resetViewportSeq();
       // FE-15：移除死代码 localStorage.removeItem('webgis_session_id')
       // (session ID 从未写入 localStorage，此 removeItem 是 no-op)
       onClearMessages();

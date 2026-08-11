@@ -58,7 +58,11 @@ class SessionStoreProtocol(Protocol):
     async def get_map_state(self, session_id: str) -> Dict[str, Any]:
         ...
 
-    async def set_map_state(self, session_id: str, key: str, value: Any) -> None:
+    async def set_map_state(self, session_id: str, key: str, value: Any, seq: Optional[int] = None) -> bool:
+        """Persist one map-state key; ``seq`` (F4) is a monotonic per-key
+        sequence number — a write is applied only when its seq is strictly
+        newer than the stored one (stale out-of-order writes are rejected and
+        return False). Returns True when the write was applied."""
         ...
 
     async def update_layer_in_state(self, session_id: str, layer_id: str, updates: dict) -> None:

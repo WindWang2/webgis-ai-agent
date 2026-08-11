@@ -358,6 +358,9 @@ class MapStatePushRequest(BaseModel):
     viewport: Optional[dict] = None
     layers: Optional[list] = None
     base_layer: Optional[str] = None
+    # F4: monotonic client seq for the viewport write — an out-of-order older
+    # POST landing after the turn-start write is rejected as stale.
+    seq: Optional[int] = None
 
 
 @router.post("/sessions/{session_id}/map-state", status_code=204)
@@ -373,7 +376,7 @@ async def push_session_map_state(
     """
     from app.services.session_data import session_data_manager
     if req.viewport:
-        await session_data_manager.set_map_state(session_id, "viewport", req.viewport)
+        await session_data_manager.set_map_state(session_id, "viewport", req.viewport, seq=req.seq)
     if req.layers is not None:
         await session_data_manager.set_map_state(session_id, "layers", req.layers)
     if req.base_layer:
