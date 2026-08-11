@@ -4,6 +4,10 @@
  * F-FE-3 migration: previously raw fetch + plain Error with status only.
  * Now routes through the shared transport (typed ApiError, abort, timeout,
  * request id). GETs go through the Fast Path (in-flight dedup + 5s LRU).
+ *
+ * ADR-0052: 统一任务中心请用 `lib/api/jobs.ts` —— JobView 同时承载 agent task 与
+ * durable GIS job。这里保留的三个函数对应后端未删除的旧端点（expand-contract），
+ * 仅做 transport 迁移，不承担新任务中心的职责。
  */
 
 import { apiFetch } from './transport';

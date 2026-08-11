@@ -1,6 +1,6 @@
 'use client';
 
-import { MessageCircle, Layers, Printer, Triangle, Folder, Database } from 'lucide-react';
+import { MessageCircle, Layers, Printer, Triangle, Folder, Database, ListChecks } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { ChatTab } from '@/components/sidebar/chat-tab';
@@ -9,6 +9,7 @@ import { AnalysisTab } from '@/components/sidebar/analysis-tab';
 import { MapStudioTab } from '@/components/sidebar/map-studio-tab';
 import { ProjectTab } from '@/components/sidebar/project-tab';
 import { DataSourcesTab } from '@/components/sidebar/data-sources-tab';
+import { TasksTab } from '@/components/sidebar/tasks-tab';
 import type { AiStatus, LeftTab } from '@/lib/store/hud-types';
 
 export interface LeftSidebarProps {
@@ -24,6 +25,10 @@ export interface LeftSidebarProps {
   aiStatus: AiStatus;
   onSend: (text: string) => void;
   accentColor?: string;
+  /** ADR-0052 任务中心：durable job 按 session 归属查询，需要当前 session */
+  sessionId?: string | null;
+  /** 匿名会话的归属令牌（SEC-08）。任务中心据此证明 job 归属 */
+  ownerToken?: string | null;
   /** Plan Mode: 由 page.tsx 注入 — 用户在 PlanProposalCard 上点按钮时回调 */
   onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
 }
@@ -41,9 +46,10 @@ const TAB_DEFS: TabDef[] = [
   { key: 'analysis', icon: Triangle, label: '分析' },
   { key: 'data_sources', icon: Database, label: '数据织网' },
   { key: 'export_layout', icon: Printer, label: '制图工坊' },
+  { key: 'tasks', icon: ListChecks, label: '任务' },
 ];
 
-export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#16a34a', onPlanAction }: LeftSidebarProps) {
+export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#16a34a', sessionId, ownerToken, onPlanAction }: LeftSidebarProps) {
   const activeTab = useHudStore((s) => s.activeLeftTab);
   const setActiveTab = useHudStore((s) => s.setActiveLeftTab);
   const sidebarWidth = useHudStore((s) => s.sidebarWidth);
@@ -121,6 +127,9 @@ export function LeftSidebar({ open, messages, aiStatus, onSend, accentColor = '#
         {activeTab === 'analysis' && <AnalysisTab onSend={onSend} />}
         {activeTab === 'data_sources' && <DataSourcesTab />}
         {(activeTab === 'export_layout' || activeTab === 'exports') && <MapStudioTab />}
+        {activeTab === 'tasks' && (
+          <TasksTab sessionId={sessionId} ownerToken={ownerToken} accentColor={accentColor} />
+        )}
       </div>
     </aside>
   );
