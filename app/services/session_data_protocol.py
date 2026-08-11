@@ -86,6 +86,16 @@ class SessionStoreProtocol(Protocol):
     async def get_event_log(self, session_id: str) -> list[dict]:
         ...
 
+    async def append_map_action_event(self, session_id: str, event: dict) -> bool:
+        """Append a terminal map-action ACK (Harness–Map Interaction V3).
+        Idempotent by ``action_id`` — first terminal state wins, duplicates return
+        False. Bounded per session (MAX_MAP_ACTION_EVENTS), oldest evicted first."""
+        ...
+
+    async def get_map_action_events(self, session_id: str) -> list[dict]:
+        """Return all current map-action ACKs for a session, in arrival order."""
+        ...
+
     async def list_refs(self, session_id: str) -> dict[str, str]:
         ...
 

@@ -1,10 +1,10 @@
 """Chat API Route - SSE 流式对话"""
 import logging
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_optional, get_owner_token, require_admin, require_owned_session
@@ -525,6 +525,59 @@ async def push_session_map_state(
         await session_data_manager.set_map_state(session_id, "layers", req.layers)
     if req.base_layer:
         await session_data_manager.set_map_state(session_id, "base_layer", req.base_layer)
+
+
+class MapActionAck(BaseModel):
+    """单条地图动作终态 ACK（V3 闭环：前端上报命令执行终态）。"""
+
+    action_id: str = Field(min_length=1, max_length=64)
+    command: str = Field(max_length=64)
+    status: Literal["succeeded", "failed", "cancelled", "superseded"]
+    error: str = Field(default="", max_length=500)
+    started_at: str = ""
+    finished_at: str = ""
+    duration_ms: Optional[float] = Field(default=None, ge=0)
+    correlation: Optional[dict] = None
+    requested: Optional[dict] = None
+    actual: Optional[dict] = None
+
+    @model_validator(mode="after")
+    def _cap_serialized_size(self):
+        # 单条 ACK 序列化上限 16KB —— requested/actual 是无界 dict，防超大上报
+        # 撑爆会话存储。超限抛 ValueError -> FastAPI 返回 422。
+        if len(self.model_dump_json().encode("utf-8")) > 16 * 1024:
+            raise ValueError("serialized ack exceeds 16KB")
+        return self
+
+
+class MapActionAckRequest(BaseModel):
+    """地图动作 ACK 批量上报体（V3 闭环），单批 ≤50 条。"""
+
+    acks: list[MapActionAck] = Field(max_length=50)
+
+
+@router.post("/sessions/{session_id}/map-action-ack")
+async def push_map_action_acks(
+    session_id: str,
+    req: MapActionAckRequest,
+    _conv: Conversation = Depends(require_owned_session),
+):
+    """接收前端上报的地图动作终态 ACK（V3 闭环）。
+
+    鉴权与 map-state 推送完全一致（require_owned_session：登录用户归属或
+    SEC-08 匿名 owner_token 匹配）。存储按 action_id 幂等 —— 首达终态获胜，
+    重复 ACK 计入 duplicates。fire-and-forget 遥测：存储层自带降级（Redis
+    不可达仅丢事件），端点成败不影响地图交互。harness 评估时直接从 session
+    存储读取 ACK（单一事实源），此处不再另写 harness。
+    """
+    from app.services.session_data import session_data_manager
+    accepted = 0
+    for ack in req.acks:
+        if await session_data_manager.append_map_action_event(
+            session_id, ack.model_dump(exclude_none=True)
+        ):
+            accepted += 1
+    return {"accepted": accepted, "duplicates": len(req.acks) - accepted}
 
 
 @router.get("/skills")

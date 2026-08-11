@@ -10,6 +10,10 @@ from app.services.session_data_protocol import BaseSessionStore
 
 logger = logging.getLogger(__name__)
 
+# V3 闭环：每 session 地图动作 ACK 上限（超出按插入序淘汰最旧）。
+# Redis 后端（session_data_redis）同名常量必须保持一致（ADR-0035 协议对齐）。
+MAX_MAP_ACTION_EVENTS = 200
+
 class MemorySessionStore(BaseSessionStore):
 
     """In-memory SessionStore implementation with cursor support (LRU)"""
@@ -22,6 +26,8 @@ class MemorySessionStore(BaseSessionStore):
         self._map_state: dict[str, dict[str, Any]] = {}
         # session_id -> deque of recent user actions (max 20)
         self._event_log: dict[str, deque] = {}
+        # session_id -> {action_id -> 地图动作终态 ACK}（V3 闭环；插入序 = 到达顺序）
+        self._map_action_events: dict[str, OrderedDict[str, dict]] = {}
         self.capacity = capacity
         # BUG-14: serialize read-modify-write mutations of the layers list so
         # two concurrent update_layer_in_state calls don't clobber each other.
@@ -200,6 +206,28 @@ class MemorySessionStore(BaseSessionStore):
         """获取近期用户操作日志"""
         return list(self._event_log.get(session_id, []))
 
+    async def append_map_action_event(self, session_id: str, event: dict) -> bool:
+        """追加地图动作终态 ACK（V3 闭环），按 action_id 幂等。
+
+        首达终态获胜：同一 action_id 已存在时拒绝并返回 False（前端重连/重试
+        会重复上报，首个到达的终态即真相）。每 session 上限
+        MAX_MAP_ACTION_EVENTS，超出时按插入序淘汰最旧条目。
+        """
+        action_id = str(event.get("action_id") or "")
+        if not action_id:
+            return False
+        events = self._map_action_events.setdefault(session_id, OrderedDict())
+        if action_id in events:
+            return False
+        while len(events) >= MAX_MAP_ACTION_EVENTS:
+            events.popitem(last=False)
+        events[action_id] = dict(event)
+        return True
+
+    async def get_map_action_events(self, session_id: str) -> list[dict]:
+        """返回该 session 当前全部地图动作 ACK（按到达顺序）。"""
+        return list(self._map_action_events.get(session_id, {}).values())
+
     async def get_session_metadata(self, session_id: str) -> dict[str, Any]:
         """获取会话元数据（聚合查询以减少 Redis 等后端往返）"""
         return {
@@ -215,6 +243,7 @@ class MemorySessionStore(BaseSessionStore):
         self._aliases.pop(session_id, None)
         self._map_state.pop(session_id, None)
         self._event_log.pop(session_id, None)
+        self._map_action_events.pop(session_id, None)
 
     async def cleanup_idle_sessions(self, max_sessions: int = 100) -> None:
         """Evict oldest sessions when total exceeds max_sessions."""
