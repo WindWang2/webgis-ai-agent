@@ -75,6 +75,7 @@ class StacClientPrimitive:
                     from app.lib.geo_analysis.raster_math import rasterio_env
 
                     bands_dict: Dict[str, np.ndarray] = {}
+                    cell_size_m = None
                     with rasterio_env():
                         for name, asset_key in band_mapping.items():
                             if asset_key not in item.assets:
@@ -90,9 +91,27 @@ class StacClientPrimitive:
                                     resampling=Resampling.bilinear,
                                 ).astype(float)
                                 bands_dict[name] = data
-                    return bands_dict
+                                # Effective pixel size after downsampling, in
+                                # metres (R-F02): terrain derivatives
+                                # (compute_slope/hillshade) need the *actual*
+                                # pixel size of the array they receive. The
+                                # previous code always passed 30 m even though
+                                # the DEM is read at ds_factor=2 (~60 m),
+                                # overstating slopes ~2x. Geographic DEMs report
+                                # pixel size in degrees -> convert at the
+                                # equator rate (~111320 m/deg, matching the
+                                # Copernicus GLO-30 "30 m" label convention).
+                                if cell_size_m is None and ds.transform.a:
+                                    px = abs(ds.transform.a) * ds_factor
+                                    if ds.crs is not None and ds.crs.is_geographic:
+                                        px *= 111320.0
+                                    cell_size_m = float(px)
+                    return bands_dict, cell_size_m
 
-                result["bands"] = await asyncio.to_thread(_read_bands)
+            bands_dict, cell_size_m = await asyncio.to_thread(_read_bands)
+            result["bands"] = bands_dict
+            if cell_size_m is not None:
+                result["cell_size_m"] = cell_size_m
 
             return result
         except Exception as e:
