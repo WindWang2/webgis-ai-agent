@@ -126,6 +126,11 @@ export function useMapBridge(
   // V3: map-action context — supplies the ACK sink registration + clearActions
   // (both optional until FE-1's context upgrade lands).
   const mapActionCtx = useContext(MapActionContext) as MapActionContextWithAck | undefined;
+  // Ref mirror: the context VALUE object identity churns on every queue update,
+  // but the functions are stable — reading through the ref keeps `send`'s
+  // identity stable (no per-action rebuild / stream-effect churn) and is lint-clean.
+  const mapActionCtxRef = useRef<MapActionContextWithAck | undefined>(mapActionCtx);
+  mapActionCtxRef.current = mapActionCtx;
   const sessionIdRef = useRef(sessionId);
 
   // V3 ACK sender: created once per hook instance. Session + token are read
@@ -283,7 +288,7 @@ export function useMapBridge(
               // only after onEvent(event) returned without throwing (if onEvent
               // throws, the mount may not have happened → report failed instead
               // of a fake confirmed).
-              let deferredStoreMounted: Array<{ action: MapActionPayload }> = [];
+              const deferredStoreMounted: Array<{ action: MapActionPayload }> = [];
 
               // step_result: command-wins-over-bbox priority; dispatch before forwarding to onEvent
               if (event.event === 'step_result') {
@@ -391,7 +396,7 @@ export function useMapBridge(
                   // (abort/reconnect semantics) is preserved.
                   const errMsg = e instanceof Error ? e.message : String(e);
                   for (const d of deferredStoreMounted) {
-                    mapActionCtx?.reportTerminal?.(d.action, 'failed', { error: errMsg });
+                    mapActionCtxRef.current?.reportTerminal?.(d.action, 'failed', { error: errMsg });
                   }
                   throw e;
                 }
@@ -399,7 +404,7 @@ export function useMapBridge(
                 // treats store_mounted as not convergence-verifiable (the mount
                 // path is trusted but cannot be re-verified against a viewport).
                 for (const d of deferredStoreMounted) {
-                  mapActionCtx?.reportTerminal?.(d.action, 'succeeded', {
+                  mapActionCtxRef.current?.reportTerminal?.(d.action, 'succeeded', {
                     actual: { store_mounted: true },
                   });
                 }
