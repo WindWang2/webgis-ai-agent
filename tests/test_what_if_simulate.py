@@ -1,4 +1,6 @@
 """Tests for what-if simulation tool."""
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
 from app.tools.what_if_rules import WHAT_IF_RULES, list_scenarios
@@ -14,6 +16,28 @@ from app.tools.what_if_simulate import (
     register_what_if_simulate,
 )
 from app.tools.registry import ToolRegistry
+
+
+@pytest.fixture
+def offline_rag():
+    """Stub the RAG knowledge engine so what-if tests run fully offline.
+
+    The tool path reaches RAG via build_evidence_chain →
+    retrieve_evidence_from_rag → get_knowledge_engine(). The real engine's
+    FaissVectorStore lazily loads the sentence-transformers
+    paraphrase-multilingual-MiniLM-L12-v2 model, which attempts an HF
+    download that hangs the offline suite. The assertions in these tests
+    never inspect RAG evidence (rules/metrics/geojson only), so stubbing
+    the engine with an empty search keeps them offline without changing
+    what they verify.
+    """
+    mock_engine = MagicMock()
+    mock_engine.search = AsyncMock(return_value=[])
+    with patch(
+        "app.services.spatial_decision.rule_pack.get_knowledge_engine",
+        return_value=mock_engine,
+    ):
+        yield
 
 
 def test_what_if_rules_structure():
@@ -119,7 +143,7 @@ def test_generate_simulation_geojson_non_spatial():
 
 
 @pytest.mark.asyncio
-async def test_what_if_simulate_tool_output():
+async def test_what_if_simulate_tool_output(offline_rag):
     """Verify tool returns structured result via registry dispatch."""
     registry = ToolRegistry()
     register_what_if_simulate(registry)
@@ -198,7 +222,7 @@ def test_list_scenarios():
         assert "indirect_radius_m" in s
 
 
-def test_what_if_simulate_population_growth():
+def test_what_if_simulate_population_growth(offline_rag):
     """Verify population growth scenario produces scaled metrics."""
     result = what_if_simulate(
         scenario="人口增长",
