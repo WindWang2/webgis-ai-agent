@@ -1,9 +1,13 @@
 /**
  * Chat API - 对接后端 SSE 流式接口
+ *
+ * F-FE-3: 所有请求统一走 `./transport`（apiFetch / openStream），错误统一为
+ * ApiError（含 status + body + requestId），超时由 transport 的
+ * AbortController 模型处理，非幂等 POST 永不自动重试。
  */
 
 import type { ToolResult } from '@/lib/types';
-import { API_BASE } from './config';
+import { apiFetch, openStream } from './transport';
 import { parseSSEStream } from './sse-stream-parser';
 
 export interface ChatMessage {
@@ -57,6 +61,9 @@ export interface SSEEvent {
  *
  * SEC-08：ownerToken 仅在匿名会话首次创建后由前端持有；提供时附在
  * `X-Session-Token` 头里回传，后端据此放行该匿名会话的访问。
+ *
+ * 超时模型：openStream 只对"连接阶段"（拿到响应头之前）计时，一旦开始
+ * 流式输出，时长由调用方的 signal 控制 —— 长 Agent turn 不会被计时器杀掉。
  */
 export async function* streamChat(
   message: string,
@@ -66,24 +73,18 @@ export async function* streamChat(
   skillName?: string,
   ownerToken?: string | null
 ): AsyncGenerator<SSEEvent> {
-  const response = await fetch(`${API_BASE}/api/v1/chat/stream`, {
+  const response = await openStream('/api/v1/chat/stream', {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(ownerToken ? { "X-Session-Token": ownerToken } : {}),
-    },
-    body: JSON.stringify({
+    body: {
       message,
       session_id: sessionId,
       map_state: mapState,
       skill_name: skillName
-    }),
+    },
     signal,
+    ownerToken,
+    label: "Chat API error",
   });
-
-  if (!response.ok) {
-    throw new Error(`Chat API error: ${response.status}`);
-  }
 
   if (!response.body) throw new Error("No response body");
 
@@ -110,29 +111,22 @@ export async function sendChat(
   mapState?: Record<string, unknown>,
   ownerToken?: string | null
 ): Promise<{ content: string; session_id: string; owner_token?: string }> {
-  const response = await fetch(`${API_BASE}/api/v1/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(ownerToken ? { "X-Session-Token": ownerToken } : {}),
-    },
-    body: JSON.stringify({ message, session_id: sessionId, map_state: mapState }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Chat API error: ${response.status}`);
-  }
-
-  return response.json();
+  return apiFetch<{ content: string; session_id: string; owner_token?: string }>(
+    '/api/v1/chat/completions',
+    {
+      method: "POST",
+      body: { message, session_id: sessionId, map_state: mapState },
+      ownerToken,
+      label: "Chat API error",
+    }
+  );
 }
 
 /**
  * 获取会话历史列表
  */
 export async function getSessionList() {
-  const res = await fetch(`${API_BASE}/api/v1/chat/sessions`);
-  if (!res.ok) throw new Error(`API Error: ${res.status}`);
-  return res.json();
+  return apiFetch('/api/v1/chat/sessions', { label: "API Error" });
 }
 
 /**
@@ -141,24 +135,22 @@ export async function getSessionList() {
  * SEC-08：匿名会话需提供 ownerToken 匹配 X-Session-Token 头。
  */
 export async function getSessionDetail(sessionId: string, ownerToken?: string | null) {
-  const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sessionId}`, {
-    headers: ownerToken ? { "X-Session-Token": ownerToken } : {},
-  });
-  if (!res.ok) throw new Error(`API Error: ${res.status}`);
-  return res.json();
+  return apiFetch(`/api/v1/chat/sessions/${sessionId}`, { ownerToken, label: "API Error" });
 }
 
 /**
  * 删除会话
  *
  * SEC-08：匿名会话需提供 ownerToken 匹配 X-Session-Token 头。
+ * DELETE 为幂等方法，但 transport 默认不重试；204 无响应体，parseJson: false。
  */
 export async function deleteSession(sessionId: string, ownerToken?: string | null): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/chat/sessions/${sessionId}`, {
+  await apiFetch<void>(`/api/v1/chat/sessions/${sessionId}`, {
     method: "DELETE",
-    headers: ownerToken ? { "X-Session-Token": ownerToken } : {},
+    ownerToken,
+    label: "API Error",
+    parseJson: false,
   });
-  if (!res.ok) throw new Error(`API Error: ${res.status}`);
 }
 
 /**
@@ -175,16 +167,16 @@ export async function deleteSession(sessionId: string, ownerToken?: string | nul
  * 审计契约断裂：前端之前发 { tool, argument }（单数），后端 ToolExecuteRequest
  * 期望 { tool, arguments }（复数）→ 参数被 pydantic 默认值 {} 覆盖，工具收到
  * 空参数。改为匹配后端字段名。
+ *
+ * 非幂等 POST：工具执行会被当作新的一次执行，transport 保证永不自动重试。
  */
 export async function executeToolDirect(
   tool: string,
   arguments_: Record<string, unknown>,
 ): Promise<ToolResult> {
-  const res = await fetch(`${API_BASE}/api/v1/chat/tools/execute`, {
+  return apiFetch<ToolResult>('/api/v1/chat/tools/execute', {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tool, arguments: arguments_ }),
+    body: { tool, arguments: arguments_ },
+    label: "Tool execute error",
   });
-  if (!res.ok) throw new Error(`Tool execute error: ${res.status}`);
-  return res.json();
 }
