@@ -132,6 +132,11 @@ def _handle_tool_execution_end(event: dict, session_id: str, cache_lookup: Optio
         ref = getattr(cached, "geojson_ref", None)
         if ref:
             payload["geojson_ref"] = ref
+            # V3 Performance: descriptor was pre-computed by dispatch() and
+            # carried on ToolDispatchResult.ref_descriptor — no async call needed.
+            descriptor = getattr(cached, "ref_descriptor", None)
+            if descriptor:
+                payload["ref_descriptor"] = descriptor
         return sse_event("step_result", payload)
 
     # 缓存未命中（Pi 重复回传 / dispatch 未走 service 路径）：退化到旧行为
