@@ -8,7 +8,7 @@ import logging
 from typing import List, Dict, Any, Tuple
 from urllib.parse import urlparse
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
-from app.services.data_fabric.security import DataFabricSecurity
+from app.services.data_fabric.security import DataFabricSecurity, make_safe_session
 from app.schemas.data_fabric_schema import (
     DatasetDescriptor,
     QuerySpec,
@@ -62,6 +62,9 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
         self.region = getattr(self.profile, "region", None) or self.profile.options.get("region", "us-east-1")
         self.allow_private = getattr(self.profile, "allow_private", False)
 
+        # SSRF-safe session: every request (incl. redirects) is revalidated.
+        self.session = make_safe_session(allow_private=self.allow_private)
+
         # Ensure credentials are redacted in profile dict for secret reference security
         self.sanitized_profile = DataFabricSecurity.sanitize_profile_dict(self.profile.model_dump())
 
@@ -88,9 +91,7 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
 
         try:
             safe_url = DataFabricSecurity.validate_url(self.endpoint, allow_private=self.allow_private)
-            import requests
-
-            resp = requests.head(safe_url, timeout=5)
+            resp = self.session.head(safe_url, timeout=5)
             return resp.status_code in (200, 403, 405)  # S3 endpoints may respond 403/405 to unauthenticated HEAD
         except Exception as e:
             logger.debug(f"S3 Storage Seam probe check note for {self.endpoint}: {type(e).__name__}")
@@ -218,8 +219,12 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
         meta = desc.metadata
 
         max_bytes = min(query_spec.limit * 1024 if query_spec.limit else MAX_PREVIEW_BYTES, MAX_PREVIEW_BYTES)
-        
+
         exec_time = round((time.time() - start_time) * 1000, 2)
+        # Demo vs remote label: with no real endpoint configured the metadata is
+        # served from SYNTHETIC_S3_FIXTURES — callers must not mistake it for a
+        # probed remote object.
+        src = "synthetic-demo" if (not self.endpoint or self.endpoint.startswith("s3://")) else "remote"
         return QueryResult(
             dataset_id=target_uri,
             features=[],
@@ -237,6 +242,7 @@ class S3StorageSeam(GeospatialDataSourceAdapter):
                 "exec_time_ms": exec_time,
                 "bounded_memory_stream": True,
                 "chunk_size_bytes": DEFAULT_CHUNK_SIZE,
+                "source": src,
             },
         )
 

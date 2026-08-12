@@ -9,7 +9,7 @@ import struct
 import logging
 from typing import List, Dict, Any
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
-from app.services.data_fabric.security import DataFabricSecurity
+from app.services.data_fabric.security import DataFabricSecurity, make_safe_session
 from app.schemas.data_fabric_schema import (
     DatasetDescriptor,
     QuerySpec,
@@ -67,6 +67,8 @@ class PMTilesAdapter(GeospatialDataSourceAdapter):
         super().__init__(connection_profile)
         self.endpoint = (self.profile.endpoint or "").strip()
         self.allow_private = getattr(self.profile, "allow_private", False)
+        # SSRF-safe session: every request (incl. redirects) is revalidated.
+        self.session = make_safe_session(allow_private=self.allow_private)
 
     def _parse_header_bytes(self, header_bytes: bytes) -> Dict[str, Any]:
         """
@@ -105,22 +107,23 @@ class PMTilesAdapter(GeospatialDataSourceAdapter):
         }
 
     def probe(self) -> bool:
-        """Probe PMTiles file reachability and 127-byte header."""
-        if not self.endpoint or not os.path.exists(self.endpoint):
-            return True  # Synthetic fallback mode
+        """Probe PMTiles file reachability and 127-byte header.
 
+        Truthfulness: no-endpoint = explicit demo mode (reachable); an endpoint
+        that IS configured but points at a missing/unreadable source is NOT.
+        """
+        if not self.endpoint:
+            return True  # explicit demo mode
         try:
             if self.endpoint.startswith(("http://", "https://")):
                 safe_url = DataFabricSecurity.validate_url(self.endpoint, allow_private=self.allow_private)
-                import requests
-
-                resp = requests.get(safe_url, headers={"Range": "bytes=0-126"}, timeout=5)
+                resp = self.session.get(safe_url, headers={"Range": "bytes=0-126"}, timeout=5)
                 return resp.status_code in (200, 206) and (b"PMT" in resp.content or b"PMTiles" in resp.content)
             elif os.path.isfile(self.endpoint):
                 with open(self.endpoint, "rb") as f:
                     buf = f.read(HEADER_SIZE)
                     return b"PMT" in buf or b"PMTiles" in buf
-            return True
+            return False
         except Exception as e:
             logger.debug(f"PMTiles probe failed for {self.endpoint}: {e}")
             return False
@@ -266,6 +269,8 @@ class PMTilesAdapter(GeospatialDataSourceAdapter):
         start_time = time.time()
         desc = self.describe(dataset_id)
         meta = desc.metadata
+        # Demo vs remote label so callers never mistake demo metadata for a real source.
+        src = "synthetic-demo" if not self.endpoint else "remote"
 
         if query_spec.tile_coords and isinstance(query_spec.tile_coords, dict):
             z = query_spec.tile_coords.get("z", meta.get("min_zoom", 0))
@@ -283,7 +288,7 @@ class PMTilesAdapter(GeospatialDataSourceAdapter):
                 },
                 total_count=1,
                 returned_count=1,
-                metadata={"exec_time_ms": exec_time, "full_geojson_conversion": False},
+                metadata={"exec_time_ms": exec_time, "full_geojson_conversion": False, "source": src},
             )
 
         target_zoom = query_spec.zoom if query_spec.zoom is not None else meta.get("min_zoom", 0)
@@ -303,7 +308,7 @@ class PMTilesAdapter(GeospatialDataSourceAdapter):
             },
             total_count=1,
             returned_count=1,
-            metadata={"exec_time_ms": exec_time, "full_geojson_conversion": False},
+            metadata={"exec_time_ms": exec_time, "full_geojson_conversion": False, "source": src},
         )
 
     def health(self) -> DataFabricHealth:

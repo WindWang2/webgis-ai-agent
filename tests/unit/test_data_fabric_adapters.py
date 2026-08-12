@@ -80,9 +80,12 @@ def test_stac_adapter_interface():
 
 
 def test_geoparquet_adapter_interface():
+    # Demo mode (no endpoint): probe is reachable; describe returns the
+    # synthetic fixture metadata. Configured-but-unreachable is covered in the
+    # fault-injection suite (truthful probe()==False), not here (offline).
     profile = ConnectionProfile(
         source_type="geoparquet",
-        endpoint_url="s3://mybucket/data.parquet",
+        endpoint_url="",
         name="test_parquet",
     )
     adapter = GeoParquetAdapter(profile)
@@ -92,9 +95,11 @@ def test_geoparquet_adapter_interface():
 
 
 def test_flatgeobuf_adapter_interface():
+    # Demo mode (no endpoint): probe is reachable. Real-http probe behavior is
+    # exercised offline via FakeFabricAdapter in the fault-injection suite.
     profile = ConnectionProfile(
         source_type="flatgeobuf",
-        endpoint_url="https://flatgeobuf.org/test.fgb",
+        endpoint_url="",
         name="test_fgb",
     )
     adapter = FlatGeobufAdapter(profile)
@@ -102,9 +107,10 @@ def test_flatgeobuf_adapter_interface():
 
 
 def test_pmtiles_adapter_interface():
+    # Demo mode (no endpoint): probe is reachable; describe returns tile type.
     profile = ConnectionProfile(
         source_type="pmtiles",
-        endpoint_url="https://pmtiles.io/test.pmtiles",
+        endpoint_url="",
         name="test_pmtiles",
     )
     adapter = PMTilesAdapter(profile)

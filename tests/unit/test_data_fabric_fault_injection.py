@@ -182,3 +182,52 @@ def test_stac_no_endpoint_demo_mode_is_labeled_synthetic():
     assert len(res.features) > 0
     assert res.metadata["source"] == "synthetic-demo"
 
+
+def test_geoparquet_configured_but_unreadable_returns_typed_error():
+    """A configured GeoParquet source that isn't a readable local file must NOT
+    serve synthetic fixtures as real data — it returns empty + SOURCE_UNREACHABLE."""
+    from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec
+    from app.services.data_fabric.adapters.geoparquet_adapter import GeoParquetAdapter
+
+    adapter = GeoParquetAdapter(ConnectionProfile(source_type="geoparquet", endpoint="s3://bucket/data.parquet"))
+    assert adapter.probe() is False  # configured but not a readable local file
+    res = adapter.query("data.parquet", QuerySpec(limit=5))
+    assert res.features == []
+    assert res.metadata["source"] == "remote"
+    assert res.metadata["error_type"] == "SOURCE_UNREACHABLE"
+
+
+def test_geoparquet_demo_mode_is_labeled_synthetic():
+    from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec
+    from app.services.data_fabric.adapters.geoparquet_adapter import GeoParquetAdapter
+
+    adapter = GeoParquetAdapter(ConnectionProfile(source_type="geoparquet", endpoint=""))
+    res = adapter.query("us_states_geoparquet", QuerySpec(limit=5))
+    assert len(res.features) > 0
+    assert res.metadata["source"] == "synthetic-demo"
+
+
+def test_flatgeobuf_configured_but_unreadable_returns_typed_error():
+    from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec
+    from app.services.data_fabric.adapters.flatgeobuf_adapter import FlatGeobufAdapter
+
+    adapter = FlatGeobufAdapter(ConnectionProfile(source_type="flatgeobuf", endpoint="s3://bucket/data.fgb"))
+    assert adapter.probe() is False
+    res = adapter.query("data.fgb", QuerySpec(limit=5))
+    assert res.features == []
+    assert res.metadata["error_type"] == "SOURCE_UNREACHABLE"
+
+
+def test_pmtiles_and_s3_query_carry_source_label():
+    """PMTiles/S3 queries are metadata-only but must label demo vs remote."""
+    from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec
+    from app.services.data_fabric.adapters.pmtiles_adapter import PMTilesAdapter
+    from app.services.data_fabric.adapters.s3_storage_seam import S3StorageAdapter
+
+    pm_demo = PMTilesAdapter(ConnectionProfile(source_type="pmtiles", endpoint=""))
+    assert pm_demo.query("world_basemap_vector", QuerySpec(limit=1)).metadata["source"] == "synthetic-demo"
+
+    s3_demo = S3StorageAdapter(ConnectionProfile(source_type="s3", endpoint="s3://bucket/x.fgb"))
+    assert s3_demo.query("x.fgb", QuerySpec(limit=1)).metadata["source"] == "synthetic-demo"
+
+
