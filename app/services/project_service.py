@@ -15,8 +15,29 @@ from app.models.project import (
 )
 from app.schemas.project_schema import ProjectUpdate, DatasetAttach, WorkflowCreate
 from app.services.provenance import compute_dataset_fingerprint, compute_graph_fingerprint
+from app.services.project_context_types import ProjectContextSummary, ProjectFingerprint
 
 logger = logging.getLogger(__name__)
+
+
+def _invalidate_project_context_cache(project_id: Optional[str]) -> None:
+    """Best-effort invalidation of the project-context block cache.
+
+    The cache is *also* correct without this call — the next round
+    pays a fingerprint read which detects staleness — but invalidating
+    on the mutation path lets the very next ``assemble()`` skip the
+    fingerprint read entirely (it still pays one query, but no
+    fingerprint read is needed because the entry is gone). The
+    invalidation is wrapped in a try/except so a cache failure never
+    blocks a write to the DB.
+    """
+    if not project_id:
+        return
+    try:
+        from app.services.chat.project_context_cache import project_context_cache
+        project_context_cache.invalidate(project_id)
+    except Exception as ex:  # pragma: no cover - defensive
+        logger.debug("project_context_cache invalidate failed: %s", ex)
 
 
 class ProjectService:
@@ -70,6 +91,174 @@ class ProjectService:
             return None
 
         return project
+
+    @staticmethod
+    def get_project_context_summary(
+        db: Session,
+        project_id: str,
+        user_id: Optional[str] = None,
+        org_id: Optional[int] = None,
+    ) -> Optional["ProjectContextSummary"]:
+        """Slim read of the project state used by the chat context block.
+
+        Returns ``None`` if the project is missing or the caller is not
+        authorised. Otherwise returns a ``ProjectContextSummary`` whose
+        ``fingerprint`` is a deterministic hash of the live aggregates:
+        the same DB state ⇒ the same fingerprint, and any mutation
+        (project update, dataset attach/detach, workflow create/update)
+        necessarily bumps at least one of the aggregates ⇒ the
+        fingerprint changes ⇒ the cache invalidates implicitly.
+
+        The method only ever reads scalar columns (no relationship loads,
+        no JSON columns, no joins). It costs at most 6 small queries
+        and serves as the source of truth for the LRU cache.
+        """
+        from sqlalchemy import func
+        from sqlalchemy.orm import noload
+
+        # 1. Project scalar + auth check. The project row is read with
+        # ``noload`` on the ``organization`` / ``owner`` ``selectin``
+        # eager loads, which we do not need here.
+        proj = db.execute(
+            select(Project)
+            .where(Project.id == project_id)
+            .options(noload(Project.organization), noload(Project.owner))
+        ).scalar_one_or_none()
+        if proj is None:
+            return None
+
+        # Tenant / Owner permission check (mirrors get_project_with_auth).
+        if org_id and proj.org_id and proj.org_id != org_id:
+            return None
+        if user_id and proj.owner_id and proj.owner_id != user_id and not org_id:
+            return None
+
+        # 2. Dataset aggregate: the max(COALESCE(detached_at, created_at))
+        # bumps on every attach (new created_at) but not on a detach
+        # (the row is filtered out of this aggregate). The COUNT(*)
+        # drops on detach. Together they form the dataset half of
+        # the fingerprint.
+        ds_row = db.execute(
+            select(
+                func.count(ProjectDataset.id),
+                func.max(func.coalesce(ProjectDataset.detached_at, ProjectDataset.created_at)),
+            ).where(
+                ProjectDataset.project_id == project_id,
+                ProjectDataset.detached_at.is_(None),
+            )
+        ).one()
+        dataset_count = int(ds_row[0] or 0)
+        dataset_max_modified = ds_row[1]
+
+        # 3. Workflow aggregate: Workflow.updated_at is bumped on every
+        # save_workflow and every update_workflow (also on _publish_revision).
+        wf_row = db.execute(
+            select(
+                func.count(Workflow.id),
+                func.max(Workflow.updated_at),
+            ).where(Workflow.project_id == project_id)
+        ).one()
+        workflow_count = int(wf_row[0] or 0)
+        workflow_max_updated = wf_row[1]
+
+        # 4. Top-5 dataset names (only id + name scalars).
+        ds_names = list(
+            db.execute(
+                select(ProjectDataset.name)
+                .where(
+                    ProjectDataset.project_id == project_id,
+                    ProjectDataset.detached_at.is_(None),
+                )
+                .order_by(ProjectDataset.created_at.desc())
+                .limit(5)
+            ).scalars().all()
+        )
+
+        # 5. Top-5 workflow names (only id + name scalars).
+        wf_names = list(
+            db.execute(
+                select(Workflow.name)
+                .where(Workflow.project_id == project_id)
+                .order_by(Workflow.updated_at.desc())
+                .limit(5)
+            ).scalars().all()
+        )
+
+        from app.services.project_context_types import ProjectContextSummary
+
+        return ProjectContextSummary(
+            project_id=proj.id,
+            project_name=proj.name,
+            dataset_count=dataset_count,
+            workflow_count=workflow_count,
+            dataset_names=tuple(ds_names),
+            workflow_names=tuple(wf_names),
+            project_updated_at=proj.updated_at,
+            dataset_max_modified=dataset_max_modified,
+            workflow_max_updated=workflow_max_updated,
+        )
+
+    @staticmethod
+    def get_project_fingerprint(
+        db: Session,
+        project_id: str,
+        user_id: Optional[str] = None,
+        org_id: Optional[int] = None,
+    ) -> Optional["ProjectFingerprint"]:
+        """Read just enough to compute the cache key.
+
+        Returns ``None`` if the project is missing or unauthorised. Does
+        not pull the top-5 name lists — the full summary is only
+        computed on a cache miss. The project row is read with
+        ``noload()`` to suppress the ``organization`` / ``owner``
+        ``selectin`` eager loads, which we do not need to compute the
+        fingerprint.
+        """
+        from sqlalchemy import func
+        from sqlalchemy.orm import noload
+
+        # Slim project read: only the columns we need, no relationships.
+        proj = db.execute(
+            select(Project)
+            .where(Project.id == project_id)
+            .options(noload(Project.organization), noload(Project.owner))
+        ).scalar_one_or_none()
+        if proj is None:
+            return None
+
+        # Tenant / Owner permission check (in-Python, mirrors
+        # get_project_with_auth).
+        if org_id and proj.org_id and proj.org_id != org_id:
+            return None
+        if user_id and proj.owner_id and proj.owner_id != user_id and not org_id:
+            return None
+
+        ds_row = db.execute(
+            select(
+                func.count(ProjectDataset.id),
+                func.max(func.coalesce(ProjectDataset.detached_at, ProjectDataset.created_at)),
+            ).where(
+                ProjectDataset.project_id == project_id,
+                ProjectDataset.detached_at.is_(None),
+            )
+        ).one()
+        wf_row = db.execute(
+            select(
+                func.count(Workflow.id),
+                func.max(Workflow.updated_at),
+            ).where(Workflow.project_id == project_id)
+        ).one()
+
+        from app.services.project_context_types import ProjectFingerprint
+
+        return ProjectFingerprint(
+            project_id=project_id,
+            project_updated_at=proj.updated_at,
+            dataset_count=int(ds_row[0] or 0),
+            dataset_max_modified=ds_row[1],
+            workflow_count=int(wf_row[0] or 0),
+            workflow_max_updated=wf_row[1],
+        )
 
     @staticmethod
     def list_projects(
@@ -128,6 +317,7 @@ class ProjectService:
         project.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(project)
+        _invalidate_project_context_cache(project_id)
         return project
 
     @staticmethod
@@ -168,6 +358,7 @@ class ProjectService:
         db.add(dataset)
         db.commit()
         db.refresh(dataset)
+        _invalidate_project_context_cache(project_id)
         return dataset
 
     @staticmethod
@@ -194,6 +385,7 @@ class ProjectService:
         # list views filter it out via detached_at IS NULL.
         dataset.detached_at = datetime.now(timezone.utc)
         db.commit()
+        _invalidate_project_context_cache(project_id)
         return True
 
     @staticmethod
@@ -286,6 +478,7 @@ class ProjectService:
         # Publish the first immutable revision (INV-REV1/2) so the graph as
         # saved is recoverable even before a first run.
         ProjectService._publish_revision(db, workflow, user_id)
+        _invalidate_project_context_cache(project_id)
         return workflow
 
     @staticmethod
@@ -398,6 +591,11 @@ class ProjectService:
         new_fp = compute_graph_fingerprint(workflow.graph_spec or {})
         if new_fp != prev_fp:
             ProjectService._publish_revision(db, workflow, user_id)
+        # Every update bumps ``updated_at`` (line 572) and therefore
+        # the workflow_max_updated aggregate; the cache will miss on
+        # the next lookup. We also invalidate explicitly so the
+        # fingerprint read is not even needed.
+        _invalidate_project_context_cache(project_id)
         return workflow
 
     @staticmethod
