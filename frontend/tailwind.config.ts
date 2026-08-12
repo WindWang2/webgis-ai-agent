@@ -2,6 +2,11 @@ import type { Config } from "tailwindcss";
 import typography from "@tailwindcss/typography";
 
 const config: Config = {
+  // Without this, Tailwind v3 defaults to `darkMode: 'media'` and every `dark:`
+  // variant tracks the OS preference instead of the `dark` class that
+  // app/page.tsx puts on <html>. The V4 audit found 124 such variants across 13
+  // files, all of them inert under the in-app theme toggle.
+  darkMode: 'class',
   content: [
     "./pages/**/*.{js,ts,jsx,tsx,mdx}",
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
@@ -10,29 +15,83 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        /* ── All is Agent — Light Glass Palette ── */
-        "agent-bg": "#dce8f2",
-        "agent-panel": "rgba(252, 253, 254, 0.88)",
-        "agent-panel2": "rgba(248, 250, 252, 0.72)",
-        "agent-glass": "rgba(255, 255, 255, 0.70)",
-        "agent-border": "rgba(15, 23, 42, 0.08)",
-        "agent-border-mid": "rgba(15, 23, 42, 0.12)",
+        /* ── Visual System V4 semantic tokens ──
+           Prefer these over raw palette classes: `bg-surface-panel` survives a
+           theme flip, `bg-slate-50` does not. The values live in
+           app/globals.css (`:root` and `.dark`). */
+        surface: {
+          canvas: "var(--surface-canvas)",
+          panel: "var(--surface-panel)",
+          raised: "var(--surface-raised)",
+          overlay: "var(--surface-overlay)",
+          sunken: "var(--surface-sunken)",
+          hover: "var(--surface-hover)",
+          selected: "var(--surface-selected)",
+          scrim: "var(--surface-scrim)",
+        },
+        edge: {
+          subtle: "var(--border-subtle)",
+          DEFAULT: "var(--border-default)",
+          strong: "var(--border-strong)",
+        },
+        ink: {
+          DEFAULT: "var(--text-primary)",
+          secondary: "var(--text-secondary)",
+          muted: "var(--text-muted)",
+          disabled: "var(--text-disabled)",
+          "on-accent": "var(--text-on-accent)",
+        },
+        status: {
+          accent: "var(--accent)",
+          "accent-vivid": "var(--accent-vivid)",
+          "accent-soft": "var(--accent-soft)",
+          "accent-border": "var(--accent-border)",
+          success: "var(--success)",
+          "success-soft": "var(--success-soft)",
+          "success-border": "var(--success-border)",
+          info: "var(--info)",
+          "info-soft": "var(--info-soft)",
+          "info-border": "var(--info-border)",
+          warning: "var(--warning)",
+          "warning-soft": "var(--warning-soft)",
+          "warning-border": "var(--warning-border)",
+          critical: "var(--critical)",
+          "critical-soft": "var(--critical-soft)",
+          "critical-border": "var(--critical-border)",
+          neutral: "var(--neutral)",
+          "neutral-soft": "var(--neutral-soft)",
+          "neutral-border": "var(--neutral-border)",
+        },
+        "map-chrome": {
+          DEFAULT: "var(--map-chrome-bg)",
+          border: "var(--map-chrome-border)",
+          ink: "var(--map-chrome-text)",
+          "ink-muted": "var(--map-chrome-text-muted)",
+        },
+
+        /* ── Pre-V4 aliases, kept so existing call sites keep compiling.
+              They now resolve through the semantic tokens above. ── */
+        "agent-bg": "var(--surface-canvas)",
+        "agent-panel": "var(--surface-panel)",
+        "agent-panel2": "var(--surface-raised)",
+        "agent-glass": "var(--surface-overlay)",
+        "agent-border": "var(--border-subtle)",
+        "agent-border-mid": "var(--border-default)",
 
         /* Text */
-        "agent-tp": "#0f172a",
-        "agent-ts": "#475569",
-        "agent-tm": "#94a3b8",
+        "agent-tp": "var(--text-primary)",
+        "agent-ts": "var(--text-secondary)",
+        "agent-tm": "var(--text-muted)",
 
         /* Accent */
-        "agent-accent": "#16a34a",
-        "agent-accent-dim": "rgba(22, 163, 74, 0.08)",
-        "agent-accent-brd": "rgba(22, 163, 74, 0.22)",
-        "agent-accent-text": "#15803d",
+        "agent-accent": "var(--agent-accent)",
+        "agent-accent-dim": "var(--accent-soft)",
+        "agent-accent-brd": "var(--accent-border)",
 
         /* Semantic */
-        "agent-blue": "#2563eb",
-        "agent-orange": "#ea580c",
-        "agent-red": "#dc2626",
+        "agent-blue": "var(--info)",
+        "agent-orange": "var(--warning)",
+        "agent-red": "var(--critical)",
 
         /* Legacy compat (CSS vars for shadcn) */
         border: "hsl(var(--border))",
@@ -69,22 +128,56 @@ const config: Config = {
           foreground: "hsl(var(--popover-foreground))",
         },
       },
+      /* Dense workbench type scale. The audit counted 309 raw `text-[Npx]`
+         across 12 distinct values; these six steps replace them. */
+      fontSize: {
+        micro: ["var(--font-micro)", { lineHeight: "var(--leading-tight)" }],
+        caption: ["var(--font-caption)", { lineHeight: "var(--leading-tight)" }],
+        meta: ["var(--font-meta)", { lineHeight: "var(--leading-normal)" }],
+        body: ["var(--font-body)", { lineHeight: "var(--leading-normal)" }],
+        title: ["var(--font-title)", { lineHeight: "var(--leading-tight)" }],
+        heading: ["var(--font-heading)", { lineHeight: "var(--leading-tight)" }],
+      },
+      /* Control/row heights and shell metrics, so `h-control-md` and `w-rail`
+         replace the scattered h-6/h-7/h-8 and the hardcoded 48/42/330. */
+      spacing: {
+        "control-sm": "var(--control-sm)",
+        "control-md": "var(--control-md)",
+        "control-lg": "var(--control-lg)",
+        "row-sm": "var(--row-sm)",
+        "row-md": "var(--row-md)",
+        "row-lg": "var(--row-lg)",
+        "icon-sm": "var(--icon-sm)",
+        "icon-md": "var(--icon-md)",
+        "icon-lg": "var(--icon-lg)",
+        panel: "var(--panel-pad)",
+        topbar: "var(--topH)",
+        statusbar: "var(--stH)",
+        rail: "var(--railW)",
+        sidebar: "var(--sw)",
+      },
       borderRadius: {
-        lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
+        xs: "var(--radius-xs)",
+        sm: "var(--radius-sm)",
+        md: "var(--radius-md)",
+        lg: "var(--radius-lg)",
+        xl: "var(--radius-xl)",
+        pill: "var(--radius-pill)",
+        chrome: "var(--map-chrome-radius)",
       },
       fontFamily: {
         sans: ["DM Sans", "system-ui", "sans-serif"],
         mono: ["JetBrains Mono", "Fira Code", "monospace"],
       },
       boxShadow: {
-        "agent-sm":
-          "0 1px 4px rgba(15,23,42,0.06), 0 0 0 1px rgba(15,23,42,0.04)",
-        "agent-md":
-          "0 4px 24px rgba(15,23,42,0.09), 0 1px 4px rgba(15,23,42,0.05)",
-        "agent-lg":
-          "0 8px 40px rgba(15,23,42,0.12), 0 2px 8px rgba(15,23,42,0.06)",
+        raised: "var(--elevation-raised)",
+        overlay: "var(--elevation-overlay)",
+        drawer: "var(--elevation-drawer)",
+        chrome: "var(--map-chrome-shadow)",
+        /* Pre-V4 names, re-pointed at the elevation scale. */
+        "agent-sm": "var(--elevation-raised)",
+        "agent-md": "var(--elevation-overlay)",
+        "agent-lg": "var(--elevation-drawer)",
       },
       animation: {
         "hb-scan": "hbScan 2.2s ease-in-out infinite",
