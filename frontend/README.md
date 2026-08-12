@@ -35,16 +35,18 @@ frontend/components/
 │   ├── layer-style-panel.tsx # 图层样式面板
 │   ├── settings-panel.tsx   # 设置面板
 │   └── causal-trace.tsx     # 因果追踪
-├── sidebar/                 # 多标签侧边栏
-│   ├── left-sidebar.tsx     # 侧边栏容器
+├── sidebar/                 # 工作区上下文面板标签（UI V3）
 │   ├── chat-tab.tsx         # 聊天标签
+│   ├── project-tab.tsx      # 项目标签
+│   ├── data-sources-tab.tsx # 数据源标签（编排器）
+│   ├── data-sources/        # 数据源子模块（hook/卡片/弹窗）
 │   ├── layers-tab.tsx       # 图层管理标签
-│   ├── ops-log-tab.tsx      # 操作日志标签
-│   ├── exports-tab.tsx      # 导出文件标签
 │   ├── analysis-tab.tsx     # 分析标签
-│   └── assets-tab.tsx       # 资产管理标签
+│   ├── map-studio-tab.tsx   # 制图工坊标签
+│   └── tasks-tab.tsx        # 任务中心标签
 ├── drawers/                 # 抽屉面板
-│   └── history-drawer.tsx   # 历史记录抽屉
+│   ├── history-drawer.tsx   # 历史记录抽屉
+│   └── template-gallery-v2.tsx # 模板库抽屉
 ├── explorer/                # 空间探索器
 │   ├── explorer-progress-panel.tsx
 │   ├── reasoning-panel.tsx
@@ -53,7 +55,9 @@ frontend/components/
 │   ├── report-generator.tsx
 │   └── report-preview.tsx
 ├── layout/                  # 布局组件
-│   └── top-bar.tsx          # 顶部导航栏
+│   ├── top-bar.tsx          # 顶部导航栏
+│   ├── nav-rail.tsx         # 主导航竖排图标栏（UI V3）
+│   └── context-panel.tsx    # 统一上下文面板（UI V3）
 ├── overlays/                # 覆盖层
 │   └── perception-rings.tsx # 感知环动画
 ├── panel/                   # 功能面板

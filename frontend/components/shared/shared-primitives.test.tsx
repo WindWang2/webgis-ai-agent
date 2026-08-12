@@ -55,6 +55,7 @@ describe('StatusBadge', () => {
 
 describe('ConfirmAction', () => {
   it('requires two clicks: first arms, second confirms', () => {
+    vi.useFakeTimers();
     const onConfirm = vi.fn();
     render(<ConfirmAction label="删除" confirmLabel="确认删除？" onConfirm={onConfirm} />);
 
@@ -62,11 +63,24 @@ describe('ConfirmAction', () => {
     fireEvent.click(btn);
     expect(onConfirm).not.toHaveBeenCalled();
 
+    // 确认点击必须在 arm 最小间隔（250ms）之后，防双击一次手势完成删除
+    act(() => vi.advanceTimersByTime(300));
     const armed = screen.getByRole('button', { name: '确认删除？' });
     fireEvent.click(armed);
     expect(onConfirm).toHaveBeenCalledTimes(1);
     // 确认后还原
     expect(screen.getByRole('button', { name: '删除' })).toBeInTheDocument();
+  });
+
+  it('ignores a confirm click within the min-arm window (double-click protection)', () => {
+    const onConfirm = vi.fn();
+    render(<ConfirmAction label="删除" confirmLabel="确认删除？" onConfirm={onConfirm} />);
+
+    const btn = screen.getByRole('button', { name: '删除' });
+    fireEvent.click(btn);
+    // 立即第二击（双击手势）—— 不确认
+    fireEvent.click(screen.getByRole('button', { name: '确认删除？' }));
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 
   it('auto-reverts after the timeout', () => {

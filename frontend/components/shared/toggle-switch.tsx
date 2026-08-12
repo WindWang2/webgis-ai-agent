@@ -28,7 +28,7 @@ export default function ToggleSwitch({
         style={{
           width: 34,
           height: 19,
-          backgroundColor: checked ? accentColor : 'rgba(15,23,42,0.15)',
+          backgroundColor: checked ? accentColor : 'var(--theme-border-strong, rgba(15,23,42,0.15))',
         }}
       />
       {/* Knob */}

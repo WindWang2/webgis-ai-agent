@@ -32,18 +32,19 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { Search, Loader2, ChevronLeft, ChevronRight, Layers, Map as MapIcon, Palette, Layout as LayoutIcon, BarChart3, Sparkles, X } from 'lucide-react';
+import { Loader2, ChevronLeft, ChevronRight, Layers, Map as MapIcon, Palette, Layout as LayoutIcon, BarChart3, Sparkles, X } from 'lucide-react';
 import { templatesApi, type TemplateKind, type TemplateSummary } from '@/lib/api/templates';
 import { isApiError } from '@/lib/api/transport';
 import { applyBaseline, type BasemapPayload } from '@/lib/basemap-apply';
 import { applySymbology, type SymbologyPayload } from '@/lib/symbology-apply';
 import { resolveThematicPreset } from '@/lib/thematic-apply';
 import { resolveStyle } from '@/lib/map-kit/layout-style';
-import { trapTabKey } from '@/lib/utils/focus';
+import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import { LoadingState } from '@/components/shared/loading-state';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { EmptyState } from '@/components/shared/empty-state';
 import { IconButton } from '@/components/shared/icon-button';
+import { SearchField } from '@/components/shared/search-field';
 
 const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 200;
@@ -75,8 +76,6 @@ export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2P
   const [activeTemplate, setActiveTemplate] = useState<TemplateSummary | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  const searchRef = useRef<HTMLInputElement | null>(null);
-  const restoreFocusRef = useRef<HTMLElement | null>(null);
 
   // Debounce search input so each keystroke does not fire a request.
   useEffect(() => {
@@ -127,29 +126,14 @@ export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2P
     return () => controller.abort();
   }, [open, activeKind, debouncedSearch, page]);
 
-  // Dialog 焦点管理：打开时聚焦搜索框，关闭时归还触发元素。
-  useEffect(() => {
-    if (!open) return;
-    restoreFocusRef.current = document.activeElement as HTMLElement | null;
-    const t = setTimeout(() => searchRef.current?.focus(), 50);
-    return () => {
-      clearTimeout(t);
-      restoreFocusRef.current?.focus?.();
-      restoreFocusRef.current = null;
-    };
-  }, [open]);
-
-  const onDialogKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose();
-        return;
-      }
-      if (trapTabKey(e.nativeEvent, dialogRef.current)) return;
-    },
-    [onClose]
-  );
+  // Dialog 焦点管理（共用 hook）：初始聚焦搜索框 / 焦点归还 /
+  // document 级 Tab 围栏 + Escape（修复焦点落到非交互区后 trap 失效）。
+  useDialogFocus({
+    open,
+    containerRef: dialogRef,
+    onEscape: onClose,
+    initialFocusSelector: 'input',
+  });
 
   // Memoized handler so the card list below doesn't re-render on parent
   // updates unrelated to selection.
@@ -258,12 +242,12 @@ export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2P
         role="dialog"
         aria-modal="true"
         aria-labelledby="template-gallery-title"
+        tabIndex={-1}
         className="flex h-full w-[560px] max-w-[92vw] flex-col border-l border-[var(--theme-border)] shadow-2xl"
         style={{ background: 'var(--theme-bg-panel)', backdropFilter: 'blur(28px)', WebkitBackdropFilter: 'blur(28px)' }}
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={onDialogKeyDown}
       >
-        <Header onClose={onClose} search={search} setSearch={setSearch} loading={loading} searchRef={searchRef} />
+        <Header onClose={onClose} search={search} setSearch={setSearch} loading={loading} />
 
         <KindTabs active={activeKind} onChange={setActiveKind} />
 
@@ -309,13 +293,11 @@ function Header({
   search,
   setSearch,
   loading,
-  searchRef,
 }: {
   onClose: () => void;
   search: string;
   setSearch: (s: string) => void;
   loading: boolean;
-  searchRef: React.Ref<HTMLInputElement>;
 }) {
   return (
     <div className="flex items-center justify-between gap-3 border-b border-[var(--theme-border)] p-4">
@@ -327,18 +309,15 @@ function Header({
         <p className="mt-0.5 text-[12px] text-[var(--theme-text-muted)]">模板 · 按分类/关键词搜索 · 快速应用</p>
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <div className="relative">
-          <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--theme-text-muted)]" aria-hidden />
-          <input
-            ref={searchRef}
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜索模板…"
-            aria-label="搜索模板"
-            className="w-44 rounded-md border border-[var(--theme-border)] bg-[var(--theme-bg-input)] py-1.5 pl-7 pr-2 text-[13px] text-[var(--theme-text-primary)] placeholder:text-[var(--theme-text-muted)]"
-          />
-        </div>
+        {/* 受控 + debounce=0：fetch 防抖由组件自身的 200ms debouncedSearch 承担；
+            SearchField 提供 Escape 清空与清除按钮。 */}
+        <SearchField
+          value={search}
+          onChange={setSearch}
+          placeholder="搜索模板…"
+          aria-label="搜索模板"
+          debounceMs={0}
+        />
         {loading && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none text-[var(--theme-text-muted)]" aria-hidden />}
         <IconButton label="关闭模板库" icon={X} onClick={onClose} />
       </div>
@@ -354,14 +333,15 @@ function KindTabs({
   onChange: (k: TemplateKind | 'all') => void;
 }) {
   return (
-    <div role="tablist" aria-label="模板分类" className="flex gap-1 overflow-x-auto border-b border-[var(--theme-border)] px-4 pt-2">
+    // 分类过滤是 toggle-button 组（不控制 tabpanel），不用 tablist 语义。
+    <div aria-label="模板分类" className="flex gap-1 overflow-x-auto border-b border-[var(--theme-border)] px-4 pt-2">
       {KIND_TABS.map(({ kind, label, Icon }) => {
         const selected = active === kind;
         return (
           <button
             key={kind}
-            role="tab"
-            aria-selected={selected}
+            type="button"
+            aria-pressed={selected}
             onClick={() => onChange(kind)}
             className={`flex items-center gap-1.5 whitespace-nowrap rounded-t-md px-3 py-2 text-[13px] transition-colors ${
               selected ? '' : 'hover:bg-[var(--theme-bg-hover)]'

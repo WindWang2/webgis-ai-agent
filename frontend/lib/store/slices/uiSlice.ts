@@ -124,7 +124,10 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   showGrid: true,
   setShowGrid: (show) => set({ showGrid: show }),
   sidebarWidth: 330,
-  setSidebarWidth: (width) => set({ sidebarWidth: width }),
+  // UI V3 review：280–420 clamp 收敛到 setter（之前只在 context panel 的拖拽
+  // 手柄处 clamp，tweaks 滑杆 240–480 可绕过并使 separator 的 aria-min/max 失真）。
+  setSidebarWidth: (width) =>
+    set({ sidebarWidth: Math.min(420, Math.max(280, Math.round(width))) }),
 
   /* ─── v2 Feature Data ─── */
   opsLog: [],

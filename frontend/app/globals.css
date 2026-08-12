@@ -96,7 +96,8 @@
   --muted-foreground: 215 20% 65%;
 
   --accent: 142 71% 45%;
-  --accent-foreground: 142 71% 70%;
+  /* 深底上 accent 为绿色，前景用近黑保证对比（shadcn 约定：fg 为accent上的文字色） */
+  --accent-foreground: 222 47% 11%;
 
   --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 98%;
@@ -426,11 +427,11 @@ textarea {
 
 /* ═══ Accessibility: focus-visible + reduced motion (UI V3) ═══ */
 
-/* 统一键盘焦点环 — 之前全仓 0 处 focus-visible。鼠标点击不触发。 */
+/* 统一键盘焦点环 — 之前全仓 0 处 focus-visible。鼠标点击不触发。
+   不覆盖元素自身 border-radius（review P2：圆形控件聚焦时不应变形）。 */
 *:focus-visible {
   outline: 2px solid var(--agent-accent, #16a34a);
   outline-offset: 1px;
-  border-radius: 4px;
 }
 
 /* prefers-reduced-motion：全站 CSS 动画/过渡降级。

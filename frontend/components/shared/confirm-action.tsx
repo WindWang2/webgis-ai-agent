@@ -30,6 +30,10 @@ export function ConfirmAction({
 }: ConfirmActionProps) {
   const [confirming, setConfirming] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Review P2 修复：双击会在 250ms 内连点两下直接完成“arm+confirm”，
+  // 两段式保护形同虚设；确认点击必须发生在 arm 之后的最小间隔外。
+  const armedAtRef = useRef(0);
+  const MIN_ARM_MS = 250;
 
   useEffect(() => {
     if (!confirming) return;
@@ -53,9 +57,11 @@ export function ConfirmAction({
       onClick={(e) => {
         e.stopPropagation();
         if (confirming) {
+          if (Date.now() - armedAtRef.current < MIN_ARM_MS) return;
           setConfirming(false);
           onConfirm();
         } else {
+          armedAtRef.current = Date.now();
           setConfirming(true);
         }
       }}

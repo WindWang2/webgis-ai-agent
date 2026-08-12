@@ -18,6 +18,7 @@ import { useMemo } from 'react';
 
 import type { JobStatus, JobView } from '@/lib/api/jobs';
 import { useJobCenter } from '@/lib/hooks/use-job-center';
+import { useHudStore } from '@/lib/store/useHudStore';
 import { EmptyState } from '@/components/shared/empty-state';
 import { IconButton } from '@/components/shared/icon-button';
 import { InlineNotice } from '@/components/shared/inline-notice';
@@ -159,9 +160,13 @@ function JobCard({
 }
 
 export function TasksTab({ sessionId, ownerToken, accentColor = '#16a34a' }: TasksTabProps) {
+  // Review P2 修复：context panel 收起时 tab 内容保持挂载（visibility 隐藏），
+  // 传 enabled 关闭轮询，避免看不见的面板持续打后端。
+  const leftPanelOpen = useHudStore((s) => s.leftPanelOpen);
   const { jobs, loading, error, cancelling, refresh, cancel, retry } = useJobCenter({
     sessionId,
     ownerToken,
+    enabled: leftPanelOpen,
   });
 
   // 单次读取的时钟基准：同一渲染内所有卡片用同一个 now，避免逐张 Date.now()

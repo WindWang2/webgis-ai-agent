@@ -86,6 +86,9 @@ export function ContextPanel({
   const setSidebarWidth = useHudStore((s) => s.setSidebarWidth);
   const layerCount = useHudStore((s) => s.layers.length);
   const exportCount = useHudStore((s) => s.exports.length);
+  // HUD 展开时面板整体上移避让（与 nav rail / floating legend 一致），
+  // 否则 composer 与 tab 底部内容被 210px HUD 遮住。
+  const hudOpen = useHudStore((s) => s.hudOpen);
 
   const metaKey = activeTab === 'exports' ? 'export_layout' : activeTab;
   const meta = PANEL_META[metaKey] ?? PANEL_META.chat;
@@ -95,25 +98,35 @@ export function ContextPanel({
   const [dragging, setDragging] = useState(false);
   const dragStart = useRef<{ x: number; width: number } | null>(null);
 
+  // Review P1 修复：pointer capture + cancel/blur 兜底。
+  // 之前用 window pointermove/up 监听，指针在窗口外释放（或 pointercancel）
+  // 时 onUp 不触发，会留下永久 dragging 状态 + 泄漏的监听器。
+  const endDrag = useCallback(() => {
+    dragStart.current = null;
+    setDragging(false);
+  }, []);
+
   const onHandlePointerDown = useCallback(
-    (e: React.PointerEvent) => {
+    (e: React.PointerEvent<HTMLDivElement>) => {
       e.preventDefault();
       dragStart.current = { x: e.clientX, width: sidebarWidth };
       setDragging(true);
-      const onMove = (ev: PointerEvent) => {
-        if (!dragStart.current) return;
-        setSidebarWidth(clampWidth(dragStart.current.width + (ev.clientX - dragStart.current.x)));
-      };
-      const onUp = () => {
-        dragStart.current = null;
-        setDragging(false);
-        window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
-      };
-      window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp);
+      // 指针捕获后 move/up/cancel 全部重定向到本元素，无需 window 监听。
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        /* jsdom / 老浏览器无 pointer capture，退化为仅键盘调宽可用 */
+      }
     },
-    [sidebarWidth, setSidebarWidth]
+    [sidebarWidth]
+  );
+
+  const onHandlePointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!dragStart.current) return;
+      setSidebarWidth(clampWidth(dragStart.current.width + (e.clientX - dragStart.current.x)));
+    },
+    [setSidebarWidth]
   );
 
   const onHandleKeyDown = useCallback(
@@ -126,26 +139,36 @@ export function ContextPanel({
     [sidebarWidth, setSidebarWidth]
   );
 
+  // Review P2 修复：PanelHeader close 收起面板后，焦点从不可见按钮归还到
+  // rail 对应 tab。
+  const handleClose = useCallback(() => {
+    toggleLeftPanel();
+    setTimeout(() => {
+      document.getElementById(`rail-tab-${metaKey}`)?.focus();
+    }, 0);
+  }, [toggleLeftPanel, metaKey]);
+
   return (
     <aside
       role="tabpanel"
       id="workspace-panel"
       aria-labelledby={`rail-tab-${metaKey}`}
       aria-hidden={!leftPanelOpen}
-      className="fixed bottom-[24px] left-12 top-[42px] z-40 flex flex-col"
+      className="fixed left-12 top-[42px] z-40 flex flex-col"
       style={{
+        bottom: hudOpen ? 234 : 24,
         width: sidebarWidth,
         maxWidth: 'calc(100vw - 48px)',
         background: 'var(--theme-bg-panel)',
         backdropFilter: 'blur(28px)',
         WebkitBackdropFilter: 'blur(28px)',
         borderRight: '1px solid var(--theme-border)',
-        boxShadow: '2px 0 24px rgba(15, 23, 42, 0.09)',
+        boxShadow: 'var(--theme-shadow)',
         transform: leftPanelOpen ? 'translateX(0)' : 'translateX(-110%)',
         visibility: leftPanelOpen ? 'visible' : 'hidden',
         transition: dragging
           ? 'none'
-          : 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.25s',
+          : 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.25s, bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
     >
       <PanelHeader
@@ -153,7 +176,7 @@ export function ContextPanel({
         title={meta.title}
         description={meta.description}
         badge={badge}
-        onClose={toggleLeftPanel}
+        onClose={handleClose}
         id={`workspace-panel-title`}
       />
 
@@ -188,6 +211,10 @@ export function ContextPanel({
         title="拖拽调整面板宽度（双击复位）"
         tabIndex={0}
         onPointerDown={onHandlePointerDown}
+        onPointerMove={onHandlePointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onLostPointerCapture={endDrag}
         onKeyDown={onHandleKeyDown}
         onDoubleClick={() => setSidebarWidth(PANEL_DEFAULT)}
         className="absolute -right-[3px] bottom-0 top-0 w-1.5 cursor-col-resize hover:bg-[var(--agent-accent,#16a34a)]/30"

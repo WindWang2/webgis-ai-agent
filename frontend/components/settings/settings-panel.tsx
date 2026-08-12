@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useRef } from 'react';
 import {
   Sparkles,
   Hash,
@@ -11,7 +11,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
-import { trapTabKey } from '@/lib/utils/focus';
+import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import { LlmConfig } from './llm-config';
 import { SkillsHub } from './skills-hub';
 import { RagConfig } from './rag-config';
@@ -71,34 +71,38 @@ export function SettingsPanel() {
   const skills = useHudStore((s) => s.skills);
 
   const drawerRef = useRef<HTMLDivElement | null>(null);
-  const restoreFocusRef = useRef<HTMLElement | null>(null);
+  const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
 
-  useEffect(() => {
-    if (!settingsOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setSettingsOpen(false);
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [settingsOpen, setSettingsOpen]);
+  const close = useCallback(() => setSettingsOpen(false), [setSettingsOpen]);
 
-  // UI V3 dialog 焦点管理：打开时聚焦第一个导航项，关闭时归还触发元素。
-  useEffect(() => {
-    if (!settingsOpen) return;
-    restoreFocusRef.current = document.activeElement as HTMLElement | null;
-    const t = setTimeout(() => {
-      drawerRef.current?.querySelector<HTMLElement>('[role="tab"]')?.focus();
-    }, 50);
-    return () => {
-      clearTimeout(t);
-      restoreFocusRef.current?.focus?.();
-      restoreFocusRef.current = null;
-    };
-  }, [settingsOpen]);
+  // UI V3 dialog 焦点管理（共用 hook）：初始聚焦 / 焦点归还 / document 级
+  // Tab 围栏 + Escape。
+  useDialogFocus({
+    open: settingsOpen,
+    containerRef: drawerRef,
+    onEscape: close,
+    initialFocusSelector: '[role="tab"]',
+  });
 
-  const onDrawerKeyDown = useCallback((e: React.KeyboardEvent) => {
-    trapTabKey(e.nativeEvent, drawerRef.current);
-  }, []);
+  // Review P1 修复：tablist 补 WAI-APG 方向键导航（roving tabindex 已存在，
+  // 之前缺 ArrowUp/Down/Home/End，键盘用户无法切换设置分类）。
+  const onNavKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const idx = NAV_ITEMS.findIndex((item) => item.key === settingsTab);
+      let next: number | null = null;
+      if (e.key === 'ArrowDown') next = ((idx < 0 ? 0 : idx) + 1) % NAV_ITEMS.length;
+      else if (e.key === 'ArrowUp')
+        next = ((idx < 0 ? 0 : idx) - 1 + NAV_ITEMS.length) % NAV_ITEMS.length;
+      else if (e.key === 'Home') next = 0;
+      else if (e.key === 'End') next = NAV_ITEMS.length - 1;
+      if (next === null) return;
+      e.preventDefault();
+      const key = NAV_ITEMS[next].key;
+      setSettingsTab(key);
+      tabRefs.current.get(key)?.focus();
+    },
+    [settingsTab, setSettingsTab]
+  );
 
   if (!settingsOpen) return null;
 
@@ -123,7 +127,7 @@ export function SettingsPanel() {
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-panel-title"
-        onKeyDown={onDrawerKeyDown}
+        tabIndex={-1}
         className="fixed inset-y-0 right-0 z-[101] flex animate-slide-from-right"
         style={{ width: 'min(720px, 92vw)' }}
       >
@@ -151,13 +155,23 @@ export function SettingsPanel() {
           </div>
 
           {/* Nav items */}
-          <div role="tablist" aria-orientation="vertical" className="flex flex-col gap-0.5 px-2 flex-1">
+          <div
+            role="tablist"
+            aria-orientation="vertical"
+            aria-label="设置分类"
+            onKeyDown={onNavKeyDown}
+            className="flex flex-col gap-0.5 px-2 flex-1"
+          >
             {navWithCounts.map((item) => {
               const Icon = item.icon;
               const isActive = settingsTab === item.key;
               return (
                 <button
                   key={item.key}
+                  ref={(el) => {
+                    if (el) tabRefs.current.set(item.key, el);
+                    else tabRefs.current.delete(item.key);
+                  }}
                   role="tab"
                   id={`settings-tab-${item.key}`}
                   aria-selected={isActive}
@@ -227,7 +241,7 @@ export function SettingsPanel() {
                   width: 36,
                   height: 36,
                   background:
-                    'linear-gradient(135deg, var(--agent-accent, #16a34a) 0%, #22c55e 50%, #4ade80 100%)',
+                    'linear-gradient(135deg, var(--agent-accent, #16a34a) 0%, color-mix(in srgb, var(--agent-accent, #16a34a) 72%, #ffffff) 100%)',
                 }}
               >
                 <Settings size={18} className="text-white" />

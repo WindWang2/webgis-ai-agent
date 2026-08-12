@@ -217,9 +217,11 @@ describe('TasksTab — 结果与刷新', () => {
   it('把 session 与 ownerToken 传给数据 hook', () => {
     mockCenter([]);
     render(<TasksTab sessionId="sess-a" ownerToken="tok-a" />);
+    // enabled 跟随面板开合（context panel 收起时停止轮询），默认展开为 true
     expect(hook.useJobCenter).toHaveBeenCalledWith({
       sessionId: 'sess-a',
       ownerToken: 'tok-a',
+      enabled: true,
     });
   });
 });

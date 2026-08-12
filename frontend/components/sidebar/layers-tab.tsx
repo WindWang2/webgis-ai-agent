@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState, useCallback } from 'react';
-import { Eye, EyeOff, Trash2, GripVertical, Layers as LayersIcon } from 'lucide-react';
+import { useMemo, useState, useCallback } from 'react';
+import { Eye, EyeOff, GripVertical, Layers as LayersIcon } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { Layer } from '@/lib/types/layer';
+import { ConfirmAction } from '@/components/shared/confirm-action';
 import { EmptyState } from '@/components/shared/empty-state';
 import { IconButton } from '@/components/shared/icon-button';
 
@@ -22,29 +23,9 @@ function getFeatureCount(layer: Layer): number {
   return 0;
 }
 
-/** UI V3：删除图层两段式确认（危险操作防误触，替代无确认即时删除）。 */
+/** UI V3：删除图层走 ConfirmAction 两段式确认（危险操作防误触 + 防双击绕过）。 */
 function DeleteLayerButton({ onDelete }: { onDelete: () => void }) {
-  const [confirming, setConfirming] = useState(false);
-  useEffect(() => {
-    if (!confirming) return;
-    const t = setTimeout(() => setConfirming(false), 3000);
-    return () => clearTimeout(t);
-  }, [confirming]);
-
-  if (confirming) {
-    return (
-      <button
-        type="button"
-        aria-label="确认删除图层"
-        onClick={onDelete}
-        onBlur={() => setConfirming(false)}
-        className="rounded bg-red-500/15 px-1.5 py-0.5 text-[10px] font-medium text-red-600 hover:bg-red-500/25 dark:text-red-300"
-      >
-        确认
-      </button>
-    );
-  }
-  return <IconButton label="删除图层" icon={Trash2} iconSize={12} variant="danger" onClick={() => setConfirming(true)} />;
+  return <ConfirmAction label="删除图层" confirmLabel="确认删除？" onConfirm={onDelete} />;
 }
 
 export function LayersTab() {
@@ -182,7 +163,7 @@ export function LayersTab() {
           <div className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--theme-text-muted)' }}>总图层</div>
         </div>
         <div className="px-2.5 py-2 text-center" style={{ backgroundColor: 'var(--theme-bg-subtle)' }}>
-          <div className="text-[14px] font-semibold" style={{ color: isDark ? '#4ade80' : '#059669' }}>{visibleCount}</div>
+          <div className="text-[14px] font-semibold" style={{ color: 'var(--agent-accent, #16a34a)' }}>{visibleCount}</div>
           <div className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--theme-text-muted)' }}>可见</div>
         </div>
         <div className="px-2.5 py-2 text-center" style={{ backgroundColor: 'var(--theme-bg-subtle)' }}>
@@ -199,7 +180,7 @@ export function LayersTab() {
               icon={LayersIcon}
               title="暂无图层"
               description="开始分析后图层将自动添加；也可以从数据织网加载数据集"
-              action={{ label: '前往数据织网', onClick: () => setActiveLeftTab('data_sources') }}
+              action={{ label: '前往数据源', onClick: () => setActiveLeftTab('data_sources') }}
             />
           </div>
         ) : (

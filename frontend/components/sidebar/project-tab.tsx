@@ -3,7 +3,6 @@
 import React, { useId, useState, useEffect } from 'react';
 import {
   Play,
-  CheckCircle,
   Plus,
   Layers,
   Activity,
@@ -24,6 +23,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { IconButton } from '@/components/shared/icon-button';
 import { InlineNotice } from '@/components/shared/inline-notice';
 import { LoadingState } from '@/components/shared/loading-state';
+import { StatusBadge } from '@/components/shared/status-badge';
 import { useToastStore } from '@/components/ui/toast';
 
 export function ProjectTab() {
@@ -67,6 +67,8 @@ export function ProjectTab() {
   };
 
   const loadProjectDetails = async (projId: string) => {
+    // Review P2 修复：成功路径要清掉上一次失败的残留错误横幅。
+    setError(null);
     try {
       const [ds, wf] = await Promise.all([
         fetchProjectDatasets(projId),
@@ -138,7 +140,7 @@ export function ProjectTab() {
                   placeholder="项目名称…"
                   value={newProjName}
                   onChange={(e) => setNewProjName(e.target.value)}
-                  className="w-full rounded border px-2.5 py-1.5 text-xs focus:outline-none"
+                  className="w-full rounded border px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   style={{
                     backgroundColor: "var(--theme-bg-input)",
                     borderColor: "var(--theme-border)",
@@ -168,7 +170,7 @@ export function ProjectTab() {
                 id={`${uid}-project-select`}
                 value={selectedProjectId}
                 onChange={(e) => setSelectedProjectId(e.target.value)}
-                className="w-full rounded border px-2.5 py-1.5 text-xs focus:outline-none"
+                className="w-full rounded border px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                 style={{
                   backgroundColor: "var(--theme-bg-input)",
                   borderColor: "var(--theme-border)",
@@ -203,9 +205,8 @@ export function ProjectTab() {
                         <div className="text-xs font-medium text-[var(--theme-text-primary)]">{d.name}</div>
                         <div className="text-[10px] text-[var(--theme-text-muted)]">{d.crs} • {d.source_type}</div>
                       </div>
-                      <div className="flex items-center gap-1 rounded border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-600 dark:text-emerald-400">
-                        <CheckCircle className="h-3 w-3" /> {d.quality_status}
-                      </div>
+                      {/* 质量状态复用 StatusBadge（未知值回退原始文案） */}
+                      <StatusBadge status={d.quality_status} />
                     </div>
                   ))}
                 </div>

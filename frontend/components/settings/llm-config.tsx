@@ -86,10 +86,10 @@ export function LlmConfig() {
       {/* Caching toggle */}
       <div className="flex items-center justify-between py-1">
         <div>
-          <div className="text-[14px] font-medium text-slate-700">
+          <div className="text-[14px] font-medium text-[var(--theme-text-primary)]">
             Prompt Caching
           </div>
-          <div className="text-[15px] text-slate-400">
+          <div className="text-[15px] text-[var(--theme-text-muted)]">
             Cache repeated prompts to reduce latency and token usage
           </div>
         </div>
@@ -101,7 +101,7 @@ export function LlmConfig() {
         <button
           onClick={handleTest}
           disabled={testing}
-          className="inline-flex items-center gap-1.5 rounded px-3 py-1 text-[15px] font-medium border border-slate-200 bg-white/70 text-slate-600 hover:bg-slate-50 transition-all disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded px-3 py-1 text-[15px] font-medium border border-[var(--theme-border)] bg-[var(--theme-bg-input)] text-[var(--theme-text-secondary)] hover:bg-[var(--theme-bg-hover)] transition-all disabled:opacity-50"
         >
           {testing ? (
             <>
@@ -129,12 +129,12 @@ export function LlmConfig() {
           )}
         </button>
         {testResult === 'success' && (
-          <span className="text-[15px] font-medium text-green-600">
+          <span className="text-[15px] font-medium text-emerald-600 dark:text-emerald-300">
             Connection OK
           </span>
         )}
         {testResult === 'error' && (
-          <span className="text-[15px] font-medium text-red-500">
+          <span className="text-[15px] font-medium text-red-600 dark:text-red-400">
             Connection Failed
           </span>
         )}

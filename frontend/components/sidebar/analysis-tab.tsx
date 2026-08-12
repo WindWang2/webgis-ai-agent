@@ -115,12 +115,29 @@ export function AnalysisTab({ onSend }: AnalysisTabProps) {
     <div className="flex flex-col h-full overflow-hidden">
       {/* Tool Selector */}
       <div className="p-3 space-y-2 shrink-0">
-        <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="分析工具">
+        {/* Review P2 修复：radiogroup 补 APG 键盘契约 —— roving tabindex +
+            方向键移动选中并跟随焦点。 */}
+        <div
+          className="grid grid-cols-3 gap-2"
+          role="radiogroup"
+          aria-label="分析工具"
+          onKeyDown={(e) => {
+            if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+            e.preventDefault();
+            const idx = TOOLS.findIndex((t) => t.key === activeTool);
+            const delta = e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1 : 1;
+            const next = TOOLS[(idx + delta + TOOLS.length) % TOOLS.length];
+            setActiveTool(next.key);
+            setTimeout(() => document.getElementById(`analysis-tool-${next.key}`)?.focus(), 0);
+          }}
+        >
           {TOOLS.map(({ key, label, icon: Icon }) => (
             <button
               key={key}
+              id={`analysis-tool-${key}`}
               role="radio"
               aria-checked={activeTool === key}
+              tabIndex={activeTool === key ? 0 : -1}
               onClick={() => setActiveTool(key)}
               className="flex flex-col items-center gap-1 py-2 rounded-lg text-xs font-medium transition-all border"
               style={{
@@ -150,7 +167,7 @@ export function AnalysisTab({ onSend }: AnalysisTabProps) {
       <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
         {vectorLayers.length === 0 && (
           <InlineNotice variant="info">
-            暂无可分析的矢量图层。可先在数据织网加载数据集，或直接告诉 AI 你要分析的内容。
+            暂无可分析的矢量图层。可先在数据面板加载数据集，或直接告诉 AI 你要分析的内容。
           </InlineNotice>
         )}
 

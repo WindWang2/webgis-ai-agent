@@ -8,6 +8,7 @@ import { Download, Printer, History, ChevronDown } from 'lucide-react';
 import { API_BASE } from '@/lib/api/config';
 import { IconButton } from '@/components/shared/icon-button';
 import { ConfirmAction } from '@/components/shared/confirm-action';
+import { EmptyState } from '@/components/shared/empty-state';
 import { devOnly } from '@/lib/utils/logger';
 
 const iconForType: Record<string, string> = {
@@ -193,14 +194,21 @@ export function MapStudioTab() {
           onKeyDown={(e) => {
             if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
             e.preventDefault();
-            setActiveSubTab((prev) => (prev === 'layout' ? 'history' : 'layout'));
+            // Review P2 修复：APG activation-on-focus —— 方向键切换后焦点跟随
+            // 到新激活的 tab（roving tabindex 已随之更新）。
+            setActiveSubTab((prev) => {
+              const next = prev === 'layout' ? 'history' : 'layout';
+              setTimeout(() => document.getElementById(`map-studio-tab-${next}`)?.focus(), 0);
+              return next;
+            });
           }}
         >
           <button
             role="tab"
             id="map-studio-tab-layout"
             aria-selected={activeSubTab === 'layout'}
-            aria-controls="map-studio-panel-layout"
+            // 仅当前激活 tab 指向实际渲染的 panel（另一 panel 未挂载）
+            aria-controls={activeSubTab === 'layout' ? 'map-studio-panel-layout' : undefined}
             tabIndex={activeSubTab === 'layout' ? 0 : -1}
             onClick={() => setActiveSubTab('layout')}
             className="flex-1 py-1.5 rounded-md flex items-center justify-center gap-1.5 font-medium transition-all"
@@ -223,7 +231,7 @@ export function MapStudioTab() {
             role="tab"
             id="map-studio-tab-history"
             aria-selected={activeSubTab === 'history'}
-            aria-controls="map-studio-panel-history"
+            aria-controls={activeSubTab === 'history' ? 'map-studio-panel-history' : undefined}
             tabIndex={activeSubTab === 'history' ? 0 : -1}
             onClick={() => setActiveSubTab('history')}
             className="flex-1 py-1.5 rounded-md flex items-center justify-center gap-1.5 font-medium transition-all"
@@ -391,7 +399,7 @@ export function MapStudioTab() {
                       borderColor: 'var(--theme-border)',
                       color: 'var(--theme-text-primary)'
                     }}
-                    className="text-[13px] border rounded-lg px-2 py-1.5 focus:outline-none"
+                    className="text-[13px] border rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   >
                     <option value="png">PNG 高清图片</option>
                     <option value="pdf">PDF 印刷文档</option>
@@ -410,7 +418,7 @@ export function MapStudioTab() {
                       borderColor: 'var(--theme-border)',
                       color: 'var(--theme-text-primary)'
                     }}
-                    className="text-[13px] border rounded-lg px-2 py-1.5 focus:outline-none"
+                    className="text-[13px] border rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   >
                     <option value="screen">当前屏幕比例 (Screen)</option>
                     <option value="A4">A4 标准纸张尺寸</option>
@@ -430,7 +438,7 @@ export function MapStudioTab() {
                       borderColor: 'var(--theme-border)',
                       color: 'var(--theme-text-primary)'
                     }}
-                    className="text-[13px] border rounded-lg px-2 py-1.5 focus:outline-none disabled:opacity-40"
+                    className="text-[13px] border rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)] disabled:opacity-40"
                   >
                     <option value="landscape">横向 (Landscape)</option>
                     <option value="portrait">纵向 (Portrait)</option>
@@ -448,7 +456,7 @@ export function MapStudioTab() {
                       borderColor: 'var(--theme-border)',
                       color: 'var(--theme-text-primary)'
                     }}
-                    className="text-[13px] border rounded-lg px-2 py-1.5 focus:outline-none"
+                    className="text-[13px] border rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   >
                     <option value={96}>标准清晰度 (96 DPI)</option>
                     <option value={150}>高清晰度 (150 DPI)</option>
@@ -475,12 +483,7 @@ export function MapStudioTab() {
             </div>
 
             {exports.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 text-center px-6">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-2.5" style={{ backgroundColor: 'var(--theme-bg-muted)' }}>
-                  <Download size={16} style={{ color: 'var(--theme-text-subtle)' }} />
-                </div>
-                <p className="text-[13px] font-medium" style={{ color: 'var(--theme-text-muted)' }}>暂无已导出的文件</p>
-              </div>
+              <EmptyState icon={Download} title="暂无已导出的文件" description="完成的导出会出现在这里" />
             ) : (
               <div className="space-y-1 overflow-y-auto">
                 {exports.map((item) => (

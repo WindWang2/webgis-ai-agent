@@ -59,6 +59,8 @@ export function NavRail() {
   const setTemplatesOpen = useHudStore((s) => s.setTemplatesOpen);
   const layerCount = useHudStore((s) => s.layers.length);
   const exportCount = useHudStore((s) => s.exports.length);
+  // Review P2 修复：HUD 展开（210px,z-50）会盖住 rail 底部工具区，整体上移避让。
+  const hudOpen = useHudStore((s) => s.hudOpen);
 
   const badges: Partial<Record<LeftTab, number | undefined>> = {
     layers: layerCount > 0 ? layerCount : undefined,
@@ -108,8 +110,10 @@ export function NavRail() {
   return (
     <nav
       aria-label="主导航"
-      className="fixed bottom-[24px] left-0 top-[42px] z-40 flex w-12 flex-col items-center"
+      className="fixed left-0 top-[42px] z-40 flex w-12 flex-col items-center"
       style={{
+        bottom: hudOpen ? 234 : 24,
+        transition: 'bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
         background: 'var(--theme-bg-panel)',
         backdropFilter: 'blur(28px)',
         WebkitBackdropFilter: 'blur(28px)',
@@ -128,7 +132,6 @@ export function NavRail() {
             {gi > 0 && <div aria-hidden className="my-1 w-6 border-t border-[var(--theme-border-subtle)]" />}
             {group.map(({ key, icon: Icon, label }) => {
               const active = isTabActive(key);
-              const selected = active && leftPanelOpen;
               const badge = badges[key];
               return (
                 <button
@@ -139,7 +142,9 @@ export function NavRail() {
                   }}
                   role="tab"
                   id={`rail-tab-${key}`}
-                  aria-selected={selected}
+                  // aria-selected 只表达“当前 tab”（APG）；面板开合由 panel
+                  // 自身 aria-hidden 与折叠按钮 aria-expanded 传达。
+                  aria-selected={active}
                   aria-controls="workspace-panel"
                   aria-label={label}
                   title={label}
@@ -153,10 +158,10 @@ export function NavRail() {
                     color: active ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-secondary)',
                   }}
                 >
-                  {selected && (
+                  {active && leftPanelOpen && (
                     <span
                       aria-hidden
-                      className="absolute left-[-9px] top-1/2 h-5 w-[2.5px] -translate-y-1/2 rounded-full"
+                      className="absolute left-[-4px] top-1/2 h-5 w-[2.5px] -translate-y-1/2 rounded-full"
                       style={{ background: 'var(--agent-accent, #16a34a)' }}
                     />
                   )}

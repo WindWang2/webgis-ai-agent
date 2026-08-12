@@ -74,10 +74,12 @@ describe('NavRail', () => {
     }
   });
 
-  it('aria-selected is false when panel collapsed even for the active tab', () => {
+  it('aria-selected reflects the active tab even when the panel is collapsed', () => {
     store.leftPanelOpen = false;
     render(<NavRail />);
-    expect(screen.getByRole('tab', { name: '对话' })).toHaveAttribute('aria-selected', 'false');
+    // APG：aria-selected 表达当前 tab；折叠态由折叠按钮 aria-expanded 传达
+    expect(screen.getByRole('tab', { name: '对话' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('button', { name: '展开面板' })).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('clicking an inactive tab activates it', () => {

@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useRef } from 'react';
 import { X } from 'lucide-react';
 import type { DatasetDescriptor } from '@/lib/api/data-fabric';
+import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import { IconButton } from '@/components/shared/icon-button';
 
 export interface DatasetDescriptorModalProps {
@@ -10,21 +11,18 @@ export interface DatasetDescriptorModalProps {
   onClose: () => void;
 }
 
-/** DatasetDescriptor 契约弹窗：role=dialog + aria-modal + Escape 关闭。 */
+/** DatasetDescriptor 契约弹窗：role=dialog + aria-modal + Escape + 焦点围栏/归还（共用 hook）。 */
 export function DatasetDescriptorModal({ descriptor, onClose }: DatasetDescriptorModalProps) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useDialogFocus({ open: true, containerRef: dialogRef, onEscape: onClose });
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label="DatasetDescriptor 契约"
+      tabIndex={-1}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
     >
       <div className="max-h-[80vh] w-full max-w-md space-y-3 overflow-y-auto rounded-2xl bg-[var(--theme-bg-panel)] p-4 shadow-xl">

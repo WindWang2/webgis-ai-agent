@@ -46,7 +46,7 @@ export function MapConfig() {
 
       {/* Basemap style cards */}
       <div>
-        <div className="text-[15px] uppercase tracking-wider text-slate-400 font-semibold mb-3">
+        <div className="text-[15px] uppercase tracking-wider text-[var(--theme-text-muted)] font-semibold mb-3">
           Basemap Style
         </div>
         <div className="grid grid-cols-3 gap-2">
@@ -59,11 +59,11 @@ export function MapConfig() {
                 className="flex flex-col items-center justify-center gap-1.5 rounded-xl border-2 py-3 px-2 transition-all"
                 style={{
                   borderColor: isActive
-                    ? '#16a34a'
-                    : 'rgba(15,23,42,0.08)',
+                    ? 'var(--agent-accent, #16a34a)'
+                    : 'var(--theme-border)',
                   backgroundColor: isActive
-                    ? 'rgba(22,163,74,0.04)'
-                    : 'rgba(255,255,255,0.5)',
+                    ? 'color-mix(in srgb, var(--agent-accent, #16a34a) 4%, transparent)'
+                    : 'var(--theme-bg-subtle)',
                 }}
               >
                 {/* Mini preview */}
@@ -73,26 +73,26 @@ export function MapConfig() {
                     width: 48,
                     height: 32,
                     background: isActive
-                      ? 'linear-gradient(135deg, rgba(22,163,74,0.15), rgba(22,163,74,0.05))'
-                      : 'linear-gradient(135deg, #e2e8f0, #f1f5f9)',
+                      ? 'linear-gradient(135deg, color-mix(in srgb, var(--agent-accent, #16a34a) 15%, transparent), color-mix(in srgb, var(--agent-accent, #16a34a) 5%, transparent))'
+                      : 'linear-gradient(135deg, var(--theme-bg-muted), var(--theme-bg-subtle))',
                     border: isActive
-                      ? '1px solid rgba(22,163,74,0.2)'
-                      : '1px solid rgba(15,23,42,0.06)',
+                      ? '1px solid color-mix(in srgb, var(--agent-accent, #16a34a) 20%, transparent)'
+                      : '1px solid var(--theme-border)',
                   }}
                 >
                   {isActive && (
-                    <Check size={16} style={{ color: '#16a34a' }} />
+                    <Check size={16} style={{ color: 'var(--agent-accent, #16a34a)' }} />
                   )}
                 </div>
                 <span
                   className="text-[15px] font-medium leading-tight"
                   style={{
-                    color: isActive ? '#16a34a' : '#475569',
+                    color: isActive ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-secondary)',
                   }}
                 >
                   {style.name}
                 </span>
-                <span className="text-[14px] text-slate-400 leading-tight">
+                <span className="text-[14px] text-[var(--theme-text-muted)] leading-tight">
                   {style.desc}
                 </span>
               </button>
@@ -103,10 +103,10 @@ export function MapConfig() {
 
       {/* Add custom basemap */}
       <div>
-        <div className="text-[15px] uppercase tracking-wider text-slate-400 font-semibold mb-3">
+        <div className="text-[15px] uppercase tracking-wider text-[var(--theme-text-muted)] font-semibold mb-3">
           Add Custom Basemap
         </div>
-        <div className="flex flex-col gap-2.5 rounded-xl border border-slate-900/8 bg-white/50 px-4 py-3">
+        <div className="flex flex-col gap-2.5 rounded-xl border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] px-4 py-3">
           <SField
             label="Name"
             value={newName}
@@ -135,7 +135,7 @@ export function MapConfig() {
 
       {/* CRS selection */}
       <div>
-        <div className="text-[15px] uppercase tracking-wider text-slate-400 font-semibold mb-3">
+        <div className="text-[15px] uppercase tracking-wider text-[var(--theme-text-muted)] font-semibold mb-3">
           Coordinate Reference System
         </div>
         <div className="flex gap-2">
@@ -148,17 +148,17 @@ export function MapConfig() {
                 className="flex-1 flex flex-col items-center gap-0.5 rounded-lg border-2 py-2 px-2 transition-all"
                 style={{
                   borderColor: isActive
-                    ? '#16a34a'
-                    : 'rgba(15,23,42,0.08)',
+                    ? 'var(--agent-accent, #16a34a)'
+                    : 'var(--theme-border)',
                   backgroundColor: isActive
-                    ? 'rgba(22,163,74,0.04)'
-                    : 'rgba(255,255,255,0.5)',
+                    ? 'color-mix(in srgb, var(--agent-accent, #16a34a) 4%, transparent)'
+                    : 'var(--theme-bg-subtle)',
                 }}
               >
                 <span
                   className="text-[14px] font-mono font-semibold"
                   style={{
-                    color: isActive ? '#16a34a' : '#475569',
+                    color: isActive ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-secondary)',
                   }}
                 >
                   {opt.code}
@@ -166,7 +166,7 @@ export function MapConfig() {
                 <span
                   className="text-[14px]"
                   style={{
-                    color: isActive ? '#16a34a' : '#94a3b8',
+                    color: isActive ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-muted)',
                   }}
                 >
                   {opt.label}
