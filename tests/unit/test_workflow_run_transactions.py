@@ -64,11 +64,14 @@ class _FakeRegistry:
         self.fail_on = fail_on
         self.calls = []
 
-    async def dispatch(self, tool_name, tool_args):
+    async def dispatch(self, tool_name, tool_args, session_id=None):
         self.calls.append(tool_name)
         if self.fail_on == tool_name:
             raise RuntimeError(f"tool {tool_name} exploded")
         return self.results.get(tool_name, {"success": True, "ref_id": f"ref:{tool_name}"})
+
+    def tool_version(self, name):
+        return "1.0#cv1"
 
 
 def test_workflow_commits_each_step_and_produces_artifacts(db_session):
