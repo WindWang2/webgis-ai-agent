@@ -17,6 +17,7 @@ from app.schemas.data_fabric_schema import (
 from app.models.data_fabric import DataSourceModel, CatalogItemModel, MaterializationModel
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.errors import MATERIALIZATION_FAILED
+from app.services.data_fabric.fingerprint import dataset_fingerprint_service
 from app.services.data_fabric.limits import enforce_result_bounds
 from app.services.data_fabric.metadata import (
     classify_feature_type,
@@ -135,7 +136,16 @@ class DataFabricManager:
 
     @classmethod
     def sync_catalog(cls, db: Session, source_id: str) -> List[CatalogItemModel]:
-        """Discover and sync datasets from data source adapter into Spatial Catalog."""
+        """Discover and sync datasets from data source adapter into Spatial Catalog.
+
+        Efficiency (Section 30/31):
+        - describe() calls run with bounded concurrency (network I/O), clamped to
+          a small pool — a 5000-dataset source no longer serializes ~5000 remote
+          round-trips;
+        - existing catalog rows are fetched in ONE batch query (no per-item N+1);
+        - incremental: each row's descriptor fingerprint is stored and compared;
+          unchanged rows are skipped (no needless write/updated_at churn).
+        """
         ds_model = db.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
         if not ds_model:
             raise ValueError(f"Data source '{source_id}' not found")
@@ -151,45 +161,70 @@ class DataFabricManager:
 
         adapter = cls.get_adapter(conn_profile)
         datasets = adapter.list_datasets()
-        synced_items: List[CatalogItemModel] = []
 
+        # Resolve dataset names + keep the raw list-datasets dicts for fallbacks.
+        names: List[str] = []
+        raw: Dict[str, Dict[str, Any]] = {}
         for ds in datasets:
             dataset_name = ds.get("id") or ds.get("name") or ds.get("title")
             if not dataset_name:
                 continue
+            names.append(dataset_name)
+            raw[dataset_name] = ds
 
+        # Bounded-concurrency describe(). Adapter sessions are thread-safe for
+        # independent requests; keep the pool small to avoid hammering sources.
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from app.core.config import settings as _settings
+
+        max_workers = max(1, min(16, int(getattr(_settings, "DATA_FABRIC_SYNC_CONCURRENCY", 4))))
+
+        def _describe(name: str) -> DatasetDescriptor:
             try:
-                descriptor = adapter.describe(dataset_name)
+                return adapter.describe(name)
             except Exception:
-                descriptor = DatasetDescriptor(
-                    id=dataset_name,
-                    title=ds.get("title", dataset_name),
-                    source_type=ds_model.source_type,
+                return DatasetDescriptor(
+                    id=name, title=raw.get(name, {}).get("title", name), source_type=ds_model.source_type
                 )
 
-            item_id = f"cat_{source_id}_{dataset_name}".replace(".", "_").replace("/", "_")
-            existing = db.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
+        descriptors: Dict[str, DatasetDescriptor] = {}
+        if names:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {pool.submit(_describe, n): n for n in names}
+                for fut in as_completed(futures):
+                    descriptors[futures[fut]] = fut.result()
 
-            item_title = descriptor.title or ds.get("title") or dataset_name
+        # Batch DB lookup: ONE query for all existing items for this source.
+        existing_rows = db.query(CatalogItemModel).filter(CatalogItemModel.source_id == source_id).all()
+        existing_by_id: Dict[str, CatalogItemModel] = {row.id: row for row in existing_rows}
+
+        synced_items: List[CatalogItemModel] = []
+        now = datetime.now(timezone.utc)
+        for name in names:
+            descriptor = descriptors.get(name) or DatasetDescriptor(id=name, source_type=ds_model.source_type)
+            ds = raw[name]
+            item_id = f"cat_{source_id}_{name}".replace(".", "_").replace("/", "_")
+
+            item_title = descriptor.title or ds.get("title") or name
             item_desc = descriptor.description or ds.get("description", "")
-            # Metadata truthfulness (Section 27/28): normalize instead of
-            # fabricating. An undeclared CRS is stored as None (not faked
-            # EPSG:4326); geometry type is classified canonically (tile
-            # pyramids are no longer mislabeled vector via substring match).
-            geom_type = normalize_geometry_type(
-                descriptor.geometry_type or ds.get("geometry_type")
-            )
+            # Metadata truthfulness (Section 27/28): normalize instead of fabricating.
+            geom_type = normalize_geometry_type(descriptor.geometry_type or ds.get("geometry_type"))
             feature_type = classify_feature_type(geom_type)
             crs = normalize_crs(descriptor.srs or descriptor.crs)
-
             descriptor_dict = descriptor.model_dump()
             meta_profile = {
                 "srs": crs,
                 "feature_count": normalize_feature_count(descriptor.feature_count),
                 "fields": descriptor.fields,
             }
+            fp = dataset_fingerprint_service.calculate_descriptor_fingerprint(descriptor)
 
+            existing = existing_by_id.get(item_id)
             if existing:
+                # Incremental skip: descriptor unchanged since last sync → no write.
+                if existing.fingerprint == fp and existing.geometry_type == geom_type:
+                    synced_items.append(existing)
+                    continue
                 existing.title = item_title
                 existing.description = item_desc
                 existing.geometry_type = geom_type
@@ -198,13 +233,14 @@ class DataFabricManager:
                 existing.bbox_json = descriptor.bbox
                 existing.descriptor_json = descriptor_dict
                 existing.meta_profile_json = meta_profile
-                existing.updated_at = datetime.now(timezone.utc)
+                existing.fingerprint = fp
+                existing.updated_at = now
                 synced_items.append(existing)
             else:
                 new_item = CatalogItemModel(
                     id=item_id,
                     source_id=source_id,
-                    name=dataset_name,
+                    name=name,
                     title=item_title,
                     description=item_desc,
                     geometry_type=geom_type,
@@ -214,6 +250,7 @@ class DataFabricManager:
                     tags_json=[ds_model.source_type, feature_type],
                     descriptor_json=descriptor_dict,
                     meta_profile_json=meta_profile,
+                    fingerprint=fp,
                 )
                 db.add(new_item)
                 synced_items.append(new_item)

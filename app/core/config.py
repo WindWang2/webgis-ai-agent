@@ -112,6 +112,10 @@ class Settings(BaseSettings):
     # system dirs (/etc, /proc, …) are always blocked. Add DATA_DIR by default.
     DATA_FABRIC_LOCAL_FILE_ROOTS: str = "./data"
     DATA_FABRIC_LOCAL_FILE_MAX_BYTES: int = 1024 * 1024 * 1024  # 1 GiB
+    # Catalog sync (Section 30): bounded concurrency for parallel dataset
+    # describe() calls, clamped to [1, 16] so a 5000-dataset source no longer
+    # serializes ~5000 remote round-trips.
+    DATA_FABRIC_SYNC_CONCURRENCY: int = 4
 
     # 代理设置
     HTTP_PROXY: Optional[str] = None
