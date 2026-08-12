@@ -256,7 +256,9 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
         # full mapspec is fetched via fetch-on-demand, never logged wholesale.
         ev = {"status": result.status, "llm_payload_len": len(result.llm_payload)}
         raw = result.raw_result if isinstance(result.raw_result, dict) else {}
-        for k in ("success", "is_compiled", "warnings", "checkpoint_id", "message", "correction_hint"):
+        # ADR-0052: also forward cartography_findings so the Harness surfaces
+        # thematic drift (paint↔legend equivalence) in semantic_errors.
+        for k in ("success", "is_compiled", "warnings", "checkpoint_id", "message", "correction_hint", "cartography_findings"):
             if k in raw:
                 ev[k] = raw[k]
         event = ToolCallEvent(

@@ -21,6 +21,7 @@ from app.services.session_data import session_data_manager
 from app.services.mapspec.store import mapspec_store_instance, _should_remove_layer
 from app.services.mapspec.pipeline import process_layer_ingestion
 from app.services.mapspec.coordinator import validate as validate_mapspec
+from app.lib.cartography.semantic_checks import evaluate_cartography_semantics
 from app.services.mapspec.checkpoint import snapshot as create_checkpoint, rollback as rollback_checkpoint
 from app.services.distributed_lock import session_lock_registry
 
@@ -48,6 +49,12 @@ class MapSpecResult:
     is_error: bool = False
     error_msg: str = ""
     correction_hint: str = ""
+    # ADR-0052: deterministic cartography-semantic findings (paint ↔ legend
+    # equivalence, cardinality, domain coverage, no-data, …). Structural
+    # validity (is_compiled) ≠ thematic correctness — these findings are the
+    # evidence the Harness surfaces so "structurally valid but legend/paint
+    # drift" is detectable. Checks needing a source profile are NOT_EVALUATED.
+    cartography_findings: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         if self.is_error:
@@ -61,6 +68,7 @@ class MapSpecResult:
             "warnings": self.warnings,
             "is_compiled": self.is_compiled,
             "checkpoint_id": self.checkpoint_id,
+            "cartography_findings": self.cartography_findings,
         }
 
 
@@ -387,6 +395,17 @@ class MapSpecLifecycleEngine:
                         session_id, "layers", list(mapspec.get("layers", []))
                     )
 
+                # ADR-0052: attach thematic-consistency evidence (no source
+                # profile available here → profile-dependent checks report
+                # NOT_EVALUATED; profile-free checks like LEGEND_STYLE_EQUIVALENCE
+                # still fire on layers carrying a legend_spec). Wrapped in its own
+                # try/except so a cartography-check failure on an edge-case spec
+                # can NEVER roll back an already-committed valid mutation — these
+                # are evidence for the Harness, not a commit gate.
+                try:
+                    cartography_findings = evaluate_cartography_semantics(mapspec).to_dict().get("findings", [])
+                except Exception:  # noqa: BLE001 — evidence must never block commit
+                    cartography_findings = []
                 return MapSpecResult(
                     mapspec=mapspec,
                     warnings=warnings,
@@ -394,6 +413,7 @@ class MapSpecLifecycleEngine:
                     checkpoint_id=checkpoint_id_created,
                     ref_count=ckpt_ref_count,
                     is_error=False,
+                    cartography_findings=cartography_findings,
                 )
 
             except Exception as e:

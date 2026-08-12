@@ -193,11 +193,17 @@ Multi-tenant root entity. All users, layers, and documents belong to an organiza
 ### HistoryStore & HistoryContext
 Deepened conversation persistence seam. `HistoryContext` consolidates Conversation ORM metadata, owner token validation (SEC-08), and role-converted LLM messages (`llm_messages`). `HistoryStoreProtocol` defines 4 intent operations: `load_context`, `commit_interaction`, `delete_history`, and `summarize_session_title`.
 
-### CartographicStyle (Thematic Style Module)
-The canonical deep module (`app/services/cartographic_style.py`) for thematic cartographic classification
-(Fisher-Jenks, quantiles, equal interval, LISA) and palette color generation. Solves the dual-pipeline
-friction between live map overlay state (`legend_spec`) and MapSpec compiler paint specifications
-(`StyleMethod`) by offering a unified model with twin adapters (`.to_legend_spec()` and `.to_style_method()`).
+### Thematic Style Contract (`legend_spec`)
+`legend_spec` is the canonical thematic style — the single source of truth for thematic
+classification + visual encoding. Both MapSpec `paint` (a `StyleMethod`, backend) and the live
+map's MapLibre color expression (frontend) are deterministic **projections** of the same
+`legend_spec`, as is the `<ThematicLegend>` overlay. The contract lives in
+`app/lib/cartography/thematic_spec.py` (single classification via `CartographyService.classify`,
+one palette-resolution path, finite/NaN filtering, `spec_to_paint` projection, `normalize_legend_spec`
+for legacy payloads); its frontend mirror is `frontend/lib/mapspec-runtime/thematic-paint.ts`
+(`legendSpecToColorExpression`, incl. a no-data guard). This replaces the aspirational
+`CartographicStyle` service ADR-0007 deferred — see ADR-0052. `CartographyService` remains the
+classification engine (ADR-0012) and the two converters stay separate renderers (ADR-0017).
 
 ### MapSpec (Cartographic Intent)
 The declarative, high-level cartographic specification: view, layers with high-level style
@@ -228,17 +234,20 @@ two-`type` collision. The TS compiler (`frontend/lib/mapspec-compiler/`) is the 
 for compiling MapSpec → MapLibre style.
 
 ### Cartographic Intent vs. Runtime State
-Two sources with distinct responsibilities — **currently connected headless-only, not live**:
+Two sources with distinct responsibilities — **now connected live via MapSpecRuntime (ADR-0036)**:
 - **Runtime State** = `map_state` in `SessionStore` (Redis). What the running map *actually
   renders*: live layer refs, viewport, and inline `layer.style` + `layer.legend_spec` (the
-  live-map overlay path). The frontend `map-kit` renders from this.
+  live-map overlay path).
 - **Cartographic Intent** = `MapSpec`. What the map *should be*: high-level style/layout/legend.
-- The **MapSpec Compiler** turns Intent → MapLibre Style (`style.json`/`index.html`). **This
-  output does NOT feed the live map today** — it drives only headless consumers: the Playwright
-  runtime validator, eval-evidence scoring, and the static exporter. The function that would
-  apply compiled MapSpec to the live map (`applyMapSpecToMap`) has no live callers. Making the
-  live map render from compiled MapSpec is an unrealized spec aspiration (the "dual-write
-  tension"), not the current architecture.
+- The live map **renders from a derived MapSpec**: `map-panel.tsx` calls `hudStateToMapSpec(...)`
+  → `MapSpecRuntime.reconcileAsync(spec)`, which diffs against the applied spec and patches the
+  MapLibre map. The orphaned `applyMapSpecToMap` was deleted (ADR-0036); `hudStateToMapSpec` is
+  the pure adapter that fans HUD `Layer[]` into a flat MapSpec, and since ADR-0052 it derives
+  thematic paint from each layer's `legend_spec` (the same source `<ThematicLegend>` reads).
+- The **MapSpec Compiler** still turns Intent → MapLibre Style (`style.json`/`index.html`) for
+  headless consumers: the Playwright runtime validator, eval-evidence scoring, and the static
+  exporter. The runtime applies a layer's `paint` dict straight to MapLibre; both paths produce
+  byte-identical thematic expressions.
 - **MapSpec is authoritative for intent and headless acceptance.** Frontend live-UI edits
   (drag, opacity slider, paint tweaks) write `map_state` directly and are **transient** — they
   are *not* back-synced to MapSpec. To persist a manual edit, the user invokes

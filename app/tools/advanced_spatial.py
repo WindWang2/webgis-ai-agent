@@ -267,25 +267,17 @@ def register_advanced_spatial_tools(registry: ToolRegistry):
             else:
                 stat_field_name = "count"
             if isinstance(out_geojson, dict):
-                values = [
-                    float(f.get("properties", {}).get(stat_field_name))
-                    for f in out_geojson.get("features", [])
-                    if isinstance(f.get("properties", {}).get(stat_field_name), (int, float))
-                ]
-                if len(values) >= 2:
-                    from app.services.cartography_service import CartographyService
-                    from app.lib.cartography.palettes import resolve_palette_colors
-                    breaks = CartographyService.classify(values, "quantiles", 5)
-                    palette = "YlOrRd"
-                    palette_colors = resolve_palette_colors(palette)[:5]
-                    if isinstance(payload, dict):
-                        payload["legend_spec"] = {
-                            "type": "graduated",
-                            "field": stat_field_name,
-                            "breaks": breaks,
-                            "palette": palette,
-                            "palette_colors": palette_colors,
-                        }
+                # Single canonical graduated-spec builder (ADR-0052): runs the
+                # one classification algorithm, resolves palette colors through
+                # one path (midpoint sampling, matching create_thematic_map), and
+                # filters NaN/Inf once. Replaces the verbatim palette truncation
+                # that diverged from every other graduated emitter.
+                from app.lib.cartography.thematic_spec import build_graduated_spec
+                spec = build_graduated_spec(
+                    out_geojson, stat_field_name, method="quantiles", k=5, palette="YlOrRd"
+                )
+                if spec is not None and isinstance(payload, dict):
+                    payload["legend_spec"] = spec
         except Exception as e:  # noqa: BLE001 — legend failure never blocks tool result
             import logging
             logging.getLogger(__name__).warning(f"[h3_binning] legend_spec construction failed: {e}")

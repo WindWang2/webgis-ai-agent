@@ -21,6 +21,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from app.lib.cartography.palettes import resolve_palette_colors
+
 logger = logging.getLogger(__name__)
 
 # Default colormap for raster overlays (NDVI/DEM). Viridis is perceptually
@@ -179,12 +181,23 @@ def build_raster_layer(
 
     png = render_array_to_png(array, palette=palette)
 
-    a_min, a_max = float(np.min(array)), float(np.max(array))
+    # Legend min/max must use the SAME finite mask as render_array_to_png
+    # (GIS-05): raw np.min/np.max return NaN when any nodata is present, which
+    # would make legend_spec.min/max disagree with the correctly-masked PNG.
+    resolved_palette = palette if palette in _known_palettes() else DEFAULT_RASTER_PALETTE
+    finite = array[np.isfinite(array)]
+    if finite.size == 0:
+      a_min, a_max = 0.0, 0.0
+    else:
+      a_min, a_max = float(finite.min()), float(finite.max())
     legend = {
         "type": "continuous",
         "min": round(a_min, 6),
         "max": round(a_max, 6),
-        "palette": palette if palette in _known_palettes() else DEFAULT_RASTER_PALETTE,
+        "palette": resolved_palette,
+        # Carry the resolved ramp so the legend swatches match the baked PNG
+        # pixels exactly (both derive from COLOR_PALETTES via one path).
+        "palette_colors": resolve_palette_colors(resolved_palette, fallback=DEFAULT_RASTER_PALETTE),
     }
 
     layer = {

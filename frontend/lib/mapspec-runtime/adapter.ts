@@ -1,6 +1,7 @@
 import type { Layer } from "@/lib/types/layer";
 import type { GeoJSONFeatureCollection, HeatmapRasterSource } from "@/lib/types";
 import type { MapSpec, MapSpecSource, MapSpecLayer, MapSpecLayerPaint } from "@/lib/mapspec-compiler/types";
+import { legendSpecToColorExpression, thematicField } from "@/lib/mapspec-runtime/thematic-paint";
 
 /**
  * hudStateToMapSpec — pure adapter (ADR-0036, Q2 = "derived MapSpec").
@@ -130,13 +131,18 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
     const isNativeHeatmap = layer.type === "heatmap" && src && !isHeatmapRasterSource(layer.source);
     const isHeatmapMode = layer.type === "heatmap" || layer.style?.renderType === "heatmap" || layer.style?.renderType === "grid";
 
-    // Filter expression builder (map-panel.tsx:207-214)
-    const thematicField = src && typeof src === "object" ? (src as any).metadata?.field : null;
+    // Filter expression builder (map-panel.tsx:207-214).
+    // ADR-0052: when a layer carries a thematic legend_spec, its field is the
+    // SINGLE identity shared by paint, legend filter and the legend UI — so the
+    // range filter can never reference a different field than the painted one.
+    // Falls back to source metadata.field for non-thematic layers (back compat).
+    const srcMetaField = src && typeof src === "object" ? (src as any).metadata?.field : null;
+    const filterField = thematicField(layer.legend_spec) ?? srcMetaField;
     const filterRanges = activeFilters[layer.id];
     const buildLayerFilter = (baseType: string): unknown[] => {
       const base: unknown[] = ["==", "$type", baseType];
-      if (thematicField && filterRanges) {
-        const rangeFilters = filterRanges.map((range: number[]) => ["all", [">=", ["get", thematicField], range[0]], ["<", ["get", thematicField], range[1]]]);
+      if (filterField && filterRanges) {
+        const rangeFilters = filterRanges.map((range: number[]) => ["all", [">=", ["get", filterField], range[0]], ["<", ["get", filterField], range[1]]]);
         return ["all", base, ["any", ...rangeFilters]];
       }
       return base;
@@ -144,6 +150,16 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
 
     const color = layer.style?.color || "#16a34a";
     const strokeColor = layer.style?.strokeColor || layer.style?.color || "#16a34a";
+
+    // ADR-0052: derive the live map's thematic color expression from the SAME
+    // legend_spec the <ThematicLegend> overlay reads. Before this, the adapter
+    // painted every feature as a flat `style.color`/`#16a34a` while the legend
+    // showed a full classified palette — a maximal, undetectable drift. When no
+    // thematic spec is present (plain single-color / apply_layer_style layers)
+    // thematicColor is null and each color site keeps its legacy fill_color
+    // coalesce + flat fallback, byte-identical to the pre-refactor behavior
+    // (pinned by adapter.test.ts).
+    const thematicColor = legendSpecToColorExpression(layer.legend_spec);
 
     const pushLayer = (sub: string, type: MapSpecLayer["type"], paint: MapSpecLayerPaint, filter?: unknown[]) => {
       outLayers.push({
@@ -192,17 +208,18 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
         }, buildLayerFilter("Polygon"));
       } else {
         // Normal polygon: fill (map-panel.tsx:295-304)
+        const fillEnabled = layer.style?.fill !== false;
         pushLayer("fill", "fill", {
-          "fill-color": layer.style?.fill !== false
-            ? ["coalesce", ["get", "fill_color"], color] as any
-            : "rgba(0,0,0,0)" as any,
-          "fill-opacity": layer.style?.fill !== false ? (layer.opacity || 1) * 0.3 : (0 as any),
+          "fill-color": (fillEnabled
+            ? (thematicColor ?? ["coalesce", ["get", "fill_color"], color])
+            : "rgba(0,0,0,0)") as any,
+          "fill-opacity": fillEnabled ? (layer.opacity || 1) * 0.3 : (0 as any),
         }, buildLayerFilter("Polygon"));
 
         // Conditional fill-extrusion when 3D (map-panel.tsx:306-317)
         if (is3D) {
           pushLayer("extrusion", "fill-extrusion", {
-            "fill-extrusion-color": color as any,
+            "fill-extrusion-color": (thematicColor ?? color) as any,
             "fill-extrusion-height": ["coalesce", ["get", "height"], 20] as any,
             "fill-extrusion-base": (0 as any),
             "fill-extrusion-opacity": (layer.opacity || 0.8) as any,
@@ -211,7 +228,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
 
         // Outline line (map-panel.tsx:318-328)
         const outlinePaint: Record<string, unknown> = {
-          "line-color": ["coalesce", ["get", "stroke_color"], ["get", "fill_color"], strokeColor],
+          "line-color": (thematicColor ?? ["coalesce", ["get", "stroke_color"], ["get", "fill_color"], strokeColor]) as any,
           "line-width": layer.style?.strokeWidth ?? 2,
           "line-opacity": layer.opacity || 1,
         };
@@ -225,7 +242,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
     // Lines (map-panel.tsx:330-341)
     if (hasLines && !isNativeHeatmap) {
       const linePaint: Record<string, unknown> = {
-        "line-color": ["coalesce", ["get", "fill_color"], strokeColor],
+        "line-color": (thematicColor ?? ["coalesce", ["get", "fill_color"], strokeColor]) as any,
         "line-width": layer.style?.strokeWidth ?? 2,
         "line-opacity": layer.opacity || 1,
       };
@@ -244,7 +261,7 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
           : 6;
       pushLayer("point", "circle", {
         "circle-radius": radius as any,
-        "circle-color": ["coalesce", ["get", "fill_color"], color] as any,
+        "circle-color": (thematicColor ?? ["coalesce", ["get", "fill_color"], color]) as any,
         "circle-stroke-width": (1.5 as any),
         "circle-stroke-color": "rgba(22, 163, 74, 0.3)" as any,
         "circle-opacity": (layer.opacity || 1) as any,
