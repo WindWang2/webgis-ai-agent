@@ -46,6 +46,15 @@ export {
   DEMO_CAUSAL_CHAIN,
 } from '../constants/demo';
 
+/**
+ * localStorage key for the persisted slice.
+ *
+ * Exported because `app/layout.tsx` reads the same key in an inline script to
+ * apply the theme before the first paint — a second literal there would let a
+ * rename break the no-flash path silently.
+ */
+export const PERSIST_KEY = 'geoagent-settings';
+
 export const useHudStore = create<HudState>()(
   persist(
     (...a) => ({
@@ -55,7 +64,7 @@ export const useHudStore = create<HudState>()(
       ...createUiSlice(...a),
     }) as HudState,
     {
-      name: 'geoagent-settings',
+      name: PERSIST_KEY,
       partialize: (state) => ({
         skills: state.skills,
         ragConfig: state.ragConfig,
@@ -63,6 +72,11 @@ export const useHudStore = create<HudState>()(
         baseLayer: state.baseLayer,
         // 审计 F29：accentColor 之前未持久化 -> 用户选的颜色刷新后丢失。
         accentColor: state.accentColor,
+        // UI V4：theme / fontSize 同样未持久化 —— 切到暗色后刷新会静默回到浅色。
+        // 与 app/layout.tsx 的 no-flash 内联脚本读同一个 localStorage 键，
+        // 因此首帧就是正确主题，不再有浅色闪烁。
+        theme: state.theme,
+        fontSize: state.fontSize,
         // SECURITY: 去除 apiKey 后再持久化，避免明文写入 localStorage
         // （XSS / 浏览器扩展 / DevTools 可读）。
         llmConfigFull: state.llmConfigFull
