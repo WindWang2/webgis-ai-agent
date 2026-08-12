@@ -465,7 +465,6 @@ def test_cartography_findings_forwarded_through_production_evidence_channel():
     assert forwarded.get("cartography_findings") == findings
 
     # And the bridge whitelist includes it (the field is named in the forward list).
-    import re
     bridge_src = open("app/agent_pi_bridge.py").read()
     assert "cartography_findings" in bridge_src
 
