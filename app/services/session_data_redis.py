@@ -17,6 +17,8 @@ STATE_TTL = 4 * 60 * 60
 EVENTS_TTL = 4 * 60 * 60
 SESSION_TTL = 4 * 60 * 60
 MAX_EVENTS = 20
+# V3 闭环：每 session 地图动作 ACK 上限（与 session_data.MAX_MAP_ACTION_EVENTS 保持一致）
+MAX_MAP_ACTION_EVENTS = 200
 
 # L1 (in-process) cache TTL. Short on purpose: every worker process owns its
 # own L1, so a long TTL would serve stale state written by another worker for
@@ -182,6 +184,14 @@ class RedisSessionStore(BaseSessionStore):
     @staticmethod
     def _events_key(session_id: str) -> str:
         return f"session:{session_id}:events"
+
+    @staticmethod
+    def _map_actions_key(session_id: str) -> str:
+        return f"session:{session_id}:map_actions"
+
+    @staticmethod
+    def _map_actions_order_key(session_id: str) -> str:
+        return f"session:{session_id}:map_actions_order"
 
     @staticmethod
     def _index_key(session_id: str) -> str:
@@ -597,6 +607,95 @@ class RedisSessionStore(BaseSessionStore):
             for item in raw_list
         ]
 
+    async def append_map_action_event(self, session_id: str, event: dict) -> bool:
+        """追加地图动作终态 ACK（V3 闭环），按 action_id 幂等 —— 与 memory 后端语义一致。
+
+        存储：hash ``session:{sid}:map_actions``（field=action_id, value=json）
+        + zset ``session:{sid}:map_actions_order``（score=到达时间戳，维护插入序，
+        hash 本身无序）。首达终态获胜：action_id 已存在 → 返回 False。每 session
+        上限 MAX_MAP_ACTION_EVENTS，写入时淘汰最旧字段。TTL 同 STATE_TTL。
+        去重+淘汰是 read-modify-write，用 WATCH/MULTI 防并发（同 set_map_state）；
+        Redis 不可达时降级丢弃（log warning，返回 False），不阻断主流程。
+        """
+        action_id = str(event.get("action_id") or "")
+        if not action_id:
+            return False
+        await self._ensure_connected()
+        actions_key = self._map_actions_key(session_id)
+        order_key = self._map_actions_order_key(session_id)
+        payload = json.dumps(event, ensure_ascii=False)
+        for attempt in range(3):
+            try:
+                async with self._r.pipeline(transaction=True) as pipe:
+                    await pipe.watch(actions_key, order_key)
+                    if await pipe.hexists(actions_key, action_id):
+                        return False  # duplicate — 首达终态获胜
+                    evict_ids: list[str] = []
+                    count = await pipe.zcard(order_key)
+                    if count >= MAX_MAP_ACTION_EVENTS:
+                        overflow = count - MAX_MAP_ACTION_EVENTS + 1
+                        raw_oldest = await pipe.zrange(order_key, 0, overflow - 1)
+                        evict_ids = [
+                            r.decode() if isinstance(r, bytes) else r for r in raw_oldest
+                        ]
+                    # 到达序严格单调：同一次请求/同一时钟 tick 内多次写入若 zset
+                    # score 相同，Redis 退回按 member 字典序排序，会破坏"按到达
+                    # 顺序读回"的协议对齐（memory 后端是纯插入序）。在事务内读取
+                    # 当前最大 score，必要时在其上取微小增量，保证 score 严格递增。
+                    last_raw = await pipe.zrevrange(order_key, 0, 0, withscores=True)
+                    last_score = last_raw[0][1] if last_raw else 0.0
+                    arrival = time.time()
+                    if arrival <= last_score:
+                        arrival = last_score + 1e-6
+                    pipe.multi()
+                    pipe.hset(actions_key, action_id, payload)
+                    pipe.zadd(order_key, {action_id: arrival})
+                    if evict_ids:
+                        pipe.hdel(actions_key, *evict_ids)
+                        pipe.zrem(order_key, *evict_ids)
+                    pipe.expire(actions_key, STATE_TTL)
+                    pipe.expire(order_key, STATE_TTL)
+                    pipe.sadd(self._active_key(), session_id)
+                    await pipe.execute()
+                return True
+            except aioredis.WatchError:
+                continue  # 重试
+            except aioredis.RedisError as e:
+                # action_id 是客户端可控值（可含换行等控制字符），日志用 %r
+                # repr 转义，防 log injection。
+                logger.warning(
+                    "Redis append_map_action_event failed for session %s action %r: %s — event dropped",
+                    session_id, action_id, e,
+                )
+                return False
+        logger.warning(
+            "append_map_action_event gave up after 3 retries for %s action %r (concurrent contention)",
+            session_id, action_id,
+        )
+        return False
+
+    async def get_map_action_events(self, session_id: str) -> list[dict]:
+        """返回该 session 当前全部地图动作 ACK（按到达顺序，与 memory 后端一致）。"""
+        await self._ensure_connected()
+        try:
+            raw_ids = await self._r.zrange(self._map_actions_order_key(session_id), 0, -1)
+            if not raw_ids:
+                return []
+            action_ids = [r.decode() if isinstance(r, bytes) else r for r in raw_ids]
+            values = await self._r.hmget(self._map_actions_key(session_id), action_ids)
+            events = []
+            for v in values:
+                if v is None:
+                    continue  # 字段已被淘汰/清理
+                events.append(json.loads(v.decode() if isinstance(v, bytes) else v))
+            return events
+        except aioredis.RedisError as e:
+            logger.warning(
+                "Redis get_map_action_events failed for session %s: %s — returning empty",
+                session_id, e,
+            )
+            return []
+
     async def get_session_metadata(self, session_id: str) -> dict[str, Any]:
         """Fetch session metadata in a single async pipeline."""
         # L1 hot read — this is called at the start of every chat turn and
@@ -676,6 +775,8 @@ class RedisSessionStore(BaseSessionStore):
                 self._state_key(session_id),
                 self._events_key(session_id),
                 self._refs_order_key(session_id),
+                self._map_actions_key(session_id),
+                self._map_actions_order_key(session_id),
             )
             pipe.srem(self._active_key(), session_id)
             await pipe.execute()

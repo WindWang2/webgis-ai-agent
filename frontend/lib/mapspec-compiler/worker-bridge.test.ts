@@ -5,6 +5,7 @@ import {
   _resetWorkerBridgeForTests,
   DIFF_WORKER_TIMEOUT_MS,
   DIFF_WORKER_IDLE_MS,
+  consumeDiffLastFailed,
 } from "./worker-bridge";
 import { diffSpecs } from "./reconciler";
 import type { MapSpec } from "./types";
@@ -113,6 +114,79 @@ describe("diffSpecsAsync", () => {
     await vi.advanceTimersByTimeAsync(DIFF_WORKER_TIMEOUT_MS);
     const patch = await pending;
     expect(patch).toEqual({ sources: [], layers: [] });
+  });
+
+  // ── FIX-3-6: failed-diff flag (EMPTY_PATCH ≠ genuine no-op) ───────────────
+
+  it("flags a worker-error empty patch as a failed diff, and clears it on success", async () => {
+    expect(consumeDiffLastFailed()).toBe(false); // clean slate
+
+    class FailingWorker {
+      onerror: ((event: ErrorEvent) => void) | null = null;
+      constructor(_url: URL, _opts?: { type?: string }) {}
+      postMessage() {
+        // Fail like a crashed worker: fire `onerror` and never post a response.
+        queueMicrotask(() => this.onerror?.({ type: "error" } as ErrorEvent));
+      }
+      addEventListener() {}
+      removeEventListener() {}
+      terminate() {}
+    }
+    vi.stubGlobal("Worker", FailingWorker as unknown as typeof Worker);
+
+    const patch = await diffSpecsAsync(null, spec);
+    expect(patch).toEqual({ sources: [], layers: [] });
+    // The runtime consumes this flag to avoid advancing appliedSpec.
+    expect(consumeDiffLastFailed()).toBe(true);
+    expect(consumeDiffLastFailed()).toBe(false); // read-and-clear semantics
+
+    // A subsequent SUCCESSFUL diff (sync fallback) resets the flag too. Drop
+    // the crashed worker first — createWorker caches the shared instance.
+    _resetWorkerBridgeForTests();
+    vi.stubGlobal("Worker", undefined);
+    const ok = await diffSpecsAsync(null, spec);
+    expect(ok.layers[0].kind).toBe("add");
+    expect(consumeDiffLastFailed()).toBe(false);
+  });
+
+  it("flags the timeout empty patch as a failed diff too", async () => {
+    class SilentWorker {
+      constructor(_url: URL, _opts?: { type?: string }) {}
+      postMessage() {} // Never responds — simulates a wedged worker.
+      addEventListener() {}
+      removeEventListener() {}
+      terminate() {}
+    }
+    vi.stubGlobal("Worker", SilentWorker as unknown as typeof Worker);
+
+    vi.useFakeTimers();
+    const pending = diffSpecsAsync(null, spec);
+    await vi.advanceTimersByTimeAsync(DIFF_WORKER_TIMEOUT_MS);
+    await pending;
+    expect(consumeDiffLastFailed()).toBe(true);
+  });
+
+  it("does NOT flag a genuine no-op diff (identical specs) as a failure", async () => {
+    let listener: ((event: { data: { id: string; patch: ReturnType<typeof diffSpecs> } }) => void) | null = null;
+    class FakeWorker {
+      constructor(_url: URL, _opts?: { type?: string }) {}
+      postMessage(msg: { id: string; prev: MapSpec | null; next: MapSpec }) {
+        const { id, prev, next } = msg;
+        queueMicrotask(() => {
+          const patch = diffSpecs(prev, next);
+          listener?.({ data: { id, patch } });
+        });
+      }
+      addEventListener(_type: string, cb: typeof listener) { listener = cb; }
+      removeEventListener() {}
+      terminate() {}
+    }
+    vi.stubGlobal("Worker", FakeWorker as unknown as typeof Worker);
+
+    await diffSpecsAsync(null, spec);
+    const patch = await diffSpecsAsync(spec, spec); // identical → real empty patch
+    expect(patch).toEqual({ sources: [], layers: [] });
+    expect(consumeDiffLastFailed()).toBe(false); // a genuine no-op, not a failure
   });
 
   it("only terminates worker when no requests are pending", async () => {

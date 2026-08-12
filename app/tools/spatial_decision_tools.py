@@ -57,7 +57,9 @@ def register_spatial_decision_tools(registry: ToolRegistry):
         tier=3,
         domains=["what_if"],
         args_model=SpatialDecisionV2Args,
-        execution_policy=ToolExecutionPolicy.THREAD,
+        # 审计修复：async def 工具必须用 ASYNC 策略——THREAD 会在线程里同步调用
+        # coroutine 函数并返回未 await 的 coroutine，dispatch 后续 JSON 序列化必挂。
+        execution_policy=ToolExecutionPolicy.ASYNC,
     )
     async def spatial_decision_v2(
         scenario: str,
@@ -85,13 +87,16 @@ def register_spatial_decision_tools(registry: ToolRegistry):
                 mapspec_state = await apply_decision_to_mapspec(session_id, result)
                 try:
                     # The validator's API is the async `validate_runtime`, which
-                    # returns a dict with a `success`/`valid` flag (it drives a
-                    # headless browser). The previous call used a non-existent
+                    # returns a dict keyed by `valid` on the evaluation path (it
+                    # drives a headless browser); failure short-circuits return
+                    # `success` instead. The previous call used a non-existent
                     # `validate_session_state` sync method, whose AttributeError was
                     # swallowed — so validation_passed was always silently True.
+                    # (Later regression: reading only `success` made a passing
+                    # validation report False — read `valid` first.)
                     from app.services.runtime_validator import runtime_validator
                     val_res = await runtime_validator.validate_runtime(session_id)
-                    validation_passed = bool(val_res.get("success"))
+                    validation_passed = bool(val_res.get("valid", val_res.get("success", False)))
                 except Exception as ve:
                     logger.debug(f"[spatial_decision_v2] Runtime validation warning: {ve}")
 
@@ -131,7 +136,8 @@ def register_spatial_decision_tools(registry: ToolRegistry):
         tier=3,
         domains=["what_if"],
         args_model=ScenarioCompareArgs,
-        execution_policy=ToolExecutionPolicy.THREAD,
+        # 审计修复：async def 工具必须用 ASYNC 策略（同 spatial_decision_v2）。
+        execution_policy=ToolExecutionPolicy.ASYNC,
     )
     async def scenario_compare(
         scenarios: List[dict],

@@ -31,6 +31,7 @@ from app.services.chat.context import (
     _xml_fence,
     TAG_UNTRUSTED_REGION_NAME,
     TAG_UNTRUSTED_BASE_LAYER,
+    TAG_UNTRUSTED_LAYER_NAME,
     TAG_UNTRUSTED_USER_ACTION,
     format_selected_feature,
     format_style_summary,
@@ -193,7 +194,16 @@ async def build_map_state_summary(
     selected = state.get("selected_feature")
     sel_line = format_selected_feature(selected)
     if sel_line:
-        lines.append(f"- 选中要素: {sel_line}")
+        # FE-4 (design §7): 标签改为"用户当前选中"，让下一轮 agent 明确这是
+        # 用户正在指的对象（'这个对象/这里'）；要素标识/属性由 format_selected_feature
+        # 负责有界渲染。
+        lines.append(f"- 用户当前选中: {sel_line}")
+
+    # FE-4 (design §7): 用户聚焦图层（tool-call 卡片 / 图层面板聚焦）。
+    # 缺失/空串静默省略，绝不输出 "None" 字符串。
+    focus_layer_id = state.get("focus_layer_id")
+    if isinstance(focus_layer_id, str) and focus_layer_id:
+        lines.append(f"- 用户聚焦图层: {_xml_fence(TAG_UNTRUSTED_LAYER_NAME, focus_layer_id)}")
 
     layer_lines = await format_layer_lines(
         inventory,

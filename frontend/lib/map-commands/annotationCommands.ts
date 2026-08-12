@@ -12,18 +12,29 @@ import { ensureAnnotationLayers, refreshAnnotations } from './annotationHelpers'
  */
 export const annotationCommands: Record<string, CommandEntry> = {
   add_marker: {
-    requiredParams: (p) => Array.isArray(p.center) || Array.isArray(p.coordinate),
+    // run body reads longitude/latitude (backend add_marker emission)
+    requiredParams: (p) => typeof p.longitude === 'number' && typeof p.latitude === 'number',
     run(ctx) {
       const { map, params, getHudState } = ctx;
       const { longitude, latitude, label, color } = params || {};
-      if (typeof longitude !== 'number' || typeof latitude !== 'number') return;
+      // V3: missing payload data → explicit failed result (was a silent return).
+      if (typeof longitude !== 'number' || typeof latitude !== 'number') {
+        return { status: 'failed', error: 'invalid_params' };
+      }
       ensureAnnotationLayers(map);
       getHudState().addAnnotation({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [longitude, latitude] },
         properties: { label: label || null, color: color || '#ef4444', kind: 'marker' },
       });
-      refreshAnnotations(map);
+      // ROUND-2: only claim a confirmed mutation when the data actually landed
+      // on the map — refreshAnnotations no-ops when the annotation source is
+      // absent, and a confirmed:true for a no-op is a fake ack.
+      if (!refreshAnnotations(map)) {
+        return { status: 'failed', error: 'target_not_found' };
+      }
+      // V3: verifiable marker (annotation mutation — harness convergence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 
@@ -32,7 +43,10 @@ export const annotationCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { map, params, getHudState } = ctx;
       const { shape, coordinates, label } = params || {};
-      if (!Array.isArray(coordinates) || coordinates.length < 2) return;
+      // V3: missing payload data → explicit failed result (was a silent return).
+      if (!Array.isArray(coordinates) || coordinates.length < 2) {
+        return { status: 'failed', error: 'invalid_params' };
+      }
       ensureAnnotationLayers(map);
       const store = getHudState();
       if (shape === 'polygon') {
@@ -74,7 +88,12 @@ export const annotationCommands: Record<string, CommandEntry> = {
           });
         }
       }
-      refreshAnnotations(map);
+      // ROUND-2: confirmed only when the data actually reached the map source.
+      if (!refreshAnnotations(map)) {
+        return { status: 'failed', error: 'target_not_found' };
+      }
+      // V3: verifiable marker (annotation mutation — harness convergence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 
@@ -83,7 +102,13 @@ export const annotationCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { map, getHudState } = ctx;
       getHudState().clearAnnotations();
-      refreshAnnotations(map);
+      // ROUND-2: the store cleared, but the map source must actually receive the
+      // empty FeatureCollection before we can claim the map converged.
+      if (!refreshAnnotations(map)) {
+        return { status: 'failed', error: 'target_not_found' };
+      }
+      // V3: verifiable marker (annotation mutation — harness convergence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 };

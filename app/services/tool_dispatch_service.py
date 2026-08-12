@@ -32,8 +32,9 @@ import asyncio
 import json
 import logging
 import re
-from dataclasses import dataclass
-from typing import Any, Callable, Literal, Optional
+import uuid
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, Literal, Optional
 
 from app.services.session_data import session_data_manager
 from app.tools.registry import ToolRegistry
@@ -102,6 +103,39 @@ from app.services.llm_result_formatter import (
 
 DispatchStatus = Literal["ok", "repeated", "error"]
 
+# ─── V3 地图动作 action_id 铸造（Harness–Map Interaction Closed Loop）─────
+# 动作 id 形如 ``ma-<uuid4hex[:16]>``，写入工具结果的 command/commands[] dict，
+# 随 SSE step_result 直达前端；前端 ack 时原样回传，供后端按 action_id 精确匹配。
+MAP_ACTION_ID_PREFIX = "ma-"
+REQUESTED_SNAPSHOT_MAX_BYTES = 2048
+
+
+def _mint_map_action_id() -> str:
+    """铸一个唯一的地图动作 id。"""
+    return f"{MAP_ACTION_ID_PREFIX}{uuid.uuid4().hex[:16]}"
+
+
+def _cap_requested_snapshot(
+    params: Any, max_bytes: int = REQUESTED_SNAPSHOT_MAX_BYTES
+) -> Dict[str, Any]:
+    """请求目标参数快照（~2KB 上限）：按序保留键，直到序列化超限为止。
+
+    供 harness 记录 issued 证据（requested 侧），避免把超大 params 全量落盘。
+    """
+    if not isinstance(params, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    for k, v in params.items():
+        probe = {**out, k: v}
+        try:
+            size = len(json.dumps(probe, ensure_ascii=False).encode("utf-8"))
+        except (TypeError, ValueError):
+            continue
+        if size > max_bytes:
+            break
+        out[k] = v
+    return out
+
 
 @dataclass
 class ToolDispatchResult:
@@ -113,6 +147,9 @@ class ToolDispatchResult:
     - status=="ok"       → geojson_ref 可能为 None（无几何工具）或 ref 串
     - status=="repeated" → 重复调用拦截，geojson_ref 必为 None
     - status=="error"    → error_msg 必有值，geojson_ref 必为 None
+
+    map_actions（V3）：本结果携带的地图动作元数据 [{action_id, command, requested}]，
+    action_id 已写回 raw_result 的 command/commands[] dict（SSE 由此携带）。
     """
 
     status: DispatchStatus
@@ -121,6 +158,7 @@ class ToolDispatchResult:
     geojson_ref: Optional[str]  # 仅 status=="ok" 且产出图层时非空
     raw_result: Any             # 原始工具返回，供 step 完成追踪使用
     error_msg: Optional[str]    # 仅 status=="error" 时有值
+    map_actions: list = field(default_factory=list)  # V3: [{action_id, command, requested}]
 
 
 # 重复调用拦截的 LLM 提示（独立常量，避免 ok/error 分支误用）
@@ -190,6 +228,9 @@ class ToolDispatchService:
                 correction_hint=f"Execution error: {error_msg}",
             )
 
+        # 2b. V3: 为工具结果中的地图命令铸 action_id（写回 command dict，SSE 携带）。
+        map_actions = self._mint_map_action_ids(result)
+
         # 3. registry 返回 std_error_response dict 的统一错误路径
         if is_error_dict(result):
             error_msg = sanitize_error_msg(result.get("message", ""))
@@ -210,6 +251,7 @@ class ToolDispatchService:
                 geojson_ref=None,
                 raw_result=result,
                 error_msg=error_msg,
+                map_actions=map_actions,
             )
 
         # 4. 正常路径：大型 GeoJSON 存为 ref；热力图等元数据落地
@@ -244,7 +286,55 @@ class ToolDispatchService:
             geojson_ref=geojson_ref,
             raw_result=result,
             error_msg=None,
+            map_actions=map_actions,
         )
+
+    # ── V3: 地图动作 action_id 铸造 ──────────────────────────────────────
+
+    def _mint_map_action_ids(self, result: Any) -> list:
+        """为工具结果中的地图命令铸 action_id（写入 command dict，SSE 携带）。
+
+        两种形态（前端 useMapBridge 消费契约一致）：
+        - ``result.command``（单命令：result 本身即 command dict，如 fly_to /
+          export_map / set_map_view）→ 在 result 顶层写入 action_id；
+        - ``result.commands[]``（批量命令：如 export_batch_maps）→ 逐条写入。
+
+        同时构造尺寸受限的 requested 参数快照（~2KB），供 harness 记录 issued
+        证据。返回 [{action_id, command, requested}]。
+        """
+        if not isinstance(result, dict):
+            return []
+        minted: list = []
+        commands = result.get("commands")
+        if isinstance(commands, list):
+            for cmd in commands:
+                if isinstance(cmd, dict):
+                    entry = self._mint_one_map_action(cmd)
+                    if entry is not None:
+                        minted.append(entry)
+            return minted
+        if result.get("command"):
+            entry = self._mint_one_map_action(result)
+            if entry is not None:
+                minted.append(entry)
+        return minted
+
+    @staticmethod
+    def _mint_one_map_action(command_dict: Dict[str, Any]) -> Optional[dict]:
+        """给单个 command dict 铸 action_id（已存在则复用），返回元数据。"""
+        cmd_name = command_dict.get("command") or command_dict.get("type") or ""
+        if not cmd_name:
+            return None
+        action_id = command_dict.get("action_id")
+        if not action_id or not isinstance(action_id, str):
+            action_id = _mint_map_action_id()
+            command_dict["action_id"] = action_id
+        requested = _cap_requested_snapshot(command_dict.get("params") or {})
+        return {
+            "action_id": action_id,
+            "command": str(cmd_name),
+            "requested": requested,
+        }
 
     async def _record_event(
         self,

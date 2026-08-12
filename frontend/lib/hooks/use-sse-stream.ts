@@ -7,7 +7,7 @@ import { apiFetch, isApiError } from '@/lib/api/transport';
 import { API_BASE } from '@/lib/api/config';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 import type { SSEEvent } from '@/lib/api/chat';
-import type { ToolCallEntry, PlanProposalPayload } from '@/lib/store/hud-types';
+import type { ToolCallEntry, PlanProposalPayload, SelectedFeatureInfo } from '@/lib/store/hud-types';
 import type { AgentPlanState } from '@/lib/types/agent-plan';
 import type { MapActionPayload } from '@/lib/types';
 import { createMessageIdGenerator } from './use-message-id';
@@ -16,6 +16,142 @@ import { IncrementalThinkParser, parseThink } from './incremental-think';
 
 
 import { devOnly } from "@/lib/utils/logger";
+
+/* ─── FE-4: selection/focus → agent snapshot helpers (design §7) ───
+ * The selection snapshot sent inside map_state must stay bounded: the PARENT
+ * layer id (never the `${layerId}__${sub}` sublayer id), a stable feature
+ * identity, ≤5 scalar key properties, and a bbox when the caller computed
+ * one. Raw feature payloads / geometry never enter the prompt path.
+ */
+
+// Sublayer separator emitted by the MapSpec runtime (`${layerId}__${sub}`,
+// mirrors SUBLAYER_SEP in lib/mapspec-runtime/adapter).
+const SUBLAYER_SEP = '__';
+
+// Label-ish property keys surfaced first when bounding selected-feature props
+// (mirrors the backend format_selected_feature preference order).
+const FEATURE_LABEL_KEYS = ['name', 'title', 'label', 'id', 'OBJECTID'];
+
+// Id-like property keys used as feature identity before falling back to a hash.
+const FEATURE_ID_KEYS = ['id', 'OBJECTID', 'fid', 'osm_id', '@id'];
+
+const MAX_SNAPSHOT_PROPS = 5;
+const MAX_PROP_VALUE_LEN = 60;
+
+// FIX-3-5: feature identity must stay bounded — a raw multi-KB property (e.g.
+// a WKT string) must never ride the prompt path. Truncation keeps the id
+// stable (same feature → same prefix), which is all the backend correlation
+// needs; the content-hash fallback below is already ≤10 chars.
+const MAX_FEATURE_ID_LEN = 64;
+
+function truncateFeatureId(v: string): string {
+  return v.length > MAX_FEATURE_ID_LEN ? v.slice(0, MAX_FEATURE_ID_LEN) : v;
+}
+
+/**
+ * Resolve the parent project-layer id from a possibly-sublayer id via
+ * longest-prefix match against the project's layer ids (`__`-boundary aware,
+ * so `poi_schools__fill` attributes to `poi_schools`, never `poi`). Falls back
+ * to stripping the trailing `__sub` suffix when the parent is gone (layer
+ * removed after the click); already-parent ids pass through unchanged.
+ */
+export function resolveParentLayerId(
+  layerId: string,
+  projectLayerIds: readonly string[],
+): string {
+  if (!layerId) return layerId;
+  let best: string | null = null;
+  for (const id of projectLayerIds) {
+    if (!id) continue;
+    if (layerId === id) return id; // already a parent id
+    if (layerId.startsWith(id + SUBLAYER_SEP) && (!best || id.length > best.length)) {
+      best = id;
+    }
+  }
+  if (best) return best;
+  const sep = layerId.lastIndexOf(SUBLAYER_SEP);
+  return sep > 0 ? layerId.slice(0, sep) : layerId;
+}
+
+/** djb2 → 8 hex chars; stable identity for features without an id property. */
+function shortContentHash(input: string): string {
+  let h = 5381;
+  for (let i = 0; i < input.length; i++) {
+    h = ((h << 5) + h + input.charCodeAt(i)) | 0;
+  }
+  return `h-${(h >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+/**
+ * Bound a raw properties dict to ≤5 scalar entries: label-ish keys first,
+ * then insertion order; strings truncated; objects/arrays (e.g. a `geometry`
+ * dump) dropped so no raw feature payload reaches the prompt path.
+ */
+function boundedKeyProperties(
+  properties: Record<string, unknown> | undefined,
+): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = {};
+  if (!properties || typeof properties !== 'object') return out;
+  const put = (k: string) => {
+    if (Object.keys(out).length >= MAX_SNAPSHOT_PROPS || k in out) return;
+    const v = properties[k];
+    if (v === null || v === undefined) return;
+    if (typeof v === 'string') {
+      out[k] = v.length > MAX_PROP_VALUE_LEN ? `${v.slice(0, MAX_PROP_VALUE_LEN - 1)}…` : v;
+    } else if (typeof v === 'number' || typeof v === 'boolean') {
+      out[k] = v;
+    }
+  };
+  for (const k of FEATURE_LABEL_KEYS) put(k);
+  for (const k of Object.keys(properties)) put(k);
+  return out;
+}
+
+/** Feature identity: explicit featureId → id-like property → content hash. */
+function resolveFeatureId(
+  sel: SelectedFeatureInfo,
+  props: Record<string, string | number | boolean>,
+): string | number {
+  if (typeof sel.featureId === 'string' && sel.featureId) return truncateFeatureId(sel.featureId);
+  if (typeof sel.featureId === 'number') return sel.featureId;
+  for (const k of FEATURE_ID_KEYS) {
+    const v = sel.properties?.[k];
+    if (typeof v === 'string' && v) return truncateFeatureId(v);
+    if (typeof v === 'number') return v;
+  }
+  return shortContentHash(JSON.stringify({ p: props, pt: sel.point }));
+}
+
+function validBBox(bbox: unknown): [number, number, number, number] | null {
+  return Array.isArray(bbox) &&
+    bbox.length === 4 &&
+    bbox.every((n) => typeof n === 'number' && Number.isFinite(n))
+    ? (bbox as [number, number, number, number])
+    : null;
+}
+
+/**
+ * Build the bounded selected_feature snapshot for map_state. Output shape is
+ * the contract consumed by the backend `build_map_state_summary`; every field
+ * is small and scalar-only (missing data → null, omitted downstream silently).
+ */
+export function buildSelectedFeatureSnapshot(
+  sel: SelectedFeatureInfo,
+  projectLayerIds: readonly string[],
+) {
+  const properties = boundedKeyProperties(sel.properties);
+  return {
+    layer_id: resolveParentLayerId(sel.layerId, projectLayerIds),
+    layer_name: sel.layerName ?? null,
+    ref_id: sel.refId ?? null,
+    feature_id: resolveFeatureId(sel, properties),
+    point: sel.point,
+    bbox: validBBox(sel.bbox),
+    properties,
+    selected_at: sel.selectedAt,
+  };
+}
+
 export function useSSEStream(
   sessionId: string | undefined,
   setSessionId: (sid: string) => void,
@@ -399,7 +535,7 @@ export function useSSEStream(
     async (userMsg: string) => {
       if (!userMsg || isLoadingRef.current) return;
 
-      const { viewport, baseLayer, is3D, layers: hudLayers, selectedFeature } = useHudStore.getState();
+      const { viewport, baseLayer, is3D, layers: hudLayers, selectedFeature, focusLayerId } = useHudStore.getState();
       const liveSnapshot = getMapSnapshot();
       const mapState = {
         viewport: {
@@ -429,16 +565,15 @@ export function useSSEStream(
         user_location: userLocation
           ? { lng: userLocation.lng, lat: userLocation.lat, accuracy: userLocation.accuracy }
           : null,
+        // FE-4 (design §7)：选中要素快照必须是有界的 —— 父图层 id（非 __ 子图层）、
+        // 稳定要素标识、≤5 个标量关键属性、可算时的 bbox。原始要素 payload /
+        // geometry 永远不进 prompt 路径（后端 build_map_state_summary 只消费这些字段）。
         selected_feature: selectedFeature
-          ? {
-              layer_id: selectedFeature.layerId,
-              layer_name: selectedFeature.layerName ?? null,
-              ref_id: selectedFeature.refId ?? null,
-              point: selectedFeature.point,
-              properties: selectedFeature.properties,
-              selected_at: selectedFeature.selectedAt,
-            }
+          ? buildSelectedFeatureSnapshot(selectedFeature, hudLayers.map((l) => l.id))
           : null,
+        // FE-4 (design §7)：用户聚焦图层（tool-call 卡片 / 图层面板聚焦）随 map_state
+        // 上报，后端以"用户聚焦图层: Z"注入环境感知；无聚焦时省略。
+        focus_layer_id: focusLayerId ?? null,
       };
 
       setMessages((prev) => [

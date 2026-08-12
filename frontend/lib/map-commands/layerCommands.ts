@@ -1,4 +1,4 @@
-import type { CommandEntry } from './types';
+import type { CommandEntry, MapCommandResult } from './types';
 import { TILE_PROVIDERS } from '@/lib/providers';
 import * as navigation from '@/lib/map-kit/navigation';
 import * as renderer from '@/lib/map-kit/renderer';
@@ -18,15 +18,59 @@ import { parseFilter } from './parseFilter';
  * and `dispatchAction` normalizes to lowercase at entry, so the catalogue only
  * registers lowercase keys (e.g. `base_layer_change`, not `BASE_LAYER_CHANGE`).
  */
+
+/**
+ * Map sublayer id schemes for one logical layer id (round-2 FIX-B):
+ *  - custom (interactive add / legacy): `custom-${id}`, `custom-${id}-…`, `custom-${id}_…`
+ *  - store (MapSpecRuntime reconcile, mapspec-runtime/adapter.ts): `${id}__${sub}`
+ *    sublayers plus the bare `${id}` (the runtime's source id / bare layer).
+ * Commands must match BOTH schemes before declaring `target_not_found`.
+ */
+function isCustomSchemeMatch(target: string, id: string): boolean {
+  const custom = `custom-${target}`;
+  return id === custom || id.startsWith(`${custom}-`) || id.startsWith(`${custom}_`);
+}
+
+function isStoreSchemeMatch(target: string, id: string): boolean {
+  return id === target || id.startsWith(`${target}__`);
+}
+
+/** All map layer ids matching the target across both schemes (style index). */
+function matchMapLayers(map: any, target: string): string[] {
+  const style = map?.getStyle?.();
+  return ((style?.layers ?? []) as any[])
+    .map((l: any) => l.id as string)
+    .filter((id: string) => isCustomSchemeMatch(target, id) || isStoreSchemeMatch(target, id));
+}
+
+/**
+ * Store-layer sublayers (`${id}__*`) are owned by the async MapSpecRuntime
+ * reconcile — when they cannot be verified synchronously the honest ack is
+ * `store_updated:true` (the backend treats it as non-converging), never a
+ * fabricated `confirmed`. Pure custom layers degrade to `mutation_failed`.
+ */
+function nonConfirmableAck(storeMatched: string[]): MapCommandResult {
+  return storeMatched.length > 0
+    ? { status: 'succeeded', result: { store_updated: true } }
+    : { status: 'failed', error: 'mutation_failed' };
+}
+
 export const layerCommands: Record<string, CommandEntry> = {
   add_layer: {
-    requiredParams: (p) => typeof p.id === 'string',
+    // run body reads `layerId` (tests + AI emissions); `id` tolerated for legacy emissions
+    requiredParams: (p) => typeof p.layerId === 'string' || typeof p.id === 'string',
     run(ctx) {
       const { map, params } = ctx;
       const { layerId, type, geojson, style, flyTo } = params;
-      if (!layerId || !geojson) return;
+      // V3: silent no-ops become explicit failed results (design §6) — missing
+      // target → target_not_found, missing payload data → invalid_params.
+      // Legacy emissions use `id` — read it as the layerId fallback (the
+      // validator already accepts both forms).
+      const targetId = (layerId as string | undefined) ?? (params.id as string | undefined);
+      if (!targetId) return { status: 'failed', error: 'target_not_found' };
+      if (!geojson) return { status: 'failed', error: 'invalid_params' };
 
-      const id = `custom-${layerId}`;
+      const id = `custom-${targetId}`;
       renderer.addGeoJsonSource(map, id, geojson);
 
       if (style && ((style as any).type === 'choropleth' || (style as any).type === 'lisa')) {
@@ -46,6 +90,11 @@ export const layerCommands: Record<string, CommandEntry> = {
           navigation.fitBounds(map, bbox, 50);
         }
       }
+      // V3 round-2 FIX-B: real post-mutation verification — the source must
+      // actually exist on the map before we claim confirmed.
+      if (!map.getSource?.(id)) return { status: 'failed', error: 'mutation_failed' };
+      // V3: verifiable marker so the harness convergence metric has evidence.
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 
@@ -55,7 +104,9 @@ export const layerCommands: Record<string, CommandEntry> = {
       const { map, params } = ctx;
       const { id, url, image, bbox, opacity = 1.0 } = params;
       const imageUrl = image || url;
-      if (!imageUrl || !bbox || !id) return;
+      // V3: silent no-ops become explicit failed results (design §6).
+      if (!id) return { status: 'failed', error: 'target_not_found' };
+      if (!imageUrl || !bbox) return { status: 'failed', error: 'invalid_params' };
 
       const sourceId = `custom-${id}`;
       const layerId = `${sourceId}-layer`;
@@ -80,28 +131,91 @@ export const layerCommands: Record<string, CommandEntry> = {
       });
 
       navigation.fitBounds(map, bbox, 80);
+      // V3 round-2 FIX-B: real post-mutation verification — the image source
+      // must exist on the map before we claim confirmed.
+      if (!map.getSource?.(sourceId)) return { status: 'failed', error: 'mutation_failed' };
+      // V3: verifiable marker (layer add — harness convergence evidence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 
   remove_layer: {
-    requiredParams: (p) => typeof p.id === 'string' || typeof p.layer_id === 'string',
+    // run body reads `layer_id || layerId`; `id` tolerated for legacy emissions
+    requiredParams: (p) => typeof p.layer_id === 'string' || typeof p.layerId === 'string' || typeof p.id === 'string',
     run(ctx) {
       const { map, params, getHudState } = ctx;
       const { layer_id, layerId } = params || {};
       const target = layer_id || layerId;
-      if (!target) return;
-      renderer.removeLayerStack(map, `custom-${target}`, true);
-      // Sync removal to store so LayersTab stays in sync
+      // V3: missing target → explicit failed result (was a silent return).
+      if (!target) return { status: 'failed', error: 'target_not_found' };
+      // V3 round-2 FIX-B: resolve the target across BOTH id schemes (custom-…
+      // stack and store `…__…` sublayers) before declaring a miss — the old
+      // custom-only matcher missed store layers keyed `${id}__${sub}`.
+      const matched = matchMapLayers(map, target);
+      const storeHasLayer = getHudState().layers?.some?.((l: any) => l.id === target) ?? false;
+      if (matched.length === 0 && !storeHasLayer) return { status: 'failed', error: 'target_not_found' };
+
+      const customId = `custom-${target}`;
+      const customMatched = matched.filter((id) => isCustomSchemeMatch(target, id));
+      const storeMatched = matched.filter((id) => isStoreSchemeMatch(target, id));
+
+      if (matched.length === 0) {
+        // Store-only: the MapSpecRuntime owns the map sublayers (not applied
+        // yet / mid-reconcile). Dropping the store entry lets the reconcile
+        // clean the map; there is no synchronous map state to verify → honest
+        // store_updated ack (backend treats it as non-converging).
+        getHudState().removeLayer(target);
+        return { status: 'succeeded', result: { store_updated: true } };
+      }
+
+      // 1. custom stack → renderer.removeLayerStack (layers + sources). The
+      //    boolean return distinguishes a real removal failure from a no-op
+      //    (round-2 FIX-B; previously every error was silently swallowed).
+      if (customMatched.length > 0 || map.getLayer?.(customId) || map.getSource?.(customId)) {
+        try {
+          const ok = renderer.removeLayerStack(map, customId, true);
+          if (!ok) {
+            devOnly.warn('[MapActionHandler] REMOVE_LAYER failed to remove custom stack:', customId);
+            return { status: 'failed', error: 'mutation_failed' };
+          }
+        } catch (e) {
+          devOnly.warn('[MapActionHandler] REMOVE_LAYER failed:', e);
+          return { status: 'failed', error: 'mutation_failed' };
+        }
+      }
+      // 2. store sublayers + bare source → remove directly (the runtime's next
+      //    reconcile is a no-op for already-gone ids).
+      for (const id of storeMatched) {
+        if (map.getLayer?.(id)) {
+          try { map.removeLayer(id); } catch { /* already gone */ }
+        }
+      }
+      if (map.getSource?.(target)) {
+        try { map.removeSource(target); } catch { /* already gone */ }
+      }
+      // 3. Sync removal to store so LayersTab stays in sync
       getHudState().removeLayer(target);
+
+      // 4. V3 round-2 FIX-B: post-mutation verification — the resolved stack
+      //    must be gone from the map (getLayer/getSource absent OR the style
+      //    layer set no longer contains any of the target's sublayers).
+      const layersAfter = ((map.getStyle?.()?.layers ?? []) as any[]).map((l: any) => l.id as string);
+      const stillPresent = matched.some(
+        (id) => !!map.getLayer?.(id) || !!map.getSource?.(id) || layersAfter.includes(id),
+      );
+      if (stillPresent) return nonConfirmableAck(storeMatched);
+      // V3: verifiable marker (layer remove — harness convergence evidence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 
   base_layer_change: {
     requiredParams: (p) => typeof p.name === 'string' || typeof p.id === 'string',
     run(ctx) {
-      const { params, setSelectedBaseLayer, getHudState } = ctx;
+      const { map, params, setSelectedBaseLayer, getHudState } = ctx;
       const name = params?.name as string | undefined;
-      if (!name) return;
+      // V3: a missing name is a param failure, not a target miss.
+      if (!name) return { status: 'failed', error: 'invalid_params' };
       const search = name.toLowerCase();
 
       // 1. Exact name match (case-insensitive)
@@ -122,15 +236,28 @@ export const layerCommands: Record<string, CommandEntry> = {
         );
       }
 
-      if (idx !== -1) {
-        setSelectedBaseLayer(idx);
-        // QA-2026-05-20 ISSUE-002 fix: keep useHudStore.baseLayer in sync so
-        // the dropdown button label, HUD panel, and status bar all show the
-        // canonical name after an AI-driven switch_base_layer call.
-        getHudState().setBaseLayer(TILE_PROVIDERS[idx].name);
-      } else {
+      if (idx === -1) {
         devOnly.warn('[MapActionHandler] Could not match base layer name:', name);
+        // V3: no provider matched → explicit failed result (was a silent no-op
+        // with only a dev warning).
+        return { status: 'failed', error: 'target_not_found' };
       }
+
+      const provider = TILE_PROVIDERS[idx];
+      // V3 round-2 FIX-B: the store already points at this provider → no style
+      // swap needed → resolve succeeded immediately (no async wait).
+      if (getHudState().baseLayer === provider.name) {
+        return { status: 'succeeded' };
+      }
+      setSelectedBaseLayer(idx);
+      // QA-2026-05-20 ISSUE-002 fix: keep useHudStore.baseLayer in sync so
+      // the dropdown button label, HUD panel, and status bar all show the
+      // canonical name after an AI-driven switch_base_layer call.
+      getHudState().setBaseLayer(provider.name);
+      // V3 round-2 FIX-B: the style swap is async — the ack must not claim
+      // success before the new style actually loads. Resolve on the next
+      // `style.load`, fail on style error / 15s timeout.
+      return waitForStyleLoad(map);
     },
   },
 
@@ -139,27 +266,58 @@ export const layerCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { map, params, getHudState } = ctx;
       const { layer_id, visible, opacity, name, color } = params || {};
-      if (!layer_id) return;
+      // V3: missing target → explicit failed result (was a silent return).
+      if (!layer_id) return { status: 'failed', error: 'target_not_found' };
 
-      const style = map.getStyle();
-      style.layers?.forEach((l: any) => {
-        if (l.id.startsWith(`custom-${layer_id}-`)) {
-          renderer.updateLayerStyle(map, l.id, {
-            visibility: visible !== undefined ? (visible ? 'visible' : 'none') : undefined,
-            opacity,
-            color: color as string | undefined,
-          });
-        }
-      });
+      // V3 round-2 FIX-B: resolve across BOTH id schemes (custom-… + store …__…).
+      const matched = matchMapLayers(map, layer_id);
+      const storeHasLayer = getHudState().layers?.some?.((l: any) => l.id === layer_id) ?? false;
+      // V3: no matching map layer AND no store layer → genuine miss → failed
+      // result (was: silent no-op forEach + void success).
+      if (matched.length === 0 && !storeHasLayer) return { status: 'failed', error: 'target_not_found' };
+
+      // Store-layer sublayers are owned by the async MapSpecRuntime reconcile.
+      const storeMatched = matched.filter((id) => isStoreSchemeMatch(layer_id, id));
+
       // Sync visibility/opacity/name/color back to store so LayersTab stays in sync
       const storeUpdates: Record<string, unknown> = {};
       if (visible !== undefined) storeUpdates.visible = visible;
       if (opacity !== undefined) storeUpdates.opacity = opacity;
       if (name !== undefined) storeUpdates.name = name;
       if (color !== undefined) storeUpdates.style = { ...(getHudState().layers.find((l: any) => l.id === layer_id)?.style ?? {}), color };
+
+      if (matched.length === 0) {
+        // Store-only: the reconcile owns the map sublayers → honest store_updated.
+        if (Object.keys(storeUpdates).length > 0) {
+          getHudState().updateLayer(layer_id, storeUpdates);
+        }
+        return { status: 'succeeded', result: { store_updated: true } };
+      }
+
+      for (const id of matched) {
+        renderer.updateLayerStyle(map, id, {
+          visibility: visible !== undefined ? (visible ? 'visible' : 'none') : undefined,
+          opacity,
+          color: color as string | undefined,
+        });
+      }
       if (Object.keys(storeUpdates).length > 0) {
         getHudState().updateLayer(layer_id, storeUpdates);
       }
+      // V3 round-2 FIX-B: post-mutation verification — the matched layer exists
+      // on the map AND (visibility) getLayoutProperty reflects the new value.
+      const wantVisibility = visible !== undefined ? (visible ? 'visible' : 'none') : undefined;
+      for (const id of matched) {
+        if (!map.getLayer?.(id)) return nonConfirmableAck(storeMatched);
+        if (
+          wantVisibility !== undefined &&
+          map.getLayoutProperty?.(id, 'visibility') !== wantVisibility
+        ) {
+          return nonConfirmableAck(storeMatched);
+        }
+      }
+      // V3: verifiable marker (layer style/visibility update — harness convergence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 
@@ -168,25 +326,47 @@ export const layerCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { map, params, getHudState } = ctx;
       const { layer_id, style } = params || {};
-      if (!layer_id || !style) return;
-      const mapStyle = map.getStyle();
+      // V3: silent no-ops become explicit failed results (design §6).
+      if (!layer_id) return { status: 'failed', error: 'target_not_found' };
+      if (!style) return { status: 'failed', error: 'invalid_params' };
       const s = style as any;
-      mapStyle.layers?.forEach((l: any) => {
-        if (l.id.startsWith(`custom-${layer_id}-`)) {
-          renderer.updateLayerStyle(map, l.id, {
-            color: s.color,
-            strokeColor: s.strokeColor,
-            strokeWidth: s.strokeWidth,
-            pointSize: s.pointSize,
-            dashArray: s.dashArray,
-            fill: s.fill,
-          });
-        }
-      });
+
+      // V3 round-2 FIX-B: resolve across BOTH id schemes (custom-… + store …__…).
+      const matched = matchMapLayers(map, layer_id);
+      const storeHasLayer = getHudState().layers?.some?.((l: any) => l.id === layer_id) ?? false;
+      // V3: no matching map layer AND no store layer → genuine miss → failed
+      // result (was: silent no-op forEach + void success).
+      if (matched.length === 0 && !storeHasLayer) return { status: 'failed', error: 'target_not_found' };
+
+      // Store-layer sublayers are owned by the async MapSpecRuntime reconcile.
+      const storeMatched = matched.filter((id) => isStoreSchemeMatch(layer_id, id));
+
       // Sync style changes back to store so LayersTab swatch stays in sync
       const styleUpdates: Record<string, any> = {};
       for (const key of ['color', 'strokeColor', 'strokeWidth', 'pointSize', 'dashArray', 'fill']) {
         if (s[key] !== undefined && s[key] !== null) styleUpdates[key] = s[key];
+      }
+
+      if (matched.length === 0) {
+        // Store-only: the reconcile owns the map sublayers → honest store_updated.
+        if (Object.keys(styleUpdates).length > 0) {
+          const existing = getHudState().layers.find((l: any) => l.id === layer_id);
+          getHudState().updateLayer(layer_id, {
+            style: { ...(existing?.style ?? {}), ...styleUpdates },
+          });
+        }
+        return { status: 'succeeded', result: { store_updated: true } };
+      }
+
+      for (const id of matched) {
+        renderer.updateLayerStyle(map, id, {
+          color: s.color,
+          strokeColor: s.strokeColor,
+          strokeWidth: s.strokeWidth,
+          pointSize: s.pointSize,
+          dashArray: s.dashArray,
+          fill: s.fill,
+        });
       }
       if (Object.keys(styleUpdates).length > 0) {
         const existing = getHudState().layers.find((l: any) => l.id === layer_id);
@@ -194,21 +374,34 @@ export const layerCommands: Record<string, CommandEntry> = {
           style: { ...(existing?.style ?? {}), ...styleUpdates },
         });
       }
+      // V3 round-2 FIX-B: post-mutation verification — the matched layer must
+      // exist on the map (getLayer) before we claim confirmed.
+      for (const id of matched) {
+        if (!map.getLayer?.(id)) return nonConfirmableAck(storeMatched);
+      }
+      // V3: verifiable marker (layer style update — harness convergence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 
   reorder_layer: {
-    requiredParams: (p) => Array.isArray(p.layers) || Array.isArray(p.order),
+    // run body reads `layer_id` + `position` (backend REORDER_LAYER emission);
+    // the old validator (layers/order arrays) matched no actual run contract
+    requiredParams: (p) => typeof p.layer_id === 'string' && typeof p.position === 'string',
     run(ctx) {
       const { map, params } = ctx;
       const { layer_id, position, before_id } = params || {};
-      if (!layer_id || typeof layer_id !== 'string' || !layer_id.trim() || layer_id === 'ref:' || layer_id === 'custom-' || !position) return;
+      // V3: silent no-ops become explicit failed results (design §6).
+      if (!layer_id || typeof layer_id !== 'string' || !layer_id.trim() || layer_id === 'ref:' || layer_id === 'custom-') {
+        return { status: 'failed', error: 'target_not_found' };
+      }
+      if (!position) return { status: 'failed', error: 'invalid_params' };
       const style = map.getStyle();
       const allLayers = style.layers || [];
       const subIds = allLayers
         .map((l: any) => l.id as string)
         .filter((id: string) => id === `custom-${layer_id}` || id.startsWith(`custom-${layer_id}-`));
-      if (subIds.length === 0) return;
+      if (subIds.length === 0) return { status: 'failed', error: 'target_not_found' };
 
       // Snapshot custom layer IDs only (we ignore base style layers)
       const customIds = allLayers
@@ -250,7 +443,18 @@ export const layerCommands: Record<string, CommandEntry> = {
         }
       } catch (e) {
         devOnly.warn('[MapActionHandler] REORDER_LAYER failed:', e);
+        return { status: 'failed', error: 'reorder_failed' };
       }
+      // V3 round-2 FIX-B: post-mutation verification — the target sublayers
+      // must still exist on the map (moveLayer on a stale style index is a
+      // silent no-op otherwise).
+      const layersAfter = ((map.getStyle?.()?.layers ?? []) as any[]).map((l: any) => l.id as string);
+      const targetGone = subIds.some(
+        (id: string) => !map.getLayer?.(id) && !layersAfter.includes(id),
+      );
+      if (targetGone) return { status: 'failed', error: 'mutation_failed' };
+      // V3: verifiable marker (layer reorder — harness convergence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 
@@ -259,9 +463,47 @@ export const layerCommands: Record<string, CommandEntry> = {
     run(ctx) {
       const { map, params } = ctx;
       const { layer_id, filter } = params || {};
-      if (!layer_id) return;
+      // V3: missing target → explicit failed result (was a silent return).
+      if (!layer_id) return { status: 'failed', error: 'target_not_found' };
       // Apply MapLibre filter with fallback parser for simple string filters
       map.setFilter(layer_id, parseFilter(filter) as any);
     },
   },
 };
+
+/** Round-2 FIX-B: base layer style swap ack deadline. */
+const BASE_LAYER_SWAP_TIMEOUT_MS = 15000;
+
+/**
+ * Resolves once the map's next style finishes loading (`style.load`), rejects
+ * the swap on a style-level error, and fails on a 15s timeout — the ack can
+ * never stall the queue. Tile/fetch errors during load are ignored (they must
+ * not cancel a legit swap).
+ */
+function waitForStyleLoad(map: any, timeoutMs: number = BASE_LAYER_SWAP_TIMEOUT_MS): Promise<MapCommandResult> {
+  return new Promise((resolve) => {
+    let settled = false;
+    // Holder object (repo style — viewCommands.ts): `timer` is assigned after
+    // `settle` is defined, and a `let` assigned exactly once trips prefer-const.
+    const handles: { timer?: ReturnType<typeof setTimeout> } = {};
+    const settle = (result: MapCommandResult) => {
+      if (settled) return;
+      settled = true;
+      if (handles.timer) clearTimeout(handles.timer);
+      map.off?.('style.load', onLoad);
+      map.off?.('error', onError);
+      resolve(result);
+    };
+    const onLoad = () => settle({ status: 'succeeded' });
+    const onError = (e: any) => {
+      // Only style-relevant errors fail the swap — tile/fetch errors during
+      // loading must not cancel it.
+      const err = e?.error ?? e;
+      const isTileError = !!e?.tile || /tile|fetch|network|worker/i.test(String(err?.message ?? ''));
+      if (!isTileError) settle({ status: 'failed', error: 'style_error' });
+    };
+    handles.timer = setTimeout(() => settle({ status: 'failed', error: 'timeout' }), timeoutMs);
+    map.once?.('style.load', onLoad);
+    map.once?.('error', onError);
+  });
+}

@@ -10,6 +10,13 @@ import type { HudState } from '../hud-types';
 
 
 import { devOnly } from "@/lib/utils/logger";
+
+/**
+ * FE-3: 注释（annotation）队列上限。AI 长会话中反复标注会无限增长
+ * （findings E4 无界数组），超限丢弃最旧条目。
+ */
+export const MAX_ANNOTATIONS = 500;
+
 export const createLayersSlice: StateCreator<HudState, [], [], Partial<HudState>> = (set, get) => ({
   /* ─── Layers ─── */
   layers: [],
@@ -31,7 +38,12 @@ export const createLayersSlice: StateCreator<HudState, [], [], Partial<HudState>
 
   /* ─── Annotations ─── */
   annotations: [],
-  addAnnotation: (feature) => set((s) => ({ annotations: [...s.annotations, feature] })),
+  // FE-3: 上限 500 —— 长会话 AI 反复 add_marker / draw_measurement 时防止
+  // 无限增长（findings E4）。超限时丢最旧的（append 队尾保留最新）。
+  addAnnotation: (feature) => set((s) => {
+    const next = [...s.annotations, feature];
+    return { annotations: next.length > MAX_ANNOTATIONS ? next.slice(next.length - MAX_ANNOTATIONS) : next };
+  }),
   clearAnnotations: () => set({ annotations: [] }),
 
   /* ─── Layer Editing ─── */

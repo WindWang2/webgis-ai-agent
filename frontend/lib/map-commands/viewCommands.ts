@@ -1,6 +1,6 @@
-import type { CommandEntry } from './types';
+import type { CommandEntry, MapCommandContext, MapCommandResult } from './types';
 import * as navigation from '@/lib/map-kit/navigation';
-import { devOnly } from '@/lib/utils/logger';
+import { isUserGesturing, onUserGestureStart, waitForGestureEnd } from './camera-arbitration';
 
 /**
  * View commands: camera/navigation.
@@ -9,35 +9,227 @@ import { devOnly } from '@/lib/utils/logger';
  * map-action-handler.tsx, reading from `ctx` instead of the closed-over scope.
  * Validators mirror the old `REQUIRED_PARAMS` table in map-action-renderer.tsx
  * so the renderer gate accepts exactly the same actions as before.
+ *
+ * V3 (design §6): camera commands return Promise<MapCommandResult> — they own
+ * the human-vs-AI arbitration and always settle the action (the queue can never
+ * stall on a camera move):
+ * - if a user gesture is active when the command starts → wait (≤3s) for it;
+ *   if the wait bound expires with the user STILL gesturing → settle
+ *   `superseded_by_user` (never start a camera fight);
+ * - map.stop() before starting a new animation (self-interrupt);
+ * - resolve succeeded on `moveend` only when the settled viewport actually
+ *   reached the requested center+zoom (backend tolerance) AND no map
+ *   interaction handler is active AND no user gesture flag is set — the settle
+ *   check is deferred one frame so a just-arriving dragstart can be seen first;
+ * - a user gesture mid-flight → failed `superseded_by_user` (handler maps to a
+ *   cancelled ack — the human took over);
+ * - a foreign programmatic move cut the animation short (settled viewport never
+ *   reached the target) → failed `interrupted`;
+ * - 10s safety timeout → failed `timeout`.
  */
+
+const CAMERA_SAFETY_TIMEOUT_MS = 10_000;
+const GESTURE_WAIT_TIMEOUT_MS = 3_000;
+
+// Camera convergence tolerance mirrored from the backend
+// (app/lib/harness/pi_agent_harness.py: CAMERA_CENTER_TOL_DEG = 0.001,
+// CAMERA_ZOOM_TOL = 0.05, _FLOAT_EPSILON = 1e-9). A camera command only acks
+// SUCCEEDED when the settled viewport reached the requested target — a success
+// the live map did not earn is a fake ack (ROUND-2 finding).
+const CAMERA_CENTER_TOL_DEG = 0.001;
+const CAMERA_ZOOM_TOL = 0.05;
+// Absorb float64 noise so a delta exactly at the tolerance boundary (e.g.
+// 116.001 - 116 = 0.0010000000000012…) keeps the "≤ tolerance" semantics —
+// same ε the backend adds.
+const FLOAT_EPSILON = 1e-9;
+
+/** Requested center+zoom target used for the post-moveend convergence check. */
+interface CameraTarget {
+  center: [number, number];
+  zoom: number;
+}
+
+/** True while ANY map interaction handler is active (a user grab in progress).
+ * A grab activates its HandlerManager synchronously, BEFORE the dragstart DOM
+ * event lands — so this catches the ROUND-2 camera interrupt race even when the
+ * gesture flag has not been set yet. */
+function anyInteractionActive(map: any): boolean {
+  return !!(
+    map?.dragPan?.isActive?.() ||
+    map?.scrollZoom?.isActive?.() ||
+    map?.dragRotate?.isActive?.() ||
+    map?.touchZoomRotate?.isActive?.() ||
+    map?.tapZoom?.isActive?.() ||
+    map?.keyboard?.isActive?.()
+  );
+}
+
+/** Whether the settled viewport reached the requested target (backend tolerance). */
+function reachedTarget(settled: { center: [number, number]; zoom: number }, target: CameraTarget): boolean {
+  return (
+    Math.abs(settled.center[0] - target.center[0]) <= CAMERA_CENTER_TOL_DEG + FLOAT_EPSILON &&
+    Math.abs(settled.center[1] - target.center[1]) <= CAMERA_CENTER_TOL_DEG + FLOAT_EPSILON &&
+    Math.abs(settled.zoom - target.zoom) <= CAMERA_ZOOM_TOL + FLOAT_EPSILON
+  );
+}
+
+/**
+ * Wraps a synchronous camera move so the action settles with a structured result.
+ * Always resolves (never rejects): predictable failures like invalid coordinates
+ * become a failed MapCommandResult, matching the command's Promise contract.
+ */
+function runCameraCommand(
+  ctx: MapCommandContext,
+  execute: (ctx: MapCommandContext) => void,
+  target?: CameraTarget,
+): Promise<MapCommandResult> {
+  return (async () => {
+    // V3: a user gesture owns the camera — wait it out (bounded) instead of
+    // fighting it. waitForGestureEnd resolves immediately when idle.
+    if (isUserGesturing()) {
+      await waitForGestureEnd(GESTURE_WAIT_TIMEOUT_MS);
+      // ROUND-2: the wait bound can expire with the user STILL gesturing.
+      // Starting an animation now (map.stop() + flyTo) would fight the user's
+      // active handlers — settle superseded instead, never start a camera fight.
+      if (isUserGesturing()) {
+        return { status: 'failed', error: 'superseded_by_user' };
+      }
+    }
+
+    const { map } = ctx;
+    // Self-interrupt: stop any in-flight AI camera animation before a new one.
+    map.stop();
+
+    return new Promise<MapCommandResult>((resolve) => {
+      let settled = false;
+      // Holder object instead of `let` bindings: `timer`/`offGesture` are assigned
+      // after `cleanup` is defined (closures reference them), and a `let` that is
+      // only ever assigned once trips `prefer-const` lint.
+      const handles: {
+        timer?: ReturnType<typeof setTimeout>;
+        frameTimer?: ReturnType<typeof setTimeout>;
+        offGesture?: () => void;
+      } = {};
+
+      const cleanup = () => {
+        if (handles.timer) clearTimeout(handles.timer);
+        if (handles.frameTimer) clearTimeout(handles.frameTimer);
+        handles.offGesture?.();
+      };
+      const settle = (result: MapCommandResult) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(result);
+      };
+
+      // Safety timeout: the queue can never stall on a camera command.
+      handles.timer = setTimeout(() => {
+        settle({ status: 'failed', error: 'timeout' });
+      }, CAMERA_SAFETY_TIMEOUT_MS);
+
+      // User gesture mid-flight → the human owns the camera now (design §6).
+      // Settle superseded FIRST and never call map.stop() ourselves: in real
+      // MapLibre stop() fires moveend synchronously, so the once('moveend')
+      // settle would win and the action would ack SUCCEEDED — and stop() would
+      // also reset the user's active gesture handlers. MapLibre stops the
+      // in-flight animation itself when a user gesture begins.
+      handles.offGesture = onUserGestureStart(() => {
+        settle({ status: 'failed', error: 'superseded_by_user' });
+      });
+
+      // Settled viewport = the actual state the backend can verify convergence
+      // against (requested center/zoom vs actual within tolerance).
+      map.once('moveend', () => {
+        // ROUND-2 camera interrupt race: a user grab mid-flyTo fires the
+        // interrupt moveend SYNCHRONOUSLY before dragstart lands (in real
+        // MapLibre HandlerManager._stop(true) → _afterEase → moveend; dragstart
+        // arrives the next frame). The once('moveend') settle would ack
+        // SUCCEEDED even though the human just took over. Defer the settle
+        // check by one frame so a just-arriving dragstart can set the gesture
+        // flag first — and, independently, verify no map interaction handler is
+        // active (they activate synchronously with the grab, before the JS
+        // dragstart event ever dispatches).
+        if (settled) return;
+        handles.frameTimer = setTimeout(() => {
+          if (isUserGesturing() || anyInteractionActive(map)) {
+            settle({ status: 'failed', error: 'superseded_by_user' });
+            return;
+          }
+          const settledVp = settledViewport(map);
+          // ROUND-2: a camera command only succeeds when the settled viewport
+          // actually reached the requested target — e.g. a foreign programmatic
+          // fitBounds that cut the flyTo short means the map did NOT earn the ack.
+          if (target && !reachedTarget(settledVp, target)) {
+            settle({ status: 'failed', error: 'interrupted' });
+            return;
+          }
+          settle({ status: 'succeeded', result: settledVp });
+        }, 0);
+      });
+
+      try {
+        execute(ctx);
+      } catch (e) {
+        // Predictable execution failures (e.g. navigation.flyTo rejecting invalid
+        // coordinates) become a failed result — the old silent-swallow path.
+        settle({ status: 'failed', error: e instanceof Error ? e.message : String(e) });
+      }
+    });
+  })();
+}
+
+/** Reads the *settled* camera state off the map (post-moveend). */
+function settledViewport(map: any): { center: [number, number]; zoom: number; bearing: number; pitch: number } {
+  return {
+    center: [map.getCenter().lng, map.getCenter().lat],
+    zoom: map.getZoom(),
+    bearing: map.getBearing(),
+    pitch: map.getPitch(),
+  };
+}
+
 export const viewCommands: Record<string, CommandEntry> = {
   fly_to: {
     requiredParams: (p) => Array.isArray(p.center) && p.center.length === 2,
     run(ctx) {
-      const { map, params } = ctx;
-      if (params?.center) {
-        navigation.flyTo(map, {
-          center: params.center,
-          zoom: params?.zoom || 12,
-          bearing: params.bearing,
-          pitch: params.pitch,
-        });
-      }
+      return runCameraCommand(
+        ctx,
+        (c) => {
+          const { map, params } = c;
+          if (params?.center) {
+            navigation.flyTo(map, {
+              center: params.center,
+              zoom: params?.zoom || 12,
+              bearing: params.bearing,
+              pitch: params.pitch,
+            });
+          }
+        },
+        // Requested target for the post-moveend convergence check — mirror the
+        // execute body's zoom default so the comparison is apples-to-apples.
+        {
+          center: ctx.params?.center as [number, number],
+          zoom: (ctx.params?.zoom as number) || 12,
+        },
+      );
     },
   },
 
   zoom_to_bbox: {
     requiredParams: (p) => Array.isArray(p.bbox) && p.bbox.length === 4,
     run(ctx) {
-      const { map, params } = ctx;
-      const bbox = params?.bbox as [number, number, number, number] | undefined;
-      const padding = params?.padding ?? 50;
-      if (!bbox || bbox.length < 4) return;
-      try {
+      // No explicit center+zoom target (fitBounds computes it internally), so no
+      // convergence check — settled == succeeded.
+      return runCameraCommand(ctx, (c) => {
+        const { map, params } = c;
+        const bbox = params?.bbox as [number, number, number, number] | undefined;
+        const padding = params?.padding ?? 50;
+        if (!bbox || bbox.length < 4) {
+          throw new Error('invalid bbox');
+        }
         navigation.fitBounds(map, bbox, padding);
-      } catch (e) {
-        devOnly.warn('[MapActionHandler] zoom_to_bbox failed:', e);
-      }
+      });
     },
   },
 
@@ -45,15 +237,53 @@ export const viewCommands: Record<string, CommandEntry> = {
     requiredParams: (p) => Array.isArray(p.center) || typeof p.zoom === 'number',
     run(ctx) {
       const { map, params } = ctx;
-      const { zoom, bearing, pitch } = params || {};
-      if (zoom === undefined && bearing === undefined && pitch === undefined) return;
-      const center = map.getCenter();
-      navigation.flyTo(map, {
-        center: [center.lng, center.lat],
-        zoom: zoom !== undefined ? zoom : map.getZoom(),
-        bearing: bearing !== undefined ? bearing : map.getBearing(),
-        pitch: pitch !== undefined ? pitch : map.getPitch(),
-      });
+      const { center, zoom, bearing, pitch } = params || {};
+      const hasCenter = Array.isArray(center) && center.length === 2;
+      const hasZoom = typeof zoom === 'number';
+      const hasBearing = typeof bearing === 'number';
+      const hasPitch = typeof pitch === 'number';
+      if (!hasCenter && !hasZoom && !hasBearing && !hasPitch) {
+        // No effective camera params at all → nothing would move, so no moveend
+        // will ever fire. Settle succeeded immediately with the current camera
+        // as actual — otherwise the queue would stall 10s and ack `timeout` for
+        // a no-op request.
+        return { status: 'succeeded', result: settledViewport(map) };
+      }
+      // ROUND-2: honor params.center (was dropped — flew to the current center).
+      // Merge with the current zoom/bearing/pitch so a partial request moves
+      // only the dimensions it names; the merged state is the convergence target.
+      const requestedCenter: [number, number] = hasCenter
+        ? (center as [number, number])
+        : [map.getCenter().lng, map.getCenter().lat];
+      const requestedZoom: number = hasZoom ? (zoom as number) : map.getZoom();
+      return runCameraCommand(
+        ctx,
+        (c) => {
+          const { map: m } = c;
+          if (hasCenter && !hasZoom && !hasBearing && !hasPitch) {
+            // Center-only request: an instant jump is the honest no-argument
+            // move (was a silent no-op success before ROUND-2). MapLibre jumpTo
+            // fires moveend synchronously, so the settle still flows through the
+            // one-frame deferred check.
+            navigation.jumpTo(m, {
+              center: requestedCenter,
+              zoom: m.getZoom(),
+              bearing: m.getBearing(),
+              pitch: m.getPitch(),
+            });
+            return;
+          }
+          navigation.flyTo(m, {
+            center: requestedCenter,
+            zoom: requestedZoom,
+            bearing: hasBearing ? (bearing as number) : m.getBearing(),
+            pitch: hasPitch ? (pitch as number) : m.getPitch(),
+          });
+        },
+        { center: requestedCenter, zoom: requestedZoom },
+      );
     },
   },
 };
+
+

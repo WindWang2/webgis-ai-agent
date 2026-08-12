@@ -47,6 +47,58 @@ class MapSpecValidityTier(int, Enum):
     RUNTIME_VALID = 5       # 通过 headless 运行时（mapLoaded + 无错误 + 非空 canvas）
 
 
+class MapActionStatus(str, Enum):
+    """地图运行时交互动作的生命周期状态（Harness–Map Interaction V3）。
+
+    终态为 SUCCEEDED / FAILED / CANCELLED / SUPERSEDED；ISSUED/QUEUED/RUNNING
+    为瞬态。没有终态 ACK 的动作永远停留在非终态 —— 缺失证据绝不被当作 success。
+    """
+    ISSUED = "issued"            # 后端已铸 action_id 并发出（尚未收到终态 ACK）
+    QUEUED = "queued"            # 前端已入队
+    RUNNING = "running"          # 前端开始执行
+    SUCCEEDED = "succeeded"      # 执行完成（相机类携带实际落定视口）
+    FAILED = "failed"            # 未知命令/参数非法/MapLibre 抛错/目标缺失/超时
+    CANCELLED = "cancelled"      # 被用户手势或 session 切换取消
+    SUPERSEDED = "superseded"    # 被更新的同类命令取代（camera coalesce）
+
+    @property
+    def is_terminal(self) -> bool:
+        return self in (
+            MapActionStatus.SUCCEEDED,
+            MapActionStatus.FAILED,
+            MapActionStatus.CANCELLED,
+            MapActionStatus.SUPERSEDED,
+        )
+
+
+@dataclass
+class MapActionEvidence:
+    """一次 AI 地图命令从前端真实执行回传的结构化证据（ACK）。
+
+    每条记录独立携带 run/session/turn/tool_call/step/SSE-event 全链路
+    correlation；requested 为请求目标（如 fly_to 的 center/zoom），actual 为
+    执行后的真实状态（如落定视口），供收敛性判定。
+    """
+    action_id: str
+    command: str
+    session_id: str
+    status: MapActionStatus = MapActionStatus.ISSUED
+    run_id: str = ""
+    turn_id: str = ""
+    tool_call_id: str = ""
+    sse_event_id: str = ""
+    started_at: str = ""
+    finished_at: str = ""
+    duration_ms: Optional[float] = None
+    error: str = ""
+    requested: Dict[str, Any] = field(default_factory=dict)
+    actual: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def has_terminal_evidence(self) -> bool:
+        return self.status.is_terminal
+
+
 @dataclass
 class RefResolution:
     """单次 ref cursor 解析的真实结果。"""
@@ -104,6 +156,8 @@ class ToolCallEvidence:
     ref_resolutions: List[RefResolution] = field(default_factory=list)
     # MapSpec 有效性分层证据（仅 mutation 工具）
     mapspec_validity: Optional[MapSpecValidityEvidence] = None
+    # 地图运行时交互证据（V3：前端真实执行 ACK，可选）
+    map_actions: List["MapActionEvidence"] = field(default_factory=list)
     # 运行时制图证据路径（screenshot/trace/report，可选）
     runtime_evidence_path: Optional[str] = None
 

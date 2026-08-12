@@ -49,9 +49,22 @@ def format_selected_feature(sel: dict | None) -> str | None:
     point = sel.get("point")
     # /review P1-4: layer_name comes from user-uploaded GeoJSON; escape before splicing
     parts = [f"图层={_xml_fence(TAG_UNTRUSTED_LAYER_NAME, name_or_ref)}"]
+    # FE-4 (design §7): feature_id 是稳定的要素标识（id 属性或内容哈希），
+    # 可能派生自用户数据 → 同样转义；缺失/空串/字面 "None" 一律静默省略。
+    feature_id = sel.get("feature_id")
+    if feature_id is not None and str(feature_id) not in ("", "None"):
+        parts.append(f"要素={_xml_fence(TAG_UNTRUSTED_FEATURE_PROPERTY, feature_id)}")
     if isinstance(point, (list, tuple)) and len(point) >= 2:
         try:
             parts.append(f"点击@{float(point[0]):.4f},{float(point[1]):.4f}")
+        except (ValueError, TypeError):
+            pass
+    # FE-4 (design §7): bbox 可算时给出要素外接矩形 (W,S,E,N)，帮 LLM 理解"当前范围"。
+    bbox = sel.get("bbox")
+    if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+        try:
+            w, s, e, n = (float(v) for v in bbox)
+            parts.append(f"范围=W{w:.3f} S{s:.3f} E{e:.3f} N{n:.3f}")
         except (ValueError, TypeError):
             pass
     props = sel.get("properties")

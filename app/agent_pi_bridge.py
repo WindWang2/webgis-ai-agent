@@ -21,15 +21,17 @@ zero knowledge of the cache.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
+import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
 
 from pydantic import BaseModel
 
-from app.utils.sse import sse_event
+from app.utils.sse import sse_event, sse_event_type
 from app.services.chat.pi_event_mapper import map_event_to_sse, _extract_text_from_event
 from app.services.tool_dispatch_service import ToolDispatchService
 from app.lib.harness.pi_agent_harness import PiAgentHarness
@@ -72,6 +74,43 @@ PI_HEARTBEAT_INTERVAL = _env_float_drain("PI_HEARTBEAT_INTERVAL", 8.0)
 # long toolchains (still well under PI_RPC_TIMEOUT=300s that bounds one RPC).
 # Operators may tune via the env var.
 PI_EVENT_STREAM_TIMEOUT = _env_float_drain("PI_EVENT_STREAM_TIMEOUT", 180.0)
+
+
+# ── V3: turn_id 铸造 + step_result SSE 注入（Harness–Map Interaction Closed Loop）─
+#
+# turn_id 形如 ``turn-<uuid4hex[:12]>``，每个 Pi turn（stream_prompt）铸一个，
+# 显式透传给 harness 记录与 step_result SSE 负载。绝不用全局 set_correlation ——
+# 单例 harness 跨 session 累积，全局 correlation 在并发/串行交错的 session 间
+# 会互相污染。
+TURN_ID_PREFIX = "turn-"
+
+
+def _mint_turn_id() -> str:
+    """铸一个本 turn 唯一的 correlation id。"""
+    return f"{TURN_ID_PREFIX}{uuid.uuid4().hex[:12]}"
+
+
+def _inject_turn_id(sse_str: str, turn_id: str) -> str:
+    """把 turn_id 写入 step_result SSE 负载（additive 字段）。
+
+    pi_event_mapper 属其它 slice，不越界修改；此处仅在 bridge 层对映射结果做
+    防御性改写：只处理 step_result 事件，保留原有的 event:/id: 行与编号语义
+    （重建时手动改 data 行，避免 sse_event() 重新消耗 DUP-1 的 id 计数器）。
+    """
+    if not turn_id or sse_event_type(sse_str) != "step_result":
+        return sse_str
+    lines = sse_str.split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith("data: "):
+            try:
+                payload = json.loads(line[len("data: "):])
+            except (TypeError, ValueError):
+                return sse_str
+            if isinstance(payload, dict):
+                payload["turn_id"] = turn_id
+                lines[i] = "data: " + json.dumps(payload, ensure_ascii=False)
+            break
+    return "\n".join(lines)
 
 
 # ── Pi tool dispatch models (owned by bridge, not pi_tools route) ──
@@ -249,6 +288,19 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     cache_dispatch_result(request.toolCallId, result)
 
     if _harness is not None:
+        # V3: 记录本次 dispatch 发出的地图动作（issued 侧证据）。仅 status=="ok" ——
+        # error/repeated 不产生可执行的地图命令。turn_id 在此不可得（HTTP 回调无
+        # turn 上下文）；turn 级 correlation 由前端 ack 的 correlation 侧补齐。
+        if result.status == "ok":
+            for ma in result.map_actions:
+                _harness.record_map_action_issued(
+                    session_id=request.sessionId or "",
+                    tool_call_id=request.toolCallId,
+                    turn_id="",
+                    action_id=ma["action_id"],
+                    command=ma["command"],
+                    requested=ma["requested"],
+                )
         is_error = result.status == "error"
         # HARNESS-V2: forward real MapSpec mutation evidence (is_compiled /
         # success / warnings / checkpoint_id) from raw_result so the validity
@@ -545,6 +597,10 @@ class PiBridge:
         _session_executed_sets.pop(turn_sid, None)
         _clear_dispatch_cache()
 
+        # V3: 每个 Pi turn 铸一个 turn_id，显式透传给 harness 记录与 SSE 负载
+        # （绝不用全局 set_correlation —— 单例 harness 跨 session 累积会互相污染）。
+        turn_id = _mint_turn_id()
+
         # Hold the lock across send + drain + cleanup so turns are strictly
         # serial on the singleton bridge (Pi processes one prompt at a time).
         # try/finally ensures a client-disconnect GeneratorExit/CancelledError
@@ -567,13 +623,14 @@ class PiBridge:
                 yield sse_event("task_error", {
                     "task_id": turn_sid,
                     "session_id": turn_sid,
+                    "turn_id": turn_id,
                     "error": str(e),
                 })
                 yield sse_event("done", {"session_id": turn_sid})
                 return
 
             # Stream events from Pi
-            yield sse_event("task_start", {"task_id": turn_sid, "session_id": turn_sid})
+            yield sse_event("task_start", {"task_id": turn_sid, "session_id": turn_sid, "turn_id": turn_id})
 
             timed_out = False
             silence_seconds = 0.0
@@ -585,9 +642,14 @@ class PiBridge:
                     silence_seconds = 0.0
                     sse = map_event_to_sse(event, turn_sid, cache_lookup=get_cached_dispatch_result)
                     if _harness is not None:
-                        _harness.record_sse_event(event)
+                        # V3: 给原始 SSE 事件记录补 turn/run correlation（显式透传）。
+                        _harness.record_sse_event({
+                            **event, "run_id": turn_sid, "turn_id": turn_id,
+                        })
                     if sse:
-                        yield sse
+                        # V3: step_result 负载加 additive turn_id 字段（前端 ack 时
+                        # 通过 correlation 回传，闭环才完整）。
+                        yield _inject_turn_id(sse, turn_id)
                     if event.get("type") == "agent_end":
                         break
                 except asyncio.TimeoutError:

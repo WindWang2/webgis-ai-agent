@@ -1,13 +1,16 @@
-import type { CommandEntry } from './types';
+import type { CommandEntry, MapCommandResult } from './types';
 import type { ExportRequest } from '@/lib/map-kit/exporter';
 import { devOnly } from '@/lib/utils/logger';
 
 /**
  * export_map command — thin dispatch arm.
  *
- * Owns only the dispatch-level concerns: deferred pop (the component's finally
- * block must skip the synchronous pop), the `map.once('render')` lifecycle, and
- * the re-entrancy guard (`safePop`).
+ * V3 (design §6): `run` returns the real Promise from the render-callback work.
+ * The handler awaits it and then pops — replacing the old deferred-pop
+ * machinery (`setDeferredPop` / `safePop` stay in MapCommandContext only for
+ * backward compat). The action stays at the queue head (running) until the
+ * export composition actually finishes, so a second export cannot overwrite the
+ * first's canvas.
  *
  * The entire export pipeline — DPI management, canvas preparation, layout,
  * format branching, upload, system messages, error handling — lives in the
@@ -18,45 +21,66 @@ import { devOnly } from '@/lib/utils/logger';
  * callback. This keeps the heavy exporter out of the first-load bundle of any
  * screen that renders the command catalogue (i.e. every map screen).
  */
+const EXPORT_RENDER_TIMEOUT_MS = 30_000;
+
 export const exportCommands: Record<string, CommandEntry> = {
   export_map: {
     requiredParams: () => true,
-    run(ctx) {
-      const { map, params, getHudState, setDeferredPop, safePop } = ctx;
+    run(ctx): Promise<MapCommandResult> {
+      const { map, params, getHudState } = ctx;
 
-      // F5: 异步 export 必须等 map.once('render') 真正回调完再 popAction，
-      // 否则连续触发 export 会让后一次在前一次还没合成完时覆盖 canvas。
-      // 标记该 case 自己负责 popAction，外层 finally 跳过。
-      setDeferredPop(true);
+      return new Promise<MapCommandResult>((resolve) => {
+        let settled = false;
+        // Holder object instead of `let` bindings (matches runCameraCommand's
+        // pattern): `timer` is assigned after `settle` is defined.
+        const handles: { timer?: ReturnType<typeof setTimeout> } = {};
 
-      map.once('render', async () => {
-        try {
-          // Dynamic import: the exporter engine is heavy (canvas composition,
-          // DPI/oversample, vector SVG/PDF generation, layout). Load on demand.
-          const { MapExporterEngine } = await import('@/lib/map-kit/exporter');
-          const outcome = await MapExporterEngine.export(
-            { map, getHudState },
-            (params || {}) as ExportRequest,
-          );
-          if (!outcome.ok) {
-            devOnly.error('[export_map] Export failed:', outcome.error);
-          }
-        } catch (e) {
-          devOnly.error('[export_map] Unexpected error:', e);
+        const settle = (result: MapCommandResult) => {
+          if (settled) return;
+          settled = true;
+          if (handles.timer) clearTimeout(handles.timer);
+          resolve(result);
+        };
+
+        // Safety timeout: if `render` never fires (e.g. the canvas is hidden or
+        // the GL context is gone), the queue must not stall forever — same
+        // holder pattern as runCameraCommand.
+        handles.timer = setTimeout(() => {
+          settle({ status: 'failed', error: 'timeout' });
+        }, EXPORT_RENDER_TIMEOUT_MS);
+
+        // F5: 异步 export 必须等 map.once('render') 真正回调完再 settle，否则
+        // 连续触发 export 会让后一次在前一次还没合成完时覆盖 canvas。Handler
+        // 在 promise settle 后才 popAction（设计 §6）。
+        map.once('render', async () => {
           try {
-            getHudState().setPendingSystemMessage(
-              `[系统通知] 专题地图排版合成失败。错误原因: ${e}。请向用户致歉并结束流程。`,
+            // Dynamic import: the exporter engine is heavy (canvas composition,
+            // DPI/oversample, vector SVG/PDF generation, layout). Load on demand.
+            const { MapExporterEngine } = await import('@/lib/map-kit/exporter');
+            const outcome = await MapExporterEngine.export(
+              { map, getHudState },
+              (params || {}) as ExportRequest,
             );
-          } catch {
-            /* defensive */
+            if (!outcome.ok) {
+              devOnly.error('[export_map] Export failed:', outcome.error);
+              settle({ status: 'failed', error: 'export_failed' });
+            } else {
+              settle({ status: 'succeeded' });
+            }
+          } catch (e) {
+            devOnly.error('[export_map] Unexpected error:', e);
+            try {
+              getHudState().setPendingSystemMessage(
+                `[系统通知] 专题地图排版合成失败。错误原因: ${e}。请向用户致歉并结束流程。`,
+              );
+            } catch {
+              /* defensive */
+            }
+            settle({ status: 'failed', error: 'export_error' });
           }
-        } finally {
-          // F5: 真正合成完才出队，杜绝重入
-          // 审计 F24：用 safePop 防止 base layer 切换重入导致 double-pop
-          safePop();
-        }
+        });
+        map.triggerRepaint();
       });
-      map.triggerRepaint();
     },
   },
 };

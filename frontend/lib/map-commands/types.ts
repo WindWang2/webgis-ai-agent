@@ -53,10 +53,27 @@ export interface MapCommandContext {
 export type CommandValidator = (p: Record<string, unknown>) => boolean;
 
 /**
+ * Structured result of a command execution (Harness–Map Interaction V3).
+ * Commands may still return `void` — the handler treats a clean void return as
+ * `succeeded` (full backward compatibility). Returning a result (or a Promise
+ * of one) lets sync and async commands express explicit terminal outcomes and
+ * carry the *actual* resulting state (e.g. the settled viewport after fly_to).
+ */
+export interface MapCommandResult {
+  status: 'succeeded' | 'failed';
+  /** Actual/result state, e.g. `{ center, zoom, bearing, pitch }` after a camera move. */
+  result?: unknown;
+  /** Machine-readable-ish error detail when status is 'failed'. */
+  error?: string;
+}
+
+/**
  * A single command's vocabulary entry: its validator + its handler body.
  * The handler body is the verbatim extraction of the old `case` body.
+ * V3: `run` may return a `MapCommandResult` or a Promise of one; `void` keeps
+ * the legacy fire-and-forget semantics (mapped to `succeeded` by the handler).
  */
 export interface CommandEntry {
   requiredParams: CommandValidator;
-  run: (ctx: MapCommandContext) => void;
+  run: (ctx: MapCommandContext) => void | MapCommandResult | Promise<MapCommandResult | void>;
 }

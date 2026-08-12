@@ -207,23 +207,23 @@ async def test_resume_replays_exactly_missed_events_in_order(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_resume_replay_bounded_to_ring_tail(monkeypatch):
-    """The resume buffer is a bounded ring (RESUME_MAX_EVENTS=64): a client
+    """The resume buffer is a bounded ring (RESUME_MAX_EVENTS=256): a client
     that fell far behind gets only the buffered tail, replayed in order — the
     documented bound, never a duplicate or reordered event."""
     from app.services.chat.event_resume import RESUME_MAX_EVENTS
 
-    bridge = _BurstBridge(bursts=(96, 104))  # 204 events total
+    bridge = _BurstBridge(bursts=(196, 204))  # 400 events total
     await _collect_route(monkeypatch, bridge)
 
     resumed, bridge_after = await _collect_route(
-        monkeypatch, bridge, last_event_id=50
+        monkeypatch, bridge, last_event_id=100
     )
     assert bridge_after.prompt_calls == 1
     resumed_ids = [_event_id(b) for b in resumed]
-    # Ring tail = the last 64 events (141..204); ids 51..140 were evicted.
+    # Ring tail = the last 256 events (149..404); ids 101..148 were evicted.
     assert len(resumed_ids) == RESUME_MAX_EVENTS, len(resumed_ids)
-    assert resumed_ids == list(range(141, 205)), (
-        f"replay must deliver the ring tail 141..204, got {resumed_ids[:3]}..{resumed_ids[-3:]}"
+    assert resumed_ids == list(range(149, 405)), (
+        f"replay must deliver the ring tail 149..404, got {resumed_ids[:3]}..{resumed_ids[-3:]}"
     )
 
 

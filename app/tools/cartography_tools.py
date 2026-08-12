@@ -5,8 +5,24 @@ from pydantic import BaseModel, Field
 
 from app.tools.registry import ToolRegistry, tool
 from app.services.mapspec_store import mapspec_store
+from app.services.session_data import session_data_manager
 
 logger = logging.getLogger(__name__)
+
+# HARNESS-V3 / BE-3: adapter 结果中的证据字段，必须透传到工具结果——
+# harness MapSpecValidity 阶梯读 is_compiled；被拒绝的 mutation 需要
+# message + correction_hint 让 LLM 自愈（此前包装层硬编码 success:True，
+# 丢弃全部证据，导致生产证据链断裂）。
+_EVIDENCE_KEYS = ("is_compiled", "warnings", "checkpoint_id", "correction_hint", "message")
+
+
+def _forward_evidence(res: Dict[str, Any], out: Dict[str, Any]) -> Dict[str, Any]:
+  """透传 adapter 证据字段，并从 adapter 结果推导 success（不再硬编码 True）。"""
+  out["success"] = bool(res.get("success", False))
+  for key in _EVIDENCE_KEYS:
+    if key in res and res[key] is not None:
+      out[key] = res[key]
+  return out
 
 
 class WebgisProjectInitArgs(BaseModel):
@@ -83,11 +99,10 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
     if not session_id:
       return {"success": False, "message": "Missing session_id"}
     res = await mapspec_store.init_project(session_id, view, thresholds)
-    return {
-        "success": True,
-        "mapspec": res["mapspec"],
-        "summary": "MapSpec project initialized",
-    }
+    out: Dict[str, Any] = {"mapspec": res.get("mapspec")}
+    if res.get("success"):
+      out["summary"] = "MapSpec project initialized"
+    return _forward_evidence(res, out)
 
   @tool(
       registry,
@@ -126,11 +141,36 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
     if not session_id:
       return {"success": False, "message": "Missing session_id"}
     res = await mapspec_store.set_view(session_id, center, zoom, pitch, bearing)
-    return {
-        "success": True,
-        "view": res["mapspec"]["view"],
-        "summary": f"View updated to {res['mapspec']['view']}",
-    }
+    view = (res.get("mapspec") or {}).get("view", {})
+    out: Dict[str, Any] = {"view": view}
+    if res.get("success"):
+      # Round-2 P2：LLM 可见文本绝不声称相机已移动 —— 工具层只完成了 mapspec.view
+      # 写入 + 下发 fly_to 指令，前端是否真正落定相机由 ACK 证据闭环判定
+      # （后端 _is_verifiable_ack 从 actual 重算收敛）。此前 "View updated to …"
+      # 在没有任何实时 ACK 前就向 LLM 宣称更新完成，属于"假成功"自我表扬。
+      out["summary"] = "视图指令已下发，等待前端执行"
+      # HARNESS-V3 / BE-3: 此前只写 mapspec.view，实时相机从不动。这里在调用方
+      # 确实传了视图参数时，同步 runtime map_state.viewport（无 seq 的服务端真相
+      # 写入，同 ws_service 的 viewport 契约），并下发 fly_to 命令让前端相机移动。
+      fly_params: Dict[str, Any] = {}
+      if center is not None:
+        fly_params["center"] = center
+      if zoom is not None:
+        fly_params["zoom"] = zoom
+      if pitch is not None:
+        fly_params["pitch"] = pitch
+      if bearing is not None:
+        fly_params["bearing"] = bearing
+      if fly_params:
+        current = (await session_data_manager.get_map_state(session_id)).get("viewport") or {}
+        merged = {**current, **fly_params}
+        await session_data_manager.set_map_state(session_id, "viewport", merged)
+        out["command"] = "fly_to"
+        # P2 fix: 下发合并后的完整视口（当前视口 ∪ 本次参数）。此前只透传
+        # fly_params —— 部分参数（如仅 pitch）会产出 center-less 的 fly_to，
+        # 前端按缺 center 判 invalid_params，相机永不移动、viewport 失步。
+        out["params"] = merged
+    return _forward_evidence(res, out)
 
   @tool(
       registry,
@@ -146,7 +186,18 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   ) -> dict:
     if not session_id:
       return {"success": False, "message": "Missing session_id"}
-    profile = await mapspec_store.source_profile(session_id, source_id, geojson_data)
+    # source_profile adapter 不经引擎（无锁/校验），失败路径是 profiling 抛错；
+    # 捕获后返回 success:False + correction_hint，让 LLM 自愈而非拿到异常。
+    try:
+      profile = await mapspec_store.source_profile(session_id, source_id, geojson_data)
+    except Exception as e:
+      logger.warning(f"[webgis_source_profile] profile failed for '{source_id}': {e}")
+      return {
+          "success": False,
+          "source_id": source_id,
+          "message": f"Source profile failed: {e}",
+          "correction_hint": "请检查 geojson_data 是否为合法 GeoJSON、ref:xxx 引用或可读 URL/路径后重试。",
+      }
     return {
         "success": True,
         "source_id": source_id,
@@ -169,12 +220,13 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
     if not session_id:
       return {"success": False, "message": "Missing session_id"}
     res = await mapspec_store.layer_upsert(session_id, layer, source_data)
-    return {
-        "success": True,
+    out: Dict[str, Any] = {
         "layer_id": layer.get("id"),
-        "mapspec": res["mapspec"],
-        "summary": f"Layer '{layer.get('id')}' upserted into MapSpec",
+        "mapspec": res.get("mapspec"),
     }
+    if res.get("success"):
+      out["summary"] = f"Layer '{layer.get('id')}' upserted into MapSpec"
+    return _forward_evidence(res, out)
 
   @tool(
       registry,
@@ -189,12 +241,11 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   ) -> dict:
     if not session_id:
       return {"success": False, "message": "Missing session_id"}
-    await mapspec_store.layer_remove(session_id, layer_id)
-    return {
-        "success": True,
-        "removed_id": layer_id,
-        "summary": f"Layer '{layer_id}' removed from MapSpec",
-    }
+    res = await mapspec_store.layer_remove(session_id, layer_id)
+    out: Dict[str, Any] = {"removed_id": layer_id}
+    if res.get("success"):
+      out["summary"] = f"Layer '{layer_id}' removed from MapSpec"
+    return _forward_evidence(res, out)
 
   @tool(
       registry,
@@ -212,11 +263,10 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
     if not session_id:
       return {"success": False, "message": "Missing session_id"}
     res = await mapspec_store.layout_set(session_id, legend, controls, margins)
-    return {
-        "success": True,
-        "layout": res["layout"],
-        "summary": "MapSpec layout updated",
-    }
+    out: Dict[str, Any] = {"layout": res.get("layout", {})}
+    if res.get("success"):
+      out["summary"] = "MapSpec layout updated"
+    return _forward_evidence(res, out)
 
   @tool(
       registry,
