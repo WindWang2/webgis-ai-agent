@@ -1,14 +1,23 @@
-# WebGIS AI Agent 前端 (V2 重新设计)
+# WebGIS AI Agent 前端
 
-基于 **WebGIS AI Agent v2.html** 设计规范重新构建的新一代具身空间智能引擎前端。
+具身空间智能引擎前端。视觉体系当前为 **Visual System V4（专业 GIS 工作台）**，
+信息架构为 V3 的 NavRail + ContextPanel 工作区外壳。
 
-## 🎨 V2 新特性
+设计规范见下方 [🎨 设计规范 (Visual System V4)](#-设计规范-visual-system-v4)。
 
-### 全新视觉体系 - 玻璃拟态设计
-- **Light / Dark 双主题** - 完整的暗色/亮色主题切换
-- **玻璃拟态 (Glassmorphism)** - 半透明背景 + 毛玻璃模糊效果
-- **Agentic 配色** - 绿色为主色调的科技感配色方案
-- **动态光效** - 思考/执行状态的扫描线动画
+## 🎨 视觉体系沿革
+
+### V4 — 专业 GIS 工作台（当前）
+- **语义 token 体系** - 表面/描边/文字/状态/地图挂件一套变量，明暗各自定义
+- **地图优先** - 地图永远是视觉主体，抽屉不再盖满地图；底部挂件共用一条基线
+- **高信息密度** - 6 级密排字号、24/26/30 三档控件高度、图层行 ~30px
+- **去玻璃拟态** - 地图之上不再有 `backdrop-filter`，改用不透明面板 + 极平阴影
+- **明暗双一等公民** - `darkMode: 'class'`，对比度由测试直接解析 CSS 计算校验
+
+### V2 遗留
+- **玻璃拟态 (Glassmorphism)** - 已由 V4 移除（`.glass` 等类已删除）
+- **Agentic 配色** - 绿色主色调保留，但收敛为 `--accent` / `--accent-vivid` 两个角色
+- **动态光效** - 思考/执行状态的扫描线动画（受 `prefers-reduced-motion` 门控）
 
 ### 重构的组件架构
 ```
@@ -124,23 +133,78 @@ npm run build
 
 ### 新增组件
 所有新组件都应遵循：
-1. 支持 `isDark` 主题切换
-2. 使用 CSS 变量而非硬编码颜色
+1. 用语义 token 类（`bg-surface-panel` / `text-ink-muted` / `border-edge-subtle`），
+   **不要**读 `lib/theme.ts` 的 JS 颜色对象来做内联 `style`
+2. 明暗两套都要能看 —— token 已经在两个主题里各自定义，正常情况下不需要写 `dark:`
 3. 提供 TypeScript 类型定义
 4. 保持小而精，单一职责
 
 ### 状态更新
 在 `lib/store/useHudStore.ts` 中添加新的状态字段和方法。
+需要跨刷新保留的字段必须加进 `partialize`（未列入的字段会静默丢失）。
 
 ### 主题扩展
-在 `lib/theme.ts` 中添加新的颜色变量，并在 `app/globals.css` 中同步。
+在 `app/globals.css` 的 `:root` **和** `.dark` 两个块里同时定义新 token，
+再在 `tailwind.config.ts` 里绑成 `var(--token)` 形式的工具类。
+`test/design-system/tokens.contract.test.ts` 会强制这条双定义规则。
 
-## 🎨 设计规范
+## 🎨 设计规范 (Visual System V4)
 
-- **字体**: DM Sans (正文) + JetBrains Mono (代码/数值)
-- **圆角**: 12px (大组件), 8px (小组件), 6px (按钮)
-- **阴影**: 两层阴影（主阴影 + 细节阴影）
-- **过渡**: 0.2s cubic-bezier(0.4, 0, 0.2, 1)
+定位是**专业 GIS 工作台**：地图永远是视觉主体，工具 UI 克制、紧凑、信息密度高。
+不用大面积渐变、不堆玻璃拟态、不加无意义动画。
+
+### 语义 token（唯一色彩来源）
+
+全部定义在 `app/globals.css`，通过 `tailwind.config.ts` 暴露成工具类。
+旧的 `--theme-*`、`--agent-*`、shadcn HSL 三套变量现在都 `var()` 指回 V4 token，
+所以历史调用点不会漂移。
+
+| 组 | token | 工具类 |
+|---|---|---|
+| 表面 | `--surface-canvas/panel/raised/overlay/sunken/hover/selected/scrim` | `bg-surface-*` |
+| 描边 | `--border-subtle/default/strong` | `border-edge-*` |
+| 文字 | `--text-primary/secondary/muted/disabled/on-accent` | `text-ink-*` |
+| 状态 | `accent` `success` `info` `warning` `critical` `neutral`（各带 `-soft`/`-border`） | `text-status-*` `bg-status-*-soft` |
+| 地图挂件 | `--map-chrome-bg/border/text/…` | `bg-map-chrome` / `.map-chrome` |
+
+- **字体**: DM Sans (正文) + JetBrains Mono (代码/数值/坐标)
+- **字号**: 6 级密排刻度 —— `text-micro`(10) `caption`(11) `meta`(12) `body`(13) `title`(14) `heading`(15)
+- **圆角**: `rounded-xs`(3) `sm`(4) `md`(6) `lg`(8) `xl`(12) `pill`。刻意偏紧 —— 精密仪器感，不是消费级卡片
+- **控件/行高**: `h-control-sm`(24) `md`(26) `lg`(30)；`min-h-row-sm/md/lg`。24px 是 WCAG 2.2 SC 2.5.8 的下限，不要再往下压
+- **图标**: `size-icon-sm`(12) `md`(14) `lg`(16)
+- **阴影**: `shadow-raised/overlay/drawer/chrome`，刻意很平
+- **焦点环**: 靠全局 `*:focus-visible`，别在组件里写 `outline: none`
+
+### 两个 accent，别搞混
+
+- `--accent` —— 文字安全，也是 `--text-on-accent` 底下的填充色
+- `--accent-vivid` —— 只用于图例色块/指示点这类非文字标记
+
+用户自选强调色走 `--agent-accent-raw`（store 写入）→ `--agent-accent`（按主题校正后的可用值）。
+**读的时候一律读 `--agent-accent`。**
+
+### 地图挂件布局
+
+底部所有挂件从 `--map-chrome-bottom` 这一个基线往上排（HUD 开合时会变）。
+新增挂件请挂到这个基线上，不要再写死 `bottom-*`，否则会和图例/比例尺叠在一起。
+
+### 设计系统测试
+
+`test/design-system/` 下三个套件是硬约束，改 token 前先看它们：
+
+- `tokens.contract.test.ts` —— `darkMode: 'class'`、token 双主题定义、工具类必须绑 CSS 变量
+- `contrast.test.ts` —— 直接解析 CSS 算真实对比度，正文 4.5:1 / 非文字 3:1
+- `visual-system.contract.test.tsx` —— 无障碍与交互行为（可及名称、焦点、inert、键盘重排…）
+
+### 视觉回归
+
+```bash
+npm run dev                                    # 另开一个终端
+node test/visual/capture.mjs --out .visual/after
+```
+
+4 视口 × 明暗 × 14 个界面 = 112 张图，落到 `.visual/`（已 gitignore）。
+后端全部走内置 fixture，不需要真的起后端。
 
 ## 📚 相关文档
 
