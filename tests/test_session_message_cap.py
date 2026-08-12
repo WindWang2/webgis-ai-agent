@@ -53,7 +53,7 @@ async def test_session_messages_bounded_across_turns(monkeypatch):
          patch.object(engine, "_save_msg_async", new_callable=AsyncMock), \
          patch.object(engine, "_maybe_plan", new_callable=AsyncMock, return_value=None), \
          patch.object(engine, "_compose_request_messages", new_callable=AsyncMock,
-                      side_effect=lambda sid, msgs: msgs):
+                      side_effect=lambda sid, msgs, project_id=None: msgs):
         for _ in range(20):
             await engine.chat("hi", session_id="s1")
 
@@ -71,7 +71,7 @@ async def test_trim_keeps_system_prompt_and_newest_turn(monkeypatch):
          patch.object(engine, "_save_msg_async", new_callable=AsyncMock), \
          patch.object(engine, "_maybe_plan", new_callable=AsyncMock, return_value=None), \
          patch.object(engine, "_compose_request_messages", new_callable=AsyncMock,
-                      side_effect=lambda sid, msgs: msgs):
+                      side_effect=lambda sid, msgs, project_id=None: msgs):
         for _ in range(20):
             await engine.chat("hi", session_id="s1")
 
@@ -95,7 +95,7 @@ async def test_trim_evicts_only_oldest_turns_never_splits_a_turn(monkeypatch):
          patch.object(engine, "_save_msg_async", new_callable=AsyncMock), \
          patch.object(engine, "_maybe_plan", new_callable=AsyncMock, return_value=None), \
          patch.object(engine, "_compose_request_messages", new_callable=AsyncMock,
-                      side_effect=lambda sid, msgs: msgs):
+                      side_effect=lambda sid, msgs, project_id=None: msgs):
         await engine.chat("hi", session_id="s1")
 
     # 1 + 10 turns + 1 new turn -> trimmed to system + newest 2 turns (5 msgs).
@@ -125,7 +125,7 @@ async def test_trim_drops_oversized_older_turn_whole(monkeypatch):
          patch.object(engine, "_save_msg_async", new_callable=AsyncMock), \
          patch.object(engine, "_maybe_plan", new_callable=AsyncMock, return_value=None), \
          patch.object(engine, "_compose_request_messages", new_callable=AsyncMock,
-                      side_effect=lambda sid, msgs: msgs):
+                      side_effect=lambda sid, msgs, project_id=None: msgs):
         await engine.chat("hi", session_id="s1")
 
     tail = engine._sessions["s1"]
@@ -183,7 +183,7 @@ async def test_chat_stream_messages_bounded_across_turns(monkeypatch):
          patch.object(engine, "_save_msg_async", new_callable=AsyncMock), \
          patch.object(engine, "_maybe_plan", new_callable=AsyncMock, return_value=None), \
          patch.object(engine, "_compose_request_messages", new_callable=AsyncMock,
-                      side_effect=lambda sid, msgs: msgs), \
+                      side_effect=lambda sid, msgs, project_id=None: msgs), \
          patch.object(engine, "_generate_title", fake_generate_title):
         for _ in range(20):
             async for _ev in engine.chat_stream("hi", session_id="s1"):
