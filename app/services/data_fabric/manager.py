@@ -17,15 +17,10 @@ from app.schemas.data_fabric_schema import (
 from app.models.data_fabric import DataSourceModel, CatalogItemModel, MaterializationModel
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.errors import MATERIALIZATION_FAILED
+from app.services.data_fabric.registry import build_adapter
 from app.services.data_fabric.security import DataFabricSecurity
 from app.services.session_data import session_data_manager
 from app.services.session_data_protocol import is_unavailable_ref
-
-from app.services.data_fabric.adapters.postgis_adapter import PostGISAdapter
-from app.services.data_fabric.adapters.ogc_api_adapter import OGCAPIAdapter
-from app.services.data_fabric.adapters.wfs_adapter import WFSAdapter
-from app.services.data_fabric.adapters.wms_wmts_adapter import WMSWMTSAdapter
-from app.services.data_fabric.adapters.arcgis_adapter import ArcGISAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -39,20 +34,13 @@ class DataFabricManager:
 
     @staticmethod
     def get_adapter(profile: ConnectionProfile) -> GeospatialDataSourceAdapter:
-        """Factory method to instantiate protocol-specific adapter."""
-        st = (profile.source_type or "").lower().strip()
-        if st == "postgis":
-            return PostGISAdapter(profile)
-        elif st in ("ogc_api", "ogc_api_features", "ogc"):
-            return OGCAPIAdapter(profile)
-        elif st == "wfs":
-            return WFSAdapter(profile)
-        elif st in ("wms", "wmts", "wms_wmts"):
-            return WMSWMTSAdapter(profile)
-        elif st in ("arcgis", "arcgis_rest", "featureserver", "mapserver"):
-            return ArcGISAdapter(profile)
-        else:
-            raise ValueError(f"Unsupported Data Fabric source type: '{profile.source_type}'")
+        """Factory method to instantiate protocol-specific adapter.
+
+        Routes through the canonical ``AdapterRegistry`` (single source of
+        truth). All 10 real adapters are reachable; an unregistered source type
+        raises ``UnsupportedSourceError`` — never a silent mock fallback.
+        """
+        return build_adapter(profile)
 
     @classmethod
     def probe_profile(cls, profile: ConnectionProfile) -> DataFabricHealth:

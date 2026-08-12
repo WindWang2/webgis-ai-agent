@@ -17,10 +17,9 @@ from app.services.data_fabric.spatial_catalog import spatial_catalog_service
 from app.services.data_fabric.fingerprint import dataset_fingerprint_service
 from app.services.data_fabric.materialization_service import materialization_service
 from app.services.data_fabric.health import data_fabric_health_check
-from app.services.data_fabric.connection_manager import (
-    connection_manager,
-    GenericDataSourceAdapter,
-)
+from app.services.data_fabric.connection_manager import connection_manager
+from app.services.data_fabric.registry import build_adapter
+from app.services.data_fabric.errors import UNSUPPORTED_SOURCE
 
 logger = logging.getLogger(__name__)
 
@@ -120,10 +119,12 @@ def register_data_fabric_tools(registry: ToolRegistry):
             adapter = connection_manager.get_adapter(profile_id)
             if not adapter:
                 profile = connection_manager.get_profile(profile_id)
-                if profile:
-                    adapter = GenericDataSourceAdapter(profile)
-                else:
+                if not profile:
                     raise RuntimeError(f"Data source connection profile '{profile_id}' not found. Please connect first.")
+                # Build the profile's real adapter via the canonical registry.
+                # An unregistered source type raises UnsupportedSourceError rather
+                # than silently producing mock data.
+                adapter = build_adapter(profile)
 
             health = data_fabric_health_check.check_health(adapter)
             caps = adapter.capabilities()
@@ -276,8 +277,19 @@ def register_data_fabric_tools(registry: ToolRegistry):
             adapter = connection_manager.get_adapter(pid) if pid else None
 
             if not adapter:
-                profile = ConnectionProfile(id=pid or "default-profile", source_type="geojson")
-                adapter = GenericDataSourceAdapter(profile)
+                # Do NOT fabricate a geojson mock adapter — that would serve
+                # synthetic features as if they were real remote data. Return a
+                # typed, actionable error so the agent connects a source first.
+                return {
+                    "status": "error",
+                    "error_type": UNSUPPORTED_SOURCE,
+                    "error": (
+                        f"No connected data source adapter for dataset '{dataset_id}' "
+                        f"(profile_id={pid}). Connect a data source first."
+                    ),
+                    "dataset_id": dataset_id,
+                    "features": [],
+                }
 
             spec = QuerySpec(
                 limit=limit,
@@ -341,8 +353,19 @@ def register_data_fabric_tools(registry: ToolRegistry):
         adapter = connection_manager.get_adapter(pid) if pid else None
 
         if not adapter:
-            profile = ConnectionProfile(id=pid or "default-profile", source_type="geojson")
-            adapter = GenericDataSourceAdapter(profile)
+            # Do NOT fabricate a geojson mock adapter and materialize synthetic
+            # features as real data. Return a typed error so the agent connects
+            # a source first.
+            return {
+                "status": "error",
+                "error_type": UNSUPPORTED_SOURCE,
+                "error": (
+                    f"No connected data source adapter for dataset '{dataset_id}' "
+                    f"(profile_id={pid}). Connect a data source first."
+                ),
+                "dataset_id": dataset_id,
+                "ref_id": None,
+            }
 
         spec = QuerySpec(
             limit=limit,

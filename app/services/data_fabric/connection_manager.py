@@ -213,49 +213,16 @@ class GenericDataSourceAdapter(GeospatialDataSourceAdapter):
 
 
 def create_adapter_for_profile(profile: ConnectionProfile) -> GeospatialDataSourceAdapter:
-    """Factory function mapping ConnectionProfile source_type to concrete GeospatialDataSourceAdapter."""
-    try:
-        from app.services.data_fabric.adapters import (
-            PostGISAdapter,
-            OGCAPIAdapter,
-            WFSAdapter,
-            WMSWMTSAdapter,
-            ArcGISAdapter,
-            STACAdapter,
-            GeoParquetAdapter,
-            FlatGeobufAdapter,
-            PMTilesAdapter,
-            S3StorageAdapter,
-        )
+    """Factory mapping ConnectionProfile.source_type → concrete adapter.
 
-        adapter_map = {
-            "postgis": PostGISAdapter,
-            "postgres": PostGISAdapter,
-            "postgresql": PostGISAdapter,
-            "geoparquet": GeoParquetAdapter,
-            "parquet": GeoParquetAdapter,
-            "flatgeobuf": FlatGeobufAdapter,
-            "fgb": FlatGeobufAdapter,
-            "stac": STACAdapter,
-            "ogc_api": OGCAPIAdapter,
-            "ogc_api_features": OGCAPIAdapter,
-            "wfs": WFSAdapter,
-            "wms": WMSWMTSAdapter,
-            "wmts": WMSWMTSAdapter,
-            "arcgis": ArcGISAdapter,
-            "arcgis_rest": ArcGISAdapter,
-            "pmtiles": PMTilesAdapter,
-            "s3": S3StorageAdapter,
-        }
+    Routes through the canonical ``AdapterRegistry``. An unregistered source
+    type raises ``UnsupportedSourceError`` — it is NEVER silently mapped to
+    mock data. (Callers that want the explicit demo adapter must request
+    source_type ``generic``/``geojson``.)
+    """
+    from app.services.data_fabric.registry import build_adapter
 
-        st = (profile.source_type or "").lower().strip()
-        adapter_cls = adapter_map.get(st)
-        if adapter_cls:
-            return adapter_cls(profile)
-    except Exception as e:
-        logger.warning(f"[ConnectionManager] Factory lookup for source_type='{profile.source_type}' failed: {e}")
-
-    return GenericDataSourceAdapter(profile)
+    return build_adapter(profile)
 
 
 class DataFabricConnectionManager:
