@@ -186,6 +186,7 @@ export function LayerManagement() {
 
                 {/* Visibility toggle */}
                 <ToggleSwitch
+                  label={`显示图层：${layer.name}`}
                   checked={layer.visible}
                   onChange={() => toggleLayer(layer.id)}
                 />

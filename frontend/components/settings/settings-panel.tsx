@@ -117,7 +117,7 @@ export function SettingsPanel() {
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 z-[100] bg-slate-900/20 backdrop-blur-sm"
+        className="fixed inset-0 z-[100] bg-surface-scrim"
         onClick={() => setSettingsOpen(false)}
       />
 
@@ -128,29 +128,28 @@ export function SettingsPanel() {
         aria-modal="true"
         aria-labelledby="settings-panel-title"
         tabIndex={-1}
+        /* 宽度走 --drawer-w（见 globals.css）：约束是"地图仍然可见"，
+           两个右侧抽屉共用同一条规则。 */
         className="fixed inset-y-0 right-0 z-[101] flex animate-slide-from-right"
-        style={{ width: 'min(720px, 92vw)' }}
+        style={{ width: 'var(--drawer-w)' }}
       >
+        {/* E: 抽屉本体之前有两处 backdrop-filter: blur(32px)（左栏 + 内容区）。
+            backdrop 压在持续重绘的地图画布上是最贵的那类合成，而且 scrim 已经
+            盖住地图 —— 全部移除，改不透明 surface-panel + shadow-drawer。 */}
         {/* Left nav rail */}
         <nav
           aria-label="设置分类"
-          className="flex flex-col border-r py-4"
+          className="flex flex-col border-r border-edge-subtle bg-surface-panel py-4"
           style={{
             width: 136,
             flexShrink: 0,
-            borderColor: 'var(--theme-border)',
-            background: 'var(--theme-bg-panel)',
-            backdropFilter: 'blur(32px)',
-            WebkitBackdropFilter: 'blur(32px)',
           }}
         >
           {/* Header mini */}
           <div className="px-4 mb-4">
             <div className="flex items-center gap-1.5">
-              <ShieldCheck size={14} style={{ color: 'var(--agent-accent, #16a34a)' }} />
-              <span className="text-[14px] font-semibold" style={{ color: 'var(--theme-text-primary)' }}>
-                控制中心
-              </span>
+              <ShieldCheck size={14} className="text-agent-accent" />
+              <span className="text-title font-semibold text-ink">控制中心</span>
             </div>
           </div>
 
@@ -166,112 +165,92 @@ export function SettingsPanel() {
               const Icon = item.icon;
               const isActive = settingsTab === item.key;
               return (
+                /* 选中项的 label/icon 是 accent 作文字，暗色下 2.96–3.40:1 ——
+                   改用主题校正后的 --agent-accent；底色同源，
+                   --agent-accent。 */
                 <button
-                  key={item.key}
-                  ref={(el) => {
-                    if (el) tabRefs.current.set(item.key, el);
-                    else tabRefs.current.delete(item.key);
-                  }}
-                  role="tab"
-                  id={`settings-tab-${item.key}`}
-                  aria-selected={isActive}
-                  aria-controls="settings-tabpanel"
-                  tabIndex={isActive ? 0 : -1}
-                  onClick={() => setSettingsTab(item.key)}
-                  className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-all duration-150"
-                  style={{
-                    backgroundColor: isActive
-                      ? 'color-mix(in srgb, var(--agent-accent, #16a34a) 10%, transparent)'
-                      : 'transparent',
-                    color: isActive ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-secondary)',
-                  }}
-                >
-                  <Icon
-                    size={16}
-                    style={{
-                      color: isActive ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-muted)',
+                    key={item.key}
+                    ref={(el) => {
+                      if (el) tabRefs.current.set(item.key, el);
+                      else tabRefs.current.delete(item.key);
                     }}
-                  />
-                  <span
-                    className="text-[13px] font-medium truncate flex-1"
-                    style={{ color: isActive ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-secondary)' }}
+                    role="tab"
+                    id={`settings-tab-${item.key}`}
+                    aria-selected={isActive}
+                    aria-controls="settings-tabpanel"
+                    tabIndex={isActive ? 0 : -1}
+                    onClick={() => setSettingsTab(item.key)}
+                    className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left transition-all duration-150"
+                    style={{
+                      backgroundColor: isActive
+                        ? 'color-mix(in srgb, var(--agent-accent, #16a34a) 10%, transparent)'
+                        : 'transparent',
+                      color: isActive ? 'var(--agent-accent)' : 'var(--text-secondary)',
+                    }}
                   >
-                    {item.label}
-                  </span>
-                  {item.count !== undefined && item.count > 0 && (
-                    <span
-                      className="text-[11px] font-bold rounded-full px-1.5 leading-tight"
+                    <Icon
+                      size={16}
                       style={{
-                        backgroundColor: isActive
-                          ? 'color-mix(in srgb, var(--agent-accent, #16a34a) 14%, transparent)'
-                          : 'var(--theme-bg-muted)',
-                        color: isActive ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-muted)',
-                        minWidth: 18,
-                        textAlign: 'center',
+                        color: isActive ? 'var(--agent-accent)' : 'var(--text-muted)',
                       }}
+                    />
+                    <span
+                      className="text-body font-medium truncate flex-1"
+                      style={{ color: isActive ? 'var(--agent-accent)' : 'var(--text-secondary)' }}
                     >
-                      {item.count}
+                      {item.label}
                     </span>
-                  )}
-                </button>
+                    {item.count !== undefined && item.count > 0 && (
+                      <span
+                        className="text-caption font-bold rounded-pill px-1.5 leading-tight"
+                        style={{
+                          backgroundColor: isActive
+                            ? 'color-mix(in srgb, var(--agent-accent, #16a34a) 14%, transparent)'
+                            : 'var(--surface-sunken)',
+                          color: isActive ? 'var(--agent-accent)' : 'var(--text-muted)',
+                          minWidth: 18,
+                          textAlign: 'center',
+                        }}
+                      >
+                        {item.count}
+                      </span>
+                    )}
+                  </button>
               );
             })}
           </div>
         </nav>
 
         {/* Right content area */}
-        <div
-          className="flex flex-col flex-1"
-          style={{
-            background: 'var(--theme-bg-panel)',
-            backdropFilter: 'blur(32px)',
-            WebkitBackdropFilter: 'blur(32px)',
-            boxShadow: '-8px 0 48px rgba(15,23,42,0.12)',
-          }}
-        >
+        <div className="flex flex-1 flex-col bg-surface-panel shadow-drawer">
           {/* Header */}
-          <div
-            className="flex items-center justify-between px-6 py-4 border-b"
-            style={{ borderColor: 'var(--theme-border)' }}
-          >
+          <div className="flex items-center justify-between border-b border-edge-subtle px-6 py-4">
             <div className="flex items-center gap-3">
               <div
-                className="flex items-center justify-center rounded-xl"
+                className="flex h-9 w-9 items-center justify-center rounded-md"
                 style={{
-                  width: 36,
-                  height: 36,
                   background:
                     'linear-gradient(135deg, var(--agent-accent, #16a34a) 0%, color-mix(in srgb, var(--agent-accent, #16a34a) 72%, #ffffff) 100%)',
                 }}
               >
-                <Settings size={18} className="text-white" />
+                <Settings size={18} className="text-ink-on-accent" />
               </div>
               <div>
-                <div
-                  id="settings-panel-title"
-                  className="text-[14px] font-bold leading-tight"
-                  style={{ color: 'var(--theme-text-primary)' }}
-                >
+                <div id="settings-panel-title" className="text-title font-bold leading-tight text-ink">
                   Agent 控制中心
                 </div>
-                <div className="text-[12px] leading-tight" style={{ color: 'var(--theme-text-muted)' }}>
-                  Agent Command Center
-                </div>
+                <div className="text-meta leading-tight text-ink-muted">Agent Command Center</div>
               </div>
               <span
-                className="ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[12px] font-medium"
+                className="ml-2 inline-flex items-center gap-1 rounded-pill px-2 py-0.5 text-meta font-medium"
                 style={{
                   backgroundColor: 'color-mix(in srgb, var(--agent-accent, #16a34a) 10%, transparent)',
-                  color: 'var(--agent-accent, #16a34a)',
+                  color: 'var(--agent-accent)',
                 }}
               >
                 <span
-                  className="inline-block rounded-full"
-                  style={{
-                    width: 6,
-                    height: 6,
-                    backgroundColor: 'var(--agent-accent, #16a34a)',
-                  }}
+                  className="inline-block h-1.5 w-1.5 rounded-full"
+                  style={{ backgroundColor: 'var(--agent-accent, #16a34a)' }}
                 />
                 系统在线
               </span>
@@ -280,8 +259,7 @@ export function SettingsPanel() {
             <button
               onClick={() => setSettingsOpen(false)}
               aria-label="关闭设置"
-              className="flex items-center justify-center rounded-lg w-8 h-8 transition-colors hover:bg-[var(--theme-bg-hover)]"
-              style={{ color: 'var(--theme-text-muted)' }}
+              className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-surface-hover"
             >
               <X size={18} />
             </button>

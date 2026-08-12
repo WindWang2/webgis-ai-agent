@@ -233,8 +233,9 @@ export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2P
 
   return (
     <div
-      className="fixed inset-0 z-[90] flex justify-end"
-      style={{ background: 'rgba(15, 23, 42, 0.32)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
+      /* V4：scrim 改语义 token（--surface-scrim 即原来的 rgba(15,23,42,0.32)）。
+         A：去掉 blur(4px) —— scrim 已经盖住地图，blur 只增加合成成本。 */
+      className="fixed inset-0 z-[90] flex justify-end bg-surface-scrim"
       onClick={onClose}
     >
       <div
@@ -243,8 +244,10 @@ export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2P
         aria-modal="true"
         aria-labelledby="template-gallery-title"
         tabIndex={-1}
-        className="flex h-full w-[560px] max-w-[92vw] flex-col border-l border-[var(--theme-border)] shadow-2xl"
-        style={{ background: 'var(--theme-bg-panel)', backdropFilter: 'blur(28px)', WebkitBackdropFilter: 'blur(28px)' }}
+        /* 宽度走 --drawer-w（见 globals.css）：约束是"地图仍然可见"，
+           两个右侧抽屉共用同一条规则。 */
+        className="flex h-full flex-col border-l border-edge-subtle bg-surface-overlay shadow-drawer animate-slide-from-right"
+        style={{ width: 'var(--drawer-w)' }}
         onClick={(e) => e.stopPropagation()}
       >
         <Header onClose={onClose} search={search} setSearch={setSearch} loading={loading} />
@@ -300,13 +303,13 @@ function Header({
   loading: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-[var(--theme-border)] p-4">
+    <div className="flex items-center justify-between gap-3 border-b border-edge-subtle p-4">
       <div className="min-w-0">
-        <h2 id="template-gallery-title" className="flex items-center gap-2 text-[15px] font-semibold text-[var(--theme-text-primary)]">
-          <Sparkles className="h-4 w-4" style={{ color: 'var(--agent-accent, #16a34a)' }} aria-hidden />
+        <h2 id="template-gallery-title" className="flex items-center gap-2 text-title font-semibold text-ink">
+          <Sparkles className="h-4 w-4 text-agent-accent" aria-hidden />
           地图制图模板库
         </h2>
-        <p className="mt-0.5 text-[12px] text-[var(--theme-text-muted)]">模板 · 按分类/关键词搜索 · 快速应用</p>
+        <p className="mt-0.5 text-meta text-ink-muted">模板 · 按分类/关键词搜索 · 快速应用</p>
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {/* 受控 + debounce=0：fetch 防抖由组件自身的 200ms debouncedSearch 承担；
@@ -318,7 +321,7 @@ function Header({
           aria-label="搜索模板"
           debounceMs={0}
         />
-        {loading && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none text-[var(--theme-text-muted)]" aria-hidden />}
+        {loading && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none text-ink-muted" aria-hidden />}
         <IconButton label="关闭模板库" icon={X} onClick={onClose} />
       </div>
     </div>
@@ -334,7 +337,7 @@ function KindTabs({
 }) {
   return (
     // 分类过滤是 toggle-button 组（不控制 tabpanel），不用 tablist 语义。
-    <div aria-label="模板分类" className="flex gap-1 overflow-x-auto border-b border-[var(--theme-border)] px-4 pt-2">
+    <div aria-label="模板分类" className="flex gap-1 overflow-x-auto border-b border-edge-subtle px-4 pt-2">
       {KIND_TABS.map(({ kind, label, Icon }) => {
         const selected = active === kind;
         return (
@@ -343,12 +346,14 @@ function KindTabs({
             type="button"
             aria-pressed={selected}
             onClick={() => onChange(kind)}
-            className={`flex items-center gap-1.5 whitespace-nowrap rounded-t-md px-3 py-2 text-[13px] transition-colors ${
-              selected ? '' : 'hover:bg-[var(--theme-bg-hover)]'
+            className={`flex items-center gap-1.5 whitespace-nowrap rounded-t-md px-3 py-2 text-body transition-colors ${
+              selected ? '' : 'hover:bg-surface-hover'
             }`}
             style={{
-              color: selected ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-secondary)',
-              boxShadow: selected ? 'inset 0 -2px 0 var(--agent-accent, #16a34a)' : undefined,
+              /* 选中项的文字是 accent 作文字 —— 暗色下原色 2.96–3.40:1，
+                 用 text-safe 派生；底部的指示条仍是 fill，用原色。 */
+              color: selected ? 'var(--agent-accent)' : 'var(--text-secondary)',
+              boxShadow: selected ? 'inset 0 -2px 0 var(--agent-accent)' : undefined,
             }}
           >
             <Icon className="h-3.5 w-3.5" aria-hidden />
@@ -380,11 +385,11 @@ const TemplateCard = React.memo(function TemplateCard({
   return (
     <div
       onClick={handleClick}
-      className="group cursor-pointer rounded-lg border p-3 transition-colors"
+      className="group cursor-pointer rounded-md border p-3 transition-colors"
       style={{
-        borderColor: selected ? 'var(--agent-accent, #16a34a)' : 'var(--theme-border)',
-        background: selected ? 'var(--theme-bg-subtle)' : 'var(--theme-bg-glass)',
-        boxShadow: selected ? '0 0 0 1px color-mix(in srgb, var(--agent-accent, #16a34a) 35%, transparent)' : undefined,
+        borderColor: selected ? 'var(--agent-accent)' : 'var(--border-subtle)',
+        background: selected ? 'var(--surface-selected)' : 'var(--surface-raised)',
+        boxShadow: selected ? '0 0 0 1px color-mix(in srgb, var(--agent-accent) 35%, transparent)' : undefined,
       }}
     >
       <div className="flex items-start gap-2">
@@ -396,11 +401,11 @@ const TemplateCard = React.memo(function TemplateCard({
           {template.kind === 'composite' ? '⧉' : template.kind[0]?.toUpperCase()}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-medium text-[var(--theme-text-primary)]">{template.name}</div>
-          <div className="mt-0.5 line-clamp-2 text-[12px] text-[var(--theme-text-muted)]">{template.description || '—'}</div>
+          <div className="truncate text-body font-medium text-ink">{template.name}</div>
+          <div className="mt-0.5 line-clamp-2 text-meta text-ink-muted">{template.description || '—'}</div>
           <div className="mt-1.5 flex flex-wrap gap-1">
             {(template.keywords || []).slice(0, 3).map((k) => (
-              <span key={k} className="rounded bg-[var(--theme-bg-muted)] px-1.5 py-0.5 text-[10px] text-[var(--theme-text-secondary)]">
+              <span key={k} className="rounded-sm bg-surface-sunken px-1.5 py-0.5 text-micro text-ink-secondary">
                 {k}
               </span>
             ))}
@@ -408,16 +413,15 @@ const TemplateCard = React.memo(function TemplateCard({
         </div>
       </div>
       <div className="mt-2 flex items-center justify-between">
-        <span className="font-mono text-[10px] text-[var(--theme-text-muted)]">{template.id}</span>
+        <span className="font-mono text-micro text-ink-muted">{template.id}</span>
         <button
           onClick={(e) => {
             e.stopPropagation();
             handleApplyClick();
           }}
-          className="rounded px-2 py-1 text-[11px] font-medium transition-opacity hover:opacity-80"
+          className="rounded-sm px-2 py-1 text-caption font-medium text-agent-accent transition-opacity hover:opacity-80"
           style={{
-            color: 'var(--agent-accent, #16a34a)',
-            background: 'color-mix(in srgb, var(--agent-accent, #16a34a) 12%, transparent)',
+            background: 'color-mix(in srgb, var(--agent-accent) 12%, transparent)',
           }}
         >
           应用
@@ -441,20 +445,20 @@ function Footer({
   onPage: (p: number) => void;
 }) {
   return (
-    <div className="flex items-center justify-between border-t border-[var(--theme-border)] p-3">
-      <span className="text-[12px] text-[var(--theme-text-muted)]">第 {page + 1} / {totalPages} 页</span>
+    <div className="flex items-center justify-between border-t border-edge-subtle p-3">
+      <span className="text-meta text-ink-muted">第 {page + 1} / {totalPages} 页</span>
       <div className="flex gap-2">
         <button
           onClick={() => onPage(page - 1)}
           disabled={isFirstPage}
-          className="flex items-center gap-1 rounded-md border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] px-2 py-1 text-[12px] text-[var(--theme-text-secondary)] hover:bg-[var(--theme-bg-hover)] disabled:opacity-40"
+          className="flex items-center gap-1 rounded-md border border-edge-subtle bg-surface-raised px-2 py-1 text-meta text-ink-secondary hover:bg-surface-hover disabled:opacity-40"
         >
           <ChevronLeft className="h-3.5 w-3.5" aria-hidden /> 上一页
         </button>
         <button
           onClick={() => onPage(page + 1)}
           disabled={isLastPage}
-          className="flex items-center gap-1 rounded-md border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] px-2 py-1 text-[12px] text-[var(--theme-text-secondary)] hover:bg-[var(--theme-bg-hover)] disabled:opacity-40"
+          className="flex items-center gap-1 rounded-md border border-edge-subtle bg-surface-raised px-2 py-1 text-meta text-ink-secondary hover:bg-surface-hover disabled:opacity-40"
         >
           下一页 <ChevronRight className="h-3.5 w-3.5" aria-hidden />
         </button>

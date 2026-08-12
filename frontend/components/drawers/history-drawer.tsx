@@ -1,26 +1,18 @@
 'use client';
 
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { History, X, Plus, Search } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import type { SessionSummary } from '@/lib/store/hud-types';
 
 interface HistoryDrawerProps {
   open: boolean;
   onClose: () => void;
   onSelect: (session: SessionSummary | null) => void;
-  accentColor: string;
 }
 
-// 面板内 tab 顺序的可聚焦元素，供焦点陷阱循环使用。
-// 排除 hidden input（不可聚焦但会被 input 选择器命中，导致循环目标落到空节点）。
-function getTabbableIn(container: HTMLElement): HTMLElement[] {
-  const selector =
-    'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
-  return Array.from(container.querySelectorAll<HTMLElement>(selector));
-}
-
-export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryDrawerProps) {
+export function HistoryDrawer({ open, onClose, onSelect }: HistoryDrawerProps) {
   const sessions = useHudStore((s) => s.sessions);
   const [search, setSearch] = useState('');
 
@@ -39,52 +31,17 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
     onClose();
   }
 
-  // 审计 a11y HIGH（findings.md F4 残留缺口）：drawer 已有 Escape 关闭、打开聚焦、
-  // 关闭回焦；缺 Tab 焦点陷阱 —— 键盘用户可 Tab 到背景元素。这里在已有 keydown 处理
-  // 里拦截 Tab/Shift+Tab，把焦点循环限制在面板内的可聚焦元素之间。
+  // 审计 a11y HIGH（findings.md F4 残留缺口）曾在这里手写焦点陷阱（本地
+  // getTabbableIn + Tab/Escape/回焦），与全站共用的 useDialogFocus 是两套平行
+  // 实现，逻辑容易漂移。统一改用共用 hook：搜索框初始聚焦、Tab/Shift+Tab 围栏、
+  // Escape 关闭、关闭回焦，行为与原来一致。
   const panelRef = useRef<HTMLDivElement>(null);
-  const previouslyFocused = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    previouslyFocused.current = document.activeElement as HTMLElement | null;
-    // 聚焦 drawer 面板（搜搜索框，便于键盘用户立刻操作）
-    const searchInput = panelRef.current?.querySelector<HTMLInputElement>('input[type="text"], input');
-    searchInput?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose();
-        return;
-      }
-      if (e.key !== 'Tab') return;
-      const panel = panelRef.current;
-      if (!panel) return;
-      const focusables = getTabbableIn(panel);
-      if (focusables.length === 0) return;
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      const active = document.activeElement as HTMLElement | null;
-      if (e.shiftKey) {
-        // 在第一个（或面板本身）上 Shift+Tab → 跳到最后一个，阻止焦点回退到背景。
-        if (active === first || active === panel || !panel.contains(active)) {
-          e.preventDefault();
-          last.focus();
-        }
-      } else {
-        // 在最后一个（或面板本身）上 Tab → 跳回第一个，阻止焦点前进到背景。
-        // 注意 panel 自身 tabIndex={-1} 不在 focusables 中，故需显式判断 active === panel。
-        if (active === last || active === panel || !panel.contains(active)) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      previouslyFocused.current?.focus?.();
-    };
-  }, [open, onClose]);
+  useDialogFocus({
+    open,
+    containerRef: panelRef,
+    onEscape: onClose,
+    initialFocusSelector: 'input',
+  });
 
   if (!open) return null;
 
@@ -92,8 +49,7 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
     <div className="fixed inset-0 z-50 flex">
       {/* Backdrop (left side -- click to close) */}
       <div
-        className="flex-1 bg-slate-900/20"
-        style={{ backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
+        className="flex-1 bg-surface-scrim"
         onClick={onClose}
         aria-hidden="true"
       />
@@ -105,11 +61,11 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
         aria-modal="true"
         aria-labelledby="history-drawer-title"
         tabIndex={-1}
-        className="w-[340px] shrink-0 flex flex-col border-l border-slate-200/60 shadow-[-2px_0_24px_rgba(15,23,42,0.09)] outline-none"
+        className="w-[340px] shrink-0 flex flex-col border-l border-edge-subtle shadow-drawer outline-none"
         style={{
-          background: 'rgba(252,253,254,0.92)',
-          backdropFilter: 'blur(28px)',
-          WebkitBackdropFilter: 'blur(28px)',
+          // V4：overlay 表面不透明（--surface-overlay 双主题均不透明），
+          // 半透明白底 + backdrop blur 已无作用，去掉。
+          background: 'var(--surface-overlay)',
           animation: 'slide-from-right 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
         }}
       >
@@ -121,14 +77,14 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
         `}</style>
 
         {/* Header */}
-        <div className="shrink-0 flex items-center gap-2 px-4 py-3 border-b border-slate-200/60">
-          <History size={16} style={{ color: accentColor }} />
-          <h2 id="history-drawer-title" className="flex-1 text-[15px] font-semibold text-slate-800">历史会话</h2>
+        <div className="shrink-0 flex items-center gap-2 px-4 py-3 border-b border-edge-subtle">
+          <History size={16} style={{ color: 'var(--agent-accent)' }} />
+          <h2 id="history-drawer-title" className="flex-1 text-body font-semibold text-ink">历史会话</h2>
           <button
             onClick={() => { onSelect(null); onClose(); }}
             aria-label="新建会话"
-            className="flex items-center gap-1 px-2 py-1 rounded-md text-[10.5px] font-medium text-white transition-opacity hover:opacity-90"
-            style={{ backgroundColor: accentColor }}
+            className="flex items-center gap-1 px-2 py-1 rounded-sm text-caption font-medium text-ink-on-accent transition-opacity hover:opacity-90"
+            style={{ backgroundColor: 'var(--agent-accent)' }}
           >
             <Plus size={12} />
             新建会话
@@ -136,23 +92,23 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
           <button
             onClick={onClose}
             aria-label="关闭历史会话"
-            className="p-1.5 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+            className="p-1.5 rounded-sm text-ink-disabled hover:text-ink-secondary hover:bg-surface-hover transition-colors"
           >
             <X size={15} />
           </button>
         </div>
 
         {/* Search input */}
-        <div className="shrink-0 px-3 py-2 border-b border-slate-100">
-          <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-slate-100/60 border border-slate-200/60">
-            <Search size={13} className="text-slate-300 shrink-0" />
+        <div className="shrink-0 px-3 py-2 border-b border-edge-subtle">
+          <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-surface-sunken border border-edge-subtle">
+            <Search size={13} className="text-ink-disabled shrink-0" />
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               aria-label="搜索历史会话"
               placeholder="搜索会话..."
-              className="flex-1 bg-transparent text-[14px] text-slate-700 placeholder:text-slate-300 outline-none"
+              className="flex-1 bg-transparent text-body text-ink-secondary placeholder:text-ink-disabled outline-none"
             />
           </div>
         </div>
@@ -165,8 +121,8 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
               role="status"
               aria-live="polite"
             >
-              <History size={20} className="text-slate-200 mb-2" />
-              <p className="text-[13.5px] text-slate-400">
+              <History size={20} className="text-ink-disabled mb-2" />
+              <p className="text-body text-ink-muted">
                 {search ? '没有匹配的会话' : '暂无历史会话'}
               </p>
             </div>
@@ -176,19 +132,19 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
                 <button
                   key={session.id}
                   onClick={() => handleSelect(session)}
-                  className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-slate-50/80 transition-colors group"
+                  className="w-full text-left px-3 py-2.5 rounded-md hover:bg-surface-hover transition-colors group"
                   role="listitem"
                 >
                   {/* Title */}
-                  <p className="text-[12.5px] font-medium text-slate-700 truncate group-hover:text-slate-900">
+                  <p className="text-meta font-medium text-ink-secondary truncate group-hover:text-ink">
                     {session.title || '未命名会话'}
                   </p>
 
                   {/* Meta */}
                   <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-[9.5px] text-slate-300">{session.time}</span>
+                    <span className="text-micro text-ink-muted">{session.time}</span>
                     {session.msgs > 0 && (
-                      <span className="text-[9.5px] text-slate-300">
+                      <span className="text-micro text-ink-muted">
                         {session.msgs} 条消息
                       </span>
                     )}
@@ -200,10 +156,10 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
                       {session.tags.map((tag: string) => (
                         <span
                           key={tag}
-                          className="inline-flex px-1.5 py-0.5 rounded-full text-[15px] font-medium"
+                          className="inline-flex px-1.5 py-0.5 rounded-pill text-body font-medium"
                           style={{
-                            backgroundColor: `${accentColor}12`,
-                            color: accentColor,
+                            backgroundColor: 'color-mix(in srgb, var(--agent-accent) 7%, transparent)',
+                            color: 'var(--agent-accent)',
                           }}
                         >
                           {tag}
@@ -218,8 +174,8 @@ export function HistoryDrawer({ open, onClose, onSelect, accentColor }: HistoryD
         </div>
 
         {/* Footer */}
-        <div className="shrink-0 px-4 py-2.5 border-t border-slate-200/60 bg-white/30">
-          <span className="text-[14px] text-slate-400">
+        <div className="shrink-0 px-4 py-2.5 border-t border-edge-subtle bg-surface-raised">
+          <span className="text-body text-ink-muted">
             共 {filtered.length} 条历史会话
           </span>
         </div>
