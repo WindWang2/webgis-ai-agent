@@ -59,26 +59,29 @@ export const useToastStore = create<ToastStore>((set, get) => ({
 
 /* ── Style maps ── */
 
+// V4: the same four status slots as StatusBadge / InlineNotice, so an operation's
+// toast and its badge are never two different greens. `text-hud-cyan` (info) was
+// an undefined utility and rendered as inherited colour.
 const typeStyles: Record<ToastType, { color: string; border: string; icon: React.ReactNode }> = {
   success: {
-    color: "text-emerald-400",
-    border: "border-emerald-500/30",
-    icon: <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />,
+    color: "text-status-success",
+    border: "border-status-success-border",
+    icon: <CheckCircle2 className="h-icon-md w-icon-md shrink-0 text-status-success" aria-hidden />,
   },
   error: {
-    color: "text-red-400",
-    border: "border-red-500/30",
-    icon: <AlertCircle className="h-4 w-4 text-red-400 shrink-0" />,
+    color: "text-status-critical",
+    border: "border-status-critical-border",
+    icon: <AlertCircle className="h-icon-md w-icon-md shrink-0 text-status-critical" aria-hidden />,
   },
   info: {
-    color: "text-hud-cyan",
-    border: "border-hud-cyan/30",
-    icon: <Info className="h-4 w-4 text-hud-cyan shrink-0" />,
+    color: "text-status-info",
+    border: "border-status-info-border",
+    icon: <Info className="h-icon-md w-icon-md shrink-0 text-status-info" aria-hidden />,
   },
   warning: {
-    color: "text-amber-400",
-    border: "border-amber-500/30",
-    icon: <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />,
+    color: "text-status-warning",
+    border: "border-status-warning-border",
+    icon: <AlertTriangle className="h-icon-md w-icon-md shrink-0 text-status-warning" aria-hidden />,
   },
 }
 
@@ -89,7 +92,17 @@ export function ToastContainer() {
   const removeToast = useToastStore((s) => s.removeToast)
 
   return (
-    <div className="fixed bottom-4 right-4 z-[9999] flex flex-col-reverse gap-2 pointer-events-none">
+    /*
+      a11y（P0）：ToastContainer 之前没有任何 live region —— 「模板已应用」、
+      「数据源已删除」、连通测试结果等每一次操作反馈对读屏用户都是不存在的。
+      role="status" + aria-live="polite" 让它们在用户空闲时被读出，而不是打断。
+    */
+    <div
+      role="status"
+      aria-live="polite"
+      aria-atomic="false"
+      className="pointer-events-none fixed bottom-4 right-4 z-[9999] flex flex-col-reverse gap-2"
+    >
       <AnimatePresence mode="popLayout">
         {toasts.map((toast) => {
           const style = typeStyles[toast.type]
@@ -101,21 +114,19 @@ export function ToastContainer() {
               animate={{ opacity: 1, x: 0, scale: 1 }}
               exit={{ opacity: 0, x: 80, scale: 0.95 }}
               transition={{ type: "spring", stiffness: 400, damping: 30 }}
-              className={`
-                pointer-events-auto flex items-center gap-2 px-4 py-3
-                rounded-xl shadow-lg backdrop-blur-hud
-                bg-ds-surface border ${style.border}
-                max-w-sm
-              `}
+              /* `bg-ds-surface` / `backdrop-blur-hud` were never defined in the
+                 Tailwind config, so the toast rendered with no background at all
+                 — its text sat straight on the map. Now on the overlay surface. */
+              className={`pointer-events-auto flex max-w-sm items-center gap-2 rounded-md border bg-surface-overlay px-3 py-2 shadow-overlay ${style.border}`}
             >
               {style.icon}
-              <span className={`text-sm font-mono ${style.color}`}>{toast.message}</span>
+              <span className={`font-mono text-meta ${style.color}`}>{toast.message}</span>
               <button
                 onClick={() => removeToast(toast.id)}
-                className="ml-2 shrink-0 text-white/40 hover:text-white/80 transition-colors"
-                aria-label="Dismiss"
+                className="ml-2 shrink-0 text-ink-muted transition-colors hover:text-ink"
+                aria-label="关闭提示"
               >
-                <X className="h-3.5 w-3.5" />
+                <X className="h-icon-sm w-icon-sm" aria-hidden />
               </button>
             </motion.div>
           )

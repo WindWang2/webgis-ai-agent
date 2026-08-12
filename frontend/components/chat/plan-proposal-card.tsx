@@ -29,8 +29,6 @@ export interface PlanProposalCardProps {
   destructiveSteps?: string[];
   stepsPreview?: PlanStepPreview[];
   status: 'pending' | 'approved' | 'rejected';
-  isDark?: boolean;
-  accentColor?: string;
   /** 执行确认 — 父组件应触发一条 chat 让 LLM 调 execute_plan(plan_id)。 */
   onApprove: (planId: string) => void;
   /** 让 LLM 修改计划 */
@@ -48,8 +46,6 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
     destructiveSteps = [],
     stepsPreview = [],
     status,
-    isDark = true,
-    accentColor = '#10b981',
     onApprove,
     onRevise,
     onReject,
@@ -59,102 +55,54 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
   const hasDestructive = destructiveSteps.length > 0;
   const locked = status !== 'pending';
 
-  const bg = isDark ? 'rgba(15,23,42,0.6)' : 'rgba(248,250,252,0.95)';
-  const border = isDark ? 'rgba(148,163,184,0.25)' : 'rgba(203,213,225,0.9)';
-  const subText = isDark ? '#94a3b8' : '#64748b';
-  const titleColor = isDark ? '#e2e8f0' : '#0f172a';
-
+  /* V4（D）：卡片表面/文字全部走语义 token（随主题翻转），不再按 isDark 手工
+     二选一 —— 原来暗色下的 subText #94a3b8 只有 2.45:1。accent 作文字一律用
+     text-safe 派生（--agent-accent 已含主题校正）。 */
   return (
     <div
       data-testid="plan-proposal-card"
-      style={{
-        marginTop: 8,
-        borderRadius: 12,
-        border: `1px solid ${border}`,
-        backgroundColor: bg,
-        padding: 12,
-        fontSize: 14,
-      }}
+      className="my-2 rounded-md border border-edge-subtle bg-surface-raised p-3 text-body"
     >
       {/* Header */}
       <div className="flex items-start gap-2">
         <div
-          className="w-7 h-7 rounded-md flex items-center justify-center shrink-0"
-          style={{ backgroundColor: `${accentColor}1f` }}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
+          style={{ backgroundColor: 'color-mix(in srgb, var(--agent-accent) 12%, transparent)' }}
         >
-          <ListTodo size={14} style={{ color: accentColor }} />
+          <ListTodo size={14} style={{ color: 'var(--agent-accent)' }} />
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span style={{ color: titleColor, fontWeight: 600, fontSize: 15 }}>{title}</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-title font-semibold text-ink">{title}</span>
             <span
+              className="rounded-pill px-2 py-px text-meta font-medium"
               style={{
-                padding: '1px 8px',
-                borderRadius: 999,
-                fontSize: 12,
-                fontWeight: 500,
-                color: accentColor,
-                backgroundColor: `${accentColor}1f`,
+                color: 'var(--agent-accent)',
+                backgroundColor: 'color-mix(in srgb, var(--agent-accent) 12%, transparent)',
               }}
             >
               计划 · {stepCount} 步
             </span>
             {status === 'approved' && (
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  padding: '1px 8px',
-                  borderRadius: 999,
-                  fontSize: 12,
-                  color: '#22c55e',
-                  backgroundColor: 'rgba(34,197,94,0.15)',
-                }}
-              >
+              <span className="inline-flex items-center gap-1 rounded-pill bg-status-success-soft px-2 py-px text-meta text-status-success">
                 <CheckCircle2 size={10} /> 已批准
               </span>
             )}
             {status === 'rejected' && (
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  padding: '1px 8px',
-                  borderRadius: 999,
-                  fontSize: 12,
-                  color: '#ef4444',
-                  backgroundColor: 'rgba(239,68,68,0.15)',
-                }}
-              >
+              <span className="inline-flex items-center gap-1 rounded-pill bg-status-critical-soft px-2 py-px text-meta text-status-critical">
                 <X size={10} /> 已取消
               </span>
             )}
           </div>
           {summary && (
-            <div style={{ color: subText, marginTop: 4, lineHeight: 1.5 }}>{summary}</div>
+            <div className="mt-1 text-body text-ink-muted">{summary}</div>
           )}
         </div>
       </div>
 
       {/* Destructive warning */}
       {hasDestructive && (
-        <div
-          style={{
-            marginTop: 8,
-            padding: '6px 10px',
-            borderRadius: 6,
-            backgroundColor: 'rgba(245,158,11,0.12)',
-            border: '1px solid rgba(245,158,11,0.3)',
-            color: '#f59e0b',
-            display: 'flex',
-            gap: 6,
-            alignItems: 'flex-start',
-            fontSize: 13,
-            lineHeight: 1.5,
-          }}
-        >
+        <div className="mt-2 flex items-start gap-1.5 rounded-md border border-status-warning-border bg-status-warning-soft p-2 text-body leading-relaxed text-status-warning">
           <AlertTriangle size={12} className="mt-[1px] shrink-0" />
           <span>
             本计划含 {destructiveSteps.length} 个破坏性步骤（{destructiveSteps.join('、')}），
@@ -165,61 +113,35 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
 
       {/* Steps */}
       {stepsPreview.length > 0 && (
-        <div style={{ marginTop: 10 }}>
+        <div className="mt-2.5">
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
-            style={{
-              color: subText,
-              fontSize: 12,
-              padding: 0,
-              background: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-            }}
+            className="cursor-pointer border-none bg-transparent p-0 text-meta text-ink-muted"
           >
             {expanded ? '▾' : '▸'} 步骤明细
           </button>
           {expanded && (
-            <ol
-              style={{
-                marginTop: 6,
-                paddingLeft: 0,
-                listStyle: 'none',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 4,
-              }}
-            >
+            <ol className="mt-1.5 flex list-none flex-col gap-1 p-0">
               {stepsPreview.map((step, i) => (
                 <li
                   key={step.id}
-                  style={{
-                    display: 'flex',
-                    gap: 8,
-                    padding: '4px 8px',
-                    borderRadius: 6,
-                    backgroundColor: step.destructive
-                      ? 'rgba(245,158,11,0.08)'
-                      : isDark
-                      ? 'rgba(30,41,59,0.4)'
-                      : 'rgba(241,245,249,0.6)',
-                    fontSize: 13,
-                    lineHeight: 1.5,
-                  }}
+                  className={`flex gap-2 rounded-md px-2 py-1 ${
+                    step.destructive ? 'bg-status-warning-soft' : 'bg-surface-sunken'
+                  }`}
                 >
-                  <span style={{ color: subText, fontWeight: 600, minWidth: 18 }}>{i + 1}.</span>
-                  <div className="flex-1 min-w-0">
-                    <div style={{ color: titleColor }}>
-                      <code style={{ fontSize: 12, color: accentColor }}>{step.tool}</code>
+                  <span className="min-w-[18px] font-semibold text-ink-muted">{i + 1}.</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-ink">
+                      <code className="text-meta text-agent-accent">{step.tool}</code>
                       {step.destructive && (
-                        <span style={{ marginLeft: 6, color: '#f59e0b', fontSize: 12 }}>
+                        <span className="ml-1.5 text-meta text-status-warning">
                           ⚠ 破坏性
                         </span>
                       )}
                     </div>
                     {step.purpose && (
-                      <div style={{ color: subText, fontSize: 12.5 }}>{step.purpose}</div>
+                      <div className="text-meta text-ink-muted">{step.purpose}</div>
                     )}
                   </div>
                 </li>
@@ -230,25 +152,17 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
       )}
 
       {/* Action buttons */}
-      <div className="flex gap-2" style={{ marginTop: 12 }}>
+      <div className="mt-3 flex gap-2">
         <button
           type="button"
           disabled={locked}
           onClick={() => onApprove(planId)}
+          className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2.5 py-1.5 text-body font-medium ${
+            locked ? 'cursor-not-allowed' : 'cursor-pointer'
+          }`}
           style={{
-            flex: 1,
-            padding: '6px 10px',
-            borderRadius: 8,
-            border: 'none',
-            backgroundColor: locked ? 'rgba(100,116,139,0.3)' : accentColor,
-            color: locked ? subText : '#fff',
-            fontSize: 14,
-            fontWeight: 500,
-            cursor: locked ? 'not-allowed' : 'pointer',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 6,
+            backgroundColor: locked ? 'color-mix(in srgb, var(--neutral) 30%, transparent)' : 'var(--agent-accent)',
+            color: locked ? 'var(--text-muted)' : 'var(--text-on-accent)',
           }}
         >
           {locked ? <Lock size={12} /> : <Play size={12} />}
@@ -258,17 +172,11 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
           type="button"
           disabled={locked}
           onClick={() => onRevise(planId)}
+          className={`flex items-center gap-1.5 rounded-md border border-edge-subtle bg-transparent px-2.5 py-1.5 text-body ${
+            locked ? 'cursor-not-allowed' : 'cursor-pointer'
+          }`}
           style={{
-            padding: '6px 10px',
-            borderRadius: 8,
-            border: `1px solid ${border}`,
-            backgroundColor: 'transparent',
-            color: locked ? subText : titleColor,
-            fontSize: 14,
-            cursor: locked ? 'not-allowed' : 'pointer',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
+            color: locked ? 'var(--text-muted)' : 'var(--text-primary)',
           }}
         >
           <Edit3 size={12} /> 修改
@@ -277,17 +185,11 @@ export function PlanProposalCard(props: PlanProposalCardProps) {
           type="button"
           disabled={locked}
           onClick={() => onReject(planId)}
+          className={`flex items-center gap-1.5 rounded-md border border-edge-subtle bg-transparent px-2.5 py-1.5 text-body ${
+            locked ? 'cursor-not-allowed' : 'cursor-pointer'
+          }`}
           style={{
-            padding: '6px 10px',
-            borderRadius: 8,
-            border: `1px solid ${border}`,
-            backgroundColor: 'transparent',
-            color: locked ? subText : '#ef4444',
-            fontSize: 14,
-            cursor: locked ? 'not-allowed' : 'pointer',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
+            color: locked ? 'var(--text-muted)' : 'var(--text-critical)',
           }}
         >
           <X size={12} /> 取消

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Database, Inbox, Layers, SearchX } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useToastStore } from '@/components/ui/toast';
@@ -21,9 +21,33 @@ import { PreviewModal } from './data-sources/preview-modal';
 // the tab entry point (constant itself lives with the catalog hook).
 export { CATALOG_SEARCH_DEBOUNCE_MS } from './data-sources/use-spatial-catalog';
 
+/** 子页签顺序即渲染顺序（V4 tablist 键盘导航用）。 */
+const SUBTABS: Array<'catalog' | 'sources'> = ['catalog', 'sources'];
+
 export function DataSourcesTab() {
   const [activeSubTab, setActiveSubTab] = useState<'catalog' | 'sources'>('catalog');
   const [showAddForm, setShowAddForm] = useState(false);
+
+  // V4 子页签：补齐 WAI-APG tablist 语义（roving tabindex + 方向键/Home/End
+  // 键盘导航，activation-on-focus），与 nav-rail / map-studio 的 tablist 一致。
+  const subTabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+
+  const onSubTabKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const idx = SUBTABS.indexOf(activeSubTab);
+      let next: 'catalog' | 'sources' | null = null;
+      if (e.key === 'ArrowRight') next = SUBTABS[(idx + 1) % SUBTABS.length];
+      else if (e.key === 'ArrowLeft') next = SUBTABS[(idx - 1 + SUBTABS.length) % SUBTABS.length];
+      else if (e.key === 'Home') next = SUBTABS[0];
+      else if (e.key === 'End') next = SUBTABS[SUBTABS.length - 1];
+      if (!next) return;
+      e.preventDefault();
+      // activation-on-focus（APG）：移动焦点即激活对应子页签。
+      setActiveSubTab(next);
+      subTabRefs.current.get(next)?.focus();
+    },
+    [activeSubTab]
+  );
 
   // Modal / Drawer state
   const [activeDescriptor, setActiveDescriptor] = useState<DatasetDescriptor | null>(null);
@@ -134,16 +158,33 @@ export function DataSourcesTab() {
   };
 
   return (
-    <div className="flex h-full flex-col overflow-hidden text-[13px]">
-      {/* Subtab navigation */}
-      <div className="flex shrink-0 gap-2 border-b border-[var(--theme-border)] bg-[var(--theme-bg-glass)] px-2.5 pt-2">
+    <div className="flex h-full flex-col overflow-hidden text-body">
+      {/* Subtab navigation —— 完整 WAI-APG tablist（role/aria-selected/
+          aria-controls/roving tabindex + 方向键与 Home/End 键盘导航）。
+          V4 之前是裸 button，无任何 tab 语义，键盘用户只能 Tab 到按钮后回车。 */}
+      <div
+        role="tablist"
+        aria-label="数据子页签"
+        onKeyDown={onSubTabKeyDown}
+        className="flex shrink-0 gap-2 border-b border-edge-subtle bg-surface-overlay px-2.5 pt-2"
+      >
         <button
           type="button"
+          role="tab"
+          id="data-subtab-catalog"
+          aria-selected={activeSubTab === 'catalog'}
+          // 仅当前激活 tab 指向实际渲染的 panel（另一 panel 未挂载）
+          aria-controls={activeSubTab === 'catalog' ? 'data-subtab-panel-catalog' : undefined}
+          tabIndex={activeSubTab === 'catalog' ? 0 : -1}
+          ref={(el) => {
+            if (el) subTabRefs.current.set('catalog', el);
+            else subTabRefs.current.delete('catalog');
+          }}
           onClick={() => setActiveSubTab('catalog')}
-          className={`flex items-center gap-1.5 border-b-2 px-2 pb-2 text-[12px] font-medium transition-colors ${
+          className={`flex items-center gap-1.5 border-b-2 px-2 pb-2 text-meta font-medium transition-colors ${
             activeSubTab === 'catalog'
-              ? 'border-[var(--agent-accent,#16a34a)] text-[var(--agent-accent,#16a34a)]'
-              : 'border-transparent text-[var(--theme-text-muted)] hover:text-[var(--theme-text-secondary)]'
+              ? 'border-status-accent-vivid text-status-accent'
+              : 'border-transparent text-ink-muted hover:text-ink-secondary'
           }`}
         >
           <Layers size={14} aria-hidden />
@@ -151,11 +192,20 @@ export function DataSourcesTab() {
         </button>
         <button
           type="button"
+          role="tab"
+          id="data-subtab-sources"
+          aria-selected={activeSubTab === 'sources'}
+          aria-controls={activeSubTab === 'sources' ? 'data-subtab-panel-sources' : undefined}
+          tabIndex={activeSubTab === 'sources' ? 0 : -1}
+          ref={(el) => {
+            if (el) subTabRefs.current.set('sources', el);
+            else subTabRefs.current.delete('sources');
+          }}
           onClick={() => setActiveSubTab('sources')}
-          className={`flex items-center gap-1.5 border-b-2 px-2 pb-2 text-[12px] font-medium transition-colors ${
+          className={`flex items-center gap-1.5 border-b-2 px-2 pb-2 text-meta font-medium transition-colors ${
             activeSubTab === 'sources'
-              ? 'border-[var(--agent-accent,#16a34a)] text-[var(--agent-accent,#16a34a)]'
-              : 'border-transparent text-[var(--theme-text-muted)] hover:text-[var(--theme-text-secondary)]'
+              ? 'border-status-accent-vivid text-status-accent'
+              : 'border-transparent text-ink-muted hover:text-ink-secondary'
           }`}
         >
           <Database size={14} aria-hidden />
@@ -165,7 +215,12 @@ export function DataSourcesTab() {
 
       {/* Catalog View */}
       {activeSubTab === 'catalog' && (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div
+          role="tabpanel"
+          id="data-subtab-panel-catalog"
+          aria-labelledby="data-subtab-catalog"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden"
+        >
           <CatalogToolbar
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
@@ -198,7 +253,12 @@ export function DataSourcesTab() {
 
       {/* Sources View */}
       {activeSubTab === 'sources' && (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div
+          role="tabpanel"
+          id="data-subtab-panel-sources"
+          aria-labelledby="data-subtab-sources"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden"
+        >
           <SourcesToolbar showAddForm={showAddForm} onToggleAddForm={() => setShowAddForm(!showAddForm)} />
 
           {showAddForm && <AddSourceForm onCreated={handleSourceCreated} />}

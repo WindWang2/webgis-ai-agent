@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { ChevronRight, ChevronDown, CheckCircle2, AlertCircle, Loader2, Clock, Wrench } from 'lucide-react';
 import { CartographyResultCard } from './cartography-result-card';
 import { H3LisaResultCard } from './h3-lisa-result-card';
@@ -137,39 +137,42 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
 
   const statusIcon =
     call.status === 'running' ? (
-      <Loader2 size={11} className="animate-spin text-blue-500" />
+      <Loader2 size={11} className="animate-spin text-status-info" />
     ) : call.status === 'completed' ? (
-      <CheckCircle2 size={11} className="text-green-500" />
+      <CheckCircle2 size={11} className="text-status-success" />
     ) : (
-      <AlertCircle size={11} className="text-red-500" />
+      <AlertCircle size={11} className="text-status-critical" />
     );
 
   const panelId = `tool-row-panel-${call.id}`;
 
   return (
-    <div className={`rounded-md border text-[15px] overflow-hidden ${expanded ? 'border-slate-200/80 bg-white/50' : 'border-transparent'}`}>
+    <div className={`rounded-sm border text-body overflow-hidden ${expanded ? 'border-edge-subtle bg-surface-raised' : 'border-transparent'}`}>
       <button
         onClick={() => setOpen(!open)}
         aria-expanded={open}
         aria-controls={panelId}
-        className="w-full flex items-center gap-1.5 px-2 py-1 text-left hover:bg-slate-50/60 transition-colors focus:outline-none focus:ring-1 focus:ring-blue-400"
+        /* B: 删掉 focus:outline-none focus:ring-1 focus:ring-blue-400 —— 硬编码
+           blue 与全站焦点环词汇冲突；globals.css 的 unlayered *:focus-visible
+           已从 --focus-ring 提供统一焦点环。 */
+        className="w-full flex items-center gap-1.5 px-2 py-1 text-left hover:bg-surface-hover transition-colors"
       >
         <ChevronRight
           size={10}
-          className={`shrink-0 text-slate-400 transition-transform ${open ? 'rotate-90' : ''}`}
+          className={`shrink-0 text-ink-disabled transition-transform ${open ? 'rotate-90' : ''}`}
         />
         {statusIcon}
-        <span className="font-mono text-slate-600">
+        <span className="font-mono text-ink-secondary">
           <ToolName name={call.tool} />
         </span>
         {call.hasGeojson && (
-          <span className="px-1 py-0 rounded text-[8px] bg-green-50 text-green-600 font-medium">
+          <span className="px-1 py-0 rounded-sm text-micro bg-status-accent-soft text-status-accent font-medium">
             GeoJSON
           </span>
         )}
         <span className="flex-1" />
         {duration && (
-          <span className="flex items-center gap-0.5 text-[15px] text-slate-400">
+          <span className="flex items-center gap-0.5 text-body text-ink-disabled">
             <Clock size={9} />
             {duration}
           </span>
@@ -201,11 +204,11 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
       )}
 
       {open && (
-        <div id={panelId} role="region" aria-label={`${call.tool} 详细信息`} className="border-t border-slate-100 px-2.5 py-1.5 space-y-1.5 bg-slate-50/30">
+        <div id={panelId} role="region" aria-label={`${call.tool} 详细信息`} className="border-t border-edge-subtle px-2.5 py-1.5 space-y-1.5 bg-surface-sunken">
           {parsedArgs && (
             <div>
-              <p className="text-[15px] font-semibold text-slate-400 uppercase tracking-wider mb-0.5">参数</p>
-              <pre className="p-1.5 rounded bg-white/80 border border-slate-100 text-[14px] leading-relaxed text-slate-600 font-mono overflow-x-auto max-h-[100px] overflow-y-auto">
+              <p className="text-body font-semibold text-ink-muted uppercase tracking-wider mb-0.5">参数</p>
+              <pre className="p-1.5 rounded-sm bg-surface-raised border border-edge-subtle text-body leading-relaxed text-ink-secondary font-mono overflow-x-auto max-h-[100px] overflow-y-auto">
                 {Object.entries(parsedArgs)
                   .map(([k, v]) => {
                     const val = typeof v === 'string' ? `"${v}"` : JSON.stringify(v);
@@ -217,8 +220,8 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
           )}
           {call.result && (
             <div>
-              <p className="text-[15px] font-semibold text-slate-400 uppercase tracking-wider mb-0.5">结果</p>
-              <pre className="p-1.5 rounded bg-white/80 border border-slate-100 text-[14px] leading-relaxed text-slate-600 font-mono overflow-x-auto max-h-[150px] overflow-y-auto">
+              <p className="text-body font-semibold text-ink-muted uppercase tracking-wider mb-0.5">结果</p>
+              <pre className="p-1.5 rounded-sm bg-surface-raised border border-edge-subtle text-body leading-relaxed text-ink-secondary font-mono overflow-x-auto max-h-[150px] overflow-y-auto">
                 {formatJson(call.result).slice(0, 1500)}
                 {formatJson(call.result).length > 1500 ? '\n...' : ''}
               </pre>
@@ -226,8 +229,8 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
           )}
           {call.error && (
             <div>
-              <p className="text-[15px] font-semibold text-red-400 uppercase tracking-wider mb-0.5">错误</p>
-              <pre className="p-1.5 rounded bg-red-50/50 border border-red-100 text-[14px] text-red-600 font-mono">{call.error}</pre>
+              <p className="text-body font-semibold text-status-critical uppercase tracking-wider mb-0.5">错误</p>
+              <pre className="p-1.5 rounded-sm bg-status-critical-soft border border-status-critical-border text-body text-status-critical font-mono">{call.error}</pre>
             </div>
           )}
         </div>
@@ -251,38 +254,41 @@ export function ToolCallChain({ calls }: { calls: ToolCallEntry[] }) {
     ? `${completedCount} 个工具调用完成${failedCount > 0 ? `，${failedCount} 个失败` : ''}`
     : `正在执行 ${runningCount} 个工具...`;
 
-  const chainListId = 'tool-call-chain-list';
+  // Fix: a constant id collides when several tool-call chains are on screen,
+  // which breaks the aria-controls relationship; useId() keeps it unique per instance.
+  const chainListId = useId();
 
   return (
-    <div className="my-1.5 rounded-lg border border-slate-200/70 bg-white/40 overflow-hidden">
+    <div className="my-1.5 rounded-md border border-edge-subtle bg-surface-raised overflow-hidden">
       {/* Chain header — click to expand */}
       <button
         onClick={() => setExpanded(!expanded)}
         aria-expanded={expanded}
         aria-controls={chainListId}
-        className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-slate-50/60 transition-colors text-[15px] focus:outline-none focus:ring-1 focus:ring-blue-400"
+        /* B: 同 ToolCallRow —— 删掉 focus:ring-blue-400，交给全局 *:focus-visible。 */
+        className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-left hover:bg-surface-hover transition-colors text-body"
       >
         {expanded ? (
-          <ChevronDown size={12} className="shrink-0 text-slate-400" />
+          <ChevronDown size={12} className="shrink-0 text-ink-disabled" />
         ) : (
-          <ChevronRight size={12} className="shrink-0 text-slate-400" />
+          <ChevronRight size={12} className="shrink-0 text-ink-disabled" />
         )}
-        <Wrench size={11} className="text-slate-400" />
-        <span className="text-slate-500">
+        <Wrench size={11} className="text-ink-disabled" />
+        <span className="text-ink-muted">
           {expanded ? '工具调用链' : statusText}
         </span>
         <span className="flex-1" />
         {allDone && !expanded && (
-          <CheckCircle2 size={11} className="text-green-500" />
+          <CheckCircle2 size={11} className="text-status-success" />
         )}
         {!allDone && (
-          <Loader2 size={11} className="animate-spin text-blue-500" />
+          <Loader2 size={11} className="animate-spin text-status-info" />
         )}
       </button>
 
       {/* Expanded: individual tool calls */}
       {expanded && (
-        <div id={chainListId} role="region" aria-label="工具调用链详情" className="border-t border-slate-100 px-2 py-1 space-y-0.5 bg-slate-50/20">
+        <div id={chainListId} role="region" aria-label="工具调用链详情" className="border-t border-edge-subtle px-2 py-1 space-y-0.5 bg-surface-sunken">
           {calls.map((tc) => (
             <ToolCallRow key={tc.id} call={tc} expanded={expanded} />
           ))}

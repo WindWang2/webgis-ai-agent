@@ -32,26 +32,28 @@ export const safeUrlTransform: UrlTransform = (url) => {
 
 export default function MiniMd({ text }: MiniMdProps) {
   return (
-    <div className="prose-agent text-[12.5px] leading-[1.7] text-slate-600 max-w-none break-words">
+    <div className="prose-agent text-body leading-[1.7] text-ink-secondary max-w-none break-words">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         urlTransform={safeUrlTransform}
         components={{
           p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
+          // 可访问性（V4）：聊天气泡里的 markdown 标题从 h4 起跳（h1→h4、h2→h5、h3→h6），
+          // 避免把 h1/h2 注入页面大纲 —— 应用自身的顶层标题就是 h2。视觉字号不变。
           h1: ({ children }) => (
-            <h1 className="text-[15px] font-bold text-slate-800 mt-3 mb-1.5 first:mt-0">{children}</h1>
+            <h4 className="text-heading font-bold text-ink mt-3 mb-1.5 first:mt-0">{children}</h4>
           ),
           h2: ({ children }) => (
-            <h2 className="text-[13.5px] font-semibold text-slate-800 mt-2.5 mb-1 first:mt-0">{children}</h2>
+            <h5 className="text-title font-semibold text-ink mt-2.5 mb-1 first:mt-0">{children}</h5>
           ),
           h3: ({ children }) => (
-            <h3 className="text-[12.5px] font-semibold text-slate-700 mt-2 mb-1 first:mt-0">{children}</h3>
+            <h6 className="text-body font-semibold text-ink-secondary mt-2 mb-1 first:mt-0">{children}</h6>
           ),
           ul: ({ children }) => <ul className="list-disc list-outside ml-4 mb-2 space-y-0.5">{children}</ul>,
           ol: ({ children }) => <ol className="list-decimal list-outside ml-4 mb-2 space-y-0.5">{children}</ol>,
           li: ({ children }) => <li className="leading-relaxed">{children}</li>,
           blockquote: ({ children }) => (
-            <blockquote className="border-l-2 border-green-300 pl-3 my-2 text-slate-500 italic">
+            <blockquote className="border-l-2 border-status-accent-border pl-3 my-2 text-ink-muted italic">
               {children}
             </blockquote>
           ),
@@ -59,13 +61,13 @@ export default function MiniMd({ text }: MiniMdProps) {
             const isBlock = className?.includes('language-');
             if (isBlock) {
               return (
-                <pre className="my-2 p-3 bg-slate-50 border border-slate-200/80 rounded-lg overflow-x-auto text-[13.5px] leading-relaxed">
+                <pre className="my-2 p-3 bg-surface-sunken border border-edge-subtle rounded-md overflow-x-auto text-body leading-relaxed">
                   <code>{children}</code>
                 </pre>
               );
             }
             return (
-              <code className="rounded bg-green-50 px-1 py-0.5 font-mono text-[13.5px] text-green-700">
+              <code className="rounded-sm bg-status-accent-soft px-1 py-0.5 font-mono text-body text-status-accent">
                 {children}
               </code>
             );
@@ -81,25 +83,25 @@ export default function MiniMd({ text }: MiniMdProps) {
               children: [],
             });
             return (
-              <a href={safeHref ?? undefined} target="_blank" rel="noopener noreferrer" className="text-green-600 underline hover:text-green-700">
+              <a href={safeHref ?? undefined} target="_blank" rel="noopener noreferrer" className="text-status-accent underline hover:text-status-accent">
                 {children}
               </a>
             );
           },
           table: ({ children }) => (
-            <div className="overflow-x-auto my-2 rounded-lg border border-slate-200/80">
-              <table className="w-full text-[14px]">{children}</table>
+            <div className="overflow-x-auto my-2 rounded-md border border-edge-subtle">
+              <table className="w-full text-body">{children}</table>
             </div>
           ),
           th: ({ children }) => (
-            <th className="px-2.5 py-1.5 bg-green-50/50 text-left font-semibold text-slate-700 border-b border-slate-200/80">
+            <th className="px-2.5 py-1.5 bg-status-accent-soft text-left font-semibold text-ink-secondary border-b border-edge-subtle">
               {children}
             </th>
           ),
           td: ({ children }) => (
-            <td className="px-2.5 py-1.5 border-b border-slate-100 text-slate-600">{children}</td>
+            <td className="px-2.5 py-1.5 border-b border-edge-subtle text-ink-secondary">{children}</td>
           ),
-          hr: () => <hr className="my-3 border-slate-200/60" />,
+          hr: () => <hr className="my-3 border-edge-subtle" />,
         }}
       >
         {text}

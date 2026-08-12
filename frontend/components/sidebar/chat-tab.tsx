@@ -3,13 +3,13 @@
 import { memo, useState, useRef, useEffect, useCallback, type KeyboardEvent } from 'react';
 import dynamic from 'next/dynamic';
 import { Send, Sparkles, CheckCircle2 } from 'lucide-react';
-import { useHudStore } from '@/lib/store/useHudStore';
 import type { AiStatus } from '@/lib/store/hud-types';
 import { ToolCallChain } from '@/components/chat/tool-call-card';
 import { CollapsibleThink } from '@/components/chat/collapsible-think';
 import { PlanProposalCard } from '@/components/chat/plan-proposal-card';
 import { PlanCard } from '@/components/chat/plan-card';
 import { InlineNotice } from '@/components/shared/inline-notice';
+import { ChatAnnouncer } from '@/components/chat/chat-announcer';
 import { adaptChartData } from "@/lib/chart-adapter";
 
 // Bundle-slimming: react-markdown (MiniMd) and recharts (ChartRenderer) load on
@@ -24,7 +24,7 @@ const ChartRenderer = dynamic(
 /* ─── Thinking dots animation ─── */
 const DOT_ANIMS = ['animate-dot-1', 'animate-dot-2', 'animate-dot-3'];
 
-function ThinkingDots({ text, accentColor }: { text: string; accentColor: string; isDark?: boolean }) {
+function ThinkingDots({ text }: { text: string }) {
   return (
     <div className="flex items-center gap-2 py-1.5 px-1">
       <div className="flex gap-[3px]">
@@ -33,13 +33,13 @@ function ThinkingDots({ text, accentColor }: { text: string; accentColor: string
             key={anim}
             style={{
               display: 'block', width: 5, height: 5, borderRadius: '50%',
-              backgroundColor: accentColor
+              backgroundColor: 'var(--agent-accent)'
             }}
             className={anim}
           />
         ))}
       </div>
-      <span className="text-[15px]" style={{ color: 'var(--theme-text-muted)' }}>{text}</span>
+      <span className="text-body text-ink-muted">{text}</span>
     </div>
   );
 }
@@ -52,25 +52,21 @@ const SUGGESTED_PROMPTS = [
   '叠加分析两个图层',
 ];
 
-function SuggestedPromptButtons({ onSend, accentColor }: { onSend: (text: string) => void; accentColor: string; isDark?: boolean }) {
+function SuggestedPromptButtons({ onSend }: { onSend: (text: string) => void }) {
   return (
     <div className="px-3 pt-3 pb-2">
-      <p className="text-[14px] uppercase tracking-wider mb-2" style={{ color: 'var(--theme-text-muted)' }}>快捷指令</p>
+      {/* A: 快捷指令头是 14px uppercase 标签 —— 走 V4 的 title 档 + ink-muted，
+          不再用裸 text-[14px] 与 --theme-* 双轨。 */}
+      <p className="text-title uppercase tracking-wider text-ink-muted mb-2">快捷指令</p>
       <div className="flex flex-wrap gap-1.5">
         {SUGGESTED_PROMPTS.map((prompt) => (
           <button
             key={prompt}
             onClick={() => onSend(prompt)}
-            style={{
-              padding: '6px 10px', borderRadius: 8, fontSize: 13,
-              color: 'var(--theme-text-primary)',
-              borderWidth: 1, borderStyle: 'solid',
-              borderColor: `${accentColor}22`,
-              backgroundColor: 'var(--theme-bg-subtle)',
-              cursor: 'pointer', transition: 'background-color 0.15s'
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--theme-bg-hover)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--theme-bg-subtle)'; }}
+            className="cursor-pointer rounded-md border bg-surface-raised px-2.5 py-1.5 text-body text-ink transition-colors"
+            style={{ borderColor: 'var(--accent-border)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--surface-hover)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--surface-raised)'; }}
           >
             {prompt}
           </button>
@@ -99,7 +95,6 @@ interface ChatTabProps {
   messages: ChatMessage[];
   aiStatus: AiStatus;
   onSend: (text: string) => void;
-  accentColor: string;
   /** Plan Mode: 用户在卡片上点按钮时回调，由父组件发送对应 chat 消息并更新 plan.status */
   onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
 }
@@ -114,15 +109,11 @@ interface ChatTabProps {
  */
 const ChatMessageItem = memo(function ChatMessageItem({
   message: msg,
-  accentColor,
-  isDark,
   mounted,
   thinkingText,
   onPlanAction,
 }: {
   message: ChatMessage;
-  accentColor: string;
-  isDark: boolean;
   mounted: boolean;
   thinkingText: string;
   onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
@@ -140,15 +131,19 @@ const ChatMessageItem = memo(function ChatMessageItem({
     <div className="flex justify-end">
       <div className="max-w-[85%]">
         <div className="flex items-center justify-end gap-1.5 mb-0.5">
-          {time && <span className="text-[15px]" style={{ color: 'var(--theme-text-subtle)' }}>{time}</span>}
-          <span className="text-[14px] font-semibold" style={{ color: accentColor }}>You</span>
+          {/* A: 时间戳是真实正文，--theme-text-subtle（= --text-disabled, 3.5:1）
+             只该用于禁用/装饰 —— 改 ink-muted。 */}
+          {time && <span className="text-body text-ink-muted">{time}</span>}
+          {/* 运行时 accent 直接作文字在暗色下只有 2.96–3.40:1 —— 角色标签改用
+              主题校正后的 --agent-accent。 */}
+          <span className="text-title font-semibold text-agent-accent">You</span>
         </div>
         <div
           style={{
             borderTopRightRadius: 4, borderTopLeftRadius: 16,
             borderBottomLeftRadius: 16, borderBottomRightRadius: 16,
-            padding: '8px 12px', fontSize: 14.5, lineHeight: 1.6, color: '#fff',
-            backgroundColor: accentColor
+            padding: '8px 12px', fontSize: 14.5, lineHeight: 1.6, color: 'var(--text-on-accent)',
+            backgroundColor: 'var(--agent-accent)'
           }}
         >
           <div className="whitespace-pre-wrap">{msg.content}</div>
@@ -161,24 +156,24 @@ const ChatMessageItem = memo(function ChatMessageItem({
       <div className="shrink-0 mt-0.5">
         <div
           className="w-6 h-6 rounded-full flex items-center justify-center"
-          style={{ backgroundColor: `${accentColor}15` }}
+          style={{ backgroundColor: 'color-mix(in srgb, var(--agent-accent) 8%, transparent)' }}
         >
-          <Sparkles size={11} style={{ color: accentColor }} />
+          <Sparkles size={11} style={{ color: 'var(--agent-accent)' }} />
         </div>
       </div>
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5">
-          <span className="text-[14px] font-semibold" style={{ color: accentColor }}>GeoAgent</span>
-          {time && <span className="text-[15px]" style={{ color: 'var(--theme-text-subtle)' }}>{time}</span>}
+          <span className="text-title font-semibold text-agent-accent">GeoAgent</span>
+          {time && <span className="text-body text-ink-muted">{time}</span>}
         </div>
 
         {msg.layerAdded && (
           <div
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px',
-              borderRadius: 999, fontSize: 12, fontWeight: 500, color: '#fff',
-              backgroundColor: accentColor, marginBottom: 6
+              borderRadius: 999, fontSize: 12, fontWeight: 500, color: 'var(--text-on-accent)',
+              backgroundColor: 'var(--agent-accent)', marginBottom: 6
             }}
           >
             <CheckCircle2 size={10} />
@@ -187,22 +182,18 @@ const ChatMessageItem = memo(function ChatMessageItem({
         )}
 
         {msg.isThinking ? (
-          <ThinkingDots text={thinkingText} accentColor={accentColor} isDark={isDark} />
+          <ThinkingDots text={thinkingText} />
         ) : msg.content || msg.think || msg.toolCalls?.length ? (
           <div style={{
             borderTopLeftRadius: 4, borderTopRightRadius: 16,
             borderBottomLeftRadius: 16, borderBottomRightRadius: 16,
-            backgroundColor: 'var(--theme-bg-subtle)',
+            backgroundColor: 'var(--surface-raised)',
             borderWidth: 1, borderStyle: 'solid',
-            borderColor: 'var(--theme-border-subtle)',
+            borderColor: 'var(--border-subtle)',
             padding: '8px 12px'
           }}>
             {msg.think && (
-              <CollapsibleThink
-                content={msg.think}
-                isDark={isDark}
-                accentColor={accentColor}
-              />
+              <CollapsibleThink content={msg.think} />
             )}
             {msg.agentPlan && (
               <PlanCard plan={msg.agentPlan} />
@@ -220,8 +211,6 @@ const ChatMessageItem = memo(function ChatMessageItem({
                 destructiveSteps={msg.plan.destructive_steps}
                 stepsPreview={msg.plan.steps_preview}
                 status={msg.plan.status}
-                isDark={isDark}
-                accentColor={accentColor}
                 onApprove={(pid) => onPlanAction?.(pid, 'approve')}
                 onRevise={(pid) => onPlanAction?.(pid, 'revise')}
                 onReject={(pid) => onPlanAction?.(pid, 'reject')}
@@ -231,7 +220,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
               const chart = adaptChartData(raw);
               if (!chart) return null;
               return (
-                <div key={`chart-${idx}`} style={{ marginTop: 8, borderRadius: 8, overflow: 'hidden', border: `1px solid ${accentColor}22`, backgroundColor: 'var(--theme-bg-input)' }}>
+                <div key={`chart-${idx}`} className="mt-2 overflow-hidden rounded-md border bg-surface-sunken" style={{ borderColor: 'var(--accent-border)' }}>
                   <ChartRenderer chart={chart} />
                 </div>
               );
@@ -243,9 +232,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
   );
 });
 
-export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction }: ChatTabProps) {
-  const theme = useHudStore((s) => s.theme);
-  const isDark = theme === 'dark';
+export function ChatTab({ messages, aiStatus, onSend, onPlanAction }: ChatTabProps) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -303,28 +290,27 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
       {/* Messages scroll area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {messages.length === 0 && !isBusy && (
-          <div className="flex flex-col items-center justify-center h-full px-6 text-center">
-            <div
-              className="w-12 h-12 rounded-2xl flex items-center justify-center mb-3"
-              style={{ backgroundColor: `${accentColor}15` }}
-            >
-              <Sparkles size={22} style={{ color: accentColor }} />
-            </div>
-            <h3 className="text-[15px] font-semibold mb-1" style={{ color: 'var(--theme-text-primary)' }}>GeoAgent</h3>
-            <p className="text-[13.5px] leading-relaxed" style={{ color: 'var(--theme-text-secondary)' }}>
-              输入空间分析指令，开始智能 GIS 分析
-            </p>
+          <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+            <span aria-hidden className="mb-3 flex h-control-lg w-control-lg items-center justify-center rounded-md bg-status-accent-soft">
+              <Sparkles size={16} className="text-status-accent" />
+            </span>
+            <h3 className="mb-1 text-title font-semibold text-ink">GeoAgent</h3>
+            <p className="text-meta text-ink-muted">输入空间分析指令，开始智能 GIS 分析</p>
           </div>
         )}
 
-        {/* Message list */}
-        <div className="px-3 py-3 space-y-3">
+        {/*
+          a11y：流式回复此前完全没有播报 —— 助手 token、工具调用状态、
+          「正在分析指令…」全都只是视觉变化，读屏用户感知不到产品的主反馈回路。
+          播报交给 <ChatAnnouncer/>（下方 composer 区）：把 aria-live 直接放在
+          消息列表上会在每个 token 批次重读整段回答（MiniMd 每批重新解析、整个
+          气泡子树被替换，aria-atomic=false 只有在追加叶子节点时才是增量）。
+        */}
+        <div className="space-y-2 px-panel py-2">
           {messages.map((msg, idx) => (
             <ChatMessageItem
               key={msg.id ?? `msg-${idx}`}
               message={msg}
-              accentColor={accentColor}
-              isDark={isDark}
               mounted={mounted}
               thinkingText={thinkingText}
               onPlanAction={onPlanAction}
@@ -334,31 +320,30 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
 
           {/* Thinking indicator at end of messages */}
           {isBusy && messages.length > 0 && !messages[messages.length - 1]?.isThinking && (
-            <ThinkingDots text={thinkingText} accentColor={accentColor} isDark={isDark} />
+            <ThinkingDots text={thinkingText} />
           )}
         </div>
 
         {/* Suggested prompts when not busy and few messages */}
         {!isBusy && messages.length <= 1 && (
-          <SuggestedPromptButtons onSend={onSend} accentColor={accentColor} isDark={isDark} />
+          <SuggestedPromptButtons onSend={onSend} />
         )}
       </div>
 
       {/* Input area */}
-      <div style={{
-        borderTopWidth: 1, borderTopStyle: 'solid',
-        borderTopColor: 'var(--theme-border-subtle)',
-        backgroundColor: 'var(--theme-bg-input)',
-        backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)'
-      }} className="shrink-0">
+      <ChatAnnouncer messages={messages} aiStatus={aiStatus} />
+
+      {/* 不透明底 + 去掉 blur(12px)：composer 压在地图上，半透明会让输入文字
+          与底图细节互相干扰，而 backdrop-filter 又是最贵的那类合成。 */}
+      <div className="shrink-0 border-t border-edge-subtle bg-surface-panel">
         {/* UI V3：AI 错误在 chat 内可见（之前仅 top-bar/HUD 有指示，
             composer 静默恢复可用，用户无法感知失败） */}
         {aiStatus === 'error' && (
-          <div className="px-3 pt-2">
+          <div className="px-panel pt-2">
             <InlineNotice variant="error">上一条指令执行失败，请调整后重试。</InlineNotice>
           </div>
         )}
-        <div className="flex items-end gap-2 px-3 pt-2.5 pb-1.5">
+        <div className="flex items-end gap-2 px-panel pb-1 pt-2">
           {/* Textarea */}
           <textarea
             ref={textareaRef}
@@ -368,11 +353,11 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
             aria-label="输入空间分析指令"
             placeholder="输入空间分析指令..."
             rows={1}
-            style={{
-              flex: 1, resize: 'none', backgroundColor: 'transparent',
-              fontSize: 14.5, color: 'var(--theme-text-primary)',
-              outline: 'none', lineHeight: 1.5, maxHeight: 80, paddingTop: 4, paddingBottom: 4
-            }}
+            /* a11y 修复：这里原本是内联 `outline: 'none'`。内联样式压过
+               globals.css 里那条 unlayered 的 *:focus-visible 规则，于是产品最
+               核心的输入框是全站唯一没有键盘焦点环的控件。改成 focus-visible
+               时用 ring 表达，鼠标点击不显示。 */
+            className="max-h-20 flex-1 resize-none bg-transparent py-1 text-body leading-normal text-ink placeholder:text-ink-disabled focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-status-accent-border"
           />
 
           {/* Send button */}
@@ -380,24 +365,19 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
             onClick={handleSend}
             disabled={!input.trim() || isBusy}
             aria-label="发送消息"
-            style={{
-              flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              width: 26, height: 26, borderRadius: 8, transition: 'opacity 0.15s',
-              opacity: !input.trim() || isBusy ? 0.4 : 1,
-              backgroundColor: input.trim() ? accentColor : 'var(--theme-bg-muted)',
-              color: input.trim() ? '#fff' : 'var(--theme-text-muted)',
-              cursor: 'pointer'
-            }}
+            className={`flex h-control-md w-control-md shrink-0 items-center justify-center rounded-sm transition-colors ${
+              input.trim() && !isBusy
+                ? 'bg-status-accent text-ink-on-accent'
+                : 'cursor-not-allowed bg-surface-sunken text-ink-disabled'
+            }`}
           >
-            <Send size={13} />
+            <Send size={13} aria-hidden />
           </button>
         </div>
 
         {/* Hint */}
-        <div className="px-3 pb-2">
-          <span className="text-[9.5px]" style={{ color: 'var(--theme-text-subtle)' }}>
-            Enter 发送 · Shift+Enter 换行
-          </span>
+        <div className="px-panel pb-1.5">
+          <span className="text-micro text-ink-muted">Enter 发送 · Shift+Enter 换行</span>
         </div>
       </div>
     </div>

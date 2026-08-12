@@ -24,7 +24,7 @@ export function CatalogToolbar({
   onSourceFilterChange,
 }: CatalogToolbarProps) {
   return (
-    <div className="shrink-0 space-y-2 border-b border-[var(--theme-border)] p-2.5">
+    <div className="shrink-0 space-y-2 border-b border-edge-subtle px-panel py-2">
       <SearchField
         value={searchQuery}
         onChange={onSearchChange}
@@ -37,7 +37,7 @@ export function CatalogToolbar({
           value={selectedSourceFilter}
           onChange={(e) => onSourceFilterChange(e.target.value)}
           aria-label="按数据源筛选空间目录"
-          className="w-full rounded border border-[var(--theme-border)] bg-[var(--theme-bg-input)] px-2 py-1 text-[11px] text-[var(--theme-text-secondary)]"
+          className="w-full rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1 text-caption text-ink-secondary"
         >
           <option value="">全部数据源</option>
           {sources.map((s) => (

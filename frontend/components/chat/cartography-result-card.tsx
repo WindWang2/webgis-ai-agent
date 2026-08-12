@@ -39,27 +39,27 @@ export function CartographyResultCard({ result, layerId, onFocus }: Props) {
   const title = result?.layer_meta?.title ?? '专题图';
   const colors = swatches(spec);
   return (
-    <div className="my-2 p-3 rounded-lg border border-border bg-card/70">
+    <div className="my-2 p-3 rounded-md border border-edge-subtle bg-surface-raised">
       <div className="flex items-center gap-2 mb-2">
-        <Palette className="h-4 w-4 text-primary" />
-        <span className="text-sm font-semibold text-foreground truncate">{title}</span>
+        <Palette className="h-4 w-4 text-status-accent" />
+        <span className="text-body font-semibold text-ink truncate">{title}</span>
       </div>
       <div className="flex items-center gap-1 mb-2">
         {colors.map((c, i) => (
           <div
             key={i}
             data-testid="card-swatch"
-            className="w-5 h-3 rounded-sm ring-1 ring-black/10"
+            className="w-5 h-3 rounded-sm ring-1 ring-edge-subtle"
             style={{ backgroundColor: c }}
           />
         ))}
       </div>
       <div className="flex items-center justify-between">
-        <span className="text-[15px] text-muted-foreground">{summarize(spec)}</span>
+        <span className="text-body text-ink-muted">{summarize(spec)}</span>
         <button
           type="button"
           onClick={() => onFocus?.(layerId)}
-          className="inline-flex items-center gap-1 text-[15px] font-medium text-primary hover:underline"
+          className="inline-flex items-center gap-1 text-body font-medium text-status-accent hover:underline"
         >
           <Target className="h-3 w-3" />
           高亮此图层
