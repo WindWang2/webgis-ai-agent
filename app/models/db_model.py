@@ -89,18 +89,33 @@ class Layer(Base):
     creator = relationship("User", backref="layers", lazy="selectin")
 
 class AnalysisTask(Base):
-    """空间分析任务表"""
+    """统一 durable job 表（ADR-0052）。
+
+    原为「空间分析任务表」且无生产调用方。ADR-0052 把它演进成 Agent task /
+    空间分析 job / Celery job 的统一持久化事实源，而不是新建第二套 Job 表 ——
+    它已经具备 status CHECK、progress、retry_count、queued/started/completed
+    时间戳、org/creator 归属与 JSON 载荷列，缺的只是关联与取消/租约字段。
+
+    迁移：migrations/versions/0013_unified_durable_job_runtime.py（additive，
+    老数据行不需要改写）。
+    """
     __tablename__ = "analysis_tasks"
     
-    id = Column(BigInteger, primary_key=True)
-    org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    # ADR-0052: SQLite 只把「INTEGER PRIMARY KEY」当 rowid 别名（即自增）；BIGINT 主键
+    # 不自增，插入时会 NOT NULL 失败。durable job 现在是热路径，必须能在本地
+    # SQLite 与生产 PostgreSQL 上都自增，故用 dialect variant。
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    # 归属由 creator_id + owner_token + session_id 三元组证明。
+    org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)
     creator_id = Column(String(255), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     layer_id = Column(BigInteger, ForeignKey("layers.id", ondelete="SET NULL"), nullable=True)
     result_layer_id = Column(BigInteger, ForeignKey("layers.id", ondelete="SET NULL"), nullable=True)
     task_type = Column(String(50), nullable=False)
     parameters = Column(JSON, nullable=False)
     celery_task_id = Column(String(100), unique=True)
-    status = Column(String(20), default="pending", index=True)
+    # 注意：不要在这里加 index=True —— __table_args__ 里已有 idx_task_status，
+    # 两者会在 create_all 下生成两个内容相同的索引（写放大且无收益）。
+    status = Column(String(20), default="pending")
     progress = Column(Integer, default=0)
     progress_message = Column(String(255))
     result_summary = Column(JSON)
@@ -112,12 +127,53 @@ class AnalysisTask(Base):
     completed_at = Column(DateTime)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    # ── ADR-0052 统一 durable job 字段 ──────────────────────────────
+    #: 执行域：agent / analysis / workflow / explorer（JobKind）
+    job_kind = Column(String(20), nullable=True, default="analysis")
+    #: 展示名。前端任务中心的标题，不含用户原文（避免 §35 的原文泄漏面扩大）
+    display_name = Column(String(200), nullable=True)
+    #: 会话归属。匿名会话的权限证明链：session_id → Conversation.owner_token
+    session_id = Column(String(255), nullable=True)
+    #: 匿名归属令牌（镜像 Conversation.owner_token 的 SEC-08 模式）
+    owner_token = Column(String(64), nullable=True)
+    project_id = Column(String(255), nullable=True)
+    #: Agent 侧关联（形成 Agent Turn → Tool Step → Durable Job 链）
+    run_id = Column(String(64), nullable=True)
+    turn_id = Column(String(64), nullable=True)
+    tool_call_id = Column(String(128), nullable=True)
+    agent_task_id = Column(String(64), nullable=True)
+    agent_step_id = Column(String(32), nullable=True)
+    #: 幂等键。同一逻辑提交重复到达（SSE 重连 / 双击 / API retry）时复用同一行
+    idempotency_key = Column(String(128), nullable=True, unique=True)
+    #: 当前尝试序号（从 1 开始）。retry 创建新 attempt 而不是覆盖失败证据
+    attempt = Column(Integer, default=1)
+    #: 执行者标识（hostname:pid 或 celery worker 名），用于 stale 归因
+    worker_id = Column(String(128), nullable=True)
+    #: 取消请求的持久事实源 —— 进程重启不丢
+    cancel_requested_at = Column(DateTime, nullable=True)
+    #: worker 心跳。running 且心跳超时 → stale（规范 §25）
+    heartbeat_at = Column(DateTime, nullable=True)
+    #: 结果指针（artifact id / 存储路径），巨型结果不入 result_summary（规范 §38）
+    result_ref = Column(String(512), nullable=True)
+    #: 重跑描述符 {task, args, kwargs}。retry 靠它忠实重新入队 —— parameters 是
+    #: 脱敏+截断后的展示摘要，无法用于重跑。写入前经敏感键脱敏与体积上限校验，
+    #: 且**绝不**通过任何 API 返回（JobView 里没有这个字段）。
+    dispatch_spec = Column(JSON, nullable=True)
     
     __table_args__ = (
         Index("idx_task_status", "status"),
         Index("idx_task_org_status", "org_id", "status"),
         Index("idx_task_org_type_status", "org_id", "task_type", "status"),
-        CheckConstraint("status IN ('pending', 'queued', 'running', 'completed', 'failed', 'cancelled')", name="ck_task_status"),
+        # ADR-0052: 任务中心的三条主查询路径
+        Index("idx_task_session_created", "session_id", "created_at"),
+        Index("idx_task_creator_created", "creator_id", "created_at"),
+        Index("idx_task_status_heartbeat", "status", "heartbeat_at"),
+        Index("idx_task_agent_task", "agent_task_id"),
+        CheckConstraint(
+            "status IN ('pending', 'queued', 'running', 'cancelling', 'completed', 'failed', 'cancelled', 'stale')",
+            name="ck_task_status",
+        ),
         CheckConstraint("progress >= 0 AND progress <= 100", name="ck_task_progress"),
     )
 

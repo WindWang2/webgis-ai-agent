@@ -20,6 +20,10 @@ from shapely.geometry import box, mapping, Polygon
 
 from app.lib.geo_processor.core import GeoAnalysisResult, to_utm_gdf
 from app.lib.geo_analysis._vector import extract_centroids
+# ADR-0052: 协作式取消检查点。cancellable() 在 chunk 边界读一次 contextvar，
+# 未绑定 token 时开销为零；用户取消后长循环立即抛 OperationCancelled 退出，
+# 真正释放 CPU 而不是只改 UI 状态。
+from app.services.jobs.cancellation import cancellable
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +105,7 @@ def voronoi_polygons(
             logger.warning("voronoi: invalid clip_bounds %s ignored: %s", clip_bounds, e)
     raw_polys = []  # (poly, props) - batch CRS after loop
 
-    for i in range(len(coords)):
+    for i in cancellable(range(len(coords)), every=256):
         region_idx = vor.point_region[i]
         region = vor.regions[region_idx]
         if -1 in region or len(region) == 0:

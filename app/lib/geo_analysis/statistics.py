@@ -11,6 +11,10 @@ from scipy.stats import norm
 from app.lib.geo_processor.core import GeoAnalysisResult
 from app.lib.geo_processor.core import to_utm_gdf
 from app.lib.geo_analysis._vector import extract_centroids
+# ADR-0052: 协作式取消检查点。cancellable() 在 chunk 边界读一次 contextvar，
+# 未绑定 token 时开销为零；用户取消后长循环立即抛 OperationCancelled 退出，
+# 真正释放 CPU 而不是只改 UI 状态。
+from app.services.jobs.cancellation import cancellable
 
 def _build_weights(gdf: gpd.GeoDataFrame, k: int = 8) -> sparse.coo_matrix:
     """Build spatial weights matrix using KNN via cKDTree.
@@ -223,7 +227,7 @@ def moran_i_narrated(geojson: dict, value_field: str) -> GeoAnalysisResult:
     rng = np.random.default_rng(42)
     perms = 99
     perm_is = []
-    for _ in range(perms):
+    for _ in cancellable(range(perms)):
         pv = rng.permutation(values)
         pz = pv - pv.mean()
         if sparse.issparse(w):
@@ -350,7 +354,7 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
     ).tolist()
 
     features = []
-    for i in range(len(gdf)):
+    for i in cancellable(range(len(gdf)), every=512):
         gi_star = float(gi_stars[i])
         p_val = float(p_vals[i])
         h_type = hotspot_types[i]
@@ -551,7 +555,7 @@ def cluster_narrated(
     gdf_wgs84 = gdf.to_crs("EPSG:4326")
     
     out_features = []
-    for i in range(len(gdf)):
+    for i in cancellable(range(len(gdf)), every=512):
         geom_wgs84 = gdf_wgs84.geometry.iloc[i]
         row = gdf.iloc[i]
         props = {k: v for k, v in row.items() if k != "geometry"}
@@ -647,7 +651,7 @@ def h3_lisa(h3_geojson: dict, value_field: str) -> GeoAnalysisResult:
     gdf_wgs84 = gdf.to_crs("EPSG:4326")
     
     out_features = []
-    for i in range(len(gdf)):
+    for i in cancellable(range(len(gdf)), every=512):
         geom_wgs84 = gdf_wgs84.geometry.iloc[i]
         row = gdf.iloc[i]
         props = {k: v for k, v in row.items() if k != "geometry"}
@@ -871,7 +875,7 @@ def st_dbscan_narrated(
     # 4. Format Output GeoJSON
     gdf_wgs84 = gdf_valid.to_crs("EPSG:4326")
     out_features = []
-    for i in range(n):
+    for i in cancellable(range(n), every=512):
         geom_wgs84 = gdf_wgs84.geometry.iloc[i]
         row = gdf_valid.iloc[i]
         props = {k: v for k, v in row.items() if k != "geometry"}

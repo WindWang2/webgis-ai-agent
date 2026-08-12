@@ -4,9 +4,16 @@ from pydantic import BaseModel
 from typing import Optional
 
 from app.api.routes.chat import get_engine
-from app.core.auth import get_current_user, require_owned_session, verify_session_owner
+from app.core.auth import (
+    get_current_user,
+    get_owner_token,
+    require_owned_session,
+    verify_session_owner,
+)
 from app.core.database import get_async_db
 from app.models.db_model import Conversation
+from app.services.jobs import DurableJobStore
+from app.services.jobs import registry as cancellation_registry
 from app.services.task_queue import TaskQueueService
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -131,26 +138,96 @@ async def cancel_task(
     db: AsyncSession = Depends(get_async_db),
     _user: dict = Depends(get_current_user),
 ) -> TaskCancelResponse:
-    """取消正在执行的任务"""
+    """取消正在执行的任务。
+
+    ADR-0052：除了点燃 agent task 的 token，这里也把该 turn 派生的 durable job 的
+    取消请求**落库** —— 否则跨进程 worker 观察不到取消，后台 GIS 计算会一路跑完。
+    行为与新的 ``DELETE /tasks/jobs/{job_id}`` 端点一致。
+    """
     await _verify_task_owner(db, task_id, _user.get("user_id"))
-    cancelled = get_engine().tracker.cancel(task_id)
+    tracker = get_engine().tracker
+    task_info = tracker.get(task_id)
+    background_job_ids = list(task_info.background_job_ids) if task_info else []
+    cancelled = tracker.cancel(task_id)
+    for job_id in background_job_ids:
+        await DurableJobStore.request_cancel(db, job_id)
+    if background_job_ids:
+        await db.commit()
     return TaskCancelResponse(cancelled=cancelled)
 
 
 # ── Celery Task Status API ──────────────────────────────────────────
 
+
+async def _verify_celery_owner(
+    db: AsyncSession, celery_task_id: str, user_id: str, owner_token: Optional[str]
+) -> None:
+    """校验 celery task 归属。
+
+    ADR-0052：以前唯一事实源是 ``TaskQueueService._task_owners`` —— 一个进程内
+    class dict。后果是 API 重启后所有 Celery 任务突然 404（合法用户也查不到、
+    取消不了），多副本部署下更是「注册在哪个 pod 就只有那个 pod 认」。
+
+    现在内存 map 降级为快路径缓存，durable 行（analysis_tasks.celery_task_id +
+    归属列）才是事实源。任一命中即通过；两者都不认才 404。
+    """
+    if TaskQueueService.verify_owner(celery_task_id, user_id):
+        return
+    if await DurableJobStore.verify_celery_owner(
+        db, celery_task_id, owner_id=(user_id or None), owner_token=owner_token
+    ):
+        return
+    raise HTTPException(status_code=404, detail="Task not found")
+
+
 @router.get("/status/{task_id}")
-async def get_celery_task_status(task_id: str, _user: dict = Depends(get_current_user)):
-    """查询 Celery 异步任务状态（审计 S34：校验任务所有权）"""
-    if not TaskQueueService.verify_owner(task_id, _user.get("user_id", "")):
-        raise HTTPException(status_code=404, detail="Task not found")
-    return TaskQueueService.get_task_status(task_id)
+async def get_celery_task_status(
+    task_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    _user: dict = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """查询 Celery 异步任务状态（审计 S34：校验任务所有权）
+
+    ADR-0052：保持原响应键不变（Celery 语义的 status/result/progress），但在存在
+    durable job 行时用它补充 job_id / durable_status / progress —— Celery result
+    backend 不可用（无 Redis）时进度仍然可读，因为事实源已经在数据库里。
+    """
+    await _verify_celery_owner(db, task_id, _user.get("user_id", ""), owner_token)
+    payload = TaskQueueService.get_task_status(task_id)
+
+    job = await DurableJobStore.get_by_celery_id(db, task_id)
+    if job is not None:
+        payload["job_id"] = str(job.id)
+        payload["durable_status"] = str(job.status or "")
+        if job.progress is not None:
+            payload["progress"] = int(job.progress)
+        if job.progress_message:
+            payload["message"] = job.progress_message
+    return payload
 
 
 @router.delete("/status/{task_id}")
-async def revoke_celery_task(task_id: str, _user: dict = Depends(get_current_user)):
-    """撤销 Celery 异步任务（审计 S34：校验任务所有权）"""
-    if not TaskQueueService.verify_owner(task_id, _user.get("user_id", "")):
-        raise HTTPException(status_code=404, detail="Task not found")
+async def revoke_celery_task(
+    task_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    _user: dict = Depends(get_current_user),
+    owner_token: Optional[str] = Depends(get_owner_token),
+):
+    """撤销 Celery 异步任务（审计 S34：校验任务所有权）
+
+    ADR-0052：撤销改为「先协作、后 revoke」—— 先把 durable job 的
+    ``cancel_requested_at`` 落库并点燃本进程 token（worker 在 checkpoint 处优雅
+    退出，顺带清理临时产物），再调 Celery revoke 兜底。terminate 不再是所有任务
+    的第一取消手段（规范 §12）。
+    """
+    await _verify_celery_owner(db, task_id, _user.get("user_id", ""), owner_token)
+
+    job = await DurableJobStore.get_by_celery_id(db, task_id)
+    if job is not None:
+        await DurableJobStore.request_cancel(db, job.id)
+        await db.commit()
+        cancellation_registry.cancel(str(job.id), "cancelled by user")
+
     revoked = TaskQueueService.revoke_task(task_id)
     return {"revoked": revoked, "task_id": task_id}

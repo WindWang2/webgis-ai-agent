@@ -1,5 +1,92 @@
 # Changelog
 
+## [Unreleased] - 2026-08-12
+
+### Unified durable job runtime & cancellation lifecycle (ADR-0052)
+
+Replaces three disconnected task-state stores (in-memory `TaskTracker`, the
+zero-caller `analysis_tasks` table, and the process-local
+`TaskQueueService._task_owners` dict) with one durable job lifecycle spanning
+Agent task → tool step → heavy GIS job → Celery worker → artifact.
+
+- **Cancellation now actually stops compute.** `TaskTracker.cancel()` used to flip
+  a bool that was polled only *between* tool calls, so an in-flight NDVI or buffer
+  analysis ran to completion (30–60s) before stopping — CPU was never released.
+  A `CancellationToken` is now lit on cancel and propagates three ways: the stream
+  engine `await`s it inside the parallel tool wave and **preemptively** cancels
+  in-flight asyncio tasks; a ContextVar carries it into synchronous GIS code
+  (`asyncio.to_thread` copies context, so ~40 tool signatures stay unchanged) where
+  hot loops exit at `jobs.checkpoint()`; and a per-job watchdog thread pushes the
+  durable cancel fact to cross-process workers. Benchmark: cancelling after 50 of
+  10 000 chunks now executes 51 chunks (99.49% of the work skipped).
+- **Task ownership survives API restart.** `_task_owners` is demoted to a fast-path
+  cache; the durable row is the source of truth. After a restart a legitimate owner
+  can still query *and* cancel their Celery job, while other users still get 404.
+  Ownership accepts three proofs (authenticated `creator_id`, anonymous
+  `owner_token` mirroring SEC-08, or a verified `session_id`); with none of them the
+  predicate is constant-false rather than an unfiltered scan.
+- **Explicit state machine with atomic transitions.** Every status write is a
+  conditional `UPDATE ... WHERE status IN (<legal predecessors>)`, so `cancelled`
+  and `completed` can never be overwritten — a worker's late success after a cancel
+  converges to `cancelled` and its result is discarded. Double cancel is idempotent;
+  cancelled jobs are never retried.
+- **Worker-crash recovery.** Workers heartbeat independently of progress reporting;
+  a 60s sweeper converges heartbeat-timed-out jobs to `stale` (retryable) — or to
+  `cancelled` when the worker died mid-cancellation — so a job can no longer stay
+  `running` forever.
+- **Bounded progress writes.** Unified `{phase, progress, message, current_step,
+  total_steps}` contract that explicitly allows `progress = null` for indeterminate
+  work (no fake 99% that then hangs). Throttling at ≥1% / ≥500ms turns 100 000
+  progress reports into ~100 DB writes.
+- **Atomic artifact commit.** NDVI output and the `raster_math` windowed writers now
+  write a temp file and `os.replace` on success; cancel/failure discards the partial
+  file, so a cancelled task can no longer leave half a GeoTIFF that looks valid.
+  Already-finalized artifacts are never deleted by later cleanup.
+- **Agent ↔ job linkage.** Durable jobs created inside a tool inherit
+  session/owner/run/turn/tool_call/step from a ContextVar and are reported back on
+  `step_result` as `background_job_ids`, so a background GIS job is shown under the
+  step that started it instead of as an unrelated entry.
+- **Unified task API (expand-contract).** New owner-scoped `GET /tasks/jobs`,
+  `GET|DELETE /tasks/jobs/{job_id}`, `POST /tasks/jobs/{job_id}/retry` returning a
+  single `JobView` shape for both agent tasks and durable jobs. All five pre-existing
+  `/tasks/*` endpoints keep their contract; `/tasks/status/{celery_task_id}` gains
+  durable `job_id`/`durable_status`/`progress` and now degrades gracefully when the
+  Celery result backend is unavailable instead of returning 500.
+- **Retry is real or refused.** Retry re-enqueues the task using a persisted
+  `dispatch_spec`; when no faithful spec exists (missing, oversized, or carrying a
+  sensitive argument) it is refused with a reason rather than flipping the row to
+  `queued` with nothing to run it.
+- **Frontend Task Center.** New sidebar tab showing name/type/status/progress/message/
+  elapsed with cancel and retry. Cancel shows "取消中…" until the backend confirms a
+  terminal state. Polling is strictly bounded: none without active jobs, paused when
+  the tab is hidden, aborted on unmount/session switch, capped after consecutive
+  errors, with generation+session guards so a stale response can never write into a
+  new session's UI. No new websocket transport.
+- **Payload safety.** Task rows and API responses carry redacted, size-capped
+  summaries — credentials are replaced, large GeoJSON/raster payloads become
+  `{__omitted__, count}`, and errors are single-line (never a traceback). Task-center
+  responses measure ~478 B/job.
+
+### Fixed (pre-existing bugs surfaced by this work)
+
+- NDVI analysis assets were never registered: the insert used `format="tif"`, which
+  `ck_upload_format` rejects (`geotiff` is the allowed value), and the resulting
+  `IntegrityError` was swallowed as a warning — so the tool's "结果已入库" claim was
+  never true on a constraint-enforcing database.
+- Migration `e46935cd5dd1` only dropped `analysis_tasks.creator_id NOT NULL` on the
+  PostgreSQL branch, leaving SQLite dev databases diverged from the model.
+- `analysis_tasks.status` carried both `index=True` and an explicit `idx_task_status`,
+  producing two identical indexes under `create_all`.
+
+### Migration
+
+`0013_unified_durable_job_runtime` — additive: 17 nullable columns, 5 indexes,
+widened `ck_task_status` (adds `cancelling`, `stale`), and relaxed
+`org_id`/`creator_id` nullability. Upgrade and downgrade are both implemented and
+existing rows survive the round trip (`cancelling`/`stale` normalize to `failed` on
+downgrade rather than being deleted). Dialect-split: SQLite rebuilds the table via
+`batch_alter_table`, PostgreSQL uses idempotent `IF NOT EXISTS` DDL.
+
 ## [Unreleased] - 2026-08-07
 
 ### Performance — Full-stack optimization (spatial compute / agent dispatch / rendering / storage)

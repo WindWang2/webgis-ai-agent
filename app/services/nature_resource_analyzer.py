@@ -9,6 +9,7 @@ import rasterio
 from typing import Dict, Optional
 import uuid
 import time
+from app.services.jobs.artifacts import atomic_output
 
 logger = logging.getLogger(__name__)
 
@@ -128,8 +129,11 @@ class NatureResourceAnalyzer:
                 filename = f"NDVI_{int(time.time())}_{uuid.uuid4().hex[:6]}.tif"
                 result_path = os.path.join(output_dir, filename)
 
-                with rasterio.open(result_path, 'w', **meta) as dst:
-                    dst.write(ndvi.astype(np.float32), 1)
+                # ADR-0052: 先写临时文件再原子 os.replace —— 取消/崩溃不会留下一个
+                # 看起来正常、其实只写了一半的 NDVI GeoTIFF（规范 §23）。
+                with atomic_output(result_path) as tmp_path:
+                    with rasterio.open(tmp_path, 'w', **meta) as dst:
+                        dst.write(ndvi.astype(np.float32), 1)
 
                 return {
                     "success": True,

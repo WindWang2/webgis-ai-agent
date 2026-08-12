@@ -191,6 +191,8 @@ export default function Home() {
           aiStatus={aiStatus}
           onSend={handleSend}
           accentColor={reactiveAccentColor}
+          sessionId={sessionId}
+          ownerToken={sessionTokenRef.current}
           onPlanAction={handlePlanAction}
         />
 

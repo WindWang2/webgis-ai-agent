@@ -12,6 +12,11 @@ export interface StepResultEvent {
   geojson_ref?: string;
   tool?: string;
   name?: string;
+  /**
+   * ADR-0052: 本 tool step 派生出的后台 durable job id。
+   * 任务中心据此把后台 GIS job 挂到对应步骤下，用户不会看到两条互不相关的条目。
+   */
+  background_job_ids?: string[];
 }
 
 export interface TokenEvent {

@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.core.database import Engine
 from app.core.exception import global_exception_handler
 from app.core.rate_limiter import get_rate_limiter
-from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric
+from app.api.routes import health, map, chat, layer, report, task, upload, knowledge, ws, config, explorer, auth as auth_routes, static as static_routes, pi_tools, templates, raster as raster_routes, metrics, project as project_routes, data_fabric, jobs as jobs_routes
 from app.tools.registry import ToolRegistry
 from app.tools import init_tools
 from app.services.chat_engine import ChatEngine
@@ -71,14 +71,20 @@ async def lifespan(app: FastAPI):
     # 通过 session_data 的 TTL 兜底，但 active 列表 + in-memory 单例需要主动扫。
     cleanup_task = asyncio.create_task(_periodic_session_cleanup())
 
+    # ADR-0052：stale job 清扫。worker 崩溃/被杀时 DB 里的 job 会永远停在
+    # running —— 用户面对一个永不结束的任务。这里周期性把心跳超时的 job
+    # 收敛为 stale（终态但可 retry）。
+    stale_sweep_task = asyncio.create_task(_periodic_stale_job_sweep())
+
     yield
 
     # 关闭后台清理任务
-    cleanup_task.cancel()
-    try:
-        await cleanup_task
-    except asyncio.CancelledError:
-        pass
+    for bg_task in (cleanup_task, stale_sweep_task):
+        bg_task.cancel()
+        try:
+            await bg_task
+        except asyncio.CancelledError:
+            pass
 
     # 输出工具调用 digest（top 累计 / top p99 / 错误），便于运维定位最慢工具
     try:
@@ -122,6 +128,44 @@ async def _periodic_session_cleanup(interval_seconds: int = 600) -> None:
             raise
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[lifespan] session cleanup tick failed: {e}")
+
+
+async def _periodic_stale_job_sweep(interval_seconds: int = 60) -> None:
+    """ADR-0052：把心跳超时的 durable job 标记为 stale（规范 §25）。
+
+    最小可行方案：worker 在写进度时顺带刷新 heartbeat_at，本任务扫出
+    ``running/cancelling 且心跳早于 cutoff`` 的行并原子迁移到 stale。没有引入
+    分布式调度平台、lease 表或额外中间件 —— 只用已有的 DB 列。
+
+    多副本 API 同时扫是安全的：迁移是条件更新（WHERE status IN (...)），只有一个
+    副本能成功改到 stale，其余 rowcount=0。
+    """
+    import asyncio
+    import logging
+
+    from app.core.database import AsyncSessionLocal
+    from app.services.jobs import DurableJobStore
+
+    logger = logging.getLogger(__name__)
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            if AsyncSessionLocal is None:
+                continue
+            async with AsyncSessionLocal() as db:
+                swept = await DurableJobStore.sweep_stale(db)
+                # pending/queued 不会心跳，心跳预测器抓不到它们；提交路径在 create 与
+                # apply_async 之间崩溃、或 broker 丢消息时，job 会永远停在那里。
+                orphaned = await DurableJobStore.sweep_orphans(db)
+                if swept or orphaned:
+                    await db.commit()
+                    logger.warning(
+                        f"[lifespan] swept {swept} stale job(s), {orphaned} orphaned job(s)"
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[lifespan] stale job sweep tick failed: {e}")
 
 
 
@@ -211,6 +255,9 @@ app.include_router(layer.router, prefix="/api/v1", tags=["图层管理"])
 app.include_router(report.router, prefix="/api/v1", tags=["报告生成"])
 app.include_router(chat.router, prefix="/api/v1", tags=["AI对话"])
 app.include_router(map.router, prefix="/api/v1", tags=["地图管理"])
+# ADR-0052: 统一任务中心必须先注册 —— task.router 的 GET /tasks/{task_id}
+# 会把字面量 "jobs" 当成 task_id 匹配掉。
+app.include_router(jobs_routes.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(task.router, prefix="/api/v1", tags=["任务管理"])
 app.include_router(upload.router, prefix="/api/v1", tags=["数据上传"])
 app.include_router(knowledge.router, prefix="/api/v1", tags=["知识库管理"])

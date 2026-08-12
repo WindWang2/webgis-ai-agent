@@ -6,6 +6,10 @@ from shapely.geometry import Point, LineString, mapping
 from shapely.ops import unary_union
 from app.lib.geo_processor.core import GeoAnalysisResult
 from app.lib.geo_processor.core import to_utm_gdf
+# ADR-0052: 协作式取消检查点。cancellable() 在 chunk 边界读一次 contextvar，
+# 未绑定 token 时开销为零；用户取消后长循环立即抛 OperationCancelled 退出，
+# 真正释放 CPU 而不是只改 UI 状态。
+from app.services.jobs.cancellation import cancellable
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +92,7 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
         # follows the actual road network.
         _buffer_m = 30.0 if mode == "walking" else 20.0
 
-        for idx, facility in gdf_facilities.iterrows():
+        for idx, facility in cancellable(gdf_facilities.iterrows()):
             start_point = np.array([facility.geometry.x, facility.geometry.y])
 
             # Find nearest node via cKDTree
@@ -106,7 +110,7 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
             # the last reachable point (review C).
             from shapely.ops import substring
             reachable_edges = []
-            for u, v, edata in G.edges(data=True):
+            for u, v, edata in cancellable(G.edges(data=True), every=1024):
                 eg = edata.get("geometry")
                 if eg is None:
                     continue

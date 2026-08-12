@@ -1,12 +1,21 @@
 """TaskTracker - 任务状态跟踪器
 
 根据 docs/superpower/specs/2026-04-08-task-planning-react-design.md 设计实现
+
+ADR-0052 之后 TaskTracker 不再是任务的**持久事实源** —— 它是「本进程内正在跑的
+agent turn」的热态视图，durable 事实在 analysis_tasks 表（见 app/services/jobs）。
+同时每个 task 现在持有一个 CancellationToken：``cancel()`` 会点燃它，执行引擎
+``await token.wait()`` 从而**抢占式**打断在飞的工具，而不是等当前工具自然跑完；
+token 还通过 contextvar 传进同步 GIS 代码，让长循环能在 checkpoint 处协作退出。
 """
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
+
+from app.services.jobs.cancellation import CancellationToken
+from app.services.jobs.cancellation import registry as cancellation_registry
 
 
 class StepStatus(str, Enum):
@@ -35,6 +44,9 @@ class TaskStep:
     error: str | None = None
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: datetime | None = None
+    #: ADR-0052：本步骤派生出的 durable job id。前端据此把后台 GIS job 挂到
+    #: 对应 tool step 下面，形成 Agent Turn → Tool Step → Durable Job 链。
+    background_job_ids: list[str] = field(default_factory=list)
 
     @property
     def is_error(self) -> bool:
@@ -53,6 +65,19 @@ class TaskInfo:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: datetime | None = None
     _cancelled: bool = field(default=False, repr=False)  # 内部取消标志
+    #: ADR-0052：贯穿式取消信号。cancel() 点燃它 → 执行引擎抢占在飞工具，
+    #: 同步 GIS 循环在 checkpoint 处退出。
+    cancel_token: CancellationToken | None = field(default=None, repr=False)
+
+    @property
+    def background_job_ids(self) -> list[str]:
+        """本 task 全部步骤派生的 durable job id（按出现顺序去重）。"""
+        seen: list[str] = []
+        for step in self.steps:
+            for job_id in step.background_job_ids:
+                if job_id not in seen:
+                    seen.append(job_id)
+        return seen
 
 
 class _TrackStepContext:
@@ -135,6 +160,7 @@ class TaskTracker:
             id=task_id,
             session_id=session_id,
             original_request=request,
+            cancel_token=cancellation_registry.register(task_id),
         )
         self._tasks[task_id] = task
 
@@ -187,6 +213,8 @@ class TaskTracker:
         """Remove a task and its bookkeeping; drop now-empty session keys."""
         self._tasks.pop(tid, None)
         self._step_counters.pop(tid, None)
+        # ADR-0052: token 随 task 一起回收，避免 registry 随进程寿命单调增长
+        cancellation_registry.discard(tid)
         for sid, ids in list(self._session_tasks.items()):
             if tid in ids:
                 ids.remove(tid)
@@ -261,13 +289,24 @@ class TaskTracker:
         # 可选：记录失败原因到任务中
 
     def cancel(self, task_id: str) -> bool:
-        """取消任务（cooperative - 不会打断正在执行的 tool）。
+        """取消任务。点燃 CancellationToken，取消随即贯穿整条执行路径。
 
-        审计 M7：cancel 仅设置 _cancelled 标志，由 chat_engine 在每轮/每步
-        之间轮询 is_cancelled 决定是否退出。正在执行的单个 tool（如 NDVI 计算、
-        LLM 流式调用）会跑到自然完成才检查标志。完整 preemptive cancel 需要把
-        asyncio.Event 透传到每个 tool 的 dispatch 路径，是独立重构工作。
-        用户感知：长任务点 cancel 后可能等 30-60s 才真正停。
+        ADR-0052 之前这里只翻一个 bool，chat 引擎在「每轮之间 / 每个工具完成之后」
+        轮询它 —— 正在跑的 NDVI 或缓冲区分析会一路算完（30–60s）才停，CPU 并没有
+        被释放。现在：
+
+          * 执行引擎 ``await token.wait()``，取消到达即 **抢占式** cancel 在飞的
+            asyncio 工具任务（见 execution_engine 的并行 wave 循环）；
+          * token 经 contextvar 传入同步 GIS 代码（asyncio.to_thread 会复制
+            context），长循环在 ``jobs.checkpoint()`` 处协作退出；
+          * 本 turn 派生的 durable job 的**进程内** token 一并点燃，所以同进程的
+            执行体（eager Celery、线程池工具）立即感知。
+
+        注意：跨进程 worker 依赖的是 DB 里的 ``cancel_requested_at``，那需要一次
+        数据库写入，不在本方法职责内 —— 由 Task API 的取消端点负责持久化，worker
+        的看门狗从 DB 读到它。
+
+        幂等：重复取消返回 True 但不重复点燃 token（规范 §5）。
         """
         task = self._tasks.get(task_id)
         if not task:
@@ -276,7 +315,22 @@ class TaskTracker:
         task.status = TaskStatus.cancelled
         task._cancelled = True
         task.finished_at = datetime.now(timezone.utc)
+        token = task.cancel_token or cancellation_registry.register(task_id)
+        task.cancel_token = token
+        token.cancel("cancelled by user")
+        # 级联到本 turn 派生的 durable job（仅进程内 token；持久化见上方说明）
+        for job_id in task.background_job_ids:
+            cancellation_registry.cancel(job_id, "parent agent task cancelled")
         return True
+
+    def cancel_token_for(self, task_id: str) -> CancellationToken | None:
+        """取回 task 的取消 token（工具管道用它绑定执行上下文）。"""
+        task = self._tasks.get(task_id)
+        if task is None:
+            return None
+        if task.cancel_token is None:
+            task.cancel_token = cancellation_registry.register(task_id)
+        return task.cancel_token
 
     def is_cancelled(self, task_id: str) -> bool:
         """检查任务是否已取消"""

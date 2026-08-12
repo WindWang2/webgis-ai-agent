@@ -7,6 +7,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 from app.tools.registry import ToolRegistry, tool
 from app.services.spatial_tasks import run_ndvi_analysis
+from app.services.jobs.submit import submit_durable_job
 from app.tools._utils import db_session
 
 logger = logging.getLogger(__name__)
@@ -37,13 +38,20 @@ def register_nature_resource_tools(registry: ToolRegistry):
               "\n关键约束：raster_path 必须是 list_uploaded_data 返回过的路径；任务异步，返回 task_id 后需轮询。"
           ))
     def analyze_vegetation_index(raster_path: str, nir_band: Optional[int] = None, red_band: Optional[int] = None, session_id: Optional[str] = None) -> dict:
-        # 触发 Celery 异步任务
-        task = run_ndvi_analysis.delay(raster_path, nir_band, red_band, session_id)
-        return {
-            "status": "analysis_task_started",
-            "task_id": task.id,
-            "message": "植被指数 (NDVI) 分析任务已启动。这是后台异步计算，完成后结果会自动推送到地图并进入你的资产库。"
-        }
+        # ADR-0052: 重计算走 durable job —— 返回 job_id 让用户能在任务中心看到进度
+        # 并随时取消；幂等键防止双击/重连提交两次同样的分析。
+        return submit_durable_job(
+            celery_task=run_ndvi_analysis,
+            task_type="ndvi",
+            display_name="NDVI 植被指数分析",
+            params={
+                "raster_path": raster_path,
+                "nir_band": nir_band,
+                "red_band": red_band,
+            },
+            task_args=(raster_path, nir_band, red_band, session_id),
+            session_id=session_id,
+        )
 
     @tool(registry, name="list_analysis_assets",
           tier=2, domains=["raster"],

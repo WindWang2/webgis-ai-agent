@@ -5,6 +5,10 @@ import geopandas as gpd
 from shapely.geometry import box, Polygon
 from app.lib.geo_processor.core import GeoAnalysisResult
 from app.lib.geo_processor.core import to_utm_gdf
+# ADR-0052: 协作式取消检查点。cancellable() 在 chunk 边界读一次 contextvar，
+# 未绑定 token 时开销为零；用户取消后长循环立即抛 OperationCancelled 退出，
+# 真正释放 CPU 而不是只改 UI 状态。
+from app.services.jobs.cancellation import cancellable
 
 logger = logging.getLogger(__name__)
 
@@ -260,7 +264,7 @@ def h3_binning(geojson: dict | str, resolution: int | None = None, stat_field: s
             
         # Create Polygons from H3 indices
         polygons = []
-        for h3_id in grouped['h3_index']:
+        for h3_id in cancellable(grouped['h3_index'], every=512):
             # cell_to_boundary returns ((lat, lng), ...)
             boundary = h3.cell_to_boundary(h3_id)
             # shapely expects (lng, lat)

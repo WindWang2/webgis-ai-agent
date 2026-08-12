@@ -224,16 +224,33 @@ async def test_m4_chat_marks_task_failed_on_llm_error(monkeypatch):
 
 # ── M7: task_tracker cancel 文档化 ─────────────────────────────────────
 # 注：本测试检查 docstring 内容（API 文档契约），不是源码结构 inspect。
-# cooperative 取消语义是 cancel() 对外的行为约定，文档化它本身就是需求。
+# cancel() 的取消语义是对外行为约定，文档化它本身就是需求。
+#
+# ADR-0052 之后契约变了：cancel 不再「只是协作式、不打断在跑的 tool」，而是
+# 抢占式 + 协作式混合 —— 点燃 CancellationToken 后，asyncio 侧立即打断在飞任务，
+# 同步 GIS 循环在 checkpoint 处退出。因此本测试改为验证新契约被文档化。
 
 
-def test_m7_cancel_docstring_documents_cooperative_limitation():
-    """M7：cancel() docstring 必须说明 cooperative 限制。"""
+def test_m7_cancel_docstring_documents_cancellation_contract():
+    """M7：cancel() docstring 必须说明取消如何贯穿执行路径。"""
     from app.services.task_tracker import TaskTracker
 
     doc = TaskTracker.cancel.__doc__ or ""
-    assert "cooperative" in doc.lower() or "协作" in doc, (
-        "cancel() docstring 应说明 cooperative 语义"
+    lowered = doc.lower()
+
+    # 协作式部分（GIS 循环在检查点退出）仍然是契约的一半
+    assert "协作" in doc or "cooperative" in lowered or "checkpoint" in lowered, (
+        "cancel() docstring 应说明协作式取消（检查点退出）"
     )
-    # 应提到不会打断正在执行的 tool
-    assert "打断" in doc or "interrupt" in doc.lower() or "preemptive" in doc.lower()
+    # 抢占式部分：取消不再等在跑的 tool 自然结束
+    assert "抢占" in doc or "preemptive" in lowered, (
+        "cancel() docstring 应说明抢占式取消（立即打断在飞任务）"
+    )
+    # 传播机制必须写清楚，否则调用方不知道取消能到多深
+    assert "cancellationtoken" in lowered, (
+        "cancel() docstring 应说明通过 CancellationToken 传播"
+    )
+    # 幂等性是调用方最容易踩的点（重复取消）
+    assert "幂等" in doc or "idempotent" in lowered, (
+        "cancel() docstring 应说明重复取消的幂等语义"
+    )
