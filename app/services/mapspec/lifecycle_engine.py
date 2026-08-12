@@ -173,30 +173,28 @@ class MapSpecLifecycleEngine:
         mutation，避免 lost update。
         """
         async with session_lock_registry.lock(session_id):
-            # 事务快照（deepcopy，避免 in-memory store 的引用别名）：失败时回滚
-            # mapspec + redis layers 到此刻状态。Review P1-1: 此前快照捕获的是
-            # live 引用 + 在 load 之前，导致 rollback 静默 no-op / 半提交残留。
+            # V3 Performance: copy-on-write candidate to eliminate O(sources) deepcopy
+            # for small mutations (SetView/SetLayout). Snapshot is deferred until after
+            # intent dispatch so we can capture ONLY what the intent will touch.
+            # For Redis backend (returns fresh copies), this is zero-copy. For in-memory
+            # backend, shallow copy is enough since we mutate only top-level keys.
             pre_state = await session_data_manager.get_map_state(session_id)
             old_layers_snapshot = copy.deepcopy(pre_state.get("layers", []) or [])
             try:
                 loaded = await self.store.get_mapspec(session_id)
-                old_mapspec_snapshot = copy.deepcopy(loaded) if loaded is not None else None
-                # Deep-copy before mutating: the in-memory session store returns
-                # REFERENCES, so in-place mutation would also mutate the prior
-                # snapshot (aliasing) and mask newly-introduced blocking errors.
-                # The Redis backend already returns fresh copies; deepcopy is a
-                # no-op-equivalent safety there. prior_mapspec stays un-mutated.
-                # Offload the deepcopy: for a large inline-GeoJSON mapspec this is
-                # O(features) and must not block the event loop (REL-07).
                 prior_mapspec = loaded
-                mapspec = (
-                    await asyncio.to_thread(copy.deepcopy, loaded)
-                    if loaded is not None else None
-                )
+                
+                # V3: Defer the deep snapshot until AFTER we know the intent type.
+                # SetView/SetLayout/CheckpointIntent only touch top-level keys, so
+                # a shallow copy + copy-on-write for the touched branch is O(1).
+                # UpsertLayer/RemoveLayer/InitProject touch sources/layers, so we
+                # still need a working copy but can do it offloaded.
+                old_mapspec_snapshot = None  # deferred
+                mapspec = None  # candidate, assigned per intent type
 
                 # 1. 针对未初始化会话自动构建根框架（仅内存；commit 阶段才落盘 —
                 #    Review P2-3: 此前在 reject 前就 save_mapspec，reject 会残留骨架）
-                if not mapspec and not isinstance(intent, (InitProjectIntent, RollbackIntent)):
+                if not loaded and not isinstance(intent, (InitProjectIntent, RollbackIntent)):
                     mapspec = {
                         "version": "1.0",
                         "view": {},
@@ -209,7 +207,7 @@ class MapSpecLifecycleEngine:
                         "thresholds": {"maxFeatures": 50000, "timeoutMs": 30000},
                     }
                     prior_mapspec = None
-                    prior_mapspec = None
+                    old_mapspec_snapshot = None
 
                 # 2. 在内存构建 candidate；记录 deferred redis layer 操作。
                 #    重 IO/CPU 的 process_layer_ingestion 卸载到线程，不阻塞 event loop。
@@ -222,6 +220,8 @@ class MapSpecLifecycleEngine:
                 is_rollback = False
 
                 if isinstance(intent, InitProjectIntent):
+                    # Full spec build, no snapshot needed (nothing to roll back)
+                    old_mapspec_snapshot = None
                     mapspec = {
                         "version": "1.0",
                         "view": intent.view or {},
@@ -235,7 +235,10 @@ class MapSpecLifecycleEngine:
                     }
 
                 elif isinstance(intent, SetViewIntent):
-                    view = mapspec.setdefault("view", {})
+                    # V3 COW: view-only mutation, shallow copy + copy touched branch
+                    old_mapspec_snapshot = loaded  # shallow snapshot (for rollback)
+                    mapspec = {**loaded} if loaded else {}
+                    view = dict(mapspec.get("view", {}))  # copy view branch
                     if intent.center is not None:
                         view["center"] = intent.center
                     if intent.zoom is not None:
@@ -244,8 +247,22 @@ class MapSpecLifecycleEngine:
                         view["pitch"] = intent.pitch
                     if intent.bearing is not None:
                         view["bearing"] = intent.bearing
+                    mapspec["view"] = view
 
                 elif isinstance(intent, UpsertLayerIntent):
+                    # V3 COW: shallow copy + per-branch copy for sources and layers.
+                    # process_layer_ingestion never mutates mapspec in-place (it copies
+                    # existing_entry at pipeline.py:56 before any write). The view update
+                    # suggested_view is an in-place write on mapspec["view"], so we copy
+                    # that branch too. Source entry objects in sources are shared but
+                    # not mutated (only replaced by key). This avoids full deepcopy for
+                    # the rollback snapshot (which just needs the prior reference).
+                    old_mapspec_snapshot = loaded  # prior reference for rollback
+                    mapspec = {**loaded} if loaded else {}
+                    mapspec["sources"] = dict(loaded.get("sources", {})) if loaded else {}
+                    mapspec["layers"] = list(loaded.get("layers", [])) if loaded else []
+                    mapspec["view"] = dict(loaded.get("view", {})) if loaded else {}
+                    
                     session_dir = self.store.get_session_dir(session_id)
                     # 卸载重计算（GeoJSON profiling / raster PNG 渲染）到线程，
                     # 释放 event loop 给其它 session 的 I/O（REL-07）。
@@ -254,14 +271,13 @@ class MapSpecLifecycleEngine:
                         mapspec, intent.layer, intent.source_data, session_dir,
                     )
                     source_id = processed_layer.get("source", "default_source")
-                    mapspec.setdefault("sources", {})[source_id] = source_entry
+                    mapspec["sources"][source_id] = source_entry
 
                     if suggested_view:
-                        mapspec.setdefault("view", {})
                         mapspec["view"]["center"] = suggested_view["center"]
                         mapspec["view"]["zoom"] = suggested_view["zoom"]
 
-                    layers = mapspec.setdefault("layers", [])
+                    layers = mapspec["layers"]
                     updated = False
                     for i, layer in enumerate(layers):
                         if layer.get("id") == processed_layer.get("id"):
@@ -279,22 +295,31 @@ class MapSpecLifecycleEngine:
                     auto_checkpoint = True
 
                 elif isinstance(intent, RemoveLayerIntent):
+                    # V3 COW: layers mutation, shallow copy + new filtered list
+                    old_mapspec_snapshot = loaded
+                    mapspec = {**loaded} if loaded else {}
                     layers = mapspec.get("layers", [])
-                    filtered_layers = [layer for layer in layers if not _should_remove_layer(layer, intent.layer_id)]
-                    mapspec["layers"] = filtered_layers
+                    mapspec["layers"] = [lay for lay in layers if not _should_remove_layer(lay, intent.layer_id)]
                     pending_layer_op = ("remove", intent.layer_id, None)
                     auto_checkpoint = True
 
                 elif isinstance(intent, SetLayoutIntent):
-                    layout = mapspec.setdefault("layout", {})
+                    # V3 COW: layout-only mutation, shallow copy + copy touched branch
+                    old_mapspec_snapshot = loaded
+                    mapspec = {**loaded} if loaded else {}
+                    layout = dict(mapspec.get("layout", {}))  # copy layout branch
                     if intent.legend is not None:
                         layout["legend"] = intent.legend
                     if intent.controls is not None:
                         layout["controls"] = intent.controls
                     if intent.margins is not None:
                         layout["margins"] = intent.margins
+                    mapspec["layout"] = layout
 
                 elif isinstance(intent, CheckpointIntent):
+                    # V3 COW: checkpoint reads but doesn't mutate the spec
+                    old_mapspec_snapshot = loaded
+                    mapspec = loaded  # no mutation, just checkpoint
                     session_dir = self.store.get_session_dir(session_id)
                     ckpt_res = await create_checkpoint(
                         mapspec, session_dir, session_data_manager, intent.checkpoint_id
@@ -303,6 +328,8 @@ class MapSpecLifecycleEngine:
                     ckpt_ref_count = ckpt_res.get("ref_count", 0)
 
                 elif isinstance(intent, RollbackIntent):
+                    # V3 COW: rollback replaces the entire spec
+                    old_mapspec_snapshot = loaded
                     session_dir = self.store.get_session_dir(session_id)
                     rb_res = await rollback_checkpoint(
                         session_dir, intent.checkpoint_id, session_data_manager
@@ -319,7 +346,10 @@ class MapSpecLifecycleEngine:
                     is_rollback = True
 
                 elif isinstance(intent, SetTimeIntent):
-                    time_cfg = mapspec.setdefault("time", {
+                    # V3 COW: time-only mutation, shallow copy + copy touched branch
+                    old_mapspec_snapshot = loaded
+                    mapspec = {**loaded} if loaded else {}
+                    time_cfg = dict(mapspec.get("time", {
                         "enabled": True,
                         "field": "timestamp",
                         "type": "continuous",
@@ -327,7 +357,7 @@ class MapSpecLifecycleEngine:
                         "current": None,
                         "step": 1.0,
                         "speed": 1.0,
-                    })
+                    }))
                     if intent.enabled is not None:
                         time_cfg["enabled"] = intent.enabled
                     if intent.field is not None:
@@ -346,6 +376,7 @@ class MapSpecLifecycleEngine:
                         time_cfg["step"] = intent.step
                     if intent.speed is not None:
                         time_cfg["speed"] = intent.speed
+                    mapspec["time"] = time_cfg
 
                 # 3. Pre-compile 校验。Rollback 不走拒绝逻辑（恢复的是历史合法 spec）。
                 validation = validate_mapspec(mapspec)
