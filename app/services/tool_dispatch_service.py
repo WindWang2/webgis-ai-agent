@@ -161,6 +161,7 @@ class ToolDispatchResult:
     raw_result: Any             # 原始工具返回，供 step 完成追踪使用
     error_msg: Optional[str]    # 仅 status=="error" 时有值
     map_actions: list = field(default_factory=list)  # V3: [{action_id, command, requested}]
+    ref_descriptor: Optional[dict] = None  # V3 Performance: pre-computed alongside geojson_ref
 
 
 # 重复调用拦截的 LLM 提示（独立常量，避免 ok/error 分支误用）
@@ -284,6 +285,19 @@ class ToolDispatchService:
         # 6. event_log 回写 + WS 广播
         await self._record_event(tc, session_id, tool_name, result, geojson_ref)
 
+        # V3 Performance: compute the descriptor once, here, inside the async
+        # dispatch path — this is the ONLY place both call sites (ChatEngine's
+        # execution_engine.py and the Pi bridge's pi_event_mapper.py) can reach
+        # without a redundant async round trip. Fetching it here means
+        # pi_event_mapper never needs asyncio.run() (which would raise inside
+        # the already-running FastAPI event loop and get silently swallowed).
+        ref_descriptor = None
+        if geojson_ref:
+            try:
+                ref_descriptor = await session_data_manager.get_ref_descriptor(session_id, geojson_ref)
+            except Exception:
+                pass  # non-fatal: frontend falls back to full download
+
         return ToolDispatchResult(
             status="ok",
             llm_payload=llm_payload,
@@ -292,6 +306,7 @@ class ToolDispatchService:
             raw_result=result,
             error_msg=None,
             map_actions=map_actions,
+            ref_descriptor=ref_descriptor,
         )
 
     # ── V3: 地图动作 action_id 铸造 ──────────────────────────────────────
