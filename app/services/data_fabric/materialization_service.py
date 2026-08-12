@@ -16,6 +16,7 @@ from app.schemas.data_fabric_schema import QuerySpec, QueryResult
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.errors import MaterializationFailedError
 from app.services.data_fabric.fingerprint import dataset_fingerprint_service
+from app.services.data_fabric.limits import enforce_result_bounds
 from app.services.session_data import session_data_manager
 from app.services.session_data_protocol import is_unavailable_ref
 
@@ -74,6 +75,11 @@ class MaterializationService:
         feature_count = len(query_result.features)
         total_count = query_result.total_count or feature_count
         fingerprint = dataset_fingerprint_service.calculate_data_fingerprint(query_result.features)
+
+        # Resource guard (Section 22): reject an oversized result BEFORE storing
+        # it, so a server that ignores `limit` cannot OOM the process. This
+        # raises ResultTooLargeError with an actionable hint.
+        enforce_result_bounds(query_result.features)
 
         # Store in session_data_manager and retrieve cursor ref_id.
         # A ref exists iff its payload is retrievable: both an exception and the

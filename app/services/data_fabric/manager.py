@@ -17,6 +17,7 @@ from app.schemas.data_fabric_schema import (
 from app.models.data_fabric import DataSourceModel, CatalogItemModel, MaterializationModel
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.errors import MATERIALIZATION_FAILED
+from app.services.data_fabric.limits import enforce_result_bounds
 from app.services.data_fabric.registry import build_adapter
 from app.services.data_fabric.security import DataFabricSecurity
 from app.services.session_data import session_data_manager
@@ -268,6 +269,11 @@ class DataFabricManager:
             "source_id": item.source_id,
             "title": item.title,
         }
+
+        # Resource guard (Section 22): reject oversized results before storing.
+        # Raises ResultTooLargeError with an actionable hint; the route maps it
+        # to HTTP 413.
+        enforce_result_bounds(q_res.features)
 
         fc = {
             "type": "FeatureCollection",

@@ -16,6 +16,7 @@ from app.schemas.data_fabric_schema import (
     QuerySpec,
 )
 from app.services.data_fabric.manager import data_fabric_manager
+from app.services.data_fabric.errors import ResultTooLargeError
 from app.services.data_fabric.security import DataFabricSecurity
 
 logger = logging.getLogger(__name__)
@@ -486,6 +487,9 @@ async def materialize_catalog_item(
         if not res.get("success"):
             return JSONResponse(status_code=503, content=res)
         return res
+    except ResultTooLargeError as e:
+        # Oversized remote result — actionable 413 with the shrink hint.
+        return JSONResponse(status_code=413, content={"success": False, **e.to_dict()})
     except Exception as e:
         logger.error(f"Materialization failed for catalog item '{req.catalog_item_id}': {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
