@@ -106,6 +106,12 @@ class Settings(BaseSettings):
     DATA_FABRIC_MAX_PAGES: int = 200
     DATA_FABRIC_QUERY_TIMEOUT: float = 30.0       # seconds (connect+read budget per request)
     DATA_FABRIC_TOTAL_QUERY_TIMEOUT: float = 120.0  # seconds (whole multi-page operation)
+    # Local-file adapter guard (Section 44). Comma-separated absolute/relative
+    # roots that geoparquet/flatgeobuf/pmtiles local reads must stay within
+    # (symlink-escape defense). Empty = no root enforcement, but sensitive
+    # system dirs (/etc, /proc, …) are always blocked. Add DATA_DIR by default.
+    DATA_FABRIC_LOCAL_FILE_ROOTS: str = "./data"
+    DATA_FABRIC_LOCAL_FILE_MAX_BYTES: int = 1024 * 1024 * 1024  # 1 GiB
 
     # 代理设置
     HTTP_PROXY: Optional[str] = None

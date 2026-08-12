@@ -9,7 +9,13 @@ import struct
 import logging
 from typing import List, Dict, Any
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
-from app.services.data_fabric.security import DataFabricSecurity, make_safe_session
+from app.services.data_fabric.security import (
+    DataFabricSecurity,
+    _local_file_max_bytes_from_settings,
+    _local_file_roots_from_settings,
+    make_safe_session,
+    resolve_safe_local_path,
+)
 from app.schemas.data_fabric_schema import (
     DatasetDescriptor,
     QuerySpec,
@@ -182,6 +188,14 @@ class PMTilesAdapter(GeospatialDataSourceAdapter):
             )
 
         try:
+            # Local-file path guard (Section 44): block traversal / symlink
+            # escape / sensitive-system-dir / oversize reads before opening.
+            if not self.endpoint.startswith(("http://", "https://", "s3://", "minio://")):
+                resolve_safe_local_path(
+                    self.endpoint,
+                    _local_file_roots_from_settings(),
+                    _local_file_max_bytes_from_settings(),
+                )
             with open(self.endpoint, "rb") as f:
                 header_bytes = f.read(HEADER_SIZE)
                 info = self._parse_header_bytes(header_bytes)

@@ -42,6 +42,15 @@ BLOCKED_IPS_EXPLICIT = {
     ipaddress.ip_address("fd00:ec2::254"),     # AWS IMDSv6 metadata
 }
 
+# System directories a geospatial local-file adapter must never read from, even
+# when an internal caller supplies such a path (defense in depth — the public
+# REST API already blocks bare/file: paths at validate_url, but adapters can be
+# constructed programmatically with arbitrary local paths).
+SENSITIVE_SYSTEM_DIRS = (
+    "/etc", "/proc", "/sys", "/dev", "/run", "/boot",
+    "/root", "/var/log", "/usr/lib", "/usr/sbin", "/sbin", "/bin",
+)
+
 # Networks that are private/loopback/link-local and must be blocked.
 BLOCKED_NETWORKS = [
     ipaddress.ip_network("0.0.0.0/8"),          # "this network"
@@ -300,3 +309,68 @@ def make_safe_session(allow_private: bool = False):
     session.mount("http://", adapter)
     session.mount("https://", adapter)
     return session
+
+
+def resolve_safe_local_path(path, allowed_roots=None, max_bytes=None):
+    """Validate a local file path for adapter reads (Section 44).
+
+    Defenses (defense-in-depth — the public REST API already blocks bare/file:
+    paths at ``validate_url``):
+    - rejects empty / non-string paths;
+    - canonicalizes via realpath (collapses ``..`` and resolves symlinks);
+    - blocks reads under sensitive system dirs (``/etc``, ``/proc``, ``~/.ssh``…);
+    - when ``allowed_roots`` is provided, the real path must be under one of
+      them (blocks symlink escape beyond the intended directory);
+    - optional file-size cap.
+
+    Raises ``DataFabricSecurityError`` on violation; returns the resolved
+    ``pathlib.Path`` otherwise.
+    """
+    from pathlib import Path
+
+    if not path or not isinstance(path, str):
+        raise DataFabricSecurityError("empty or invalid local file path")
+    raw = Path(path)
+    real = raw.resolve() if raw.is_absolute() else (Path.cwd() / raw).resolve()
+    real_str = str(real)
+
+    # Always block sensitive system locations + the user's SSH dir.
+    home_ssh = str(Path.home() / ".ssh")
+    blocked = list(SENSITIVE_SYSTEM_DIRS) + [home_ssh]
+    for sens in blocked:
+        if real_str == sens or real_str.startswith(sens + "/"):
+            raise DataFabricSecurityError(
+                f"local file path '{path}' is in a blocked system directory"
+            )
+
+    if allowed_roots:
+        roots = []
+        for r in allowed_roots:
+            rp = Path(r).expanduser()
+            roots.append(str(rp.resolve()))
+        if not any(real_str == rr or real_str.startswith(rr + "/") for rr in roots if rr):
+            raise DataFabricSecurityError(
+                f"local file path '{path}' escapes the allowed roots"
+            )
+
+    if max_bytes is not None and real.exists() and real.is_file():
+        size = real.stat().st_size
+        if size > max_bytes:
+            raise DataFabricSecurityError(
+                f"local file '{path}' size {size} exceeds limit {max_bytes}"
+            )
+    return real
+
+
+def _local_file_roots_from_settings():
+    """Resolve the configured local-file roots list from settings (helper for adapters)."""
+    from app.core.config import settings
+
+    raw = getattr(settings, "DATA_FABRIC_LOCAL_FILE_ROOTS", "") or ""
+    return [r.strip() for r in raw.split(",") if r.strip()]
+
+
+def _local_file_max_bytes_from_settings():
+    from app.core.config import settings
+
+    return int(getattr(settings, "DATA_FABRIC_LOCAL_FILE_MAX_BYTES", 1024 * 1024 * 1024))

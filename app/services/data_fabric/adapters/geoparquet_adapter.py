@@ -9,7 +9,14 @@ import json
 import logging
 from typing import List, Dict, Any
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
-from app.services.data_fabric.security import DataFabricSecurity, make_safe_session
+from app.services.data_fabric.security import (
+    DataFabricSecurity,
+    DataFabricSecurityError,
+    _local_file_max_bytes_from_settings,
+    _local_file_roots_from_settings,
+    make_safe_session,
+    resolve_safe_local_path,
+)
 from app.schemas.data_fabric_schema import (
     DatasetDescriptor,
     QuerySpec,
@@ -280,6 +287,18 @@ class GeoParquetAdapter(GeospatialDataSourceAdapter):
                 returned_count=0,
                 metadata={"exec_time_ms": exec_time_ms(), "source": "remote", "error_type": error_type, "error": msg},
             )
+
+        # Local-file path guard (Section 44): block traversal / symlink escape /
+        # sensitive-system-dir / oversize reads before opening any local file.
+        if self.endpoint and not self.endpoint.startswith(("http://", "https://", "s3://", "minio://")):
+            try:
+                resolve_safe_local_path(
+                    self.endpoint,
+                    _local_file_roots_from_settings(),
+                    _local_file_max_bytes_from_settings(),
+                )
+            except DataFabricSecurityError as se:
+                return _err("SECURITY_BLOCKED", str(se))
 
         # Real file reading if a local path exists and geopandas is available.
         if self.endpoint and os.path.exists(self.endpoint):
