@@ -51,7 +51,7 @@ def _make_project(db, name="p", org_id=1):
         if not exists:
             db.add(Organization(id=org_id, name=f"org{org_id}", slug=f"org{org_id}"))
             db.commit()
-    proj = Project(id=f"proj_{uuid.uuid4().hex[:6]}", name=name, org_id=org_id, status="active")
+    proj = Project(id=f"proj_{uuid.uuid4().hex[:16]}", name=name, org_id=org_id, status="active")
     db.add(proj)
     db.commit()
     return proj

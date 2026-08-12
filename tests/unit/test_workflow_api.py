@@ -41,7 +41,7 @@ def fake_registry(monkeypatch):
 
 def _unique(prefix):
     import uuid
-    return f"{prefix}_{uuid.uuid4().hex[:6]}"
+    return f"{prefix}_{uuid.uuid4().hex[:16]}"
 
 
 def _make_project(name):

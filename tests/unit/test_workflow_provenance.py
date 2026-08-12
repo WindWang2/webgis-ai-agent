@@ -46,7 +46,7 @@ def db_session():
 def _seed_org_project(db, name="p", org_id=1):
     db.add(Organization(id=org_id, name=f"org{org_id}", slug=f"org{org_id}"))
     db.commit()
-    proj = Project(id=f"proj_{uuid.uuid4().hex[:6]}", name=name, org_id=org_id, status="active")
+    proj = Project(id=f"proj_{uuid.uuid4().hex[:16]}", name=name, org_id=org_id, status="active")
     db.add(proj)
     db.commit()
     return proj
@@ -74,7 +74,7 @@ class FakeRegistry:
         # Default: a Fetch-on-Demand vector descriptor, with a reconstructable
         # payload stored under a real ref so resume can read it back.
         payload = {"produced_by": name, "feature_count": 3, "bbox": [0, 0, 1, 1]}
-        ref = f"ref:{name}-{uuid.uuid4().hex[:6]}"
+        ref = f"ref:{name}-{uuid.uuid4().hex[:16]}"
         if session_id:
             from app.services.session_data import session_data_manager
             ref = await session_data_manager.store(session_id, payload, prefix=name)
@@ -278,7 +278,7 @@ def test_resume_rejects_on_stale_input(db_session):
     db = db_session
     proj = _seed_org_project(db)
     ds = ProjectDataset(
-        id=f"ds_{uuid.uuid4().hex[:6]}", project_id=proj.id, name="d",
+        id=f"ds_{uuid.uuid4().hex[:16]}", project_id=proj.id, name="d",
         source_type="upload", source_ref="up_1", crs="EPSG:4326",
         version_fingerprint="fp1")
     db.add(ds)
@@ -313,7 +313,7 @@ def test_resume_rejects_on_stale_input(db_session):
 def test_cross_project_run_blocked(db_session):
     db = db_session
     pa = _seed_org_project(db, "pa", org_id=1)
-    pb = Project(id=f"proj_{uuid.uuid4().hex[:6]}", name="pb", org_id=1, status="active")
+    pb = Project(id=f"proj_{uuid.uuid4().hex[:16]}", name="pb", org_id=1, status="active")
     db.add(pb)
     db.commit()
     wf = _make_workflow(db, pa.id, [{"step_id": "s1", "tool_name": "t_a", "dependencies": []}])
@@ -326,7 +326,7 @@ def test_cross_project_run_blocked(db_session):
 def test_replay_re_authorizes_project(db_session):
     db = db_session
     pa = _seed_org_project(db, "pa", org_id=1)
-    pb = Project(id=f"proj_{uuid.uuid4().hex[:6]}", name="pb", org_id=1, status="active")
+    pb = Project(id=f"proj_{uuid.uuid4().hex[:16]}", name="pb", org_id=1, status="active")
     db.add(pb)
     db.commit()
     wf = _make_workflow(db, pa.id, [{"step_id": "s1", "tool_name": "t_a", "dependencies": []}])
@@ -342,7 +342,7 @@ def test_replay_re_authorizes_project(db_session):
 def test_resume_re_authorizes_project(db_session):
     db = db_session
     pa = _seed_org_project(db, "pa", org_id=1)
-    pb = Project(id=f"proj_{uuid.uuid4().hex[:6]}", name="pb", org_id=1, status="active")
+    pb = Project(id=f"proj_{uuid.uuid4().hex[:16]}", name="pb", org_id=1, status="active")
     db.add(pb)
     db.commit()
     wf = _make_workflow(db, pa.id, [

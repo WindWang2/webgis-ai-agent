@@ -45,7 +45,7 @@ class _Reg:
 def _setup(db):
     db.add(Organization(id=1, name="o", slug="o"))
     db.commit()
-    proj = Project(id=f"proj_{uuid.uuid4().hex[:6]}", name="p", org_id=1, status="active")
+    proj = Project(id=f"proj_{uuid.uuid4().hex[:16]}", name="p", org_id=1, status="active")
     db.add(proj)
     db.commit()
     wf = ProjectService.save_workflow(db, proj.id, WorkflowCreate(

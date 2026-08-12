@@ -48,7 +48,7 @@ def db_session():
 def _seed(db, name="p", org_id=1):
     db.add(Organization(id=org_id, name=f"o{org_id}", slug=f"o{org_id}"))
     db.commit()
-    proj = Project(id=f"proj_{uuid.uuid4().hex[:6]}", name=name, org_id=org_id, status="active")
+    proj = Project(id=f"proj_{uuid.uuid4().hex[:16]}", name=name, org_id=org_id, status="active")
     db.add(proj)
     db.commit()
     return proj
@@ -113,7 +113,7 @@ def test_run_fingerprint_stable_with_inter_step_bindings(db_session):
 # ── consumers traversal correctness + tenant filter ──────────────────────────
 
 def _art(db, project_id, name):
-    a = Artifact(id=f"art_{uuid.uuid4().hex[:6]}", project_id=project_id,
+    a = Artifact(id=f"art_{uuid.uuid4().hex[:16]}", project_id=project_id,
                  name=name, artifact_type="analysis")
     db.add(a)
     db.commit()
@@ -138,13 +138,13 @@ def test_consumers_cross_tenant_filtered(db_session):
     p1 = _seed(db, "p1", org_id=1)
     db.add(Organization(id=2, name="o2", slug="o2"))
     db.commit()
-    p2 = Project(id=f"proj_{uuid.uuid4().hex[:6]}", name="p2", org_id=2, status="active")
+    p2 = Project(id=f"proj_{uuid.uuid4().hex[:16]}", name="p2", org_id=2, status="active")
     db.add(p2)
     db.commit()
     a = _art(db, p1.id, "a")
     foreign = _art(db, p2.id, "x")
     # Directly inject a cross-tenant consumer edge (a -> foreign).
-    db.add(ArtifactLineage(id=f"lin_{uuid.uuid4().hex[:6]}", artifact_id=foreign.id,
+    db.add(ArtifactLineage(id=f"lin_{uuid.uuid4().hex[:16]}", artifact_id=foreign.id,
                            parent_artifact_id=a.id, producing_tool="leak"))
     db.commit()
     graph = LineageService.get_lineage_graph(db, a.id, max_depth=5, project_id=p1.id)
