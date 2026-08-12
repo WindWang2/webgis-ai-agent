@@ -33,7 +33,7 @@ def test_create_and_get_project():
     # List Projects
     list_res = client.get("/api/v1/projects")
     assert list_res.status_code == 200
-    assert any(p["id"] == proj_id for p in list_res.json())
+    assert any(p["id"] == proj_id for p in list_res.json()["items"])
 
 
 def test_attach_and_detach_dataset():
@@ -56,7 +56,7 @@ def test_attach_and_detach_dataset():
     # List Datasets
     ds_list = client.get(f"/api/v1/projects/{proj_id}/datasets")
     assert ds_list.status_code == 200
-    assert len(ds_list.json()) == 1
+    assert len(ds_list.json()["items"]) == 1
 
     # Detach Dataset
     detach_res = client.delete(f"/api/v1/projects/{proj_id}/datasets/{ds_id}")
@@ -64,7 +64,7 @@ def test_attach_and_detach_dataset():
 
     # Verify List Empty
     ds_list_after = client.get(f"/api/v1/projects/{proj_id}/datasets")
-    assert len(ds_list_after.json()) == 0
+    assert len(ds_list_after.json()["items"]) == 0
 
 
 def test_spatial_quality_and_repair_api():

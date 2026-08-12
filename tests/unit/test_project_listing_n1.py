@@ -81,7 +81,7 @@ def test_list_project_artifacts_query_count_is_constant(db_session, project_with
     proj = project_with_artifacts
 
     artifacts, n_queries = _count_queries(
-        db, lambda: ProjectService.list_project_artifacts(db, proj.id)
+        db, lambda: ProjectService.list_project_artifacts(db, proj.id)[0]
     )
     assert len(artifacts) == 20
     # 20 artifacts × ~3 lazy relationship queries each would be ~60+ queries.
@@ -109,7 +109,7 @@ def test_list_project_workflows_and_runs_eager_loaded(db_session, project_with_a
     db.commit()
 
     runs, n_queries = _count_queries(
-        db, lambda: ProjectService.list_workflow_runs(db, proj.id)
+        db, lambda: ProjectService.list_workflow_runs(db, proj.id)[0]
     )
     assert len(runs) == 10
     # Constant query count regardless of N (auth check + join query + 2 selectin

@@ -12,11 +12,13 @@ class TestLayerFetchAbort:
         """The geojson_ref fetch must pass an AbortSignal so it can be cancelled."""
         source = _read_source()
 
-        # Find the geojson_ref fetch block
-        fetch_match = re.search(r"fetch\(`\$\{API_BASE\}/api/v1/layers/data/\$\{fetchRef\}", source)
-        assert fetch_match, "Could not find geojson_ref fetch call"
+        # The geojson_ref fetch now goes through apiFetch (transport helper) with
+        # an encodeURIComponent'd ref (H14 + Data Plane). Find the block by the
+        # data endpoint path and verify an AbortSignal is passed to it.
+        fetch_match = re.search(r"api/v1/layers/data/\$\{encodeURIComponent\(fetchRef\)\}", source)
+        assert fetch_match, "Could not find geojson_ref fetch call (apiFetch encodeURIComponent path)"
 
-        # Get surrounding context (200 chars after the fetch URL)
+        # Get surrounding context (300 chars after the fetch URL)
         context_start = fetch_match.start()
         context = source[context_start:context_start + 300]
 

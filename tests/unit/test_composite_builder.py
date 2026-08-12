@@ -47,7 +47,8 @@ def test_composite_builder_preset_combinations():
     mapspec = builder.assemble({"preset": "cyber_dark"})
 
     assert mapspec["basemap"]["providerId"] == "carto-dark"
-    assert mapspec["layout"]["paperSize"] == "A4"
+    # tmpl_ly_dark_report is defined as A3 landscape (暗色主题 A3 横向版式).
+    assert mapspec["layout"]["paperSize"] == "A3"
 
 
 def test_combine_map_theme_tool_execution():
