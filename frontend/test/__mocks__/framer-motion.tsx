@@ -24,3 +24,6 @@ export const motion = new Proxy({}, {
 })
 
 export const AnimatePresence = ({ children }: { children: React.ReactNode }) => <>{children}</>
+
+// 透传：不执行动画相关逻辑（reducedMotion 等配置 prop 直接剥离）。
+export const MotionConfig = ({ children }: { children: React.ReactNode }) => <>{children}</>

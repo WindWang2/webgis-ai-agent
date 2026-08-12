@@ -63,7 +63,18 @@ if (typeof HTMLCanvasElement !== 'undefined') {
     } as any;
   };
   HTMLCanvasElement.prototype.toDataURL = function () {
-    return 'data:image/png;base64,iVBORw0KGgoAAAANSU5EUgAAAAIAAAACCAYAAABytg0kAAAAC0lEQVR4XmNgQAcAABIAAQu7JJwAAAAASUVORK5CYII=';
+    return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAC0lEQVR4XmNgQAcAABIAAQu7JJwAAAAASUVORK5CYII=';
   };
 }
+
+// jsdom 不做布局计算，offsetParent 恒为 null，而共用焦点工具
+// （lib/utils/focus.ts）以 `offsetParent !== null` 过滤可见元素 ——
+// 不垫一层的话 useDialogFocus 的 Tab 围栏在测试里永远找不到可聚焦元素。
+// 按 display:none / hidden 之外的元素返回 body，语义与浏览器一致。
+Object.defineProperty(HTMLElement.prototype, 'offsetParent', {
+  configurable: true,
+  get(this: HTMLElement) {
+    return this.style.display === 'none' || this.hidden ? null : document.body;
+  },
+});
 

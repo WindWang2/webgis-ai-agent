@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useState } from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { SessionSummary } from '@/lib/store/hud-types';
 
@@ -34,11 +34,11 @@ describe('HistoryDrawer keyboard focus trap', () => {
         open
         onClose={vi.fn()}
         onSelect={vi.fn()}
-        accentColor="#0ea5e9"
       />,
     );
 
     const panel = await screen.findByRole('dialog');
+    await waitForInitialFocus();
     const focusables = getTabbable(panel);
     expect(focusables.length).toBeGreaterThanOrEqual(2);
 
@@ -59,11 +59,11 @@ describe('HistoryDrawer keyboard focus trap', () => {
         open
         onClose={vi.fn()}
         onSelect={vi.fn()}
-        accentColor="#0ea5e9"
       />,
     );
 
     const panel = await screen.findByRole('dialog');
+    await waitForInitialFocus();
     const focusables = getTabbable(panel);
 
     focusables[0].focus();
@@ -85,12 +85,12 @@ describe('HistoryDrawer keyboard focus trap', () => {
           open
           onClose={vi.fn()}
           onSelect={vi.fn()}
-          accentColor="#0ea5e9"
         />
       </div>,
     );
 
     const panel = await screen.findByRole('dialog');
+    await waitForInitialFocus();
     const panelFocusables = getTabbable(panel);
     const backgroundButton = screen.getByText('背景按钮');
 
@@ -108,7 +108,7 @@ describe('HistoryDrawer keyboard focus trap', () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
     render(
-      <HistoryDrawer open onClose={onClose} onSelect={vi.fn()} accentColor="#0ea5e9" />,
+      <HistoryDrawer open onClose={onClose} onSelect={vi.fn()} />,
     );
 
     await screen.findByRole('dialog');
@@ -119,11 +119,13 @@ describe('HistoryDrawer keyboard focus trap', () => {
 
   it('moves focus into the search input when opened', async () => {
     render(
-      <HistoryDrawer open onClose={vi.fn()} onSelect={vi.fn()} accentColor="#0ea5e9" />,
+      <HistoryDrawer open onClose={vi.fn()} onSelect={vi.fn()} />,
     );
 
     const search = await screen.findByLabelText('搜索历史会话');
-    expect(document.activeElement).toBe(search);
+    // useDialogFocus（与全站其他 dialog 共用的 hook）初始聚焦带 50ms 延迟，
+    // 需等待焦点落位；断言本身不变。
+    await waitFor(() => expect(document.activeElement).toBe(search));
   });
 
   it('restores focus to the previously-focused element when closed', async () => {
@@ -136,7 +138,6 @@ describe('HistoryDrawer keyboard focus trap', () => {
             open={open}
             onClose={() => setOpen(false)}
             onSelect={vi.fn()}
-            accentColor="#0ea5e9"
           />
         </>
       );
@@ -154,7 +155,7 @@ describe('HistoryDrawer keyboard focus trap', () => {
   it('closes when the backdrop is clicked', async () => {
     const onClose = vi.fn();
     render(
-      <HistoryDrawer open onClose={onClose} onSelect={vi.fn()} accentColor="#0ea5e9" />,
+      <HistoryDrawer open onClose={onClose} onSelect={vi.fn()} />,
     );
 
     await screen.findByRole('dialog');
@@ -169,10 +170,18 @@ describe('HistoryDrawer keyboard focus trap', () => {
 // 工具：获取容器内 tab 顺序的可聚焦元素（与浏览器 Tab 行为一致）。
 // 注意：jsdom 不计算布局，getClientRects() 恒为空，故不能用可见性过滤 —— 这里只按
 // 选择器与 DOM 顺序返回，符合浏览器对可见元素的默认 Tab 顺序。
-// 选择器必须与生产代码 history-drawer.tsx::getTabbableIn 完全一致（含 input[type=hidden]
-// 排除），否则测试不会覆盖生产代码所做的过滤。
+// 选择器必须与生产代码 lib/utils/focus.ts 的 FOCUSABLE_SELECTOR 完全一致
+// （含 input[type=hidden] 排除），否则测试不会覆盖生产代码所做的过滤。
 function getTabbable(container: HTMLElement): HTMLElement[] {
   const selector =
     'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
   return Array.from(container.querySelectorAll<HTMLElement>(selector));
+}
+
+// 共用 hook（useDialogFocus）的初始聚焦带 50ms 延迟：测试手动接管焦点前先等
+// 自动聚焦落位，否则延迟聚焦会在测试执行中途触发、与焦点断言竞态
+// （全量跑测试时更慢，更容易触发）。
+async function waitForInitialFocus() {
+  const search = await screen.findByLabelText('搜索历史会话');
+  await waitFor(() => expect(document.activeElement).toBe(search));
 }

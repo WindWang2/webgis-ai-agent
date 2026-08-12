@@ -21,4 +21,7 @@ const motion = new Proxy({}, {
 
 const AnimatePresence = ({ children }) => React.createElement(React.Fragment, null, children)
 
-export { motion, AnimatePresence }
+// 透传：不执行动画相关逻辑（reducedMotion 等配置 prop 直接剥离）。
+const MotionConfig = ({ children }) => React.createElement(React.Fragment, null, children)
+
+export { motion, AnimatePresence, MotionConfig }
