@@ -128,7 +128,9 @@ def register_plan_mode_tools(registry: ToolRegistry):
         name="get_plan_status",
         tier=1,
         description=(
-            "查询一个已提交计划的当前状态：pending(待审) / running / completed / failed / cancelled。"
+            "查询一个已提交计划的当前状态。状态词表：pending(待审) / running(执行中) / "
+            "partially_completed(部分完成，可恢复执行) / completed / failed / "
+            "cancelled(已取消，拒绝恢复) / superseded(已被新计划取代)。"
             "用于在长时计划执行后回看哪一步失败 / 检查计划是否已经跑过避免重复执行。"
         ),
         param_descriptions={"plan_id": "propose_plan 返回的 plan_id"},

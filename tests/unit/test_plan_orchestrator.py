@@ -9,7 +9,7 @@ from app.services.chat.plan_orchestrator import (
     parse_plan,
     should_plan,
 )
-from app.services.planning import FollowUpKind, PlanStatus
+from app.services.planning import FollowUpKind, PlanStatus, TERMINAL_STATUSES
 from app.services.planning.store import plan_store
 
 
@@ -56,27 +56,32 @@ def test_orchestrator_step_advancement():
         domains=["statistics"],
         steps=[
             PlanStep(n=1, goal="计算热点", tool_family="statistics"),
-            PlanStep(n=2, goal="生成地图", tool_family="core"),
+            PlanStep(n=2, goal="做缓冲", tool_family="core"),
         ],
     )
     orchestrator.set_plan(session_id, plan)
 
-    # Mock registry
+    # Mock registry（带 list_tools：P1-A 限定通配需要"已注册"判定）
     class MockRegistry:
         def metadata(self, name):
             if name == "hotspot_analysis":
                 return {"domains": ["statistics"]}
-            return {"domains": ["core"]}
+            if name == "buffer_analysis":
+                return {"domains": []}
+            return {"domains": []}
+
+        def list_tools(self):
+            return ["hotspot_analysis", "buffer_analysis"]
 
     reg = MockRegistry()
 
-    # Advance step 1
+    # Advance step 1（domain 重叠）
     step_n = orchestrator.advance_step(session_id, "hotspot_analysis", reg)
     assert step_n == 1
     assert plan.steps[0].done is True
 
-    # Advance step 2
-    step_n2 = orchestrator.advance_step(session_id, "webgis_layer_upsert", reg)
+    # Advance step 2（core 限定通配：已注册 ∧ 非展示类 的分析工具打勾）
+    step_n2 = orchestrator.advance_step(session_id, "buffer_analysis", reg)
     assert step_n2 == 2
     assert plan.steps[1].done is True
 
@@ -331,3 +336,82 @@ def test_capability_validation_nulls_family_with_no_registered_tool():
     assert plan.steps[0].tool_family == "statistics"  # 有工具支撑 → 保留
     assert plan.steps[1].tool_family is None          # 无工具支撑 → None
     orch.clear_plan(sid)
+
+
+# ─── P2-5：get_plan 热缓存路径的终态过滤 ──────────────────────
+
+
+def test_get_plan_warm_cache_filters_terminal_plan():
+    """P2-5：本轮 flush 把 canonical 算成 completed 后，下轮 get_plan 不得再把
+    它当活跃计划返回（进程内"已完成即失效"，与 restore 冷路径一致）。"""
+    orch = AgentPlanOrchestrator()
+    sid = "sess-term-warm"
+    plan = Plan(
+        intent="x", domains=["core"],
+        steps=[PlanStep(n=1, goal="a", tool_family="core")],
+    )
+    orch.set_plan(sid, plan)
+    assert orch.get_plan(sid) is not None
+
+    class Reg:
+        def metadata(self, name):
+            return {"domains": ["core"]}
+        def list_tools(self):
+            return ["buffer_analysis"]
+
+    # 打勾全部步骤 + flush → canonical 变 completed
+    assert orch.advance_step(sid, "buffer_analysis", Reg()) == 1
+    # 手动完成 canonical（模拟 flush 的 recompute_status 效果）
+    canon = orch._canonical.get(sid)
+    from app.services.planning import StepStatus
+    for s in canon.steps:
+        s.status = StepStatus.completed
+    canon.status = canon.recompute_status()
+    assert canon.status in TERMINAL_STATUSES  # completed
+
+    assert orch.get_plan(sid) is None  # 热缓存路径同样终态过滤
+    orch.clear_plan(sid)
+
+
+# ─── P1-B(3)：make_plan 在 canonical 缓存未命中时回落到 store ─────
+
+
+@pytest.mark.asyncio
+async def test_make_plan_supersedes_after_process_cache_miss(monkeypatch):
+    """P1-B(3)：_canonical 缓存未命中（evicted / 重启后的新 worker）时，
+    make_plan 的 supersede 判定必须回落到 store 的当前计划——否则新 worker
+    会静默 overwrite 掉更新计划而不是把它 supersede。"""
+    from app.services.chat import planner as planner_mod
+    from app.services.chat.llm_client import LLMConfig
+
+    monkeypatch.setattr("app.services.chat.plan_orchestrator._get_registry", lambda: None)
+
+    orch = AgentPlanOrchestrator()
+    sid = "sess-cache-miss"
+    cfg = LLMConfig(base_url="http://x", model="m", api_key="k")
+    responses = iter([
+        '{"intent":"旧计划","domains":["raster"],"steps":[{"n":1,"goal":"NDVI","tool_family":"raster"}]}',
+        '{"intent":"新计划","domains":["network"],"steps":[{"n":1,"goal":"路线","tool_family":"network"}]}',
+    ])
+
+    async def fake_call_llm(_cfg, _messages, _tools=None):
+        return {"choices": [{"message": {"content": next(responses)}}]}
+
+    monkeypatch.setattr(planner_mod, "call_llm", fake_call_llm)
+
+    old = await orch.make_plan(cfg, sid, "算一下 NDVI", "[环境感知]")
+    assert old is not None
+    old_canon = await plan_store.load_current(sid)
+    old_id = old_canon.plan_id
+
+    # 模拟 worker 重启/缓存被逐出：全新 orchestrator（空 canonical 缓存）
+    fresh = AgentPlanOrchestrator()
+    new = await fresh.make_plan(cfg, sid, "换成查路线", "[环境感知]")
+    assert new is not None and new.intent == "新计划"
+
+    # 旧计划被 superseded（而不是被静默覆盖后无从查起）
+    hist = await plan_store.get_by_id(sid, old_id)
+    assert hist is not None
+    assert hist.status == PlanStatus.superseded
+    assert (await plan_store.load_current(sid)).plan_id != old_id
+    await plan_store.clear(sid)

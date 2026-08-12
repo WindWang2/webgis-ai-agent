@@ -8,8 +8,10 @@ design-v3 收敛（本切片）：
   本模块的 ``Plan``/``PlanStep`` dataclass 退化为它的**投影**（compatibility
   projection），``get_plan``/``set_plan``/``clear_plan``/``make_plan``/
   ``advance_step``/``should_plan`` 保持原签名与返回类型。
-- ``advance_step`` 移除 ``"core"`` 通配（R1）：只有真实 domain 重叠才打勾；
-  使用与 tool_dispatch_service 一致的规范化工具名做 domain 查找（R6/R7）。
+- ``advance_step`` 的 ``"core"`` 通配改为**限定通配**（P1-A）：core 步骤只在
+  调用工具已注册且非展示类（PRESENTATION_TOOLS：样式/视图/交互工具）时打勾，
+  或工具的声明 domains 与 plan.domains 有交集；使用与 tool_dispatch_service
+  一致的规范化工具名做 domain 查找（R6/R7）。幻觉/未注册工具与样式工具绝不打勾。
 - ``parse_plan`` 逐字段防御（R4）：``n`` 强转、``tool_family`` 校验（非法 →
   None，步骤保留）、步骤数上限 MAX_PLAN_STEPS。
 - ``should_plan`` 接受可选的 ``followup_kind``（followup.py 分类结果）：
@@ -53,6 +55,31 @@ VALID_DOMAINS: Set[str] = set(DOMAIN_KEYWORDS) | {"core"}
 
 # R4: 单计划步骤数硬上限（prompt 里的 5 步只是软约束，代码层强制 8）
 MAX_PLAN_STEPS = 8
+
+# P1-A（R1-qualified）：core 通配的**展示类工具排除集**。
+# 生产注册表里 0/149 个工具声明 domain "core"（149 个里有 86 个 tier-1 分析
+# 工具干脆不声明任何 domain），而规划 prompt 让 LLM 对最常见的步骤发
+# tool_family:"core"——所以 core 步骤必须用「已注册 ∧ 非展示类」的限定通配
+# 打勾，否则样式/视图/交互类工具（webgis_layer_upsert、缩放/飞行/视角工具、
+# 样式设置器…）会把用户"换个颜色"这类纯展示操作误打成分析步骤。
+# 本集合从实际展示工具清单手工整理（app/tools/map_view.py、layer_manager.py、
+# cartography.py、cartography_tools.py），保持显式、小、可审计。
+PRESENTATION_TOOLS: frozenset[str] = frozenset({
+    # 视图 / 相机控制（map_view.py + webgis_view_set）
+    "fly_to_location", "zoom_to_bbox", "zoom_to_layer", "reset_map_view", "set_map_view",
+    "webgis_view_set",
+    # 图层展示 / 样式 / 交互（layer_manager.py）
+    "alias_layer", "inventory_layers", "switch_base_layer", "set_layer_status",
+    "update_layer_appearance", "reorder_layer", "remove_layer",
+    "apply_layer_filter", "display_layer",
+    # MapSpec 制图生命周期 / 版面 / 编译（cartography_tools.py + templates.py）
+    "webgis_layer_upsert", "webgis_layer_remove", "webgis_layout_set",
+    "webgis_project_init", "webgis_state_get", "webgis_source_profile",
+    "webgis_validate", "webgis_compile_maplibre", "webgis_checkpoint",
+    "webgis_rollback", "webgis_runtime_validate", "webgis_map_combine",
+    # 成果导出（cartography.py）
+    "export_thematic_map", "export_batch_maps",
+})
 
 PLANNER_PROMPT = """你是 WebGIS 空间分析任务的规划器。给定用户请求与当前地图状态，
 输出一个简洁的执行计划。只输出 JSON，不要任何解释文字、不要 Markdown 代码围栏。
@@ -187,6 +214,12 @@ def parse_plan(raw: str, registry: object = None) -> Optional[Plan]:
             goal=str(s.get("goal", "")),
             tool_family=_validate_tool_family(s.get("tool_family", "core"), valid_families),
         ))
+    if not steps:
+        # P2-4（adversarial P2-7 zombie plan）：解析出的步骤列表为空
+        # （steps:[] 或全部步骤非法被跳过）→ 视为无计划，绝不返回
+        # 一个"活着的空计划"卡住 should_plan/get_plan 状态机。
+        logger.info(f"[plan_orchestrator] 计划 JSON 步骤列表为空，降级无计划: {text[:200]}")
+        return None
     return Plan(intent=intent.strip(), domains=domains, steps=steps)
 
 
@@ -299,9 +332,17 @@ class AgentPlanOrchestrator:
 
         恢复出的计划若已是终态（completed/failed/cancelled/superseded），
         视为无活跃计划。真正的跨进程/重启恢复走 ``restore_plan``（异步读 store）。
+
+        P2-5：**热缓存路径同样做终态过滤**——本轮 flush 把 canonical 算成
+        completed 后，下轮 get_plan 不得再把它当活跃计划返回（进程内保持
+        "已完成即失效"，与 restore 的冷路径一致）。
         """
         plan = self._plans.get(session_id)
         if plan is not None:
+            canon = self._canonical.get(session_id)
+            if canon is not None and canon.status in TERMINAL_STATUSES:
+                self.clear_plan(session_id)
+                return None
             return plan
         canon = plan_store.peek(session_id)
         if canon is None:
@@ -317,10 +358,15 @@ class AgentPlanOrchestrator:
         """从 plan_store 恢复当前计划（进程重启续接，R5/R10）。
 
         已在本进程 LRU 中则直接返回（不重建投影，保持身份）。恢复出的
-        终态计划视为无活跃计划。
+        终态计划视为无活跃计划（热缓存路径与 get_plan 一样做终态过滤，
+        见 P2-5）。
         """
         cached = self._plans.get(session_id)
         if cached is not None:
+            canon = self._canonical.get(session_id)
+            if canon is not None and canon.status in TERMINAL_STATUSES:
+                self.clear_plan(session_id)
+                return None
             return cached
         canon = await plan_store.load_current(session_id)
         if canon is None:
@@ -333,11 +379,17 @@ class AgentPlanOrchestrator:
         return proj
 
     async def flush(self, session_id: str) -> None:
-        """把本进程 canonical 计划（含步骤 done 状态）持久化到 plan_store。"""
+        """把本进程 canonical 计划（含步骤 done 状态）持久化到 plan_store。
+
+        P1-B(4)：flush 前 bump revision —— canonical 被 advance_step 打勾 /
+        recompute_status 改状态，revision 必须真实递增，否则 tool_metrics 里
+        plan_revision 恒为 1，跨 worker revision guard 也失去意义。
+        """
         canon = self._canonical.get(session_id)
         if canon is None:
             return
         canon.status = canon.recompute_status()
+        canon.bump_revision()
         await plan_store.save(canon)
 
     def set_plan(self, session_id: str, plan: Plan) -> None:
@@ -382,6 +434,16 @@ class AgentPlanOrchestrator:
         self._apply_capability_validation(plan, registry)
 
         prev = self._canonical.get(session_id)
+        if prev is None:
+            # P1-B(3)：进程 _canonical 缓存未命中（evicted / 重启后的新 worker）
+            # 时，supersede 判定必须回落到 store 的当前计划——否则一个刚
+            # 恢复出旧计划/无缓存的 worker 会静默 overwrite 掉更新计划，
+            # 而不是把它 supersede。
+            try:
+                prev = await plan_store.load_current(session_id)
+            except Exception as e:  # noqa: BLE001 store 读失败不阻断规划
+                logger.warning(f"[plan_orchestrator] make_plan 读取 store 当前计划失败: {e}")
+                prev = None
         canon = self._canonical_from_projection(plan, session_id)
         if (
             prev is not None
@@ -460,10 +522,17 @@ class AgentPlanOrchestrator:
         return await planner.make_plan(cfg, session_id, user_message, env_summary)
 
     def advance_step(self, session_id: str, tool_name: str, registry, tool_catalog=None) -> Optional[int]:
-        """把工具调用匹配到第一个未完成的计划步骤并打勾（R1/R6/R7）。
+        """把工具调用匹配到第一个未完成的计划步骤并打勾（R1/R6/R7 + P1-A）。
 
-        - 移除 ``"core"`` 通配：只有调用工具声明 domain 与步骤 tool_family
-          真实重叠才打勾（R1，G-report 实测未知工具/样式工具误打勾）。
+        - 非 core 步骤：只有调用工具声明 domain 与步骤 tool_family 真实重叠
+          才打勾（R1，G-report 实测未知工具/样式工具误打勾）。
+        - **core 步骤（限定通配，P1-A）**：生产注册表没有任何工具声明
+          domain "core"，而 planner prompt 对最常见步骤发 tool_family:"core"，
+          纯 domain 重叠会让 core 步骤永远无法打勾。因此 core 步骤按
+          「工具已注册（先规范化名称）∧ 不在 PRESENTATION_TOOLS 展示类排除集」
+          打勾——成功调用的分析工具（buffer_analysis / clip_layer…）打勾，
+          样式/视图/交互工具与幻觉工具名不打勾；另加一层安全网：工具的
+          声明 domains 与 plan.domains 有交集时也打勾。
         - 使用规范化工具名做 domain 查找（R7：遗留名如 set_layer_style 也能匹配）。
         - 不再调用 ``tool_catalog.decay_sticky_domain``（R8 死代码分支；TTL 衰减
           由 select_schemas 每轮自然进行）。``tool_catalog`` 参数保留仅为签名兼容。
@@ -477,10 +546,27 @@ class AgentPlanOrchestrator:
             tool_domains = set(registry.metadata(norm).get("domains", []))
         except Exception:  # noqa: BLE001 未知工具/registry 异常 → 无 domain → 不打勾
             tool_domains = set()
+        try:
+            registered = norm in set(registry.list_tools())
+        except Exception:  # noqa: BLE001 registry 异常 → 视为未注册
+            registered = False
+        plan_domains = set(plan.domains)
         for idx, step in enumerate(plan.steps):
             if step.done:
                 continue
-            if step.tool_family in tool_domains:
+            if step.tool_family == "core":
+                # P1-A 限定通配：core 步骤只按「已注册 ∧ 非展示类」打勾，或
+                # 工具的声明 domains 与 plan.domains 有交集（额外安全网）。
+                # core 步骤**永远不走**裸 domain 重叠分支——否则一个谎称
+                # core domain 的展示工具仍能误打勾。
+                if (registered and norm not in PRESENTATION_TOOLS) or (
+                    tool_domains & plan_domains
+                ):
+                    step.done = True
+                    if canon is not None and idx < len(canon.steps):
+                        canon.steps[idx].status = StepStatus.completed
+                    return step.n
+            elif step.tool_family in tool_domains:
                 step.done = True
                 if canon is not None and idx < len(canon.steps):
                     canon.steps[idx].status = StepStatus.completed

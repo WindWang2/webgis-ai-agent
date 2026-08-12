@@ -133,7 +133,7 @@ async def test_chat_stream_emits_plan_ready_when_plan_created(engine, monkeypatc
         domains=["core", "chinese"],
         steps=[
             planner_mod.PlanStep(n=1, goal="获取边界", tool_family="chinese"),
-            planner_mod.PlanStep(n=2, goal="出热力图", tool_family="core"),
+            planner_mod.PlanStep(n=2, goal="出热力图", tool_family="core", done=True),
         ],
     )
     async def fake_maybe_plan(self, session_id, message, messages):
@@ -166,7 +166,9 @@ async def test_chat_stream_emits_plan_ready_when_plan_created(engine, monkeypatc
     assert data["intent"] == "测试意图"
     assert data["domains"] == ["core", "chinese"]
     assert len(data["steps"]) == 2
+    # P3-2/P2-6：done 取投影真实状态（step2 已完成 → True），不硬编码 False
     assert data["steps"][0] == {"n": 1, "goal": "获取边界", "tool_family": "chinese", "done": False}
+    assert data["steps"][1] == {"n": 2, "goal": "出热力图", "tool_family": "core", "done": True}
     planner_mod.clear_plan("sess-EV1")
 
 

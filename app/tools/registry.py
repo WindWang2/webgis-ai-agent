@@ -300,6 +300,7 @@ class ToolRegistry:
         token = cache_hit_var.set(False)  # 重置 — 每次 dispatch 都从未命中开始
         start = _time.perf_counter()
         error_cls: Optional[str] = None
+        active_exc: Optional[BaseException] = None
         result: Any = None
         # PERF-01: arg_bytes is a small dict (tool args). A cheap size estimate
         # avoids a full json.dumps on every dispatch just to measure bytes.
@@ -321,6 +322,7 @@ class ToolRegistry:
             result = await self._dispatch_impl(name, arguments, session_id)
         except Exception as e:  # noqa: BLE001
             error_cls = type(e).__name__
+            active_exc = e
             raise
         finally:
             duration_ms = int((_time.perf_counter() - start) * 1000)
@@ -343,6 +345,13 @@ class ToolRegistry:
                     if _canon is not None:
                         plan_id = _canon.plan_id
                         plan_revision = _canon.revision
+                        # P2-10(a)：计划里有 running / 匹配本工具的步骤时填 step_id
+                        # （running = 正在执行的步骤；tool 匹配 = 已绑定的步骤）。
+                        from app.services.planning.models import StepStatus as _StepStatus
+                        for _cs in _canon.steps:
+                            if _cs.status == _StepStatus.running or _cs.tool == name:
+                                step_id = _cs.id
+                                break
                 except Exception:  # noqa: BLE001
                     pass
             if error_cls is not None:
@@ -351,10 +360,15 @@ class ToolRegistry:
                         classify_error as _classify_error,
                         recovery_action_for as _recovery_action_for,
                     )
-                    _code = result.get("code") if isinstance(result, dict) else None
-                    _etype = result.get("error_type") if isinstance(result, dict) else None
-                    _emsg = result.get("message") if isinstance(result, dict) else None
-                    _fc = _classify_error(code=_code, error_type=_etype, message=_emsg)
+                    if active_exc is not None:
+                        # P2-10(b)：异常路径直接分类异常——OperationCancelled 等
+                        # 才能被正确分到 cancelled，而不是落到默认 internal。
+                        _fc = _classify_error(exception=active_exc)
+                    else:
+                        _code = result.get("code") if isinstance(result, dict) else None
+                        _etype = result.get("error_type") if isinstance(result, dict) else None
+                        _emsg = result.get("message") if isinstance(result, dict) else None
+                        _fc = _classify_error(code=_code, error_type=_etype, message=_emsg)
                     failure_class = _fc.value
                     recovery_action = _recovery_action_for(_fc).value
                 except Exception:  # noqa: BLE001

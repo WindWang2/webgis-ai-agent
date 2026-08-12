@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from collections import deque
 from typing import Any, Optional
 
@@ -25,9 +26,39 @@ from pydantic import BaseModel, Field
 
 from app.services.session_data import session_data_manager
 from app.services.planning.deps import MissingRefError, resolve_arg_refs
+from app.services.jobs.cancellation import OperationCancelled
 from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+
+# ─────────────────── 进程内 per-plan 执行锁（P1-C） ───────────────────
+# 把 execute_plan 的「status 检查 → running 写入 → 执行」整段按 plan 串行化，
+# 堵住 check-then-act TOCTOU 双派发（两个并发 execute_plan 同时通过 running
+# 检查后各自 dispatch 一遍）。注意：这是**单 worker 作用域**的 asyncio.Lock
+# （跨进程的原子 plan claim 是 design-v3 明确延后项，见 .planning 文档）。
+# Redis 版 distributed_lock 是 per-session 的，且跨进程 claim 已延后，故此处
+# 使用进程内锁 + 注释声明作用域。
+_PLAN_EXEC_LOCKS: dict[str, asyncio.Lock] = {}
+_PLAN_LOCKS_MAX = 1024
+
+# running 状态超过该秒数视为 crashed（worker 崩溃/被杀），允许 resume。
+_RUNNING_STALE_SECONDS = 300
+
+
+def _get_plan_lock(session_id: str, plan_id: str) -> asyncio.Lock:
+    """取该 (session, plan) 的执行锁（进程内、有界）。"""
+    key = f"{session_id}\0{plan_id}"
+    lock = _PLAN_EXEC_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _PLAN_EXEC_LOCKS[key] = lock
+        if len(_PLAN_EXEC_LOCKS) > _PLAN_LOCKS_MAX:
+            # 淘汰空闲锁（无持有者无等待者），防止长跑进程无限增长。
+            idle = [k for k, lock in _PLAN_EXEC_LOCKS.items() if not lock.locked()][: _PLAN_LOCKS_MAX // 4]
+            for k in idle:
+                _PLAN_EXEC_LOCKS.pop(k, None)
+    return lock
 
 
 # ────────────────────────────── 数据模型 ──────────────────────────────
@@ -207,6 +238,7 @@ async def store_plan(session_id: str, plan: PlanProposal) -> str:
     # execute_plan 的既有调用方）；``partially_completed`` 作为可读/可恢复状态
     # 被 execute_plan 接受（与 failed 同样触发 resume 语义）。
     payload["__status__"] = "pending"
+    payload["__updated_at__"] = time.time()  # P1-C：stale-running 判定依赖它
     return await session_data_manager.store(session_id, payload, prefix="plan")
 
 
@@ -269,18 +301,32 @@ async def update_plan_status(session_id: str, plan_id: str, **updates: Any) -> N
     生成新的 ref_id 而非原地覆盖。所以这里用 overwrite() 把更新后的 dict 写回
     原始 key。内存后端虽然返回的是同一个对象（mutation 会“偶然”可见），但同样
     走 overwrite 以保持两个后端行为一致。
+
+    P0-1（数据丢失防御）：overwrite() 返回 False 说明原始 ref 已被逐出（LRU
+    容量淘汰 / Redis DATA_TTL 过期）或后端降级——此时**重新 mint** 一个新 ref
+    并把旧 plan_id 注册为别名，持有 plan_id 的调用方（load_plan /
+    get_plan_status）仍能经别名寻址到最新 payload（镜像 PlanStore.save 的
+    resilience，见 app/services/planning/store.py:123-141）。绝不静默丢写。
+
+    每次写回都会自动刷新 ``__updated_at__``（stale-running 判定用），除非
+    调用方显式传了该字段。
     """
     plan_data = await load_plan(session_id, plan_id)
     if plan_data is None:
         logger.warning(f"update_plan_status: plan {plan_id} 不存在")
         return
+    updates.setdefault("__updated_at__", time.time())
     plan_data.update(updates)
     overwrite = getattr(session_data_manager, "overwrite", None)
-    if overwrite is not None:
-        await overwrite(session_id, plan_id, plan_data)
-    else:
-        # Backends without overwrite(): fall back to store (in-memory only path).
-        await session_data_manager.store(session_id, plan_data, prefix="plan")
+    if overwrite is not None and await overwrite(session_id, plan_id, plan_data):
+        return
+    # overwrite 失败（ref 被逐出 / 后端降级）→ 重新 mint + 把旧 plan_id 注册为
+    # 别名，保证既有调用方仍读到更新后的 payload。set_alias 缺失的后端（测试
+    # stub）退化为仅 re-mint（尽力而为）。
+    new_ref = await session_data_manager.store(session_id, plan_data, prefix="plan")
+    set_alias = getattr(session_data_manager, "set_alias", None)
+    if set_alias is not None:
+        await set_alias(session_id, new_ref, plan_id)
 
 
 # ─────────────────────────────── 执行引擎 ───────────────────────────────
@@ -313,45 +359,164 @@ async def execute_plan_async(
       可用 keys），不再静默得到 None/""。
     - **失败持久化**：失败时同样写回 ``__step_results__``，供后续 resume 复用。
 
+    P1-C（并发与崩溃恢复）：
+    - 整段执行持有**进程内 per-plan 锁**（status 检查 → running 写入 → 执行
+      串行化），堵住 check-then-act TOCTOU 双派发。作用域为单 worker
+      （跨进程原子 claim 是 design-v3 延后项）。
+    - ``running`` 但 ``__updated_at__`` 陈旧（>300s）→ 视为 crashed，允许 resume。
+    - 终态写入（completed/failed/partially_completed）前重读：绝不覆盖已被
+      superseded / cancelled 的计划。
+    - 工具抛 ``OperationCancelled`` → 写终态 ``cancelled``（terminal），
+      resume 拒绝 cancelled 计划。
+
+    P2-1（失败语义）：
+    - 失败路径有已存结果时写 ``partially_completed``，否则 ``failed``。
+    - 确定性失败（首个未完成步骤 == 上次失败步骤，failure_class 非
+      transient_network）→ 直接返回存储的失败（livelock guard），不重跑。
+    - superseded / legacy 计划且**无已存结果** → success=False + 明确消息。
+
     返回汇总 {plan_id, status, executed, results, failed_step, error}。
     """
+    async with _get_plan_lock(session_id, plan_id):
+        return await _execute_plan_locked(session_id, plan_id, registry)
+
+
+async def _execute_plan_locked(
+    session_id: str,
+    plan_id: str,
+    registry: ToolRegistry,
+) -> dict:
+    """execute_plan_async 的锁内实现（P1-C / P2-1 语义见 execute_plan_async）。"""
     plan_data = await load_plan(session_id, plan_id)
     if plan_data is None:
         return {"success": False, "error": f"找不到 plan_id={plan_id}"}
     status = plan_data.get("__status__", "pending")
     if status == "running":
-        return {"success": False, "error": f"plan {plan_id} 已在执行中"}
+        # P1-C：running 但 updated_at 陈旧（>300s，或字段缺失）→ 视为 crashed，
+        # 允许 resume。旧 payload 无 __updated_at__ → 一律视为 crashed 孤儿。
+        updated_at = plan_data.get("__updated_at__")
+        try:
+            stale = updated_at is None or (time.time() - float(updated_at)) > _RUNNING_STALE_SECONDS
+        except (TypeError, ValueError):
+            stale = True
+        if stale:
+            logger.info(
+                f"[PlanMode] plan {plan_id} 上次运行状态已陈旧（crashed 判定），按可恢复计划继续"
+            )
+        else:
+            return {"success": False, "error": f"plan {plan_id} 已在执行中"}
+    elif status == "cancelled":
+        # P1-C：resume 必须拒绝已取消的计划。
+        return {
+            "success": False,
+            "plan_id": plan_id,
+            "status": "cancelled",
+            "error": f"plan {plan_id} 已取消，拒绝执行",
+            "executed": [],
+            "results": {},
+        }
 
     # 还原 Pydantic 模型用于拓扑排序
     plan = PlanProposal.model_validate({k: v for k, v in plan_data.items() if not k.startswith("__")})
-
-    order = _topological_order(plan)
-    if order is None:
-        await update_plan_status(session_id, plan_id, __status__="failed", __error__="cycle")
-        return {"success": False, "error": "依赖图含环"}
-
-    topo_idx = {sid: i for i, sid in enumerate(order)}
-    step_by_id = {s.id: s for s in plan.steps}
 
     # design-v3 §4：用已存结果播种 step_results（resume 起点）。
     stored_results = plan_data.get("__step_results__")
     step_results: dict[str, Any] = dict(stored_results) if isinstance(stored_results, dict) else {}
 
+    # 先定义辅助闭包（终态写入等），供下方环检查复用。
+    async def _write_terminal(**updates: Any) -> None:
+        """终态写入（P1-C）：写入前重读，绝不覆盖 superseded / cancelled。
+
+        执行中途被 supersede_active_plans 取代 / 被用户取消的计划，其终态是
+        真相；本执行体的 completed / failed 不得把它覆盖回活跃语义。
+        """
+        fresh = await load_plan(session_id, plan_id)
+        cur = (fresh or {}).get("__status__")
+        if cur in ("superseded", "cancelled"):
+            logger.info(
+                f"[PlanMode] plan {plan_id} 已处于 {cur}，跳过终态覆盖 {updates.get('__status__')}"
+            )
+            return
+        await update_plan_status(session_id, plan_id, **updates)
+
+    order = _topological_order(plan)
+    if order is None:
+        await _write_terminal(__status__="failed", __error__="cycle")
+        return {"success": False, "error": "依赖图含环"}
+
+    topo_idx = {sid: i for i, sid in enumerate(order)}
+    step_by_id = {s.id: s for s in plan.steps}
+
     def _ordered_executed() -> list[str]:
         """已执行步骤按拓扑序输出（确定性，不依赖并发完成顺序）。"""
         return sorted(step_results.keys(), key=topo_idx.__getitem__)
 
-    # design-v3 §4：completed / superseded 计划直接返回已存结果，不重放。
-    if status in ("completed", "superseded") or all(
-        s.id in step_results for s in plan.steps
-    ):
+    # design-v3 §4：superseded 计划优先于 completed 判定（存储状态即真相）——
+    # 有已存结果则返回（不重放），无结果则明确失败（P2-3）。
+    if status == "superseded":
+        if not step_results:
+            return {
+                "success": False,
+                "plan_id": plan_id,
+                "status": "superseded",
+                "error": f"plan {plan_id} 已被新计划取代且未执行任何步骤",
+                "executed": [],
+                "results": {},
+            }
         return {
             "success": True,
             "plan_id": plan_id,
-            "status": status if status in ("completed", "superseded") else "completed",
+            "status": "superseded",
             "executed": _ordered_executed(),
             "results": step_results,
         }
+    # completed 或全部步骤已有结果 → 直接返回已存结果，不重放。
+    if status == "completed" or all(s.id in step_results for s in plan.steps):
+        return {
+            "success": True,
+            "plan_id": plan_id,
+            "status": "completed",
+            "executed": _ordered_executed(),
+            "results": step_results,
+        }
+
+    # P2-2 livelock guard：确定性失败（首个未完成步骤 == 上次失败步骤，
+    # 且 failure_class 非 transient_network）→ 直接返回存储的失败，不重跑。
+    if status in ("failed", "partially_completed"):
+        failed_step = plan_data.get("__failed_step__")
+        fc = plan_data.get("__failure_class__")
+        unfinished = [sid for sid in order if sid not in step_results]
+        if (
+            failed_step
+            and fc
+            and fc != "transient_network"
+            and unfinished
+            and unfinished[0] == failed_step
+        ):
+            err = plan_data.get("__error__") or f"步骤 {failed_step!r} 确定性失败"
+            ra = _recovery_action_for_class(fc)
+            logger.info(
+                f"[PlanMode] plan {plan_id} 步骤 {failed_step} 为确定性失败（{fc}），"
+                f"拒绝盲目重跑（livelock guard）"
+            )
+            ret: dict = {
+                "success": False,
+                "plan_id": plan_id,
+                "status": status,
+                "failed_step": failed_step,
+                "tool": step_by_id[failed_step].tool,
+                "error": err,
+                "failure_class": fc,
+                "executed": _ordered_executed(),
+                "results": step_results,
+            }
+            if ra is not None:
+                ret["recovery_action"] = ra
+            return ret
+
+    def _failure_status() -> str:
+        """P2-1：有已存结果 → partially_completed（可读/可恢复）；否则 failed。"""
+        return "partially_completed" if step_results else "failed"
 
     def _fail(
         sid: str,
@@ -412,9 +577,8 @@ async def execute_plan_async(
                 r = resolve_arg_refs(step.args, step_results)
             except MissingRefError as e:
                 hint = str(e)
-                await update_plan_status(
-                    session_id, plan_id,
-                    __status__="failed",
+                await _write_terminal(
+                    __status__=_failure_status(),
                     __failed_step__=sid,
                     __error__=hint,
                     __failure_class__="missing_ref",
@@ -428,9 +592,8 @@ async def execute_plan_async(
                     correction_hint=hint,
                 )
             except Exception as e:  # noqa: BLE001
-                await update_plan_status(
-                    session_id, plan_id,
-                    __status__="failed",
+                await _write_terminal(
+                    __status__=_failure_status(),
                     __failed_step__=sid,
                     __error__=f"args 解析异常: {e}",
                     __step_results__=step_results,
@@ -442,9 +605,8 @@ async def execute_plan_async(
                     recovery_action="replan_remaining",
                 )
             if not isinstance(r, dict):
-                await update_plan_status(
-                    session_id, plan_id,
-                    __status__="failed",
+                await _write_terminal(
+                    __status__=_failure_status(),
                     __failed_step__=sid,
                     __error__=f"args 解析后不是 dict: {type(r).__name__}",
                     __step_results__=step_results,
@@ -485,6 +647,25 @@ async def execute_plan_async(
                     result = t.result()
                 except asyncio.CancelledError:
                     continue  # 外部取消（如引擎关闭），忽略该任务
+                except OperationCancelled as e:
+                    # P1-C：用户取消不是工具故障 —— 写终态 cancelled（terminal），
+                    # 用 logger.info 记录（不是 exception）。走 _write_terminal：
+                    # 若计划已在途中被 superseded，保留 superseded 不被覆盖。
+                    logger.info(f"[PlanMode] plan {plan_id} 执行被取消: {e}")
+                    await _write_terminal(
+                        __status__="cancelled",
+                        __error__=str(e) or "用户取消",
+                        __step_results__=step_results,
+                    )
+                    return {
+                        "success": False,
+                        "plan_id": plan_id,
+                        "status": "cancelled",
+                        "error": f"plan {plan_id} 已取消",
+                        "executed": _ordered_executed(),
+                        "results": step_results,
+                        "failure_class": "cancelled",
+                    }
                 except Exception as e:
                     logger.exception(f"[PlanMode] step {sid} raised")
                     fc, ra = _classify_failure(exception=e)
@@ -525,7 +706,7 @@ async def execute_plan_async(
         if failure is not None:
             sid, err, last_result, fc, ra = failure
             updates: dict[str, Any] = {
-                "__status__": "failed",
+                "__status__": _failure_status(),
                 "__failed_step__": sid,
                 "__error__": err,
                 # design-v3 §4：失败也保留已完成结果，供下次 execute_plan resume。
@@ -533,7 +714,7 @@ async def execute_plan_async(
             }
             if fc is not None:
                 updates["__failure_class__"] = fc
-            await update_plan_status(session_id, plan_id, **updates)
+            await _write_terminal(**updates)
             return _fail(sid, err, last_result, failure_class=fc, recovery_action=ra)
 
         # 波次完成 → 推进依赖图，解锁下一波次
@@ -543,8 +724,7 @@ async def execute_plan_async(
                 if in_degree[nxt] == 0:
                     ready.append(nxt)
 
-    await update_plan_status(
-        session_id, plan_id,
+    await _write_terminal(
         __status__="completed",
         __step_results__=step_results,
     )
@@ -555,6 +735,16 @@ async def execute_plan_async(
         "executed": _ordered_executed(),
         "results": step_results,
     }
+
+
+def _recovery_action_for_class(failure_class: str) -> Optional[str]:
+    """从 failure_class 反查 recovery_action；分类失败返回 None。"""
+    try:
+        from app.services.planning.models import FailureClass as _FC
+        from app.services.planning.recovery import recovery_action_for
+        return recovery_action_for(_FC(failure_class)).value
+    except Exception:  # noqa: BLE001 分类失败不拖垮执行
+        return None
 
 
 def _classify_failure(

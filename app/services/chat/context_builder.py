@@ -278,9 +278,11 @@ def build_last_analysis_context(messages: list[dict]) -> str:
 
     ctx = "[最近对话上下文]\n"
     if last_user_msg:
-        ctx += f"- 用户上一次请求：{last_user_msg}\n"
+        # P2-8（context/token P2）：去重后本块只覆盖历史窗口**之前**的轮次，
+        # "上一次请求/回复"标签有误导性 —— 改成"较早对话摘要"。
+        ctx += f"- 较早对话摘要（用户）：{last_user_msg}\n"
     if last_assistant_msg:
-        ctx += f"- 你上一次回复摘要：{last_assistant_msg}...\n"
+        ctx += f"- 较早对话摘要（助手）：{last_assistant_msg}...\n"
     if data_refs:
         unique_refs = list(dict.fromkeys(data_refs))[-5:]
         ctx += f"- 可复用的数据引用：{', '.join(unique_refs)}\n"

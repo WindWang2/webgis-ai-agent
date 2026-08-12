@@ -29,6 +29,16 @@ REF_REUSE_KEYWORDS = [
     "之前的结果", "上面的", "this result", "that result", "previous result",
 ]
 
+# Query/action signals (adversarial P2-6): a message carrying BOTH a style word
+# and a query/action word plus content (查一下蓝色区域的医院分布) is a real
+# request, NOT a style tweak. These take precedence over STYLE_KEYWORDS when
+# they co-occur, so the classifier never turns a fresh query into a no-op
+# style_change (which would skip planning / re-analysis).
+QUERY_ACTION_KEYWORDS = [
+    "查", "找", "搜索", "查询", "检索", "统计", "分析", "计算", "获取", "读取", "定位",
+    "search", "find", "query", "look", "count", "analyze", "compute", "get", "locate",
+]
+
 
 class FollowUpKind(str, Enum):
     """Classification of a follow-up message (design-v3 §followup)."""
@@ -63,7 +73,8 @@ def classify_followup(
 
     Rules, in priority order:
 
-    1. style keyword AND no new-domain keyword    → style_change
+    1. style keyword AND no new-domain keyword AND no query/action keyword
+       → style_change
     2. ref-reuse keyword AND ``session_has_refs`` → ref_reuse
     3. continuation keyword AND active plan       → continuation
     4. domain keyword outside ``active_domains``  → new_goal
@@ -72,6 +83,11 @@ def classify_followup(
     A "new domain keyword" is a keyword from ``domain_keywords`` whose domain
     is not in ``active_domains`` — style tweaks over the already-active domain
     stay style_change (e.g. 热力图换成蓝色 with statistics active).
+
+    Adversarial P2-6: a message with BOTH style words and query/action signals
+    (查一下蓝色区域的医院分布) must NOT classify as style_change — the query
+    takes precedence so the message falls through to ref_reuse / new_goal /
+    unclear instead of silently skipping planning.
     """
     text = (message or "").lower()
     active = set(active_domains or [])
@@ -84,7 +100,11 @@ def classify_followup(
             has_new_domain = True
             break
 
-    if _has_any_keyword(STYLE_KEYWORDS, text) and not has_new_domain:
+    if (
+        _has_any_keyword(STYLE_KEYWORDS, text)
+        and not has_new_domain
+        and not _has_any_keyword(QUERY_ACTION_KEYWORDS, text)
+    ):
         return FollowUpKind.style_change
     if session_has_refs and _has_any_keyword(REF_REUSE_KEYWORDS, text):
         return FollowUpKind.ref_reuse

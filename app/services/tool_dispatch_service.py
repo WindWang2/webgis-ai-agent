@@ -167,6 +167,15 @@ class ToolDispatchResult:
 # 重复调用拦截的 LLM 提示（独立常量，避免 ok/error 分支误用）
 _REPEAT_LLMPAYLOAD = "[重复调用拦截] {tool} 已在本任务中以相同参数成功执行，结果已生效。请直接基于既有结果汇报，不要再次调用。"
 
+# 并发在飞去重（adversarial P2-9 / recovery P2）：同一波次出现两条相同调用时，
+# 原调用可能仍在执行中——此时**绝不谎报"已成功执行"**。软化措辞：告知原调用
+# 已发起，让 LLM 以原调用的结果为准。原调用完成后（_completed_keys 命中）仍走
+# 上面的成功语义消息（post-success dedup 文案不变）。
+_REPEAT_INFLIGHT_LLMPAYLOAD = (
+    "[重复调用拦截] {tool} 的同参数调用已在本任务中发起（原调用仍在执行中），"
+    "请以原调用的结果为准并据此汇报，不要重复调用。"
+)
+
 
 class ToolDispatchService:
     """工具调度的单一拥有者。两条 agent 路径都应经由本服务。"""
@@ -185,6 +194,12 @@ class ToolDispatchService:
         # adds. Lock is held only for the microsecond check-and-add, released
         # before the heavy registry dispatch, so it never serializes execution.
         self._dedup_lock = asyncio.Lock()
+        # P2-9（adversarial P2-9 / recovery P2）：已完成（非在飞）的同参调用集合。
+        # 重复命中时若 key ∈ _completed_keys → post-success 语义（原文案）；
+        # 否则视为"并发在飞"→ 不谎报成功的软化文案。有界：超限整体清空只会
+        # 把个别后序重复从"成功文案"降级为"在飞文案"，去重本身不受影响。
+        self._completed_keys: set[tuple[str, str]] = set()
+        self._COMPLETED_KEYS_MAX = 4096
 
     async def dispatch(
         self,
@@ -210,7 +225,11 @@ class ToolDispatchService:
         tool_key = (tool_name, normalize_tool_args(tool_args_raw))
         async with self._dedup_lock:
             if tool_key in executed_tools:
-                note = _REPEAT_LLMPAYLOAD.format(tool=tool_name)
+                # P2-9：区分「并发在飞」与「已完成」——在飞时绝不谎报成功。
+                if tool_key in self._completed_keys:
+                    note = _REPEAT_LLMPAYLOAD.format(tool=tool_name)
+                else:
+                    note = _REPEAT_INFLIGHT_LLMPAYLOAD.format(tool=tool_name)
                 return ToolDispatchResult(
                     status="repeated",
                     llm_payload=note,
@@ -227,8 +246,7 @@ class ToolDispatchService:
         except OperationCancelled:
             # ADR-0052：取消上抛给工具管道处理（它会记成「已取消」而非工具故障）。
             # 取消的调用不占用 dedup 槽位（本轮后续重试不被“已成功”谎言拦截）。
-            async with self._dedup_lock:
-                executed_tools.discard(tool_key)
+            self._release_key(executed_tools, tool_key)
             raise
         except Exception as e:
             from app.tools._utils import std_error_response
@@ -239,8 +257,7 @@ class ToolDispatchService:
                 error_type=type(e).__name__,
                 correction_hint=f"Execution error: {error_msg}",
             )
-            async with self._dedup_lock:
-                executed_tools.discard(tool_key)
+            self._release_key(executed_tools, tool_key)
 
         # 2b. V3: 为工具结果中的地图命令铸 action_id（写回 command dict，SSE 携带）。
         map_actions = self._mint_map_action_ids(result)
@@ -248,8 +265,7 @@ class ToolDispatchService:
         # 3. registry 返回 std_error_response dict 的统一错误路径
         if is_error_dict(result):
             # 失败调用不占用 dedup 槽位：同参重试放行，且不会谎报“已成功执行”。
-            async with self._dedup_lock:
-                executed_tools.discard(tool_key)
+            self._release_key(executed_tools, tool_key)
             error_msg = sanitize_error_msg(result.get("message", ""))
             result["message"] = error_msg
             if "correction_hint" in result and result["correction_hint"]:
@@ -309,6 +325,9 @@ class ToolDispatchService:
             except Exception:
                 pass  # non-fatal: frontend falls back to full download
 
+        # P2-9：成功完成 → 标记 completed（后续同参重复走 post-success 文案）。
+        self._mark_completed(tool_key)
+
         return ToolDispatchResult(
             status="ok",
             llm_payload=llm_payload,
@@ -319,6 +338,23 @@ class ToolDispatchService:
             map_actions=map_actions,
             ref_descriptor=ref_descriptor,
         )
+
+    # ── P2-9: dedup 槽位生命周期 ─────────────────────────────────────
+
+    def _release_key(self, executed_tools: set, tool_key: tuple[str, str]) -> None:
+        """失败/取消的调用释放 dedup 槽位（同参可重试），并清掉 completed 标记。
+
+        ``executed_tools.discard`` / ``_completed_keys.discard`` 均为 set 原子
+        操作（GIL），无需持锁；check-and-add 的原子性由 _dedup_lock 保证。
+        """
+        executed_tools.discard(tool_key)
+        self._completed_keys.discard(tool_key)
+
+    def _mark_completed(self, tool_key: tuple[str, str]) -> None:
+        """成功完成的调用标记为 completed（post-success dedup 语义）。"""
+        self._completed_keys.add(tool_key)
+        if len(self._completed_keys) > self._COMPLETED_KEYS_MAX:
+            self._completed_keys.clear()
 
     # ── V3: 地图动作 action_id 铸造 ──────────────────────────────────────
 

@@ -213,7 +213,7 @@ async def test_execute_halts_on_first_failure(registry):
     assert result["failed_step"] == "s2"
     assert result["executed"] == ["s1"]  # s1 跑完，s2 失败，s3（依赖 s2）没跑
     plan_data = await svc.load_plan(sid, plan_id)
-    assert plan_data["__status__"] == "failed"
+    assert plan_data["__status__"] == "partially_completed"  # s1 已成功（P2-1）
     assert plan_data["__failed_step__"] == "s2"
 
 
@@ -285,7 +285,7 @@ async def test_execute_failure_in_wave_keeps_completed_siblings(registry):
     assert "s3" in result["executed"]           # 同波兄弟，先于失败完成
     assert "s2" not in result["executed"]       # 失败步骤不计入
     plan_data = await svc.load_plan(sid, plan_id)
-    assert plan_data["__status__"] == "failed"
+    assert plan_data["__status__"] == "partially_completed"  # s1/s3 已成功（P2-1）
     assert plan_data["__failed_step__"] == "s2"
 
 
@@ -310,7 +310,8 @@ async def test_execute_resume_skips_completed_steps_and_reuses_refs(registry):
     def fake_flaky_hotspot(points: list) -> dict:
         calls["s2"] += 1
         if calls["s2"] == 1:
-            return {"success": False, "code": "TOOL_ERROR", "message": "第一次失败"}
+            # 瞬时网络失败（transient_network）→ 可恢复重试，不触发 livelock guard
+            return {"success": False, "code": "TOOL_ERROR", "message": "网络超时 连接失败"}
         return {"success": True, "data": {"hot_count": len(points), "from": points}}
 
     plan = svc.PlanProposal(
@@ -328,11 +329,12 @@ async def test_execute_resume_skips_completed_steps_and_reuses_refs(registry):
     r1 = await svc.execute_plan_async(sid, plan_id, registry)
     assert r1["success"] is False
     assert r1["failed_step"] == "s2"
+    assert r1["failure_class"] == "transient_network"
     assert r1["executed"] == ["s1"]
     # 失败也持久化了已完成结果（resume 的数据基础）
     data = await svc.load_plan(sid, plan_id)
     assert "s1" in data["__step_results__"]
-    assert data["__status__"] == "failed"
+    assert data["__status__"] == "partially_completed"  # s1 已成功（P2-1）
 
     # resume：s1 跳过（复用结果）、s2 重试成功、s3 执行
     r2 = await svc.execute_plan_async(sid, plan_id, registry)
@@ -367,7 +369,7 @@ async def test_execute_bad_path_ref_fails_with_missing_ref(registry):
     assert "s1" in result["error"]            # 及可用 keys
     assert result["recovery_action"] == "reuse_ref"
     data = await svc.load_plan(sid, plan_id)
-    assert data["__status__"] == "failed"
+    assert data["__status__"] == "partially_completed"  # s1 已成功（P2-1）
     assert data["__failure_class__"] == "missing_ref"
 
 
@@ -392,11 +394,11 @@ async def test_propose_supersedes_old_pending_plan(registry):
     assert old_data["__status__"] == "superseded"
     status = await registry.dispatch("get_plan_status", {"plan_id": p1["plan_id"]}, session_id=sid)
     assert status["status"] == "superseded"
-    # superseded 计划不重放
+    # superseded 计划**从未执行过**（无已存结果）→ 明确失败，不假装成功（P2-3）
     r = await svc.execute_plan_async(sid, p1["plan_id"], registry)
-    assert r["success"] is True
+    assert r["success"] is False
     assert r["status"] == "superseded"
-    assert r["executed"] == []  # 未重新 dispatch 任何步骤
+    assert "取代" in r["error"]
 
 
 # ─── 工具入口集成 ─────────────────────────────────────────────
@@ -466,3 +468,43 @@ async def test_propose_plan_requires_session(registry):
     result = await registry.dispatch("propose_plan", args, session_id=None)
     assert result["success"] is False
     assert "session_id" in result["message"]
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# P2-1 / P2-3 补充：superseded 但有已存结果 → 返回结果（不重放）；失败无结果 → failed
+# ─────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_superseded_plan_with_stored_results_still_returns_them(registry):
+    """superseded 且已执行过部分步骤（有 __step_results__）→ success=True 返回
+    已存结果，不重放；与"从没跑过"的空 superseded（P2-3）区分。"""
+    sid = "sess-plan-super-results"
+    plan = svc.PlanProposal(
+        title="ran-then-superseded",
+        steps=[svc.PlanStep(id="s1", tool="fake_get_bbox", args={"area": "x"})],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+    await svc.execute_plan_async(sid, plan_id, registry)  # 先跑完 → completed
+    await svc.update_plan_status(sid, plan_id, __status__="superseded")  # 再被取代
+    r = await svc.execute_plan_async(sid, plan_id, registry)
+    assert r["success"] is True
+    assert r["status"] == "superseded"
+    assert r["executed"] == ["s1"]  # 结果复用，不重放
+    assert "s1" in r["results"]
+
+
+@pytest.mark.asyncio
+async def test_failure_with_no_results_writes_failed(registry):
+    """第一个步骤就失败（无任何已存结果）→ 状态写 failed（不是 partially_completed）。"""
+    sid = "sess-plan-fail-first"
+    plan = svc.PlanProposal(
+        title="fail-first",
+        steps=[svc.PlanStep(id="s1", tool="fake_always_fail", args={})],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+    r = await svc.execute_plan_async(sid, plan_id, registry)
+    assert r["success"] is False
+    data = await svc.load_plan(sid, plan_id)
+    assert data["__status__"] == "failed"
+    assert data["__failure_class__"] == "internal"

@@ -211,3 +211,50 @@ async def test_spawn_subagent_happy_path(registry):
         )
     assert result["success"] is True
     assert result["summary"] == "完工。"
+
+
+# ─── P2-7（Pi#1/#2）：子代理引擎绝不推进父会话计划 ──────────────
+
+
+@pytest.mark.asyncio
+async def test_subagent_engine_never_advances_parent_plan(registry, monkeypatch):
+    """子代理引擎：is_subagent_engine=True → _maybe_plan 直接返回 None（不触发
+    规划 LLM），_flush_plan 不 flush 父会话计划；_FrozenCatalog 提供
+    reset_sticky / active_domains no-op（否则 _log_tool_decision 崩溃）。"""
+    from app.services.chat import planner as planner_mod
+    from app.services.chat.plan_orchestrator import plan_orchestrator
+
+    dispatcher = SubagentDispatcher(registry, parent_session_id="parent-sess-p27")
+    sub_engine = dispatcher._build_sub_engine(
+        select_tools_for_subagent(registry), max_rounds=5,
+    )
+    assert sub_engine.is_subagent_engine is True
+
+    # 1) _maybe_plan：即使父会话已有活跃计划，子代理也绝不重新规划/触碰
+    parent_plan = planner_mod.Plan(
+        intent="父计划", domains=["statistics"],
+        steps=[planner_mod.PlanStep(n=1, goal="热点", tool_family="statistics")],
+    )
+    planner_mod.set_plan("parent-sess-p27", parent_plan)
+
+    make_plan_calls = {"n": 0}
+    async def fake_make_plan(*a, **k):
+        make_plan_calls["n"] += 1
+        return None
+    monkeypatch.setattr(planner_mod, "make_plan", fake_make_plan)
+    result = await sub_engine._maybe_plan("parent-sess-p27", "复杂请求需要规划的内容", [])
+    assert result is None
+    assert make_plan_calls["n"] == 0
+
+    # 2) _flush_plan：不 flush 父会话计划（即便父计划存在）
+    flush_calls = {"n": 0}
+    async def fake_flush(sid):
+        flush_calls["n"] += 1
+    monkeypatch.setattr(plan_orchestrator, "flush", fake_flush)
+    await sub_engine._flush_plan("parent-sess-p27")
+    assert flush_calls["n"] == 0
+
+    # 3) _FrozenCatalog no-op 方法（引擎会调用的新接口）
+    assert sub_engine.catalog.active_domains("parent-sess-p27") == set()
+    sub_engine.catalog.reset_sticky("parent-sess-p27")  # 不抛异常即通过
+    planner_mod.clear_plan("parent-sess-p27")

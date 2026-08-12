@@ -80,7 +80,7 @@ def env():
         return {"success": True, "data": {"keyword": keyword, "count": count}}
 
     @r.tool(name="buffer_analysis", description="缓冲分析",
-            tier=1, domains=["core"])
+            tier=1, domains=[])
     def buffer_analysis(radius: float, source: dict) -> dict:
         _record("buffer_analysis")
         received["buffer_analysis"] = {"radius": radius, "source": source}
@@ -121,6 +121,14 @@ def env():
         _record("webgis_layer_upsert")
         received["webgis_layer_upsert"] = {"layer_ref": layer_ref, "color": color}
         return {"success": True, "layer_id": f"lyr-{layer_ref}", "color": color}
+
+    # 视图/相机类工具：与真实 map_view.set_map_view 一致，不声明任何 domain。
+    @r.tool(name="set_map_view", description="调整视图",
+            tier=1, domains=[])
+    def set_map_view(zoom: float = 12) -> dict:
+        _record("set_map_view")
+        received["set_map_view"] = {"zoom": zoom}
+        return {"success": True, "command": "set_map_view", "params": {"zoom": zoom}}
 
     return SimpleNamespace(
         registry=r,
@@ -408,7 +416,7 @@ async def test_scenario06_missing_ref_fails_with_hint(env):
     assert "s1" in result["error"]                 # 及可用 step keys
     assert "None" not in str(result["results"])    # 没有任何静默 None 落进结果
     data = await plan_mode_svc.load_plan(sid, plan_id)
-    assert data["__status__"] == "failed"
+    assert data["__status__"] == "partially_completed"  # s1 已成功 → 部分完成（P2-1）
     assert data["__failure_class__"] == "missing_ref"
 
 
@@ -427,7 +435,8 @@ async def test_scenario07_partial_success_resume_reuses_refs(env):
         env.calls["flaky_hotspot"] = env.calls.get("flaky_hotspot", 0) + 1
         s2_received["points"] = points
         if env.calls["flaky_hotspot"] == 1:
-            return {"success": False, "code": "TOOL_ERROR", "message": "第一次失败"}
+            # 瞬时网络失败（transient_network）→ 可恢复重试，不触发 livelock guard
+            return {"success": False, "code": "TOOL_ERROR", "message": "网络超时 连接失败"}
         return {"success": True, "data": {"hot_count": len(points)}}
 
     plan = plan_mode_svc.PlanProposal(
@@ -446,10 +455,11 @@ async def test_scenario07_partial_success_resume_reuses_refs(env):
     r1 = await plan_mode_svc.execute_plan_async(sid, plan_id, env.registry)
     assert r1["success"] is False
     assert r1["failed_step"] == "s2"
+    assert r1["failure_class"] == "transient_network"
     assert r1["executed"] == ["s1"]
     # 失败也持久化了已完成结果（resume 的数据基础）
     data = await plan_mode_svc.load_plan(sid, plan_id)
-    assert data["__status__"] == "failed"
+    assert data["__status__"] == "partially_completed"  # s1 已成功（P2-1）
     assert "s1" in data["__step_results__"]
 
     r2 = await plan_mode_svc.execute_plan_async(sid, plan_id, env.registry)
@@ -655,4 +665,382 @@ async def test_scenario10_terminal_plan_not_resurrected_as_active(env):
     fresh = AgentPlanOrchestrator()
     assert await fresh.restore_plan(sid) is None   # 终态计划不作为活跃计划恢复
     assert fresh.get_plan(sid) is None
+    await plan_store.clear(sid)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# P1-A：core 限定通配（qualified wildcard）——已注册非展示分析工具打勾 core 步骤；
+# 展示类/幻觉工具绝不打勾。fixture 已与生产对齐（tier-1 分析工具 domains=[]）。
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_p1a_core_step_ticks_on_registered_no_domain_analysis_tool(env):
+    """(a) core 步骤：已注册、无 domain 的分析工具（buffer_analysis）必须打勾——
+    生产注册表没有工具声明 core domain，纯 domain 重叠会让 core 步骤永远无法推进。"""
+    orch = AgentPlanOrchestrator()
+    sid = "sess-p1a-tick"
+    plan = Plan(
+        intent="缓冲分析", domains=["core"],
+        steps=[PlanStep(n=1, goal="做缓冲", tool_family="core")],
+    )
+    orch.set_plan(sid, plan)
+    assert env.registry.metadata("buffer_analysis")["domains"] == []  # 与生产一致
+    assert orch.advance_step(sid, "buffer_analysis", env.registry) == 1
+    assert plan.steps[0].done is True
+    orch.clear_plan(sid)
+
+
+def test_p1a_core_step_does_not_tick_on_presentation_tool(env):
+    """(b) core 步骤：展示类工具（webgis_layer_upsert，样式/图层更新）绝不打勾。"""
+    orch = AgentPlanOrchestrator()
+    sid = "sess-p1a-presentation"
+    plan = Plan(
+        intent="缓冲分析", domains=["core"],
+        steps=[PlanStep(n=1, goal="做缓冲", tool_family="core")],
+    )
+    orch.set_plan(sid, plan)
+    assert orch.advance_step(sid, "webgis_layer_upsert", env.registry) is None
+    assert plan.steps[0].done is False
+    # 视图类同样不打勾
+    assert orch.advance_step(sid, "set_map_view", env.registry) is None
+    assert plan.steps[0].done is False
+    orch.clear_plan(sid)
+
+
+def test_p1a_core_step_does_not_tick_on_unregistered_hallucinated_tool(env):
+    """(c) core 步骤：幻觉/未注册工具名绝不打勾。"""
+    orch = AgentPlanOrchestrator()
+    sid = "sess-p1a-halluc"
+    plan = Plan(
+        intent="缓冲分析", domains=["core"],
+        steps=[PlanStep(n=1, goal="做缓冲", tool_family="core")],
+    )
+    orch.set_plan(sid, plan)
+    assert orch.advance_step(sid, "hallucinated_tool_xyz", env.registry) is None
+    assert plan.steps[0].done is False
+    orch.clear_plan(sid)
+
+
+def test_p1a_presentation_tool_normalized_legacy_name_still_excluded(env):
+    """展示类工具经 legacy 名规范化后（set_layer_style → webgis_layer_upsert）
+    依然在排除集内，core 步骤不打勾。"""
+    orch = AgentPlanOrchestrator()
+    sid = "sess-p1a-legacy"
+    plan = Plan(
+        intent="制图", domains=["core"],
+        steps=[PlanStep(n=1, goal="加图层", tool_family="core")],
+    )
+    orch.set_plan(sid, plan)
+    assert orch.advance_step(sid, "set_layer_style", env.registry) is None
+    assert plan.steps[0].done is False
+    orch.clear_plan(sid)
+
+
+def test_p1a_real_registry_metadata_check():
+    """对真实注册表（init_tools）做聚焦元数据检查，防止 fixture/排除集与生产漂移：
+    - 没有任何工具声明 domain "core"（0/149）；
+    - tier-1 分析工具（buffer_analysis）已注册且 domains=[]；
+    - PRESENTATION_TOOLS 里每个名字都是真实注册工具（防打字错误）；"""
+    from app.tools import init_tools as _init_tools
+    from app.services.chat.plan_orchestrator import PRESENTATION_TOOLS
+
+    r = ToolRegistry()
+    _init_tools(r)
+    metas = r.all_metadata()
+    registered = set(r.list_tools())
+    assert "buffer_analysis" in registered
+    assert metas["buffer_analysis"]["domains"] == []
+    # 生产无任何工具声明 core domain（core 通配必须靠 qualified 规则）
+    assert not any("core" in m.get("domains", []) for m in metas.values())
+    unknown = PRESENTATION_TOOLS - registered
+    assert not unknown, f"PRESENTATION_TOOLS 含未注册工具: {sorted(unknown)}"
+    # 展示类工具本身无 domain，靠排除集拦截
+    for t in ("webgis_layer_upsert", "set_map_view", "fly_to_location", "webgis_view_set"):
+        assert t in registered
+        assert metas[t]["domains"] == []
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# P0-1：update_plan_status 在 ref 被逐出（LRU 容量淘汰）后重新 mint + 别名，
+# 绝不静默丢写；持有旧 plan_id 的调用方仍能读到最新 payload。
+# ─────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_p0_1_update_status_remints_after_eviction(env):
+    """模拟 overwrite() 返回 False（ref 在读写间隙被逐出/后端降级）：update_plan_status
+    必须重新 mint + set_alias，load_plan(旧 plan_id) 仍可寻址到最新 payload——绝不静默丢写。"""
+    from app.services.session_data import MemorySessionStore
+    from app.services import plan_mode as _svc
+
+    class _EvictingOverwriteStore(MemorySessionStore):
+        """get 能读到，但 overwrite 一律失败（模拟 ref 在 read→write 间隙被逐出）。"""
+
+        async def overwrite(self, session_id, ref_id, data):
+            return False
+
+    tiny = _EvictingOverwriteStore(capacity=100)
+    sid = "sess-p01-evict"
+    payload = {
+        "__kind__": "plan_proposal", "__status__": "pending", "__updated_at__": 1.0,
+        "title": "t", "summary": "", "steps": [{"id": "s1", "tool": "x", "args": {}}],
+    }
+    plan_id = await tiny.store(sid, payload, prefix="plan")
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr("app.services.plan_mode.session_data_manager", tiny)
+    try:
+        await _svc.update_plan_status(sid, plan_id, __status__="completed")
+        loaded = await _svc.load_plan(sid, plan_id)
+        assert loaded is not None, "update_plan_status 在 overwrite 失败后不得静默丢写"
+        assert loaded["__status__"] == "completed"
+        assert loaded["__updated_at__"] > 1.0
+        # 新 ref 是 ref:plan-*（重新 mint），旧 plan_id 经别名可寻址
+        refs = await tiny.list_refs(sid)
+        assert any(str(r).startswith("ref:plan-") for r in refs)
+        assert any(a == plan_id for a in refs.values())
+    finally:
+        monkeypatch.undo()
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# P1-C：per-plan 执行锁（TOCTOU 双派发）、stale-running 可恢复、
+# 终态写入不覆盖 superseded/cancelled、OperationCancelled → cancelled。
+# ─────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_p1c_concurrent_execute_serialized_per_plan(env):
+    """同一计划的两个并发 execute_plan：第一个拿到 per-plan 锁执行；第二个阻塞到
+    锁释放后重读，直接返回已完成结果——**绝无双派发**（TOCTOU 修复）。"""
+    sid = "sess-p1c-lock"
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = {"n": 0}
+
+    @env.registry.tool(name="slow_lock_tool", description="慢工具")
+    async def slow_lock_tool(tag: str) -> dict:
+        calls["n"] += 1
+        entered.set()
+        await asyncio.wait_for(release.wait(), timeout=5.0)
+        return {"success": True, "data": {"tag": tag}}
+
+    plan = plan_mode_svc.PlanProposal(
+        title="lock",
+        steps=[plan_mode_svc.PlanStep(id="s1", tool="slow_lock_tool", args={"tag": "a"})],
+    )
+    plan_id = await plan_mode_svc.store_plan(sid, plan)
+
+    async def _run() -> dict:
+        return await plan_mode_svc.execute_plan_async(sid, plan_id, env.registry)
+
+    t1 = asyncio.create_task(_run())
+    await asyncio.wait_for(entered.wait(), timeout=5.0)  # t1 已进入执行（持有锁）
+    t2 = asyncio.create_task(_run())  # 并发第二发：阻塞等锁
+    release.set()  # 放行 t1
+    r1 = await asyncio.wait_for(t1, timeout=5.0)
+    r2 = await asyncio.wait_for(t2, timeout=5.0)
+    assert r1["success"] is True and r1["status"] == "completed"
+    # t2 在锁后重读 → 直接返回已存结果（completed），不重新 dispatch
+    assert r2["success"] is True and r2["status"] == "completed"
+    assert calls["n"] == 1  # 绝无双派发
+
+
+@pytest.mark.asyncio
+async def test_p1c_stale_running_is_resumable(env):
+    """running 状态超过阈值（或 __updated_at__ 缺失）→ 视为 crashed，允许 resume。"""
+    sid = "sess-p1c-stale"
+    plan = plan_mode_svc.PlanProposal(
+        title="stale",
+        steps=[
+            plan_mode_svc.PlanStep(id="s1", tool="fetch_data", args={"keyword": "医院"}),
+        ],
+    )
+    plan_id = await plan_mode_svc.store_plan(sid, plan)
+    # 人为写成 running + 陈旧时间戳（crashed 形态）
+    import time as _time
+    await plan_mode_svc.update_plan_status(
+        sid, plan_id, __status__="running", __updated_at__=_time.time() - 1000,
+    )
+    r = await plan_mode_svc.execute_plan_async(sid, plan_id, env.registry)
+    assert r["success"] is True
+    assert r["status"] == "completed"
+    data = await plan_mode_svc.load_plan(sid, plan_id)
+    assert data["__status__"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_p1c_fresh_running_still_blocks(env):
+    """running + 新鲜时间戳 → 拒绝执行（在飞）。"""
+    sid = "sess-p1c-fresh"
+    plan = plan_mode_svc.PlanProposal(
+        title="fresh",
+        steps=[plan_mode_svc.PlanStep(id="s1", tool="fetch_data", args={"keyword": "x"})],
+    )
+    plan_id = await plan_mode_svc.store_plan(sid, plan)
+    await plan_mode_svc.update_plan_status(sid, plan_id, __status__="running")
+    r = await plan_mode_svc.execute_plan_async(sid, plan_id, env.registry)
+    assert r["success"] is False
+    assert "已在执行中" in r["error"]
+
+
+@pytest.mark.asyncio
+async def test_p1c_cancelled_plan_refuses_resume(env):
+    """cancelled（terminal）计划：resume 必须拒绝，绝不重跑。"""
+    sid = "sess-p1c-cancelled"
+    plan = plan_mode_svc.PlanProposal(
+        title="cancel",
+        steps=[plan_mode_svc.PlanStep(id="s1", tool="fetch_data", args={"keyword": "x"})],
+    )
+    plan_id = await plan_mode_svc.store_plan(sid, plan)
+    await plan_mode_svc.update_plan_status(sid, plan_id, __status__="cancelled")
+    r = await plan_mode_svc.execute_plan_async(sid, plan_id, env.registry)
+    assert r["success"] is False
+    assert r["status"] == "cancelled"
+    assert "已取消" in r["error"]
+    assert env.calls.get("fetch_data", 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_p1c_operation_cancelled_writes_terminal_cancelled(env):
+    """工具抛 OperationCancelled → 写终态 cancelled（不是 failed），返回 status=cancelled。"""
+    from app.services.jobs.cancellation import OperationCancelled
+
+    sid = "sess-p1c-opcancel"
+
+    @env.registry.tool(name="cancel_tool", description="抛取消")
+    def cancel_tool() -> dict:
+        raise OperationCancelled("用户取消")
+
+    plan = plan_mode_svc.PlanProposal(
+        title="opcancel",
+        steps=[plan_mode_svc.PlanStep(id="s1", tool="cancel_tool", args={})],
+    )
+    plan_id = await plan_mode_svc.store_plan(sid, plan)
+    r = await plan_mode_svc.execute_plan_async(sid, plan_id, env.registry)
+    assert r["success"] is False
+    assert r["status"] == "cancelled"
+    assert r["failure_class"] == "cancelled"
+    data = await plan_mode_svc.load_plan(sid, plan_id)
+    assert data["__status__"] == "cancelled"  # terminal，不是 failed
+
+
+@pytest.mark.asyncio
+async def test_p1c_terminal_write_does_not_overwrite_superseded(env):
+    """执行中途计划被 supersede → 终态写入（completed）不得覆盖 superseded。"""
+    sid = "sess-p1c-super-mid"
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    @env.registry.tool(name="slow_super_tool", description="慢工具")
+    async def slow_super_tool(tag: str) -> dict:
+        entered.set()
+        await asyncio.wait_for(release.wait(), timeout=5.0)
+        return {"success": True, "data": {"tag": tag}}
+
+    plan = plan_mode_svc.PlanProposal(
+        title="mid-super",
+        steps=[plan_mode_svc.PlanStep(id="s1", tool="slow_super_tool", args={"tag": "a"})],
+    )
+    plan_id = await plan_mode_svc.store_plan(sid, plan)
+
+    async def _run() -> dict:
+        return await plan_mode_svc.execute_plan_async(sid, plan_id, env.registry)
+
+    t1 = asyncio.create_task(_run())
+    await asyncio.wait_for(entered.wait(), timeout=5.0)
+    # 运行中被 supersede（模拟：直接改状态，等价 supersede_active_plans 的效果）
+    await plan_mode_svc.update_plan_status(sid, plan_id, __status__="superseded")
+    release.set()
+    await asyncio.wait_for(t1, timeout=5.0)
+    data = await plan_mode_svc.load_plan(sid, plan_id)
+    assert data["__status__"] == "superseded"  # 终态写入未覆盖
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# P2-1：失败状态 partially_completed / failed；确定性失败 livelock guard；
+# superseded 且无结果 → success=False。
+# ─────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_p2_1_deterministic_failure_not_rerun_on_resume(env):
+    """livelock guard：首次失败为确定性失败（failure_class != transient_network）时，
+    resume 直接返回存储的失败，绝不重跑同一工具。"""
+    sid = "sess-p2-1-livelock"
+    env.calls["deterministic_fail"] = 0
+
+    @env.registry.tool(name="deterministic_fail", description="永远失败")
+    def deterministic_fail() -> dict:
+        env.calls["deterministic_fail"] += 1
+        return {"success": False, "code": "VALIDATION_ERROR", "message": "参数非法"}
+
+    plan = plan_mode_svc.PlanProposal(
+        title="livelock",
+        steps=[
+            plan_mode_svc.PlanStep(id="s1", tool="fetch_data", args={"keyword": "医院"}),
+            plan_mode_svc.PlanStep(id="s2", tool="deterministic_fail", args={}),
+        ],
+    )
+    plan_id = await plan_mode_svc.store_plan(sid, plan)
+
+    r1 = await plan_mode_svc.execute_plan_async(sid, plan_id, env.registry)
+    assert r1["success"] is False
+    assert r1["failed_step"] == "s2"
+    assert r1["failure_class"] == "validation"
+    assert env.calls["deterministic_fail"] == 1
+
+    r2 = await plan_mode_svc.execute_plan_async(sid, plan_id, env.registry)
+    assert r2["success"] is False
+    assert r2["failed_step"] == "s2"
+    assert r2["failure_class"] == "validation"
+    assert env.calls["deterministic_fail"] == 1  # 绝不被重跑
+    data = await plan_mode_svc.load_plan(sid, plan_id)
+    assert data["__status__"] == "partially_completed"
+
+
+@pytest.mark.asyncio
+async def test_p2_1_superseded_with_empty_results_returns_failure(env):
+    """superseded / legacy 计划且无任何已存结果 → success=False + 明确消息
+    （不再假装 success=True + executed=[]）。"""
+    sid = "sess-p2-1-super-empty"
+    plan = plan_mode_svc.PlanProposal(
+        title="old",
+        steps=[plan_mode_svc.PlanStep(id="s1", tool="fetch_data", args={"keyword": "x"})],
+    )
+    plan_id = await plan_mode_svc.store_plan(sid, plan)
+    await plan_mode_svc.update_plan_status(sid, plan_id, __status__="superseded")
+    r = await plan_mode_svc.execute_plan_async(sid, plan_id, env.registry)
+    assert r["success"] is False
+    assert r["status"] == "superseded"
+    assert "取代" in r["error"]
+    assert env.calls.get("fetch_data", 0) == 0
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# P2-6：session_has_refs 必须排除计划自身 ref（ref:plan-* / plan 别名）
+# ─────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_p2_6_session_has_refs_excludes_plan_refs(env):
+    """仅存了计划 ref（ref:plan-* / plan-current 别名）的会话 → session_has_refs
+    必须为 False，不得把"刚规划完"误判成 ref_reuse 承接。"""
+    from app.services.chat.execution_engine import _has_non_plan_refs
+    from app.services.planning.models import CanonicalPlan as _CP
+
+    sid = "sess-p2-6-planrefs"
+    # 存一个 plan-mode 计划（ref:plan-* 前缀）+ canonical 计划（plan-current 别名）
+    await plan_mode_svc.store_plan(
+        sid, plan_mode_svc.PlanProposal(
+            title="p", steps=[plan_mode_svc.PlanStep(id="s1", tool="fetch_data", args={})],
+        )
+    )
+    await plan_store.save(_CP(plan_id="p-can", session_id=sid, intent="x"))
+    refs = await session_data_manager.list_refs(sid)
+    assert _has_non_plan_refs(refs) is False, f"计划 ref 不应算作数据 ref: {refs}"
+    # 存一条真实数据 ref → True
+    await session_data_manager.store(sid, {"geojson": 1}, prefix="geojson")
+    refs2 = await session_data_manager.list_refs(sid)
+    assert _has_non_plan_refs(refs2) is True
     await plan_store.clear(sid)

@@ -47,6 +47,27 @@ from app.services.chat.tool_pipeline import ToolExecutionPipeline, ToolExecution
 
 logger = logging.getLogger(__name__)
 
+# 计划自身 ref 的判定（P2-6 / recovery P2）：plan-mode 计划以 ref:plan-* 存，
+# canonical 计划经别名 plan-current / plan-id:* 寻址。它们只代表"计划存在"，
+# 不代表会话有可复用的数据 —— session_has_refs 必须把它们排除，否则
+# "仅存了计划"的会话会被 ref_reuse 分类误判。
+_PLAN_REF_PREFIX = "ref:plan-"
+_PLAN_ALIAS_PREFIX = "plan-id:"
+_PLAN_CURRENT_ALIAS = "plan-current"
+
+
+def _has_non_plan_refs(refs: dict) -> bool:
+    """list_refs() 结果里是否存在非计划数据引用（ref:plan-* / plan 别名除外）。"""
+    for rid, alias in (refs or {}).items():
+        rid_s = str(rid)
+        alias_s = str(alias or "")
+        if rid_s.startswith(_PLAN_REF_PREFIX):
+            continue
+        if alias_s == _PLAN_CURRENT_ALIAS or alias_s.startswith(_PLAN_ALIAS_PREFIX):
+            continue
+        return True
+    return False
+
 
 class ChatExecutionEngine:
     """Agent 对话与流式响应执行引擎"""
@@ -55,9 +76,16 @@ class ChatExecutionEngine:
         self,
         tool_registry: ToolRegistry,
         tool_catalog: Optional["ToolCatalog"] = None,
+        *,
+        is_subagent_engine: bool = False,
     ):
         self.registry = tool_registry
         self.catalog = tool_catalog
+        # P2-7（Pi#1/#2）：子代理引擎轮次绝不推进父会话的计划。SubagentDispatcher
+        # 构造子引擎时传 is_subagent_engine=True；_maybe_plan / mark_step_done /
+        # _flush_plan 据此跳过一切计划推进，避免子代理的工具调用把父会话的
+        # 活跃计划打勾/改写。
+        self.is_subagent_engine = is_subagent_engine
         self.base_url = settings.LLM_BASE_URL.rstrip("/")
         self.model = settings.LLM_MODEL
         self.api_key = settings.LLM_API_KEY
@@ -401,6 +429,11 @@ class ChatExecutionEngine:
         from app.services.planning.followup import classify_followup
         from app.services.planning import FollowUpKind
         from app.services.tool_catalog import DOMAIN_KEYWORDS
+        # P2-7（Pi#1/#2）：子代理引擎的轮次不参与父会话的规划（独立微会话，
+        # 计划推进只属于主代理）。getattr 兜底：测试用 __new__ 构造的引擎没有
+        # 该属性时按 False（主代理）处理。
+        if getattr(self, "is_subagent_engine", False):
+            return None
         env = await self._get_map_state_summary(session_id)
         try:
             # R5/R10：进程重启续接——把 store 里的 canonical 计划恢复到本进程 LRU。
@@ -415,12 +448,16 @@ class ChatExecutionEngine:
                 refs = await session_data_manager.list_refs(session_id)
             except Exception:  # noqa: BLE001
                 refs = {}
+            # P2-6（recovery P2 / Pi#3）：session_has_refs 必须排除计划自身的
+            # ref（ref:plan-* 与 plan-current / plan-id:* 别名）——否则"仅存了
+            # 一个计划、没有任何数据"的会话会被 ref_reuse 误判。
+            has_data_refs = _has_non_plan_refs(refs)
             # design-v3 §followup：确定性分类喂给 should_plan。
             kind = classify_followup(
                 message,
                 has_active_plan=has_plan,
                 active_domains=active_domains,
-                session_has_refs=bool(refs),
+                session_has_refs=has_data_refs,
                 domain_keywords=DOMAIN_KEYWORDS,
             )
             if kind == FollowUpKind.new_goal and self.catalog is not None:
@@ -563,6 +600,9 @@ class ChatExecutionEngine:
 
     async def _flush_plan(self, session_id: str) -> None:
         """把活跃 canonical 计划持久化（advance_step 的 done 标志写回 store）。"""
+        # P2-7：子代理引擎不 flush 父会话的计划（独立微会话，计划属于主代理）。
+        if getattr(self, "is_subagent_engine", False):
+            return
         try:
             from app.services.chat import planner as _planner
             if _planner.get_plan(session_id) is None:
@@ -659,7 +699,8 @@ class ChatExecutionEngine:
                             # R6-nonstreaming / R2：非流式路径同样只在“非可疑成功”
                             # 时推进计划（失败/空结果绝不打勾）。
                             if (
-                                exec_res.outcome is not None
+                                not getattr(self, "is_subagent_engine", False)  # P2-7：子代理不打勾父计划
+                                and exec_res.outcome is not None
                                 and exec_res.outcome.status == "ok"
                                 and not _is_suspicious_result_fn(exec_res.outcome.raw_result)
                             ):
@@ -770,9 +811,11 @@ class ChatExecutionEngine:
                             "intent": plan.intent,
                             "domains": plan.domains,
                             "steps": [
+                                # P3-2/P2-6：done 取投影的真实打勾状态（恢复出的
+                                # 计划带已完成步骤），不再硬编码 False。
                                 {"n": s.n, "goal": s.goal,
                                  "tool_family": s.tool_family if s.tool_family is not None else "core",
-                                 "done": False}
+                                 "done": s.done}
                                 for s in plan.steps
                             ],
                         })
@@ -1004,6 +1047,7 @@ class ChatExecutionEngine:
                                     if (
                                         outcome.status == "ok"
                                         and not _is_suspicious_result_fn(outcome.raw_result)
+                                        and not getattr(self, "is_subagent_engine", False)  # P2-7
                                     ):
                                         step_n_matched = _planner.mark_step_done(
                                             session_id, tool_name, self.registry

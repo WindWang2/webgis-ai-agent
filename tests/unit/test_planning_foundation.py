@@ -528,3 +528,104 @@ def test_classify_followup_unclear():
         session_has_refs=False,
         domain_keywords=_DOMAIN_KEYWORDS,
     ) == FollowUpKind.unclear
+
+
+# ─── P1-B：cache TTL 重新读取 + save revision guard ──────────────
+
+
+@pytest.mark.asyncio
+async def test_store_cache_ttl_expiry_rereads_from_store():
+    """P1-B(1)：进程缓存条目超过 L1_TTL_SECONDS 后视为过期，load_current 重新
+    从 session store 读取——模拟另一 worker 写入后，本进程在 ~2s 内感知新值，
+    而不是一直服务陈旧副本。"""
+    from app.services.session_data import session_data_manager as _sdm
+    from app.services.planning.store import L1_TTL_SECONDS
+
+    store = PlanStore()
+    sid = "sess-foundation-ttl"
+    await store.save(CanonicalPlan(plan_id="p-ttl-a", session_id=sid, intent="local"))
+    # 模拟另一个 worker 直接在 session store 里写入了更新计划
+    ref_id = await _sdm.resolve_alias(sid, "plan-current")
+    await _sdm.overwrite(sid, ref_id, CanonicalPlan(
+        plan_id="p-ttl-b", session_id=sid, intent="remote",
+        revision=5,
+    ).model_dump())
+    # 把进程缓存条目时间戳拨回 TTL 之前 → 必须重新读取 store（拿到 remote）
+    entry = store._cache._data[sid]
+    store._cache._data[sid] = (entry[0], entry[1] - L1_TTL_SECONDS - 1.0)
+    loaded = await store.load_current(sid)
+    assert loaded is not None
+    assert loaded.plan_id == "p-ttl-b"
+    assert loaded.intent == "remote"
+
+
+@pytest.mark.asyncio
+async def test_store_save_revision_guard_refuses_stale_clobber():
+    """P1-B(2)：持久化的 current plan 是**不同 plan_id** 且 revision 更新/相等时，
+    save 拒绝覆盖（日志 + 重新读取）；同 plan_id 仍 last-writer-wins。"""
+    import io
+    import logging as _logging
+
+    store = PlanStore()
+    sid = "sess-foundation-revguard"
+    # 先把"更新计划"立为 current（模拟另一 worker 已推进）
+    await store.save(CanonicalPlan(
+        plan_id="p-new", session_id=sid, intent="newer", revision=3,
+    ), _promote=True)
+    store.clear_cache()  # 让 load_current 走 store（避免缓存掩盖）
+    # 陈旧 worker 想用旧计划覆盖
+    stale = CanonicalPlan(plan_id="p-stale", session_id=sid, intent="stale", revision=2)
+    buf = io.StringIO()
+    h = _logging.StreamHandler(buf)
+    _logging.getLogger("app.services.planning.store").addHandler(h)
+    try:
+        await store.save(stale)
+    finally:
+        _logging.getLogger("app.services.planning.store").removeHandler(h)
+    assert "refused to clobber" in buf.getvalue()
+    # current 仍是更新计划（没被覆盖）
+    current = await store.load_current(sid)
+    assert current.plan_id == "p-new"
+    assert current.intent == "newer"
+
+    # 同 plan_id 仍 last-writer-wins（revision 更低也允许，同一计划的进化）
+    await store.save(CanonicalPlan(plan_id="p-new", session_id=sid, intent="newer-v2", revision=1))
+    current2 = await store.load_current(sid)
+    assert current2.intent == "newer-v2"
+    assert current2.plan_id == "p-new"
+
+
+# ─── P2-3（adversarial P2-6）：style + query 共存时不判 style_change ──
+
+
+def test_classify_followup_style_plus_query_is_not_style_change():
+    """消息同时含样式词与查询/动作词（查一下蓝色区域的医院分布）→ 不得判为
+    style_change（否则会跳过规划/重分析）。"""
+    from app.services.planning.followup import QUERY_ACTION_KEYWORDS
+
+    kind = classify_followup(
+        "查一下蓝色区域的医院分布",
+        has_active_plan=True,
+        active_domains=["statistics"],
+        session_has_refs=False,
+        domain_keywords=_DOMAIN_KEYWORDS,
+    )
+    assert kind != FollowUpKind.style_change
+    # 有内容词 + 查询信号 → 落到 new_goal / unclear，绝不 style_change
+    kind2 = classify_followup(
+        "找一下红色区域里的学校",
+        has_active_plan=True,
+        active_domains=["statistics"],
+        session_has_refs=False,
+        domain_keywords=_DOMAIN_KEYWORDS,
+    )
+    assert kind2 != FollowUpKind.style_change
+    # 纯样式追问（无查询信号）仍是 style_change
+    assert classify_followup(
+        "换成蓝色",
+        has_active_plan=True,
+        active_domains=["statistics"],
+        session_has_refs=False,
+        domain_keywords=_DOMAIN_KEYWORDS,
+    ) == FollowUpKind.style_change
+    assert any(kw in QUERY_ACTION_KEYWORDS for kw in ("查", "找", "search", "分析"))
