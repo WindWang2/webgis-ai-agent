@@ -18,6 +18,17 @@ export interface LayerStyle {
   [key: string]: unknown;
 }
 
+/** V3 Performance: Lightweight ref metadata computed once at ref creation. */
+export interface RefDescriptor {
+  ref_id: string;
+  feature_count: number;
+  point_count: number;
+  geometry_types: string[];
+  bbox: [number, number, number, number] | null;
+  mvt_capable: boolean;
+  estimated_bytes: number;
+}
+
 export interface Layer {
   id: string;
   name: string;
@@ -30,6 +41,8 @@ export interface Layer {
   _refId?: string;
   /** Data Plane: MVT tile URL template ({z}/{x}/{y}) for large ref layers. */
   _tileUrl?: string;
+  /** V3 Performance: Pre-computed descriptor; allows MVT decision without downloading full FC. */
+  _descriptor?: RefDescriptor;
   created_at?: string;
   updated_at?: string;
   legend_spec?: LegendSpec;

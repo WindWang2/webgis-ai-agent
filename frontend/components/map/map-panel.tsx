@@ -109,7 +109,11 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
 
     const computeAndFit = async () => {
       let bbox: [number, number, number, number] | null = null
-      if (src && Array.isArray(src.bbox) && src.bbox.length === 4) {
+      // V3 Performance: use pre-computed descriptor.bbox for MVT-backed large layers.
+      // Avoids O(n) coordinate scan over 100k features just to fitBounds.
+      if (target._descriptor?.bbox) {
+        bbox = target._descriptor.bbox as [number, number, number, number]
+      } else if (src && Array.isArray(src.bbox) && src.bbox.length === 4) {
         bbox = src.bbox as [number, number, number, number]
       } else if (src && (src.type === "FeatureCollection" || src.type === "Feature")) {
         bbox = await calculateBBoxAsync(src)
