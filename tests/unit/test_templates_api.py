@@ -160,7 +160,7 @@ async def test_user_template_appears_in_list_templates(client):
     get_res = await client.get("/api/v1/templates?kind=basemap")
     assert get_res.status_code == 200
     templates_list = get_res.json()
-    assert any(t["name"] == "我的夜间大屏底图" for t in templates_list)
+    assert any(t["name"] == "我的夜间大屏底图" for t in templates_list["items"])
 
 
 @pytest.mark.asyncio
