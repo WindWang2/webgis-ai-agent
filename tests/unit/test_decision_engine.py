@@ -9,12 +9,83 @@ from app.services.spatial_decision.models import (
 )
 from app.services.spatial_decision.engine import DecisionEngine
 from app.services.spatial_decision.comparison_engine import ScenarioComparisonEngine
+from app.services.spatial_decision.target_resolver import TargetAreaResolver
+
+
+class _FakeGeocodeProvider:
+    """确定性的离线地理编码替身（替换 Tianditu/Amap 在线调用）。
+
+    测试环境没有可信的外网，真实 provider 的 HTTP 重试会让整组测试挂到超时。
+    已知行政区名解析为固定几何，其余返回空 —— 不可解析路径的测试也因此保持确定。
+    """
+
+    KNOWN: dict[str, dict] = {
+        "西湖区": {"type": "Polygon", "coordinates": [[[120.05, 30.20], [120.25, 30.20], [120.25, 30.35], [120.05, 30.35], [120.05, 30.20]]]},
+        "余杭区": {"type": "Polygon", "coordinates": [[[119.90, 30.25], [120.20, 30.25], [120.20, 30.45], [119.90, 30.45], [119.90, 30.25]]]},
+        "中关村": {"type": "Point", "coordinates": [116.3166, 39.9953]},
+        "徐汇区": {"type": "Polygon", "coordinates": [[[121.40, 31.15], [121.48, 31.15], [121.48, 31.22], [121.40, 31.22], [121.40, 31.15]]]},
+        "天河区": {"type": "Polygon", "coordinates": [[[113.30, 23.10], [113.42, 23.10], [113.42, 23.18], [113.30, 23.18], [113.30, 23.10]]]},
+        "南山区": {"type": "Polygon", "coordinates": [[[113.88, 22.45], [113.98, 22.45], [113.98, 22.56], [113.88, 22.56], [113.88, 22.45]]]},
+        "成都高新区": {"type": "Point", "coordinates": [104.06, 30.57]},
+        "武昌区": {"type": "Polygon", "coordinates": [[[114.28, 30.52], [114.37, 30.52], [114.37, 30.58], [114.28, 30.58], [114.28, 30.52]]]},
+    }
+
+    @staticmethod
+    def _match(address: str):
+        for name, geom in _FakeGeocodeProvider.KNOWN.items():
+            if name in address:
+                return name, geom
+        return None, None
+
+    async def district(self, keywords, level="", return_geometry="point"):
+        name, geom = self._match(keywords)
+        if name:
+            return {"features": [{"geometry": geom, "properties": {"name": name}}]}
+        return {"features": []}
+
+    async def geocode(self, address, city=""):
+        name, geom = self._match(address)
+        if name:
+            if geom["type"] == "Point":
+                lng, lat = geom["coordinates"]
+            else:
+                lng, lat = geom["coordinates"][0][0]
+            return {"results": [{"location": [lng, lat], "formatted_address": address}]}
+        return {"results": []}
+
+
+@pytest.fixture
+def engine():
+    """注入假 provider 的 DecisionEngine —— 全链路离线且确定。"""
+    return DecisionEngine(
+        target_resolver=TargetAreaResolver(geocode_provider=_FakeGeocodeProvider())
+    )
+
+
+@pytest.fixture(autouse=True)
+def patch_embed(monkeypatch):
+    """RAG grounding 必须离线（仓库既有惯例，见 test_rag_durability.patch_embed）。
+
+    不 patch 的话，证据链的向量检索会在 worker 线程里尝试从 HuggingFace 下载
+    sentence-transformer 模型 —— 测试环境网络被禁时，huggingface_hub 会重试约
+    半分钟，且 wait_for 无法取消 to_thread，最终把事件循环关停卡死（整个测试文件
+    挂到 pytest-timeout）。返回零向量让 FAISS 空索引检索直接得到空结果，RAG
+    grounding 走文档化的降级路径（rule_pack.retrieve_evidence_from_rag 的 fallback），
+    这正是该路径本身该被测试覆盖的行为。
+    """
+    import numpy as np
+
+    from app.services.rag.faiss_store import FaissVectorStore
+
+    def fake(self, texts):
+        return np.zeros((len(texts), 384), dtype=np.float32)
+
+    monkeypatch.setattr(FaissVectorStore, "embed_texts", fake)
 
 
 @pytest.mark.asyncio
-async def test_decision_engine_subway_scenario():
+async def test_decision_engine_subway_scenario(engine):
     """Test DecisionEngine on subway station scenario with geocoded target area."""
-    engine = DecisionEngine()
     
     result = await engine.evaluate_decision(
         scenario_text="新建地铁站，评估周边房价与交通影响",
@@ -58,9 +129,8 @@ async def test_decision_engine_subway_scenario():
 
 
 @pytest.mark.asyncio
-async def test_decision_engine_all_six_scenarios():
+async def test_decision_engine_all_six_scenarios(engine):
     """Verify that all 6 required scenario types run real data-grounded evaluation."""
-    engine = DecisionEngine()
     
     scenarios_to_test = [
         ("subway", "新建地铁站影响评估", "北京市海淀区中关村"),
@@ -85,9 +155,8 @@ async def test_decision_engine_all_six_scenarios():
 
 
 @pytest.mark.asyncio
-async def test_scenario_comparison_engine():
+async def test_scenario_comparison_engine(engine):
     """Test multi-scenario comparison (Baseline vs Scenario A vs Scenario B vs Scenario C)."""
-    engine = DecisionEngine()
     cmp_engine = ScenarioComparisonEngine()
 
     res_a = await engine.evaluate_decision(
@@ -118,9 +187,8 @@ async def test_scenario_comparison_engine():
 
 
 @pytest.mark.asyncio
-async def test_unresolvable_target_area_returns_correction_hint():
+async def test_unresolvable_target_area_returns_correction_hint(engine):
     """Verify that unresolvable target area returns structured correction hint instead of Beijing fallback."""
-    engine = DecisionEngine()
     
     result = await engine.evaluate_decision(
         scenario_text="新建地铁站",

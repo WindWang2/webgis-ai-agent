@@ -80,10 +80,12 @@ def test_list_project_artifacts_query_count_is_constant(db_session, project_with
     db = db_session
     proj = project_with_artifacts
 
-    artifacts, n_queries = _count_queries(
-        db, lambda: ProjectService.list_project_artifacts(db, proj.id)[0]
+    (artifacts, total), n_queries = _count_queries(
+        db, lambda: ProjectService.list_project_artifacts(db, proj.id)
     )
+    # 服务现在返回分页形状 (items, total)
     assert len(artifacts) == 20
+    assert total == 20
     # 20 artifacts × ~3 lazy relationship queries each would be ~60+ queries.
     # With selectinload: 1 (artifacts) + 4 (selectin batches) = 5 total.
     assert n_queries <= 8, (
@@ -108,10 +110,11 @@ def test_list_project_workflows_and_runs_eager_loaded(db_session, project_with_a
         ))
     db.commit()
 
-    runs, n_queries = _count_queries(
-        db, lambda: ProjectService.list_workflow_runs(db, proj.id)[0]
+    (runs, total), n_queries = _count_queries(
+        db, lambda: ProjectService.list_workflow_runs(db, proj.id)
     )
     assert len(runs) == 10
+    assert total == 10
     # Constant query count regardless of N (auth check + join query + 2 selectin
     # batches + project auth overhead). 10 runs × 2 lazy relationship queries
     # would be ~20+ queries.

@@ -30,7 +30,7 @@ def test_create_and_get_project():
     assert get_res.status_code == 200
     assert get_res.json()["id"] == proj_id
 
-    # List Projects
+    # List Projects —— 分页形状 {items, total, ...}
     list_res = client.get("/api/v1/projects")
     assert list_res.status_code == 200
     assert any(p["id"] == proj_id for p in list_res.json()["items"])
@@ -53,7 +53,7 @@ def test_attach_and_detach_dataset():
     assert dataset["name"] == "Chaoyang_Buildings"
     ds_id = dataset["id"]
 
-    # List Datasets
+    # List Datasets —— 分页形状 {items, total, ...}
     ds_list = client.get(f"/api/v1/projects/{proj_id}/datasets")
     assert ds_list.status_code == 200
     assert len(ds_list.json()["items"]) == 1

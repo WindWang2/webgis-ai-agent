@@ -47,7 +47,8 @@ def test_composite_builder_preset_combinations():
     mapspec = builder.assemble({"preset": "cyber_dark"})
 
     assert mapspec["basemap"]["providerId"] == "carto-dark"
-    # tmpl_ly_dark_report is defined as A3 landscape (暗色主题 A3 横向版式).
+    # cyber_dark → tmpl_ly_dark_report，其定义就是 A3 横向（template_schema.py）。
+    # 早期实现里该预设映射到 A4 版式，制图统一（#337）后收敛为 A3。
     assert mapspec["layout"]["paperSize"] == "A3"
 
 

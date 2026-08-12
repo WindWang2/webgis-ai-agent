@@ -27,6 +27,20 @@ from app.services.jobs.context import JobOrigin, use_origin
 from app.services.jobs.submit import build_execution_key, submit_durable_job
 
 
+@pytest.fixture(autouse=True)
+def _celery_offline(monkeypatch):
+    """钉死 Celery 为 eager + 无 Redis backend（双保险，见 conftest 占位说明）。
+
+    直接调用任务体时 update_state 依赖 backend；若 backend 回退成 RedisBackend
+    （load_dotenv 注入 CELERY_* 的竞态），会去连 localhost:16379 并抛连接错误。
+    """
+    from app.services.task_queue import celery_app
+
+    monkeypatch.setitem(celery_app.conf, "result_backend", None)
+    monkeypatch.setitem(celery_app.conf, "broker_url", "memory://")
+    monkeypatch.setitem(celery_app.conf, "task_always_eager", True)
+
+
 @pytest.fixture
 def job_db(tmp_path, monkeypatch):
     """把 `db_session`（工具/worker 用的同步会话）指向临时 SQLite。"""

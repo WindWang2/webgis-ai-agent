@@ -156,11 +156,11 @@ async def test_user_template_appears_in_list_templates(client):
     post_res = await client.post("/api/v1/templates", json=req_data, headers=user_headers)
     assert post_res.status_code == 201
 
-    # Check GET endpoint
+    # Check GET endpoint —— 分页形状 {items, total, ...}
     get_res = await client.get("/api/v1/templates?kind=basemap")
     assert get_res.status_code == 200
-    templates_list = get_res.json()
-    assert any(t["name"] == "我的夜间大屏底图" for t in templates_list["items"])
+    templates_list = get_res.json()["items"]
+    assert any(t["name"] == "我的夜间大屏底图" for t in templates_list)
 
 
 @pytest.mark.asyncio
