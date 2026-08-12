@@ -8,7 +8,8 @@ import logging
 from typing import List, Dict, Any
 from urllib.parse import urljoin
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
-from app.services.data_fabric.security import DataFabricSecurity
+from app.services.data_fabric.errors import classify_http_status
+from app.services.data_fabric.security import DataFabricSecurity, make_safe_session
 from app.schemas.data_fabric_schema import (
     DatasetDescriptor,
     QuerySpec,
@@ -127,6 +128,8 @@ class STACAdapter(GeospatialDataSourceAdapter):
         super().__init__(connection_profile)
         self.endpoint = (self.profile.endpoint or "").strip()
         self.allow_private = getattr(self.profile, "allow_private", False)
+        # SSRF-safe session: every request (incl. redirects) is revalidated.
+        self.session = make_safe_session(allow_private=self.allow_private)
 
     def probe(self) -> bool:
         """Reachability probe for STAC endpoint."""
@@ -291,16 +294,21 @@ class STACAdapter(GeospatialDataSourceAdapter):
         }
 
     def query(self, dataset_id: str, query_spec: QuerySpec) -> QueryResult:
-        """Execute STAC search with pushdown bbox and temporal filtering."""
+        """Execute STAC search with pushdown bbox and temporal filtering.
+
+        Truthfulness contract: when a real endpoint is configured, a query
+        failure (non-200 or exception) returns a structured ``QueryResult`` with
+        ``features=[]`` and a typed ``error_type`` in metadata — it does NOT fall
+        back to synthetic fixtures as if they were the remote's real data. The
+        synthetic fixtures are used only in explicit no-endpoint demo mode, and
+        are labeled ``source="synthetic-demo"`` in metadata.
+        """
         start_time = time.time()
         bounded_limit = max(1, min(query_spec.limit or 50, MAX_QUERY_LIMIT))
 
-        # Check for online endpoint query vs synthetic fallback
         if self.endpoint:
             try:
                 safe_url = DataFabricSecurity.validate_url(self.endpoint, allow_private=self.allow_private)
-                import requests
-
                 search_url = urljoin(safe_url + "/", "search")
                 payload: Dict[str, Any] = {
                     "collections": [dataset_id],
@@ -311,22 +319,55 @@ class STACAdapter(GeospatialDataSourceAdapter):
                 if query_spec.datetime_range and len(query_spec.datetime_range) == 2:
                     payload["datetime"] = f"{query_spec.datetime_range[0]}/{query_spec.datetime_range[1]}"
 
-                resp = requests.post(search_url, json=payload, timeout=10)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    features = data.get("features", [])
+                resp = self.session.post(search_url, json=payload, timeout=10)
+                if resp.status_code != 200:
+                    # Real source responded with an error — surface it, do not
+                    # masquerade synthetic fixtures as the remote's data.
+                    err_type = classify_http_status(resp.status_code)
                     exec_time = round((time.time() - start_time) * 1000, 2)
                     return QueryResult(
                         dataset_id=dataset_id,
-                        features=features[:bounded_limit],
-                        data={"type": "FeatureCollection", "features": features[:bounded_limit]},
-                        total_count=data.get("numberMatched", len(features)),
-                        returned_count=len(features[:bounded_limit]),
-                        metadata={"exec_time_ms": exec_time, "pushdown_bbox": bool(query_spec.bbox)},
+                        features=[],
+                        total_count=0,
+                        returned_count=0,
+                        metadata={
+                            "exec_time_ms": exec_time,
+                            "source": "remote",
+                            "error_type": err_type,
+                            "error": f"STAC search returned HTTP {resp.status_code}",
+                            "http_status": resp.status_code,
+                        },
                     )
+                data = resp.json()
+                features = data.get("features", [])
+                exec_time = round((time.time() - start_time) * 1000, 2)
+                return QueryResult(
+                    dataset_id=dataset_id,
+                    features=features[:bounded_limit],
+                    data={"type": "FeatureCollection", "features": features[:bounded_limit]},
+                    total_count=data.get("numberMatched", len(features)),
+                    returned_count=len(features[:bounded_limit]),
+                    metadata={"exec_time_ms": exec_time, "pushdown_bbox": bool(query_spec.bbox), "source": "remote"},
+                )
             except Exception as e:
-                logger.warning(f"STAC remote query failed for '{dataset_id}', using synthetic fallback: {e}")
+                # Endpoint configured but unreachable / bad response — fail
+                # truthfully with empty features + typed error. No synthetic data.
+                logger.warning(f"STAC remote query failed for '{dataset_id}': {e}")
+                exec_time = round((time.time() - start_time) * 1000, 2)
+                return QueryResult(
+                    dataset_id=dataset_id,
+                    features=[],
+                    total_count=0,
+                    returned_count=0,
+                    metadata={
+                        "exec_time_ms": exec_time,
+                        "source": "remote",
+                        "error_type": "SOURCE_UNREACHABLE",
+                        "error": f"STAC search failed: {e}",
+                    },
+                )
 
+        # No endpoint configured → explicit synthetic DEMO mode (labeled).
         # Synthetic fallback filtering
         fixture = SYNTHETIC_STAC_FIXTURES.get(dataset_id, SYNTHETIC_STAC_FIXTURES["landsat-8-c2-l2"])
         items = list(fixture.get("items", []))
@@ -354,7 +395,12 @@ class STACAdapter(GeospatialDataSourceAdapter):
             data={"type": "FeatureCollection", "features": sliced},
             total_count=len(items),
             returned_count=len(sliced),
-            metadata={"exec_time_ms": exec_time, "pushdown_bbox": bool(query_spec.bbox)},
+            metadata={
+                "exec_time_ms": exec_time,
+                "pushdown_bbox": bool(query_spec.bbox),
+                # Explicit label so callers never mistake demo data for remote data.
+                "source": "synthetic-demo",
+            },
         )
 
     def health(self) -> DataFabricHealth:

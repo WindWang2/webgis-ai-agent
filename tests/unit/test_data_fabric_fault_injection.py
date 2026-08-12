@@ -147,3 +147,38 @@ def test_classify_http_status_mapping():
     assert classify_http_status(429) == "SOURCE_RATE_LIMITED"
     assert classify_http_status(503) == "SOURCE_BAD_RESPONSE"
     assert classify_http_status(400) == "SOURCE_BAD_RESPONSE"
+
+
+# ── Adapter truthfulness: real-endpoint failure never returns synthetic data ──
+
+
+def test_stac_real_endpoint_failure_returns_typed_error_not_synthetic():
+    """When a real STAC endpoint is configured and returns 503, the adapter must
+    return empty features + a typed error_type — NOT synthetic fixtures
+    masquerading as remote results (the 'silent wrong data' P0)."""
+    from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec
+    from app.services.data_fabric.adapters.stac_adapter import STACAdapter
+
+    stac_base = "http://stac-fake.example"
+    routes = (("/search", lambda req: make_response(req.url, status=503, text="down")),)
+    fake_session = session_with_fake(routes, allow_private=False)
+
+    adapter = STACAdapter(ConnectionProfile(provider_type="stac", endpoint=stac_base))
+    adapter.session = fake_session  # inject the offline transport
+
+    res = adapter.query("landsat-8-c2-l2", QuerySpec(limit=10))
+    assert res.features == []           # no fabricated features
+    assert res.metadata["source"] == "remote"
+    assert res.metadata["error_type"] == "SOURCE_BAD_RESPONSE"
+
+
+def test_stac_no_endpoint_demo_mode_is_labeled_synthetic():
+    """No-endpoint demo mode still returns fixtures, but explicitly labeled."""
+    from app.schemas.data_fabric_schema import ConnectionProfile, QuerySpec
+    from app.services.data_fabric.adapters.stac_adapter import STACAdapter
+
+    adapter = STACAdapter(ConnectionProfile(provider_type="stac", endpoint=""))
+    res = adapter.query("landsat-8-c2-l2", QuerySpec(limit=5))
+    assert len(res.features) > 0
+    assert res.metadata["source"] == "synthetic-demo"
+
