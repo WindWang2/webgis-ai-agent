@@ -2,8 +2,20 @@
 bounded concurrency, and incremental fingerprint skip."""
 from unittest.mock import MagicMock
 
+import pytest
+
 from app.schemas.data_fabric_schema import DatasetDescriptor
 from app.services.data_fabric.manager import DataFabricManager
+from app.services.data_fabric.metadata_cache import _describe_cache
+
+
+@pytest.fixture(autouse=True)
+def _clear_describe_cache():
+    """sync_catalog uses the process-global describe TTL cache; clear it between
+    tests so descriptors don't leak across cases."""
+    _describe_cache.invalidate()
+    yield
+    _describe_cache.invalidate()
 
 
 class _FakeAdapter:

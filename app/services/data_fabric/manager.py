@@ -180,12 +180,21 @@ class DataFabricManager:
         max_workers = max(1, min(16, int(getattr(_settings, "DATA_FABRIC_SYNC_CONCURRENCY", 4))))
 
         def _describe(name: str) -> DatasetDescriptor:
-            try:
-                return adapter.describe(name)
-            except Exception:
-                return DatasetDescriptor(
-                    id=name, title=raw.get(name, {}).get("title", name), source_type=ds_model.source_type
-                )
+            # Tenant/source-scoped TTL cache (Section 37): avoids re-describing
+            # unchanged datasets on back-to-back syncs. scope is the source key —
+            # sync is server-side per source, never crosses tenants.
+            from app.services.data_fabric.metadata_cache import cached_describe
+
+            def _do(dataset_id: str) -> DatasetDescriptor:
+                try:
+                    return adapter.describe(dataset_id)
+                except Exception:
+                    return DatasetDescriptor(
+                        id=dataset_id, title=raw.get(dataset_id, {}).get("title", dataset_id),
+                        source_type=ds_model.source_type,
+                    )
+
+            return cached_describe(_do, source_id, name, scope=f"source:{source_id}")
 
         descriptors: Dict[str, DatasetDescriptor] = {}
         if names:
