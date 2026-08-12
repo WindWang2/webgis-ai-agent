@@ -18,6 +18,12 @@ from app.models.data_fabric import DataSourceModel, CatalogItemModel, Materializ
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
 from app.services.data_fabric.errors import MATERIALIZATION_FAILED
 from app.services.data_fabric.limits import enforce_result_bounds
+from app.services.data_fabric.metadata import (
+    classify_feature_type,
+    normalize_crs,
+    normalize_feature_count,
+    normalize_geometry_type,
+)
 from app.services.data_fabric.registry import build_adapter
 from app.services.data_fabric.security import DataFabricSecurity
 from app.services.session_data import session_data_manager
@@ -166,13 +172,20 @@ class DataFabricManager:
 
             item_title = descriptor.title or ds.get("title") or dataset_name
             item_desc = descriptor.description or ds.get("description", "")
-            geom_type = descriptor.geometry_type or ds.get("geometry_type", "Geometry")
-            feature_type = "raster" if geom_type and "raster" in geom_type.lower() else "vector"
+            # Metadata truthfulness (Section 27/28): normalize instead of
+            # fabricating. An undeclared CRS is stored as None (not faked
+            # EPSG:4326); geometry type is classified canonically (tile
+            # pyramids are no longer mislabeled vector via substring match).
+            geom_type = normalize_geometry_type(
+                descriptor.geometry_type or ds.get("geometry_type")
+            )
+            feature_type = classify_feature_type(geom_type)
+            crs = normalize_crs(descriptor.srs or descriptor.crs)
 
             descriptor_dict = descriptor.model_dump()
             meta_profile = {
-                "srs": descriptor.srs,
-                "feature_count": descriptor.feature_count,
+                "srs": crs,
+                "feature_count": normalize_feature_count(descriptor.feature_count),
                 "fields": descriptor.fields,
             }
 
@@ -181,7 +194,7 @@ class DataFabricManager:
                 existing.description = item_desc
                 existing.geometry_type = geom_type
                 existing.feature_type = feature_type
-                existing.crs = descriptor.srs or "EPSG:4326"
+                existing.crs = crs
                 existing.bbox_json = descriptor.bbox
                 existing.descriptor_json = descriptor_dict
                 existing.meta_profile_json = meta_profile
@@ -196,7 +209,7 @@ class DataFabricManager:
                     description=item_desc,
                     geometry_type=geom_type,
                     feature_type=feature_type,
-                    crs=descriptor.srs or "EPSG:4326",
+                    crs=crs,
                     bbox_json=descriptor.bbox,
                     tags_json=[ds_model.source_type, feature_type],
                     descriptor_json=descriptor_dict,
