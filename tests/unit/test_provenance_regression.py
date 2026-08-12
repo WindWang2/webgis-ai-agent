@@ -244,14 +244,18 @@ def test_resume_after_workflow_edit_uses_frozen_snapshot(db_session):
 
 # ── migration: unique index + CHECKs on every altered table ──────────────────
 
-def test_migration_unique_revision_number_and_checks(tmp_path):
+def test_migration_unique_revision_number_and_checks(tmp_path, monkeypatch):
     import sqlite3
     from alembic import command
     from alembic.config import Config
 
     db_path = tmp_path / "m.db"
+    url = f"sqlite:///{db_path}"
+    # env.py reads DATABASE_URL and overrides the config URL — force SQLite so CI's
+    # PostgreSQL DATABASE_URL doesn't hijack this isolated migration test.
+    monkeypatch.setenv("DATABASE_URL", url)
     cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
+    cfg.set_main_option("sqlalchemy.url", url)
     command.upgrade(cfg, "head")
 
     con = sqlite3.connect(str(db_path))

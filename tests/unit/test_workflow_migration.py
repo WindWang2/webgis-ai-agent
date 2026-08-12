@@ -14,10 +14,17 @@ from alembic.config import Config
 
 
 @pytest.fixture
-def alembic_cfg(tmp_path):
+def alembic_cfg(tmp_path, monkeypatch):
     db_path = tmp_path / "wf_prov.db"
+    url = f"sqlite:///{db_path}"
+    # migrations/env.py reads DATABASE_URL at run time and OVERRIDES the config's
+    # sqlalchemy.url (mirrors test_i6). Setting only the config option would let
+    # CI's PostgreSQL DATABASE_URL win → the full migration chain would try to
+    # create_table on a table that already exists in the shared CI DB. Force
+    # SQLite by setting the env var the same way test_i6 does.
+    monkeypatch.setenv("DATABASE_URL", url)
     cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
+    cfg.set_main_option("sqlalchemy.url", url)
     return cfg, str(db_path)
 
 
