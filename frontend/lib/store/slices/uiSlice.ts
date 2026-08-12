@@ -86,11 +86,19 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   aiStatus: 'idle' as AiStatus,
   setAiStatus: (status: AiStatus) => set({ aiStatus: status }),
   activeLeftTab: 'chat' as LeftTab,
-  setActiveLeftTab: (tab: LeftTab) => set({ activeLeftTab: tab }),
+  // UI V3：选择 tab 即打开 context panel（nav rail 语义）；折叠由
+  // toggleLeftPanel / setLeftPanelOpen 或再次点击 active rail item 完成。
+  setActiveLeftTab: (tab: LeftTab) => set({ activeLeftTab: tab, leftPanelOpen: true }),
   activeTool: null,
   setActiveTool: (tool: string | null) => set({ activeTool: tool }),
+  // UI V3 overlay 互斥：history / settings / templates 同时最多打开一个，
+  // 避免多层 drawer 互相遮挡（审计：7 个独立可见性布尔值无协调）。
   historyOpen: false,
-  setHistoryOpen: (open: boolean) => set({ historyOpen: open }),
+  setHistoryOpen: (open: boolean) =>
+    set(open ? { historyOpen: true, settingsOpen: false, templatesOpen: false } : { historyOpen: false }),
+  templatesOpen: false,
+  setTemplatesOpen: (open: boolean) =>
+    set(open ? { templatesOpen: true, settingsOpen: false, historyOpen: false } : { templatesOpen: false }),
   settingsTab: 'llm' as SettingsTab,
   setSettingsTab: (tab: SettingsTab) => set({ settingsTab: tab }),
   sessions: [],

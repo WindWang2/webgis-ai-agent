@@ -13,17 +13,20 @@ import { useSSEStream } from '@/lib/hooks/use-sse-stream';
 
 // New layout components
 import TopBar from '@/components/layout/top-bar';
-import { LeftSidebar } from '@/components/sidebar/left-sidebar';
+import { NavRail } from '@/components/layout/nav-rail';
+import { ContextPanel } from '@/components/layout/context-panel';
 import FloatingLegend from '@/components/map/floating-legend';
 import { SpatialCrosshair } from '@/components/map/spatial-crosshair';
 import { MapErrorBoundary } from '@/components/map/map-error-boundary';
 import { EmbodiedHud } from '@/components/hud/embodied-hud';
 import TweaksPanel from '@/components/tweaks-panel';
+import { useToastStore } from '@/components/ui/toast';
 
 const RagIndependentPanel = dynamic(() => import('@/components/panel/rag-independent-panel'), { ssr: false });
 const HistoryDrawer = dynamic(() => import('@/components/drawers/history-drawer').then(m => ({ default: m.HistoryDrawer })), { ssr: false });
 const SettingsPanel = dynamic(() => import('@/components/settings/settings-panel').then(m => ({ default: m.SettingsPanel })), { ssr: false });
 const ExportMask = dynamic(() => import('@/components/map/export-mask').then(m => ({ default: m.ExportMask })), { ssr: false });
+const TemplateGalleryV2 = dynamic(() => import('@/components/drawers/template-gallery-v2').then(m => ({ default: m.TemplateGalleryV2 })), { ssr: false });
 
 const MapPanel = dynamic(
   () => import('@/components/map/map-panel').then((m) => ({ default: m.MapPanel })),
@@ -43,6 +46,7 @@ const MapPanel = dynamic(
 // 这些兄弟面板的 props 在流式期间稳定（layers / handlers / store 内部订阅
 // 不受 memo 影响，状态变更仍会触发重渲染），memo 让它们跳过逐批重渲染。
 const MemoTopBar = memo(TopBar);
+const MemoNavRail = memo(NavRail);
 const MemoMapPanel = memo(MapPanel);
 const MemoEmbodiedHud = memo(EmbodiedHud);
 const MemoSpatialCrosshair = memo(SpatialCrosshair);
@@ -62,6 +66,8 @@ export default function Home() {
   const hudOpen = useHudStore((s) => s.hudOpen);
   const ragPanelOpen = useHudStore((s) => s.ragPanelOpen);
   const setRagPanelOpen = useHudStore((s) => s.setRagPanelOpen);
+  const templatesOpen = useHudStore((s) => s.templatesOpen);
+  const setTemplatesOpen = useHudStore((s) => s.setTemplatesOpen);
   const sidebarWidth = useHudStore((s) => s.sidebarWidth);
 
   const { location: userLocation } = useGeolocation();
@@ -154,7 +160,18 @@ export default function Home() {
         onNewSession={handleNewSession}
       />
 
-      <div style={{ flex: 1, position: 'relative', overflow: 'hidden', marginTop: 42, marginBottom: 24 }}>
+      <div
+        style={{
+          flex: 1,
+          position: 'relative',
+          overflow: 'hidden',
+          marginTop: 42,
+          marginBottom: 24,
+          // UI V3：地图 chrome（图例等）的水平避让偏移 —— nav rail(48) +
+          // context panel(可选) 占据的左侧空间。
+          ['--workspace-offset' as string]: `${leftPanelOpen ? 48 + sidebarWidth + 12 : 60}px`,
+        }}
+      >
         {/* Map Panel */}
         <div style={{ position: 'absolute', inset: 0 }}>
           <MapErrorBoundary>
@@ -175,7 +192,7 @@ export default function Home() {
             style={{
               position: 'absolute',
               bottom: hudOpen ? 220 : 34,
-              left: leftPanelOpen ? sidebarWidth + 14 : 10,
+              left: 'var(--workspace-offset, 60px)',
               transition: 'left 0.22s cubic-bezier(0.4,0,0.2,1), bottom 0.3s cubic-bezier(0.4,0,0.2,1)',
               zIndex: 10,
             }}
@@ -184,9 +201,9 @@ export default function Home() {
           </div>
         )}
 
-        {/* Left Sidebar */}
-        <LeftSidebar
-          open={leftPanelOpen}
+        {/* Workspace navigation rail + context panel (UI V3) */}
+        <MemoNavRail />
+        <ContextPanel
           messages={messages}
           aiStatus={aiStatus}
           onSend={handleSend}
@@ -236,6 +253,13 @@ export default function Home() {
       />
 
       {settingsOpen && <SettingsPanel />}
+
+      {/* Template Gallery V2 — nav rail「模板」入口（与 history/settings 互斥） */}
+      <TemplateGalleryV2
+        open={templatesOpen}
+        onClose={() => setTemplatesOpen(false)}
+        onApply={(t) => useToastStore.getState().addToast(`模板已应用：${t.name}`, 'success')}
+      />
 
       {/* Tweaks Panel Wrapper */}
       <TweaksPanel />

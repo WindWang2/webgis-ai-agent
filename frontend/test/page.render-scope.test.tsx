@@ -7,8 +7,8 @@ import Home from '@/app/page';
  *
  * `messages` lives in Home (app/page.tsx) via useSSEStream, so every token
  * batch re-renders Home → TopBar, MapPanel, EmbodiedHud, SpatialCrosshair,
- * LeftSidebar, FloatingLegend all re-render even though nothing they depend
- * on changed.
+ * NavRail, ContextPanel, FloatingLegend all re-render even though nothing
+ * they depend on changed.
  *
  * This test renders the REAL Home with mocked hooks + mocked leaf components
  * (render counters), then simulates N token batches exactly the way
@@ -16,15 +16,16 @@ import Home from '@/app/page';
  * replaced). Assertions:
  *
  *   - BEFORE: every sibling re-renders N times (render count == N) → FAIL.
- *   - AFTER (memoized siblings): TopBar/MapPanel/EmbodiedHud/SpatialCrosshair
- *     never re-render during streaming (count == 0); LeftSidebar still
- *     re-renders per batch (it displays the messages) → PASS.
+ *   - AFTER (memoized siblings): TopBar/MapPanel/EmbodiedHud/SpatialCrosshair/
+ *     NavRail never re-render during streaming (count == 0); ContextPanel
+ *     still re-renders per batch (it displays the messages) → PASS.
  */
 
 const counters = vi.hoisted(() => ({
   topBar: 0,
   mapPanel: 0,
-  sidebar: 0,
+  navRail: 0,
+  contextPanel: 0,
   hud: 0,
   crosshair: 0,
 }));
@@ -96,6 +97,8 @@ const hud = vi.hoisted(() => ({
     ragPanelOpen: false,
     setRagPanelOpen: () => {},
     sidebarWidth: 360,
+    templatesOpen: false,
+    setTemplatesOpen: () => {},
     theme: 'light',
     accentColor: '#16a34a',
     fontSize: 14,
@@ -124,10 +127,17 @@ vi.mock('@/components/map/map-panel', () => ({
   },
 }));
 
-vi.mock('@/components/sidebar/left-sidebar', () => ({
-  LeftSidebar: () => {
-    counters.sidebar += 1;
-    return <div data-testid="sidebar" />;
+vi.mock('@/components/layout/nav-rail', () => ({
+  NavRail: () => {
+    counters.navRail += 1;
+    return <div data-testid="nav-rail" />;
+  },
+}));
+
+vi.mock('@/components/layout/context-panel', () => ({
+  ContextPanel: () => {
+    counters.contextPanel += 1;
+    return <div data-testid="context-panel" />;
   },
 }));
 
@@ -161,6 +171,7 @@ vi.mock('@/components/panel/rag-independent-panel', () => ({ default: () => null
 vi.mock('@/components/drawers/history-drawer', () => ({ HistoryDrawer: () => null }));
 vi.mock('@/components/settings/settings-panel', () => ({ SettingsPanel: () => null }));
 vi.mock('@/components/map/export-mask', () => ({ ExportMask: () => null }));
+vi.mock('@/components/drawers/template-gallery-v2', () => ({ TemplateGalleryV2: () => null }));
 
 const mkMsg = (id: string, content: string) => ({
   id,
@@ -184,7 +195,8 @@ describe('page render scope (D-F8)', () => {
 
     // Initial mount rendered every sibling exactly once.
     expect(counters.topBar).toBe(1);
-    expect(counters.sidebar).toBe(1);
+    expect(counters.navRail).toBe(1);
+    expect(counters.contextPanel).toBe(1);
     expect(counters.hud).toBe(1);
     expect(counters.crosshair).toBe(1);
 
@@ -204,7 +216,8 @@ describe('page render scope (D-F8)', () => {
 
     console.log(
       `[D-F8 page] N=${N} batches: topBar=${counters.topBar}, mapPanel=${counters.mapPanel}, ` +
-        `hud=${counters.hud}, crosshair=${counters.crosshair}, sidebar=${counters.sidebar}`
+        `hud=${counters.hud}, crosshair=${counters.crosshair}, navRail=${counters.navRail}, ` +
+        `contextPanel=${counters.contextPanel}`
     );
 
     // Siblings with stable props must not re-render during token streaming.
@@ -212,8 +225,9 @@ describe('page render scope (D-F8)', () => {
     expect(counters.mapPanel).toBe(0);
     expect(counters.hud).toBe(0);
     expect(counters.crosshair).toBe(0);
-    // LeftSidebar receives the new messages array each batch — re-rendering
+    expect(counters.navRail).toBe(0);
+    // ContextPanel receives the new messages array each batch — re-rendering
     // per batch is required (control).
-    expect(counters.sidebar).toBe(N);
+    expect(counters.contextPanel).toBe(N);
   });
 });

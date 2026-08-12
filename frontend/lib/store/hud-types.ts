@@ -70,7 +70,7 @@ export interface CausalEntry {
   mapState?: Record<string, unknown>;
 }
 
-export type LeftTab = 'chat' | 'project' | 'layers' | 'analysis' | 'ops' | 'exports' | 'assets' | 'export_layout' | 'data_sources' | 'tasks';
+export type LeftTab = 'chat' | 'project' | 'layers' | 'analysis' | 'exports' | 'export_layout' | 'data_sources' | 'tasks';
 export type SettingsTab = 'llm' | 'skills' | 'rag' | 'layers' | 'map' | 'system';
 
 export interface SkillEntry {
@@ -235,6 +235,9 @@ export interface HudState {
   setActiveTool: (tool: string | null) => void;
   historyOpen: boolean;
   setHistoryOpen: (open: boolean) => void;
+  /** 模板库 V2 drawer（UI V3：与 history/settings 互斥的 overlay 之一） */
+  templatesOpen: boolean;
+  setTemplatesOpen: (open: boolean) => void;
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
   sessions: SessionSummary[];
