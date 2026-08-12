@@ -173,9 +173,16 @@ class MaterializationService:
         """
         Unified pushdown query execution and local materialization pipeline.
         Emits ref_id cursor for downstream analysis.
+
+        The blocking remote ``execute_query`` runs off the event loop via
+        ``asyncio.to_thread`` so concurrent tool dispatches aren't stalled; an
+        ``asyncio.CancelledError`` during the await propagates before store (no
+        stale materialization).
         """
+        import asyncio
+
         spec = query_spec or QuerySpec(limit=100)
-        query_result = self.execute_query(adapter, dataset_id, spec)
+        query_result = await asyncio.to_thread(self.execute_query, adapter, dataset_id, spec)
         return await self.materialize(dataset_id, query_result, session_id=session_id, layer_name=layer_name)
 
 

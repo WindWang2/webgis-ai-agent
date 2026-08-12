@@ -125,14 +125,19 @@ def _mock_db_with_item():
     return db, item
 
 
+async def _async_query(cls, db, item_id, spec, cancel_token=None):
+    """Async stand-in for query_catalog_item_async (bypasses real adapter build)."""
+    return _qr()
+
+
 @pytest.mark.asyncio
 async def test_manager_materialize_store_unavailable_writes_no_audit(monkeypatch):
     """Store-unavailable → success=False AND no audit row added/committed."""
     db, _item = _mock_db_with_item()
     monkeypatch.setattr(
         DataFabricManager,
-        "query_catalog_item",
-        classmethod(lambda cls, d, i, s: _qr()),
+        "query_catalog_item_async",
+        classmethod(_async_query),
     )
 
     async def fake_store(session_id, data, prefix="data"):
@@ -156,8 +161,8 @@ async def test_manager_materialize_audit_commit_failure_rolls_back(monkeypatch):
     db.commit.side_effect = RuntimeError("db gone")
     monkeypatch.setattr(
         DataFabricManager,
-        "query_catalog_item",
-        classmethod(lambda cls, d, i, s: _qr()),
+        "query_catalog_item_async",
+        classmethod(_async_query),
     )
 
     async def fake_store(session_id, data, prefix="data"):
@@ -179,8 +184,8 @@ async def test_manager_materialize_success_commits_audit(monkeypatch):
     db, _item = _mock_db_with_item()
     monkeypatch.setattr(
         DataFabricManager,
-        "query_catalog_item",
-        classmethod(lambda cls, d, i, s: _qr()),
+        "query_catalog_item_async",
+        classmethod(_async_query),
     )
 
     async def fake_store(session_id, data, prefix="data"):
@@ -194,3 +199,26 @@ async def test_manager_materialize_success_commits_audit(monkeypatch):
     assert res["ref_id"] == "ref:df-real789"
     db.add.assert_called_once()
     db.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_materialize_respects_cancel_token_before_store(monkeypatch):
+    """A pre-cancelled token must abort BEFORE the remote query/store — no stale
+    materialization (Section 17)."""
+    from app.services.jobs.cancellation import CancellationToken, OperationCancelled
+
+    db, _item = _mock_db_with_item()
+    token = CancellationToken(job_id="job1")
+    token.cancel("user requested")
+
+    async def no_store(*a, **k):  # pragma: no cover - must not be reached
+        raise AssertionError("store must not run for a cancelled materialize")
+
+    monkeypatch.setattr(df_manager.session_data_manager, "store", no_store)
+
+    with pytest.raises(OperationCancelled):
+        await DataFabricManager.materialize_catalog_item(
+            db=db, session_id="s1", item_id="cat1", cancel_token=token
+        )
+    db.add.assert_not_called()
+    db.commit.assert_not_called()

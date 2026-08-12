@@ -94,13 +94,14 @@ def test_data_fabric_rest_routes():
         db.add(item)
         db.commit()
 
-    with patch("app.services.data_fabric.manager.DataFabricManager.query_catalog_item") as mock_q:
-        mock_q.return_value = QueryResult(
+    async def _fake_async_query(cls, db, item_id, spec, cancel_token=None):
+        return QueryResult(
             dataset_id=f"cat_{source_id}_default",
             features=[{"type": "Feature", "geometry": {"type": "Point", "coordinates": [100.0, 0.0]}, "properties": {"name": "Sample"}}],
             total_count=1,
         )
 
+    with patch("app.services.data_fabric.manager.DataFabricManager.query_catalog_item_async", classmethod(_fake_async_query)):
         mat_payload = {
             "session_id": "test_session_12345",
             "catalog_item_id": f"cat_{source_id}_default",

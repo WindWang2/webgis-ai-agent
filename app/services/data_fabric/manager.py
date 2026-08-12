@@ -289,6 +289,59 @@ class DataFabricManager:
         return adapter.query(item.name, query_spec)
 
     @classmethod
+    async def query_catalog_item_async(
+        cls,
+        db: Session,
+        item_id: str,
+        query_spec: QuerySpec,
+        cancel_token: Optional["object"] = None,
+    ) -> QueryResult:
+        """Async-safe pushdown query.
+
+        The DB lookups run on the calling coroutine (fast, and the SQLAlchemy
+        session is not thread-safe); the blocking remote ``adapter.query()`` runs
+        in a worker thread via ``asyncio.to_thread`` so it does NOT stall the
+        event loop. Cooperative cancellation: if a ``cancel_token`` is supplied,
+        ``raise_if_cancelled`` is checked before and after the remote fetch, so a
+        cancellation during the fetch surfaces as ``OperationCancelled`` and the
+        caller never materializes a stale result.
+        """
+        # Cooperative cancel check first — abort before any DB or remote work.
+        if cancel_token is not None:
+            cancel_token.raise_if_cancelled()
+
+        item = db.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
+        if not item:
+            raise ValueError(f"Catalog item '{item_id}' not found")
+
+        ds_model = item.data_source
+        if not ds_model:
+            ds_model = db.query(DataSourceModel).filter(DataSourceModel.id == item.source_id).first()
+        if not ds_model:
+            raise ValueError(f"Parent data source for item '{item_id}' not found")
+
+        conn_profile = ConnectionProfile(
+            id=ds_model.id,
+            name=ds_model.name,
+            source_type=ds_model.source_type,
+            url=ds_model.endpoint_url,
+            options=ds_model.connection_profile.get("options", {}),
+            allow_private=ds_model.connection_profile.get("allow_private", False),
+        )
+        adapter = cls.get_adapter(conn_profile)
+
+        if cancel_token is not None:
+            cancel_token.raise_if_cancelled()
+        # Offload the blocking remote query; the await lets the event loop run
+        # and lets asyncio.CancelledError propagate on task cancellation.
+        import asyncio
+
+        result = await asyncio.to_thread(adapter.query, item.name, query_spec)
+        if cancel_token is not None:
+            cancel_token.raise_if_cancelled()
+        return result
+
+    @classmethod
     async def materialize_catalog_item(
         cls,
         db: Session,
@@ -296,6 +349,7 @@ class DataFabricManager:
         item_id: str,
         query_spec: Optional[QuerySpec] = None,
         owner_token: Optional[str] = None,
+        cancel_token: Optional["object"] = None,
     ) -> Dict[str, Any]:
         """Materialize catalog query results into session ref_id and save audit log.
 
@@ -303,13 +357,17 @@ class DataFabricManager:
         store or audit failure the result is ``success=False`` with ``ref_id=None``
         and a typed ``error_type`` — no fake ref is persisted or returned, and no
         audit row is written for a non-retrievable ref.
+
+        The blocking remote query runs off the event loop (see
+        ``query_catalog_item_async``); a supplied ``cancel_token`` aborts before
+        materialization if the operation was cancelled during the fetch.
         """
         spec = query_spec or QuerySpec(limit=500)
         item = db.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
         if not item:
             raise ValueError(f"Catalog item '{item_id}' not found")
 
-        q_res = cls.query_catalog_item(db, item_id, spec)
+        q_res = await cls.query_catalog_item_async(db, item_id, spec, cancel_token=cancel_token)
 
         feature_count = len(q_res.features)
         base = {
