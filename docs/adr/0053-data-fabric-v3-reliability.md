@@ -99,16 +99,35 @@ pagination, auth and oversized paths fully offline and deterministically.
 
 ## Deferred / follow-up
 
-- **File-format adapters** (GeoParquet/FlatGeobuf/PMTiles/S3) still fall back to
-  synthetic fixtures on real-endpoint error. Containment is in place (canonical
-  registry, result guard, truthful materialization); the STAC fix (b3a98c4) is
-  the reference pattern to apply per adapter.
-- **Connect-time IP pinning** for full DNS-rebinding defense (socket-level transport).
-- **Async / cancellation**: blocking sync I/O still runs inside async
-  materialization; `OperationCancelled`/`to_thread` propagation is a follow-up.
-- **HTTP conditional requests** (ETag / If-None-Match) and a safe TTL result cache.
-- **Catalog sync efficiency**: bounded concurrency, batch DB lookup, incremental
-  sync via descriptor fingerprint, removed-dataset marking.
+The V3 follow-up slices landed in this PR (P2 set):
+
+- **File-format adapters** (GeoParquet/FlatGeobuf/PMTiles/S3) no longer serve
+  synthetic fixtures as real data — a configured endpoint that fails returns a
+  typed error; synthetic is demo-mode only and labeled `source="synthetic-demo"`.
+  STAC (b3a98c4) was the reference pattern, now applied to all four (c3211b0).
+- **Local-file path guards** (Section 44): `resolve_safe_local_path` blocks
+  traversal / symlink escape / sensitive-system-dir / oversize reads (355f99a).
+- **Catalog sync efficiency** (Section 30/31): bounded-concurrency describe,
+  batch DB lookup (no N+1), incremental fingerprint skip (5f360b0).
+- **Async / cancellation** (Section 13/17): blocking adapter I/O offloaded via
+  `asyncio.to_thread`; cooperative `CancellationToken` aborts before store
+  (0f33b2c).
+- **Safe TTL metadata cache** (Section 37): tenant-scoped `SafeTTLCache` /
+  `cached_describe`; the scope is a mandatory key part (no cross-tenant leak) (aa53cbc).
+
+Still deferred (P3):
+
+- **Connect-time IP pinning** for full DNS-rebinding defense (socket-level
+  transport pin). The per-send revalidation in `SSRFSafeHTTPAdapter` already
+  shrinks the practical TOCTOU window to the resolve→connect gap inside one
+  `send()`; pinning the connection to a pre-validated IP would close the
+  residual gap but risks breaking legitimate dual-stack / CDN connections, so
+  it is deferred unless a deployment requires it.
+- **HTTP conditional requests** (ETag / If-None-Match) and a **query-result**
+  cache: needs adapter response-header plumbing this PR does not introduce;
+  metadata caching is already in place.
+- **Removed-dataset marking**: cohesive write+read change (status convention +
+  catalog-list filtering), no migration-free win; tracked separately.
 
 ## Consequences
 
