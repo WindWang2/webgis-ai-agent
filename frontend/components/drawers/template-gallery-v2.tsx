@@ -17,10 +17,10 @@
  *     in-memory cache, so two components opening the gallery share one
  *     roundtrip)
  *
- * The component is intentionally self-contained: importable from a drawer,
- * a popover, or a standalone page. The Twin Seam (apply via local
- * applyBaseline / applySymbology / resolveThematicPreset) is preserved
- * from the older gallery so the user-visible behavior is identical.
+ * UI V3：作为工作区右侧 drawer 挂载（nav rail「模板」入口，与
+ * history/settings overlay 互斥）。视觉从永久暗色 slate + 未定义的
+ * hud-cyan 收敛到 --theme-* 设计令牌 + accent；补齐 dialog 语义
+ * （aria-modal / Escape / focus trap / 焦点归还）。
  */
 
 'use client';
@@ -32,13 +32,19 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { Search, Loader2, ChevronLeft, ChevronRight, Layers, Map as MapIcon, Palette, Layout as LayoutIcon, BarChart3, Sparkles } from 'lucide-react';
+import { Loader2, ChevronLeft, ChevronRight, Layers, Map as MapIcon, Palette, Layout as LayoutIcon, BarChart3, Sparkles, X } from 'lucide-react';
 import { templatesApi, type TemplateKind, type TemplateSummary } from '@/lib/api/templates';
 import { isApiError } from '@/lib/api/transport';
 import { applyBaseline, type BasemapPayload } from '@/lib/basemap-apply';
 import { applySymbology, type SymbologyPayload } from '@/lib/symbology-apply';
 import { resolveThematicPreset } from '@/lib/thematic-apply';
 import { resolveStyle } from '@/lib/map-kit/layout-style';
+import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
+import { LoadingState } from '@/components/shared/loading-state';
+import { InlineNotice } from '@/components/shared/inline-notice';
+import { EmptyState } from '@/components/shared/empty-state';
+import { IconButton } from '@/components/shared/icon-button';
+import { SearchField } from '@/components/shared/search-field';
 
 const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 200;
@@ -69,6 +75,7 @@ export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2P
   const [error, setError] = useState<string | null>(null);
   const [activeTemplate, setActiveTemplate] = useState<TemplateSummary | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
 
   // Debounce search input so each keystroke does not fire a request.
   useEffect(() => {
@@ -118,6 +125,15 @@ export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2P
       });
     return () => controller.abort();
   }, [open, activeKind, debouncedSearch, page]);
+
+  // Dialog 焦点管理（共用 hook）：初始聚焦搜索框 / 焦点归还 /
+  // document 级 Tab 围栏 + Escape（修复焦点落到非交互区后 trap 失效）。
+  useDialogFocus({
+    open,
+    containerRef: dialogRef,
+    onEscape: onClose,
+    initialFocusSelector: 'input',
+  });
 
   // Memoized handler so the card list below doesn't re-render on parent
   // updates unrelated to selection.
@@ -216,11 +232,20 @@ export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2P
   const isLastPage = page >= totalPages - 1;
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm">
+    <div
+      className="fixed inset-0 z-[90] flex justify-end"
+      style={{ background: 'rgba(15, 23, 42, 0.32)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
+      onClick={onClose}
+    >
       <div
+        ref={dialogRef}
         role="dialog"
-        aria-label="地图制图模板库 V2"
-        className="w-full max-w-3xl h-full bg-slate-900 text-slate-100 shadow-2xl flex flex-col border-l border-slate-800"
+        aria-modal="true"
+        aria-labelledby="template-gallery-title"
+        tabIndex={-1}
+        className="flex h-full w-[560px] max-w-[92vw] flex-col border-l border-[var(--theme-border)] shadow-2xl"
+        style={{ background: 'var(--theme-bg-panel)', backdropFilter: 'blur(28px)', WebkitBackdropFilter: 'blur(28px)' }}
+        onClick={(e) => e.stopPropagation()}
       >
         <Header onClose={onClose} search={search} setSearch={setSearch} loading={loading} />
 
@@ -228,17 +253,15 @@ export function TemplateGalleryV2({ open, onClose, onApply }: TemplateGalleryV2P
 
         <div className="flex-1 overflow-y-auto p-4">
           {error && (
-            <div className="mb-3 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+            <InlineNotice variant="error" className="mb-3">
               {error}
-            </div>
+            </InlineNotice>
           )}
 
           {loading && templates.length === 0 ? (
-            <div className="flex items-center justify-center py-16 text-slate-400">
-              <Loader2 className="h-5 w-5 animate-spin mr-2" /> 加载中…
-            </div>
+            <LoadingState label="加载模板…" />
           ) : templates.length === 0 ? (
-            <div className="text-center text-slate-500 py-12 text-sm">无匹配模板</div>
+            <EmptyState icon={Sparkles} title="无匹配模板" description="调整关键词或切换分类重试" />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="tpl-grid">
               {templates.map((t) => (
@@ -277,34 +300,26 @@ function Header({
   loading: boolean;
 }) {
   return (
-    <div className="p-4 border-b border-slate-800 bg-slate-900/90 flex items-center justify-between">
-      <div>
-        <h2 className="text-lg font-semibold flex items-center gap-2">
-          <Sparkles className="h-5 w-5 text-hud-cyan" />
+    <div className="flex items-center justify-between gap-3 border-b border-[var(--theme-border)] p-4">
+      <div className="min-w-0">
+        <h2 id="template-gallery-title" className="flex items-center gap-2 text-[15px] font-semibold text-[var(--theme-text-primary)]">
+          <Sparkles className="h-4 w-4" style={{ color: 'var(--agent-accent, #16a34a)' }} aria-hidden />
           地图制图模板库
-          <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">V2</span>
         </h2>
-        <p className="text-xs text-slate-500 mt-0.5">60+ 模板 · 按 kind/关键词搜索 · 快速应用</p>
+        <p className="mt-0.5 text-[12px] text-[var(--theme-text-muted)]">模板 · 按分类/关键词搜索 · 快速应用</p>
       </div>
-      <div className="flex items-center gap-2">
-        <div className="relative">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜索模板…"
-            className="pl-8 pr-3 py-1.5 rounded-md bg-slate-800 border border-slate-700 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-hud-cyan/50 w-56"
-          />
-        </div>
-        {loading && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
-        <button
-          onClick={onClose}
-          className="text-slate-500 hover:text-slate-200 text-xl leading-none px-2"
-          aria-label="关闭"
-        >
-          ×
-        </button>
+      <div className="flex shrink-0 items-center gap-2">
+        {/* 受控 + debounce=0：fetch 防抖由组件自身的 200ms debouncedSearch 承担；
+            SearchField 提供 Escape 清空与清除按钮。 */}
+        <SearchField
+          value={search}
+          onChange={setSearch}
+          placeholder="搜索模板…"
+          aria-label="搜索模板"
+          debounceMs={0}
+        />
+        {loading && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none text-[var(--theme-text-muted)]" aria-hidden />}
+        <IconButton label="关闭模板库" icon={X} onClick={onClose} />
       </div>
     </div>
   );
@@ -318,21 +333,29 @@ function KindTabs({
   onChange: (k: TemplateKind | 'all') => void;
 }) {
   return (
-    <div className="px-4 pt-3 border-b border-slate-800 flex gap-1">
-      {KIND_TABS.map(({ kind, label, Icon }) => (
-        <button
-          key={kind}
-          onClick={() => onChange(kind)}
-          className={`px-3 py-2 text-sm rounded-t-md flex items-center gap-1.5 transition-colors ${
-            active === kind
-              ? 'bg-slate-800 text-hud-cyan border-b-2 border-hud-cyan'
-              : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <Icon className="h-3.5 w-3.5" />
-          {label}
-        </button>
-      ))}
+    // 分类过滤是 toggle-button 组（不控制 tabpanel），不用 tablist 语义。
+    <div aria-label="模板分类" className="flex gap-1 overflow-x-auto border-b border-[var(--theme-border)] px-4 pt-2">
+      {KIND_TABS.map(({ kind, label, Icon }) => {
+        const selected = active === kind;
+        return (
+          <button
+            key={kind}
+            type="button"
+            aria-pressed={selected}
+            onClick={() => onChange(kind)}
+            className={`flex items-center gap-1.5 whitespace-nowrap rounded-t-md px-3 py-2 text-[13px] transition-colors ${
+              selected ? '' : 'hover:bg-[var(--theme-bg-hover)]'
+            }`}
+            style={{
+              color: selected ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-secondary)',
+              boxShadow: selected ? 'inset 0 -2px 0 var(--agent-accent, #16a34a)' : undefined,
+            }}
+          >
+            <Icon className="h-3.5 w-3.5" aria-hidden />
+            {label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -357,26 +380,27 @@ const TemplateCard = React.memo(function TemplateCard({
   return (
     <div
       onClick={handleClick}
-      className={`group rounded-lg border p-3 cursor-pointer transition-all ${
-        selected
-          ? 'border-hud-cyan bg-slate-800/60 ring-1 ring-hud-cyan/30'
-          : 'border-slate-800 bg-slate-900/40 hover:border-slate-600 hover:bg-slate-800/40'
-      }`}
+      className="group cursor-pointer rounded-lg border p-3 transition-colors"
+      style={{
+        borderColor: selected ? 'var(--agent-accent, #16a34a)' : 'var(--theme-border)',
+        background: selected ? 'var(--theme-bg-subtle)' : 'var(--theme-bg-glass)',
+        boxShadow: selected ? '0 0 0 1px color-mix(in srgb, var(--agent-accent, #16a34a) 35%, transparent)' : undefined,
+      }}
     >
       <div className="flex items-start gap-2">
         <div
-          className="w-10 h-10 rounded-md flex-shrink-0 flex items-center justify-center text-xs font-mono text-white/80"
+          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-md font-mono text-xs text-white/90"
           style={{ background: swatch }}
           aria-hidden
         >
           {template.kind === 'composite' ? '⧉' : template.kind[0]?.toUpperCase()}
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-slate-100 truncate">{template.name}</div>
-          <div className="text-xs text-slate-500 line-clamp-2 mt-0.5">{template.description || '—'}</div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[13px] font-medium text-[var(--theme-text-primary)]">{template.name}</div>
+          <div className="mt-0.5 line-clamp-2 text-[12px] text-[var(--theme-text-muted)]">{template.description || '—'}</div>
           <div className="mt-1.5 flex flex-wrap gap-1">
             {(template.keywords || []).slice(0, 3).map((k) => (
-              <span key={k} className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">
+              <span key={k} className="rounded bg-[var(--theme-bg-muted)] px-1.5 py-0.5 text-[10px] text-[var(--theme-text-secondary)]">
                 {k}
               </span>
             ))}
@@ -384,13 +408,17 @@ const TemplateCard = React.memo(function TemplateCard({
         </div>
       </div>
       <div className="mt-2 flex items-center justify-between">
-        <span className="text-[10px] text-slate-500 font-mono">{template.id}</span>
+        <span className="font-mono text-[10px] text-[var(--theme-text-muted)]">{template.id}</span>
         <button
           onClick={(e) => {
             e.stopPropagation();
             handleApplyClick();
           }}
-          className="text-[11px] px-2 py-1 rounded bg-hud-cyan/15 text-hud-cyan hover:bg-hud-cyan/25 transition-colors"
+          className="rounded px-2 py-1 text-[11px] font-medium transition-opacity hover:opacity-80"
+          style={{
+            color: 'var(--agent-accent, #16a34a)',
+            background: 'color-mix(in srgb, var(--agent-accent, #16a34a) 12%, transparent)',
+          }}
         >
           应用
         </button>
@@ -413,22 +441,22 @@ function Footer({
   onPage: (p: number) => void;
 }) {
   return (
-    <div className="p-3 border-t border-slate-800 flex items-center justify-between bg-slate-900/90">
-      <span className="text-xs text-slate-500">第 {page + 1} / {totalPages} 页</span>
+    <div className="flex items-center justify-between border-t border-[var(--theme-border)] p-3">
+      <span className="text-[12px] text-[var(--theme-text-muted)]">第 {page + 1} / {totalPages} 页</span>
       <div className="flex gap-2">
         <button
           onClick={() => onPage(page - 1)}
           disabled={isFirstPage}
-          className="px-2 py-1 rounded bg-slate-800 text-slate-300 text-sm flex items-center gap-1 disabled:opacity-40 hover:bg-slate-700"
+          className="flex items-center gap-1 rounded-md border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] px-2 py-1 text-[12px] text-[var(--theme-text-secondary)] hover:bg-[var(--theme-bg-hover)] disabled:opacity-40"
         >
-          <ChevronLeft className="h-4 w-4" /> 上一页
+          <ChevronLeft className="h-3.5 w-3.5" aria-hidden /> 上一页
         </button>
         <button
           onClick={() => onPage(page + 1)}
           disabled={isLastPage}
-          className="px-2 py-1 rounded bg-slate-800 text-slate-300 text-sm flex items-center gap-1 disabled:opacity-40 hover:bg-slate-700"
+          className="flex items-center gap-1 rounded-md border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] px-2 py-1 text-[12px] text-[var(--theme-text-secondary)] hover:bg-[var(--theme-bg-hover)] disabled:opacity-40"
         >
-          下一页 <ChevronRight className="h-4 w-4" />
+          下一页 <ChevronRight className="h-3.5 w-3.5" aria-hidden />
         </button>
       </div>
     </div>

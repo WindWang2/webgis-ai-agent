@@ -75,6 +75,37 @@
 
 .dark,
 [data-theme='dark'] {
+  /* shadcn HSL vars — 暗色重定义（审计：之前只有 --theme-* 翻转，
+     使用 bg-card/text-foreground 等 shadcn token 的组件在暗色下保持浅色） */
+  --background: 222 47% 11%;            /* #0f172a */
+  --foreground: 210 40% 96%;            /* #f1f5f9 */
+
+  --card: 222 44% 13%;
+  --card-foreground: 210 40% 96%;
+
+  --popover: 222 44% 11%;
+  --popover-foreground: 210 40% 96%;
+
+  --primary: 142 71% 45%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 217 33% 20%;
+  --secondary-foreground: 210 40% 96%;
+
+  --muted: 217 33% 18%;
+  --muted-foreground: 215 20% 65%;
+
+  --accent: 142 71% 45%;
+  /* 深底上 accent 为绿色，前景用近黑保证对比（shadcn 约定：fg 为accent上的文字色） */
+  --accent-foreground: 222 47% 11%;
+
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 98%;
+
+  --border: 217 33% 22%;
+  --input: 217 33% 22%;
+  --ring: 142 71% 45%;
+
   /* Standardized Semantic Theme Design Tokens - Dark Theme */
   --theme-bg: #0f172a;
   --theme-bg-panel: rgba(15, 23, 42, 0.85);
@@ -392,4 +423,26 @@ textarea {
 
 .animate-map-grid-move {
   animation: mapGridMove 8s linear infinite;
+}
+
+/* ═══ Accessibility: focus-visible + reduced motion (UI V3) ═══ */
+
+/* 统一键盘焦点环 — 之前全仓 0 处 focus-visible。鼠标点击不触发。
+   不覆盖元素自身 border-radius（review P2：圆形控件聚焦时不应变形）。 */
+*:focus-visible {
+  outline: 2px solid var(--agent-accent, #16a34a);
+  outline-offset: 1px;
+}
+
+/* prefers-reduced-motion：全站 CSS 动画/过渡降级。
+   JS/rAF 动画由 usePrefersReducedMotion hook 单独门控。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

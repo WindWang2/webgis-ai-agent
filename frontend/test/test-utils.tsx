@@ -69,6 +69,8 @@ export function createMockStoreState(overrides?: Partial<HudState>): Record<stri
     setActiveLeftTab: vi.fn(),
     historyOpen: false,
     setHistoryOpen: vi.fn(),
+    templatesOpen: false,
+    setTemplatesOpen: vi.fn(),
     settingsTab: 'llm' as SettingsTab,
     setSettingsTab: vi.fn(),
     sessions: [],

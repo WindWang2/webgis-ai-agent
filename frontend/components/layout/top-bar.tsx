@@ -10,6 +10,7 @@ import {
   Settings,
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { usePrefersReducedMotion } from '@/lib/hooks/use-prefers-reduced-motion';
 import BaselayerSwitcher from '@/components/map/baselayer-switcher';
 
 interface TopBarProps {
@@ -43,10 +44,11 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
 
   const status = getStatusConfig(aiStatus);
 
-  /* scan-line position 0-100% */
+  /* scan-line position 0-100%（prefers-reduced-motion 下不启动 rAF） */
   const [scanX, setScanX] = useState(0);
+  const reducedMotion = usePrefersReducedMotion();
   useEffect(() => {
-    if (!isActive) return;
+    if (!isActive || reducedMotion) return;
     let frame: number;
     let start: number | null = null;
     const DURATION = 2000;
@@ -58,7 +60,7 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [isActive]);
+  }, [isActive, reducedMotion]);
 
   return (
     <div
@@ -172,6 +174,7 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
 
         <button
           onClick={() => setHistoryOpen(true)}
+          aria-label="历史记录"
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             width: 28, height: 28, borderRadius: 6, cursor: 'pointer',
@@ -233,6 +236,7 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
 
         <button
           onClick={() => setSettingsOpen(true)}
+          aria-label="设置"
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             width: 28, height: 28, borderRadius: 6, cursor: 'pointer',

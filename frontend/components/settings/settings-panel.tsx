@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useCallback, useRef } from 'react';
 import {
   Sparkles,
   Hash,
@@ -11,6 +11,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import { LlmConfig } from './llm-config';
 import { SkillsHub } from './skills-hub';
 import { RagConfig } from './rag-config';
@@ -69,14 +70,39 @@ export function SettingsPanel() {
 
   const skills = useHudStore((s) => s.skills);
 
-  useEffect(() => {
-    if (!settingsOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setSettingsOpen(false);
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [settingsOpen, setSettingsOpen]);
+  const drawerRef = useRef<HTMLDivElement | null>(null);
+  const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+
+  const close = useCallback(() => setSettingsOpen(false), [setSettingsOpen]);
+
+  // UI V3 dialog 焦点管理（共用 hook）：初始聚焦 / 焦点归还 / document 级
+  // Tab 围栏 + Escape。
+  useDialogFocus({
+    open: settingsOpen,
+    containerRef: drawerRef,
+    onEscape: close,
+    initialFocusSelector: '[role="tab"]',
+  });
+
+  // Review P1 修复：tablist 补 WAI-APG 方向键导航（roving tabindex 已存在，
+  // 之前缺 ArrowUp/Down/Home/End，键盘用户无法切换设置分类）。
+  const onNavKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const idx = NAV_ITEMS.findIndex((item) => item.key === settingsTab);
+      let next: number | null = null;
+      if (e.key === 'ArrowDown') next = ((idx < 0 ? 0 : idx) + 1) % NAV_ITEMS.length;
+      else if (e.key === 'ArrowUp')
+        next = ((idx < 0 ? 0 : idx) - 1 + NAV_ITEMS.length) % NAV_ITEMS.length;
+      else if (e.key === 'Home') next = 0;
+      else if (e.key === 'End') next = NAV_ITEMS.length - 1;
+      if (next === null) return;
+      e.preventDefault();
+      const key = NAV_ITEMS[next].key;
+      setSettingsTab(key);
+      tabRefs.current.get(key)?.focus();
+    },
+    [settingsTab, setSettingsTab]
+  );
 
   if (!settingsOpen) return null;
 
@@ -97,61 +123,89 @@ export function SettingsPanel() {
 
       {/* Drawer */}
       <div
+        ref={drawerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-panel-title"
+        tabIndex={-1}
         className="fixed inset-y-0 right-0 z-[101] flex animate-slide-from-right"
-        style={{ width: 720 }}
+        style={{ width: 'min(720px, 92vw)' }}
       >
         {/* Left nav rail */}
         <nav
-          className="flex flex-col border-r border-slate-900/10 bg-[rgba(250,251,252,0.97)] backdrop-blur-[32px] py-4"
-          style={{ width: 136, flexShrink: 0 }}
+          aria-label="设置分类"
+          className="flex flex-col border-r py-4"
+          style={{
+            width: 136,
+            flexShrink: 0,
+            borderColor: 'var(--theme-border)',
+            background: 'var(--theme-bg-panel)',
+            backdropFilter: 'blur(32px)',
+            WebkitBackdropFilter: 'blur(32px)',
+          }}
         >
           {/* Header mini */}
           <div className="px-4 mb-4">
             <div className="flex items-center gap-1.5">
-              <ShieldCheck size={14} className="text-green-600" />
-              <span className="text-[15px] font-semibold text-slate-700">
+              <ShieldCheck size={14} style={{ color: 'var(--agent-accent, #16a34a)' }} />
+              <span className="text-[14px] font-semibold" style={{ color: 'var(--theme-text-primary)' }}>
                 控制中心
               </span>
             </div>
           </div>
 
           {/* Nav items */}
-          <div className="flex flex-col gap-0.5 px-2 flex-1">
+          <div
+            role="tablist"
+            aria-orientation="vertical"
+            aria-label="设置分类"
+            onKeyDown={onNavKeyDown}
+            className="flex flex-col gap-0.5 px-2 flex-1"
+          >
             {navWithCounts.map((item) => {
               const Icon = item.icon;
               const isActive = settingsTab === item.key;
               return (
                 <button
                   key={item.key}
+                  ref={(el) => {
+                    if (el) tabRefs.current.set(item.key, el);
+                    else tabRefs.current.delete(item.key);
+                  }}
+                  role="tab"
+                  id={`settings-tab-${item.key}`}
+                  aria-selected={isActive}
+                  aria-controls="settings-tabpanel"
+                  tabIndex={isActive ? 0 : -1}
                   onClick={() => setSettingsTab(item.key)}
                   className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-all duration-150"
                   style={{
                     backgroundColor: isActive
-                      ? 'rgba(22,163,74,0.08)'
+                      ? 'color-mix(in srgb, var(--agent-accent, #16a34a) 10%, transparent)'
                       : 'transparent',
-                    color: isActive ? '#16a34a' : '#475569',
+                    color: isActive ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-secondary)',
                   }}
                 >
                   <Icon
                     size={16}
                     style={{
-                      color: isActive ? '#16a34a' : '#94a3b8',
+                      color: isActive ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-muted)',
                     }}
                   />
                   <span
-                    className="text-[14px] font-medium truncate flex-1"
-                    style={{ color: isActive ? '#16a34a' : '#475569' }}
+                    className="text-[13px] font-medium truncate flex-1"
+                    style={{ color: isActive ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-secondary)' }}
                   >
                     {item.label}
                   </span>
                   {item.count !== undefined && item.count > 0 && (
                     <span
-                      className="text-[14px] font-bold rounded-full px-1.5 leading-tight"
+                      className="text-[11px] font-bold rounded-full px-1.5 leading-tight"
                       style={{
                         backgroundColor: isActive
-                          ? 'rgba(22,163,74,0.12)'
-                          : 'rgba(15,23,42,0.06)',
-                        color: isActive ? '#16a34a' : '#94a3b8',
+                          ? 'color-mix(in srgb, var(--agent-accent, #16a34a) 14%, transparent)'
+                          : 'var(--theme-bg-muted)',
+                        color: isActive ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-muted)',
                         minWidth: 18,
                         textAlign: 'center',
                       }}
@@ -167,13 +221,19 @@ export function SettingsPanel() {
 
         {/* Right content area */}
         <div
-          className="flex flex-col flex-1 bg-[rgba(250,251,252,0.97)] backdrop-blur-[32px]"
+          className="flex flex-col flex-1"
           style={{
+            background: 'var(--theme-bg-panel)',
+            backdropFilter: 'blur(32px)',
+            WebkitBackdropFilter: 'blur(32px)',
             boxShadow: '-8px 0 48px rgba(15,23,42,0.12)',
           }}
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-slate-900/10">
+          <div
+            className="flex items-center justify-between px-6 py-4 border-b"
+            style={{ borderColor: 'var(--theme-border)' }}
+          >
             <div className="flex items-center gap-3">
               <div
                 className="flex items-center justify-center rounded-xl"
@@ -181,24 +241,28 @@ export function SettingsPanel() {
                   width: 36,
                   height: 36,
                   background:
-                    'linear-gradient(135deg, #16a34a 0%, #22c55e 50%, #4ade80 100%)',
+                    'linear-gradient(135deg, var(--agent-accent, #16a34a) 0%, color-mix(in srgb, var(--agent-accent, #16a34a) 72%, #ffffff) 100%)',
                 }}
               >
                 <Settings size={18} className="text-white" />
               </div>
               <div>
-                <div className="text-[15px] font-bold text-slate-800 leading-tight">
+                <div
+                  id="settings-panel-title"
+                  className="text-[14px] font-bold leading-tight"
+                  style={{ color: 'var(--theme-text-primary)' }}
+                >
                   Agent 控制中心
                 </div>
-                <div className="text-[15px] text-slate-400 leading-tight">
+                <div className="text-[12px] leading-tight" style={{ color: 'var(--theme-text-muted)' }}>
                   Agent Command Center
                 </div>
               </div>
               <span
-                className="ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[14px] font-medium"
+                className="ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[12px] font-medium"
                 style={{
-                  backgroundColor: 'rgba(22,163,74,0.08)',
-                  color: '#16a34a',
+                  backgroundColor: 'color-mix(in srgb, var(--agent-accent, #16a34a) 10%, transparent)',
+                  color: 'var(--agent-accent, #16a34a)',
                 }}
               >
                 <span
@@ -206,7 +270,7 @@ export function SettingsPanel() {
                   style={{
                     width: 6,
                     height: 6,
-                    backgroundColor: '#16a34a',
+                    backgroundColor: 'var(--agent-accent, #16a34a)',
                   }}
                 />
                 系统在线
@@ -216,14 +280,20 @@ export function SettingsPanel() {
             <button
               onClick={() => setSettingsOpen(false)}
               aria-label="关闭设置"
-              className="flex items-center justify-center rounded-lg w-8 h-8 text-slate-400 hover:text-slate-600 hover:bg-slate-100/80 transition-colors"
+              className="flex items-center justify-center rounded-lg w-8 h-8 transition-colors hover:bg-[var(--theme-bg-hover)]"
+              style={{ color: 'var(--theme-text-muted)' }}
             >
               <X size={18} />
             </button>
           </div>
 
           {/* Tab content */}
-          <div className="flex-1 overflow-y-auto px-6 py-5">
+          <div
+            role="tabpanel"
+            id="settings-tabpanel"
+            aria-labelledby={`settings-tab-${settingsTab}`}
+            className="flex-1 overflow-y-auto px-6 py-5"
+          >
             <TabContent tab={settingsTab} />
           </div>
         </div>

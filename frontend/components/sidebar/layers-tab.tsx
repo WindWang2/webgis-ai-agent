@@ -1,9 +1,12 @@
 'use client';
 
 import { useMemo, useState, useCallback } from 'react';
-import { Eye, EyeOff, Trash2, GripVertical } from 'lucide-react';
+import { Eye, EyeOff, GripVertical, Layers as LayersIcon } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { Layer } from '@/lib/types/layer';
+import { ConfirmAction } from '@/components/shared/confirm-action';
+import { EmptyState } from '@/components/shared/empty-state';
+import { IconButton } from '@/components/shared/icon-button';
 
 const GROUP_NAMES: Record<string, string> = {
   analysis: '分析结果',
@@ -20,12 +23,18 @@ function getFeatureCount(layer: Layer): number {
   return 0;
 }
 
+/** UI V3：删除图层走 ConfirmAction 两段式确认（危险操作防误触 + 防双击绕过）。 */
+function DeleteLayerButton({ onDelete }: { onDelete: () => void }) {
+  return <ConfirmAction label="删除图层" confirmLabel="确认删除？" onConfirm={onDelete} />;
+}
+
 export function LayersTab() {
   const layers = useHudStore((s) => s.layers);
   const toggleLayer = useHudStore((s) => s.toggleLayer);
   const removeLayer = useHudStore((s) => s.removeLayer);
   const updateLayer = useHudStore((s) => s.updateLayer);
   const reorderLayers = useHudStore((s) => s.reorderLayers);
+  const setActiveLeftTab = useHudStore((s) => s.setActiveLeftTab);
   const theme = useHudStore((s) => s.theme);
   const isDark = theme === 'dark';
 
@@ -151,38 +160,39 @@ export function LayersTab() {
       <div className="shrink-0 grid grid-cols-3 gap-px" style={{ backgroundColor: 'var(--theme-border-subtle)', borderBottomColor: 'var(--theme-border-subtle)' }}>
         <div className="px-2.5 py-2 text-center" style={{ backgroundColor: 'var(--theme-bg-subtle)' }}>
           <div className="text-[14px] font-semibold" style={{ color: 'var(--theme-text-primary)' }}>{layers.length}</div>
-          <div className="text-[15px] uppercase tracking-wider" style={{ color: 'var(--theme-text-muted)' }}>总图层</div>
+          <div className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--theme-text-muted)' }}>总图层</div>
         </div>
         <div className="px-2.5 py-2 text-center" style={{ backgroundColor: 'var(--theme-bg-subtle)' }}>
-          <div className="text-[14px] font-semibold" style={{ color: isDark ? '#4ade80' : '#059669' }}>{visibleCount}</div>
-          <div className="text-[15px] uppercase tracking-wider" style={{ color: 'var(--theme-text-muted)' }}>可见</div>
+          <div className="text-[14px] font-semibold" style={{ color: 'var(--agent-accent, #16a34a)' }}>{visibleCount}</div>
+          <div className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--theme-text-muted)' }}>可见</div>
         </div>
         <div className="px-2.5 py-2 text-center" style={{ backgroundColor: 'var(--theme-bg-subtle)' }}>
           <div className="text-[14px] font-semibold" style={{ color: 'var(--theme-text-primary)' }}>{totalFeatures}</div>
-          <div className="text-[15px] uppercase tracking-wider" style={{ color: 'var(--theme-text-muted)' }}>要素</div>
+          <div className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--theme-text-muted)' }}>要素</div>
         </div>
       </div>
 
       {/* Layer list */}
       <div className="flex-1 overflow-y-auto">
         {layers.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center px-6">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-2" style={{ backgroundColor: 'var(--theme-bg-muted)' }}>
-              <Eye size={16} style={{ color: 'var(--theme-text-subtle)' }} />
-            </div>
-            <p className="text-[13.5px]" style={{ color: 'var(--theme-text-muted)' }}>暂无图层</p>
-            <p className="text-[14px] mt-0.5" style={{ color: 'var(--theme-text-subtle)' }}>开始分析后图层将自动添加</p>
+          <div className="flex h-full items-center justify-center">
+            <EmptyState
+              icon={LayersIcon}
+              title="暂无图层"
+              description="开始分析后图层将自动添加；也可以从数据织网加载数据集"
+              action={{ label: '前往数据源', onClick: () => setActiveLeftTab('data_sources') }}
+            />
           </div>
         ) : (
           <div className="px-2 py-2 space-y-3">
             {groups.map((group) => (
               <div key={group.name}>
                 <div className="flex items-center gap-1.5 px-2 py-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                  <span className="text-[9.5px] font-medium text-slate-400 uppercase tracking-wider">
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--agent-accent, #16a34a)' }} />
+                  <span className="text-[10px] font-medium uppercase tracking-wider" style={{ color: 'var(--theme-text-muted)' }}>
                     {GROUP_NAMES[group.name] || group.name}
                   </span>
-                  <span className="text-[15px] text-slate-300">({group.layers.length})</span>
+                  <span className="text-[11px]" style={{ color: 'var(--theme-text-subtle)' }}>({group.layers.length})</span>
                 </div>
 
                 <div className="space-y-1">
@@ -268,26 +278,13 @@ export function LayersTab() {
 
                           {/* Action buttons — always visible */}
                           <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
-                            <button
+                            <IconButton
+                              label={layer.visible ? '隐藏图层' : '显示图层'}
+                              icon={layer.visible ? Eye : EyeOff}
+                              iconSize={12}
                               onClick={() => toggleLayer(layer.id)}
-                              aria-label={layer.visible ? '隐藏图层' : '显示图层'}
-                              style={{ padding: 4, borderRadius: 4, border: 'none', backgroundColor: 'transparent', cursor: 'pointer', color: 'var(--theme-text-muted)' }}
-                              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--theme-bg-hover)'; e.currentTarget.style.color = 'var(--theme-text-primary)'; }}
-                              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--theme-text-muted)'; }}
-                              title={layer.visible ? '隐藏图层' : '显示图层'}
-                            >
-                              {layer.visible ? <Eye size={11} /> : <EyeOff size={11} />}
-                            </button>
-                            <button
-                              onClick={() => removeLayer(layer.id)}
-                              aria-label="删除图层"
-                              style={{ padding: 4, borderRadius: 4, border: 'none', backgroundColor: 'transparent', cursor: 'pointer', color: 'var(--theme-text-muted)' }}
-                              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.15)'; e.currentTarget.style.color = '#ef4444'; }}
-                              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--theme-text-muted)'; }}
-                              title="删除图层"
-                            >
-                              <Trash2 size={11} />
-                            </button>
+                            />
+                            <DeleteLayerButton onDelete={() => removeLayer(layer.id)} />
                           </div>
                         </div>
 
@@ -297,6 +294,7 @@ export function LayersTab() {
                             type="range"
                             min={0}
                             max={100}
+                            aria-label={`${layer.name} 不透明度`}
                             value={sliderPercent(layer)}
                             onChange={(e) =>
                               handleOpacityChange(layer, parseInt(e.target.value, 10))

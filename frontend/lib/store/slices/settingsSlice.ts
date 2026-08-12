@@ -11,7 +11,9 @@ import type { HudState } from '../hud-types';
 export const createSettingsSlice: StateCreator<HudState, [], [], Partial<HudState>> = (set) => ({
   /* ─── Settings UI 旧字段（legacy compat） ─── */
   settingsOpen: false,
-  setSettingsOpen: (open: boolean) => set({ settingsOpen: open }),
+  // UI V3 overlay 互斥：打开 settings 时关闭 history / templates drawer。
+  setSettingsOpen: (open: boolean) =>
+    set(open ? { settingsOpen: true, historyOpen: false, templatesOpen: false } : { settingsOpen: false }),
   llmConfig: {},
   setLlmConfig: (config: Record<string, unknown>) => set({ llmConfig: config }),
   availableSkills: [],

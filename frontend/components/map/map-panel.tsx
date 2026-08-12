@@ -698,7 +698,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
       {/* Live cartography overlays — driven by layer.legend_spec */}
       {thematicLayers.length > 0 && (
         <>
-          <div className="absolute bottom-4 left-4 z-30 space-y-3">
+          <div className="absolute bottom-4 z-30 space-y-3" style={{ left: 'var(--workspace-offset, 16px)' }}>
             {thematicLayers.map((l) => {
               const flashing = focusLayerId === l.id;
               return (

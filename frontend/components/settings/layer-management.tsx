@@ -73,7 +73,7 @@ export function LayerManagement() {
       case 'heatmap':
         return { bg: 'rgba(239,68,68,0.08)', color: '#ef4444' };
       default:
-        return { bg: 'rgba(15,23,42,0.05)', color: '#94a3b8' };
+        return { bg: 'var(--theme-bg-muted)', color: 'var(--theme-text-muted)' };
     }
   };
 
@@ -94,7 +94,7 @@ export function LayerManagement() {
       <STitle title="图层管理" sub="Layer Management" />
 
       {layers.length === 0 ? (
-        <div className="text-[14px] text-slate-400 italic py-6 text-center">
+        <div className="text-[14px] text-[var(--theme-text-muted)] italic py-6 text-center">
           No layers loaded
         </div>
       ) : (
@@ -114,22 +114,22 @@ export function LayerManagement() {
                 onDragLeave={handleDragLeave}
                 onDrop={(e) => handleDrop(e, index)}
                 onDragEnd={handleDragEnd}
-                className="flex items-center gap-2 rounded-lg border bg-white/50 px-3 py-2 transition-all cursor-default"
+                className="flex items-center gap-2 rounded-lg border bg-[var(--theme-bg-subtle)] px-3 py-2 transition-all cursor-default"
                 style={{
                   borderColor: isDragOver
-                    ? 'rgba(22,163,74,0.3)'
-                    : 'rgba(15,23,42,0.06)',
+                    ? 'color-mix(in srgb, var(--agent-accent, #16a34a) 30%, transparent)'
+                    : 'var(--theme-border)',
                   backgroundColor: isDragOver
-                    ? 'rgba(22,163,74,0.03)'
-                    : 'rgba(255,255,255,0.5)',
+                    ? 'color-mix(in srgb, var(--agent-accent, #16a34a) 4%, transparent)'
+                    : 'var(--theme-bg-subtle)',
                   opacity: isDragging ? 0.4 : layer.visible ? 1 : 0.55,
                   boxShadow: isDragOver
-                    ? '0 0 0 1px rgba(22,163,74,0.2)'
+                    ? '0 0 0 1px color-mix(in srgb, var(--agent-accent, #16a34a) 20%, transparent)'
                     : 'none',
                 }}
               >
                 {/* Drag handle */}
-                <div className="cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-400">
+                <div className="cursor-grab active:cursor-grabbing text-[var(--theme-text-subtle)] hover:text-[var(--theme-text-muted)]">
                   <GripVertical size={14} />
                 </div>
 
@@ -145,7 +145,7 @@ export function LayerManagement() {
 
                 {/* Name + type */}
                 <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                  <span className="text-[14px] font-medium text-slate-700 truncate">
+                  <span className="text-[14px] font-medium text-[var(--theme-text-primary)] truncate">
                     {layer.name}
                   </span>
                   <span
@@ -158,7 +158,7 @@ export function LayerManagement() {
                     {layer.type}
                   </span>
                   {featureCount !== null && (
-                    <span className="text-[14px] text-slate-400">
+                    <span className="text-[14px] text-[var(--theme-text-muted)]">
                       {featureCount} features
                     </span>
                   )}
@@ -178,7 +178,7 @@ export function LayerManagement() {
                     }
                     className="w-full h-1 rounded-full appearance-none cursor-pointer"
                     style={{
-                      background: `linear-gradient(to right, #16a34a ${layer.opacity * 100}%, #e2e8f0 ${layer.opacity * 100}%)`,
+                      background: `linear-gradient(to right, var(--agent-accent, #16a34a) ${layer.opacity * 100}%, var(--theme-border-subtle) ${layer.opacity * 100}%)`,
                     }}
                     title={`Opacity: ${Math.round(layer.opacity * 100)}%`}
                   />
@@ -194,7 +194,7 @@ export function LayerManagement() {
                 <button
                   onClick={() => removeLayer(layer.id)}
                   aria-label="删除图层"
-                  className="text-slate-300 hover:text-red-400 transition-colors p-0.5"
+                  className="text-[var(--theme-text-subtle)] hover:text-red-400 transition-colors p-0.5"
                   title="Remove layer"
                 >
                   <Trash2 size={13} />

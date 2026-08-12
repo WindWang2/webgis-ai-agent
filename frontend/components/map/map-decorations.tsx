@@ -52,7 +52,7 @@ export const MapDecorations = React.memo(function MapDecorations({ show, title, 
       </div>
       <div
         data-testid="scale-bar"
-        className="absolute bottom-10 right-3 z-30 px-2 py-1 rounded-md bg-card/90 backdrop-blur-md border border-border shadow-lg text-[15px] font-medium text-foreground flex items-center gap-2"
+        className="absolute bottom-14 right-3 z-30 px-2 py-1 rounded-md bg-card/90 backdrop-blur-md border border-border shadow-lg text-[15px] font-medium text-foreground flex items-center gap-2"
       >
         <div
           className="border-b-2 border-l-2 border-r-2 border-foreground"

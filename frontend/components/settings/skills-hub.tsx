@@ -70,29 +70,29 @@ export function SkillsHub() {
 
       {sortedCategories.map((category) => (
         <div key={category}>
-          <div className="text-[15px] uppercase tracking-wider text-slate-400 font-semibold mb-2">
+          <div className="text-[15px] uppercase tracking-wider text-[var(--theme-text-muted)] font-semibold mb-2">
             {category}
           </div>
           <div className="flex flex-col gap-1.5">
             {grouped[category].map((sk) => (
               <div
                 key={sk.id}
-                className="flex items-center gap-3 rounded-lg border border-slate-900/6 bg-white/50 px-3 py-2.5 transition-all"
+                className="flex items-center gap-3 rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] px-3 py-2.5 transition-all"
                 style={{
                   opacity: sk.enabled ? 1 : 0.55,
                 }}
               >
                 {/* Name + badge */}
                 <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <span className="text-[14px] font-medium text-slate-700 truncate">
+                  <span className="text-[14px] font-medium text-[var(--theme-text-primary)] truncate">
                     {sk.name}
                   </span>
                   {sk.calls > 0 && (
                     <span
                       className="text-[14px] font-bold rounded-full px-1.5 py-0.5 leading-none"
                       style={{
-                        backgroundColor: 'rgba(22,163,74,0.08)',
-                        color: '#16a34a',
+                        backgroundColor: 'color-mix(in srgb, var(--agent-accent, #16a34a) 8%, transparent)',
+                        color: 'var(--agent-accent, #16a34a)',
                       }}
                     >
                       {sk.calls}
@@ -101,7 +101,7 @@ export function SkillsHub() {
                 </div>
 
                 {/* Description */}
-                <div className="text-[15px] text-slate-400 truncate flex-1">
+                <div className="text-[15px] text-[var(--theme-text-muted)] truncate flex-1">
                   {sk.desc}
                 </div>
 
@@ -117,7 +117,7 @@ export function SkillsHub() {
       ))}
 
       {/* Upload custom skill */}
-      <button className="flex items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200/80 bg-white/30 py-3 text-[14px] font-medium text-slate-400 hover:text-slate-500 hover:border-slate-300 transition-all">
+      <button className="flex items-center justify-center gap-2 rounded-xl border-2 border-dashed border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] py-3 text-[14px] font-medium text-[var(--theme-text-muted)] hover:text-[var(--theme-text-secondary)] hover:border-[var(--theme-border-strong)] transition-all">
         <svg
           width="14"
           height="14"

@@ -23,28 +23,28 @@ export function SystemSettings() {
 
       {/* Backend API URL — read-only, determined at build time */}
       <div>
-        <div className="text-[14px] uppercase tracking-wide text-slate-400 font-medium mb-2">
+        <div className="text-[14px] uppercase tracking-wide text-[var(--theme-text-muted)] font-medium mb-2">
           Backend API URL
         </div>
         <div
-          className="rounded-lg border border-slate-900/8 bg-slate-50/50 px-3 py-2 text-[14px] font-mono text-slate-600"
+          className="rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-input)] px-3 py-2 text-[14px] font-mono text-[var(--theme-text-secondary)]"
           aria-label="后端 API 地址（只读，由构建时环境变量决定）"
         >
           {API_BASE}
         </div>
-        <div className="text-[15px] text-slate-400 mt-1">
-          由 <code className="text-[15px] text-slate-500">NEXT_PUBLIC_API_URL</code> 环境变量在构建时确定，运行时不可修改。
+        <div className="text-[15px] text-[var(--theme-text-muted)] mt-1">
+          由 <code className="text-[15px] text-[var(--theme-text-secondary)]">NEXT_PUBLIC_API_URL</code> 环境变量在构建时确定，运行时不可修改。
         </div>
       </div>
 
       {/* Language selection — disabled, i18n not yet implemented */}
       <div>
         <div className="flex items-center gap-2 mb-2">
-          <span className="text-[14px] uppercase tracking-wide text-slate-400 font-medium">
+          <span className="text-[14px] uppercase tracking-wide text-[var(--theme-text-muted)] font-medium">
             Language / 语言
           </span>
           <span
-            className="text-[14px] rounded-full px-1.5 py-0.5 bg-slate-100 text-slate-400 font-medium"
+            className="text-[14px] rounded-full px-1.5 py-0.5 bg-[var(--theme-bg-muted)] text-[var(--theme-text-muted)] font-medium"
             title="国际化系统尚未实现"
           >
             规划中
@@ -55,9 +55,9 @@ export function SystemSettings() {
             disabled
             className="flex-1 rounded-lg border-2 py-2 text-[14px] font-medium cursor-not-allowed"
             style={{
-              borderColor: '#16a34a',
-              backgroundColor: 'rgba(22,163,74,0.04)',
-              color: '#16a34a',
+              borderColor: 'var(--agent-accent, #16a34a)',
+              backgroundColor: 'color-mix(in srgb, var(--agent-accent, #16a34a) 4%, transparent)',
+              color: 'var(--agent-accent, #16a34a)',
             }}
           >
             中文
@@ -66,9 +66,9 @@ export function SystemSettings() {
             disabled
             className="flex-1 rounded-lg border-2 py-2 text-[14px] font-medium cursor-not-allowed"
             style={{
-              borderColor: 'rgba(15,23,42,0.08)',
-              backgroundColor: 'rgba(255,255,255,0.5)',
-              color: '#475569',
+              borderColor: 'var(--theme-border)',
+              backgroundColor: 'var(--theme-bg-subtle)',
+              color: 'var(--theme-text-secondary)',
             }}
           >
             English
@@ -77,7 +77,7 @@ export function SystemSettings() {
       </div>
 
       {/* About section — version from build-time injection */}
-      <div className="rounded-xl border border-slate-900/8 bg-white/50 px-4 py-3">
+      <div className="rounded-xl border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] px-4 py-3">
         <div className="flex items-center gap-2.5 mb-2">
           <div
             className="flex items-center justify-center rounded-lg"
@@ -85,7 +85,7 @@ export function SystemSettings() {
               width: 28,
               height: 28,
               background:
-                'linear-gradient(135deg, #16a34a 0%, #22c55e 100%)',
+                'linear-gradient(135deg, var(--agent-accent, #16a34a) 0%, color-mix(in srgb, var(--agent-accent, #16a34a) 72%, #ffffff) 100%)',
             }}
           >
             <svg
@@ -103,15 +103,15 @@ export function SystemSettings() {
             </svg>
           </div>
           <div>
-            <div className="text-[15px] font-bold text-slate-800">
+            <div className="text-[15px] font-bold text-[var(--theme-text-primary)]">
               GeoAgent
             </div>
-            <div className="text-[14px] text-slate-400 font-mono">
+            <div className="text-[14px] text-[var(--theme-text-muted)] font-mono">
               v{process.env.NEXT_PUBLIC_APP_VERSION || '0.1.2'}
             </div>
           </div>
         </div>
-        <div className="text-[15px] text-slate-400 italic">
+        <div className="text-[15px] text-[var(--theme-text-muted)] italic">
           &quot;All is Agent&quot;
         </div>
       </div>

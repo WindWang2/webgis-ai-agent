@@ -60,11 +60,11 @@ export function RagConfig() {
 
       {/* Spatial index section */}
       <div>
-        <div className="text-[15px] uppercase tracking-wider text-slate-400 font-semibold mb-2">
+        <div className="text-[15px] uppercase tracking-wider text-[var(--theme-text-muted)] font-semibold mb-2">
           Spatial Index
         </div>
         {ragSpatial.length === 0 ? (
-          <div className="text-[15px] text-slate-300 italic py-2">
+          <div className="text-[15px] text-[var(--theme-text-subtle)] italic py-2">
             No spatial documents indexed yet
           </div>
         ) : (
@@ -72,18 +72,18 @@ export function RagConfig() {
             {ragSpatial.map((doc) => (
               <div
                 key={doc.id}
-                className="flex items-center gap-3 rounded-lg border border-slate-900/6 bg-white/50 px-3 py-2"
+                className="flex items-center gap-3 rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] px-3 py-2"
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="text-[14px] font-medium text-slate-700">
+                    <span className="text-[14px] font-medium text-[var(--theme-text-primary)]">
                       {doc.name}
                     </span>
-                    <span className="text-[14px] text-slate-400 bg-slate-100/80 rounded px-1.5 py-0.5">
+                    <span className="text-[14px] text-[var(--theme-text-muted)] bg-[var(--theme-bg-muted)] rounded px-1.5 py-0.5">
                       {doc.type}
                     </span>
                   </div>
-                  <div className="text-[14px] text-slate-400 mt-0.5">
+                  <div className="text-[14px] text-[var(--theme-text-muted)] mt-0.5">
                     {doc.features !== null && `${doc.features} features`}
                     {doc.features !== null && ' · '}
                     {doc.size}
@@ -93,9 +93,9 @@ export function RagConfig() {
                   className="text-[14px] font-medium rounded-full px-1.5 py-0.5"
                   style={{
                     backgroundColor: doc.indexed
-                      ? 'rgba(22,163,74,0.08)'
-                      : 'rgba(15,23,42,0.05)',
-                    color: doc.indexed ? '#16a34a' : '#94a3b8',
+                      ? 'color-mix(in srgb, var(--agent-accent, #16a34a) 10%, transparent)'
+                      : 'var(--theme-bg-muted)',
+                    color: doc.indexed ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-muted)',
                   }}
                 >
                   {doc.indexed ? 'Indexed' : 'Pending'}
@@ -108,11 +108,11 @@ export function RagConfig() {
 
       {/* Semantic index section */}
       <div>
-        <div className="text-[15px] uppercase tracking-wider text-slate-400 font-semibold mb-2">
+        <div className="text-[15px] uppercase tracking-wider text-[var(--theme-text-muted)] font-semibold mb-2">
           Semantic Index
         </div>
         {ragSemantic.length === 0 ? (
-          <div className="text-[15px] text-slate-300 italic py-2">
+          <div className="text-[15px] text-[var(--theme-text-subtle)] italic py-2">
             No semantic documents indexed yet
           </div>
         ) : (
@@ -120,18 +120,18 @@ export function RagConfig() {
             {ragSemantic.map((doc) => (
               <div
                 key={doc.id}
-                className="flex items-center gap-3 rounded-lg border border-slate-900/6 bg-white/50 px-3 py-2"
+                className="flex items-center gap-3 rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] px-3 py-2"
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="text-[14px] font-medium text-slate-700">
+                    <span className="text-[14px] font-medium text-[var(--theme-text-primary)]">
                       {doc.name}
                     </span>
-                    <span className="text-[14px] text-slate-400">
+                    <span className="text-[14px] text-[var(--theme-text-muted)]">
                       {doc.chunks} chunks
                     </span>
                   </div>
-                  <div className="text-[14px] text-slate-400 mt-0.5">
+                  <div className="text-[14px] text-[var(--theme-text-muted)] mt-0.5">
                     {doc.size}
                   </div>
                 </div>
@@ -139,9 +139,9 @@ export function RagConfig() {
                   className="text-[14px] font-medium rounded-full px-1.5 py-0.5"
                   style={{
                     backgroundColor: doc.indexed
-                      ? 'rgba(22,163,74,0.08)'
-                      : 'rgba(15,23,42,0.05)',
-                    color: doc.indexed ? '#16a34a' : '#94a3b8',
+                      ? 'color-mix(in srgb, var(--agent-accent, #16a34a) 10%, transparent)'
+                      : 'var(--theme-bg-muted)',
+                    color: doc.indexed ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-muted)',
                   }}
                 >
                   {doc.indexed ? 'Indexed' : 'Pending'}
@@ -154,18 +154,18 @@ export function RagConfig() {
 
       {/* Retrieval config */}
       <div>
-        <div className="text-[15px] uppercase tracking-wider text-slate-400 font-semibold mb-3">
+        <div className="text-[15px] uppercase tracking-wider text-[var(--theme-text-muted)] font-semibold mb-3">
           Retrieval Config
         </div>
 
-        <div className="flex flex-col gap-4 rounded-xl border border-slate-900/8 bg-white/50 px-4 py-3">
+        <div className="flex flex-col gap-4 rounded-xl border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] px-4 py-3">
           {/* Spatial weight slider */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[15px] text-slate-500">
+              <span className="text-[15px] text-[var(--theme-text-secondary)]">
                 Spatial Weight
               </span>
-              <span className="text-[15px] font-mono text-slate-600">
+              <span className="text-[15px] font-mono text-[var(--theme-text-secondary)]">
                 {ragConfig.spatialWeight}%
               </span>
             </div>
@@ -179,7 +179,7 @@ export function RagConfig() {
               }
               className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
               style={{
-                background: `linear-gradient(to right, #16a34a ${ragConfig.spatialWeight}%, #e2e8f0 ${ragConfig.spatialWeight}%)`,
+                background: `linear-gradient(to right, var(--agent-accent, #16a34a) ${ragConfig.spatialWeight}%, var(--theme-border-subtle) ${ragConfig.spatialWeight}%)`,
               }}
             />
           </div>
@@ -187,7 +187,7 @@ export function RagConfig() {
           {/* Top K */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <span className="text-[15px] text-slate-500">Top K</span>
+              <span className="text-[15px] text-[var(--theme-text-secondary)]">Top K</span>
             </div>
             <input
               type="number"
@@ -197,15 +197,15 @@ export function RagConfig() {
               onChange={(e) =>
                 setRagConfig({ topK: Number(e.target.value) })
               }
-              className="w-20 rounded bg-white/70 border border-slate-200/80 px-2 py-1 text-[14px] font-mono text-slate-700 focus:outline-none focus:ring-1 focus:ring-green-400/50"
+              className="w-20 rounded bg-[var(--theme-bg-input)] border border-[var(--theme-border)] px-2 py-1 text-[14px] font-mono text-[var(--theme-text-primary)] focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
             />
           </div>
 
           {/* Rerank toggle */}
           <div className="flex items-center justify-between">
             <div>
-              <span className="text-[15px] text-slate-500">Rerank</span>
-              <span className="text-[14px] text-slate-400 ml-1">
+              <span className="text-[15px] text-[var(--theme-text-secondary)]">Rerank</span>
+              <span className="text-[14px] text-[var(--theme-text-muted)] ml-1">
                 Cross-encoder reranking
               </span>
             </div>
@@ -221,10 +221,10 @@ export function RagConfig() {
 
       {/* Vector DB connection */}
       <div>
-        <div className="text-[15px] uppercase tracking-wider text-slate-400 font-semibold mb-3">
+        <div className="text-[15px] uppercase tracking-wider text-[var(--theme-text-muted)] font-semibold mb-3">
           Vector DB Connection
         </div>
-        <div className="flex flex-col gap-3 rounded-xl border border-slate-900/8 bg-white/50 px-4 py-3">
+        <div className="flex flex-col gap-3 rounded-xl border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] px-4 py-3">
           <SField
             label="Address"
             value={vectorDb}
@@ -241,17 +241,17 @@ export function RagConfig() {
             <button
               onClick={handleTestConnection}
               disabled={testing}
-              className="inline-flex items-center gap-1.5 rounded px-3 py-1 text-[15px] font-medium border border-slate-200 bg-white/70 text-slate-600 hover:bg-slate-50 transition-all disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded px-3 py-1 text-[15px] font-medium border border-[var(--theme-border)] bg-[var(--theme-bg-input)] text-[var(--theme-text-secondary)] hover:bg-[var(--theme-bg-hover)] transition-all disabled:opacity-50"
             >
               {testing ? 'Testing...' : 'Test Connection'}
             </button>
             {testResult === 'success' && (
-              <span className="text-[15px] font-medium text-green-600">
+              <span className="text-[15px] font-medium text-emerald-600 dark:text-emerald-300">
                 Connected
               </span>
             )}
             {testResult === 'error' && (
-              <span className="text-[15px] font-medium text-red-500">
+              <span className="text-[15px] font-medium text-red-600 dark:text-red-400">
                 Failed
               </span>
             )}

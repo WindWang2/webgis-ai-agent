@@ -14,9 +14,9 @@ interface STitleProps {
 export function STitle({ title, sub }: STitleProps) {
   return (
     <div className="mb-2">
-      <div className="text-[14px] font-semibold text-slate-800 leading-tight">{title}</div>
+      <div className="text-[14px] font-semibold text-[var(--theme-text-primary)] leading-tight">{title}</div>
       {sub && (
-        <div className="text-[15px] text-slate-400 mt-0.5 leading-tight">{sub}</div>
+        <div className="text-[15px] text-[var(--theme-text-muted)] mt-0.5 leading-tight">{sub}</div>
       )}
     </div>
   );
@@ -43,7 +43,7 @@ export function SField({
 }: SFieldProps) {
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-[14px] uppercase tracking-wide text-slate-400 font-medium">
+      <label className="text-[14px] uppercase tracking-wide text-[var(--theme-text-muted)] font-medium">
         {label}
       </label>
       <input
@@ -51,7 +51,7 @@ export function SField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full rounded bg-white/70 border border-slate-200/80 px-2 py-1 text-[14px] font-mono text-slate-700 placeholder:text-slate-300 focus:outline-none focus:ring-1 focus:ring-green-400/50 transition-shadow"
+        className="w-full rounded bg-[var(--theme-bg-input)] border border-[var(--theme-border)] px-2 py-1 text-[14px] font-mono text-[var(--theme-text-primary)] placeholder:text-[var(--theme-text-subtle)] focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)] transition-shadow"
       />
     </div>
   );

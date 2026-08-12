@@ -2,13 +2,14 @@
 
 import { memo, useState, useRef, useEffect, useCallback, type KeyboardEvent } from 'react';
 import dynamic from 'next/dynamic';
-import { Upload, Send, Sparkles, CheckCircle2 } from 'lucide-react';
+import { Send, Sparkles, CheckCircle2 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { AiStatus } from '@/lib/store/hud-types';
 import { ToolCallChain } from '@/components/chat/tool-call-card';
 import { CollapsibleThink } from '@/components/chat/collapsible-think';
 import { PlanProposalCard } from '@/components/chat/plan-proposal-card';
 import { PlanCard } from '@/components/chat/plan-card';
+import { InlineNotice } from '@/components/shared/inline-notice';
 import { adaptChartData } from "@/lib/chart-adapter";
 
 // Bundle-slimming: react-markdown (MiniMd) and recharts (ChartRenderer) load on
@@ -350,22 +351,14 @@ export function ChatTab({ messages, aiStatus, onSend, accentColor, onPlanAction 
         backgroundColor: 'var(--theme-bg-input)',
         backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)'
       }} className="shrink-0">
+        {/* UI V3：AI 错误在 chat 内可见（之前仅 top-bar/HUD 有指示，
+            composer 静默恢复可用，用户无法感知失败） */}
+        {aiStatus === 'error' && (
+          <div className="px-3 pt-2">
+            <InlineNotice variant="error">上一条指令执行失败，请调整后重试。</InlineNotice>
+          </div>
+        )}
         <div className="flex items-end gap-2 px-3 pt-2.5 pb-1.5">
-          {/* Upload button */}
-          <button
-            aria-label="上传文件"
-            style={{
-              flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              width: 24, height: 24, borderRadius: 6, color: 'var(--theme-text-muted)',
-              backgroundColor: 'transparent', cursor: 'pointer'
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--theme-bg-hover)'; e.currentTarget.style.color = 'var(--theme-text-primary)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--theme-text-muted)'; }}
-            title="上传文件"
-          >
-            <Upload size={14} />
-          </button>
-
           {/* Textarea */}
           <textarea
             ref={textareaRef}
