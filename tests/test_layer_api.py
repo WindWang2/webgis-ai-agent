@@ -7,8 +7,20 @@ from fastapi import FastAPI
 from app.api.routes import layer as _mod
 from app.core.auth import require_owned_session
 from app.models.db_model import Conversation
+from app.services.mvt import spatial_index_cache, tile_lru_cache
 
 _VALID_SID = "session-aaaaaaaaaaaaaaaa"  # >= min_length=8
+
+
+@pytest.fixture(autouse=True)
+def _clear_mvt_caches():
+    """V2 进程内缓存按 (session, ref, z, x, y) 隔离 — 每个用例清空，
+    避免用例间共享的 session/ref 键造成缓存串扰。"""
+    tile_lru_cache.clear()
+    spatial_index_cache.clear()
+    yield
+    tile_lru_cache.clear()
+    spatial_index_cache.clear()
 
 
 @pytest.fixture
@@ -88,7 +100,7 @@ def _poi_fc(n=3):
 
 @pytest.mark.asyncio
 async def test_mvt_tile_success_and_content(client):
-    """Tile 端点返回 gzip 的合法 MVT（含点要素 + 属性）。"""
+    """Tile 端点返回 gzip 的合法 MVT（含点要素 + 属性 + ETag）。"""
     from tests.unit.test_mvt_encoder import _decode_tile
     fc = _poi_fc()
     with patch.object(_mod.session_data_manager, "get", return_value=fc):
@@ -97,8 +109,11 @@ async def test_mvt_tile_success_and_content(client):
             params={"session_id": _VALID_SID},
         )
         assert resp.status_code == 200
-        assert resp.headers["content-type"].startswith("application/x-protobuf")
+        assert resp.headers["content-type"].startswith("application/vnd.mapbox-vector-tile")
+        assert resp.headers.get("content-encoding") == "gzip"
         assert "private" in resp.headers.get("cache-control", "")
+        assert resp.headers.get("etag", "").startswith('"')
+        assert len(resp.headers["etag"]) == 18  # 16 hex chars + quotes
 
         # httpx 自动解压 gzip —— resp.content 即原始 MVT bytes
         tile = resp.content
@@ -109,6 +124,26 @@ async def test_mvt_tile_success_and_content(client):
         props = dict(zip((layers[0]["keys"][k] for k, _ in layers[0]["features"][0]["tags"]),
                          (layers[0]["values"][v] for _, v in layers[0]["features"][0]["tags"])))
         assert props["name"] == "p0"
+
+
+@pytest.mark.asyncio
+async def test_mvt_tile_etag_304(client):
+    """If-None-Match 命中 ETag → 304；未命中 → 200 完整响应。"""
+    fc = _poi_fc()
+    with patch.object(_mod.session_data_manager, "get", return_value=fc):
+        url = "/api/v1/layers/data/ref-123/tiles/1/1/0.mvt"
+        params = {"session_id": _VALID_SID}
+        first = await client.get(url, params=params)
+        assert first.status_code == 200
+        etag = first.headers["etag"]
+        # 命中 → 304（无 body）
+        cached_resp = await client.get(url, params=params, headers={"If-None-Match": etag})
+        assert cached_resp.status_code == 304
+        assert cached_resp.content == b""
+        # 未命中（不同 etag）→ 200 完整响应
+        miss = await client.get(url, params=params, headers={"If-None-Match": '"deadbeefdeadbeef"'})
+        assert miss.status_code == 200
+        assert miss.headers["etag"] == etag
 
 
 @pytest.mark.asyncio

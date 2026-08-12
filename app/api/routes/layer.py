@@ -11,14 +11,22 @@
 
 import asyncio
 import gzip
+import hashlib
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 
 from app.core.auth import require_owned_session, verify_session_owner
 from app.models.db_model import Conversation
-from app.services.mvt import encode_point_tile
+from app.services.mvt import (
+    RefDataUnavailableError,
+    build_spatial_index_entry,
+    encode_tile,
+    single_flight,
+    spatial_index_cache,
+    tile_lru_cache,
+)
 from app.services.session_data import session_data_manager
 from app.services.task_tracker import TaskTracker  # noqa: F401  (typing aid)
 from app.tools._utils import async_db_session
@@ -80,6 +88,50 @@ def _extract_points(data) -> list[tuple[tuple[float, float], dict]]:
     return points
 
 
+async def _fetch_ref_data(session_id: str, ref_id: str, owner_token: Optional[str]) -> Any:
+    """Fetch + authorize ref data (same semantics as the data endpoint)."""
+    res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
+    if not res.success:
+        status_code = 403 if res.error_type == "PermissionDenied" else 404
+        raise HTTPException(status_code=status_code, detail=res.error or "数据不可用")
+    return res.data
+
+
+def _encode_tile_cached(session_id: str, ref_id: str, z: int, x: int, y: int, data) -> bytes:
+    """Sync tile pipeline: spatial-index lookup → encode → gzip → tile LRU store.
+
+    Runs inside asyncio.to_thread. Raises RefDataUnavailableError when the
+    index was evicted between the route's presence check and this build (the
+    route then refetches the ref data once and retries).
+    """
+    key = (session_id, ref_id)
+    entry = spatial_index_cache.get_or_build(key, lambda: build_spatial_index_entry(key, data))
+    features = entry.query_tile(z, x, y)
+    raw = encode_tile(features, z, x, y)
+    body = gzip.compress(raw)
+    tile_lru_cache.put((session_id, ref_id, z, x, y), body)
+    return body
+
+
+def _tile_response(body: bytes, if_none_match: Optional[str]) -> Response:
+    """MVT response with ETag (sha256 of gzip bytes) and 304 support."""
+    etag = '"%s"' % hashlib.sha256(body).hexdigest()[:16]
+    if if_none_match:
+        candidate = if_none_match.strip()
+        if candidate == "*" or candidate.strip('"') == etag.strip('"'):
+            return Response(status_code=304, headers={"ETag": etag})
+    return Response(
+        content=body,
+        media_type="application/vnd.mapbox-vector-tile",
+        headers={
+            "Content-Encoding": "gzip",
+            "Cache-Control": "private, max-age=300",  # ref 数据会话内不可变
+            "ETag": etag,
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @router.get("/layers/data/{ref_id}/tiles/{z}/{x}/{y}.mvt", tags=["图层数据"])
 async def get_mvt_tile(
     ref_id: str,
@@ -89,37 +141,45 @@ async def get_mvt_tile(
     session_id: str = Query(..., min_length=8, max_length=128, description="会话 ID"),
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _conv: Conversation = Depends(require_owned_session),
+    if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
 ):
-    """以 MVT 瓦片形式返回会话引用数据中的 Point 要素（Data Plane 显示路径）。
+    """以 MVT 瓦片形式返回会话引用数据（Data Plane 显示路径，全几何类型）。
 
     权限语义与 /layers/data/{ref_id} 完全一致（require_owned_session +
-    owner_token）。空瓦片返回合法的空 MVT message（无 layer）。响应 gzip 压缩。
+    owner_token）。性能路径：tile LRU 命中直接返回；未命中走 single-flight
+    去重后，在 asyncio.to_thread 中完成索引查询 + 编码 + gzip。空瓦片返回
+    合法的空 MVT message（无 layer）。响应 gzip 压缩并携带 ETag，
+    支持 If-None-Match 条件请求（304）。
     """
     if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
         raise HTTPException(status_code=400, detail="非法 ref_id")
     if not (0 <= z <= 20) or x < 0 or y < 0 or x >= (1 << z) or y >= (1 << z):
         raise HTTPException(status_code=400, detail="非法瓦片坐标")
 
-    res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
-    if not res.success:
-        status_code = 403 if res.error_type == "PermissionDenied" else 404
-        raise HTTPException(status_code=status_code, detail=res.error or "数据不可用")
+    cache_key = (session_id, ref_id, z, x, y)
 
-    def _sync_mvt_encode():
-        points = _extract_points(res.data)
-        tile = encode_point_tile(points, z, x, y)
-        return gzip.compress(tile)
+    # 1) tile LRU cache first — 命中时不做任何 ref-store 工作。
+    #    缓存以 session_id 为 key 隔离，且 require_owned_session 已校验会话归属。
+    cached = tile_lru_cache.get(cache_key)
+    if cached is not None:
+        return _tile_response(cached, if_none_match)
 
-    body = await asyncio.to_thread(_sync_mvt_encode)
-    return Response(
-        content=body,
-        media_type="application/x-protobuf",
-        headers={
-            "Content-Encoding": "gzip",
-            "Cache-Control": "private, max-age=300",  # ref 数据会话内不可变
-            "X-Content-Type-Options": "nosniff",
-        },
-    )
+    # 2) single-flight：同一 (session, ref, z, x, y) 的并发请求共享一次计算。
+    async def _compute() -> bytes:
+        # ref 数据仅在空间索引尚未构建时拉取（含 owner_token 鉴权）。
+        # 索引构建一次后即按 (session_id, ref_id) 常驻 LRU，不再重复读大 JSON。
+        data = None
+        if spatial_index_cache.get((session_id, ref_id)) is None:
+            data = await _fetch_ref_data(session_id, ref_id, owner_token)
+        try:
+            return await asyncio.to_thread(_encode_tile_cached, session_id, ref_id, z, x, y, data)
+        except RefDataUnavailableError:
+            # 索引在检查后被 LRU 逐出的竞态：重新拉取一次并重试
+            data = await _fetch_ref_data(session_id, ref_id, owner_token)
+            return await asyncio.to_thread(_encode_tile_cached, session_id, ref_id, z, x, y, data)
+
+    body = await single_flight.run(cache_key, _compute)
+    return _tile_response(body, if_none_match)
 
 
 @router.get("/layers/descriptor/{ref_id}", tags=["图层数据"])
@@ -129,10 +189,38 @@ async def get_layer_descriptor(
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _conv: Conversation = Depends(require_owned_session),
 ):
-    """返回轻量级图层元数据描述符 (Count, Bounds, Geometry Types, MVT Capability, Est Bytes)."""
+    """返回轻量级图层元数据描述符 (Count, Bounds, Geometry Types, MVT Capability, Est Bytes).
+    
+    V3 Performance: reads pre-computed descriptor from storage (computed once at
+    ref creation), eliminating 100k-feature scans on every descriptor request.
+    Falls back to on-the-fly compute for refs stored before V3.
+    """
     if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
         raise HTTPException(status_code=400, detail="非法 ref_id")
 
+    # V3: Try pre-computed descriptor first
+    descriptor = await session_data_manager.get_ref_descriptor(session_id, ref_id)
+    if descriptor:
+        # Auth check: verify ownership via the existing get_ref_data path
+        # (descriptor itself doesn't contain sensitive data, but access control must match)
+        res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
+        if not res.success:
+            status_code = 403 if res.error_type == "PermissionDenied" else 404
+            raise HTTPException(status_code=status_code, detail=res.error or "数据不可用")
+        # Descriptor found and access granted
+        return {
+            "ref_id": descriptor["ref_id"],
+            "session_id": session_id,
+            "feature_count": descriptor["feature_count"],
+            "point_count": descriptor["point_count"],
+            "geometry_types": descriptor["geometry_types"],
+            "bbox": descriptor["bbox"],
+            "mvt_capable": descriptor["mvt_capable"],
+            "raster_capable": False,  # descriptor doesn't store raster flag yet
+            "estimated_bytes": descriptor["estimated_bytes"],
+        }
+    
+    # Fallback: compute on-the-fly for refs without stored descriptor (pre-V3 refs)
     res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
     if not res.success or not res.data:
         status_code = 403 if res.error_type == "PermissionDenied" else 404

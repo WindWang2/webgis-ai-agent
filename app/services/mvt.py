@@ -1,16 +1,43 @@
-"""Minimal Mapbox Vector Tile (MVT) encoder — Point features, stdlib only.
+"""Mapbox Vector Tile (MVT) encoder — V2: all geometry types + performance layer.
 
-Tracer bullet for the Data Plane goal: large POI FeatureCollections are
-served to the browser as viewport tiles instead of one huge GeoJSON.
-Encoding follows the MVT 2.1 spec (layer "data", extent 4096, Web-Mercator
-projection, zigzag/varint delta geometry). Only Point features are encoded;
-non-point features are skipped by the caller.
+V1 was a stdlib-only tracer bullet for Point features. V2 keeps that encode
+core and adds:
 
-Tile-empty result is a valid empty tile (no layers) — MapLibre renders it
-as blank, which is correct for tiles outside the data extent.
+* Geometry support: Point / MultiPoint / LineString / MultiLineString /
+  Polygon / MultiPolygon (correct winding, holes, ClosePath). GeometryCollection
+  is skipped with a warning (never encoded).
+* Spatial index: one STRtree per (session_id, ref_id), bounded LRU (256 refs),
+  thread-safe. Tile queries use index.query(tile_bbox) instead of scanning all
+  features.
+* Tile LRU cache: per-(session_id, ref_id, z, x, y) cache of the final gzip
+  bytes, bounded by entry count (4096) and total bytes (256 MB), thread-safe,
+  session-isolated via the key.
+* Single-flight dedup: concurrent same-tile requests share one computation
+  (asyncio.Future), bounded to 512 in-flight keys.
+* Zoom-aware simplification: Line/Polygon are simplified at z < 14 with
+  shapely.simplify; the tolerance is half a pixel (in degree terms
+  360 / (256 * 2^z) / 2). Degenerate results are dropped; self-intersecting
+  polygons are never emitted (shapely.is_valid gate).
+* Web-Mercator geometry encoding per the MVT 2.1 spec: layer "data",
+  extent 4096, zigzag/varint delta commands.
+
+Winding convention: exterior rings are emitted counter-clockwise and holes
+clockwise in geographic (lon/lat) terms — i.e. RFC 7946 GeoJSON winding. In
+the tile's y-down coordinate space that is exactly the orientation the MVT 2.1
+spec requires (4.3.4.4) and what map renderers expect.
+
+shapely (>= 2.1, a hard dependency of the project) is imported behind a guard:
+without it the encoder falls back to a pure-python clipper and the spatial
+index degrades to a full bbox scan.
 """
+import asyncio
+import logging
 import math
+import threading
+from collections import OrderedDict
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 _LAYER_NAME = "data"
 _EXTENT = 4096
@@ -19,9 +46,7 @@ _EXTENT = 4096
 _VARINT = 0
 _BYTES = 2
 
-# value field tags
-# value field tags (MVT Value message: only the types we actually emit are
-# kept; float/uint/sint variants are future-work if non-double numerics land).
+# value field tags (MVT Value message: only the types we actually emit)
 _VAL_STRING = 1
 _VAL_DOUBLE = 3
 _VAL_INT = 4
@@ -29,9 +54,47 @@ _VAL_BOOL = 7
 
 # geometry types (MVT)
 _GT_POINT = 1
+_GT_LINESTRING = 2
+_GT_POLYGON = 3
 
 # command ids
 _MOVETO = 1
+_LINETO = 2
+_CLOSEPATH = 7
+
+# zoom threshold: simplification is skipped at z >= this (preserve detail)
+_SIMPLIFY_MAX_ZOOM = 14
+# clip buffer beyond the tile extent, in extent units (4/16 = 0.25 px)
+_BUFFER_UNITS = 4.0
+_BUFFER_PX = _BUFFER_UNITS / (_EXTENT / 256.0)
+# minimum ring area (extent units^2) after quantization; smaller is invisible
+_AREA_EPS = 1.0
+
+_SUPPORTED_TYPES = frozenset(
+    {"Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon"}
+)
+_IS_POINT = frozenset({"Point", "MultiPoint"})
+_IS_LINE = frozenset({"LineString", "MultiLineString"})
+_IS_POLY = frozenset({"Polygon", "MultiPolygon"})
+
+# ─── optional shapely / numpy ───────────────────────────────────────────────
+try:  # pragma: no cover - exercised only in environments without shapely
+    import numpy as np
+    import shapely
+    import shapely.geometry
+
+    _SHAPELY = True
+except ImportError:  # pragma: no cover
+    np = None
+    shapely = None
+    _SHAPELY = False
+
+
+class RefDataUnavailableError(RuntimeError):
+    """Raised when a spatial-index build needs ref data that was not supplied."""
+
+
+# ─── low-level protobuf helpers (unchanged from V1) ─────────────────────────
 
 
 def _field(num: int, wire: int) -> bytes:
@@ -60,7 +123,12 @@ def _string_field(num: int, s: str) -> bytes:
 
 
 def _project(lon: float, lat: float, z: int) -> Tuple[float, float]:
-    """WGS84 → Web-Mercator pixels at zoom z (world = 256 * 2^z)."""
+    """WGS84 → Web-Mercator pixels at zoom z (world = 256 * 2^z).
+
+    Projection is homogeneous in z: _project(lon, lat, z) ==
+    _project(lon, lat, 0) * 2^z, so geometries indexed in z0 world pixels
+    (world = 256) can be re-used at any zoom by a simple scale.
+    """
     world = 256.0 * (1 << z)
     x = (lon + 180.0) / 360.0 * world
     lat_rad = math.radians(lat)
@@ -68,12 +136,21 @@ def _project(lon: float, lat: float, z: int) -> Tuple[float, float]:
     return x, y
 
 
+def _transform_z0(coords):
+    """Vectorized _project(..., z=0) for shapely.transform (y-down world px)."""
+    x = coords[:, 0]
+    y = coords[:, 1]
+    xs = (x + 180.0) / 360.0 * 256.0
+    lat_rad = np.radians(y)
+    ys = (1.0 - np.log(np.tan(lat_rad) + 1.0 / np.cos(lat_rad)) / np.pi) / 2.0 * 256.0
+    return np.column_stack([xs, ys])
+
+
 def _encode_value(v: Any) -> Optional[bytes]:
     """Proto Value message for a property value; None for unsupported types."""
     if isinstance(v, bool):
         return _field(_VAL_BOOL, _VARINT) + _varint(1 if v else 0)
     if isinstance(v, int) and not isinstance(v, bool):
-        # 32-bit signed: keep within int32 (MVT spec)
         n = v & 0xFFFFFFFF
         if n > 0x7FFFFFFF:
             n -= 0x100000000
@@ -91,35 +168,6 @@ def _double_bytes(v: float) -> bytes:
     return struct.pack("<d", v)
 
 
-def _encode_geometry(points: Iterable[Tuple[float, float]], tile_x: int, tile_y: int, z: int) -> Optional[bytes]:
-    """Encode Point geometry for the given tile; None if no point falls inside.
-
-    Points are projected to pixels, clipped to the tile, then delta-encoded
-    in extent units (cursor starts at (0,0); each point is a MoveTo(1)).
-    """
-    scale = _EXTENT / 256.0
-    out = bytearray()
-    cursor_x = 0
-    cursor_y = 0
-    wrote = False
-    for lon, lat in points:
-        px_x, px_y = _project(lon, lat, z)
-        if not (tile_x * 256 <= px_x < (tile_x + 1) * 256 and tile_y * 256 <= px_y < (tile_y + 1) * 256):
-            continue
-        # extent 量化后夹紧到 [0, extent-1]：像素边界上的点 round 可能溢出
-        ex = min(int(round((px_x - tile_x * 256) * scale)), _EXTENT - 1)
-        ey = min(int(round((px_y - tile_y * 256) * scale)), _EXTENT - 1)
-        # 光标 delta 编码
-        dx = ex - cursor_x
-        dy = ey - cursor_y
-        out += _varint((_MOVETO << 3) | 1)          # MoveTo, count=1
-        out += _varint(_zigzag32(dx))
-        out += _varint(_zigzag32(dy))
-        cursor_x, cursor_y = ex, ey
-        wrote = True
-    return bytes(out) if wrote else None
-
-
 def _encode_feature(geometry: bytes, tags: List[int], type_: int = _GT_POINT) -> bytes:
     out = bytearray()
     out += _field(3, _VARINT) + _varint(type_)
@@ -132,17 +180,502 @@ def _encode_feature(geometry: bytes, tags: List[int], type_: int = _GT_POINT) ->
     return bytes(out)
 
 
-def encode_point_tile(
-    features: List[Tuple[Tuple[float, float], Dict[str, Any]]],
-    z: int,
-    x: int,
-    y: int,
-) -> bytes:
-    """Encode Point features [(lon, lat), properties] into an MVT tile.
+# ─── geometry helpers ───────────────────────────────────────────────────────
 
-    Returns a valid (possibly empty) tile for (z, x, y). Properties are
-    deduped per tile; unsupported value types are dropped from the tag list.
+
+def _geometry_parts(gtype: str, coords) -> List[Tuple[str, Optional[str], List[Tuple[float, float]]]]:
+    """Split GeoJSON coordinates into (kind, role, lonlat_points) parts.
+
+    kind: "point" | "line" | "ring"; role: "exterior"/"hole" for rings, else None.
     """
+    if gtype == "Point":
+        return [("point", None, [tuple(coords)])]
+    if gtype == "MultiPoint":
+        return [("point", None, [tuple(c) for c in coords])]
+    if gtype == "LineString":
+        return [("line", None, [tuple(c) for c in coords])]
+    if gtype == "MultiLineString":
+        return [("line", None, [tuple(c) for c in line]) for line in coords]
+    if gtype == "Polygon":
+        return [
+            ("ring", "exterior" if i == 0 else "hole", [tuple(c) for c in ring])
+            for i, ring in enumerate(coords)
+        ]
+    if gtype == "MultiPolygon":
+        parts = []
+        for poly in coords:
+            for i, ring in enumerate(poly):
+                parts.append(("ring", "exterior" if i == 0 else "hole", [tuple(c) for c in ring]))
+        return parts
+    return []
+
+
+def _shapely_geom_from_coords(gtype: str, coords) -> Optional[Any]:
+    """Build a shapely geometry (lon/lat space) from GeoJSON coordinates."""
+    try:
+        if gtype == "Point":
+            return shapely.geometry.Point(coords)
+        if gtype == "MultiPoint":
+            return shapely.geometry.MultiPoint(coords)
+        if gtype == "LineString":
+            return shapely.geometry.LineString(coords)
+        if gtype == "MultiLineString":
+            return shapely.geometry.MultiLineString(coords)
+        if gtype == "Polygon":
+            holes = coords[1:] if len(coords) > 1 else None
+            return shapely.geometry.Polygon(coords[0], holes)
+        if gtype == "MultiPolygon":
+            polys = []
+            for poly in coords:
+                holes = poly[1:] if len(poly) > 1 else None
+                polys.append(shapely.geometry.Polygon(poly[0], holes))
+            return shapely.geometry.MultiPolygon(polys)
+    except Exception:
+        return None
+    return None
+
+
+def _tile_rect_z0(z: int, x: int, y: int) -> Tuple[float, float, float, float]:
+    """Tile rect in z0 world pixels (world = 256), expanded by the clip buffer.
+
+    buffer = 4 extent units = 0.25 px at zoom z = 0.25 / 2^z px at z0.
+    """
+    scale = 256.0 / (1 << z)
+    buf = _BUFFER_PX / (1 << z)
+    return (
+        x * scale - buf,
+        y * scale - buf,
+        (x + 1) * scale + buf,
+        (y + 1) * scale + buf,
+    )
+
+
+def _to_extent(z0x: float, z0y: float, factor: int, tile_x: int, tile_y: int) -> Tuple[int, int]:
+    """z0 world px → quantized extent units, clamped to [0, _EXTENT]."""
+    px = z0x * factor
+    py = z0y * factor
+    scale = _EXTENT / 256.0
+    ex = int(round((px - tile_x * 256.0) * scale))
+    ey = int(round((py - tile_y * 256.0) * scale))
+    return min(max(ex, 0), _EXTENT), min(max(ey, 0), _EXTENT)
+
+
+def _shoelace(pts: List[Tuple[float, float]]) -> float:
+    n = len(pts)
+    if n < 3:
+        return 0.0
+    s = 0.0
+    for i in range(n):
+        x1, y1 = pts[i]
+        x2, y2 = pts[(i + 1) % n]
+        s += x1 * y2 - x2 * y1
+    return 0.5 * s
+
+
+def _normalize_ring(coords) -> Optional[List[Tuple[float, float]]]:
+    """Ensure the ring is closed and consecutive duplicates are dropped."""
+    if len(coords) < 3:
+        return None
+    ring = [tuple(c) for c in coords]
+    if ring[0] != ring[-1]:
+        ring.append(ring[0])
+    deduped = []
+    for p in ring:
+        if deduped and deduped[-1] == p:
+            continue
+        deduped.append(p)
+    if len(deduped) < 4:  # fewer than 3 distinct points + closing
+        return None
+    return deduped
+
+
+def _orient_ring(ring: List[Tuple[float, float]], exterior: bool) -> List[Tuple[float, float]]:
+    """Force ring winding: exterior CCW / holes CW in geographic (lon/lat) terms.
+
+    World/tile y points down, so geographic CCW ⇔ shoelace < 0 in y-down
+    coordinates. This matches RFC 7946 GeoJSON winding and, after the y flip,
+    the MVT 2.1 spec orientation.
+    """
+    s = _shoelace(ring)
+    if exterior and s > 0:
+        return list(reversed(ring))
+    if not exterior and s < 0:
+        return list(reversed(ring))
+    return ring
+
+
+def _quantize_ring(ring, factor: int, tile_x: int, tile_y: int) -> Optional[List[Tuple[int, int]]]:
+    """Quantize a closed z0-px ring to extent coords; None if degenerate."""
+    pts = []
+    for zx, zy in ring[:-1]:  # drop the closing duplicate
+        ex, ey = _to_extent(zx, zy, factor, tile_x, tile_y)
+        if pts and pts[-1] == (ex, ey):
+            continue
+        pts.append((ex, ey))
+    if len(pts) < 3:
+        return None
+    if abs(_shoelace(pts)) < _AREA_EPS:
+        return None
+    return pts
+
+
+def _quantize_line(coords, factor: int, tile_x: int, tile_y: int) -> List[Tuple[int, int]]:
+    pts = []
+    for zx, zy in coords:
+        ex, ey = _to_extent(zx, zy, factor, tile_x, tile_y)
+        if pts and pts[-1] == (ex, ey):
+            continue
+        pts.append((ex, ey))
+    return pts
+
+
+def _emit_line_commands(out: bytearray, q, cursor_x: int, cursor_y: int) -> Tuple[int, int]:
+    """MoveTo(1) + LineTo(n-1) with cursor delta encoding.
+
+    MVT command integer = (count << 3) | command_id.
+    """
+    out += _varint((1 << 3) | _MOVETO)
+    out += _varint(_zigzag32(q[0][0] - cursor_x))
+    out += _varint(_zigzag32(q[0][1] - cursor_y))
+    cursor_x, cursor_y = q[0]
+    out += _varint(((len(q) - 1) << 3) | _LINETO)
+    for ex, ey in q[1:]:
+        out += _varint(_zigzag32(ex - cursor_x))
+        out += _varint(_zigzag32(ey - cursor_y))
+        cursor_x, cursor_y = ex, ey
+    return cursor_x, cursor_y
+
+
+def _emit_ring_commands(out: bytearray, q, cursor_x: int, cursor_y: int) -> Tuple[int, int]:
+    """MoveTo(1) + LineTo(n-1) + ClosePath; cursor returns to the ring start."""
+    cursor_x, cursor_y = _emit_line_commands(out, q, cursor_x, cursor_y)
+    out += _varint((1 << 3) | _CLOSEPATH)
+    return q[0][0], q[0][1]
+
+
+# ─── clipping (pure-python fallback when shapely is unavailable) ────────────
+
+
+def _edge_intersect(a, b, v: float, axis: int):
+    da, db = a[axis], b[axis]
+    if da == db:
+        return b
+    t = (v - da) / (db - da)
+    return (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]))
+
+
+def _clip_polygon_rect(pts, x0: float, y0: float, x1: float, y1: float):
+    """Sutherland–Hodgman clip of a ring against the (convex) rect."""
+    if len(pts) < 3:
+        return []
+    cur = list(pts)
+    for v, keep_ge, axis in (
+        (x0, True, 0),
+        (x1, False, 0),
+        (y0, True, 1),
+        (y1, False, 1),
+    ):
+        if len(cur) < 3:
+            return []
+        nxt = []
+        prev = cur[-1]
+        prev_in = (prev[axis] >= v) if keep_ge else (prev[axis] <= v)
+        for p in cur:
+            pin = (p[axis] >= v) if keep_ge else (p[axis] <= v)
+            if pin:
+                if not prev_in:
+                    nxt.append(_edge_intersect(prev, p, v, axis))
+                nxt.append(p)
+            elif prev_in:
+                nxt.append(_edge_intersect(prev, p, v, axis))
+            prev, prev_in = p, pin
+        cur = nxt
+    return cur
+
+
+def _clip_segment_lb(a, b, x0: float, y0: float, x1: float, y1: float):
+    """Liang–Barsky: clip segment a→b to the rect; None if fully outside."""
+    ax, ay = a
+    bx, by = b
+    dx = bx - ax
+    dy = by - ay
+    t0, t1 = 0.0, 1.0
+    for p, q in ((-dx, ax - x0), (dx, x1 - ax), (-dy, ay - y0), (dy, y1 - ay)):
+        if p == 0:
+            if q < 0:
+                return None
+        else:
+            r = q / p
+            if p < 0:
+                if r > t1:
+                    return None
+                if r > t0:
+                    t0 = r
+            else:
+                if r < t0:
+                    return None
+                if r < t1:
+                    t1 = r
+    if t1 < t0:
+        return None
+    return (ax + t0 * dx, ay + t0 * dy), (ax + t1 * dx, ay + t1 * dy)
+
+
+def _same_point(a, b, eps: float = 1e-9) -> bool:
+    return abs(a[0] - b[0]) <= eps and abs(a[1] - b[1]) <= eps
+
+
+def _clip_polyline_lb(pts, x0: float, y0: float, x1: float, y1: float):
+    """Clip a polyline to the rect; returns a list of clipped polylines."""
+    if len(pts) < 2:
+        return []
+    runs = []
+    cur = []
+    for i in range(len(pts) - 1):
+        seg = _clip_segment_lb(pts[i], pts[i + 1], x0, y0, x1, y1)
+        if seg is None:
+            if cur:
+                runs.append(cur)
+                cur = []
+            continue
+        ca, cb = seg
+        if not cur:
+            cur = [ca, cb]
+        elif _same_point(cur[-1], ca):
+            cur.append(cb)
+        else:
+            runs.append(cur)
+            cur = [ca, cb]
+    if cur:
+        runs.append(cur)
+    return runs
+
+
+# ─── geometry encoding ──────────────────────────────────────────────────────
+
+
+def _encode_points(points: Iterable[Tuple[float, float]], z: int, x: int, y: int) -> Optional[bytes]:
+    """Encode Point/MultiPoint coordinates; None if nothing falls inside the tile.
+
+    Behavior matches V1: points are clipped to [tile_x*256, (tile_x+1)*256) ×
+    [tile_y*256, (tile_y+1)*256) in zoom-z pixels and clamped to [0, extent-1].
+    """
+    scale = _EXTENT / 256.0
+    out = bytearray()
+    cursor_x = 0
+    cursor_y = 0
+    wrote = False
+    for lon, lat in points:
+        if lon is None or lat is None:
+            continue
+        px_x, px_y = _project(lon, lat, z)
+        if not (x * 256 <= px_x < (x + 1) * 256 and y * 256 <= px_y < (y + 1) * 256):
+            continue
+        ex = min(int(round((px_x - x * 256) * scale)), _EXTENT - 1)
+        ey = min(int(round((px_y - y * 256) * scale)), _EXTENT - 1)
+        out += _varint((1 << 3) | _MOVETO)  # MoveTo, count=1
+        out += _varint(_zigzag32(ex - cursor_x))
+        out += _varint(_zigzag32(ey - cursor_y))
+        cursor_x, cursor_y = ex, ey
+        wrote = True
+    return bytes(out) if wrote else None
+
+
+def _encode_parts(parts, is_poly: bool, z: int, x: int, y: int) -> Optional[bytes]:
+    """Encode line/ring parts given in z0 world pixels into MVT commands."""
+    out = bytearray()
+    cursor_x = 0
+    cursor_y = 0
+    wrote = False
+    factor = 1 << z
+    for kind, role, coords in parts:
+        if kind == "ring":
+            if not is_poly:
+                continue
+            ring = _normalize_ring(coords)
+            if ring is None:
+                continue
+            ring = _orient_ring(ring, exterior=(role == "exterior"))
+            q = _quantize_ring(ring, factor, x, y)
+            if q is None:
+                continue
+            cursor_x, cursor_y = _emit_ring_commands(out, q, cursor_x, cursor_y)
+            wrote = True
+        elif kind == "line":
+            if is_poly:
+                continue
+            q = _quantize_line(coords, factor, x, y)
+            if len(q) < 2:
+                continue
+            cursor_x, cursor_y = _emit_line_commands(out, q, cursor_x, cursor_y)
+            wrote = True
+    return bytes(out) if wrote else None
+
+
+def _shapely_parts(geom):
+    """Yield (kind, role, coords) from a clipped shapely geometry (z0 px)."""
+    gt = geom.geom_type
+    if gt == "LineString":
+        yield ("line", None, list(geom.coords))
+    elif gt == "MultiLineString":
+        for line in geom.geoms:
+            yield ("line", None, list(line.coords))
+    elif gt == "Polygon":
+        yield ("ring", "exterior", list(geom.exterior.coords))
+        for hole in geom.interiors:
+            yield ("ring", "hole", list(hole.coords))
+    elif gt == "MultiPolygon":
+        for poly in geom.geoms:
+            yield ("ring", "exterior", list(poly.exterior.coords))
+            for hole in poly.interiors:
+                yield ("ring", "hole", list(hole.coords))
+    elif gt == "GeometryCollection":
+        for g in geom.geoms:
+            yield from _shapely_parts(g)
+
+
+def _encode_line_polygon_shapely(gtype: str, coords, z: int, x: int, y: int) -> Optional[bytes]:
+    """Line/Polygon encode with shapely: simplify + is_valid gate + exact clip."""
+    geom = _shapely_geom_from_coords(gtype, coords)
+    if geom is None or geom.is_empty:
+        return None
+    is_poly = gtype in _IS_POLY
+    if is_poly and not geom.is_valid:
+        # never emit self-intersecting polygons
+        logger.debug("mvt: skipping invalid %s feature", gtype)
+        return None
+    if z < _SIMPLIFY_MAX_ZOOM:
+        # half a pixel at zoom z; in degree terms: 360 / (256 * 2^z) / 2,
+        # converted to z0 world px (world = 256): 2 ** -(z + 1)
+        simplified = geom.simplify(2.0 ** -(z + 1), preserve_topology=True)
+        if simplified.is_empty:
+            return None
+        if not is_poly or simplified.is_valid:
+            geom = simplified
+        # else: simplification produced self-intersection → keep the original
+        # (which passed the is_valid gate above)
+    geom = shapely.transform(geom, _transform_z0)
+    clipped = geom.intersection(shapely.geometry.box(*_tile_rect_z0(z, x, y)))
+    if clipped.is_empty:
+        return None
+    parts = _shapely_parts(clipped)
+    return _encode_parts(parts, is_poly, z, x, y)
+
+
+def _encode_line_polygon_pure(gtype: str, coords, z: int, x: int, y: int) -> Optional[bytes]:
+    """Line/Polygon encode without shapely: pure-python clipping, no simplify."""
+    parts = _geometry_parts(gtype, coords)
+    rect = _tile_rect_z0(z, x, y)
+    out = bytearray()
+    cursor_x = 0
+    cursor_y = 0
+    wrote = False
+    factor = 1 << z
+    is_poly = gtype in _IS_POLY
+    for kind, role, part in parts:
+        if kind == "ring":
+            if not is_poly:
+                continue
+            projected = [_project(lon, lat, 0) for lon, lat in part]
+            clipped = _clip_polygon_rect(projected, *rect)
+            ring = _normalize_ring(clipped)
+            if ring is None:
+                continue
+            ring = _orient_ring(ring, exterior=(role == "exterior"))
+            q = _quantize_ring(ring, factor, x, y)
+            if q is None:
+                continue
+            cursor_x, cursor_y = _emit_ring_commands(out, q, cursor_x, cursor_y)
+            wrote = True
+        elif kind == "line":
+            if is_poly:
+                continue
+            projected = [_project(lon, lat, 0) for lon, lat in part]
+            for run in _clip_polyline_lb(projected, *rect):
+                q = _quantize_line(run, factor, x, y)
+                if len(q) < 2:
+                    continue
+                cursor_x, cursor_y = _emit_line_commands(out, q, cursor_x, cursor_y)
+                wrote = True
+    return bytes(out) if wrote else None
+
+
+def _encode_geometry(gtype: str, coords, z: int, x: int, y: int) -> Optional[bytes]:
+    """Encode one feature geometry; None if nothing lies inside the tile."""
+    if gtype in _IS_POINT:
+        pts = coords if gtype == "MultiPoint" else [coords]
+        return _encode_points(pts, z, x, y)
+    if gtype in _IS_LINE or gtype in _IS_POLY:
+        if _SHAPELY:
+            try:
+                return _encode_line_polygon_shapely(gtype, coords, z, x, y)
+            except Exception:
+                logger.warning("mvt: shapely encode failed, using pure-python fallback", exc_info=True)
+        return _encode_line_polygon_pure(gtype, coords, z, x, y)
+    return None
+
+
+# ─── public encode API ──────────────────────────────────────────────────────
+
+
+def extract_features(data) -> List[dict]:
+    """Extract GeoJSON feature dicts from ref-data shapes.
+
+    Accepts a bare FeatureCollection, {"geojson": FC} or
+    {"type": "poi_query", "geojson": FC}. Geometry-less entries are dropped.
+    """
+    fc = data
+    if isinstance(data, dict):
+        nested = data.get("geojson")
+        if isinstance(nested, dict):
+            fc = nested
+    if not isinstance(fc, dict) or fc.get("type") != "FeatureCollection":
+        return []
+    return [
+        f
+        for f in fc.get("features", [])
+        if isinstance(f, dict) and isinstance(f.get("geometry"), dict)
+    ]
+
+
+def _to_feature_dicts(features_data) -> List[dict]:
+    """Normalize encode_tile input into a list of GeoJSON feature dicts."""
+    if isinstance(features_data, dict):
+        return extract_features(features_data)
+    if isinstance(features_data, (list, tuple)):
+        out = []
+        for item in features_data:
+            if isinstance(item, dict):
+                out.append(item)
+            elif isinstance(item, (list, tuple)) and len(item) == 2:
+                # legacy point format: ((lon, lat), properties)
+                coord, props = item
+                if (
+                    isinstance(coord, (list, tuple))
+                    and len(coord) >= 2
+                    and coord[0] is not None
+                    and coord[1] is not None
+                ):
+                    out.append(
+                        {
+                            "type": "Feature",
+                            "geometry": {"type": "Point", "coordinates": [coord[0], coord[1]]},
+                            "properties": props or {},
+                        }
+                    )
+        return out
+    return []
+
+
+def encode_tile(features_data, z: int, x: int, y: int) -> bytes:
+    """Encode features into a raw (uncompressed) MVT tile for (z, x, y).
+
+    ``features_data`` may be a list of GeoJSON feature dicts, a bare
+    FeatureCollection, a wrapped ref-data shape ({"geojson": ...}) or the
+    legacy point list [((lon, lat), props), ...]. Returns a valid (possibly
+    empty) tile: b"" when nothing falls inside the tile.
+    """
+    features = _to_feature_dicts(features_data)
     keys: List[str] = []
     key_idx: Dict[str, int] = {}
     values: List[bytes] = []
@@ -161,23 +694,38 @@ def encode_point_tile(
         return value_idx[encoded]
 
     feature_msgs: List[bytes] = []
-    for (lon, lat), props in features:
-        if lon is None or lat is None:
+    for f in features:
+        geometry = f.get("geometry")
+        if not isinstance(geometry, dict):
             continue
-        geometry = _encode_geometry([(lon, lat)], x, y, z)
-        if geometry is None:
+        gtype = geometry.get("type")
+        coords = geometry.get("coordinates")
+        if gtype == "GeometryCollection":
+            logger.warning("mvt: GeometryCollection features are not encoded, skipping")
             continue
+        if gtype not in _SUPPORTED_TYPES:
+            continue
+        geom_bytes = _encode_geometry(gtype, coords, z, x, y)
+        if geom_bytes is None:
+            continue
+        if gtype in _IS_POINT:
+            type_id = _GT_POINT
+        elif gtype in _IS_LINE:
+            type_id = _GT_LINESTRING
+        else:
+            type_id = _GT_POLYGON
         tags: List[int] = []
+        props = f.get("properties") or {}
         for k, v in props.items():
             encoded = _encode_value(v)
             if encoded is None:
                 continue
             tags.append(_k(k))
             tags.append(_v(encoded))
-        feature_msgs.append(_encode_feature(geometry, tags))
+        feature_msgs.append(_encode_feature(geom_bytes, tags, type_id))
 
     if not feature_msgs:
-        return b""  # 空 tile：合法的空 message（无 layer）
+        return b""  # empty tile: valid empty message (no layer)
 
     layer = bytearray()
     layer += _field(15, _VARINT) + _varint(2)          # version=2
@@ -192,3 +740,276 @@ def encode_point_tile(
 
     tile = _field(3, _BYTES) + _varint(len(layer)) + bytes(layer)
     return bytes(tile)
+
+
+def encode_point_tile(
+    features: List[Tuple[Tuple[float, float], Dict[str, Any]]],
+    z: int,
+    x: int,
+    y: int,
+) -> bytes:
+    """Backward-compat wrapper: [(lon, lat), properties] → MVT tile.
+
+    Equivalent to V1's encode_point_tile; delegates to encode_tile with the
+    legacy point list format.
+    """
+    return encode_tile(features, z, x, y)
+
+
+# ─── spatial index ──────────────────────────────────────────────────────────
+
+
+class SpatialIndexEntry:
+    """Immutable per-(session_id, ref_id) index over feature dicts.
+
+    ``geoms`` are shapely geometries in z0 world pixels (world = 256); the
+    query box is the tile rect in the same space, so one index serves every
+    zoom (projection is homogeneous in z). ``bounds`` are plain z0-px bboxes
+    used by the no-shapely full-scan fallback.
+    """
+
+    __slots__ = ("key", "features", "geoms", "tree", "bounds")
+
+    def __init__(self, key, features, geoms, tree, bounds):
+        self.key = key
+        self.features = features
+        self.geoms = geoms
+        self.tree = tree
+        self.bounds = bounds
+
+    def query_tile(self, z: int, x: int, y: int) -> List[dict]:
+        """Features whose bbox intersects the tile (exact filter at encode).
+
+        Results keep the original feature order (STRtree returns spatially
+        sorted indices; re-sorting restores insertion order).
+        """
+        x0, y0, x1, y1 = _tile_rect_z0(z, x, y)
+        if self.tree is not None:
+            idx = np.sort(np.atleast_1d(self.tree.query(shapely.geometry.box(x0, y0, x1, y1))))
+            return [self.features[int(i)] for i in idx]
+        hits = []
+        for i, b in enumerate(self.bounds):
+            if b[0] <= x1 and b[2] >= x0 and b[1] <= y1 and b[3] >= y0:
+                hits.append(self.features[i])
+        return hits
+
+
+def _pure_bounds(gtype: str, coords) -> Optional[Tuple[float, float, float, float]]:
+    """Bbox in z0 world px computed without shapely; None for bad coords."""
+    parts = _geometry_parts(gtype, coords)
+    minx = miny = math.inf
+    maxx = maxy = -math.inf
+    count = 0
+    for _kind, _role, part in parts:
+        for lon, lat in part:
+            if lon is None or lat is None:
+                return None
+            px, py = _project(lon, lat, 0)
+            if px < minx:
+                minx = px
+            if px > maxx:
+                maxx = px
+            if py < miny:
+                miny = py
+            if py > maxy:
+                maxy = py
+            count += 1
+    if count == 0 or not all(math.isfinite(v) for v in (minx, miny, maxx, maxy)):
+        return None
+    return (minx, miny, maxx, maxy)
+
+
+def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
+    """Build a spatial index entry for (session_id, ref_id) from raw ref data."""
+    if data is None:
+        raise RefDataUnavailableError(f"ref data unavailable for index build: {key}")
+    features = extract_features(data)
+    geoms: List[Any] = []
+    bounds: List[Tuple[float, float, float, float]] = []
+    kept: List[dict] = []
+    for f in features:
+        g = f.get("geometry")
+        gtype = g.get("type") if isinstance(g, dict) else None
+        coords = g.get("coordinates") if isinstance(g, dict) else None
+        if gtype == "GeometryCollection" or gtype not in _SUPPORTED_TYPES:
+            continue
+        if _SHAPELY:
+            geom = _shapely_geom_from_coords(gtype, coords)
+            if geom is None or geom.is_empty:
+                continue
+            try:
+                geom_z0 = shapely.transform(geom, _transform_z0)
+                b = geom_z0.bounds
+                if b is None or not np.isfinite(b).all():
+                    continue
+            except Exception:
+                continue
+            geoms.append(geom_z0)
+            bounds.append(tuple(b))
+        else:  # pragma: no cover - no-shapely environments
+            b = _pure_bounds(gtype, coords)
+            if b is None:
+                continue
+            bounds.append(b)
+        kept.append(f)
+    tree = None
+    if _SHAPELY and geoms:
+        try:
+            tree = shapely.STRtree(geoms)
+        except Exception:  # pragma: no cover - defensive
+            tree = None
+    return SpatialIndexEntry(key, kept, geoms if _SHAPELY else None, tree, bounds)
+
+
+class SpatialIndexCache:
+    """Per-(session_id, ref_id) STRtree cache with bounded LRU eviction.
+
+    Thread-safe (threading.Lock). The heavy build runs outside the lock
+    (double-checked), so concurrent misses may build twice — acceptable and
+    harmless — while the index itself is only ever queried through the lock.
+    """
+
+    def __init__(self, max_refs: int = 256):
+        self._max_refs = max_refs
+        self._entries: "OrderedDict[tuple, SpatialIndexEntry]" = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key) -> Optional[SpatialIndexEntry]:
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                return None
+            self._entries.move_to_end(key)
+            return entry
+
+    def get_or_build(self, key, build_fn) -> SpatialIndexEntry:
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is not None:
+                self._entries.move_to_end(key)
+                return entry
+        entry = build_fn()  # heavy work outside the lock
+        with self._lock:
+            existing = self._entries.get(key)
+            if existing is not None:
+                return existing
+            self._entries[key] = entry
+            self._entries.move_to_end(key)
+            while len(self._entries) > self._max_refs:
+                self._entries.popitem(last=False)
+            return entry
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
+
+# ─── tile LRU cache ─────────────────────────────────────────────────────────
+
+
+class TileLRUCache:
+    """Per-(session_id, ref_id, z, x, y) LRU cache of final gzip bytes.
+
+    Bounded by entry count and total bytes; thread-safe. Session-isolated
+    because session_id is part of the key.
+    """
+
+    def __init__(self, max_tiles: int = 4096, max_bytes: int = 256 * 1024 * 1024):
+        self._max_tiles = max_tiles
+        self._max_bytes = max_bytes
+        self._cache: "OrderedDict[tuple, bytes]" = OrderedDict()
+        self._total_bytes = 0
+        self._lock = threading.Lock()
+
+    def get(self, key) -> Optional[bytes]:
+        with self._lock:
+            value = self._cache.get(key)
+            if value is None:
+                return None
+            self._cache.move_to_end(key)
+            return value
+
+    def put(self, key, value: bytes) -> None:
+        if value is None or len(value) > self._max_bytes:
+            return  # oversized single entry: don't cache
+        with self._lock:
+            old = self._cache.get(key)
+            if old is not None:
+                self._total_bytes -= len(old)
+            self._cache[key] = value
+            self._cache.move_to_end(key)
+            self._total_bytes += len(value)
+            while len(self._cache) > self._max_tiles or self._total_bytes > self._max_bytes:
+                _key, evicted = self._cache.popitem(last=False)
+                self._total_bytes -= len(evicted)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._cache.clear()
+            self._total_bytes = 0
+
+
+# ─── single-flight dedup ────────────────────────────────────────────────────
+
+
+class SingleFlightManager:
+    """Dedupe concurrent same-key computations: waiters share the leader's result.
+
+    Bounded: when max_inflight keys are already in flight, new callers fall
+    through and compute directly instead of waiting. Thread-safe registration
+    with an asyncio.Future as the shared result channel.
+    """
+
+    def __init__(self, max_inflight: int = 512):
+        self._max_inflight = max_inflight
+        self._inflight: Dict[Any, "asyncio.Future"] = {}
+        self._lock = threading.Lock()
+
+    async def run(self, key, coro_factory) -> Any:
+        """Run a coroutine once per key; concurrent same-key callers await it.
+
+        ``coro_factory`` is a zero-arg callable returning a coroutine (or a
+        coroutine itself).
+        """
+        coro = None  # created lazily: only the caller that actually computes
+        with self._lock:
+            fut = self._inflight.get(key)
+            if fut is not None:
+                # another request is computing this key: share its result
+                return_fut = fut
+                direct = False
+            elif len(self._inflight) >= self._max_inflight:
+                # overloaded: compute directly, don't register / wait
+                return_fut = None
+                direct = True
+            else:
+                return_fut = None
+                direct = False
+                fut = asyncio.get_running_loop().create_future()
+                self._inflight[key] = fut
+        # NB: never await while holding the lock above — a suspended waiter
+        # would block the leader's finally-pop and deadlock.
+        if return_fut is not None:
+            return await asyncio.shield(return_fut)
+        coro = coro_factory() if callable(coro_factory) else coro_factory
+        if direct:
+            return await coro
+        try:
+            result = await coro
+        except BaseException as exc:
+            if not fut.done():
+                fut.set_exception(exc)
+            raise
+        else:
+            if not fut.done():
+                fut.set_result(result)
+            return result
+        finally:
+            with self._lock:
+                self._inflight.pop(key, None)
+
+
+# module-level singletons (bounded caches, one per process)
+spatial_index_cache = SpatialIndexCache()
+tile_lru_cache = TileLRUCache()
+single_flight = SingleFlightManager()
