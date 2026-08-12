@@ -303,7 +303,14 @@ def _run_ndvi_legacy(
 ):
     """ADR-0052 之前的 NDVI 路径。无 durable job 时的兼容分支。"""
     try:
-        task.update_state(state='PROGRESS', meta={'progress': 10, 'message': '校验路径并读取影像元信息'})
+        # 直接调用（测试/shell）时 request.id 可能为 None（Celery 的 request 栈合并
+        # 行为），update_state 会抛 "task_id must not be empty"。显式回退到稳定 id，
+        # 真实 worker 路径不受影响。
+        _task_id = task.request.id or f"legacy-{os.getpid()}"
+        task.update_state(
+            task_id=_task_id, state='PROGRESS',
+            meta={'progress': 10, 'message': '校验路径并读取影像元信息'},
+        )
         result = NatureResourceAnalyzer.calculate_ndvi(
             tif_path=raster_path,
             red_band=red_band,
@@ -313,7 +320,10 @@ def _run_ndvi_legacy(
         if not result.get("success"):
             return {"success": False, "error": result.get("error", "NDVI calculation failed")}
 
-        task.update_state(state='PROGRESS', meta={'progress': 80, 'message': '入库登记分析资产'})
+        task.update_state(
+            task_id=_task_id, state='PROGRESS',
+            meta={'progress': 80, 'message': '入库登记分析资产'},
+        )
 
         # 将分析结果落入 UploadRecord 资产表，便于 list_analysis_assets 查询
         try:

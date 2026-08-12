@@ -364,7 +364,9 @@ def durable_job(
         state.last_heartbeat_at = time.monotonic()
         if celery_task is not None:
             with contextlib.suppress(Exception):
+                # 显式 task_id：直接调用（测试）时 request.id 可能为 None
                 celery_task.update_state(
+                    task_id=celery_task.request.id or f"job-{job_id}",
                     state="PROGRESS",
                     meta={
                         "progress": snapshot.progress if snapshot.progress is not None else 0,
