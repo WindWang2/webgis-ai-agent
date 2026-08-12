@@ -4,6 +4,7 @@ Enterprise Geospatial Data Fabric REST Routes
 import logging
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Header
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -457,7 +458,12 @@ async def materialize_catalog_item(
             query_spec=req.query_spec,
             owner_token=owner_token,
         )
-        return {"success": True, **res}
+        # The manager now carries its own truth flag. A store-unavailable or
+        # audit-commit failure is a transient infra problem (503), not a bad
+        # request; the structured body lets the agent/tool retry or degrade.
+        if not res.get("success"):
+            return JSONResponse(status_code=503, content=res)
+        return res
     except Exception as e:
         logger.error(f"Materialization failed for catalog item '{req.catalog_item_id}': {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))

@@ -16,8 +16,10 @@ from app.schemas.data_fabric_schema import (
 )
 from app.models.data_fabric import DataSourceModel, CatalogItemModel, MaterializationModel
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
+from app.services.data_fabric.errors import MATERIALIZATION_FAILED
 from app.services.data_fabric.security import DataFabricSecurity
 from app.services.session_data import session_data_manager
+from app.services.session_data_protocol import is_unavailable_ref
 
 from app.services.data_fabric.adapters.postgis_adapter import PostGISAdapter
 from app.services.data_fabric.adapters.ogc_api_adapter import OGCAPIAdapter
@@ -256,13 +258,28 @@ class DataFabricManager:
         query_spec: Optional[QuerySpec] = None,
         owner_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Materialize catalog query results into session ref_id and save audit log."""
+        """Materialize catalog query results into session ref_id and save audit log.
+
+        Truthfulness contract: the returned dict carries ``success``. On any
+        store or audit failure the result is ``success=False`` with ``ref_id=None``
+        and a typed ``error_type`` — no fake ref is persisted or returned, and no
+        audit row is written for a non-retrievable ref.
+        """
         spec = query_spec or QuerySpec(limit=500)
         item = db.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
         if not item:
             raise ValueError(f"Catalog item '{item_id}' not found")
 
         q_res = cls.query_catalog_item(db, item_id, spec)
+
+        feature_count = len(q_res.features)
+        base = {
+            "feature_count": feature_count,
+            "total_count": q_res.total_count,
+            "dataset_id": item_id,
+            "source_id": item.source_id,
+            "title": item.title,
+        }
 
         fc = {
             "type": "FeatureCollection",
@@ -275,10 +292,33 @@ class DataFabricManager:
             },
         }
 
-        # Store in SessionStore (Fetch-on-Demand cursor)
-        ref_id = await session_data_manager.store(session_id, fc, prefix="df")
+        # Store in SessionStore (Fetch-on-Demand cursor). A ref exists iff its
+        # payload is retrievable: an exception OR the store-unavailability
+        # sentinel is a real failure — never persist a fake audit ref.
+        try:
+            ref_id = await session_data_manager.store(session_id, fc, prefix="df")
+        except Exception as e:
+            logger.error(
+                "[DataFabricManager] materialize store failed for item '%s': %s",
+                item_id, e,
+            )
+            return {**base, "success": False, "ref_id": None,
+                    "error_type": MATERIALIZATION_FAILED,
+                    "error": f"session store failed: {e}"}
 
-        # Save materialization audit record
+        if is_unavailable_ref(ref_id):
+            logger.error(
+                "[DataFabricManager] materialize store unavailable for item '%s': %s",
+                item_id, ref_id,
+            )
+            return {**base, "success": False, "ref_id": None,
+                    "error_type": MATERIALIZATION_FAILED,
+                    "error": "session store unavailable"}
+
+        # Materialization atomicity: query success AND payload stored AND audit
+        # record committed must hold together. If the audit commit fails after
+        # the payload was stored, the ref is orphaned (no audit) — report failure
+        # so the caller does not trust an unaudited ref, and roll the TX back.
         mat_id = f"mat_{uuid.uuid4().hex[:12]}"
         mat_record = MaterializationModel(
             id=mat_id,
@@ -286,20 +326,23 @@ class DataFabricManager:
             source_id=item.source_id,
             ref_id=ref_id,
             query_spec_json=spec.model_dump(),
-            record_count=len(q_res.features),
+            record_count=feature_count,
             materialized_at=datetime.now(timezone.utc),
         )
         db.add(mat_record)
-        db.commit()
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception(
+                "[DataFabricManager] audit commit failed for item '%s'; ref '%s' orphaned",
+                item_id, ref_id,
+            )
+            return {**base, "success": False, "ref_id": None,
+                    "error_type": MATERIALIZATION_FAILED,
+                    "error": "materialization audit failed"}
 
-        return {
-            "ref_id": ref_id,
-            "feature_count": len(q_res.features),
-            "total_count": q_res.total_count,
-            "dataset_id": item_id,
-            "source_id": item.source_id,
-            "title": item.title,
-        }
+        return {**base, "success": True, "ref_id": ref_id}
 
 
 data_fabric_manager = DataFabricManager()

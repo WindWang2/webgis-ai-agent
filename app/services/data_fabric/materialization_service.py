@@ -1,13 +1,23 @@
 """
 Geospatial Data Fabric: Materialization Service
 Pipeline for executing QuerySpec pushdown queries and materializing remote data into local session store emitting ref_id.
+
+Reliability contract (Data Fabric V3):
+- A ref exists IFF its payload is retrievable. Store failure (exception OR the
+  Redis-unavailability sentinel) is reported as a typed ``MATERIALIZATION_FAILED``
+  result with ``ref_id=None`` and ``success=False`` — never a fake ref, never a
+  fake success.
+- ``set_alias`` is best-effort metadata; its failure must NOT invalidate an
+  otherwise-valid ref.
 """
 import logging
 from typing import Dict, Any, Optional
 from app.schemas.data_fabric_schema import QuerySpec, QueryResult
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
+from app.services.data_fabric.errors import MaterializationFailedError
 from app.services.data_fabric.fingerprint import dataset_fingerprint_service
 from app.services.session_data import session_data_manager
+from app.services.session_data_protocol import is_unavailable_ref
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +53,11 @@ class MaterializationService:
     ) -> Dict[str, Any]:
         """
         Materialize query results locally into session_data_manager, emitting ref_id.
+
+        Truthfulness invariant: the returned dict reports ``success``/``status``
+        consistent with whether ``ref_id`` is a real, retrievable ref. On any
+        store failure the result is ``success=False`` with ``ref_id=None`` and a
+        typed ``error_type=MATERIALIZATION_FAILED`` — no fake ref is minted.
         """
         layer_title = layer_name or f"Materialized Layer {dataset_id}"
         geojson_payload = {
@@ -56,34 +71,89 @@ class MaterializationService:
             },
         }
 
-        # Store in session_data_manager and retrieve cursor ref_id
-        import uuid
-        try:
-            ref_id = await session_data_manager.store(session_id, geojson_payload, prefix="data-fabric")
-            try:
-                await session_data_manager.set_alias(session_id, ref_id, layer_title)
-            except Exception as ae:
-                logger.warning(f"[MaterializationService] set_alias failed ({ae}); proceeding with ref_id '{ref_id}'")
-        except Exception as e:
-            logger.warning(f"[MaterializationService] session_data_manager store failed ({e}); using fallback ref_id")
-            ref_id = f"ref:data-fabric-{uuid.uuid4().hex[:16]}"
-
-        # Compute fingerprint hash for data payload
-
+        feature_count = len(query_result.features)
+        total_count = query_result.total_count or feature_count
         fingerprint = dataset_fingerprint_service.calculate_data_fingerprint(query_result.features)
 
-        logger.info(f"[MaterializationService] Materialized dataset '{dataset_id}' -> ref_id: {ref_id}")
+        # Store in session_data_manager and retrieve cursor ref_id.
+        # A ref exists iff its payload is retrievable: both an exception and the
+        # store-unavailability sentinel are real failures — never fake a ref.
+        try:
+            ref_id = await session_data_manager.store(session_id, geojson_payload, prefix="data-fabric")
+        except Exception as e:
+            logger.error(
+                "[MaterializationService] store failed for '%s': %s", dataset_id, e
+            )
+            return self._failure(
+                dataset_id, layer_title, feature_count, total_count,
+                fingerprint, query_result,
+                MaterializationFailedError(f"session store failed: {e}"),
+            )
+
+        if is_unavailable_ref(ref_id):
+            logger.error(
+                "[MaterializationService] store returned unavailable ref for '%s': %s",
+                dataset_id, ref_id,
+            )
+            return self._failure(
+                dataset_id, layer_title, feature_count, total_count,
+                fingerprint, query_result,
+                MaterializationFailedError("session store unavailable"),
+            )
+
+        # set_alias is best-effort metadata enrichment; a failure here does not
+        # invalidate an otherwise-valid ref, so we keep the ref and proceed.
+        try:
+            await session_data_manager.set_alias(session_id, ref_id, layer_title)
+        except Exception as ae:
+            logger.warning(
+                "[MaterializationService] set_alias failed (%s); ref '%s' still valid",
+                ae, ref_id,
+            )
+
+        logger.info(
+            "[MaterializationService] Materialized dataset '%s' -> ref_id: %s",
+            dataset_id, ref_id,
+        )
 
         return {
             "status": "success",
+            "success": True,
             "ref_id": ref_id,
             "dataset_id": dataset_id,
             "layer_name": layer_title,
-            "feature_count": len(query_result.features),
-            "total_count": query_result.total_count or len(query_result.features),
+            "feature_count": feature_count,
+            "total_count": total_count,
             "fingerprint": fingerprint,
             "schema_info": query_result.schema_info,
             "metadata": query_result.metadata,
+        }
+
+    @staticmethod
+    def _failure(
+        dataset_id: str,
+        layer_title: str,
+        feature_count: int,
+        total_count: int,
+        fingerprint: str,
+        query_result: QueryResult,
+        err: MaterializationFailedError,
+    ) -> Dict[str, Any]:
+        """Build a truthful materialization-failure result (no ref, no success)."""
+        d = err.to_dict()
+        return {
+            "status": "failed",
+            "success": False,
+            "ref_id": None,
+            "dataset_id": dataset_id,
+            "layer_name": layer_title,
+            "feature_count": feature_count,
+            "total_count": total_count,
+            "fingerprint": fingerprint,
+            "schema_info": query_result.schema_info,
+            "metadata": query_result.metadata,
+            "error_type": d["error_type"],
+            "error": d["error"],
         }
 
     async def materialize_dataset(
