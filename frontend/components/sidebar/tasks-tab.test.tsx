@@ -124,15 +124,16 @@ describe('TasksTab — 渲染', () => {
 });
 
 describe('TasksTab — 状态标签映射（规范 §29）', () => {
+  // 状态标签来自 shared StatusBadge 的默认中文映射（UI V3 收敛后单一事实来源）
   const cases: Array<[JobView['status'], string, boolean]> = [
-    ['pending', '待入队', true],
+    ['pending', '等待中', true],
     ['queued', '排队中', true],
-    ['running', '执行中', true],
-    ['cancelling', '取消中…', true],
+    ['running', '运行中', true],
+    ['cancelling', '取消中', true],
     ['completed', '已完成', false],
     ['failed', '失败', false],
     ['cancelled', '已取消', false],
-    ['stale', '已中断', false],
+    ['stale', '已过期', false],
   ];
 
   it.each(cases)('%s → %s', (status, label, active) => {
@@ -150,11 +151,11 @@ describe('TasksTab — 取消 UX（规范 §30）', () => {
     expect(cancel).toHaveBeenCalledWith('job-1');
   });
 
-  it('取消进行中时显示「取消中…」且按钮禁用，绝不直接显示已取消', () => {
+  it('取消进行中时显示「取消中」且按钮禁用，绝不直接显示已取消', () => {
     mockCenter([job()], ['job-1']);
     render(<TasksTab sessionId="sess-a" />);
 
-    expect(screen.getByText('取消中…')).toBeInTheDocument();
+    expect(screen.getByText('取消中')).toBeInTheDocument();
     expect(screen.queryByText('已取消')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /取消 NDVI/ })).toBeDisabled();
   });
@@ -209,7 +210,7 @@ describe('TasksTab — 结果与刷新', () => {
   it('点击刷新调用 refresh', () => {
     mockCenter([]);
     render(<TasksTab sessionId="sess-a" />);
-    fireEvent.click(screen.getByRole('button', { name: '刷新' }));
+    fireEvent.click(screen.getByRole('button', { name: '刷新任务' }));
     expect(refresh).toHaveBeenCalled();
   });
 

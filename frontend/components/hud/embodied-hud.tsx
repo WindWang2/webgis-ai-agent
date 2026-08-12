@@ -6,6 +6,7 @@ import {
   ChevronUp, ChevronDown, Database, CheckCircle2
 } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { usePrefersReducedMotion } from '@/lib/hooks/use-prefers-reduced-motion';
 
 const BASE_LAYER_LABELS: Record<string, string> = {
   osm: 'OpenStreetMap',
@@ -79,10 +80,12 @@ export function EmbodiedHud() {
 
   // Waveform phase animation
   const [phase, setPhase] = useState(0);
+  const reducedMotion = usePrefersReducedMotion();
   useEffect(() => {
     // 审计 findings.md Perf Medium：HUD 关闭时（仅显示 24px 条）无需动画，
     // 暂停 rAF 循环避免空转的 60fps 状态更新 + 重渲染。
-    if (!hudOpen) return;
+    // UI V3：prefers-reduced-motion 时同样不启动。
+    if (!hudOpen || reducedMotion) return;
     let frame: number;
     const tick = () => {
       setPhase((p) => (p + (isThinking ? 0.25 : 0.08)) % (Math.PI * 2));
@@ -90,7 +93,7 @@ export function EmbodiedHud() {
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [isThinking, hudOpen]);
+  }, [isThinking, hudOpen, reducedMotion]);
 
   // Render CPU Cognitive Waveform
   const renderWaveform = () => {
@@ -145,7 +148,9 @@ export function EmbodiedHud() {
         }
       `}</style>
 
-      {/* DOCKED HEADER (Thin Telemetry Stripe) */}
+      {/* DOCKED HEADER (Thin Telemetry Stripe)
+          整条鼠标点击可开合；键盘等效操作在右侧 chevron 按钮上
+          （避免 button-in-button 的嵌套交互违规）。 */}
       <div
         onClick={() => setHudOpen(!hudOpen)}
         style={{
@@ -206,7 +211,9 @@ export function EmbodiedHud() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }} onClick={(e) => e.stopPropagation()}>
           {/* Theme Toggle */}
           <button
+            type="button"
             onClick={handleToggleTheme}
+            aria-label={isDark ? '切换到浅色主题' : '切换到深色主题'}
             style={{
               background: 'transparent',
               border: 'none',
@@ -224,19 +231,25 @@ export function EmbodiedHud() {
 
           <span style={{ fontSize: 11, color: 'var(--theme-text-subtle)' }}>|</span>
 
-          {/* Expand/Collapse Chevron */}
-          <div 
+          {/* Expand/Collapse Chevron — HUD 开合的键盘可达控制 */}
+          <button
+            type="button"
             onClick={() => setHudOpen(!hudOpen)}
+            aria-expanded={hudOpen}
+            aria-label={hudOpen ? '收起状态栏' : '展开状态栏'}
             style={{
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               color: 'var(--theme-text-muted)',
-              cursor: 'pointer'
+              cursor: 'pointer',
+              background: 'transparent',
+              border: 'none',
+              padding: 2,
             }}
           >
             {hudOpen ? <ChevronDown size={14} className="hover:text-slate-200 transition-colors" /> : <ChevronUp size={14} className="hover:text-slate-200 transition-colors" />}
-          </div>
+          </button>
         </div>
       </div>
 

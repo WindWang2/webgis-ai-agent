@@ -1,14 +1,15 @@
-"use client";
+'use client';
 
-import React, { useState, useEffect } from "react";
+import React, { useId, useState, useEffect } from 'react';
 import {
-  Folder,
   Play,
   CheckCircle,
   Plus,
   Layers,
   Activity,
-} from "lucide-react";
+  Database,
+  Workflow as WorkflowIcon,
+} from 'lucide-react';
 import {
   Project,
   ProjectDataset,
@@ -18,16 +19,24 @@ import {
   fetchProjectDatasets,
   fetchProjectWorkflows,
   runWorkflow
-} from "@/lib/api/project";
+} from '@/lib/api/project';
+import { EmptyState } from '@/components/shared/empty-state';
+import { IconButton } from '@/components/shared/icon-button';
+import { InlineNotice } from '@/components/shared/inline-notice';
+import { LoadingState } from '@/components/shared/loading-state';
+import { useToastStore } from '@/components/ui/toast';
 
 export function ProjectTab() {
+  const uid = useId();
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [datasets, setDatasets] = useState<ProjectDataset[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
-  const [, setLoading] = useState<boolean>(false);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
   const [newProjName, setNewProjName] = useState<string>("");
   const [showCreate, setShowCreate] = useState<boolean>(false);
+  const addToast = useToastStore((s) => s.addToast);
 
   // Load once on mount; loadProjects is a stable component function.
   useEffect(() => {
@@ -42,15 +51,16 @@ export function ProjectTab() {
   }, [selectedProjectId]);
 
   const loadProjects = async () => {
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
       const data = await fetchProjects();
       setProjects(data);
       if (data.length > 0 && !selectedProjectId) {
         setSelectedProjectId(data[0].id);
       }
     } catch (e) {
-      console.error(e);
+      setError(e instanceof Error ? e.message : "加载项目列表失败");
     } finally {
       setLoading(false);
     }
@@ -65,7 +75,7 @@ export function ProjectTab() {
       setDatasets(ds);
       setWorkflows(wf);
     } catch (e) {
-      console.error(e);
+      setError(e instanceof Error ? e.message : "加载项目详情失败");
     }
   };
 
@@ -78,7 +88,7 @@ export function ProjectTab() {
       setNewProjName("");
       setShowCreate(false);
     } catch (e) {
-      console.error(e);
+      setError(e instanceof Error ? e.message : "创建项目失败");
     }
   };
 
@@ -86,119 +96,162 @@ export function ProjectTab() {
     if (!selectedProjectId) return;
     try {
       await runWorkflow(selectedProjectId, wfId);
-      alert("Workflow Re-run triggered successfully!");
+      addToast("工作流已成功触发重新运行", "success");
       loadProjectDetails(selectedProjectId);
-    } catch (e: any) {
-      alert("Re-run failed: " + e.message);
+    } catch (e) {
+      addToast(`重新运行失败：${e instanceof Error ? e.message : "未知错误"}`, "error");
     }
   };
 
   return (
-    <div className="p-4 space-y-6 text-sm text-slate-200 h-full overflow-y-auto">
-      <div className="flex items-center justify-between border-b border-slate-700/60 pb-3">
-        <div className="flex items-center gap-2 font-semibold text-base text-slate-100">
-          <Folder className="w-5 h-5 text-indigo-400" />
-          <span>Project Workspace</span>
-        </div>
-        <button
+    <div className="flex h-full flex-col overflow-hidden">
+      {/* 细工具栏：标题 + 新建项目（面板头部由 PanelHeader 提供） */}
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--theme-border)] px-3 py-1.5">
+        <span className="text-[12px] font-semibold text-[var(--theme-text-secondary)]">项目工作区</span>
+        <IconButton
+          label="新建项目"
+          icon={Plus}
+          iconSize={15}
+          active={showCreate}
           onClick={() => setShowCreate(!showCreate)}
-          className="p-1 text-slate-400 hover:text-indigo-400 rounded transition"
-          title="New Project"
-        >
-          <Plus className="w-4 h-4" />
-        </button>
+        />
       </div>
 
-      {showCreate && (
-        <div className="bg-slate-800/80 p-3 rounded border border-slate-700 space-y-2">
-          <input
-            type="text"
-            placeholder="Project Name..."
-            value={newProjName}
-            onChange={(e) => setNewProjName(e.target.value)}
-            className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-          />
-          <button
-            onClick={handleCreateProject}
-            className="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium py-1.5 rounded transition"
-          >
-            Create Project
-          </button>
-        </div>
-      )}
-
-      {/* Project Selector */}
-      <div>
-        <label className="block text-xs font-medium text-slate-400 mb-1">Active Project</label>
-        <select
-          value={selectedProjectId}
-          onChange={(e) => setSelectedProjectId(e.target.value)}
-          className="w-full bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
-        >
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name} ({p.status})
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Datasets Section */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between text-xs font-medium text-slate-400">
-          <span className="flex items-center gap-1.5">
-            <Layers className="w-3.5 h-3.5 text-emerald-400" /> Attached Datasets ({datasets.length})
-          </span>
-        </div>
-        {datasets.length === 0 ? (
-          <div className="text-xs text-slate-500 italic p-2 bg-slate-800/40 rounded">No attached datasets.</div>
+      <div className="flex-1 space-y-4 overflow-y-auto p-3 text-[13px]">
+        {loading ? (
+          <LoadingState label="加载项目…" />
         ) : (
-          <div className="space-y-1.5">
-            {datasets.map((d) => (
-              <div key={d.id} className="bg-slate-800/60 p-2.5 rounded border border-slate-700/50 flex items-center justify-between">
-                <div>
-                  <div className="font-medium text-slate-200 text-xs">{d.name}</div>
-                  <div className="text-[10px] text-slate-400">{d.crs} • {d.source_type}</div>
-                </div>
-                <div className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  <CheckCircle className="w-3 h-3" /> {d.quality_status}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+          <>
+            {error && <InlineNotice variant="error">{error}</InlineNotice>}
 
-      {/* Persistent Workflows Section */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between text-xs font-medium text-slate-400">
-          <span className="flex items-center gap-1.5">
-            <Activity className="w-3.5 h-3.5 text-amber-400" /> Persistent Workflows ({workflows.length})
-          </span>
-        </div>
-        {workflows.length === 0 ? (
-          <div className="text-xs text-slate-500 italic p-2 bg-slate-800/40 rounded">No saved workflows. Save a Plan to create one.</div>
-        ) : (
-          <div className="space-y-2">
-            {workflows.map((w) => (
-              <div key={w.id} className="bg-slate-800/60 p-3 rounded border border-slate-700/50 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-slate-200 text-xs">{w.name} (v{w.version})</span>
-                  <button
-                    onClick={() => handleRerunWorkflow(w.id)}
-                    className="flex items-center gap-1 text-[10px] bg-indigo-600/80 hover:bg-indigo-500 text-white px-2 py-1 rounded transition"
-                  >
-                    <Play className="w-3 h-3" /> Re-run
-                  </button>
-                </div>
-                <div className="text-[10px] text-slate-400">
-                  Steps ({w.graph_spec.steps?.length || 0}): {w.graph_spec.steps?.map((s) => s.tool_name).join(" → ")}
-                </div>
+            {showCreate && (
+              <div className="space-y-2 rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] p-3">
+                <label
+                  htmlFor={`${uid}-project-name`}
+                  className="block text-[12px] font-medium text-[var(--theme-text-secondary)]"
+                >
+                  项目名称
+                </label>
+                <input
+                  id={`${uid}-project-name`}
+                  type="text"
+                  placeholder="项目名称…"
+                  value={newProjName}
+                  onChange={(e) => setNewProjName(e.target.value)}
+                  className="w-full rounded border px-2.5 py-1.5 text-xs focus:outline-none"
+                  style={{
+                    backgroundColor: "var(--theme-bg-input)",
+                    borderColor: "var(--theme-border)",
+                    color: "var(--theme-text-primary)",
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={handleCreateProject}
+                  className="w-full rounded py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
+                  style={{ background: "var(--agent-accent, #16a34a)" }}
+                >
+                  创建项目
+                </button>
               </div>
-            ))}
-          </div>
+            )}
+
+            {/* Project Selector */}
+            <div>
+              <label
+                htmlFor={`${uid}-project-select`}
+                className="mb-1 block text-xs font-medium text-[var(--theme-text-secondary)]"
+              >
+                当前项目
+              </label>
+              <select
+                id={`${uid}-project-select`}
+                value={selectedProjectId}
+                onChange={(e) => setSelectedProjectId(e.target.value)}
+                className="w-full rounded border px-2.5 py-1.5 text-xs focus:outline-none"
+                style={{
+                  backgroundColor: "var(--theme-bg-input)",
+                  borderColor: "var(--theme-border)",
+                  color: "var(--theme-text-primary)",
+                }}
+              >
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({p.status})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Datasets Section */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs font-medium text-[var(--theme-text-secondary)]">
+                <span className="flex items-center gap-1.5">
+                  <Layers className="h-3.5 w-3.5 text-emerald-500" /> 挂载数据集 ({datasets.length})
+                </span>
+              </div>
+              {datasets.length === 0 ? (
+                <EmptyState icon={Database} title="暂无挂载数据集" />
+              ) : (
+                <div className="space-y-1.5">
+                  {datasets.map((d) => (
+                    <div
+                      key={d.id}
+                      className="flex items-center justify-between rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] p-2.5"
+                    >
+                      <div>
+                        <div className="text-xs font-medium text-[var(--theme-text-primary)]">{d.name}</div>
+                        <div className="text-[10px] text-[var(--theme-text-muted)]">{d.crs} • {d.source_type}</div>
+                      </div>
+                      <div className="flex items-center gap-1 rounded border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-600 dark:text-emerald-400">
+                        <CheckCircle className="h-3 w-3" /> {d.quality_status}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 已保存工作流区块 */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs font-medium text-[var(--theme-text-secondary)]">
+                <span className="flex items-center gap-1.5">
+                  <Activity className="h-3.5 w-3.5 text-amber-500" /> 已保存工作流 ({workflows.length})
+                </span>
+              </div>
+              {workflows.length === 0 ? (
+                <EmptyState icon={WorkflowIcon} title="暂无已保存工作流" description="保存一份 Plan 即可创建" />
+              ) : (
+                <div className="space-y-2">
+                  {workflows.map((w) => (
+                    <div
+                      key={w.id}
+                      className="space-y-2 rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] p-3"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-[var(--theme-text-primary)]">{w.name} (v{w.version})</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRerunWorkflow(w.id)}
+                          className="flex items-center gap-1 rounded px-2 py-1 text-[10px] font-medium text-white transition-opacity hover:opacity-85"
+                          style={{ background: "var(--agent-accent, #16a34a)" }}
+                        >
+                          <Play className="h-3 w-3" /> 重新运行
+                        </button>
+                      </div>
+                      <div className="text-[10px] text-[var(--theme-text-muted)]">
+                        步骤 ({w.graph_spec.steps?.length || 0})：{w.graph_spec.steps?.map((s) => s.tool_name).join(" → ")}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
         )}
       </div>
     </div>
   );
 }
+
+export default ProjectTab;

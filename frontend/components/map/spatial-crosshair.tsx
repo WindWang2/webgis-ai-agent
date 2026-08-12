@@ -131,10 +131,19 @@ export function SpatialCrosshair() {
           }} />
         )}
 
-        {/* Center Precise Crosshair */}
-        <svg 
+        {/* Center Precise Crosshair — 点击/Enter 复制中心坐标 */}
+        <svg
           onClick={handleCopy}
-          width="24" 
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleCopy();
+            }
+          }}
+          role="button"
+          tabIndex={0}
+          aria-label={copied ? '坐标已复制' : '复制当前地图中心坐标'}
+          width="24"
           height="24" 
           viewBox="0 0 24 24" 
           fill="none" 
