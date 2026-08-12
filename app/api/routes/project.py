@@ -21,7 +21,9 @@ from app.schemas.project_schema import (
     DatasetAttach, ProjectDatasetResponse,
     WorkflowCreate, WorkflowResponse,
     WorkflowRunRequest, WorkflowRunResponse,
-    RunComparisonResponse
+    RunComparisonResponse,
+    WorkflowRevisionResponse, WorkflowRevisionSummary,
+    RunReplayRequest, RunResumeRequest,
 )
 from app.schemas.pagination import Page, clamp_pagination
 
@@ -318,6 +320,131 @@ def compare_runs(
 
     res = WorkflowEngine.compare_runs(db=db, run_a=run_a, run_b=run_b)
     return res
+
+
+@router.get(
+    "/{project_id}/workflows/{workflow_id}/revisions",
+    response_model=Page[WorkflowRevisionSummary],
+)
+def list_workflow_revisions(
+    project_id: str,
+    workflow_id: str,
+    limit: Optional[int] = Query(None, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
+    """List immutable workflow revisions (tenant-scoped)."""
+    user_id = user.get("id") if user else None
+    org_id = user.get("org_id") if user else None
+    limit, offset = clamp_pagination(limit, offset)
+    revisions = ProjectService.list_workflow_revisions(
+        db=db, project_id=project_id, workflow_id=workflow_id, user_id=user_id, org_id=org_id
+    )
+    if revisions is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    total = len(revisions)
+    page = revisions[offset:offset + limit]
+    items = [WorkflowRevisionSummary.model_validate(r) for r in page]
+    return Page(items=items, total=total, limit=limit, offset=offset,
+                has_more=(offset + limit) < total)
+
+
+@router.get("/{project_id}/workflows/{workflow_id}/revisions/{revision_id}",
+            response_model=WorkflowRevisionResponse)
+def get_workflow_revision(
+    project_id: str,
+    workflow_id: str,
+    revision_id: str,
+    db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
+    user_id = user.get("id") if user else None
+    org_id = user.get("org_id") if user else None
+    revisions = ProjectService.list_workflow_revisions(
+        db=db, project_id=project_id, workflow_id=workflow_id, user_id=user_id, org_id=org_id
+    )
+    if revisions is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    for r in revisions:
+        if r.id == revision_id:
+            return r
+    raise HTTPException(status_code=404, detail="Revision not found")
+
+
+@router.get("/{project_id}/runs/{run_id}", response_model=WorkflowRunResponse)
+def get_run_detail(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
+    """Run detail incl. the reproducibility manifest + fingerprint."""
+    user_id = user.get("id") if user else None
+    org_id = user.get("org_id") if user else None
+    run = ProjectService.get_workflow_run(
+        db=db, project_id=project_id, run_id=run_id, user_id=user_id, org_id=org_id
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found or permission denied")
+    return run
+
+
+@router.post("/{project_id}/runs/{run_id}/replay", response_model=WorkflowRunResponse)
+async def replay_run(
+    project_id: str,
+    run_id: str,
+    req: RunReplayRequest,
+    db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
+    """Re-execute a prior run. ``exact`` (default) reuses the frozen graph +
+    inputs; ``latest`` runs the current revision with the prior inputs.
+
+    Re-authorizes project ownership (INV-AUTH1): replay cannot bypass access.
+    """
+    user_id = user.get("id") if user else None
+    org_id = user.get("org_id") if user else None
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    tool_registry = get_tool_registry()
+    try:
+        return await WorkflowEngine.replay_run(
+            db=db, prior_run_id=run_id, tool_registry=tool_registry, mode=req.mode,
+            user_id=user_id, org_id=org_id, expected_project_id=project_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404 if "not found" in str(e) else 409, detail=str(e))
+
+
+@router.post("/{project_id}/runs/{run_id}/resume", response_model=WorkflowRunResponse)
+async def resume_run(
+    project_id: str,
+    run_id: str,
+    req: RunResumeRequest,
+    db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
+    """Continue a failed/partial prior run from where it stopped.
+
+    Re-authorizes project ownership (INV-AUTH1). Rejects (409) when resume
+    preconditions fail unless ``allow_rerun=True``.
+    """
+    user_id = user.get("id") if user else None
+    org_id = user.get("org_id") if user else None
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    tool_registry = get_tool_registry()
+    try:
+        return await WorkflowEngine.resume_run(
+            db=db, prior_run_id=run_id, tool_registry=tool_registry,
+            user_id=user_id, org_id=org_id, expected_project_id=project_id,
+            allow_rerun=req.allow_rerun,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404 if "not found" in str(e) else 409, detail=str(e))
 
 
 @router.post("/{project_id}/quality-audit")
