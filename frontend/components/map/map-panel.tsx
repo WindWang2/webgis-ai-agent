@@ -601,7 +601,9 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   const showPerceptionRings = aiStatus === 'thinking' || aiStatus === 'acting'
 
   return (
-    <div className="absolute inset-0">
+    /* bg-surface-canvas 作为地图底衬：瓦片未到位（首帧、离线、瓦片报错）时
+       暗色主题下会露出一整屏白色画布 —— 地图是主视觉，这里不该闪白。 */
+    <div className="absolute inset-0 bg-surface-canvas">
       {/* Map Canvas — Full Viewport */}
       <Map
         id="default"
@@ -625,8 +627,8 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
             onClose={() => setOverlapFeatures(null)}
             closeOnClick={false}
           >
-            <div className="text-xs p-1 font-sans min-w-[160px]">
-              <div className="font-semibold border-b pb-1 mb-1 border-white/20 text-primary">选择要素</div>
+            <div className="min-w-[160px] p-1 font-sans text-meta">
+              <div className="mb-1 border-b border-map-chrome-border pb-1 font-semibold text-map-chrome-ink">选择要素</div>
               {overlapFeatures.features.map((f, i) => {
                 const sublayerId = (f.layer?.id as string | undefined)
                 const parentId = sublayerId ? resolveParentLayerId(sublayerId, layersRef.current.map((l) => l.id)) : undefined
@@ -637,10 +639,10 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
                   <button
                     key={i}
                     type="button"
-                    className="block w-full text-left px-1 py-0.5 hover:bg-white/10 rounded"
+                    className="block w-full rounded-xs px-1 py-0.5 text-left hover:bg-surface-hover"
                     onClick={() => pickOverlapFeature(f, overlapFeatures.point)}
                   >
-                    <span className="text-gray-400 font-mono">{name}</span>
+                    <span className="font-mono text-map-chrome-ink-muted">{name}</span>
                     {firstProp && <span className="ml-2 font-mono break-all">{String(firstProp[1])}</span>}
                   </button>
                 )
@@ -656,19 +658,19 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
             onClose={() => setSelectedFeature(null)}
             closeOnClick={false}
           >
-            <div className="text-xs p-1 font-sans">
-              <div className="font-semibold border-b pb-1 mb-1 border-white/20 text-primary">
+            <div className="p-1 font-sans text-meta">
+              <div className="mb-1 truncate border-b border-map-chrome-border pb-1 font-semibold text-map-chrome-ink" title={selectedFeature.layerName || '未命名图层'}>
                 {selectedFeature.layerName || '未命名图层'}
               </div>
-              <div className="max-h-32 overflow-y-auto space-y-0.5 min-w-[150px]">
+              <div className="max-h-32 min-w-[150px] space-y-0.5 overflow-y-auto">
                 {Object.entries(selectedFeature.properties).slice(0, 5).map(([k, v]) => (
                   <div key={k} className="flex justify-between gap-4">
-                    <span className="text-gray-400 font-mono">{k}:</span>
-                    <span className="font-mono break-all">{String(v)}</span>
+                    <span className="font-mono text-map-chrome-ink-muted">{k}:</span>
+                    <span className="break-all font-mono text-map-chrome-ink">{String(v)}</span>
                   </div>
                 ))}
                 {Object.keys(selectedFeature.properties).length > 5 && (
-                  <div className="text-gray-500 text-[10px] italic">
+                  <div className="text-micro italic text-map-chrome-ink-muted">
                     ...以及其他 {Object.keys(selectedFeature.properties).length - 5} 个属性
                   </div>
                 )}
@@ -684,13 +686,15 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
             closeOnClick={false}
             closeButton={false}
           >
-            <div className="text-xs p-1 font-sans">
-              <div className="font-semibold border-b pb-1 mb-1 border-white/20">{hoverInfo.layerName}</div>
-              <div className="space-y-0.5 min-w-[120px]">
+            <div className="p-1 font-sans text-meta">
+              <div className="mb-1 truncate border-b border-map-chrome-border pb-1 font-semibold text-map-chrome-ink" title={hoverInfo.layerName}>
+                {hoverInfo.layerName}
+              </div>
+              <div className="min-w-[120px] space-y-0.5">
                 {Object.entries(hoverInfo.props).map(([k, v]) => (
                   <div key={k} className="flex justify-between gap-4">
-                    <span className="text-gray-400 font-mono">{k}:</span>
-                    <span className="font-mono break-all">{String(v)}</span>
+                    <span className="font-mono text-map-chrome-ink-muted">{k}:</span>
+                    <span className="break-all font-mono text-map-chrome-ink">{String(v)}</span>
                   </div>
                 ))}
               </div>
@@ -702,15 +706,28 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
       {/* Live cartography overlays — driven by layer.legend_spec */}
       {thematicLayers.length > 0 && (
         <>
-          <div className="absolute bottom-4 z-30 space-y-3" style={{ left: 'var(--workspace-offset, 16px)' }}>
+          {/* The stack owns the vertical budget: `top` pins it below the map
+              title so it can never grow past the top bar, and it scrolls once
+              several thematic legends are loaded. */}
+          <div
+            className="absolute z-30 flex max-w-[268px] flex-col gap-2 overflow-y-auto pr-1 transition-[bottom,left] duration-300"
+            style={{
+              left: 'var(--workspace-offset, 16px)',
+              bottom: 'var(--map-chrome-bottom, 10px)',
+              top: '48px',
+              justifyContent: 'flex-end',
+            }}
+          >
             {thematicLayers.map((l) => {
               const flashing = focusLayerId === l.id;
               return (
                 <div
                   key={l.id}
-                  className={`rounded-xl transition-all ${flashing ? "ring-2 ring-primary/80 ring-offset-2 ring-offset-background animate-pulse" : ""}`}
+                  className={`rounded-chrome ${flashing ? 'ring-2 ring-status-accent-vivid' : ''}`}
                 >
-                  <div className="text-[14px] uppercase tracking-widest text-muted-foreground/60 mb-1 px-1">{l.name}</div>
+                  <div className="eyebrow mb-1 max-w-[240px] truncate px-1" title={l.name}>
+                    {l.name}
+                  </div>
                   <ThematicLegend spec={l.legend_spec!} onFilterChange={legendFilterHandlers[l.id]} />
                 </div>
               );
@@ -730,9 +747,11 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
       {showPerceptionRings && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
           <svg width="120" height="120" viewBox="0 0 120 120" className="opacity-60">
-            <circle cx="60" cy="60" r="20" fill="none" stroke="#16a34a" strokeWidth="1.5" className="animate-ring-pulse" />
-            <circle cx="60" cy="60" r="35" fill="none" stroke="#16a34a" strokeWidth="1" className="animate-ring-pulse-delay" />
-            <circle cx="60" cy="60" r="50" fill="none" stroke="#16a34a" strokeWidth="0.75" className="animate-ring-pulse-delay2" />
+            {/* stroke 走 --agent-accent（页面已把 store 的 accentColor 同步到
+                该变量），此前硬编码 #16a34a：用户换主题色后感知环还是默认绿。 */}
+            <circle cx="60" cy="60" r="20" fill="none" stroke="var(--agent-accent)" strokeWidth="1.5" className="animate-ring-pulse" />
+            <circle cx="60" cy="60" r="35" fill="none" stroke="var(--agent-accent)" strokeWidth="1" className="animate-ring-pulse-delay" />
+            <circle cx="60" cy="60" r="50" fill="none" stroke="var(--agent-accent)" strokeWidth="0.75" className="animate-ring-pulse-delay2" />
           </svg>
         </div>
       )}

@@ -1,6 +1,7 @@
 'use client';
 
 import { useHudStore } from '@/lib/store/useHudStore';
+import { LegendCard } from './legends/legend-card';
 
 interface FloatingLegendProps {
   className?: string;
@@ -9,45 +10,41 @@ interface FloatingLegendProps {
 const COLORS = ['#0ff0ff', '#00ff41', '#ffff00', '#ff5f00', '#ff2d55'];
 const LABELS = ['极低', '低', '中', '高', '极高'];
 
+/**
+ * 热力图图例。
+ *
+ * UI V4：改用与四种专题图例相同的 LegendCard 容器 —— 之前它是地图 chrome 里
+ * 唯一一套独立视觉系统（硬编码 rgba、blur(20px)、12.5px JetBrains Mono 标题），
+ * 其标题色在浅色下只有约 2.4:1，而它就贴在三个已收敛的图例旁边。
+ * 色带本身是热力图渲染器的固定配色，属于数据编码，保持原样。
+ */
 export function FloatingLegend({ className }: FloatingLegendProps) {
   const layers = useHudStore((s) => s.layers);
-  const theme = useHudStore((s) => s.theme);
-  const isDark = theme === 'dark';
   const visibleHeatLayer = layers.find((l) => l.visible && l.type === 'heatmap');
 
   return (
     <div
+      className={className}
       style={{
-        background: isDark ? 'rgba(15, 23, 42, 0.85)' : 'rgba(252,253,254,0.92)',
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
-        border: isDark ? '1px solid rgba(255, 255, 255, 0.06)' : '1px solid rgba(255,255,255,0.92)',
-        boxShadow: isDark ? '0 4px 24px rgba(0,0,0,0.4)' : '0 4px 24px rgba(15,23,42,0.09)',
-        borderRadius: 10,
-        padding: '8px 12px',
-        fontSize: '12.5px',
-        fontFamily: "'DM Sans', system-ui, sans-serif",
-        minWidth: 140,
         transform: visibleHeatLayer ? 'translateY(0)' : 'translateY(20px)',
         opacity: visibleHeatLayer ? 1 : 0,
         transition: 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
         pointerEvents: visibleHeatLayer ? 'auto' : 'none',
       }}
-      className={className}
+      aria-hidden={!visibleHeatLayer}
     >
-      <div style={{ fontSize: 12, color: isDark ? '#64748b' : '#94a3b8', fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
-        {visibleHeatLayer?.name || ''}
-      </div>
-      <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', marginBottom: 5 }}>
-        {COLORS.map((color, idx) => (
-          <div key={idx} style={{ flex: 1, backgroundColor: color }} />
-        ))}
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', color: isDark ? '#94a3b8' : '#64748b', fontSize: 11 }}>
-        {LABELS.map((label, idx) => (
-          <span key={idx}>{label}</span>
-        ))}
-      </div>
+      <LegendCard field={visibleHeatLayer?.name} kind="热力密度渲染">
+        <div aria-hidden className="mb-1 flex h-2 overflow-hidden rounded-xs ring-1 ring-inset ring-map-chrome-border">
+          {COLORS.map((color) => (
+            <div key={color} className="flex-1" style={{ backgroundColor: color }} />
+          ))}
+        </div>
+        <div className="flex justify-between text-micro text-map-chrome-ink">
+          {LABELS.map((label) => (
+            <span key={label}>{label}</span>
+          ))}
+        </div>
+      </LegendCard>
     </div>
   );
 }

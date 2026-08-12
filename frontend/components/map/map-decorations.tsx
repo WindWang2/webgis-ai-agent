@@ -37,28 +37,38 @@ export const MapDecorations = React.memo(function MapDecorations({ show, title, 
       {title && (
         <div
           data-testid="map-title"
-          className="absolute top-3 left-1/2 -translate-x-1/2 z-30 px-4 py-1.5 rounded-full bg-card/90 backdrop-blur-md border border-border shadow-lg text-sm font-semibold text-foreground"
+          className="map-chrome absolute top-3 left-1/2 -translate-x-1/2 z-30 max-w-[min(46ch,50%)] truncate px-3 py-1 text-title font-semibold"
         >
           {title}
         </div>
       )}
+      {/* North arrow with an explicit N label — a bare compass glyph is not the
+          GIS convention, and the rotation makes "which way is north" the whole
+          point of the control. */}
       <div
         data-testid="north-arrow"
-        className="absolute top-3 right-3 z-30 p-2 rounded-full bg-card/90 backdrop-blur-md border border-border shadow-lg"
+        className="map-chrome absolute top-3 right-3 z-30 flex h-control-lg w-control-lg flex-col items-center justify-center gap-px rounded-chrome"
         style={{ transform: `rotate(${-bearing}deg)` }}
-        aria-label="指北针"
+        aria-label={`指北针，当前方位角 ${Math.round(bearing)}°`}
       >
-        <Compass className="h-4 w-4 text-foreground" />
+        <Compass aria-hidden className="h-icon-md w-icon-md text-map-chrome-ink" />
+        <span aria-hidden className="text-micro font-semibold leading-none text-map-chrome-ink-muted">N</span>
       </div>
+      {/* Scale bar sits in the bottom-right chrome column, one step above the
+          status readout. Before V4 it was a fixed `bottom-14` that left a 6px
+          gap to the attribution pill and collided as soon as either grew. */}
       <div
         data-testid="scale-bar"
-        className="absolute bottom-14 right-3 z-30 px-2 py-1 rounded-md bg-card/90 backdrop-blur-md border border-border shadow-lg text-[15px] font-medium text-foreground flex items-center gap-2"
+        className="map-chrome absolute right-3 z-30 flex items-center gap-2 px-2 py-1 text-caption font-medium tabular-nums transition-[bottom] duration-300"
+        style={{ bottom: 'calc(var(--map-chrome-bottom, 10px) + 30px)' }}
+        aria-label={`比例尺 ${formatMeters(meters)}`}
       >
         <div
-          className="border-b-2 border-l-2 border-r-2 border-foreground"
-          style={{ width: `${Math.round(pixels)}px`, height: '6px' }}
+          aria-hidden
+          className="border-b-2 border-l-2 border-r-2 border-map-chrome-ink"
+          style={{ width: `${Math.round(pixels)}px`, height: '5px' }}
         />
-        <span>{formatMeters(meters)}</span>
+        <span className="text-map-chrome-ink">{formatMeters(meters)}</span>
       </div>
     </>
   );

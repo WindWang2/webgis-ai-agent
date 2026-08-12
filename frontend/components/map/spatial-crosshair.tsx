@@ -6,7 +6,6 @@ import { useHudStore } from '@/lib/store/useHudStore';
 export function SpatialCrosshair() {
   const viewport = useHudStore((s) => s.viewport);
   const aiStatus = useHudStore((s) => s.aiStatus);
-  const accentColor = useHudStore((s) => s.accentColor);
   const [copied, setCopied] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -86,7 +85,7 @@ export function SpatialCrosshair() {
           height: 140,
           border: '1px dashed rgba(22, 163, 74, 0.25)',
           borderRadius: '50%',
-          borderColor: isThinking ? `${accentColor}77` : 'rgba(148, 163, 184, 0.2)',
+          borderColor: isThinking ? 'color-mix(in srgb, var(--agent-accent) 47%, transparent)' : 'rgba(148, 163, 184, 0.2)',
           animation: isThinking ? 'spin-clockwise 15s linear infinite' : 'spin-clockwise 45s linear infinite',
           transition: 'border-color 0.3s ease',
         }}>
@@ -98,7 +97,7 @@ export function SpatialCrosshair() {
               left: '50%',
               width: 1,
               height: 6,
-              background: isThinking ? accentColor : '#64748b',
+              background: isThinking ? 'var(--agent-accent)' : '#64748b',
               transform: `translate(-50%, -50%) rotate(${deg}deg) translateY(-67px)`,
               transition: 'background-color 0.3s ease',
             }} />
@@ -112,7 +111,7 @@ export function SpatialCrosshair() {
           height: 80,
           border: '1px solid rgba(22, 163, 74, 0.15)',
           borderRadius: '30%',
-          borderColor: isThinking ? `${accentColor}55` : 'rgba(148, 163, 184, 0.15)',
+          borderColor: isThinking ? 'color-mix(in srgb, var(--agent-accent) 33%, transparent)' : 'rgba(148, 163, 184, 0.15)',
           animation: 'spin-counterclockwise 12s linear infinite',
           transition: 'border-color 0.3s ease',
         }} />
@@ -123,7 +122,7 @@ export function SpatialCrosshair() {
             position: 'absolute',
             width: 110,
             height: 110,
-            border: `2px solid ${accentColor}`,
+            border: '2px solid var(--agent-accent)',
             borderRadius: '50%',
             opacity: 0.4,
             animation: 'radar-pulse 2s ease-in-out infinite',
@@ -150,15 +149,19 @@ export function SpatialCrosshair() {
           style={{
             position: 'absolute',
             zIndex: 10,
-            filter: copied ? `drop-shadow(0 0 6px ${accentColor})` : (isThinking ? `drop-shadow(0 0 4px ${accentColor})` : 'none'),
+            filter: copied
+              ? 'drop-shadow(0 0 6px var(--agent-accent))'
+              : (isThinking ? 'drop-shadow(0 0 4px var(--agent-accent))' : 'none'),
             transition: 'filter 0.3s ease',
             cursor: 'pointer',
-            pointerEvents: 'auto',
+            // 审计：这里恒为 'auto'，于是地图正中央始终有一个 24px 的点击陷阱，
+            // 空闲时也会吞掉要素拾取。只有真正可复制时才接收指针事件。
+            pointerEvents: copied || isThinking ? 'auto' : 'none',
           }}
         >
           <title>{copied ? "已复制！" : "点击复制当前中心坐标"}</title>
-          <circle cx="12" cy="12" r="3" fill={copied ? accentColor : (isThinking ? accentColor : '#cbd5e1')} style={{ transition: 'fill 0.3s ease' }} />
-          <path d="M12 2v6M12 16v6M2 12h6M16 12h6" stroke={copied ? accentColor : (isThinking ? accentColor : '#64748b')} strokeWidth="1.5" strokeLinecap="round" style={{ transition: 'stroke 0.3s ease' }} />
+          <circle cx="12" cy="12" r="3" fill={copied || isThinking ? 'var(--agent-accent)' : 'var(--text-disabled)'} style={{ transition: 'fill 0.3s ease' }} />
+          <path d="M12 2v6M12 16v6M2 12h6M16 12h6" stroke={copied || isThinking ? 'var(--agent-accent)' : 'var(--text-muted)'} strokeWidth="1.5" strokeLinecap="round" style={{ transition: 'stroke 0.3s ease' }} />
         </svg>
 
         {/* Laser Scanning Line Overlay */}
@@ -167,8 +170,8 @@ export function SpatialCrosshair() {
             position: 'absolute',
             width: 120,
             height: 2,
-            background: `linear-gradient(90deg, transparent, ${accentColor}, transparent)`,
-            boxShadow: `0 0 8px ${accentColor}`,
+            background: 'linear-gradient(90deg, transparent, var(--agent-accent), transparent)',
+            boxShadow: '0 0 8px var(--agent-accent)',
             animation: 'laser-sweep 1.8s ease-in-out infinite',
             zIndex: 5,
           }} />

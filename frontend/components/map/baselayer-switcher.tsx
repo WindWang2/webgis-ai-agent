@@ -22,8 +22,6 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
   const baseLayer = useHudStore((s) => s.baseLayer);
   const setBaseLayer = useHudStore((s) => s.setBaseLayer);
   const { selectedBaseLayer, setSelectedBaseLayer } = useMapAction();
-  const theme = useHudStore((s) => s.theme);
-  const isDark = theme === 'dark';
   const rootRef = useRef<HTMLDivElement>(null);
 
   const currentLabel = TILE_PROVIDERS[selectedBaseLayer]?.name || baseLayer || 'Carto 浅色';
@@ -58,36 +56,24 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
 
   return (
     <div ref={rootRef} style={{ position: 'relative' }} className={className}>
+      {/* C: 下拉浮在地图上 —— 之前用 backdrop-filter: blur(12px)，对持续重绘的
+          画布是最贵的那类合成；改走 .map-chrome 不透明容器配方（主题色由
+          --map-chrome-* 提供，不再按 isDark 手写两套 hex）。 */}
       <button
         type='button'
         aria-haspopup='listbox'
         aria-expanded={open}
         aria-label={`Base layer: ${currentLabel}`}
         onClick={() => setOpen(!open)}
-        style={{
-          padding: '5px 10px',
-          borderRadius: 8,
-          background: isDark ? 'rgba(15, 23, 42, 0.72)' : 'rgba(255,255,255,0.88)',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
-          border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(255,255,255,0.92)',
-          boxShadow: isDark ? '0 2px 12px rgba(0,0,0,0.3)' : '0 2px 12px rgba(15,23,42,0.08)',
-          fontSize: '12.5px',
-          color: isDark ? '#cbd5e1' : '#475569',
-          cursor: 'pointer',
-          fontFamily: "'JetBrains Mono', monospace",
-          display: 'flex',
-          alignItems: 'center',
-          gap: 5,
-        }}
+        className='map-chrome flex cursor-pointer items-center gap-1.5 px-2.5 py-1 text-body font-mono text-map-chrome-ink'
       >
-        <svg width='11' height='11' viewBox='0 0 11 11' fill='none' style={{ display: 'block' }}>
-          <path d='M5.5 1L1 4l4.5 2.5L10 4 5.5 1z' stroke={isDark ? '#475569' : '#94a3b8'} strokeWidth='1'/>
-          <path d='M1 7l4.5 2.5L10 7' stroke={isDark ? '#475569' : '#94a3b8'} strokeWidth='1' strokeLinecap='round'/>
+        <svg width='11' height='11' viewBox='0 0 11 11' fill='none' stroke='currentColor' strokeWidth='1' className='text-map-chrome-ink-muted' style={{ display: 'block' }}>
+          <path d='M5.5 1L1 4l4.5 2.5L10 4 5.5 1z' />
+          <path d='M1 7l4.5 2.5L10 7' strokeLinecap='round'/>
         </svg>
         {currentLabel}
-        <svg width='8' height='8' viewBox='0 0 8 8' fill='none' style={{ display: 'block', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>
-          <path d='M1 2.5l3 3 3-3' stroke={isDark ? '#475569' : '#94a3b8'} strokeWidth='1.2' strokeLinecap='round'/>
+        <svg width='8' height='8' viewBox='0 0 8 8' fill='none' stroke='currentColor' strokeWidth='1.2' strokeLinecap='round' className='text-map-chrome-ink-muted' style={{ display: 'block', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>
+          <path d='M1 2.5l3 3 3-3' />
         </svg>
       </button>
 
@@ -95,22 +81,7 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
         <div
           role='listbox'
           aria-label='Base layer options'
-          style={{
-            position: 'absolute',
-            top: '100%',
-            right: 0,
-            marginTop: 4,
-            background: isDark ? 'rgba(15, 23, 42, 0.95)' : 'rgba(252,253,254,0.96)',
-            backdropFilter: 'blur(20px)',
-            WebkitBackdropFilter: 'blur(20px)',
-            border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(255,255,255,0.92)',
-            boxShadow: isDark ? '0 4px 24px rgba(0,0,0,0.5)' : '0 4px 24px rgba(15,23,42,0.09)',
-            borderRadius: 10,
-            overflow: 'hidden',
-            minWidth: 160,
-            maxHeight: 340,
-            overflowY: 'auto',
-          }}
+          className='map-chrome absolute right-0 top-full z-30 mt-1 max-h-[340px] min-w-[160px] overflow-y-auto py-1'
         >
           {TILE_PROVIDERS.map((provider, idx) => {
             const isActive = idx === selectedBaseLayer;
@@ -132,8 +103,9 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
                   width: '100%',
                   padding: '7px 12px',
                   border: 'none',
-                  background: isActive ? (isDark ? 'rgba(22,163,74,0.15)' : 'rgba(22,163,74,0.07)') : 'transparent',
-                  color: isActive ? (isDark ? '#4ade80' : '#15803d') : (isDark ? '#94a3b8' : '#475569'),
+                  background: isActive ? 'var(--accent-soft)' : 'transparent',
+                  /* 选中项文字是 accent 作文字 —— 用 text-safe 的 --agent-accent-text。 */
+                  color: isActive ? 'var(--agent-accent)' : 'var(--map-chrome-text)',
                   fontSize: 13,
                   cursor: 'pointer',
                   textAlign: 'left',
@@ -142,7 +114,7 @@ export function BaselayerSwitcher({ className }: BaselayerSwitcherProps) {
                 }}
                 onMouseEnter={(e) => {
                   if (!isActive) {
-                    e.currentTarget.style.background = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(15,23,42,0.04)';
+                    e.currentTarget.style.background = 'var(--surface-hover)';
                   }
                 }}
                 onMouseLeave={(e) => {

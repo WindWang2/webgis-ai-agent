@@ -1,19 +1,14 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Info, Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 import type { GraduatedLegendSpec } from '@/lib/map-kit/types';
+import { LegendCard, formatLegendValue } from './legend-card';
 
 interface Props {
   spec: GraduatedLegendSpec;
   onFilterChange?: (visibleBreaks: number[][]) => void;
 }
-
-const formatNum = (n: number) => {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(0) + 'M';
-  if (n >= 1_000) return (n / 1_000).toFixed(0) + 'k';
-  return String(Math.round(n));
-};
 
 export function GraduatedLegend({ spec, onFilterChange }: Props) {
   const { field, breaks, palette_colors } = spec;
@@ -39,59 +34,55 @@ export function GraduatedLegend({ spec, onFilterChange }: Props) {
   };
 
   return (
-    <div className="bg-card/90 backdrop-blur-md border border-border p-4 rounded-xl shadow-2xl min-w-[200px] animate-in slide-in-from-right-4 duration-500">
-      <div className="flex items-center gap-2 mb-3 border-b border-border pb-2">
-        <div className="p-1 bg-primary/10 rounded-md">
-          <Info className="h-3.5 w-3.5 text-primary" />
-        </div>
-        <div className="flex flex-col">
-          <span className="text-[14px] uppercase font-bold tracking-widest text-muted-foreground/80">图例说明</span>
-          <span className="text-xs font-semibold text-foreground truncate max-w-[140px]" title={field}>
-            字段: {field}
-          </span>
-        </div>
+    <LegendCard field={field} kind="数据驱动专题渲染">
+      <div className="mb-1 flex justify-between text-micro tabular-nums text-map-chrome-ink-muted">
+        <span>{formatLegendValue(breaks[0])}</span>
+        <span>{formatLegendValue(breaks[breaks.length - 1])}</span>
       </div>
-      <div className="flex justify-between text-[15px] text-muted-foreground/70 mb-1 px-1">
-        <span>{formatNum(breaks[0])}</span>
-        <span>{formatNum(breaks[breaks.length - 1])}</span>
-      </div>
-      <div className="space-y-2">
+      <div className="space-y-0.5">
         {breaks.slice(0, -1).map((val, idx) => {
           const nextVal = breaks[idx + 1];
           const colorIdx = Math.min(idx, palette_colors.length - 1);
           const isVisible = visible[idx];
-          const rangeLabel = `${formatNum(val)} — ${formatNum(nextVal)}`;
+          const rangeLabel = `${formatLegendValue(val)} — ${formatLegendValue(nextVal)}`;
           return (
             <div
               key={idx}
               role="button"
               tabIndex={0}
+              // aria-pressed carries the class's visibility, which the eye icon
+              // showed visually but never announced.
+              aria-pressed={isVisible}
               aria-label={rangeLabel}
-              className={`flex items-center justify-between group transition-all cursor-pointer hover:bg-muted/30 p-1 rounded-md ${!isVisible ? 'opacity-50' : ''}`}
+              className={`group flex min-h-row-sm cursor-pointer items-center justify-between gap-2 rounded-sm px-1 transition-colors hover:bg-surface-hover ${!isVisible ? 'opacity-50' : ''}`}
               onClick={() => toggle(idx)}
-              onKeyDown={(e) => { if (e.key === 'Enter') toggle(idx); }}
+              onKeyDown={(e) => {
+                // Space as well as Enter: role="button" must honour both.
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  toggle(idx);
+                }
+              }}
             >
-              <div className="flex items-center gap-3">
+              <div className="flex min-w-0 items-center gap-2">
                 <div
-                  className="w-3.5 h-3.5 rounded-sm shadow-sm ring-1 ring-black/10 group-hover:scale-110 transition-transform"
+                  aria-hidden
+                  className="h-icon-sm w-icon-sm shrink-0 rounded-xs ring-1 ring-inset ring-map-chrome-border"
                   style={{ backgroundColor: palette_colors[colorIdx] }}
                 />
-                <span className="text-[15px] font-medium text-muted-foreground group-hover:text-foreground transition-colors">
+                <span className="truncate text-meta tabular-nums text-map-chrome-ink">
                   {rangeLabel}
                 </span>
               </div>
-              <div className="flex items-center">
-                {isVisible
-                  ? <Eye className="h-3 w-3 text-primary/70" />
-                  : <EyeOff className="h-3 w-3 text-muted-foreground/50" />}
-              </div>
+              {isVisible ? (
+                <Eye aria-hidden className="h-icon-sm w-icon-sm shrink-0 text-status-accent" />
+              ) : (
+                <EyeOff aria-hidden className="h-icon-sm w-icon-sm shrink-0 text-ink-disabled" />
+              )}
             </div>
           );
         })}
       </div>
-      <div className="mt-4 pt-2 border-t border-border/40 text-[15px] text-muted-foreground/60 italic text-center">
-        数据驱动专题渲染
-      </div>
-    </div>
+    </LegendCard>
   );
 }
