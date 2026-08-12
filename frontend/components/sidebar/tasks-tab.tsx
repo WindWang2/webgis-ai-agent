@@ -28,7 +28,6 @@ import { StatusBadge } from '@/components/shared/status-badge';
 interface TasksTabProps {
   sessionId?: string | null;
   ownerToken?: string | null;
-  accentColor?: string;
 }
 
 const KIND_LABELS: Record<string, string> = {
@@ -58,14 +57,12 @@ function JobCard({
   onCancel,
   onRetry,
   now,
-  accentColor,
 }: {
   job: JobView;
   isCancelling: boolean;
   onCancel: (id: string) => void;
   onRetry: (id: string) => void;
   now: number;
-  accentColor: string;
 }) {
   // 「取消中」以本地乐观状态或后端状态任一为准；但「已取消」只认后端终态
   const displayStatus: JobStatus =
@@ -74,15 +71,18 @@ function JobCard({
   const indeterminate = job.active && job.progress === null;
 
   return (
+    /* 任务行与 layers-tab 同款交互配方：hover 底色 + 左侧预留 accent 指示条
+       位（border-l-2 border-l-transparent）。V4 之前整卡无任何悬停反馈，且
+       backdrop-blur-sm 属于审计清掉的半透明玻璃效果；垂直内边距收一步。 */
     <div
-      className="rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] p-3 backdrop-blur-sm"
+      className="rounded-md border border-l-2 border-edge-subtle border-l-transparent bg-surface-raised px-panel py-2.5 transition-colors hover:bg-surface-hover"
       data-testid={`job-card-${job.id}`}
       aria-busy={job.active}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="truncate text-sm font-medium text-[var(--theme-text-primary)]">{job.name}</div>
-          <div className="mt-0.5 text-xs text-[var(--theme-text-muted)]">
+          <div className="truncate text-body font-medium text-ink">{job.name}</div>
+          <div className="mt-0.5 text-meta text-ink-muted">
             {KIND_LABELS[job.kind] ?? job.kind}
             {job.attempt > 1 && ` · 第 ${job.attempt} 次尝试`}
             {job.agent_step_id && ` · 来自 ${job.agent_step_id}`}
@@ -94,19 +94,21 @@ function JobCard({
       {showProgress && (
         <div className="mt-2">
           <div
-            className="h-1.5 overflow-hidden rounded-full bg-[var(--theme-bg-muted)]"
+            className="h-1.5 overflow-hidden rounded-pill bg-surface-sunken"
             role="progressbar"
             aria-valuenow={job.progress ?? 0}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-label={`${job.name} 进度`}
           >
+            {/* 运行中任务 = info（蓝）：进度填充与同一任务的 StatusBadge 同色。
+                之前填充用 accent 绿、徽标是蓝，一个「运行中」出现两种颜色。 */}
             <div
-              className="h-1.5 rounded-full transition-all duration-500"
-              style={{ width: `${job.progress ?? 0}%`, backgroundColor: accentColor }}
+              className="h-1.5 rounded-pill bg-status-info transition-all duration-500"
+              style={{ width: `${job.progress ?? 0}%` }}
             />
           </div>
-          <div className="mt-1 flex justify-between text-xs text-[var(--theme-text-muted)]">
+          <div className="mt-1 flex justify-between text-meta text-ink-muted">
             <span className="truncate">{job.message ?? ''}</span>
             <span className="shrink-0 pl-2">{job.progress}%</span>
           </div>
@@ -115,18 +117,18 @@ function JobCard({
 
       {indeterminate && (
         // 不确定进度：明确显示为「进行中」而不是编造一个 99% 然后卡住
-        <div className="mt-2 text-xs text-[var(--theme-text-muted)]" data-testid={`job-indeterminate-${job.id}`}>
+        <div className="mt-2 text-meta text-ink-muted" data-testid={`job-indeterminate-${job.id}`}>
           {job.message ?? '进行中…'}
         </div>
       )}
 
-      {job.error && <div className="mt-2 text-xs text-red-600 dark:text-red-400">{job.error}</div>}
+      {job.error && <div className="mt-2 text-meta text-status-critical">{job.error}</div>}
 
-      <div className="mt-2 flex items-center justify-between text-xs text-[var(--theme-text-muted)]">
+      <div className="mt-2 flex items-center justify-between text-meta text-ink-muted">
         <span>已用 {formatElapsed(job, now)}</span>
         <div className="flex items-center gap-2">
           {job.result_ref && !job.active && (
-            <span className="max-w-[10rem] truncate text-[var(--theme-text-muted)]" title={job.result_ref}>
+            <span className="max-w-[10rem] truncate text-ink-muted" title={job.result_ref}>
               {job.result_ref.split('/').pop()}
             </span>
           )}
@@ -135,10 +137,10 @@ function JobCard({
               type="button"
               onClick={() => onCancel(job.id)}
               disabled={isCancelling || displayStatus === 'cancelling'}
-              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[var(--theme-text-muted)] transition-colors hover:bg-[var(--theme-bg-hover)] hover:text-[var(--theme-text-primary)] disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink disabled:opacity-40"
               aria-label={`取消 ${job.name}`}
             >
-              <X className="h-3 w-3" />
+              <X size={12} aria-hidden />
               取消
             </button>
           )}
@@ -146,10 +148,10 @@ function JobCard({
             <button
               type="button"
               onClick={() => onRetry(job.id)}
-              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[var(--theme-text-muted)] transition-colors hover:bg-[var(--theme-bg-hover)] hover:text-[var(--theme-text-primary)]"
+              className="inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink"
               aria-label={`重试 ${job.name}`}
             >
-              <RotateCcw className="h-3 w-3" />
+              <RotateCcw size={12} aria-hidden />
               重试
             </button>
           )}
@@ -159,7 +161,7 @@ function JobCard({
   );
 }
 
-export function TasksTab({ sessionId, ownerToken, accentColor = '#16a34a' }: TasksTabProps) {
+export function TasksTab({ sessionId, ownerToken }: TasksTabProps) {
   // Review P2 修复：context panel 收起时 tab 内容保持挂载（visibility 隐藏），
   // 传 enabled 关闭轮询，避免看不见的面板持续打后端。
   const leftPanelOpen = useHudStore((s) => s.leftPanelOpen);
@@ -183,9 +185,9 @@ export function TasksTab({ sessionId, ownerToken, accentColor = '#16a34a' }: Tas
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* 细工具栏：活跃任务数（仅 >0 时显示）+ 刷新 */}
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--theme-border)] px-3 py-1.5">
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-edge-subtle bg-surface-panel px-panel py-1.5">
         {active.length > 0 && (
-          <span className="text-[11px] font-medium text-[var(--theme-text-secondary)]">
+          <span className="text-caption font-medium text-ink-secondary">
             {active.length} 个活跃任务
           </span>
         )}
@@ -198,7 +200,7 @@ export function TasksTab({ sessionId, ownerToken, accentColor = '#16a34a' }: Tas
         </InlineNotice>
       )}
 
-      <div className="flex-1 space-y-2 overflow-y-auto p-3">
+      <div className="flex-1 space-y-2 overflow-y-auto px-panel py-2">
         {jobs.length === 0 && loading ? (
           <LoadingState label="加载任务…" />
         ) : jobs.length === 0 ? (
@@ -213,12 +215,11 @@ export function TasksTab({ sessionId, ownerToken, accentColor = '#16a34a' }: Tas
                 onCancel={cancel}
                 onRetry={retry}
                 now={now}
-                accentColor={accentColor}
               />
             ))}
 
             {finished.length > 0 && active.length > 0 && (
-              <div className="pt-2 text-xs text-[var(--theme-text-subtle)]">已结束</div>
+              <div className="pt-2 text-meta text-ink-disabled">已结束</div>
             )}
 
             {finished.map((job) => (
@@ -229,7 +230,6 @@ export function TasksTab({ sessionId, ownerToken, accentColor = '#16a34a' }: Tas
                 onCancel={cancel}
                 onRetry={retry}
                 now={now}
-                accentColor={accentColor}
               />
             ))}
           </>

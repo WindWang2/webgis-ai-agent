@@ -110,14 +110,13 @@ export function NavRail() {
   return (
     <nav
       aria-label="主导航"
-      className="fixed left-0 top-[42px] z-40 flex w-12 flex-col items-center"
+      // V4：宽度/顶距改用 --railW / --topH token；背景改为不透明 surface-panel，
+      // 去掉 blur(28px) —— 面板压在持续重绘的地图画布上，backdrop-filter 是最贵
+      // 的那一类，而且半透明面板会让底下的地图干扰图标可读性。
+      className="fixed left-0 top-topbar z-40 flex w-rail flex-col items-center border-r border-edge-subtle bg-surface-panel"
       style={{
         bottom: hudOpen ? 234 : 24,
         transition: 'bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-        background: 'var(--theme-bg-panel)',
-        backdropFilter: 'blur(28px)',
-        WebkitBackdropFilter: 'blur(28px)',
-        borderRight: '1px solid var(--theme-border)',
       }}
     >
       <div
@@ -129,7 +128,7 @@ export function NavRail() {
       >
         {RAIL_GROUPS.map((group, gi) => (
           <div key={gi} className="flex w-full flex-col items-center gap-1">
-            {gi > 0 && <div aria-hidden className="my-1 w-6 border-t border-[var(--theme-border-subtle)]" />}
+            {gi > 0 && <div aria-hidden className="my-1 w-6 border-t border-edge-subtle" />}
             {group.map(({ key, icon: Icon, label }) => {
               const active = isTabActive(key);
               const badge = badges[key];
@@ -150,27 +149,30 @@ export function NavRail() {
                   title={label}
                   tabIndex={active ? 0 : -1}
                   onClick={() => activateTab(key)}
+                  // 审计修复：active 用的底色类与 hover 完全相同，于是
+                  // hover 当前 tab 时毫无反馈，"已选中" 与 "指针在上面" 视觉同源。
+                  // 现在 selected = accent 软底 + accent 图标 + 左侧指示条，
+                  // hover 只是中性底色，两者不再混淆。
                   className={clsx(
-                    'relative flex h-10 w-10 items-center justify-center rounded-lg transition-colors',
-                    active ? 'bg-[var(--theme-bg-hover)]' : 'hover:bg-[var(--theme-bg-hover)]'
+                    'relative flex h-9 w-9 items-center justify-center rounded-md transition-colors',
+                    active
+                      ? 'bg-status-accent-soft text-status-accent'
+                      : 'text-ink-secondary hover:bg-surface-hover hover:text-ink'
                   )}
-                  style={{
-                    color: active ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-secondary)',
-                  }}
                 >
                   {active && leftPanelOpen && (
                     <span
                       aria-hidden
-                      className="absolute left-[-4px] top-1/2 h-5 w-[2.5px] -translate-y-1/2 rounded-full"
-                      style={{ background: 'var(--agent-accent, #16a34a)' }}
+                      className="absolute left-[-5px] top-1/2 h-5 w-[2.5px] -translate-y-1/2 rounded-pill bg-status-accent-vivid"
                     />
                   )}
                   <Icon size={17} strokeWidth={active ? 2.1 : 1.6} aria-hidden />
                   {badge !== undefined && (
                     <span
                       aria-hidden
-                      className="absolute right-0 top-0 inline-flex h-3.5 min-w-[14px] items-center justify-center rounded-full px-0.5 text-[9px] font-semibold text-white"
-                      style={{ background: 'var(--agent-accent, #16a34a)' }}
+                      // 计数徽标是中性信息，不是交互重点 —— 之前用满饱和品牌绿，
+                      // 与 active 指示条抢同一个视觉权重。
+                      className="absolute right-0 top-0 inline-flex h-3.5 min-w-[14px] items-center justify-center rounded-pill bg-surface-sunken px-0.5 text-micro font-semibold tabular-nums text-ink-secondary ring-1 ring-edge-subtle"
                     >
                       {badge}
                     </span>
@@ -183,13 +185,13 @@ export function NavRail() {
       </div>
 
       {/* 工具区：模板库（drawer）+ 面板折叠 */}
-      <div className="flex w-full flex-col items-center gap-1 border-t border-[var(--theme-border-subtle)] py-2">
+      <div className="flex w-full flex-col items-center gap-1 border-t border-edge-subtle py-2">
         <button
           type="button"
           aria-label="模板库"
           title="模板库"
           onClick={() => setTemplatesOpen(true)}
-          className="flex h-10 w-10 items-center justify-center rounded-lg text-[var(--theme-text-secondary)] transition-colors hover:bg-[var(--theme-bg-hover)]"
+          className="flex h-9 w-9 items-center justify-center rounded-md text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
         >
           <LayoutTemplate size={17} strokeWidth={1.6} aria-hidden />
         </button>
@@ -200,7 +202,7 @@ export function NavRail() {
           aria-controls="workspace-panel"
           title={leftPanelOpen ? '折叠面板' : '展开面板'}
           onClick={toggleLeftPanel}
-          className="flex h-10 w-10 items-center justify-center rounded-lg text-[var(--theme-text-secondary)] transition-colors hover:bg-[var(--theme-bg-hover)]"
+          className="flex h-9 w-9 items-center justify-center rounded-md text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
         >
           {leftPanelOpen ? (
             <PanelLeftClose size={17} strokeWidth={1.6} aria-hidden />

@@ -24,21 +24,20 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
   const aiStatus = useHudStore((s) => s.aiStatus);
   const setSettingsOpen = useHudStore((s) => s.setSettingsOpen);
   const setHistoryOpen = useHudStore((s) => s.setHistoryOpen);
-  const theme = useHudStore((s) => s.theme);
-  const accentColor = useHudStore((s) => s.accentColor);
   const is3D = useHudStore((s) => s.is3D);
   const setIs3D = useHudStore((s) => s.setIs3D);
-  const isDark = theme === 'dark';
 
   const isActive = aiStatus === 'thinking' || aiStatus === 'acting';
 
   const getStatusConfig = (status: string) => {
     switch (status) {
-      case 'idle': return { label: '就绪', color: 'var(--theme-text-muted)', bg: 'var(--theme-bg-muted)' };
-      case 'thinking': case 'acting': return { label: status === 'thinking' ? '感知中' : '执行中', color: accentColor, bg: isDark ? `${accentColor}15` : `${accentColor}10` };
-      case 'done': return { label: '完成', color: isDark ? '#4ade80' : '#16a34a', bg: isDark ? 'rgba(74,222,128,0.15)' : 'rgba(16,185,129,0.10)' };
-      case 'error': return { label: '异常', color: isDark ? '#fca5a5' : '#ef4444', bg: isDark ? 'rgba(248,113,113,0.15)' : 'rgba(254,226,226,0.6)' };
-      default: return { label: '就绪', color: 'var(--theme-text-muted)', bg: 'var(--theme-bg-muted)' };
+      case 'idle': return { label: '就绪', color: 'var(--text-muted)', bg: 'var(--surface-sunken)' };
+      case 'thinking': case 'acting': return { label: status === 'thinking' ? '感知中' : '执行中', color: 'var(--agent-accent)', bg: 'color-mix(in srgb, var(--agent-accent) 8%, transparent)' };
+      // V4：走与 StatusBadge / InlineNotice / toast 同一套语义 token，
+      // 不再各写一对明暗 hex（原先是 #4ade80/#16a34a 与 #fca5a5/#ef4444）。
+      case 'done': return { label: '完成', color: 'var(--success)', bg: 'var(--success-soft)' };
+      case 'error': return { label: '异常', color: 'var(--critical)', bg: 'var(--critical-soft)' };
+      default: return { label: '就绪', color: 'var(--text-muted)', bg: 'var(--surface-sunken)' };
     }
   };
 
@@ -63,15 +62,15 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
   }, [isActive, reducedMotion]);
 
   return (
+    // V4：壳层度量改用 token（h-topbar），背景改为不透明 surface-panel 并
+    // 移除 backdrop-blur —— 顶栏压在持续重绘的地图画布上，blur 是最贵的
+    // 那一类滤镜，半透明又会让地图细节透进密集文本。
     <div
+      className="fixed inset-x-0 top-0 z-50 flex h-topbar items-center gap-2.5 bg-surface-panel px-3"
       style={{
-        position: 'fixed', top: 0, left: 0, right: 0, zIndex: 50,
-        display: 'flex', alignItems: 'center', height: 42, paddingLeft: 12, paddingRight: 12, gap: 10,
-        backgroundColor: 'var(--theme-bg-glass)',
-        backdropFilter: 'blur(28px)', WebkitBackdropFilter: 'blur(28px)',
         borderBottomWidth: isActive ? 2 : 1,
         borderBottomStyle: 'solid',
-        borderBottomColor: isActive ? `${accentColor}55` : 'var(--theme-border)'
+        borderBottomColor: isActive ? 'color-mix(in srgb, var(--agent-accent) 33%, transparent)' : 'var(--border-subtle)'
       }}
     >
       {/* heartbeat scan line */}
@@ -79,7 +78,7 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
         <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, overflow: 'hidden', pointerEvents: 'none' }}>
           <div
             style={{
-              background: `linear-gradient(90deg, transparent 0%, ${accentColor}99 50%, transparent 100%)`,
+              background: 'linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--agent-accent) 60%, transparent) 50%, transparent 100%)',
               width: '40%',
               transform: `translateX(${scanX * 2.5}%)`,
               height: '100%'
@@ -92,102 +91,73 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
       <button
         onClick={toggleLeftPanel}
         aria-label={leftPanelOpen ? '收起侧栏' : '展开侧栏'}
-        style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          width: 28, height: 28, borderRadius: 6, cursor: 'pointer',
-          color: 'var(--theme-text-primary)', backgroundColor: 'transparent'
-        }}
-        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--theme-bg-hover)'; }}
-        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
         title={leftPanelOpen ? '收起侧栏' : '展开侧栏'}
+        className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink transition-colors hover:bg-surface-hover"
       >
-        {leftPanelOpen ? <PanelLeftClose size={15} /> : <Menu size={15} />}
+        {leftPanelOpen ? <PanelLeftClose size={14} aria-hidden /> : <Menu size={14} aria-hidden />}
       </button>
 
       {/* logo */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, userSelect: 'none' }}>
+      <div className="flex select-none items-center gap-1.5">
         <span
+          aria-hidden
+          className="flex h-6 w-6 items-center justify-center rounded-sm"
           style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            width: 24, height: 24, borderRadius: 6,
-            background: `linear-gradient(135deg, ${accentColor}, ${accentColor}dd)`
+            background: 'linear-gradient(135deg, var(--agent-accent), color-mix(in srgb, var(--agent-accent) 87%, transparent))'
           }}
         >
-          <Compass size={13} style={{ color: '#fff' }} />
+          <Compass size={13} className="text-ink-on-accent" />
         </span>
-        <div style={{ lineHeight: 1 }}>
-          <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--theme-text-primary)' }}>
+        <div className="leading-tight">
+          <span className="text-heading font-semibold text-ink">
             GeoAgent
           </span>
-          <span style={{ fontSize: 11, marginLeft: 4, color: 'var(--theme-text-muted)' }}>All is Agent</span>
+          <span className="ml-1 text-caption text-ink-muted">All is Agent</span>
         </div>
       </div>
 
       {/* session name pill */}
-      <span
-        style={{
-          marginLeft: 4, padding: '2px 8px', borderRadius: 999,
-          backgroundColor: 'var(--theme-bg-muted)',
-          fontSize: 12, color: 'var(--theme-text-secondary)',
-          borderWidth: 1, borderStyle: 'solid',
-          borderColor: 'var(--theme-border-subtle)',
-          maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
-        }}
-      >
+      <span className="ml-1 max-w-[180px] truncate rounded-pill border border-edge-subtle bg-surface-sunken px-2 py-0.5 text-meta text-ink-secondary">
         会话 / {sessionName}
       </span>
 
       {/* spacer */}
-      <div style={{ flex: 1 }} />
+      <div className="flex-1" />
 
       {/* agent status badge */}
       <span
-        style={{
-          display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px',
-          borderRadius: 999, backgroundColor: status.bg, fontSize: 12, fontWeight: 500
-        }}
+        className="flex items-center gap-1 rounded-pill px-2 py-0.5 text-meta font-medium"
+        style={{ backgroundColor: status.bg }}
       >
         <span
-          style={{
-            width: 6, height: 6, borderRadius: '50%', backgroundColor: status.color
-          }}
+          aria-hidden
+          className="h-1.5 w-1.5 rounded-pill"
+          style={{ backgroundColor: status.color }}
         />
-        <span style={{ color: 'var(--theme-text-primary)' }}>{status.label}</span>
+        <span className="text-ink">{status.label}</span>
       </span>
 
       {/* right actions */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+      <div className="flex items-center gap-0.5">
         <button
           onClick={onNewSession}
           aria-label="新建会话"
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            width: 28, height: 28, borderRadius: 6, cursor: 'pointer',
-            color: 'var(--theme-text-secondary)', backgroundColor: 'transparent'
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--theme-bg-hover)'; e.currentTarget.style.color = 'var(--theme-text-primary)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--theme-text-secondary)'; }}
           title="新建会话"
+          className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
         >
-          <Plus size={15} />
+          <Plus size={14} aria-hidden />
         </button>
 
         <button
           onClick={() => setHistoryOpen(true)}
           aria-label="历史记录"
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            width: 28, height: 28, borderRadius: 6, cursor: 'pointer',
-            color: 'var(--theme-text-secondary)', backgroundColor: 'transparent'
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--theme-bg-hover)'; e.currentTarget.style.color = 'var(--theme-text-primary)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--theme-text-secondary)'; }}
           title="历史记录"
+          className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
         >
-          <History size={15} />
+          <History size={14} aria-hidden />
         </button>
 
-        <span style={{ marginLeft: 4, marginRight: 4, width: 1, height: 16, backgroundColor: 'var(--theme-border-subtle)' }} />
+        <span aria-hidden className="mx-1 h-4 w-px bg-edge-subtle" />
 
         <BaselayerSwitcher />
 
@@ -196,57 +166,32 @@ export default function TopBar({ sessionName = '未命名', onNewSession }: TopB
           onClick={() => setIs3D(!is3D)}
           aria-label={is3D ? '切换至 2D 视图' : '切换至 3D 视角'}
           title={is3D ? '视角: 3D (点击切换 2D)' : '视角: 2D (点击切换 3D)'}
-          style={{
-            padding: '5px 10px',
-            borderRadius: 8,
-            background: 'var(--theme-bg-glass)',
-            backdropFilter: 'blur(12px)',
-            WebkitBackdropFilter: 'blur(12px)',
-            border: '1px solid var(--theme-border)',
-            boxShadow: 'var(--theme-shadow)',
-            fontSize: '12.5px',
-            color: 'var(--theme-text-secondary)',
-            cursor: 'pointer',
-            fontFamily: "'JetBrains Mono', monospace",
-            display: 'flex',
-            alignItems: 'center',
-            gap: 5,
-            transition: 'all 0.2s ease',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = 'var(--theme-bg-hover)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'var(--theme-bg-glass)';
-          }}
+          className="flex items-center gap-1 rounded-md border border-edge-subtle bg-surface-overlay px-2.5 py-1 font-mono text-body text-ink-secondary shadow-overlay transition-colors hover:bg-surface-hover"
         >
           <svg width='11' height='11' viewBox='0 0 11 11' fill='none' style={{ display: 'block' }}>
             {is3D ? (
-              <path d='M5.5 1.5L2 3.5l3.5 2L9 3.5 5.5 1.5z M2 6l3.5 2L9 6 M2 8.5l3.5 2 3.5-2' stroke={isDark ? '#4ade80' : '#16a34a'} strokeWidth='1' strokeLinecap='round' strokeLinejoin='round'/>
+              <path d='M5.5 1.5L2 3.5l3.5 2L9 3.5 5.5 1.5z M2 6l3.5 2L9 6 M2 8.5l3.5 2 3.5-2' stroke='var(--success)' strokeWidth='1' strokeLinecap='round' strokeLinejoin='round'/>
             ) : (
-              <path d='M5.5 2.5L2 4.5l3.5 2 3.5-2-3.5-2z' stroke='var(--theme-text-secondary)' strokeWidth='1' strokeLinecap='round' strokeLinejoin='round'/>
+              <path d='M5.5 2.5L2 4.5l3.5 2 3.5-2-3.5-2z' stroke='var(--text-secondary)' strokeWidth='1' strokeLinecap='round' strokeLinejoin='round'/>
             )}
           </svg>
-          <span style={{ color: is3D ? (isDark ? '#4ade80' : '#16a34a') : 'var(--theme-text-secondary)', fontWeight: is3D ? 600 : 400 }}>
+          <span
+            className={is3D ? 'font-semibold' : undefined}
+            style={{ color: is3D ? 'var(--success)' : undefined }}
+          >
             {is3D ? '3D' : '2D'}
           </span>
         </button>
 
-        <span style={{ marginLeft: 4, marginRight: 4, width: 1, height: 16, backgroundColor: 'var(--theme-border-subtle)' }} />
+        <span aria-hidden className="mx-1 h-4 w-px bg-edge-subtle" />
 
         <button
           onClick={() => setSettingsOpen(true)}
           aria-label="设置"
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            width: 28, height: 28, borderRadius: 6, cursor: 'pointer',
-            color: 'var(--theme-text-secondary)', backgroundColor: 'transparent'
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--theme-bg-hover)'; e.currentTarget.style.color = 'var(--theme-text-primary)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--theme-text-secondary)'; }}
           title="设置"
+          className="flex h-control-md w-control-md items-center justify-center rounded-sm text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink"
         >
-          <Settings size={15} />
+          <Settings size={14} aria-hidden />
         </button>
       </div>
     </div>
