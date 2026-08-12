@@ -147,6 +147,8 @@ class ToolRegistry:
              tier: int = 1,
              domains: Optional[List[str]] = None,
              execution_policy: Optional[ToolExecutionPolicy | str] = None,
+             version: str = "1.0",
+             contract_version: int = 1,
              **kwargs: Any) -> Callable:
         """装饰器：注册工具到此 registry 实例"""
         def decorator(func: Callable):
@@ -157,6 +159,8 @@ class ToolRegistry:
                 tier=tier,
                 domains=domains,
                 execution_policy=execution_policy,
+                version=version,
+                contract_version=contract_version,
                 **kwargs,
             )
             return func
@@ -169,6 +173,8 @@ class ToolRegistry:
                  tier: int = 1,
                  domains: Optional[List[str]] = None,
                  execution_policy: Optional[ToolExecutionPolicy | str] = None,
+                 version: str = "1.0",
+                 contract_version: int = 1,
                  **kwargs: Any):
         """注册一个工具函数"""
         self._tools[name] = func
@@ -220,10 +226,16 @@ class ToolRegistry:
             policy = ToolExecutionPolicy(execution_policy)
 
         # 记录分层元数据与执行策略
+        # version / contract_version: 工具实现指纹（INV-TOOL，规范 §12）。
+        # declared version 是作者声明的人类可读版本；contract_version 是结果契约
+        # （result shape）版本——二者拼接形成稳定指纹，供 lineage/run manifest 记录
+        # 「当时执行的工具是哪一个版本」。绝不把 git SHA 塞进每个 tool schema。
         self._metadata[name] = {
             "tier": tier,
             "domains": list(domains or []),
             "execution_policy": policy,
+            "version": str(version or "1.0"),
+            "contract_version": int(contract_version or 1),
         }
 
     def _generate_model(self, name: str, func: Callable, param_descriptions: Optional[dict[str, str]]) -> Type[BaseModel]:
@@ -254,7 +266,20 @@ class ToolRegistry:
 
     def metadata(self, name: str) -> dict[str, Any]:
         """获取单个工具的分层元数据；未注册时返回 tier=1 兜底。"""
-        return self._metadata.get(name, {"tier": 1, "domains": []})
+        return self._metadata.get(
+            name, {"tier": 1, "domains": [], "version": "1.0", "contract_version": 1}
+        )
+
+    def tool_version(self, name: str) -> str:
+        """稳定实现指纹：``"{declared_version}#cv{contract_version}"``。
+
+        未注册的工具回退到 ``"1.0#cv1"``。供 ArtifactLineage.tool_version 与
+        run manifest 记录「当时执行的工具版本」——替代以前硬编码的 "1.0"。
+        """
+        meta = self._metadata.get(name)
+        if not meta:
+            return "1.0#cv1"
+        return f"{meta.get('version', '1.0')}#cv{int(meta.get('contract_version', 1) or 1)}"
 
     def all_metadata(self) -> dict[str, dict[str, Any]]:
         """获取全部工具的元数据快照。"""
@@ -565,10 +590,13 @@ def tool(registry: ToolRegistry, name: str, description: str,
          tier: int = 1,
          domains: Optional[List[str]] = None,
          execution_policy: Optional[ToolExecutionPolicy | str] = None,
+         version: str = "1.0",
+         contract_version: int = 1,
          **kwargs: Any):
     """装饰器：注册工具到 registry.
 
     tier / domains 见 ToolRegistry.register 文档。未提供时默认 tier=1 always-on。
+    version / contract_version 提供稳定实现指纹（见 ToolRegistry.tool_version）。
     """
     def decorator(func: Callable):
         registry.register(
@@ -578,6 +606,8 @@ def tool(registry: ToolRegistry, name: str, description: str,
             tier=tier,
             domains=domains,
             execution_policy=execution_policy,
+            version=version,
+            contract_version=contract_version,
             **kwargs,
         )
         return func

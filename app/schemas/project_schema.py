@@ -90,6 +90,7 @@ class WorkflowResponse(BaseModel):
     version: int
     graph_spec: Dict[str, Any]
     inputs_schema: Dict[str, Any]
+    current_revision_id: Optional[str] = None
     created_from_session: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -106,7 +107,10 @@ class WorkflowRunResponse(BaseModel):
     id: str
     workflow_id: str
     workflow_version: int
-    input_bindings: Dict[str, Any]
+    project_id: Optional[str] = None
+    workflow_revision_id: Optional[str] = None
+    input_bindings: Dict[str, Any] = Field(default_factory=dict)
+    input_dataset_fingerprints: Dict[str, Any] = Field(default_factory=dict)
     status: str
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
@@ -114,7 +118,42 @@ class WorkflowRunResponse(BaseModel):
     outputs: Dict[str, Any] = Field(default_factory=dict)
     error_message: Optional[str] = None
     cost_perf_summary: Dict[str, Any] = Field(default_factory=dict)
+    completed_steps: List[str] = Field(default_factory=list)
+    run_manifest: Optional[Dict[str, Any]] = None
+    run_fingerprint: Optional[str] = None
     created_at: datetime
+
+
+class WorkflowRevisionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    workflow_id: str
+    revision_no: int
+    graph_fingerprint: str
+    inputs_schema: Optional[Dict[str, Any]] = None
+    created_by: Optional[str] = None
+    created_at: datetime
+
+
+class WorkflowRevisionSummary(BaseModel):
+    """Slim revision row — graph_spec excluded (detail endpoint returns it)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    workflow_id: str
+    revision_no: int
+    graph_fingerprint: str
+    created_at: datetime
+
+
+class RunReplayRequest(BaseModel):
+    mode: str = Field("exact", description="exact = reuse frozen graph+inputs; latest = current revision, same inputs")
+
+
+class RunResumeRequest(BaseModel):
+    allow_rerun: bool = Field(False, description="Fall back to a full rerun if resume preconditions fail")
 
 
 class ArtifactResponse(BaseModel):
@@ -125,10 +164,11 @@ class ArtifactResponse(BaseModel):
     name: str
     artifact_type: str
     format: Optional[str] = None
-    crs: Optional[str] = "EPSG:4326"
+    crs: Optional[str] = None
     storage_ref: Optional[str] = None
     upload_record_id: Optional[int] = None
     layer_id: Optional[int] = None
+    content_fingerprint: Optional[str] = None
     metadata_json: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
 
@@ -143,17 +183,24 @@ class ArtifactLineageResponse(BaseModel):
     tool_version: Optional[str] = "1.0"
     workflow_run_id: Optional[str] = None
     parameters: Dict[str, Any] = Field(default_factory=dict)
+    source_dataset_id: Optional[str] = None
+    source_dataset_fingerprint: Optional[str] = None
+    content_fingerprint: Optional[str] = None
     created_at: datetime
 
 
 class RunComparisonResponse(BaseModel):
     run_a_id: str
     run_b_id: str
-    inputs_changed: Dict[str, Any]
-    params_changed: Dict[str, Any]
-    output_artifacts_changed: Dict[str, Any]
-    metrics_changed: Dict[str, Any]
-    warnings_changed: Dict[str, Any]
+    revision: Dict[str, Any] = Field(default_factory=dict)
+    inputs_changed: Dict[str, Any] = Field(default_factory=dict)
+    dataset_versions_changed: Dict[str, Any] = Field(default_factory=dict)
+    tool_versions_changed: Dict[str, Any] = Field(default_factory=dict)
+    params_changed: Dict[str, Any] = Field(default_factory=dict)
+    output_artifacts_changed: Dict[str, Any] = Field(default_factory=dict)
+    metrics_changed: Dict[str, Any] = Field(default_factory=dict)
+    warnings_changed: Dict[str, Any] = Field(default_factory=dict)
+    run_fingerprint: Dict[str, Any] = Field(default_factory=dict)
 
 
 # =====================================================================
