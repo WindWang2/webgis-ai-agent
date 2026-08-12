@@ -41,7 +41,7 @@ describe("adapter derives thematic paint from legend_spec (drift fix)", () => {
     });
     const spec = hudStateToMapSpec({ layers: [l], processLayers: {}, activeFilters: {}, is3D: false });
     const fill = spec.layers.find((x) => x.id.endsWith("__fill"))!;
-    expect(fill.paint["fill-color"]).toEqual([
+    expect(fill.paint!["fill-color"]).toEqual([
       "step", ["to-number", ["get", "pop"]], "#ffffb2",
       10, "#fd8d3c", 20, "#bd0026",
     ]);
@@ -57,7 +57,7 @@ describe("adapter derives thematic paint from legend_spec (drift fix)", () => {
     const spec = hudStateToMapSpec({ layers: [l], processLayers: {}, activeFilters: {}, is3D: false });
     const fill = spec.layers.find((x) => x.id.endsWith("__fill"))!;
     // paint references the legend's field, not a hardcoded metadata field.
-    expect(JSON.stringify(fill.paint["fill-color"])).toContain('"get","income"');
+    expect(JSON.stringify(fill.paint!["fill-color"])).toContain('"get","income"');
   });
 
   it("applies the no-data guard when legend_spec declares nodata", () => {
@@ -69,7 +69,7 @@ describe("adapter derives thematic paint from legend_spec (drift fix)", () => {
     });
     const spec = hudStateToMapSpec({ layers: [l], processLayers: {}, activeFilters: {}, is3D: false });
     const fill = spec.layers.find((x) => x.id.endsWith("__fill"))!;
-    const expr = fill.paint["fill-color"] as unknown[];
+    const expr = fill.paint!["fill-color"] as unknown as unknown[];
     expect(expr[0]).toBe("case");
     expect(JSON.stringify(expr)).toContain('"#ccc"');
   });
@@ -79,7 +79,7 @@ describe("adapter derives thematic paint from legend_spec (drift fix)", () => {
     const spec = hudStateToMapSpec({ layers: [l], processLayers: {}, activeFilters: {}, is3D: false });
     const fill = spec.layers.find((x) => x.id.endsWith("__fill"))!;
     // byte-identical to the pre-refactor behavior.
-    expect(fill.paint["fill-color"]).toEqual(["coalesce", ["get", "fill_color"], "#ff0000"]);
+    expect(fill.paint!["fill-color"]).toEqual(["coalesce", ["get", "fill_color"], "#ff0000"]);
   });
 
   it("categorical legend_spec emits a match expression on the live map", () => {
@@ -93,7 +93,7 @@ describe("adapter derives thematic paint from legend_spec (drift fix)", () => {
     });
     const spec = hudStateToMapSpec({ layers: [l], processLayers: {}, activeFilters: {}, is3D: false });
     const fill = spec.layers.find((x) => x.id.endsWith("__fill"))!;
-    expect(fill.paint["fill-color"]).toEqual([
+    expect(fill.paint!["fill-color"]).toEqual([
       "match", ["get", "landuse"], "residential", "#0", "commercial", "#1", "#1",
     ]);
   });
@@ -138,7 +138,7 @@ describe("adapter derives thematic paint from legend_spec (drift fix)", () => {
     const dt = Date.now() - t0;
     const fill = spec.layers.find((x) => x.id === "big__fill")!;
     // The color expression is a single step (3 classes), independent of 50k features.
-    expect((fill.paint["fill-color"] as unknown[])[0]).toBe("step");
+    expect((fill.paint!["fill-color"] as unknown as unknown[])[0]).toBe("step");
     // Guard: must complete quickly — thematic derivation must not be O(features).
     // (Geometry introspection is pre-existing O(features) and allowed; this
     // bounds total wall-clock as a coarse sanity check.)

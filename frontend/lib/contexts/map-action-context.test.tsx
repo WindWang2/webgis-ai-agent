@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import React from 'react';
 import { MapActionProvider, useMapAction } from './map-action-context';
-import type { MapActionPayload } from '@/lib/types';
+import type { GeoJSONFeatureCollection, MapActionPayload } from '@/lib/types';
 import type { MapActionAck } from '@/lib/api/map-action-acks';
 
 // The provider's base-layer lazy init reads useHudStore.getState().baseLayer and
@@ -46,7 +46,7 @@ describe('MapActionProvider (V3 queue + lifecycle)', () => {
   it('appends a normalized action on dispatch', () => {
     const { result } = renderCtx();
     act(() => {
-      result.current.dispatchAction({ command: 'FLY_TO', params: { center: [116, 39], zoom: 12 } });
+      result.current.dispatchAction({ command: 'FLY_TO' as MapActionPayload['command'], params: { center: [116, 39], zoom: 12 } });
     });
     expect(result.current.actions).toHaveLength(1);
     // command normalized to lowercase; UPPERCASE backend emissions tolerated
@@ -346,10 +346,12 @@ describe('MapActionProvider (V3 queue + lifecycle)', () => {
       features: Array.from({ length: 5000 }, (_, i) => ({
         id: i, geometry: { type: 'Point', coordinates: [i, i] }, properties: { i },
       })),
-    };
+    } as unknown as GeoJSONFeatureCollection;
     const action = makeAction({
       action_id: 'ma-big',
       command: 'add_heatmap_raster',
+      // features/data/image are deliberately NOT part of the payload type — the
+      // ack sanitizer must drop data-dump keys, so they are smuggled via cast.
       params: {
         image: bigImage,
         geojson: bigGeojson,
@@ -358,7 +360,7 @@ describe('MapActionProvider (V3 queue + lifecycle)', () => {
         bbox: [116.0, 39.0, 117.0, 40.0],
         center: [116.5, 39.5],
         zoom: 12,
-      },
+      } as unknown as MapActionPayload['params'],
     });
     act(() => { result.current.dispatchAction(action); });
     act(() => { result.current.reportTerminal(action, 'succeeded'); });

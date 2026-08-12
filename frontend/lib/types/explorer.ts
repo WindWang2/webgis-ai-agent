@@ -1,3 +1,8 @@
+// The ambient global `GeoJSON` namespace is only auto-included when @types
+// packages are unrestricted; tsconfig.test.json pins `types` to
+// vitest/globals+node+next, so reference the explicit geojson package type.
+import type { FeatureCollection } from 'geojson';
+
 export type ExplorerStage =
   | "discover"
   | "fetch"
@@ -81,7 +86,7 @@ export interface WhatIfSimulationResult {
   metrics: Record<string, MetricDelta>;
   uncertainty: string;
   rules_applied: string[];
-  simulation_geojson: GeoJSON.FeatureCollection;
+  simulation_geojson: FeatureCollection;
 }
 
 export type SimulationViewMode = "baseline" | "simulated" | "delta";

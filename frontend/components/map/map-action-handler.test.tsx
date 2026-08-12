@@ -76,14 +76,14 @@ const mockSetBaseLayer = vi.fn();
 const mockSetPendingSystemMessage = vi.fn();
 const mockRemoveLayer = vi.fn();
 const mockUpdateLayer = vi.fn();
-const mockExport = vi.fn(async () => ({ ok: true }));
+const mockExport = vi.fn(async (): Promise<{ ok: boolean; error?: string }> => ({ ok: true }));
 const mockAddAnnotation = vi.fn((feature) => {
   mockAnnotationsStore.push(feature);
 });
 const mockClearAnnotations = vi.fn(() => {
   mockAnnotationsStore = [];
 });
-let mockLayersStore: Array<{ id: string; name?: string; style?: any }> = [];
+let mockLayersStore: Array<{ id: string; name?: string; style?: any; visible?: boolean }> = [];
 let mockAnnotationsStore: any[] = [];
 // Round-2 FIX-B: mirrors useHudStore.baseLayer so base_layer_change can detect
 // an unchanged base layer (no style swap needed) and resolve immediately.
