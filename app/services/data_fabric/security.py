@@ -12,6 +12,8 @@ import socket
 from urllib.parse import urlparse
 from typing import Dict, Any, Optional
 
+import requests.adapters
+
 try:
     # defusedxml hardens ElementTree against XXE / external entity / entity
     # expansion attacks. It is a declared project dependency (pyproject.toml).
@@ -180,6 +182,30 @@ class DataFabricSecurity:
         return ips
 
     @staticmethod
+    def redact_url(url: Optional[str]) -> Optional[str]:
+        """Strip ``user:password@`` userinfo from a URL for safe egress.
+
+        ``postgres://user:pass@host/db`` connection strings and HTTP URLs with
+        embedded tokens were returned verbatim in source egress responses
+        (list/get/create). The userinfo never needs to reach the client.
+        Returns the input unchanged for non-URL / parseable-without-userinfo.
+        """
+        if not url or not isinstance(url, str):
+            return url
+        try:
+            parsed = urlparse(url)
+        except Exception:
+            return url
+        if not parsed.scheme or "@" not in (parsed.netloc or ""):
+            return url
+        # Keep host:port; drop the userinfo segment.
+        hostport = parsed.hostname or ""
+        if parsed.port:
+            hostport = f"{hostport}:{parsed.port}"
+        rebuilt = parsed._replace(netloc=hostport)
+        return rebuilt.geturl()
+
+    @staticmethod
     def sanitize_profile_dict(profile_dict: Dict[str, Any]) -> Dict[str, Any]:
         """Redacts credentials before returning a profile to LLM or frontend.
 
@@ -225,3 +251,52 @@ class DataFabricSecurity:
         except Exception as e:
             logger.error(f"Failed to parse XML safely: {e}")
             raise DataFabricSecurityError(f"Malformed or unsafe XML payload: {e}")
+
+
+# ── HTTP client SSRF hardening ──────────────────────────────────────────────
+#
+# validate_url() is a *pre-flight* gate: it runs once on the URL the user
+# registered. The original adapters then handed the URL to a plain
+# ``requests.Session`` with the default ``allow_redirects=True``. ``requests``
+# follows redirects internally and never re-validated the ``Location`` target,
+# so a registered public host that answered ``302 → http://169.254.169.254/``
+# was followed straight into the cloud metadata service (redirect-SSRF P0).
+#
+# Mitigation: ``SSRFSafeHTTPAdapter`` re-runs ``validate_url`` inside ``send()``
+# on *every* request. Because ``requests`` re-invokes the mounted adapter for
+# each redirect hop, every redirect target is re-validated against the same
+# SSRF policy (private IPs, loopback, metadata, ULA/link-local, IPv4-mapped
+# IPv6). Re-resolving inside ``send()`` also shrinks the DNS-rebinding TOCTOU
+# window: the hostname is resolved immediately before the underlying urllib3
+# connect, not seconds earlier at registration time. (A residual micro-window
+# between resolve and connect remains; full connect-time IP pinning would need
+# a socket-level transport and is documented as ADR-0053 follow-up.)
+
+
+class SSRFSafeHTTPAdapter(requests.adapters.HTTPAdapter):
+    """``requests`` HTTPAdapter that enforces SSRF policy on every send.
+
+    Mount on both ``http://`` and ``https://`` (see ``make_safe_session``) so
+    initial requests AND every redirect hop are validated.
+    """
+
+    def __init__(self, *args, allow_private: bool = False, **kwargs):
+        self._allow_private = allow_private
+        super().__init__(*args, **kwargs)
+
+    def send(self, request, **kwargs):  # type: ignore[override]
+        url = getattr(request, "url", None)
+        if url:
+            DataFabricSecurity.validate_url(url, allow_private=self._allow_private)
+        return super().send(request, **kwargs)
+
+
+def make_safe_session(allow_private: bool = False):
+    """Return a ``requests.Session`` whose every request (incl. redirects) is
+    SSRF-validated. Adapters MUST use this instead of a bare ``requests.Session``.
+    """
+    session = requests.Session()
+    adapter = SSRFSafeHTTPAdapter(allow_private=allow_private)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session

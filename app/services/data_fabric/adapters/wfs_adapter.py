@@ -3,10 +3,9 @@ WFS (Web Feature Service) Data Source Adapter
 """
 import time
 import logging
-import requests
 from typing import List, Dict, Any
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
-from app.services.data_fabric.security import DataFabricSecurity
+from app.services.data_fabric.security import DataFabricSecurity, make_safe_session
 from app.schemas.data_fabric_schema import (
     DatasetDescriptor,
     QuerySpec,
@@ -36,7 +35,7 @@ class WFSAdapter(GeospatialDataSourceAdapter):
             else ""
         )
         self.options = self.profile.options or {}
-        self.session = requests.Session()
+        self.session = make_safe_session(allow_private=self.profile.allow_private)
         if "headers" in self.options:
             self.session.headers.update(self.options["headers"])
 
