@@ -5,41 +5,37 @@ import React from 'react';
 interface ToggleSwitchProps {
   checked: boolean;
   onChange: () => void;
-  accentColor?: string;
+  /**
+   * 可访问名称。a11y 修复：此前 role="switch" 有 aria-checked 但完全没有名字，
+   * 于是 LLM / RAG 设置以及技能中心里每一个开关对读屏都是「无名开关」。
+   */
+  label: string;
 }
 
-export default function ToggleSwitch({
-  checked,
-  onChange,
-  accentColor = '#16a34a',
-}: ToggleSwitchProps) {
+export default function ToggleSwitch({ checked, onChange, label }: ToggleSwitchProps) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-label={label}
+      title={label}
       onClick={onChange}
-      className="relative inline-flex flex-shrink-0 cursor-pointer border-0 p-0 focus:outline-none"
-      style={{ width: 34, height: 19 }}
+      // 只保留 relative 定位；焦点环由 globals.css 的 *:focus-visible 统一提供，
+      // 不再手写 focus:outline-none（那会把键盘可见性交给一条兜底规则去救）。
+      className="relative inline-flex h-[18px] w-[32px] shrink-0 cursor-pointer border-0 p-0"
     >
-      {/* Track */}
       <span
-        className="block rounded-full transition-colors duration-200"
-        style={{
-          width: 34,
-          height: 19,
-          backgroundColor: checked ? accentColor : 'var(--theme-border-strong, rgba(15,23,42,0.15))',
-        }}
+        aria-hidden
+        className={`block h-[18px] w-[32px] rounded-pill transition-colors duration-200 ${
+          checked ? 'bg-status-accent-vivid' : 'bg-edge-strong'
+        }`}
       />
-      {/* Knob */}
       <span
-        className="absolute top-[2px] rounded-full bg-white transition-all duration-200"
-        style={{
-          width: 15,
-          height: 15,
-          left: checked ? 16 : 2,
-          boxShadow: '0 1px 3px rgba(0,0,0,0.15), 0 1px 2px rgba(0,0,0,0.1)',
-        }}
+        aria-hidden
+        className={`absolute top-[2px] h-[14px] w-[14px] rounded-pill bg-surface-raised shadow-raised transition-[left] duration-200 ${
+          checked ? 'left-[16px]' : 'left-[2px]'
+        }`}
       />
     </button>
   );

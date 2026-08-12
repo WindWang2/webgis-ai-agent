@@ -6,6 +6,9 @@
  * 把 map-studio 的 2-step confirm + 3s 自动还原 + blur 取消泛化，
  * 替代原生 confirm()（project/data-sources）与无确认删除（ops-log）。
  * 危险操作默认红色语义。
+ *
+ * UI V4：配色改用 --critical token，与 StatusBadge / InlineNotice 的
+ * critical 语义同源。
  */
 import { useEffect, useRef, useState, type ButtonHTMLAttributes } from 'react';
 import clsx from 'clsx';
@@ -48,10 +51,10 @@ export function ConfirmAction({
       type="button"
       aria-label={confirming ? confirmLabel : label}
       className={clsx(
-        'rounded-md px-2 py-1 text-[11px] font-medium transition-colors',
+        'rounded-sm px-2 py-0.5 text-caption font-medium transition-colors',
         confirming
-          ? 'bg-red-500/15 text-red-600 hover:bg-red-500/25 dark:text-red-300'
-          : 'text-[var(--theme-text-muted)] hover:bg-red-500/10 hover:text-red-500',
+          ? 'bg-status-critical-soft text-status-critical hover:brightness-110'
+          : 'text-ink-muted hover:bg-status-critical-soft hover:text-status-critical',
         className
       )}
       onClick={(e) => {
