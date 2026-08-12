@@ -1,6 +1,14 @@
 /**
  * Project Workspace, Workflow, Quality & Lineage Frontend API Client
+ *
+ * All requests flow through the shared transport (apiFetch) for typed errors,
+ * request correlation, abort propagation, and timeout. GETs go through the
+ * Fast Path (in-flight dedup + 5s LRU) so parallel mounts / tab switches
+ * collapse to a single roundtrip.
  */
+
+import { apiFetch } from './transport';
+import { fastGet, invalidateCache } from './get-fast-path';
 
 export interface Project {
   id: string;
@@ -88,34 +96,54 @@ export interface QualityReport {
   }>;
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '/api/v1';
-
-export async function fetchProjects(): Promise<Project[]> {
-  const res = await fetch(`${API_BASE}/projects`);
-  if (!res.ok) throw new Error('Failed to fetch projects');
-  return res.json();
+/** GET /projects — short-lived cached, dedupe across parallel mounts. */
+export async function fetchProjects(opts?: {
+  forceRefresh?: boolean;
+  signal?: AbortSignal;
+}): Promise<Project[]> {
+  const result = await fastGet<Project[]>('/projects', {
+    forceRefresh: opts?.forceRefresh,
+    signal: opts?.signal,
+    label: 'Project list error',
+  });
+  return result.data;
 }
 
 export async function createProject(name: string, description?: string): Promise<Project> {
-  const res = await fetch(`${API_BASE}/projects`, {
+  const project = await apiFetch<Project>('/projects', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, description }),
+    body: { name, description },
+    label: 'Project create error',
   });
-  if (!res.ok) throw new Error('Failed to create project');
-  return res.json();
+  // New project → bust the list cache so the next fetchProjects is fresh.
+  invalidateCache('/projects');
+  return project;
 }
 
-export async function fetchProjectDatasets(projectId: string): Promise<ProjectDataset[]> {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/datasets`);
-  if (!res.ok) throw new Error('Failed to fetch project datasets');
-  return res.json();
+export async function fetchProjectDatasets(
+  projectId: string,
+  opts?: { forceRefresh?: boolean; signal?: AbortSignal },
+): Promise<ProjectDataset[]> {
+  const path = `/projects/${projectId}/datasets`;
+  const result = await fastGet<ProjectDataset[]>(path, {
+    forceRefresh: opts?.forceRefresh,
+    signal: opts?.signal,
+    label: 'Project datasets error',
+  });
+  return result.data;
 }
 
-export async function fetchProjectWorkflows(projectId: string): Promise<Workflow[]> {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/workflows`);
-  if (!res.ok) throw new Error('Failed to fetch project workflows');
-  return res.json();
+export async function fetchProjectWorkflows(
+  projectId: string,
+  opts?: { forceRefresh?: boolean; signal?: AbortSignal },
+): Promise<Workflow[]> {
+  const path = `/projects/${projectId}/workflows`;
+  const result = await fastGet<Workflow[]>(path, {
+    forceRefresh: opts?.forceRefresh,
+    signal: opts?.signal,
+    label: 'Project workflows error',
+  });
+  return result.data;
 }
 
 export async function runWorkflow(
@@ -123,21 +151,28 @@ export async function runWorkflow(
   workflowId: string,
   inputBindings: Record<string, any> = {}
 ): Promise<WorkflowRun> {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/workflows/${workflowId}/run`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ input_bindings: inputBindings }),
-  });
-  if (!res.ok) throw new Error('Failed to run workflow');
-  return res.json();
+  const run = await apiFetch<WorkflowRun>(
+    `/projects/${projectId}/workflows/${workflowId}/run`,
+    {
+      method: 'POST',
+      body: { input_bindings: inputBindings },
+      label: 'Workflow run error',
+    }
+  );
+  // A new run invalidates the runs list cache and the workflow list cache.
+  invalidateCache(`/projects/${projectId}/workflows`);
+  invalidateCache(`/projects/${projectId}/runs`);
+  return run;
 }
 
-export async function auditQuality(projectId: string, geojson: Record<string, any>): Promise<QualityReport> {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/quality-audit`, {
+export async function auditQuality(
+  projectId: string,
+  geojson: Record<string, any>
+): Promise<QualityReport> {
+  return apiFetch<QualityReport>(`/projects/${projectId}/quality-audit`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ geojson }),
+    body: { geojson },
+    timeoutMs: 60_000, // quality audit can take longer than the default 30s
+    label: 'Quality audit error',
   });
-  if (!res.ok) throw new Error('Failed to audit quality');
-  return res.json();
 }

@@ -1,4 +1,21 @@
-import { API_BASE } from './config';
+/**
+ * Data Fabric frontend client (sources, catalog, query, materialize).
+ *
+ * All requests flow through the shared transport (apiFetch) for typed errors,
+ * request correlation, abort, timeout, and `credentials: 'include'` (data-fabric
+ * endpoints ride the session cookie). GETs use the Fast Path (in-flight dedup +
+ * 5s LRU) so search-as-you-type and tab switches collapse to a single roundtrip.
+ *
+ * Migrated F-FE-3: previously each function re-implemented fetch + plain
+ * `throw new Error(\`...${statusText}\`)`, had no abort/timeout, and lost the
+ * FastAPI `detail` body. Now the same 401/403/5xx distinction as chat paths.
+ */
+
+import { apiFetch } from './transport';
+import { fastGet, invalidateCache } from './get-fast-path';
+
+const DF_CREDENTIALS: RequestCredentials = 'include';
+const DF_LABEL = 'DataFabric API error';
 
 export interface ConnectionProfile {
   id?: string;
@@ -92,62 +109,85 @@ export interface MaterializeResult {
 }
 
 export const dataFabricApi = {
-  async listDataSources(sourceType?: string): Promise<{ sources: DataSource[] }> {
-    const url = new URL(`${API_BASE}/api/v1/data-fabric/sources`);
-    if (sourceType) url.searchParams.append('source_type', sourceType);
-
-    const res = await fetch(url.toString(), { credentials: 'include' });
-    if (!res.ok) throw new Error(`获取数据源列表失败: ${res.statusText}`);
-    return res.json();
+  async listDataSources(
+    sourceType?: string,
+    opts?: { forceRefresh?: boolean; signal?: AbortSignal }
+  ): Promise<{ sources: DataSource[] }> {
+    const path = sourceType
+      ? `/api/v1/data-fabric/sources?source_type=${encodeURIComponent(sourceType)}`
+      : '/api/v1/data-fabric/sources';
+    const result = await fastGet<{ sources: DataSource[] }>(path, {
+      forceRefresh: opts?.forceRefresh,
+      signal: opts?.signal,
+      credentials: DF_CREDENTIALS,
+      label: DF_LABEL,
+    });
+    return result.data;
   },
 
   async createDataSource(req: CreateDataSourceRequest): Promise<{ success: boolean; data_source: DataSource }> {
-    const res = await fetch(`${API_BASE}/api/v1/data-fabric/sources`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(req),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || `注册数据源失败: ${res.statusText}`);
-    }
-    return res.json();
+    const out = await apiFetch<{ success: boolean; data_source: DataSource }>(
+      '/api/v1/data-fabric/sources',
+      {
+        method: 'POST',
+        body: req,
+        credentials: DF_CREDENTIALS,
+        label: DF_LABEL,
+      }
+    );
+    invalidateCache('/api/v1/data-fabric/sources');
+    return out;
   },
 
-  async getDataSource(sourceId: string): Promise<DataSource> {
-    const res = await fetch(`${API_BASE}/api/v1/data-fabric/sources/${encodeURIComponent(sourceId)}`, {
-      credentials: 'include',
-    });
-    if (!res.ok) throw new Error(`获取数据源失败: ${res.statusText}`);
-    return res.json();
+  async getDataSource(sourceId: string, opts?: { signal?: AbortSignal }): Promise<DataSource> {
+    const result = await fastGet<DataSource>(
+      `/api/v1/data-fabric/sources/${encodeURIComponent(sourceId)}`,
+      {
+        signal: opts?.signal,
+        credentials: DF_CREDENTIALS,
+        label: DF_LABEL,
+      }
+    );
+    return result.data;
   },
 
   async deleteDataSource(sourceId: string): Promise<{ success: boolean; message: string }> {
-    const res = await fetch(`${API_BASE}/api/v1/data-fabric/sources/${encodeURIComponent(sourceId)}`, {
-      method: 'DELETE',
-      credentials: 'include',
-    });
-    if (!res.ok) throw new Error(`删除数据源失败: ${res.statusText}`);
-    return res.json();
+    const out = await apiFetch<{ success: boolean; message: string }>(
+      `/api/v1/data-fabric/sources/${encodeURIComponent(sourceId)}`,
+      {
+        method: 'DELETE',
+        credentials: DF_CREDENTIALS,
+        label: DF_LABEL,
+      }
+    );
+    invalidateCache('/api/v1/data-fabric/sources');
+    return out;
   },
 
-  async probeDataSource(sourceId: string): Promise<DataFabricHealth> {
-    const res = await fetch(`${API_BASE}/api/v1/data-fabric/sources/${encodeURIComponent(sourceId)}/probe`, {
-      method: 'POST',
-      credentials: 'include',
-    });
-    if (!res.ok) throw new Error(`数据源连通性探查失败: ${res.statusText}`);
-    return res.json();
+  async probeDataSource(sourceId: string, opts?: { signal?: AbortSignal }): Promise<DataFabricHealth> {
+    return apiFetch<DataFabricHealth>(
+      `/api/v1/data-fabric/sources/${encodeURIComponent(sourceId)}/probe`,
+      {
+        method: 'POST',
+        credentials: DF_CREDENTIALS,
+        signal: opts?.signal,
+        label: DF_LABEL,
+      }
+    );
   },
 
   async syncDataSourceCatalog(sourceId: string): Promise<{ success: boolean; synced_count: number }> {
-    const res = await fetch(`${API_BASE}/api/v1/data-fabric/sources/${encodeURIComponent(sourceId)}/sync`, {
-      method: 'POST',
-      credentials: 'include',
-    });
-    if (!res.ok) throw new Error(`同步数据源目录失败: ${res.statusText}`);
-    return res.json();
+    const out = await apiFetch<{ success: boolean; synced_count: number }>(
+      `/api/v1/data-fabric/sources/${encodeURIComponent(sourceId)}/sync`,
+      {
+        method: 'POST',
+        credentials: DF_CREDENTIALS,
+        label: DF_LABEL,
+      }
+    );
+    // Catalog changed → invalidate any cached list/detail.
+    invalidateCache('/api/v1/data-fabric/catalog');
+    return out;
   },
 
   async listSpatialCatalog(params?: {
@@ -157,54 +197,74 @@ export const dataFabricApi = {
     feature_type?: string;
     limit?: number;
     offset?: number;
+    forceRefresh?: boolean;
     signal?: AbortSignal;
   }): Promise<{ total: number; limit: number; offset: number; items: CatalogItem[] }> {
-    const url = new URL(`${API_BASE}/api/v1/data-fabric/catalog`);
-    if (params?.q) url.searchParams.append('q', params.q);
-    if (params?.source_id) url.searchParams.append('source_id', params.source_id);
-    if (params?.geometry_type) url.searchParams.append('geometry_type', params.geometry_type);
-    if (params?.feature_type) url.searchParams.append('feature_type', params.feature_type);
-    if (params?.limit) url.searchParams.append('limit', String(params.limit));
-    if (params?.offset) url.searchParams.append('offset', String(params.offset));
-
-    const res = await fetch(url.toString(), { credentials: 'include', signal: params?.signal });
-    if (!res.ok) throw new Error(`获取空间目录失败: ${res.statusText}`);
-    return res.json();
+    const queryParams: Record<string, string | number> = {};
+    if (params?.q) queryParams.q = params.q;
+    if (params?.source_id) queryParams.source_id = params.source_id;
+    if (params?.geometry_type) queryParams.geometry_type = params.geometry_type;
+    if (params?.feature_type) queryParams.feature_type = params.feature_type;
+    if (params?.limit !== undefined) queryParams.limit = params.limit;
+    if (params?.offset !== undefined) queryParams.offset = params.offset;
+    const result = await fastGet<{ total: number; limit: number; offset: number; items: CatalogItem[] }>(
+      '/api/v1/data-fabric/catalog',
+      {
+        params: queryParams,
+        forceRefresh: params?.forceRefresh,
+        signal: params?.signal,
+        credentials: DF_CREDENTIALS,
+        label: DF_LABEL,
+        // search-as-you-type: keep cached data fresh by default
+        ttlMs: 2_000,
+      }
+    );
+    return result.data;
   },
 
-  async getCatalogItem(itemId: string): Promise<CatalogItem> {
-    const res = await fetch(`${API_BASE}/api/v1/data-fabric/catalog/${encodeURIComponent(itemId)}`, {
-      credentials: 'include',
-    });
-    if (!res.ok) throw new Error(`获取目录项失败: ${res.statusText}`);
-    return res.json();
+  async getCatalogItem(itemId: string, opts?: { signal?: AbortSignal }): Promise<CatalogItem> {
+    const result = await fastGet<CatalogItem>(
+      `/api/v1/data-fabric/catalog/${encodeURIComponent(itemId)}`,
+      {
+        signal: opts?.signal,
+        credentials: DF_CREDENTIALS,
+        label: DF_LABEL,
+      }
+    );
+    return result.data;
   },
 
-  async getCatalogItemDescriptor(itemId: string): Promise<DatasetDescriptor> {
-    const res = await fetch(`${API_BASE}/api/v1/data-fabric/catalog/${encodeURIComponent(itemId)}/descriptor`, {
-      credentials: 'include',
-    });
-    if (!res.ok) throw new Error(`获取数据集 Descriptor 失败: ${res.statusText}`);
-    return res.json();
+  async getCatalogItemDescriptor(itemId: string, opts?: { signal?: AbortSignal }): Promise<DatasetDescriptor> {
+    return apiFetch<DatasetDescriptor>(
+      `/api/v1/data-fabric/catalog/${encodeURIComponent(itemId)}/descriptor`,
+      {
+        credentials: DF_CREDENTIALS,
+        signal: opts?.signal,
+        label: DF_LABEL,
+      }
+    );
   },
 
   async previewCatalogItem(itemId: string, limit = 10): Promise<QueryResult> {
-    const url = new URL(`${API_BASE}/api/v1/data-fabric/catalog/${encodeURIComponent(itemId)}/preview`);
-    url.searchParams.append('limit', String(limit));
-    const res = await fetch(url.toString(), { credentials: 'include' });
-    if (!res.ok) throw new Error(`数据预览失败: ${res.statusText}`);
-    return res.json();
+    return apiFetch<QueryResult>(
+      `/api/v1/data-fabric/catalog/${encodeURIComponent(itemId)}/preview?limit=${limit}`,
+      {
+        credentials: DF_CREDENTIALS,
+        label: DF_LABEL,
+      }
+    );
   },
 
   async queryCatalogItem(itemId: string, spec: QuerySpec): Promise<QueryResult> {
-    const res = await fetch(`${API_BASE}/api/v1/data-fabric/catalog/${encodeURIComponent(itemId)}/query`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(spec),
-    });
-    if (!res.ok) throw new Error(`推导查询失败: ${res.statusText}`);
-    return res.json();
+    return apiFetch<QueryResult>(
+      `/api/v1/data-fabric/catalog/${encodeURIComponent(itemId)}/query`,
+      {
+        method: 'POST',
+        body: spec,
+        credentials: DF_CREDENTIALS,
+        label: DF_LABEL,
+      }
+    );
   },
 
   async materializeCatalogItem(req: {
@@ -212,16 +272,13 @@ export const dataFabricApi = {
     catalog_item_id: string;
     query_spec?: QuerySpec;
   }): Promise<MaterializeResult> {
-    const res = await fetch(`${API_BASE}/api/v1/data-fabric/materialize`, {
+    return apiFetch<MaterializeResult>('/api/v1/data-fabric/materialize', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(req),
+      body: req,
+      credentials: DF_CREDENTIALS,
+      // Materialize can do a remote describe + insert; allow extra time.
+      timeoutMs: 60_000,
+      label: DF_LABEL,
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || `实例化数据失败: ${res.statusText}`);
-    }
-    return res.json();
   },
 };

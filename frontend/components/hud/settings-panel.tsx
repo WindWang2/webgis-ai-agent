@@ -7,7 +7,7 @@ import {
   Upload, Download, Globe, Code, Terminal,
   CheckCircle2, Loader2,
 } from 'lucide-react';
-import { API_BASE } from '@/lib/api/config';
+import { apiFetch, isApiError } from '@/lib/api/transport';
 import { useHudStore } from '@/lib/store/useHudStore';
 
 
@@ -26,28 +26,26 @@ export function SettingsPanel() {
   const [localLlm, setLocalLlm] = useState<Record<string, any>>({});
 
   useEffect(() => {
-    if (settingsOpen) fetchConfig();
+    if (!settingsOpen) return;
+    const controller = new AbortController();
+    fetchConfig(controller.signal);
+    return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsOpen]);
 
-  const fetchConfig = async () => {
+  const fetchConfig = async (signal?: AbortSignal) => {
     try {
-      const [llmResp, skillsResp] = await Promise.all([
-        fetch(`${API_BASE}/api/v1/config/llm`),
-        fetch(`${API_BASE}/api/v1/config/skills`)
+      const [llmData, skillsData] = await Promise.all([
+        apiFetch<Record<string, any>>('/api/v1/config/llm', { signal, label: 'Config LLM error' }),
+        apiFetch<{ skills: any[] }>('/api/v1/config/skills', { signal, label: 'Config skills error' }),
       ]);
-
-      if (llmResp.ok) {
-        const data = await llmResp.json();
-        setLlmConfig(data);
-        setLocalLlm(data);
-      }
-      if (skillsResp.ok) {
-        const data = await skillsResp.json();
-        setAvailableSkills(data.skills);
-      }
+      setLlmConfig(llmData);
+      setLocalLlm(llmData);
+      if (Array.isArray(skillsData?.skills)) setAvailableSkills(skillsData.skills);
     } catch (e) {
-      devOnly.error("Failed to fetch settings:", e);
+      if (!isApiError(e) && !(e instanceof Error && e.name === 'AbortError')) {
+        devOnly.error("Failed to fetch settings:", e);
+      }
     }
   };
 
@@ -59,16 +57,17 @@ export function SettingsPanel() {
   const saveLlm = async () => {
     setIsSaving(true);
     try {
-      const resp = await fetch(`${API_BASE}/api/v1/config/llm`, {
+      const data = await apiFetch<{ config: Record<string, any> }>('/api/v1/config/llm', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(localLlm)
+        body: localLlm,
+        label: 'Config LLM save error',
       });
-      if (resp.ok) {
-        const data = await resp.json();
-        setLlmConfig(data.config);
-        handleSaveFlash('llm');
-      }
+      setLlmConfig(data.config);
+      handleSaveFlash('llm');
+    } catch (e) {
+      // Surface failure (was previously silent).
+      if (!isApiError(e)) devOnly.error("Save LLM failed:", e);
+      handleSaveFlash('error');
     } finally {
       setIsSaving(false);
     }

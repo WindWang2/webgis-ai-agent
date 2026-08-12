@@ -2,8 +2,8 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
-import { API_BASE } from '@/lib/api/config';
-import { apiFetch } from '@/lib/api/transport';
+import { apiFetch, isApiError } from '@/lib/api/transport';
+import type { GeoJSONFeatureCollection } from '@/lib/types';
 import type { ChatSession } from '@/lib/types/chat';
 import type { MapActionPayload } from '@/lib/types';
 
@@ -52,15 +52,15 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
     );
   }, [sessions, setStoreSessions]);
 
-  // Fetch session list on mount
+  // Fetch session list on mount (Fast Path: deduped + cached)
   const refreshSessions = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/chat/sessions`);
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await apiFetch<{ sessions?: ChatSession[] }>('/api/v1/chat/sessions', {
+        label: 'Session list error',
+      });
       if (data.sessions) setSessions(data.sessions);
     } catch (err) {
-      devOnly.error('Fetch sessions failed:', err);
+      if (!isApiError(err)) devOnly.error('Fetch sessions failed:', err);
     }
   }, []);
 
@@ -125,68 +125,68 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
 
         // setSessionId 已在函数开头同步调用（审计 F38），这里不再重复
 
-        const stateRes = await fetch(`${API_BASE}/api/v1/chat/sessions/${sid}/map-state`, {
-          signal,
-          headers: token ? { 'X-Session-Token': token } : {},
-        });
+        const stateData = await apiFetch<{ map_state?: any }>(
+          `/api/v1/chat/sessions/${sid}/map-state`,
+          { signal, ownerToken: token, label: 'Map state error' }
+        );
         if (signal.aborted) return;
-        if (stateRes.ok) {
-          const stateData = await stateRes.json();
-          const state = stateData?.map_state;
-          if (state) {
-            const store = useHudStore.getState();
-            if (state.viewport) {
-              // F4: ignore stale/older-seq viewport state — an in-flight
-              // throttled POST the client already sent outranks the persisted
-              // value, so a restore must never fly the map back to an older view.
-              const coalesced = coalesceViewportState(
-                viewportSeqTracker,
-                state._viewport_seq,
-                state.viewport
-              );
-              if (coalesced.viewport) {
-                dispatchAction({
-                  command: 'fly_to',
-                  params: {
-                    center: coalesced.viewport.center,
-                    zoom: coalesced.viewport.zoom,
-                    bearing: coalesced.viewport.bearing,
-                    pitch: coalesced.viewport.pitch,
-                  },
-                });
-              }
+        const state = stateData?.map_state;
+        if (state) {
+          const store = useHudStore.getState();
+          if (state.viewport) {
+            // F4: ignore stale/older-seq viewport state — an in-flight
+            // throttled POST the client already sent outranks the persisted
+            // value, so a restore must never fly the map back to an older view.
+            const coalesced = coalesceViewportState(
+              viewportSeqTracker,
+              state._viewport_seq,
+              state.viewport
+            );
+            if (coalesced.viewport) {
+              dispatchAction({
+                command: 'fly_to',
+                params: {
+                  center: coalesced.viewport.center,
+                  zoom: coalesced.viewport.zoom,
+                  bearing: coalesced.viewport.bearing,
+                  pitch: coalesced.viewport.pitch,
+                },
+              });
             }
-            if (state.base_layer) store.setBaseLayer(state.base_layer);
-            for (const layer of state.layers || []) {
-              if (layer._refId && layer._refId.startsWith('ref:')) {
-                // SEC-08：匿名会话的图层引用数据同样受 owner_token 保护。
-                fetch(`${API_BASE}/api/v1/layers/data/${layer._refId}?session_id=${sid}`, {
-                  signal,
-                  headers: token ? { 'X-Session-Token': token } : {},
+          }
+          if (state.base_layer) store.setBaseLayer(state.base_layer);
+          for (const layer of state.layers || []) {
+            if (layer._refId && layer._refId.startsWith('ref:')) {
+              // SEC-08：匿名会话的图层引用数据同样受 owner_token 保护。
+              apiFetch<GeoJSONFeatureCollection>(
+                `/api/v1/layers/data/${encodeURIComponent(layer._refId)}?session_id=${encodeURIComponent(sid)}`,
+                { signal, ownerToken: token, label: 'Layer data error' }
+              )
+                .then((geojson) => {
+                  if (signal.aborted) return;
+                  if (geojson && (geojson.type === 'FeatureCollection' || geojson.features)) {
+                    store.addLayer({ ...layer, source: geojson });
+                  }
                 })
-                  .then((r) => (r.ok ? r.json() : null))
-                  .then((geojson) => {
-                    if (signal.aborted) return;
-                    if (geojson && (geojson.type === 'FeatureCollection' || geojson.features)) {
-                      store.addLayer({ ...layer, source: geojson });
-                    }
-                  })
-                  .catch((err) => {
-                    if (err?.name !== 'AbortError') devOnly.error('[LayerFetch]', err);
-                  });
-              }
+                .catch((err) => {
+                  if (!isApiError(err)) devOnly.error('[LayerFetch]', err);
+                });
             }
           }
         }
 
         // 审计 F39：切换会话后必须刷新分析资产列表，否则 session A 的资产
-        // 残留在 session B 的 AnalysisTab 里。之前 fetchAnalysisAssets 从未被调用。
+        // 残留在 session B 的 AnalysisTab 里。store 内部的 fetchAnalysisAssets
+        // 走统一 listUploads（Fast Path + 集中错误/超时处理）。
         try {
           await useHudStore.getState().fetchAnalysisAssets(sid);
         } catch (e) {
-          devOnly.warn('[fetchAnalysisAssets] failed on session switch:', e);
+          if (!isApiError(e)) devOnly.warn('[fetchAnalysisAssets] failed on session switch:', e);
         }
       } catch (err: any) {
+        // Log the failure (typed or not) so debugging surface is uniform;
+        // AbortError stays silent because it's the expected outcome of
+        // session-switch cancellation.
         if (err?.name !== 'AbortError') {
           devOnly.error('Load session failed:', err);
         }

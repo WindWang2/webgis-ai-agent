@@ -1,8 +1,15 @@
 /**
  * Task API - 任务管理接口
+ *
+ * F-FE-3 migration: previously raw fetch + plain Error with status only.
+ * Now routes through the shared transport (typed ApiError, abort, timeout,
+ * request id). GETs go through the Fast Path (in-flight dedup + 5s LRU).
  */
 
-import { API_BASE } from './config';
+import { apiFetch } from './transport';
+import { fastGet, invalidateCache } from './get-fast-path';
+
+const TASK_LABEL = 'Task API error';
 
 export interface TaskStepInfo {
   id: string;
@@ -19,46 +26,38 @@ export interface TaskInfo {
   steps: TaskStepInfo[];
 }
 
-/**
- * 获取任务详情
- */
-export async function getTask(taskId: string): Promise<TaskInfo> {
-  const response = await fetch(`${API_BASE}/api/v1/tasks/${taskId}`);
-  if (!response.ok) {
-    throw new Error(`Task API error: ${response.status}`);
-  }
-  return response.json();
+/** GET /api/v1/tasks/{id} — task detail. */
+export async function getTask(
+  taskId: string,
+  opts?: { signal?: AbortSignal }
+): Promise<TaskInfo> {
+  const result = await fastGet<TaskInfo>(`/api/v1/tasks/${taskId}`, {
+    signal: opts?.signal,
+    label: TASK_LABEL,
+  });
+  return result.data;
 }
 
-/**
- * 获取任务列表。
- *
- * 审计契约：后端要求 session_id 必填（防跨租户泄漏所有用户任务），
- * 前端这里同步改为必填。
- */
+/** GET /api/v1/tasks?session_id=… — task list, scoped per session. */
 export async function listTasks(
   sessionId: string,
+  opts?: { forceRefresh?: boolean; signal?: AbortSignal }
 ): Promise<{ tasks: TaskInfo[] }> {
-  const url = `${API_BASE}/api/v1/tasks?session_id=${encodeURIComponent(sessionId)}`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Task API error: ${response.status}`);
-  }
-  return response.json();
+  const result = await fastGet<{ tasks: TaskInfo[] }>('/api/v1/tasks', {
+    params: { session_id: sessionId },
+    forceRefresh: opts?.forceRefresh,
+    signal: opts?.signal,
+    label: TASK_LABEL,
+  });
+  return result.data;
 }
 
-/**
- * 取消任务。
- *
- * 审计契约断裂：前端之前 POST /tasks/{id}/cancel，后端实际路由是
- * DELETE /tasks/{id}（无 /cancel 后缀）→ 一直 404。改为匹配后端。
- */
+/** DELETE /api/v1/tasks/{id} — cancel task. */
 export async function cancelTask(taskId: string): Promise<{ cancelled: boolean }> {
-  const response = await fetch(`${API_BASE}/api/v1/tasks/${taskId}`, {
+  const out = await apiFetch<{ cancelled: boolean }>(`/api/v1/tasks/${taskId}`, {
     method: "DELETE",
+    label: TASK_LABEL,
   });
-  if (!response.ok) {
-    throw new Error(`Task API error: ${response.status}`);
-  }
-  return response.json();
+  invalidateCache('/api/v1/tasks');
+  return out;
 }

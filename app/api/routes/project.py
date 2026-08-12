@@ -2,8 +2,8 @@
 Project Workspace, Persistent Workflow, Spatial Data Quality & Lineage API Endpoints
 """
 import logging
-from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Dict, Any, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -16,11 +16,14 @@ from app.services.spatial_repair_pipeline import SpatialRepairPipeline
 from app.agent_pi_bridge import get_tool_registry
 from app.schemas.project_schema import (
     ProjectCreate, ProjectUpdate, ProjectResponse,
+    ProjectSummary, ProjectDatasetSummary, WorkflowSummary,
+    WorkflowRunSummary, ArtifactSummary,
     DatasetAttach, ProjectDatasetResponse,
     WorkflowCreate, WorkflowResponse,
     WorkflowRunRequest, WorkflowRunResponse,
-    ArtifactResponse, RunComparisonResponse
+    RunComparisonResponse
 )
+from app.schemas.pagination import Page, clamp_pagination
 
 logger = logging.getLogger(__name__)
 
@@ -46,14 +49,34 @@ def create_project(
     return project
 
 
-@router.get("", response_model=List[ProjectResponse])
+@router.get("", response_model=Page[ProjectSummary])
 def list_projects(
+    limit: Optional[int] = Query(None, ge=1, le=200, description="Page size (default 50, max 200)"),
+    offset: int = Query(0, ge=0, description="Row offset"),
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
+    """Paginated list of projects, slim summary payload.
+
+    Backward-compatible: the response wraps items in a Page envelope with
+    total/limit/offset/has_more. Clients that only read ``items`` continue
+    to work — the page is the only shape returned.
+    """
     user_id = user.get("id") if user else None
     org_id = user.get("org_id") if user else None
-    return ProjectService.list_projects(db=db, user_id=user_id, org_id=org_id)
+    limit, offset = clamp_pagination(limit, offset)
+    rows, total = ProjectService.list_projects(
+        db=db, user_id=user_id, org_id=org_id,
+        limit=limit, offset=offset,
+    )
+    items = [ProjectSummary.model_validate(r) for r in rows]
+    return Page(
+        items=items,
+        total=total,
+        limit=limit,
+        offset=offset,
+        has_more=(offset + limit) < total,
+    )
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
@@ -115,26 +138,44 @@ def detach_dataset(
     return {"status": "success", "message": f"Dataset {dataset_id} detached"}
 
 
-@router.get("/{project_id}/datasets", response_model=List[ProjectDatasetResponse])
+@router.get("/{project_id}/datasets", response_model=Page[ProjectDatasetSummary])
 def list_datasets(
     project_id: str,
+    limit: Optional[int] = Query(None, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     user_id = user.get("id") if user else None
     org_id = user.get("org_id") if user else None
-    return ProjectService.list_project_datasets(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    limit, offset = clamp_pagination(limit, offset)
+    rows, total = ProjectService.list_project_datasets(
+        db=db, project_id=project_id, user_id=user_id, org_id=org_id,
+        limit=limit, offset=offset,
+    )
+    items = [ProjectDatasetSummary.model_validate(r) for r in rows]
+    return Page(items=items, total=total, limit=limit, offset=offset,
+                has_more=(offset + limit) < total)
 
 
-@router.get("/{project_id}/artifacts", response_model=List[ArtifactResponse])
+@router.get("/{project_id}/artifacts", response_model=Page[ArtifactSummary])
 def list_artifacts(
     project_id: str,
+    limit: Optional[int] = Query(None, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     user_id = user.get("id") if user else None
     org_id = user.get("org_id") if user else None
-    return ProjectService.list_project_artifacts(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    limit, offset = clamp_pagination(limit, offset)
+    rows, total = ProjectService.list_project_artifacts(
+        db=db, project_id=project_id, user_id=user_id, org_id=org_id,
+        limit=limit, offset=offset,
+    )
+    items = [ArtifactSummary.model_validate(r) for r in rows]
+    return Page(items=items, total=total, limit=limit, offset=offset,
+                has_more=(offset + limit) < total)
 
 
 @router.post("/{project_id}/workflows", response_model=WorkflowResponse)
@@ -157,15 +198,36 @@ def save_workflow(
     return workflow
 
 
-@router.get("/{project_id}/workflows", response_model=List[WorkflowResponse])
+@router.get("/{project_id}/workflows", response_model=Page[WorkflowSummary])
 def list_workflows(
     project_id: str,
+    limit: Optional[int] = Query(None, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     user_id = user.get("id") if user else None
     org_id = user.get("org_id") if user else None
-    return ProjectService.list_project_workflows(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    limit, offset = clamp_pagination(limit, offset)
+    rows, total = ProjectService.list_project_workflows(
+        db=db, project_id=project_id, user_id=user_id, org_id=org_id,
+        limit=limit, offset=offset,
+    )
+    items = [
+        WorkflowSummary(
+            id=r.id,
+            project_id=r.project_id,
+            name=r.name,
+            description=r.description,
+            version=r.version,
+            step_count=len((r.graph_spec or {}).get("steps", [])) if r.graph_spec else 0,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+        )
+        for r in rows
+    ]
+    return Page(items=items, total=total, limit=limit, offset=offset,
+                has_more=(offset + limit) < total)
 
 
 @router.post("/{project_id}/workflows/{workflow_id}/run", response_model=WorkflowRunResponse)
@@ -205,16 +267,26 @@ async def run_workflow(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{project_id}/runs", response_model=List[WorkflowRunResponse])
+@router.get("/{project_id}/runs", response_model=Page[WorkflowRunSummary])
 def list_runs(
     project_id: str,
     workflow_id: Optional[str] = None,
+    limit: Optional[int] = Query(None, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     user_id = user.get("id") if user else None
     org_id = user.get("org_id") if user else None
-    return ProjectService.list_workflow_runs(db=db, project_id=project_id, workflow_id=workflow_id, user_id=user_id, org_id=org_id)
+    limit, offset = clamp_pagination(limit, offset)
+    rows, total = ProjectService.list_workflow_runs(
+        db=db, project_id=project_id, workflow_id=workflow_id,
+        user_id=user_id, org_id=org_id,
+        limit=limit, offset=offset,
+    )
+    items = [WorkflowRunSummary.model_validate(r) for r in rows]
+    return Page(items=items, total=total, limit=limit, offset=offset,
+                has_more=(offset + limit) < total)
 
 
 @router.post("/{project_id}/runs/compare", response_model=RunComparisonResponse)
@@ -227,9 +299,20 @@ def compare_runs(
 ):
     user_id = user.get("id") if user else None
     org_id = user.get("org_id") if user else None
-    runs = ProjectService.list_workflow_runs(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
-    run_a = next((r for r in runs if r.id == run_a_id), None)
-    run_b = next((r for r in runs if r.id == run_b_id), None)
+    project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    # Targeted 2-row lookup instead of full scan + Python next() (DATA-12).
+    from sqlalchemy import select as _sel
+    from app.models.project import WorkflowRun as _WR
+    stmt = _sel(_WR).where(
+        _WR.project_id == project_id,
+        _WR.id.in_([run_a_id, run_b_id]),
+    )
+    runs = list(db.execute(stmt).scalars().all())
+    by_id = {r.id: r for r in runs}
+    run_a = by_id.get(run_a_id)
+    run_b = by_id.get(run_b_id)
     if not run_a or not run_b:
         raise HTTPException(status_code=404, detail="One or both WorkflowRuns not found")
 

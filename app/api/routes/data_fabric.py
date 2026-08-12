@@ -265,12 +265,37 @@ async def list_spatial_catalog(
     source_id: Optional[str] = Query(None, description="Filter by source ID"),
     geometry_type: Optional[str] = Query(None, description="Filter by geometry type"),
     feature_type: Optional[str] = Query(None, description="Filter by feature type (vector/raster)"),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    summary: bool = Query(
+        True,
+        description="If true (default), strip the heavy `descriptor` / `meta_profile` "
+        "JSON from the list payload; pass ?summary=false to receive the full row "
+        "(backward compat).",
+    ),
     db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    """检索 Spatial Catalog 空间元数据索引目录"""
+    """检索 Spatial Catalog 空间元数据索引目录
+
+    Default response is a slim summary (no `descriptor`, no `meta_profile`):
+    the dedicated ``GET /data-fabric/catalog/{id}/descriptor`` returns the
+    full payload on demand. Pass ``?summary=false`` to opt into the legacy
+    shape with both fields populated.
+    """
+    from app.models.data_fabric import DataSourceModel as _DS
+    from sqlalchemy.orm import defer
+
     query = db.query(CatalogItemModel)
+
+    # Tenancy guard: catalog items belong to a source, which is org-scoped
+    # (DATA-P0-SEC). Unauthenticated callers used to enumerate every org's
+    # descriptors; the join through DataSource.org_id now applies the same
+    # tenant filter the sources endpoint already uses.
+    if user and user.get("org_id"):
+        query = query.join(_DS, _DS.id == CatalogItemModel.source_id).filter(
+            _DS.org_id == user["org_id"]
+        )
 
     if source_id:
         query = query.filter(CatalogItemModel.source_id == source_id)
@@ -286,30 +311,40 @@ async def list_spatial_catalog(
             (CatalogItemModel.description.ilike(kw))
         )
 
+    # Defer the heavy JSON columns at the ORM level so the list query
+    # doesn't hydrate them; the summary path then never needs to load them.
+    if summary:
+        query = query.options(
+            defer(CatalogItemModel.descriptor_json),
+            defer(CatalogItemModel.meta_profile_json),
+        )
+
     total = query.count()
     items = query.order_by(CatalogItemModel.updated_at.desc()).offset(offset).limit(limit).all()
+
+    def _row(item):
+        base = {
+            "id": item.id,
+            "source_id": item.source_id,
+            "name": item.name,
+            "title": item.title,
+            "description": item.description,
+            "geometry_type": item.geometry_type,
+            "feature_type": item.feature_type,
+            "crs": item.crs,
+            "bbox": item.bbox_json,
+            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        }
+        if not summary:
+            base["meta_profile"] = item.meta_profile_json
+            base["descriptor"] = item.descriptor_json
+        return base
 
     return {
         "total": total,
         "limit": limit,
         "offset": offset,
-        "items": [
-            {
-                "id": item.id,
-                "source_id": item.source_id,
-                "name": item.name,
-                "title": item.title,
-                "description": item.description,
-                "geometry_type": item.geometry_type,
-                "feature_type": item.feature_type,
-                "crs": item.crs,
-                "bbox": item.bbox_json,
-                "meta_profile": item.meta_profile_json,
-                "descriptor": item.descriptor_json,
-                "updated_at": item.updated_at.isoformat() if item.updated_at else None,
-            }
-            for item in items
-        ],
+        "items": [_row(item) for item in items],
     }
 
 
@@ -317,11 +352,17 @@ async def list_spatial_catalog(
 async def get_catalog_item(
     item_id: str,
     db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """获取指定 Spatial Catalog 项元数据"""
     item = db.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail=f"Catalog item '{item_id}' not found")
+    # Tenancy: org-scoped via the parent data source. (DATA-P0-SEC)
+    if user and user.get("org_id"):
+        src = db.query(DataSourceModel).filter(DataSourceModel.id == item.source_id).first()
+        if src and src.org_id and src.org_id != user["org_id"]:
+            raise HTTPException(status_code=404, detail=f"Catalog item '{item_id}' not found")
 
     return {
         "id": item.id,
@@ -343,11 +384,16 @@ async def get_catalog_item(
 async def get_catalog_item_descriptor(
     item_id: str,
     db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """获取完整的 DatasetDescriptor 契约元数据"""
     item = db.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail=f"Catalog item '{item_id}' not found")
+    if user and user.get("org_id"):
+        src = db.query(DataSourceModel).filter(DataSourceModel.id == item.source_id).first()
+        if src and src.org_id and src.org_id != user["org_id"]:
+            raise HTTPException(status_code=404, detail=f"Catalog item '{item_id}' not found")
 
     return item.descriptor_json or {
         "id": item.name,

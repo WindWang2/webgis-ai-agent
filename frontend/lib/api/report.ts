@@ -1,6 +1,14 @@
 /**
  * 报告 API 客户端
+ *
+ * F-FE-3 migration: previously raw fetch + plain Error with status only.
+ * Now routes through the shared transport (typed ApiError, abort, timeout,
+ * request id). GETs go through the Fast Path (in-flight dedup + 5s LRU).
  */
+
+import { API_BASE } from './config';
+import { apiFetch } from './transport';
+import { fastGet, invalidateCache } from './get-fast-path';
 
 import type {
   ReportFormat,
@@ -10,7 +18,8 @@ import type {
   ReportStatusResponse,
   ShareResponse,
 } from '../types/report';
-import { API_BASE } from './config';
+
+const REPORT_LABEL = 'Report API error';
 
 /**
  * 生成报告（同步等待结果）
@@ -25,19 +34,15 @@ export async function generateReport(
     format,
     ...(title ? { title } : {}),
   };
-
-  const res = await fetch(`${API_BASE}/api/v1/reports`, {
+  const out = await apiFetch<ReportGenerateResponse>('/api/v1/reports', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body,
+    // WeasyPrint render can take longer than the default 30s.
+    timeoutMs: 90_000,
+    label: REPORT_LABEL,
   });
-
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({}));
-    throw new Error(errorData.message || `生成报告失败: ${res.status}`);
-  }
-
-  return res.json();
+  invalidateCache('/api/v1/reports');
+  return out;
 }
 
 /**
@@ -45,28 +50,29 @@ export async function generateReport(
  */
 export async function listReports(
   sessionId?: string,
+  opts?: { forceRefresh?: boolean; signal?: AbortSignal }
 ): Promise<ReportListApiResponse> {
-  const params = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
-  const res = await fetch(`${API_BASE}/api/v1/reports${params}`);
-
-  if (!res.ok) {
-    throw new Error(`获取报告列表失败: ${res.status}`);
-  }
-
-  return res.json();
+  const result = await fastGet<ReportListApiResponse>('/api/v1/reports', {
+    params: sessionId ? { session_id: sessionId } : undefined,
+    forceRefresh: opts?.forceRefresh,
+    signal: opts?.signal,
+    label: REPORT_LABEL,
+  });
+  return result.data;
 }
 
 /**
  * 获取报告状态
  */
-export async function getReportStatus(reportId: string): Promise<ReportStatusResponse> {
-  const res = await fetch(`${API_BASE}/api/v1/reports/${reportId}`);
-
-  if (!res.ok) {
-    throw new Error(`获取报告状态失败: ${res.status}`);
-  }
-
-  return res.json();
+export async function getReportStatus(
+  reportId: string,
+  opts?: { signal?: AbortSignal }
+): Promise<ReportStatusResponse> {
+  const result = await fastGet<ReportStatusResponse>(`/api/v1/reports/${reportId}`, {
+    signal: opts?.signal,
+    label: REPORT_LABEL,
+  });
+  return result.data;
 }
 
 /**
@@ -83,17 +89,11 @@ export async function createShareLink(
   reportId: string,
   ttlDays: number = 7,
 ): Promise<ShareResponse> {
-  const res = await fetch(`${API_BASE}/api/v1/reports/${reportId}/share`, {
+  return apiFetch<ShareResponse>(`/api/v1/reports/${reportId}/share`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ttl_days: ttlDays }),
+    body: { ttl_days: ttlDays },
+    label: REPORT_LABEL,
   });
-
-  if (!res.ok) {
-    throw new Error(`创建分享链接失败: ${res.status}`);
-  }
-
-  return res.json();
 }
 
 /**
@@ -101,14 +101,15 @@ export async function createShareLink(
  */
 export async function getSharedReportInfo(
   shareCode: string,
+  opts?: { signal?: AbortSignal }
 ): Promise<ReportStatusResponse> {
-  const res = await fetch(`${API_BASE}/api/v1/reports/shared/${shareCode}`);
-
-  if (!res.ok) {
-    throw new Error(`获取分享报告失败: ${res.status}`);
-  }
-
-  return res.json();
+  return apiFetch<ReportStatusResponse>(
+    `/api/v1/reports/shared/${encodeURIComponent(shareCode)}`,
+    {
+      signal: opts?.signal,
+      label: REPORT_LABEL,
+    }
+  );
 }
 
 /**

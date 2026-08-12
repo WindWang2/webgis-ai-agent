@@ -2,6 +2,7 @@ import type { Map } from 'maplibre-gl';
 import type { LegendSpec } from './types';
 import { resolveStyle, type LayoutStyle } from './layout-style';
 import { API_BASE } from '@/lib/api/config';
+import { apiFetch } from '@/lib/api/transport';
 import { devOnly } from '@/lib/utils/logger';
 // Re-export the shared oversample helper so existing callers importing from
 // './exporter' keep working, while the single source of truth lives in
@@ -1096,15 +1097,14 @@ async function uploadExport(
   form.append('file', blob, filename);
   if (title) form.append('title', title);
 
-  const res = await fetch(`${API_BASE}/api/v1/export`, {
+  // 走统一 transport：rawBody 走 FormData，transport 不会 set Content-Type
+  // (由浏览器自动加 multipart boundary)；typed ApiError 携带 FastAPI detail。
+  return apiFetch<{ url: string; filename: string }>('/api/v1/export', {
     method: 'POST',
-    body: form,
+    rawBody: form,
+    timeoutMs: 90_000, // PDF/PNG export can be large
+    label: 'Export upload error',
   });
-  if (!res.ok) {
-    throw new Error(`Export upload failed: ${res.status}`);
-  }
-  const data = await res.json();
-  return { url: data.url as string, filename: data.filename as string };
 }
 
 function recordExport(

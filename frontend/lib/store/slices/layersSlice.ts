@@ -4,7 +4,8 @@
  * 关注点：地图上的可视/可操作要素集合。
  */
 import type { StateCreator } from 'zustand';
-import { API_BASE } from '../../api/config';
+import { listUploads } from '../../api/upload';
+import { isApiError } from '../../api/transport';
 import type { HudState } from '../hud-types';
 
 
@@ -53,14 +54,16 @@ export const createLayersSlice: StateCreator<HudState, [], [], Partial<HudState>
   analysisAssets: [],
   fetchAnalysisAssets: async (sessionId: string | undefined) => {
     try {
-      const resp = await fetch(`${API_BASE}/api/v1/uploads?session_id=${sessionId || ''}`);
-      if (resp.ok) {
-        const data = await resp.json();
-        const assets = data.uploads.filter((u: { geometry_type?: string }) => u.geometry_type === 'raster_analysis');
-        set({ analysisAssets: assets });
-      }
+      // listUploads goes through the Fast Path — parallel mount callers and
+      // session-switch follow-up fetch share one roundtrip. errors flow as
+      // typed ApiError so we can distinguish abort/timeout/HTTP.
+      const data = await listUploads(sessionId);
+      const assets = (data.uploads || []).filter(
+        (u) => u.geometry_type === 'raster_analysis'
+      );
+      set({ analysisAssets: assets });
     } catch (e) {
-      devOnly.error('Failed to fetch assets:', e);
+      if (!isApiError(e)) devOnly.error('Failed to fetch assets:', e);
     }
     void get;
   },

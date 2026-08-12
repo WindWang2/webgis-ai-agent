@@ -1,5 +1,18 @@
-import { API_BASE } from "./config";
-import { parseSSEStream } from "./sse-stream-parser";
+/**
+ * Explorer API client.
+ *
+ * F-FE-3 migration: previously raw fetch + plain Error. The streaming
+ * endpoint continues to use the shared SSE stream parser (with proper EOF
+ * flush and reader cancel on abort — A-F-06); it now flows through the
+ * shared transport's `openStream` so connect-phase failures also surface
+ * as ApiError with status/requestId.
+ */
+
+import { apiFetch, openStream } from './transport';
+import { fastGet } from './get-fast-path';
+import { parseSSEStream } from './sse-stream-parser';
+
+const EXPLORER_LABEL = 'Explorer API error';
 
 export interface StartExploreRequest {
   query: string;
@@ -10,50 +23,62 @@ export interface StartExploreRequest {
 }
 
 export async function startExploration(req: StartExploreRequest): Promise<{ task_id: string; status: string }> {
-  const res = await fetch(`${API_BASE}/api/v1/explorer/start`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
+  return apiFetch<{ task_id: string; status: string }>('/api/v1/explorer/start', {
+    method: 'POST',
+    body: req,
+    label: `${EXPLORER_LABEL} (start)`,
   });
-  if (!res.ok) throw new Error(`Explorer start error: ${res.status}`);
-  return res.json();
 }
 
-export async function getExplorerStatus(taskId: string): Promise<{
+export async function getExplorerStatus(
+  taskId: string,
+  opts?: { signal?: AbortSignal }
+): Promise<{
   task_id: string;
   status: string;
   progress: number;
   result: unknown;
 }> {
-  const res = await fetch(`${API_BASE}/api/v1/explorer/status/${taskId}`);
-  if (!res.ok) throw new Error(`Explorer status error: ${res.status}`);
-  return res.json();
+  const result = await fastGet<{
+    task_id: string;
+    status: string;
+    progress: number;
+    result: unknown;
+  }>(`/api/v1/explorer/status/${taskId}`, {
+    signal: opts?.signal,
+    // Status is a polling endpoint — 1s cache to dedupe near-simultaneous polls.
+    ttlMs: 1_000,
+    label: `${EXPLORER_LABEL} (status)`,
+  });
+  return result.data;
 }
 
 export async function abortExploration(taskId: string): Promise<{ task_id: string; aborted: boolean }> {
-  const res = await fetch(`${API_BASE}/api/v1/explorer/abort/${taskId}`, { method: "POST" });
-  if (!res.ok) throw new Error(`Explorer abort error: ${res.status}`);
-  return res.json();
+  return apiFetch<{ task_id: string; aborted: boolean }>(
+    `/api/v1/explorer/abort/${taskId}`,
+    {
+      method: 'POST',
+      label: `${EXPLORER_LABEL} (abort)`,
+    }
+  );
 }
 
-export async function* streamExplorerProgress(taskId: string, signal?: AbortSignal): AsyncGenerator<{
+export async function* streamExplorerProgress(
+  taskId: string,
+  signal?: AbortSignal
+): AsyncGenerator<{
   event: string;
   data: Record<string, unknown>;
 }> {
-  const response = await fetch(`${API_BASE}/api/v1/explorer/stream/${taskId}`, { signal });
-  if (!response.ok) throw new Error(`Explorer stream error: ${response.status}`);
+  const response = await openStream(
+    `/api/v1/explorer/stream/${taskId}`,
+    { signal, label: `${EXPLORER_LABEL} (stream)` }
+  );
+  if (!response.body) throw new Error('No response body');
 
-  if (!response.body) throw new Error("No response body");
-
-  // transport goal A-F-06: use the shared parser. The inline copy here had
-  // diverged from chat.ts: it never flushed a final unterminated event (a
-  // trailing progress event with no blank line was silently dropped) and on
-  // abort it `break`ed without reader.cancel(), leaking the connection until
-  // the server closed it. The shared parser flushes at EOF and cancels the
-  // reader in a finally on abort/exception.
   for await (const ev of parseSSEStream(response.body, signal)) {
     const data =
-      typeof ev.data === "string"
+      typeof ev.data === 'string'
         ? { raw: ev.data }
         : (ev.data as Record<string, unknown>);
     yield { event: ev.event, data };
