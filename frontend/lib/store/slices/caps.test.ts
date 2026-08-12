@@ -9,11 +9,28 @@ import { createUiSlice, MAX_OPS_LOG } from "./uiSlice";
 
 type SliceState = ReturnType<typeof createLayersSlice> & ReturnType<typeof createUiSlice>;
 
-function makeStore() {
-  return createStore<SliceState>()((set, get, api) => ({
+// Slice creators are typed Partial<HudState>; the composed vanilla store always
+// holds the FULL state at runtime. Expose a Required-typed getState so the cap
+// tests can call addAnnotation/pushOpLog without optional-chaining noise
+// (tsconfig.test.json strictNullChecks).
+type ComposedStore = {
+  getState: () => Required<SliceState>;
+  setState: (partial: Partial<SliceState>) => void;
+  subscribe: (listener: (state: SliceState, prev: SliceState) => void) => () => void;
+  getInitialState: () => SliceState;
+};
+
+function makeStore(): ComposedStore {
+  const store = createStore<SliceState>()((set, get, api) => ({
     ...createLayersSlice(set as any, get as any, api as any),
     ...createUiSlice(set as any, get as any, api as any),
   }));
+  return {
+    getState: () => store.getState() as unknown as Required<SliceState>,
+    setState: store.setState,
+    subscribe: store.subscribe,
+    getInitialState: store.getInitialState,
+  };
 }
 
 describe("store slice caps (FE-3)", () => {

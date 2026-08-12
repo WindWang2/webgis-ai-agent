@@ -7,6 +7,8 @@ import * as chatApi from '@/lib/api/chat';
 import type { SSEEvent } from '@/lib/api/chat';
 import { MapActionContext } from '@/lib/contexts/map-action-context';
 import type { MapActionContextType } from '@/lib/contexts/map-action-context';
+import type { MapActionPayload, MapActionTerminalStatus } from '@/lib/types';
+import type { MapActionTerminalDetails } from '@/lib/contexts/map-action-context';
 import type { MapActionAckSink } from '@/lib/api/map-action-acks';
 import { devOnly } from '@/lib/utils/logger';
 
@@ -59,7 +61,11 @@ function makeAckWrapper(
         };
       },
       clearActions,
-      reportTerminal: (action, status, details) => {
+      reportTerminal: (
+        action: MapActionPayload,
+        status: MapActionTerminalStatus,
+        details?: MapActionTerminalDetails,
+      ) => {
         sinkHolder.current?.({
           action_id: action.action_id!,
           command: action.command,
@@ -73,7 +79,7 @@ function makeAckWrapper(
           actual: details?.actual !== undefined ? (details.actual as Record<string, unknown> | null) : null,
         });
       },
-    } as MapActionContextType;
+    } as unknown as MapActionContextType;
     return React.createElement(MapActionContext.Provider, { value }, children);
   };
 }
@@ -812,7 +818,7 @@ describe('useMapBridge', () => {
 
     // handler NOT invoked — the store mount already executed the work
     expect(dispatchAction).not.toHaveBeenCalled();
-    const sink = sinkHolder.current;
+    const sink: any = sinkHolder.current;
     expect(sink).toBeTruthy();
     // ROUND-2: the ack is reported only AFTER onEvent (the mount) returned —
     // never claims success BEFORE the mount ran.

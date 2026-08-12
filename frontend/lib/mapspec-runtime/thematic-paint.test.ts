@@ -114,18 +114,18 @@ describe("ADR-0052 cross-check: legend_spec→expression matches compileStyleMet
     
     const spec = { type: "graduated", field: "pop", breaks: [0, 10, 20, 30], palette_colors: ["#a", "#b", "#c"] } as any;
     const styleMethod = { method: "step", field: "pop", default: "#a", stops: [[10, "#b"], [20, "#c"]] };
-    expect(legendSpecToColorExpression(spec)).toEqual(compileStyleMethod(styleMethod));
+    expect(legendSpecToColorExpression(spec)).toEqual(compileStyleMethod(styleMethod as any));
   });
   it("continuous: direct interpolate == compileStyleMethod(interpolate)", () => {
     
     const spec = { type: "continuous", field: "d", min: 0, max: 100, palette_colors: ["#1", "#2", "#3"] } as any;
     const styleMethod = { method: "interpolate", field: "d", stops: [[0, "#1"], [50, "#2"], [100, "#3"]] };
-    expect(legendSpecToColorExpression(spec)).toEqual(compileStyleMethod(styleMethod));
+    expect(legendSpecToColorExpression(spec)).toEqual(compileStyleMethod(styleMethod as any));
   });
   it("categorical: direct match == compileStyleMethod(match)", () => {
     
     const spec = { type: "categorical", field: "u", categories: [{ key: "a", color: "#0", label: "a" }, { key: "b", color: "#1", label: "b" }] } as any;
     const styleMethod = { method: "match", field: "u", cases: [["a", "#0"], ["b", "#1"]], default: "#1" };
-    expect(legendSpecToColorExpression(spec)).toEqual(compileStyleMethod(styleMethod));
+    expect(legendSpecToColorExpression(spec)).toEqual(compileStyleMethod(styleMethod as any));
   });
 });

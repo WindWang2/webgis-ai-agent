@@ -47,7 +47,9 @@ const hud = vi.hoisted(() => {
       hud.setState({ viewport: { center, zoom, bearing, pitch, bounds } }),
     focusLayer: (id: string | null) => hud.setState({ focusLayerId: id }),
   };
-  const state: Record<string, unknown> = { ...initialState(), ...actions };
+  // selectedFeature is deliberately `any`: the tests assert shape via the
+  // component contract (setSelectedFeature callers may set arbitrary fields).
+  const state: Record<string, unknown> & { selectedFeature: any } = { ...initialState(), ...actions };
   const listeners = new Set<() => void>();
   return {
     state,

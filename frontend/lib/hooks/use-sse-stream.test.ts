@@ -100,8 +100,8 @@ describe('buildSelectedFeatureSnapshot (FE-4 design §7)', () => {
     expect(props).not.toHaveProperty('geometry');
     expect(props).not.toHaveProperty('tags');
     expect(props.name).toBe('第一区');
-    expect(props.long_val).toHaveLength(60); // 59 chars + ellipsis
-    expect(props.long_val.endsWith('…')).toBe(true);
+    expect(props.long_val as string).toHaveLength(60); // 59 chars + ellipsis
+    expect((props.long_val as string).endsWith('…')).toBe(true);
   });
 
   it('resolves parent layer id and keeps bbox/feature identity', () => {
