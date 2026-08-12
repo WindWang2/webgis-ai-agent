@@ -150,8 +150,22 @@ class ToolCatalog:
         """清掉会话粘性（清理会话时调用）。"""
         self._sticky.pop(session_id, None)
 
+    def reset_sticky(self, session_id: str) -> None:
+        """design-v3 §5：明确换目标（followup 分类 new_goal）时清空会话粘性。
+
+        用户换了一个全新目标时，旧目标领域的 sticky domain 不应继续污染
+        本轮工具 schema 选择。由 execution_engine 在 new_goal 时调用。
+        """
+        self._sticky.pop(session_id, None)
+
     def decay_sticky_domain(self, session_id: str) -> None:
-        """手动衰减一轮会话 sticky domain TTL（plan_orchestrator 步骤完成后调用）。"""
+        """手动衰减一轮会话 sticky domain TTL。
+
+        保留（public API 兼容）。design-v3 §5 / R8：plan_orchestrator 的调用点
+        已移除——该分支在生产路径从不触发（引擎从未传过 tool_catalog），TTL
+        衰减由 ``_activate_domains`` 每轮自然进行（每次 select_schemas 都把
+        所有 sticky domain 减 1）。
+        """
         sticky = self._sticky.get(session_id)
         if not sticky:
             return

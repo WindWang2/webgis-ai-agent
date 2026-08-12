@@ -184,6 +184,29 @@ async def test_suspicious_result_appends_hint(service, fake_registry, clean_sess
     assert "未返回任何空间要素" in result.llm_payload
 
 
+@pytest.mark.asyncio
+async def test_failed_dispatch_does_not_occupy_dedup_slot(service, fake_registry, clean_session):
+    """R-dedup（design-v3 §2）：失败调用不占用 dedup 槽位——同参重试放行，
+    且绝不会收到「已成功执行」的重复提示；成功后的同参重复仍被拦截。"""
+    executed: set = set()
+    tc = _tc("query_osm", {"area": "北京"})
+    fake_registry.dispatch.side_effect = [
+        {"success": False, "code": "VALIDATION_ERROR", "message": "参数校验失败"},
+        {"summary": "ok"},
+    ]
+    r1 = await service.dispatch(tc, clean_session, executed)
+    assert r1.status == "error"
+    # 失败后同参重试 → 正常 dispatch（不是 repeated，不谎报成功）
+    r2 = await service.dispatch(tc, clean_session, executed)
+    assert r2.status == "ok"
+    assert fake_registry.dispatch.call_count == 2
+    # 成功后同参再调 → repeated（成功重复语义不变）
+    r3 = await service.dispatch(tc, clean_session, executed)
+    assert r3.status == "repeated"
+    assert "[重复调用拦截]" in r3.llm_payload
+    assert fake_registry.dispatch.call_count == 2
+
+
 def test_tool_name_normalization_table():
     """断言 legacy 工具名被正确映射为 webgis_* canonical 名称。"""
     assert normalize_tool_name("add_layer") == "webgis_layer_upsert"

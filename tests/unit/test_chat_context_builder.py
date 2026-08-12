@@ -9,9 +9,12 @@ import pytest
 from app.services.chat.context_builder import (
     build_last_analysis_context,
     build_map_state_summary,
+    build_plan_block,
     compose_request_messages,
     format_layer_lines,
 )
+from app.services.chat.context_assembler import ChatContextAssembler
+from app.services.chat.plan_orchestrator import render_plan_block
 from app.services.session_data import session_data_manager
 
 
@@ -58,6 +61,8 @@ class TestLastAnalysisContext:
         assert build_last_analysis_context([{"role": "system", "content": "..."}]) == ""
 
     def test_picks_most_recent_user_and_assistant(self):
+        # design-v3 §4 去重（行为变更）：历史窗口保证保留最近 2 轮，
+        # [最近对话上下文] 只覆盖窗口之前的轮次（这里是第一轮"你好"交换）。
         msgs = [
             {"role": "user", "content": "你好"},
             {"role": "assistant", "content": "你好"},
@@ -66,32 +71,42 @@ class TestLastAnalysisContext:
             {"role": "user", "content": "画热力图"},
         ]
         ctx = build_last_analysis_context(msgs)
-        assert "画热力图" in ctx
-        assert "已查到 312 家医院" in ctx
-        assert "查海淀医院" not in ctx  # 不是最新
+        assert "你好" in ctx  # 窗口之前的轮次被提炼
+        assert "画热力图" not in ctx  # 最新一轮在历史窗口内逐字可见，不再重复
+        assert "查海淀医院" not in ctx
 
     def test_collects_unique_refs(self):
+        # 3 轮：refs 放在窗口之前的首轮，验证去重采集仍生效。
         msgs = [
             {"role": "user", "content": "x"},
             {"role": "assistant", "content": "result at ref:data-aaa"},
             {"role": "tool", "content": "{ref: ref:data-bbb, ...}"},
             {"role": "assistant", "content": "ref:data-aaa is reused"},  # 与上面重复
+            {"role": "user", "content": "继续"},
+            {"role": "assistant", "content": "好的"},
+            {"role": "user", "content": "换个样式"},
         ]
         ctx = build_last_analysis_context(msgs)
         assert "ref:data-aaa" in ctx
         assert "ref:data-bbb" in ctx
 
     def test_truncates_long_messages(self):
+        # 3 轮：长消息在窗口之前的首轮，验证 200/300 截断仍生效。
         long_user = "X" * 500
         long_asst = "Y" * 500
         msgs = [
             {"role": "user", "content": long_user},
             {"role": "assistant", "content": long_asst},
+            {"role": "user", "content": "继续"},
+            {"role": "assistant", "content": "好的"},
+            {"role": "user", "content": "换个样式"},
         ]
         ctx = build_last_analysis_context(msgs)
         # 用户 200 截、助手 300 截
         assert ctx.count("X") <= 200
         assert ctx.count("Y") <= 300
+        assert ctx.count("X") > 0  # 确实提炼了窗口之前的长消息（非空断言）
+        assert ctx.count("Y") > 0
 
 
 # ─── build_map_state_summary（接 session_data_manager） ──────────
@@ -170,6 +185,8 @@ class TestComposeRequestMessages:
         assert any(m["role"] == "user" and m["content"] == "hi" for m in out)
 
     async def test_appends_last_ctx_when_history_nonempty(self, clean_session):
+        # design-v3 §4 去重（行为变更）：仅 2 轮对话全部落在历史窗口内
+        # （min 2 轮保证），[最近对话上下文] 不再重复注入同一批消息。
         msgs = [
             {"role": "system", "content": "BASE"},
             {"role": "user", "content": "查海淀医院"},
@@ -177,12 +194,40 @@ class TestComposeRequestMessages:
             {"role": "user", "content": "画热力图"},
         ]
         out = await compose_request_messages(clean_session, msgs)
-        # 第二条应该是"最近对话上下文"系统消息
-        assert out[1]["role"] == "system"
-        assert "[最近对话上下文]" in out[1]["content"]
-        # 用户消息全部还原顺序
+        joined = " ".join(m["content"] for m in out if m.get("role") == "system")
+        assert "[最近对话上下文]" not in joined
+        # 用户消息全部还原顺序（历史窗口逐字保留）
         user_msgs = [m["content"] for m in out if m["role"] == "user"]
         assert user_msgs == ["查海淀医院", "画热力图"]
 
     async def test_empty_messages_returns_empty(self, clean_session):
         assert await compose_request_messages(clean_session, []) == []
+
+
+# ─── design-v3 §4：计划块单一渲染 + tools payload 软计入 ─────────
+
+
+def test_plan_block_single_render_source():
+    """[执行计划] 单一渲染来源：build_plan_block 与 render_plan_block 等价。"""
+    from app.services.chat.planner import Plan, PlanStep
+    plan = Plan(intent="x", domains=["core"], steps=[
+        PlanStep(n=1, goal="a", tool_family="core", done=True),
+        PlanStep(n=2, goal="b", tool_family="core", done=False),
+    ])
+    assert build_plan_block(plan) == render_plan_block(plan)
+    assert "[执行计划]" in render_plan_block(plan)
+
+
+class TestEstimatedTokens:
+    async def test_tools_payload_counted_in_estimate(self, clean_session):
+        msgs = [
+            {"role": "system", "content": "SYS"},
+            {"role": "user", "content": "hi"},
+        ]
+        base = await ChatContextAssembler().assemble(clean_session, msgs)
+        with_tools = await ChatContextAssembler().assemble(
+            clean_session, msgs, tools_payload_chars=8000
+        )
+        # 8000 ASCII chars ≈ 2000 tokens（软计入，只影响估算）
+        assert with_tools.estimated_tokens > base.estimated_tokens
+        assert with_tools.estimated_tokens - base.estimated_tokens >= 2000

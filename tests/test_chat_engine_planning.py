@@ -286,3 +286,87 @@ async def test_chat_stream_no_plan_events_when_plan_skipped(engine, monkeypatch)
     assert "event: plan_ready" not in joined
     assert "event: plan_step_done" not in joined
     assert "event: plan_finalized" not in joined
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_failed_tool_does_not_advance_plan(engine, monkeypatch):
+    """R2（design-v3 §2）：工具失败（status=error）绝不打勾计划步骤，也不发
+    plan_step_done；step_error 附带 failure_class/recovery_action（additive）。"""
+    test_plan = planner_mod.Plan(
+        intent="x", domains=["statistics"],
+        steps=[planner_mod.PlanStep(n=1, goal="热点", tool_family="statistics")],
+    )
+    planner_mod.set_plan("sess-EV5", test_plan)
+    async def fake_maybe_plan(self, *a, **k): return None
+    monkeypatch.setattr(engine, "_maybe_plan",
+                        fake_maybe_plan.__get__(engine, type(engine)))
+    monkeypatch.setattr(engine.registry, "metadata",
+                        lambda name: {"domains": ["statistics"]})
+
+    call_count = {"n": 0}
+    async def fake_llm_stream(*a, **k):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            yield ("done", {"message": {
+                "role": "assistant", "content": None,
+                "tool_calls": [{"id": "tc1", "type": "function",
+                                "function": {"name": "hotspot_analysis",
+                                             "arguments": "{}"}}],
+            }, "finish_reason": "tool_calls"})
+        else:
+            yield ("done", {"message": {"role": "assistant", "content": "done"},
+                            "finish_reason": "stop"})
+    monkeypatch.setattr(engine, "_call_llm_stream", fake_llm_stream)
+
+    from app.services.tool_dispatch_service import ToolDispatchResult
+    async def fake_dispatch(self, *a, **k):
+        return ToolDispatchResult(
+            status="error",
+            llm_payload="boom",
+            slim_event={"error": "boom"},
+            geojson_ref=None,
+            raw_result={"success": False, "code": "TOOL_ERROR", "message": "boom"},
+            error_msg="boom",
+        )
+    monkeypatch.setattr(engine, "_dispatch_tool",
+                        fake_dispatch.__get__(engine, type(engine)))
+
+    captured = []
+    async for ev in engine.chat_stream("热点分析", session_id="sess-EV5"):
+        captured.append(ev)
+
+    joined = "".join(captured)
+    assert "event: plan_step_done" not in joined
+    assert test_plan.steps[0].done is False  # 失败不打勾
+    assert "event: step_error" in joined
+    assert "failure_class" in joined  # additive 分类字段
+    planner_mod.clear_plan("sess-EV5")
+
+
+@pytest.mark.asyncio
+async def test_maybe_plan_new_goal_supersedes_old(engine, monkeypatch):
+    """design-v3 §2/§4：新目标（"换成查路线"）→ 旧 canonical 计划 superseded，
+    新计划接管（修复场景 8 短消息换目标被门控吞掉）。"""
+    from app.services.planning import PlanStatus
+    from app.services.planning.store import plan_store
+
+    old = planner_mod.Plan(
+        intent="旧", domains=["raster"],
+        steps=[planner_mod.PlanStep(n=1, goal="NDVI", tool_family="raster")],
+    )
+    planner_mod.set_plan("sess-S1", old)
+    old_canon = plan_store.peek("sess-S1")
+    old_id = old_canon.plan_id
+
+    async def fake_call_llm(_cfg, _messages, _tools=None):
+        return {"choices": [{"message": {"content":
+            '{"intent":"新","domains":["network"],"steps":[{"n":1,"goal":"路线","tool_family":"network"}]}'}}]}
+
+    monkeypatch.setattr(planner_mod, "call_llm", fake_call_llm)
+
+    plan = await engine._maybe_plan("sess-S1", "换成查路线", [])
+    assert plan is not None and plan.intent == "新"
+    hist = await plan_store.get_by_id("sess-S1", old_id)
+    assert hist is not None and hist.status == PlanStatus.superseded
+    planner_mod.clear_plan("sess-S1")
+    await plan_store.clear("sess-S1")

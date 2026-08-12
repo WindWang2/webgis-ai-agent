@@ -296,6 +296,109 @@ async def test_execute_unknown_plan_id_returns_error(registry):
     assert "找不到" in result["error"]
 
 
+# ─── design-v3：resume / typed refs / supersede ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_execute_resume_skips_completed_steps_and_reuses_refs(registry):
+    """design-v3 §4：失败后 resume——已完成步骤不重跑、其结果继续供 ${} 引用，
+    只有 pending/failed 步骤执行。"""
+    sid = "sess-plan-resume"
+    calls = {"s2": 0}
+
+    @registry.tool(name="fake_flaky_hotspot", description="第一次失败第二次成功")
+    def fake_flaky_hotspot(points: list) -> dict:
+        calls["s2"] += 1
+        if calls["s2"] == 1:
+            return {"success": False, "code": "TOOL_ERROR", "message": "第一次失败"}
+        return {"success": True, "data": {"hot_count": len(points), "from": points}}
+
+    plan = svc.PlanProposal(
+        title="resume",
+        steps=[
+            svc.PlanStep(id="s1", tool="fake_get_bbox", args={"area": "海淀"}),
+            svc.PlanStep(id="s2", tool="fake_flaky_hotspot",
+                         args={"points": "${s1.data.bbox}"}),
+            svc.PlanStep(id="s3", tool="fake_hotspot",
+                         args={"points": [1, 2, 3]}, depends_on=["s2"]),
+        ],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+
+    r1 = await svc.execute_plan_async(sid, plan_id, registry)
+    assert r1["success"] is False
+    assert r1["failed_step"] == "s2"
+    assert r1["executed"] == ["s1"]
+    # 失败也持久化了已完成结果（resume 的数据基础）
+    data = await svc.load_plan(sid, plan_id)
+    assert "s1" in data["__step_results__"]
+    assert data["__status__"] == "failed"
+
+    # resume：s1 跳过（复用结果）、s2 重试成功、s3 执行
+    r2 = await svc.execute_plan_async(sid, plan_id, registry)
+    assert r2["success"] is True
+    assert r2["executed"] == ["s1", "s2", "s3"]
+    assert r2["results"]["s3"]["data"]["hot_count"] == 3
+    assert calls["s2"] == 2  # 只重试了一次
+    data2 = await svc.load_plan(sid, plan_id)
+    assert data2["__status__"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_execute_bad_path_ref_fails_with_missing_ref(registry):
+    """design-v3 §deps：${s1.bad.path} 坏路径 → 立即失败 + failure_class=missing_ref
+    + 修正提示（命名坏路径与可用 keys），不再静默 None/""。"""
+    sid = "sess-plan-badpath"
+    plan = svc.PlanProposal(
+        title="badpath",
+        steps=[
+            svc.PlanStep(id="s1", tool="fake_get_bbox", args={"area": "北京"}),
+            svc.PlanStep(id="s2", tool="fake_query_points",
+                         args={"bbox": "${s1.bad.path}", "count": 3}),
+        ],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+
+    result = await svc.execute_plan_async(sid, plan_id, registry)
+    assert result["success"] is False
+    assert result["failed_step"] == "s2"
+    assert result["failure_class"] == "missing_ref"
+    assert "bad.path" in result["error"]      # 提示里带坏路径
+    assert "s1" in result["error"]            # 及可用 keys
+    assert result["recovery_action"] == "reuse_ref"
+    data = await svc.load_plan(sid, plan_id)
+    assert data["__status__"] == "failed"
+    assert data["__failure_class__"] == "missing_ref"
+
+
+@pytest.mark.asyncio
+async def test_propose_supersedes_old_pending_plan(registry):
+    """design-v3 §4：新 propose 把旧 pending 计划标记 superseded；superseded
+    计划不重放（返回已存状态）。"""
+    sid = "sess-plan-super"
+    p1 = await registry.dispatch("propose_plan", {
+        "title": "旧计划",
+        "steps": [{"id": "s1", "tool": "fake_get_bbox", "args": {"area": "A"}}],
+    }, session_id=sid)
+    assert p1["success"] is True
+
+    p2 = await registry.dispatch("propose_plan", {
+        "title": "新计划",
+        "steps": [{"id": "s1", "tool": "fake_get_bbox", "args": {"area": "B"}}],
+    }, session_id=sid)
+    assert p2["success"] is True
+
+    old_data = await svc.load_plan(sid, p1["plan_id"])
+    assert old_data["__status__"] == "superseded"
+    status = await registry.dispatch("get_plan_status", {"plan_id": p1["plan_id"]}, session_id=sid)
+    assert status["status"] == "superseded"
+    # superseded 计划不重放
+    r = await svc.execute_plan_async(sid, p1["plan_id"], registry)
+    assert r["success"] is True
+    assert r["status"] == "superseded"
+    assert r["executed"] == []  # 未重新 dispatch 任何步骤
+
+
 # ─── 工具入口集成 ─────────────────────────────────────────────
 
 

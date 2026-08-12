@@ -333,6 +333,32 @@ class ToolRegistry:
             # percent for typical JSON, never materializing the full string.
             result_bytes = _estimate_json_bytes(result) if result is not None else 0
             cache_hit = cache_hit_var.get()
+            # design-v3 §6 observability（additive）：只在 plan_store 进程缓存命中时
+            # 附带 plan_id/plan_revision；失败时附 failure_class/recovery_action。
+            plan_id = plan_revision = step_id = failure_class = recovery_action = None
+            if session_id:
+                try:
+                    from app.services.planning.store import plan_store as _plan_store
+                    _canon = _plan_store.peek(session_id)
+                    if _canon is not None:
+                        plan_id = _canon.plan_id
+                        plan_revision = _canon.revision
+                except Exception:  # noqa: BLE001
+                    pass
+            if error_cls is not None:
+                try:
+                    from app.services.planning.recovery import (
+                        classify_error as _classify_error,
+                        recovery_action_for as _recovery_action_for,
+                    )
+                    _code = result.get("code") if isinstance(result, dict) else None
+                    _etype = result.get("error_type") if isinstance(result, dict) else None
+                    _emsg = result.get("message") if isinstance(result, dict) else None
+                    _fc = _classify_error(code=_code, error_type=_etype, message=_emsg)
+                    failure_class = _fc.value
+                    recovery_action = _recovery_action_for(_fc).value
+                except Exception:  # noqa: BLE001
+                    pass
             tool_metrics.record_tool_call(
                 tool=name,
                 arg_bytes=arg_bytes,
@@ -344,6 +370,11 @@ class ToolRegistry:
                 requested_execution_policy=req_policy_str,
                 actual_execution_mode=actual_mode,
                 compute_ms=duration_ms if not cache_hit else 0,
+                plan_id=plan_id,
+                plan_revision=plan_revision,
+                step_id=step_id,
+                failure_class=failure_class,
+                recovery_action=recovery_action,
             )
             cache_hit_var.reset(token)
 

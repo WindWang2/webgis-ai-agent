@@ -130,6 +130,18 @@ def test_reset_session(catalog):
     assert catalog.active_domains("abc") == set()
 
 
+def test_reset_sticky_on_new_goal(catalog):
+    """design-v3 §5：new_goal 时 reset_sticky 清空旧领域粘性，
+    旧领域不再污染后续工具选择。"""
+    catalog.select_schemas("NDVI 计算", session_id="abc")
+    assert catalog.active_domains("abc") == {"raster"}
+    catalog.reset_sticky("abc")
+    assert catalog.active_domains("abc") == set()
+    # 后续无关键词轮次不再被旧领域污染
+    names = _names(catalog.select_schemas("换个颜色", session_id="abc"))
+    assert "compute_ndvi" not in names
+
+
 def test_unannotated_tools_default_tier1():
     """未标注 tier 的工具默认 tier 1 (向后兼容)。"""
     r = ToolRegistry()

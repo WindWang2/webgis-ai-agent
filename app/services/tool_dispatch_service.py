@@ -204,6 +204,9 @@ class ToolDispatchService:
 
         # 1. 重复调用拦截 (并发安全：check-and-add 在锁内原子完成，否则两条并行
         #    dispatch 都会通过 in 检查后才 add，重复调用逃逸拦截)。
+        #    design-v3 §2（R-dedup）：先“占位”保证并发同参互斥，但**失败**的调用
+        #    会在下方释放占位 —— 失败的同参调用可被 LLM 重试，且绝不会收到
+        #    “已成功执行”的重复提示。
         tool_key = (tool_name, normalize_tool_args(tool_args_raw))
         async with self._dedup_lock:
             if tool_key in executed_tools:
@@ -222,7 +225,10 @@ class ToolDispatchService:
         try:
             result = await self._registry.dispatch(tool_name, tool_args_raw, session_id=session_id)
         except OperationCancelled:
-            # ADR-0052：取消上抛给工具管道处理（它会记成「已取消」而非工具故障）
+            # ADR-0052：取消上抛给工具管道处理（它会记成「已取消」而非工具故障）。
+            # 取消的调用不占用 dedup 槽位（本轮后续重试不被“已成功”谎言拦截）。
+            async with self._dedup_lock:
+                executed_tools.discard(tool_key)
             raise
         except Exception as e:
             from app.tools._utils import std_error_response
@@ -233,12 +239,17 @@ class ToolDispatchService:
                 error_type=type(e).__name__,
                 correction_hint=f"Execution error: {error_msg}",
             )
+            async with self._dedup_lock:
+                executed_tools.discard(tool_key)
 
         # 2b. V3: 为工具结果中的地图命令铸 action_id（写回 command dict，SSE 携带）。
         map_actions = self._mint_map_action_ids(result)
 
         # 3. registry 返回 std_error_response dict 的统一错误路径
         if is_error_dict(result):
+            # 失败调用不占用 dedup 槽位：同参重试放行，且不会谎报“已成功执行”。
+            async with self._dedup_lock:
+                executed_tools.discard(tool_key)
             error_msg = sanitize_error_msg(result.get("message", ""))
             result["message"] = error_msg
             if "correction_hint" in result and result["correction_hint"]:

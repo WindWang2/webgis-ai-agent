@@ -24,6 +24,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 from app.services.session_data import session_data_manager
+from app.services.planning.deps import MissingRefError, resolve_arg_refs
 from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -200,8 +201,57 @@ async def store_plan(session_id: str, plan: PlanProposal) -> str:
     """把计划落进 session_data_manager，返回 plan_id (即 ref:plan-xxxxxx)。"""
     payload = plan.model_dump()
     payload["__kind__"] = "plan_proposal"
-    payload["__status__"] = "pending"  # pending | running | completed | failed | cancelled
+    # 状态词表：pending | running | partially_completed | completed | failed
+    #           | cancelled | superseded
+    # 说明：fail-fast 路径失败时仍写 ``failed``（向后兼容 get_plan_status /
+    # execute_plan 的既有调用方）；``partially_completed`` 作为可读/可恢复状态
+    # 被 execute_plan 接受（与 failed 同样触发 resume 语义）。
+    payload["__status__"] = "pending"
     return await session_data_manager.store(session_id, payload, prefix="plan")
+
+
+async def supersede_active_plans(session_id: str) -> None:
+    """design-v3 §4：新计划提出时，把该 session 其他 pending/running 的
+    plan-mode 计划标记为 superseded（绝不静默覆盖/并发双活）。
+
+    只扫描 ref:plan-* 条目；scan + get 都是 session_data 的轻量读。
+    """
+    try:
+        refs = await session_data_manager.list_refs(session_id)
+    except Exception:  # noqa: BLE001
+        return
+    for ref in refs:
+        if not str(ref).startswith("ref:plan-"):
+            continue
+        data = await session_data_manager.get(session_id, ref)
+        if not isinstance(data, dict):
+            continue
+        if data.get("__status__") in ("pending", "running"):
+            await update_plan_status(session_id, ref, __status__="superseded")
+
+
+def validate_static_refs(plan: PlanProposal) -> list[str]:
+    """Propose-time 静态引用校验（design-v3 §deps）。
+
+    委托 app/services/planning/deps.validate_static_refs（CanonicalStep 形态）。
+    与 validate_plan 的重叠检查（未知 id / 前向引用 / 自引用 / 环）在 validate_plan
+    中已全部拦截，此调用是补充性第二道闸——返回完整 issue 列表，空列表即通过。
+    """
+    from app.services.planning.deps import validate_static_refs as _v
+    from app.services.planning.models import CanonicalStep
+    steps = [
+        CanonicalStep(
+            id=s.id,
+            n=i + 1,
+            goal=s.purpose or s.tool,
+            tool_family=None,
+            tool=s.tool,
+            args=s.args,
+            depends_on=list(s.depends_on),
+        )
+        for i, s in enumerate(plan.steps)
+    ]
+    return _v(steps)
 
 
 async def load_plan(session_id: str, plan_id: str) -> Optional[dict]:
@@ -250,14 +300,26 @@ async def execute_plan_async(
 
     语义差异（与纯串行相比）：同一波次中与失败步骤无依赖关系的兄弟
     步骤可能已完成（结果计入 executed）——"立即中止" 指不再启动新的
-    波次，已派发的任务允许收尾。
+    波次，已派发的任务允许收尾（siblings-finish 契约，见下方失败处理）。
+
+    design-v3 §4 收敛：
+    - **Resume**：对 ``__status__`` ∈ {failed, partially_completed} 的计划，
+      ``__step_results__`` 里已记录成功结果的步骤**不重新 dispatch**，其
+      结果直接用于 ``${stepId}`` 解析；只有 pending/failed 步骤执行。
+      completed / superseded 的计划直接返回已存结果，不重放（运行中 guard
+      "已在执行中" 保持）。无新参数，resume 语义自动生效。
+    - **Typed refs**：``${stepId[.path]}`` 解析失败（坏路径 / 无结果）→ 该
+      步骤立即失败，``failure_class=missing_ref`` + 修正提示（列出坏路径与
+      可用 keys），不再静默得到 None/""。
+    - **失败持久化**：失败时同样写回 ``__step_results__``，供后续 resume 复用。
 
     返回汇总 {plan_id, status, executed, results, failed_step, error}。
     """
     plan_data = await load_plan(session_id, plan_id)
     if plan_data is None:
         return {"success": False, "error": f"找不到 plan_id={plan_id}"}
-    if plan_data.get("__status__") == "running":
+    status = plan_data.get("__status__", "pending")
+    if status == "running":
         return {"success": False, "error": f"plan {plan_id} 已在执行中"}
 
     # 还原 Pydantic 模型用于拓扑排序
@@ -268,27 +330,37 @@ async def execute_plan_async(
         await update_plan_status(session_id, plan_id, __status__="failed", __error__="cycle")
         return {"success": False, "error": "依赖图含环"}
 
-    # 构建邻接表 / 入度，用于波次调度（与 _topological_order 同一依赖口径）
     topo_idx = {sid: i for i, sid in enumerate(order)}
-    in_degree: dict[str, int] = {s.id: 0 for s in plan.steps}
-    edges: dict[str, list[str]] = {s.id: [] for s in plan.steps}
-    for step in plan.steps:
-        deps = set(step.depends_on) | _extract_refs(step.args)
-        deps.discard(step.id)
-        for dep in deps:
-            if dep in in_degree:
-                edges[dep].append(step.id)
-                in_degree[step.id] += 1
-
     step_by_id = {s.id: s for s in plan.steps}
-    step_results: dict[str, Any] = {}
-    await update_plan_status(session_id, plan_id, __status__="running")
+
+    # design-v3 §4：用已存结果播种 step_results（resume 起点）。
+    stored_results = plan_data.get("__step_results__")
+    step_results: dict[str, Any] = dict(stored_results) if isinstance(stored_results, dict) else {}
 
     def _ordered_executed() -> list[str]:
         """已执行步骤按拓扑序输出（确定性，不依赖并发完成顺序）。"""
         return sorted(step_results.keys(), key=topo_idx.__getitem__)
 
-    def _fail(sid: str, error: str, last_result: Optional[Any] = None) -> dict:
+    # design-v3 §4：completed / superseded 计划直接返回已存结果，不重放。
+    if status in ("completed", "superseded") or all(
+        s.id in step_results for s in plan.steps
+    ):
+        return {
+            "success": True,
+            "plan_id": plan_id,
+            "status": status if status in ("completed", "superseded") else "completed",
+            "executed": _ordered_executed(),
+            "results": step_results,
+        }
+
+    def _fail(
+        sid: str,
+        error: str,
+        last_result: Optional[Any] = None,
+        failure_class: Optional[str] = None,
+        recovery_action: Optional[str] = None,
+        correction_hint: Optional[str] = None,
+    ) -> dict:
         # 失败中止：不再启动新波次；已完成的兄弟步骤保留在 executed 中。
         ret: dict = {
             "success": False,
@@ -299,9 +371,31 @@ async def execute_plan_async(
             "executed": _ordered_executed(),
             "results": step_results,
         }
+        if failure_class is not None:
+            ret["failure_class"] = failure_class
+        if recovery_action is not None:
+            ret["recovery_action"] = recovery_action
+        if correction_hint is not None:
+            ret["correction_hint"] = correction_hint
         if last_result is not None:
             ret["last_result"] = last_result
         return ret
+
+    await update_plan_status(session_id, plan_id, __status__="running")
+
+    # RESUME：已有结果的步骤跳过（上次运行存下的结果继续供 ${} 引用），
+    # 只对剩余步骤构建波次 DAG；已完成依赖不阻塞剩余步骤。
+    unfinished = [s for s in plan.steps if s.id not in step_results]
+    in_degree: dict[str, int] = {s.id: 0 for s in unfinished}
+    edges: dict[str, list[str]] = {s.id: [] for s in unfinished}
+    for step in unfinished:
+        deps = (set(step.depends_on) | _extract_refs(step.args)) - {step.id}
+        for dep in deps:
+            if dep in step_results:
+                continue  # 依赖已有结果（本次或上次运行）→ 不阻塞
+            if dep in in_degree:
+                edges[dep].append(step.id)
+                in_degree[step.id] += 1
 
     ready: list[str] = [sid for sid, d in in_degree.items() if d == 0]
 
@@ -315,23 +409,52 @@ async def execute_plan_async(
         for sid in wave:
             step = step_by_id[sid]
             try:
-                r = resolve_refs(step.args, step_results)
+                r = resolve_arg_refs(step.args, step_results)
+            except MissingRefError as e:
+                hint = str(e)
+                await update_plan_status(
+                    session_id, plan_id,
+                    __status__="failed",
+                    __failed_step__=sid,
+                    __error__=hint,
+                    __failure_class__="missing_ref",
+                    __step_results__=step_results,
+                )
+                return _fail(
+                    sid,
+                    f"步骤 {sid!r} 引用解析失败: {hint}",
+                    failure_class="missing_ref",
+                    recovery_action="reuse_ref",
+                    correction_hint=hint,
+                )
             except Exception as e:  # noqa: BLE001
                 await update_plan_status(
                     session_id, plan_id,
                     __status__="failed",
                     __failed_step__=sid,
                     __error__=f"args 解析异常: {e}",
+                    __step_results__=step_results,
                 )
-                return _fail(sid, f"步骤 {sid!r} args 解析异常: {e}")
+                return _fail(
+                    sid,
+                    f"步骤 {sid!r} args 解析异常: {e}",
+                    failure_class="internal",
+                    recovery_action="replan_remaining",
+                )
             if not isinstance(r, dict):
                 await update_plan_status(
                     session_id, plan_id,
                     __status__="failed",
                     __failed_step__=sid,
                     __error__=f"args 解析后不是 dict: {type(r).__name__}",
+                    __step_results__=step_results,
                 )
-                return _fail(sid, f"步骤 {sid!r} args 解析后不是 dict")
+                return _fail(
+                    sid,
+                    f"步骤 {sid!r} args 解析后不是 dict",
+                    failure_class="validation",
+                    recovery_action="correct_args",
+                )
 
             resolved_args[sid] = r
 
@@ -349,7 +472,8 @@ async def execute_plan_async(
         task_to_sid = {t: sid for sid, t in tasks.items()}
 
         wave_successes: dict[str, Any] = {}
-        failure: Optional[tuple[str, str, Optional[Any]]] = None  # (sid, error, last_result)
+        # (sid, error, last_result, failure_class, recovery_action)
+        failure: Optional[tuple[str, str, Optional[Any], Optional[str], Optional[str]]] = None
         pending: set[asyncio.Task] = set(tasks.values())
         while pending:
             done, pending = await asyncio.wait(
@@ -363,11 +487,14 @@ async def execute_plan_async(
                     continue  # 外部取消（如引擎关闭），忽略该任务
                 except Exception as e:
                     logger.exception(f"[PlanMode] step {sid} raised")
-                    failure = (sid, str(e), None)
+                    fc, ra = _classify_failure(exception=e)
+                    failure = (sid, str(e), None, fc, ra)
                     break
                 # 工具返回 success=False（V3.x Exception As Thought 包装）也视为失败
                 if isinstance(result, dict) and result.get("success") is False:
-                    failure = (sid, result.get("message") or result.get("error", "tool failed"), result)
+                    err = result.get("message") or result.get("error", "tool failed")
+                    fc, ra = _classify_failure(result=result)
+                    failure = (sid, err, result, fc, ra)
                     break
                 wave_successes[sid] = result
             if failure is not None:
@@ -396,14 +523,18 @@ async def execute_plan_async(
                 step_results[sid] = wave_successes[sid]
 
         if failure is not None:
-            sid, err, last_result = failure
-            await update_plan_status(
-                session_id, plan_id,
-                __status__="failed",
-                __failed_step__=sid,
-                __error__=err,
-            )
-            return _fail(sid, err, last_result)
+            sid, err, last_result, fc, ra = failure
+            updates: dict[str, Any] = {
+                "__status__": "failed",
+                "__failed_step__": sid,
+                "__error__": err,
+                # design-v3 §4：失败也保留已完成结果，供下次 execute_plan resume。
+                "__step_results__": step_results,
+            }
+            if fc is not None:
+                updates["__failure_class__"] = fc
+            await update_plan_status(session_id, plan_id, **updates)
+            return _fail(sid, err, last_result, failure_class=fc, recovery_action=ra)
 
         # 波次完成 → 推进依赖图，解锁下一波次
         for sid in wave:
@@ -424,3 +555,25 @@ async def execute_plan_async(
         "executed": _ordered_executed(),
         "results": step_results,
     }
+
+
+def _classify_failure(
+    *,
+    result: Optional[dict] = None,
+    exception: Optional[Exception] = None,
+) -> tuple[Optional[str], Optional[str]]:
+    """design-v3 §recovery：把 plan-mode 工具失败分类成 failure_class +
+    recovery_action（additive 返回字段，不改变任何重试行为）。"""
+    from app.services.planning.recovery import classify_error, recovery_action_for
+    try:
+        if exception is not None:
+            fc = classify_error(exception=exception)
+        else:
+            fc = classify_error(
+                code=(result or {}).get("code"),
+                error_type=(result or {}).get("error_type"),
+                message=(result or {}).get("message") or (result or {}).get("error"),
+            )
+        return fc.value, recovery_action_for(fc).value
+    except Exception:  # noqa: BLE001 分类失败不拖垮执行
+        return None, None

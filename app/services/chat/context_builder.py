@@ -242,12 +242,26 @@ _REF_RE = re.compile(r"(ref:[\w-]+)")
 
 
 def build_last_analysis_context(messages: list[dict]) -> str:
-    """从最近的历史消息中提取分析上下文摘要，帮 LLM 维持追问连贯性。"""
+    """从最近的历史消息中提取分析上下文摘要，帮 LLM 维持追问连贯性。
+
+    design-v3 §4 去重：历史窗口（truncate_history_by_budget 至少保留
+    HISTORY_MIN_TURNS=2 轮）已逐字包含最近若干轮对话，[最近对话上下文]
+    块只覆盖**窗口之前**的轮次——避免同一轮 user/assistant 交换被
+    同时注入两次（块 + 历史）。
+    """
+    # system 消息不参与轮次划分（messages[0] 通常是 system prompt）
+    nonsystem = [m for m in messages if m.get("role") != "system"]
+    turns = _group_into_turns(nonsystem)
+    if len(turns) <= HISTORY_MIN_TURNS:
+        # 全部对话都在历史窗口内，无“窗口之前”的内容可提炼。
+        return ""
+    scan = [m for turn in turns[: len(turns) - HISTORY_MIN_TURNS] for m in turn]
+
     last_user_msg = ""
     last_assistant_msg = ""
     data_refs: list[str] = []
 
-    for msg in reversed(messages):
+    for msg in reversed(scan):
         role = msg.get("role", "")
         content = msg.get("content", "") or ""
         if role == "assistant" and content and not last_assistant_msg:
@@ -278,22 +292,13 @@ def build_last_analysis_context(messages: list[dict]) -> str:
 
 
 def build_plan_block(plan) -> str:
-    """把 Plan 渲染成 [执行计划] 系统块，步骤带 ✅/⬜ 完成标记。"""
-    lines = [
-        "[执行计划] — 你为本任务制定的步骤，按此推进，完成一步即视为打勾",
-        f"- 意图: {plan.intent}",
-    ]
-    if plan.steps:
-        lines.append("- 步骤:")
-        for step in plan.steps:
-            mark = "✅" if step.done else "⬜"
-            lines.append(f"  {mark} {step.n}. {step.goal}")
-        if any(not s.done for s in plan.steps):
-            lines.append(
-                "⚠️ 仍有未完成步骤。若要给出最终回复，请先确认这些步骤是否"
-                "已无必要，或在回复中向用户说明未完成的原因。"
-            )
-    return "\n".join(lines)
+    """把 Plan 渲染成 [执行计划] 系统块（design-v3 §4 单一渲染来源）。
+
+    兼容壳：渲染逻辑收敛到 plan_orchestrator.render_plan_block，避免
+    重复的 plan 状态格式化。
+    """
+    from app.services.chat.plan_orchestrator import render_plan_block
+    return render_plan_block(plan)
 
 
 _default_assembler = None

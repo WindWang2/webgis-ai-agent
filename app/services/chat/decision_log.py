@@ -32,6 +32,12 @@ class ToolDecisionRecord:
     tool_args: dict[str, Any]
     result_quality: str            # "ok" | "empty" | "error"
     plan_step_matched: Optional[int]  # 命中的计划步骤号；无计划时为 None
+    # design-v3 §6 observability（additive）：
+    plan_id: Optional[str] = None
+    plan_revision: Optional[int] = None
+    step_id: Optional[str] = None        # 命中的 canonical 步骤 id（如 s1）
+    failure_class: Optional[str] = None  # 仅 status=="error" 时有值
+    recovery_action: Optional[str] = None
 
     def to_dict(self) -> dict:
         d = dataclasses.asdict(self)

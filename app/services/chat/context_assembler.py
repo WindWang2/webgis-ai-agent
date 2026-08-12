@@ -126,6 +126,7 @@ class ChatContextAssembler:
         session_id: str,
         messages: List[dict],
         project_id: Optional[str] = None,
+        tools_payload_chars: int = 0,
     ) -> ContextAssemblyResult:
         """
         Assemble the complete LLM request message list from session state,
@@ -139,6 +140,9 @@ class ChatContextAssembler:
         about the active project — see also the
         ``get_session_metadata`` path which is still a no-op for
         ``project_id``).
+
+        ``tools_payload_chars``（design-v3 §4）：调用方把已选出的工具 schema
+        序列化字节数传入，软计入 estimated_tokens（仅影响估算，不改变任何截断）。
         """
         if not messages:
             return ContextAssemblyResult(
@@ -148,7 +152,6 @@ class ChatContextAssembler:
         from app.services.chat.context_builder import (
             build_last_analysis_context,
             build_map_state_summary,
-            build_plan_block,
             truncate_history_by_budget,
             _build_truncation_notice,
         )
@@ -221,7 +224,9 @@ class ChatContextAssembler:
 
         plan = get_plan(session_id)
         if plan is not None:
-            head.append({"role": "system", "content": build_plan_block(plan)})
+            # design-v3 §4：计划块单一渲染来源（plan_orchestrator.render_plan_block）。
+            from app.services.chat.plan_orchestrator import render_plan_block
+            head.append({"role": "system", "content": render_plan_block(plan)})
 
         last_ctx = build_last_analysis_context(messages)
         if last_ctx:
@@ -240,6 +245,10 @@ class ChatContextAssembler:
         total_tokens = sum(
             _estimate_tokens(str(m.get("content", ""))) for m in head
         )
+        if tools_payload_chars and tools_payload_chars > 0:
+            # design-v3 §4：工具 schema 是 ASCII-heavy JSON，按 4 字符 ≈ 1 token
+            # 软计入。只影响估算与可观测性，不改变任何截断行为。
+            total_tokens += int(tools_payload_chars / 4) + 1
 
         return ContextAssemblyResult(
             messages=head,
