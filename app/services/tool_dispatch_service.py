@@ -388,14 +388,21 @@ class ToolDispatchService:
 
     @staticmethod
     def _mint_one_map_action(command_dict: Dict[str, Any]) -> Optional[dict]:
-        """给单个 command dict 铸 action_id（已存在则复用），返回元数据。"""
+        """给单个 command dict 铸 action_id（每次派发都铸新 id），返回元数据。
+
+        P2 (F25): 不再复用 command dict 里已存在的 action_id。原实现「已存在则
+        复用」在工具返回缓存/持久化的 command 对象跨 turn 重放时会复用旧 id：
+        两次真实执行（如重新飞一次/重新导出）共用一个 action_id，ACK store 的
+        first-terminal-wins 会把第二次执行的真实终态当作重复丢弃 —— 下游遥测
+        无法区分两次真实副作用。每次派发铸新 id 后：同 turn 内去重（
+        `_session_executed_sets`）保证同一 tool_call 不会重复派发；跨 turn 的
+        陈旧 id 不再可能碰撞。前端以 SSE 事件里携带的 action_id 为准，行为不变。
+        """
         cmd_name = command_dict.get("command") or command_dict.get("type") or ""
         if not cmd_name:
             return None
-        action_id = command_dict.get("action_id")
-        if not action_id or not isinstance(action_id, str):
-            action_id = _mint_map_action_id()
-            command_dict["action_id"] = action_id
+        action_id = _mint_map_action_id()
+        command_dict["action_id"] = action_id
         requested = _cap_requested_snapshot(command_dict.get("params") or {})
         return {
             "action_id": action_id,

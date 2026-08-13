@@ -277,5 +277,25 @@ describe('Chat API', () => {
       expect(events[0]).toMatchObject({ event: 'token', id: '3' });
       expect(events[1]).toMatchObject({ event: 'done', id: '4' });
     });
+
+    it('yields step_cancelled with its payload (runtime-chaos P2)', async () => {
+      mockFetch.mockResolvedValueOnce(makeSSEStream([
+        'event: step_cancelled',
+        'data: {"task_id":"t1","step_id":"step-1","tool":"search_poi","session_id":"s1"}',
+        '',
+      ]));
+      const events: SSEEvent[] = [];
+      for await (const e of streamChat('hello')) {
+        events.push(e);
+      }
+      expect(events).toHaveLength(1);
+      expect(events[0].event).toBe('step_cancelled');
+      expect(events[0].data).toEqual({
+        task_id: 't1',
+        step_id: 'step-1',
+        tool: 'search_poi',
+        session_id: 's1',
+      });
+    });
   });
 });

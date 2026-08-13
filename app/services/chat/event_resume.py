@@ -233,6 +233,12 @@ class TurnResumeRegistry:
         if session_id not in self._buffers:
             self._order.append(session_id)
             self._buffers[session_id] = deque()
+        else:
+            # P2: 重新注册已有 key 时刷新 LRU 序（MRU bump）—— 否则一个活跃
+            # 会话的 buffer 会被 32 个「只注册过一次」的其它会话挤出缓存，
+            # 造成活跃会话的续传不可用。
+            self._order.remove(session_id)
+            self._order.append(session_id)
         buffers = self._buffers[session_id]
         buffers.append(buffer)
         while len(buffers) > self._max_buffers_per_session:
