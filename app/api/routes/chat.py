@@ -20,6 +20,8 @@ from app.tools.registry import ToolRegistry
 from app.utils.sse import SSEBatcher, sse_event, sse_event_id, sse_event_id_scope, sse_event_type
 
 from app.agent_pi_bridge import PiRpcError, USE_NEW_AGENT
+from app.lib.runtime import context as rt_ctx
+from app.lib.runtime.evidence import record_map_action_acked_by_turn
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["对话"])
@@ -177,6 +179,18 @@ async def _recorded(stream, buffer: TurnEventBuffer):
 
 
 async def _resume_generator(
+    session_key: str,
+    last_event_id: int,
+    message: str,
+    request_id: Optional[str] = None,
+):
+    """Resume wrapper: bind request-scoped correlation, then delegate to the impl."""
+    with rt_ctx.bind_runtime_context(request_id=request_id, session_id=session_key or None):
+        async for evt in _resume_generator_impl(session_key, last_event_id, message):
+            yield evt
+
+
+async def _resume_generator_impl(
     session_key: str,
     last_event_id: int,
     message: str,
@@ -398,31 +412,36 @@ async def chat_completions(
     user_id = _user.get("user_id")
     await _guard_body_session(db, req.session_id, user_id, owner_token)
 
-    if _use_pi_bridge():
-        try:
-            result = await pi_bridge.prompt(req.message, session_id=req.session_id)
-            return ChatResponse(session_id=result.get("sessionId", req.session_id or ""), content=result.get("content", ""))
-        except PiRpcError as e:
-            logger.error(f"Pi bridge error: {e}", exc_info=True)
-            raise HTTPException(status_code=502, detail="Agent bridge error")
-        except Exception as e:
-            logger.error(f"Pi bridge unexpected error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail="Internal server error")
+    # Runtime observability (W1): mint a request id and bind request-scoped
+    # correlation. The Pi bridge / legacy engine bind turn_id/run_id on top of
+    # this (merged), so a full identity chain reaches metrics + job rows.
+    request_id = rt_ctx.new_request_id()
+    with rt_ctx.bind_runtime_context(request_id=request_id, session_id=req.session_id):
+        if _use_pi_bridge():
+            try:
+                result = await pi_bridge.prompt(req.message, session_id=req.session_id)
+                return ChatResponse(session_id=result.get("sessionId", req.session_id or ""), content=result.get("content", ""))
+            except PiRpcError as e:
+                logger.error(f"Pi bridge error: {e}", exc_info=True)
+                raise HTTPException(status_code=502, detail="Agent bridge error")
+            except Exception as e:
+                logger.error(f"Pi bridge unexpected error: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail="Internal server error")
 
-    # Legacy path: 使用 ChatEngine
-    try:
-        result = await get_engine().chat(
-            req.message,
-            session_id=req.session_id,
-            map_state=req.map_state,
-            skill_name=req.skill_name,
-            user_id=user_id,
-            project_id=req.project_id,
-        )
-        return ChatResponse(**result)
-    except Exception as e:
-        logger.error(f"Chat error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error")
+        # Legacy path: 使用 ChatEngine
+        try:
+            result = await get_engine().chat(
+                req.message,
+                session_id=req.session_id,
+                map_state=req.map_state,
+                skill_name=req.skill_name,
+                user_id=user_id,
+                project_id=req.project_id,
+            )
+            return ChatResponse(**result)
+        except Exception as e:
+            logger.error(f"Chat error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/stream", response_model=None)
@@ -477,12 +496,18 @@ async def chat_stream(
         else last_event_id_query
     )
 
+    # Runtime observability (W1): request-scoped correlation, bound INSIDE the
+    # streaming generators (a `with` in the route body would exit before the
+    # stream starts). stream_prompt / chat_stream bind turn_id/run_id on top of
+    # this, so the full identity chain reaches tool metrics + durable job rows.
+    request_id = rt_ctx.new_request_id()
+
     if last_event_id is not None:
         # DUP-1: a POST carrying Last-Event-ID is a RESUME (read) — never a
         # new execution. Replay the buffered turn's missed events and
         # terminate; do NOT send a prompt RPC.
         return StreamingResponse(
-            _resume_generator(session_key, last_event_id, req.message),
+            _resume_generator(session_key, last_event_id, req.message, request_id=request_id),
             media_type="text/event-stream",
             headers=SSE_HEADERS,
         )
@@ -493,7 +518,9 @@ async def chat_stream(
             _turn_resume_registry.register(session_key, buffer)
             # One id scope per turn: ids stay monotonic across batched token
             # events and structural events, in emission order (see sse.py).
-            with sse_event_id_scope():
+            with sse_event_id_scope(), rt_ctx.bind_runtime_context(
+                request_id=request_id, session_id=req.session_id
+            ):
                 try:
                     async for chunk in _sse_batched(
                         _recorded(
@@ -521,7 +548,9 @@ async def chat_stream(
     async def event_generator():
         buffer = TurnEventBuffer(session_key, req.message)
         _turn_resume_registry.register(session_key, buffer)
-        with sse_event_id_scope():
+        with sse_event_id_scope(), rt_ctx.bind_runtime_context(
+            request_id=request_id, session_id=req.session_id
+        ):
             try:
                 async for event in _recorded(
                     get_engine().chat_stream(
@@ -730,6 +759,13 @@ async def push_map_action_acks(
         ):
             accepted += 1
             snapshot_stale = True
+            # Runtime observability: join the ACK into the live turn's evidence
+            # (cross-request: this endpoint runs in a different task than the
+            # stream). turn_id comes from the frontend's correlation echo; if the
+            # turn already ended / wrong worker, this is a graceful no-op.
+            _ack_turn_id = (ack.correlation or {}).get("turn_id")
+            if _ack_turn_id:
+                record_map_action_acked_by_turn(_ack_turn_id, ack.action_id, ack.status)
             continue
         if snapshot_stale:
             # An append landed since the snapshot — an in-batch duplicate of

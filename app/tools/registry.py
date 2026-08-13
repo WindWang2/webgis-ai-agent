@@ -390,6 +390,20 @@ class ToolRegistry:
                 failure_class=failure_class,
                 recovery_action=recovery_action,
             )
+            # Runtime observability: record this actual tool execution into the
+            # live turn's evidence (single chokepoint — registry.dispatch is the
+            # only path that reaches real tool execution on BOTH the Pi and
+            # legacy engines, and deduped calls return before here). Recorded
+            # AFTER tool_metrics so a failure here never suppresses the metrics
+            # row.
+            try:
+                from app.lib.runtime.evidence import current_turn_evidence
+                _tev = current_turn_evidence()
+                if _tev is not None:
+                    _tev.add_tool_call(duration_ms=duration_ms,
+                                       failure_class=failure_class)
+            except Exception:  # noqa: BLE001
+                pass
             cache_hit_var.reset(token)
 
         return result
@@ -398,8 +412,16 @@ class ToolRegistry:
         """执行工具，包含 Pydantic 校验与透明解引用"""
         from app.tools._utils import std_error_response
 
-        if name not in self._tools:
+        # PERF/H1: resolve name → (func, meta, model) ONCE. The prior code
+        # re-resolved _tools[name] / _metadata.get(name) / _models.get(name) at
+        # four separate sites (existence check, signature probe, execution,
+        # policy read). All are O(1) but the repetition is needless work on the
+        # dispatch hot path and obscures intent.
+        tool_func = self._tools.get(name)
+        if tool_func is None:
             return std_error_response(f"未知工具: {name}", code="UNKNOWN_TOOL")
+        meta = self._metadata.get(name, {})
+        model = self._models.get(name)
 
         if isinstance(arguments, str):
             try:
@@ -430,7 +452,6 @@ class ToolRegistry:
                 )
 
         # Pydantic 语义校验
-        model = self._models.get(name)
         if model:
             try:
                 validated_args = model.model_validate(arguments)
@@ -464,13 +485,11 @@ class ToolRegistry:
 
         # 执行函数
         # 探测函数签名，如果需要 session_id 则传入
-        sig = inspect.signature(self._tools[name])
+        sig = inspect.signature(tool_func)
         if "session_id" in sig.parameters:
             arguments["session_id"] = session_id
 
         try:
-            tool_func = self._tools[name]
-            meta = self._metadata.get(name, {})
             policy = meta.get("execution_policy", ToolExecutionPolicy.THREAD)
 
             if policy == ToolExecutionPolicy.INLINE:

@@ -222,7 +222,34 @@ def record_tool_call(
     plan_id / plan_revision / step_id / failure_class / recovery_action
     (design-v3 §6) are additive — registry.dispatch fills them from the
     process-local plan cache when a plan is active and on classified failures.
+
+    OBSERVABILITY: correlation fields (tool_call_id / run_id / turn_id) are
+    resolved from the runtime context when the caller omits them — the registry
+    call site passes none, so without this fallback every JSONL row was NULL on
+    those three fields and a tool call could never be joined back to its turn.
+    The runtime ContextVar (RuntimeContext) + JobOrigin are both bound during
+    dispatch (tool_pipeline.use_origin + chat/bridge bind_runtime_context), and
+    asyncio.to_thread copies the context into sync-tool worker threads.
     """
+    if tool_call_id is None or run_id is None or turn_id is None:
+        try:
+            from app.services.jobs.context import current_origin
+            _origin = current_origin()
+        except Exception:  # noqa: BLE001
+            _origin = None
+        try:
+            from app.lib.runtime.context import current_runtime_context
+            _rt = current_runtime_context()
+        except Exception:  # noqa: BLE001
+            _rt = None
+        if tool_call_id is None and _origin is not None:
+            tool_call_id = _origin.tool_call_id
+        if run_id is None:
+            run_id = (_origin.run_id if _origin else None) or (_rt.run_id if _rt else None)
+        if turn_id is None:
+            turn_id = (_origin.turn_id if _origin else None) or (_rt.turn_id if _rt else None)
+        if session_id is None:
+            session_id = (_origin.session_id if _origin else None) or (_rt.session_id if _rt else None)
     row = {
         "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
         "tool": tool,
@@ -251,7 +278,8 @@ def record_tool_call(
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[tool_metrics] enqueue failed (dropping row): {type(e).__name__}: {e}")
 
-    _update_aggregator(tool, duration_ms, cache_hit, error, result_bytes=result_bytes)
+    _update_aggregator(tool, duration_ms, cache_hit, error,
+                       failure_class=failure_class, result_bytes=result_bytes)
 
 
 def record_event(event: ToolCallEvent) -> None:
@@ -293,19 +321,29 @@ def _percentiles(counts: list[int], total: int) -> dict[str, float]:
 
 
 def _update_aggregator(tool: str, duration_ms: int, cache_hit: bool, error: Optional[str],
+                       failure_class: Optional[str] = None,
                        result_bytes: int = 0) -> None:
     global _call_counter
     with _lock:
-        slot = _aggregator.setdefault(tool, [0, 0, 0, 0, 0, 0])
-        # [count, total_ms, max_ms, hit_count, error_count, total_result_bytes]
+        slot = _aggregator.setdefault(tool, [0, 0, 0, 0, 0, 0, 0])
+        # [count, total_ms, max_ms, hit_count, error_count, total_result_bytes, cancelled_count]
+        # Defensive: a slot created before this field existed is only 6 wide.
+        if len(slot) < 7:
+            slot.append(0)
         slot[0] += 1
         slot[1] += duration_ms
         if duration_ms > slot[2]:
             slot[2] = duration_ms
         if cache_hit:
             slot[3] += 1
-        if error:
+        # OBSERVABILITY: cancellation is not a failure (FailureClass.cancelled).
+        # Don't let an OperationCancelled inflate error_count — but DO count it
+        # separately (cancelled_count) so cancellation storms stay visible.
+        is_cancelled = (failure_class == "cancelled")
+        if error and not is_cancelled:
             slot[4] += 1
+        if is_cancelled:
+            slot[6] += 1
         slot[5] += result_bytes
         bins = _hist.setdefault(tool, [0] * 33)
         bins[_bin_index(duration_ms)] += 1
@@ -331,6 +369,7 @@ def aggregator_snapshot() -> dict:
                 "hit_count": v[3],
                 "error_count": v[4],
                 "total_result_bytes": v[5],
+                "cancelled_count": v[6] if len(v) > 6 else 0,
                 **_percentiles(_hist.get(t, []), v[0]),
             }
             for t, v in _aggregator.items()

@@ -157,14 +157,18 @@ def test_telemetry_summary_separates_rates_from_counts():
     summary = harness.get_telemetry_summary()
     assert "rates" in summary
     assert "counts" in summary
-    # Rates are 0-100 percentages.
+    # Rates are 0-100 percentages WHEN evaluated; null (not 100.0) when there is
+    # no positive evidence — "missing evidence ≠ success". An ``evaluated`` map
+    # says which rates had evidence, and null-ness MUST match evaluated=False.
+    assert "evaluated" in summary
     assert "MapSpecValidity" in summary["rates"]
     assert "ErrorRecoveryRate" in summary["rates"]
-    for v in summary["rates"].values():
-        assert 0.0 <= v <= 100.0
+    for name, v in summary["rates"].items():
+        assert v is None or 0.0 <= v <= 100.0
+        # invariant: a rate is null exactly when it was not evaluated
+        assert (v is None) == (not summary["evaluated"][name])
     # Counts are raw integers-as-floats, NOT in rates.
     assert summary["counts"]["ToolCallsCount"] == 3.0
-    assert summary["counts"]["ExceptionsCount"] == 1.0
     assert "ToolCallsCount" not in summary["rates"]
 
 

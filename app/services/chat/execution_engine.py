@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 import uuid
 from typing import AsyncGenerator, Optional, Any, TYPE_CHECKING
 
@@ -44,8 +45,30 @@ from app.services.tool_dispatch_service import (
     is_suspicious_result as _is_suspicious_result_fn,
 )
 from app.services.chat.tool_pipeline import ToolExecutionPipeline, ToolExecutionResult
+from app.lib.runtime import context as rt_ctx
+from app.lib.runtime.evidence import (
+    Outcome,
+    TurnEvidence,
+    TURN_EVIDENCE,
+    bind_turn_evidence,
+    current_turn_evidence,
+    emit_turn_summary,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _settle_cancel() -> None:
+    """Mark the live turn's outcome CANCELLED on a cooperative cancel.
+
+    The legacy round loops return a normal "任务已取消" dict on cancel (not an
+    exception), so without this the outer turn would settle SUCCEEDED — the
+    exact "error counted as success" failure this PR prevents. No-op when no
+    turn evidence is bound (e.g. subagent / plan-only paths).
+    """
+    _ev = current_turn_evidence()
+    if _ev is not None:
+        _ev.settle(Outcome.CANCELLED)
 
 # 计划自身 ref 的判定（P2-6 / recovery P2）：plan-mode 计划以 ref:plan-* 存，
 # canonical 计划经别名 plan-current / plan-id:* 寻址。它们只代表"计划存在"，
@@ -792,19 +815,43 @@ class ChatExecutionEngine:
             _task = asyncio.current_task()
             if _task is not None:
                 self._active_turn_tasks[session_id] = _task
-            try:
-                return await self._chat_locked(
-                    message, session_id, messages, skill_name, user_id, project_id,
-                )
-            finally:
-                # design-v3：把本进程 canonical 计划（含打勾进度）持久化到 store。
-                await self._flush_plan(session_id)
-                # P1: the turn's cleanup drained — deregister the turn task so
-                # clear_session's quiesce doesn't wait on a finished turn.
-                self._active_turn_tasks.pop(session_id, None)
-                # C-F12: bound the in-memory tail once the turn's appends are
-                # complete (every exit path — return, exception, cancel).
-                self._trim_session_tail(messages)
+            # Runtime observability: bind turn identity + evidence for the whole
+            # legacy turn (retires "run_id == session_id"). tool_metrics / job
+            # rows inherit turn_id/run_id via W4/W5; the round loop records
+            # context/LLM timing into the evidence accumulator.
+            turn_id = rt_ctx.new_turn_id()
+            run_id = rt_ctx.new_run_id()
+            _pctx = rt_ctx.current_runtime_context()
+            rt_ev = TurnEvidence(
+                request_id=_pctx.request_id if _pctx else None,
+                session_id=session_id, turn_id=turn_id, run_id=run_id,
+            )
+            with rt_ctx.bind_runtime_context(turn_id=turn_id, run_id=run_id), bind_turn_evidence(rt_ev):
+                TURN_EVIDENCE.register(rt_ev)
+                try:
+                    result = await self._chat_locked(
+                        message, session_id, messages, skill_name, user_id, project_id,
+                    )
+                    rt_ev.settle(Outcome.SUCCEEDED)
+                    return result
+                except asyncio.CancelledError:
+                    rt_ev.settle(Outcome.CANCELLED)
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    rt_ev.settle(Outcome.FAILED, failure_class=type(exc).__name__, detail=str(exc)[:200])
+                    raise
+                finally:
+                    # design-v3：把本进程 canonical 计划（含打勾进度）持久化到 store。
+                    await self._flush_plan(session_id)
+                    # P1: the turn's cleanup drained — deregister the turn task so
+                    # clear_session's quiesce doesn't wait on a finished turn.
+                    self._active_turn_tasks.pop(session_id, None)
+                    # C-F12: bound the in-memory tail once the turn's appends are
+                    # complete (every exit path — return, exception, cancel).
+                    self._trim_session_tail(messages)
+                    rt_ev.mark_ended()
+                    emit_turn_summary(rt_ev)
+                    TURN_EVIDENCE.remove(turn_id)
 
     async def _flush_plan(self, session_id: str) -> None:
         """把活跃 canonical 计划持久化（advance_step 的 done 标志写回 store）。
@@ -849,15 +896,23 @@ class ChatExecutionEngine:
         try:
             for _ in range(self.max_rounds):
                 if self.tracker.is_cancelled(task.id):
+                    _settle_cancel()  # cooperative cancel ≠ success
                     return {"session_id": session_id, "content": "任务已取消", **({"owner_token": owner_token} if owner_token else {})}
 
                 # tools 先选（含 tools payload 软计入估算），再组装上下文
                 tools = self._select_tools(session_id, messages)
+                _t_ctx = time.perf_counter()
                 messages_with_context = await self._compose_request_messages(
                     session_id, messages, tools=tools,
                 )
+                _ev = current_turn_evidence()
+                if _ev is not None:
+                    _ev.add_context_ms((time.perf_counter() - _t_ctx) * 1000.0)
 
+                _t_llm = time.perf_counter()
                 response = await self._call_llm(messages_with_context, tools)
+                if _ev is not None:
+                    _ev.add_llm_round(total_ms=(time.perf_counter() - _t_llm) * 1000.0)
                 choice = response.get("choices", [{}])[0]
                 assistant_msg = choice.get("message", {})
 
@@ -996,6 +1051,7 @@ class ChatExecutionEngine:
                         # F9: 已完成工具的消息已在上方落库；这里只补真正孤儿的
                         # tool_call（幂等），随后以取消收尾本轮。
                         await self._repair_orphaned_tool_calls(session_id, messages)
+                        _settle_cancel()  # cooperative cancel ≠ success
                         return {"session_id": session_id, "content": "任务已取消", **({"owner_token": owner_token} if owner_token else {})}
                     continue
                 else:
@@ -1112,7 +1168,25 @@ class ChatExecutionEngine:
             await self._save_msg_async(session_id, "user", message)
 
             task = self.tracker.create(session_id, message)
+            # Runtime observability: bind turn identity + evidence for the legacy
+            # stream turn (manual CM enter/exit — the generator body is too large
+            # to re-indent; reset happens in the outer finally, which is correct
+            # for ContextVar token reset under any exit path).
+            turn_id = rt_ctx.new_turn_id()
+            run_id = rt_ctx.new_run_id()
+            _pctx = rt_ctx.current_runtime_context()
+            rt_ev = TurnEvidence(
+                request_id=_pctx.request_id if _pctx else None,
+                session_id=session_id, turn_id=turn_id, run_id=run_id,
+            )
+            _rt_cm = rt_ctx.bind_runtime_context(turn_id=turn_id, run_id=run_id)
+            _tev_cm = bind_turn_evidence(rt_ev)
+            _rt_cm.__enter__()
+            _tev_cm.__enter__()
             try:
+                # register inside the try so a raise here still reaches the
+                # finally that exits the CMs (no ContextVar leak window).
+                TURN_EVIDENCE.register(rt_ev)
                 owner_token = self.get_session_owner_token(session_id)
                 task_start_data = {"task_id": task.id, "session_id": session_id}
                 if owner_token:
@@ -1168,14 +1242,19 @@ class ChatExecutionEngine:
                 for round_index in range(self.max_rounds):
                     # tools 先选（含 tools payload 软计入估算），再组装上下文
                     tools = self._select_tools(session_id, messages)
+                    _t_ctx = time.perf_counter()
                     messages_with_context = await self._compose_request_messages(
                         session_id, messages, project_id=project_id, tools=tools,
                     )
+                    _ev = current_turn_evidence()
+                    if _ev is not None:
+                        _ev.add_context_ms((time.perf_counter() - _t_ctx) * 1000.0)
 
                     if self.tracker.is_cancelled(task.id):
                         pf = _maybe_plan_finalized_event()
                         if pf:
                             yield pf
+                        _settle_cancel()  # cooperative cancel ≠ success
                         yield sse_event("task_cancelled", {"task_id": task.id})
                         return
 
@@ -1188,8 +1267,14 @@ class ChatExecutionEngine:
                     # 语义不变。done 到来时 flush 尾部，保证流式内容完整到达。
                     from app.utils.sse import SSEBatcher
                     token_batcher = SSEBatcher(max_events=32, max_delay_s=0.08)
+                    _t_llm = time.perf_counter()
+                    _ttft_ms: Optional[float] = None
                     async for event_type, event_data in self._call_llm_stream(messages_with_context, tools):
                         if event_type == "token":
+                            if _ttft_ms is None:
+                                _ttft_ms = (time.perf_counter() - _t_llm) * 1000.0
+                                if _ev is not None:
+                                    _ev.mark_first_event()
                             streamed_content_parts.append(event_data["content"])
                             token_batcher.push(sse_event("token", {
                                 "content": event_data["content"],
@@ -1203,6 +1288,12 @@ class ChatExecutionEngine:
                             for chunk in token_batcher.flush():
                                 yield chunk
                             assistant_msg = event_data["message"]
+
+                    if _ev is not None:
+                        _ev.add_llm_round(
+                            total_ms=(time.perf_counter() - _t_llm) * 1000.0,
+                            ttft_ms=_ttft_ms,
+                        )
 
                     standard_calls = assistant_msg.get("tool_calls") or []
                     xml_calls: list[dict] = []
@@ -1514,6 +1605,7 @@ class ChatExecutionEngine:
                                     pf = _maybe_plan_finalized_event()
                                     if pf:
                                         yield pf
+                                    _settle_cancel()  # cooperative cancel ≠ success
                                     yield sse_event("task_cancelled", {"task_id": task.id})
                                     return
                         finally:
@@ -1560,6 +1652,7 @@ class ChatExecutionEngine:
                         if pf:
                             yield pf
                         self.tracker.complete_task(task.id)
+                        rt_ev.settle(Outcome.SUCCEEDED)
                         yield sse_event("task_complete", {
                             "task_id": task.id,
                             "step_count": len(task.steps),
@@ -1570,6 +1663,7 @@ class ChatExecutionEngine:
                         return
 
                 self.tracker.fail_task(task.id, "达到最大工具调用轮数")
+                rt_ev.settle(Outcome.FAILED, failure_class="max_rounds")
                 pf = _maybe_plan_finalized_event()
                 if pf:
                     yield pf
@@ -1600,12 +1694,14 @@ class ChatExecutionEngine:
                     )
                 except (asyncio.TimeoutError, asyncio.CancelledError):
                     pass
+                rt_ev.settle(Outcome.CANCELLED)
                 raise
             except Exception:
                 # B-P2-17: 流中异常同样终止任务（与 _chat_locked 一致）。
                 task_info = self.tracker.get(task.id)
                 if task_info is not None and task_info.status == TaskStatus.running:
                     self.tracker.fail_task(task.id, "chat_stream exception")
+                rt_ev.settle(Outcome.FAILED, failure_class="chat_stream_exception")
                 raise
             finally:
                 # design-v3：把本进程 canonical 计划（含打勾进度）持久化到 store。
@@ -1617,6 +1713,14 @@ class ChatExecutionEngine:
                 # are complete (every exit path — done, cancelled, max rounds,
                 # disconnect/exception via generator close).
                 self._trim_session_tail(messages)
+                # Runtime observability: exit the bound CMs (reset ContextVars),
+                # emit the diagnostic summary, and unregister the evidence. If no
+                # terminal point settled an outcome, it stays None (honest).
+                rt_ev.mark_ended()
+                emit_turn_summary(rt_ev)
+                TURN_EVIDENCE.remove(turn_id)
+                _tev_cm.__exit__(None, None, None)
+                _rt_cm.__exit__(None, None, None)
 
     async def _dispatch_tool(
         self,

@@ -922,9 +922,12 @@ async def test_stream_prompt_mints_turn_id_and_threads_into_records(monkeypatch)
     assert len(harness.sse_events) >= 2
     for ev in harness.sse_events:
         assert ev["turn_id"].startswith("turn-")
-        assert ev["run_id"] == "turn-sess"
+        # run_id is now a first-class run handle (run-<hex>), not the session id
+        # (the prior "run_id == session_id" reuse is retired — see RuntimeContext).
+        assert ev["run_id"].startswith("run-")
     # 同一 turn 内 turn_id 一致
     assert len({ev["turn_id"] for ev in harness.sse_events}) == 1
+    assert len({ev["run_id"] for ev in harness.sse_events}) == 1
 
 
 @pytest.mark.asyncio

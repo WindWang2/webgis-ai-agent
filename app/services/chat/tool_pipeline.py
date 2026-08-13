@@ -12,6 +12,7 @@ from typing import Any, Optional, Callable
 from app.tools.registry import ToolRegistry
 from app.services.jobs.cancellation import OperationCancelled, use_token
 from app.services.jobs.context import JobOrigin, use_origin
+from app.lib.runtime.context import current_runtime_context
 from app.services.task_tracker import TaskTracker, TaskStep
 from app.services.tool_dispatch_service import ToolDispatchService, ToolDispatchResult
 
@@ -110,10 +111,17 @@ class ToolExecutionPipeline:
         # 线程里，几十个 GIS 工具签名不用改。origin 让工具内部创建的 durable job
         # 自动带上 session/owner/agent step 关联。
         cancel_token = self.tracker.cancel_token_for(task_id) if task_id else None
+        # Runtime observability (W5): inherit run_id/turn_id from the active
+        # RuntimeContext so durable jobs spawned by this tool are linkable to the
+        # owning turn (retires the always-NULL run_id/turn_id on job rows — the
+        # new_run_id/new_turn_id helpers in jobs.context had zero callers).
+        _rt = current_runtime_context()
         origin = JobOrigin(
             session_id=session_id or None,
             owner_id=owner_id,
             owner_token=owner_token,
+            run_id=(_rt.run_id if _rt else None),
+            turn_id=(_rt.turn_id if _rt else None),
             agent_task_id=task_id,
             agent_step_id=(pre_created_step.id if pre_created_step is not None else None),
             tool_call_id=tool_call_id or None,

@@ -325,9 +325,14 @@ class WorkflowEngine:
                     step_spec, step_outputs, bound_inputs
                 )
 
+                # OBSERVABILITY/SEC-REDACT: log only structural fingerprints of the
+                # args (key names + a bounded size estimate), NEVER the values —
+                # tool_args can carry inline GeoJSON / coordinates / large rasters
+                # passed as step inputs, which must not reach INFO logs.
+                _arg_keys = sorted(tool_args.keys()) if isinstance(tool_args, dict) else []
                 logger.info(
-                    "[WorkflowEngine] step '%s' tool '%s' v=%s args=%s",
-                    step_id, tool_name, tool_version, tool_args,
+                    "[WorkflowEngine] step '%s' tool '%s' v=%s arg_keys=%s",
+                    step_id, tool_name, tool_version, _arg_keys,
                 )
                 tool_result = await tool_registry.dispatch(tool_name, tool_args, session_id=session_id)
 

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import logging
 import re
+import time
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from app.lib.harness.evidence import (
@@ -414,6 +416,9 @@ class PiAgentHarness:
         """
         if not session_id:
             return {}
+        # OBSERVABILITY (W7): stamp issued-at so ack_wait (issued → terminal ACK)
+        # is computable when the closed loop is wired. Without a timestamp the
+        # issued side carried no time evidence at all.
         entry = {
             "action_id": action_id,
             "command": command,
@@ -421,6 +426,8 @@ class PiAgentHarness:
             "run_id": self._active_run_id,
             "turn_id": turn_id or self._active_turn_id,
             "tool_call_id": tool_call_id,
+            "issued_at_monotonic": time.monotonic(),
+            "issued_at_ts": datetime.now(timezone.utc).isoformat(),
             "requested": dict(requested) if isinstance(requested, dict) else {},
         }
         self._append_capped(self.map_actions_issued, entry)
@@ -880,22 +887,40 @@ class PiAgentHarness:
         well_formed = sum(1 for a in non_succeeded if _ack_is_well_formed(a))
         return min(100.0, max(0.0, (well_formed / len(non_succeeded)) * 100.0))
 
-    def get_telemetry_summary(self) -> Dict[str, Dict[str, float]]:
+    def get_telemetry_summary(self) -> Dict[str, Any]:
+        """Production telemetry digest (consumed by /metrics/digest).
+
+        OBSERVABILITY (false-success fix): a rate with NO positive evidence is
+        emitted as ``null`` (not 100.0), and an additive ``evaluated`` map says
+        which rates actually had evidence. "missing evidence ≠ success" — a null
+        rate cannot be read as 100% by any programmatic consumer (a gate, an
+        alert). The legacy compute_* still return 100.0 for the gate-facing
+        evaluate_all path; this production surface overrides to null.
+        """
+        exc_count = sum(1 for e in self.exceptions if e.get("session_id") == self.session_id)
+        mutations = [m for m in self.mapspec_mutations if m.get("session_id") == self.session_id]
+        cursors = [c for c in self.ref_cursors if c.get("session_id") == self.session_id]
+        eval_mapspec = len(mutations) > 0
+        eval_cursor = len(cursors) > 0
+        eval_recovery = exc_count > 0
         return {
             "rates": {
-                "MapSpecValidity": round(self.compute_mapspec_validity(), 2),
-                "CursorResolutionRate": round(self.compute_cursor_resolution_rate(), 2),
-                "ErrorRecoveryRate": round(self.compute_error_recovery_rate(), 2),
+                # null when unevaluated; round when there is evidence.
+                "MapSpecValidity": round(self.compute_mapspec_validity(), 2) if eval_mapspec else None,
+                "CursorResolutionRate": round(self.compute_cursor_resolution_rate(), 2) if eval_cursor else None,
+                "ErrorRecoveryRate": round(self.compute_error_recovery_rate(), 2) if eval_recovery else None,
+            },
+            "evaluated": {
+                "MapSpecValidity": eval_mapspec,
+                "CursorResolutionRate": eval_cursor,
+                "ErrorRecoveryRate": eval_recovery,
             },
             "counts": {
                 "ToolCallsCount": float(sum(
                     1 for tc in self.tool_calls
                     if tc.get("session_id") == self.session_id
                 )),
-                "ExceptionsCount": float(sum(
-                    1 for e in self.exceptions
-                    if e.get("session_id") == self.session_id
-                )),
+                "ExceptionsCount": float(exc_count),
             },
         }
 
