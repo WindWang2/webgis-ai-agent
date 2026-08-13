@@ -158,6 +158,15 @@ export function useMapBridge(
         const response = body as { repair_action?: MapActionPayload } | null;
         const repair = response?.repair_action;
         if (responseSessionId !== sessionIdRef.current || !repair) return false;
+        // Observation path (#358) is latest-generation-wins. A retried ACK
+        // must not apply a repair whose MapSpec fingerprint is no longer live.
+        const repairFingerprint = repair.params?.mapspec_fingerprint;
+        if (typeof repairFingerprint === 'string' && repairFingerprint) {
+          const live = useHudStore.getState().layers.some(
+            (layer) => layer._mapspecFingerprint === repairFingerprint,
+          );
+          if (!live) return false;
+        }
         const repairId = repair.action_id;
         if (repairId) {
           const key = `${responseSessionId}:${repairId}`;
