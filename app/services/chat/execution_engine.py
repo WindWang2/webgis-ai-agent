@@ -327,29 +327,27 @@ class ChatExecutionEngine:
 
     async def _generate_title(self, session_id: str, first_user_message: str):
         """异步生成对话标题"""
-        import httpx as _httpx
         title = None
         try:
-            payload = {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": "根据用户的首条消息，生成一个简短的对话主题标题。要求：1) 不超过12个字 2) 突出空间分析的核心对象（地名、分析类型等）3) 不要使用引号、书名号或多余的标点。只输出标题文本，不要任何额外内容。"},
-                    {"role": "user", "content": first_user_message[:500]},
-                ],
-                "max_tokens": 64,
-            }
-            async with _httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-                    json=payload,
-                )
-                resp.raise_for_status()
-                choice = resp.json()["choices"][0]
-                msg = choice["message"]
-                title = msg.get("content") or msg.get("reasoning") or msg.get("reasoning_content")
-                if title:
-                    title = title.strip()
+            # Route through the pooled LLM client (call_llm) instead of opening a
+            # one-off httpx.AsyncClient, so title generation reuses the same
+            # keep-alive connection pool as every other LLM call to this provider.
+            cfg = LLMConfig(
+                base_url=self.base_url,
+                model=self.model,
+                api_key=self.api_key,
+                max_tokens=64,
+            )
+            messages = [
+                {"role": "system", "content": "根据用户的首条消息，生成一个简短的对话主题标题。要求：1) 不超过12个字 2) 突出空间分析的核心对象（地名、分析类型等）3) 不要使用引号、书名号或多余的标点。只输出标题文本，不要任何额外内容。"},
+                {"role": "user", "content": first_user_message[:500]},
+            ]
+            resp = await call_llm(cfg, messages)
+            choice = resp["choices"][0]
+            msg = choice["message"]
+            title = msg.get("content") or msg.get("reasoning") or msg.get("reasoning_content")
+            if title:
+                title = title.strip()
 
             if title:
                 title = title.strip('"\'""''《》')

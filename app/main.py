@@ -96,6 +96,17 @@ async def lifespan(app: FastAPI):
     from app.core.network import close_shared_client
     await close_shared_client()
 
+    # Close the pooled LLM provider HTTP clients (httpx). They are reused across
+    # LLM calls for keep-alive connection pooling and must be closed on shutdown
+    # so sockets are released (consistent with close_shared_client above).
+    # Idempotent; failure is best-effort and never blocks shutdown.
+    try:
+        from app.services.chat.llm_client import close_llm_http_clients
+
+        await close_llm_http_clients()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[lifespan] LLM HTTP client close failed: {e}")
+
     # 审计 BUG-03/AGENT-04：Pi bridge subprocess 之前从未在 shutdown 时关闭
     # → 每次重启泄漏一个 node 进程 + reader task。现在显式关闭。
     if USE_NEW_AGENT:
