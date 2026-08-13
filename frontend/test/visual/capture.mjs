@@ -59,6 +59,40 @@ const SURFACES = [
   { name: 'panel-collapsed', tab: '图层', collapse: true },
   { name: 'hud-expanded', tab: '对话', hud: true },
   /*
+    Result Workbench: the results registry is session-scoped and fed only by the
+    chat SSE stream, so these seed it through the production path — the stubbed
+    `/chat/stream` response below replays tool_call + step_result events through
+    the same normalizer that fills the registry on screen. The turn produces
+    five results covering the audit matrix: completed vector w/ metrics + bound
+    layer + long ref, statistic w/ metrics, warning (unreachable facilities),
+    partial (grid too dense) and failed (correction hint).
+  */
+  { name: 'results-empty', tab: '结果' },
+  { name: 'results-list', tab: '结果', seedResults: true },
+  { name: 'results-detail', tab: '结果', seedResults: true, openResult: '热点分析' },
+  { name: 'results-detail-warning', tab: '结果', seedResults: true, openResult: '等时圈分析' },
+  { name: 'results-detail-partial', tab: '结果', seedResults: true, openResult: '核密度表面' },
+  { name: 'results-detail-failed', tab: '结果', seedResults: true, openResult: '时空聚类' },
+  /*
+    Narrowest panel (280px, the resize clamp floor) and widest (420px) via the
+    real keyboard resize path on the drag separator — proves the detail survives
+    both ends of the ContextPanel width range.
+  */
+  {
+    name: 'results-detail-narrow',
+    tab: '结果',
+    seedResults: true,
+    openResult: '热点分析',
+    panelArrows: -6,
+  },
+  {
+    name: 'results-detail-wide',
+    tab: '结果',
+    seedResults: true,
+    openResult: '热点分析',
+    panelArrows: 7,
+  },
+  /*
     Map overlays need layers in the store, and the store is deliberately not on
     `window`. Rather than reach past the app, these two restore a session: the
     real production path (`use-workspace-session`) reads `map-state`, pulls each
@@ -145,6 +179,112 @@ const RESTORED_LAYERS = [
 ];
 
 const NOW = '2026-01-01T08:30:00Z';
+
+/* ── Result Workbench seed turn ───────────────────────────────────────────────
+ *
+ * One chat turn whose SSE replay fills the results registry through the real
+ * normalizer. Refs are deliberately long to exercise truncation; the hotspot
+ * ref also gets a descriptor below so the Output section renders enriched
+ * metadata (count / geometry / bbox / bytes). */
+
+const HOTSPOT_REF = 'ref:hotspot-8f3a2b7c4d5e6f7a8b9c0d1e2f3a4b5c';
+const ISO_REF = 'ref:iso-2c4b6e8a0d1f3a5b7c9e';
+
+function sse(name, payload) {
+  return `event: ${name}\ndata: ${JSON.stringify(payload)}\n\n`;
+}
+
+const toolCall = (name, args) => sse('tool_call', { name, arguments: JSON.stringify(args) });
+
+const RESULTS_SSE_BODY = [
+  sse('session', { session_id: 's-1' }),
+  sse('task_start', { task_id: 't-1', session_id: 's-1' }),
+  sse('token', { content: '正在对商业 POI 执行空间分析…' }),
+  // 1) hotspot — completed vector w/ metrics, legend + visible bound layer (long ref)
+  toolCall('hotspot_analysis', {
+    geojson: HOTSPOT_REF,
+    value_field: 'poi_weight',
+    distance_band: 1000,
+  }),
+  sse('step_result', {
+    task_id: 't-1',
+    step_id: 'sr-hotspot',
+    tool: 'hotspot_analysis',
+    geojson_ref: HOTSPOT_REF,
+    result: {
+      success: true,
+      summary: '已完成商业 POI 热点分析：识别出 12 个显著热点与 7 个冷点，结果已挂载为图层。',
+      bbox: [116.2814, 39.7842, 116.7351, 40.1213],
+      data: { hot_spots_count: 12, cold_spots_count: 7, distance_band_m: 1000 },
+      legend_spec: {
+        type: 'graduated',
+        field: 'gi_bin',
+        breaks: [0, 3, 5, 7, 9],
+        palette: 'RdYlBu',
+        palette_colors: ['#2166ac', '#92c5de', '#f7f7f7', '#f4a582', '#b2182b'],
+      },
+      runtime_patch: { visible: true },
+    },
+  }),
+  // 2) Moran's I — statistic with metrics, no layer
+  toolCall('moran_i', { geojson: 'ref:census-blocks', value_field: 'pop_density' }),
+  sse('step_result', {
+    task_id: 't-1',
+    step_id: 'sr-moran',
+    tool: 'moran_i',
+    result: {
+      success: true,
+      summary: '全局空间自相关计算完成，呈现显著聚类模式。',
+      data: { moran_i: 0.4231, expected_i: -0.0114, p_value: 0.001, pattern: 'Clustered', n_features: 88 },
+    },
+  }),
+  // 3) isochrone — warning (unreachable facilities), hidden layer, params
+  toolCall('isochrone_network', {
+    network_layer: 'ref:road-network',
+    source_points: 'ref:facilities-clinic',
+    travel_time: 15,
+    mode: 'walk',
+  }),
+  sse('step_result', {
+    task_id: 't-1',
+    step_id: 'sr-iso',
+    tool: 'isochrone_network',
+    geojson_ref: ISO_REF,
+    result: {
+      success: true,
+      summary: 'Isochrone built. 3 facility(ies) unreachable (disconnected from the road network).',
+      bbox: [116.1073, 39.7211, 116.8892, 40.1987],
+    },
+  }),
+  // 4) KDE — partial (grid too dense)
+  toolCall('kde_surface', { geojson: 'ref:poi-all', bandwidth: 1200, cell_size: 30 }),
+  sse('step_result', {
+    task_id: 't-1',
+    step_id: 'sr-kde',
+    tool: 'kde_surface',
+    result: {
+      success: true,
+      summary: 'Kernel density surface estimated. Warning: grid too dense, output resampled to 2 m cells.',
+      data: { count: 40320, bandwidth_m: 1200, grid_size: [512, 384], stats: { min: 0.0004, max: 128.4419, mean_density: 6.2041 } },
+    },
+  }),
+  // 5) ST-DBSCAN — failed with correction hint
+  toolCall('st_dbscan', { geojson: 'ref:taxi-trips', eps: 300, min_samples: 8, timestamp_field: 'ts' }),
+  sse('step_result', {
+    task_id: 't-1',
+    step_id: 'sr-stdbscan',
+    tool: 'st_dbscan',
+    result: {
+      success: false,
+      error_type: 'VALIDATION_ERROR',
+      summary: '时间字段解析失败。',
+      correction_hint: '请提供 ISO 8601 格式的时间字段（当前字段 ts 含非数值）。',
+    },
+  }),
+  sse('token', { content: '五个分析步骤已完成，结果已收入结果工作台。' }),
+  sse('task_complete', { task_id: 't-1' }),
+  'data: [DONE]\n\n',
+].join('');
 
 const project = (id, name, description, status = 'active') => ({
   id,
@@ -240,6 +380,26 @@ const template = (id, kind, name, category, description) => ({
  * the shots exercise real information density instead of only empty states.
  */
 const FIXTURES = [
+  // Result Workbench seeding: the chat turn replay above is answered as an SSE
+  // stream (must precede the generic localhost JSON branch in installStubs).
+  // Kept here next to the other fixtures for discoverability; matched by URL in
+  // installStubs, not by this list.
+  // Descriptor for the hotspot ref — the only enriched output (metadata-first).
+  [
+    /\/api\/v1\/layers\/descriptor\//,
+    (url) =>
+      decodeURIComponent(url).includes(HOTSPOT_REF)
+        ? {
+            ref_id: HOTSPOT_REF,
+            feature_count: 1284,
+            geometry_types: ['Polygon'],
+            bbox: [116.2814, 39.7842, 116.7351, 40.1213],
+            mvt_capable: true,
+            raster_capable: false,
+            estimated_bytes: 482304,
+          }
+        : {},
+  ],
   // Session map state drives the layer restore, and therefore the legends.
   // Order matters: these patterns are more specific than the session list below.
   [
@@ -348,11 +508,22 @@ async function installStubs(page) {
     const url = route.request().url();
 
     if (/^https?:\/\/(localhost|127\.0\.0\.1):8000\//.test(url)) {
+      // The seeded chat turn replays as an SSE stream through the production
+      // parser/normalizer (fills the Result Workbench registry).
+      if (/\/api\/v1\/chat\/stream/.test(url)) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          headers: { 'cache-control': 'no-cache' },
+          body: RESULTS_SSE_BODY,
+        });
+      }
       const hit = FIXTURES.find(([re]) => re.test(url));
+      const payload = hit ? (typeof hit[1] === 'function' ? hit[1](url) : hit[1]) : [];
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify(hit ? hit[1] : []),
+        body: JSON.stringify(payload),
       });
     }
 
@@ -405,6 +576,71 @@ async function clickTopBarButton(page, label) {
   return false;
 }
 
+/** Send the seed chat turn — the stubbed stream fills the results registry. */
+async function seedResults(page) {
+  // Chat is the default tab and the panel opens on load; clicking the already
+  // active rail tab would TOGGLE the panel closed, so fill directly. Wait for
+  // hydration rather than assuming the app mounted within the page-settle wait.
+  const input = page.locator('textarea[aria-label="输入空间分析指令"]');
+  try {
+    await input.waitFor({ state: 'visible', timeout: 10000 });
+  } catch {
+    return false;
+  }
+  await input.fill('对商业 POI 做热点、可达性与密度分析');
+  const send = page.locator('button[aria-label="发送消息"]');
+  // A swallowed click here would screenshot the empty state as "success", so
+  // let it throw and surface as a capture failure instead.
+  await send.click({ timeout: 5000 });
+  // Poll for the seeded turn to land (SSE replay + layer auto-mount) rather
+  // than a fixed sleep — deterministic on slow machines. The results LIST only
+  // mounts on the results tab, which isn't open yet; the rail badge count is
+  // the tab-agnostic signal that the registry filled.
+  try {
+    await page.waitForFunction(
+      () => {
+        const tab = document.querySelector('[role="tab"][aria-label*="结果"]');
+        return !!tab && /\d/.test(tab.textContent ?? '');
+      },
+      { timeout: 15000 },
+    );
+  } catch {
+    return false;
+  }
+  // Descriptor enrichment settles shortly after the rows appear.
+  await page.waitForTimeout(1200);
+  return true;
+}
+
+/** Open a result detail by its tool label in the results list. */
+async function openResult(page, label) {
+  const row = page
+    .locator(`ul[aria-label="分析结果列表"] button:has-text("${label}")`)
+    .first();
+  try {
+    await row.waitFor({ state: 'visible', timeout: 10000 });
+  } catch {
+    return false;
+  }
+  await row.click({ timeout: 5000 }).catch(() => {});
+  return true;
+}
+
+/**
+ * Resize the context panel via the keyboard path on the drag separator.
+ * Negative arrowPresses shrink (ArrowLeft), positive grow (ArrowRight).
+ */
+async function resizePanel(page, arrowPresses) {
+  const handle = page.locator('div[role="separator"][aria-label="调整面板宽度"]');
+  if (!(await handle.count())) return false;
+  await handle.focus();
+  for (let i = 0; i < Math.abs(arrowPresses); i += 1) {
+    await page.keyboard.press(arrowPresses < 0 ? 'ArrowLeft' : 'ArrowRight');
+  }
+  await page.waitForTimeout(300);
+  return true;
+}
+
 async function capture() {
   const browser = await chromium.launch({ args: ['--force-color-profile=srgb'] });
   const failures = [];
@@ -417,7 +653,19 @@ async function capture() {
         deviceScaleFactor: 1,
         reducedMotion: 'reduce',
         locale: 'zh-CN',
+        // Pinned timezone + a wall clock anchored to NOW: result timestamps
+        // render identically across runs/machines so before/after diffs show
+        // real changes, not clock noise. Elapsed time keeps flowing normally.
+        timezoneId: 'Asia/Shanghai',
       });
+      await context.addInitScript(
+        ({ anchor }) => {
+          const realNow = Date.now;
+          const t0 = realNow();
+          Date.now = () => anchor + (realNow() - t0);
+        },
+        { anchor: Date.parse('2026-01-01T08:30:00Z') },
+      );
       const page = await context.newPage();
       await installStubs(page);
       page.on('pageerror', (e) => failures.push(`${vp.name}/${theme}: ${e.message}`));
@@ -441,8 +689,17 @@ async function capture() {
             if (await entry.count()) await entry.click({ timeout: 5000 }).catch(() => {});
             await page.waitForTimeout(1400);
           }
+          if (surface.seedResults && !(await seedResults(page))) {
+            throw new Error('seed chat input not found — results registry not populated');
+          }
           if (surface.tab) await clickRailTab(page, surface.tab);
           if (surface.button) await clickTopBarButton(page, surface.button);
+          if (surface.openResult && !(await openResult(page, surface.openResult))) {
+            throw new Error(`result row "${surface.openResult}" not found`);
+          }
+          if (surface.panelArrows !== undefined && !(await resizePanel(page, surface.panelArrows))) {
+            throw new Error('panel resize separator not found');
+          }
           if (surface.collapse) await clickRailTab(page, surface.tab);
           if (surface.hud) {
             const chevron = page
@@ -472,6 +729,9 @@ async function capture() {
   if (failures.length) {
     console.log(`[visual] ${failures.length} issue(s):`);
     for (const f of failures.slice(0, 40)) console.log(`  - ${f}`);
+    // A broken seed/selector must fail the run, not just print — otherwise a
+    // wrong-state screenshot ships as a golden.
+    process.exitCode = 1;
   }
 }
 

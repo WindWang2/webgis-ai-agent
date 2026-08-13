@@ -41,6 +41,10 @@ const STATUS_MAP: Record<string, { label: string; tone: StatusTone; pulse?: bool
   failed: { label: '失败', tone: 'critical' },
   cancelled: { label: '已取消', tone: 'neutral' },
   stale: { label: '已过期', tone: 'warning' },
+  // 结果工作台：分析结果带着告警完成时，语义是 warning 而不是中性灰——
+  // 否则「部分完成 / 含告警」与「未知」不可区分（V4 审计 P0）。
+  partial: { label: '部分完成', tone: 'warning' },
+  warning: { label: '含告警', tone: 'warning' },
   // 通用语义（图层 / 数据源同步状态等）
   active: { label: '活跃', tone: 'info', pulse: true },
   ok: { label: '正常', tone: 'success' },

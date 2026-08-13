@@ -10,6 +10,13 @@
  *
  * Truthfulness: CRS renders "未知" when unknown; feature count renders "未报告"
  * when not backed by evidence; warnings are always visible (never buried in JSON).
+ *
+ * UI V4 — header is a persistent compact bar outside the scroll area (context
+ * survives long scrolls); 输出与地图 leads with a layer strip that fuses the
+ * live visibility state with the show/hide + zoom controls, so the result→map
+ * relationship is one visual unit; analytical suggestions render as secondary
+ * text intents, never mixed with map controls. A failed result drops the
+ * output/actions sections — its content is the correction hint.
  */
 import { useCallback, useMemo } from 'react';
 import {
@@ -41,20 +48,13 @@ interface ResultDetailProps {
   onSend: (text: string) => void;
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  completed: '已完成',
-  failed: '失败',
-  partial: '部分完成',
-  warning: '完成（含告警）',
-  running: '运行中',
-  unknown: '未知',
-};
-
 const WARNING_VARIANT: Record<string, 'info' | 'warning' | 'error'> = {
   info: 'info',
   warning: 'warning',
   error: 'error',
 };
+
+const MAP_ACTION_KINDS: readonly SuggestedAction['kind'][] = ['show_on_map', 'hide', 'zoom'];
 
 function formatTime(ms?: number): string {
   if (!ms) return '';
@@ -80,8 +80,8 @@ function formatBytes(bytes?: number): string {
 function Section({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-1.5" aria-label={title}>
-      <div className="flex items-center justify-between">
-        <h4 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--theme-text-muted)]">{title}</h4>
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="eyebrow">{title}</h4>
         {action}
       </div>
       {children}
@@ -90,17 +90,24 @@ function Section({ title, children, action }: { title: string; children: React.R
 }
 
 function MetricItem({ metric }: { metric: ResultMetric }) {
+  const primary = metric.emphasis === 'primary';
+  if (primary) {
+    return (
+      <div className="col-span-2 flex items-baseline justify-between gap-2 rounded-sm border border-status-accent-border px-2 py-1.5">
+        <span className="text-caption text-ink-muted">{metric.label}</span>
+        <span className="min-w-0 truncate font-mono text-heading text-ink">
+          {metric.value}
+          {metric.unit ? <span className="ml-1 text-micro font-normal text-ink-muted">{metric.unit}</span> : null}
+        </span>
+      </div>
+    );
+  }
   return (
-    <div
-      className={clsx(
-        'flex flex-col rounded-md border border-[var(--theme-border-subtle)] bg-[var(--theme-bg-subtle)] px-2 py-1.5',
-        metric.emphasis === 'primary' && 'border-[var(--agent-accent,#16a34a)]/40',
-      )}
-    >
-      <span className="text-[10px] text-[var(--theme-text-muted)]">{metric.label}</span>
-      <span className={clsx('font-mono text-[var(--theme-text-primary)]', metric.emphasis === 'primary' ? 'text-[15px]' : 'text-[13px]')}>
+    <div className="flex items-baseline justify-between gap-2 px-0.5">
+      <span className="min-w-0 truncate text-caption text-ink-muted">{metric.label}</span>
+      <span className="min-w-0 truncate font-mono text-body text-ink">
         {metric.value}
-        {metric.unit ? <span className="ml-0.5 text-[10px] text-[var(--theme-text-muted)]">{metric.unit}</span> : null}
+        {metric.unit ? <span className="ml-1 text-micro text-ink-muted">{metric.unit}</span> : null}
       </span>
     </div>
   );
@@ -111,8 +118,13 @@ function WarningItem({ warning }: { warning: ResultWarning }) {
 }
 
 export function ResultDetail({ result, sessionId, ownerToken, onBack, onSend }: ResultDetailProps) {
+  // A failed result has no inspectable output — its content is the correction
+  // hint. Skip the descriptor enrichment for it (nothing to enrich) and drop
+  // the output/actions sections below instead of rendering rows of 未报告.
+  const failed = result.status === 'failed';
+
   // Lazy metadata-first enrichment (no full GeoJSON). No-op when already enriched.
-  useResultDescriptor(result, sessionId, ownerToken);
+  useResultDescriptor(failed ? null : result, sessionId, ownerToken);
 
   const layers = useHudStore((s) => s.layers);
   const updateLayer = useHudStore((s) => s.updateLayer);
@@ -139,13 +151,20 @@ export function ResultDetail({ result, sessionId, ownerToken, onBack, onSend }: 
   const handleAction = useCallback(
     (action: SuggestedAction) => {
       if (!action.available) return;
+      // Resolve through the bound layer's real id (not the raw ref) so the
+      // `_refId` binding the UI honors is the same one the writes target.
+      const layerId = boundLayer?.id ?? ref;
+      const needsLayer = action.kind === 'show_on_map' || action.kind === 'hide' || action.kind === 'zoom';
+      if (needsLayer && !layerId) return;
       switch (action.kind) {
         case 'show_on_map':
         case 'hide':
-          if (ref) updateLayer(ref, { visible: !hasVisibleLayer });
+          // Absolute value from the action kind: two rapid clicks before a
+          // re-render must not compute the same target twice.
+          updateLayer(layerId, { visible: action.kind === 'show_on_map' });
           break;
         case 'zoom':
-          if (ref) focusLayer(ref);
+          focusLayer(layerId);
           break;
         case 'style':
           setActiveLeftTab('layers');
@@ -167,7 +186,7 @@ export function ResultDetail({ result, sessionId, ownerToken, onBack, onSend }: 
           break;
       }
     },
-    [ref, hasVisibleLayer, updateLayer, focusLayer, setActiveLeftTab, onSend, result.toolLabel],
+    [ref, boundLayer, updateLayer, focusLayer, setActiveLeftTab, onSend, result.toolLabel],
   );
 
   const crsLabel = output?.crs ?? '未知';
@@ -176,175 +195,237 @@ export function ResultDetail({ result, sessionId, ownerToken, onBack, onSend }: 
   const geomLabel = output?.geometryTypes?.length ? output.geometryTypes.join('、') : '未报告';
   const bboxLabel = output?.bbox ? output.bbox.map((n) => n.toFixed(3)).join(', ') : '未报告';
 
+  const showOutputSection = !failed;
+  // Partition once: map controls render with the layer strip they act on;
+  // analytical intents are a separate, secondary group.
+  const mapActions = actions.filter((a) => MAP_ACTION_KINDS.includes(a.kind));
+  const toggleAction = mapActions.find((a) => a.kind === 'show_on_map' || a.kind === 'hide');
+  const zoomAction = mapActions.find((a) => a.kind === 'zoom');
+  const analyticalActions = actions.filter((a) => !MAP_ACTION_KINDS.includes(a.kind));
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-2.5 text-[13px]">
-      {/* Header */}
-      <div className="flex items-center gap-1.5">
-        <IconButton label="返回结果列表" icon={ArrowLeft} onClick={onBack} />
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* Header — persistent compact bar (outside the scroll area, so the
+          result identity + status survive any scroll depth). */}
+      <header className="flex shrink-0 items-center gap-1.5 border-b border-edge-subtle px-panel py-1">
+        <IconButton label="返回结果列表" icon={ArrowLeft} size="sm" onClick={onBack} />
         <div className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate font-medium text-[var(--theme-text-primary)]">{result.toolLabel}</span>
-          <span className="truncate text-[11px] text-[var(--theme-text-muted)]">
-            {familyLabel(result.family)} · {formatTime(result.capturedAt)}
+          <span className="truncate text-title font-medium leading-tight text-ink">{result.toolLabel}</span>
+          <span className="truncate text-caption leading-tight text-ink-muted">
+            {[familyLabel(result.family), formatTime(result.capturedAt)].filter(Boolean).join(' · ')}
           </span>
         </div>
-        <StatusBadge status={result.status} label={STATUS_LABEL[result.status] ?? result.status} />
-        <IconButton label="从列表移除" icon={Trash2} variant="ghost" onClick={() => { removeResult(result.id); onBack(); }} />
-      </div>
+        <StatusBadge status={result.status} />
+        <IconButton
+          label="从列表移除"
+          icon={Trash2}
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            removeResult(result.id);
+            onBack();
+          }}
+        />
+      </header>
 
-      {/* Summary */}
-      {result.summary ? (
-        <p className="rounded-md bg-[var(--theme-bg-subtle)] px-2.5 py-2 text-[12.5px] leading-relaxed text-[var(--theme-text-secondary)]">
-          {result.summary}
-        </p>
-      ) : null}
+      <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-panel py-2 text-body">
+        {/* Summary */}
+        {result.summary ? (
+          <p className="leading-normal text-ink-secondary">{result.summary}</p>
+        ) : null}
 
-      {/* Warnings — always visible, never buried */}
-      {result.warnings.length > 0 ? (
-        <Section title="告警 / 提示">
-          <div className="flex flex-col gap-1.5">
-            {result.warnings.map((w) => (
-              <WarningItem key={w.code} warning={w} />
-            ))}
-          </div>
+        {/* Warnings — always visible, never buried */}
+        {result.warnings.length > 0 ? (
+          <Section title="告警 / 提示">
+            <div className="flex flex-col gap-1.5">
+              {result.warnings.map((w) => (
+                <WarningItem key={w.code} warning={w} />
+              ))}
+            </div>
+          </Section>
+        ) : null}
+
+        {/* Key metrics */}
+        {result.metrics.length > 0 ? (
+          <Section title="关键指标">
+            <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+              {result.metrics.map((m, i) => (
+                <MetricItem key={`${m.label}-${i}`} metric={m} />
+              ))}
+            </div>
+          </Section>
+        ) : null}
+
+        {/* Inputs */}
+        <Section title="输入">
+          {result.inputs.length > 0 ? (
+            <ul className="flex flex-col gap-0.5">
+              {result.inputs.map((inp, i) => (
+                <li key={i} className="flex items-baseline justify-between gap-2 text-meta">
+                  <span className="shrink-0 text-ink-secondary">{inp.label}</span>
+                  {inp.ref ? (
+                    <span className="min-w-0 truncate font-mono text-caption text-ink-muted" title={inp.ref}>
+                      {inp.ref}
+                    </span>
+                  ) : (
+                    <span className="text-caption italic text-ink-muted">推断</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-meta italic text-ink-muted">未捕获输入参数（仅展示操作与输出）。</p>
+          )}
         </Section>
-      ) : null}
 
-      {/* Key metrics */}
-      {result.metrics.length > 0 ? (
-        <Section title="关键指标">
-          <div className="grid grid-cols-2 gap-1.5">
-            {result.metrics.map((m, i) => (
-              <MetricItem key={`${m.label}-${i}`} metric={m} />
-            ))}
-          </div>
-        </Section>
-      ) : null}
+        {/* Parameters */}
+        {result.parameters.length > 0 ? (
+          <Section title="参数">
+            <dl className="grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-0.5 text-meta">
+              {result.parameters.map((p, i) => (
+                <div key={i} className="contents">
+                  <dt className="text-ink-muted">{p.label}</dt>
+                  <dd className="min-w-0 truncate font-mono text-ink" title={String(p.value)}>
+                    {String(p.value)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </Section>
+        ) : null}
 
-      {/* Inputs */}
-      <Section title="输入">
-        {result.inputs.length > 0 ? (
-          <ul className="flex flex-col gap-1">
-            {result.inputs.map((inp, i) => (
-              <li key={i} className="flex items-baseline justify-between gap-2 text-[12.5px]">
-                <span className="text-[var(--theme-text-secondary)]">{inp.label}</span>
-                {inp.ref ? (
-                  <span className="truncate font-mono text-[10.5px] text-[var(--theme-text-muted)]" title={inp.ref}>{inp.ref}</span>
-                ) : (
-                  <span className="text-[10.5px] italic text-[var(--theme-text-muted)]">推断</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-[12px] italic text-[var(--theme-text-muted)]">未捕获输入参数（仅展示操作与输出）。</p>
-        )}
-      </Section>
-
-      {/* Parameters */}
-      {result.parameters.length > 0 ? (
-        <Section title="参数">
-          <dl className="grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-1 text-[12.5px]">
-            {result.parameters.map((p, i) => (
-              <div key={i} className="contents">
-                <dt className="text-[var(--theme-text-muted)]">{p.label}</dt>
-                <dd className="truncate font-mono text-[var(--theme-text-primary)]" title={String(p.value)}>{String(p.value)}</dd>
+        {/* Output + map linkage — the layer strip fuses live visibility with
+            the map controls, then the metadata sheet follows. */}
+        {showOutputSection ? (
+          <Section title="输出与地图">
+            {hasBoundLayer ? (
+              <div className="flex items-center gap-1 rounded-md border border-edge-subtle bg-surface-raised px-1 py-0.5">
+                {toggleAction ? (
+                  <IconButton
+                    label={toggleAction.label}
+                    icon={hasVisibleLayer ? EyeOff : Eye}
+                    size="sm"
+                    disabled={!toggleAction.available}
+                    onClick={() => handleAction(toggleAction)}
+                  />
+                ) : null}
+                <span className="min-w-0 flex-1 truncate px-0.5 font-mono text-caption text-ink" title={boundLayer?.name}>
+                  {boundLayer?.name ?? ref}
+                </span>
+                <span className="inline-flex shrink-0 items-center gap-1 text-caption text-ink-muted">
+                  <span
+                    aria-hidden
+                    className={clsx(
+                      'h-1 w-1 rounded-pill',
+                      hasVisibleLayer ? 'bg-status-accent-vivid' : 'bg-ink-disabled',
+                    )}
+                  />
+                  {hasVisibleLayer ? '地图中可见' : '已隐藏'}
+                </span>
+                {zoomAction ? (
+                  <IconButton
+                    label={zoomAction.label}
+                    icon={Crosshair}
+                    size="sm"
+                    disabled={!zoomAction.available}
+                    onClick={() => handleAction(zoomAction)}
+                  />
+                ) : null}
               </div>
-            ))}
-          </dl>
-        </Section>
-      ) : null}
+            ) : (
+              <p className="text-meta text-ink-muted">
+                {ref ? '引用层未绑定到当前地图会话。' : '该结果未挂载为地图图层。'}
+              </p>
+            )}
 
-      {/* Output + map linkage */}
-      <Section
-        title="输出与地图"
-        action={
-          hasBoundLayer ? (
-            <span className="inline-flex items-center gap-1 text-[10.5px] text-[var(--theme-text-muted)]">
-              <span
-                aria-hidden
-                className={clsx('h-1.5 w-1.5 rounded-full', hasVisibleLayer ? 'bg-emerald-500' : 'bg-slate-400')}
-              />
-              {hasVisibleLayer ? '地图中可见' : '已隐藏'}
-            </span>
-          ) : null
-        }
-      >
-        <div className="flex flex-col gap-1.5 rounded-md border border-[var(--theme-border-subtle)] bg-[var(--theme-bg-subtle)] px-2.5 py-2 text-[12.5px]">
-          <Row label="类型" value={outputKindLabel(output?.kind)} />
-          <Row label="要素数" value={featureCountLabel} />
-          <Row label="几何类型" value={geomLabel} />
-          <Row label="CRS" value={crsLabel} muted={crsLabel === '未知'} />
-          <Row label="范围 (W,S,E,N)" value={bboxLabel} mono />
-          {output?.estimatedBytes ? <Row label="估算大小" value={formatBytes(output.estimatedBytes)} /> : null}
-          {ref ? <Row label="引用" value={ref} mono title={ref} /> : null}
-          {output?.note ? <Row label="备注" value={output.note} /> : null}
-        </div>
+            <div className="flex flex-col gap-0.5 rounded-md bg-surface-sunken px-2.5 py-1.5 text-meta">
+              <Row label="类型" value={outputKindLabel(output?.kind)} />
+              <Row label="要素数" value={featureCountLabel} />
+              <Row label="几何类型" value={geomLabel} />
+              <Row label="CRS" value={crsLabel} muted={crsLabel === '未知'} />
+              {/* bbox/ref are data, not prose — wrap instead of truncating so a
+                  coordinate is never silently cut mid-number. */}
+              <Row label="范围 (W,S,E,N)" value={bboxLabel} mono wrap />
+              {output?.estimatedBytes ? <Row label="估算大小" value={formatBytes(output.estimatedBytes)} /> : null}
+              {ref ? <Row label="引用" value={ref} mono wrap title={ref} /> : null}
+              {output?.note ? <Row label="备注" value={output.note} /> : null}
+            </div>
+          </Section>
+        ) : null}
 
-        {/* Map actions */}
-        <div className="flex flex-wrap gap-1.5">
-          {actions
-            .filter((a) => ['show_on_map', 'hide', 'zoom'].includes(a.kind))
-            .map((a) => (
-              <ActionButton key={a.kind} action={a} onAction={handleAction} />
-            ))}
-        </div>
-      </Section>
-
-      {/* Suggested next actions (analytical intents) */}
-      {actions.some((a) => !['show_on_map', 'hide', 'zoom'].includes(a.kind)) ? (
-        <Section title="后续操作">
-          <div className="flex flex-wrap gap-1.5">
-            {actions
-              .filter((a) => !['show_on_map', 'hide', 'zoom'].includes(a.kind))
-              .map((a) => (
+        {/* Suggested next actions — analytical intents, secondary to map controls */}
+        {!failed && analyticalActions.length > 0 ? (
+          <Section title="后续操作">
+            <div className="flex flex-wrap gap-1">
+              {analyticalActions.map((a) => (
                 <ActionButton key={a.kind} action={a} onAction={handleAction} />
               ))}
-          </div>
-        </Section>
-      ) : null}
+            </div>
+          </Section>
+        ) : null}
 
-      {/* Legend (compact; the live legend renders on the map) */}
-      {result.legendSpec ? (
-        <Section title="图例">
-          <span className="text-[12.5px] text-[var(--theme-text-secondary)]">
-            {legendSummary(result.legendSpec)}（完整图例见地图）
-          </span>
-        </Section>
-      ) : null}
+        {/* Legend (compact; the live legend renders on the map) */}
+        {result.legendSpec ? (
+          <Section title="图例">
+            <span className="text-meta text-ink-secondary">
+              {legendSummary(result.legendSpec)}（完整图例见地图）
+            </span>
+          </Section>
+        ) : null}
 
-      {/* Provenance */}
-      {result.provenance.length > 0 ? (
-        <Section title="数据 lineage">
-          <ol className="flex flex-col gap-1 text-[12px] text-[var(--theme-text-secondary)]">
-            {result.provenance.map((p, i) => (
-              <li key={i} className="flex items-baseline gap-1.5">
-                <span className="text-[var(--theme-text-muted)]">{provenanceLabel(p.kind)}</span>
-                <span className="truncate text-[var(--theme-text-primary)]">{p.label}</span>
-              </li>
-            ))}
-          </ol>
-        </Section>
-      ) : null}
+        {/* Provenance */}
+        {result.provenance.length > 0 ? (
+          <Section title="数据溯源">
+            <ol className="flex flex-col gap-0.5 text-meta text-ink-secondary">
+              {result.provenance.map((p, i) => (
+                <li key={i} className="flex items-baseline gap-1.5">
+                  <span className="shrink-0 text-ink-muted">{provenanceLabel(p.kind)}</span>
+                  <span className="min-w-0 truncate text-ink">{p.label}</span>
+                </li>
+              ))}
+            </ol>
+          </Section>
+        ) : null}
 
-      {/* Raw — progressive disclosure */}
-      <details className="group rounded-md border border-[var(--theme-border-subtle)] text-[12px]">
-        <summary className="cursor-pointer select-none px-2.5 py-1.5 text-[var(--theme-text-muted)] hover:bg-[var(--theme-bg-hover)]">
-          原始结果（高级）
-        </summary>
-        <pre className="max-h-64 overflow-auto px-2.5 py-2 font-mono text-[10.5px] leading-relaxed text-[var(--theme-text-secondary)]">
-          {truncateJson(result.raw)}
-        </pre>
-      </details>
+        {/* Raw — progressive disclosure */}
+        <details className="rounded-sm border border-edge-subtle text-meta">
+          <summary className="cursor-pointer select-none px-2 py-1 text-ink-muted transition-colors hover:bg-surface-hover">
+            原始结果（高级）
+          </summary>
+          <pre className="max-h-64 overflow-auto px-2 py-1.5 font-mono text-caption leading-relaxed text-ink-secondary">
+            {truncateJson(result.raw)}
+          </pre>
+        </details>
+      </div>
     </div>
   );
 }
 
-function Row({ label, value, mono, muted, title }: { label: string; value: string; mono?: boolean; muted?: boolean; title?: string }) {
+function Row({
+  label,
+  value,
+  mono,
+  muted,
+  wrap,
+  title,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  muted?: boolean;
+  wrap?: boolean;
+  title?: string;
+}) {
   return (
     <div className="flex items-baseline justify-between gap-2">
-      <span className="text-[var(--theme-text-muted)]">{label}</span>
+      <span className="shrink-0 text-ink-muted">{label}</span>
       <span
-        className={clsx('truncate text-right', mono && 'font-mono text-[11.5px]', muted && 'italic text-[var(--theme-text-muted)]')}
+        className={clsx(
+          'min-w-0 text-right text-ink',
+          mono && 'font-mono text-caption',
+          wrap ? 'break-words' : 'truncate',
+          muted && 'italic text-ink-muted',
+        )}
         title={title ?? value}
       >
         {value}
@@ -361,9 +442,9 @@ function ActionButton({ action, onAction }: { action: SuggestedAction; onAction:
       disabled={!action.available}
       onClick={() => onAction(action)}
       aria-label={action.label}
-      className="inline-flex items-center gap-1 rounded-md border border-[var(--theme-border)] bg-[var(--theme-bg)] px-2 py-1 text-[12px] text-[var(--theme-text-secondary)] transition-colors hover:bg-[var(--theme-bg-hover)] disabled:cursor-not-allowed disabled:opacity-40"
+      className="inline-flex h-control-sm items-center gap-1 rounded-sm px-1.5 text-meta text-ink-secondary transition-colors hover:bg-surface-hover hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
     >
-      {icon ? <icon.type size={13} aria-hidden /> : null}
+      {icon ? <icon.type size={12} aria-hidden /> : null}
       {action.label}
     </button>
   );
