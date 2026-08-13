@@ -921,6 +921,10 @@ class ChatExecutionEngine:
                                             "geojson_ref": outcome.geojson_ref,
                                             "session_id": session_id,
                                         }
+                                        # V3 Performance: descriptor was computed by dispatch() and
+                                        # is carried on outcome.ref_descriptor — zero extra async calls.
+                                        if outcome.ref_descriptor:
+                                            step_payload["ref_descriptor"] = outcome.ref_descriptor
                                         # ADR-0052: 本步骤派生的后台 durable job —— 前端
                                         # 据此把 GIS job 挂到该 tool step 下，而不是让
                                         # agent task 与 Celery task 变成两条毫无关联的

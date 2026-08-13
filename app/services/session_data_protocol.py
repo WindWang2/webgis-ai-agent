@@ -99,6 +99,11 @@ class SessionStoreProtocol(Protocol):
     async def list_refs(self, session_id: str) -> dict[str, str]:
         ...
 
+    async def get_ref_descriptor(self, session_id: str, ref_id: str) -> "Optional[Dict[str, Any]]":
+        """V3 Performance: Return pre-computed descriptor metadata for a ref without
+        reading or scanning the full data payload. None if ref not found."""
+        ...
+
     async def cleanup_idle_sessions(self, max_sessions: int = 100) -> None:
         ...
 

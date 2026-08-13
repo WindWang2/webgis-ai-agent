@@ -28,6 +28,8 @@ class MemorySessionStore(BaseSessionStore):
         self._event_log: dict[str, deque] = {}
         # session_id -> {action_id -> 地图动作终态 ACK}（V3 闭环；插入序 = 到达顺序）
         self._map_action_events: dict[str, OrderedDict[str, dict]] = {}
+        # V3 Performance: session_id -> {ref_id -> descriptor_dict}
+        self._descriptors: dict[str, dict[str, Any]] = {}
         self.capacity = capacity
         # BUG-14: serialize read-modify-write mutations of the layers list so
         # two concurrent update_layer_in_state calls don't clobber each other.
@@ -51,9 +53,23 @@ class MemorySessionStore(BaseSessionStore):
         while len(session_cache) >= self.capacity:
             oldest_ref, _ = session_cache.popitem(last=False)
             self._remove_alias_by_ref(session_id, oldest_ref)
+            if session_id in self._descriptors:
+                self._descriptors[session_id].pop(oldest_ref, None)
             logger.debug(f"Session {session_id}: evicted {oldest_ref} (capacity={self.capacity})")
 
         session_cache[ref_id] = data
+
+        # V3 Performance: compute descriptor once at store time so every subsequent
+        # descriptor read is O(1) instead of O(features).
+        try:
+            from app.schemas.ref_descriptor import compute_descriptor
+            descriptor = compute_descriptor(ref_id, data)
+            if session_id not in self._descriptors:
+                self._descriptors[session_id] = {}
+            self._descriptors[session_id][ref_id] = descriptor.to_dict()
+        except Exception as e:
+            logger.warning(f"V3: Failed to compute descriptor for {ref_id}: {e}")
+
         return ref_id
 
     async def overwrite(self, session_id: str, ref_id: str, data: Any) -> bool:
@@ -237,6 +253,10 @@ class MemorySessionStore(BaseSessionStore):
             "started_at": await self.get_started_at(session_id),
         }
 
+    async def get_ref_descriptor(self, session_id: str, ref_id: str) -> Optional[dict]:
+        """V3 Performance: return pre-computed descriptor (O(1)); None if not found."""
+        return self._descriptors.get(session_id, {}).get(ref_id)
+
     async def clear_session(self, session_id: str) -> None:
         """清理会话数据"""
         self._store.pop(session_id, None)
@@ -244,6 +264,7 @@ class MemorySessionStore(BaseSessionStore):
         self._map_state.pop(session_id, None)
         self._event_log.pop(session_id, None)
         self._map_action_events.pop(session_id, None)
+        self._descriptors.pop(session_id, None)
 
     async def cleanup_idle_sessions(self, max_sessions: int = 100) -> None:
         """Evict oldest sessions when total exceeds max_sessions."""

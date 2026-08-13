@@ -200,6 +200,11 @@ class RedisSessionStore(BaseSessionStore):
     @staticmethod
     def _refs_order_key(session_id: str) -> str:
         return f"session:{session_id}:refs_order"
+    
+    @staticmethod
+    def _descriptor_key(session_id: str, ref_id: str) -> str:
+        """V3 Performance: descriptor metadata key (sibling to data key)."""
+        return f"session:{session_id}:meta:{ref_id}"
 
     @staticmethod
     def _active_key() -> str:
@@ -212,11 +217,20 @@ class RedisSessionStore(BaseSessionStore):
         dispatcher.dispatch_tool 直接 raise → 整个 chat turn 崩溃 + tracker
         卡死。降级返回 ref:redis-unavailable-xxx 让上层 chat_engine 把它当
         普通失败工具结果处理（_untrusted + 自愈消息）。
+        
+        V3 Performance: computes and stores descriptor metadata alongside data
+        in a sibling Redis key. This eliminates per-request 100k-feature scans.
         """
         await self._ensure_connected()
         ref_id = f"ref:{prefix}-{uuid.uuid4().hex[:16]}"
         data_key = self._data_key(session_id, ref_id)
         order_key = self._refs_order_key(session_id)
+        
+        # V3: compute descriptor once at store time
+        from app.schemas.ref_descriptor import compute_descriptor
+        descriptor = compute_descriptor(ref_id, data)
+        descriptor_key = self._descriptor_key(session_id, ref_id)
+        
         try:
             current_count = await self._r.zcard(order_key)
             if current_count >= self.capacity:
@@ -239,6 +253,7 @@ class RedisSessionStore(BaseSessionStore):
                 pipe.expire(self._state_key(session_id), STATE_TTL)
                 pipe.sadd(self._active_key(), session_id)
                 pipe.set(data_key, json.dumps(data, ensure_ascii=False), ex=DATA_TTL)
+                pipe.set(descriptor_key, json.dumps(descriptor.to_dict(), ensure_ascii=False), ex=DATA_TTL)
                 pipe.zadd(order_key, {ref_id: time.time()})
                 pipe.sadd(self._index_key(session_id), ref_id)
                 self._refresh_session_ttl(pipe, session_id)
@@ -804,12 +819,41 @@ class RedisSessionStore(BaseSessionStore):
         await self._ensure_connected()
         alias = await self._r.hget(self._refs_key(session_id), ref_id)
         pipe.delete(self._data_key(session_id, ref_id))
+        pipe.delete(self._descriptor_key(session_id, ref_id))  # V3: evict descriptor too
         pipe.zrem(self._refs_order_key(session_id), ref_id)
         pipe.srem(self._index_key(session_id), ref_id)
         if alias:
             alias_str = alias.decode() if isinstance(alias, bytes) else alias
             pipe.hdel(self._aliases_key(session_id), alias_str)
         pipe.hdel(self._refs_key(session_id), ref_id)
+
+    async def get_ref_descriptor(self, session_id: str, ref_id: str) -> "Optional[dict]":
+        """V3 Performance: Return pre-computed descriptor; None if not found.
+
+        Avoids re-scanning 100k features on every descriptor request.
+        Falls back to on-the-fly compute + cache if the descriptor key is missing
+        (refs stored before V3, or descriptor evicted separately).
+        """
+        await self._ensure_connected()
+        descriptor_key = self._descriptor_key(session_id, ref_id)
+        try:
+            raw = await self._r.get(descriptor_key)
+            if raw:
+                return json.loads(raw)
+            # Fallback: compute from raw data if descriptor missing
+            data_key = self._data_key(session_id, ref_id)
+            data_raw = await self._r.get(data_key)
+            if data_raw:
+                data = json.loads(data_raw)
+                from app.schemas.ref_descriptor import compute_descriptor
+                descriptor = compute_descriptor(ref_id, data)
+                d = descriptor.to_dict()
+                await self._r.set(descriptor_key, json.dumps(d, ensure_ascii=False), ex=DATA_TTL)
+                return d
+            return None
+        except aioredis.RedisError as e:
+            logger.error("Redis get_ref_descriptor failed for %s/%s: %s", session_id, ref_id, e)
+            return None
 
     def _refresh_session_ttl(self, pipe, session_id: str) -> None:
         for key in [

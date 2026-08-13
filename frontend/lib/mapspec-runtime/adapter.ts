@@ -43,10 +43,22 @@ function isGeoJSONSource(source: Layer["source"]): source is GeoJSONFeatureColle
   return typeof source === "object" && source !== null && "type" in source && (source as any).type === "FeatureCollection";
 }
 
-/** 大 ref 图层（_tileUrl 已配 + 要素数超阈值）→ MVT 矢量瓦片。 */
+/** 大 ref 图层（_tileUrl 已配 + 要素数超阈值 + MVT 编码器可处理）→ MVT 矢量瓦片。
+ * V3 Performance: use pre-computed descriptor when available, so the MVT
+ * decision is made without requiring the full FC in the store. */
 function isVectorTileLayer(layer: Layer): boolean {
+  if (!layer._tileUrl) return false;
+  // Fast path: use descriptor if present (avoids needing the full FC).
+  // mvt_capable is false for raster/GeometryCollection-only/empty refs —
+  // those must not be routed to the tile endpoint (it would render blank).
+  if (layer._descriptor) {
+    return (
+      layer._descriptor.mvt_capable &&
+      layer._descriptor.feature_count > VECTOR_TILE_THRESHOLD
+    );
+  }
+  // Legacy path: requires FC already downloaded (pre-V3 refs without descriptor)
   return (
-    !!layer._tileUrl &&
     isGeoJSONSource(layer.source) &&
     Array.isArray(layer.source.features) &&
     layer.source.features.length > VECTOR_TILE_THRESHOLD
@@ -96,6 +108,18 @@ export function _resetGeometryProfileCacheForTests(): void {
 }
 
 function geometryProfileOf(layer: Layer): GeometryProfile {
+  // V3 Performance: use descriptor geometry_types when available — eliminates
+  // 4× O(n) .some() scans on the full FC for MVT-backed large layers.
+  if (layer._descriptor && layer._descriptor.geometry_types.length > 0) {
+    const types = layer._descriptor.geometry_types;
+    const profile: GeometryProfile = {
+      hasPolygons: types.some((t) => t.includes("Polygon")),
+      hasLines: types.some((t) => t.includes("Line")),
+      hasPoints: types.some((t) => t.includes("Point")),
+      hasWeight: false, // not tracked in descriptor; safe default
+    };
+    return profile;
+  }
   const src = isGeoJSONSource(layer.source) ? layer.source : null;
   if (!src) return EMPTY_PROFILE;
   const cached = geometryProfileCache.get(src);

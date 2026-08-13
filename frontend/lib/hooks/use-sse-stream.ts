@@ -311,6 +311,10 @@ export function useSSEStream(
             data.tool === 'heatmap_data' &&
             (data.result?.command === 'add_native_heatmap' ||
               data.result?.metadata?.render_type === 'native');
+          
+          // V3 Performance: Extract descriptor from SSE payload (attached by execution_engine.py)
+          const descriptor = data.ref_descriptor;
+          
           useHudStore.getState().addLayer({
             id: layerId,
             name: layerName,
@@ -331,14 +335,26 @@ export function useSSEStream(
             _tileUrl: data.geojson_ref
               ? `${API_BASE}/api/v1/layers/data/${data.geojson_ref}/tiles/{z}/{x}/{y}.mvt?session_id=${sessionIdRef.current}`
               : undefined,
+            _descriptor: descriptor,
             legend_spec: legendSpec,
           });
           if (layerMetaTitle) {
             useHudStore.getState().setCartographyTitle(layerMetaTitle);
           }
 
-          // Asynchronously fetch the actual GeoJSON data for the reference
-          if (data.geojson_ref) {
+          // V3 Performance: Decide GeoJSON vs MVT based on descriptor metadata.
+          // Only fetch full GeoJSON if:
+          //   (a) no descriptor available (pre-V3 ref, or Pi path cache miss — safe fallback), OR
+          //   (b) not MVT-capable (raster, GeometryCollection-only, etc.), OR
+          //   (c) feature_count is at/below the threshold (inline GeoJSON is fine).
+          // Large tile-capable layers skip the full download entirely.
+          const VECTOR_TILE_THRESHOLD = 5000;
+          const shouldFetchFullFC =
+            !descriptor ||
+            !descriptor.mvt_capable ||
+            descriptor.feature_count <= VECTOR_TILE_THRESHOLD;
+          
+          if (data.geojson_ref && shouldFetchFullFC) {
             const sid = sessionIdRef.current;
             const fetchRef = data.geojson_ref;
             // SEC-08：匿名会话的图层引用数据受 owner_token 保护。
