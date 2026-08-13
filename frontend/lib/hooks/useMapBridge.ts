@@ -139,6 +139,8 @@ export function useMapBridge(
   const getSessionTokenRef = useRef(getSessionToken);
   getSessionTokenRef.current = getSessionToken;
   const streamEpochRef = useRef(0);
+  const deliveredRepairIdsRef = useRef<Set<string>>(new Set());
+  const deliveredRepairOrderRef = useRef<string[]>([]);
 
   // V3 ACK sender: created once per hook instance. Session + token are read
   // through refs so a session switch re-routes acks without recreating the
@@ -154,12 +156,21 @@ export function useMapBridge(
       ),
       onResponse: (responseSessionId, body) => {
         const response = body as { repair_action?: MapActionPayload } | null;
-        if (
-          responseSessionId === sessionIdRef.current
-          && response?.repair_action
-        ) {
-          mapActionCtxRef.current?.dispatchAction(response.repair_action);
+        const repair = response?.repair_action;
+        if (responseSessionId !== sessionIdRef.current || !repair) return false;
+        const repairId = repair.action_id;
+        if (repairId) {
+          const key = `${responseSessionId}:${repairId}`;
+          if (deliveredRepairIdsRef.current.has(key)) return false;
+          deliveredRepairIdsRef.current.add(key);
+          deliveredRepairOrderRef.current.push(key);
+          if (deliveredRepairOrderRef.current.length > 256) {
+            const old = deliveredRepairOrderRef.current.shift();
+            if (old) deliveredRepairIdsRef.current.delete(old);
+          }
         }
+        mapActionCtxRef.current?.dispatchAction(repair);
+        return true;
       },
     });
   }
