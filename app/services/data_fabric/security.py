@@ -12,6 +12,8 @@ import socket
 from urllib.parse import urlparse
 from typing import Dict, Any, Optional
 
+import requests.adapters
+
 try:
     # defusedxml hardens ElementTree against XXE / external entity / entity
     # expansion attacks. It is a declared project dependency (pyproject.toml).
@@ -39,6 +41,15 @@ BLOCKED_IPS_EXPLICIT = {
     ipaddress.ip_address("169.254.169.254"),  # AWS / GCP metadata
     ipaddress.ip_address("fd00:ec2::254"),     # AWS IMDSv6 metadata
 }
+
+# System directories a geospatial local-file adapter must never read from, even
+# when an internal caller supplies such a path (defense in depth — the public
+# REST API already blocks bare/file: paths at validate_url, but adapters can be
+# constructed programmatically with arbitrary local paths).
+SENSITIVE_SYSTEM_DIRS = (
+    "/etc", "/proc", "/sys", "/dev", "/run", "/boot",
+    "/root", "/var/log", "/usr/lib", "/usr/sbin", "/sbin", "/bin",
+)
 
 # Networks that are private/loopback/link-local and must be blocked.
 BLOCKED_NETWORKS = [
@@ -180,6 +191,30 @@ class DataFabricSecurity:
         return ips
 
     @staticmethod
+    def redact_url(url: Optional[str]) -> Optional[str]:
+        """Strip ``user:password@`` userinfo from a URL for safe egress.
+
+        ``postgres://user:pass@host/db`` connection strings and HTTP URLs with
+        embedded tokens were returned verbatim in source egress responses
+        (list/get/create). The userinfo never needs to reach the client.
+        Returns the input unchanged for non-URL / parseable-without-userinfo.
+        """
+        if not url or not isinstance(url, str):
+            return url
+        try:
+            parsed = urlparse(url)
+        except Exception:
+            return url
+        if not parsed.scheme or "@" not in (parsed.netloc or ""):
+            return url
+        # Keep host:port; drop the userinfo segment.
+        hostport = parsed.hostname or ""
+        if parsed.port:
+            hostport = f"{hostport}:{parsed.port}"
+        rebuilt = parsed._replace(netloc=hostport)
+        return rebuilt.geturl()
+
+    @staticmethod
     def sanitize_profile_dict(profile_dict: Dict[str, Any]) -> Dict[str, Any]:
         """Redacts credentials before returning a profile to LLM or frontend.
 
@@ -225,3 +260,117 @@ class DataFabricSecurity:
         except Exception as e:
             logger.error(f"Failed to parse XML safely: {e}")
             raise DataFabricSecurityError(f"Malformed or unsafe XML payload: {e}")
+
+
+# ── HTTP client SSRF hardening ──────────────────────────────────────────────
+#
+# validate_url() is a *pre-flight* gate: it runs once on the URL the user
+# registered. The original adapters then handed the URL to a plain
+# ``requests.Session`` with the default ``allow_redirects=True``. ``requests``
+# follows redirects internally and never re-validated the ``Location`` target,
+# so a registered public host that answered ``302 → http://169.254.169.254/``
+# was followed straight into the cloud metadata service (redirect-SSRF P0).
+#
+# Mitigation: ``SSRFSafeHTTPAdapter`` re-runs ``validate_url`` inside ``send()``
+# on *every* request. Because ``requests`` re-invokes the mounted adapter for
+# each redirect hop, every redirect target is re-validated against the same
+# SSRF policy (private IPs, loopback, metadata, ULA/link-local, IPv4-mapped
+# IPv6). Re-resolving inside ``send()`` also shrinks the DNS-rebinding TOCTOU
+# window: the hostname is resolved immediately before the underlying urllib3
+# connect, not seconds earlier at registration time. (A residual micro-window
+# between resolve and connect remains; full connect-time IP pinning would need
+# a socket-level transport and is documented as ADR-0053 follow-up.)
+
+
+class SSRFSafeHTTPAdapter(requests.adapters.HTTPAdapter):
+    """``requests`` HTTPAdapter that enforces SSRF policy on every send.
+
+    Mount on both ``http://`` and ``https://`` (see ``make_safe_session``) so
+    initial requests AND every redirect hop are validated.
+    """
+
+    def __init__(self, *args, allow_private: bool = False, **kwargs):
+        self._allow_private = allow_private
+        super().__init__(*args, **kwargs)
+
+    def send(self, request, **kwargs):  # type: ignore[override]
+        url = getattr(request, "url", None)
+        if url:
+            DataFabricSecurity.validate_url(url, allow_private=self._allow_private)
+        return super().send(request, **kwargs)
+
+
+def make_safe_session(allow_private: bool = False):
+    """Return a ``requests.Session`` whose every request (incl. redirects) is
+    SSRF-validated. Adapters MUST use this instead of a bare ``requests.Session``.
+    """
+    session = requests.Session()
+    adapter = SSRFSafeHTTPAdapter(allow_private=allow_private)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
+def resolve_safe_local_path(path, allowed_roots=None, max_bytes=None):
+    """Validate a local file path for adapter reads (Section 44).
+
+    Defenses (defense-in-depth — the public REST API already blocks bare/file:
+    paths at ``validate_url``):
+    - rejects empty / non-string paths;
+    - canonicalizes via realpath (collapses ``..`` and resolves symlinks);
+    - blocks reads under sensitive system dirs (``/etc``, ``/proc``, ``~/.ssh``…);
+    - when ``allowed_roots`` is provided, the real path must be under one of
+      them (blocks symlink escape beyond the intended directory);
+    - optional file-size cap.
+
+    Raises ``DataFabricSecurityError`` on violation; returns the resolved
+    ``pathlib.Path`` otherwise.
+    """
+    from pathlib import Path
+
+    if not path or not isinstance(path, str):
+        raise DataFabricSecurityError("empty or invalid local file path")
+    raw = Path(path)
+    real = raw.resolve() if raw.is_absolute() else (Path.cwd() / raw).resolve()
+    real_str = str(real)
+
+    # Always block sensitive system locations + the user's SSH dir.
+    home_ssh = str(Path.home() / ".ssh")
+    blocked = list(SENSITIVE_SYSTEM_DIRS) + [home_ssh]
+    for sens in blocked:
+        if real_str == sens or real_str.startswith(sens + "/"):
+            raise DataFabricSecurityError(
+                f"local file path '{path}' is in a blocked system directory"
+            )
+
+    if allowed_roots:
+        roots = []
+        for r in allowed_roots:
+            rp = Path(r).expanduser()
+            roots.append(str(rp.resolve()))
+        if not any(real_str == rr or real_str.startswith(rr + "/") for rr in roots if rr):
+            raise DataFabricSecurityError(
+                f"local file path '{path}' escapes the allowed roots"
+            )
+
+    if max_bytes is not None and real.exists() and real.is_file():
+        size = real.stat().st_size
+        if size > max_bytes:
+            raise DataFabricSecurityError(
+                f"local file '{path}' size {size} exceeds limit {max_bytes}"
+            )
+    return real
+
+
+def _local_file_roots_from_settings():
+    """Resolve the configured local-file roots list from settings (helper for adapters)."""
+    from app.core.config import settings
+
+    raw = getattr(settings, "DATA_FABRIC_LOCAL_FILE_ROOTS", "") or ""
+    return [r.strip() for r in raw.split(",") if r.strip()]
+
+
+def _local_file_max_bytes_from_settings():
+    from app.core.config import settings
+
+    return int(getattr(settings, "DATA_FABRIC_LOCAL_FILE_MAX_BYTES", 1024 * 1024 * 1024))

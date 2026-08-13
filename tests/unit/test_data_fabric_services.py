@@ -130,7 +130,9 @@ def test_data_fabric_health_and_ssrf():
         url="https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/World_Cities/FeatureServer/0",
     )
     h_res = health_checker.check_connection_profile(profile)
-    assert h_res.status == "healthy"
+    # Truthful health (Section 33/34): a validated URL is NOT "healthy" — the
+    # checker did not probe the endpoint, only validated SSRF/shape.
+    assert h_res.status == "valid_profile"
 
     # SSRF Attack tests
     bad_urls = [

@@ -4,6 +4,7 @@ Enterprise Geospatial Data Fabric REST Routes
 import logging
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Header
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -15,6 +16,7 @@ from app.schemas.data_fabric_schema import (
     QuerySpec,
 )
 from app.services.data_fabric.manager import data_fabric_manager
+from app.services.data_fabric.errors import ResultTooLargeError
 from app.services.data_fabric.security import DataFabricSecurity
 
 logger = logging.getLogger(__name__)
@@ -85,6 +87,22 @@ def _require_tenant_owned(s: Optional[DataSourceModel], user: Optional[Dict[str,
     return s
 
 
+def _authorize_catalog_item(db: Session, item_id: str, user: Optional[Dict[str, Any]]):
+    """Authorize catalog-item access for the caller's tenant (or 404).
+
+    Cross-tenant access to preview/query/materialize previously had NO guard —
+    any caller could read or materialize any catalog item by id. We resolve the
+    item's DataSource and apply the same tenant check as the source routes.
+    Returns 404 (not 403) to avoid leaking cross-tenant row existence.
+    """
+    item = db.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
+    if item is None:
+        raise HTTPException(status_code=404, detail="Catalog item not found")
+    src = db.query(DataSourceModel).filter(DataSourceModel.id == item.source_id).first()
+    _require_tenant_owned(src, user)
+    return item
+
+
 class CreateDataSourceRequest(BaseModel):
     name: str = Field(..., description="Data source display name")
     source_type: str = Field(..., description="Source adapter type (postgis, ogc_api, wfs, wms, wmts, arcgis)")
@@ -131,7 +149,7 @@ async def create_data_source(
                 "id": source.id,
                 "name": source.name,
                 "source_type": source.source_type,
-                "endpoint_url": source.endpoint_url,
+                "endpoint_url": DataFabricSecurity.redact_url(source.endpoint_url),
                 "status": source.status,
                 "capabilities": source.capabilities_json,
                 # SEC-07: the stored profile now carries the REAL credentials
@@ -164,7 +182,7 @@ async def list_data_sources(
                 "id": s.id,
                 "name": s.name,
                 "source_type": s.source_type,
-                "endpoint_url": s.endpoint_url,
+                "endpoint_url": DataFabricSecurity.redact_url(s.endpoint_url),
                 "status": s.status,
                 "capabilities": s.capabilities_json,
                 "connection_profile": DataFabricSecurity.sanitize_profile_dict(s.connection_profile or {}),
@@ -189,7 +207,7 @@ async def get_data_source(
         "id": s.id,
         "name": s.name,
         "source_type": s.source_type,
-        "endpoint_url": s.endpoint_url,
+        "endpoint_url": DataFabricSecurity.redact_url(s.endpoint_url),
         "status": s.status,
         "capabilities": s.capabilities_json,
         "connection_profile": DataFabricSecurity.sanitize_profile_dict(s.connection_profile or {}),
@@ -410,9 +428,11 @@ async def preview_catalog_item(
     item_id: str,
     limit: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """获取 Spatial Catalog 项的有界样例数据预览"""
     try:
+        _authorize_catalog_item(db, item_id, user)
         q_spec = QuerySpec(limit=limit)
         q_res = data_fabric_manager.query_catalog_item(db, item_id, q_spec)
         return {
@@ -432,9 +452,11 @@ async def query_catalog_item(
     item_id: str,
     query_spec: QuerySpec,
     db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """执行下推（Pushdown）选择性查询"""
     try:
+        _authorize_catalog_item(db, item_id, user)
         q_res = data_fabric_manager.query_catalog_item(db, item_id, query_spec)
         return q_res.model_dump()
     except Exception as e:
@@ -447,9 +469,11 @@ async def materialize_catalog_item(
     req: MaterializeRequest,
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     db: Session = Depends(get_db),
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """按需实例化（Materialize）数据至会话 SessionStore 并产生 ref_id 游标"""
     try:
+        _authorize_catalog_item(db, req.catalog_item_id, user)
         res = await data_fabric_manager.materialize_catalog_item(
             db=db,
             session_id=req.session_id,
@@ -457,7 +481,15 @@ async def materialize_catalog_item(
             query_spec=req.query_spec,
             owner_token=owner_token,
         )
-        return {"success": True, **res}
+        # The manager now carries its own truth flag. A store-unavailable or
+        # audit-commit failure is a transient infra problem (503), not a bad
+        # request; the structured body lets the agent/tool retry or degrade.
+        if not res.get("success"):
+            return JSONResponse(status_code=503, content=res)
+        return res
+    except ResultTooLargeError as e:
+        # Oversized remote result — actionable 413 with the shrink hint.
+        return JSONResponse(status_code=413, content={"success": False, **e.to_dict()})
     except Exception as e:
         logger.error(f"Materialization failed for catalog item '{req.catalog_item_id}': {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))

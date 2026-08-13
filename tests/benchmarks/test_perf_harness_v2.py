@@ -28,6 +28,7 @@ from app.services.data_fabric.adapters import (
     STACAdapter,
     WFSAdapter,
 )
+from app.services.data_fabric.errors import UnsupportedSourceError
 from app.schemas.data_fabric_schema import ConnectionProfile
 from app.services.raster_tile_service import render_raster_tile
 
@@ -145,7 +146,6 @@ def test_data_fabric_factory_adapter_routing():
         ConnectionProfile(id="p_fgb", source_type="flatgeobuf", url="https://example.com/test.fgb"),
         ConnectionProfile(id="p_stac", source_type="stac", url="https://earth-search.aws.element84.com/v1"),
         ConnectionProfile(id="p_wfs", source_type="wfs", url="https://example.com/wfs"),
-        ConnectionProfile(id="p_gen", source_type="unknown_custom", url="https://example.com/custom"),
     ]
 
     for p in profiles:
@@ -160,8 +160,18 @@ def test_data_fabric_factory_adapter_routing():
             assert isinstance(adapter, STACAdapter)
         elif p.source_type == "wfs":
             assert isinstance(adapter, WFSAdapter)
-        elif p.source_type == "unknown_custom":
-            assert isinstance(adapter, GenericDataSourceAdapter)
+
+    # Unregistered source types MUST raise UnsupportedSourceError — never fall
+    # back to a mock adapter that fabricates synthetic features as real data.
+    bad = ConnectionProfile(id="p_gen", source_type="unknown_custom", url="https://example.com/custom")
+    with pytest.raises(UnsupportedSourceError):
+        cm.connect(bad)
+
+    # The demo/sample adapter is still reachable via its explicit canonical name.
+    demo_prof, demo_adapter = cm.connect(
+        ConnectionProfile(id="p_demo", source_type="generic")
+    )
+    assert isinstance(demo_adapter, GenericDataSourceAdapter)
 
 
 @pytest.mark.asyncio

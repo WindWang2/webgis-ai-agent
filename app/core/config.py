@@ -97,6 +97,26 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:16379/1"
     USE_REDIS: bool = True
 
+    # Geospatial Data Fabric resource guards (Section 70). Bounded hard limits so
+    # one remote query (or a server that ignores `limit`) cannot OOM the process
+    # or materialize an unbounded payload. Override per-env; values are clamped
+    # by the limits module so an operator cannot disable protection by setting 0.
+    DATA_FABRIC_MAX_FEATURES: int = 50_000
+    DATA_FABRIC_MAX_RESPONSE_BYTES: int = 256 * 1024 * 1024  # 256 MiB
+    DATA_FABRIC_MAX_PAGES: int = 200
+    DATA_FABRIC_QUERY_TIMEOUT: float = 30.0       # seconds (connect+read budget per request)
+    DATA_FABRIC_TOTAL_QUERY_TIMEOUT: float = 120.0  # seconds (whole multi-page operation)
+    # Local-file adapter guard (Section 44). Comma-separated absolute/relative
+    # roots that geoparquet/flatgeobuf/pmtiles local reads must stay within
+    # (symlink-escape defense). Empty = no root enforcement, but sensitive
+    # system dirs (/etc, /proc, …) are always blocked. Add DATA_DIR by default.
+    DATA_FABRIC_LOCAL_FILE_ROOTS: str = "./data"
+    DATA_FABRIC_LOCAL_FILE_MAX_BYTES: int = 1024 * 1024 * 1024  # 1 GiB
+    # Catalog sync (Section 30): bounded concurrency for parallel dataset
+    # describe() calls, clamped to [1, 16] so a 5000-dataset source no longer
+    # serializes ~5000 remote round-trips.
+    DATA_FABRIC_SYNC_CONCURRENCY: int = 4
+
     # 代理设置
     HTTP_PROXY: Optional[str] = None
     HTTPS_PROXY: Optional[str] = None

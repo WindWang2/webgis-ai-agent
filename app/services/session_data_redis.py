@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import redis.asyncio as aioredis
-from app.services.session_data_protocol import BaseSessionStore
+from app.services.session_data_protocol import BaseSessionStore, UNAVAILABLE_REF_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -263,7 +263,7 @@ class RedisSessionStore(BaseSessionStore):
                 "Redis store failed for session %s (prefix=%s): %s — returning unavailable ref",
                 session_id, prefix, e,
             )
-            return f"ref:redis-unavailable-{uuid.uuid4().hex[:16]}"
+            return f"{UNAVAILABLE_REF_PREFIX}{uuid.uuid4().hex[:16]}"
         # RUN-06: a new ref must be visible to the next get_session_metadata /
         # list_refs round within the same chat turn. The metadata L1 bundle
         # caches list_refs + event_log (2s TTL); drop it so we don't serve the

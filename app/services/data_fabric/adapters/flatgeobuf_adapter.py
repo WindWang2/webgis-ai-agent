@@ -10,7 +10,14 @@ import struct
 import logging
 from typing import List, Dict, Any
 from app.services.data_fabric.base_adapter import GeospatialDataSourceAdapter
-from app.services.data_fabric.security import DataFabricSecurity
+from app.services.data_fabric.security import (
+    DataFabricSecurity,
+    DataFabricSecurityError,
+    _local_file_max_bytes_from_settings,
+    _local_file_roots_from_settings,
+    make_safe_session,
+    resolve_safe_local_path,
+)
 from app.schemas.data_fabric_schema import (
     DatasetDescriptor,
     QuerySpec,
@@ -72,24 +79,27 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
         super().__init__(connection_profile)
         self.endpoint = (self.profile.endpoint or "").strip()
         self.allow_private = getattr(self.profile, "allow_private", False)
+        # SSRF-safe session: every request (incl. redirects) is revalidated.
+        self.session = make_safe_session(allow_private=self.allow_private)
 
     def probe(self) -> bool:
-        """Probe FlatGeobuf file accessibility and magic signature."""
-        if not self.endpoint or not os.path.exists(self.endpoint):
-            return True  # Fallback synthetic mode
+        """Probe FlatGeobuf file accessibility and magic signature.
 
+        Truthfulness: no-endpoint = explicit demo mode (reachable); an endpoint
+        that IS configured but points at a missing/unreadable source is NOT.
+        """
+        if not self.endpoint:
+            return True  # explicit demo mode
         try:
             if self.endpoint.startswith(("http://", "https://")):
                 safe_url = DataFabricSecurity.validate_url(self.endpoint, allow_private=self.allow_private)
-                import requests
-
-                resp = requests.get(safe_url, headers={"Range": "bytes=0-7"}, timeout=5)
+                resp = self.session.get(safe_url, headers={"Range": "bytes=0-7"}, timeout=5)
                 return resp.status_code in (200, 206) and resp.content.startswith(b"fgb")
             elif os.path.isfile(self.endpoint):
                 with open(self.endpoint, "rb") as f:
                     header = f.read(8)
                     return header.startswith(b"fgb")
-            return True
+            return False
         except Exception as e:
             logger.debug(f"FlatGeobuf probe failed for {self.endpoint}: {e}")
             return False
@@ -229,11 +239,39 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
         }
 
     def query(self, dataset_id: str, query_spec: QuerySpec) -> QueryResult:
-        """Execute selective spatial index / bbox query on FlatGeobuf."""
+        """Execute selective spatial index / bbox query on FlatGeobuf.
+
+        Truthfulness contract: a configured endpoint that fails to read returns
+        an empty QueryResult with a typed error_type — never synthetic fixtures
+        masquerading as real data. Synthetic fixtures are demo-mode only (labeled).
+        """
         start_time = time.time()
         bounded_limit = max(1, min(query_spec.limit or 100, MAX_QUERY_LIMIT))
+        def exec_time_ms() -> float:
+            return round((time.time() - start_time) * 1000, 2)
 
-        # Real file query if file exists
+        def _err(error_type: str, msg: str) -> QueryResult:
+            return QueryResult(
+                dataset_id=dataset_id,
+                features=[],
+                total_count=0,
+                returned_count=0,
+                metadata={"exec_time_ms": exec_time_ms(), "source": "remote", "error_type": error_type, "error": msg},
+            )
+
+        # Local-file path guard (Section 44): block traversal / symlink escape /
+        # sensitive-system-dir / oversize reads before opening any local file.
+        if self.endpoint and not self.endpoint.startswith(("http://", "https://", "s3://", "minio://")):
+            try:
+                resolve_safe_local_path(
+                    self.endpoint,
+                    _local_file_roots_from_settings(),
+                    _local_file_max_bytes_from_settings(),
+                )
+            except DataFabricSecurityError as se:
+                return _err("SECURITY_BLOCKED", str(se))
+
+        # Real file query if a local path exists.
         if self.endpoint and os.path.exists(self.endpoint):
             try:
                 import geopandas as gpd
@@ -254,7 +292,6 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
                 data = json.loads(sliced.to_json())
                 features = data.get("features", [])
 
-                exec_time = round((time.time() - start_time) * 1000, 2)
                 return QueryResult(
                     dataset_id=dataset_id,
                     features=features,
@@ -263,14 +300,24 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
                     returned_count=len(features),
                     schema_info={"columns": list(sliced.columns)},
                     metadata={
-                        "exec_time_ms": exec_time,
+                        "exec_time_ms": exec_time_ms(),
                         "pushdown_bbox": bool(query_spec.bbox),
                         "spatial_index_used": True,
+                        "source": "remote",
                     },
                 )
             except Exception as e:
                 logger.warning(f"FlatGeobuf file query failed for '{dataset_id}': {e}")
+                return _err("SOURCE_BAD_RESPONSE", f"FlatGeobuf read failed: {e}")
 
+        # Endpoint configured but not a readable local file → fail truthfully.
+        if self.endpoint:
+            return _err(
+                "SOURCE_UNREACHABLE",
+                "FlatGeobuf source configured but not readable (http/remote ranged read unsupported in this path)",
+            )
+
+        # No endpoint configured → explicit synthetic DEMO mode (labeled).
         # Synthetic fallback query execution
         fixture = SYNTHETIC_FGB_FIXTURES.get(dataset_id, SYNTHETIC_FGB_FIXTURES["beijing_subway_stations"])
         raw_features = fixture["features"]
@@ -312,6 +359,7 @@ class FlatGeobufAdapter(GeospatialDataSourceAdapter):
                 "exec_time_ms": exec_time,
                 "pushdown_bbox": bool(query_spec.bbox),
                 "spatial_index_used": True,
+                "source": "synthetic-demo",
             },
         )
 

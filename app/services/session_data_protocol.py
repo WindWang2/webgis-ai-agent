@@ -8,6 +8,25 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol, Union, runtime_checkable
 
 
+# Sentinel prefix minted by the Redis backend when the store is unavailable,
+# so a transient Redis timeout does NOT crash the chat dispatch loop (the store
+# returns this marker instead of raising — see audit C3). Consumers that require
+# a *retrievable* ref (e.g. Data Fabric materialization) MUST detect it via
+# ``is_unavailable_ref`` and report failure rather than treating it as a real ref.
+# Invariant: a ref exists iff its payload is retrievable.
+UNAVAILABLE_REF_PREFIX = "ref:redis-unavailable-"
+
+
+def is_unavailable_ref(ref_id: Optional[str]) -> bool:
+    """True iff ``ref_id`` is a non-retrievable store-unavailability sentinel.
+
+    A ref minted under this prefix has NO payload stored anywhere; ``get`` will
+    always miss. Any caller that persists or returns a ref to a downstream
+    consumer must treat this as failure, not success.
+    """
+    return bool(ref_id) and ref_id.startswith(UNAVAILABLE_REF_PREFIX)
+
+
 @dataclass(frozen=True)
 class SessionRefDataResult:
     """Immutable value object returned by SessionStore.get_ref_data()."""
