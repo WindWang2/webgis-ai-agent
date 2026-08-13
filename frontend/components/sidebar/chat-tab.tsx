@@ -4,6 +4,7 @@ import { memo, useState, useRef, useEffect, useCallback, type KeyboardEvent } fr
 import dynamic from 'next/dynamic';
 import { Send, Sparkles, CheckCircle2 } from 'lucide-react';
 import type { AiStatus } from '@/lib/store/hud-types';
+import { useHudStore } from '@/lib/store/useHudStore';
 import { ToolCallChain } from '@/components/chat/tool-call-card';
 import { CollapsibleThink } from '@/components/chat/collapsible-think';
 import { PlanProposalCard } from '@/components/chat/plan-proposal-card';
@@ -89,6 +90,7 @@ interface ChatMessage {
   plan?: import('@/lib/store/hud-types').PlanProposalPayload;
   agentPlan?: import('@/lib/types/agent-plan').AgentPlanState;
   layerAdded?: string;
+  resultId?: string;
 }
 
 interface ChatTabProps {
@@ -177,7 +179,21 @@ const ChatMessageItem = memo(function ChatMessageItem({
             }}
           >
             <CheckCircle2 size={10} />
-            感知图层已挂载：{msg.layerAdded}
+            <span>感知图层已挂载：{msg.layerAdded}</span>
+            {msg.resultId && (
+              <button
+                type="button"
+                onClick={() => {
+                  const s = useHudStore.getState();
+                  s.selectResult(msg.resultId!);
+                  s.setActiveLeftTab('results');
+                }}
+                className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-white/20 px-1.5 py-0.5 text-[11px] font-medium text-white transition-colors hover:bg-white/30"
+                aria-label="在结果工作台查看分析结果"
+              >
+                查看结果
+              </button>
+            )}
           </div>
         )}
 
