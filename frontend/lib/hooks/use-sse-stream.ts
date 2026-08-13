@@ -479,6 +479,38 @@ export function useSSEStream(
         } catch (err) {
           devOnly.warn('[plan_finalized] parse failed', err);
         }
+      } else if (event.event === 'step_cancelled') {
+        // B-P2: 步骤被抢占取消时后端下发 step_cancelled
+        // ({task_id, step_id, tool, session_id})。把对应 running 的 tool-call
+        // 行标记为已取消（复用 ToolCallEntry 的 failed 形态），否则该行会一直
+        // 停在 running 直到流结束。已到终态的行绝不覆盖；未匹配时原样返回 prev，
+        // 保持 message 对象身份不变。
+        const stepId = data.step_id;
+        const tool = data.tool;
+        if (typeof stepId === 'string' && stepId) {
+          setMessages((prev) => {
+            const msgIdx = prev.findIndex(
+              (m) => m.id === thinkingId && Array.isArray(m.toolCalls),
+            );
+            if (msgIdx === -1) return prev;
+            const toolCalls = prev[msgIdx].toolCalls;
+            if (!toolCalls || toolCalls.length === 0) return prev;
+            let changed = false;
+            const nextCalls = toolCalls.map((c) => {
+              const matches =
+                c.id === stepId &&
+                (tool === undefined || c.tool === tool) &&
+                c.status === 'running';
+              if (!matches) return c;
+              changed = true;
+              return { ...c, status: 'failed' as const, error: '已取消' };
+            });
+            if (!changed) return prev;
+            const next = [...prev];
+            next[msgIdx] = { ...prev[msgIdx], toolCalls: nextCalls };
+            return next;
+          });
+        }
       } else if (
         event.event === 'error' ||
         event.event === 'step_error' ||

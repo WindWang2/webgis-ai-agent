@@ -184,50 +184,55 @@ async def test_factory_get_session_store():
     assert get_session_store() is custom
 
 
-def test_factory_selects_backend_from_settings_use_redis(monkeypatch):
-    """REVIEW-P1-6: the seam used to gate on settings.REDIS_ENABLED (which
-    does not exist) and then try to import a name the redis module doesn't
-    export, so the `except Exception` fallback always returned memory even
-    when USE_REDIS=True. Verify the seam now honors the real config flag.
+def test_get_session_store_returns_canonical_singleton(monkeypatch):
+    """P2: `get_session_store()` 必须返回规范单例 `session_data_manager`，
+    而不是每次新建一个实例 —— 两个独立 RedisSessionStore 各持一份 L1 缓存，
+    引擎经 session_data_manager 的写不会失效 explorer 经 get_session_store()
+    的 L1（反之亦然），同 id 会话存在 ≤L1_TTL 的陈旧读取。共享实例后 L1
+    写失效对所有消费方可见。
+
+    `set_active_session_store()` 仍可显式覆盖（测试/替代 provider）；重置为
+    None 后回到规范单例。后端选择（USE_REDIS）由 import 期工厂
+    `create_session_data_manager()` 决定，其行为由 tests/unit/test_session_factory.py
+    单独覆盖（这里不再重复 mock 工厂）。
     """
     import fakeredis.aioredis
 
-    from app.services import session_data_protocol
+    from app.services import session_data, session_data_protocol
+    from app.services.session_data import MemorySessionStore
     from app.services.session_data_redis import RedisSessionDataManager
 
-    # Wire the factory to an injected fakeredis so USE_REDIS=True doesn't
-    # try to reach a real Redis server.
     fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=False)
-    use_redis = {"value": False}  # mutable so the factory closure reads it
+    use_redis = {"value": False}
 
     def _factory_with_fake():
-        from app.services.session_data import MemorySessionStore
+        from app.services.session_data import MemorySessionStore as MemStore
 
         if use_redis["value"]:
             return RedisSessionDataManager(
                 redis_url="redis://unused", redis=fake_redis
             )
-        return MemorySessionStore()
+        return MemStore()
 
     monkeypatch.setattr(
         "app.services.session_data.create_session_data_manager",
         _factory_with_fake,
     )
 
-    # Force a fresh singleton so the factory re-runs.
-    session_data_protocol._active_store = None
-    use_redis["value"] = False
-    store = get_session_store()
-    assert not isinstance(store, RedisSessionDataManager), (
-        f"USE_REDIS=False must not yield a Redis store, got {type(store).__name__}"
-    )
-
-    session_data_protocol._active_store = None
-    use_redis["value"] = True
-    store = get_session_store()
-    assert isinstance(store, RedisSessionDataManager), (
-        f"USE_REDIS=True should yield RedisSessionDataManager, got {type(store).__name__}"
-    )
-
-    # Reset for following tests.
-    session_data_protocol._active_store = None
+    try:
+        session_data_protocol._active_store = None
+        # 规范单例：与模块级 session_data_manager 同一实例
+        assert session_data_protocol.get_session_store() is session_data.session_data_manager
+        # 工厂（直接调用）仍遵循 USE_REDIS 选择后端
+        use_redis["value"] = False
+        assert isinstance(_factory_with_fake(), MemorySessionStore)
+        use_redis["value"] = True
+        assert isinstance(_factory_with_fake(), RedisSessionDataManager)
+        # 显式覆盖仍生效，重置后回到规范单例
+        custom = MemorySessionStore()
+        session_data_protocol.set_active_session_store(custom)
+        assert session_data_protocol.get_session_store() is custom
+        session_data_protocol.set_active_session_store(None)
+        assert session_data_protocol.get_session_store() is session_data.session_data_manager
+    finally:
+        session_data_protocol._active_store = None

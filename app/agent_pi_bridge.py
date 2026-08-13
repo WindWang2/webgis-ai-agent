@@ -699,6 +699,10 @@ class PiBridge:
         await self._lock.acquire()
         cancelled = False
         timed_out = False
+        # G: set True when the pump observes the Pi subprocess dying mid-stream
+        # (see the process_died_event watcher below). Initialized here so the
+        # finally can read it even on the early-return send-failure path.
+        process_died = False
         # F5/F24: publish the active turn's identity + cancellation token while
         # the lock is held — abort() reads the sid for session scoping,
         # dispatch_tool binds the token via use_token. Cleared in the finally.
@@ -726,41 +730,86 @@ class PiBridge:
             # Stream events from Pi
             yield sse_event("task_start", {"task_id": turn_sid, "session_id": turn_sid, "turn_id": turn_id})
 
+            # G: watch the subprocess death signal alongside the event queue so
+            # a mid-stream Pi crash ends the turn promptly (error + done +
+            # no abort) instead of parking on heartbeat silence for the whole
+            # PI_EVENT_STREAM_TIMEOUT=180s stall budget and then retrying with
+            # duplicate side effects. Bare MagicMock rpc fakes (used by other
+            # test suites) auto-create a MagicMock for ``process_died_event``,
+            # which is not awaitable — fall back to a never-set event so those
+            # fakes degrade to the old heartbeat-only behavior.
+            process_died_event = getattr(self._rpc, "process_died_event", None)
+            if not isinstance(process_died_event, asyncio.Event):
+                process_died_event = asyncio.Event()
+
             silence_seconds = 0.0
-            while True:
-                try:
-                    event = await asyncio.wait_for(
-                        self._rpc.events.get(), timeout=PI_HEARTBEAT_INTERVAL
+            get_task = asyncio.ensure_future(self._rpc.events.get())
+            died_task = asyncio.ensure_future(process_died_event.wait())
+            pending = {get_task, died_task}
+            try:
+                while True:
+                    done, pending = await asyncio.wait(
+                        pending, timeout=PI_HEARTBEAT_INTERVAL,
+                        return_when=asyncio.FIRST_COMPLETED,
                     )
-                    silence_seconds = 0.0
-                    sse = map_event_to_sse(event, turn_sid, cache_lookup=get_cached_dispatch_result)
-                    if _harness is not None:
-                        # V3: 给原始 SSE 事件记录补 turn/run correlation（显式透传）。
-                        _harness.record_sse_event({
-                            **event, "run_id": turn_sid, "turn_id": turn_id,
-                        })
-                    if sse:
-                        # V3: step_result 负载加 additive turn_id 字段（前端 ack 时
-                        # 通过 correlation 回传，闭环才完整）。
-                        yield _inject_turn_id(sse, turn_id)
-                    if event.get("type") == "agent_end":
+                    if died_task in done:
+                        # Pi subprocess died mid-stream: the reader's finally
+                        # already failed every pending future; end the turn now
+                        # (error + done below), no abort RPC needed.
+                        process_died = True
                         break
-                except asyncio.TimeoutError:
-                    silence_seconds += PI_HEARTBEAT_INTERVAL
-                    if silence_seconds >= PI_EVENT_STREAM_TIMEOUT:
-                        # True stall: no Pi event for the whole stall budget.
-                        timed_out = True
-                        break
-                    # Keepalive: an SSE comment line (``: ...``) is ignored by
-                    # the client parser and never enters chat history or the
-                    # LLM context, but it produces bytes on the wire so proxies
-                    # and browsers see activity and don't drop the connection.
-                    yield ": keepalive\n\n"
+                    if get_task in done:
+                        event = get_task.result()
+                        silence_seconds = 0.0
+                        sse = map_event_to_sse(event, turn_sid, cache_lookup=get_cached_dispatch_result)
+                        if _harness is not None:
+                            # V3: 给原始 SSE 事件记录补 turn/run correlation（显式透传）。
+                            _harness.record_sse_event({
+                                **event, "run_id": turn_sid, "turn_id": turn_id,
+                            })
+                        if sse:
+                            # V3: step_result 负载加 additive turn_id 字段（前端 ack 时
+                            # 通过 correlation 回传，闭环才完整）。
+                            yield _inject_turn_id(sse, turn_id)
+                        if event.get("type") == "agent_end":
+                            break
+                        # Re-arm the queue waiter for the next event; the
+                        # completed waiter task is dropped from `pending` by
+                        # the next asyncio.wait round.
+                        get_task = asyncio.ensure_future(self._rpc.events.get())
+                        pending.add(get_task)
+                    else:
+                        # Neither an event nor a death within one heartbeat
+                        # interval -> accumulate silence, keepalive.
+                        silence_seconds += PI_HEARTBEAT_INTERVAL
+                        if silence_seconds >= PI_EVENT_STREAM_TIMEOUT:
+                            # True stall: no Pi event for the whole stall budget.
+                            timed_out = True
+                            break
+                        # Keepalive: an SSE comment line (``: ...``) is ignored by
+                        # the client parser and never enters chat history or the
+                        # LLM context, but it produces bytes on the wire so proxies
+                        # and browsers see activity and don't drop the connection.
+                        yield ": keepalive\n\n"
+            finally:
+                # G: cancel the parked wait tasks so no queue-get / death-wait
+                # task outlives the turn; await their completion so nothing
+                # lingers past loop teardown. Also covers generator
+                # cancellation (client disconnect) mid-await.
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
 
             if timed_out:
                 yield sse_event("error", {
                     "session_id": turn_sid,
                     "error": f"Pi agent stalled — no events for {int(PI_EVENT_STREAM_TIMEOUT)}s. The agent may be stuck; please retry.",
+                })
+            if process_died:
+                yield sse_event("error", {
+                    "session_id": turn_sid,
+                    "error": "Pi agent process exited unexpectedly mid-stream. The agent's tools may have run partially; please retry.",
                 })
 
             yield sse_event("done", {"session_id": turn_sid})
@@ -771,7 +820,22 @@ class PiBridge:
             cancelled = True
             raise
         finally:
-            if cancelled or timed_out:
+            if process_died:
+                # G: the Pi subprocess is dead — the reader's finally already
+                # failed every pending future, so an abort RPC would only
+                # raise 'Pi process not started' (duplicate of the fast-fail).
+                # Still ignite the turn's cancellation token so in-flight
+                # HTTP-callback tool dispatches (bound via use_token) stop at
+                # their next checkpoint() instead of running to completion
+                # against a dead turn.
+                logger.error(
+                    "[PiBridge] Pi subprocess exited mid-stream (turn=%s); "
+                    "skipping abort RPC (reader already failed pending futures)",
+                    turn_sid,
+                )
+                if _active_turn_token is not None:
+                    _active_turn_token.cancel("pi process exited unexpectedly")
+            elif cancelled or timed_out:
                 # Tell Pi to stop generating tokens / executing tools. F10:
                 # this now covers the stall-timeout path too — previously a
                 # stalled turn yielded error+done and returned WITHOUT the

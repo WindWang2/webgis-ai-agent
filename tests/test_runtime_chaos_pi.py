@@ -1,6 +1,6 @@
 """Runtime-chaos hardening tests for the Pi bridge / RPC client (WP-PI).
 
-Covers four defects, one test class each:
+Covers five defects, one test class each:
 
   - F5:  ``PiBridge.abort(session_id=...)`` must not kill a DIFFERENT
     session's in-flight turn on the singleton bridge.
@@ -12,6 +12,10 @@ Covers four defects, one test class each:
   - F24: the Pi HTTP-callback ``dispatch_tool`` must run under the active
     turn's ``CancellationToken`` so checkpoint()-cooperative tools stop when
     the turn is aborted.
+  - G:   a mid-stream Pi subprocess death must fast-fail the turn via the
+    public ``process_died_event`` (error + done, no abort RPC — the reader
+    already failed pending futures), not park on heartbeat silence for the
+    180s stall budget.
 
 Deterministic: fake RPC clients with asyncio.Queue event streams, Event
 barriers, and tiny patched timeout constants (no wall-clock-dependent
@@ -21,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -519,3 +523,193 @@ async def test_abort_toctou_sid_flip_logs_warning(caplog):
     ), "sid flip during the abort RPC must log a TOCTOU warning (P1)"
 
     await gen.aclose()
+
+
+# ── G: mid-stream Pi subprocess death fast-fail ─────────────────────
+
+
+def _make_death_rpc(seed_events: list[dict] | None = None) -> MagicMock:
+    """Like _make_rpc but with a REAL asyncio.Event process_died_event so the
+    bridge's death watcher can be driven deterministically (the bare
+    MagicMock attribute auto-created on attribute access is not awaitable).
+    """
+    rpc = _make_rpc(seed_events)
+    rpc.process_died_event = asyncio.Event()
+    return rpc
+
+
+class _EofPipe:
+    """Immediate-EOF stdout stand-in: read(1)/readline() both return b''."""
+
+    def read(self, n: int = -1):
+        return b""
+
+    def readline(self):
+        return b""
+
+
+@pytest.mark.asyncio
+async def test_process_death_mid_stream_fast_fails_turn(monkeypatch):
+    """G: when the Pi subprocess dies mid-stream, stream_prompt must end the
+    turn promptly with a truthful error + done — NOT park on heartbeat silence
+    for the whole 180s stall budget (which would then abort + encourage a
+    retry that duplicates side effects). It must skip the abort RPC (the
+    reader already failed pending futures; abort would only raise 'Pi process
+    not started'), cancel the turn token (in-flight HTTP-callback dispatches
+    stop at their next checkpoint()), drain the queue and release the lock.
+
+    Deterministic: the stall budget is patched to 3600s so ONLY the death
+    signal can end the stream; completion is asserted via an asyncio.Event
+    barrier inside a short wait_for (no wall-clock sleeps).
+    """
+    class _StubRegistry:
+        def list_tools(self):
+            return ["query_map_features"]
+
+        def metadata(self, name):
+            return {"tier": 1}
+
+    monkeypatch.setattr(bridge_mod, "get_tool_registry", lambda: _StubRegistry())
+    monkeypatch.setattr(bridge_mod, "PI_HEARTBEAT_INTERVAL", 0.01)
+    # Only the death signal may end the stream — a stall would take 3600s.
+    monkeypatch.setattr(bridge_mod, "PI_EVENT_STREAM_TIMEOUT", 3600.0)
+
+    observed_tokens: list = []
+
+    async def _fake_dispatch(self, tc, session_id, executed):
+        observed_tokens.append(current_token())
+        return ToolDispatchResult(
+            status="ok", llm_payload="ok", slim_event={}, geojson_ref=None,
+            raw_result={}, error_msg=None,
+        )
+
+    monkeypatch.setattr(bridge_mod.ToolDispatchService, "dispatch", _fake_dispatch)
+
+    rpc = _make_death_rpc([make_token_event("partial")])  # one event, no agent_end
+    bridge = PiBridge(rpc=rpc)
+
+    parked = asyncio.Event()
+    terminal = asyncio.Event()
+    collected: list[str] = []
+
+    async def _consume():
+        async for ev in bridge.stream_prompt("hi", session_id="sess-death"):
+            collected.append(ev)
+            if "partial" in ev:
+                parked.set()  # turn is mid-stream, parked on the next event
+            if ev.startswith("event: done"):
+                terminal.set()
+
+    consumer = asyncio.create_task(_consume())
+    await asyncio.wait_for(parked.wait(), timeout=2.0)
+
+    # A tool dispatch is in flight via the HTTP callback, bound to the turn's
+    # token (F24); it captures the token object for the cancellation assert.
+    dispatch = asyncio.create_task(dispatch_tool(PiToolRequest(
+        name="query_map_features", toolCallId="tc-death", arguments={},
+        sessionId=None,
+    )))
+    await dispatch
+
+    # Mid-turn: the Pi subprocess dies.
+    rpc.process_died_event.set()
+    await asyncio.wait_for(terminal.wait(), timeout=2.0)
+    await consumer
+
+    # Terminal sequence: a truthful error, then done, and NOTHING after done.
+    structured = [e for e in collected if not e.startswith(":")]
+    assert structured[-1].startswith("event: done"), structured
+    assert structured[-2].startswith("event: error"), structured
+    assert "exited unexpectedly" in structured[-2]
+
+    # No abort RPC: the reader already failed pending futures; abort would
+    # only raise 'Pi process not started' (and duplicate the fast-fail).
+    assert "abort" not in _rpc_commands(rpc), (
+        f"death must skip the abort RPC; calls={_rpc_commands(rpc)}"
+    )
+    rpc.fail_all_pending.assert_not_called()
+
+    # The turn token was cancelled so checkpoint()-cooperative tool
+    # dispatches (HTTP callback path) stop against the dead turn.
+    token = observed_tokens[0]
+    assert token is not None, "dispatch must run under the turn's token"
+    assert token.cancelled, "mid-stream death must cancel the turn token"
+
+    # Leftover events drained, lock released.
+    assert rpc.events.empty(), "queue must be drained after death"
+    assert bridge._lock.locked() is False, "turn lock leaked after death"
+
+
+@pytest.mark.asyncio
+async def test_process_died_event_fires_on_reader_eof():
+    """G: the public process_died_event must be set by the reader's finally at
+    the same moment process_died flips True (stdout EOF -> subprocess gone),
+    so a streaming turn can fast-fail on it."""
+    client = PiRpcClient()
+    mock_proc = MagicMock()
+    mock_proc.stdin = MagicMock()
+    mock_proc.stdout = _EofPipe()
+    mock_proc.stderr = _EofPipe()
+    mock_proc.poll.return_value = 1
+
+    client._process = mock_proc
+    assert client.process_died_event.is_set() is False
+
+    await client._read_responses()
+
+    assert client.process_died_event.is_set() is True
+    assert client.process_died is True
+    # The dead process reference is cleared so start() can respawn.
+    assert client._process is None
+
+
+@pytest.mark.asyncio
+async def test_start_clears_death_signal():
+    """G guard: a stale death signal from a previous process must not fast-fail
+    a healthy respawned turn — start() clears both the flag and the event
+    before spawning (mirrors the unit respawn test's Popen mocking)."""
+    import app.api.routes.pi_tools  # noqa: F401 — pre-import so the patch hits the cached module
+
+    client = PiRpcClient()
+    client._process_died = True
+    client._process_died_event.set()
+
+    mock_proc = MagicMock()
+    mock_proc.poll.return_value = None
+    mock_proc.stdin = MagicMock()
+
+    with patch.object(PiRpcClient, "_read_responses", new_callable=AsyncMock), \
+         patch.object(PiRpcClient, "_read_stderr", new_callable=AsyncMock), \
+         patch("app.services.chat.pi_rpc_client.subprocess.Popen", return_value=mock_proc), \
+         patch("app.api.routes.pi_tools.get_bridge_secret", return_value="test-secret"), \
+         patch.object(PiRpcClient, "_wait_for_ready", new_callable=AsyncMock):
+        await client.start()
+
+    assert client.process_died is False, "start() must clear the stale death flag"
+    assert client.process_died_event.is_set() is False, (
+        "start() must clear the stale death event so a respawned turn isn't fast-failed"
+    )
+    assert client._process is mock_proc
+
+
+@pytest.mark.asyncio
+async def test_stream_prompt_happy_path_unchanged_with_death_aware_rpc():
+    """G guard: with a death-aware client (real process_died_event that never
+    fires), the happy path is unchanged — task_start -> token -> agent_end ->
+    done, no error, no abort, queue empty, lock released."""
+    rpc = _make_death_rpc([
+        make_token_event("hello"),
+        {"type": "agent_end"},
+    ])
+    bridge = PiBridge(rpc=rpc)
+
+    events = [ev async for ev in bridge.stream_prompt("hi", session_id="sess-ok")]
+
+    structured = [e for e in events if not e.startswith(":")]
+    assert any("task_start" in e for e in structured), structured
+    assert any("hello" in e for e in structured), structured
+    assert structured[-1].startswith("event: done"), structured
+    assert not any(e.startswith("event: error") for e in structured), structured
+    assert "abort" not in _rpc_commands(rpc), _rpc_commands(rpc)
+    assert bridge._lock.locked() is False
+    assert rpc.events.empty()

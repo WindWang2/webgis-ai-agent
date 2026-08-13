@@ -6,17 +6,29 @@ import {
   resolveParentLayerId,
 } from './use-sse-stream';
 import { useHudStore } from '@/lib/store/useHudStore';
-import type { SelectedFeatureInfo } from '@/lib/store/hud-types';
+import type { SelectedFeatureInfo, ToolCallEntry } from '@/lib/store/hud-types';
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 // use-sse-stream consumes the bridge for aiStatus + send; we spy on send to
-// capture the mapState payload (the FE-4 contract under test).
+// capture the mapState payload (the FE-4 contract under test). The mock also
+// captures the real onEvent callback (useMapBridge's 3rd arg —
+// (sessionId, dispatchAction, onEvent, sessionTokenRef, opts)) so tests can
+// drive SSE events straight into the hook.
 const bridgeMock = vi.hoisted(() => ({
   send: vi.fn().mockResolvedValue(undefined),
   aiStatus: 'idle',
+  onEventCallback: null as ((event: {
+    event: string;
+    data: Record<string, unknown>;
+  }) => void) | null,
 }));
 
-vi.mock('./useMapBridge', () => ({ useMapBridge: () => bridgeMock }));
+vi.mock('./useMapBridge', () => ({
+  useMapBridge: (...args: unknown[]) => {
+    bridgeMock.onEventCallback = args[2] as typeof bridgeMock.onEventCallback;
+    return bridgeMock;
+  },
+}));
 vi.mock('@/lib/utils/logger', () => ({
   devOnly: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
   safeError: vi.fn(),
@@ -215,5 +227,97 @@ describe('useSSEStream mapState snapshot (FE-4 design §7)', () => {
     const mapState = await sendAndGetMapState();
     expect(mapState.selected_feature).toBeNull();
     expect(mapState.focus_layer_id).toBeNull();
+  });
+});
+
+describe('useSSEStream step_cancelled', () => {
+  beforeEach(() => {
+    bridgeMock.send.mockClear();
+    bridgeMock.onEventCallback = null;
+    useHudStore.setState({
+      selectedFeature: null,
+      focusLayerId: null,
+      layers: [],
+      baseLayer: 'OSM 地图',
+      viewport: { center: [0, 0], zoom: 5, bearing: 0, pitch: 0 },
+      is3D: false,
+    });
+  });
+
+  // Render, send once (establishes thinkingMsgIdRef), then attach the seeded
+  // tool-call rows to the turn's thinking message (the last message).
+  async function renderWithToolCalls(toolCalls: ToolCallEntry[]) {
+    const hook = renderStream();
+    await act(async () => {
+      await hook.result.current.handleSend('hi');
+    });
+    act(() => {
+      hook.result.current.setMessages((prev) => {
+        const idx = prev.length - 1;
+        return [...prev.slice(0, idx), { ...prev[idx], toolCalls }];
+      });
+    });
+    return hook;
+  }
+
+  function emitStepCancelled(data: Record<string, unknown>) {
+    act(() => {
+      bridgeMock.onEventCallback?.({ event: 'step_cancelled', data });
+    });
+  }
+
+  it('marks a matching running row failed/已取消, preserving other fields and sibling rows', async () => {
+    const hook = await renderWithToolCalls([
+      { id: 'step-1', tool: 'search_poi', arguments: '{"q":"school"}', status: 'running', startedAt: 1 },
+      { id: 'step-2', tool: 'heatmap_data', status: 'running', startedAt: 2 },
+    ]);
+    emitStepCancelled({
+      task_id: 't1',
+      step_id: 'step-1',
+      tool: 'search_poi',
+      session_id: 'sid-fe4',
+    });
+    const msg = hook.result.current.messages[hook.result.current.messages.length - 1];
+    expect(msg.toolCalls).toEqual([
+      { id: 'step-1', tool: 'search_poi', arguments: '{"q":"school"}', status: 'failed', error: '已取消', startedAt: 1 },
+      { id: 'step-2', tool: 'heatmap_data', status: 'running', startedAt: 2 },
+    ]);
+  });
+
+  it('no-ops on unknown step_id, preserving message object identity', async () => {
+    const hook = await renderWithToolCalls([
+      { id: 'step-1', tool: 'search_poi', status: 'running', startedAt: 1 },
+    ]);
+    const messagesBefore = hook.result.current.messages;
+    const msgBefore = messagesBefore[messagesBefore.length - 1];
+    emitStepCancelled({ task_id: 't1', step_id: 'nope', tool: 'search_poi', session_id: 'sid-fe4' });
+    expect(hook.result.current.messages).toBe(messagesBefore);
+    expect(hook.result.current.messages[hook.result.current.messages.length - 1]).toBe(msgBefore);
+  });
+
+  it('never overwrites an already-terminal row while cancelling a running row in the same batch', async () => {
+    const hook = await renderWithToolCalls([
+      { id: 'step-1', tool: 'search_poi', status: 'completed', result: 'ok', completedAt: 5 },
+      { id: 'step-2', tool: 'heatmap_data', status: 'running', startedAt: 2 },
+    ]);
+    emitStepCancelled({ task_id: 't1', step_id: 'step-1', tool: 'search_poi', session_id: 'sid-fe4' });
+    let calls = hook.result.current.messages[hook.result.current.messages.length - 1].toolCalls!;
+    expect(calls[0].status).toBe('completed');
+    expect(calls[0].result).toBe('ok');
+    expect(calls[0].error).toBeUndefined();
+    expect(calls[1].status).toBe('running');
+    // a later step_cancelled for the running row still lands
+    emitStepCancelled({ task_id: 't1', step_id: 'step-2', tool: 'heatmap_data', session_id: 'sid-fe4' });
+    calls = hook.result.current.messages[hook.result.current.messages.length - 1].toolCalls!;
+    expect(calls[1]).toMatchObject({ id: 'step-2', status: 'failed', error: '已取消' });
+  });
+
+  it('leaves a row running when data.tool mismatches on the same step_id', async () => {
+    const hook = await renderWithToolCalls([
+      { id: 'step-1', tool: 'search_poi', status: 'running', startedAt: 1 },
+    ]);
+    emitStepCancelled({ task_id: 't1', step_id: 'step-1', tool: 'other_tool', session_id: 'sid-fe4' });
+    const calls = hook.result.current.messages[hook.result.current.messages.length - 1].toolCalls!;
+    expect(calls[0]).toMatchObject({ id: 'step-1', status: 'running' });
   });
 });

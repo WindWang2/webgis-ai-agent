@@ -141,18 +141,24 @@ async def test_dispatch_no_command_no_minting(fake_registry, clean_session):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_minting_preserves_preexisting_action_id(fake_registry, clean_session):
-    """已铸过 action_id 的 command dict → 复用，不重复铸造。"""
+async def test_dispatch_minting_mints_fresh_id_over_preexisting(fake_registry, clean_session):
+    """F25: 已带 action_id 的 command dict（跨 turn 缓存/持久化对象）→ 仍铸新 id。
+
+    复用陈旧 id 会让 ACK store 的 first-terminal-wins 把第二次真实执行的终态
+    当作重复丢弃（重复副作用不可区分）。每次派发必须铸新 id；同 turn 去重由
+    `_session_executed_sets` 保证，前端以 SSE 事件携带的 action_id 为准。
+    """
     fake_registry.dispatch.return_value = {
         "success": True,
         "command": "fly_to",
         "params": {"center": [116.0, 39.0], "zoom": 12},
-        "action_id": "ma-preexisting1234",
+        "action_id": "ma-preexisting1234",  # 陈旧 id（来自之前某次执行）
     }
     svc = ToolDispatchService(registry=fake_registry)
     result = await svc.dispatch(_tc("webgis_view_set", {}), clean_session, set())
-    assert result.map_actions[0]["action_id"] == "ma-preexisting1234"
-    assert result.raw_result["action_id"] == "ma-preexisting1234"
+    assert result.map_actions[0]["action_id"] != "ma-preexisting1234"
+    assert result.map_actions[0]["action_id"].startswith("ma-")
+    assert result.raw_result["action_id"] == result.map_actions[0]["action_id"]
 
 
 @pytest.mark.asyncio

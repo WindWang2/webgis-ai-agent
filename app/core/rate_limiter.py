@@ -126,12 +126,24 @@ class MemoryRateLimiter:
 
 
 _rate_limiter: RateLimiter | None = None
+# P2: 首次探测 Redis 失败会回退到内存版。原实现把该回退永久缓存 —— Redis 恢复后
+# 整个进程生命周期内跨 pod 限流仍然失效（安全上 fail-open 无害，但语义漂移）。
+# 现在记录回退时刻，下次调用时若超过 _FALLBACK_REPROBE_S 则重新探测一次；成功则
+# 切换回 Redis 后端，失败则刷新回退时刻（避免每次调用都打 Redis）。
+_FALLBACK_REPROBE_S = 60.0
+_rate_limiter_fallback_at: float | None = None
 
 
 async def get_rate_limiter() -> RateLimiter:
     """Return a shared rate limiter instance, preferring Redis when available."""
-    global _rate_limiter
-    if _rate_limiter is not None:
+    global _rate_limiter, _rate_limiter_fallback_at
+    if _rate_limiter is not None and not isinstance(_rate_limiter, MemoryRateLimiter):
+        return _rate_limiter
+    if (
+        _rate_limiter is not None
+        and _rate_limiter_fallback_at is not None
+        and (time.monotonic() - _rate_limiter_fallback_at) < _FALLBACK_REPROBE_S
+    ):
         return _rate_limiter
 
     try:
@@ -145,9 +157,11 @@ async def get_rate_limiter() -> RateLimiter:
         )
         await client.ping()
         _rate_limiter = RedisRateLimiter(client)
+        _rate_limiter_fallback_at = None
         logger.info("[RateLimiter] Using Redis backend")
     except Exception as exc:
         logger.warning(f"[RateLimiter] Redis unavailable ({exc}), falling back to in-memory")
         _rate_limiter = MemoryRateLimiter()
+        _rate_limiter_fallback_at = time.monotonic()
 
     return _rate_limiter

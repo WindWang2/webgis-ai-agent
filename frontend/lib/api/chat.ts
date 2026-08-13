@@ -42,6 +42,7 @@ export type SSEEventType =
   | 'task_complete'
   | 'task_error'
   | 'task_cancelled'
+  | 'step_cancelled'
   | 'session'
   | 'task_plan'
   | 'token'

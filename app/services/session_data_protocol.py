@@ -205,9 +205,14 @@ def get_session_store() -> SessionStoreProtocol:
     """
     global _active_store
     if _active_store is None:
-        from app.services.session_data import create_session_data_manager
+        # P2: 与 `session_data_manager`（session_data.py 模块单例）共用同一个
+        # 实例，而不是各建一个 —— 原来两个独立 RedisSessionStore 各自持有 L1
+        # 缓存：引擎经 session_data_manager 的写不会失效 explorer 经
+        # get_session_store() 的 L1（反之亦然），同 id 会话存在 ≤L1_TTL 的
+        # 陈旧读取。共享实例后 L1 写失效对所有消费方可见。
+        from app.services.session_data import session_data_manager
 
-        _active_store = create_session_data_manager()
+        _active_store = session_data_manager
     return _active_store
 
 

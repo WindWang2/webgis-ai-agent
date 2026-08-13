@@ -11,6 +11,11 @@ Interface:
     - :attr:`events` - the raw ``AgentSessionEvent`` queue (consumed by the mapper)
     - :attr:`process_died` - True after the Pi process exits (lets the bridge
       fall back to the legacy path)
+    - :attr:`process_died_event` - public ``asyncio.Event`` set at the same
+      moment ``process_died`` flips True; ``start()`` clears both so a stale
+      death can't fast-fail a healthy respawned turn. Lets a streaming turn
+      park on ``{events.get(), process_died_event.wait()}`` and learn of a
+      mid-stream death promptly instead of via heartbeat silence.
 
 The ADR-0022 dispatch-result cache and the two dispatch adapters stay in
 ``agent_pi_bridge.py`` - this module has no knowledge of tool dispatch.
@@ -99,6 +104,11 @@ class PiRpcClient:
         self._stderr_task: Optional[asyncio.Task] = None
         # 审计 AGENT-05：Pi 进程死亡后标记为 True，让 _use_pi_bridge() 能回退
         self._process_died = False
+        # 与 _process_died 同步翻转的 asyncio.Event：stream_prompt 把它和事件
+        # 队列一起 wait，进程中途死亡时能立刻结束 turn，而不是靠心跳静默等满
+        # PI_EVENT_STREAM_TIMEOUT。start() 里与 flag 一起 clear，防止上一次
+        # 死亡的残留信号误杀重连后的新 turn。
+        self._process_died_event = asyncio.Event()
         # Register an atexit hook so that if the Python process exits for any
         # catchable reason (SIGTERM, unhandled exception, normal shutdown) the
         # Pi child is terminated rather than orphaned. The k8s entrypoint's
@@ -140,10 +150,26 @@ class PiRpcClient:
         """True after the Pi process exits or the reader task crashes."""
         return self._process_died
 
+    @property
+    def process_died_event(self) -> asyncio.Event:
+        """Public death signal: set the moment ``process_died`` flips True.
+
+        Awaitable alongside :attr:`events` so a streaming consumer can fast-fail
+        on a mid-stream subprocess death instead of waiting out the stall
+        budget. Cleared by :meth:`start` so a stale death from a previous
+        process can't fast-fail a healthy respawned turn.
+        """
+        return self._process_died_event
+
     async def start(self) -> None:
         """Start the Pi subprocess."""
         if self._process is not None:
             return
+
+        # 重连/respawn：清掉上一次死亡的残留信号，防止陈旧死亡误杀新 turn
+        # （reader finally 里与 flag 一起 set 的 event，这里与 flag 一起 clear）。
+        self._process_died = False
+        self._process_died_event.clear()
 
         self._session_dir.mkdir(parents=True, exist_ok=True)
 
@@ -298,8 +324,10 @@ class PiRpcClient:
         finally:
             # Pi 进程退出 / reader 异常 -> fail 所有 pending 请求，避免 300s 挂起
             self._fail_all_pending("Pi process exited or reader stopped")
-            # 标记为不可用
+            # 标记为不可用（flag + 可等待的 asyncio.Event 同步翻转，让正在
+            # stream_prompt 里等待的 turn 立刻感知死亡并 fast-fail）
             self._process_died = True
+            self._process_died_event.set()
             # Clear the dead process reference so start() can respawn (its guard
             # is `if self._process is not None: return`). Only clear when the
             # process has actually exited (poll() returns a non-None exit code) -
