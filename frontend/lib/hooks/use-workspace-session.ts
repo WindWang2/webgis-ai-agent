@@ -33,6 +33,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
   const setSelectedFeature = useHudStore((s) => s.setSelectedFeature);
   const setAiStatus = useHudStore((s) => s.setAiStatus);
   const clearTask = useHudStore((s) => s.clearTask);
+  const clearResults = useHudStore((s) => s.clearResults);
 
   // Sync sessionId state to ref
   useEffect(() => {
@@ -84,6 +85,9 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       setSelectedFeature(null);
       setAiStatus('idle');
       clearTask();
+      // Result Workbench: results reference session-scoped ref: cursors that are
+      // dead in the new session — clear the registry to avoid stale inspection.
+      clearResults();
       // F4: the viewport seq tracker is per-session (server seqs are
       // session-scoped) — reset before the restore GET so the coalesce below
       // compares against a fresh counter, not the previous session's.
@@ -192,7 +196,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         }
       }
     },
-    [clearLayers, clearAnnotations, clearTask, setSelectedFeature, setAiStatus, dispatchAction]
+    [clearLayers, clearAnnotations, clearTask, clearResults, setSelectedFeature, setAiStatus, dispatchAction]
   );
 
   const startNewSession = useCallback(

@@ -22,6 +22,7 @@ import {
   LayoutTemplate,
   PanelLeftClose,
   PanelLeftOpen,
+  ClipboardList,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
@@ -45,6 +46,7 @@ const RAIL_GROUPS: Array<Array<RailTabDef>> = [
   [
     { key: 'analysis', icon: Triangle, label: '分析' },
     { key: 'tasks', icon: ListChecks, label: '任务' },
+    { key: 'results', icon: ClipboardList, label: '结果' },
   ],
   [{ key: 'export_layout', icon: Printer, label: '制图' }],
 ];
@@ -59,12 +61,14 @@ export function NavRail() {
   const setTemplatesOpen = useHudStore((s) => s.setTemplatesOpen);
   const layerCount = useHudStore((s) => s.layers.length);
   const exportCount = useHudStore((s) => s.exports.length);
+  const resultCount = useHudStore((s) => s.results.length);
   // Review P2 修复：HUD 展开（210px,z-50）会盖住 rail 底部工具区，整体上移避让。
   const hudOpen = useHudStore((s) => s.hudOpen);
 
   const badges: Partial<Record<LeftTab, number | undefined>> = {
     layers: layerCount > 0 ? layerCount : undefined,
     export_layout: exportCount > 0 ? exportCount : undefined,
+    results: resultCount > 0 ? resultCount : undefined,
   };
 
   const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());

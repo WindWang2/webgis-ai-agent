@@ -174,6 +174,8 @@ export function useSSEStream(
       plan?: PlanProposalPayload;
       agentPlan?: AgentPlanState;
       layerAdded?: string;
+      /** Result Workbench linkage (id of the captured AnalysisResult for this step). */
+      resultId?: string;
     }>
   >([
     {
@@ -279,7 +281,20 @@ export function useSSEStream(
           chunk,
           !!(data.is_reasoning || data.type === "reasoning"),
         );
+      } else if (event.event === 'tool_call') {
+        // Result Workbench: stash the tool-call args so the matching step_result
+        // can show truthful input evidence + parameters (best-effort, keyed by
+        // tool name within the turn).
+        if (data.name && typeof data.arguments === 'string') {
+          useHudStore.getState().captureToolCallArgs(data.name, data.arguments);
+        }
       } else if (event.event === "step_result") {
+        // Result Workbench: normalize + record this result into the bounded,
+        // session-scoped registry. Runs before the layer/chart handling so the
+        // result is inspectable even when no layer is mounted. propose_plan and
+        // other non-analysis events are ignored inside the slice. The returned
+        // id lets the chat layer-added chip deep-link to the same result.
+        const workbenchResultId = useHudStore.getState().captureStepResult(data);
         // Plan Mode：propose_plan 返回的 plan 摘要挂到当前消息，由 PlanProposalCard 渲染
         if (data.tool === 'propose_plan' && data.result?.success && data.result?.plan_id) {
           const plan: PlanProposalPayload = {
@@ -384,7 +399,7 @@ export function useSSEStream(
           }
 
           setMessages((prev) =>
-            prev.map((m) => (m.id === thinkingId ? { ...m, layerAdded: layerName } : m))
+            prev.map((m) => (m.id === thinkingId ? { ...m, layerAdded: layerName, resultId: workbenchResultId } : m))
           );
         }
         // Chart data from generate_chart tool — attach to message for rendering in chat

@@ -18,6 +18,7 @@ import {
   Triangle,
   ListChecks,
   Printer,
+  ClipboardList,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
@@ -30,6 +31,7 @@ import { MapStudioTab } from '@/components/sidebar/map-studio-tab';
 import { ProjectTab } from '@/components/sidebar/project-tab';
 import { DataSourcesTab } from '@/components/sidebar/data-sources-tab';
 import { TasksTab } from '@/components/sidebar/tasks-tab';
+import { ResultsTab } from '@/components/sidebar/results-tab';
 
 export interface ContextPanelProps {
   messages: Array<{
@@ -39,6 +41,7 @@ export interface ContextPanelProps {
     timestamp: Date | number | null;
     isThinking?: boolean;
     charts?: unknown[];
+    resultId?: string;
   }>;
   aiStatus: AiStatus;
   onSend: (text: string) => void;
@@ -66,6 +69,7 @@ const PANEL_META: Record<string, PanelMeta> = {
   layers: { icon: Layers, title: '图层', description: '可见性 · 样式 · 顺序' },
   analysis: { icon: Triangle, title: '分析', description: '空间分析工具' },
   tasks: { icon: ListChecks, title: '任务', description: '后台作业中心' },
+  results: { icon: ClipboardList, title: '分析结果', description: '结果工作台 · 输入 · 指标 · 输出' },
   export_layout: { icon: Printer, title: '制图工坊', description: '排版与导出' },
 };
 
@@ -84,13 +88,18 @@ export function ContextPanel({
   const setSidebarWidth = useHudStore((s) => s.setSidebarWidth);
   const layerCount = useHudStore((s) => s.layers.length);
   const exportCount = useHudStore((s) => s.exports.length);
+  const resultCount = useHudStore((s) => s.results.length);
   // HUD 展开时面板整体上移避让（与 nav rail / floating legend 一致），
   // 否则 composer 与 tab 底部内容被 210px HUD 遮住。
   const hudOpen = useHudStore((s) => s.hudOpen);
 
   const metaKey = activeTab === 'exports' ? 'export_layout' : activeTab;
   const meta = PANEL_META[metaKey] ?? PANEL_META.chat;
-  const badge = metaKey === 'layers' ? layerCount : metaKey === 'export_layout' ? exportCount : undefined;
+  const badge =
+    metaKey === 'layers' ? layerCount
+    : metaKey === 'export_layout' ? exportCount
+    : metaKey === 'results' ? resultCount
+    : undefined;
 
   /* ─── 右缘拖拽调宽 ─── */
   const [dragging, setDragging] = useState(false);
@@ -192,6 +201,9 @@ export function ContextPanel({
         {(activeTab === 'export_layout' || activeTab === 'exports') && <MapStudioTab />}
         {activeTab === 'tasks' && (
           <TasksTab sessionId={sessionId} ownerToken={ownerToken} />
+        )}
+        {activeTab === 'results' && (
+          <ResultsTab sessionId={sessionId} ownerToken={ownerToken} onSend={onSend} />
         )}
       </div>
 

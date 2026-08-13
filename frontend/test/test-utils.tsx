@@ -94,6 +94,15 @@ export function createMockStoreState(overrides?: Partial<HudState>): Record<stri
     annotations: [],
     addAnnotation: vi.fn(),
     clearAnnotations: vi.fn(),
+    // Analysis Results Workbench slice
+    results: [],
+    selectedResultId: null,
+    captureToolCallArgs: vi.fn(),
+    captureStepResult: vi.fn(),
+    enrichResultOutput: vi.fn(),
+    selectResult: vi.fn(),
+    removeResult: vi.fn(),
+    clearResults: vi.fn(),
     ...overrides,
   }
 }

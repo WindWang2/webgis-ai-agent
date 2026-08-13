@@ -24,6 +24,7 @@ import { persist } from 'zustand/middleware';
 
 import type { HudState, LeftTab } from './hud-types';
 import { createLayersSlice } from './slices/layersSlice';
+import { createResultsSlice } from './slices/resultsSlice';
 import { createSettingsSlice } from './slices/settingsSlice';
 import { createTaskSlice } from './slices/taskSlice';
 import { createUiSlice } from './slices/uiSlice';
@@ -59,6 +60,7 @@ export const useHudStore = create<HudState>()(
   persist(
     (...a) => ({
       ...createLayersSlice(...a),
+      ...createResultsSlice(...a),
       ...createTaskSlice(...a),
       ...createSettingsSlice(...a),
       ...createUiSlice(...a),

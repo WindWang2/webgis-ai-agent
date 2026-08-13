@@ -5,11 +5,11 @@ import { render, screen, fireEvent } from '@testing-library/react';
  * NavRail (UI V3) — 主导航竖排图标栏。
  *
  * Pin 的契约：
- *   - 7 个 tab（chat/project/data_sources/layers/analysis/tasks/export_layout）
+ *   - 8 个 tab（chat/project/data_sources/layers/analysis/tasks/results/export_layout）
  *     带 role=tab + aria-selected + roving tabindex；
  *   - 点击 inactive tab → setActiveLeftTab；点击 active tab → toggleLeftPanel；
  *   - ArrowUp/Down/Home/End 键盘导航（自动激活语义）；
- *   - 图层/导出徽标计数；模板库按钮 → setTemplatesOpen(true)。
+ *   - 图层/导出/结果徽标计数；模板库按钮 → setTemplatesOpen(true)。
  */
 
 const setActiveLeftTab = vi.fn();
@@ -24,6 +24,7 @@ const store: Record<string, unknown> = {
   setTemplatesOpen,
   layers: [],
   exports: [],
+  results: [],
 };
 
 vi.mock('@/lib/store/useHudStore', () => ({
@@ -33,7 +34,7 @@ vi.mock('@/lib/store/useHudStore', () => ({
 // Import AFTER the mock is registered.
 import { NavRail } from './nav-rail';
 
-const TAB_ORDER = ['chat', 'project', 'data_sources', 'layers', 'analysis', 'tasks', 'export_layout'];
+const TAB_ORDER = ['chat', 'project', 'data_sources', 'layers', 'analysis', 'tasks', 'results', 'export_layout'];
 const TAB_LABELS: Record<string, string> = {
   chat: '对话',
   project: '项目',
@@ -41,6 +42,7 @@ const TAB_LABELS: Record<string, string> = {
   layers: '图层',
   analysis: '分析',
   tasks: '任务',
+  results: '结果',
   export_layout: '制图',
 };
 
@@ -51,16 +53,17 @@ describe('NavRail', () => {
     store.leftPanelOpen = true;
     store.layers = [];
     store.exports = [];
+    store.results = [];
   });
 
-  it('renders 7 tabs with tablist semantics and roving tabindex', () => {
+  it('renders 8 tabs with tablist semantics and roving tabindex', () => {
     render(<NavRail />);
 
     const tablist = screen.getByRole('tablist', { name: '工作区面板' });
     expect(tablist).toHaveAttribute('aria-orientation', 'vertical');
 
     const tabs = screen.getAllByRole('tab');
-    expect(tabs).toHaveLength(7);
+    expect(tabs).toHaveLength(8);
     expect(tabs.map((t) => t.getAttribute('aria-label'))).toEqual(
       TAB_ORDER.map((k) => TAB_LABELS[k])
     );

@@ -20,6 +20,7 @@ const hudState = vi.hoisted(() => ({
   setBaseLayer: vi.fn(),
   addLayer: vi.fn(),
   fetchAnalysisAssets: vi.fn().mockResolvedValue(undefined),
+  clearResults: vi.fn(),
 }));
 
 vi.mock('@/lib/store/useHudStore', () => ({

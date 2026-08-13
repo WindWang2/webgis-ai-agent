@@ -13,7 +13,7 @@
  */
 'use client';
 
-import { ListChecks, RefreshCw, RotateCcw, X } from 'lucide-react';
+import { ListChecks, RefreshCw, RotateCcw, X, ClipboardList } from 'lucide-react';
 import { useMemo } from 'react';
 
 import type { JobStatus, JobView } from '@/lib/api/jobs';
@@ -69,6 +69,16 @@ function JobCard({
     isCancelling && job.active && job.status !== 'cancelling' ? 'cancelling' : job.status;
   const showProgress = job.active && job.progress !== null;
   const indeterminate = job.active && job.progress === null;
+
+  // Result Workbench entry point: link a durable job to a captured result by
+  // shared background_job_ids / agent_step_id, and surface an inspector link.
+  const results = useHudStore((s) => s.results);
+  const selectResult = useHudStore((s) => s.selectResult);
+  const setActiveLeftTab = useHudStore((s) => s.setActiveLeftTab);
+  const linkedResult = results.find(
+    (r) => r.backgroundJobIds.includes(job.id) || (!!job.agent_step_id && r.id === job.agent_step_id),
+  );
+  const canOpenResult = !!linkedResult && !job.active;
 
   return (
     /* 任务行与 layers-tab 同款交互配方：hover 底色 + 左侧预留 accent 指示条
@@ -128,9 +138,22 @@ function JobCard({
         <span>已用 {formatElapsed(job, now)}</span>
         <div className="flex items-center gap-2">
           {job.result_ref && !job.active && (
-            <span className="max-w-[10rem] truncate text-ink-muted" title={job.result_ref}>
-              {job.result_ref.split('/').pop()}
-            </span>
+            canOpenResult && linkedResult ? (
+              <button
+                type="button"
+                onClick={() => { selectResult(linkedResult.id); setActiveLeftTab('results'); }}
+                className="inline-flex max-w-[10rem] items-center gap-1 truncate rounded-sm px-1 py-0.5 text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink"
+                title={`在结果工作台查看：${job.result_ref}`}
+                aria-label="在结果工作台查看分析结果"
+              >
+                <ClipboardList className="h-3 w-3" aria-hidden />
+                <span className="truncate">{job.result_ref.split('/').pop()}</span>
+              </button>
+            ) : (
+              <span className="max-w-[10rem] truncate text-ink-muted" title={job.result_ref}>
+                {job.result_ref.split('/').pop()}
+              </span>
+            )
           )}
           {job.cancellable && (
             <button
