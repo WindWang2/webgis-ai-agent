@@ -154,18 +154,20 @@ export function ResultDetail({ result, sessionId, ownerToken, onBack, onSend }: 
       // Resolve through the bound layer's real id (not the raw ref) so the
       // `_refId` binding the UI honors is the same one the writes target.
       const layerId = boundLayer?.id ?? ref;
-      const needsLayer = action.kind === 'show_on_map' || action.kind === 'hide' || action.kind === 'zoom';
-      if (needsLayer && !layerId) return;
       switch (action.kind) {
         case 'show_on_map':
-        case 'hide':
+        case 'hide': {
+          if (!layerId) return;
           // Absolute value from the action kind: two rapid clicks before a
           // re-render must not compute the same target twice.
           updateLayer(layerId, { visible: action.kind === 'show_on_map' });
           break;
-        case 'zoom':
+        }
+        case 'zoom': {
+          if (!layerId) return;
           focusLayer(layerId);
           break;
+        }
         case 'style':
           setActiveLeftTab('layers');
           break;
