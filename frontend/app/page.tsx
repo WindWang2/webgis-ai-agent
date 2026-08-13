@@ -194,6 +194,8 @@ export default function Home() {
               onRemoveLayer={removeLayer}
               onToggleLayer={toggleLayer}
               onViewportChange={bridge.onViewportChange}
+              sessionId={sessionId}
+              ownerToken={sessionTokenRef.current}
             />
             <ExportMask />
             <MemoSpatialCrosshair />

@@ -34,9 +34,9 @@ user intent
   → deterministic desired-state review
   → bounded AUTO_SAFE presentation repair
   → transactional MapSpec + map_state commit
-  → existing frontend MapSpec runtime / map actions
-  → action ACK and newer frontend state observation
-  → PiAgentHarness trusted re-read and re-review
+  → existing step_result/HUD adapter and MapSpec runtime
+  → live MapLibre state observation + action ACK (either arrival order)
+  → session-scoped PiAgentHarness trusted re-read and re-review
   → cartographic quality gate
 ```
 
@@ -83,7 +83,8 @@ Rules use metadata already stored on MapSpec sources and layers:
 - classification interval/category/domain integrity;
 - legend/style field, color, threshold, palette, and no-data equivalence;
 - runtime result presence, visibility, authoritative legend, and camera
-  convergence in a newer frontend observation.
+  convergence in a newer frontend observation;
+- desired-vs-live MapLibre source, layer, paint, and layout convergence.
 
 Ordinary unclassified imagery does not require a thematic legend. An unknown
 CRS is never replaced with EPSG:4326. Coordinates without explicit CRS do not
@@ -105,39 +106,50 @@ Classification breaks, fields, categories, analysis parameters, source data,
 CRS, and geometry are not silently changed. Those are semantic-risk or
 non-repairable failures.
 
-Repairs operate on deep-copied MapSpec presentation metadata under the existing
-per-session lifecycle lock. They do not invoke a GIS tool or mutate source
-data. The hard maximum is two applications. Repeated failure fingerprints,
+Repairs copy MapSpec presentation branches under the existing per-session
+lifecycle lock while sharing immutable source dataset bodies. They do not
+invoke a GIS tool or mutate source data. The hard maximum is two applications.
+Repeated failure fingerprints,
 repeated patch fingerprints, stale generations, or no safe repair terminate as
 `repair_exhausted`, `superseded`, `failed_repairable`, or
 `failed_unrepairable`; exhaustion never becomes success.
 
 ## Runtime convergence and user supersession
 
-At Pi turn start the frontend sends a bounded observation containing camera,
-layer identity, visibility, opacity, style, and legend metadata. Dataset bodies
-and geometries are excluded. The backend records a monotonic, session-owned
-observation sequence once per turn. Streaming tokens and ordinary map pans do
-not trigger review.
+Pre-turn frontend context is stored separately and cannot certify a mutation.
+After `MapSpecRuntime.reconcileAsync` settles, the frontend compares the locally
+derived desired runtime spec with live `getSource`/`getLayer`/paint/layout
+state and sends a bounded observation tagged with the backend MapSpec
+fingerprint. Dataset bodies and geometries are excluded. Streaming tokens and
+ordinary map pans do not trigger review. Identical observations are coalesced.
 
 Each MapSpec mutation records the observation sequence that existed before the
-mutation. Final runtime review requires a strictly newer frontend observation.
+mutation. Final runtime review requires a strictly newer frontend observation
+whose fingerprint equals the current desired MapSpec.
 The transported MapSpec content fingerprint must equal the freshly recomputed
 fingerprint. Any correlated map action must also carry that fingerprint. A
 stale ACK, stale review, wrong-session state, cancelled action, or superseded
 action cannot pass the current map. User/newer intent therefore wins over an
 old autonomous repair.
 
-An ACK remains separate from state comparison. Camera ACKs are recomputed from
-requested versus actual coordinates; layer ACKs require a verifiable marker.
-The final runtime rules still compare the newer observed layer and camera
-state, so command acceptance alone is insufficient.
+An ACK remains separate from state comparison. A `store_mounted` ACK proves
+only the existing HUD-store action completed; it cannot prove rendering.
+Camera ACKs are recomputed from requested versus actual coordinates. The final
+runtime rules compare the newer live layer/style observation and camera state,
+so command acceptance alone is insufficient. Observation and ACK endpoints
+both trigger the same coalesced evaluation, making their arrival order safe.
+
+Harness accumulators, readers, caches, and evaluation locks are scoped by the
+real session id and LRU bounded. Both the Pi dispatch path and the legacy chat
+tool pipeline feed the same harness seam; no fixed `"production"` evaluator or
+cross-session mutable accumulator is used.
 
 ## Performance and retention
 
-Review fingerprints use a metadata projection. Inline GeoJSON, features, raw
-source data, and other dataset bodies are excluded. Review never resolves a
-large ref or downloads full data. Pure desired reviews are cached by
+Review fingerprints use a strict field allowlist and bounded profile summary.
+Inline GeoJSON, features, source URLs, arbitrary nested metadata, and other
+dataset bodies are excluded. Review never resolves a large ref or downloads
+full data. Pure desired reviews are cached by
 `(session_id, content_fingerprint)` with a bounded 128-entry cache; live
 runtime comparison and ACK evidence are never cached.
 

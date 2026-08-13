@@ -1,9 +1,11 @@
 """Unit tests for ToolExecutionPipeline (ADR-0024)."""
 import pytest
 import json
+from unittest.mock import AsyncMock, MagicMock
 from app.tools.registry import ToolRegistry, tool
 from app.services.task_tracker import TaskTracker
 from app.services.chat.tool_pipeline import ToolExecutionPipeline, ToolExecutionResult
+from app.services.tool_dispatch_service import ToolDispatchResult
 
 
 def _build_test_registry():
@@ -96,3 +98,39 @@ async def test_tool_pipeline_error_handling():
     updated_task = tracker.get(task.id)
     assert len(updated_task.steps) == 1
     assert updated_task.steps[0].status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_legacy_pipeline_feeds_display_mutation_to_existing_harness(monkeypatch):
+    import app.agent_pi_bridge as bridge
+
+    recorder = AsyncMock()
+    monkeypatch.setattr(bridge, "record_cartographic_dispatch_evidence", recorder)
+    outcome = ToolDispatchResult(
+        status="ok",
+        llm_payload="authored",
+        slim_event={"success": True},
+        geojson_ref="ref:geojson-1",
+        raw_result={"success": True, "mapspec_fingerprint": "carto-sha256:abc"},
+        error_msg=None,
+        map_actions=[],
+    )
+    pipeline = ToolExecutionPipeline(
+        MagicMock(),
+        dispatch_fn=AsyncMock(return_value=outcome),
+    )
+    tc = {
+        "id": "legacy-layer-call",
+        "function": {
+            "name": "webgis_layer_upsert",
+            "arguments": {"layer": {"id": "result"}},
+        },
+    }
+
+    await pipeline.execute_tool_call(tc, session_id="legacy-session")
+
+    recorder.assert_awaited_once()
+    args = recorder.await_args.args
+    assert args[:3] == (
+        "legacy-session", "legacy-layer-call", "webgis_layer_upsert"
+    )

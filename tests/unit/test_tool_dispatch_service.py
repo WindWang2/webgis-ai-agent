@@ -130,6 +130,39 @@ async def test_no_geojson_means_no_ref(service, fake_registry, clean_session):
 
 
 @pytest.mark.asyncio
+async def test_existing_result_ref_reuses_metadata_without_copying_data(
+    service, fake_registry, clean_session,
+):
+    source = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [116.4, 39.9]},
+            "properties": {},
+        }],
+    }
+    existing_ref = await session_data_manager.store(
+        clean_session, source, prefix="geojson"
+    )
+    fake_registry.dispatch.return_value = {
+        "summary": "authored",
+        "result_ref": existing_ref,
+        "command": "add_layer",
+        "params": {"result_ref": existing_ref},
+    }
+
+    result = await service.dispatch(
+        _tc("webgis_layer_upsert", {}), clean_session, set()
+    )
+
+    assert result.geojson_ref == existing_ref
+    assert result.ref_descriptor is not None
+    assert result.ref_descriptor["feature_count"] == 1
+    refs = await session_data_manager.list_refs(clean_session)
+    assert list(refs) == [existing_ref]
+
+
+@pytest.mark.asyncio
 async def test_broadcast_fired_when_ref_produced(service, fake_registry, clean_session):
     """产生 ref 时触发 WS 广播；event_log 记录 tool_executed。"""
     broadcasts: list[tuple] = []

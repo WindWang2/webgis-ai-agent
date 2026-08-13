@@ -20,6 +20,33 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 
+_MAX_CARTOGRAPHIC_CHECKS = 64
+_MAX_CARTOGRAPHIC_FINDINGS = 32
+_MAX_REPAIR_ATTEMPTS = 2
+_MAX_VISUAL_EVIDENCE = 4
+
+
+def _bounded_cartographic_review(review: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a storage-safe review summary without changing its verdict.
+
+    Rule counts and terminal status remain authoritative even when an extreme
+    MapSpec emits more diagnostic rows than are useful in session state.  The
+    omitted count is explicit so bounded retention cannot masquerade as a
+    complete evidence dump.
+    """
+    bounded = dict(review)
+    for key, limit in (
+        ("checks", _MAX_CARTOGRAPHIC_CHECKS),
+        ("findings", _MAX_CARTOGRAPHIC_FINDINGS),
+    ):
+        values = review.get(key)
+        if not isinstance(values, list) or len(values) <= limit:
+            continue
+        bounded[key] = values[:limit]
+        bounded[f"{key}_omitted"] = len(values) - limit
+    return bounded
+
+
 class RefResolutionStatus(str, Enum):
     """Ref cursor 解析的真实状态（非布尔）。"""
     MALFORMED = "malformed"                 # 不符合 ref:<type>:<id> 语法
@@ -171,6 +198,10 @@ class CartographicReviewEvidence:
         return self.status in ("passed", "passed_with_warnings")
 
     def to_dict(self) -> Dict[str, Any]:
+        desired_review = _bounded_cartographic_review(self.desired_review)
+        checks = self.checks[:_MAX_CARTOGRAPHIC_CHECKS]
+        repair_attempts = self.repair_attempts[:_MAX_REPAIR_ATTEMPTS]
+        visual_evidence = self.visual_evidence[:_MAX_VISUAL_EVIDENCE]
         return {
             "stage": "actual_runtime",
             "status": self.status,
@@ -182,10 +213,17 @@ class CartographicReviewEvidence:
             "trusted": self.trusted,
             "evaluated": self.evaluated,
             "passed": self.passed,
-            "desired_review": self.desired_review,
-            "checks": self.checks,
-            "repair_attempts": self.repair_attempts,
-            "visual_evidence": self.visual_evidence,
+            "desired_review": desired_review,
+            "checks": checks,
+            "checks_omitted": max(0, len(self.checks) - len(checks)),
+            "repair_attempts": repair_attempts,
+            "repair_attempts_omitted": max(
+                0, len(self.repair_attempts) - len(repair_attempts)
+            ),
+            "visual_evidence": visual_evidence,
+            "visual_evidence_omitted": max(
+                0, len(self.visual_evidence) - len(visual_evidence)
+            ),
             "termination_reason": self.termination_reason,
             "counters": self.counters,
         }

@@ -296,6 +296,7 @@ class ToolDispatchService:
 
         # 4. 正常路径：大型 GeoJSON 存为 ref；热力图等元数据落地
         geojson_ref: Optional[str] = None
+        ref_descriptor: Optional[dict] = None
         target_data = None
         if isinstance(result, dict):
             if isinstance(result.get("geojson"), (dict, list)):
@@ -306,6 +307,20 @@ class ToolDispatchService:
                 geojson_ref = await session_data_manager.store(session_id, target_data, prefix="geojson")
             if result.get("type") == "heatmap_raster":
                 await session_data_manager.store(session_id, result, prefix="heatmap")
+            # Canonical MapSpec layer authoring points at an existing
+            # session-owned analysis ref instead of returning the dataset
+            # again.  Preserve that stable identity through the existing SSE
+            # mount channel without materializing/copying its feature body.
+            result_ref = result.get("result_ref")
+            if isinstance(result_ref, str) and result_ref.startswith("ref:"):
+                try:
+                    ref_descriptor = await session_data_manager.get_ref_descriptor(
+                        session_id, result_ref
+                    )
+                except Exception:
+                    ref_descriptor = None
+                if ref_descriptor is not None:
+                    geojson_ref = result_ref
 
         # 5. 给 LLM 的载荷（压缩 + 可选自愈提示）
         result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
@@ -325,8 +340,7 @@ class ToolDispatchService:
         # without a redundant async round trip. Fetching it here means
         # pi_event_mapper never needs asyncio.run() (which would raise inside
         # the already-running FastAPI event loop and get silently swallowed).
-        ref_descriptor = None
-        if geojson_ref:
+        if geojson_ref and ref_descriptor is None:
             try:
                 ref_descriptor = await session_data_manager.get_ref_descriptor(session_id, geojson_ref)
             except Exception:

@@ -261,6 +261,10 @@ def test_semantic_check_clean_mapspec_passes():
             "id": "L", "source": "s1", "type": "circle",
             "paint": {"circle-color": {"method": "interpolate", "field": "v", "stops": [
                 [0, "#fff"], [10, "#000"]]}},
+            "legend_spec": {
+                "type": "continuous", "field": "v", "min": 0, "max": 10,
+                "palette_colors": ["#fff", "#000"],
+            },
         }],
         "layout": {"legend": {"field": "v"}},
     }

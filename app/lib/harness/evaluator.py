@@ -106,7 +106,14 @@ class HarnessEvaluator:
         evidence = evidence_result.get("evidence", [])
 
         had_mutation = any(e.get("mapspec_validity") for e in evidence)
-        cartography_required = had_mutation if require_cartography is None else require_cartography
+        display_mutation = any(
+            e.get("tool_name") == "webgis_layer_upsert"
+            and e.get("mapspec_validity")
+            for e in evidence
+        )
+        cartography_required = (
+            display_mutation if require_cartography is None else require_cartography
+        )
         had_ref = any(len(e.get("refs", [])) > 0 for e in evidence)
         interaction = evidence_result.get("interaction") or {}
         try:
@@ -170,9 +177,26 @@ class HarnessEvaluator:
         # it by default; callers can explicitly exempt non-cartographic runs.
         cartography = evidence_result.get("cartography") or {}
         cartography_status = str(cartography.get("status") or "not_evaluated")
-        cartography_evaluated = bool(cartography.get("evaluated"))
-        cartography_passed = bool(cartography.get("passed"))
-        if cartography_passed:
+        cartography_trusted = cartography.get("trusted") is True
+        cartography_evaluated = (
+            cartography_trusted
+            and cartography_status not in ("not_evaluated", "superseded")
+        )
+        cartography_passed = (
+            cartography_trusted
+            and cartography_status in ("passed", "passed_with_warnings")
+        )
+        contradictory = (
+            ("evaluated" in cartography
+             and bool(cartography.get("evaluated")) != cartography_evaluated)
+            or ("passed" in cartography
+                and bool(cartography.get("passed")) != cartography_passed)
+        )
+        if contradictory:
+            cartography_evaluated = False
+            cartography_passed = False
+            cartography_reason = "inconsistent_or_untrusted_evidence"
+        elif cartography_passed:
             cartography_reason = "evaluated"
         elif not cartography_required and not cartography_evaluated:
             cartography_passed = True
@@ -190,7 +214,23 @@ class HarnessEvaluator:
             "evaluated": cartography_evaluated,
             "reason": cartography_reason,
             "status": cartography_status,
+            "trusted": cartography_trusted,
         }
+
+        # A store-mounted ACK intentionally cannot prove MapLibre convergence,
+        # but a trusted post-reconcile cartographic PASS can.  Let that stronger
+        # actual-state evidence satisfy the interaction convergence dimension
+        # without rewriting the ACK itself as verifiable.
+        if cartography_passed and issued > 0:
+            metrics["InteractionStateConvergenceRate"] = 100.0
+            checks["InteractionStateConvergenceRate"].update({
+                "score": 100.0,
+                "passed": True,
+                "evaluated": True,
+                "reason": "trusted_runtime_cartographic_evidence",
+            })
+
+        all_passed = all(bool(check.get("passed")) for check in checks.values())
 
         return {
             "overall_passed": all_passed,

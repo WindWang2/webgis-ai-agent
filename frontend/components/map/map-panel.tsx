@@ -10,7 +10,12 @@ import { MapDecorations } from "./map-decorations"
 import { useHudStore, type HudState } from "@/lib/store/useHudStore"
 import * as renderer from "@/lib/map-kit/renderer"
 import { fitBounds as navFitBounds, calculateBBox, calculateBBoxAsync } from "@/lib/map-kit/navigation"
-import { MapSpecRuntime, hudStateToMapSpec } from "@/lib/mapspec-runtime"
+import {
+  MapSpecRuntime,
+  collectCartographicRuntimeObservation,
+  hudStateToMapSpec,
+} from "@/lib/mapspec-runtime"
+import { apiFetch } from "@/lib/api/transport"
 import { computeInteractiveIds, resolveParentLayerId } from "@/lib/map-kit/interactive-ids"
 import {
   setSelectionHighlight,
@@ -25,6 +30,8 @@ interface MapPanelProps {
   onRemoveLayer: (id: string) => void
   onToggleLayer: (id: string) => void
   onViewportChange?: (center: [number, number], zoom: number, bearing: number, pitch: number) => void
+  sessionId?: string | null
+  ownerToken?: string | null
 }
 
 import { useMapAction } from "@/lib/contexts/map-action-context"
@@ -63,7 +70,14 @@ const DEFAULT_VIEW_STATE = {
   zoom: 4,
 }
 
-export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer: _onToggleLayer, onViewportChange }: MapPanelProps) {
+export function MapPanel({
+  layers,
+  onRemoveLayer: _onRemoveLayer,
+  onToggleLayer: _onToggleLayer,
+  onViewportChange,
+  sessionId,
+  ownerToken,
+}: MapPanelProps) {
   void _onRemoveLayer;
   void _onToggleLayer;
 
@@ -160,6 +174,7 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   // (renderTimeoutRef/isUpdatingRef/renderLayersRef) + the styledata re-listen
   // machinery. The runtime owns the style-loaded retry internally.
   const runtimeRef = useRef<MapSpecRuntime | null>(null)
+  const lastCartographicObservationKeyRef = useRef<string>('')
 
   // FE-3 (design §7): derive interactiveLayerIds from the runtime's APPLIED
   // spec — the authoritative registry of what the map currently reflects
@@ -257,9 +272,42 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
         // FIX-3-2: syncLayerZOrder buried the selection highlight under the
         // spec sublayers — put it back on top now that the reconcile settled.
         raiseSelectionHighlight()
+        const map = mapRef.current?.getMap()
+        const generation = layers.reduce<Layer | null>((latest, layer) => {
+          if (!layer._mapspecFingerprint) return latest
+          if (!latest) return layer
+          return (layer._mapspecGenerationAt ?? 0) > (latest._mapspecGenerationAt ?? 0)
+            ? layer
+            : latest
+        }, null)
+        if (!map || !sessionId || !generation?._mapspecFingerprint) return
+        const observation = collectCartographicRuntimeObservation(
+          map,
+          spec,
+          layers,
+          generation._mapspecFingerprint,
+          runtimeRef.current?.getLastError() ?? '',
+        )
+        const observationKey = `${sessionId}:${JSON.stringify(observation)}`
+        if (observationKey === lastCartographicObservationKeyRef.current) return
+        lastCartographicObservationKeyRef.current = observationKey
+        void apiFetch(
+          `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/cartographic-observation`,
+          {
+            method: 'POST',
+            body: observation,
+            ownerToken,
+            label: 'Cartographic observation error',
+          },
+        ).catch((error) => {
+          // Allow the next meaningful reconcile to retry; token/pan events do
+          // not enter this effect and therefore cannot create a retry storm.
+          lastCartographicObservationKeyRef.current = ''
+          devOnly.warn('[map] cartographic observation failed:', error)
+        })
       })
       .catch((e) => console.error("[map] reconcile failed", e))
-  }, [layers, processLayers, activeFilters, is3D, mapReady, currentMapStyle, syncInteractiveIds, raiseSelectionHighlight])
+  }, [layers, processLayers, activeFilters, is3D, mapReady, currentMapStyle, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken])
 
 
   const setViewport = useHudStore((s: HudState) => s.setViewport)

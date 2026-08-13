@@ -27,6 +27,7 @@ import { recordDebounceFrame } from "@/lib/utils/perf-counters";
  */
 
 const STYLE_RETRY_MS = 100;
+export const MAX_STYLE_RETRY_ATTEMPTS = 50;
 
 export class MapSpecRuntime {
   private map: any;
@@ -41,6 +42,7 @@ export class MapSpecRuntime {
   private reconcileTail: Promise<void> = Promise.resolve();
   private applySeq = 0;
   private currentApplyResolve: (() => void) | null = null;
+  private lastError: string | null = null;
 
   constructor(map: any) {
     this.map = map;
@@ -64,20 +66,25 @@ export class MapSpecRuntime {
    * If the map style isn't loaded yet, schedules a retry (owning the loop that
    * was previously 3 React refs in map-panel.tsx).
    */
-  reconcile(nextSpec: MapSpec): void {
+  reconcile(nextSpec: MapSpec, retryAttempt = 0): void {
     if (this.disposed || !this.map) return;
 
     // Defer until the base style is loaded. This mirrors map-panel.tsx:167-170
     // but the retry state lives here, not in React refs.
     if (!this.map.isStyleLoaded()) {
+      if (retryAttempt >= MAX_STYLE_RETRY_ATTEMPTS) {
+        this.lastError = "style_load_timeout";
+        return;
+      }
       if (this.pendingTimer) clearTimeout(this.pendingTimer);
       this.pendingTimer = setTimeout(() => {
         this.pendingTimer = null;
-        this.reconcile(nextSpec);
+        this.reconcile(nextSpec, retryAttempt + 1);
       }, STYLE_RETRY_MS);
       return;
     }
 
+    this.lastError = null;
     const patch = diffSpecs(this.appliedSpec, nextSpec);
     this.applyPatchDirect(patch, nextSpec);
   }
@@ -103,23 +110,28 @@ export class MapSpecRuntime {
   reconcileAsync(nextSpec: MapSpec): Promise<void> {
     if (this.disposed || !this.map) return Promise.resolve();
     this.reconcileTail = this.reconcileTail
-      .then(() => this.processOne(nextSpec))
+      .then(() => this.processOne(nextSpec, 0))
       .catch((err) => {
         console.warn("[MapSpecRuntime] reconcileAsync error:", err);
       });
     return this.reconcileTail;
   }
 
-  private async processOne(nextSpec: MapSpec): Promise<void> {
+  private async processOne(nextSpec: MapSpec, retryAttempt: number): Promise<void> {
     if (this.disposed || !this.map) return;
 
     // Defer until the base style is loaded (mirrors the sync retry loop).
     if (!this.map.isStyleLoaded()) {
+      if (retryAttempt >= MAX_STYLE_RETRY_ATTEMPTS) {
+        this.lastError = "style_load_timeout";
+        return;
+      }
       await new Promise((resolve) => setTimeout(resolve, STYLE_RETRY_MS));
       if (this.disposed || !this.map) return;
-      return this.processOne(nextSpec);
+      return this.processOne(nextSpec, retryAttempt + 1);
     }
 
+    this.lastError = null;
     const patch = await diffSpecsAsync(this.appliedSpec, nextSpec);
     if (this.disposed || !this.map) return;
     // Resolves when the patch's ops have actually run (last op = z-order).
@@ -176,7 +188,7 @@ export class MapSpecRuntime {
     const orderedIds = nextSpec.layers.map((l) => l.id);
     renderer.syncLayerZOrder(this.map, "", orderedIds);
 
-    this.appliedSpec = nextSpec;
+    if (!this.lastError) this.appliedSpec = nextSpec;
   }
 
   /**
@@ -266,7 +278,7 @@ export class MapSpecRuntime {
         renderer.syncLayerZOrder(this.map, "", orderedIds);
         // All ops of this patch have now run (z-order is enqueued last in the
         // high-priority FIFO). appliedSpec may now legitimately equal the map.
-        this.appliedSpec = nextSpec;
+        if (!this.lastError) this.appliedSpec = nextSpec;
         const resolve = this.currentApplyResolve;
         this.currentApplyResolve = null;
         if (resolve) resolve();
@@ -288,6 +300,11 @@ export class MapSpecRuntime {
 
   getAppliedSpec(): MapSpec | null {
     return this.appliedSpec;
+  }
+
+  /** Last bounded reconciliation failure, for structured runtime evidence. */
+  getLastError(): string | null {
+    return this.lastError;
   }
 
   /**
@@ -396,6 +413,7 @@ export class MapSpecRuntime {
       // throwing the whole reconcile.
        
       console.warn(`[MapSpecRuntime] addLayer failed for ${layer.id}:`, err);
+      this.lastError = `add_layer_failed:${layer.id}`;
     }
   }
 

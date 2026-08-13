@@ -4,6 +4,8 @@
 GeoJSON 自动 Profiling, DataFabric 源代理与 View 计算)。
 """
 from pathlib import Path
+import hashlib
+import json
 import logging
 from typing import Any, Dict, Optional, Tuple
 
@@ -55,14 +57,16 @@ def process_layer_ingestion(
     existing_entry = sources.get(source_id, {"type": "geojson"})
     source_entry = dict(existing_entry)
 
-    already_has_data = (
-        "inlineData" in source_entry
-        or "url" in source_entry
-        or is_raster_entry(source_entry)
-        or is_data_fabric_entry(source_entry)
-    )
-
-    if processed_source_data is not None and not already_has_data:
+    if processed_source_data is not None:
+        # An explicit upsert replaces the prior source generation.  Keeping an
+        # old inlineData/profile beside a new URL/ref made semantic review use
+        # stale geometry/field evidence.  Presentation metadata survives; data
+        # carrier and its derived profile do not.
+        for key in (
+            "inlineData", "url", "dataPath", "imageRef", "bounds",
+            "imageSize", "profile", "profile_fingerprint",
+        ):
+            source_entry.pop(key, None)
         store_data(source_entry, processed_source_data)
 
     provenance = (
@@ -79,10 +83,22 @@ def process_layer_ingestion(
     else:
         data_to_profile = processed_source_data or profile_data(source_entry)
 
-    if data_to_profile and isinstance(data_to_profile, dict) and "profile" not in source_entry:
+    if data_to_profile and isinstance(data_to_profile, dict) and (
+        processed_source_data is not None or "profile" not in source_entry
+    ):
         try:
             profile = profile_geojson_source(data_to_profile)
             source_entry["profile"] = profile
+            profile_payload = json.dumps(
+                profile,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+            source_entry["profile_fingerprint"] = (
+                "profile-sha256:" + hashlib.sha256(profile_payload).hexdigest()
+            )
 
             if not view_has_center(mapspec) and profile.get("suggestedView"):
                 suggested_view = {

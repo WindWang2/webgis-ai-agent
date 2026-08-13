@@ -11,11 +11,13 @@ import pytest
 
 from app.lib.cartography.semantic_checks import evaluate_cartography_semantics
 from app.lib.cartography.quality_loop import (
+    cartographic_projection,
     cartographic_fingerprint,
     review_cartography,
     review_and_repair_cartography,
 )
 from app.lib.harness.evaluator import HarnessEvaluator
+from app.lib.harness.evidence import CartographicReviewEvidence
 from app.lib.harness.pi_agent_harness import PiAgentHarness
 from app.services.mapspec.lifecycle_engine import (
     InitProjectIntent,
@@ -24,7 +26,11 @@ from app.services.mapspec.lifecycle_engine import (
 )
 from app.services.mapspec.store import BASE_STORAGE_DIR
 from app.services.session_data import session_data_manager
-from app.api.routes.chat import _record_frontend_cartographic_observation
+from app.api.routes.chat import (
+    CartographicRuntimeObservationRequest,
+    _record_frontend_cartographic_observation,
+    push_cartographic_runtime_observation,
+)
 
 
 @pytest.fixture
@@ -101,6 +107,36 @@ def test_review_pass_has_positive_structured_evidence():
         }
         for check in report["checks"]
     )
+
+
+def test_typed_failure_cannot_report_legacy_ok_or_zero_errors():
+    mapspec = _plain_mapspec()
+    mapspec["sources"]["points"]["profile"] = _point_profile()
+    mapspec["layers"][0]["legend_spec"] = {
+        "type": "categorical",
+        "field": "kind",
+        "categories": [
+            {"key": "a", "label": "A", "color": "not-a-color"},
+            {"key": "a", "label": "A2", "color": "#3366cc"},
+        ],
+    }
+    mapspec["layers"][0]["paint"]["circle-color"] = {
+        "method": "match",
+        "field": "kind",
+        "cases": [["a", "#3366cc"]],
+        "default": "#999999",
+    }
+
+    report = evaluate_cartography_semantics(mapspec).to_dict()
+
+    assert report["status"] == "fail"
+    assert report["ok"] is False
+    assert report["error_count"] > 0
+    classification = next(
+        check for check in report["checks"]
+        if check["rule"] == "CLASSIFICATION_INTEGRITY"
+    )
+    assert classification["evidence"]["colors_valid"] is False
 
 
 def test_read_only_review_classifies_repairability_without_applying_patch():
@@ -183,6 +219,7 @@ def test_safe_opacity_repair_is_bounded_and_does_not_mutate_input_or_data():
     assert result.mapspec["layers"][0]["paint"]["circle-opacity"] == 1.0
     assert mapspec["layers"][0]["paint"]["circle-opacity"] == float("inf")
     assert result.mapspec["sources"]["points"]["inlineData"] == mapspec["sources"]["points"]["inlineData"]
+    assert result.mapspec["sources"]["points"]["inlineData"] is mapspec["sources"]["points"]["inlineData"]
     assert result.counters["full_data_loads"] == 0
     assert result.counters["repair_attempts"] == 1
 
@@ -232,6 +269,7 @@ def test_unclassified_imagery_raster_does_not_require_thematic_legend():
         "sources": {
             "image": {
                 "type": "image",
+                "imageRef": "ref:raster-image",
                 "profile": {
                     "bbox": [100, 20, 101, 21],
                     "crs": "EPSG:4326",
@@ -352,6 +390,24 @@ def test_cartographic_fingerprint_is_metadata_first():
     assert cartographic_fingerprint(first) == cartographic_fingerprint(second)
     second["layers"][0]["paint"]["circle-color"] = "#ff0000"
     assert cartographic_fingerprint(first) != cartographic_fingerprint(second)
+
+
+def test_cartographic_projection_drops_arbitrary_metadata_and_source_url_secrets():
+    mapspec = _plain_mapspec()
+    mapspec["sources"]["points"].update({
+        "url": "https://user:secret@example.test/data?token=private",
+        "metadata": {"huge": "x" * 1_000_000},
+    })
+    mapspec["layers"][0]["metadata"] = {"huge": "x" * 1_000_000}
+
+    projection = cartographic_projection(mapspec)
+    encoded = str(projection)
+
+    assert len(encoded) < 20_000
+    assert "private" not in encoded
+    assert "secret" not in encoded
+    assert "metadata" not in projection["layers"][0]
+    assert "url" not in projection["sources"]["points"]
 
 
 @pytest.mark.asyncio
@@ -485,6 +541,30 @@ async def test_harness_recomputes_quality_instead_of_trusting_tool_pass():
     assert gate["overall_passed"] is False
 
 
+def test_harness_evaluator_rejects_untrusted_or_contradictory_quality_payload():
+    forged = {
+        "metrics": {},
+        "evidence": [],
+        "interaction": {"issued": 0},
+        "cartography": {
+            "status": "passed",
+            "trusted": False,
+            "evaluated": True,
+            "passed": True,
+        },
+    }
+
+    gate = HarnessEvaluator().evaluate_evidence(
+        forged,
+        require_evaluated=False,
+        require_cartography=True,
+    )
+
+    assert gate["checks"]["CartographicQuality"]["passed"] is False
+    assert gate["checks"]["CartographicQuality"]["trusted"] is False
+    assert gate["overall_passed"] is False
+
+
 @pytest.mark.asyncio
 async def test_harness_pass_requires_new_session_owned_runtime_observation():
     mapspec = _plain_mapspec()
@@ -498,16 +578,18 @@ async def test_harness_pass_requires_new_session_owned_runtime_observation():
                 "_cartographic_observation": {
                     "session_id": session_id,
                     "sequence": 4,
-                    "source": "frontend",
+                    "source": "frontend_runtime",
+                    "mapspec_fingerprint": cartographic_fingerprint(mapspec),
+                    "layers": [
+                        {
+                            "id": "result",
+                            "visible": True,
+                            "opacity": 0.8,
+                            "legend_spec": None,
+                            "style_converged": True,
+                        }
+                    ],
                 },
-                "layers": [
-                    {
-                        "id": "result",
-                        "visible": True,
-                        "opacity": 0.8,
-                        "legend_spec": None,
-                    }
-                ],
             },
         }
 
@@ -544,16 +626,18 @@ async def test_harness_matches_runtime_layer_only_through_exact_result_provenanc
                 "_cartographic_observation": {
                     "session_id": session_id,
                     "sequence": 2,
-                    "source": "frontend",
+                    "source": "frontend_runtime",
+                    "mapspec_fingerprint": cartographic_fingerprint(mapspec),
+                    # The main HUD mounts analysis outputs under the ref identity,
+                    # not the semantic MapSpec layer id.
+                    "layers": [{
+                        "id": "ref:geojson-owned-result",
+                        "_refId": "ref:geojson-owned-result",
+                        "visible": True,
+                        "opacity": 0.8,
+                        "style_converged": True,
+                    }],
                 },
-                # The main HUD mounts analysis outputs under the ref identity,
-                # not the semantic MapSpec layer id.
-                "layers": [{
-                    "id": "ref:geojson-owned-result",
-                    "_refId": "ref:geojson-owned-result",
-                    "visible": True,
-                    "opacity": 0.8,
-                }],
             },
         }
 
@@ -587,17 +671,19 @@ async def test_harness_rejects_same_named_layer_with_wrong_result_identity():
                 "_cartographic_observation": {
                     "session_id": session_id,
                     "sequence": 2,
-                    "source": "frontend",
+                    "source": "frontend_runtime",
+                    "mapspec_fingerprint": cartographic_fingerprint(mapspec),
+                    "layers": [{
+                        # Even an equal semantic id cannot bypass conflicting ref
+                        # provenance from another result.
+                        "id": "result",
+                        "_refId": "ref:geojson-other-session-result",
+                        "name": "result",
+                        "visible": True,
+                        "opacity": 0.8,
+                        "style_converged": True,
+                    }],
                 },
-                "layers": [{
-                    # Even an equal semantic id cannot bypass conflicting ref
-                    # provenance from another result.
-                    "id": "result",
-                    "_refId": "ref:geojson-other-session-result",
-                    "name": "result",
-                    "visible": True,
-                    "opacity": 0.8,
-                }],
             },
         }
 
@@ -628,9 +714,13 @@ async def test_harness_stale_observation_and_stale_fingerprint_cannot_pass():
                 "_cartographic_observation": {
                     "session_id": session_id,
                     "sequence": 7,
-                    "source": "frontend",
+                    "source": "frontend_runtime",
+                    "mapspec_fingerprint": cartographic_fingerprint(mapspec),
+                    "layers": [{
+                        "id": "result", "visible": True,
+                        "opacity": 0.8, "style_converged": True,
+                    }],
                 },
-                "layers": [{"id": "result", "visible": True}],
             },
         }
 
@@ -701,15 +791,19 @@ async def test_frontend_observation_is_bounded_metadata_and_monotonic(quality_se
     await _record_frontend_cartographic_observation(quality_session, snapshot)
     state = await session_data_manager.get_map_state(quality_session)
 
-    assert state["_cartographic_observation"] == {
+    context = state["_cartographic_context_observation"]
+    assert {key: context[key] for key in (
+        "session_id", "sequence", "source", "layer_count"
+    )} == {
         "session_id": quality_session,
         "sequence": 2,
-        "source": "frontend",
+        "source": "frontend_pre_turn",
         "layer_count": 1,
     }
-    assert "source" not in state["layers"][0]
-    assert "features" not in state["layers"][0]["style"]
-    assert state["layers"][0]["legend_spec"]["categories"] == ["a"]
+    assert "layers" not in state
+    assert "source" not in context["layers"][0]
+    assert "features" not in context["layers"][0]["style"]
+    assert context["layers"][0]["legend_spec"]["categories"] == ["a"]
 
 
 @pytest.mark.asyncio
@@ -731,9 +825,10 @@ async def test_frontend_observation_rejects_pathological_nested_metadata(quality
     await _record_frontend_cartographic_observation(quality_session, snapshot)
     state = await session_data_manager.get_map_state(quality_session)
 
-    assert len(state["layers"]) <= 128
-    assert len(str(state["layers"])) < 262_144
-    assert state["_cartographic_observation"]["layer_count"] == len(state["layers"])
+    layers = state["_cartographic_context_observation"]["layers"]
+    assert len(layers) <= 128
+    assert len(str(layers)) < 262_144
+    assert state["_cartographic_context_observation"]["layer_count"] == len(layers)
 
 
 @pytest.mark.asyncio
@@ -848,9 +943,13 @@ async def test_unchanged_mapspec_reuses_deterministic_review():
                 "_cartographic_observation": {
                     "session_id": session_id,
                     "sequence": 2,
-                    "source": "frontend",
+                    "source": "frontend_runtime",
+                    "mapspec_fingerprint": cartographic_fingerprint(mapspec),
+                    "layers": [{
+                        "id": "result", "visible": True, "opacity": 0.8,
+                        "style_converged": True,
+                    }],
                 },
-                "layers": [{"id": "result", "visible": True, "opacity": 0.8}],
             },
         }
 
@@ -864,3 +963,114 @@ async def test_unchanged_mapspec_reuses_deterministic_review():
     assert second["cartography"]["counters"]["review_invocations"] == 0
     assert second["cartography"]["counters"]["review_cache_hits"] == 1
     assert second["cartography"]["status"] == "passed"
+
+
+@pytest.mark.asyncio
+async def test_production_session_harness_re_evaluates_after_runtime_and_ack(
+    quality_session,
+):
+    import app.agent_pi_bridge as bridge
+    from app.services.mapspec.store import mapspec_store_instance
+
+    mapspec = _plain_mapspec()
+    mapspec["sources"]["points"]["profile"] = _point_profile()
+    fingerprint = cartographic_fingerprint(mapspec)
+    await mapspec_store_instance.save_mapspec(quality_session, mapspec)
+
+    harness = bridge._get_session_harness(quality_session, create=True)
+    assert harness is not None
+    _record_mapspec_mutation(harness, mapspec, observation_seq=0)
+    harness.record_map_action_issued(
+        session_id=quality_session,
+        tool_call_id="call-1",
+        action_id="ma-runtime",
+        command="add_layer",
+        requested={"layer_id": "result"},
+        mapspec_fingerprint=fingerprint,
+    )
+
+    observation = CartographicRuntimeObservationRequest(
+        mapspec_fingerprint=fingerprint,
+        layers=[{
+            "id": "result",
+            "visible": True,
+            "opacity": 0.8,
+            "style_converged": True,
+            "source_converged": True,
+            "runtime_layer_count": 1,
+        }],
+        viewport={},
+        style_loaded=True,
+    )
+    pending = await push_cartographic_runtime_observation(
+        quality_session, observation, _conv=object()
+    )
+    assert pending["cartography"]["termination_reason"] == "runtime_action_ack_pending"
+    assert pending["cartography"]["passed"] is False
+
+    await session_data_manager.append_map_action_event(
+        quality_session,
+        {
+            "action_id": "ma-runtime",
+            "command": "add_layer",
+            "status": "succeeded",
+            "actual": {"store_mounted": True},
+        },
+    )
+    converged = await bridge.evaluate_cartographic_session(quality_session)
+
+    assert converged["cartography"]["status"] == "passed"
+    assert converged["cartography"]["passed"] is True
+    assert converged["gate"]["passed"] is True
+    stored = await session_data_manager.get_map_state(quality_session)
+    assert stored["_cartographic_review"]["cartography"]["status"] == "passed"
+    assert stored["_cartographic_observation"]["mapspec_fingerprint"] == fingerprint
+
+    bridge._harnesses.pop(quality_session, None)
+
+
+def test_session_harness_registry_never_retags_or_shares_accumulators():
+    import app.agent_pi_bridge as bridge
+
+    session_a = f"registry-a-{uuid.uuid4().hex[:8]}"
+    session_b = f"registry-b-{uuid.uuid4().hex[:8]}"
+    harness_a = bridge._get_session_harness(session_a, create=True)
+    harness_b = bridge._get_session_harness(session_b, create=True)
+
+    assert harness_a is not None and harness_b is not None
+    assert harness_a is not harness_b
+    assert harness_a.session_id == session_a
+    assert harness_b.session_id == session_b
+    harness_a.record_tool_call("a-only", "webgis_layer_upsert", {})
+    assert harness_b.tool_calls == []
+
+    bridge._harnesses.pop(session_a, None)
+    bridge._harnesses.pop(session_b, None)
+
+
+def test_persisted_cartographic_evidence_is_bounded_without_losing_verdict():
+    evidence = CartographicReviewEvidence(
+        session_id="bounded",
+        status="failed_repairable",
+        trusted=True,
+        desired_review={
+            "status": "fail",
+            "checks": [{"rule": str(index)} for index in range(80)],
+            "findings": [{"check": str(index)} for index in range(40)],
+        },
+        checks=[{"rule": str(index)} for index in range(80)],
+        repair_attempts=[{"iteration": index} for index in range(5)],
+        visual_evidence=[{"id": index} for index in range(8)],
+    )
+
+    serialized = evidence.to_dict()
+
+    assert serialized["status"] == "failed_repairable"
+    assert len(serialized["desired_review"]["checks"]) == 64
+    assert serialized["desired_review"]["checks_omitted"] == 16
+    assert len(serialized["checks"]) == 64
+    assert serialized["checks_omitted"] == 16
+    assert len(serialized["repair_attempts"]) == 2
+    assert serialized["repair_attempts_omitted"] == 3
+    assert len(serialized["visual_evidence"]) == 4
+    assert serialized["visual_evidence_omitted"] == 4

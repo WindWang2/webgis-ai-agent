@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { MapSpecRuntime } from "./runtime";
+import { MapSpecRuntime, MAX_STYLE_RETRY_ATTEMPTS } from "./runtime";
 import type { MapSpec } from "@/lib/mapspec-compiler/types";
 import { consumeDiffLastFailed, _resetWorkerBridgeForTests } from "@/lib/mapspec-compiler/worker-bridge";
 import { getPerfCounters, resetPerfCounters } from "@/lib/utils/perf-counters";
@@ -186,6 +186,31 @@ describe("MapSpecRuntime (ADR-0036)", () => {
       expect(map._calls.addSource.map((c: any) => c.id)).toEqual(["L1"]);
       vi.useRealTimers();
     });
+
+    it("terminates the async retry loop with explicit evidence", async () => {
+      vi.useFakeTimers();
+      map.isStyleLoaded = () => false;
+      const rt = new MapSpecRuntime(map);
+      const pending = rt.reconcileAsync(pointSpec());
+
+      await vi.advanceTimersByTimeAsync((MAX_STYLE_RETRY_ATTEMPTS + 1) * 100);
+      await pending;
+
+      expect(rt.getLastError()).toBe("style_load_timeout");
+      expect(rt.getAppliedSpec()).toBeNull();
+      expect(map._calls.addLayer).toEqual([]);
+      vi.useRealTimers();
+    });
+  });
+
+  it("does not claim an applied spec when MapLibre rejects a layer", () => {
+    map.addLayer = vi.fn(() => { throw new Error("unsupported expression"); });
+    const rt = new MapSpecRuntime(map);
+
+    rt.reconcile(pointSpec());
+
+    expect(rt.getLastError()).toBe("add_layer_failed:L1__point");
+    expect(rt.getAppliedSpec()).toBeNull();
   });
 
   describe("z-order sync", () => {

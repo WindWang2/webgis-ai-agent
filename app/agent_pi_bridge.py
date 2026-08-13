@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections import OrderedDict
+import copy
 import json
 import logging
 import os
@@ -232,6 +234,12 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     """
     registry = get_tool_registry()
     tool_name = request.name
+    # The Pi callback historically omitted sessionId.  The singleton bridge
+    # serializes turns, so its active owner is the only safe fallback; an empty
+    # session must never pool cartographic evidence across users.
+    session_id = request.sessionId or (
+        _pi_bridge._active_turn_sid if _pi_bridge is not None else ""
+    )
 
     # Validate tool exists
     available = set(registry.list_tools())
@@ -265,7 +273,7 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     # executed_tools 复用一个 session 级 set，让重复调用拦截在 service 内生效。
     service = ToolDispatchService(registry=registry)
     tc = {"id": request.toolCallId, "function": {"name": tool_name, "arguments": request.arguments or {}}}
-    executed = _session_executed_sets.setdefault(request.sessionId or "", set())
+    executed = _session_executed_sets.setdefault(session_id, set())
     # 防御上限：turn 末清理兜底正常路径，此上限兜住跨会话无 turn 的病态累积
     if len(_session_executed_sets) > 128:
         _session_executed_sets.pop(next(iter(_session_executed_sets)))
@@ -274,18 +282,7 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     # dispatch_tool is a separate HTTP-callback task with no turn context of its
     # own; the singleton bridge processes turns strictly serially, so the active
     # turn's (turn_id, run_id, session_id) is well-defined — the SAME invariant
-    # the cancel token already relies on. Tolerate None in the abort race (the
-    # turn's finally clears these before a late callback can arrive).
-    #
-    # Session guard (Matt #2 P2-3): a stale/late callback, or one load-balanced
-    # to a non-owner worker that has its OWN in-flight turn, would otherwise be
-    # misattributed to the wrong turn. If the callback carries a session_id that
-    # does NOT match the active turn's session, drop the correlation (still
-    # execute the tool — only the evidence attribution is skipped). When the
-    # callback carries no session_id (current Pi extension behavior) we cannot
-    # guard by session; the single-worker serial-turn invariant then keeps the
-    # window ~empty (the proper cross-worker fix is passing turn_id in the Pi
-    # callback payload — see PR "Deferred").
+    # the cancel token already relies on.
     turn_id, run_id, active_session = active_turn_correlation()
     if (
         request.sessionId
@@ -296,61 +293,46 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
         turn_id, run_id = None, None
     rt_ev = TURN_EVIDENCE.get(turn_id)  # None if turn ended / non-owner worker
 
-    # Bind the recovered correlation so tool_metrics / JobOrigin (W4/W5) — read
-    # deeper inside service.dispatch → registry — propagate turn_id/run_id, AND
-    # bind the live TurnEvidence so the registry chokepoint (current_turn_evidence)
-    # records tool_calls/tool_ms into THIS turn's summary. Without bind_turn_evidence
-    # the Pi path (a separate HTTP-callback task) would leave tool_calls=0.
     with contextlib.ExitStack() as _rt_stack:
         _rt_stack.enter_context(rt_ctx.bind_runtime_context(
             turn_id=turn_id, run_id=run_id, session_id=request.sessionId
         ))
         if rt_ev is not None:
             _rt_stack.enter_context(bind_turn_evidence(rt_ev))
-        # P1 fix: time the dispatch, record telemetry on BOTH the success and the
-        # exception path (previously an exception skipped recording entirely),
-        # and truncate error_msg so a multi-KB llm_payload doesn't flood telemetry.
         t0 = time.monotonic()
         try:
-            # F24: bind the active turn's CancellationToken so checkpoint()-
-            # cooperative tools observe abort/disconnect and stop early instead of
-            # running to completion against an abandoned turn. asyncio.to_thread
-            # (registry's sync-tool path) copies the context, so the token reaches
-            # worker threads without changing tool signatures (ADR-0052).
-            # use_token(None) is a no-op, so dispatch outside a turn is unchanged.
             with use_token(_active_turn_token):
-                result = await service.dispatch(tc, request.sessionId or "", executed)
+                result = await service.dispatch(tc, session_id, executed)
         except Exception as exc:
             duration_ms = int((time.monotonic() - t0) * 1000)
-            if _harness is not None:
-                err_msg = str(exc)[:200]
-                _harness.record_event(ToolCallEvent(
+            harness = _get_session_harness(session_id)
+            if harness is not None:
+                harness.record_event(ToolCallEvent(
                     tool_call_id=request.toolCallId,
                     tool_name=request.name,
                     arguments=request.arguments or {},
                     duration_ms=duration_ms,
                     is_error=True,
-                    error_msg=err_msg,
+                    error_msg=str(exc)[:200],
                     result={},
-                    session_id=request.sessionId,
+                    session_id=session_id,
                 ))
             raise
 
         duration_ms = int((time.monotonic() - t0) * 1000)
-
-        # 缓存供 SSE 适配器读取（keyed by tool_call_id only — see cache docstring）
         cache_dispatch_result(request.toolCallId, result)
 
-        if _harness is not None:
-            # V3: 记录本次 dispatch 发出的地图动作（issued 侧证据）。仅 status=="ok" ——
-            # error/repeated 不产生可执行的地图命令。turn_id 现由 active_turn_correlation()
-            # 恢复（不再是 ""），issued 侧证据与本 turn 直接关联。
+        harness = _get_session_harness(
+            session_id,
+            create=tool_name == "webgis_layer_upsert",
+        )
+        if harness is not None:
             if result.status == "ok":
                 for ma in result.map_actions:
                     if rt_ev is not None:
                         rt_ev.record_map_action_issued(ma["action_id"])
-                    _harness.record_map_action_issued(
-                        session_id=request.sessionId or "",
+                    harness.record_map_action_issued(
+                        session_id=session_id,
                         tool_call_id=request.toolCallId,
                         turn_id=turn_id or "",
                         action_id=ma["action_id"],
@@ -359,14 +341,8 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
                         mapspec_fingerprint=ma.get("mapspec_fingerprint"),
                     )
             is_error = result.status == "error"
-            # HARNESS-V2: forward real MapSpec mutation evidence (is_compiled /
-            # success / warnings / checkpoint_id) from raw_result so the validity
-            # ladder isn't starved in production. Slim to evidence fields only — the
-            # full mapspec is fetched via fetch-on-demand, never logged wholesale.
             ev = {"status": result.status, "llm_payload_len": len(result.llm_payload)}
             raw = result.raw_result if isinstance(result.raw_result, dict) else {}
-            # ADR-0052: also forward cartography_findings so the Harness surfaces
-            # thematic drift (paint↔legend equivalence) in semantic_errors.
             for k in (
                 "success",
                 "is_compiled",
@@ -381,18 +357,19 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
             ):
                 if k in raw:
                     ev[k] = raw[k]
-            event = ToolCallEvent(
+            harness.record_event(ToolCallEvent(
                 tool_call_id=request.toolCallId,
                 tool_name=request.name,
                 arguments=request.arguments or {},
                 duration_ms=duration_ms,
                 is_error=is_error,
-                # P1 fix: truncate to a short message rather than the full payload.
                 error_msg=(result.llm_payload[:200] if is_error else ""),
                 result=ev,
-                session_id=request.sessionId,
-            )
-            _harness.record_event(event)
+                session_id=session_id,
+            ))
+            if tool_name == "webgis_layer_upsert":
+                await evaluate_cartographic_session(session_id)
+
 
     return PiToolResponse(
         toolCallId=request.toolCallId,
@@ -436,44 +413,227 @@ def active_turn_correlation() -> tuple[Optional[str], Optional[str], Optional[st
     return _active_turn_turn_id, _active_turn_run_id, _active_turn_session_id
 
 
-# ── Optional evaluation harness (opt-in via PI_HARNESS_ENABLED=true) ──
-# V2（HARNESS-V2）：注入真实证据 resolver —— ref 解析走 SessionStore，
-# MapSpec 校验走真实 validate()，杜绝"没报错=100%有效"的假成功。
+# ── Session-scoped evaluation harnesses ────────────────────────────────
+# General telemetry remains opt-in. Display-producing MapSpec mutations create
+# a harness even when telemetry is disabled because cartographic verification
+# is part of the product result, not optional observability.
 _harness: Optional[PiAgentHarness] = None
-if os.getenv("PI_HARNESS_ENABLED", "").lower() in ("true", "1", "yes"):
-    try:
-        from app.services.session_data import session_data_manager as _sdm
-        from app.services.mapspec.coordinator import validate as _validate_mapspec
-        from app.services.mapspec.store import mapspec_store_instance as _mapspec_store
-        from app.lib.harness.ref_resolver import make_session_store_resolver
+_harnesses: "OrderedDict[str, PiAgentHarness]" = OrderedDict()
+_cartography_eval_cache: "OrderedDict[tuple[str, str, int, int, int], dict[str, Any]]" = OrderedDict()
+_cartography_eval_locks: dict[str, asyncio.Lock] = {}
+_HARNESS_REGISTRY_LIMIT = 128
+_harness_feature_enabled = os.getenv("PI_HARNESS_ENABLED", "").lower() in (
+    "true", "1", "yes"
+)
 
-        async def _read_cartographic_state(session_id: str) -> dict[str, Any]:
-            """Read only the requested session; the harness verifies this tag."""
-            mapspec, map_state = await asyncio.gather(
-                _mapspec_store.get_mapspec(session_id),
-                _sdm.get_map_state(session_id),
-            )
-            return {
-                "session_id": session_id,
-                "mapspec": mapspec,
-                "map_state": map_state,
-            }
 
-        _harness = PiAgentHarness(
-            session_id="production",
-            ref_resolver=make_session_store_resolver(_sdm),
-            mapspec_validator=_validate_mapspec,
-            cartography_state_reader=_read_cartographic_state,
+def _build_session_harness(session_id: str) -> PiAgentHarness:
+    """Create one evidence accumulator whose readers are tenant scoped."""
+    from app.services.session_data import session_data_manager as sdm
+    from app.services.mapspec.coordinator import validate as validate_mapspec
+    from app.services.mapspec.store import mapspec_store_instance
+    from app.lib.harness.ref_resolver import make_session_store_resolver
+
+    async def read_cartographic_state(requested_session_id: str) -> dict[str, Any]:
+        mapspec, map_state = await asyncio.gather(
+            mapspec_store_instance.get_mapspec(requested_session_id),
+            sdm.get_map_state(requested_session_id),
         )
-        logger.info("[PiBridge] Evaluation harness V2 enabled (real SessionStore ref resolver)")
-    except Exception as _harness_err:  # noqa: BLE001 - never block startup on telemetry
-        logger.warning(f"[PiBridge] Harness V2 wiring failed, degrading to no harness: {_harness_err}")
-        _harness = None
+        return {
+            "session_id": requested_session_id,
+            "mapspec": mapspec,
+            "map_state": map_state,
+        }
+
+    return PiAgentHarness(
+        session_id=session_id,
+        ref_resolver=make_session_store_resolver(sdm),
+        mapspec_validator=validate_mapspec,
+        cartography_state_reader=read_cartographic_state,
+        map_action_reader=sdm.get_map_action_events,
+    )
 
 
-def get_harness() -> Optional[PiAgentHarness]:
+def _get_session_harness(
+    session_id: str,
+    *,
+    create: bool = False,
+) -> Optional[PiAgentHarness]:
+    """Return a bounded, exact-session harness; never retag a singleton."""
+    global _harness
+    if not session_id:
+        return None
+    if _harness is not None and _harness.session_id == session_id:
+        return _harness
+    existing = _harnesses.get(session_id)
+    if existing is not None:
+        _harnesses.move_to_end(session_id)
+        return existing
+    if not create and not _harness_feature_enabled:
+        return None
+    try:
+        created = _build_session_harness(session_id)
+    except Exception as harness_err:  # noqa: BLE001 - map interaction must survive telemetry failure
+        logger.warning(
+            "[PiBridge] session harness wiring failed for %s: %s",
+            session_id,
+            harness_err,
+        )
+        return None
+    _harnesses[session_id] = created
+    _harness = created  # compatibility/telemetry summary: most recently active
+    while len(_harnesses) > _HARNESS_REGISTRY_LIMIT:
+        evicted_session, _ = _harnesses.popitem(last=False)
+        _cartography_eval_locks.pop(evicted_session, None)
+        for key in list(_cartography_eval_cache):
+            if key[0] == evicted_session:
+                del _cartography_eval_cache[key]
+    return created
+
+
+async def evaluate_cartographic_session(session_id: str) -> dict[str, Any]:
+    """Serialize and recompute the session gate after meaningful evidence."""
+    if _get_session_harness(session_id) is None:
+        return {
+            "session_id": session_id,
+            "cartography": {
+                "status": "not_evaluated",
+                "trusted": False,
+                "evaluated": False,
+                "passed": False,
+                "termination_reason": "no_session_harness",
+            },
+        }
+    lock = _cartography_eval_locks.setdefault(session_id, asyncio.Lock())
+    async with lock:
+        return await _evaluate_cartographic_session_unlocked(session_id)
+
+
+async def record_cartographic_dispatch_evidence(
+    session_id: str,
+    tool_call_id: str,
+    tool_name: str,
+    arguments: dict[str, Any],
+    outcome: "ToolDispatchResult",
+    duration_ms: int,
+) -> None:
+    """Shared legacy-agent seam for one display-producing dispatch.
+
+    Pi records all telemetry in ``dispatch_tool``. The legacy chat pipeline
+    calls this narrow additive seam so both production agents feed the same
+    session-scoped harness and runtime observation/ACK evaluator.
+    """
+    if outcome.status != "ok" or tool_name != "webgis_layer_upsert":
+        return
+    harness = _get_session_harness(session_id, create=True)
+    if harness is None:
+        return
+    for action in outcome.map_actions:
+        harness.record_map_action_issued(
+            session_id=session_id,
+            tool_call_id=tool_call_id,
+            action_id=action["action_id"],
+            command=action["command"],
+            requested=action["requested"],
+            mapspec_fingerprint=action.get("mapspec_fingerprint"),
+        )
+    raw = outcome.raw_result if isinstance(outcome.raw_result, dict) else {}
+    result_evidence: dict[str, Any] = {
+        "status": outcome.status,
+        "llm_payload_len": len(outcome.llm_payload),
+    }
+    for key in (
+        "success", "is_compiled", "warnings", "checkpoint_id", "message",
+        "correction_hint", "cartography_findings", "cartographic_review",
+        "mapspec_fingerprint", "runtime_observation_seq",
+    ):
+        if key in raw:
+            result_evidence[key] = raw[key]
+    harness.record_event(ToolCallEvent(
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
+        arguments=arguments,
+        duration_ms=duration_ms,
+        is_error=False,
+        result=result_evidence,
+        session_id=session_id,
+    ))
+    await evaluate_cartographic_session(session_id)
+
+
+async def _evaluate_cartographic_session_unlocked(
+    session_id: str,
+) -> dict[str, Any]:
+    harness = _get_session_harness(session_id)
+    if harness is None:
+        return {
+            "session_id": session_id,
+            "cartography": {
+                "status": "not_evaluated",
+                "trusted": False,
+                "evaluated": False,
+                "passed": False,
+                "termination_reason": "no_session_harness",
+            },
+        }
+    from app.lib.harness.evaluator import HarnessEvaluator
+    from app.services.session_data import session_data_manager
+
+    state = await session_data_manager.get_map_state(session_id)
+    observation = state.get("_cartographic_observation")
+    sequence = int(observation.get("sequence", 0)) if isinstance(observation, dict) else 0
+    fingerprint = str(observation.get("mapspec_fingerprint") or "") if isinstance(observation, dict) else ""
+    actions = await session_data_manager.get_map_action_events(session_id)
+    cache_key = (
+        session_id,
+        fingerprint,
+        sequence,
+        len(actions),
+        len(harness.tool_calls),
+    )
+    cached = _cartography_eval_cache.get(cache_key)
+    if cached is not None:
+        _cartography_eval_cache.move_to_end(cache_key)
+        return copy.deepcopy(cached)
+
+    evidence = await harness.evaluate_with_evidence()
+    gate = HarnessEvaluator().evaluate_evidence(
+        evidence,
+        require_evaluated=False,
+        require_cartography=True,
+    )
+    result = {
+        "session_id": session_id,
+        "cartography": evidence.get("cartography") or {},
+        "gate": gate.get("checks", {}).get("CartographicQuality") or {},
+        "overall_passed": bool(gate.get("overall_passed")),
+    }
+    _cartography_eval_cache[cache_key] = copy.deepcopy(result)
+    while len(_cartography_eval_cache) > _HARNESS_REGISTRY_LIMIT * 4:
+        _cartography_eval_cache.popitem(last=False)
+    await session_data_manager.set_map_state(
+        session_id, "_cartographic_review", result
+    )
+    return result
+
+
+def get_harness(session_id: Optional[str] = None) -> Optional[PiAgentHarness]:
     """Return the active evaluation harness, or None if disabled."""
+    if session_id:
+        return _get_session_harness(session_id)
     return _harness
+
+
+def clear_cartographic_session_state(session_id: str) -> None:
+    """Drop process-local evidence when the owned session is deleted."""
+    global _harness
+    removed = _harnesses.pop(session_id, None)
+    _cartography_eval_locks.pop(session_id, None)
+    for key in list(_cartography_eval_cache):
+        if key[0] == session_id:
+            del _cartography_eval_cache[key]
+    if removed is not None and _harness is removed:
+        _harness = next(reversed(_harnesses.values()), None) if _harnesses else None
 
 
 # ── PiBridge: thin orchestrator (holds PiRpcClient + delegates mapping) ──────

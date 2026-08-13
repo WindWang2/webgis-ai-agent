@@ -11,6 +11,7 @@ import copy
 from dataclasses import dataclass, field
 import hashlib
 import json
+import math
 from typing import Any, Callable, Dict, List, Optional
 
 from app.lib.cartography.semantic_checks import evaluate_cartography_semantics
@@ -19,7 +20,6 @@ from app.lib.cartography.semantic_checks import evaluate_cartography_semantics
 MAX_REPAIR_ITERATIONS = 2
 _SOURCE_METADATA_KEYS = (
     "type",
-    "url",
     "ref",
     "ref_id",
     "imageRef",
@@ -28,20 +28,85 @@ _SOURCE_METADATA_KEYS = (
     "profile",
     "profile_fingerprint",
 )
-_LAYER_DATA_KEYS = {"data", "geojson", "features", "inlineData", "source_data"}
+_LAYER_METADATA_KEYS = (
+    "id",
+    "source",
+    "type",
+    "visible",
+    "minzoom",
+    "maxzoom",
+    "layout",
+    "paint",
+    "legend_spec",
+    "provenance",
+    "cartographic_intent",
+    "cartographic_profile",
+)
+_MAX_METADATA_NODES = 4_096
+_MAX_METADATA_DEPTH = 8
+_MAX_METADATA_ITEMS = 256
+_MAX_METADATA_STRING = 512
 
 
-def _without_data(value: Any) -> Any:
-    """Project nested layer metadata without copying feature/data bodies."""
+def _bounded_metadata(
+    value: Any,
+    *,
+    depth: int = 0,
+    budget: Optional[List[int]] = None,
+) -> Any:
+    """Copy structured evidence into a finite, credential-safe projection."""
+    if budget is None:
+        budget = [_MAX_METADATA_NODES]
+    if budget[0] <= 0 or depth > _MAX_METADATA_DEPTH:
+        return {"truncated": True}
+    budget[0] -= 1
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            return {"non_finite": str(value)}
+        return value
+    if isinstance(value, str):
+        if len(value) <= _MAX_METADATA_STRING:
+            return value
+        digest = hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()
+        return {"sha256": digest, "length": len(value)}
     if isinstance(value, dict):
         return {
-            str(key): _without_data(item)
-            for key, item in value.items()
-            if key not in _LAYER_DATA_KEYS
+            str(key): _bounded_metadata(item, depth=depth + 1, budget=budget)
+            for key, item in list(value.items())[:_MAX_METADATA_ITEMS]
         }
     if isinstance(value, (list, tuple)):
-        return [_without_data(item) for item in value]
-    return value
+        return [
+            _bounded_metadata(item, depth=depth + 1, budget=budget)
+            for item in value[:_MAX_METADATA_ITEMS]
+        ]
+    return {"unsupported_type": type(value).__name__}
+
+
+def _profile_metadata(value: Any, budget: List[int]) -> Any:
+    if not isinstance(value, dict):
+        return {"profile_type": type(value).__name__}
+    projected = {
+        key: _bounded_metadata(value.get(key), budget=budget)
+        for key in (
+            "featureCount", "geometryTypes", "bbox", "crs", "crs_status",
+        )
+        if key in value
+    }
+    fields = value.get("fields")
+    if isinstance(fields, dict):
+        projected["fields"] = {
+            str(field_name): {
+                key: _bounded_metadata(field_info.get(key), budget=budget)
+                for key in (
+                    "type", "min", "max", "mean", "null_count", "sampleValues",
+                )
+                if isinstance(field_info, dict) and key in field_info
+            }
+            for field_name, field_info in list(fields.items())[:_MAX_METADATA_ITEMS]
+        }
+    return projected
 
 
 def cartographic_projection(mapspec: Dict[str, Any]) -> Dict[str, Any]:
@@ -53,22 +118,39 @@ def cartographic_projection(mapspec: Dict[str, Any]) -> Dict[str, Any]:
     """
     sources = mapspec.get("sources") if isinstance(mapspec.get("sources"), dict) else {}
     projected_sources: Dict[str, Any] = {}
-    for source_id, source in sources.items():
+    budget = [_MAX_METADATA_NODES]
+    for source_id, source in list(sources.items())[:_MAX_METADATA_ITEMS]:
         if not isinstance(source, dict):
             projected_sources[str(source_id)] = {"descriptor_type": type(source).__name__}
             continue
         projected_sources[str(source_id)] = {
-            key: _without_data(source[key])
+            key: (
+                _profile_metadata(source[key], budget)
+                if key == "profile"
+                else _bounded_metadata(source[key], budget=budget)
+            )
             for key in _SOURCE_METADATA_KEYS
             if key in source
         }
     layers = mapspec.get("layers") if isinstance(mapspec.get("layers"), list) else []
+    projected_layers = []
+    for layer in layers[:_MAX_METADATA_ITEMS]:
+        if not isinstance(layer, dict):
+            continue
+        projected_layers.append({
+            key: _bounded_metadata(layer[key], budget=budget)
+            for key in _LAYER_METADATA_KEYS
+            if key in layer
+        })
     return {
         "version": mapspec.get("version"),
-        "view": _without_data(mapspec.get("view") or {}),
-        "layout": _without_data(mapspec.get("layout") or {}),
+        "cartographic_profile": _bounded_metadata(
+            mapspec.get("cartographic_profile"), budget=budget
+        ),
+        "view": _bounded_metadata(mapspec.get("view") or {}, budget=budget),
+        "layout": _bounded_metadata(mapspec.get("layout") or {}, budget=budget),
         "sources": projected_sources,
-        "layers": [_without_data(layer) for layer in layers if isinstance(layer, dict)],
+        "layers": projected_layers,
     }
 
 
@@ -78,18 +160,18 @@ def cartographic_fingerprint(mapspec: Dict[str, Any]) -> str:
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
-        allow_nan=True,
+        allow_nan=False,
     ).encode("utf-8")
     return f"carto-sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
 def _fingerprint(value: Any) -> str:
     payload = json.dumps(
-        value,
+        _bounded_metadata(value),
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
-        allow_nan=True,
+        allow_nan=False,
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
@@ -128,7 +210,7 @@ def _plan_auto_safe_repairs(review: Dict[str, Any]) -> List[Dict[str, Any]]:
 def _apply_repairs(
     mapspec: Dict[str, Any], repairs: List[Dict[str, Any]]
 ) -> Dict[str, Any]:
-    candidate = copy.deepcopy(mapspec)
+    candidate = _presentation_copy(mapspec)
     layers = candidate.get("layers") if isinstance(candidate.get("layers"), list) else []
     by_id = {
         layer.get("id"): layer for layer in layers
@@ -162,6 +244,43 @@ def _apply_repairs(
 
 RepairExecutor = Callable[[Dict[str, Any], List[Dict[str, Any]]], Dict[str, Any]]
 CurrentGuard = Callable[[str], bool]
+
+
+def _presentation_copy(mapspec: Dict[str, Any]) -> Dict[str, Any]:
+    """Copy mutable presentation fields while sharing immutable data bodies.
+
+    Review and AUTO_SAFE repair never edit source datasets.  Deep-copying a
+    100k-feature inlineData payload merely to change opacity defeats the
+    metadata-first contract, so source/unknown payload values remain shared
+    and only their small containers plus presentation fields are copied.
+    """
+    candidate = dict(mapspec)
+    sources = mapspec.get("sources")
+    if isinstance(sources, dict):
+        candidate["sources"] = {
+            source_id: dict(source) if isinstance(source, dict) else source
+            for source_id, source in sources.items()
+        }
+    layers = mapspec.get("layers")
+    if isinstance(layers, list):
+        copied_layers = []
+        for layer in layers:
+            if not isinstance(layer, dict):
+                copied_layers.append(layer)
+                continue
+            copied = dict(layer)
+            for key in (
+                "layout", "paint", "legend_spec", "provenance",
+                "cartographic_intent",
+            ):
+                if key in layer:
+                    copied[key] = copy.deepcopy(layer[key])
+            copied_layers.append(copied)
+        candidate["layers"] = copied_layers
+    for key in ("view", "layout"):
+        if key in mapspec:
+            candidate[key] = copy.deepcopy(mapspec[key])
+    return candidate
 
 
 @dataclass
@@ -198,7 +317,7 @@ def review_cartography(
     source_profiles: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> CartographicLoopResult:
     """Read-only desired-state review with explicit repairability semantics."""
-    current = copy.deepcopy(mapspec)
+    current = _presentation_copy(mapspec)
     fingerprint = cartographic_fingerprint(current)
     review = evaluate_cartography_semantics(current, source_profiles).to_dict()
     if review["status"] == "pass":
@@ -249,7 +368,7 @@ def review_and_repair_cartography(
     result terminates as ``superseded`` before a patch is applied.
     """
     bounded_iterations = max(0, min(int(max_iterations), MAX_REPAIR_ITERATIONS))
-    current = copy.deepcopy(mapspec)
+    current = _presentation_copy(mapspec)
     initial_fingerprint = cartographic_fingerprint(current)
     attempts: List[Dict[str, Any]] = []
     seen_failures: set[str] = set()
@@ -307,7 +426,7 @@ def review_and_repair_cartography(
             status, reason = "superseded", "stale_generation"
             break
 
-        next_mapspec = repair_executor(copy.deepcopy(current), copy.deepcopy(repairs))
+        next_mapspec = repair_executor(_presentation_copy(current), copy.deepcopy(repairs))
         if not isinstance(next_mapspec, dict):
             next_mapspec = current
         next_fingerprint = cartographic_fingerprint(next_mapspec)
@@ -320,7 +439,7 @@ def review_and_repair_cartography(
             "output_fingerprint": next_fingerprint,
             "state_changed": next_fingerprint != current_fingerprint,
         })
-        current = copy.deepcopy(next_mapspec)
+        current = _presentation_copy(next_mapspec)
 
     final_fingerprint = cartographic_fingerprint(current)
     return CartographicLoopResult(

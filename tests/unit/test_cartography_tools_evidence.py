@@ -129,6 +129,33 @@ async def test_layer_upsert_preserves_result_ref_provenance(registry, clean_sess
     assert source_entry["ref"] == result_ref
     assert provenance_check["status"] == "pass"
     assert provenance_check["evidence"]["source_ref"] == result_ref
+    assert res["runtime_patch"]["result_ref"] == result_ref
+    assert res["runtime_patch"]["mapspec_fingerprint"] == res["mapspec_fingerprint"]
+    assert res["commands"][0]["command"] == "add_layer"
+
+
+@pytest.mark.asyncio
+async def test_layer_upsert_preserves_url_source_instead_of_treating_it_as_ref(
+    registry, clean_session,
+):
+    url = "https://tiles.example.test/result/{z}/{x}/{y}.png"
+    res = await registry.dispatch(
+        "webgis_layer_upsert",
+        {
+            "layer": {
+                "id": "remote",
+                "source": "remote-source",
+                "type": "raster",
+                "paint": {"raster-opacity": 0.85},
+            },
+            "source_data": url,
+        },
+        session_id=clean_session,
+    )
+
+    assert res["success"] is True
+    assert res["mapspec"]["sources"]["remote-source"]["url"] == url
+    assert res.get("code") != "REFERENCE_NOT_FOUND"
 
 
 @pytest.mark.asyncio

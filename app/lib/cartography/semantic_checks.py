@@ -151,8 +151,16 @@ class CartographyReport:
 
     @property
     def ok(self) -> bool:
-        """No error-severity findings. Warnings do not fail (cartographic taste)."""
-        return len(self.errors) == 0
+        """Compatibility gate backed by the canonical typed checks.
+
+        Older callers still consume ``ok``.  It must never contradict
+        ``status`` merely because a new rule emitted a ``CartographyCheck``
+        instead of a legacy finding.
+        """
+        return not any(
+            check.status == "fail" and check.evidence_class == "deterministic"
+            for check in self._all_checks()
+        )
 
     def _all_checks(self) -> List[CartographyCheck]:
         checks = list(self.checks)
@@ -217,8 +225,14 @@ class CartographyReport:
             "complete": self.complete,
             "passed": self.complete and self.status in ("pass", "warning"),
             "evaluated_count": sum(1 for c in checks if c.evaluated),
-            "error_count": len(self.errors),
-            "warning_count": len(self.warnings),
+            "error_count": sum(
+                1 for check in checks
+                if check.status == "fail" and check.evidence_class == "deterministic"
+            ),
+            "warning_count": sum(
+                1 for check in checks
+                if check.status == "warning"
+            ),
             "profiles": self.profiles,
             "checks": [c.to_dict() for c in checks],
             "findings": [f.to_dict() for f in self.findings],
@@ -333,6 +347,19 @@ def _is_num(v: Any) -> bool:
     )
 
 
+def _is_supported_color(value: Any) -> bool:
+    """Validate CSS colors with the installed raster/color parser."""
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        from PIL import ImageColor
+
+        ImageColor.getcolor(value.strip(), "RGBA")
+        return True
+    except (ImportError, TypeError, ValueError):
+        return False
+
+
 def _valid_bbox(value: Any) -> bool:
     return (
         isinstance(value, (list, tuple))
@@ -412,14 +439,26 @@ def _classification_integrity(legend_spec: Any) -> tuple[str, Dict[str, Any], st
             for c in categories
         )
         unique = len(keys) == len(set(map(str, keys)))
+        invalid_color_keys = [
+            c.get("key") if isinstance(c, dict) else None
+            for c in categories
+            if not isinstance(c, dict) or not _is_supported_color(c.get("color"))
+        ]
+        colors_valid = bool(categories) and not invalid_color_keys
         evidence = {
             "legend_type": ltype,
             "category_count": len(categories),
             "keys_unique": unique,
             "labels_non_empty": labels_valid,
+            "colors_valid": colors_valid,
+            "invalid_color_keys": invalid_color_keys[:16],
         }
-        if not labels_valid or not unique:
-            return "fail", evidence, "Categorical legend has duplicate keys or empty labels"
+        if not labels_valid or not unique or not colors_valid:
+            return (
+                "fail",
+                evidence,
+                "Categorical legend has duplicate keys, empty labels, or invalid colors",
+            )
         return "pass", evidence, "Categorical classification is structurally coherent"
     return (
         "fail",
@@ -746,6 +785,45 @@ def evaluate_cartography_semantics(
             },
         )
 
+        layer_provenance = (
+            layer.get("provenance")
+            if isinstance(layer.get("provenance"), dict) else {}
+        )
+        provenance_warnings = layer_provenance.get("warnings")
+        raster_conversion_errors = [
+            warning for warning in (
+                provenance_warnings if isinstance(provenance_warnings, list) else []
+            )
+            if isinstance(warning, str)
+            and warning.startswith("raster_converter_error:")
+        ]
+        if layer.get("type") == "raster":
+            raster_artifact_present = bool(
+                source.get("imageRef") or source.get("ref") or source.get("url")
+            )
+            raster_ready = raster_artifact_present and not raster_conversion_errors
+            report.add_check(
+                "RASTER_ARTIFACT_READY",
+                "pass" if raster_ready else "fail",
+                (
+                    f"Layer '{lid}' raster conversion failed"
+                    if raster_conversion_errors
+                    else (
+                        f"Layer '{lid}' raster artifact is addressable"
+                        if raster_artifact_present
+                        else f"Layer '{lid}' has no addressable raster artifact"
+                    )
+                ),
+                severity="info" if raster_ready else "error",
+                layer_id=lid,
+                source_id=sid,
+                evidence={
+                    "converter_error_count": len(raster_conversion_errors),
+                    "artifact_ref_present": raster_artifact_present,
+                },
+                repairability="not_repairable",
+            )
+
         # Desired visibility is structural evidence, not pixel evidence. A
         # hidden/zero-opacity result is detectable, but only malformed opacity
         # is AUTO_SAFE: valid hidden state may be deliberate unless completion
@@ -930,37 +1008,90 @@ def evaluate_cartography_semantics(
                     evidence={"source_id": sid, "crs": crs, "bbox": bbox},
                 )
 
-        # 2. Empty-data not success (error): a zero-feature source is no data.
-        if profile is not None and profile.get("featureCount", 1) == 0:
-            report.findings.append(CartographyFinding(
-                check="EMPTY_DATA", severity="error",
-                message=f"Layer '{lid}' source '{sid}' has zero features (no data)",
-                layer_id=lid, source_id=sid,
-            ))
+        # 2. Empty-data not success: emit positive/missing evidence as well.
+        if layer.get("type") != "raster":
+            feature_count = profile.get("featureCount") if profile is not None else None
+            feature_count_known = _is_num(feature_count) and float(feature_count) >= 0
+            has_features = feature_count_known and float(feature_count) > 0
+            report.add_check(
+                "RESULT_DATA_PRESENCE",
+                "pass" if has_features else "fail" if feature_count_known else "not_evaluated",
+                (
+                    f"Layer '{lid}' source contains {int(feature_count)} features"
+                    if has_features
+                    else (
+                        f"Layer '{lid}' source '{sid}' has zero features"
+                        if feature_count_known
+                        else f"Layer '{lid}' feature count is unavailable"
+                    )
+                ),
+                severity="info" if has_features else "error" if feature_count_known else "warning",
+                layer_id=lid,
+                source_id=sid,
+                evidence={"feature_count": feature_count},
+                repairability="not_repairable",
+            )
+            if feature_count_known and not has_features:
+                report.findings.append(CartographyFinding(
+                    check="EMPTY_DATA",
+                    severity="error",
+                    message=f"Layer '{lid}' source '{sid}' has zero features (no data)",
+                    layer_id=lid,
+                    source_id=sid,
+                ))
 
         # 3. Geometry type vs layer type (warning).
         ltype = layer.get("type")
-        if profile is not None:
+        if ltype == "raster":
+            pass
+        elif profile is not None:
             geom_types = profile.get("geometryTypes") or []
             mismatched = [
                 g for g in geom_types
                 if g in _GEOM_LAYER_TYPE and ltype not in _GEOM_LAYER_TYPE[g]
             ]
-            if mismatched and ltype:
+            geometry_evaluated = bool(geom_types and ltype)
+            report.add_check(
+                "GEOMETRY_LAYER_TYPE",
+                (
+                    "fail" if mismatched
+                    else "pass" if geometry_evaluated
+                    else "not_evaluated"
+                ),
+                (
+                    f"Layer '{lid}' type '{ltype}' matches source geometry"
+                    if geometry_evaluated and not mismatched
+                    else (
+                        f"Layer '{lid}' type '{ltype}' mismatches geometry {mismatched}"
+                        if mismatched
+                        else f"Layer '{lid}' geometry/layer type evidence is incomplete"
+                    )
+                ),
+                severity="error" if mismatched else "info",
+                layer_id=lid,
+                source_id=sid,
+                evidence={"layer_type": ltype, "geometry_types": geom_types},
+            )
+            if mismatched:
                 report.findings.append(CartographyFinding(
-                    check="GEOMETRY_LAYER_TYPE", severity="warning",
+                    check="GEOMETRY_LAYER_TYPE",
+                    severity="error",
                     message=(
                         f"Layer '{lid}' type '{ltype}' mismatches geometry "
                         f"{mismatched} from source '{sid}'"
                     ),
-                    layer_id=lid, source_id=sid,
+                    layer_id=lid,
+                    source_id=sid,
                 ))
         elif ltype:
-            report.findings.append(CartographyFinding(
-                check="GEOMETRY_LAYER_TYPE", severity="info",
-                message=f"Layer '{lid}' geometry/layer-type not evaluable (no profile for '{sid}')",
-                layer_id=lid, source_id=sid, evaluated=False,
-            ))
+            report.add_check(
+                "GEOMETRY_LAYER_TYPE",
+                "not_evaluated",
+                f"Layer '{lid}' geometry/layer-type not evaluable (no profile for '{sid}')",
+                layer_id=lid,
+                source_id=sid,
+                evidence={"layer_type": ltype, "geometry_types": None},
+            )
 
         # 4-6. Paint field existence / numeric / stops-range checks.
         fields_profile = (profile or {}).get("fields") or {}
@@ -987,6 +1118,14 @@ def evaluate_cartography_semantics(
                     layer_id=lid, source_id=sid,
                 ))
                 continue
+            report.add_check(
+                "PAINT_FIELD_EXISTS",
+                "pass",
+                f"Layer '{lid}' paint field '{fname}' exists in source metadata",
+                layer_id=lid,
+                source_id=sid,
+                evidence={"property": prop, "field": fname},
+            )
             # interpolate/step require a numeric field.
             if method in ("interpolate", "step") and field_info.get("type") != "number":
                 report.findings.append(CartographyFinding(
@@ -1088,6 +1227,15 @@ def evaluate_cartography_semantics(
                 }
                 for finding in report.findings[findings_before:]:
                     if finding.check == "LEGEND_STYLE_EQUIVALENCE":
+                        # ADR-0052 makes legend_spec the canonical thematic
+                        # classification and derives paint with spec_to_paint;
+                        # this repair restores that projection, it does not
+                        # invent new breaks/categories.
+                        finding.evidence = {
+                            **finding.evidence,
+                            "authoritative_source": "legend_spec",
+                            "semantic_parameters_changed": False,
+                        }
                         finding.repairability = "auto_safe"
                         finding.suggested_fix = suggested_fix
         if isinstance(legend_spec, dict) and color_spec is not None and equivalence_after == equivalence_before:
@@ -1108,15 +1256,28 @@ def evaluate_cartography_semantics(
         provenance = layer.get("provenance") if isinstance(layer.get("provenance"), dict) else {}
         provenance_ref = provenance.get("result_ref") or provenance.get("source_ref")
         if source_ref or provenance_ref:
-            provenance_matches = bool(source_ref and provenance_ref and source_ref == provenance_ref)
+            provenance_complete = bool(source_ref and provenance_ref)
+            provenance_matches = bool(
+                provenance_complete and source_ref == provenance_ref
+            )
+            provenance_status = (
+                "pass" if provenance_matches
+                else "fail" if provenance_complete
+                else "not_evaluated"
+            )
             report.add_check(
                 "RESULT_MAP_PROVENANCE",
-                "pass" if provenance_matches else "not_evaluated",
+                provenance_status,
                 (
                     f"Layer '{lid}' is traceable to result ref '{source_ref}'"
                     if provenance_matches
-                    else f"Layer '{lid}' result-to-source identity is incomplete"
+                    else (
+                        f"Layer '{lid}' source and provenance identify different results"
+                        if provenance_complete
+                        else f"Layer '{lid}' result-to-source identity is incomplete"
+                    )
                 ),
+                severity="error" if provenance_status == "fail" else "warning",
                 layer_id=lid,
                 source_id=sid,
                 evidence={

@@ -95,10 +95,16 @@ _FRONTEND_OBSERVATION_MAX_DEPTH = 8
 _FRONTEND_OBSERVATION_MAX_DICT_KEYS = 64
 _FRONTEND_LAYER_KEYS = (
     "id", "name", "type", "visible", "opacity", "group", "_refId",
-    "_tileUrl", "featureCount", "style", "legend_spec",
+    "_descriptor", "featureCount", "style", "legend_spec",
+    "style_converged", "source_converged", "runtime_layer_count",
+    "runtime_layer_ids",
 )
 _OBSERVATION_DATA_KEYS = frozenset({
     "data", "features", "geojson", "inlineData", "source", "source_data",
+})
+_OBSERVATION_SECRET_KEYS = frozenset({
+    "authorization", "api_key", "apikey", "access_token", "refresh_token",
+    "owner_token", "password", "secret", "cookie",
 })
 
 
@@ -118,7 +124,10 @@ def _bounded_observation_fragment(
         for index, (key, item) in enumerate(value.items()):
             if index >= _FRONTEND_OBSERVATION_MAX_DICT_KEYS or budget[0] <= 0:
                 break
-            if key not in _OBSERVATION_DATA_KEYS:
+            normalized_key = str(key).lower()
+            if normalized_key in _OBSERVATION_SECRET_KEYS:
+                projected[str(key)] = "[redacted]"
+            elif key not in _OBSERVATION_DATA_KEYS:
                 projected[str(key)] = _bounded_observation_fragment(
                     item, _depth=_depth + 1, _budget=budget
                 )
@@ -130,7 +139,13 @@ def _bounded_observation_fragment(
             for item in value[:128]
             if budget[0] > 0
         ]
-    elif isinstance(value, (str, int, float, bool)) or value is None:
+    elif isinstance(value, str):
+        projected = (
+            value.split("?", 1)[0] + "?[redacted]"
+            if "://" in value and "?" in value
+            else value
+        )
+    elif isinstance(value, (int, float, bool)) or value is None:
         projected = value
     else:
         return None
@@ -143,21 +158,13 @@ def _bounded_observation_fragment(
     return projected
 
 
-async def _record_frontend_cartographic_observation(
-    session_id: Optional[str], map_state: Optional[dict]
-) -> None:
-    """Persist one bounded frontend snapshot for event-driven convergence.
-
-    This runs once at turn start, never for token events or map pans. The
-    monotonic sequence lets a mutation distinguish an old snapshot from a
-    post-mutation observation without polling the browser.
-    """
-    if not session_id or not isinstance(map_state, dict):
-        return
-    layers = []
+def _project_frontend_layers(raw_layers: Any) -> list[dict[str, Any]]:
+    """Return bounded metadata-only runtime layers (never feature payloads)."""
+    layers: list[dict[str, Any]] = []
     node_budget = [_FRONTEND_OBSERVATION_MAX_NODES]
     total_bytes = 0
-    for raw in (map_state.get("layers") or [])[:_FRONTEND_OBSERVATION_MAX_LAYERS]:
+    candidates = raw_layers if isinstance(raw_layers, list) else []
+    for raw in candidates[:_FRONTEND_OBSERVATION_MAX_LAYERS]:
         if not isinstance(raw, dict) or not raw.get("id") or node_budget[0] <= 0:
             continue
         layer = {
@@ -177,6 +184,23 @@ async def _record_frontend_cartographic_observation(
             break
         total_bytes += layer_bytes
         layers.append(layer)
+    return layers
+
+
+async def _record_frontend_cartographic_observation(
+    session_id: Optional[str], map_state: Optional[dict]
+) -> None:
+    """Persist bounded pre-turn context without claiming runtime convergence.
+
+    This user-supplied snapshot runs once at turn start.  It is useful context,
+    but it predates the next mutation and must neither overwrite canonical map
+    state nor certify the post-reconcile runtime.  The authoritative runtime
+    endpoint writes ``_cartographic_observation`` separately.
+    """
+    if not session_id or not isinstance(map_state, dict):
+        return
+    layers = _project_frontend_layers(map_state.get("layers"))
+    node_budget = [_FRONTEND_OBSERVATION_MAX_NODES]
     viewport = _bounded_observation_fragment(
         map_state.get("viewport") or {}, _budget=node_budget
     )
@@ -186,24 +210,22 @@ async def _record_frontend_cartographic_observation(
 
     async with session_lock_registry.lock(session_id):
         current = await session_data_manager.get_map_state(session_id)
-        previous = current.get("_cartographic_observation")
+        previous = current.get("_cartographic_context_observation")
         try:
             sequence = int(previous.get("sequence", 0)) + 1 if isinstance(previous, dict) else 1
         except (TypeError, ValueError):
             sequence = 1
-        await session_data_manager.set_map_state(session_id, "layers", layers)
-        if isinstance(viewport, dict):
-            await session_data_manager.set_map_state(session_id, "viewport", viewport)
-        if base_layer is not None:
-            await session_data_manager.set_map_state(session_id, "base_layer", base_layer)
         await session_data_manager.set_map_state(
             session_id,
-            "_cartographic_observation",
+            "_cartographic_context_observation",
             {
                 "session_id": session_id,
                 "sequence": sequence,
-                "source": "frontend",
+                "source": "frontend_pre_turn",
                 "layer_count": len(layers),
+                "layers": layers,
+                "viewport": viewport if isinstance(viewport, dict) else {},
+                "base_layer": base_layer,
             },
         )
 
@@ -805,6 +827,67 @@ async def push_session_map_state(
         await session_data_manager.set_map_state(session_id, "base_layer", req.base_layer)
 
 
+class CartographicRuntimeObservationRequest(BaseModel):
+    """Bounded actual MapLibre evidence for one MapSpec generation."""
+
+    mapspec_fingerprint: str = Field(min_length=16, max_length=96)
+    layers: list[dict[str, Any]] = Field(default_factory=list, max_length=128)
+    viewport: dict[str, Any] = Field(default_factory=dict)
+    style_loaded: bool
+    reconcile_error: str = Field(default="", max_length=500)
+
+    @model_validator(mode="after")
+    def _cap_serialized_size(self):
+        if len(self.model_dump_json().encode("utf-8")) > 256 * 1024:
+            raise ValueError("serialized cartographic observation exceeds 256KB")
+        return self
+
+
+@router.post("/sessions/{session_id}/cartographic-observation")
+async def push_cartographic_runtime_observation(
+    session_id: str,
+    req: CartographicRuntimeObservationRequest,
+    _conv: Conversation = Depends(require_owned_session),
+):
+    """Persist live post-reconcile evidence and re-run the trusted gate.
+
+    This endpoint is event-driven by MapSpec reconciliation. It is not called
+    for token streaming or ordinary pans, and it never replaces canonical
+    desired MapSpec/session layers.
+    """
+    layers = _project_frontend_layers(req.layers)
+    viewport = _bounded_observation_fragment(req.viewport) or {}
+    async with session_lock_registry.lock(session_id):
+        state = await session_data_manager.get_map_state(session_id)
+        previous = state.get("_cartographic_observation")
+        try:
+            sequence = (
+                int(previous.get("sequence", 0)) + 1
+                if isinstance(previous, dict) else 1
+            )
+        except (TypeError, ValueError):
+            sequence = 1
+        observation = {
+            "session_id": session_id,
+            "sequence": sequence,
+            "source": "frontend_runtime",
+            "mapspec_fingerprint": req.mapspec_fingerprint,
+            "layer_count": len(layers),
+            "layers": layers,
+            "viewport": viewport if isinstance(viewport, dict) else {},
+            "style_loaded": req.style_loaded,
+            "reconcile_error": req.reconcile_error,
+        }
+        await session_data_manager.set_map_state(
+            session_id, "_cartographic_observation", observation
+        )
+
+    from app.agent_pi_bridge import evaluate_cartographic_session
+
+    review = await evaluate_cartographic_session(session_id)
+    return {"observation_sequence": sequence, **review}
+
+
 class MapActionAck(BaseModel):
     """单条地图动作终态 ACK（V3 闭环：前端上报命令执行终态）。"""
 
@@ -906,6 +989,14 @@ async def push_map_action_acks(
     result = {"accepted": accepted, "duplicates": duplicates}
     if dropped:
         result["dropped"] = dropped
+    if accepted:
+        from app.agent_pi_bridge import evaluate_cartographic_session, get_harness
+
+        # Preserve the longstanding ACK response shape for unrelated map
+        # actions. A cartographic upsert creates the exact-session harness
+        # before issuing its action, so its ACK still triggers re-evaluation.
+        if get_harness(session_id) is not None:
+            result["cartography"] = await evaluate_cartographic_session(session_id)
     return result
 
 
@@ -950,6 +1041,9 @@ async def clear_session(
     # sessions) is deliberately never purged here — clear_session only ever
     # targets a real (named) session id.
     _turn_resume_registry.clear_session(session_id)
+    from app.agent_pi_bridge import clear_cartographic_session_state
+
+    clear_cartographic_session_state(session_id)
     return {"status": "ok"}
 
 

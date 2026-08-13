@@ -232,22 +232,27 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
     layer = dict(layer)
     source_ref: Optional[str] = None
     if isinstance(source_data, str):
-      source_ref = await session_data_manager.resolve_alias(session_id, source_data)
-      resolved = await session_data_manager.get(session_id, source_ref)
-      if resolved is None:
-        return {
-          "success": False,
-          "code": "REFERENCE_NOT_FOUND",
-          "message": f"Source reference '{source_data}' is unavailable in this session",
-          "correction_hint": "Use a result ref created in the current session.",
-        }
-      source_data = resolved
-      provenance = (
-        dict(layer.get("provenance"))
-        if isinstance(layer.get("provenance"), dict) else {}
-      )
-      provenance["result_ref"] = source_ref
-      layer["provenance"] = provenance
+      resolved_alias = await session_data_manager.resolve_alias(session_id, source_data)
+      # URL/path sources are valid MapSpec inputs.  Only an explicit ref or a
+      # session-known alias is dereferenced; arbitrary strings must not become
+      # fabricated session cursors.
+      if source_data.startswith("ref:") or resolved_alias != source_data:
+        source_ref = resolved_alias
+        resolved = await session_data_manager.get(session_id, source_ref)
+        if resolved is None:
+          return {
+            "success": False,
+            "code": "REFERENCE_NOT_FOUND",
+            "message": f"Source reference '{source_data}' is unavailable in this session",
+            "correction_hint": "Use a result ref created in the current session.",
+          }
+        source_data = resolved
+        provenance = (
+          dict(layer.get("provenance"))
+          if isinstance(layer.get("provenance"), dict) else {}
+        )
+        provenance["result_ref"] = source_ref
+        layer["provenance"] = provenance
     res = await mapspec_store.layer_upsert(session_id, layer, source_data)
     out: Dict[str, Any] = {
         "layer_id": layer.get("id"),
@@ -257,6 +262,88 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
       out["summary"] = f"Layer '{layer.get('id')}' upserted into MapSpec"
       if source_ref:
         out["result_ref"] = source_ref
+        mapspec = res.get("mapspec") if isinstance(res.get("mapspec"), dict) else {}
+        reviewed_layer = next(
+          (
+            item for item in mapspec.get("layers", [])
+            if isinstance(item, dict) and item.get("id") == layer.get("id")
+          ),
+          layer,
+        )
+        paint = reviewed_layer.get("paint") if isinstance(reviewed_layer.get("paint"), dict) else {}
+        opacity = next(
+          (
+            float(paint[key]) for key in (
+              "opacity", "fill-opacity", "line-opacity", "circle-opacity", "raster-opacity"
+            )
+            if isinstance(paint.get(key), (int, float)) and not isinstance(paint.get(key), bool)
+          ),
+          1.0,
+        )
+        runtime_patch: Dict[str, Any] = {
+          "layer_id": reviewed_layer.get("id"),
+          "result_ref": source_ref,
+          "visible": (
+            reviewed_layer.get("visible") is not False
+            and (reviewed_layer.get("layout") or {}).get("visibility") != "none"
+          ),
+          "opacity": opacity,
+          "legend_spec": reviewed_layer.get("legend_spec"),
+          "mapspec_fingerprint": res.get("mapspec_fingerprint"),
+          "repair_attempts": (
+            (res.get("cartographic_review") or {}).get("attempts", [])
+            if isinstance(res.get("cartographic_review"), dict) else []
+          ),
+        }
+        runtime_style: Dict[str, Any] = {}
+        color = next(
+          (
+            paint[key] for key in (
+              "color", "fill-color", "line-color", "circle-color"
+            )
+            if isinstance(paint.get(key), str)
+          ),
+          None,
+        )
+        if color:
+          runtime_style["color"] = color
+        for source_key, target_key in (
+          ("fill-outline-color", "strokeColor"),
+          ("line-width", "strokeWidth"),
+          ("circle-radius", "pointSize"),
+        ):
+          value = paint.get(source_key)
+          if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+            runtime_style[target_key] = value
+        if runtime_style:
+          runtime_patch["style"] = runtime_style
+        # Existing runtime seam: the step result mounts/updates a ref-backed
+        # HUD layer, then MapSpecRuntime reconciles it into MapLibre.  The ACK
+        # proves only store mounting; a later live observation proves quality.
+        commands: List[Dict[str, Any]] = [{
+          "command": "add_layer",
+          "params": {
+            "layer_id": reviewed_layer.get("id"),
+            "result_ref": source_ref,
+            "mapspec_fingerprint": res.get("mapspec_fingerprint"),
+          },
+        }]
+        desired_view = mapspec.get("view") if isinstance(mapspec.get("view"), dict) else {}
+        if (
+          isinstance(desired_view.get("center"), (list, tuple))
+          and len(desired_view["center"]) >= 2
+          and isinstance(desired_view.get("zoom"), (int, float))
+        ):
+          commands.append({
+            "command": "set_map_view",
+            "params": {
+              key: desired_view[key]
+              for key in ("center", "zoom", "bearing", "pitch")
+              if key in desired_view
+            },
+          })
+        out["commands"] = commands
+        out["runtime_patch"] = runtime_patch
     return _forward_evidence(res, out)
 
   @tool(

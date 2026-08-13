@@ -346,5 +346,65 @@ describe('useSSEStream step_cancelled', () => {
     emitStepCancelled({ task_id: 't1', step_id: 'step-1', tool: 'other_tool', session_id: 'sid-fe4' });
     const calls = hook.result.current.messages[hook.result.current.messages.length - 1].toolCalls!;
     expect(calls[0]).toMatchObject({ id: 'step-1', status: 'running' });
+describe('canonical MapSpec runtime patch', () => {
+  beforeEach(() => {
+    useHudStore.setState({
+      layers: [{
+        id: 'ref:geojson-1',
+        name: 'Raw result',
+        type: 'vector',
+        visible: false,
+        opacity: 1,
+        source: { type: 'FeatureCollection', features: [] },
+        _refId: 'ref:geojson-1',
+      }] as any,
+      accentColor: '#00aaff',
+    });
   });
-});
+
+  it('updates the existing ref layer instead of duplicating it', () => {
+    renderStream();
+    const legend = {
+      type: 'categorical',
+      field: 'kind',
+      categories: [{ key: 'a', label: 'A', color: '#3366cc' }],
+    };
+
+    act(() => {
+      bridgeMock.onEventCallback?.({
+        event: 'step_result',
+        data: {
+          tool: 'webgis_layer_upsert',
+          geojson_ref: 'ref:geojson-1',
+          ref_descriptor: {
+            ref_id: 'ref:geojson-1', feature_count: 10000, point_count: 10000,
+            geometry_types: ['Point'], bbox: [100, 20, 101, 21],
+            mvt_capable: true, estimated_bytes: 1000000,
+          },
+          result: {
+            runtime_patch: {
+              layer_id: 'thematic-result',
+              result_ref: 'ref:geojson-1',
+              visible: true,
+              opacity: 0.75,
+              style: { color: '#3366cc' },
+              legend_spec: legend,
+              mapspec_fingerprint: 'carto-sha256:abc',
+              repair_attempts: [{ iteration: 1 }],
+            },
+          },
+        },
+      });
+    });
+
+    const layers = useHudStore.getState().layers;
+    expect(layers).toHaveLength(1);
+    expect(layers[0]).toEqual(expect.objectContaining({
+      id: 'ref:geojson-1',
+      visible: true,
+      opacity: 0.75,
+      legend_spec: legend,
+      _mapspecLayerId: 'thematic-result',
+      _mapspecFingerprint: 'carto-sha256:abc',
+    }));
+

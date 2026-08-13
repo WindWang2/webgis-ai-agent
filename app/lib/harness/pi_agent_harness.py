@@ -112,7 +112,12 @@ def _runtime_identity_match(
     semantic_id = str(desired.get("id"))
     provenance_refs = [ref for ref in expected_refs if ref != semantic_id]
     actual_ref = actual.get("_refId")
-    if actual_ref and provenance_refs:
+    if provenance_refs:
+        # Once desired state names an authoritative result, semantic ids are
+        # presentation labels only.  Missing or different runtime provenance
+        # cannot certify that the displayed layer is the analysis result.
+        if not actual_ref:
+            return None
         return str(actual_ref) if str(actual_ref) in provenance_refs else None
     actual_refs = _actual_runtime_refs(actual)
     return next((ref for ref in expected_refs if ref in actual_refs), None)
@@ -244,11 +249,13 @@ class PiAgentHarness:
         ref_resolver: Optional[RefResolver] = None,
         mapspec_validator: Optional[MapSpecValidator] = None,
         cartography_state_reader: Optional[CartographyStateReader] = None,
+        map_action_reader: Optional[MapActionReader] = None,
     ):
         self.session_id = session_id
         self.ref_resolver = ref_resolver
         self.mapspec_validator = mapspec_validator
         self.cartography_state_reader = cartography_state_reader
+        self.map_action_reader = map_action_reader
 
         # Raw event buffers (legacy-compatible shape), FIFO-capped.
         self.tool_calls: List[Dict[str, Any]] = []
@@ -596,7 +603,7 @@ class PiAgentHarness:
 
         # 1b. V3: 读取 session store ACK，构建地图动作证据（issued ∪ ack）。
         self._map_action_evidence = await self._build_map_action_evidence(
-            map_action_reader
+            map_action_reader or self.map_action_reader
         )
 
         # 2. Build per-tool-call evidence with correlation + validity ladder.
@@ -949,6 +956,16 @@ class PiAgentHarness:
         evidence.desired_review = desired
         evidence.desired_status = str(desired.get("status") or "not_evaluated")
 
+        if not evidence.reported_fingerprint:
+            evidence.status = "not_evaluated"
+            evidence.checks.append(self._cartography_check(
+                "MAPSPEC_FINGERPRINT_CONVERGENCE",
+                "not_evaluated",
+                {"reported": None, "current": current_fingerprint},
+                message="The mutation did not report a MapSpec fingerprint.",
+            ))
+            evidence.termination_reason = "mapspec_fingerprint_missing"
+            return evidence
         if evidence.reported_fingerprint != current_fingerprint:
             evidence.status = "superseded"
             evidence.checks.append(self._cartography_check(
@@ -994,6 +1011,20 @@ class PiAgentHarness:
             if action.tool_call_id == tool_call_id
         ]
         for action in related_actions:
+            if not action.mapspec_fingerprint:
+                evidence.status = "not_evaluated"
+                evidence.checks.append(self._cartography_check(
+                    "MAP_ACTION_GENERATION",
+                    "not_evaluated",
+                    {
+                        "action_id": action.action_id,
+                        "action_fingerprint": None,
+                        "current_fingerprint": current_fingerprint,
+                    },
+                    message="The runtime action has no MapSpec generation tag.",
+                ))
+                evidence.termination_reason = "action_fingerprint_missing"
+                return evidence
             if action.mapspec_fingerprint != current_fingerprint:
                 evidence.status = "superseded"
                 evidence.checks.append(self._cartography_check(
@@ -1072,7 +1103,7 @@ class PiAgentHarness:
             observed_seq, baseline_seq = -1, -1
         observation_owned = (
             isinstance(observation, dict)
-            and observation.get("source") == "frontend"
+            and observation.get("source") == "frontend_runtime"
             and observation.get("session_id") == self.session_id
         )
         if not observation_owned or observed_seq <= baseline_seq:
@@ -1102,9 +1133,42 @@ class PiAgentHarness:
             severity="info",
         ))
 
+        observed_fingerprint = (
+            observation.get("mapspec_fingerprint")
+            if isinstance(observation, dict) else None
+        )
+        if not observed_fingerprint:
+            evidence.checks.append(self._cartography_check(
+                "RUNTIME_MAPSPEC_GENERATION",
+                "not_evaluated",
+                {"observed": None, "current": current_fingerprint},
+                message="The live runtime observation has no MapSpec generation tag.",
+            ))
+            evidence.status = "not_evaluated"
+            evidence.termination_reason = "runtime_fingerprint_missing"
+            return evidence
+        if observed_fingerprint != current_fingerprint:
+            evidence.checks.append(self._cartography_check(
+                "RUNTIME_MAPSPEC_GENERATION",
+                "fail",
+                {"observed": observed_fingerprint, "current": current_fingerprint},
+                message="The live runtime observation belongs to a stale MapSpec generation.",
+            ))
+            evidence.status = "superseded"
+            evidence.termination_reason = "stale_runtime_fingerprint"
+            return evidence
+        evidence.checks.append(self._cartography_check(
+            "RUNTIME_MAPSPEC_GENERATION",
+            "pass",
+            {"observed": observed_fingerprint, "current": current_fingerprint},
+            message="The live runtime observation matches the current MapSpec generation.",
+            severity="info",
+        ))
+
         runtime_failed = False
+        runtime_incomplete = False
         actual_layers = [
-            layer for layer in (map_state.get("layers") or [])
+            layer for layer in (observation.get("layers") or [])
             if isinstance(layer, dict) and layer.get("id")
         ]
         sources = mapspec.get("sources") if isinstance(mapspec.get("sources"), dict) else {}
@@ -1155,11 +1219,16 @@ class PiAgentHarness:
                 layer.get("visible") is not False
                 and (layer.get("layout") or {}).get("visibility") != "none"
             )
-            actual_visible = actual.get("visible") is not False
-            visible_match = actual_visible == expected_visible
+            actual_visible = actual.get("visible")
+            visibility_evaluated = isinstance(actual_visible, bool)
+            visible_match = visibility_evaluated and actual_visible == expected_visible
             evidence.checks.append(self._cartography_check(
                 "RUNTIME_RESULT_VISIBILITY",
-                "pass" if visible_match else "fail",
+                (
+                    "pass" if visible_match
+                    else "fail" if visibility_evaluated
+                    else "not_evaluated"
+                ),
                 {
                     "layer_id": layer_id,
                     "expected_visible": expected_visible,
@@ -1168,24 +1237,36 @@ class PiAgentHarness:
                 message=(
                     "Runtime layer visibility matches the desired MapSpec."
                     if visible_match else
-                    "Runtime layer visibility differs from the desired MapSpec."
+                    (
+                        "Runtime layer visibility differs from the desired MapSpec."
+                        if visibility_evaluated
+                        else "Runtime layer visibility evidence is missing."
+                    )
                 ),
-                severity="info" if visible_match else "error",
+                severity="info" if visible_match else "error" if visibility_evaluated else "warning",
             ))
-            runtime_failed = runtime_failed or not visible_match
+            runtime_failed = runtime_failed or (visibility_evaluated and not visible_match)
+            runtime_incomplete = runtime_incomplete or not visibility_evaluated
 
             expected_opacity = _constant_layer_opacity(layer)
             if expected_opacity is not None:
                 actual_opacity = actual.get("opacity")
-                opacity_matches = (
+                opacity_evaluated = (
                     not isinstance(actual_opacity, bool)
                     and isinstance(actual_opacity, (int, float))
                     and math.isfinite(float(actual_opacity))
+                )
+                opacity_matches = bool(
+                    opacity_evaluated
                     and abs(float(actual_opacity) - expected_opacity) <= _FLOAT_EPSILON
                 )
                 evidence.checks.append(self._cartography_check(
                     "RUNTIME_OPACITY_CONVERGENCE",
-                    "pass" if opacity_matches else "fail",
+                    (
+                        "pass" if opacity_matches
+                        else "fail" if opacity_evaluated
+                        else "not_evaluated"
+                    ),
                     {
                         "layer_id": layer_id,
                         "runtime_layer_id": actual.get("id"),
@@ -1195,11 +1276,16 @@ class PiAgentHarness:
                     message=(
                         "Runtime opacity matches the desired MapSpec."
                         if opacity_matches else
-                        "Runtime opacity differs from the desired MapSpec."
+                        (
+                            "Runtime opacity differs from the desired MapSpec."
+                            if opacity_evaluated
+                            else "Runtime opacity evidence is missing."
+                        )
                     ),
-                    severity="info" if opacity_matches else "error",
+                    severity="info" if opacity_matches else "error" if opacity_evaluated else "warning",
                 ))
-                runtime_failed = runtime_failed or not opacity_matches
+                runtime_failed = runtime_failed or (opacity_evaluated and not opacity_matches)
+                runtime_incomplete = runtime_incomplete or not opacity_evaluated
 
             expected_legend = layer.get("legend_spec")
             if expected_legend is not None:
@@ -1222,9 +1308,57 @@ class PiAgentHarness:
                 ))
                 runtime_failed = runtime_failed or not legend_match
 
+            style_converged = actual.get("style_converged")
+            style_evaluated = isinstance(style_converged, bool)
+            evidence.checks.append(self._cartography_check(
+                "RUNTIME_STYLE_CONVERGENCE",
+                (
+                    "pass" if style_converged is True
+                    else "fail" if style_evaluated
+                    else "not_evaluated"
+                ),
+                {
+                    "layer_id": layer_id,
+                    "runtime_layer_id": actual.get("id"),
+                    "style_converged": style_converged,
+                    "runtime_layer_count": actual.get("runtime_layer_count"),
+                },
+                message=(
+                    "Live MapLibre style matches the reconciled desired layer."
+                    if style_converged is True
+                    else (
+                        "Live MapLibre style differs from the reconciled desired layer."
+                        if style_evaluated
+                        else "Live MapLibre style convergence was not observed."
+                    )
+                ),
+                severity="info" if style_converged is True else "error" if style_evaluated else "warning",
+            ))
+            runtime_failed = runtime_failed or style_converged is False
+            runtime_incomplete = runtime_incomplete or not style_evaluated
+
         desired_view = mapspec.get("view") if isinstance(mapspec.get("view"), dict) else {}
         if _has_camera_state(desired_view):
-            actual_view = map_state.get("viewport") if isinstance(map_state.get("viewport"), dict) else {}
+            # A camera command can settle just after the layer reconcile
+            # observation. Its terminal ACK carries a live MapLibre snapshot,
+            # so prefer that newer exact-action evidence over the earlier
+            # observation while still requiring the latter for layer/style
+            # convergence.
+            acknowledged_view = next(
+                (
+                    action.actual for action in reversed(related_actions)
+                    if action.status is MapActionStatus.SUCCEEDED
+                    and _has_camera_state(action.actual)
+                ),
+                None,
+            )
+            actual_view = (
+                acknowledged_view
+                if acknowledged_view is not None
+                else observation.get("viewport")
+                if isinstance(observation.get("viewport"), dict)
+                else {}
+            )
             camera_matches = _camera_match(desired_view, actual_view)
             evidence.checks.append(self._cartography_check(
                 "RUNTIME_VIEW_CONVERGENCE",
@@ -1243,6 +1377,10 @@ class PiAgentHarness:
             evidence.status = "failed_repairable"
             evidence.runtime_status = "fail"
             evidence.termination_reason = "runtime_state_mismatch"
+        elif runtime_incomplete:
+            evidence.status = "partial"
+            evidence.runtime_status = "not_evaluated"
+            evidence.termination_reason = "runtime_evidence_incomplete"
         else:
             evidence.status = (
                 "passed_with_warnings" if evidence.desired_status == "warning" else "passed"

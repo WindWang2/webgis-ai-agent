@@ -320,6 +320,19 @@ export function useSSEStream(
               : `分析结果: ${data.tool}`;
           const accentColor = useHudStore.getState().accentColor;
           const legendSpec = data.result?.legend_spec ?? undefined;
+          const runtimePatch = data.result?.runtime_patch;
+          const patchVisible = typeof runtimePatch?.visible === 'boolean'
+            ? runtimePatch.visible
+            : !data.geojson_ref;
+          const patchOpacity = typeof runtimePatch?.opacity === 'number'
+            && Number.isFinite(runtimePatch.opacity)
+            ? runtimePatch.opacity
+            : 1;
+          const patchLegend = runtimePatch?.legend_spec ?? legendSpec;
+          const patchStyle = runtimePatch?.style && typeof runtimePatch.style === 'object'
+            ? runtimePatch.style
+            : { color: accentColor };
+          const mapspecGenerationAt = runtimePatch ? Date.now() : undefined;
           const layerMetaTitle: string | null = data.result?.layer_meta?.title ?? null;
           // Detect native heatmap
           const isNativeHeatmap =
@@ -334,8 +347,8 @@ export function useSSEStream(
             id: layerId,
             name: layerName,
             type: data.result?.image ? 'heatmap' : isNativeHeatmap ? 'heatmap' : 'vector',
-            visible: !data.geojson_ref, // image-only layers have no ref_id so display_layer can't show them
-            opacity: 1,
+            visible: patchVisible,
+            opacity: patchOpacity,
             group: 'analysis',
             source: data.geojson_ref
               ? ({
@@ -344,15 +357,44 @@ export function useSSEStream(
                   metadata: { ref_id: data.geojson_ref },
                 } as any)
               : data.result,
-            style: { color: accentColor },
+            style: patchStyle,
             _refId: data.geojson_ref,
             // Data Plane: 大要素 ref 图层由 MVT 瓦片端点显示（替代整包 GeoJSON）。
             _tileUrl: data.geojson_ref
               ? `${API_BASE}/api/v1/layers/data/${data.geojson_ref}/tiles/{z}/{x}/{y}.mvt?session_id=${sessionIdRef.current}`
               : undefined,
             _descriptor: descriptor,
-            legend_spec: legendSpec,
+            legend_spec: patchLegend,
+            _mapspecFingerprint: runtimePatch?.mapspec_fingerprint,
+            _mapspecLayerId: runtimePatch?.layer_id,
+            _mapspecGenerationAt: mapspecGenerationAt,
+            _cartographicRepairs: Array.isArray(runtimePatch?.repair_attempts)
+              ? runtimePatch.repair_attempts.slice(0, 2)
+              : undefined,
           });
+          // A GIS result is often auto-mounted hidden before the agent authors
+          // its final MapSpec.  In that case addLayer is intentionally a no-op;
+          // update the existing ref layer with the reviewed presentation and
+          // generation instead of creating a duplicate layer.
+          if (runtimePatch && data.geojson_ref) {
+            useHudStore.getState().updateLayer(layerId, {
+              name: runtimePatch.layer_id
+                ? `分析结果: ${runtimePatch.layer_id}`
+                : layerName,
+              visible: patchVisible,
+              opacity: patchOpacity,
+              style: patchStyle,
+              legend_spec: patchLegend,
+              _refId: data.geojson_ref,
+              _descriptor: descriptor,
+              _mapspecFingerprint: runtimePatch.mapspec_fingerprint,
+              _mapspecLayerId: runtimePatch.layer_id,
+              _mapspecGenerationAt: mapspecGenerationAt,
+              _cartographicRepairs: Array.isArray(runtimePatch.repair_attempts)
+                ? runtimePatch.repair_attempts.slice(0, 2)
+                : undefined,
+            });
+          }
           if (layerMetaTitle) {
             useHudStore.getState().setCartographyTitle(layerMetaTitle);
           }
@@ -619,6 +661,7 @@ export function useSSEStream(
           group: l.group,
           _refId: l._refId,
           _tileUrl: l._tileUrl,
+          _descriptor: l._descriptor,
           featureCount:
             l.source && typeof l.source === 'object' && 'features' in l.source
               ? (l.source as any).features?.length ?? 0
