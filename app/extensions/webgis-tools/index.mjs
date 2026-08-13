@@ -9,9 +9,9 @@
  */
 const WEBGIS_API_BASE = process.env.WEBGIS_API_BASE ?? "http://localhost:8000";
 const BRIDGE_SECRET = process.env.WEBGIS_BRIDGE_SECRET ?? "";
-const TURN_CONTEXT_RE = /WEBGIS_TURN_CONTEXT:([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/;
+const TURN_CONTEXT_RE = /WEBGIS_TURN_CONTEXT:([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/g;
 
-function currentTurnToken(ctx) {
+export function currentTurnToken(ctx) {
   const entries = ctx?.sessionManager?.getEntries?.() ?? [];
   const start = Math.max(0, entries.length - 24);
   for (let index = entries.length - 1; index >= start; index -= 1) {
@@ -21,8 +21,8 @@ function currentTurnToken(ctx) {
     } catch {
       continue;
     }
-    const match = TURN_CONTEXT_RE.exec(serialized);
-    if (match) return match[1];
+    const matches = Array.from(serialized.matchAll(TURN_CONTEXT_RE));
+    if (matches.length) return matches[matches.length - 1][1];
   }
   return "";
 }

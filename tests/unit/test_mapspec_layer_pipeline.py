@@ -70,6 +70,7 @@ def test_process_layer_ingestion_raster_payload(tmp_path):
     raster_data = {
         "success": True,
         "algorithm": "ndvi",
+        "source_ref": "ref:raster/input",
         "array": np.array([[0.1, 0.5], [0.8, 0.2]], dtype=float),
         "bounds": [120.0, 30.0, 121.0, 31.0],
         "legend_spec": {"type": "continuous", "min": 0, "max": 1, "palette": "RdYlGn"}
@@ -86,6 +87,8 @@ def test_process_layer_ingestion_raster_payload(tmp_path):
     assert source_entry["type"] == "raster"
     assert "imageRef" in source_entry
     assert source_entry["bounds"] == [120.0, 30.0, 121.0, 31.0]
+    assert processed_layer["provenance"]["source_ref"] == "ref:raster/input"
+    assert processed_layer["provenance"]["result_ref"] == source_entry["imageRef"]
     assert suggested_view is None  # Rasters do not run GeoJSON auto-profiling
 
 
@@ -109,6 +112,30 @@ def test_process_layer_ingestion_preserves_existing_view():
 
     # View was already explicitly set (even at origin [0,0]), so no new suggested_view is returned
     assert suggested_view is None
+
+
+def test_plain_geojson_replacement_clears_stale_raster_source_type():
+    geojson = {"type": "FeatureCollection", "features": []}
+    mapspec = {
+        "sources": {
+            "shared": {
+                "type": "raster",
+                "imageRef": "ref:raster/old",
+                "bounds": [0, 0, 1, 1],
+            },
+        },
+    }
+
+    _, source_entry, _ = process_layer_ingestion(
+        mapspec,
+        {"id": "replacement", "source": "shared"},
+        source_data=geojson,
+    )
+
+    assert source_entry["type"] == "geojson"
+    assert source_entry["inlineData"] == geojson
+    assert "imageRef" not in source_entry
+    assert "bounds" not in source_entry
 
 
 def test_process_layer_ingestion_does_not_mutate_mapspec():

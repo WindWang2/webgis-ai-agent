@@ -29,6 +29,10 @@ import { recordDebounceFrame } from "@/lib/utils/perf-counters";
 const STYLE_RETRY_MS = 100;
 export const MAX_STYLE_RETRY_ATTEMPTS = 50;
 
+interface MapSpecRuntimeOptions {
+  onStyleRecovery?: () => void;
+}
+
 export class MapSpecRuntime {
   private map: any;
   private appliedSpec: MapSpec | null = null;
@@ -43,9 +47,13 @@ export class MapSpecRuntime {
   private applySeq = 0;
   private currentApplyResolve: (() => void) | null = null;
   private lastError: string | null = null;
+  private styleRecoveryHandler: (() => void) | null = null;
+  private pendingRecoverySpec: MapSpec | null = null;
+  private readonly onStyleRecovery?: () => void;
 
-  constructor(map: any) {
+  constructor(map: any, options: MapSpecRuntimeOptions = {}) {
     this.map = map;
+    this.onStyleRecovery = options.onStyleRecovery;
     // FE-3: wire the debouncer's FrameStats instrument to the dev/test counter
     // sink (was constructed with no options — findings E5).
     this.debouncer = new RenderDebouncer(map, {
@@ -74,6 +82,7 @@ export class MapSpecRuntime {
     if (!this.map.isStyleLoaded()) {
       if (retryAttempt >= MAX_STYLE_RETRY_ATTEMPTS) {
         this.lastError = "style_load_timeout";
+        this.armStyleRecovery(nextSpec);
         return;
       }
       if (this.pendingTimer) clearTimeout(this.pendingTimer);
@@ -84,6 +93,7 @@ export class MapSpecRuntime {
       return;
     }
 
+    this.clearStyleRecovery();
     this.lastError = null;
     const patch = diffSpecs(this.appliedSpec, nextSpec);
     this.applyPatchDirect(patch, nextSpec);
@@ -124,6 +134,7 @@ export class MapSpecRuntime {
     if (!this.map.isStyleLoaded()) {
       if (retryAttempt >= MAX_STYLE_RETRY_ATTEMPTS) {
         this.lastError = "style_load_timeout";
+        this.armStyleRecovery(nextSpec);
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, STYLE_RETRY_MS));
@@ -131,6 +142,7 @@ export class MapSpecRuntime {
       return this.processOne(nextSpec, retryAttempt + 1);
     }
 
+    this.clearStyleRecovery();
     this.lastError = null;
     const patch = await diffSpecsAsync(this.appliedSpec, nextSpec);
     if (this.disposed || !this.map) return;
@@ -172,7 +184,7 @@ export class MapSpecRuntime {
         // add/update both route through the idempotent renderer helpers (they
         // carry the F28/F31 cache logic). Tile-URL sources carry no cache state
         // and addRasterTileSource is itself idempotent.
-        this.applySource(change.id, change.next);
+        this.applySource(change.id, change.next, change.kind === "update");
       }
     }
 
@@ -251,7 +263,7 @@ export class MapSpecRuntime {
           id: `source:apply:${change.id}`,
           type: "UPDATE_GEOJSON",
           priority: "high",
-          execute: () => this.applySource(change.id, next),
+          execute: () => this.applySource(change.id, next, change.kind === "update"),
         });
       }
     }
@@ -324,6 +336,7 @@ export class MapSpecRuntime {
       clearTimeout(this.pendingTimer);
       this.pendingTimer = null;
     }
+    this.clearStyleRecovery();
     this.debouncer?.dispose();
     this.debouncer = null;
     // FE-01: the worker-bridge keeps its module worker warm for
@@ -342,6 +355,32 @@ export class MapSpecRuntime {
 
   // ---- source/layer application helpers ----
 
+  private armStyleRecovery(nextSpec: MapSpec): void {
+    this.pendingRecoverySpec = nextSpec;
+    if (
+      this.styleRecoveryHandler
+      || typeof this.map?.on !== "function"
+      || typeof this.map?.off !== "function"
+    ) return;
+    this.styleRecoveryHandler = () => {
+      if (this.disposed || !this.map?.isStyleLoaded?.()) return;
+      const pending = this.pendingRecoverySpec;
+      this.clearStyleRecovery();
+      if (!pending) return;
+      this.reconcile(pending);
+      this.onStyleRecovery?.();
+    };
+    this.map.on("styledata", this.styleRecoveryHandler);
+  }
+
+  private clearStyleRecovery(): void {
+    if (this.styleRecoveryHandler && typeof this.map?.off === "function") {
+      this.map.off("styledata", this.styleRecoveryHandler);
+    }
+    this.styleRecoveryHandler = null;
+    this.pendingRecoverySpec = null;
+  }
+
   /**
    * Current map viewport as [west, south, east, north], or undefined when the
    * map has no bounds yet (style not loaded / stub map without getBounds).
@@ -357,7 +396,18 @@ export class MapSpecRuntime {
    * renderer helpers so F28 (image cache-buster) and F31 (geojson ref-cache)
    * optimizations are preserved exactly.
    */
-  private applySource(id: string, source: MapSpecSource): void {
+  private applySource(id: string, source: MapSpecSource, replaceExisting = false): void {
+    if (replaceExisting && this.map.getSource(id)) {
+      // The reconciler has already scheduled every dependent layer for
+      // recompile. Replace the definition instead of relying on renderer
+      // helpers whose same-type fast paths deliberately no-op tile/image URL
+      // changes.
+      this.removeSourceSafe(id);
+      if (this.map.getSource(id)) {
+        this.lastError = `replace_source_failed:${id}`;
+        return;
+      }
+    }
     if (source.type === "raster") {
       // Raster image source (HeatmapRasterSource path).
       renderer.addImageSource(

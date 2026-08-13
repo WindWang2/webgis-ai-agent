@@ -152,12 +152,12 @@ class CartographyReport:
 
     @property
     def ok(self) -> bool:
-        """Compatibility gate backed by the canonical typed checks.
+        """Strict success gate; incomplete evidence is never represented true."""
+        return self.complete and self.status in ("pass", "warning")
 
-        Older callers still consume ``ok``.  It must never contradict
-        ``status`` merely because a new rule emitted a ``CartographyCheck``
-        instead of a legacy finding.
-        """
+    @property
+    def no_deterministic_failures(self) -> bool:
+        """Compatibility diagnostic distinct from successful evaluation."""
         return not any(
             check.status == "fail" and check.evidence_class == "deterministic"
             for check in self._all_checks()
@@ -217,14 +217,19 @@ class CartographyReport:
 
     def to_dict(self) -> Dict[str, Any]:
         checks = self._all_checks()
+        passed = self.ok
         return {
-            "ok": self.ok,
+            # Serialized ``ok`` is the success signal used by legacy JSON
+            # consumers. Missing deterministic evidence must therefore be
+            # false even when no explicit deterministic failure exists.
+            "ok": passed,
+            "no_deterministic_failures": self.no_deterministic_failures,
             "status": self.status,
             # A warning may be a real evaluated warning or a partial review
             # containing NOT_EVALUATED checks. Only the former may be called a
             # pass-with-warnings; missing evidence never becomes success.
             "complete": self.complete,
-            "passed": self.complete and self.status in ("pass", "warning"),
+            "passed": passed,
             "evaluated_count": sum(1 for c in checks if c.evaluated),
             "error_count": sum(
                 1 for check in checks
@@ -431,11 +436,17 @@ def _is_geographic_crs(crs: Any) -> bool:
     if not isinstance(crs, str) or not crs.strip():
         return False
     normalized = crs.upper().replace(" ", "")
-    return (
-        normalized in {"EPSG:4326", "CRS:84", "OGC:CRS84"}
-        or normalized.endswith("::4326")
-        or normalized.endswith("/CRS84")
-    )
+    return normalized in {
+        "EPSG:4326",
+        "CRS:84",
+        "OGC:CRS84",
+        "URN:OGC:DEF:CRS:EPSG::4326",
+        "HTTP://WWW.OPENGIS.NET/DEF/CRS/EPSG/0/4326",
+        "HTTPS://WWW.OPENGIS.NET/DEF/CRS/EPSG/0/4326",
+        "URN:OGC:DEF:CRS:OGC:1.3:CRS84",
+        "HTTP://WWW.OPENGIS.NET/DEF/CRS/OGC/1.3/CRS84",
+        "HTTPS://WWW.OPENGIS.NET/DEF/CRS/OGC/1.3/CRS84",
+    }
 
 
 def _constant_opacities(paint: Any):
@@ -461,14 +472,26 @@ def _classification_integrity(legend_spec: Any) -> tuple[str, Dict[str, Any], st
         )
         labels = legend_spec.get("labels") or []
         labels_valid = not labels or all(str(v).strip() for v in labels)
+        colors = legend_spec.get("palette_colors") or legend_spec.get("colors") or []
+        invalid_color_indexes = [
+            index for index, color in enumerate(colors)
+            if not _is_supported_color(color)
+        ] if isinstance(colors, list) else [0]
+        colors_valid = bool(colors) and not invalid_color_indexes
         evidence = {
             "legend_type": ltype,
             "break_count": len(breaks),
             "strictly_increasing": bool(increasing),
             "labels_non_empty": bool(labels_valid),
+            "colors_valid": colors_valid,
+            "invalid_color_indexes": invalid_color_indexes[:16],
         }
-        if not increasing or not labels_valid:
-            return "fail", evidence, "Graduated legend has invalid breaks or empty labels"
+        if not increasing or not labels_valid or not colors_valid:
+            return (
+                "fail",
+                evidence,
+                "Graduated legend has invalid breaks, labels, or palette colors",
+            )
         return "pass", evidence, "Graduated classification is structurally coherent"
     if ltype in ("continuous", "divergent"):
         mn, mx = legend_spec.get("min"), legend_spec.get("max")
@@ -478,15 +501,27 @@ def _classification_integrity(legend_spec: Any) -> tuple[str, Dict[str, Any], st
             ltype != "divergent"
             or (_is_num(center) and float(mn) <= float(center) <= float(mx))
         )
+        colors = legend_spec.get("palette_colors") or legend_spec.get("colors") or []
+        invalid_color_indexes = [
+            index for index, color in enumerate(colors)
+            if not _is_supported_color(color)
+        ] if isinstance(colors, list) else [0]
+        colors_valid = len(colors) >= 2 and not invalid_color_indexes
         evidence = {
             "legend_type": ltype,
             "min": mn,
             "max": mx,
             "domain_valid": bool(valid),
             "center_valid": bool(center_valid),
+            "colors_valid": colors_valid,
+            "invalid_color_indexes": invalid_color_indexes[:16],
         }
-        if not valid or not center_valid:
-            return "fail", evidence, "Continuous legend has an invalid numeric domain"
+        if not valid or not center_valid or not colors_valid:
+            return (
+                "fail",
+                evidence,
+                "Continuous legend has an invalid numeric domain or palette colors",
+            )
         return "pass", evidence, "Continuous classification domain is valid"
     if ltype == "categorical":
         categories = legend_spec.get("categories") or []
@@ -538,6 +573,15 @@ def _thematic_color_spec(paint: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _thematic_color_property(paint: Dict[str, Any]) -> Optional[str]:
+    """Return the authoritative paint key paired with the thematic spec."""
+    methods = list(_paint_methods(paint))
+    for prop, _spec in methods:
+        if prop == "color":
+            return prop
+    return methods[0][0] if methods else None
+
+
 def _review_profile(
     mapspec: Dict[str, Any], layer: Dict[str, Any], source: Dict[str, Any]
 ) -> str:
@@ -577,6 +621,52 @@ def _check_thematic_consistency(
     has_legend = isinstance(legend_spec, dict)
     if not has_legend and color_spec is None:
         return  # nothing thematic to check on this layer
+
+    # A legend is a claim about the active data-driven encoding.  Its mere
+    # presence cannot certify a constant paint or a different classification
+    # method.  These mappings are deterministic projections in thematic_spec.
+    if has_legend:
+        legend_type = legend_spec.get("type")
+        expected_method = {
+            "categorical": "match",
+            "graduated": "step",
+            "continuous": "interpolate",
+            "divergent": "interpolate",
+        }.get(legend_type)
+        actual_method = color_spec.get("method") if color_spec is not None else None
+        legend_field = thematic_field(legend_spec)
+        style_field = color_spec.get("field") if color_spec is not None else None
+        if color_spec is None or expected_method != actual_method:
+            report.findings.append(CartographyFinding(
+                check="LEGEND_STYLE_EQUIVALENCE",
+                severity="error",
+                message=(
+                    f"Layer '{lid}' {legend_type!r} legend requires a "
+                    f"{expected_method!r} data-driven paint, found {actual_method!r}"
+                ),
+                layer_id=lid,
+                source_id=sid,
+                evidence={
+                    "legend_type": legend_type,
+                    "expected_style_method": expected_method,
+                    "actual_style_method": actual_method,
+                },
+            ))
+        elif legend_field and style_field != legend_field:
+            report.findings.append(CartographyFinding(
+                check="LEGEND_STYLE_EQUIVALENCE",
+                severity="error",
+                message=(
+                    f"Layer '{lid}' legend field '{legend_field}' differs from "
+                    f"paint field {style_field!r}"
+                ),
+                layer_id=lid,
+                source_id=sid,
+                evidence={
+                    "legend_field": legend_field,
+                    "style_field": style_field,
+                },
+            ))
 
     # ── LEGEND_STYLE_EQUIVALENCE ────────────────────────────────────────────
     # The live paint and the legend must derive from the same classification:
@@ -808,6 +898,7 @@ def evaluate_cartography_semantics(
         for sid, source in sources.items()
         if isinstance(source, dict) and isinstance(source.get("profile"), dict)
     }
+    explicit_profile_ids = set((source_profiles or {}).keys())
     source_profiles = {**embedded_profiles, **(source_profiles or {})}
 
     source_keys = set(sources.keys())
@@ -977,6 +1068,11 @@ def evaluate_cartography_semantics(
                 "expected_visible": expected_visible,
                 "layout_visibility": layout.get("visibility", "visible"),
                 "visibility_source": visibility_source,
+                "visibility_contract": (
+                    "MapLibre layout.visibility defaults to visible"
+                    if visibility_source == "maplibre_default_visible" else None
+                ),
+                "evidence_scope": "desired_structural_state",
             },
             repairability=visibility_repairability,
             suggested_fix=visibility_fix,
@@ -1155,12 +1251,18 @@ def evaluate_cartography_semantics(
                 g for g in supported_geom_types
                 if ltype not in _GEOM_LAYER_TYPE[g]
             ]
+            mixed_geometry = len(set(supported_geom_types)) > 1
             geometry_evaluated = bool(supported_geom_types and ltype)
-            geometry_complete = geometry_evaluated and not unsupported_geom_types
+            geometry_complete = (
+                geometry_evaluated
+                and not unsupported_geom_types
+                and not mixed_geometry
+            )
             report.add_check(
                 "GEOMETRY_LAYER_TYPE",
                 (
-                    "fail" if mismatched
+                    "not_evaluated" if mixed_geometry
+                    else "fail" if mismatched
                     else "pass" if geometry_complete
                     else "not_evaluated"
                 ),
@@ -1168,7 +1270,12 @@ def evaluate_cartography_semantics(
                     f"Layer '{lid}' type '{ltype}' matches source geometry"
                     if geometry_complete and not mismatched
                     else (
-                        f"Layer '{lid}' type '{ltype}' mismatches geometry {mismatched}"
+                        (
+                            f"Layer '{lid}' source contains mixed geometry types; "
+                            "runtime sublayer fan-out must provide type evidence"
+                        )
+                        if mixed_geometry
+                        else f"Layer '{lid}' type '{ltype}' mismatches geometry {mismatched}"
                         if mismatched
                         else (
                             f"Layer '{lid}' includes unsupported geometry types {unsupported_geom_types}"
@@ -1177,7 +1284,7 @@ def evaluate_cartography_semantics(
                         )
                     )
                 ),
-                severity="error" if mismatched else "info",
+                severity="error" if mismatched and not mixed_geometry else "info",
                 layer_id=lid,
                 source_id=sid,
                 evidence={
@@ -1185,9 +1292,10 @@ def evaluate_cartography_semantics(
                     "geometry_types": geom_types,
                     "supported_geometry_types": supported_geom_types,
                     "unsupported_geometry_types": unsupported_geom_types,
+                    "mixed_geometry": mixed_geometry,
                 },
             )
-            if mismatched:
+            if mismatched and not mixed_geometry:
                 report.findings.append(CartographyFinding(
                     check="GEOMETRY_LAYER_TYPE",
                     severity="error",
@@ -1210,7 +1318,12 @@ def evaluate_cartography_semantics(
 
         # 4-6. Paint field existence / numeric / stops-range checks.
         fields_profile = (profile or {}).get("fields") or {}
-        fields_status = (profile or {}).get("fields_status") or "explicit"
+        # An explicit caller profile is an authoritative inspection result;
+        # embedded descriptor metadata is incomplete unless it says otherwise.
+        fields_status = (profile or {}).get("fields_status") or (
+            "explicit" if sid in explicit_profile_ids
+            else "unknown"
+        )
         for prop, raw_spec in (layer.get("paint") or {}).items():
             if isinstance(raw_spec, list):
                 report.add_check(
@@ -1329,6 +1442,40 @@ def evaluate_cartography_semantics(
                 },
             )
             if has_legend:
+                legend_type = legend_spec.get("type")
+                field_required = (
+                    review_profile != "raster_result"
+                    and legend_type in {
+                        "categorical", "graduated", "continuous", "divergent",
+                    }
+                )
+                legend_field = thematic_field(legend_spec)
+                if field_required:
+                    report.add_check(
+                        "THEMATIC_FIELD",
+                        "pass" if legend_field else "fail",
+                        (
+                            f"Layer '{lid}' legend and style classify field '{legend_field}'"
+                            if legend_field
+                            else f"Layer '{lid}' vector thematic legend has no classification field"
+                        ),
+                        severity="info" if legend_field else "error",
+                        layer_id=lid,
+                        source_id=sid,
+                        evidence={
+                            "legend_type": legend_type,
+                            "legend_field": legend_field,
+                            "style_field": (
+                                color_spec.get("field")
+                                if isinstance(color_spec, dict) else None
+                            ),
+                            "raster_exception": False,
+                        },
+                        repairability=(
+                            "not_repairable" if legend_field
+                            else "auto_with_semantic_risk"
+                        ),
+                    )
                 class_status, class_evidence, class_message = _classification_integrity(legend_spec)
                 report.add_check(
                     "CLASSIFICATION_INTEGRITY",
@@ -1358,11 +1505,32 @@ def evaluate_cartography_semantics(
         if equivalence_after > equivalence_before and isinstance(legend_spec, dict):
             canonical_paint, paint_warnings = spec_to_paint(legend_spec)
             paint = layer.get("paint") if isinstance(layer.get("paint"), dict) else {}
-            if canonical_paint is not None and not paint_warnings and isinstance(paint.get("color"), dict):
+            color_property = _thematic_color_property(paint)
+            if (
+                canonical_paint is not None
+                and not paint_warnings
+                and color_property is not None
+                and isinstance(paint.get(color_property), dict)
+            ):
+                expected_method = {
+                    "categorical": "match",
+                    "graduated": "step",
+                    "continuous": "interpolate",
+                    "divergent": "interpolate",
+                }.get(legend_spec.get("type"))
+                legend_field = thematic_field(legend_spec)
+                style_field = color_spec.get("field") if color_spec is not None else None
+                style_method = color_spec.get("method") if color_spec is not None else None
+                safe_projection = bool(
+                    legend_field
+                    and style_field == legend_field
+                    and expected_method
+                    and style_method == expected_method
+                )
                 suggested_fix = {
                     "operation": "refresh_style_from_legend",
                     "layer_id": lid,
-                    "property": "color",
+                    "property": color_property,
                     "value": canonical_paint,
                 }
                 for finding in report.findings[findings_before:]:
@@ -1374,10 +1542,17 @@ def evaluate_cartography_semantics(
                         finding.evidence = {
                             **finding.evidence,
                             "authoritative_source": "legend_spec",
-                            "semantic_parameters_changed": False,
+                            "legend_field": legend_field,
+                            "style_field": style_field,
+                            "expected_style_method": expected_method,
+                            "actual_style_method": style_method,
+                            "semantic_parameters_changed": not safe_projection,
                         }
-                        finding.repairability = "auto_safe"
-                        finding.suggested_fix = suggested_fix
+                        finding.repairability = (
+                            "auto_safe" if safe_projection
+                            else "auto_with_semantic_risk"
+                        )
+                        finding.suggested_fix = suggested_fix if safe_projection else None
         if isinstance(legend_spec, dict) and color_spec is not None and equivalence_after == equivalence_before:
             report.add_check(
                 "LEGEND_STYLE_EQUIVALENCE",
@@ -1392,13 +1567,28 @@ def evaluate_cartography_semantics(
                 },
             )
 
-        source_ref = source.get("ref_id") or source.get("ref")
+        display_ref = source.get("ref_id") or source.get("ref")
         provenance = layer.get("provenance") if isinstance(layer.get("provenance"), dict) else {}
-        provenance_ref = provenance.get("result_ref") or provenance.get("source_ref")
-        if source_ref or provenance_ref:
-            provenance_complete = bool(source_ref and provenance_ref)
+        # ``source_ref`` identifies the analysis input. It must never satisfy
+        # the output-to-map chain; only the display result identity can do so.
+        result_ref = provenance.get("result_ref")
+        if (
+            not display_ref
+            and result_ref
+            and source.get("imageRef") == result_ref
+        ):
+            display_ref = source.get("imageRef")
+        analysis_origin = bool(
+            result_ref
+            or provenance.get("algorithm")
+            or provenance.get("source_ref")
+            or provenance.get("computed_at")
+            or provenance.get("item_id")
+        )
+        if analysis_origin:
+            provenance_complete = bool(display_ref and result_ref)
             provenance_matches = bool(
-                provenance_complete and source_ref == provenance_ref
+                provenance_complete and display_ref == result_ref
             )
             provenance_status = (
                 "pass" if provenance_matches
@@ -1409,7 +1599,7 @@ def evaluate_cartography_semantics(
                 "RESULT_MAP_PROVENANCE",
                 provenance_status,
                 (
-                    f"Layer '{lid}' is traceable to result ref '{source_ref}'"
+                    f"Layer '{lid}' is traceable to result ref '{display_ref}'"
                     if provenance_matches
                     else (
                         f"Layer '{lid}' source and provenance identify different results"
@@ -1421,8 +1611,13 @@ def evaluate_cartography_semantics(
                 layer_id=lid,
                 source_id=sid,
                 evidence={
-                    "source_ref": source_ref,
-                    "provenance_ref": provenance_ref,
+                    "display_ref": display_ref,
+                    # Compatibility alias: historically this evidence key named
+                    # the MapSpec source carrier, not analysis input provenance.
+                    "source_ref": display_ref,
+                    "result_ref": result_ref,
+                    "input_ref": provenance.get("source_ref"),
+                    "analysis_origin": analysis_origin,
                     "matches": provenance_matches,
                 },
             )

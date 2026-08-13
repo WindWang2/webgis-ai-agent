@@ -9,14 +9,17 @@ import { TSchema, Type } from "typebox";
 
 const WEBGIS_API_BASE = process.env.WEBGIS_API_BASE ?? "http://localhost:8000";
 const BRIDGE_SECRET = process.env.WEBGIS_BRIDGE_SECRET ?? "";
-const TURN_CONTEXT_RE = /WEBGIS_TURN_CONTEXT:([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/;
+const TURN_CONTEXT_RE = /WEBGIS_TURN_CONTEXT:([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/g;
 
-function currentTurnToken(ctx: any): string {
+export function currentTurnToken(ctx: any): string {
 	const entries = ctx?.sessionManager?.getEntries?.() ?? [];
 	for (let index = entries.length - 1; index >= Math.max(0, entries.length - 24); index -= 1) {
 		try {
-			const match = TURN_CONTEXT_RE.exec(JSON.stringify(entries[index]));
-			if (match) return match[1];
+			// The backend appends its marker after the untrusted user text. Take
+			// the last marker in the newest entry so a user-supplied lookalike
+			// earlier in that same entry cannot shadow the server capability.
+			const matches = Array.from(JSON.stringify(entries[index]).matchAll(TURN_CONTEXT_RE));
+			if (matches.length) return matches[matches.length - 1][1];
 		} catch { /* ignore unserializable extension entries */ }
 	}
 	return "";

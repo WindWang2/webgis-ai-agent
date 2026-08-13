@@ -66,6 +66,9 @@ class MapSpecResult:
     # Latest frontend observation already present when this mutation began.
     # A runtime snapshot must carry a strictly newer sequence to certify it.
     runtime_observation_seq: int = 0
+    # Monotonic session revision assigned while holding the distributed
+    # lifecycle lock. Durable harness context uses it to reject late writes.
+    mutation_revision: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         if self.is_error:
@@ -83,6 +86,7 @@ class MapSpecResult:
             "cartographic_review": self.cartographic_review,
             "mapspec_fingerprint": self.mapspec_fingerprint,
             "runtime_observation_seq": self.runtime_observation_seq,
+            "mutation_revision": self.mutation_revision,
         }
 
 
@@ -107,6 +111,12 @@ class SetViewIntent:
 class UpsertLayerIntent:
     layer: Dict[str, Any]
     source_data: Optional[Any] = None
+
+
+@dataclass
+class UpsertSourceIntent:
+    source_id: str
+    source: Dict[str, Any]
 
 
 @dataclass
@@ -147,6 +157,7 @@ class SetTimeIntent:
 MutationIntent = Union[
     InitProjectIntent,
     SetViewIntent,
+    UpsertSourceIntent,
     UpsertLayerIntent,
     RemoveLayerIntent,
     SetLayoutIntent,
@@ -225,12 +236,20 @@ class MapSpecLifecycleEngine:
         mutation，避免 lost update。
         """
         async with session_lock_registry.lock(session_id):
+            invalidate = getattr(session_data_manager, "invalidate_local_cache", None)
+            if callable(invalidate):
+                invalidate(session_id)
             # V3 Performance: copy-on-write candidate to eliminate O(sources) deepcopy
             # for small mutations (SetView/SetLayout). Snapshot is deferred until after
             # intent dispatch so we can capture ONLY what the intent will touch.
             # For Redis backend (returns fresh copies), this is zero-copy. For in-memory
             # backend, shallow copy is enough since we mutate only top-level keys.
             pre_state = await session_data_manager.get_map_state(session_id)
+            if pre_state.get("_cartographic_deleted") is True:
+                return MapSpecResult(
+                    is_error=True,
+                    error_msg="Session was deleted; stale MapSpec mutation rejected.",
+                )
             old_layers_snapshot = copy.deepcopy(pre_state.get("layers", []) or [])
             observation = pre_state.get("_cartographic_observation")
             try:
@@ -240,6 +259,12 @@ class MapSpecLifecycleEngine:
                 )
             except (TypeError, ValueError):
                 runtime_observation_seq = 0
+            try:
+                prior_mutation_revision = int(
+                    pre_state.get("_cartographic_mutation_revision", 0)
+                )
+            except (TypeError, ValueError):
+                prior_mutation_revision = 0
             try:
                 loaded = await self.store.get_mapspec(session_id)
                 prior_mapspec = loaded
@@ -352,6 +377,13 @@ class MapSpecLifecycleEngine:
                         processed_layer.get("id", "layer"),
                         processed_layer,
                     )
+                    auto_checkpoint = True
+
+                elif isinstance(intent, UpsertSourceIntent):
+                    old_mapspec_snapshot = loaded
+                    mapspec = {**loaded} if loaded else {}
+                    mapspec["sources"] = dict(loaded.get("sources", {})) if loaded else {}
+                    mapspec["sources"][intent.source_id] = copy.deepcopy(intent.source)
                     auto_checkpoint = True
 
                 elif isinstance(intent, RemoveLayerIntent):
@@ -508,16 +540,33 @@ class MapSpecLifecycleEngine:
                 if pending_layer_op is not None:
                     op, layer_id, layer = pending_layer_op
                     if op == "upsert":
-                        await session_data_manager.update_layer_in_state(
+                        persisted = await session_data_manager.update_layer_in_state(
                             session_id, layer_id, layer
                         )
+                        if persisted is False:
+                            raise RuntimeError("runtime layer persistence rejected")
                     elif op == "remove":
-                        await session_data_manager.remove_layer_from_state(session_id, layer_id)
+                        persisted = await session_data_manager.remove_layer_from_state(
+                            session_id, layer_id
+                        )
+                        if persisted is False:
+                            raise RuntimeError("runtime layer removal rejected")
                 elif is_rollback:
                     # 把运行时 layers 对齐到恢复后的 mapspec.layers。
-                    await session_data_manager.set_map_state(
+                    persisted = await session_data_manager.set_map_state(
                         session_id, "layers", list(mapspec.get("layers", []))
                     )
+                    if persisted is False:
+                        raise RuntimeError("rollback runtime layer persistence rejected")
+
+                mutation_revision = prior_mutation_revision + 1
+                persisted = await session_data_manager.set_map_state(
+                    session_id,
+                    "_cartographic_mutation_revision",
+                    mutation_revision,
+                )
+                if persisted is False:
+                    raise RuntimeError("cartographic mutation revision persistence rejected")
 
                 cartography_findings = (
                     cartographic_review.get("review", {}).get("findings", [])
@@ -533,6 +582,7 @@ class MapSpecLifecycleEngine:
                     cartographic_review=cartographic_review,
                     mapspec_fingerprint=cartographic_review.get("final_fingerprint"),
                     runtime_observation_seq=runtime_observation_seq,
+                    mutation_revision=mutation_revision,
                 )
 
             except Exception as e:
@@ -563,6 +613,13 @@ class MapSpecLifecycleEngine:
         try:
             if old_mapspec is not None:
                 await self.store.save_mapspec(session_id, old_mapspec)
+            else:
+                # First mutation: there is no last-known-good spec. Discard the
+                # candidate that may already have been written so rollback does
+                # not invent a residual MapSpec.
+                discard = getattr(self.store, "discard_mapspec", None)
+                if callable(discard):
+                    await discard(session_id)
             await session_data_manager.set_map_state(session_id, "layers", old_layers)
         except Exception as rb_err:
             # rollback 自身失败必须大声报错——绝不静默。

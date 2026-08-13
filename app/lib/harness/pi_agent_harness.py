@@ -85,12 +85,20 @@ def _expected_runtime_refs(
     deliberately never used as substitutes.
     """
     candidates: List[Any] = [layer.get("id")]
-    source = sources.get(layer.get("source"))
-    if isinstance(source, dict):
-        candidates.extend((source.get("ref"), source.get("ref_id"), source.get("imageRef")))
     provenance = layer.get("provenance")
-    if isinstance(provenance, dict):
-        candidates.extend((provenance.get("result_ref"), provenance.get("source_ref")))
+    result_ref = provenance.get("result_ref") if isinstance(provenance, dict) else None
+    if result_ref:
+        # source_ref is the analysis input and cannot identify the displayed
+        # output. Accepting it here lets the wrong dataset satisfy presence.
+        candidates.append(result_ref)
+    else:
+        # Direct/manual layers may have no analysis provenance. Their owned
+        # source carrier is then the only runtime identity available.
+        source = sources.get(layer.get("source"))
+        if isinstance(source, dict):
+            candidates.extend((
+                source.get("ref"), source.get("ref_id"), source.get("imageRef")
+            ))
     return list(dict.fromkeys(str(value) for value in candidates if value))
 
 
@@ -1495,19 +1503,31 @@ class PiAgentHarness:
                 if isinstance(observation.get("viewport"), dict)
                 else {}
             )
-            camera_matches = _camera_match(desired_view, actual_view)
+            camera_evaluated = _has_camera_state(actual_view)
+            camera_matches = bool(
+                camera_evaluated and _camera_match(desired_view, actual_view)
+            )
             evidence.checks.append(self._cartography_check(
                 "RUNTIME_VIEW_CONVERGENCE",
-                "pass" if camera_matches else "fail",
+                (
+                    "pass" if camera_matches
+                    else "fail" if camera_evaluated
+                    else "not_evaluated"
+                ),
                 {"requested": desired_view, "actual": actual_view},
                 message=(
                     "Runtime camera converged to the desired MapSpec view."
                     if camera_matches else
-                    "Runtime camera has not converged to the desired MapSpec view."
+                    (
+                        "Runtime camera has not converged to the desired MapSpec view."
+                        if camera_evaluated else
+                        "Runtime camera evidence is missing."
+                    )
                 ),
-                severity="info" if camera_matches else "error",
+                severity="info" if camera_matches else "error" if camera_evaluated else "warning",
             ))
-            runtime_failed = runtime_failed or not camera_matches
+            runtime_failed = runtime_failed or (camera_evaluated and not camera_matches)
+            runtime_incomplete = runtime_incomplete or not camera_evaluated
 
         if active_repair is not None:
             repaired_layers = [

@@ -289,6 +289,13 @@ def convert_analysis_to_mapspec_layer(
             "params": params,
             "computed_at": computed_at,
         }
+        # ``source_ref`` identifies the analysis input; ``result_ref`` is the
+        # distinct, session-owned output that the map actually renders.  Keep
+        # both so provenance checks cannot let an input dataset satisfy an
+        # output-to-map binding.
+        result_ref = analysis_result.get("result_ref")
+        if isinstance(result_ref, str) and result_ref.startswith("ref:"):
+            provenance["result_ref"] = result_ref
         if unique_warnings:
             provenance["warnings"] = unique_warnings
 

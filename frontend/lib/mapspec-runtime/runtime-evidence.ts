@@ -43,8 +43,22 @@ function liveProperty(
 
 function layerConverged(map: any, expected: MapSpecLayer): boolean {
   const actual = map.getLayer?.(expected.id);
-  if (!actual || String(actual.source ?? "") !== String(expected.source ?? "")) {
+  if (
+    !actual
+    || String(actual.source ?? "") !== String(expected.source ?? "")
+    || String(actual.type ?? "") !== String(expected.type ?? "")
+  ) {
     return false;
+  }
+  const expectedRecord = expected as unknown as Record<string, unknown>;
+  const actualRecord = actual as Record<string, unknown>;
+  for (const key of ["filter", "source-layer", "minzoom", "maxzoom"] as const) {
+    if (
+      expectedRecord[key] !== undefined
+      && !equalStructured(actualRecord[key], expectedRecord[key])
+    ) {
+      return false;
+    }
   }
   for (const [key, value] of Object.entries(expected.paint ?? {})) {
     if (!equalStructured(liveProperty(map, actual, expected.id, "paint", key), value)) {
@@ -57,6 +71,28 @@ function layerConverged(map: any, expected: MapSpecLayer): boolean {
     }
   }
   return true;
+}
+
+function liveConstantOpacity(
+  map: any,
+  expectedLayers: Array<{ candidate: MapSpecLayer; actual: any }>,
+): number | undefined {
+  const values: number[] = [];
+  for (const { candidate, actual } of expectedLayers) {
+    if (!actual) return undefined;
+    const opacityKeys = Object.keys(candidate.paint ?? {}).filter(
+      (key) => key.endsWith("-opacity"),
+    );
+    for (const key of opacityKeys) {
+      const value = liveProperty(map, actual, candidate.id, "paint", key);
+      if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+      values.push(value);
+    }
+  }
+  if (values.length === 0) return undefined;
+  return values.every((value) => Math.abs(value - values[0]) <= 1e-9)
+    ? values[0]
+    : undefined;
 }
 
 function viewportOf(map: any): Record<string, unknown> {
@@ -85,9 +121,11 @@ export function collectCartographicRuntimeObservation(
   hudLayers: Layer[],
   mapspecFingerprint: string,
   reconcileError = "",
+  applied: MapSpec | null = null,
 ): Record<string, unknown> {
   const styleLoaded = !!map?.isStyleLoaded?.();
   const layers = hudLayers.map((hud) => {
+    const attested = hud._mapspecFingerprint === mapspecFingerprint;
     const expected = desired.layers.filter(
       (candidate) => candidate.id.startsWith(`${hud.id}${SUBLAYER_SEP}`),
     );
@@ -99,29 +137,60 @@ export function collectCartographicRuntimeObservation(
       !!actual
       && liveProperty(map, actual, candidate.id, "layout", "visibility") !== "none"
     ));
-    const sourceConverged = expected.length > 0 && expected.every(
-      (candidate) => !!map.getSource?.(candidate.source),
-    );
+    const sourceConverged = expected.length > 0 && expected.every((candidate) => {
+      const desiredSource = desired.sources[candidate.source];
+      const appliedSource = applied?.sources[candidate.source];
+      const liveSource = map.getSource?.(candidate.source);
+      const liveStyleSource = map.getStyle?.()?.sources?.[candidate.source];
+      const liveType = liveStyleSource?.type ?? liveSource?.type;
+      const expectedLiveType = desiredSource?.type === "raster"
+        ? "image"
+        : desiredSource?.type;
+      return (
+        !!desiredSource
+        && appliedSource === desiredSource
+        && !!liveSource
+        && liveType === expectedLiveType
+      );
+    });
     const styleConverged = (
-      styleLoaded
+      attested
+      && styleLoaded
       && !reconcileError
       && sourceConverged
       && expected.length === live.length
       && expected.every((candidate) => layerConverged(map, candidate))
     );
+    const rasterSource = (
+      hud.source
+      && typeof hud.source === "object"
+      && "image" in hud.source
+      && "bbox" in hud.source
+    ) ? hud.source as { image: string; bbox: [number, number, number, number] } : null;
     return {
       id: hud._mapspecLayerId ?? hud.id,
       runtime_store_id: hud.id,
+      name: hud.name,
+      type: hud.type,
+      group: hud.group,
       _refId: hud._refId,
       _descriptor: hud._descriptor,
       visible: visibility.length > 0 && visibility.every(Boolean),
-      opacity: hud.opacity,
+      // Runtime quality evidence must come from MapLibre, not the potentially
+      // stale HUD projection. Divergent/expression opacities remain unevaluated.
+      opacity: liveConstantOpacity(map, liveByExpected),
       style: hud.style,
       legend_spec: hud.legend_spec,
-      projection_fingerprint: hud._mapspecProjectionFingerprint,
+      // A user presentation edit clears the server generation attestation in
+      // the store. Never reuse the old projection digest for that new state.
+      projection_fingerprint: attested ? hud._mapspecProjectionFingerprint : undefined,
       repair_action_id: hud._mapspecRepairActionId,
+      intent_generation: hud._intentGeneration,
+      raster_image: rasterSource?.image,
+      raster_bbox: rasterSource?.bbox,
       source_converged: sourceConverged,
       style_converged: styleConverged,
+      generation_attested: attested,
       runtime_layer_count: live.length,
       runtime_layer_ids: expected.map((candidate) => candidate.id).slice(0, 16),
     };

@@ -160,6 +160,10 @@ class RedisSessionStore(BaseSessionStore):
             except ValueError:
                 pass
 
+    def invalidate_local_cache(self, session_id: str) -> None:
+        """Public critical-read hook used after acquiring a distributed lock."""
+        self._l1_invalidate_session(session_id)
+
     def clear_l1_cache(self) -> None:
         """Drop all L1 entries (test escape hatch / memory pressure)."""
         self._l1.clear()
@@ -228,7 +232,7 @@ class RedisSessionStore(BaseSessionStore):
         
         # V3: compute descriptor once at store time
         from app.schemas.ref_descriptor import compute_descriptor
-        descriptor = compute_descriptor(ref_id, data)
+        descriptor = await asyncio.to_thread(compute_descriptor, ref_id, data)
         descriptor_key = self._descriptor_key(session_id, ref_id)
         
         try:
@@ -536,7 +540,7 @@ class RedisSessionStore(BaseSessionStore):
         self._l1_put(session_id, "map_state", out)
         return out
 
-    async def update_layer_in_state(self, session_id: str, layer_id: str, updates: dict) -> None:
+    async def update_layer_in_state(self, session_id: str, layer_id: str, updates: dict) -> bool:
         """审计 M11：read-modify-write 必须用 WATCH/MULTI 防并发覆盖。
 
         之前两个并发 update_layer_in_state 都读旧 layers list，后写的覆盖先写的。
@@ -567,7 +571,7 @@ class RedisSessionStore(BaseSessionStore):
                     pipe.sadd(self._active_key(), session_id)
                     await pipe.execute()
                     self._l1_invalidate_session(session_id)
-                    return  # 成功
+                    return True
             except aioredis.WatchError:
                 continue  # 重试
             except (json.JSONDecodeError, ValueError) as e:
@@ -576,19 +580,20 @@ class RedisSessionStore(BaseSessionStore):
                     "update_layer_in_state: corrupt 'layers' for %s layer %s: %s",
                     session_id, layer_id, e,
                 )
-                return
+                return False
             except aioredis.RedisError as e:
                 logger.warning(
                     "update_layer_in_state Redis failed for %s layer %s: %s",
                     session_id, layer_id, e,
                 )
-                return  # 降级，不抛
+                return False
         logger.warning(
             "update_layer_in_state gave up after 3 retries for %s layer %s (concurrent contention)",
             session_id, layer_id,
         )
+        return False
 
-    async def remove_layer_from_state(self, session_id: str, layer_id: str) -> None:
+    async def remove_layer_from_state(self, session_id: str, layer_id: str) -> bool:
         """审计 M11：同 update_layer_in_state，用 WATCH/MULTI 防并发覆盖。"""
         await self._ensure_connected()
         state_key = self._state_key(session_id)
@@ -611,7 +616,7 @@ class RedisSessionStore(BaseSessionStore):
                     pipe.sadd(self._active_key(), session_id)
                     await pipe.execute()
                     self._l1_invalidate_session(session_id)
-                    return
+                    return True
             except aioredis.WatchError:
                 continue
             except aioredis.RedisError as e:
@@ -619,11 +624,12 @@ class RedisSessionStore(BaseSessionStore):
                     "remove_layer_from_state Redis failed for %s layer %s: %s",
                     session_id, layer_id, e,
                 )
-                return
+                return False
         logger.warning(
             "remove_layer_from_state gave up after 3 retries for %s layer %s",
             session_id, layer_id,
         )
+        return False
 
     async def append_event(self, session_id: str, event: str, data: dict) -> None:
         """追加事件日志；Redis 不可达时降级为 no-op（log 一条警告）。
@@ -837,6 +843,7 @@ class RedisSessionStore(BaseSessionStore):
             for ref_bytes in ref_ids:
                 ref_id = ref_bytes.decode() if isinstance(ref_bytes, bytes) else ref_bytes
                 pipe.delete(self._data_key(session_id, ref_id))
+                pipe.delete(self._descriptor_key(session_id, ref_id))
             pipe.delete(
                 index_key,
                 self._aliases_key(session_id),
@@ -904,7 +911,7 @@ class RedisSessionStore(BaseSessionStore):
             if data_raw:
                 data = json.loads(data_raw)
                 from app.schemas.ref_descriptor import compute_descriptor
-                descriptor = compute_descriptor(ref_id, data)
+                descriptor = await asyncio.to_thread(compute_descriptor, ref_id, data)
                 d = descriptor.to_dict()
                 await self._r.set(descriptor_key, json.dumps(d, ensure_ascii=False), ex=DATA_TTL)
                 return d

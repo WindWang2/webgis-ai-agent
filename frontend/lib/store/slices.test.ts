@@ -31,10 +31,14 @@ describe('layers slice', () => {
     const s = useHudStore.getState();
     s.addLayer({ id: 'L1', name: 'A', type: 'vector', visible: true, opacity: 1, group: 'analysis', source: { type: 'FeatureCollection', features: [] } as any });
     expect(useHudStore.getState().layers).toHaveLength(1);
+    const addGeneration = useHudStore.getState().layers[0]._intentGeneration!;
     s.toggleLayer('L1');
     expect(useHudStore.getState().layers[0].visible).toBe(false);
+    expect(useHudStore.getState().layers[0]._intentGeneration).toBeGreaterThan(addGeneration);
+    const toggleGeneration = useHudStore.getState().layers[0]._intentGeneration!;
     s.updateLayer('L1', { opacity: 0.5 });
     expect(useHudStore.getState().layers[0].opacity).toBe(0.5);
+    expect(useHudStore.getState().layers[0]._intentGeneration).toBeGreaterThan(toggleGeneration);
     s.removeLayer('L1');
     expect(useHudStore.getState().layers).toHaveLength(0);
   });

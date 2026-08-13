@@ -42,7 +42,7 @@ export interface MapActionAckSenderOptions {
   /** Current session at enqueue time (acks without correlation.session_id). */
   getSessionId: () => string | undefined;
   /** Owner token, same source as the map-state push. */
-  getToken: () => string | null;
+  getToken: (sessionId?: string) => string | null;
   /** Debounce window before a batch is POSTed (default 500ms). */
   debounceMs?: number;
   /** Backend accepts at most 50 acks per POST (design §4) — larger flushes are chunked. */
@@ -86,14 +86,17 @@ export function createMapActionAckSender(options: MapActionAckSenderOptions): Ma
 
   const postBatch = (sessionId: string, token: string | null, acks: MapActionAck[]): void => {
     const doFetch = fetchImpl ?? fetch;
-    doFetch(`${API_BASE}/api/v1/chat/sessions/${sessionId}/map-action-ack`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { 'X-Session-Token': token } : {}),
+    doFetch(
+      `${API_BASE}/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/map-action-ack`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'X-Session-Token': token } : {}),
+        },
+        body: JSON.stringify({ acks }),
       },
-      body: JSON.stringify({ acks }),
-    }).then(async (response) => {
+    ).then(async (response) => {
       if (!response.ok || typeof response.json !== 'function') return;
       try {
         onResponse?.(sessionId, await response.json());
@@ -142,9 +145,10 @@ export function createMapActionAckSender(options: MapActionAckSenderOptions): Ma
   };
 
   const sink: MapActionAckSink = (ack) => {
+    const sessionId = ack.correlation?.session_id ?? getSessionId();
     queue.push({
-      sessionId: ack.correlation?.session_id ?? getSessionId(),
-      token: getToken(),
+      sessionId,
+      token: getToken(sessionId),
       ack,
     });
     if (timer) clearTimeout(timer);

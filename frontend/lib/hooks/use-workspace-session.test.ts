@@ -158,6 +158,89 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
     expect(hudState.fetchAnalysisAssets).toHaveBeenCalledWith('sid-1');
   });
 
+  it('restores the final runtime result from cartographic observation metadata', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonOk({ sessions: [] }))
+      .mockResolvedValueOnce(jsonOk({ title: 'Map', messages: [] }))
+      .mockResolvedValueOnce(jsonOk({
+        map_state: {
+          layers: [],
+          _current_cartographic_fingerprint: 'carto-sha256:current',
+          _cartographic_observation: {
+            mapspec_fingerprint: 'carto-sha256:current',
+            layers: [{
+              id: 'result',
+              runtime_store_id: 'ref:geojson-final',
+              name: 'Final result',
+              type: 'vector',
+              visible: true,
+              opacity: 0.8,
+              _refId: 'ref:geojson-final',
+              _descriptor: {
+                ref_id: 'ref:geojson-final',
+                feature_count: 9000,
+                point_count: 9000,
+                geometry_types: ['Point'],
+                bbox: [100, 20, 101, 21],
+                mvt_capable: true,
+                estimated_bytes: 900000,
+              },
+              projection_fingerprint: 'runtime-sha256:final',
+              intent_generation: 17,
+            }],
+          },
+        },
+      }));
+
+    const { result } = renderHook(() => useWorkspaceSession(vi.fn()));
+    await act(async () => {
+      await result.current.selectSession('sid-final', vi.fn());
+    });
+
+    expect(hudState.addLayer).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'ref:geojson-final',
+      _refId: 'ref:geojson-final',
+      _mapspecLayerId: 'result',
+      _mapspecFingerprint: 'carto-sha256:current',
+      _mapspecProjectionFingerprint: 'runtime-sha256:final',
+      _intentGeneration: 17,
+      visible: true,
+    }));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not restore a runtime observation from an older MapSpec generation', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonOk({ sessions: [] }))
+      .mockResolvedValueOnce(jsonOk({ title: 'Map', messages: [] }))
+      .mockResolvedValueOnce(jsonOk({
+        map_state: {
+          layers: [{ id: 'authoritative-layer', name: 'Current', type: 'vector' }],
+          _current_cartographic_fingerprint: 'carto-sha256:new',
+          _cartographic_observation: {
+            mapspec_fingerprint: 'carto-sha256:old',
+            layers: [{
+              id: 'stale-result',
+              runtime_store_id: 'ref:geojson-stale',
+              _refId: 'ref:geojson-stale',
+            }],
+          },
+        },
+      }));
+
+    const { result } = renderHook(() => useWorkspaceSession(vi.fn()));
+    await act(async () => {
+      await result.current.selectSession('sid-stale', vi.fn());
+    });
+
+    expect(hudState.addLayer).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'authoritative-layer',
+    }));
+    expect(hudState.addLayer).not.toHaveBeenCalledWith(expect.objectContaining({
+      id: 'ref:geojson-stale',
+    }));
+  });
+
   it('abort during restore is not surfaced as an error (AbortError contract)', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonOk({ sessions: [] }))
@@ -195,5 +278,18 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
     );
     expect(bRestore?.[1]?.headers?.['X-Session-Token']).toBe('token-b');
     expect(result.current.sessionTokenRef.current).toBe('token-b');
+  });
+
+  it('bounds retained anonymous owner capabilities', () => {
+    const { result } = renderHook(() => useWorkspaceSession(vi.fn()));
+    act(() => {
+      for (let index = 0; index < 129; index += 1) {
+        result.current.rememberSessionToken(`session-${index}`, `token-${index}`);
+      }
+    });
+
+    expect(result.current.getSessionTokenFor('session-0')).toBeNull();
+    expect(result.current.getSessionTokenFor('session-1')).toBe('token-1');
+    expect(result.current.getSessionTokenFor('session-128')).toBe('token-128');
   });
 });

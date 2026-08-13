@@ -13,6 +13,7 @@ function makeMockMap() {
   // real map's bookkeeping. The runtime reads these to decide add-vs-update.
   const sources: Record<string, any> = {};
   const layers: any[] = [];
+  const listeners = new Map<string, Set<() => void>>();
 
   const calls = {
     addSource: [] as Array<{ id: string; def: any }>,
@@ -47,6 +48,17 @@ function makeMockMap() {
     },
     moveLayer(id: string) {
       calls.moveLayer.push(id);
+    },
+    on(event: string, handler: () => void) {
+      const handlers = listeners.get(event) ?? new Set();
+      handlers.add(handler);
+      listeners.set(event, handlers);
+    },
+    off(event: string, handler: () => void) {
+      listeners.get(event)?.delete(handler);
+    },
+    _emit(event: string) {
+      for (const handler of Array.from(listeners.get(event) ?? [])) handler();
     },
     // GeoJSON source stub used by renderer.addGeoJsonSource
     _sources: sources,
@@ -199,6 +211,28 @@ describe("MapSpecRuntime (ADR-0036)", () => {
       expect(rt.getLastError()).toBe("style_load_timeout");
       expect(rt.getAppliedSpec()).toBeNull();
       expect(map._calls.addLayer).toEqual([]);
+      vi.useRealTimers();
+    });
+
+    it("recovers event-driven when a slow style loads after the retry budget", async () => {
+      vi.useFakeTimers();
+      let loaded = false;
+      map.isStyleLoaded = () => loaded;
+      const recovered = vi.fn();
+      const rt = new MapSpecRuntime(map, { onStyleRecovery: recovered });
+      const pending = rt.reconcileAsync(pointSpec());
+
+      await vi.advanceTimersByTimeAsync((MAX_STYLE_RETRY_ATTEMPTS + 1) * 100);
+      await pending;
+      expect(rt.getLastError()).toBe("style_load_timeout");
+
+      loaded = true;
+      map._emit("styledata");
+
+      expect(rt.getLastError()).toBeNull();
+      expect(rt.getAppliedSpec()).toEqual(pointSpec());
+      expect(map._calls.addLayer.map((call: any) => call.def.id)).toEqual(["L1__point"]);
+      expect(recovered).toHaveBeenCalledTimes(1);
       vi.useRealTimers();
     });
   });
@@ -533,5 +567,26 @@ describe("MapSpecRuntime — Data Plane vector tile source", () => {
     const srcCalls = map._calls.addSource.filter((c: any) => c.id === "V1");
     expect(srcCalls.length).toBe(1);
     expect(srcCalls[0].def.type).toBe("vector");
+  });
+
+  it("replaces a same-type vector generation and rebuilds dependent layers", () => {
+    const rt = new MapSpecRuntime(map);
+    const initial = vectorSpec();
+    rt.reconcile(initial);
+    map._calls.addSource.length = 0;
+    map._calls.addLayer.length = 0;
+    map._calls.removeSource.length = 0;
+    map._calls.removeLayer.length = 0;
+
+    const updated = vectorSpec();
+    (updated.sources.V1 as any).tiles = ["http://x/new/{z}/{x}/{y}.mvt"];
+    rt.reconcile(updated);
+
+    expect(map._calls.removeLayer).toEqual(["V1__point"]);
+    expect(map._calls.removeSource).toEqual(["V1"]);
+    expect(map._calls.addSource[0].def.tiles).toEqual([
+      "http://x/new/{z}/{x}/{y}.mvt",
+    ]);
+    expect(map._calls.addLayer.map((call: any) => call.def.id)).toEqual(["V1__point"]);
   });
 });

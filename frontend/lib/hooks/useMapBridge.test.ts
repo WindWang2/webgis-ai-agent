@@ -238,6 +238,53 @@ describe('useMapBridge', () => {
     expect(mockStreamChat).toHaveBeenCalledTimes(2);
   });
 
+  it('ignores an SSE event attributed to another session', async () => {
+    mockStreamChat.mockReturnValue(makeAsyncGen([
+      { event: 'thinking', data: { session_id: 's1' } },
+      {
+        event: 'step_result',
+        data: {
+          session_id: 'stale-session',
+          result: { command: 'fly_to', params: { center: [1, 2], zoom: 10 } },
+        },
+      },
+      { event: 'done', data: { session_id: 's1' } },
+    ]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent)
+    );
+
+    await act(async () => { await result.current.send('q', {}); });
+
+    expect(dispatchAction).not.toHaveBeenCalled();
+    expect(onEvent).toHaveBeenCalledTimes(2);
+    expect(onEvent.mock.calls.every(
+      ([event]) => (event.data as any).session_id === 's1'
+    )).toBe(true);
+  });
+
+  it('aborts the old stream when starting a new undefined session', async () => {
+    let wasAborted = false;
+    mockStreamChat.mockImplementation(async function*(_msg, _sid, _snap, signal) {
+      await new Promise<void>((resolve) => {
+        signal?.addEventListener('abort', () => {
+          wasAborted = true;
+          resolve();
+        });
+      });
+    });
+    const { result, rerender } = renderHook(
+      ({ sid }: { sid: string | undefined }) =>
+        useMapBridge(sid, dispatchAction, onEvent),
+      { initialProps: { sid: 's1' as string | undefined } },
+    );
+    act(() => { void result.current.send('q', {}); });
+
+    act(() => { rerender({ sid: undefined }); });
+
+    expect(wasAborted).toBe(true);
+  });
+
   it('onViewportChange is stable across re-renders', () => {
     mockStreamChat.mockReturnValue(makeAsyncGen([]));
     const { result, rerender } = renderHook(() =>

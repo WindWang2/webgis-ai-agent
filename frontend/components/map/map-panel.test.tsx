@@ -284,6 +284,7 @@ describe('MapPanel — FE-3 interaction UX', () => {
     );
     expect(init.headers['X-Session-Token']).toBe('owner-token');
     expect(body.mapspec_fingerprint).toBe('carto-sha256:1234567890abcdef');
+    expect(body.client_generation).toEqual(expect.any(Number));
     expect(body.layers).toEqual([expect.objectContaining({
       id: 'analysis-result',
       _refId: 'ref:geojson-runtime',

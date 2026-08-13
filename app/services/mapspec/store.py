@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import tempfile
 import time
 from pathlib import Path
@@ -88,12 +89,41 @@ class MapSpecStore:
     """MapSpec JSON 文件持久化与 Revision 管理服务"""
 
     def get_session_dir(self, session_id: str) -> Path:
-        session_dir = BASE_STORAGE_DIR / session_id
+        base = BASE_STORAGE_DIR.resolve()
+        session_dir = (base / session_id).resolve()
+        if session_dir.parent != base:
+            raise ValueError("invalid session id for MapSpec storage")
         session_dir.mkdir(parents=True, exist_ok=True)
         return session_dir
 
+    async def clear_session_files(self, session_id: str) -> None:
+        """Purge durable MapSpec/checkpoint/revision state for one session."""
+        session_dir = self.get_session_dir(session_id)
+        await asyncio.to_thread(shutil.rmtree, session_dir)
+
+    async def discard_mapspec(self, session_id: str) -> None:
+        """Remove a first-mutation MapSpec that must not survive rollback.
+
+        Used when the session had no prior spec: saving then failing would
+        otherwise leave the half-committed candidate as last-known-good.
+        This is not a session-delete tombstone — later mutations may create a
+        fresh spec.
+        """
+        mapspec_path = self.get_session_dir(session_id) / "mapspec.json"
+
+        def _unlink() -> None:
+            mapspec_path.unlink(missing_ok=True)
+
+        await asyncio.to_thread(_unlink)
+        await session_data_manager.set_map_state(session_id, "mapspec", None)
+        await session_data_manager.set_map_state(
+            session_id, "_cartographic_mutation_revision", 0
+        )
+
     async def get_mapspec(self, session_id: str) -> Optional[Dict[str, Any]]:
         map_state = await session_data_manager.get_map_state(session_id)
+        if map_state.get("_cartographic_deleted") is True:
+            return None
         if "mapspec" in map_state:
             return map_state["mapspec"]
 
@@ -127,7 +157,11 @@ class MapSpecStore:
         )
 
         # 落盘成功后再写 Redis cache（顺序契约：cache 不持有磁盘没有的 state）。
-        await session_data_manager.set_map_state(session_id, "mapspec", mapspec)
+        persisted = await session_data_manager.set_map_state(
+            session_id, "mapspec", mapspec
+        )
+        if persisted is False:
+            raise RuntimeError("authoritative MapSpec cache write rejected")
         return {"mapspec": mapspec}
 
     @staticmethod

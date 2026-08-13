@@ -407,4 +407,50 @@ describe('canonical MapSpec runtime patch', () => {
       _mapspecLayerId: 'thematic-result',
       _mapspecFingerprint: 'carto-sha256:abc',
     }));
+  });
 
+  it('mounts raster MapSpec output as an image source, never empty GeoJSON', () => {
+    useHudStore.setState({ layers: [], accentColor: '#00aaff' });
+    renderStream();
+
+    act(() => {
+      bridgeMock.onEventCallback?.({
+        event: 'step_result',
+        data: {
+          tool: 'webgis_layer_upsert',
+          result: {
+            type: 'heatmap_raster',
+            image: '/api/v1/sessions/s/raster/r1.png',
+            bbox: [116, 39, 117, 40],
+            result_ref: 'ref:raster/r1',
+            runtime_patch: {
+              layer_id: 'ndvi',
+              result_ref: 'ref:raster/r1',
+              image_ref: 'ref:raster/r1',
+              visible: true,
+              opacity: 0.85,
+              style: { palette: 'viridis' },
+              mapspec_fingerprint: 'carto-sha256:raster',
+            },
+          },
+        },
+      });
+    });
+
+    const layers = useHudStore.getState().layers;
+    expect(layers).toHaveLength(1);
+    expect(layers[0]).toEqual(expect.objectContaining({
+      type: 'heatmap',
+      _refId: 'ref:raster/r1',
+      _tileUrl: undefined,
+      _mapspecLayerId: 'ndvi',
+      source: expect.objectContaining({
+        image: '/api/v1/sessions/s/raster/r1.png',
+        bbox: [116, 39, 117, 40],
+      }),
+    }));
+    expect(layers[0].source).not.toEqual(expect.objectContaining({
+      type: 'FeatureCollection',
+    }));
+  });
+});

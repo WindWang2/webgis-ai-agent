@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from app.services.mapspec_store import mapspec_store
+from app.services.mapspec import MapSpecResult, UpsertSourceIntent
 from app.services.rs.spectral_engine import SpectralRasterEngine
 from app.services.runtime_validator import RuntimeValidator
 
@@ -97,12 +98,11 @@ async def test_validate_runtime_offloads_slow_subprocess(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_source_profile_offloads_geojson_profiling(monkeypatch):
     """profile_geojson_source loops every feature — must run in a thread."""
-    monkeypatch.setattr(mapspec_store, "get_mapspec", _async_fake({"sources": {}}))
-    saved = []
-    async def _fake_save(session_id, mapspec):
-        saved.append(mapspec)
-        return mapspec
-    monkeypatch.setattr(mapspec_store, "save_mapspec", _fake_save)
+    intents = []
+    async def _fake_apply(session_id, intent):
+        intents.append(intent)
+        return MapSpecResult(mapspec={"sources": {intent.source_id: intent.source}})
+    monkeypatch.setattr(mapspec_store.engine, "apply_mutation", _fake_apply)
     monkeypatch.setattr(
         "app.services.spatial_meta_profiler.profile_geojson_source",
         _slow_fake(0.8, {"feature_count": 1}),
@@ -112,7 +112,9 @@ async def test_source_profile_offloads_geojson_profiling(monkeypatch):
         lambda: mapspec_store.source_profile("offload-test-session", "s1", {"type": "FeatureCollection", "features": []})
     )
     assert profile["feature_count"] == 1
-    assert saved[0]["sources"]["s1"]["profile"]["feature_count"] == 1
+    assert isinstance(intents[0], UpsertSourceIntent)
+    assert intents[0].source["profile"]["feature_count"] == 1
+    assert intents[0].source["ref_id"].startswith("ref:geojson-")
 
 
 # ─── SpectralRasterEngine (band algebra / terrain derivatives) ───────────────

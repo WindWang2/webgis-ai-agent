@@ -103,6 +103,9 @@ export const layerCommands: Record<string, CommandEntry> = {
       for (const patch of patches) {
         const desired = patch.desired ?? {};
         const matched = matchMapLayers(ctx.map, patch.layer_id);
+        if (matched.length === 0) {
+          return { status: 'failed', error: 'target_not_found' };
+        }
         for (const id of matched) {
           renderer.updateLayerStyle(ctx.map, id, {
             visibility: typeof desired.visible === 'boolean'
@@ -118,6 +121,7 @@ export const layerCommands: Record<string, CommandEntry> = {
         }
         getHudState().updateLayer(patch.layer_id, {
           ...desired,
+          _mapspecFingerprint: fingerprint,
           _mapspecRepairActionId: actionId,
           _mapspecGenerationAt: Date.now(),
         });

@@ -95,6 +95,7 @@ def _handle_message_update(event: dict, session_id: str, cache_lookup: Optional[
         return sse_event("tool_call", {
             "name": assistant_event.get("name", ""),
             "arguments": assistant_event.get("arguments", ""),
+            "session_id": session_id,
         })
     return None
 

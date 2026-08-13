@@ -51,8 +51,18 @@ def _style_projection(layer: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def repair_patch_fingerprint(patches: List[Dict[str, Any]]) -> str:
+    # Intent generation is a concurrency precondition, not repair semantics.
+    # Excluding it ensures the same failed presentation patch is recognized
+    # after a newer observation instead of becoming an unbounded new attempt.
+    canonical = []
+    for patch in patches:
+        item = dict(patch)
+        before = dict(item.get("before") or {})
+        before.pop("_intentGeneration", None)
+        item["before"] = before
+        canonical.append(item)
     payload = json.dumps(
-        patches, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
         allow_nan=False,
     ).encode("utf-8")
     return "repair-sha256:" + hashlib.sha256(payload).hexdigest()
@@ -104,9 +114,14 @@ def plan_runtime_repairs(
         observed = observed_by_id.get(runtime_id)
         if observed is None:
             continue
+        intent_generation = observed.get("intent_generation")
+        if not isinstance(intent_generation, int) or isinstance(intent_generation, bool):
+            # Without a generation precondition, a delayed repair could
+            # overwrite a newer user edit that happens to share the old value.
+            continue
         rules = failed_by_layer[layer_id]
         desired: Dict[str, Any] = {}
-        before: Dict[str, Any] = {}
+        before: Dict[str, Any] = {"_intentGeneration": intent_generation}
         if "RUNTIME_RESULT_VISIBILITY" in rules:
             desired["visible"] = (
                 layer.get("visible") is not False
@@ -122,8 +137,10 @@ def plan_runtime_repairs(
             desired["legend_spec"] = layer.get("legend_spec")
             before["legend_spec"] = observed.get("legend_spec")
         if "RUNTIME_STYLE_CONVERGENCE" in rules:
-            desired["style"] = _style_projection(layer)
-            before["style"] = observed.get("style")
+            style = _style_projection(layer)
+            if style:
+                desired["style"] = style
+                before["style"] = observed.get("style")
         if desired:
             patches.append({
                 "layer_id": runtime_id,

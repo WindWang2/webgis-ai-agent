@@ -38,12 +38,14 @@ async def test_pi_route_uses_signed_session_and_ignores_caller_session_id():
 
     with (
         patch("app.api.routes.pi_tools.get_bridge_secret", return_value=secret),
+        patch("app.agent_pi_bridge.is_active_pi_turn", return_value=True),
         patch("app.api.routes.pi_tools.dispatch_tool", new=dispatcher),
     ):
         actual = await execute_tool(request, _secret=None)
 
     assert actual is response
     assert request.sessionId == "owned-session"
+    assert request.verifiedTurnId == "turn-1"
     dispatcher.assert_awaited_once_with(request)
 
 
@@ -62,4 +64,27 @@ async def test_pi_route_rejects_missing_turn_context_before_dispatch():
         await execute_tool(request, _secret=None)
 
     assert exc.value.status_code == 401
+    dispatcher.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pi_route_rejects_valid_but_completed_turn_token():
+    secret = "route-secret"
+    request = PiToolRequest(
+        toolCallId="call-late",
+        name="webgis_state_get",
+        arguments={},
+        turnToken=issue_turn_token(secret, "owned-session", "turn-old"),
+    )
+    dispatcher = AsyncMock()
+
+    with (
+        patch("app.api.routes.pi_tools.get_bridge_secret", return_value=secret),
+        patch("app.agent_pi_bridge.is_active_pi_turn", return_value=False),
+        patch("app.api.routes.pi_tools.dispatch_tool", new=dispatcher),
+        pytest.raises(HTTPException) as exc,
+    ):
+        await execute_tool(request, _secret=None)
+
+    assert exc.value.status_code == 409
     dispatcher.assert_not_awaited()

@@ -17,9 +17,11 @@ from app.lib.cartography.quality_loop import (
     review_cartography,
     review_and_repair_cartography,
 )
+from app.lib.cartography.runtime_repair import plan_runtime_repairs
 from app.lib.harness.evaluator import HarnessEvaluator
 from app.lib.harness.evidence import CartographicReviewEvidence
 from app.lib.harness.pi_agent_harness import PiAgentHarness
+from app.lib.harness.tool_call_event import ToolCallEvent
 from app.services.mapspec.lifecycle_engine import (
     InitProjectIntent,
     MapSpecLifecycleEngine,
@@ -145,6 +147,72 @@ def test_typed_failure_cannot_report_legacy_ok_or_zero_errors():
     assert classification["evidence"]["colors_valid"] is False
 
 
+@pytest.mark.parametrize(
+    "paint,expected_method,actual_method",
+    [
+        ({"circle-color": "#3366cc"}, "match", None),
+        ({
+            "color": {
+                "method": "step",
+                "field": "kind",
+                "default": "#3366cc",
+                "stops": [[2, "#ff0000"]],
+            }
+        }, "match", "step"),
+    ],
+)
+def test_categorical_legend_cannot_pass_constant_or_graduated_paint(
+    paint, expected_method, actual_method,
+):
+    mapspec = _plain_mapspec()
+    mapspec["layers"][0]["paint"] = paint
+    mapspec["layers"][0]["legend_spec"] = {
+        "type": "categorical",
+        "field": "kind",
+        "categories": [
+            {"key": "a", "label": "A", "color": "#3366cc"},
+        ],
+    }
+
+    report = evaluate_cartography_semantics(mapspec).to_dict()
+
+    mismatch = next(
+        check for check in report["checks"]
+        if check["rule"] == "LEGEND_STYLE_EQUIVALENCE"
+        and check["status"] == "fail"
+        and check["evidence"].get("expected_style_method") == expected_method
+    )
+    assert mismatch["evidence"]["actual_style_method"] == actual_method
+    assert report["passed"] is False
+
+
+def test_invalid_graduated_palette_color_is_deterministic_failure():
+    mapspec = _plain_mapspec()
+    mapspec["layers"][0]["paint"] = {
+        "color": {
+            "method": "step",
+            "field": "value",
+            "default": "#3366cc",
+            "stops": [[2, "not-a-color"]],
+        }
+    }
+    mapspec["layers"][0]["legend_spec"] = {
+        "type": "graduated",
+        "field": "value",
+        "breaks": [1, 2, 3],
+        "palette_colors": ["#3366cc", "not-a-color"],
+    }
+
+    report = evaluate_cartography_semantics(mapspec).to_dict()
+
+    classification = next(
+        check for check in report["checks"]
+        if check["rule"] == "CLASSIFICATION_INTEGRITY"
+    )
+    assert classification["status"] == "fail"
+    assert classification["evidence"]["invalid_color_indexes"] == [1]
+
+
 def test_read_only_review_classifies_repairability_without_applying_patch():
     mapspec = _plain_mapspec()
     mapspec["layers"][0]["paint"]["circle-opacity"] = 9
@@ -220,6 +288,10 @@ def test_default_visibility_is_explicitly_attributed_to_runtime_default():
     visibility = next(c for c in report["checks"] if c["rule"] == "RESULT_VISIBILITY")
     assert visibility["status"] == "pass"
     assert visibility["evidence"]["visibility_source"] == "maplibre_default_visible"
+    assert visibility["evidence"]["visibility_contract"] == (
+        "MapLibre layout.visibility defaults to visible"
+    )
+    assert visibility["evidence"]["evidence_scope"] == "desired_structural_state"
 
 
 def test_unknown_geometry_and_native_expression_are_not_evaluated_as_passes():
@@ -234,6 +306,20 @@ def test_unknown_geometry_and_native_expression_are_not_evaluated_as_passes():
     expression = next(c for c in report["checks"] if c["rule"] == "STYLE_EXPRESSION_SUPPORT")
     assert geometry["status"] == "not_evaluated"
     assert expression["status"] == "not_evaluated"
+    assert report["passed"] is False
+
+
+def test_mixed_geometry_requires_runtime_sublayer_evidence():
+    profile = _point_profile()
+    profile["geometryTypes"] = ["Point", "Polygon"]
+
+    report = evaluate_cartography_semantics(
+        _plain_mapspec(), {"points": profile}
+    ).to_dict()
+
+    geometry = next(c for c in report["checks"] if c["rule"] == "GEOMETRY_LAYER_TYPE")
+    assert geometry["status"] == "not_evaluated"
+    assert geometry["evidence"]["mixed_geometry"] is True
     assert report["passed"] is False
 
 
@@ -256,6 +342,24 @@ def test_descriptor_unknown_fields_do_not_become_false_missing_field_failure():
     field = next(c for c in report["checks"] if c["rule"] == "PAINT_FIELD_EXISTS")
     assert field["status"] == "not_evaluated"
     assert report["status"] == "warning"
+
+
+def test_missing_fields_status_defaults_to_unknown_not_explicit_absence():
+    mapspec = _plain_mapspec()
+    mapspec["layers"][0]["paint"]["circle-color"] = {
+        "method": "interpolate",
+        "field": "descriptor_only",
+        "stops": [[1, "#111111"], [2, "#eeeeee"]],
+    }
+    profile = _point_profile()
+    profile["fields"] = {}
+    mapspec["sources"]["points"]["profile"] = profile
+
+    report = evaluate_cartography_semantics(mapspec).to_dict()
+
+    field = next(c for c in report["checks"] if c["rule"] == "PAINT_FIELD_EXISTS")
+    assert field["status"] == "not_evaluated"
+    assert field["evidence"]["fields_status"] == "unknown"
 
 
 def test_maplibre_rgba_color_is_valid_deterministic_style_evidence():
@@ -450,7 +554,7 @@ def test_stale_style_is_regenerated_from_authoritative_existing_legend():
     mapspec["layers"][0]["paint"] = {
         "color": {
             "method": "step",
-            "field": "wrong_field",
+            "field": "value",
             "default": "#ff0000",
             "stops": [[2, "#00ff00"]],
         },
@@ -469,6 +573,120 @@ def test_stale_style_is_regenerated_from_authoritative_existing_legend():
         "default": "#111111",
         "stops": [[2.0, "#eeeeee"]],
     }
+
+
+def test_native_thematic_repair_updates_the_authoritative_paint_property():
+    mapspec = _plain_mapspec()
+    mapspec["layers"][0]["legend_spec"] = {
+        "type": "graduated",
+        "field": "value",
+        "breaks": [1, 2, 3],
+        "palette_colors": ["#111111", "#eeeeee"],
+        "labels": ["1–2", "2–3"],
+    }
+    mapspec["layers"][0]["paint"] = {
+        "circle-color": {
+            "method": "step",
+            "field": "value",
+            "default": "#ff0000",
+            "stops": [[2, "#00ff00"]],
+        },
+        "circle-opacity": 0.8,
+    }
+
+    result = review_and_repair_cartography(
+        mapspec, {"points": _point_profile()}
+    )
+
+    assert result.status == "passed"
+    assert result.mapspec["layers"][0]["paint"]["circle-color"] == {
+        "method": "step",
+        "field": "value",
+        "default": "#111111",
+        "stops": [[2.0, "#eeeeee"]],
+    }
+    assert "color" not in result.mapspec["layers"][0]["paint"]
+
+
+def test_legend_field_change_is_semantic_risk_and_never_auto_repaired():
+    mapspec = _plain_mapspec()
+    mapspec["layers"][0]["legend_spec"] = {
+        "type": "graduated",
+        "field": "value",
+        "breaks": [1, 2, 3],
+        "palette_colors": ["#111111", "#eeeeee"],
+        "labels": ["1–2", "2–3"],
+    }
+    mapspec["layers"][0]["paint"] = {
+        "color": {
+            "method": "step",
+            "field": "wrong_field",
+            "default": "#ff0000",
+            "stops": [[2, "#00ff00"]],
+        },
+        "circle-opacity": 0.8,
+    }
+
+    result = review_and_repair_cartography(
+        mapspec, {"points": _point_profile()}
+    )
+
+    risky = [
+        check for check in result.review["checks"]
+        if check["rule"] == "LEGEND_STYLE_EQUIVALENCE"
+        and check["status"] == "fail"
+    ]
+    assert risky
+    assert all(check["repairability"] == "auto_with_semantic_risk" for check in risky)
+    assert all(check["suggested_fix"] is None for check in risky)
+    assert result.status == "failed_repairable"
+    assert result.termination_reason == "semantic_risk_requires_explicit_intent"
+    assert result.repair_count == 0
+    assert result.mapspec == mapspec
+
+
+def test_analysis_origin_without_result_identity_is_not_evaluated_as_provenance_pass():
+    mapspec = _plain_mapspec()
+    mapspec["layers"][0]["provenance"] = {
+        "algorithm": "buffer",
+        "source_ref": "ref:geojson-analysis-input",
+    }
+
+    report = evaluate_cartography_semantics(
+        mapspec, {"points": _point_profile()}
+    ).to_dict()
+
+    provenance = next(
+        check for check in report["checks"]
+        if check["rule"] == "RESULT_MAP_PROVENANCE"
+    )
+    assert provenance["status"] == "not_evaluated"
+    assert provenance["evidence"]["input_ref"] == "ref:geojson-analysis-input"
+    assert provenance["evidence"]["result_ref"] is None
+    assert report["passed"] is False
+
+
+def test_expression_style_failure_does_not_emit_empty_runtime_repair():
+    mapspec = _plain_mapspec()
+    mapspec["layers"][0]["paint"]["circle-color"] = [
+        "match", ["get", "kind"], "a", "#111111", "#eeeeee"
+    ]
+    observation = {
+        "layers": [{
+            "id": "result",
+            "runtime_store_id": "result",
+            "intent_generation": 4,
+        }],
+    }
+    cartography = {
+        "checks": [{
+            "rule": "RUNTIME_STYLE_CONVERGENCE",
+            "status": "fail",
+            "evidence": {"layer_id": "result", "runtime_layer_id": "result"},
+        }],
+    }
+
+    assert plan_runtime_repairs(mapspec, observation, cartography) is None
 
 
 def test_repeated_identical_patch_terminates_without_looping_forever():
@@ -525,6 +743,7 @@ def test_cartographic_projection_drops_arbitrary_metadata_and_source_url_secrets
     mapspec = _plain_mapspec()
     mapspec["sources"]["points"].update({
         "url": "https://user:secret@example.test/data?token=private",
+        "imageRef": "https://tiles.example.test/result?signature=also-private",
         "metadata": {"huge": "x" * 1_000_000},
     })
     mapspec["layers"][0]["metadata"] = {"huge": "x" * 1_000_000}
@@ -537,6 +756,59 @@ def test_cartographic_projection_drops_arbitrary_metadata_and_source_url_secrets
     assert "secret" not in encoded
     assert "metadata" not in projection["layers"][0]
     assert "url" not in projection["sources"]["points"]
+    assert "imageRef" not in projection["sources"]["points"]
+
+
+def test_cartographic_projection_bounds_outer_source_and_layer_collections():
+    mapspec = _plain_mapspec()
+    mapspec["sources"] = {
+        f"source-{index}": {
+            "type": "geojson",
+            "ref_id": f"ref:geojson-{index}",
+            "data_fingerprint": f"data-{index}",
+        }
+        for index in range(10_000)
+    }
+    mapspec["layers"] = [{
+        "id": f"layer-{index}",
+        "type": "circle",
+        "source": f"source-{index}",
+        "paint": {"circle-color": "#336699"},
+    } for index in range(10_000)]
+
+    projection = cartographic_projection(mapspec)
+    encoded = str(projection)
+
+    assert len(projection["sources"]) == 257  # 256 entries + omission evidence
+    assert len(projection["layers"]) == 257
+    assert projection["sources"]["__omitted_sources__"]["count"] == 9_744
+    assert projection["layers"][-1]["__omitted_layers__"] == 9_744
+    assert len(encoded) < 150_000
+
+
+def test_vector_thematic_legend_without_field_cannot_pass():
+    mapspec = _plain_mapspec()
+    mapspec["layers"][0]["paint"] = {
+        "circle-color": {
+            "method": "match",
+            "field": "v",
+            "cases": [["a", "#ff0000"]],
+            "default": "#ff0000",
+        }
+    }
+    mapspec["layers"][0]["legend_spec"] = {
+        "type": "categorical",
+        "categories": [{"key": "a", "label": "A", "color": "#ff0000"}],
+    }
+    report = evaluate_cartography_semantics(
+        mapspec,
+        {"points": {"geometryTypes": ["Point"], "fields": {"v": {"type": "string"}}}},
+    ).to_dict()
+
+    assert report["passed"] is False
+    check = next(item for item in report["checks"] if item["rule"] == "THEMATIC_FIELD")
+    assert check["status"] == "fail"
+    assert check["repairability"] == "auto_with_semantic_risk"
 
 
 @pytest.mark.asyncio
@@ -842,6 +1114,55 @@ async def test_harness_matches_runtime_layer_only_through_exact_result_provenanc
 
 
 @pytest.mark.asyncio
+async def test_analysis_input_ref_cannot_satisfy_cartographic_result_provenance():
+    mapspec = _plain_mapspec()
+    mapspec["sources"]["points"]["profile"] = _point_profile()
+    mapspec["layers"][0]["provenance"] = {
+        "source_ref": "ref:geojson-analysis-input",
+    }
+
+    async def reader(session_id: str):
+        return {
+            "session_id": session_id,
+            "mapspec": mapspec,
+            "map_state": {
+                "_cartographic_observation": {
+                    "session_id": session_id,
+                    "sequence": 2,
+                    "source": "frontend_runtime",
+                    "mapspec_fingerprint": cartographic_fingerprint(mapspec),
+                    "style_loaded": True,
+                    "layers": [{
+                        "id": "ref:geojson-analysis-input",
+                        "_refId": "ref:geojson-analysis-input",
+                        "visible": True,
+                        "opacity": 0.8,
+                        "style_converged": True,
+                    }],
+                },
+            },
+        }
+
+    harness = PiAgentHarness(
+        session_id="quality-input-not-result",
+        cartography_state_reader=reader,
+    )
+    _record_mapspec_mutation(harness, mapspec, observation_seq=1)
+
+    result = await harness.evaluate_with_evidence()
+
+    provenance = next(
+        check for check in result["cartography"]["desired_review"]["checks"]
+        if check["rule"] == "RESULT_MAP_PROVENANCE"
+    )
+    assert provenance["status"] == "not_evaluated"
+    assert provenance["evidence"]["input_ref"] == "ref:geojson-analysis-input"
+    assert provenance["evidence"]["result_ref"] is None
+    assert result["cartography"]["status"] == "partial"
+    assert result["cartography"]["passed"] is False
+
+
+@pytest.mark.asyncio
 async def test_harness_rejects_same_named_layer_with_wrong_result_identity():
     mapspec = _plain_mapspec()
     mapspec["sources"]["points"].update({
@@ -933,6 +1254,40 @@ async def test_harness_stale_observation_and_stale_fingerprint_cannot_pass():
     stale_fp = await stale_fp_harness.evaluate_with_evidence()
     assert stale_fp["cartography"]["status"] == "superseded"
     assert stale_fp["cartography"]["termination_reason"] == "stale_mapspec_fingerprint"
+
+
+@pytest.mark.asyncio
+async def test_missing_runtime_viewport_is_not_evaluated_instead_of_failed():
+    mapspec = _plain_mapspec()
+    mapspec["sources"]["points"]["profile"] = _point_profile()
+    mapspec["view"] = {"center": [100, 20], "zoom": 8}
+    fingerprint = cartographic_fingerprint(mapspec)
+
+    async def reader(session_id: str):
+        observation = _runtime_observation(
+            session_id, fingerprint, sequence=2, visible=True
+        )
+        observation["viewport"] = {}
+        return {
+            "session_id": session_id,
+            "mapspec": mapspec,
+            "map_state": {"_cartographic_observation": observation},
+        }
+
+    harness = PiAgentHarness(
+        session_id="quality-missing-camera", cartography_state_reader=reader
+    )
+    _record_mapspec_mutation(harness, mapspec, observation_seq=0)
+
+    result = await harness.evaluate_with_evidence()
+
+    camera = next(
+        check for check in result["cartography"]["checks"]
+        if check["rule"] == "RUNTIME_VIEW_CONVERGENCE"
+    )
+    assert camera["status"] == "not_evaluated"
+    assert result["cartography"]["status"] == "partial"
+    assert result["cartography"]["passed"] is False
 
 
 @pytest.mark.asyncio
@@ -1181,6 +1536,7 @@ async def test_production_session_harness_re_evaluates_after_runtime_and_ack(
     )
 
     observation = CartographicRuntimeObservationRequest(
+        client_generation=1,
         mapspec_fingerprint=fingerprint,
         layers=[{
             "id": "result",
@@ -1221,6 +1577,213 @@ async def test_production_session_harness_re_evaluates_after_runtime_and_ack(
     bridge._harnesses.pop(quality_session, None)
 
 
+@pytest.mark.asyncio
+async def test_out_of_order_runtime_observation_cannot_overwrite_newer_state(
+    quality_session,
+):
+    import app.agent_pi_bridge as bridge
+    from app.services.mapspec.store import mapspec_store_instance
+
+    mapspec = _plain_mapspec()
+    mapspec["sources"]["points"]["profile"] = _point_profile()
+    fingerprint = cartographic_fingerprint(mapspec)
+    await mapspec_store_instance.save_mapspec(quality_session, mapspec)
+    harness = bridge._get_session_harness(quality_session, create=True)
+    assert harness is not None
+    _record_mapspec_mutation(harness, mapspec, observation_seq=0)
+
+    newer = CartographicRuntimeObservationRequest(
+        client_generation=200,
+        mapspec_fingerprint=fingerprint,
+        layers=[{
+            "id": "result",
+            "visible": True,
+            "opacity": 0.8,
+            "style_converged": True,
+            "source_converged": True,
+            "runtime_layer_count": 1,
+        }],
+        viewport={},
+        style_loaded=True,
+    )
+    accepted = await push_cartographic_runtime_observation(
+        quality_session, newer, _conv=object()
+    )
+    assert accepted["observation_accepted"] is True
+
+    stale = CartographicRuntimeObservationRequest(
+        client_generation=100,
+        mapspec_fingerprint=fingerprint,
+        layers=[{
+            "id": "result",
+            "visible": False,
+            "opacity": 0.8,
+            "style_converged": True,
+            "source_converged": True,
+            "runtime_layer_count": 1,
+        }],
+        viewport={},
+        style_loaded=True,
+    )
+    rejected = await push_cartographic_runtime_observation(
+        quality_session, stale, _conv=object()
+    )
+    assert rejected["observation_accepted"] is False
+    assert "repair_action" not in rejected
+
+    stored = await session_data_manager.get_map_state(quality_session)
+    assert stored["_cartographic_observation"]["client_generation"] == 200
+    assert stored["_cartographic_observation"]["layers"][0]["visible"] is True
+    bridge._harnesses.pop(quality_session, None)
+
+
+@pytest.mark.asyncio
+async def test_obsolete_fingerprint_cannot_poison_observation_generation(
+    quality_session,
+):
+    import app.agent_pi_bridge as bridge
+    from app.services.mapspec.store import mapspec_store_instance
+
+    old_mapspec = _plain_mapspec()
+    old_fingerprint = cartographic_fingerprint(old_mapspec)
+    current_mapspec = copy.deepcopy(old_mapspec)
+    current_mapspec["layers"][0]["paint"]["circle-opacity"] = 0.7
+    current_mapspec["sources"]["points"]["profile"] = _point_profile()
+    current_fingerprint = cartographic_fingerprint(current_mapspec)
+    await mapspec_store_instance.save_mapspec(quality_session, current_mapspec)
+    harness = bridge._get_session_harness(quality_session, create=True)
+    assert harness is not None
+    _record_mapspec_mutation(harness, current_mapspec, observation_seq=0)
+
+    obsolete = CartographicRuntimeObservationRequest(
+        client_generation=999,
+        mapspec_fingerprint=old_fingerprint,
+        layers=[{"id": "result", "visible": False}],
+        viewport={},
+        style_loaded=True,
+    )
+    rejected = await push_cartographic_runtime_observation(
+        quality_session, obsolete, _conv=object()
+    )
+    assert rejected["observation_accepted"] is False
+    assert rejected["observation_rejection_reason"] == "stale_mapspec_fingerprint"
+
+    current = CartographicRuntimeObservationRequest(
+        client_generation=1,
+        mapspec_fingerprint=current_fingerprint,
+        layers=[{
+            "id": "result",
+            "visible": True,
+            "opacity": 0.7,
+            "style_converged": True,
+            "source_converged": True,
+            "runtime_layer_count": 1,
+            "intent_generation": 1,
+        }],
+        viewport={},
+        style_loaded=True,
+    )
+    accepted = await push_cartographic_runtime_observation(
+        quality_session, current, _conv=object()
+    )
+    assert accepted["observation_accepted"] is True
+    stored = await session_data_manager.get_map_state(quality_session)
+    assert stored["_cartographic_observation"]["client_generation"] == 1
+
+
+@pytest.mark.asyncio
+async def test_harness_context_rehydrates_on_another_worker_without_data_body(
+    quality_session,
+):
+    import app.agent_pi_bridge as bridge
+    from app.services.mapspec.store import mapspec_store_instance
+
+    mapspec = _plain_mapspec()
+    mapspec["sources"]["points"]["profile"] = _point_profile()
+    fingerprint = cartographic_fingerprint(mapspec)
+    await mapspec_store_instance.save_mapspec(quality_session, mapspec)
+    event = ToolCallEvent(
+        tool_call_id="call-cross-worker",
+        tool_name="webgis_layer_upsert",
+        arguments={
+            "layer": {"id": "result"},
+            "source_data": {"features": [{"secret": "must-not-persist"}]},
+        },
+        result={
+            "status": "ok",
+            "success": True,
+            "is_compiled": True,
+            "mapspec_fingerprint": fingerprint,
+            "mutation_revision": 1,
+        },
+        session_id=quality_session,
+    )
+    await session_data_manager.set_map_state(
+        quality_session, "_cartographic_mutation_revision", 1
+    )
+    await bridge._persist_cartographic_harness_context(
+        quality_session, event, []
+    )
+    bridge._harnesses.pop(quality_session, None)
+    if bridge._harness is not None and bridge._harness.session_id == quality_session:
+        bridge._harness = None
+
+    review = await bridge.evaluate_cartographic_session(quality_session)
+
+    assert review["cartography"]["termination_reason"] != "no_session_harness"
+    assert review["cartography"]["source_tool_call_id"] == "call-cross-worker"
+    state = await session_data_manager.get_map_state(quality_session)
+    persisted = state["_cartographic_harness_context"]
+    assert persisted["tool_call"]["arguments"] == {"layer": {"id": "result"}}
+    assert "must-not-persist" not in str(persisted)
+
+    newer = copy.deepcopy(event)
+    newer.tool_call_id = "call-cross-worker-newer"
+    newer.result["mutation_revision"] = 2
+    await session_data_manager.set_map_state(
+        quality_session, "_cartographic_mutation_revision", 2
+    )
+    assert await bridge._persist_cartographic_harness_context(
+        quality_session, newer, []
+    ) is True
+    # A completion from revision 1 arriving after revision 2 cannot regress
+    # the durable or process-local harness generation.
+    assert await bridge._persist_cartographic_harness_context(
+        quality_session, event, []
+    ) is False
+    persisted_after_late = await session_data_manager.get_map_state(quality_session)
+    assert (
+        persisted_after_late["_cartographic_harness_context"]["tool_call"]
+        ["tool_call_id"]
+        == "call-cross-worker-newer"
+    )
+    advanced = await bridge.evaluate_cartographic_session(quality_session)
+    assert advanced["cartography"]["source_tool_call_id"] == "call-cross-worker-newer"
+
+
+@pytest.mark.asyncio
+async def test_deleted_session_tombstone_rejects_late_context_persistence(
+    quality_session,
+):
+    import app.agent_pi_bridge as bridge
+
+    await session_data_manager.set_map_state(
+        quality_session, "_cartographic_deleted", True
+    )
+    event = ToolCallEvent(
+        tool_call_id="call-too-late",
+        tool_name="webgis_layer_upsert",
+        arguments={"layer": {"id": "result"}},
+        result={"status": "ok", "success": True, "is_compiled": True},
+        session_id=quality_session,
+    )
+
+    await bridge._persist_cartographic_harness_context(quality_session, event, [])
+
+    state = await session_data_manager.get_map_state(quality_session)
+    assert "_cartographic_harness_context" not in state
+
+
 def _runtime_observation(
     session_id: str,
     fingerprint: str,
@@ -1238,6 +1801,7 @@ def _runtime_observation(
         "source_converged": True,
         "runtime_layer_count": 1,
         "projection_fingerprint": "runtime-test-projection",
+        "intent_generation": sequence,
     }
     if repair_action_id:
         layer["repair_action_id"] = repair_action_id

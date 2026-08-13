@@ -80,6 +80,7 @@ export default function Home() {
     sessionIdRef,
     sessionTokenRef,
     rememberSessionToken,
+    getSessionTokenFor,
     sessions,
     selectSession,
     startNewSession,
@@ -101,7 +102,8 @@ export default function Home() {
     getMapSnapshot,
     userLocation,
     sessionTokenRef,
-    rememberSessionToken
+    rememberSessionToken,
+    getSessionTokenFor
   );
 
   const handleSelectSession = useCallback(

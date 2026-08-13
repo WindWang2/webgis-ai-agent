@@ -84,6 +84,7 @@ export function MapPanel({
   const { selectedBaseLayer, registerSnapshotFn, dispatchAction } = useMapAction()
   const [viewState, setViewState] = useState(DEFAULT_VIEW_STATE)
   const [mapReady, setMapReady] = useState(false)
+  const [runtimeRecoveryGeneration, setRuntimeRecoveryGeneration] = useState(0)
   // is3D 来自 store，与设置面板 setIs3D 联动。原先 useState 死锁在 false。
   const is3D = useHudStore((s: HudState) => s.is3D)
   const [activeFilters, setActiveFilters] = useState<Record<string, number[][]>>({})
@@ -175,6 +176,7 @@ export function MapPanel({
   // machinery. The runtime owns the style-loaded retry internally.
   const runtimeRef = useRef<MapSpecRuntime | null>(null)
   const lastCartographicObservationKeyRef = useRef<string>('')
+  const cartographicObservationGenerationRef = useRef(Date.now() * 1000)
   const cartographicSessionIdRef = useRef(sessionId)
   cartographicSessionIdRef.current = sessionId
 
@@ -187,6 +189,9 @@ export function MapPanel({
   // completes — the styledata listener is gone (findings E3).
   const [interactiveIds, setInteractiveIds] = useState<string[]>([])
   const interactiveIdsRef = useRef<string[]>([])
+  const handleRuntimeStyleRecovery = useCallback(() => {
+    setRuntimeRecoveryGeneration((generation) => generation + 1)
+  }, [])
   // 审计 F32：缓存上次计算的 IDs joined 字符串，相同则跳过 setInteractiveIds
   // -> 防止频繁 recompute 时产生 re-render 风暴。
   const lastInteractiveIdsKeyRef = useRef<string>('')
@@ -215,14 +220,16 @@ export function MapPanel({
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
     if (!runtimeRef.current) {
-      runtimeRef.current = new MapSpecRuntime(map)
+      runtimeRef.current = new MapSpecRuntime(map, {
+        onStyleRecovery: handleRuntimeStyleRecovery,
+      })
       syncInteractiveIds()
     }
     return () => {
       runtimeRef.current?.dispose()
       runtimeRef.current = null
     }
-  }, [mapReady, syncInteractiveIds])
+  }, [mapReady, syncInteractiveIds, handleRuntimeStyleRecovery])
 
   // FE-AUDIT-01: Invalidate runtime style cache when basemap style changes so custom layers re-apply
   useEffect(() => {
@@ -289,15 +296,21 @@ export function MapPanel({
           layers,
           generation._mapspecFingerprint,
           runtimeRef.current?.getLastError() ?? '',
+          runtimeRef.current?.getAppliedSpec() ?? null,
         )
         const observationKey = `${sessionId}:${JSON.stringify(observation)}`
         if (observationKey === lastCartographicObservationKeyRef.current) return
         lastCartographicObservationKeyRef.current = observationKey
+        const clientGeneration = Math.max(
+          cartographicObservationGenerationRef.current + 1,
+          Date.now() * 1000,
+        )
+        cartographicObservationGenerationRef.current = clientGeneration
         void apiFetch<{ repair_action?: import('@/lib/types').MapActionPayload }>(
           `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/cartographic-observation`,
           {
             method: 'POST',
-            body: observation,
+            body: { ...observation, client_generation: clientGeneration },
             ownerToken,
             label: 'Cartographic observation error',
           },
@@ -316,7 +329,7 @@ export function MapPanel({
         })
       })
       .catch((e) => console.error("[map] reconcile failed", e))
-  }, [layers, processLayers, activeFilters, is3D, mapReady, currentMapStyle, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, dispatchAction])
+  }, [layers, processLayers, activeFilters, is3D, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, dispatchAction])
 
 
   const setViewport = useHudStore((s: HudState) => s.setViewport)

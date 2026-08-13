@@ -17,24 +17,88 @@ import { devOnly } from "@/lib/utils/logger";
  */
 export const MAX_ANNOTATIONS = 500;
 
+const PRESENTATION_FIELDS = new Set([
+  'visible', 'opacity', 'style', 'legend_spec', 'type', '_refId', '_mapspecLayerId',
+]);
+
+/**
+ * Server-authored cartographic tags certify one exact presentation generation.
+ * A user-facing presentation change must invalidate those tags; source-body
+ * hydration and explicitly tagged server updates may retain them.
+ */
+function withAttestationPolicy(
+  updates: Partial<HudState['layers'][number]>,
+): Partial<HudState['layers'][number]> {
+  const serverAttested = typeof updates._mapspecFingerprint === 'string';
+  const changesPresentation = Object.keys(updates).some((key) => PRESENTATION_FIELDS.has(key));
+  if (serverAttested || !changesPresentation) return updates;
+  return {
+    ...updates,
+    _mapspecFingerprint: undefined,
+    _mapspecProjectionFingerprint: undefined,
+    _mapspecRepairActionId: undefined,
+  };
+}
+
 export const createLayersSlice: StateCreator<HudState, [], [], Partial<HudState>> = (set, get) => ({
   /* ─── Layers ─── */
   layers: [],
-  addLayer: (layer) => set((s) => ({
-    layers: s.layers.some(l => l.id === layer.id) ? s.layers : [layer, ...s.layers],
+  layerIntentGeneration: 0,
+  addLayer: (layer) => set((s) => {
+    if (s.layers.some(l => l.id === layer.id)) return s;
+    const generation = s.layerIntentGeneration + 1;
+    return {
+      layerIntentGeneration: generation,
+      layers: [{ ...layer, _intentGeneration: generation }, ...s.layers],
+    };
+  }),
+  removeLayer: (id) => set((s) => ({
+    layerIntentGeneration: s.layerIntentGeneration + 1,
+    layers: s.layers.filter((l) => l.id !== id),
   })),
-  removeLayer: (id) => set((s) => ({ layers: s.layers.filter((l) => l.id !== id) })),
   toggleLayer: (id) =>
-    set((s) => ({
-      layers: s.layers.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l)),
-    })),
+    set((s) => {
+      const generation = s.layerIntentGeneration + 1;
+      return {
+        layerIntentGeneration: generation,
+        layers: s.layers.map((l) => (
+          l.id === id
+            ? {
+                ...l,
+                visible: !l.visible,
+                _mapspecFingerprint: undefined,
+                _mapspecProjectionFingerprint: undefined,
+                _mapspecRepairActionId: undefined,
+                _intentGeneration: generation,
+              }
+            : l
+        )),
+      };
+    }),
   updateLayer: (id, updates) =>
-    set((s) => ({
-      layers: s.layers.map((l) => (l.id === id ? { ...l, ...updates } : l)),
-    })),
+    set((s) => {
+      const generation = s.layerIntentGeneration + 1;
+      return {
+        layerIntentGeneration: generation,
+        layers: s.layers.map((l) => (
+          l.id === id
+            ? { ...l, ...withAttestationPolicy(updates), _intentGeneration: generation }
+            : l
+        )),
+      };
+    }),
   reorderLayers: (layers) => set({ layers }),
-  setLayers: (layers) => set({ layers }),
-  clearLayers: () => set({ layers: [] }),
+  setLayers: (layers) => set((s) => {
+    const generation = s.layerIntentGeneration + 1;
+    return {
+      layerIntentGeneration: generation,
+      layers: layers.map((layer) => ({ ...layer, _intentGeneration: generation })),
+    };
+  }),
+  clearLayers: () => set((s) => ({
+    layerIntentGeneration: s.layerIntentGeneration + 1,
+    layers: [],
+  })),
 
   /* ─── Annotations ─── */
   annotations: [],

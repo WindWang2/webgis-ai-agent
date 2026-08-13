@@ -78,6 +78,22 @@ def _blob_dir(session_dir: Path) -> Path:
     return _checkpoints_root(session_dir) / "blobs"
 
 
+def _referenced_session_refs(mapspec: Dict[str, Any]) -> list[str]:
+    """Return stable session-owned refs without touching their payloads."""
+    refs: list[str] = []
+    for source in mapspec.get("sources", {}).values():
+        if not isinstance(source, dict):
+            continue
+        candidate = source_ref(source)
+        if (
+            isinstance(candidate, str)
+            and candidate.startswith("ref:")
+            and candidate not in refs
+        ):
+            refs.append(candidate)
+    return refs
+
+
 def _manifest_path(session_dir: Path) -> Path:
     return _checkpoints_root(session_dir) / "manifest.json"
 
@@ -161,6 +177,7 @@ async def snapshot(
     _validate_checkpoint_id(ckpt_id)
 
     session_id_for_refs = session_dir.name
+    referenced_refs = _referenced_session_refs(mapspec)
     # Automatic mutation checkpoints protect presentation state. Session refs
     # are immutable identities and cartographic repairs never mutate their
     # datasets, so downloading a large ref on every style update is needless
@@ -237,6 +254,12 @@ async def snapshot(
         "timestamp": time.time(),
         "ref_count": len(ref_blob_map),
         "refs": ref_blob_map,  # ref_id -> blob_hash
+        # Automatic mutation checkpoints are intentionally metadata-only: they
+        # protect presentation changes without copying a 100k-feature result on
+        # every style edit. They are rollbackable only while these immutable
+        # live refs still exist; rollback verifies that condition explicitly.
+        "mode": "self_contained" if checkpoint_id is not None else "presentation_only",
+        "referenced_refs": referenced_refs,
     }
 
     def _write_checkpoint_sync() -> None:
@@ -254,6 +277,7 @@ async def snapshot(
         "checkpoint_id": ckpt_id,
         "checkpoint_dir": str(ckpt_dir),
         "ref_count": len(ref_blob_map),
+        "checkpoint_mode": descriptor["mode"],
         "deduplicated": False,
         "summary": f"Checkpoint '{ckpt_id}' created with {len(ref_blob_map)} materialized refs",
     }
@@ -288,10 +312,63 @@ async def rollback(
     # 优先新格式 descriptor（ref -> blob），回退旧格式 materialized_refs（内联）。
     descriptor = await asyncio.to_thread(_read_json_sync, ckpt_dir / "descriptor.json")
     if isinstance(descriptor, dict) and isinstance(descriptor.get("refs"), dict):
+        referenced_refs = [
+            ref_id
+            for ref_id in descriptor.get("referenced_refs", [])
+            if isinstance(ref_id, str) and ref_id.startswith("ref:")
+        ]
+        mode = descriptor.get("mode")
+        if mode == "presentation_only":
+            # Metadata-first existence check. Vector refs use their bounded
+            # session index; raster refs are immutable session files. No
+            # descriptor fallback or feature collection is loaded merely to
+            # restore presentation state.
+            from app.services.raster_store import resolve_png_path
+
+            available_refs = set(
+                (await session_data_manager.list_refs(session_id_for_refs)).keys()
+            )
+            missing_refs: list[str] = []
+            for ref_id in referenced_refs:
+                if ref_id.startswith("ref:raster/"):
+                    if resolve_png_path(session_dir, ref_id) is None:
+                        missing_refs.append(ref_id)
+                    continue
+                if ref_id not in available_refs:
+                    missing_refs.append(ref_id)
+            if missing_refs:
+                return {
+                    "success": False,
+                    "message": (
+                        f"Checkpoint '{checkpoint_id}' is presentation-only and "
+                        f"its live refs are unavailable: {missing_refs}"
+                    ),
+                    "checkpoint_mode": mode,
+                    "missing_refs": missing_refs,
+                }
+            ref_count = 0
+            refs_reused = len(referenced_refs)
+        else:
+            refs_reused = 0
+            unmaterialized_refs = sorted(
+                set(referenced_refs) - set(descriptor["refs"])
+            )
+            if unmaterialized_refs:
+                return {
+                    "success": False,
+                    "message": (
+                        f"Checkpoint '{checkpoint_id}' is not self-contained; "
+                        f"refs were not materialized: {unmaterialized_refs}"
+                    ),
+                    "checkpoint_mode": mode or "legacy",
+                    "missing_refs": unmaterialized_refs,
+                }
         blob_dir = _blob_dir(session_dir)
         restored = 0
         missing_blobs = []
-        for ref_id, blob_hash in descriptor["refs"].items():
+        for ref_id, blob_hash in (
+            {} if mode == "presentation_only" else descriptor["refs"]
+        ).items():
             if not isinstance(blob_hash, str):
                 continue
             blob_path = blob_dir / _blob_filename(blob_hash)
@@ -309,13 +386,15 @@ async def rollback(
                     f"{missing_blobs}"
                 ),
             }
-        ref_count = restored
+        if mode != "presentation_only":
+            ref_count = restored
     else:
         # 旧格式：materialized_refs.json 内联 payload。
         refs_file = ckpt_dir / "materialized_refs.json"
         refs_data = await asyncio.to_thread(_read_json_sync, refs_file)
         refs_data = refs_data if isinstance(refs_data, dict) else {}
         ref_count = 0
+        refs_reused = 0
         for ref_id, payload in refs_data.items():
             await session_data_manager.overwrite(session_id_for_refs, ref_id, payload)
             ref_count += 1
@@ -325,5 +404,12 @@ async def rollback(
         "checkpoint_id": checkpoint_id,
         "mapspec": mapspec,
         "ref_count": ref_count,
-        "summary": f"Recovered checkpoint '{checkpoint_id}'",
+        "refs_reused": refs_reused,
+        "checkpoint_mode": (
+            descriptor.get("mode") if isinstance(descriptor, dict) else "legacy"
+        ),
+        "summary": (
+            f"Recovered checkpoint '{checkpoint_id}' "
+            f"({refs_reused} immutable live refs verified)"
+        ),
     }

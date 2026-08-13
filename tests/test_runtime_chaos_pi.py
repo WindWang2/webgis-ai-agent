@@ -231,7 +231,7 @@ async def test_stall_abort_also_cancels_turn_token(monkeypatch):
         await asyncio.sleep(0)
     dispatch = asyncio.create_task(dispatch_tool(PiToolRequest(
         name="query_map_features", toolCallId="tc-stall", arguments={},
-        sessionId=None,
+        sessionId="sess-stall2",
     )))
     await asyncio.wait_for(started.wait(), timeout=2.0)
 
@@ -343,7 +343,7 @@ async def test_dispatch_tool_binds_active_turn_cancellation_token(monkeypatch):
 
     dispatch = asyncio.create_task(dispatch_tool(PiToolRequest(
         name="query_map_features", toolCallId="tc-1", arguments={},
-        sessionId=None,
+        sessionId="sess-cancel",
     )))
     await asyncio.wait_for(started.wait(), timeout=2.0)
 
@@ -387,7 +387,7 @@ async def test_dispatch_tool_without_active_turn_runs_uncancelled(monkeypatch):
 
     resp = await dispatch_tool(PiToolRequest(
         name="query_map_features", toolCallId="tc-solo", arguments={},
-        sessionId=None,
+        sessionId="sess-solo",
     ))
     assert resp.isError is False
     assert observed_tokens == [None]
@@ -463,7 +463,7 @@ async def test_prompt_publishes_active_turn_markers(monkeypatch, caplog):
     # F24: dispatch during prompt() is bound to the turn's token
     dispatch = asyncio.create_task(dispatch_tool(PiToolRequest(
         name="query_map_features", toolCallId="tc-prompt", arguments={},
-        sessionId=None,
+        sessionId="sess-P",
     )))
     await asyncio.wait_for(started.wait(), timeout=2.0)
     token = observed_tokens[0]

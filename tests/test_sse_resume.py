@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import AsyncIterator, Optional
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -105,7 +106,13 @@ def _event_type(event_block: str) -> str:
     return ""
 
 
-async def _collect_route(monkeypatch, bridge, message="hi", last_event_id=None, session_id=None):
+async def _collect_route(
+    monkeypatch,
+    bridge,
+    message="hi",
+    last_event_id=None,
+    session_id="resume-contract-session",
+):
     """Drive one POST /chat/stream through the route function directly and
     return (event_blocks, bridge). last_event_id simulates the resume header."""
     monkeypatch.setattr(chat_route, "USE_NEW_AGENT", True)
@@ -127,6 +134,11 @@ async def _collect_route(monkeypatch, bridge, message="hi", last_event_id=None, 
 def _fresh_resume_registry(monkeypatch):
     """Isolate the process-local resume registry per test."""
     monkeypatch.setattr(chat_route, "_turn_resume_registry", TurnResumeRegistry())
+    monkeypatch.setattr(
+        chat_route.AsyncHistoryService,
+        "get_session",
+        AsyncMock(return_value=MagicMock()),
+    )
     yield
 
 
@@ -261,7 +273,9 @@ async def test_resume_after_aborted_turn_replays_then_errors(monkeypatch):
     monkeypatch.setattr(chat_route, "pi_bridge", bridge)
 
     resp = await chat_route.chat_stream(
-        chat_route.ChatRequest(message="hi", session_id=None, map_state=None),
+        chat_route.ChatRequest(
+            message="hi", session_id="resume-contract-session", map_state=None
+        ),
         _user={}, owner_token=None, db=None,
     )
     it = resp.body_iterator
@@ -274,7 +288,7 @@ async def test_resume_after_aborted_turn_replays_then_errors(monkeypatch):
     await it.aclose()  # client disconnect → GeneratorExit → buffer marked aborted
     await asyncio.sleep(0.01)
 
-    buffer = chat_route._turn_resume_registry.get("")
+    buffer = chat_route._turn_resume_registry.get("resume-contract-session")
     assert buffer is not None
     assert buffer.ended is True and buffer.aborted is True
     assert buffer.terminal_event is None
@@ -382,14 +396,15 @@ async def test_resume_via_last_event_id_header(monkeypatch):
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         async with client.stream(
-            "POST", "/api/v1/chat/stream", json={"message": "hi"}
+            "POST", "/api/v1/chat/stream",
+            json={"message": "hi", "session_id": "resume-http-header"},
         ) as resp:
             assert resp.status_code == 200
             first = await resp.aread()
         # Resume with the header.
         async with client.stream(
             "POST", "/api/v1/chat/stream",
-            json={"message": "hi"},
+                json={"message": "hi", "session_id": "resume-http-header"},
             headers={"Last-Event-ID": "3"},
         ) as resp2:
             assert resp2.status_code == 200
@@ -413,12 +428,13 @@ async def test_resume_via_last_event_id_query_param(monkeypatch):
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         async with client.stream(
-            "POST", "/api/v1/chat/stream", json={"message": "hi"}
+            "POST", "/api/v1/chat/stream",
+            json={"message": "hi", "session_id": "resume-http-query"},
         ) as resp:
             await resp.aread()
         async with client.stream(
             "POST", f"/api/v1/chat/stream?last_event_id={4}",
-            json={"message": "hi"},
+            json={"message": "hi", "session_id": "resume-http-query"},
         ) as resp2:
             assert resp2.status_code == 200
             second = await resp2.aread()

@@ -50,8 +50,14 @@ def store_data(entry: Dict[str, Any], data: Any) -> None:
             for k, v in data.items():
                 entry[k] = v
         else:
+            # An ordinary object is a GeoJSON/inline carrier. Explicit source
+            # replacement must not retain a prior raster/vector discriminator.
+            entry["type"] = "geojson"
             entry[_INLINE] = data
     elif isinstance(data, str):
+        # A source replacement is authoritative. Do not retain a stale raster
+        # discriminator when a later mutation supplies a vector URL/ref.
+        entry["type"] = "geojson"
         if data.startswith("ref:"):
             entry["ref_id"] = data
             entry[_URL] = data

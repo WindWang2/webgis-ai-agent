@@ -126,6 +126,11 @@ export function diffSpecs(prev: MapSpec | null, next: MapSpec): SpecPatch {
       sources.push({ id, kind: "update", next: nextSources[id] });
     }
   }
+  const changedSourceIds = new Set(
+    sources
+      .filter((change) => change.kind === "update")
+      .map((change) => change.id),
+  );
 
   // Layers: keyed by id. Order matters for z-order; we walk next.layers in
   // order and emit changes in that order so the runtime applies them
@@ -139,7 +144,13 @@ export function diffSpecs(prev: MapSpec | null, next: MapSpec): SpecPatch {
     const prevLayer = prevLayerById.get(layer.id);
     if (!prevLayer) {
       layers.push({ id: layer.id, kind: "add", next: layer });
-    } else if (!isDeepEqual(prevLayer, layer)) {
+    } else if (
+      !isDeepEqual(prevLayer, layer)
+      || changedSourceIds.has(layer.source)
+    ) {
+      // MapLibre source definitions are not uniformly mutable. Recompile all
+      // dependent layers around a source replacement so a same-id vector,
+      // raster, URL, or data-generation update cannot leave stale live data.
       layers.push({ id: layer.id, kind: "recompile", next: layer });
     }
 

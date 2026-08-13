@@ -22,7 +22,9 @@ _SOURCE_METADATA_KEYS = (
     "type",
     "ref",
     "ref_id",
-    "imageRef",
+    # Raw URL/dataPath values may contain userinfo, signed query strings, or
+    # private object names. ``data_fingerprint`` carries stable source identity
+    # without putting credentials into review evidence.
     "bounds",
     "imageSize",
     "profile",
@@ -74,15 +76,37 @@ def _bounded_metadata(
         digest = hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()
         return {"sha256": digest, "length": len(value)}
     if isinstance(value, dict):
-        return {
+        projected = {
             str(key): _bounded_metadata(item, depth=depth + 1, budget=budget)
             for key, item in list(value.items())[:_MAX_METADATA_ITEMS]
         }
+        if len(value) > _MAX_METADATA_ITEMS:
+            omitted = list(value.items())[_MAX_METADATA_ITEMS:]
+            payload = json.dumps(
+                omitted, ensure_ascii=False, sort_keys=True, default=str,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            projected["__omitted_metadata__"] = {
+                "count": len(omitted),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+        return projected
     if isinstance(value, (list, tuple)):
-        return [
+        projected = [
             _bounded_metadata(item, depth=depth + 1, budget=budget)
             for item in value[:_MAX_METADATA_ITEMS]
         ]
+        if len(value) > _MAX_METADATA_ITEMS:
+            omitted = value[_MAX_METADATA_ITEMS:]
+            payload = json.dumps(
+                omitted, ensure_ascii=False, sort_keys=True, default=str,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            projected.append({
+                "__omitted_metadata__": len(omitted),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            })
+        return projected
     return {"unsupported_type": type(value).__name__}
 
 
@@ -109,7 +133,70 @@ def _profile_metadata(value: Any, budget: List[int]) -> Any:
             }
             for field_name, field_info in list(fields.items())[:_MAX_METADATA_ITEMS]
         }
+        if len(fields) > _MAX_METADATA_ITEMS:
+            digest = hashlib.sha256()
+            for field_name, field_info in list(fields.items())[_MAX_METADATA_ITEMS:]:
+                item = {
+                    str(field_name): {
+                        key: field_info.get(key)
+                        for key in (
+                            "type", "min", "max", "mean", "null_count", "sampleValues",
+                        )
+                        if isinstance(field_info, dict) and key in field_info
+                    }
+                }
+                digest.update(json.dumps(
+                    item, ensure_ascii=False, sort_keys=True, default=str,
+                    separators=(",", ":"),
+                ).encode("utf-8"))
+            projected["fields_omitted"] = {
+                "count": len(fields) - _MAX_METADATA_ITEMS,
+                "sha256": digest.hexdigest(),
+            }
     return projected
+
+
+def _project_source(source: Any, budget: List[int]) -> Dict[str, Any]:
+    if not isinstance(source, dict):
+        return {"descriptor_type": type(source).__name__}
+    projected = {
+        key: (
+            _profile_metadata(source[key], budget)
+            if key == "profile"
+            else _bounded_metadata(source[key], budget=budget)
+        )
+        for key in _SOURCE_METADATA_KEYS
+        if key in source
+        and not (
+            key in ("ref", "ref_id")
+            and (
+                not isinstance(source[key], str)
+                or not source[key].startswith("ref:")
+            )
+        )
+    }
+    return projected
+
+
+def _project_layer(layer: Any, budget: List[int]) -> Optional[Dict[str, Any]]:
+    if not isinstance(layer, dict):
+        return None
+    return {
+        key: _bounded_metadata(layer[key], budget=budget)
+        for key in _LAYER_METADATA_KEYS
+        if key in layer
+    }
+
+
+def _omitted_digest(items: Any, projector: Callable[[Any, List[int]], Any]) -> str:
+    digest = hashlib.sha256()
+    for identity, value in items:
+        projected = projector(value, [_MAX_METADATA_NODES])
+        digest.update(json.dumps(
+            [identity, projected], ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8"))
+    return digest.hexdigest()
 
 
 def cartographic_projection(mapspec: Dict[str, Any]) -> Dict[str, Any]:
@@ -121,29 +208,27 @@ def cartographic_projection(mapspec: Dict[str, Any]) -> Dict[str, Any]:
     """
     sources = mapspec.get("sources") if isinstance(mapspec.get("sources"), dict) else {}
     projected_sources: Dict[str, Any] = {}
-    budget = [_MAX_METADATA_NODES]
-    for source_id, source in list(sources.items())[:_MAX_METADATA_ITEMS]:
-        if not isinstance(source, dict):
-            projected_sources[str(source_id)] = {"descriptor_type": type(source).__name__}
-            continue
-        projected_sources[str(source_id)] = {
-            key: (
-                _profile_metadata(source[key], budget)
-                if key == "profile"
-                else _bounded_metadata(source[key], budget=budget)
-            )
-            for key in _SOURCE_METADATA_KEYS
-            if key in source
-        }
     layers = mapspec.get("layers") if isinstance(mapspec.get("layers"), list) else []
+    budget = [_MAX_METADATA_NODES]
+    source_items = list(sources.items())
+    for source_id, source in source_items[:_MAX_METADATA_ITEMS]:
+        projected_sources[str(source_id)] = _project_source(source, budget)
+    omitted_sources = source_items[_MAX_METADATA_ITEMS:]
+    if omitted_sources:
+        projected_sources["__omitted_sources__"] = {
+            "count": len(omitted_sources),
+            "sha256": _omitted_digest(omitted_sources, _project_source),
+        }
     projected_layers = []
     for layer in layers[:_MAX_METADATA_ITEMS]:
-        if not isinstance(layer, dict):
-            continue
+        projected = _project_layer(layer, budget)
+        if projected is not None:
+            projected_layers.append(projected)
+    omitted_layers = list(enumerate(layers[_MAX_METADATA_ITEMS:], _MAX_METADATA_ITEMS))
+    if omitted_layers:
         projected_layers.append({
-            key: _bounded_metadata(layer[key], budget=budget)
-            for key in _LAYER_METADATA_KEYS
-            if key in layer
+            "__omitted_layers__": len(omitted_layers),
+            "sha256": _omitted_digest(omitted_layers, _project_layer),
         })
     return {
         "version": mapspec.get("version"),
@@ -155,6 +240,8 @@ def cartographic_projection(mapspec: Dict[str, Any]) -> Dict[str, Any]:
         "time": _bounded_metadata(mapspec.get("time") or {}, budget=budget),
         "sources": projected_sources,
         "layers": projected_layers,
+        "source_count": len(sources),
+        "layer_count": len(layers),
     }
 
 

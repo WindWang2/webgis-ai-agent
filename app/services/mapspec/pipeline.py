@@ -16,6 +16,17 @@ from app.services.mapspec.store import view_has_center
 logger = logging.getLogger(__name__)
 
 
+def _content_fingerprint(value: Any) -> str:
+    """Hash JSON incrementally so identity does not require a second full copy."""
+    digest = hashlib.sha256()
+    encoder = json.JSONEncoder(
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
+    for chunk in encoder.iterencode(value):
+        digest.update(chunk.encode("utf-8"))
+    return "data-sha256:" + digest.hexdigest()
+
+
 def process_layer_ingestion(
     mapspec: Dict[str, Any],
     layer: Dict[str, Any],
@@ -69,6 +80,25 @@ def process_layer_ingestion(
         ):
             source_entry.pop(key, None)
         store_data(source_entry, processed_source_data)
+        if isinstance(processed_source_data, dict):
+            source_entry.setdefault(
+                "data_fingerprint", _content_fingerprint(processed_source_data)
+            )
+        elif isinstance(processed_source_data, str):
+            source_entry.setdefault(
+                "data_fingerprint",
+                "url-sha256:" + hashlib.sha256(processed_source_data.encode()).hexdigest(),
+            )
+
+    if is_raster and isinstance(source_entry.get("imageRef"), str):
+        # The rendered PNG is the display result; source_ref retained by the
+        # converter is the input raster. Preserve both roles explicitly.
+        raster_provenance = (
+            dict(processed_layer.get("provenance"))
+            if isinstance(processed_layer.get("provenance"), dict) else {}
+        )
+        raster_provenance["result_ref"] = source_entry["imageRef"]
+        processed_layer["provenance"] = raster_provenance
 
     provenance = (
         processed_layer.get("provenance")
@@ -81,6 +111,9 @@ def process_layer_ingestion(
     if isinstance(result_ref, str) and result_ref:
         source_entry["ref"] = result_ref
         source_entry["ref_id"] = result_ref
+        source_entry["data_fingerprint"] = (
+            "ref-sha256:" + hashlib.sha256(result_ref.encode()).hexdigest()
+        )
 
     suggested_view: Optional[Dict[str, Any]] = None
     if is_raster_entry(source_entry) or is_data_fabric_entry(source_entry):

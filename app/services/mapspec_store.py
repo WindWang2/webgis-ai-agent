@@ -4,6 +4,8 @@
 保持所有旧的导出的方法签名与逻辑完全兼容。
 """
 import asyncio
+import hashlib
+import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -12,6 +14,7 @@ from app.services.mapspec import (
     mapspec_lifecycle_engine,
     InitProjectIntent,
     SetViewIntent,
+    UpsertSourceIntent,
     UpsertLayerIntent,
     RemoveLayerIntent,
     SetLayoutIntent,
@@ -25,6 +28,7 @@ from app.services.mapspec.store import (
     _should_remove_layer,
     view_has_center,
 )
+from app.services.session_data import session_data_manager
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +59,7 @@ def _with_evidence(res, base: Dict[str, Any]) -> Dict[str, Any]:
     if getattr(res, "mapspec_fingerprint", None) is not None:
         base["mapspec_fingerprint"] = res.mapspec_fingerprint
     base["runtime_observation_seq"] = getattr(res, "runtime_observation_seq", 0)
+    base["mutation_revision"] = getattr(res, "mutation_revision", 0)
     if res.is_error:
         base["message"] = res.error_msg
         if res.correction_hint:
@@ -113,29 +118,61 @@ class MapSpecStore:
         geojson_data: Any,
     ) -> Dict[str, Any]:
         from app.services.spatial_meta_profiler import profile_geojson_source
-        from app.services.mapspec_source import store_data
+        if isinstance(geojson_data, str) and geojson_data.startswith("ref:"):
+            canonical_ref = await session_data_manager.resolve_alias(session_id, geojson_data)
+            descriptor = await session_data_manager.get_ref_descriptor(
+                session_id, canonical_ref
+            )
+            if not isinstance(descriptor, dict):
+                raise ValueError("source ref is missing or not owned by this session")
+            profile = {
+                "bbox": descriptor.get("bbox"),
+                "crs": None,
+                "crs_status": "unknown",
+                "featureCount": descriptor.get("feature_count"),
+                "geometryTypes": descriptor.get("geometry_types") or [],
+                "fields": {},
+                "fields_status": "unknown",
+                "suggestedView": {},
+                "temporalProfile": None,
+            }
+            ref_id = canonical_ref
+        else:
+            # Profiling is the one authorized full-data scan. Persist the body
+            # once behind a session-owned ref; MapSpec/review retain metadata.
+            profile = await asyncio.to_thread(profile_geojson_source, geojson_data)
+            ref_id = (
+                await session_data_manager.store(session_id, geojson_data, prefix="geojson")
+                if isinstance(geojson_data, dict)
+                else None
+            )
 
-        mapspec = await self.get_mapspec(session_id)
-        if not mapspec:
-            res = await self.init_project(session_id)
-            mapspec = res["mapspec"]
+        profile_payload = json.dumps(
+            profile, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        source: Dict[str, Any] = {
+            "type": "geojson",
+            "profile": profile,
+            "profile_fingerprint": "profile-sha256:" + hashlib.sha256(profile_payload).hexdigest(),
+        }
+        if ref_id:
+            source.update({
+                "ref": ref_id,
+                "ref_id": ref_id,
+                "data_fingerprint": "ref-sha256:" + hashlib.sha256(ref_id.encode()).hexdigest(),
+            })
+        elif isinstance(geojson_data, str):
+            source["url"] = geojson_data
+            source["data_fingerprint"] = (
+                "url-sha256:" + hashlib.sha256(geojson_data.encode()).hexdigest()
+            )
 
-        # profile_geojson_source loops every feature in pure Python — offload
-        # so a large inline GeoJSON can't block the event loop.
-        profile = await asyncio.to_thread(profile_geojson_source, geojson_data)
-
-        if "sources" not in mapspec:
-            mapspec["sources"] = {}
-        if source_id not in mapspec["sources"]:
-            mapspec["sources"][source_id] = {"type": "geojson"}
-
-        mapspec["sources"][source_id]["profile"] = profile
-        if isinstance(geojson_data, dict):
-            store_data(mapspec["sources"][source_id], geojson_data)
-        elif isinstance(geojson_data, str) and (geojson_data.startswith("http") or geojson_data.startswith("/")):
-            store_data(mapspec["sources"][source_id], geojson_data)
-
-        await self.save_mapspec(session_id, mapspec)
+        res = await self.engine.apply_mutation(
+            session_id, UpsertSourceIntent(source_id=source_id, source=source)
+        )
+        if res.is_error:
+            raise RuntimeError(res.error_msg)
         return profile
 
     async def layer_upsert(

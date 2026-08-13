@@ -62,8 +62,26 @@ describe('cartographic runtime repair command', () => {
     );
     expect(updateLayer).toHaveBeenCalledWith(
       'runtime-result',
-      expect.objectContaining({ visible: true, _mapspecRepairActionId: 'ma-carto-1' }),
+      expect.objectContaining({
+        visible: true,
+        _mapspecFingerprint: 'carto-sha256:current',
+        _mapspecRepairActionId: 'ma-carto-1',
+      }),
     );
+  });
+
+  it('does not ACK a repair when no live MapLibre layer matched', () => {
+    const { ctx, updateLayer } = context({
+      id: 'runtime-result',
+      _mapspecFingerprint: 'carto-sha256:current',
+    });
+    (ctx.map as any).getStyle = () => ({ layers: [] });
+
+    const result = layerCommands.cartographic_runtime_repair.run(ctx);
+
+    expect(result).toEqual({ status: 'failed', error: 'target_not_found' });
+    expect(renderer.updateLayerStyle).not.toHaveBeenCalled();
+    expect(updateLayer).not.toHaveBeenCalled();
   });
 
   it('does not overwrite a newer user change or stale MapSpec generation', () => {
@@ -72,6 +90,21 @@ describe('cartographic runtime repair command', () => {
       _mapspecFingerprint: 'carto-sha256:current',
     });
     hud.layers[0].visible = true;
+
+    const result = layerCommands.cartographic_runtime_repair.run(ctx);
+
+    expect(result).toEqual({ status: 'failed', error: 'superseded_by_user' });
+    expect(renderer.updateLayerStyle).not.toHaveBeenCalled();
+    expect(updateLayer).not.toHaveBeenCalled();
+  });
+
+  it('rejects a stale repair even when the user restored the old visible value', () => {
+    const { ctx, updateLayer } = context({
+      id: 'runtime-result',
+      _mapspecFingerprint: 'carto-sha256:current',
+      _intentGeneration: 8,
+    });
+    (ctx.params.repair_patches as any[])[0].before._intentGeneration = 7;
 
     const result = layerCommands.cartographic_runtime_repair.run(ctx);
 

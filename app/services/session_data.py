@@ -67,7 +67,7 @@ class MemorySessionStore(BaseSessionStore):
         # descriptor read is O(1) instead of O(features).
         try:
             from app.schemas.ref_descriptor import compute_descriptor
-            descriptor = compute_descriptor(ref_id, data)
+            descriptor = await asyncio.to_thread(compute_descriptor, ref_id, data)
             if session_id not in self._descriptors:
                 self._descriptors[session_id] = {}
             self._descriptors[session_id][ref_id] = descriptor.to_dict()
@@ -190,7 +190,11 @@ class MemorySessionStore(BaseSessionStore):
         """获取当前地图所有状态"""
         return self._map_state.get(session_id, {})
 
-    async def update_layer_in_state(self, session_id: str, layer_id: str, updates: dict) -> None:
+    def invalidate_local_cache(self, session_id: str) -> None:
+        """Memory is authoritative in-process, so no read cache can be stale."""
+        del session_id
+
+    async def update_layer_in_state(self, session_id: str, layer_id: str, updates: dict) -> bool:
         """更新地图状态中单个图层的属性"""
         # BUG-14: hold the lock across the whole read-modify-write so a
         # concurrent update/remove on the same layers list can't interleave and
@@ -203,14 +207,17 @@ class MemorySessionStore(BaseSessionStore):
                     break
             else:
                 layers.append({"id": layer_id, **updates})
-            await self.set_map_state(session_id, "layers", layers)
+            return await self.set_map_state(session_id, "layers", layers)
 
-    async def remove_layer_from_state(self, session_id: str, layer_id: str) -> None:
+    async def remove_layer_from_state(self, session_id: str, layer_id: str) -> bool:
         """从地图状态中移除指定图层"""
         # BUG-14: same read-modify-write race as update_layer_in_state.
         async with self._lock:
             layers = self._map_state.get(session_id, {}).get("layers", [])
-            await self.set_map_state(session_id, "layers", [layer for layer in layers if layer.get("id") != layer_id])
+            return await self.set_map_state(
+                session_id, "layers",
+                [layer for layer in layers if layer.get("id") != layer_id],
+            )
 
     async def append_event(self, session_id: str, event: str, data: dict) -> None:
         """追加用户操作到事件日志"""

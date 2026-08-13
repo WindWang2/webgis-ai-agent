@@ -161,6 +161,7 @@ export function useSSEStream(
   userLocation: { lng: number; lat: number; accuracy?: number } | null,
   sessionTokenRef: React.MutableRefObject<string | null>,
   rememberSessionToken?: (sessionId: string, token: string) => void,
+  getSessionToken?: (sessionId: string) => string | null,
 ) {
   const [messages, setMessages] = useState<
     Array<{
@@ -436,7 +437,7 @@ export function useSSEStream(
                 if (geojson && (geojson.type === 'FeatureCollection' || geojson.features)) {
                   // Guard: only write if the layer still exists with this ref (not removed and re-added with different data)
                   const current = useHudStore.getState().layers.find((l) => l.id === fetchRef);
-                  if (current) {
+                  if (current && current._refId === fetchRef) {
                     useHudStore.getState().updateLayer(fetchRef, { source: geojson });
                   }
                 }
@@ -617,7 +618,7 @@ export function useSSEStream(
   const bridge = useMapBridge(sessionId, dispatchAction, onEvent, sessionTokenRef, {
     maxAttempts: 2,
     baseDelayMs: 500,
-  });
+  }, getSessionToken);
   const isLoading = bridge.aiStatus === 'thinking' || bridge.aiStatus === 'acting';
 
   const handlePlanAction = useCallback((planId: string, action: 'approve' | 'revise' | 'reject') => {

@@ -189,9 +189,16 @@ async def test_benchmark_scenario_9_mapspec_cartography_integration():
     )
 
     session_id = "test_session_mapspec_001"
-    mapspec = await apply_decision_to_mapspec(session_id, result)
-    assert mapspec != {}
+    authored = await apply_decision_to_mapspec(session_id, result)
+    assert authored.get("success") is True
+    mapspec = authored.get("mapspec") or {}
     assert "layers" in mapspec or "sources" in mapspec
+    review = authored.get("cartographic_review") or {}
+    assert review.get("status") in {
+        "passed", "passed_with_warnings", "failed_repairable",
+        "failed_unrepairable", "repair_exhausted", "not_evaluated",
+    }
+    assert authored.get("mapspec_fingerprint")
 
 
 @pytest.mark.asyncio

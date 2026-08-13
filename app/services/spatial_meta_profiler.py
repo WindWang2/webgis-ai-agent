@@ -28,11 +28,17 @@ def _is_explicit_geographic_crs(crs: Optional[str]) -> bool:
   if not crs:
     return False
   normalized = crs.upper().replace(" ", "")
-  return (
-      normalized in {"EPSG:4326", "CRS:84", "OGC:CRS84"}
-      or normalized.endswith("::4326")
-      or normalized.endswith("/CRS84")
-  )
+  return normalized in {
+      "EPSG:4326",
+      "CRS:84",
+      "OGC:CRS84",
+      "URN:OGC:DEF:CRS:EPSG::4326",
+      "HTTP://WWW.OPENGIS.NET/DEF/CRS/EPSG/0/4326",
+      "HTTPS://WWW.OPENGIS.NET/DEF/CRS/EPSG/0/4326",
+      "URN:OGC:DEF:CRS:OGC:1.3:CRS84",
+      "HTTP://WWW.OPENGIS.NET/DEF/CRS/OGC/1.3/CRS84",
+      "HTTPS://WWW.OPENGIS.NET/DEF/CRS/OGC/1.3/CRS84",
+  }
 
 
 def _calculate_suggested_zoom(west: float, south: float, east: float, north: float) -> int:

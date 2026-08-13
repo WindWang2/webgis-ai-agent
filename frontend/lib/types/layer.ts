@@ -53,6 +53,8 @@ export interface Layer {
   _mapspecProjectionFingerprint?: string;
   /** Last AUTO_SAFE repair action applied to this generation. */
   _mapspecRepairActionId?: string;
+  /** Monotonic HUD mutation generation used to supersede stale repairs. */
+  _intentGeneration?: number;
   /** Bounded desired-state AUTO_SAFE repairs applied before runtime reconcile. */
   _cartographicRepairs?: Array<Record<string, unknown>>;
   created_at?: string;

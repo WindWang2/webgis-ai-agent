@@ -1255,7 +1255,9 @@ class ChatExecutionEngine:
                         if pf:
                             yield pf
                         _settle_cancel()  # cooperative cancel ≠ success
-                        yield sse_event("task_cancelled", {"task_id": task.id})
+                        yield sse_event("task_cancelled", {
+                            "task_id": task.id, "session_id": session_id,
+                        })
                         return
 
                     streamed_content_parts: list[str] = []
@@ -1357,7 +1359,11 @@ class ChatExecutionEngine:
                                 "tool": tool_name,
                                 "session_id": session_id,
                             })
-                            yield sse_event("tool_call", {"name": tool_name, "arguments": tool_args_raw})
+                            yield sse_event("tool_call", {
+                                "name": tool_name,
+                                "arguments": tool_args_raw,
+                                "session_id": session_id,
+                            })
 
                             pipeline_task = asyncio.create_task(
                                 # RUN-02: chat_stream already opened the step (start_step
@@ -1461,6 +1467,7 @@ class ChatExecutionEngine:
                                             "step_id": step.id,
                                             "tool": tool_name,
                                             "error": str(e),
+                                            "session_id": session_id,
                                         }
                                         if fc:
                                             step_error_payload["failure_class"] = fc
@@ -1546,6 +1553,7 @@ class ChatExecutionEngine:
                                             "step_id": step.id,
                                             "tool": tool_name,
                                             "error": outcome.error_msg,
+                                            "session_id": session_id,
                                         }
                                         if failure_class:
                                             step_error_payload["failure_class"] = failure_class
@@ -1606,7 +1614,9 @@ class ChatExecutionEngine:
                                     if pf:
                                         yield pf
                                     _settle_cancel()  # cooperative cancel ≠ success
-                                    yield sse_event("task_cancelled", {"task_id": task.id})
+                                    yield sse_event("task_cancelled", {
+                                        "task_id": task.id, "session_id": session_id,
+                                    })
                                     return
                         finally:
                             # 生成器被外部取消（GeneratorExit/CancelledError）时清理未完成任务。
@@ -1657,6 +1667,7 @@ class ChatExecutionEngine:
                             "task_id": task.id,
                             "step_count": len(task.steps),
                             "summary": content[:100],
+                            "session_id": session_id,
                         })
                         yield sse_event("done", {"session_id": session_id})
                         self._fire_and_forget(self._generate_title, session_id, message)
@@ -1667,7 +1678,11 @@ class ChatExecutionEngine:
                 pf = _maybe_plan_finalized_event()
                 if pf:
                     yield pf
-                yield sse_event("task_error", {"task_id": task.id, "error": "达到最大轮数"})
+                yield sse_event("task_error", {
+                    "task_id": task.id,
+                    "error": "达到最大轮数",
+                    "session_id": session_id,
+                })
                 yield sse_event("content", {"content": "达到最大工具调用轮数", "session_id": session_id})
                 yield sse_event("done", {"session_id": session_id})
             except (asyncio.CancelledError, GeneratorExit):

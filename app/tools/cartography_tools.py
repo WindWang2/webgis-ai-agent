@@ -26,6 +26,7 @@ _EVIDENCE_KEYS = (
   "mapspec_fingerprint",
   "runtime_observation_seq",
   "runtime_projection_fingerprint",
+  "mutation_revision",
 )
 
 
@@ -279,8 +280,8 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   ) -> dict:
     if not session_id:
       return {"success": False, "message": "Missing session_id"}
-    # source_profile adapter 不经引擎（无锁/校验），失败路径是 profiling 抛错；
-    # 捕获后返回 success:False + correction_hint，让 LLM 自愈而非拿到异常。
+    # The adapter profiles once, stores the body behind a session ref, then
+    # commits metadata through the serialized MapSpec lifecycle.
     try:
       profile = await mapspec_store.source_profile(session_id, source_id, geojson_data)
     except Exception as e:
@@ -430,7 +431,7 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
         commands.append({
           "command": "add_layer",
           "params": {
-            "layer_id": reviewed_layer.get("id"),
+            "layerId": reviewed_layer.get("id"),
             "result_ref": authoritative_ref,
             "mapspec_fingerprint": res.get("mapspec_fingerprint"),
           },

@@ -218,7 +218,8 @@ class ToolExecutionPipeline:
         elapsed_ms = (time.time() - start_time) * 1000
         if (
             outcome.status == "ok"
-            and normalize_tool_name(tool_name) == "webgis_layer_upsert"
+            and isinstance(outcome.raw_result, dict)
+            and outcome.raw_result.get("mapspec_fingerprint")
         ):
             # Both the legacy and Pi agents converge into the same existing
             # harness. Dynamic import avoids coupling the generic pipeline at
@@ -229,7 +230,7 @@ class ToolExecutionPipeline:
                 await record_cartographic_dispatch_evidence(
                     session_id,
                     tool_call_id,
-                    "webgis_layer_upsert",
+                    normalize_tool_name(tool_name),
                     args_dict,
                     outcome,
                     int(elapsed_ms),

@@ -407,9 +407,7 @@ async def test_source_profile_success(registry, clean_session):
 
 @pytest.mark.asyncio
 async def test_source_profile_failure_returns_correction_hint(registry, monkeypatch, clean_session):
-    """The source_profile adapter bypasses the engine (no lock/validation), so
-    its failure path is a raised exception — the wrapper must convert it into
-    success:False + correction_hint (self-healing) instead of letting it throw."""
+    """Profiling/lifecycle errors become self-healing structured failures."""
 
     async def _boom(session_id, source_id, geojson_data):
         raise ValueError("malformed geojson")

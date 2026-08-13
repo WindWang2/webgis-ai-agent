@@ -30,6 +30,7 @@ The production flow is:
 user intent
   → existing agent/tool planning
   → GIS result / session result ref
+  → existing dispatch seam authors displayable vector results into MapSpec
   → MapSpecLifecycleEngine candidate
   → deterministic desired-state review
   → bounded AUTO_SAFE presentation repair
@@ -44,6 +45,18 @@ user intent
 remains desired map intent. Session `map_state` remains the actual runtime
 observation surface. `CartographyReport`, `MapSpecResult`, `ToolCallEvidence`,
 and the existing harness evaluator carry the evidence.
+
+Displayable GeoJSON produced by existing GIS tools now enters the same MapSpec
+lifecycle automatically at `ToolDispatchService`; tools do not need to invent a
+second agent step merely to become reviewable. The dispatcher stores the result
+once behind the existing session ref, converts only presentation metadata, and
+removes the inline feature body before SSE/harness persistence. Rendered
+`heatmap_raster` results and spatial-decision simulation layers use the same
+desired-state review; they are never advertised as empty GeoJSON mounts.
+If authoring is unavailable, L1 execution remains truthful but cartography is
+explicitly `not_evaluated` and no runtime generation or map action is fabricated.
+A first MapSpec mutation that fails after save discards the residual candidate
+instead of inventing last-known-good state.
 
 ## Evidence model
 
@@ -86,12 +99,20 @@ Rules use metadata already stored on MapSpec sources and layers:
   convergence in a newer frontend observation;
 - desired-vs-live MapLibre source, layer, paint, and layout convergence.
 
-Native MapLibre expression arrays and geometry collections are surfaced as
-`not_evaluated` when the structured checker cannot prove their semantics.
+Native MapLibre expression arrays, geometry collections, and mixed-geometry
+sources that require runtime sublayer fan-out are surfaced as `not_evaluated`
+when the structured checker cannot prove their semantics.
 Descriptor-backed sources whose fields are unknown likewise remain
 `not_evaluated`; they do not fail by pretending an absent field list is
 complete. A fatal/page execution error from the existing headless runtime is a
 deterministic runtime failure, while canvas appearance remains heuristic.
+
+Desired visibility omitted from MapSpec is attributed to MapLibre's documented
+`layout.visibility = visible` default and explicitly labelled as desired-state
+contract evidence. It does not certify live visibility: L4 still requires the
+newer frontend observation. Analysis-originated layers without a distinct
+`provenance.result_ref` remain `not_evaluated`; an input `source_ref` can never
+stand in for the displayed result identity.
 
 Ordinary unclassified imagery does not require a thematic legend. An unknown
 CRS is never replaced with EPSG:4326. Coordinates without explicit CRS do not
@@ -106,7 +127,8 @@ The desired-state composer accepts only `AUTO_SAFE` presentation operations:
 - restore visibility only when `cartographic_intent.expected_visible` is
   explicit;
 - regenerate derived paint from an already-present authoritative
-  `legend_spec`.
+  `legend_spec` only when the current style already uses the same field and
+  classification method (pure color/break projection drift).
 
 Missing legends are not synthesized by guessing an inverse from paint.
 Classification breaks, fields, categories, analysis parameters, source data,
@@ -137,9 +159,18 @@ cancel/supersession, or stale generation terminates explicitly.
 Pre-turn frontend context is stored separately and cannot certify a mutation.
 After `MapSpecRuntime.reconcileAsync` settles, the frontend compares the locally
 derived desired runtime spec with live `getSource`/`getLayer`/paint/layout
-state and sends a bounded observation tagged with the backend MapSpec
-fingerprint. Dataset bodies and geometries are excluded. Streaming tokens and
-ordinary map pans do not trigger review. Identical observations are coalesced.
+state and the runtime's exact applied source generation, then sends a bounded
+observation tagged with the backend MapSpec fingerprint. Same-id source updates
+replace the live source and rebuild dependent layers; source existence alone is
+not convergence. Dataset bodies and geometries are excluded. Streaming tokens
+and ordinary map pans do not trigger review. Identical observations are
+coalesced. Each POST carries a client-monotonic generation, and the backend
+rejects a delayed older arrival without replaying any repair action.
+
+Style readiness uses a hard-bounded retry budget. If a slow basemap exceeds
+that budget, the runtime reports `style_load_timeout` and arms one event-driven
+reconciliation; a later real `styledata` readiness event reapplies the newest
+pending MapSpec and schedules a fresh observation without polling.
 
 Each MapSpec mutation records the observation sequence that existed before the
 mutation. Final runtime review requires a strictly newer frontend observation
@@ -150,11 +181,19 @@ stale ACK, stale review, wrong-session state, cancelled action, or superseded
 action cannot pass the current map. User/newer intent therefore wins over an
 old autonomous repair.
 
+The lifecycle also advances a session-scoped `mutation_revision` under the
+existing distributed lock. Durable harness context accepts only the revision
+that still equals authoritative MapSpec state; a late completion from an older
+revision cannot replace newer provenance or seed a process-local evaluation.
+Correctness-critical Redis reads invalidate the replica-local L1 cache after
+lock acquisition so a lock holder cannot validate against its own stale copy.
+
 An ACK remains separate from state comparison. A `store_mounted` ACK proves
 only the existing HUD-store action completed; it cannot prove rendering.
-Camera ACKs are recomputed from requested versus actual coordinates. The final
-runtime rules compare the newer live layer/style observation and camera state,
-so command acceptance alone is insufficient. Observation and ACK endpoints
+Camera ACKs are recomputed from requested versus actual coordinates. Missing
+viewport evidence is `not_evaluated`, while an observed mismatching camera is a
+failure. The final runtime rules compare the newer live layer/style observation
+and camera state, so command acceptance alone is insufficient. Observation and ACK endpoints
 both trigger the same coalesced evaluation, making their arrival order safe.
 
 Harness accumulators, readers, caches, and evaluation locks are scoped by the
@@ -163,18 +202,23 @@ tool pipeline feed the same harness seam; no fixed `"production"` evaluator or
 cross-session mutable accumulator is used.
 
 Pi callbacks are routed by a short-lived HMAC turn capability embedded in the
-agent turn and verified by the backend. Caller-supplied session IDs are ignored,
-and dispatch-result caches are keyed by the verified session plus tool-call ID.
-The frontend similarly retains anonymous owner tokens per session, and an ACK
-captures its session token when queued so a later workspace switch cannot
-retag the request.
+agent turn and verified by the backend. The route assigns and persists a real
+session before the first prompt. A correctly signed token is accepted only
+while its exact `(session_id, turn_id)` owns the live Pi prompt; completion,
+cancellation, and supersession retire it immediately. Caller-supplied routing
+fields are ignored, and dispatch-result caches are keyed by the verified
+session plus tool-call ID. The frontend similarly retains anonymous owner
+tokens per session, and an ACK resolves its token from the correlated session
+when queued so a later workspace switch cannot retag the request.
 
 ## Performance and retention
 
 Review fingerprints use a strict field allowlist and bounded profile summary.
 Inline GeoJSON, features, source URLs, arbitrary nested metadata, and other
-dataset bodies are excluded. Review never resolves a large ref or downloads
-full data. Pure desired reviews are cached by
+dataset bodies are excluded. Source/layer/profile collections are capped and
+carry omission counts plus stable digests, so a large MapSpec cannot create an
+unbounded evidence payload. Review never resolves a large ref or downloads full
+data. Pure desired reviews are cached by
 `(session_id, content_fingerprint)` with a bounded 128-entry cache. Completed
 runtime evaluations are cached only by session, runtime fingerprint,
 observation sequence, and a hash of terminal action/tool evidence; a new ACK,
