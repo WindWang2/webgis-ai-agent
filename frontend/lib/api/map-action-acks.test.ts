@@ -392,7 +392,7 @@ describe('map action ACK delivery (fault matrix)', () => {
     let capturedSignal: AbortSignal | undefined;
     let release: ((value: unknown) => void) | undefined;
     const fetchImpl = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
-      capturedSignal = init.signal;
+      capturedSignal = init.signal ?? undefined;
       return new Promise((resolve) => {
         release = resolve;
       });
