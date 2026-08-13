@@ -1,5 +1,6 @@
 """任务队列服务 - Celery 初始化"""
 import logging
+from collections import OrderedDict
 from celery import Celery
 from app.core.config import settings
 
@@ -55,13 +56,22 @@ class TaskQueueService:
     }
 
     # 审计 S34：celery task_id → user_id 映射，用于状态/撤销端点的所有权校验
-    _task_owners: dict[str, str] = {}
+    # P2 (F29): 该 dict 原本只增不减 —— 每次 Celery 提交都永久增长一个条目
+    # （explorer orchestrator 按任务注册），进程生命周期内无界。改为 LRU 有界：
+    # 超过 _OWNERS_MAX_ENTRIES 时逐出最旧条目。所有权校验在任务存续期内有效
+    # （过期条目回退为「不属于该用户」→ 端点 404，与「从未注册」语义一致，
+    # 因为 durable job 行才是任务中心的权威事实源）。
+    _task_owners: "OrderedDict[str, str]" = OrderedDict()
+    _OWNERS_MAX_ENTRIES = 20_000
 
     @classmethod
     def register_owner(cls, task_id: str, user_id: str) -> None:
         """记录 celery task_id 所属用户。仅在已知归属时调用。"""
         if user_id:
             cls._task_owners[task_id] = user_id
+            cls._task_owners.move_to_end(task_id)
+            while len(cls._task_owners) > cls._OWNERS_MAX_ENTRIES:
+                cls._task_owners.popitem(last=False)
 
     @classmethod
     def verify_owner(cls, task_id: str, user_id: str) -> bool:
@@ -69,6 +79,8 @@ class TaskQueueService:
         owner = cls._task_owners.get(task_id)
         if owner is None:
             return False
+        # 命中即刷新 recency，热任务不被 LRU 逐出。
+        cls._task_owners.move_to_end(task_id)
         return owner == user_id
 
     @staticmethod

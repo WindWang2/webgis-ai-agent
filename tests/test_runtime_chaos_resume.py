@@ -125,6 +125,7 @@ class _GatedEngine:
         map_state: Optional[dict] = None,
         skill_name: Optional[str] = None,
         user_id: Optional[str] = None,
+        project_id: Optional[str] = None,  # #348: route passes project_id through
     ) -> AsyncIterator[str]:
         self.stream_calls += 1
         if self._queue_second and self.stream_calls == 2:
