@@ -163,7 +163,15 @@ class ToolExecutionPipeline:
                 outcome = _error_outcome(e)
             is_error = (outcome.status == "error")
             pre_created_step.result = outcome.raw_result
-            if is_error:
+            if cancelled:
+                # F8: 取消 ≠ 失败 —— step 记 cancelled。终态不可变，与引擎侧
+                # （chat_stream 持有 pre_created step 的收尾权）谁先谁生效。
+                if task_id:
+                    try:
+                        self.tracker.cancel_step(task_id, pre_created_step.id)
+                    except Exception:
+                        pass
+            elif is_error:
                 pre_created_step.error = str(outcome.raw_result)
             pre_created_step.background_job_ids = list(origin.created_job_ids)
         else:
@@ -183,7 +191,15 @@ class ToolExecutionPipeline:
                 is_error = (outcome.status == "error")
                 if step is not None:
                     step.result = outcome.raw_result
-                    if is_error:
+                    if cancelled:
+                        # F8: 取消先记 cancelled；track_step 的 __aexit__ 随后
+                        # complete_step 会因终态不可变而空操作。
+                        if task_id:
+                            try:
+                                self.tracker.cancel_step(task_id, step.id)
+                            except Exception:
+                                pass
+                    elif is_error:
                         step.error = str(outcome.raw_result)
                     step.background_job_ids = list(origin.created_job_ids)
 

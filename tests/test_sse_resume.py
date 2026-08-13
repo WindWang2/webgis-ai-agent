@@ -250,7 +250,12 @@ async def test_resume_after_completion_all_events_seen_terminates(monkeypatch):
 async def test_resume_after_aborted_turn_replays_then_errors(monkeypatch):
     """A turn cut by a client disconnect (server aborts the prompt; no terminal
     was produced) resumes as: replay the partial content, then a terminal
-    ``error`` — partial content is never presented as a complete answer."""
+    ``error`` — partial content is never presented as a complete answer.
+
+    P2 (round-2 review): the anonymous (''-key) resume uses ``last_event_id=1``
+    — the client demonstrably received event 1 before the disconnect. Resuming
+    from 0 is now refused for anonymous sessions (no proof of prior contact),
+    so a reconnect must always carry the last id it actually saw."""
     bridge = _AbortableBridge()
     monkeypatch.setattr(chat_route, "USE_NEW_AGENT", True)
     monkeypatch.setattr(chat_route, "pi_bridge", bridge)
@@ -275,13 +280,14 @@ async def test_resume_after_aborted_turn_replays_then_errors(monkeypatch):
     assert buffer.terminal_event is None
 
     resumed, bridge_after = await _collect_route(
-        monkeypatch, bridge, last_event_id=0
+        monkeypatch, bridge, last_event_id=1
     )
     assert bridge_after.prompt_calls == 1, "resume must not re-execute the aborted turn"
     ids = [_event_id(b) for b in resumed]
-    # Buffered partial turn (task_start/token/step_result) replayed in order,
-    # then the synthesized error terminal (no id — not part of the turn).
-    assert ids[:3] == [1, 2, 3], f"replay must deliver the buffered partial turn, got {ids}"
+    # Buffered partial turn (task_start/token/step_result) replayed after the
+    # client's last-seen id (1), then the synthesized error terminal (no id —
+    # not part of the turn).
+    assert ids == [2, 3, None], f"replay must deliver the buffered partial turn, got {ids}"
     assert ids[-1] is None
     assert _event_type(resumed[-1]) == "error"
     assert '"resumed": true' in resumed[-1]

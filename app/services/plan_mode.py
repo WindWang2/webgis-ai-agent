@@ -32,6 +32,22 @@ from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
+_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "partially_completed"})
+
+
+async def _cancel_wave_tasks(wave_tasks: set[asyncio.Task]) -> None:
+    """取消并回收当前波次的 pending 任务（F6 收敛前的最后一步）。
+
+    镜像 execution_engine 的 finally 清理模式：外层被取消 / 内部异常时，
+    GIS 工具不能在 turn 结束后继续产生副作用，pending 任务必须被取消并
+    await 回收。两个 except 子句共用。
+    """
+    for t in wave_tasks:
+        if not t.done():
+            t.cancel()
+    if wave_tasks:
+        await asyncio.gather(*wave_tasks, return_exceptions=True)
+
 
 # ─────────────────── per-plan 执行锁（P1-C + 跨进程 claim） ───────────────────
 # 把 execute_plan 的「status 检查 → running 写入 → 执行」整段按 plan 串行化，
@@ -313,10 +329,25 @@ async def update_plan_status(session_id: str, plan_id: str, **updates: Any) -> N
 
     每次写回都会自动刷新 ``__updated_at__``（stale-running 判定用），除非
     调用方显式传了该字段。
+
+    首达终态获胜 (P2)：一旦 completed/failed/cancelled，后到的状态写入（包括
+    running「复活」）全部忽略。
     """
     plan_data = await load_plan(session_id, plan_id)
     if plan_data is None:
         logger.warning(f"update_plan_status: plan {plan_id} 不存在")
+        return
+    current_status = plan_data.get("__status__")
+    new_status = updates.get("__status__")
+    if (
+        new_status is not None
+        and current_status in _TERMINAL_STATUSES
+        and new_status != current_status
+    ):
+        logger.warning(
+            f"update_plan_status: plan {plan_id} 已处于终态 {current_status}，"
+            f"忽略后到的 {new_status} 覆盖（首达终态获胜）",
+        )
         return
     updates.setdefault("__updated_at__", time.time())
     plan_data.update(updates)
@@ -657,179 +688,210 @@ async def _execute_plan_locked(
                 in_degree[step.id] += 1
 
     ready: list[str] = [sid for sid, d in in_degree.items() if d == 0]
+    wave_tasks: set[asyncio.Task] = set()
 
-    while ready:
-        # 同一波次：入度均为 0 的独立步骤，按拓扑序确定排布
-        wave = sorted(ready, key=topo_idx.__getitem__)
-        ready = []
+    try:
+        while ready:
+            # 同一波次：入度均为 0 的独立步骤，按拓扑序确定排布
+            wave = sorted(ready, key=topo_idx.__getitem__)
+            ready = []
 
-        # 波次内 args 解析：只依赖已完成步骤，解析失败即中止本波次
-        resolved_args: dict[str, dict] = {}
-        for sid in wave:
-            step = step_by_id[sid]
-            try:
-                r = resolve_arg_refs(step.args, step_results)
-            except MissingRefError as e:
-                hint = str(e)
-                await _write_terminal(
-                    __status__=_failure_status(),
-                    __failed_step__=sid,
-                    __error__=hint,
-                    __failure_class__="missing_ref",
-                    __step_results__=await _persist_step_results(session_id, plan_id, step_results),
-                )
-                return _fail(
-                    sid,
-                    f"步骤 {sid!r} 引用解析失败: {hint}",
-                    failure_class="missing_ref",
-                    recovery_action="reuse_ref",
-                    correction_hint=hint,
-                )
-            except Exception as e:  # noqa: BLE001
-                await _write_terminal(
-                    __status__=_failure_status(),
-                    __failed_step__=sid,
-                    __error__=f"args 解析异常: {e}",
-                    __step_results__=await _persist_step_results(session_id, plan_id, step_results),
-                )
-                return _fail(
-                    sid,
-                    f"步骤 {sid!r} args 解析异常: {e}",
-                    failure_class="internal",
-                    recovery_action="replan_remaining",
-                )
-            if not isinstance(r, dict):
-                await _write_terminal(
-                    __status__=_failure_status(),
-                    __failed_step__=sid,
-                    __error__=f"args 解析后不是 dict: {type(r).__name__}",
-                    __step_results__=await _persist_step_results(session_id, plan_id, step_results),
-                )
-                return _fail(
-                    sid,
-                    f"步骤 {sid!r} args 解析后不是 dict",
-                    failure_class="validation",
-                    recovery_action="correct_args",
-                )
-
-            resolved_args[sid] = r
-
-        # 并发 dispatch 整个波次。注意：Python 3.12 的 asyncio.as_completed
-        # yield 的是内部 _wait_for_one 协程而非原始 Task，无法映射回 sid；
-        # 因此改用 asyncio.wait(FIRST_COMPLETED)，它返回原始 Task 对象。
-        tasks = {
-            sid: asyncio.create_task(
-                registry.dispatch(
-                    step_by_id[sid].tool, resolved_args[sid], session_id=session_id
-                )
-            )
-            for sid in wave
-        }
-        task_to_sid = {t: sid for sid, t in tasks.items()}
-
-        wave_successes: dict[str, Any] = {}
-        # (sid, error, last_result, failure_class, recovery_action)
-        failure: Optional[tuple[str, str, Optional[Any], Optional[str], Optional[str]]] = None
-        pending: set[asyncio.Task] = set(tasks.values())
-        while pending:
-            done, pending = await asyncio.wait(
-                pending, return_when=asyncio.FIRST_COMPLETED
-            )
-            for t in done:
-                sid = task_to_sid[t]
+            # 波次内 args 解析：只依赖已完成步骤，解析失败即中止本波次
+            resolved_args: dict[str, dict] = {}
+            for sid in wave:
+                step = step_by_id[sid]
                 try:
-                    result = t.result()
-                except asyncio.CancelledError:
-                    continue  # 外部取消（如引擎关闭），忽略该任务
-                except OperationCancelled as e:
-                    # P1-C：用户取消不是工具故障 —— 写终态 cancelled（terminal），
-                    # 用 logger.info 记录（不是 exception）。走 _write_terminal：
-                    # 若计划已在途中被 superseded，保留 superseded 不被覆盖。
-                    logger.info(f"[PlanMode] plan {plan_id} 执行被取消: {e}")
+                    r = resolve_arg_refs(step.args, step_results)
+                except MissingRefError as e:
+                    hint = str(e)
                     await _write_terminal(
-                        __status__="cancelled",
-                        __error__=str(e) or "用户取消",
+                        __status__=_failure_status(),
+                        __failed_step__=sid,
+                        __error__=hint,
+                        __failure_class__="missing_ref",
                         __step_results__=await _persist_step_results(session_id, plan_id, step_results),
                     )
-                    return {
-                        "success": False,
-                        "plan_id": plan_id,
-                        "status": "cancelled",
-                        "error": f"plan {plan_id} 已取消",
-                        "executed": _ordered_executed(),
-                        "results": step_results,
-                        "failure_class": "cancelled",
-                    }
-                except Exception as e:
-                    logger.exception(f"[PlanMode] step {sid} raised")
-                    fc, ra = _classify_failure(exception=e)
-                    failure = (sid, str(e), None, fc, ra)
-                    break
-                # 工具返回 success=False（V3.x Exception As Thought 包装）也视为失败
-                if isinstance(result, dict) and result.get("success") is False:
-                    err = result.get("message") or result.get("error", "tool failed")
-                    fc, ra = _classify_failure(result=result)
-                    failure = (sid, err, result, fc, ra)
-                    break
-                wave_successes[sid] = result
-            if failure is not None:
-                break
+                    return _fail(
+                        sid,
+                        f"步骤 {sid!r} 引用解析失败: {hint}",
+                        failure_class="missing_ref",
+                        recovery_action="reuse_ref",
+                        correction_hint=hint,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    await _write_terminal(
+                        __status__=_failure_status(),
+                        __failed_step__=sid,
+                        __error__=f"args 解析异常: {e}",
+                        __step_results__=await _persist_step_results(session_id, plan_id, step_results),
+                    )
+                    return _fail(
+                        sid,
+                        f"步骤 {sid!r} args 解析异常: {e}",
+                        failure_class="internal",
+                        recovery_action="replan_remaining",
+                    )
+                if not isinstance(r, dict):
+                    await _write_terminal(
+                        __status__=_failure_status(),
+                        __failed_step__=sid,
+                        __error__=f"args 解析后不是 dict: {type(r).__name__}",
+                        __step_results__=await _persist_step_results(session_id, plan_id, step_results),
+                    )
+                    return _fail(
+                        sid,
+                        f"步骤 {sid!r} args 解析后不是 dict",
+                        failure_class="validation",
+                        recovery_action="correct_args",
+                    )
 
-        # 失败处理：按本函数契约（见 docstring / line 252），同波次已 dispatch 的
-        # 兄弟步骤应跑到完成、其成功结果计入 executed；"立即中止"指不再启动 *新波次*。
-        # 此前这里 cancel 了 pending 兄弟，在较慢的 runner 上 s2 快速失败会 race 掉
-        # 即将完成的 s1，导致 flaky executed=[]（master CI 间歇性失败）。
-        if failure is not None and pending:
-            done_siblings, _ = await asyncio.wait(pending)  # 不 cancel，让兄弟完成
-            for t in done_siblings:
-                sid_sib = task_to_sid.get(t)
-                if sid_sib is None:
-                    continue
-                try:
-                    r_sib = t.result()
-                except Exception:
-                    continue  # 兄弟也失败；已记录首个 failure，忽略
-                if isinstance(r_sib, dict) and r_sib.get("success") is not False:
-                    wave_successes[sid_sib] = r_sib
+                resolved_args[sid] = r
 
-        # 按拓扑序提交成功结果（确定性）
-        for sid in wave:
-            if sid in wave_successes:
-                step_results[sid] = wave_successes[sid]
-
-        if failure is not None:
-            sid, err, last_result, fc, ra = failure
-            updates: dict[str, Any] = {
-                "__status__": _failure_status(),
-                "__failed_step__": sid,
-                "__error__": err,
-                # design-v3 §4：失败也保留已完成结果，供下次 execute_plan resume。
-                # P3 #1：持久化 slim 摘要（完整结果在 ref:planresult-*）。
-                "__step_results__": await _persist_step_results(session_id, plan_id, step_results),
+            # 并发 dispatch 整个波次。注意：Python 3.12 的 asyncio.as_completed
+            # yield 的是内部 _wait_for_one 协程而非原始 Task，无法映射回 sid；
+            # 因此改用 asyncio.wait(FIRST_COMPLETED)，它返回原始 Task 对象。
+            tasks = {
+                sid: asyncio.create_task(
+                    registry.dispatch(
+                        step_by_id[sid].tool, resolved_args[sid], session_id=session_id
+                    )
+                )
+                for sid in wave
             }
-            if fc is not None:
-                updates["__failure_class__"] = fc
-            await _write_terminal(**updates)
-            return _fail(sid, err, last_result, failure_class=fc, recovery_action=ra)
+            wave_tasks = set(tasks.values())
+            task_to_sid = {t: sid for sid, t in tasks.items()}
 
-        # 波次完成 → 推进依赖图，解锁下一波次
-        for sid in wave:
-            for nxt in edges[sid]:
-                in_degree[nxt] -= 1
-                if in_degree[nxt] == 0:
-                    ready.append(nxt)
+            wave_successes: dict[str, Any] = {}
+            # (sid, error, last_result, failure_class, recovery_action)
+            failure: Optional[tuple[str, str, Optional[Any], Optional[str], Optional[str]]] = None
+            pending: set[asyncio.Task] = set(tasks.values())
+            while pending:
+                done, pending = await asyncio.wait(
+                    pending, return_when=asyncio.FIRST_COMPLETED
+                )
+                for t in done:
+                    sid = task_to_sid[t]
+                    try:
+                        result = t.result()
+                    except asyncio.CancelledError:
+                        continue  # 外部取消（如引擎关闭），忽略该任务
+                    except OperationCancelled as e:
+                        # P1-C：用户取消不是工具故障 —— 写终态 cancelled（terminal），
+                        # 用 logger.info 记录（不是 exception）。走 _write_terminal：
+                        # 若计划已在途中被 superseded，保留 superseded 不被覆盖。
+                        logger.info(f"[PlanMode] plan {plan_id} 执行被取消: {e}")
+                        await _write_terminal(
+                            __status__="cancelled",
+                            __error__=str(e) or "用户取消",
+                            __step_results__=await _persist_step_results(session_id, plan_id, step_results),
+                        )
+                        return {
+                            "success": False,
+                            "plan_id": plan_id,
+                            "status": "cancelled",
+                            "error": f"plan {plan_id} 已取消",
+                            "executed": _ordered_executed(),
+                            "results": step_results,
+                            "failure_class": "cancelled",
+                        }
+                    except Exception as e:
+                        logger.exception(f"[PlanMode] step {sid} raised")
+                        fc, ra = _classify_failure(exception=e)
+                        failure = (sid, str(e), None, fc, ra)
+                        break
+                    # 工具返回 success=False（V3.x Exception As Thought 包装）也视为失败
+                    if isinstance(result, dict) and result.get("success") is False:
+                        err = result.get("message") or result.get("error", "tool failed")
+                        fc, ra = _classify_failure(result=result)
+                        failure = (sid, err, result, fc, ra)
+                        break
+                    wave_successes[sid] = result
+                if failure is not None:
+                    break
 
-    await _write_terminal(
-        __status__="completed",
-        __step_results__=await _persist_step_results(session_id, plan_id, step_results),
-    )
-    return {
-        "success": True,
-        "plan_id": plan_id,
-        "status": "completed",
-        "executed": _ordered_executed(),
-        "results": step_results,
-    }
+            # 失败处理：按本函数契约（见 docstring / line 252），同波次已 dispatch 的
+            # 兄弟步骤应跑到完成、其成功结果计入 executed；"立即中止"指不再启动 *新波次*。
+            # 此前这里 cancel 了 pending 兄弟，在较慢的 runner 上 s2 快速失败会 race 掉
+            # 即将完成的 s1，导致 flaky executed=[]（master CI 间歇性失败）。
+            if failure is not None and pending:
+                done_siblings, _ = await asyncio.wait(pending)  # 不 cancel，让兄弟完成
+                for t in done_siblings:
+                    sid_sib = task_to_sid.get(t)
+                    if sid_sib is None:
+                        continue
+                    try:
+                        r_sib = t.result()
+                    except Exception:
+                        continue  # 兄弟也失败；已记录首个 failure，忽略
+                    if isinstance(r_sib, dict) and r_sib.get("success") is not False:
+                        wave_successes[sid_sib] = r_sib
+
+            # 按拓扑序提交成功结果（确定性）
+            for sid in wave:
+                if sid in wave_successes:
+                    step_results[sid] = wave_successes[sid]
+
+            if failure is not None:
+                sid, err, last_result, fc, ra = failure
+                updates: dict[str, Any] = {
+                    "__status__": _failure_status(),
+                    "__failed_step__": sid,
+                    "__error__": err,
+                    # design-v3 §4：失败也保留已完成结果，供下次 execute_plan resume。
+                    # P3 #1：持久化 slim 摘要（完整结果在 ref:planresult-*）。
+                    "__step_results__": await _persist_step_results(session_id, plan_id, step_results),
+                }
+                if fc is not None:
+                    updates["__failure_class__"] = fc
+                await _write_terminal(**updates)
+                return _fail(sid, err, last_result, failure_class=fc, recovery_action=ra)
+
+            # 波次完成 → 推进依赖图，解锁下一波次
+            for sid in wave:
+                for nxt in edges[sid]:
+                    in_degree[nxt] -= 1
+                    if in_degree[nxt] == 0:
+                        ready.append(nxt)
+
+        await _write_terminal(
+            __status__="completed",
+            __step_results__=await _persist_step_results(session_id, plan_id, step_results),
+        )
+        return {
+            "success": True,
+            "plan_id": plan_id,
+            "status": "completed",
+            "executed": _ordered_executed(),
+            "results": step_results,
+        }
+    except asyncio.CancelledError:
+        # 外层被取消（客户端断连等）：取消并回收本波次 pending 任务，
+        # 状态收敛到 cancelled 后原样上抛（不吞取消）。
+        await _cancel_wave_tasks(wave_tasks)
+        try:
+            await _write_terminal(
+                __status__="cancelled",
+                __error__="cancelled",
+                __step_results__=await _persist_step_results(session_id, plan_id, step_results),
+            )
+        except Exception as e:  # noqa: BLE001 —— 收敛写失败不能替换 CancelledError
+            logger.warning(f"[PlanMode] 取消后计划状态收敛写失败: {e}")
+        raise
+    except Exception as e:  # noqa: BLE001
+        # 非预期的内部异常：同样回收波次任务并把状态收敛到终态，
+        # 避免计划永久卡在 running。
+        await _cancel_wave_tasks(wave_tasks)
+        logger.exception(f"[PlanMode] execute_plan_async aborted: {e}")
+        try:
+            await _write_terminal(
+                __status__=_failure_status(),
+                __error__=f"执行异常: {e}",
+                __step_results__=await _persist_step_results(session_id, plan_id, step_results),
+            )
+        except Exception as e2:  # noqa: BLE001 —— 收敛写失败不能替换原始异常
+            logger.warning(f"[PlanMode] 失败后计划状态收敛写失败: {e2}")
+        raise
+
 
 
 def _recovery_action_for_class(failure_class: str) -> Optional[str]:

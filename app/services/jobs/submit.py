@@ -19,6 +19,7 @@ import json
 import logging
 from typing import Any, Optional
 
+from app.services.jobs.cancellation import registry as cancellation_registry
 from app.services.jobs.context import current_origin
 from app.services.jobs.lifecycle import JobKind, JobStatus
 from app.services.jobs.store import DurableJobStore
@@ -101,6 +102,10 @@ def submit_durable_job(
         existing_celery_id = job.celery_task_id
         already_terminal = DurableJobStore.is_terminal_job(job)
         db.commit()
+
+    # F17: 提交时注册进程内取消 token —— 否则 TaskTracker.cancel() 的级联
+    # cancellation_registry.cancel(job_id) 找不到 token，变成空操作。
+    cancellation_registry.register(job_id)
 
     if origin is not None:
         origin.record_job(job_id)

@@ -69,6 +69,99 @@ def _has_non_plan_refs(refs: dict) -> bool:
     return False
 
 
+#: F9/F28: 非流式工具波被抢占式取消时，未完成任务的结果槽用哨兵占位 ——
+#: 结果对齐循环据此跳过（不写成工具失败），孤儿 tool_call 由
+#: _repair_orphaned_tool_calls 以「已取消」补齐。
+_CANCELLED_TOOL = object()
+
+
+class SessionClearingError(RuntimeError):
+    """Raised when a new turn is started for a session that is mid-``clear_session``.
+
+    P1: clear_session deletes the conversation rows and cancels the in-flight
+    turn; a turn that starts in that window would race the delete — either
+    writing into a deleted conversation (resurrecting rows) or being cancelled
+    mid-start. Callers should surface this as a clean refusal, not retry into
+    the race.
+    """
+
+
+#: F15: fire-and-forget 背景任务的进程内注册表 —— main.py lifespan shutdown
+#: 通过 drain_background_tasks() 等待它们收尾，避免任务跨事件循环泄漏。
+_background_tasks: set = set()
+
+
+def _track_background_task(task) -> None:
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+async def drain_background_tasks(timeout: float = 5.0) -> None:
+    """等待 fire-and-forget 背景任务收尾（lifespan shutdown 调用）。
+
+    P1 round-2（原实现两个缺陷）：
+      (a) 超时只是记日志返回 —— 慢 _generate_title 会在 lifespan 关闭共享
+          client / dispose 引擎之后继续写死资源。现在超时后 cancel 剩余任务
+          并短暂 gather（best-effort，try/except TimeoutError）。
+      (b) 模块级注册表跨事件循环粘连 —— 绑定已关闭/其它 loop 的任务永不完成，
+          之后每次 drain 都把它算进去吃满整个 timeout。现在只收集绑定当前
+          running loop 的任务，陈旧条目（get_loop() 不是当前 loop）直接从
+          注册表丢弃并记日志。
+    cancellation-safe：等待期间调用方自己被取消时 CancelledError 正常传播。
+    """
+    loop = asyncio.get_running_loop()
+    stale: list = []
+    current: list = []
+    for t in list(_background_tasks):
+        if t.done():
+            continue
+        try:
+            bound_loop = t.get_loop()
+        except RuntimeError:
+            bound_loop = None
+        if bound_loop is not loop:
+            stale.append(t)
+        else:
+            current.append(t)
+    if stale:
+        for t in stale:
+            _background_tasks.discard(t)
+        logger.warning(
+            "drain_background_tasks: dropped %d stale background task(s) bound "
+            "to a closed/different event loop; they can never complete here",
+            len(stale),
+        )
+    if not current:
+        return
+    _done, pending = await asyncio.wait(current, timeout=timeout)
+    if pending:
+        logger.warning(
+            "drain_background_tasks: %d background tasks still pending after "
+            "%.1fs — cancelling them (best-effort)",
+            len(pending), timeout,
+        )
+        for t in pending:
+            t.cancel()
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*pending, return_exceptions=True), timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            pass
+
+
+def _lock_in_use(lock: asyncio.Lock) -> bool:
+    """锁被持有或有等待者时为 True —— 这样的锁不可逐出/丢弃（F1）。
+
+    只看 ``locked()`` 有一个 check-then-pop 竞态：release() 唤醒等待者用的是
+    call_soon，等待者还没重新拿到锁的窗口里 locked() 已经是 False。
+    """
+    if lock.locked():
+        return True
+    waiters = getattr(lock, "_waiters", None)
+    return bool(waiters)
+
+
 class ChatExecutionEngine:
     """Agent 对话与流式响应执行引擎"""
 
@@ -134,6 +227,22 @@ class ChatExecutionEngine:
         self._MAX_LOCKS = 200
         self._session_owner_tokens: LRUCache = LRUCache(capacity=_SESSION_CACHE_SIZE)
 
+        # P1: per-session 'clearing' marker + active-turn task registry.
+        # clear_session sets the marker BEFORE deleting rows so the in-flight
+        # turn's cleanup (repair + saves) cannot resurrect history; new turns
+        # for a marked session are refused cleanly. The task registry lets
+        # clear_session quiesce the cancelled turn (bounded) before clearing
+        # the marker.
+        self._clearing_sessions: set[str] = set()
+        self._active_turn_tasks: dict[str, asyncio.Task] = {}
+        self._clear_quiesce_timeout = float(_os.getenv("CLEAR_QUIESCE_TIMEOUT", "5.0"))
+        # P1: bounded cancel-and-await budget for the cancel/finally cleanup
+        # paths — a straggler tool that cannot be interrupted (worker thread
+        # parked in long GIS compute) must not hold the session lock for the
+        # worker's full duration; the bounded wait returns promptly and the
+        # straggler's result is discarded.
+        self._cancel_wait_timeout = float(_os.getenv("CANCEL_WAIT_TIMEOUT", "5.0"))
+
     def _select_tools(self, session_id: Optional[str], messages: list[dict]) -> Optional[list[dict]]:
         """选出本轮要推给 LLM 的工具 schema 列表。"""
         if self.catalog is not None:
@@ -195,8 +304,9 @@ class ChatExecutionEngine:
         import inspect
         if inspect.iscoroutinefunction(func):
             task = asyncio.create_task(func(*args, **kwargs))
+            _track_background_task(task)  # F15
             task.add_done_callback(lambda t: (
-                logger.error(f"Background async task failed: {t.exception()}") 
+                logger.error(f"Background async task failed: {t.exception()}")
                 if not t.cancelled() and t.exception() else None
             ))
         else:
@@ -206,6 +316,7 @@ class ChatExecutionEngine:
                 logger.error(f"Background sync task failed: {f.exception()}")
                 if f.exception() else None
             ))
+            _track_background_task(asyncio.wrap_future(future))  # F15
 
     def _db_msg_to_llm(self, msg) -> dict:
         """将 DB 消息转换成 LLM 格式 dict"""
@@ -225,8 +336,8 @@ class ChatExecutionEngine:
         self,
         session_id: str,
         user_id: Optional[str] = None,
-    ) -> list[dict]:
-        """从 DB 加载历史对话"""
+    ) -> Optional[list[dict]]:
+        """从 DB 加载历史对话。失败返回 None（F23：调用方不得缓存失败 stub）。"""
         try:
             history_svc = AsyncHistoryService()
             ctx = await history_svc.load_context(
@@ -239,7 +350,7 @@ class ChatExecutionEngine:
             return ctx.llm_messages
         except Exception as e:
             logger.warning(f"History: failed to load conversation {session_id}: {e}")
-            return [{"role": "system", "content": self._build_system_prompt()}]
+            return None
 
     def get_session_owner_token(self, session_id: str) -> Optional[str]:
         """取出并消费 session 的 owner_token（SEC-08）"""
@@ -279,6 +390,15 @@ class ChatExecutionEngine:
     def _build_last_analysis_context(self, messages: list[dict]) -> str:
         return _build_last_analysis_context(messages)
 
+    def _evict_idle_locks(self) -> None:
+        """逐出空闲 session 锁。被持有或有等待者的锁绝不可逐出（F1）。"""
+        if len(self._session_locks) > self._MAX_LOCKS:
+            evict_count = self._MAX_LOCKS // 4
+            for sid in list(self._session_locks.keys())[:evict_count]:
+                lock_to_evict = self._session_locks[sid]
+                if not _lock_in_use(lock_to_evict):
+                    self._session_locks.pop(sid, None)
+
     async def _get_or_create_session(
         self,
         session_id: str,
@@ -287,17 +407,18 @@ class ChatExecutionEngine:
         if session_id in self._sessions:
             return self._sessions[session_id]
 
-        if len(self._session_locks) > self._MAX_LOCKS:
-            evict_count = self._MAX_LOCKS // 4
-            for sid in list(self._session_locks.keys())[:evict_count]:
-                lock_to_evict = self._session_locks[sid]
-                if not lock_to_evict.locked():
-                    self._session_locks.pop(sid, None)
+        self._evict_idle_locks()
         lock = self._session_locks.setdefault(session_id, asyncio.Lock())
         async with lock:
-            if session_id not in self._sessions:
-                self._sessions[session_id] = await self._load_session_from_db(session_id, user_id=user_id)
-        return self._sessions[session_id]
+            if session_id in self._sessions:
+                return self._sessions[session_id]
+            loaded = await self._load_session_from_db(session_id, user_id=user_id)
+            if loaded is None:
+                # F23: DB 抖动时本轮降级为仅 system prompt 的临时历史，
+                # 但不写进缓存 —— 否则 DB 恢复后该会话仍永远顶着空历史。
+                return [{"role": "system", "content": self._build_system_prompt()}]
+            self._sessions[session_id] = loaded
+            return loaded
 
     def _apply_skill(self, messages: list[dict], skill_name: Optional[str]) -> None:
         """注入或刷新 Skill 指令"""
@@ -356,8 +477,81 @@ class ChatExecutionEngine:
             kept = turn + kept
         messages[:] = [messages[0], *kept]
 
+    async def _repair_orphaned_tool_calls(self, session_id: str, messages: list[dict]) -> None:
+        """F9: 补齐孤儿 assistant tool_calls 的取消占位 tool 消息。
+
+        cancel / disconnect 会打断「assistant(tool_calls) → N 条 tool 响应」的
+        配对（见 _trim_session_tail 的 turn 分组说明）：LLM API 拒绝带孤儿
+        tool_calls 的历史，下一轮调用直接报错，会话永久损坏。每条缺失的
+        tool_call_id 补一条「已取消」tool 消息 —— 内存与 DB 同步补齐。
+        幂等：已配对的 tool_call 不会重复补。
+        """
+        answered = {
+            m.get("tool_call_id") for m in messages if m.get("role") == "tool"
+        }
+        orphan_ids: list[str] = []
+        for m in messages:
+            if m.get("role") != "assistant":
+                continue
+            for tc in m.get("tool_calls") or []:
+                tc_id = tc.get("id") if isinstance(tc, dict) else None
+                if tc_id and tc_id not in answered and tc_id not in orphan_ids:
+                    orphan_ids.append(tc_id)
+        for tc_id in orphan_ids:
+            payload = "工具执行已被用户取消"
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc_id,
+                "content": payload,
+            })
+            await self._save_msg_async(session_id, "tool", "", None, payload, tc_id)
+
+    async def _persist_tool_messages(
+        self,
+        session_id: str,
+        pending_tools: list[dict],
+        completion_results: dict[str, dict],
+        standard_calls: list,
+        messages: list[dict],
+        tool_result_msgs: list[str],
+    ) -> None:
+        """把已完成工具的结果按原始 tc 顺序对齐 LLM 上下文 + 落库。
+
+        Phase 3（正常出口）与抢占式取消路径共用：取消路径在 Phase 3 之前
+        return，已完成的工具（F9: 已完成 ≠ 已取消）必须在 abort 前同样落库，
+        否则它们的 tool_call_id 会被 _repair_orphaned_tool_calls 误标成
+        「工具执行已被用户取消」—— 而工具可能已创建图层、已 spawn durable job，
+        首达终态使真实成功不可恢复。
+        """
+        for p in pending_tools:
+            res = completion_results.get(p["step"].id)
+            if res is None:
+                continue  # 极端取消场景：该工具未完成，跳过
+            tc = res["tc"]
+            msg_result_str = res["msg_result_str"]
+            tool_name = res["tool_name"]
+            if standard_calls:
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": msg_result_str,
+                })
+                db_save_content = msg_result_str[:100000] if len(msg_result_str) > 100000 else msg_result_str
+                await self._save_msg_async(session_id, "tool", "", None, db_save_content, tc["id"])
+            else:
+                tool_result_msgs.append(f"{tool_name}: {msg_result_str}")
+
     async def _save_msg_async(self, session_id: str, role: str, content: str, tool_calls=None, tool_result=None, tool_call_id=None, reasoning_content=None):
         """异步保存消息到数据库"""
+        if session_id in self._clearing_sessions:
+            # P1: clear_session 刚删了该会话的 conversation 行 —— 现在写入会
+            # 复活历史（SQLite: FK off → 孤儿 Message 行；Postgres: FK →
+            # IntegrityError 被下方吞掉）。clear 期间抑制 DB 写；在途 turn 的
+            # 内存 repair（_repair_orphaned_tool_calls 的 append）不受影响。
+            logger.debug(
+                "save_message suppressed for %s: session is being cleared", session_id
+            )
+            return
         try:
             if tool_result is not None and isinstance(tool_result, str) and len(tool_result) > 100000:
                 tool_result = tool_result[:100000] + "...[truncated]"
@@ -572,6 +766,10 @@ class ChatExecutionEngine:
         if not session_id:
             session_id = str(uuid.uuid4())
 
+        # P1: 快速路径拒绝 clearing 中的 session 的新 turn（避免
+        # _get_or_create_session 的 DB 副作用）；权威检查在持锁后再次执行。
+        self._reject_if_clearing(session_id)
+
         if map_state:
             await self._persist_map_state(session_id, map_state)
             from app.services.viewport_naming import schedule_populate_from_map_state
@@ -590,6 +788,10 @@ class ChatExecutionEngine:
         messages = await self._get_or_create_session(session_id, user_id=user_id)
         lock = self._get_session_lock(session_id)
         async with lock:
+            self._reject_if_clearing(session_id)
+            _task = asyncio.current_task()
+            if _task is not None:
+                self._active_turn_tasks[session_id] = _task
             try:
                 return await self._chat_locked(
                     message, session_id, messages, skill_name, user_id, project_id,
@@ -597,6 +799,9 @@ class ChatExecutionEngine:
             finally:
                 # design-v3：把本进程 canonical 计划（含打勾进度）持久化到 store。
                 await self._flush_plan(session_id)
+                # P1: the turn's cleanup drained — deregister the turn task so
+                # clear_session's quiesce doesn't wait on a finished turn.
+                self._active_turn_tasks.pop(session_id, None)
                 # C-F12: bound the in-memory tail once the turn's appends are
                 # complete (every exit path — return, exception, cancel).
                 self._trim_session_tail(messages)
@@ -681,25 +886,73 @@ class ChatExecutionEngine:
                     await self._save_msg_async(session_id, "assistant", content_text, tc_list, reasoning_content=reasoning)
 
                     tool_result_msgs: list[str] = []
-                    if len(tc_list) > 1:
-                        tasks = [
+                    # F28: 与流式路径（chat_stream 并行 wave）同款抢占式取消 ——
+                    # cancel token 点燃立即 cancel 在飞工具，而不是等它自然跑完。
+                    # 循环每轮重挂 cancel_watch：任一工具完成或取消点燃都会从
+                    # asyncio.wait 返回，取消在整波完成前始终被检查（旧实现单次
+                    # FIRST_COMPLETED wait 后直接 gather 整波 —— 多工具轮次里
+                    # 取消要等所有工具自然跑完才生效，抢占是死的）。
+                    tool_tasks = [
+                        asyncio.create_task(
                             self.tool_pipeline.execute_tool_call(
                                 tc, session_id, task.id, executed_tools,
                                 owner_id=user_id, owner_token=owner_token,
                             )
-                            for tc in tc_list
-                        ]
-                        exec_results = await asyncio.gather(*tasks, return_exceptions=True)
-                    else:
-                        exec_results = [
-                            await self.tool_pipeline.execute_tool_call(
-                                tc_list[0], session_id, task.id, executed_tools,
-                                owner_id=user_id, owner_token=owner_token,
+                        )
+                        for tc in tc_list
+                    ]
+                    cancel_watch: Optional[asyncio.Task] = None
+                    if task.cancel_token is not None:
+                        cancel_watch = asyncio.create_task(task.cancel_token.wait())
+                    exec_results: list = [_CANCELLED_TOOL] * len(tool_tasks)
+                    cancelled = False
+                    try:
+                        remaining: set = set(tool_tasks)
+                        while remaining:
+                            wait_set = set(remaining)
+                            if cancel_watch is not None:
+                                wait_set.add(cancel_watch)
+                            done, _pending = await asyncio.wait(
+                                wait_set, return_when=asyncio.FIRST_COMPLETED
                             )
-                        ]
+                            if cancel_watch is not None and cancel_watch in done:
+                                # F28: 抢占式取消 —— 同一批里已完成的工具先收走
+                                # 结果（F9: 已完成 ≠ 已取消），未完成的立即 cancel。
+                                cancelled = True
+                                for t in done & remaining:
+                                    idx = tool_tasks.index(t)
+                                    try:
+                                        exec_results[idx] = t.result()
+                                    except Exception as e:  # noqa: BLE001
+                                        exec_results[idx] = e
+                                # P1: 有界等待 —— 顽固 straggler 不能拖住会话锁
+                                await self._cancel_and_await(remaining)
+                                remaining = set()
+                                break
+                            done_tools = done & remaining
+                            remaining -= done_tools
+                            for t in done_tools:
+                                idx = tool_tasks.index(t)
+                                try:
+                                    exec_results[idx] = t.result()
+                                except Exception as e:  # noqa: BLE001
+                                    exec_results[idx] = e
+                    finally:
+                        # 外部取消（chat 协程被 cancel）时回收在飞工具与 watch。
+                        # P1: 有界等待 —— 顽固 straggler 不能拖住会话锁。
+                        await self._cancel_and_await(
+                            [t for t in tool_tasks if not t.done()]
+                        )
+                        if cancel_watch is not None and not cancel_watch.done():
+                            cancel_watch.cancel()
+                            await self._cancel_and_await([cancel_watch])
 
                     for tc, exec_res in zip(tc_list, exec_results):
+                        if exec_res is _CANCELLED_TOOL:
+                            continue  # 被抢占/未完成 —— 由 repair 以「已取消」补齐
                         if isinstance(exec_res, Exception):
+                            if cancelled:
+                                continue  # 取消路径：已完成但失败的工具不写失败消息
                             logger.error("Tool execution parallel exception for %s: %s", tc, exec_res)
                             llm_payload = f"Tool execution failed: {exec_res}"
                         else:
@@ -738,6 +991,12 @@ class ChatExecutionEngine:
                             "role": "user",
                             "content": "[工具执行结果]\n" + "\n".join(tool_result_msgs),
                         })
+
+                    if cancelled:
+                        # F9: 已完成工具的消息已在上方落库；这里只补真正孤儿的
+                        # tool_call（幂等），随后以取消收尾本轮。
+                        await self._repair_orphaned_tool_calls(session_id, messages)
+                        return {"session_id": session_id, "content": "任务已取消", **({"owner_token": owner_token} if owner_token else {})}
                     continue
                 else:
                     content = raw_content
@@ -752,20 +1011,62 @@ class ChatExecutionEngine:
             self.tracker.complete_task(task.id)
             return {"content": "达到最大工具调用轮数", "session_id": session_id, **({"owner_token": owner_token} if owner_token else {})}
         except (asyncio.CancelledError, GeneratorExit):
-            self.tracker.fail_task(task.id, "cancelled")
+            # F8: 取消必须呈现为 cancelled 终态，而不是 failed。
+            self.tracker.cancel(task.id)
+            # F9: 补齐孤儿 tool_call，避免会话历史永久损坏。
+            # P1: shield + 有界 wait_for —— 二次取消不能截断 repair 的中途写；
+            # GC 驱动的 GeneratorExit 也不会因 except 内的 suspend 报
+            # 'async generator ignored GeneratorExit'。aclose() 路径行为不变。
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(
+                        self._repair_orphaned_tool_calls(session_id, messages)
+                    ),
+                    timeout=self._cancel_wait_timeout,
+                )
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
             raise
         except Exception:
             self.tracker.fail_task(task.id, "non-streaming chat exception")
             raise
 
     def _get_session_lock(self, session_id: str) -> asyncio.Lock:
-        if len(self._session_locks) > self._MAX_LOCKS:
-            evict_count = self._MAX_LOCKS // 4
-            for sid in list(self._session_locks.keys())[:evict_count]:
-                lock_to_evict = self._session_locks[sid]
-                if not lock_to_evict.locked():
-                    self._session_locks.pop(sid, None)
+        self._evict_idle_locks()
         return self._session_locks.setdefault(session_id, asyncio.Lock())
+
+    def _reject_if_clearing(self, session_id: str) -> None:
+        """Raise SessionClearingError if the session is mid-clear_session.
+
+        P1: blocks NEW turn start for a clearing session — return a clean
+        error, not a race into the delete.
+        """
+        if session_id in self._clearing_sessions:
+            raise SessionClearingError(
+                f"session {session_id} is being cleared; start a new turn after it completes"
+            )
+
+    async def _cancel_and_await(self, tasks, timeout: Optional[float] = None) -> None:
+        """Cancel a batch of tool tasks and await them briefly (bounded).
+
+        P1: a straggler tool that cannot be interrupted (worker thread parked
+        in long GIS compute) would make ``await asyncio.gather(*tasks,
+        return_exceptions=True)`` hold the session lock for the worker's full
+        duration on cancel/disconnect. Cancel everything first, then await up
+        to ``timeout`` seconds so the turn's cancel/finally path returns
+        promptly and the session lock is released — stragglers finish whenever
+        their workers return and their results are discarded. Task-level
+        CancelledError is collected by asyncio.wait; a re-cancel of THIS task
+        propagates as before.
+        """
+        if not tasks:
+            return
+        if timeout is None:
+            timeout = self._cancel_wait_timeout
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        await asyncio.wait(tasks, timeout=timeout)
 
     async def chat_stream(
         self,
@@ -780,6 +1081,10 @@ class ChatExecutionEngine:
         if not session_id:
             session_id = str(uuid.uuid4())
 
+        # P1: 快速路径拒绝 clearing 中的 session 的新 turn（避免
+        # _get_or_create_session 的 DB 副作用）；权威检查在持锁后再次执行。
+        self._reject_if_clearing(session_id)
+
         # RUN-03: the session lock now covers the ENTIRE turn (not just
         # map_state setup), serializing concurrent requests on the same
         # session_id — messages.append / executed_tools writes were previously
@@ -793,6 +1098,10 @@ class ChatExecutionEngine:
         messages = await self._get_or_create_session(session_id, user_id=user_id)
         lock = self._get_session_lock(session_id)
         async with lock:
+            self._reject_if_clearing(session_id)
+            _task = asyncio.current_task()
+            if _task is not None:
+                self._active_turn_tasks[session_id] = _task
             if map_state:
                 await self._persist_map_state(session_id, map_state)
                 from app.services.viewport_naming import schedule_populate_from_map_state
@@ -984,6 +1293,25 @@ class ChatExecutionEngine:
                         task_to_pending = {p["task"]: p for p in pending_tools}
                         completion_results: dict[str, dict] = {}  # step.id -> {tc, msg_result_str}
 
+                        def _aborted_step_events() -> list[str]:
+                            """F7/F8: 取消/断连路径上把未完成的 step 记 cancelled
+                            （绝不留 running），并生成对应的 step_cancelled SSE 事件。"""
+                            evts: list[str] = []
+                            for p in pending_tools:
+                                if p["step"].id in completion_results:
+                                    continue
+                                try:
+                                    self.tracker.cancel_step(task.id, p["step"].id)
+                                except Exception:
+                                    continue
+                                evts.append(sse_event("step_cancelled", {
+                                    "task_id": task.id,
+                                    "step_id": p["step"].id,
+                                    "tool": p["tool_name"],
+                                    "session_id": session_id,
+                                }))
+                            return evts
+
                         # ADR-0052 抢占式取消：以前只在「某个工具跑完之后」才检查
                         # is_cancelled，所以用户点 Cancel 要等当前工具自然结束
                         # （长 GIS 计算 30–60s）。现在把 token.wait() 一起放进
@@ -1003,20 +1331,10 @@ class ChatExecutionEngine:
                                     wait_set, timeout=5.0, return_when=asyncio.FIRST_COMPLETED
                                 )
 
-                                if cancel_watch is not None and cancel_watch in done:
-                                    for r in remaining:
-                                        r.cancel()
-                                    await asyncio.gather(*remaining, return_exceptions=True)
-                                    remaining = set()
-                                    pf = _maybe_plan_finalized_event()
-                                    if pf:
-                                        yield pf
-                                    yield sse_event("task_cancelled", {"task_id": task.id})
-                                    return
-
                                 done_tools = done & remaining
                                 remaining -= done_tools
-                                if not done_tools:
+                                cancel_fired = cancel_watch is not None and cancel_watch in done
+                                if not done_tools and not cancel_fired:
                                     yield sse_event("keep_alive", {"message": "ping"})
                                     logger.debug("SSE Heartbeat sent for parallel tool wave")
                                     continue
@@ -1029,6 +1347,17 @@ class ChatExecutionEngine:
                                     try:
                                         exec_res = t.result()
                                     except asyncio.CancelledError:
+                                        # F7/F8: 被抢占取消的 step 记 cancelled，不留 running
+                                        try:
+                                            self.tracker.cancel_step(task.id, step.id)
+                                        except Exception:
+                                            pass
+                                        yield sse_event("step_cancelled", {
+                                            "task_id": task.id,
+                                            "step_id": step.id,
+                                            "tool": tool_name,
+                                            "session_id": session_id,
+                                        })
                                         continue
                                     except Exception as e:  # noqa: BLE001 防御（execute_tool_call 内部已兜底）
                                         logger.error(f"[chat_execution_engine] tool task raised for {tool_name}: {e}")
@@ -1089,7 +1418,21 @@ class ChatExecutionEngine:
 
                                     msg_result_str = outcome.llm_payload
 
-                                    if outcome.status == "repeated":
+                                    if getattr(exec_res, "cancelled", False):
+                                        # F8: 取消不是工具故障 —— step 记 cancelled
+                                        # 并发 step_cancelled，区别于 step_error。
+                                        try:
+                                            self.tracker.cancel_step(task.id, step.id)
+                                        except Exception:
+                                            pass
+                                        yield sse_event("step_cancelled", {
+                                            "task_id": task.id,
+                                            "step_id": step.id,
+                                            "tool": tool_name,
+                                            "session_id": session_id,
+                                        })
+                                        yield sse_event("tool_result", {"name": tool_name, "result": msg_result_str, "session_id": session_id})
+                                    elif outcome.status == "repeated":
                                         # Reviewer BLOCKING fix (RUN-02): chat_stream
                                         # owns the step lifecycle now (pre_created_step
                                         # skips the pipeline's track_step, whose
@@ -1148,52 +1491,58 @@ class ChatExecutionEngine:
                                         "tool_name": tool_name,
                                     }
 
-                                    if self.tracker.is_cancelled(task.id):
-                                        for r in remaining:
-                                            r.cancel()
-                                        await asyncio.gather(*remaining, return_exceptions=True)
-                                        pf = _maybe_plan_finalized_event()
-                                        if pf:
-                                            yield pf
-                                        yield sse_event("task_cancelled", {"task_id": task.id})
-                                        return
+                                # 取消（cancel_watch 点燃或 tracker is_cancelled）：
+                                # 先收割同一批里已完成的工具（F9: 已完成 ≠ 已取消），
+                                # 再抢占式 cancel 真正未完成的在飞任务（F28）。
+                                if cancel_fired or self.tracker.is_cancelled(task.id):
+                                    # F9: 已完成工具的消息先正常落库 —— 否则 repair
+                                    # 会把它们的 tool_call_id 写成「已取消」占位，而
+                                    # 工具可能已创建图层 / 已 spawn durable job，首达
+                                    # 终态使真实成功不可恢复。
+                                    await self._persist_tool_messages(
+                                        session_id, pending_tools, completion_results,
+                                        standard_calls, messages, tool_result_msgs,
+                                    )
+                                    # P1: 有界等待 —— 顽固 straggler 不能拖住会话锁
+                                    await self._cancel_and_await(remaining)
+                                    remaining = set()
+                                    # F7/F8: 只有真正未完成的 step 记 cancelled
+                                    for evt in _aborted_step_events():
+                                        yield evt
+                                    # F9: 补齐孤儿 tool_call（已完成工具不在其列）
+                                    await self._repair_orphaned_tool_calls(session_id, messages)
+                                    pf = _maybe_plan_finalized_event()
+                                    if pf:
+                                        yield pf
+                                    yield sse_event("task_cancelled", {"task_id": task.id})
+                                    return
                         finally:
-                            # 生成器被外部取消（GeneratorExit/CancelledError）时清理未完成任务
-                            for t in all_tasks:
-                                if not t.done():
-                                    t.cancel()
-                            if all_tasks:
-                                await asyncio.gather(*all_tasks, return_exceptions=True)
+                            # 生成器被外部取消（GeneratorExit/CancelledError）时清理未完成任务。
+                            # P1: 有界等待 —— 顽固 straggler 不能拖住会话锁。
+                            await self._cancel_and_await(all_tasks)
                             # ADR-0052: cancel_watch 是纯等待任务，正常路径永不完成，
                             # 必须显式回收，否则每个工具 wave 泄漏一个 pending task。
                             if cancel_watch is not None and not cancel_watch.done():
                                 cancel_watch.cancel()
-                                await asyncio.gather(cancel_watch, return_exceptions=True)
+                                await self._cancel_and_await([cancel_watch])
 
                         # Phase 3: 按原始 tc 顺序对齐 LLM 上下文 + 落库
-                        for p in pending_tools:
-                            res = completion_results.get(p["step"].id)
-                            if res is None:
-                                continue  # 极端取消场景：该工具未完成，跳过
-                            tc = res["tc"]
-                            msg_result_str = res["msg_result_str"]
-                            tool_name = res["tool_name"]
-                            if standard_calls:
-                                messages.append({
-                                    "role": "tool",
-                                    "tool_call_id": tc["id"],
-                                    "content": msg_result_str,
-                                })
-                                db_save_content = msg_result_str[:100000] if len(msg_result_str) > 100000 else msg_result_str
-                                await self._save_msg_async(session_id, "tool", "", None, db_save_content, tc["id"])
-                            else:
-                                tool_result_msgs.append(f"{tool_name}: {msg_result_str}")
+                        await self._persist_tool_messages(
+                            session_id, pending_tools, completion_results,
+                            standard_calls, messages, tool_result_msgs,
+                        )
 
                         if xml_calls and tool_result_msgs:
                             messages.append({
                                 "role": "user",
                                 "content": "[工具执行结果]\n" + "\n".join(tool_result_msgs),
                             })
+
+                        # F9: 正常出口也兜底补齐孤儿 tool_call —— per-tool 处理里的
+                        # except CancelledError: continue / 防御 except Exception:
+                        # continue 分支不落库，会留下孤儿 assistant tool_calls；repair
+                        # 幂等，已配对的 tool_call 不会重复补。
+                        await self._repair_orphaned_tool_calls(session_id, messages)
 
                         continue
                     else:
@@ -1230,9 +1579,27 @@ class ChatExecutionEngine:
             except (asyncio.CancelledError, GeneratorExit):
                 # B-P2-17: 客户端断连/生成器被关闭时终止 tracker 任务，
                 # 避免任务永远停留在 running（直到 MAX_TOTAL_TASKS 逐出）。
+                # F8: 断连/取消呈现为 cancelled 终态而不是 failed；
+                # cancel() 顺带把仍 running 的 step 收尾（F7）。
                 task_info = self.tracker.get(task.id)
                 if task_info is not None and task_info.status == TaskStatus.running:
-                    self.tracker.fail_task(task.id, "cancelled")
+                    self.tracker.cancel(task.id)
+                else:
+                    self.tracker.terminalize_running_steps(task.id)
+                # F9: 补齐孤儿 tool_call —— 否则下一轮 LLM 调用被拒，
+                # 会话永久损坏。_save_msg_async 内部已吞异常。
+                # P1: shield + 有界 wait_for —— 二次取消不能截断 repair 的
+                # 中途写；GC 驱动的 GeneratorExit 也不会因 except 内的 suspend
+                # 报 'async generator ignored GeneratorExit'。aclose() 行为不变。
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(
+                            self._repair_orphaned_tool_calls(session_id, messages)
+                        ),
+                        timeout=self._cancel_wait_timeout,
+                    )
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
                 raise
             except Exception:
                 # B-P2-17: 流中异常同样终止任务（与 _chat_locked 一致）。
@@ -1243,6 +1610,9 @@ class ChatExecutionEngine:
             finally:
                 # design-v3：把本进程 canonical 计划（含打勾进度）持久化到 store。
                 await self._flush_plan(session_id)
+                # P1: the turn's cleanup drained — deregister the turn task so
+                # clear_session's quiesce doesn't wait on a finished turn.
+                self._active_turn_tasks.pop(session_id, None)
                 # C-F12: bound the in-memory tail once the turn's appends
                 # are complete (every exit path — done, cancelled, max rounds,
                 # disconnect/exception via generator close).
@@ -1282,36 +1652,80 @@ class ChatExecutionEngine:
         owner_token: Optional[str] = None,
     ) -> bool:
         """删除会话"""
-        deleted = False
+        # P1: 在删行之前把该 session 标记为 clearing —— 在途 turn 的清理
+        # （repair + _save_msg_async）在标记下运行，DB 写被抑制，不可能复活
+        # 已删除的 conversation；新的 turn 被干净地拒绝。标记在 finally 中、
+        # 有界 quiesce 之后清除。
+        self._clearing_sessions.add(session_id)
         try:
-            async with async_db_session() as db:
-                deleted = await AsyncHistoryService(db).delete_session(
-                    session_id, user_id=user_id, owner_token=owner_token
-                )
-        except Exception as e:
-            logger.warning(f"History: failed to delete session {session_id}: {e}")
-            return False
-        if deleted:
-            if session_id in self._sessions:
-                del self._sessions[session_id]
-            self._session_locks.pop(session_id, None)
-            self._session_owner_tokens.pop(session_id, None)
-            await session_data_manager.clear_session(session_id)
-            from app.services.chat import planner
-            planner.clear_plan(session_id)
+            deleted = False
             try:
-                from app.services.planning.store import plan_store
-                await plan_store.clear(session_id)
+                async with async_db_session() as db:
+                    deleted = await AsyncHistoryService(db).delete_session(
+                        session_id, user_id=user_id, owner_token=owner_token
+                    )
             except Exception as e:
-                logger.warning(f"[chat_execution_engine] plan_store.clear 失败: {e}")
-            try:
-                from app.services.chat.context.layer_schema import clear_layer_schema_cache
-                clear_layer_schema_cache(session_id)
-            except ImportError:
-                pass
-            if self.catalog is not None:
-                self.catalog.reset_session(session_id)
-        return deleted
+                logger.warning(f"History: failed to delete session {session_id}: {e}")
+                return False
+            if deleted:
+                # F1: 先取消该 session 的在途 turn —— 否则持有会话锁的 turn 会在
+                # 会话删除后继续往 messages/DB 追加（消息复活、重复工具执行）。
+                for task_info in self.tracker.list_by_session(session_id):
+                    if task_info.status == TaskStatus.running:
+                        self.tracker.cancel(task_info.id)
+                # P1: 有界 quiesce —— 在清标记之前等被取消 turn 的清理排空
+                # （cancel 点燃 token → wave 抢占在飞工具 → repair → turn 结束）。
+                # 不等待的话，turn 的 repair/save 可能与标记清除竞态、复活行。
+                turn_task = self._active_turn_tasks.get(session_id)
+                if (
+                    turn_task is not None
+                    and not turn_task.done()
+                    and turn_task is not asyncio.current_task()
+                ):
+                    try:
+                        await asyncio.wait(
+                            {turn_task}, timeout=self._clear_quiesce_timeout
+                        )
+                    except (asyncio.TimeoutError, asyncio.CancelledError):
+                        pass
+                self._sessions.pop(session_id, None)
+                # F1: 锁被在途 turn 持有（或有等待者）时不能丢弃 —— 丢弃后下一个
+                # 并发请求拿到的是新锁，会与旧锁并行，破坏按会话串行化。
+                lock = self._session_locks.get(session_id)
+                if lock is not None and not _lock_in_use(lock):
+                    self._session_locks.pop(session_id, None)
+                self._session_owner_tokens.pop(session_id, None)
+                # F21: 每一项进程内清理都可能独立失败（Redis 抖动 / 可选模块缺失），
+                # 隔离失败，保证其余清理总能执行；路由语义不变（仍按 DB 删除结果返回）。
+                try:
+                    await session_data_manager.clear_session(session_id)
+                except Exception as e:
+                    logger.warning(f"clear_session: session_data cleanup failed for {session_id}: {e}")
+                try:
+                    from app.services.chat import planner
+                    planner.clear_plan(session_id)
+                except Exception as e:
+                    logger.warning(f"clear_session: plan cleanup failed for {session_id}: {e}")
+                try:
+                    from app.services.planning.store import plan_store
+                    await plan_store.clear(session_id)
+                except Exception as e:
+                    logger.warning(f"clear_session: plan_store cleanup failed for {session_id}: {e}")
+                try:
+                    from app.services.chat.context.layer_schema import clear_layer_schema_cache
+                    clear_layer_schema_cache(session_id)
+                except ImportError:
+                    pass
+                except Exception as e:
+                    logger.warning(f"clear_session: layer schema cleanup failed for {session_id}: {e}")
+                if self.catalog is not None:
+                    try:
+                        self.catalog.reset_session(session_id)
+                    except Exception as e:
+                        logger.warning(f"clear_session: catalog reset failed for {session_id}: {e}")
+            return deleted
+        finally:
+            self._clearing_sessions.discard(session_id)
 
     def _detect_suspicious_result(self, result: Any) -> bool:
         return _is_suspicious_result_fn(result)
