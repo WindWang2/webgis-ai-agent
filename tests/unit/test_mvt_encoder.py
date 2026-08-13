@@ -280,6 +280,15 @@ def test_round_trip_point_tile():
             assert decoded_props[k] == v
 
 
+def test_encode_points_accepts_3d_and_skips_nan():
+    """RFC 7946 Point Z and NaN must not 500 the tile."""
+    from app.services.mvt import _encode_points
+
+    tile = _encode_points([(116.4, 39.9, 12.0), (float("nan"), 0.0)], 1, 1, 0)
+    assert tile is not None
+    assert len(tile) > 0
+
+
 def test_tile_filters_out_of_bounds_points():
     """Points outside the requested tile must be dropped; empty tile is valid."""
     tile = encode_point_tile(

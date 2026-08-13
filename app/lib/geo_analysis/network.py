@@ -261,9 +261,12 @@ def nearest_neighbor_features(source_points: dict | str, target_points: dict | s
         tree = cKDTree(tgt_coords)
         min_distances, min_indices = tree.query(src_coords, k=1)
         
-        # Pre-compute properties and geometries outside loop (audit S40)
+        # Pre-compute properties and geometries outside loop (audit S40).
+        # Reproject back to WGS84 — gdf_src is still in UTM after the KDTree.
+        # Isochrones in this file already do this; leaving metres here made
+        # the result FeatureCollection plot as easting/northing-as-lon/lat.
         props = gdf_src.drop(columns='geometry').to_dict('records')
-        geom_maps = [mapping(g) for g in gdf_src.geometry]
+        geom_maps = [mapping(g) for g in gdf_src.to_crs("EPSG:4326").geometry]
         tgt_ids = gdf_tgt.index
         
         out_features = [

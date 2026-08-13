@@ -187,6 +187,9 @@ class PiRpcClient:
         for ext_path in self._extension_paths:
             args.extend(["--extension", str(ext_path)])
 
+        # Binary pipes: _readline_bounded concatenates into a bytearray and
+        # compares against b"\\n". Text mode made stdout.read(1) return str
+        # and crashed the reader on the first character (TypeError).
         self._process = subprocess.Popen(
             args,
             stdin=subprocess.PIPE,
@@ -194,7 +197,7 @@ class PiRpcClient:
             stderr=subprocess.PIPE,
             env=env,
             cwd=str(self._cwd),
-            text=True,
+            text=False,
         )
 
         # Start reader tasks for stdout and stderr to avoid OS pipe deadlock
@@ -392,10 +395,12 @@ class PiRpcClient:
             if not ch:
                 # EOF
                 return bytes(buf) if buf else b""
-            buf += ch
-            if ch == b"\n":
+            # text=True pipes yield str; production is binary. Accept both.
+            chunk = ch.encode("utf-8") if isinstance(ch, str) else ch
+            buf += chunk
+            if chunk.endswith(b"\n") or ch == "\n":
                 return bytes(buf)
-            budget -= 1
+            budget -= len(chunk)
         # Budget exhausted without a newline — signal overflow.
         return None
 
@@ -426,8 +431,11 @@ class PiRpcClient:
             line = json.dumps(request) + "\n"
 
             def _write_and_flush():
-                self._process.stdin.write(line)
-                self._process.stdin.flush()
+                stdin = self._process.stdin
+                # Binary Popen (production) needs bytes; a text pipe keeps str.
+                payload = line if getattr(stdin, "encoding", None) else line.encode("utf-8")
+                stdin.write(payload)
+                stdin.flush()
 
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, _write_and_flush)

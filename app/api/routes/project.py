@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.auth import get_current_user_optional
+from app.core.auth import actor_ids, get_current_user_optional
 from app.services.project_service import ProjectService
 from app.services.workflow_engine import WorkflowEngine
 from app.services.lineage_service import LineageService
@@ -38,8 +38,7 @@ def create_project(
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     project = ProjectService.create_project(
         db=db,
         name=data.name,
@@ -64,8 +63,7 @@ def list_projects(
     total/limit/offset/has_more. Clients that only read ``items`` continue
     to work — the page is the only shape returned.
     """
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     limit, offset = clamp_pagination(limit, offset)
     rows, total = ProjectService.list_projects(
         db=db, user_id=user_id, org_id=org_id,
@@ -87,8 +85,7 @@ def get_project(
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found or permission denied")
@@ -102,8 +99,7 @@ def update_project(
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     project = ProjectService.update_project(db=db, project_id=project_id, data=data, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found or permission denied")
@@ -117,8 +113,7 @@ def attach_dataset(
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     dataset = ProjectService.attach_dataset(db=db, project_id=project_id, attach_data=data, user_id=user_id, org_id=org_id)
     if not dataset:
         raise HTTPException(status_code=404, detail="Project not found or permission denied")
@@ -132,8 +127,7 @@ def detach_dataset(
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     success = ProjectService.detach_dataset(db=db, project_id=project_id, dataset_id=dataset_id, user_id=user_id, org_id=org_id)
     if not success:
         raise HTTPException(status_code=404, detail="Dataset or Project not found")
@@ -148,8 +142,7 @@ def list_datasets(
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     limit, offset = clamp_pagination(limit, offset)
     rows, total = ProjectService.list_project_datasets(
         db=db, project_id=project_id, user_id=user_id, org_id=org_id,
@@ -168,8 +161,7 @@ def list_artifacts(
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     limit, offset = clamp_pagination(limit, offset)
     rows, total = ProjectService.list_project_artifacts(
         db=db, project_id=project_id, user_id=user_id, org_id=org_id,
@@ -187,8 +179,7 @@ def save_workflow(
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     try:
         WorkflowEngine.validate_dag(data.graph_spec.steps)
     except ValueError as e:
@@ -208,8 +199,7 @@ def list_workflows(
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     limit, offset = clamp_pagination(limit, offset)
     rows, total = ProjectService.list_project_workflows(
         db=db, project_id=project_id, user_id=user_id, org_id=org_id,
@@ -240,8 +230,7 @@ async def run_workflow(
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -278,8 +267,7 @@ def list_runs(
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     limit, offset = clamp_pagination(limit, offset)
     rows, total = ProjectService.list_workflow_runs(
         db=db, project_id=project_id, workflow_id=workflow_id,
@@ -299,8 +287,7 @@ def compare_runs(
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -335,8 +322,7 @@ def list_workflow_revisions(
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """List immutable workflow revisions (tenant-scoped)."""
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     limit, offset = clamp_pagination(limit, offset)
     revisions = ProjectService.list_workflow_revisions(
         db=db, project_id=project_id, workflow_id=workflow_id, user_id=user_id, org_id=org_id
@@ -359,8 +345,7 @@ def get_workflow_revision(
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     revisions = ProjectService.list_workflow_revisions(
         db=db, project_id=project_id, workflow_id=workflow_id, user_id=user_id, org_id=org_id
     )
@@ -380,8 +365,7 @@ def get_run_detail(
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """Run detail incl. the reproducibility manifest + fingerprint."""
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     run = ProjectService.get_workflow_run(
         db=db, project_id=project_id, run_id=run_id, user_id=user_id, org_id=org_id
     )
@@ -403,8 +387,7 @@ async def replay_run(
 
     Re-authorizes project ownership (INV-AUTH1): replay cannot bypass access.
     """
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -431,8 +414,7 @@ async def resume_run(
     Re-authorizes project ownership (INV-AUTH1). Rejects (409) when resume
     preconditions fail unless ``allow_rerun=True``.
     """
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -455,8 +437,7 @@ def audit_spatial_quality(
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -476,8 +457,7 @@ def repair_spatial_dataset(
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -509,8 +489,7 @@ def get_artifact_lineage(
     db: Session = Depends(get_db),
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
-    user_id = user.get("id") if user else None
-    org_id = user.get("org_id") if user else None
+    user_id, org_id = actor_ids(user)
     from app.models.project import Artifact
     from sqlalchemy import select
     artifact = db.execute(select(Artifact).where(Artifact.id == artifact_id)).scalar_one_or_none()

@@ -92,7 +92,7 @@ async def test_http_callback_caches_result_for_sse_adapter(clean_session):
     )
     await dispatch_tool(req)
 
-    cached = get_cached_dispatch_result("tc-geo-2")
+    cached = get_cached_dispatch_result("tc-geo-2", clean_session)
     assert cached is not None
     assert cached.status == "ok"
     assert cached.geojson_ref is not None  # 关键：ref 被存储了

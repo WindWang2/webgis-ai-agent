@@ -45,9 +45,9 @@ class TestUploadToolsPathTraversal:
         from app.tools.registry import ToolRegistry
 
         mock_db = MagicMock()
-        mock_db.query.return_value.filter.return_value.first.return_value = self._make_record(
-            "../../etc/passwd"
-        )
+        record = self._make_record("../../etc/passwd")
+        record.session_id = "sess-1"
+        mock_db.query.return_value.filter.return_value.first.return_value = record
         mock_db_session.return_value.__enter__ = MagicMock(return_value=mock_db)
         mock_db_session.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -56,7 +56,7 @@ class TestUploadToolsPathTraversal:
         fn = registry._tools["get_upload_info"]
 
         with pytest.raises(KeyError, match="文件路径校验失败"):
-            fn(upload_id=1)
+            fn(upload_id=1, session_id="sess-1")
 
 
 class TestNatureResourcesPathTraversal:

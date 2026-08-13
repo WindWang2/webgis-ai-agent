@@ -336,7 +336,6 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
             raise
 
         duration_ms = int((time.monotonic() - t0) * 1000)
-        cache_dispatch_result(request.toolCallId, result)
 
         harness = _get_session_harness(
             session_id,
@@ -1563,7 +1562,7 @@ class PiBridge:
         # its cancellation token carried the *session* id as job_id, so the
         # non-stream path had no turn identity). run_id is a first-class turn
         # handle (the prior "run_id == session_id" reuse is retired here).
-        turn_id = _mint_turn_id()
+        # Do NOT remint: the signed turn token above is bound to turn_id.
         run_id = rt_ctx.new_run_id()
         rt_ev = TurnEvidence(
             request_id=rt_ctx.current_runtime_context().request_id if rt_ctx.current_runtime_context() else None,
@@ -1572,16 +1571,15 @@ class PiBridge:
             run_id=run_id,
         )
 
-        # 新 turn 开始：清空重复调用拦截集合与 dispatch 结果缓存。
-        # 重复拦截语义是「同一 turn 内」-- 跨 turn 用户重发同一问题是合法的。
-        _session_executed_sets.pop(turn_sid, None)
-        _clear_dispatch_cache()
-
         # Hold the lock across send + drain so turns are strictly serial on the
         # singleton bridge. Pi processes one prompt at a time, so this matches
         # the real execution model and prevents two turns' events interleaving
         # in the shared queue. Abort bypasses the lock (see abort()).
         await self._lock.acquire()
+        # Clear caches only after the lock so a concurrent stream_prompt
+        # cannot wipe another in-flight turn's dispatch results / dedup set.
+        _session_executed_sets.pop(turn_sid, None)
+        _clear_dispatch_cache()
         with rt_ctx.bind_runtime_context(turn_id=turn_id, run_id=run_id), bind_turn_evidence(rt_ev):
             TURN_EVIDENCE.register(rt_ev)
             try:
@@ -1679,11 +1677,6 @@ class PiBridge:
         if turn_sid:
             data["sessionId"] = turn_sid
 
-        # 新 turn 开始：清空重复调用拦截集合与 dispatch 结果缓存。
-        # 重复拦截语义是「同一 turn 内」-- 跨 turn 用户重发同一问题是合法的。
-        _session_executed_sets.pop(turn_sid, None)
-        _clear_dispatch_cache()
-
         # V3: 每个 Pi turn 铸一个 turn_id，显式透传给 harness 记录与 SSE 负载
         # （绝不用全局 set_correlation —— 单例 harness 跨 session 累积会互相污染）。
         # Runtime observability: first-class run_id (retires "run_id == session_id").
@@ -1707,6 +1700,8 @@ class PiBridge:
         with rt_ctx.bind_runtime_context(turn_id=turn_id, run_id=run_id), bind_turn_evidence(rt_ev):
             TURN_EVIDENCE.register(rt_ev)
             await self._lock.acquire()
+            _session_executed_sets.pop(turn_sid, None)
+            _clear_dispatch_cache()
             cancelled = False
             timed_out = False
             send_failed = False
@@ -1781,7 +1776,13 @@ class PiBridge:
                             event = get_task.result()
                             silence_seconds = 0.0
                             rt_ev.mark_first_event()
-                            sse = map_event_to_sse(event, turn_sid, cache_lookup=get_cached_dispatch_result)
+                            sse = map_event_to_sse(
+                                event,
+                                turn_sid,
+                                cache_lookup=lambda tool_call_id, _sid=turn_sid: get_cached_dispatch_result(
+                                    tool_call_id, _sid
+                                ),
+                            )
                             if _harness is not None:
                                 # V3: 给原始 SSE 事件记录补 turn/run correlation（显式透传）。
                                 _harness.record_sse_event({

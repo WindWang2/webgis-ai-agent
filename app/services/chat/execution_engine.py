@@ -391,6 +391,7 @@ class ChatExecutionEngine:
         session_id: str,
         messages: list[dict],
         project_id: Optional[str] = None,
+        user_id: Optional[str] = None,
         tools: Optional[list] = None,
     ) -> list[dict]:
         tools_payload = None
@@ -406,6 +407,7 @@ class ChatExecutionEngine:
             session_id,
             messages,
             project_id=project_id,
+            user_id=user_id,
             tools_payload=tools_payload,
         )
         return res.to_messages()
@@ -903,7 +905,7 @@ class ChatExecutionEngine:
                 tools = self._select_tools(session_id, messages)
                 _t_ctx = time.perf_counter()
                 messages_with_context = await self._compose_request_messages(
-                    session_id, messages, tools=tools,
+                    session_id, messages, project_id=project_id, user_id=user_id, tools=tools,
                 )
                 _ev = current_turn_evidence()
                 if _ev is not None:
@@ -1244,7 +1246,7 @@ class ChatExecutionEngine:
                     tools = self._select_tools(session_id, messages)
                     _t_ctx = time.perf_counter()
                     messages_with_context = await self._compose_request_messages(
-                        session_id, messages, project_id=project_id, tools=tools,
+                        session_id, messages, project_id=project_id, user_id=user_id, tools=tools,
                     )
                     _ev = current_turn_evidence()
                     if _ev is not None:

@@ -89,6 +89,9 @@ class MemorySessionStore(BaseSessionStore):
         if not session_cache or ref_id not in session_cache:
             return False
         session_cache[ref_id] = data
+        # overwrite is the durability path for plans/checkpoints — bump LRU
+        # recency so a just-updated plan is not the next eviction victim.
+        session_cache.move_to_end(ref_id)
         return True
 
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:

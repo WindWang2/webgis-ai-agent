@@ -50,6 +50,58 @@ class DummyPipe:
 
 
 @pytest.mark.asyncio
+async def test_start_popen_uses_binary_pipes(monkeypatch):
+    """start() must spawn Popen with text=False — text pipes TypeError the reader."""
+    from app.services.chat import pi_rpc_client as mod
+
+    captured = {}
+
+    def fake_popen(*args, **kwargs):
+        captured["kwargs"] = kwargs
+        proc = MagicMock()
+        proc.stdin = MagicMock()
+        proc.stdout = DummyPipe([])
+        proc.stderr = DummyPipe([])
+        proc.poll.return_value = None
+        return proc
+
+    monkeypatch.setattr(mod.subprocess, "Popen", fake_popen)
+    client = mod.PiRpcClient()
+    monkeypatch.setattr(client, "_wait_for_ready", AsyncMock(return_value=None))
+    try:
+        await client.start()
+    finally:
+        if client._reader_task:
+            client._reader_task.cancel()
+        if client._stderr_task:
+            client._stderr_task.cancel()
+
+    assert captured["kwargs"].get("text") is False
+    assert captured["kwargs"].get("universal_newlines") in (None, False)
+
+
+def test_readline_bounded_accepts_text_pipe():
+    """Defensive: a text-mode pipe must not TypeError the reader."""
+    client = PiRpcClient()
+
+    class TextPipe:
+        def __init__(self):
+            self._data = "ok\n"
+
+        def read(self, n=1):
+            if not self._data:
+                return ""
+            ch, self._data = self._data[0], self._data[1:]
+            return ch
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = TextPipe()
+    client._process = mock_proc
+    line = client._readline_bounded()
+    assert line == b"ok\n"
+
+
+@pytest.mark.asyncio
 async def test_pi_rpc_client_request_response_matching():
     client = PiRpcClient()
 

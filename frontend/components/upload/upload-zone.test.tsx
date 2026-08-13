@@ -31,12 +31,16 @@ describe('UploadZone', () => {
 
   it('calls uploadFile on file selection', async () => {
     vi.mocked(uploadFile).mockResolvedValueOnce({ id: 1, filename: 'test.geojson' } as any);
-    render(<UploadZone onUploadSuccess={onUploadSuccess} sessionId="s1" />);
+    render(
+      <UploadZone onUploadSuccess={onUploadSuccess} sessionId="s1" ownerToken="tok-1" />,
+    );
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(['{}'], 'test.geojson', { type: 'application/geo+json' });
     fireEvent.change(input, { target: { files: [file] } });
     await waitFor(() => {
-      expect(uploadFile).toHaveBeenCalledWith(file, 's1', expect.any(Function));
+      expect(uploadFile).toHaveBeenCalledWith(file, 's1', expect.any(Function), {
+        ownerToken: 'tok-1',
+      });
     });
   });
 
