@@ -183,11 +183,18 @@ class CanonicalPlan(BaseModel):
 
         - no steps                  → keep current status
         - all steps completed       → completed
-        - any failed, none pending/running → failed
+        - any running               → running (in-flight beats derived terminal states)
         - completed mixed with (failed | skipped), none pending/running
-                                    → partially_completed
-        - any running               → running
+                                    → partially_completed (partial success is
+                                      resumable — NOT terminal; P3 #5)
+        - any failed, none completed/pending/running → failed
         - otherwise                 → keep current status
+
+        ``partially_completed`` intentionally beats plain ``failed`` whenever at
+        least one step completed: some-done-some-failed is a *partial success*
+        (``execute_plan`` resumes from it, reusing completed refs), while
+        ``failed`` is reserved for runs with no completed steps. Matches
+        plan_mode's ``_failure_status()`` semantics.
         """
         if not self.steps:
             return self.status
@@ -197,16 +204,16 @@ class CanonicalPlan(BaseModel):
         has_pending_or_running = any(
             s in (StepStatus.pending, StepStatus.running) for s in statuses
         )
-        if any(s == StepStatus.failed for s in statuses) and not has_pending_or_running:
-            return PlanStatus.failed
+        if any(s == StepStatus.running for s in statuses):
+            return PlanStatus.running
         has_completed = any(s == StepStatus.completed for s in statuses)
         has_failed_or_skipped = any(
             s in (StepStatus.failed, StepStatus.skipped) for s in statuses
         )
         if has_completed and has_failed_or_skipped and not has_pending_or_running:
             return PlanStatus.partially_completed
-        if any(s == StepStatus.running for s in statuses):
-            return PlanStatus.running
+        if any(s == StepStatus.failed for s in statuses) and not has_pending_or_running:
+            return PlanStatus.failed
         return self.status
 
     def bump_revision(self) -> int:

@@ -231,3 +231,27 @@ class TestEstimatedTokens:
         # 8000 ASCII chars ≈ 2000 tokens（软计入，只影响估算）
         assert with_tools.estimated_tokens > base.estimated_tokens
         assert with_tools.estimated_tokens - base.estimated_tokens >= 2000
+
+    async def test_cjk_tools_payload_weighted_higher_than_ascii(self, clean_session):
+        """P3 #3：等字符数的 CJK-heavy tools payload 估算 ≥ 纯 ASCII payload——
+        _estimate_tokens 权重（CJK 1 char ≈ 1.5 tokens，ASCII 4 char ≈ 1 token）。"""
+        msgs = [
+            {"role": "system", "content": "SYS"},
+            {"role": "user", "content": "hi"},
+        ]
+        ascii_payload = "tool text " * 160         # 1600 chars，全 ASCII
+        cjk_payload = "空间分析工具描述示例" * 160   # 同字符数（10×160），CJK-heavy
+        assert len(ascii_payload) == len(cjk_payload) == 1600
+
+        base = (await ChatContextAssembler().assemble(clean_session, msgs)).estimated_tokens
+        ascii_delta = (
+            await ChatContextAssembler().assemble(clean_session, msgs, tools_payload=ascii_payload)
+        ).estimated_tokens - base
+        cjk_delta = (
+            await ChatContextAssembler().assemble(clean_session, msgs, tools_payload=cjk_payload)
+        ).estimated_tokens - base
+        # 同字符数：CJK 权重（1.5/char）显著高于 ASCII（0.25/char）
+        assert cjk_delta >= ascii_delta
+        assert cjk_delta > ascii_delta
+        # CJK 估算必须高于旧的 chars/4 近似（1600/4 = 400）
+        assert cjk_delta > 400

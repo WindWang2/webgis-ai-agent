@@ -847,6 +847,43 @@ async def test_p1c_concurrent_execute_serialized_per_plan(env):
 
 
 @pytest.mark.asyncio
+async def test_p3_execute_claims_cross_process_plan_lock(env, monkeypatch):
+    """P3 延后项 #2：execute_plan 的 claim+run 关键段必须套在分布式锁
+    session_lock(f"plan:{plan_id}") 内——Redis 在时跨进程/跨 pod 原子 claim，
+    测试（in-process 兜底）行为不变。此处用记录型 stub 断言锁键与加锁路径。"""
+    from app.services import plan_mode as _svc
+
+    acquired: list[str] = []
+
+    class _AioLock:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class _FakeLockRegistry:
+        def lock(self, key):
+            acquired.append(key)
+            return _AioLock()
+
+    monkeypatch.setattr("app.services.plan_mode.session_lock_registry", _FakeLockRegistry())
+
+    sid = "sess-p3-planlock"
+    plan = plan_mode_svc.PlanProposal(
+        title="lock-claim",
+        steps=[plan_mode_svc.PlanStep(id="s1", tool="fetch_data", args={"keyword": "医院"})],
+    )
+    plan_id = await plan_mode_svc.store_plan(sid, plan)
+    r = await _svc.execute_plan_async(sid, plan_id, env.registry)
+    assert r["success"] is True
+    # 锁键按 plan_id 全局唯一（无需 session 前缀）
+    assert acquired == [f"plan:{plan_id}"]
+    # 进程内 per-plan 锁仍保留（双保险，单 worker 不退化）
+    assert f"{sid}\0{plan_id}" in _svc._PLAN_EXEC_LOCKS
+
+
+@pytest.mark.asyncio
 async def test_p1c_stale_running_is_resumable(env):
     """running 状态超过阈值（或 __updated_at__ 缺失）→ 视为 crashed，允许 resume。"""
     sid = "sess-p1c-stale"

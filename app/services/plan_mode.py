@@ -27,18 +27,21 @@ from pydantic import BaseModel, Field
 from app.services.session_data import session_data_manager
 from app.services.planning.deps import MissingRefError, resolve_arg_refs
 from app.services.jobs.cancellation import OperationCancelled
+from app.services.distributed_lock import session_lock_registry
 from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
 
-# ─────────────────── 进程内 per-plan 执行锁（P1-C） ───────────────────
+# ─────────────────── per-plan 执行锁（P1-C + 跨进程 claim） ───────────────────
 # 把 execute_plan 的「status 检查 → running 写入 → 执行」整段按 plan 串行化，
 # 堵住 check-then-act TOCTOU 双派发（两个并发 execute_plan 同时通过 running
-# 检查后各自 dispatch 一遍）。注意：这是**单 worker 作用域**的 asyncio.Lock
-# （跨进程的原子 plan claim 是 design-v3 明确延后项，见 .planning 文档）。
-# Redis 版 distributed_lock 是 per-session 的，且跨进程 claim 已延后，故此处
-# 使用进程内锁 + 注释声明作用域。
+# 检查后各自 dispatch 一遍）。两层锁：
+#   1. 进程内 per-plan asyncio.Lock（本模块，有界、按 (session, plan) 键控）；
+#   2. 分布式锁 session_lock_registry.lock(f"plan:{plan_id}")（P3 延后项 #2）——
+#      Redis 在时跨进程/跨 pod 原子 claim，Redis 不可用时透明降级为进程内锁
+#      （distributed_lock 契约：永不抛未处理异常）。plan_id 全局唯一，无需
+#      session 前缀。
 _PLAN_EXEC_LOCKS: dict[str, asyncio.Lock] = {}
 _PLAN_LOCKS_MAX = 1024
 
@@ -329,6 +332,85 @@ async def update_plan_status(session_id: str, plan_id: str, **updates: Any) -> N
         await set_alias(session_id, new_ref, plan_id)
 
 
+# ─────────────────── __step_results__ slim 持久化（P3 延后项 #1） ───────────────────
+# plan payload 里不再内嵌完整工具结果（大 GeoJSON / 栅格摘要可达 MB 级，Redis
+# payload 有界性问题）。每个已完成步骤的完整结果存入独立的 session ref
+# （ref:planresult-*，deterministic 别名 + 原地 overwrite——不随执行次数 mint
+# 新 ref），plan payload 只保留 slim 摘要 {__slim__, ref, keys}。resume 时按
+# ref 水合回完整结果供 ${stepId[.path]} 解析——payload 有界、语义不变。
+_PLANRESULT_ALIAS_PREFIX = "planresult:"
+
+
+def _step_result_alias(plan_id: str, step_id: str) -> str:
+    """一个 (plan, step) 一个 deterministic 结果 ref 别名（供原地 overwrite）。"""
+    return f"{_PLANRESULT_ALIAS_PREFIX}{plan_id}:{step_id}"
+
+
+def _is_slim_result(value: Any) -> bool:
+    """True 当 value 是 slim 摘要（ref 指向别处存储的完整结果）。"""
+    return isinstance(value, dict) and value.get("__slim__") is True
+
+
+def _build_slim_result(ref_id: str, result: Any) -> dict:
+    """slim 摘要：ref + 顶层 keys（有界，与完整结果大小无关）。"""
+    keys = sorted(result) if isinstance(result, dict) else []
+    return {"__slim__": True, "ref": ref_id, "keys": keys}
+
+
+async def _persist_step_results(
+    session_id: str, plan_id: str, step_results: dict[str, Any]
+) -> dict[str, Any]:
+    """把（内存中的）完整步骤结果落库到 ref:planresult-*，返回 slim 摘要 dict。
+
+    每个 (plan, step) 对应一个 deterministic 别名：首次 store() + set_alias，
+    之后 overwrite() 原地更新（镜像 PlanStore.save 的 resilience——overwrite
+    失败即重新 mint + 别名，绝不静默丢数据）。返回的摘要 dict 写入 plan payload。
+    """
+    slim: dict[str, Any] = {}
+    for sid, result in step_results.items():
+        if _is_slim_result(result):
+            slim[sid] = result  # 已是摘要（防御：水合前理论上不应出现）
+            continue
+        alias = _step_result_alias(plan_id, sid)
+        ref_id = await session_data_manager.resolve_alias(session_id, alias)
+        if ref_id != alias and await session_data_manager.overwrite(session_id, ref_id, result):
+            slim[sid] = _build_slim_result(ref_id, result)
+            continue
+        new_ref = await session_data_manager.store(session_id, result, prefix="planresult")
+        await session_data_manager.set_alias(session_id, new_ref, alias)
+        slim[sid] = _build_slim_result(new_ref, result)
+    return slim
+
+
+async def _hydrate_step_results(
+    session_id: str, step_results: dict[str, Any]
+) -> dict[str, Any]:
+    """resume 时把 slim 摘要还原为完整结果（按 ref 从 session store 读取）。
+
+    ref 已被逐出/过期 → 保留摘要原值（后续 ${} 解析会以 missing_ref 响亮失败，
+    绝不静默得到 None/""，与 deps.py 的失败哲学一致）。
+    """
+    hydrated: dict[str, Any] = {}
+    for sid, value in step_results.items():
+        if _is_slim_result(value):
+            ref = value.get("ref")
+            try:
+                full = await session_data_manager.get(session_id, ref)
+            except Exception as e:  # noqa: BLE001 读失败按失效处理
+                logger.warning(f"[PlanMode] 水合步骤结果失败 sid={sid} ref={ref}: {e}")
+                full = None
+            if full is not None:
+                hydrated[sid] = full
+            else:
+                logger.warning(
+                    f"[PlanMode] 步骤 {sid} 的结果 ref {ref} 已失效，resume 引用将失败"
+                )
+                hydrated[sid] = value
+        else:
+            hydrated[sid] = value
+    return hydrated
+
+
 # ─────────────────────────────── 执行引擎 ───────────────────────────────
 
 
@@ -360,9 +442,11 @@ async def execute_plan_async(
     - **失败持久化**：失败时同样写回 ``__step_results__``，供后续 resume 复用。
 
     P1-C（并发与崩溃恢复）：
-    - 整段执行持有**进程内 per-plan 锁**（status 检查 → running 写入 → 执行
-      串行化），堵住 check-then-act TOCTOU 双派发。作用域为单 worker
-      （跨进程原子 claim 是 design-v3 延后项）。
+    - 整段执行持有**两层 per-plan 锁**：进程内 asyncio.Lock（status 检查 →
+      running 写入 → 执行串行化）之上再套一层分布式锁
+      ``session_lock_registry.lock(f"plan:{plan_id}")``——Redis 在时跨 worker/
+      跨 pod 原子 claim（P3 延后项 #2 落地），Redis 不可用时降级为进程内锁
+      （单 worker / 测试语义不变）。绝无双派发。
     - ``running`` 但 ``__updated_at__`` 陈旧（>300s）→ 视为 crashed，允许 resume。
     - 终态写入（completed/failed/partially_completed）前重读：绝不覆盖已被
       superseded / cancelled 的计划。
@@ -375,10 +459,16 @@ async def execute_plan_async(
       transient_network）→ 直接返回存储的失败（livelock guard），不重跑。
     - superseded / legacy 计划且**无已存结果** → success=False + 明确消息。
 
+    P3 延后项 #1（payload 有界）：
+    - ``__step_results__`` 持久化采用 slim 形状（完整结果存入独立的
+      ref:planresult-* 引用，payload 只留 {__slim__, ref, keys} 摘要）；
+      resume 时按 ref 水合回完整结果供 ``${stepId[.path]}`` 解析，语义不变。
+
     返回汇总 {plan_id, status, executed, results, failed_step, error}。
     """
-    async with _get_plan_lock(session_id, plan_id):
-        return await _execute_plan_locked(session_id, plan_id, registry)
+    async with session_lock_registry.lock(f"plan:{plan_id}"):
+        async with _get_plan_lock(session_id, plan_id):
+            return await _execute_plan_locked(session_id, plan_id, registry)
 
 
 async def _execute_plan_locked(
@@ -420,8 +510,12 @@ async def _execute_plan_locked(
     plan = PlanProposal.model_validate({k: v for k, v in plan_data.items() if not k.startswith("__")})
 
     # design-v3 §4：用已存结果播种 step_results（resume 起点）。
+    # P3 #1：已存结果是 slim 摘要 → 先按 ref 水合回完整结果，保证 ${} 解析
+    # 拿到真实值（ref 失效时保留摘要，解析会响亮失败而非静默 None）。
     stored_results = plan_data.get("__step_results__")
     step_results: dict[str, Any] = dict(stored_results) if isinstance(stored_results, dict) else {}
+    if step_results:
+        step_results = await _hydrate_step_results(session_id, step_results)
 
     # 先定义辅助闭包（终态写入等），供下方环检查复用。
     async def _write_terminal(**updates: Any) -> None:
@@ -582,7 +676,7 @@ async def _execute_plan_locked(
                     __failed_step__=sid,
                     __error__=hint,
                     __failure_class__="missing_ref",
-                    __step_results__=step_results,
+                    __step_results__=await _persist_step_results(session_id, plan_id, step_results),
                 )
                 return _fail(
                     sid,
@@ -596,7 +690,7 @@ async def _execute_plan_locked(
                     __status__=_failure_status(),
                     __failed_step__=sid,
                     __error__=f"args 解析异常: {e}",
-                    __step_results__=step_results,
+                    __step_results__=await _persist_step_results(session_id, plan_id, step_results),
                 )
                 return _fail(
                     sid,
@@ -609,7 +703,7 @@ async def _execute_plan_locked(
                     __status__=_failure_status(),
                     __failed_step__=sid,
                     __error__=f"args 解析后不是 dict: {type(r).__name__}",
-                    __step_results__=step_results,
+                    __step_results__=await _persist_step_results(session_id, plan_id, step_results),
                 )
                 return _fail(
                     sid,
@@ -655,7 +749,7 @@ async def _execute_plan_locked(
                     await _write_terminal(
                         __status__="cancelled",
                         __error__=str(e) or "用户取消",
-                        __step_results__=step_results,
+                        __step_results__=await _persist_step_results(session_id, plan_id, step_results),
                     )
                     return {
                         "success": False,
@@ -710,7 +804,8 @@ async def _execute_plan_locked(
                 "__failed_step__": sid,
                 "__error__": err,
                 # design-v3 §4：失败也保留已完成结果，供下次 execute_plan resume。
-                "__step_results__": step_results,
+                # P3 #1：持久化 slim 摘要（完整结果在 ref:planresult-*）。
+                "__step_results__": await _persist_step_results(session_id, plan_id, step_results),
             }
             if fc is not None:
                 updates["__failure_class__"] = fc
@@ -726,7 +821,7 @@ async def _execute_plan_locked(
 
     await _write_terminal(
         __status__="completed",
-        __step_results__=step_results,
+        __step_results__=await _persist_step_results(session_id, plan_id, step_results),
     )
     return {
         "success": True,

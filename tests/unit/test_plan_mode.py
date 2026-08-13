@@ -508,3 +508,72 @@ async def test_failure_with_no_results_writes_failed(registry):
     data = await svc.load_plan(sid, plan_id)
     assert data["__status__"] == "failed"
     assert data["__failure_class__"] == "internal"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# P3 延后项 #1：__step_results__ slim 持久化（完整结果存 ref:planresult-*，
+# payload 有界；resume 水合回完整结果，${stepId.path} 解析不受影响）
+# ─────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_step_results_slim_persisted_and_resume_resolves(registry):
+    """大结果不嵌入 plan payload；resume 按 ref 水合后 ${s1.data.bbox} 正确解析。"""
+    import json as _json
+
+    sid = "sess-plan-slim"
+    big_blob = "x" * 200_000  # 大对象（≈200KB，模拟大 GeoJSON）
+    s1_calls = {"n": 0}
+    s2_calls = {"n": 0}
+
+    @registry.tool(name="fake_big_bbox", description="返回带大 blob 的 bbox")
+    def fake_big_bbox(area: str) -> dict:
+        s1_calls["n"] += 1
+        return {
+            "success": True,
+            "data": {"area": area, "bbox": [116, 39, 117, 40], "blob": big_blob},
+        }
+
+    @registry.tool(name="fake_ref_consumer", description="消费 bbox 引用")
+    def fake_ref_consumer(bbox: list) -> dict:
+        s2_calls["n"] += 1
+        if s2_calls["n"] == 1:
+            # 瞬时网络失败（transient_network）→ 可恢复重试，不触发 livelock guard
+            return {"success": False, "code": "TOOL_ERROR", "message": "网络超时 连接失败"}
+        return {"success": True, "data": {"bbox": bbox}}
+
+    plan = svc.PlanProposal(
+        title="slim",
+        steps=[
+            svc.PlanStep(id="s1", tool="fake_big_bbox", args={"area": "海淀"}),
+            svc.PlanStep(id="s2", tool="fake_ref_consumer",
+                         args={"bbox": "${s1.data.bbox}"}),
+        ],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+
+    r1 = await svc.execute_plan_async(sid, plan_id, registry)
+    assert r1["success"] is False
+    assert r1["failed_step"] == "s2"
+
+    data = await svc.load_plan(sid, plan_id)
+    assert data["__status__"] == "partially_completed"
+    # slim 形状：完整结果不在 plan payload 里（大 blob 绝不嵌入）
+    s1_entry = data["__step_results__"]["s1"]
+    assert s1_entry.get("__slim__") is True
+    assert s1_entry["ref"].startswith("ref:planresult-")
+    assert "keys" in s1_entry
+    assert big_blob not in _json.dumps(data)
+
+    # resume：s1 跳过（水合回完整结果），s2 用 ${s1.data.bbox} 重试成功
+    r2 = await svc.execute_plan_async(sid, plan_id, registry)
+    assert r2["success"] is True, f"resume failed: {r2}"
+    assert r2["executed"] == ["s1", "s2"]
+    assert s1_calls["n"] == 1  # s1 绝不被重新 dispatch
+    assert r2["results"]["s2"]["data"]["bbox"] == [116, 39, 117, 40]
+    data2 = await svc.load_plan(sid, plan_id)
+    assert data2["__status__"] == "completed"
+    # 完成态 payload 同样有界
+    assert data2["__step_results__"]["s1"].get("__slim__") is True
+    assert data2["__step_results__"]["s2"].get("__slim__") is True
+    assert big_blob not in _json.dumps(data2)

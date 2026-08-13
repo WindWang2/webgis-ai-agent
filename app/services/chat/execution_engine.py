@@ -259,17 +259,20 @@ class ChatExecutionEngine:
         project_id: Optional[str] = None,
         tools: Optional[list] = None,
     ) -> list[dict]:
-        tools_payload_chars = 0
+        tools_payload = None
         if tools:
             try:
-                tools_payload_chars = len(json.dumps(tools, ensure_ascii=False))
+                # P3 #3：把序列化后的工具 schema JSON 交给 assembler 做 CJK-aware
+                # token 估算（_estimate_tokens，与历史压缩同权重）——只传一次字符串，
+                # 不重复序列化。
+                tools_payload = json.dumps(tools, ensure_ascii=False)
             except (TypeError, ValueError):
-                tools_payload_chars = 0
+                tools_payload = None
         res = await self.context_assembler.assemble(
             session_id,
             messages,
             project_id=project_id,
-            tools_payload_chars=tools_payload_chars,
+            tools_payload=tools_payload,
         )
         return res.to_messages()
 
@@ -599,7 +602,12 @@ class ChatExecutionEngine:
                 self._trim_session_tail(messages)
 
     async def _flush_plan(self, session_id: str) -> None:
-        """把活跃 canonical 计划持久化（advance_step 的 done 标志写回 store）。"""
+        """把活跃 canonical 计划持久化（advance_step 的 done 标志写回 store）。
+
+        既作回合末 flush（chat / chat_stream 的 finally），也作 P3 #4 的
+        mid-turn tick flush（mark_step_done 打勾后立即调用）——二者幂等（同一
+        载荷原地 overwrite）。best-effort：任何失败只记 warning，绝不破坏回合。
+        """
         # P2-7：子代理引擎不 flush 父会话的计划（独立微会话，计划属于主代理）。
         if getattr(self, "is_subagent_engine", False):
             return
@@ -705,9 +713,13 @@ class ChatExecutionEngine:
                                 and not _is_suspicious_result_fn(exec_res.outcome.raw_result)
                             ):
                                 from app.services.chat import planner as _planner
-                                _planner.mark_step_done(
+                                step_n_matched = _planner.mark_step_done(
                                     session_id, exec_res.tool_name, self.registry
                                 )
+                                if step_n_matched is not None:
+                                    # P3 #4：打勾后立即 best-effort 落盘（回合末
+                                    # flush 仍保留，幂等）。崩溃/断连不丢 tick。
+                                    await self._flush_plan(session_id)
 
                         if standard_calls:
                             messages.append({
@@ -1052,6 +1064,10 @@ class ChatExecutionEngine:
                                         step_n_matched = _planner.mark_step_done(
                                             session_id, tool_name, self.registry
                                         )
+                                        if step_n_matched is not None:
+                                            # P3 #4：打勾后立即 best-effort 落盘
+                                            # （回合末 flush 仍保留，幂等）。
+                                            await self._flush_plan(session_id)
                                     elif outcome.status == "error":
                                         failure_class, recovery_action = self._classify_failure(outcome)
                                     self._log_tool_decision(

@@ -9,7 +9,12 @@ from app.services.chat.plan_orchestrator import (
     parse_plan,
     should_plan,
 )
-from app.services.planning import FollowUpKind, PlanStatus, TERMINAL_STATUSES
+from app.services.planning import (
+    FollowUpKind,
+    PlanStatus,
+    StepStatus,
+    TERMINAL_STATUSES,
+)
 from app.services.planning.store import plan_store
 
 
@@ -273,6 +278,61 @@ async def test_restore_terminal_plan_returns_none(monkeypatch):
 
     fresh = AgentPlanOrchestrator()
     assert await fresh.restore_plan(sid) is None
+    await plan_store.clear(sid)
+
+
+# ─── P3 #5：advisory 计划的部分完成语义 ──────────────────────
+
+
+@pytest.mark.asyncio
+async def test_flush_partially_completed_survives_restart_as_active(monkeypatch):
+    """P3 延后项 #5：2/3 步骤完成 + 1 步失败 → flush 后 canonical status ==
+    partially_completed（部分成功 = 非终态）；重启后 restore_plan 仍作为活跃
+    计划返回（不过滤，可继续推进剩余步骤）。"""
+    from app.services.chat import planner as planner_mod
+    from app.services.chat.llm_client import LLMConfig
+
+    monkeypatch.setattr("app.services.chat.plan_orchestrator._get_registry", lambda: None)
+
+    orch = AgentPlanOrchestrator()
+    sid = "sess-partial-1"
+    cfg = LLMConfig(base_url="http://x", model="m", api_key="k")
+
+    async def fake_call_llm(_cfg, _messages, _tools=None):
+        return {"choices": [{"message": {"content":
+            '{"intent":"热点","domains":["statistics","report"],"steps":['
+            '{"n":1,"goal":"热点","tool_family":"statistics"},'
+            '{"n":2,"goal":"报告","tool_family":"report"},'
+            '{"n":3,"goal":"导出","tool_family":"report"}]}'}}]}
+
+    monkeypatch.setattr(planner_mod, "call_llm", fake_call_llm)
+    plan = await orch.make_plan(cfg, sid, "热点", "[环境感知]")
+    assert plan is not None
+
+    class Reg:
+        def metadata(self, name):
+            return {"domains": ["statistics", "report"]}
+
+    assert orch.advance_step(sid, "hotspot_analysis", Reg()) == 1
+    assert orch.advance_step(sid, "export_batch_maps", Reg()) == 2
+    # 步骤 3 失败（模拟：直接置 canonical 状态，等价未来"失败步骤写回"路径）
+    canon = plan_store.peek(sid)
+    canon.steps[2].status = StepStatus.failed
+    # flush 前 status 必须是 recompute 推导的（不靠调用方手动设置）
+    await orch.flush(sid)
+
+    persisted = await plan_store.load_current(sid)
+    assert persisted.status == PlanStatus.partially_completed
+    assert persisted.status not in TERMINAL_STATUSES  # 非终态：可恢复
+
+    # 模拟重启：清空进程缓存，从 store 恢复 → 仍为活跃计划（不过滤）
+    plan_store.clear_cache()
+    fresh = AgentPlanOrchestrator()
+    restored = await fresh.restore_plan(sid)
+    assert restored is not None
+    assert restored.steps[0].done is True
+    assert restored.steps[1].done is True
+    assert restored.steps[2].done is False
     await plan_store.clear(sid)
 
 

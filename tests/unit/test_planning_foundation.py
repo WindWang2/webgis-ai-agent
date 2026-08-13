@@ -77,12 +77,16 @@ def test_plan_status_terminal_and_serialization():
 def test_recompute_status_matrix():
     cases = [
         ([("s1", StepStatus.completed), ("s2", StepStatus.completed)], PlanStatus.completed),
-        # failed with none pending/running → failed (beats partially_completed)
-        ([("s1", StepStatus.completed), ("s2", StepStatus.failed)], PlanStatus.failed),
-        ([("s1", StepStatus.failed), ("s2", StepStatus.completed)], PlanStatus.failed),
+        # P3 #5：部分成功（有完成 + 有失败，无 pending/running）→ partially_completed
+        # （可恢复，非终态）——优先于裸 failed（failed 保留给"无任何完成步骤"）。
+        ([("s1", StepStatus.completed), ("s2", StepStatus.failed)], PlanStatus.partially_completed),
+        ([("s1", StepStatus.failed), ("s2", StepStatus.completed)], PlanStatus.partially_completed),
         # completed mixed with failed/skipped, none pending/running → partially_completed
         ([("s1", StepStatus.completed), ("s2", StepStatus.skipped)], PlanStatus.partially_completed),
-        ([("s1", StepStatus.completed), ("s2", StepStatus.failed), ("s3", StepStatus.skipped)], PlanStatus.failed),
+        ([("s1", StepStatus.completed), ("s2", StepStatus.failed), ("s3", StepStatus.skipped)], PlanStatus.partially_completed),
+        # 无完成步骤的纯失败 → failed
+        ([("s1", StepStatus.failed), ("s2", StepStatus.failed)], PlanStatus.failed),
+        ([("s1", StepStatus.failed), ("s2", StepStatus.skipped)], PlanStatus.failed),
         # any running → running
         ([("s1", StepStatus.running), ("s2", StepStatus.completed)], PlanStatus.running),
         ([("s1", StepStatus.completed), ("s2", StepStatus.running), ("s3", StepStatus.pending)], PlanStatus.running),

@@ -127,6 +127,7 @@ class ChatContextAssembler:
         messages: List[dict],
         project_id: Optional[str] = None,
         tools_payload_chars: int = 0,
+        tools_payload: Optional[str] = None,
     ) -> ContextAssemblyResult:
         """
         Assemble the complete LLM request message list from session state,
@@ -141,8 +142,14 @@ class ChatContextAssembler:
         ``get_session_metadata`` path which is still a no-op for
         ``project_id``).
 
-        ``tools_payload_chars``（design-v3 §4）：调用方把已选出的工具 schema
-        序列化字节数传入，软计入 estimated_tokens（仅影响估算，不改变任何截断）。
+        ``tools_payload``（P3 #3，优先）：调用方把已选出的工具 schema 序列化
+        JSON（``json.dumps(..., ensure_ascii=False)``）传入，按与历史压缩相同的
+        ``_estimate_tokens`` 权重软计入 estimated_tokens（CJK 1 char ≈ 1.5
+        tokens、ASCII 4 char ≈ 1 token——不再用 ASCII-heavy 近似）。只影响估算，
+        不改变任何截断行为。
+
+        ``tools_payload_chars``（兼容旧调用——测试/benchmark 传字符数）：仅在
+        ``tools_payload`` 未提供时使用 chars/4 近似，语义不变。
         """
         if not messages:
             return ContextAssemblyResult(
@@ -245,9 +252,14 @@ class ChatContextAssembler:
         total_tokens = sum(
             _estimate_tokens(str(m.get("content", ""))) for m in head
         )
-        if tools_payload_chars and tools_payload_chars > 0:
-            # design-v3 §4：工具 schema 是 ASCII-heavy JSON，按 4 字符 ≈ 1 token
-            # 软计入。只影响估算与可观测性，不改变任何截断行为。
+        if tools_payload:
+            # P3 #3：CJK-aware —— 与历史压缩同一权重（CJK 1 char ≈ 1.5 tokens、
+            # ASCII 4 char ≈ 1 token）。软计入，只影响估算与可观测性，不改变
+            # 任何截断行为。工具 schema 里中文描述（描述/参数说明）越多，估算
+            # 越接近真实 token 数。
+            total_tokens += _estimate_tokens(tools_payload)
+        elif tools_payload_chars and tools_payload_chars > 0:
+            # 兼容旧调用（测试/benchmark 只传字符数）：ASCII-heavy 近似。
             total_tokens += int(tools_payload_chars / 4) + 1
 
         return ContextAssemblyResult(

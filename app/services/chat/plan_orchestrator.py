@@ -384,6 +384,13 @@ class AgentPlanOrchestrator:
         P1-B(4)：flush 前 bump revision —— canonical 被 advance_step 打勾 /
         recompute_status 改状态，revision 必须真实递增，否则 tool_metrics 里
         plan_revision 恒为 1，跨 worker revision guard 也失去意义。
+
+        P3 #5（partially_completed 语义）：save 前先 ``recompute_status()``——
+        步骤打勾后 canonical 状态永远由步骤状态推导，不靠调用方手动设置。
+        部分成功（部分步骤完成、其余 failed/skipped 且无 pending/running）推导
+        为 ``partially_completed``：它是**非终态**（TERMINAL_STATUSES 不含它），
+        ``get_plan`` / ``restore_plan`` 不过滤它，重启后仍作为活跃计划恢复
+        （可继续推进剩余步骤）——与 plan_mode 的可恢复部分完成语义一致。
         """
         canon = self._canonical.get(session_id)
         if canon is None:
