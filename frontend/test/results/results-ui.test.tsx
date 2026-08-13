@@ -170,6 +170,21 @@ describe('ResultDetail — V4 action grouping + status vocabulary', () => {
     renderDetail(r, []);
     expect(screen.getByText('该结果未挂载为地图图层。')).toBeInTheDocument();
   });
+
+  it('export on a ref-less statistic still calls onSend', () => {
+    const r = normalizeStepResult({
+      step_id: 's-stat',
+      tool: 'moran_i',
+      result: { success: true, summary: 'ok', data: { moran_i: 0.42 } },
+    });
+    const onSend = vi.fn();
+    render(
+      <ResultDetail result={r} sessionId="sess" ownerToken={null} onBack={() => {}} onSend={onSend} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '导出结果' }));
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend.mock.calls[0][0]).toContain('导出');
+  });
 });
 
 describe('ResultList — V4 density contracts', () => {

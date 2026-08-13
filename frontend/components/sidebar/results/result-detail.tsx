@@ -154,7 +154,8 @@ export function ResultDetail({ result, sessionId, ownerToken, onBack, onSend }: 
       // Resolve through the bound layer's real id (not the raw ref) so the
       // `_refId` binding the UI honors is the same one the writes target.
       const layerId = boundLayer?.id ?? ref;
-      if (!layerId) return;
+      const needsLayer = action.kind === 'show_on_map' || action.kind === 'hide' || action.kind === 'zoom';
+      if (needsLayer && !layerId) return;
       switch (action.kind) {
         case 'show_on_map':
         case 'hide':
