@@ -706,6 +706,9 @@ class _DroppingStore:
     async def get_map_action_events(self, session_id: str) -> list[dict]:
         return []
 
+    async def get_map_state(self, session_id: str) -> dict:
+        return {}
+
 
 def _fake_request() -> Request:
     return Request(
@@ -831,6 +834,12 @@ class _ReadCountingStore:
         self.read_calls += 1
         return await self._inner.get_map_action_events(session_id)
 
+    async def get_map_state(self, session_id: str) -> dict:
+        getter = getattr(self._inner, "get_map_state", None)
+        if getter is None:
+            return {}
+        return await getter(session_id)
+
 
 @pytest.mark.asyncio
 async def test_ack_endpoint_all_rejected_reads_store_once(monkeypatch):
@@ -886,3 +895,22 @@ async def test_ack_endpoint_mixed_batch_bounded_reads_keeps_semantics(monkeypatc
     assert store.read_calls <= 3, (
         f"readbacks must stay bounded by accepted appends, got {store.read_calls}"
     )
+
+
+@pytest.mark.asyncio
+async def test_ack_persist_redis_tombstone_is_410(monkeypatch):
+    """ACK persist must honor the Redis/map_state tombstone, not only the
+    process-local is_cartographic_session_deleted set (cross-replica delete)."""
+
+    class _TombstoneStore(MemorySessionStore):
+        async def get_map_state(self, session_id: str) -> dict:
+            return {"_cartographic_deleted": True}
+
+    monkeypatch.setattr(session_data_mod, "session_data_manager", _TombstoneStore())
+    monkeypatch.setattr(agent_pi_bridge, "is_cartographic_session_deleted", lambda _sid: False)
+    with pytest.raises(HTTPException) as ei:
+        await chat_route._persist_map_action_acks_locked(
+            "sess-deleted",
+            chat_route.MapActionAckRequest(acks=[_ack_payload("ma-late")]),
+        )
+    assert ei.value.status_code == 410
