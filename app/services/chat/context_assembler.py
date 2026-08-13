@@ -1,13 +1,28 @@
-"""
-Chat Context Assembler — Deep module for prompt context composition.
+"""Chat Context Assembler — Deep module for prompt context composition.
 
 Encapsulates map state ambient summaries, history token budget management,
 XML security fencing, and execution plan blocks behind a unified assembly seam.
+
+The project-context block (active_project_workspace) is rendered through
+``ProjectContextCache`` so that:
+
+- a chat turn that touches the same project across many LLM rounds
+  reads the project fingerprint exactly once per round (1 query) and
+  serves the rendered block from the LRU on every other round
+  (0 additional queries);
+- a mutation on the project / dataset / workflow bumps at least one
+  component of the fingerprint, so the next round misses the cache
+  and rebuilds the block (5 queries) — no stale data can leak;
+- a no-project path is unchanged (zero extra queries).
+
+See ``app/services/chat/project_context_cache.py`` for the cache
+contract and ``.planning/2026-08-13-context-assembly-perf/findings.md``
+for the design rationale.
 """
 from dataclasses import dataclass
 import asyncio
 import logging
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from app.services.session_data import session_data_manager
 from app.services.session_data_protocol import SessionStoreProtocol
@@ -15,34 +30,75 @@ from app.services.session_data_protocol import SessionStoreProtocol
 logger = logging.getLogger(__name__)
 
 
+# Module-level SessionLocal override for tests. The default delegates
+# to ``app.core.database.SessionLocal`` (the production sync engine);
+# tests inject a sessionmaker bound to an in-memory SQLite engine so
+# the cache + slim-summary path can be exercised without a real
+# Postgres.
+_session_local_factory: Optional[Callable] = None
+
+
+def _get_session_local() -> Callable:
+    """Return the sync session factory, honoring the test override."""
+    if _session_local_factory is not None:
+        return _session_local_factory
+    from app.core.database import SessionLocal
+    return SessionLocal
+
+
+def set_session_local_factory(factory: Optional[Callable]) -> None:
+    """Override the sync session factory (tests). Pass ``None`` to reset."""
+    global _session_local_factory
+    _session_local_factory = factory
+
+
 def _build_project_context_block(project_id: str) -> Optional[str]:
     """Sync DB read of the active project workspace (runs OFF the event loop).
 
-    Transport goal C-F4 (P0): ``ProjectService.get_project_with_auth`` /
-    ``list_project_datasets`` / ``list_project_workflows`` use the sync
-    ``SessionLocal``. Calling them inside the async ``assemble`` blocked the
-    event loop for the duration of three Postgres queries every LLM round;
-    under N concurrent streams that is N×3 queries of loop-blocking I/O
-    contending on the sync pool (each can stall up to ``pool_timeout=30s``).
-    This helper is the sync body, meant to be invoked via
-    ``asyncio.to_thread`` so it runs in the default executor instead of on the
-    loop.
+    Reads the project fingerprint (1 query) and, on a miss, the full
+    ``ProjectContextSummary`` (5 queries) — a strict reduction from
+    the previous 10 queries per round.
+
+    The fingerprint + summary pair is fed to ``ProjectContextCache``:
+
+    - On a hit, the cached rendered text is returned and *no* further
+      SQL is issued.
+    - On a miss, the freshly rendered text is stored in the cache
+      under ``(project_id, fingerprint.cache_key())``.
+
+    A ``None`` return means the project is missing or the caller is
+    not authorised; the cache deliberately does not store this
+    outcome so a re-creation or auth grant is picked up immediately.
     """
-    from app.core.database import SessionLocal
     from app.services.project_service import ProjectService
+    from app.services.chat.project_context_cache import project_context_cache
+
+    SessionLocal = _get_session_local()
     with SessionLocal() as db:
-        proj = ProjectService.get_project_with_auth(db, project_id)
-        if not proj:
+        # 1. Read just the fingerprint (3 cheap aggregate queries: auth
+        # + dataset aggregate + workflow aggregate). The auth check is
+        # folded into step 1 — a missing/unauthorised project returns
+        # None here, which the cache treats as a deliberate miss.
+        fingerprint = ProjectService.get_project_fingerprint(db, project_id)
+        if fingerprint is None:
             return None
-        datasets = ProjectService.list_project_datasets(db, project_id)
-        wfs = ProjectService.list_project_workflows(db, project_id)
-        return (
-            f"\n<active_project_workspace>\n"
-            f"Project: {proj.name} (ID: {proj.id})\n"
-            f"Datasets attached ({len(datasets)}): {', '.join([d.name for d in datasets[:5]])}\n"
-            f"Workflows ({len(wfs)}): {', '.join([w.name for w in wfs[:5]])}\n"
-            f"</active_project_workspace>"
-        )
+
+        # 2. Cache lookup under (project_id, fingerprint.cache_key()).
+        cached = project_context_cache.lookup(project_id, fingerprint.cache_key())
+        if cached is not None:
+            return cached
+
+        # 3. Cache miss: pay the full summary read (5 queries). The
+        # summary is then stored under the same key, so the next round
+        # pays only the 1-query fingerprint cost.
+        summary = ProjectService.get_project_context_summary(db, project_id)
+        if summary is None:
+            # The fingerprint path saw the project but the summary
+            # path did not — race with a delete. Treat as a miss;
+            # do not cache.
+            return None
+        project_context_cache.store(project_id, summary)
+        return summary.render()
 
 
 @dataclass(frozen=True)
@@ -69,10 +125,20 @@ class ChatContextAssembler:
         self,
         session_id: str,
         messages: List[dict],
+        project_id: Optional[str] = None,
     ) -> ContextAssemblyResult:
         """
         Assemble the complete LLM request message list from session state,
         ambient environment summary, execution plan, and history token budget.
+
+        ``project_id`` is an optional override: when set, it is used in
+        preference to ``metadata.get("project_id")``. The chat engine
+        forwards the active project's id when it has one (the session
+        metadata store does not yet persist ``project_id``, so this
+        override is the only way the assembler can currently learn
+        about the active project — see also the
+        ``get_session_metadata`` path which is still a no-op for
+        ``project_id``).
         """
         if not messages:
             return ContextAssemblyResult(
@@ -109,13 +175,21 @@ class ChatContextAssembler:
                 _fetched=True,
             )
 
-            project_id = metadata.get("project_id")
-            if project_id:
-                # C-F4: offload the sync Postgres reads to a worker thread so
-                # they no longer block the event loop every LLM round.
+            # Prefer the explicit override; fall back to the session
+            # metadata. Both are independently optional — a session
+            # without an active project is the common case today and
+            # must remain zero-query.
+            effective_project_id = project_id or metadata.get("project_id")
+            if effective_project_id:
+                # C-F4: offload the sync Postgres reads to a worker
+                # thread so they no longer block the event loop every
+                # LLM round. The body now goes through
+                # ``ProjectContextCache``: a hit costs 1 fingerprint
+                # query, a miss costs 5; multi-round same-project
+                # turns pay 1 per round after the first.
                 try:
                     project_block = await asyncio.to_thread(
-                        _build_project_context_block, project_id
+                        _build_project_context_block, effective_project_id
                     )
                     if project_block:
                         env_summary += project_block
@@ -175,4 +249,8 @@ class ChatContextAssembler:
         )
 
 
-__all__ = ["ChatContextAssembler", "ContextAssemblyResult"]
+__all__ = [
+    "ChatContextAssembler",
+    "ContextAssemblyResult",
+    "set_session_local_factory",
+]

@@ -224,8 +224,15 @@ class ChatExecutionEngine:
     def _format_layer_lines(inventory: dict, active_layers: list[dict]) -> list[str]:
         return _format_layer_lines(inventory, active_layers)
 
-    async def _compose_request_messages(self, session_id: str, messages: list[dict]) -> list[dict]:
-        res = await self.context_assembler.assemble(session_id, messages)
+    async def _compose_request_messages(
+        self,
+        session_id: str,
+        messages: list[dict],
+        project_id: Optional[str] = None,
+    ) -> list[dict]:
+        res = await self.context_assembler.assemble(
+            session_id, messages, project_id=project_id,
+        )
         return res.to_messages()
 
     def _build_last_analysis_context(self, messages: list[dict]) -> str:
@@ -454,7 +461,15 @@ class ChatExecutionEngine:
                 session_id, k, v, seq=viewport_seq if k == "viewport" else None
             )
 
-    async def chat(self, message: str, session_id: Optional[str] = None, map_state: Optional[dict] = None, skill_name: Optional[str] = None, user_id: Optional[str] = None) -> dict:
+    async def chat(
+        self,
+        message: str,
+        session_id: Optional[str] = None,
+        map_state: Optional[dict] = None,
+        skill_name: Optional[str] = None,
+        user_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> dict:
         """非流式对话"""
         if not session_id:
             session_id = str(uuid.uuid4())
@@ -479,7 +494,7 @@ class ChatExecutionEngine:
         async with lock:
             try:
                 return await self._chat_locked(
-                    message, session_id, messages, skill_name, user_id,
+                    message, session_id, messages, skill_name, user_id, project_id,
                 )
             finally:
                 # C-F12: bound the in-memory tail once the turn's appends are
@@ -493,6 +508,7 @@ class ChatExecutionEngine:
         messages: list[dict],
         skill_name: Optional[str] = None,
         user_id: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> dict:
         """Non-streaming chat turn body, executed under the session lock."""
 
@@ -613,7 +629,15 @@ class ChatExecutionEngine:
                     self._session_locks.pop(sid, None)
         return self._session_locks.setdefault(session_id, asyncio.Lock())
 
-    async def chat_stream(self, message: str, session_id: Optional[str] = None, map_state: Optional[dict] = None, skill_name: Optional[str] = None, user_id: Optional[str] = None) -> AsyncGenerator[str, None]:
+    async def chat_stream(
+        self,
+        message: str,
+        session_id: Optional[str] = None,
+        map_state: Optional[dict] = None,
+        skill_name: Optional[str] = None,
+        user_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> AsyncGenerator[str, None]:
         """流式对话，yield SSE 格式事件含任务跟踪"""
         if not session_id:
             session_id = str(uuid.uuid4())
@@ -683,7 +707,9 @@ class ChatExecutionEngine:
                 executed_tools = set()
 
                 for round_index in range(self.max_rounds):
-                    messages_with_context = await self._compose_request_messages(session_id, messages)
+                    messages_with_context = await self._compose_request_messages(
+                        session_id, messages, project_id=project_id,
+                    )
 
                     if self.tracker.is_cancelled(task.id):
                         pf = _maybe_plan_finalized_event()

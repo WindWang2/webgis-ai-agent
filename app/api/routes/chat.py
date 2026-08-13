@@ -233,6 +233,16 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
     map_state: Optional[dict] = Field(None, description="当前的地图状态（视角、图层等）")
     skill_name: Optional[str] = Field(None, description="要激活的技能名称")
+    project_id: Optional[str] = Field(
+        None,
+        description=(
+            "Active project workspace id; when set, the chat context "
+            "assembler renders the project-summary block (datasets + "
+            "workflows) for this project. The session metadata store "
+            "does not yet persist project_id, so the request body is "
+            "the only way to associate a chat turn with a project."
+        ),
+    )
 
 
 class ChatResponse(BaseModel):
@@ -303,6 +313,7 @@ async def chat_completions(
             map_state=req.map_state,
             skill_name=req.skill_name,
             user_id=user_id,
+            project_id=req.project_id,
         )
         return ChatResponse(**result)
     except Exception as e:
@@ -415,6 +426,7 @@ async def chat_stream(
                         map_state=req.map_state,
                         skill_name=req.skill_name,
                         user_id=user_id,
+                        project_id=req.project_id,
                     ),
                     buffer,
                 ):
