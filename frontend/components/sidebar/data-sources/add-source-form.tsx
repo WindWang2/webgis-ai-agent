@@ -62,15 +62,15 @@ export function AddSourceForm({ onCreated }: AddSourceFormProps) {
   };
 
   const inputClass =
-    'w-full rounded border border-[var(--theme-border)] bg-[var(--theme-bg-input)] px-2 py-1 text-[11px] text-[var(--theme-text-primary)]';
-  const labelClass = 'text-[11px] text-[var(--theme-text-muted)]';
+    'w-full rounded-sm border border-edge-subtle bg-surface-sunken px-2 py-1 text-caption text-ink';
+  const labelClass = 'text-caption text-ink-muted';
 
   return (
     <form
       onSubmit={handleSubmit}
-      className="shrink-0 space-y-2 border-b border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] p-3"
+      className="shrink-0 space-y-2 border-b border-edge-subtle bg-surface-raised p-3"
     >
-      <h5 className="text-[12px] font-semibold text-[var(--theme-text-primary)]">注册新数据源</h5>
+      <h5 className="text-meta font-semibold text-ink">注册新数据源</h5>
       <div>
         <label htmlFor={nameId} className={labelClass}>
           数据源名称
@@ -103,13 +103,13 @@ export function AddSourceForm({ onCreated }: AddSourceFormProps) {
           </select>
         </div>
         <div className="flex w-1/2 items-center pt-4">
-          <label htmlFor={privateId} className="flex cursor-pointer items-center gap-1.5 text-[11px] text-[var(--theme-text-secondary)]">
+          <label htmlFor={privateId} className="flex cursor-pointer items-center gap-1.5 text-caption text-ink-secondary">
             <input
               id={privateId}
               type="checkbox"
               checked={newAllowPrivate}
               onChange={(e) => setNewAllowPrivate(e.target.checked)}
-              className="rounded border-[var(--theme-border-strong)]"
+              className="rounded-sm border-edge-strong"
               style={{ accentColor: 'var(--agent-accent, #16a34a)' }}
             />
             <span>允许内网 (SSRF)</span>
@@ -132,7 +132,7 @@ export function AddSourceForm({ onCreated }: AddSourceFormProps) {
       <button
         type="submit"
         disabled={submittingSource}
-        className="w-full rounded py-1.5 text-[12px] font-medium text-white transition-opacity hover:opacity-85 disabled:opacity-50"
+        className="w-full rounded py-1.5 text-meta font-medium text-ink-on-accent transition-opacity hover:opacity-85 disabled:opacity-50"
         style={{ background: 'var(--agent-accent, #16a34a)' }}
       >
         {submittingSource ? '提交中...' : '提交注册并同步'}

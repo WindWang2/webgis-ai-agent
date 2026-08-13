@@ -5,6 +5,8 @@
  *
  * 收敛审计发现的 3 种发散实现（data-sources 300ms debounce / history 即席 /
  * template-v2 200ms）。受控值 + 可选 debounce；Escape 清空；带清除按钮。
+ *
+ * UI V4：高度/圆角/配色改用 token，与 SField 同一控件刻度。
  */
 import { useEffect, useState } from 'react';
 import { Search, X } from 'lucide-react';
@@ -38,7 +40,7 @@ export function SearchField({ value, onChange, placeholder, debounceMs = 0, 'ari
       <Search
         size={13}
         aria-hidden
-        className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--theme-text-muted)]"
+        className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-ink-muted"
       />
       <input
         type="search"
@@ -56,7 +58,7 @@ export function SearchField({ value, onChange, placeholder, debounceMs = 0, 'ari
             e.stopPropagation();
           }
         }}
-        className="w-full rounded-md border border-[var(--theme-border)] bg-[var(--theme-bg-input)] py-1.5 pl-7 pr-7 text-[13px] text-[var(--theme-text-primary)] placeholder:text-[var(--theme-text-muted)]"
+        className="h-control-lg w-full rounded-sm border border-edge-subtle bg-surface-sunken pl-7 pr-7 text-body text-ink placeholder:text-ink-disabled focus:border-status-accent-border focus:outline-none"
       />
       {draft && (
         <button
@@ -66,7 +68,7 @@ export function SearchField({ value, onChange, placeholder, debounceMs = 0, 'ari
             setDraft('');
             onChange('');
           }}
-          className="absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-[var(--theme-text-muted)] hover:bg-[var(--theme-bg-hover)]"
+          className="absolute right-1.5 top-1/2 flex h-control-sm w-control-sm -translate-y-1/2 items-center justify-center rounded-sm text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink"
         >
           <X size={12} aria-hidden />
         </button>

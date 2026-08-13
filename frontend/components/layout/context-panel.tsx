@@ -42,7 +42,6 @@ export interface ContextPanelProps {
   }>;
   aiStatus: AiStatus;
   onSend: (text: string) => void;
-  accentColor?: string;
   sessionId?: string | null;
   ownerToken?: string | null;
   onPlanAction?: (planId: string, action: 'approve' | 'revise' | 'reject') => void;
@@ -74,7 +73,6 @@ export function ContextPanel({
   messages,
   aiStatus,
   onSend,
-  accentColor = '#16a34a',
   sessionId,
   ownerToken,
   onPlanAction,
@@ -149,21 +147,19 @@ export function ContextPanel({
   }, [toggleLeftPanel, metaKey]);
 
   return (
+    // V4：壳层度量改用 token（left-rail / top-topbar），背景改为不透明
+    // surface-panel 并移除 backdrop-blur —— 面板压在持续重绘的地图画布上，
+    // blur 是最贵的那一类滤镜，且半透明会让地图细节透进密集文本。
     <aside
       role="tabpanel"
       id="workspace-panel"
       aria-labelledby={`rail-tab-${metaKey}`}
       aria-hidden={!leftPanelOpen}
-      className="fixed left-12 top-[42px] z-40 flex flex-col"
+      className="fixed left-rail top-topbar z-40 flex flex-col border-r border-edge-subtle bg-surface-panel shadow-overlay"
       style={{
         bottom: hudOpen ? 234 : 24,
         width: sidebarWidth,
-        maxWidth: 'calc(100vw - 48px)',
-        background: 'var(--theme-bg-panel)',
-        backdropFilter: 'blur(28px)',
-        WebkitBackdropFilter: 'blur(28px)',
-        borderRight: '1px solid var(--theme-border)',
-        boxShadow: 'var(--theme-shadow)',
+        maxWidth: 'calc(100vw - var(--railW))',
         transform: leftPanelOpen ? 'translateX(0)' : 'translateX(-110%)',
         visibility: leftPanelOpen ? 'visible' : 'hidden',
         transition: dragging
@@ -186,7 +182,6 @@ export function ContextPanel({
             messages={messages}
             aiStatus={aiStatus}
             onSend={onSend}
-            accentColor={accentColor}
             onPlanAction={onPlanAction}
           />
         )}
@@ -196,7 +191,7 @@ export function ContextPanel({
         {activeTab === 'data_sources' && <DataSourcesTab />}
         {(activeTab === 'export_layout' || activeTab === 'exports') && <MapStudioTab />}
         {activeTab === 'tasks' && (
-          <TasksTab sessionId={sessionId} ownerToken={ownerToken} accentColor={accentColor} />
+          <TasksTab sessionId={sessionId} ownerToken={ownerToken} />
         )}
       </div>
 

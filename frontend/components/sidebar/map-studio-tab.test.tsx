@@ -37,7 +37,6 @@ const mockState: Record<string, any> = {
   updateExportSettings,
   exports: [] as ExportItem[],
   setExports,
-  accentColor: '#16a34a',
   leftPanelOpen: true,
 };
 

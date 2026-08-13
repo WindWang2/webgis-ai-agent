@@ -46,7 +46,7 @@ export function MapConfig() {
 
       {/* Basemap style cards */}
       <div>
-        <div className="text-[15px] uppercase tracking-wider text-[var(--theme-text-muted)] font-semibold mb-3">
+        <div className="text-heading uppercase tracking-wider text-ink-muted font-semibold mb-3">
           Basemap Style
         </div>
         <div className="grid grid-cols-3 gap-2">
@@ -56,43 +56,44 @@ export function MapConfig() {
               <button
                 key={style.id}
                 onClick={() => setBaseLayer(style.name)}
-                className="flex flex-col items-center justify-center gap-1.5 rounded-xl border-2 py-3 px-2 transition-all"
+                className="flex flex-col items-center justify-center gap-1.5 rounded-md border-2 px-2 py-3 transition-all"
                 style={{
                   borderColor: isActive
                     ? 'var(--agent-accent, #16a34a)'
-                    : 'var(--theme-border)',
+                    : 'var(--border-subtle)',
                   backgroundColor: isActive
                     ? 'color-mix(in srgb, var(--agent-accent, #16a34a) 4%, transparent)'
-                    : 'var(--theme-bg-subtle)',
+                    : 'var(--surface-raised)',
                 }}
               >
                 {/* Mini preview */}
                 <div
-                  className="rounded-lg flex items-center justify-center"
+                  className="flex items-center justify-center rounded-md"
                   style={{
                     width: 48,
                     height: 32,
                     background: isActive
                       ? 'linear-gradient(135deg, color-mix(in srgb, var(--agent-accent, #16a34a) 15%, transparent), color-mix(in srgb, var(--agent-accent, #16a34a) 5%, transparent))'
-                      : 'linear-gradient(135deg, var(--theme-bg-muted), var(--theme-bg-subtle))',
+                      : 'linear-gradient(135deg, var(--surface-sunken), var(--surface-raised))',
                     border: isActive
                       ? '1px solid color-mix(in srgb, var(--agent-accent, #16a34a) 20%, transparent)'
-                      : '1px solid var(--theme-border)',
+                      : '1px solid var(--border-subtle)',
                   }}
                 >
                   {isActive && (
-                    <Check size={16} style={{ color: 'var(--agent-accent, #16a34a)' }} />
+                    /* 选中勾是状态图标，accent 作文字 —— 用 text-safe 变体。 */
+                    <Check size={16} className="text-agent-accent" />
                   )}
                 </div>
                 <span
-                  className="text-[15px] font-medium leading-tight"
+                  className="text-title font-medium leading-tight"
                   style={{
-                    color: isActive ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-secondary)',
+                    color: isActive ? 'var(--agent-accent)' : 'var(--text-secondary)',
                   }}
                 >
                   {style.name}
                 </span>
-                <span className="text-[14px] text-[var(--theme-text-muted)] leading-tight">
+                <span className="text-body leading-tight text-ink-muted">
                   {style.desc}
                 </span>
               </button>
@@ -103,10 +104,10 @@ export function MapConfig() {
 
       {/* Add custom basemap */}
       <div>
-        <div className="text-[15px] uppercase tracking-wider text-[var(--theme-text-muted)] font-semibold mb-3">
+        <div className="text-heading uppercase tracking-wider text-ink-muted font-semibold mb-3">
           Add Custom Basemap
         </div>
-        <div className="flex flex-col gap-2.5 rounded-xl border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] px-4 py-3">
+        <div className="flex flex-col gap-2.5 rounded-md border border-edge-subtle bg-surface-raised px-4 py-3">
           <SField
             label="Name"
             value={newName}
@@ -135,7 +136,7 @@ export function MapConfig() {
 
       {/* CRS selection */}
       <div>
-        <div className="text-[15px] uppercase tracking-wider text-[var(--theme-text-muted)] font-semibold mb-3">
+        <div className="text-heading uppercase tracking-wider text-ink-muted font-semibold mb-3">
           Coordinate Reference System
         </div>
         <div className="flex gap-2">
@@ -145,28 +146,28 @@ export function MapConfig() {
               <button
                 key={opt.code}
                 onClick={() => setCrs(opt.code)}
-                className="flex-1 flex flex-col items-center gap-0.5 rounded-lg border-2 py-2 px-2 transition-all"
+                className="flex flex-1 flex-col items-center gap-0.5 rounded-md border-2 px-2 py-2 transition-all"
                 style={{
                   borderColor: isActive
                     ? 'var(--agent-accent, #16a34a)'
-                    : 'var(--theme-border)',
+                    : 'var(--border-subtle)',
                   backgroundColor: isActive
                     ? 'color-mix(in srgb, var(--agent-accent, #16a34a) 4%, transparent)'
-                    : 'var(--theme-bg-subtle)',
+                    : 'var(--surface-raised)',
                 }}
               >
                 <span
-                  className="text-[14px] font-mono font-semibold"
+                  className="text-title font-mono font-semibold"
                   style={{
-                    color: isActive ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-secondary)',
+                    color: isActive ? 'var(--agent-accent)' : 'var(--text-secondary)',
                   }}
                 >
                   {opt.code}
                 </span>
                 <span
-                  className="text-[14px]"
+                  className="text-body"
                   style={{
-                    color: isActive ? 'var(--agent-accent, #16a34a)' : 'var(--theme-text-muted)',
+                    color: isActive ? 'var(--agent-accent)' : 'var(--text-muted)',
                   }}
                 >
                   {opt.label}

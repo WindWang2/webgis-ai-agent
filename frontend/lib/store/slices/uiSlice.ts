@@ -113,7 +113,8 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   setTweaksOpen: (open) => set({ tweaksOpen: open }),
 
   /* ─── v2 UI Tweaks ─── */
-  accentColor: '#16a34a',
+  // 与 --accent 同值：accent 底 + 白字需达 AA（旧的 #16a34a 只有 3.3:1）。
+  accentColor: '#15803d',
   setAccentColor: (color) => set({ accentColor: color }),
   theme: 'light' as const,
   setTheme: (theme) => set({ theme }),

@@ -9,7 +9,6 @@ describe('SpatialCrosshair', () => {
     useHudStore.setState({
       viewport: { center: [116.4074, 39.9042], zoom: 10, bearing: 0, pitch: 0 },
       aiStatus: 'idle',
-      accentColor: '#16a34a',
       is3D: false,
     });
     // Mock navigator.clipboard

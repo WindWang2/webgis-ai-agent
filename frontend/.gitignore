@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Visual regression screenshot output (see test/visual/capture.mjs)
+/.visual/

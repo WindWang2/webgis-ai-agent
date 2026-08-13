@@ -103,7 +103,6 @@ describe('ChatTab render scope (D-F8)', () => {
           messages={messages}
           aiStatus="thinking"
           onSend={() => {}}
-          accentColor="#16a34a"
         />
       </Profiler>
     );
@@ -130,7 +129,6 @@ describe('ChatTab render scope (D-F8)', () => {
             messages={messages}
             aiStatus="thinking"
             onSend={() => {}}
-            accentColor="#16a34a"
           />
         </Profiler>
       );

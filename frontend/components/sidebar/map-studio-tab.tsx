@@ -61,8 +61,7 @@ function StudioSection({
   const sectionId = useId();
   return (
     <section
-      className="overflow-hidden rounded-lg border"
-      style={{ borderColor: 'var(--theme-border)', backgroundColor: 'var(--theme-bg-glass)' }}
+      className="overflow-hidden rounded-md border border-edge-subtle bg-surface-overlay"
     >
       <button
         id={sectionId}
@@ -70,19 +69,20 @@ function StudioSection({
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-controls={`${sectionId}-content`}
-        className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-[var(--theme-bg-hover)]"
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-surface-hover"
       >
         <ChevronDown
           size={14}
           aria-hidden
-          className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
-          style={{ color: 'var(--theme-text-muted)' }}
+          className={`shrink-0 text-ink-muted transition-transform ${open ? 'rotate-180' : ''}`}
         />
         <span className="min-w-0 flex-1">
-          <span className="block text-[13px] font-semibold" style={{ color: 'var(--theme-text-primary)' }}>
+          {/* 长制图标题会折行撑高整行，而下方摘要却在截断 —— 标题同样
+              truncate，并给 title 提示补回被截断的全文。 */}
+          <span className="block truncate text-body font-semibold text-ink" title={title}>
             {title}
           </span>
-          <span className="mt-0.5 block truncate text-[11px]" style={{ color: 'var(--theme-text-muted)' }}>
+          <span className="mt-0.5 block truncate text-caption text-ink-muted">
             {summary}
           </span>
         </span>
@@ -92,8 +92,7 @@ function StudioSection({
           id={`${sectionId}-content`}
           role="region"
           aria-labelledby={sectionId}
-          className="border-t px-3 pb-3 pt-3"
-          style={{ borderColor: 'var(--theme-border-subtle)' }}
+          className="border-t border-edge-subtle px-3 pb-3 pt-3"
         >
           {children}
         </div>
@@ -109,7 +108,6 @@ export function MapStudioTab() {
   const leftPanelOpen = useHudStore((s) => s.leftPanelOpen);
   const exports = useHudStore((s) => s.exports);
   const setExports = useHudStore((s) => s.setExports);
-  const accentColor = useHudStore((s) => s.accentColor);
   const { dispatchAction } = useMapAction();
 
   // Helper to update specific fields
@@ -176,21 +174,11 @@ export function MapStudioTab() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Segmented subtab switcher（制图排版 / 导出历史）—— PanelHeader 已提供面板标题 */}
-      <div
-        className="p-3 pb-2.5 border-b shrink-0"
-        style={{
-          borderBottomColor: 'var(--theme-border)',
-          backgroundColor: 'var(--theme-bg-glass)'
-        }}
-      >
+      <div className="shrink-0 border-b border-edge-subtle bg-surface-overlay p-3 pb-2.5">
         <div
           role="tablist"
           aria-label="制图工坊子页签"
-          className="flex p-0.5 rounded-lg text-[12px]"
-          style={{
-            backgroundColor: 'var(--theme-bg-muted)',
-            border: '1px solid var(--theme-border)'
-          }}
+          className="flex rounded-md border border-edge-subtle bg-surface-sunken p-0.5 text-meta"
           onKeyDown={(e) => {
             if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
             e.preventDefault();
@@ -211,16 +199,16 @@ export function MapStudioTab() {
             aria-controls={activeSubTab === 'layout' ? 'map-studio-panel-layout' : undefined}
             tabIndex={activeSubTab === 'layout' ? 0 : -1}
             onClick={() => setActiveSubTab('layout')}
-            className="flex-1 py-1.5 rounded-md flex items-center justify-center gap-1.5 font-medium transition-all"
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 font-medium transition-all"
             style={{
               backgroundColor: activeSubTab === 'layout'
-                ? 'var(--theme-bg-subtle)'
+                ? 'var(--surface-raised)'
                 : 'transparent',
               color: activeSubTab === 'layout'
-                ? 'var(--theme-text-primary)'
-                : 'var(--theme-text-muted)',
+                ? 'var(--text-primary)'
+                : 'var(--text-muted)',
               boxShadow: activeSubTab === 'layout'
-                ? '0 1px 2px var(--theme-border-strong)'
+                ? '0 1px 2px var(--border-strong)'
                 : 'none',
             }}
           >
@@ -234,16 +222,16 @@ export function MapStudioTab() {
             aria-controls={activeSubTab === 'history' ? 'map-studio-panel-history' : undefined}
             tabIndex={activeSubTab === 'history' ? 0 : -1}
             onClick={() => setActiveSubTab('history')}
-            className="flex-1 py-1.5 rounded-md flex items-center justify-center gap-1.5 font-medium transition-all"
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 font-medium transition-all"
             style={{
               backgroundColor: activeSubTab === 'history'
-                ? 'var(--theme-bg-subtle)'
+                ? 'var(--surface-raised)'
                 : 'transparent',
               color: activeSubTab === 'history'
-                ? 'var(--theme-text-primary)'
-                : 'var(--theme-text-muted)',
+                ? 'var(--text-primary)'
+                : 'var(--text-muted)',
               boxShadow: activeSubTab === 'history'
-                ? '0 1px 2px var(--theme-border-strong)'
+                ? '0 1px 2px var(--border-strong)'
                 : 'none',
             }}
           >
@@ -251,7 +239,7 @@ export function MapStudioTab() {
             <span>导出历史</span>
             {exports.length > 0 && (
               <span
-                className="w-1.5 h-1.5 rounded-full"
+                className="h-1.5 w-1.5 rounded-full"
                 style={{ backgroundColor: 'var(--agent-accent, #16a34a)' }}
                 aria-hidden
               />
@@ -273,7 +261,7 @@ export function MapStudioTab() {
             <StudioSection title="文档" summary={docSummary} defaultOpen>
               <div className="space-y-3">
                 <div>
-                  <label htmlFor={titleId} className="block text-[12px] font-medium mb-1.5" style={{ color: 'var(--theme-text-secondary)' }}>
+                  <label htmlFor={titleId} className="mb-1.5 block text-meta font-medium text-ink-secondary">
                     主标题
                   </label>
                   <input
@@ -282,17 +270,12 @@ export function MapStudioTab() {
                     value={exportSettings.title}
                     onChange={(e) => handleChange('title', e.target.value)}
                     placeholder="如：成都市高校分布图"
-                    style={{
-                      backgroundColor: 'var(--theme-bg-input)',
-                      borderColor: 'var(--theme-border)',
-                      color: 'var(--theme-text-primary)'
-                    }}
-                    className="w-full text-[13px] border rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)] font-medium"
+                    className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-3 py-2 text-body font-medium text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   />
                 </div>
 
                 <div>
-                  <label htmlFor={subtitleId} className="block text-[12px] font-medium mb-1.5" style={{ color: 'var(--theme-text-secondary)' }}>
+                  <label htmlFor={subtitleId} className="mb-1.5 block text-meta font-medium text-ink-secondary">
                     副标题
                   </label>
                   <input
@@ -301,17 +284,12 @@ export function MapStudioTab() {
                     value={exportSettings.subtitle}
                     onChange={(e) => handleChange('subtitle', e.target.value)}
                     placeholder="如：数据来源: OSM, 制图日期: 2026"
-                    style={{
-                      backgroundColor: 'var(--theme-bg-input)',
-                      borderColor: 'var(--theme-border)',
-                      color: 'var(--theme-text-primary)'
-                    }}
-                    className="w-full text-[13px] border rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)] font-medium"
+                    className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-3 py-2 text-body font-medium text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   />
                 </div>
 
                 <div>
-                  <label htmlFor={authorId} className="block text-[12px] font-medium mb-1.5" style={{ color: 'var(--theme-text-secondary)' }}>
+                  <label htmlFor={authorId} className="mb-1.5 block text-meta font-medium text-ink-secondary">
                     作者
                   </label>
                   <input
@@ -320,17 +298,12 @@ export function MapStudioTab() {
                     value={exportSettings.author}
                     onChange={(e) => handleChange('author', e.target.value)}
                     placeholder="制图者名称"
-                    style={{
-                      backgroundColor: 'var(--theme-bg-input)',
-                      borderColor: 'var(--theme-border)',
-                      color: 'var(--theme-text-primary)'
-                    }}
-                    className="w-full text-[13px] border rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)] font-medium"
+                    className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-3 py-2 text-body font-medium text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   />
                 </div>
 
                 <div>
-                  <label htmlFor={dataSourceId} className="block text-[12px] font-medium mb-1.5" style={{ color: 'var(--theme-text-secondary)' }}>
+                  <label htmlFor={dataSourceId} className="mb-1.5 block text-meta font-medium text-ink-secondary">
                     数据来源
                   </label>
                   <input
@@ -339,12 +312,7 @@ export function MapStudioTab() {
                     value={exportSettings.dataSource}
                     onChange={(e) => handleChange('dataSource', e.target.value)}
                     placeholder="如：OSM, 天地图"
-                    style={{
-                      backgroundColor: 'var(--theme-bg-input)',
-                      borderColor: 'var(--theme-border)',
-                      color: 'var(--theme-text-primary)'
-                    }}
-                    className="w-full text-[13px] border rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)] font-medium"
+                    className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-3 py-2 text-body font-medium text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   />
                 </div>
               </div>
@@ -358,17 +326,18 @@ export function MapStudioTab() {
                   return (
                     <label
                       key={el.key}
-                      className="flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-all border text-[12px] font-medium"
+                      className="flex items-center gap-2 rounded-md border px-3 py-2.5 text-meta font-medium transition-all cursor-pointer"
                       style={{
                         backgroundColor: enabled
                           ? 'color-mix(in srgb, var(--agent-accent, #16a34a) 12%, transparent)'
                           : 'transparent',
                         borderColor: enabled
                           ? 'color-mix(in srgb, var(--agent-accent, #16a34a) 35%, transparent)'
-                          : 'var(--theme-border)',
+                          : 'var(--border-subtle)',
+                        /* 选中项文字是 accent 作文字 —— 用 text-safe 变体。 */
                         color: enabled
-                          ? 'var(--agent-accent, #16a34a)'
-                          : 'var(--theme-text-secondary)'
+                          ? 'var(--agent-accent)'
+                          : 'var(--text-secondary)'
                       }}
                     >
                       <input
@@ -387,19 +356,14 @@ export function MapStudioTab() {
 
             {/* 页面与输出：纸张 / 方向 / DPI / 格式 */}
             <StudioSection title="页面与输出" summary={outputSummary}>
-              <div className="space-y-3 font-medium text-[13px]">
+              <div className="space-y-3 text-body font-medium">
                 <div className="flex items-center justify-between gap-4">
-                  <label htmlFor={formatId} style={{ color: 'var(--theme-text-muted)' }}>输出格式</label>
+                  <label htmlFor={formatId} className="text-ink-muted">输出格式</label>
                   <select
                     id={formatId}
                     value={exportSettings.format}
                     onChange={(e) => handleChange('format', e.target.value)}
-                    style={{
-                      backgroundColor: 'var(--theme-bg-input)',
-                      borderColor: 'var(--theme-border)',
-                      color: 'var(--theme-text-primary)'
-                    }}
-                    className="text-[13px] border rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
+                    className="rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 text-body text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   >
                     <option value="png">PNG 高清图片</option>
                     <option value="pdf">PDF 印刷文档</option>
@@ -408,17 +372,12 @@ export function MapStudioTab() {
                 </div>
 
                 <div className="flex items-center justify-between gap-4">
-                  <label htmlFor={paperSizeId} style={{ color: 'var(--theme-text-muted)' }}>纸张尺寸</label>
+                  <label htmlFor={paperSizeId} className="text-ink-muted">纸张尺寸</label>
                   <select
                     id={paperSizeId}
                     value={exportSettings.paperSize}
                     onChange={(e) => handleChange('paperSize', e.target.value)}
-                    style={{
-                      backgroundColor: 'var(--theme-bg-input)',
-                      borderColor: 'var(--theme-border)',
-                      color: 'var(--theme-text-primary)'
-                    }}
-                    className="text-[13px] border rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
+                    className="rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 text-body text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   >
                     <option value="screen">当前屏幕比例 (Screen)</option>
                     <option value="A4">A4 标准纸张尺寸</option>
@@ -427,18 +386,13 @@ export function MapStudioTab() {
                 </div>
 
                 <div className="flex items-center justify-between gap-4">
-                  <label htmlFor={orientationId} style={{ color: 'var(--theme-text-muted)' }}>纸张方向</label>
+                  <label htmlFor={orientationId} className="text-ink-muted">纸张方向</label>
                   <select
                     id={orientationId}
                     value={exportSettings.orientation}
                     onChange={(e) => handleChange('orientation', e.target.value)}
                     disabled={exportSettings.paperSize === 'screen'}
-                    style={{
-                      backgroundColor: 'var(--theme-bg-input)',
-                      borderColor: 'var(--theme-border)',
-                      color: 'var(--theme-text-primary)'
-                    }}
-                    className="text-[13px] border rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)] disabled:opacity-40"
+                    className="rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 text-body text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)] disabled:opacity-40"
                   >
                     <option value="landscape">横向 (Landscape)</option>
                     <option value="portrait">纵向 (Portrait)</option>
@@ -446,17 +400,12 @@ export function MapStudioTab() {
                 </div>
 
                 <div className="flex items-center justify-between gap-4">
-                  <label htmlFor={dpiId} style={{ color: 'var(--theme-text-muted)' }}>解析度 (DPI)</label>
+                  <label htmlFor={dpiId} className="text-ink-muted">解析度 (DPI)</label>
                   <select
                     id={dpiId}
                     value={exportSettings.dpi}
                     onChange={(e) => handleChange('dpi', Number(e.target.value))}
-                    style={{
-                      backgroundColor: 'var(--theme-bg-input)',
-                      borderColor: 'var(--theme-border)',
-                      color: 'var(--theme-text-primary)'
-                    }}
-                    className="text-[13px] border rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
+                    className="rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 text-body text-ink focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
                   >
                     <option value={96}>标准清晰度 (96 DPI)</option>
                     <option value={150}>高清晰度 (150 DPI)</option>
@@ -474,7 +423,7 @@ export function MapStudioTab() {
             className="p-2 space-y-1 h-full"
           >
             <div className="flex items-center justify-between px-2 py-1">
-              <span className="text-[12px] font-semibold" style={{ color: 'var(--theme-text-secondary)' }}>
+              <span className="text-meta font-semibold text-ink-secondary">
                 历史生成文件 ({exports.length})
               </span>
               {exports.length > 0 && (
@@ -489,28 +438,24 @@ export function MapStudioTab() {
                 {exports.map((item) => (
                   <div
                     key={item.id}
-                    className="flex items-center gap-2.5 p-2 rounded-lg transition-colors border"
-                    style={{
-                      backgroundColor: 'transparent',
-                      borderColor: 'var(--theme-border)'
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--theme-bg-hover)'; }}
+                    className="flex items-center gap-2.5 rounded-md border border-edge-subtle bg-transparent p-2 transition-colors"
+                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--surface-hover)'; }}
                     onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
                   >
-                    <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base flex-shrink-0" style={{ backgroundColor: 'var(--theme-bg-muted)' }}>
+                    <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md bg-surface-sunken text-base">
                       {iconForType[item.type] || '📁'}
                     </div>
 
                     <div className="flex-1 min-w-0">
-                      <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--theme-text-primary)' }}>
+                      <div className="truncate text-meta font-semibold text-ink">
                         {item.name}
                       </div>
-                      <div className="flex items-center gap-1.5 mt-0.5 text-[11px] font-medium">
-                        <span className="uppercase px-1 rounded font-mono" style={{ backgroundColor: 'var(--theme-bg-muted)', color: 'var(--theme-text-muted)' }}>
+                      <div className="mt-0.5 flex items-center gap-1.5 text-caption font-medium">
+                        <span className="rounded-sm bg-surface-sunken px-1 font-mono uppercase text-ink-muted">
                           {item.type}
                         </span>
-                        <span style={{ color: 'var(--theme-text-subtle)' }}>|</span>
-                        <span className="font-mono" style={{ color: 'var(--theme-text-muted)' }}>
+                        <span className="text-ink-disabled" aria-hidden>|</span>
+                        <span className="font-mono text-ink-muted">
                           {item.size}
                         </span>
                       </div>
@@ -530,15 +475,12 @@ export function MapStudioTab() {
 
       {/* Action Footer for layout */}
       {activeSubTab === 'layout' && (
-        <div
-          className="p-3 bg-transparent border-t shrink-0"
-          style={{ borderColor: 'var(--theme-border)' }}
-        >
+        <div className="shrink-0 border-t border-edge-subtle bg-transparent p-3">
           <button
-            className="w-full text-white font-bold py-2 rounded-lg shadow-md transition-all text-[13px]"
+            className="w-full rounded-md py-1.5 text-body font-semibold text-ink-on-accent transition-opacity hover:opacity-90"
             style={{
-              background: `linear-gradient(135deg, ${accentColor}, ${accentColor}dd)`,
-              boxShadow: `0 4px 12px ${accentColor}25`
+              background: 'linear-gradient(135deg, var(--agent-accent), color-mix(in srgb, var(--agent-accent) 87%, transparent))',
+              boxShadow: '0 4px 12px color-mix(in srgb, var(--agent-accent) 15%, transparent)'
             }}
             onClick={() => {
               dispatchAction({

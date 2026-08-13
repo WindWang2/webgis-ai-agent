@@ -23,28 +23,28 @@ export function SystemSettings() {
 
       {/* Backend API URL — read-only, determined at build time */}
       <div>
-        <div className="text-[14px] uppercase tracking-wide text-[var(--theme-text-muted)] font-medium mb-2">
+        <div className="text-title uppercase tracking-wide text-ink-muted font-medium mb-2">
           Backend API URL
         </div>
         <div
-          className="rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-input)] px-3 py-2 text-[14px] font-mono text-[var(--theme-text-secondary)]"
+          className="rounded-md border border-edge-subtle bg-surface-sunken px-3 py-2 text-body font-mono text-ink-secondary"
           aria-label="后端 API 地址（只读，由构建时环境变量决定）"
         >
           {API_BASE}
         </div>
-        <div className="text-[15px] text-[var(--theme-text-muted)] mt-1">
-          由 <code className="text-[15px] text-[var(--theme-text-secondary)]">NEXT_PUBLIC_API_URL</code> 环境变量在构建时确定，运行时不可修改。
+        <div className="text-body text-ink-muted mt-1">
+          由 <code className="text-body text-ink-secondary">NEXT_PUBLIC_API_URL</code> 环境变量在构建时确定，运行时不可修改。
         </div>
       </div>
 
       {/* Language selection — disabled, i18n not yet implemented */}
       <div>
         <div className="flex items-center gap-2 mb-2">
-          <span className="text-[14px] uppercase tracking-wide text-[var(--theme-text-muted)] font-medium">
+          <span className="text-title uppercase tracking-wide text-ink-muted font-medium">
             Language / 语言
           </span>
           <span
-            className="text-[14px] rounded-full px-1.5 py-0.5 bg-[var(--theme-bg-muted)] text-[var(--theme-text-muted)] font-medium"
+            className="rounded-pill bg-surface-sunken px-1.5 py-0.5 text-body font-medium text-ink-muted"
             title="国际化系统尚未实现"
           >
             规划中
@@ -53,23 +53,18 @@ export function SystemSettings() {
         <div className="flex gap-2 opacity-50" aria-disabled="true">
           <button
             disabled
-            className="flex-1 rounded-lg border-2 py-2 text-[14px] font-medium cursor-not-allowed"
+            className="flex-1 cursor-not-allowed rounded-md border-2 py-2 text-body font-medium"
             style={{
               borderColor: 'var(--agent-accent, #16a34a)',
               backgroundColor: 'color-mix(in srgb, var(--agent-accent, #16a34a) 4%, transparent)',
-              color: 'var(--agent-accent, #16a34a)',
+              color: 'var(--agent-accent)',
             }}
           >
             中文
           </button>
           <button
             disabled
-            className="flex-1 rounded-lg border-2 py-2 text-[14px] font-medium cursor-not-allowed"
-            style={{
-              borderColor: 'var(--theme-border)',
-              backgroundColor: 'var(--theme-bg-subtle)',
-              color: 'var(--theme-text-secondary)',
-            }}
+            className="flex-1 cursor-not-allowed rounded-md border-2 border-edge-subtle bg-surface-raised py-2 text-body font-medium text-ink-secondary"
           >
             English
           </button>
@@ -77,13 +72,11 @@ export function SystemSettings() {
       </div>
 
       {/* About section — version from build-time injection */}
-      <div className="rounded-xl border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] px-4 py-3">
+      <div className="rounded-md border border-edge-subtle bg-surface-raised px-4 py-3">
         <div className="flex items-center gap-2.5 mb-2">
           <div
-            className="flex items-center justify-center rounded-lg"
+            className="flex h-7 w-7 items-center justify-center rounded-md"
             style={{
-              width: 28,
-              height: 28,
               background:
                 'linear-gradient(135deg, var(--agent-accent, #16a34a) 0%, color-mix(in srgb, var(--agent-accent, #16a34a) 72%, #ffffff) 100%)',
             }}
@@ -93,7 +86,7 @@ export function SystemSettings() {
               height="14"
               viewBox="0 0 24 24"
               fill="none"
-              stroke="white"
+              stroke="var(--text-on-accent)"
               strokeWidth="2.5"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -103,15 +96,15 @@ export function SystemSettings() {
             </svg>
           </div>
           <div>
-            <div className="text-[15px] font-bold text-[var(--theme-text-primary)]">
+            <div className="text-heading font-bold text-ink">
               GeoAgent
             </div>
-            <div className="text-[14px] text-[var(--theme-text-muted)] font-mono">
+            <div className="text-body font-mono text-ink-muted">
               v{process.env.NEXT_PUBLIC_APP_VERSION || '0.1.2'}
             </div>
           </div>
         </div>
-        <div className="text-[15px] text-[var(--theme-text-muted)] italic">
+        <div className="text-body text-ink-muted italic">
           &quot;All is Agent&quot;
         </div>
       </div>

@@ -70,29 +70,30 @@ export function SkillsHub() {
 
       {sortedCategories.map((category) => (
         <div key={category}>
-          <div className="text-[15px] uppercase tracking-wider text-[var(--theme-text-muted)] font-semibold mb-2">
+          <div className="text-heading uppercase tracking-wider text-ink-muted font-semibold mb-2">
             {category}
           </div>
           <div className="flex flex-col gap-1.5">
             {grouped[category].map((sk) => (
               <div
                 key={sk.id}
-                className="flex items-center gap-3 rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] px-3 py-2.5 transition-all"
+                className="flex items-center gap-3 rounded-md border border-edge-subtle bg-surface-raised px-3 py-2.5 transition-all"
                 style={{
                   opacity: sk.enabled ? 1 : 0.55,
                 }}
               >
                 {/* Name + badge */}
                 <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <span className="text-[14px] font-medium text-[var(--theme-text-primary)] truncate">
+                  <span className="text-body font-medium text-ink truncate">
                     {sk.name}
                   </span>
                   {sk.calls > 0 && (
                     <span
-                      className="text-[14px] font-bold rounded-full px-1.5 py-0.5 leading-none"
+                      className="rounded-pill px-1.5 py-0.5 text-body font-bold leading-none"
                       style={{
                         backgroundColor: 'color-mix(in srgb, var(--agent-accent, #16a34a) 8%, transparent)',
-                        color: 'var(--agent-accent, #16a34a)',
+                        /* 计数是 accent 作文字（状态数字）—— 用 text-safe 变体。 */
+                        color: 'var(--agent-accent)',
                       }}
                     >
                       {sk.calls}
@@ -101,12 +102,13 @@ export function SkillsHub() {
                 </div>
 
                 {/* Description */}
-                <div className="text-[15px] text-[var(--theme-text-muted)] truncate flex-1">
+                <div className="text-body text-ink-muted truncate flex-1">
                   {sk.desc}
                 </div>
 
                 {/* Toggle */}
                 <ToggleSwitch
+                  label={`启用技能：${sk.name}`}
                   checked={sk.enabled}
                   onChange={() => toggleSkill(sk.id)}
                 />
@@ -117,7 +119,7 @@ export function SkillsHub() {
       ))}
 
       {/* Upload custom skill */}
-      <button className="flex items-center justify-center gap-2 rounded-xl border-2 border-dashed border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] py-3 text-[14px] font-medium text-[var(--theme-text-muted)] hover:text-[var(--theme-text-secondary)] hover:border-[var(--theme-border-strong)] transition-all">
+      <button className="flex items-center justify-center gap-2 rounded-md border-2 border-dashed border-edge-subtle bg-surface-raised py-3 text-body font-medium text-ink-muted transition-all hover:border-edge-strong hover:text-ink-secondary">
         <svg
           width="14"
           height="14"

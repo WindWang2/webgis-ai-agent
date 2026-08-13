@@ -86,14 +86,12 @@ export function LlmConfig() {
       {/* Caching toggle */}
       <div className="flex items-center justify-between py-1">
         <div>
-          <div className="text-[14px] font-medium text-[var(--theme-text-primary)]">
-            Prompt Caching
-          </div>
-          <div className="text-[15px] text-[var(--theme-text-muted)]">
+          <div className="text-title font-medium text-ink">Prompt Caching</div>
+          <div className="text-body text-ink-muted">
             Cache repeated prompts to reduce latency and token usage
           </div>
         </div>
-        <ToggleSwitch checked={caching} onChange={() => setCaching(!caching)} />
+        <ToggleSwitch label="Prompt Caching" checked={caching} onChange={() => setCaching(!caching)} />
       </div>
 
       {/* Connectivity test */}
@@ -101,7 +99,7 @@ export function LlmConfig() {
         <button
           onClick={handleTest}
           disabled={testing}
-          className="inline-flex items-center gap-1.5 rounded px-3 py-1 text-[15px] font-medium border border-[var(--theme-border)] bg-[var(--theme-bg-input)] text-[var(--theme-text-secondary)] hover:bg-[var(--theme-bg-hover)] transition-all disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-sm border border-edge-subtle bg-surface-sunken px-3 py-1 text-body font-medium text-ink-secondary transition-all hover:bg-surface-hover disabled:opacity-50"
         >
           {testing ? (
             <>
@@ -129,12 +127,12 @@ export function LlmConfig() {
           )}
         </button>
         {testResult === 'success' && (
-          <span className="text-[15px] font-medium text-emerald-600 dark:text-emerald-300">
+          <span className="text-body font-medium text-status-success">
             Connection OK
           </span>
         )}
         {testResult === 'error' && (
-          <span className="text-[15px] font-medium text-red-600 dark:text-red-400">
+          <span className="text-body font-medium text-status-critical">
             Connection Failed
           </span>
         )}

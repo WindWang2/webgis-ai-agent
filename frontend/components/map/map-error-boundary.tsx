@@ -39,23 +39,26 @@ export class MapErrorBoundary extends Component<{ children: ReactNode }, MapErro
     // loading". Name the network cause so the user doesn't read it as data loss.
     const isStyleLoadError = /style is not done loading|failed to fetch|networkerror/i.test(message);
 
+    // Tokenized (bg-surface-canvas / text-ink-*): the fallback used hardcoded
+    // light colours and would render as a white block over the map under the
+    // dark theme.
     return (
-      <div className='absolute inset-0 flex items-center justify-center bg-[#dce8f2]'>
+      <div className='absolute inset-0 flex items-center justify-center bg-surface-canvas'>
         <div className='max-w-sm space-y-3 px-6 text-center'>
-          <div className='font-mono text-xs uppercase tracking-widest text-slate-500'>
+          <div className='font-mono text-xs uppercase tracking-widest text-ink-muted'>
             Map Unavailable
           </div>
-          <p className='text-sm text-slate-600'>
+          <p className='text-body text-ink-secondary'>
             {isStyleLoadError
               ? 'The basemap tiles could not be loaded. Check your network connection or tile provider.'
               : message}
           </p>
-          <p className='text-xs text-slate-400'>
+          <p className='text-meta text-ink-muted'>
             Chat and analysis still work. Layers will render once the map recovers.
           </p>
           <button
             onClick={this.handleRetry}
-            className='rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-200/60'
+            className='rounded-md border border-edge px-4 py-2 text-body text-ink-secondary transition-colors hover:bg-surface-hover'
           >
             Retry Map
           </button>

@@ -40,12 +40,7 @@ function LayerSelect({ id, layers, value, onChange, placeholder }: {
       id={id}
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      style={{
-        backgroundColor: 'var(--theme-bg-input)',
-        borderColor: 'var(--theme-border)',
-        color: 'var(--theme-text-primary)',
-      }}
-      className="w-full text-xs border rounded-lg px-2 py-1.5"
+      className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 text-meta text-ink"
     >
       <option value="">{placeholder}</option>
       {layers.map((l) => (
@@ -58,7 +53,7 @@ function LayerSelect({ id, layers, value, onChange, placeholder }: {
 function Field({ id, label, children }: { id: string; label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label htmlFor={id} className="block text-[12px] font-semibold mb-1" style={{ color: 'var(--theme-text-secondary)' }}>
+      <label htmlFor={id} className="mb-1 block text-meta font-semibold text-ink-secondary">
         {label}
       </label>
       {children}
@@ -70,7 +65,6 @@ export function AnalysisTab({ onSend }: AnalysisTabProps) {
   const uid = useId();
   const [activeTool, setActiveTool] = useState<ToolKey>('buffer');
   const layers = useHudStore((s) => s.layers);
-  const accentColor = useHudStore((s) => s.accentColor);
 
   // Buffer state
   const [bufferLayer, setBufferLayer] = useState('');
@@ -139,17 +133,17 @@ export function AnalysisTab({ onSend }: AnalysisTabProps) {
               aria-checked={activeTool === key}
               tabIndex={activeTool === key ? 0 : -1}
               onClick={() => setActiveTool(key)}
-              className="flex flex-col items-center gap-1 py-2 rounded-lg text-xs font-medium transition-all border"
+              className="flex flex-col items-center gap-1 rounded-md border py-2 text-meta font-medium transition-all"
               style={{
                 backgroundColor: activeTool === key
-                  ? 'var(--theme-bg-subtle)'
+                  ? 'var(--surface-raised)'
                   : 'transparent',
                 borderColor: activeTool === key
-                  ? `${accentColor}55`
-                  : 'var(--theme-border)',
+                  ? 'color-mix(in srgb, var(--agent-accent) 33%, transparent)'
+                  : 'var(--border-subtle)',
                 color: activeTool === key
-                  ? 'var(--theme-text-primary)'
-                  : 'var(--theme-text-muted)',
+                  ? 'var(--text-primary)'
+                  : 'var(--text-muted)',
               }}
             >
               <Icon size={16} aria-hidden />
@@ -158,7 +152,7 @@ export function AnalysisTab({ onSend }: AnalysisTabProps) {
           ))}
         </div>
         {/* 当前工具目标与产出（UI V3：强调任务目标而不是工具堆积） */}
-        <p className="text-[12px] leading-relaxed" style={{ color: 'var(--theme-text-muted)' }}>
+        <p className="text-meta leading-relaxed text-ink-muted">
           {activeDef.desc} · 输出：{activeDef.output}
         </p>
       </div>
@@ -183,12 +177,7 @@ export function AnalysisTab({ onSend }: AnalysisTabProps) {
                 value={bufferDistance}
                 onChange={(e) => setBufferDistance(e.target.value)}
                 placeholder="输入缓冲距离，如 500"
-                style={{
-                  backgroundColor: 'var(--theme-bg-input)',
-                  borderColor: 'var(--theme-border)',
-                  color: 'var(--theme-text-primary)',
-                }}
-                className="w-full text-xs border rounded-lg px-3 py-2"
+                className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-3 py-2 text-meta text-ink"
               />
             </Field>
           </>
@@ -207,12 +196,7 @@ export function AnalysisTab({ onSend }: AnalysisTabProps) {
                 id={`${uid}-overlay-op`}
                 value={overlayOp}
                 onChange={(e) => setOverlayOp(e.target.value)}
-                style={{
-                  backgroundColor: 'var(--theme-bg-input)',
-                  borderColor: 'var(--theme-border)',
-                  color: 'var(--theme-text-primary)',
-                }}
-                className="w-full text-xs border rounded-lg px-2 py-1.5"
+                className="w-full rounded-md border border-edge-subtle bg-surface-sunken px-2 py-1.5 text-meta text-ink"
               >
                 <option value="intersection">相交 (Intersection)</option>
                 <option value="union">合并 (Union)</option>
@@ -238,13 +222,13 @@ export function AnalysisTab({ onSend }: AnalysisTabProps) {
       {/* Submit */}
       <div
         className="p-3 border-t shrink-0"
-        style={{ borderColor: 'var(--theme-border)' }}
+        style={{ borderColor: 'var(--border-subtle)' }}
       >
         <button
-          className="w-full text-white font-bold py-2 rounded-lg shadow-md transition-all text-xs disabled:opacity-40"
+          className="w-full rounded-md py-1.5 text-meta font-semibold text-ink-on-accent transition-opacity hover:opacity-90 disabled:opacity-40"
           style={{
-            background: `linear-gradient(135deg, ${accentColor}, ${accentColor}dd)`,
-            boxShadow: `0 4px 12px ${accentColor}25`,
+            background: 'linear-gradient(135deg, var(--agent-accent), color-mix(in srgb, var(--agent-accent) 87%, transparent))',
+            boxShadow: '0 4px 12px color-mix(in srgb, var(--agent-accent) 15%, transparent)',
           }}
           disabled={!canSubmit}
           onClick={handleSubmit}
@@ -254,7 +238,8 @@ export function AnalysisTab({ onSend }: AnalysisTabProps) {
           {activeTool === 'clip' && '执行裁剪'}
         </button>
         {!canSubmit && (
-          <p className="mt-1.5 text-[11px]" style={{ color: 'var(--theme-text-subtle)' }}>
+          /* 提示是真实正文，--text-disabled 只该用于禁用/装饰 —— 用 ink-muted。 */
+          <p className="mt-1.5 text-caption text-ink-muted">
             请选择所需图层{activeTool === 'buffer' ? '并输入有效距离' : ''}后执行
           </p>
         )}

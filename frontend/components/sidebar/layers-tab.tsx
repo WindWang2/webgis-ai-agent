@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState, useCallback } from 'react';
+import clsx from 'clsx';
 import { Eye, EyeOff, GripVertical, Layers as LayersIcon } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import type { Layer } from '@/lib/types/layer';
@@ -35,8 +36,6 @@ export function LayersTab() {
   const updateLayer = useHudStore((s) => s.updateLayer);
   const reorderLayers = useHudStore((s) => s.reorderLayers);
   const setActiveLeftTab = useHudStore((s) => s.setActiveLeftTab);
-  const theme = useHudStore((s) => s.theme);
-  const isDark = theme === 'dark';
 
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -154,22 +153,39 @@ export function LayersTab() {
     setOverId(null);
   }, []);
 
+  /**
+   * a11y：键盘重排。此前排序只有 draggable，鼠标独占 —— 键盘用户无法改变图层
+   * 叠放次序，而叠放次序是图层面板的核心功能。Alt+↑/↓ 沿用桌面 GIS 的习惯键。
+   */
+  const moveLayer = useCallback(
+    (id: string, delta: -1 | 1) => {
+      const current = [...layers];
+      const fromIdx = current.findIndex((l) => l.id === id);
+      const toIdx = fromIdx + delta;
+      if (fromIdx === -1 || toIdx < 0 || toIdx >= current.length) return;
+      const [moved] = current.splice(fromIdx, 1);
+      current.splice(toIdx, 0, moved);
+      reorderLayers(current);
+    },
+    [layers, reorderLayers]
+  );
+
   return (
     <div className="flex flex-col h-full">
-      {/* Stats header */}
-      <div className="shrink-0 grid grid-cols-3 gap-px" style={{ backgroundColor: 'var(--theme-border-subtle)', borderBottomColor: 'var(--theme-border-subtle)' }}>
-        <div className="px-2.5 py-2 text-center" style={{ backgroundColor: 'var(--theme-bg-subtle)' }}>
-          <div className="text-[14px] font-semibold" style={{ color: 'var(--theme-text-primary)' }}>{layers.length}</div>
-          <div className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--theme-text-muted)' }}>总图层</div>
-        </div>
-        <div className="px-2.5 py-2 text-center" style={{ backgroundColor: 'var(--theme-bg-subtle)' }}>
-          <div className="text-[14px] font-semibold" style={{ color: 'var(--agent-accent, #16a34a)' }}>{visibleCount}</div>
-          <div className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--theme-text-muted)' }}>可见</div>
-        </div>
-        <div className="px-2.5 py-2 text-center" style={{ backgroundColor: 'var(--theme-bg-subtle)' }}>
-          <div className="text-[14px] font-semibold" style={{ color: 'var(--theme-text-primary)' }}>{totalFeatures}</div>
-          <div className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--theme-text-muted)' }}>要素</div>
-        </div>
+      {/* Stats header — 单行、三段。V4 之前是 53px 高的三栏卡片，在 650px 的
+          面板里等于吃掉两行图层；同时「可见」数字被涂成 accent 绿，把一个中性
+          计数伪装成状态。accent 现在只留给交互重点。 */}
+      <div className="flex shrink-0 items-center gap-3 border-b border-edge-subtle bg-surface-panel px-panel py-1">
+        {[
+          { label: '总图层', value: layers.length },
+          { label: '可见', value: visibleCount },
+          { label: '要素', value: totalFeatures },
+        ].map((stat) => (
+          <div key={stat.label} className="flex items-baseline gap-1">
+            <span className="text-body font-semibold tabular-nums text-ink">{stat.value}</span>
+            <span className="text-micro text-ink-muted">{stat.label}</span>
+          </div>
+        ))}
       </div>
 
       {/* Layer list */}
@@ -184,38 +200,36 @@ export function LayersTab() {
             />
           </div>
         ) : (
-          <div className="px-2 py-2 space-y-3">
+          <div className="py-1">
             {groups.map((group) => (
-              <div key={group.name}>
-                <div className="flex items-center gap-1.5 px-2 py-1">
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--agent-accent, #16a34a)' }} />
-                  <span className="text-[10px] font-medium uppercase tracking-wider" style={{ color: 'var(--theme-text-muted)' }}>
-                    {GROUP_NAMES[group.name] || group.name}
+              <div key={group.name} className="mb-1">
+                {/* 分组抬头：去掉装饰性 accent 圆点（accent 只表交互），
+                    统一走 .eyebrow —— 审计里 10px 一档曾有 5 种写法。 */}
+                <div className="flex items-center gap-1.5 px-panel py-1">
+                  <span className="eyebrow">{GROUP_NAMES[group.name] || group.name}</span>
+                  <span className="text-micro tabular-nums text-ink-disabled">
+                    {group.layers.length}
                   </span>
-                  <span className="text-[11px]" style={{ color: 'var(--theme-text-subtle)' }}>({group.layers.length})</span>
                 </div>
 
-                <div className="space-y-1">
+                <div>
                   {group.layers.map((layer) => {
                     const featureCount = getFeatureCount(layer);
-
-                    const color = layer.style?.color || '#16a34a';
+                    const color = layer.style?.color || 'var(--accent-vivid)';
                     const isHeatmap = layer.type === 'heatmap';
                     const isRaster = layer.type === 'raster';
                     const isDragging = dragId === layer.id;
                     const isDragOver = overId === layer.id;
-
-                    let borderColor = 'transparent';
-                    let bgColor = 'transparent';
-                    if (isDragging) {
-                      borderColor = isDark ? 'rgba(74,222,128,0.4)' : 'rgba(52,211,153,0.5)';
-                      bgColor = 'transparent';
-                    } else if (isDragOver) {
-                      borderColor = isDark ? 'rgba(74,222,128,0.6)' : 'rgba(16,185,129,0.7)';
-                      bgColor = isDark ? 'rgba(74,222,128,0.15)' : 'rgba(16,185,129,0.12)';
-                    }
+                    const globalIdx = layers.findIndex((l) => l.id === layer.id);
 
                     return (
+                      /* 单行图层项。V4 之前每项 59–63px（两行 + 两颗 28px 操作
+                         按钮撑高，图标本身只有 12px），650px 面板只放得下 8–9
+                         行；QGIS 图层树是 22–24px。现在收进一行 ~26px，可见行数
+                         提升到 20+ —— 密集数据面板优先可读的行数。 */
+                      /* 行本身不是 tab stop：role="group" 加 tabIndex 既是角色
+                         误用，也会让 20 个图层产生 20 个多余的停靠点。重排键改挂
+                         在把手按钮上 —— 它本来就是"抓着移动"的那个控件。 */
                       <div
                         key={layer.id}
                         draggable
@@ -223,94 +237,80 @@ export function LayersTab() {
                         onDragOver={(e) => handleDragOver(e, layer.id)}
                         onDrop={(e) => handleDrop(e, layer.id)}
                         onDragEnd={handleDragEnd}
-                        style={{
-                          borderRadius: 8,
-                          borderWidth: 1,
-                          borderStyle: 'solid',
-                          borderColor,
-                          backgroundColor: bgColor,
-                          padding: '6px 8px',
-                          transition: 'all 0.15s ease',
-                          opacity: !layer.visible ? 0.6 : isDragging ? 0.4 : 1,
-                          cursor: isDragging ? 'grabbing' : 'default'
-                        }}
-                        onMouseEnter={(e) => {
-                          if (!isDragging && !isDragOver) {
-                            e.currentTarget.style.backgroundColor = 'var(--theme-bg-hover)';
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          if (!isDragging && !isDragOver) {
-                            e.currentTarget.style.backgroundColor = bgColor;
-                          }
-                        }}
+                        className={clsx(
+                          'group flex min-h-row-md items-center gap-1.5 border-l-2 px-panel py-0.5 transition-colors',
+                          isDragOver
+                            ? 'border-l-status-accent-vivid bg-surface-selected'
+                            : isDragging
+                              ? 'border-l-status-accent-border opacity-40'
+                              : 'border-l-transparent hover:bg-surface-hover',
+                          !layer.visible && 'opacity-60'
+                        )}
                       >
-                        {/* Row 1: drag handle + name + actions */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          {/* Drag handle */}
-                          <div style={{ cursor: 'grab', color: 'var(--theme-text-subtle)', flexShrink: 0 }}
-                            onMouseDown={(e) => (e.currentTarget.style.cursor = 'grabbing')}
-                            onMouseUp={(e) => (e.currentTarget.style.cursor = 'grab')}
-                          >
-                            <GripVertical size={12} />
-                          </div>
-
-                          {/* Color dot */}
-                          {isRaster ? (
-                            <div style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: color, flexShrink: 0 }} />
-                          ) : isHeatmap ? (
-                            <div style={{ width: 8, height: 8, borderRadius: '50%', background: `radial-gradient(circle, ${color} 0%, transparent 70%)`, flexShrink: 0 }} />
-                          ) : (
-                            <div style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: color, flexShrink: 0 }} />
-                          )}
-
-                          {/* Layer name */}
-                          <span style={{ flex: 1, fontSize: 13, color: 'var(--theme-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
-                            {layer.name}
-                          </span>
-
-                          {/* Feature count */}
-                          {featureCount > 0 && (
-                            <span style={{ flexShrink: 0, fontSize: 11, color: 'var(--theme-text-subtle)' }}>
-                              {featureCount}
-                            </span>
-                          )}
-
-                          {/* Action buttons — always visible */}
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
-                            <IconButton
-                              label={layer.visible ? '隐藏图层' : '显示图层'}
-                              icon={layer.visible ? Eye : EyeOff}
-                              iconSize={12}
-                              onClick={() => toggleLayer(layer.id)}
-                            />
-                            <DeleteLayerButton onDelete={() => removeLayer(layer.id)} />
-                          </div>
-                        </div>
-
-                        {/* Row 2: Opacity slider */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, paddingLeft: 20 }}>
-                          <input
-                            type="range"
-                            min={0}
-                            max={100}
-                            aria-label={`${layer.name} 不透明度`}
-                            value={sliderPercent(layer)}
-                            onChange={(e) =>
-                              handleOpacityChange(layer, parseInt(e.target.value, 10))
+                        <button
+                          type="button"
+                          aria-label={`重新排序 ${layer.name}（第 ${globalIdx + 1} / ${layers.length} 层，Alt+↑/↓ 移动）`}
+                          title="拖拽移动，或 Alt+↑/↓"
+                          className="flex h-control-sm w-icon-md shrink-0 cursor-grab items-center justify-center rounded-xs text-ink-disabled transition-colors hover:text-ink-secondary active:cursor-grabbing"
+                          onKeyDown={(e) => {
+                            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                              e.preventDefault();
+                              moveLayer(layer.id, e.key === 'ArrowUp' ? -1 : 1);
                             }
-                            onPointerUp={() => commitOpacity(layer)}
-                            onBlur={() => commitOpacity(layer)}
-                            style={{
-                              flex: 1, height: 4,
-                              appearance: 'none',
-                              backgroundColor: 'var(--theme-border-subtle)',
-                              borderRadius: 999, cursor: 'pointer',
-                            }}
+                          }}
+                        >
+                          <GripVertical aria-hidden size={12} />
+                        </button>
+
+                        {/* Layer symbol swatch */}
+                        {isRaster ? (
+                          <span aria-hidden className="h-2 w-2 shrink-0 rounded-xs" style={{ backgroundColor: color }} />
+                        ) : isHeatmap ? (
+                          <span
+                            aria-hidden
+                            className="h-2 w-2 shrink-0 rounded-pill"
+                            style={{ background: `radial-gradient(circle, ${color} 0%, transparent 70%)` }}
                           />
-                          <span style={{ fontSize: 11, color: 'var(--theme-text-muted)', width: 28, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                            {sliderPercent(layer)}%
+                        ) : (
+                          <span aria-hidden className="h-2 w-2 shrink-0 rounded-pill" style={{ backgroundColor: color }} />
+                        )}
+
+                        <span className="min-w-0 flex-1 truncate text-body text-ink" title={layer.name}>
+                          {layer.name}
+                        </span>
+
+                        {featureCount > 0 && (
+                          <span className="shrink-0 text-micro tabular-nums text-ink-muted">
+                            {featureCount}
                           </span>
+                        )}
+
+                        {/* 不透明度滑杆内联进同一行 —— 功能不变，不再多占一行。 */}
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          aria-label={`${layer.name} 不透明度`}
+                          value={sliderPercent(layer)}
+                          onChange={(e) => handleOpacityChange(layer, parseInt(e.target.value, 10))}
+                          onPointerUp={() => commitOpacity(layer)}
+                          onBlur={() => commitOpacity(layer)}
+                          title={`不透明度 ${sliderPercent(layer)}%`}
+                          /* w-16 + .slider-track：w-9(36px) 配上被 appearance-none
+                             抹掉的原生 thumb，等于一条看不见把手的 4px 细杠，
+                             36px 上分 100 档也无法瞄准。 */
+                          className="slider-track h-1 w-16 shrink-0"
+                        />
+
+                        <div className="flex shrink-0 items-center">
+                          <IconButton
+                            size="sm"
+                            label={layer.visible ? '隐藏图层' : '显示图层'}
+                            icon={layer.visible ? Eye : EyeOff}
+                            active={layer.visible}
+                            onClick={() => toggleLayer(layer.id)}
+                          />
+                          <DeleteLayerButton onDelete={() => removeLayer(layer.id)} />
                         </div>
                       </div>
                     );

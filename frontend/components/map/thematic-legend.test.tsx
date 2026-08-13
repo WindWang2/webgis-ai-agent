@@ -19,8 +19,9 @@ describe('ThematicLegend (router)', () => {
       min: 0, max: 1, palette: 'Viridis',
       palette_colors: ['#440154', '#fde725'],
     }} />);
-    expect(screen.getByText('0.0')).toBeInTheDocument();
-    expect(screen.getByText('1.0')).toBeInTheDocument();
+    // UI V4：图例数值统一走 formatLegendValue（整数不再补 .0）。
+    expect(screen.getByText('0')).toBeInTheDocument();
+    expect(screen.getByText('1')).toBeInTheDocument();
   });
 
   it('routes categorical spec to CategoricalLegend', () => {

@@ -3,7 +3,6 @@
 import { memo, useCallback, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { useHudStore } from '@/lib/store/useHudStore';
-import { getThemeColors } from '@/lib/theme';
 import { useGeolocation } from '@/lib/hooks/use-geolocation';
 import { useMapAction } from '@/lib/contexts/map-action-context';
 
@@ -16,6 +15,7 @@ import TopBar from '@/components/layout/top-bar';
 import { NavRail } from '@/components/layout/nav-rail';
 import { ContextPanel } from '@/components/layout/context-panel';
 import FloatingLegend from '@/components/map/floating-legend';
+import { MapStatusReadout } from '@/components/map/map-status-readout';
 import { SpatialCrosshair } from '@/components/map/spatial-crosshair';
 import { MapErrorBoundary } from '@/components/map/map-error-boundary';
 import { EmbodiedHud } from '@/components/hud/embodied-hud';
@@ -33,8 +33,8 @@ const MapPanel = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className='flex-1 flex items-center justify-center bg-[#dce8f2]'>
-        <div className='animate-pulse text-slate-300 text-xs font-mono uppercase tracking-wider'>
+      <div className='flex-1 flex items-center justify-center bg-surface-canvas'>
+        <div className='animate-pulse text-ink-muted text-micro font-mono uppercase tracking-wider'>
           Loading Map...
         </div>
       </div>
@@ -51,6 +51,7 @@ const MemoMapPanel = memo(MapPanel);
 const MemoEmbodiedHud = memo(EmbodiedHud);
 const MemoSpatialCrosshair = memo(SpatialCrosshair);
 const MemoFloatingLegend = memo(FloatingLegend);
+const MemoMapStatusReadout = memo(MapStatusReadout);
 
 export default function Home() {
   const { getMapSnapshot, dispatchAction } = useMapAction();
@@ -109,6 +110,12 @@ export default function Home() {
     [selectSession, setMessages, setHistoryOpen]
   );
 
+  // 稳定引用：内联箭头会让 RagIndependentPanel 的 Escape 监听在 Home 每次
+  // 重渲染（即每个流式 token 批次）时反复解绑/重绑。
+  const handleCloseRagPanel = useCallback(() => setRagPanelOpen(false), [setRagPanelOpen]);
+  const handleCloseHistory = useCallback(() => setHistoryOpen(false), [setHistoryOpen]);
+  const handleCloseTemplates = useCallback(() => setTemplatesOpen(false), [setTemplatesOpen]);
+
   const handleNewSession = useCallback(() => {
     startNewSession(() => {
       setMessages([
@@ -123,11 +130,11 @@ export default function Home() {
     setHistoryOpen(false);
   }, [startNewSession, setMessages, setHistoryOpen]);
 
-  // Read theme colors and dimensions dynamically
+  // Theme + accent drive CSS custom properties (see the effects below); the
+  // shell itself styles from tokens rather than JS colour objects.
   const theme = useHudStore((s) => s.theme);
   const reactiveAccentColor = useHudStore((s) => s.accentColor);
   const fontSize = useHudStore((s) => s.fontSize);
-  const colors = getThemeColors(theme);
 
   useEffect(() => {
     if (theme === 'dark') {
@@ -139,21 +146,23 @@ export default function Home() {
     }
   }, [theme]);
 
+  // UI V4：把 store 的 accentColor 推给 --agent-accent-raw。
+  // 之前该变量只有 globals.css 里的静态默认值，nav-rail / context-panel 等
+  // 通过 var() 取色的位置永远是默认绿，与 JS 内联取色的组件不一致。
+  // 注意写入的是 *-raw：主题校正（暗色下向白色混合）由 globals.css 完成，
+  // 组件只需读 var(--agent-accent) 就能拿到当前主题下达标的 accent。
+  useEffect(() => {
+    document.documentElement.style.setProperty('--agent-accent-raw', reactiveAccentColor);
+  }, [reactiveAccentColor]);
+
   const currentSessionTitle = sessionId
     ? sessions.find((s) => s.id === sessionId)?.title || '新会话'
     : '新会话';
 
   return (
     <div
-      style={{
-        height: '100vh',
-        width: '100vw',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-        background: colors.bg,
-        fontSize: `${fontSize}px`,
-      }}
+      className='h-screen w-screen flex flex-col overflow-hidden bg-surface-canvas'
+      style={{ fontSize: `${fontSize}px` }}
     >
       <MemoTopBar
         sessionName={currentSessionTitle}
@@ -170,6 +179,11 @@ export default function Home() {
           // UI V3：地图 chrome（图例等）的水平避让偏移 —— nav rail(48) +
           // context panel(可选) 占据的左侧空间。
           ['--workspace-offset' as string]: `${leftPanelOpen ? 48 + sidebarWidth + 12 : 60}px`,
+          // UI V4：地图 chrome 的底部基线。workspace 已经预留 24px 状态条，
+          // HUD 展开到 210px 时需要再抬 186px。所有底部 chrome（读数条、比例尺、
+          // 热力图例、专题图例）都从这一个变量堆叠，因此不会互相压盖 ——
+          // 审计发现浮动图例与专题图例此前固定在同一 left/bottom 上必然重叠。
+          ['--map-chrome-bottom' as string]: hudOpen ? '196px' : '10px',
         }}
       >
         {/* Map Panel */}
@@ -186,16 +200,13 @@ export default function Home() {
           </MapErrorBoundary>
         </div>
 
-        {/* Floating Legend */}
+        {/* Floating heatmap legend — bottom-RIGHT, stacked above the scale bar.
+            It used to sit at the same left/bottom as the thematic legend stack,
+            where the higher-z thematic card hid it outright. */}
         {layers.find((l) => l.visible && l.type === 'heatmap') && (
           <div
-            style={{
-              position: 'absolute',
-              bottom: hudOpen ? 220 : 34,
-              left: 'var(--workspace-offset, 60px)',
-              transition: 'left 0.22s cubic-bezier(0.4,0,0.2,1), bottom 0.3s cubic-bezier(0.4,0,0.2,1)',
-              zIndex: 10,
-            }}
+            className='absolute right-3 z-10 transition-[bottom] duration-300'
+            style={{ bottom: 'calc(var(--map-chrome-bottom, 10px) + 66px)' }}
           >
             <MemoFloatingLegend />
           </div>
@@ -207,33 +218,21 @@ export default function Home() {
           messages={messages}
           aiStatus={aiStatus}
           onSend={handleSend}
-          accentColor={reactiveAccentColor}
           sessionId={sessionId}
           ownerToken={sessionTokenRef.current}
           onPlanAction={handlePlanAction}
         />
 
         {/* RAG Independent Panel */}
-        <RagIndependentPanel open={ragPanelOpen} onClose={() => setRagPanelOpen(false)} />
+        <RagIndependentPanel open={ragPanelOpen} onClose={handleCloseRagPanel} />
 
-        {/* Map attribution */}
+        {/* Map status readout: centre coordinate, zoom, CRS, attribution.
+            Anchors the bottom-right chrome column. */}
         <div
-          style={{
-            position: 'absolute',
-            bottom: 30,
-            right: 12,
-            fontSize: '11.5px',
-            color: theme === 'dark' ? 'rgba(148,163,184,0.6)' : 'rgba(15,23,42,0.35)',
-            fontFamily: "'JetBrains Mono', monospace",
-            background: theme === 'dark' ? 'rgba(30,41,59,0.72)' : 'rgba(255,255,255,0.72)',
-            padding: '2px 8px',
-            borderRadius: 4,
-            backdropFilter: 'blur(8px)',
-            WebkitBackdropFilter: 'blur(8px)',
-            zIndex: 10,
-          }}
+          className='absolute right-3 z-10 transition-[bottom] duration-300'
+          style={{ bottom: 'var(--map-chrome-bottom, 10px)' }}
         >
-          © OpenStreetMap contributors
+          <MemoMapStatusReadout />
         </div>
       </div>
 
@@ -241,7 +240,7 @@ export default function Home() {
 
       <HistoryDrawer
         open={historyOpen}
-        onClose={() => setHistoryOpen(false)}
+        onClose={handleCloseHistory}
         onSelect={(session) => {
           if (session && session.id) {
             handleSelectSession(session.id);
@@ -249,7 +248,6 @@ export default function Home() {
             handleNewSession();
           }
         }}
-        accentColor={reactiveAccentColor}
       />
 
       {settingsOpen && <SettingsPanel />}
@@ -257,7 +255,7 @@ export default function Home() {
       {/* Template Gallery V2 — nav rail「模板」入口（与 history/settings 互斥） */}
       <TemplateGalleryV2
         open={templatesOpen}
-        onClose={() => setTemplatesOpen(false)}
+        onClose={handleCloseTemplates}
         onApply={(t) => useToastStore.getState().addToast(`模板已应用：${t.name}`, 'success')}
       />
 

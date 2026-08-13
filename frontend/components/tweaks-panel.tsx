@@ -1,12 +1,111 @@
 'use client';
 
+import { useId, useRef } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
+import { useInertWhenClosed } from '@/lib/hooks/use-inert';
+import ToggleSwitch from '@/components/shared/toggle-switch';
+import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 
 interface TweaksPanelProps {
   children?: React.ReactNode;
 }
 
-const ACCENT_COLORS = ['#16a34a', '#2563eb', '#7c3aed', '#dc2626', '#0891b2'];
+/**
+ * 主题色预设。全部取"能承载白色文字"的一档 —— 之前的 #16a34a 与 #0891b2 配
+ * 白字只有 3.30:1 / 3.68:1，而 accent 底 + 白字正是主按钮与用户气泡的用法，
+ * 也就是说其中两个预设一旦被选中，主按钮的文字就不达 AA。
+ */
+const ACCENT_COLORS: { value: string; name: string }[] = [
+  { value: '#15803d', name: '绿色' },
+  { value: '#1d4ed8', name: '蓝色' },
+  { value: '#6d28d9', name: '紫色' },
+  { value: '#b91c1c', name: '红色' },
+  { value: '#0e7490', name: '青色' },
+];
+
+/** 供测试断言：每个预设都必须能承载 --text-on-accent 的白色文字。 */
+export const ACCENT_PRESETS = ACCENT_COLORS.map((c) => c.value);
+
+/** 分段选择器 —— 主题 / 密度共用，替代两处各写一遍的内联按钮组。 */
+function SegmentedControl<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div role="radiogroup" aria-label={label} className="flex gap-0.5 rounded-sm bg-surface-sunken p-0.5">
+      {options.map((opt) => {
+        const selected = value === opt.value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onChange(opt.value)}
+            className={`flex-1 rounded-xs py-1 text-meta transition-colors ${
+              selected
+                ? 'bg-surface-raised font-medium text-ink shadow-raised'
+                : 'text-ink-muted hover:text-ink'
+            }`}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** 带值读数的滑杆行。label 通过 htmlFor 绑定，之前两处滑杆都是无名控件。 */
+function SliderRow({
+  label,
+  value,
+  suffix,
+  min,
+  max,
+  step,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  suffix: string;
+  min: number;
+  max: number;
+  step: number;
+  onChange: (v: number) => void;
+}) {
+  const id = useId();
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between">
+        <label htmlFor={id} className="eyebrow">
+          {label}
+        </label>
+        <span className="font-mono text-caption tabular-nums text-ink-secondary">
+          {value}
+          {suffix}
+        </span>
+      </div>
+      <input
+        id={id}
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(parseFloat(e.target.value))}
+        className="h-1 w-full cursor-pointer appearance-none rounded-pill bg-edge-subtle"
+      />
+    </div>
+  );
+}
 
 export function TweaksPanel({ children }: TweaksPanelProps) {
   const tweaksOpen = useHudStore((s) => s.tweaksOpen);
@@ -28,176 +127,134 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
   const sidebarWidth = useHudStore((s) => s.sidebarWidth);
   const setSidebarWidth = useHudStore((s) => s.setSidebarWidth);
 
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  /*
+    a11y：此前本面板常驻 DOM，仅靠 transform + opacity + pointerEvents 隐藏，
+    既没有 role=dialog / 可访问名称，也没有 Escape，读屏在它视觉隐藏时依然能读到
+    里面全部控件。现在补齐对话框语义并接入共享 useDialogFocus（与 settings /
+    history / 模板库同一套焦点契约）。
+    关闭时除了 aria-hidden 还要 inert：只写 aria-hidden 是 ARIA 违规 —— 容器里
+    仍有可聚焦控件，键盘会 Tab 进一个看不见、也不会被播报的面板。
+  */
+  useInertWhenClosed(panelRef, tweaksOpen);
+
+  useDialogFocus({
+    open: tweaksOpen,
+    containerRef: panelRef,
+    onEscape: () => setTweaksOpen(false),
+  });
+
   return (
     <>
-      {/* Tweaks panel */}
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="false"
+        aria-labelledby="tweaks-panel-title"
+        aria-hidden={!tweaksOpen}
+        /* max-h + overflow-y：审计发现本面板既无高度上限也无内部滚动，
+           视口一矮就整体溢出屏幕。 */
+        className="fixed bottom-8 left-1/2 z-[100] max-h-[min(72vh,520px)] w-[300px] -translate-x-1/2 overflow-y-auto rounded-md border border-edge-subtle bg-surface-overlay p-panel shadow-drawer transition-transform duration-200"
         style={{
-          position: 'fixed',
-          bottom: 30,
-          left: '50%',
           transform: tweaksOpen ? 'translateX(-50%)' : 'translateX(-50%) translateY(105%)',
-          zIndex: 100,
-          background: 'rgba(252,253,254,0.96)',
-          backdropFilter: 'blur(20px)',
-          WebkitBackdropFilter: 'blur(20px)',
-          border: '1px solid rgba(255,255,255,0.95)',
-          boxShadow: '0 8px 32px rgba(15,23,42,0.12)',
-          borderRadius: 16,
-          padding: 16,
-          minWidth: 300,
-          transition: 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-          pointerEvents: tweaksOpen ? 'auto' : 'none',
           opacity: tweaksOpen ? 1 : 0,
+          pointerEvents: tweaksOpen ? 'auto' : 'none',
         }}
       >
-        {/* Header */}
-        <div className='flex items-center justify-between mb-3'>
-          <div className='text-xs font-semibold text-slate-800'>UI 调整</div>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 id="tweaks-panel-title" className="text-title font-semibold text-ink">
+            UI 调整
+          </h2>
           <button
+            type="button"
             onClick={() => setTweaksOpen(false)}
-            className='text-[14px] text-slate-400 hover:text-slate-600'
+            className="rounded-sm px-1.5 py-0.5 text-meta text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink"
           >
             关闭
           </button>
         </div>
 
-        {/* Accent color */}
-        <div className='mb-4'>
-          <div className='text-[14px] font-semibold text-slate-400 uppercase tracking-wider mb-2'>
-            主题色
-          </div>
-          <div className='flex gap-2'>
-            {ACCENT_COLORS.map((color) => (
-              <button
-                key={color}
-                onClick={() => setAccentColor(color)}
-                style={{
-                  width: 24,
-                  height: 24,
-                  borderRadius: 6,
-                  backgroundColor: color,
-                  border: accentColor === color ? '2px solid #0f172a' : '2px solid transparent',
-                  cursor: 'pointer',
-                }}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* Font size */}
-        <div className='mb-4'>
-          <div className='flex items-center justify-between mb-2'>
-            <div className='text-[14px] font-semibold text-slate-400 uppercase tracking-wider'>
-              字体大小
+        <div className="space-y-3">
+          <div>
+            <div className="eyebrow mb-1.5">主题色</div>
+            <div className="flex gap-1.5">
+              {ACCENT_COLORS.map((color) => (
+                <button
+                  key={color.value}
+                  type="button"
+                  /* a11y：这五颗色板此前是完全空的 <button>，既无 aria-label
+                     也无 title —— 读屏只会读到「按钮」。 */
+                  aria-label={`主题色：${color.name}`}
+                  title={color.name}
+                  aria-pressed={accentColor === color.value}
+                  onClick={() => setAccentColor(color.value)}
+                  className={`h-control-sm w-control-sm rounded-sm border-2 transition-colors ${
+                    accentColor === color.value ? 'border-ink' : 'border-transparent'
+                  }`}
+                  style={{ backgroundColor: color.value }}
+                />
+              ))}
             </div>
-            <span className='text-[14px] text-slate-500 font-mono'>{fontSize}px</span>
           </div>
-          <input
-            type='range'
+
+          <SliderRow
+            label="字体大小"
+            value={fontSize}
+            suffix="px"
             min={11}
             max={16}
             step={0.5}
-            value={fontSize}
-            onChange={(e) => setFontSize(parseFloat(e.target.value))}
-            className='w-full'
+            onChange={setFontSize}
           />
-        </div>
 
-        {/* Theme */}
-        <div className='mb-4'>
-          <div className='text-[14px] font-semibold text-slate-400 uppercase tracking-wider mb-2'>
-            主题
+          <div>
+            <div className="eyebrow mb-1.5">主题</div>
+            <SegmentedControl
+              label="主题"
+              value={theme}
+              options={[
+                { value: 'light' as const, label: '亮色' },
+                { value: 'dark' as const, label: '暗色' },
+              ]}
+              onChange={setTheme}
+            />
           </div>
-          <div className='flex gap-1'>
-            {['light', 'dark'].map((t) => (
-              <button
-                key={t}
-                onClick={() => setTheme(t as 'light' | 'dark')}
-                style={{
-                  flex: 1,
-                  padding: '6px 12px',
-                  borderRadius: 8,
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontSize: 13,
-                  background: theme === t ? 'rgba(15,23,42,0.06)' : 'transparent',
-                  color: theme === t ? '#0f172a' : '#64748b',
-                }}
-              >
-                {t === 'light' ? '亮色' : '暗色'}
-              </button>
-            ))}
-          </div>
-        </div>
 
-        {/* Density */}
-        <div className='mb-4'>
-          <div className='text-[14px] font-semibold text-slate-400 uppercase tracking-wider mb-2'>
-            信息密度
+          <div>
+            <div className="eyebrow mb-1.5">信息密度</div>
+            <SegmentedControl
+              label="信息密度"
+              value={density}
+              options={[
+                { value: 'compact' as const, label: '紧凑' },
+                { value: 'comfortable' as const, label: '舒适' },
+              ]}
+              onChange={setDensity}
+            />
           </div>
-          <div className='flex gap-1'>
-            {['compact', 'comfortable'].map((d) => (
-              <button
-                key={d}
-                onClick={() => setDensity(d as 'compact' | 'comfortable')}
-                style={{
-                  flex: 1,
-                  padding: '6px 12px',
-                  borderRadius: 8,
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontSize: 13,
-                  background: density === d ? 'rgba(15,23,42,0.06)' : 'transparent',
-                  color: density === d ? '#0f172a' : '#64748b',
-                }}
-              >
-                {d === 'compact' ? '紧凑' : '舒适'}
-              </button>
-            ))}
-          </div>
-        </div>
 
-        {/* Sidebar width */}
-        <div className='mb-4'>
-          <div className='flex items-center justify-between mb-2'>
-            <div className='text-[14px] font-semibold text-slate-400 uppercase tracking-wider'>
-              侧边栏宽度
-            </div>
-            <span className='text-[14px] text-slate-500 font-mono'>{sidebarWidth}px</span>
-          </div>
-          <input
-            type='range'
+          <SliderRow
+            label="侧边栏宽度"
+            value={sidebarWidth}
+            suffix="px"
             min={240}
             max={480}
             step={10}
-            value={sidebarWidth}
-            onChange={(e) => setSidebarWidth(parseInt(e.target.value))}
-            className='w-full'
+            onChange={(v) => setSidebarWidth(Math.round(v))}
           />
-        </div>
 
-        {/* Toggles */}
-        <div className='space-y-2'>
-          <div className='text-[14px] font-semibold text-slate-400 uppercase tracking-wider mb-2'>
-            面板
+          <div>
+            <div className="eyebrow mb-1.5">面板</div>
+            <div className="space-y-0.5">
+              {/* 这三行原本是自绘的无名开关（无 role=switch / aria-checked，
+                  label 只是旁边一个游离的 span）。改用共享 ToggleSwitch，
+                  可访问名称由它的必填 prop 强制。 */}
+              <ToggleRow label="Agent 环境 HUD" value={hudOpen} onChange={setHudOpen} />
+              <ToggleRow label="RAG 独立面板" value={ragPanelOpen} onChange={setRagPanelOpen} />
+              <ToggleRow label="显示地图网格" value={showGrid} onChange={setShowGrid} />
+            </div>
           </div>
-
-          <ToggleRow
-            label='Agent 环境 HUD'
-            value={hudOpen}
-            onChange={setHudOpen}
-          />
-          <ToggleRow
-            label='RAG 独立面板'
-            value={ragPanelOpen}
-            onChange={setRagPanelOpen}
-          />
-          <ToggleRow
-            label='显示地图网格'
-            value={showGrid}
-            onChange={setShowGrid}
-          />
         </div>
       </div>
 
@@ -206,37 +263,19 @@ export function TweaksPanel({ children }: TweaksPanelProps) {
   );
 }
 
-function ToggleRow({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
+function ToggleRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: boolean;
+  onChange: (v: boolean) => void;
+}) {
   return (
-    <div className='flex items-center justify-between py-1.5'>
-      <span className='text-xs text-slate-600'>{label}</span>
-      <button
-        onClick={() => onChange(!value)}
-        style={{
-          width: 36,
-          height: 20,
-          borderRadius: 10,
-          border: 'none',
-          cursor: 'pointer',
-          transition: 'background 0.2s',
-          background: value ? '#16a34a' : '#cbd5e1',
-          position: 'relative',
-        }}
-      >
-        <div
-          style={{
-            position: 'absolute',
-            top: 2,
-            left: value ? 18 : 2,
-            width: 16,
-            height: 16,
-            borderRadius: '50%',
-            background: 'white',
-            transition: 'left 0.2s',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-          }}
-        />
-      </button>
+    <div className="flex min-h-row-sm items-center justify-between">
+      <span className="text-meta text-ink-secondary">{label}</span>
+      <ToggleSwitch label={label} checked={value} onChange={() => onChange(!value)} />
     </div>
   );
 }

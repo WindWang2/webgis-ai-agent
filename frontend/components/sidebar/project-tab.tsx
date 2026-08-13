@@ -65,8 +65,8 @@ export function ProjectTab() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--theme-border)] px-3 py-1.5">
-        <span className="text-[12px] font-semibold text-[var(--theme-text-secondary)]">项目工作区</span>
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-edge-subtle bg-surface-panel px-panel py-1.5">
+        <span className="text-meta font-semibold text-ink-secondary">项目工作区</span>
         {ws.view === 'project' && (
           <IconButton
             label="新建项目"
@@ -78,7 +78,7 @@ export function ProjectTab() {
         )}
       </div>
 
-      <div className="flex-1 space-y-4 overflow-y-auto p-3 text-[13px]">
+      <div className="flex-1 space-y-4 overflow-y-auto px-panel py-2 text-body">
         {ws.loading ? (
           <LoadingState label="加载项目…" />
         ) : (
@@ -88,10 +88,10 @@ export function ProjectTab() {
             {ws.view === 'project' && (
               <>
                 {showCreate && (
-                  <div className="space-y-2 rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] p-3">
+                  <div className="space-y-2 rounded-md border border-edge-subtle bg-surface-raised px-panel py-2.5">
                     <label
                       htmlFor={`${uid}-project-name`}
-                      className="block text-[12px] font-medium text-[var(--theme-text-secondary)]"
+                      className="block text-meta font-medium text-ink-secondary"
                     >
                       项目名称
                     </label>
@@ -101,18 +101,12 @@ export function ProjectTab() {
                       placeholder="项目名称…"
                       value={newProjName}
                       onChange={(e) => setNewProjName(e.target.value)}
-                      className="w-full rounded border px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
-                      style={{
-                        backgroundColor: 'var(--theme-bg-input)',
-                        borderColor: 'var(--theme-border)',
-                        color: 'var(--theme-text-primary)',
-                      }}
+                      className="w-full rounded-sm border border-edge-subtle bg-surface-sunken px-2.5 py-1.5 text-meta text-ink focus:outline-none focus:ring-1 focus:ring-status-accent"
                     />
                     <button
                       type="button"
                       onClick={handleCreateProject}
-                      className="w-full rounded py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
-                      style={{ background: 'var(--agent-accent, #16a34a)' }}
+                      className="w-full rounded-sm bg-status-accent py-1.5 text-meta font-medium text-ink-on-accent transition-opacity hover:opacity-90"
                     >
                       创建项目
                     </button>
@@ -122,7 +116,7 @@ export function ProjectTab() {
                 <div>
                   <label
                     htmlFor={`${uid}-project-select`}
-                    className="mb-1 block text-xs font-medium text-[var(--theme-text-secondary)]"
+                    className="mb-1 block text-meta font-medium text-ink-secondary"
                   >
                     当前项目
                   </label>
@@ -130,12 +124,7 @@ export function ProjectTab() {
                     id={`${uid}-project-select`}
                     value={ws.selectedProjectId}
                     onChange={(e) => ws.selectProject(e.target.value)}
-                    className="w-full rounded border px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[color:var(--agent-accent)]"
-                    style={{
-                      backgroundColor: 'var(--theme-bg-input)',
-                      borderColor: 'var(--theme-border)',
-                      color: 'var(--theme-text-primary)',
-                    }}
+                    className="w-full rounded-sm border border-edge-subtle bg-surface-sunken px-2.5 py-1.5 text-meta text-ink focus:outline-none focus:ring-1 focus:ring-status-accent"
                   >
                     {ws.projects.map((p) => (
                       <option key={p.id} value={p.id}>
@@ -146,9 +135,9 @@ export function ProjectTab() {
                 </div>
 
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs font-medium text-[var(--theme-text-secondary)]">
+                  <div className="flex items-center justify-between text-meta font-medium text-ink-secondary">
                     <span className="flex items-center gap-1.5">
-                      <Layers className="h-3.5 w-3.5 text-emerald-500" /> 挂载数据集 ({ws.datasets.length})
+                      <Layers size={14} className="text-ink-muted" aria-hidden /> 挂载数据集 ({ws.datasets.length})
                     </span>
                   </div>
                   {ws.datasets.length === 0 ? (
@@ -158,11 +147,11 @@ export function ProjectTab() {
                       {ws.datasets.map((d) => (
                         <div
                           key={d.id}
-                          className="flex items-center justify-between rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] p-2.5"
+                          className="flex items-center justify-between rounded-md border border-edge-subtle bg-surface-raised px-panel py-2"
                         >
                           <div className="min-w-0">
-                            <div className="text-xs font-medium text-[var(--theme-text-primary)]">{d.name}</div>
-                            <div className="text-[10px] text-[var(--theme-text-muted)]">
+                            <div className="text-meta font-medium text-ink">{d.name}</div>
+                            <div className="text-micro text-ink-muted">
                               {formatCrs(d.crs)} • {d.source_type}
                             </div>
                           </div>
@@ -174,9 +163,9 @@ export function ProjectTab() {
                 </div>
 
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs font-medium text-[var(--theme-text-secondary)]">
+                  <div className="flex items-center justify-between text-meta font-medium text-ink-secondary">
                     <span className="flex items-center gap-1.5">
-                      <Activity className="h-3.5 w-3.5 text-amber-500" /> 已保存工作流 ({ws.workflows.length})
+                      <Activity size={14} className="text-ink-muted" aria-hidden /> 已保存工作流 ({ws.workflows.length})
                     </span>
                   </div>
                   {ws.workflows.length === 0 ? (
@@ -186,13 +175,13 @@ export function ProjectTab() {
                       {ws.workflows.map((w) => (
                         <div
                           key={w.id}
-                          className="space-y-2 rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] p-3"
+                          className="space-y-2 rounded-md border border-edge-subtle bg-surface-raised px-panel py-2.5"
                         >
                           <div className="flex items-center justify-between gap-2">
                             <button
                               type="button"
                               onClick={() => ws.openWorkflow(w.id)}
-                              className="flex min-w-0 items-center gap-1 text-left text-xs font-medium text-[var(--theme-text-primary)] hover:underline"
+                              className="flex min-w-0 items-center gap-1 text-left text-meta font-medium text-ink hover:underline"
                             >
                               <span className="truncate">
                                 {w.name} (v{w.version})
@@ -206,10 +195,10 @@ export function ProjectTab() {
                                 void handleRerunWorkflow(w.id);
                               }}
                               disabled={ws.actionBusy}
-                              className="border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] text-[var(--theme-text-primary)] hover:bg-[var(--theme-bg-hover)] hover:text-[var(--theme-text-primary)] dark:text-[var(--theme-text-primary)]"
+                              className="border border-edge-subtle bg-surface-raised text-ink hover:bg-surface-sunken"
                             />
                           </div>
-                          <div className="text-[10px] text-[var(--theme-text-muted)]">步骤 {w.step_count}</div>
+                          <div className="text-micro text-ink-muted">步骤 {w.step_count}</div>
                         </div>
                       ))}
                     </div>
@@ -223,30 +212,30 @@ export function ProjectTab() {
                 <button
                   type="button"
                   onClick={ws.back}
-                  className="text-[11px] text-[var(--theme-text-secondary)] hover:underline"
+                  className="text-micro text-ink-secondary hover:underline"
                 >
                   ← 返回项目
                 </button>
                 <div>
-                  <div className="text-[13px] font-semibold text-[var(--theme-text-primary)]">
+                  <div className="text-body font-semibold text-ink">
                     {ws.selectedWorkflow.name}
                   </div>
-                  <div className="text-[10px] text-[var(--theme-text-muted)]">
+                  <div className="text-micro text-ink-muted">
                     v{ws.selectedWorkflow.version} · {ws.selectedWorkflow.step_count} 步
                   </div>
                 </div>
                 <section aria-labelledby="wf-rev-heading" className="space-y-1">
-                  <h3 id="wf-rev-heading" className="text-[11px] font-semibold uppercase tracking-wide text-[var(--theme-text-muted)]">
+                  <h3 id="wf-rev-heading" className="text-micro font-semibold uppercase tracking-wide text-ink-muted">
                     不可变修订
                   </h3>
                   {ws.revisions.length === 0 ? (
-                    <p className="text-[11px] text-[var(--theme-text-muted)]">暂无修订</p>
+                    <p className="text-micro text-ink-muted">暂无修订</p>
                   ) : (
                     <ul className="space-y-1">
                       {ws.revisions.map((rev) => (
                         <li
                           key={rev.id}
-                          className="flex justify-between gap-2 rounded border border-[var(--theme-border)] px-2 py-1 font-mono text-[10px] text-[var(--theme-text-secondary)]"
+                          className="flex justify-between gap-2 rounded-sm border border-edge-subtle px-2 py-1 font-mono text-micro text-ink-secondary"
                         >
                           <span>r{rev.revision_no}</span>
                           <span>{shortId(rev.graph_fingerprint, 10)}</span>
@@ -256,7 +245,7 @@ export function ProjectTab() {
                   )}
                 </section>
                 <section aria-labelledby="wf-runs-heading" className="space-y-1">
-                  <h3 id="wf-runs-heading" className="text-[11px] font-semibold uppercase tracking-wide text-[var(--theme-text-muted)]">
+                  <h3 id="wf-runs-heading" className="text-micro font-semibold uppercase tracking-wide text-ink-muted">
                     运行
                   </h3>
                   {ws.detailLoading && ws.runs.length === 0 ? (
@@ -270,21 +259,21 @@ export function ProjectTab() {
                           <button
                             type="button"
                             onClick={() => ws.openRun(r.id)}
-                            className="flex w-full items-center justify-between gap-2 rounded-lg border border-[var(--theme-border)] bg-[var(--theme-bg-subtle)] px-2.5 py-2 text-left hover:bg-[var(--theme-bg-hover)]"
+                            className="flex w-full items-center justify-between gap-2 rounded-md border border-edge-subtle bg-surface-raised px-2.5 py-2 text-left hover:bg-surface-sunken"
                           >
                             <span className="min-w-0">
-                              <span className="block font-mono text-[11px] text-[var(--theme-text-primary)]">
+                              <span className="block font-mono text-micro text-ink">
                                 {shortId(r.id, 10)}
                               </span>
                               {r.error_message && (
-                                <span className="block truncate text-[10px] text-red-600 dark:text-red-300">
+                                <span className="block truncate text-micro text-status-danger">
                                   {r.error_message}
                                 </span>
                               )}
                             </span>
                             <span className="flex items-center gap-1">
                               <StatusBadge status={r.status} />
-                              <ChevronRight className="h-3 w-3 text-[var(--theme-text-muted)]" aria-hidden />
+                              <ChevronRight className="h-3 w-3 text-ink-muted" aria-hidden />
                             </span>
                           </button>
                         </li>
@@ -297,7 +286,7 @@ export function ProjectTab() {
                       onClick={() => {
                         void ws.loadMoreRuns();
                       }}
-                      className="w-full rounded border border-[var(--theme-border)] py-1 text-[11px] text-[var(--theme-text-secondary)] hover:bg-[var(--theme-bg-hover)]"
+                      className="w-full rounded-sm border border-edge-subtle py-1 text-micro text-ink-secondary hover:bg-surface-sunken"
                     >
                       加载更多运行
                     </button>

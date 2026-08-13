@@ -56,7 +56,6 @@ export function EmbodiedHud() {
   const theme = useHudStore((s) => s.theme);
   const setTheme = useHudStore((s) => s.setTheme);
   const aiStatus = useHudStore((s) => s.aiStatus);
-  const accentColor = useHudStore((s) => s.accentColor);
   const is3D = useHudStore((s) => s.is3D);
   const opsLog = useHudStore((s) => s.opsLog) || [];
   const causalChain = useHudStore((s) => s.causalChain) || [];
@@ -111,25 +110,15 @@ export function EmbodiedHud() {
   };
 
   return (
+    /* V4（B）：整条状态栏改不透明 surface-panel —— 它压在持续重绘的地图画布上，
+       backdrop-filter 是最贵的那类合成，半透明还会让地图细节透进正文。字体覆盖
+       (Inter) 去掉，改继承全站 DM Sans。静态样式全部落 class，只剩高度/过渡等
+       动态值留在 inline。 */
     <div
+      className="fixed bottom-0 left-0 right-0 z-50 flex flex-col overflow-hidden border-t border-edge-subtle bg-surface-panel text-ink shadow-overlay"
       style={{
-        position: 'fixed',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        zIndex: 50,
         height: hudOpen ? 210 : 24,
-        background: 'var(--theme-bg-panel)',
-        backdropFilter: 'blur(28px)',
-        WebkitBackdropFilter: 'blur(28px)',
-        borderTop: '1px solid var(--theme-border)',
-        boxShadow: 'var(--theme-shadow)',
-        color: 'var(--theme-text-primary)',
         transition: 'height 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-        fontFamily: "'Inter', sans-serif"
       }}
     >
       <style jsx>{`
@@ -140,11 +129,11 @@ export function EmbodiedHud() {
           background: transparent;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: rgba(148, 163, 184, 0.2);
+          background: var(--border-strong);
           border-radius: 99px;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: rgba(148, 163, 184, 0.4);
+          background: var(--text-disabled);
         }
       `}</style>
 
@@ -153,20 +142,15 @@ export function EmbodiedHud() {
           （避免 button-in-button 的嵌套交互违规）。 */}
       <div
         onClick={() => setHudOpen(!hudOpen)}
+        className="flex cursor-pointer select-none items-center px-3"
         style={{
-          display: 'flex',
-          alignItems: 'center',
           height: 24,
           minHeight: 24,
-          paddingLeft: 12,
-          paddingRight: 12,
-          cursor: 'pointer',
-          userSelect: 'none',
-          borderBottom: hudOpen ? '1px solid var(--theme-border)' : 'none',
+          borderBottom: hudOpen ? '1px solid var(--border-subtle)' : 'none',
         }}
       >
         {/* Telemetry Stats */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <div className="flex items-center gap-4">
           {[
             { label: 'CRS', value: 'EPSG:4326' },
             { label: 'LNG', value: lng.toFixed(5) },
@@ -175,11 +159,9 @@ export function EmbodiedHud() {
             { label: '底图', value: BASE_LAYER_LABELS[baseLayer] ?? baseLayer },
             { label: '图层', value: `${visibleLayerCount}/${layers.length}` }
           ].map((item) => (
-            <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--theme-text-muted)', letterSpacing: '0.06em' }}>
-                {item.label}
-              </span>
-              <span style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: 'var(--theme-text-secondary)' }}>
+            <div key={item.label} className="flex items-center gap-1">
+              <span className="eyebrow">{item.label}</span>
+              <span className="font-mono text-meta text-ink-secondary">
                 {item.value}
               </span>
             </div>
@@ -188,48 +170,45 @@ export function EmbodiedHud() {
 
         {/* Neural Wave representation in Docked State */}
         {!hudOpen && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 24, flex: 1, height: '100%', overflow: 'hidden' }}>
-            <span style={{ fontSize: 11, color: 'var(--theme-text-subtle)' }}>|</span>
-            <Activity size={10} style={{ color: isThinking ? accentColor : '#475569', animation: isThinking ? 'pulse 1s infinite' : 'none' }} />
-            <span style={{ fontSize: 11, color: 'var(--theme-text-muted)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.04em' }}>
+          <div className="flex h-full flex-1 items-center gap-2 overflow-hidden" style={{ marginLeft: 24 }}>
+            <span className="text-caption text-ink-disabled">|</span>
+            <Activity
+              size={10}
+              className={isThinking ? 'animate-pulse' : ''}
+              style={{ color: isThinking ? 'var(--agent-accent)' : 'var(--text-disabled)' }}
+            />
+            <span className="font-mono text-caption text-ink-muted" style={{ letterSpacing: '0.04em' }}>
               {isThinking ? 'AGENT NEURAL SIGNAL ACTIVE' : 'COGNITIVE CORE IDLE'}
             </span>
-            <svg width="60" height="12" style={{ opacity: 0.4, marginLeft: 4 }}>
+            <svg width="60" height="12" className="ml-1 opacity-40">
               <path
                 d={`M 0,6 Q 15,${6 + Math.sin(phase) * (isThinking ? 5 : 1.5)} 30,6 T 60,6`}
                 fill="none"
-                stroke={isThinking ? accentColor : '#64748b'}
+                stroke={isThinking ? 'var(--agent-accent)' : 'var(--text-disabled)'}
                 strokeWidth="1"
               />
             </svg>
           </div>
         )}
 
-        <div style={{ flex: 1 }} />
+        <div className="flex-1" />
 
         {/* Right Buttons */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
           {/* Theme Toggle */}
           <button
             type="button"
             onClick={handleToggleTheme}
             aria-label={isDark ? '切换到浅色主题' : '切换到深色主题'}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              padding: 0,
-              cursor: 'pointer',
-              color: 'var(--theme-text-muted)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
             title="切换主题"
+            className={`flex cursor-pointer items-center justify-center border-none bg-transparent p-0 text-ink-muted transition-colors ${
+              isDark ? 'hover:text-status-warning' : 'hover:text-status-info'
+            }`}
           >
-            {isDark ? <Sun size={12} className="hover:text-amber-400 transition-colors" /> : <Moon size={12} className="hover:text-indigo-600 transition-colors" />}
+            {isDark ? <Sun size={12} /> : <Moon size={12} />}
           </button>
 
-          <span style={{ fontSize: 11, color: 'var(--theme-text-subtle)' }}>|</span>
+          <span className="text-caption text-ink-disabled">|</span>
 
           {/* Expand/Collapse Chevron — HUD 开合的键盘可达控制 */}
           <button
@@ -237,89 +216,63 @@ export function EmbodiedHud() {
             onClick={() => setHudOpen(!hudOpen)}
             aria-expanded={hudOpen}
             aria-label={hudOpen ? '收起状态栏' : '展开状态栏'}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--theme-text-muted)',
-              cursor: 'pointer',
-              background: 'transparent',
-              border: 'none',
-              padding: 2,
-            }}
+            className="flex cursor-pointer items-center justify-center border-none bg-transparent p-0.5 text-ink-muted transition-colors hover:text-ink"
           >
-            {hudOpen ? <ChevronDown size={14} className="hover:text-slate-200 transition-colors" /> : <ChevronUp size={14} className="hover:text-slate-200 transition-colors" />}
+            {hudOpen ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
           </button>
         </div>
       </div>
 
       {/* EXPANDED TELEMETRY BAY (3 columns) */}
       {hudOpen && (
-        <div 
-          style={{
-            flex: 1,
-            display: 'grid',
-            gridTemplateColumns: '1fr 1.1fr 1.2fr',
-            gap: 16,
-            padding: '12px 16px',
-            fontSize: '13px',
-            minHeight: 0
-          }}
-        >
+        <div className="grid min-h-0 flex-1 grid-cols-[1fr_1.1fr_1.2fr] gap-4 px-4 py-3 text-body">
           {/* COLUMN 1: SENSORY PERCEPTION (感知系统) */}
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 8,
-            borderRight: '1px solid var(--theme-border)',
-            paddingRight: 12
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--theme-text-secondary)', fontWeight: 600, letterSpacing: '0.04em' }}>
-              <Compass size={13} style={{ color: isThinking ? accentColor : '#64748b' }} />
+          <div className="flex min-h-0 flex-col gap-2 border-r border-edge-subtle pr-3">
+            <div className="flex items-center gap-1.5 font-semibold text-ink-secondary" style={{ letterSpacing: '0.04em' }}>
+              <Compass size={13} style={{ color: isThinking ? 'var(--agent-accent)' : 'var(--text-disabled)' }} />
               <span>感知系统 / SENSORY PERCEPTION</span>
             </div>
 
-            <div style={{ flex: 1, display: 'flex', gap: 12, alignItems: 'center', minHeight: 0 }}>
+            <div className="flex min-h-0 flex-1 items-center gap-3">
               {/* Sonar Vector Radar */}
-              <div style={{ position: 'relative', width: 70, height: 70, flexShrink: 0 }}>
+              <div className="relative shrink-0" style={{ width: 70, height: 70 }}>
                 <svg width="70" height="70" viewBox="0 0 100 100" style={{ transform: 'rotate(-90deg)' }}>
-                  <circle cx="50" cy="50" r="45" fill="none" stroke="var(--theme-border)" strokeWidth="1" />
-                  <circle cx="50" cy="50" r="30" fill="none" stroke="var(--theme-border)" strokeWidth="1" />
-                  <circle cx="50" cy="50" r="15" fill="none" stroke="var(--theme-border)" strokeWidth="1" />
-                  <line x1="50" y1="5" x2="50" y2="95" stroke="var(--theme-border)" strokeWidth="0.75" />
-                  <line x1="5" y1="50" x2="95" y2="50" stroke="var(--theme-border)" strokeWidth="0.75" />
+                  <circle cx="50" cy="50" r="45" fill="none" stroke="var(--border-subtle)" strokeWidth="1" />
+                  <circle cx="50" cy="50" r="30" fill="none" stroke="var(--border-subtle)" strokeWidth="1" />
+                  <circle cx="50" cy="50" r="15" fill="none" stroke="var(--border-subtle)" strokeWidth="1" />
+                  <line x1="50" y1="5" x2="50" y2="95" stroke="var(--border-subtle)" strokeWidth="0.75" />
+                  <line x1="5" y1="50" x2="95" y2="50" stroke="var(--border-subtle)" strokeWidth="0.75" />
                   {/* Radar sweep */}
                   <path
                     d="M 50,50 L 50,5 A 45,45 0 0,1 81.8,18.1 Z"
-                    fill={`linear-gradient(45deg, transparent, ${accentColor}15)`}
                     style={{
-                      fill: isThinking ? `${accentColor}15` : 'transparent',
+                      fill: isThinking ? 'color-mix(in srgb, var(--agent-accent) 8%, transparent)' : 'transparent',
                       transformOrigin: '50px 50px',
                       animation: isThinking ? 'spin-clockwise 3s linear infinite' : 'none'
                     }}
                   />
                   {/* Pulse active marker */}
-                  <circle cx="50" cy="20" r="2.5" fill={isThinking ? accentColor : '#64748b'} style={{ opacity: isThinking ? 0.8 : 0.2 }} />
+                  <circle cx="50" cy="20" r="2.5" fill={isThinking ? 'var(--agent-accent)' : 'var(--text-disabled)'} style={{ opacity: isThinking ? 0.8 : 0.2 }} />
                 </svg>
               </div>
 
               {/* Detailed perception reads */}
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 3, fontFamily: "'JetBrains Mono', monospace", fontSize: '12px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: '#64748b' }}>CENTER:</span>
-                  <span style={{ color: 'var(--theme-text-secondary)' }}>[{lng.toFixed(4)}, {lat.toFixed(4)}]</span>
+              <div className="flex flex-1 flex-col gap-3 font-mono text-meta">
+                <div className="flex justify-between">
+                  <span className="text-ink-muted">CENTER:</span>
+                  <span className="text-ink-secondary">[{lng.toFixed(4)}, {lat.toFixed(4)}]</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: '#64748b' }}>BEARING/PITCH:</span>
-                  <span style={{ color: 'var(--theme-text-secondary)' }}>{bearing.toFixed(0)}° / {pitch.toFixed(0)}°</span>
+                <div className="flex justify-between">
+                  <span className="text-ink-muted">BEARING/PITCH:</span>
+                  <span className="text-ink-secondary">{bearing.toFixed(0)}° / {pitch.toFixed(0)}°</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: '#64748b' }}>DIMENSION:</span>
-                  <span style={{ color: 'var(--theme-text-secondary)' }}>{is3D ? '3D TERRAIN (1.5x)' : '2D PERSPECTIVE'}</span>
+                <div className="flex justify-between">
+                  <span className="text-ink-muted">DIMENSION:</span>
+                  <span className="text-ink-secondary">{is3D ? '3D TERRAIN (1.5x)' : '2D PERSPECTIVE'}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: '#64748b' }}>BASEMAP:</span>
-                  <span style={{ color: 'var(--theme-text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 95 }}>
+                <div className="flex justify-between">
+                  <span className="text-ink-muted">BASEMAP:</span>
+                  <span className="max-w-[95px] truncate text-ink-secondary">
                     {BASE_LAYER_LABELS[baseLayer] ?? baseLayer}
                   </span>
                 </div>
@@ -328,37 +281,31 @@ export function EmbodiedHud() {
           </div>
 
           {/* COLUMN 2: COGNITIVE CORE (认知中枢) */}
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 8,
-            borderRight: '1px solid var(--theme-border)',
-            paddingRight: 12
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--theme-text-secondary)', fontWeight: 600, letterSpacing: '0.04em' }}>
-              <Cpu size={13} style={{ color: isThinking ? accentColor : '#64748b' }} />
+          <div className="flex min-h-0 flex-col gap-2 border-r border-edge-subtle pr-3">
+            <div className="flex items-center gap-1.5 font-semibold text-ink-secondary" style={{ letterSpacing: '0.04em' }}>
+              <Cpu size={13} style={{ color: isThinking ? 'var(--agent-accent)' : 'var(--text-disabled)' }} />
               <span>认知中枢 / COGNITIVE CORE</span>
             </div>
 
             {/* AI Status Indicators */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, justifyItems: 'center', minHeight: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+              <div className="flex items-center gap-2.5">
                 {/* Status indicator */}
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 5,
-                  padding: '2px 8px',
-                  borderRadius: 6,
-                  background: isThinking ? `${accentColor}18` : 'var(--theme-bg-hover)',
-                  fontSize: '11.5px',
-                  fontWeight: 600,
-                  color: isThinking ? accentColor : 'var(--theme-text-secondary)',
-                  border: isThinking ? `1px solid ${accentColor}33` : '1px solid transparent'
-                }}>
+                <div
+                  className="flex items-center gap-1.5 rounded-md px-2 py-0.5 text-caption font-semibold"
+                  style={{
+                    background: isThinking
+                      ? 'color-mix(in srgb, var(--agent-accent) 10%, transparent)'
+                      : 'var(--surface-hover)',
+                    color: isThinking ? 'var(--agent-accent)' : 'var(--text-secondary)',
+                    border: isThinking
+                      ? '1px solid color-mix(in srgb, var(--agent-accent) 20%, transparent)'
+                      : '1px solid transparent'
+                  }}
+                >
                   {isThinking ? (
                     <>
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" style={{ backgroundColor: accentColor }} />
+                      <span className="h-1.5 w-1.5 animate-ping rounded-full" style={{ backgroundColor: 'var(--agent-accent)' }} />
                       <span>{aiStatus === 'thinking' ? '感知中' : '执行中'}</span>
                     </>
                   ) : (
@@ -371,122 +318,98 @@ export function EmbodiedHud() {
 
                 {/* Cognitive Active Tools */}
                 {isThinking && opsLog.length > 0 && (
-                  <span style={{
-                    fontSize: '11.5px',
-                    fontFamily: "'JetBrains Mono', monospace",
-                    color: accentColor,
-                    letterSpacing: '0.04em',
-                    fontWeight: 500,
-                    textTransform: 'uppercase',
-                    animation: 'pulse 1.5s infinite'
-                  }}>
+                  <span
+                    className="animate-pulse font-mono text-caption font-medium uppercase text-agent-accent"
+                    style={{ letterSpacing: '0.04em' }}
+                  >
                     RUNNING: {opsLog[0].type}
                   </span>
                 )}
               </div>
 
               {/* Dynamic Waveform Graph & Memory count */}
-              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flex: 1 }}>
-                <svg width="105" height="35" style={{ flexShrink: 0, overflow: 'visible', filter: isThinking ? `drop-shadow(0 0 2px ${accentColor}88)` : 'none' }}>
-                  <path d={renderWaveform()} fill="none" stroke={isThinking ? accentColor : '#475569'} strokeWidth="1.5" />
+              <div className="flex flex-1 items-center gap-3">
+                <svg width="105" height="35" className="shrink-0 overflow-visible" style={{ filter: isThinking ? 'drop-shadow(0 0 2px color-mix(in srgb, var(--agent-accent) 53%, transparent))' : 'none' }}>
+                  <path d={renderWaveform()} fill="none" stroke={isThinking ? 'var(--agent-accent)' : 'var(--text-disabled)'} strokeWidth="1.5" />
                 </svg>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: '11px', fontFamily: "'JetBrains Mono', monospace" }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <Database size={10} style={{ color: '#94a3b8' }} />
-                    <span style={{ color: '#64748b' }}>RAG MEM:</span>
-                    <span style={{ color: 'var(--theme-text-secondary)' }}>{ragResults.length} SLOTS</span>
+                <div className="flex flex-col gap-3 font-mono text-caption">
+                  <div className="flex items-center gap-1">
+                    <Database size={10} className="text-ink-disabled" />
+                    <span className="text-ink-muted">RAG MEM:</span>
+                    <span className="text-ink-secondary">{ragResults.length} SLOTS</span>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <Layers size={10} style={{ color: '#94a3b8' }} />
-                    <span style={{ color: '#64748b' }}>SPATIAL REF:</span>
-                    <span style={{ color: 'var(--theme-text-secondary)' }}>{layers.length} ACTIVE</span>
+                  <div className="flex items-center gap-1">
+                    <Layers size={10} className="text-ink-disabled" />
+                    <span className="text-ink-muted">SPATIAL REF:</span>
+                    <span className="text-ink-secondary">{layers.length} ACTIVE</span>
                   </div>
                 </div>
               </div>
 
               {/* 3-Step AI Stepper */}
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                marginTop: 'auto',
-                paddingTop: 8,
-                borderTop: '1px dashed var(--theme-border)',
-                width: '100%'
-              }}>
+              <div className="mt-auto flex w-full items-center justify-between border-t border-dashed border-edge-subtle pt-2">
                 {STEPS.map((step, i) => {
                   const state = getStepState(i, aiStatus);
                   const isLast = i === STEPS.length - 1;
-                  
+
                   // Color computation
-                  let dotColor = '#64748b';
-                  let textColor = '#64748b';
+                  let dotColor = 'var(--text-disabled)';
+                  let textColor = 'var(--text-muted)';
                   let glowStyle = {};
-                  
+
                   if (state === 'done') {
-                    dotColor = '#10b981';
-                    textColor = 'var(--theme-text-primary)';
+                    dotColor = 'var(--success)';
+                    textColor = 'var(--text-primary)';
                   } else if (state === 'active') {
-                    dotColor = accentColor;
-                    textColor = accentColor;
+                    dotColor = 'var(--agent-accent)';
+                    // accent 作文字在暗色下只有 2.96–3.40:1 —— 步骤名是正文，
+                    // 用 text-safe 派生；发光/圆点是 mark，仍用原色。
+                    textColor = 'var(--agent-accent)';
                     glowStyle = {
-                      boxShadow: `0 0 8px ${accentColor}`,
+                      boxShadow: '0 0 8px var(--agent-accent)',
                       animation: 'pulse 1.5s infinite'
                     };
-                  } else {
-                    dotColor = 'var(--theme-text-subtle)';
-                    textColor = 'var(--theme-text-muted)';
                   }
 
                   return (
-                    <div key={step.label} style={{ display: 'flex', alignItems: 'center', flex: isLast ? '0 0 auto' : '1 1 auto', minWidth: 0 }}>
+                    <div key={step.label} className="flex min-w-0 items-center" style={{ flex: isLast ? '0 0 auto' : '1 1 auto' }}>
                       {/* Step item */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+                      <div className="flex min-w-0 items-center gap-1.5">
                         {/* Glowing dot */}
-                        <div style={{
-                          width: 6,
-                          height: 6,
-                          borderRadius: '50%',
-                          backgroundColor: dotColor,
-                          flexShrink: 0,
-                          transition: 'all 0.3s ease',
-                          ...glowStyle
-                        }} />
-                        
+                        <div
+                          className="h-1.5 w-1.5 shrink-0 rounded-full"
+                          style={{
+                            backgroundColor: dotColor,
+                            transition: 'all 0.3s ease',
+                            ...glowStyle
+                          }}
+                        />
+
                         {/* Label & Subtext */}
-                        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                          <span style={{
-                            fontSize: '11px',
-                            fontWeight: 600,
-                            fontFamily: "'JetBrains Mono', monospace",
-                            color: textColor,
-                            transition: 'color 0.3s ease',
-                            whiteSpace: 'nowrap'
-                          }}>{step.label}</span>
-                          <span style={{
-                            fontSize: '9.5px',
-                            color: 'var(--theme-text-muted)',
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis'
-                          }}>{step.sub}</span>
+                        <div className="flex min-w-0 flex-col">
+                          <span
+                            className="whitespace-nowrap font-mono text-caption font-semibold"
+                            style={{
+                              color: textColor,
+                              transition: 'color 0.3s ease'
+                            }}
+                          >{step.label}</span>
+                          <span className="truncate whitespace-nowrap text-micro text-ink-muted">{step.sub}</span>
                         </div>
                       </div>
 
                       {/* Horizontal Connector Track */}
                       {!isLast && (
-                        <div style={{
-                          flex: 1,
-                          height: 1,
-                          marginLeft: 6,
-                          marginRight: 6,
-                          background: state === 'done' 
-                            ? `linear-gradient(to right, #10b981, ${getStepState(i+1, aiStatus) === 'active' ? accentColor : 'var(--theme-text-subtle)'})`
-                            : 'var(--theme-border)',
-                          transition: 'background 0.3s ease',
-                          minWidth: 8
-                        }} />
+                        <div
+                          className="mx-1.5 h-px min-w-2 flex-1"
+                          style={{
+                            background: state === 'done'
+                              ? `linear-gradient(to right, var(--success), ${getStepState(i+1, aiStatus) === 'active' ? 'var(--agent-accent)' : 'var(--text-disabled)'})`
+                              : 'var(--border-subtle)',
+                            transition: 'background 0.3s ease'
+                          }}
+                        />
                       )}
                     </div>
                   );
@@ -496,60 +419,49 @@ export function EmbodiedHud() {
           </div>
 
           {/* COLUMN 3: ACTION STREAM (执行通道) */}
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 8,
-            minHeight: 0
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--theme-text-secondary)', fontWeight: 600, letterSpacing: '0.04em' }}>
-              <Terminal size={13} style={{ color: isThinking ? accentColor : '#64748b' }} />
+          <div className="flex min-h-0 flex-col gap-2">
+            <div className="flex items-center gap-1.5 font-semibold text-ink-secondary" style={{ letterSpacing: '0.04em' }}>
+              <Terminal size={13} style={{ color: isThinking ? 'var(--agent-accent)' : 'var(--text-disabled)' }} />
               <span>执行通道 / ACTION LOG & CAUSAL CHAIN</span>
             </div>
 
             {/* scrolling log window */}
-            <div 
-              className="custom-scrollbar"
-              style={{
-                flex: 1,
-                overflowY: 'auto',
-                background: 'var(--theme-bg-input)',
-                border: '1px solid var(--theme-border)',
-                borderRadius: 8,
-                padding: '6px 8px',
-                fontFamily: "'JetBrains Mono', monospace",
-                fontSize: '11px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 5,
-                minHeight: 0
-              }}
+            <div
+              className="custom-scrollbar flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto rounded-md border border-edge-subtle bg-surface-sunken p-1.5 px-2 font-mono text-caption"
             >
               {/* Combine opsLog and causalChain */}
               {causalChain.length === 0 && opsLog.length === 0 ? (
-                <div style={{ color: '#475569', fontStyle: 'italic', textAlign: 'center', margin: 'auto' }}>
+                <div className="m-auto text-center italic text-ink-muted">
                   AWAITING SPATIAL AI COMMANDS...
                 </div>
               ) : (
                 <>
                   {causalChain.map((entry) => (
-                    <div key={entry.id} style={{ display: 'flex', flexDirection: 'column', gap: 1, borderLeft: `1.5px solid ${accentColor}bb`, paddingLeft: 6, marginBottom: 2 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', color: accentColor, fontWeight: 600 }}>
+                    <div
+                      key={entry.id}
+                      className="mb-0.5 flex flex-col gap-0.5 pl-1.5"
+                      style={{ borderLeft: '1.5px solid color-mix(in srgb, var(--agent-accent) 73%, transparent)' }}
+                    >
+                      <div className="flex justify-between font-semibold text-agent-accent">
                         <span>[CAUSAL] {entry.tool}</span>
-                        <span style={{ color: '#475569', fontSize: '10px' }}>{entry.time}</span>
+                        <span className="text-micro text-ink-muted">{entry.time}</span>
                       </div>
-                      {entry.toolInput && <div style={{ color: 'var(--theme-text-secondary)' }}>IN: {entry.toolInput}</div>}
-                      {entry.mapEffect && <div style={{ color: '#94a3b8' }}>OUT: {entry.mapEffect}</div>}
+                      {entry.toolInput && <div className="text-ink-secondary">IN: {entry.toolInput}</div>}
+                      {entry.mapEffect && <div className="text-ink-muted">OUT: {entry.mapEffect}</div>}
                     </div>
                   ))}
 
                   {opsLog.map((entry) => (
-                    <div key={entry.id} style={{ display: 'flex', flexDirection: 'column', gap: 1, borderLeft: '1.5px solid #475569', paddingLeft: 6, marginBottom: 2 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--theme-text-secondary)', fontWeight: 500 }}>
+                    <div
+                      key={entry.id}
+                      className="mb-0.5 flex flex-col gap-0.5 pl-1.5"
+                      style={{ borderLeft: '1.5px solid var(--border-strong)' }}
+                    >
+                      <div className="flex justify-between font-medium text-ink-secondary">
                         <span>[OP] {entry.label}</span>
-                        <span style={{ color: '#475569', fontSize: '10px' }}>{entry.time}</span>
+                        <span className="text-micro text-ink-muted">{entry.time}</span>
                       </div>
-                      <div style={{ color: '#64748b' }}>{entry.detail}</div>
+                      <div className="text-ink-muted">{entry.detail}</div>
                     </div>
                   ))}
                 </>

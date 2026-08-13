@@ -5,7 +5,7 @@ import dynamic from "next/dynamic"
 
 const MapPanel = dynamic(
   () => import('@/components/map/map-panel').then((m) => ({ default: m.MapPanel })),
-  { ssr: false, loading: () => <div className="w-full h-full bg-slate-900 animate-pulse" /> }
+  { ssr: false, loading: () => <div className="w-full h-full bg-surface-canvas animate-pulse" /> }
 )
 
 const StoryMarkdown = dynamic(() => import('@/components/chat/story-markdown'), { ssr: false })
@@ -17,7 +17,7 @@ import { Play, SkipBack, Share2 } from "lucide-react"
 
 export default function StoryPage() {
   return (
-    <Suspense fallback={<div className="flex items-center justify-center h-screen text-white/50">Loading...</div>}>
+    <Suspense fallback={<div className="flex items-center justify-center h-screen text-ink-muted">Loading...</div>}>
       <StoryPageInner />
     </Suspense>
   )
@@ -72,31 +72,39 @@ function StoryPageInner() {
   }
 
   if (loading) {
-    return <div className="h-screen w-screen bg-ds-black flex items-center justify-center text-hud-cyan font-mono relative">
-      <div className="absolute inset-0 z-[1] opacity-[0.015] bg-grid-hud bg-[size:60px_60px]"></div>
+    /* E：bg-ds-black / text-hud-cyan / bg-grid-hud 从未在 tailwind.config 或
+       任何 CSS 中定义 —— 此前这个 loading 屏与整页都没有背景。改走 V4 语义
+       token（surface-canvas 是页面床色，status-info 是叙事 accent），网格
+       底纹用已定义的 bg-grid-agent。 */
+    return <div className="h-screen w-screen bg-surface-canvas flex items-center justify-center text-status-info font-mono relative">
+      <div className="absolute inset-0 z-[1] opacity-[0.015] bg-grid-agent bg-[size:60px_60px]"></div>
       <div className="animate-pulse">Loading StoryMap CNS...</div>
     </div>
   }
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-ds-black relative flex">
+    <div className="h-screen w-screen overflow-hidden bg-surface-canvas relative flex">
       {/* Grid overlay for depth */}
-      <div className="absolute inset-0 pointer-events-none z-[1] opacity-[0.015] bg-grid-hud bg-[size:60px_60px]" />
+      <div className="absolute inset-0 pointer-events-none z-[1] opacity-[0.015] bg-grid-agent bg-[size:60px_60px]" />
 
       {/* Narrative Panel (Left) */}
+      {/* E：glass-panel / glass-panel-dense 未定义 → 叙事面板此前完全没有背景。
+          改用不透明 surface-panel（面板配方）；backdrop-blur-xl 一并去掉 ——
+          blur 盖在持续重绘的地图画布上是最贵的那类合成。 */}
       <div 
         ref={containerRef}
         onScroll={handleScroll}
-        className="w-[400px] xl:w-[500px] h-full z-20 glass-panel border-r border-hud-cyan/20 overflow-y-auto overflow-x-hidden flex flex-col relative"
+        className="w-[400px] xl:w-[500px] h-full z-20 bg-surface-panel border-r border-edge-subtle overflow-y-auto overflow-x-hidden flex flex-col relative"
       >
-        <div className="sticky top-0 p-6 glass-panel-dense backdrop-blur-xl border-b border-white/5 z-10 flex justify-between items-center">
-          <h1 className="text-hud-cyan font-semibold tracking-widest text-lg flex items-center gap-2">
-            STORY<span className="text-white/50">MAP</span>
+        <div className="sticky top-0 p-6 bg-surface-panel border-b border-edge-subtle z-10 flex justify-between items-center">
+          <h1 className="text-status-info font-semibold tracking-widest text-heading flex items-center gap-2">
+            STORY<span className="text-ink-muted">MAP</span>
           </h1>
           <div className="flex gap-2">
-            <button aria-label="上一个" className="hud-btn p-2 rounded-lg text-white/50 hover:text-hud-cyan"><SkipBack className="h-4 w-4" /></button>
-            <button aria-label="播放" className="hud-btn p-2 rounded-lg text-white/50 hover:text-hud-cyan"><Play className="h-4 w-4" /></button>
-            <button aria-label="分享" className="hud-btn p-2 rounded-lg text-white/50 hover:text-hud-cyan"><Share2 className="h-4 w-4" /></button>
+            {/* E：hud-btn 未定义 → 按钮此前无任何样式；改为面板内图标按钮配方。 */}
+            <button aria-label="上一个" className="rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info"><SkipBack className="h-4 w-4" /></button>
+            <button aria-label="播放" className="rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info"><Play className="h-4 w-4" /></button>
+            <button aria-label="分享" className="rounded-md p-2 text-ink-muted transition-colors hover:bg-surface-hover hover:text-status-info"><Share2 className="h-4 w-4" /></button>
           </div>
         </div>
 
@@ -104,8 +112,8 @@ function StoryPageInner() {
           {messages.map((msg, idx) => (
             <div 
               key={idx} 
-              className={`prose prose-invert prose-p:text-white/70 prose-headings:text-hud-cyan prose-a:text-hud-cyan prose-strong:text-white max-w-none transition-opacity duration-700
-                ${msg.role === 'user' ? 'opacity-50 border-l-2 border-white/10 pl-4 italic text-sm' : 'opacity-100'}`}
+              className={`prose prose-agent prose-headings:text-status-info prose-a:text-status-info max-w-none transition-opacity duration-700
+                ${msg.role === 'user' ? 'opacity-50 border-l-2 border-edge-subtle pl-4 italic text-body' : 'opacity-100'}`}
             >
               {msg.role === 'user' ? (
                 <p className="m-0 font-mono">USER: {msg.content}</p>
@@ -120,7 +128,7 @@ function StoryPageInner() {
       {/* Map Panel (Right) */}
       <div className="flex-1 h-full relative z-0 relative shadow-[-20px_0_40px_rgba(0,0,0,0.8)]">
         {/* Adds Cinematic Gradient */}
-        <div className="absolute inset-y-0 left-0 w-32 bg-gradient-to-r from-ds-black to-transparent z-10 pointer-events-none" />
+        <div className="absolute inset-y-0 left-0 w-32 bg-gradient-to-r from-surface-canvas to-transparent z-10 pointer-events-none" />
         
         <MapPanel
           layers={layers}

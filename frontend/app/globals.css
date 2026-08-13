@@ -9,127 +9,346 @@
    ════════════════════════════════════════════ */
 
 :root {
-  /* Core palette (HSL for shadcn compat) */
-  --background: 210 33% 96%;          /* #dce8f2 */
-  --foreground: 222 47% 11%;          /* #0f172a */
+  /* Core palette (HSL for shadcn compat).
+     These mirror the V4 surface/text tokens defined further down, expressed as
+     bare HSL triples because shadcn utilities wrap them in `hsl(...)`. Keep the
+     two in step: `bg-card` and `bg-[var(--surface-panel)]` must land on the
+     same colour or the panel chrome splits in two. */
+  --background: 208 41% 90%;          /* --surface-canvas #dbe6f1 */
+  --foreground: 222 47% 11%;          /* --text-primary   #0f172a */
 
-  --card: 210 33% 98%;
+  --card: 207 55% 98%;                /* --surface-panel  #f7fafd */
   --card-foreground: 222 47% 11%;
 
-  --popover: 0 0% 100%;
+  --popover: 200 33% 99%;             /* --surface-overlay */
   --popover-foreground: 222 47% 11%;
 
-  --primary: 142 71% 45%;             /* #16a34a — Agent Green */
+  --primary: 142 72% 29%;             /* --accent #15803d — AA as label text */
   --primary-foreground: 0 0% 100%;
 
-  --secondary: 210 15% 90%;
+  --secondary: 210 30% 95%;
   --secondary-foreground: 222 47% 11%;
 
-  --muted: 210 15% 92%;
-  --muted-foreground: 215 16% 47%;
+  --muted: 210 33% 95%;               /* --surface-sunken */
+  --muted-foreground: 215 18% 43%;    /* --text-muted #5b6b82 */
 
-  --accent: 142 71% 45%;
-  --accent-foreground: 142 71% 35%;
+  --accent: 142 72% 29%;
+  --accent-foreground: 142 72% 25%;
 
-  --destructive: 0 72% 51%;
+  --destructive: 347 82% 41%;         /* --critical #be123c */
   --destructive-foreground: 0 0% 98%;
 
-  --border: 220 13% 91%;
-  --input: 220 13% 91%;
-  --ring: 142 71% 45%;
+  --border: 220 13% 88%;
+  --input: 220 13% 88%;
+  --ring: 142 72% 29%;
 
   --radius: 0.75rem;
 
-  /* Standardized Semantic Theme Design Tokens - Light Theme */
-  --theme-bg: #dce8f2;
-  --theme-bg-panel: rgba(252, 253, 254, 0.88);
-  --theme-bg-glass: rgba(255, 255, 255, 0.80);
-  --theme-bg-subtle: rgba(248, 250, 252, 0.80);
-  --theme-bg-muted: rgba(226, 232, 240, 0.60);
-  --theme-bg-input: rgba(255, 255, 255, 0.60);
-  --theme-bg-hover: rgba(226, 232, 240, 0.60);
+  /* ════════════════════════════════════════════
+     Visual System V4 — semantic tokens
+     ════════════════════════════════════════════
+     One vocabulary for the whole workbench. The three older systems
+     (shadcn HSL vars, --theme-*, --agent-*) stay as-is and are re-pointed at
+     these values below, so nothing that already consumes them changes meaning.
 
-  --theme-text-primary: #1e293b;
-  --theme-text-secondary: #475569;
-  --theme-text-muted: #94a3b8;
-  --theme-text-subtle: #cbd5e1;
+     Naming rule: `--<category>-<role>`. Components should reach for a role
+     ("this is a raised surface"), never a literal ("this is #f8fafc").
+  */
 
-  --theme-border: rgba(15, 23, 42, 0.08);
-  --theme-border-subtle: rgba(226, 232, 240, 0.80);
-  --theme-border-strong: rgba(15, 23, 42, 0.15);
+  /* ── Surfaces: canvas → panel → raised → overlay, plus interaction states ── */
+  --surface-canvas: #dbe6f1;          /* the map / page bed */
+  --surface-panel: #f7fafd;           /* nav rail, context panel, top bar */
+  --surface-raised: #ffffff;          /* cards and rows inside a panel */
+  --surface-overlay: #fafcfe;         /* drawers, modals, map chrome */
+  /* The input well has to read as a well; #eef3f8 was only 1.07:1 against the
+     panel, so inputs were carried entirely by their border. */
+  --surface-sunken: #e7eef6;          /* inputs, code blocks, wells */
+  --surface-hover: rgba(15, 23, 42, 0.05);
+  --surface-selected: rgba(22, 163, 74, 0.10);
+  --surface-scrim: rgba(15, 23, 42, 0.32);
 
-  --theme-shadow: 0 4px 20px rgba(15, 23, 42, 0.06);
+  /* ── Borders ── */
+  --border-subtle: rgba(15, 23, 42, 0.07);
+  --border-default: rgba(15, 23, 42, 0.13);
+  --border-strong: rgba(15, 23, 42, 0.24);
+
+  /* ── Text. Every value below clears WCAG AA on --surface-panel. ──
+     Audited before V4: --theme-text-muted #94a3b8 measured 2.45:1 and
+     --theme-text-subtle #cbd5e1 measured 1.42:1 in light mode. Both were used
+     for real label copy, so they are darkened here rather than left decorative. */
+  --text-primary: #0f172a;            /* 15.9:1 */
+  --text-secondary: #47556a;          /* 7.4:1  */
+  /* Measured against the *canvas* (#dbe6f1), not just the panel — muted copy
+     appears over the map bed too, and the canvas is the darkest light surface. */
+  --text-muted: #566579;              /* 5.7:1 on panel, 4.7:1 on canvas */
+  --text-disabled: #7a8798;           /* 3.5:1 — non-text / disabled only */
+  /* Pairs with `--accent` (the text-bearing accent fill), never with
+     `--accent-vivid`: white on the vivid green is 3.3:1 and fails AA. */
+  --text-on-accent: #ffffff;
+
+  /* ── Status. `soft`/`border` are the tint pair for chips and notices.
+        Two accents by design:
+          --accent       text-safe, and the fill under `--text-on-accent`
+          --accent-vivid brighter; marks, indicators, swatches — never text ── */
+  --accent: #15803d;                  /* 4.9:1 as label text; 5.0:1 under white */
+  --accent-vivid: #16a34a;
+  --accent-soft: rgba(22, 163, 74, 0.10);
+  --accent-border: rgba(22, 163, 74, 0.26);
+
+  --success: #15803d;
+  --success-soft: rgba(22, 163, 74, 0.10);
+  --success-border: rgba(22, 163, 74, 0.26);
+
+  --info: #1d4ed8;                    /* the one "in progress" hue */
+  --info-soft: rgba(37, 99, 235, 0.10);
+  --info-border: rgba(37, 99, 235, 0.26);
+
+  --warning: #b45309;
+  --warning-soft: rgba(234, 88, 12, 0.10);
+  --warning-border: rgba(234, 88, 12, 0.26);
+
+  --critical: #be123c;
+  --critical-soft: rgba(220, 38, 38, 0.10);
+  --critical-border: rgba(220, 38, 38, 0.26);
+
+  --neutral: #5b6b82;
+  --neutral-soft: rgba(100, 116, 139, 0.12);
+  --neutral-border: rgba(100, 116, 139, 0.26);
+
+  /* ── Elevation. Flat by design: this is a workbench, not a landing page. ── */
+  --elevation-flat: none;
+  --elevation-raised: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --elevation-overlay: 0 4px 16px rgba(15, 23, 42, 0.10), 0 1px 3px rgba(15, 23, 42, 0.06);
+  --elevation-drawer: 0 8px 32px rgba(15, 23, 42, 0.14), 0 2px 6px rgba(15, 23, 42, 0.07);
+
+  /* ── Radius. Tight corners read as precision instrumentation. ── */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-pill: 999px;
+
+  /* ── Typography. A 6-step dense scale; the audit found 12 raw px values
+        (8, 9, 9.5, 10, 10.5, 11, 12, 12.5, 13, 13.5, 14, 15) in use. ── */
+  --font-micro: 10px;                 /* uppercase eyebrows, unit suffixes */
+  --font-caption: 11px;               /* counts, timestamps */
+  --font-meta: 12px;                  /* secondary rows, descriptions */
+  --font-body: 13px;                  /* default panel body */
+  --font-title: 14px;                 /* panel + card titles */
+  --font-heading: 15px;               /* the single largest workbench step */
+  --leading-tight: 1.25;
+  --leading-normal: 1.45;
+  --tracking-eyebrow: 0.06em;
+
+  /* ── Metrics: density comes from agreeing on these, not from ad-hoc padding.
+        QGIS-class layer trees run ~22–24px rows; `--row-sm` is that target. ── */
+  --control-sm: 24px;
+  --control-md: 26px;
+  --control-lg: 30px;
+  --row-sm: 24px;
+  --row-md: 30px;
+  --row-lg: 38px;
+  --icon-sm: 12px;
+  --icon-md: 14px;
+  --icon-lg: 16px;
+  --panel-pad: 10px;
+  --panel-gap: 6px;
+  /* Right-hand drawer width (settings, template gallery).
+     The constraint is "the map stays visible", not "the drawer gets what it
+     wants". 1024 is the minimum target: visible map = 1024 − 48 (rail) − 330
+     (panel) = 646px, so 46vw = 471px leaves a 175px strip. The 720px cap stops
+     the drawer widening pointlessly at 1440/1920; the 400px floor keeps it
+     usable on anything narrower than the target range. */
+  --drawer-w: min(720px, max(400px, 46vw));
+
+  /* ── Focus ring. Single source for the global *:focus-visible rule below. ── */
+  --focus-ring: #15803d;
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 1px;
+
+  /* ── Map chrome: legends, scale bar, readouts, popups. One container look. ── */
+  --map-chrome-bg: rgba(253, 254, 254, 0.94);
+  --map-chrome-border: rgba(15, 23, 42, 0.13);
+  --map-chrome-text: #0f172a;
+  --map-chrome-text-muted: #5b6b82;
+  --map-chrome-shadow: 0 4px 16px rgba(15, 23, 42, 0.10), 0 1px 3px rgba(15, 23, 42, 0.06);
+  --map-chrome-radius: var(--radius-md);
+
+  /* Standardized Semantic Theme Design Tokens - Light Theme
+     Retained for the ~475 existing `var(--theme-*)` call sites; each now
+     resolves through the V4 tokens above so both vocabularies stay in step. */
+  --theme-bg: var(--surface-canvas);
+  --theme-bg-panel: var(--surface-panel);
+  --theme-bg-glass: var(--surface-overlay);
+  --theme-bg-subtle: var(--surface-raised);
+  --theme-bg-muted: var(--surface-sunken);
+  --theme-bg-input: var(--surface-raised);
+  --theme-bg-hover: var(--surface-hover);
+
+  --theme-text-primary: var(--text-primary);
+  --theme-text-secondary: var(--text-secondary);
+  --theme-text-muted: var(--text-muted);
+  --theme-text-subtle: var(--text-disabled);
+
+  --theme-border: var(--border-subtle);
+  --theme-border-subtle: var(--border-subtle);
+  --theme-border-strong: var(--border-strong);
+
+  --theme-shadow: var(--elevation-overlay);
 
   /* Agent semantic tokens (legacy compat) */
-  --agent-bg: var(--theme-bg);
-  --agent-panel: var(--theme-bg-panel);
-  --agent-glass: var(--theme-bg-glass);
-  --agent-border: var(--theme-border);
-  --agent-accent: #16a34a;
+  --agent-bg: var(--surface-canvas);
+  --agent-panel: var(--surface-panel);
+  --agent-glass: var(--surface-overlay);
+  --agent-border: var(--border-subtle);
+  /* The user-chosen accent, as a pure CSS lever.
+     `--agent-accent-raw` is what the effect in app/page.tsx writes: the exact hex
+     from the store, theme-agnostic. `--agent-accent` is the *theme-corrected*
+     accent every consumer should use — fills, marks, indicators and label copy.
+     In light the presets already clear AA both as label text and under a white
+     label (5.02–7.10:1), so the light correction is the identity. */
+  --agent-accent-raw: var(--accent-vivid);
+  --agent-accent: var(--agent-accent-raw);
 
-  /* Layout */
+  /* Layout. The shell reads these through Tailwind's spacing scale
+     (h-topbar / top-topbar / w-rail …) so one edit moves every consumer. */
   --topH: 42px;
   --stH: 24px;
   --sw: 330px;
+  --railW: 48px;
 }
 
 .dark,
 [data-theme='dark'] {
   /* shadcn HSL vars — 暗色重定义（审计：之前只有 --theme-* 翻转，
-     使用 bg-card/text-foreground 等 shadcn token 的组件在暗色下保持浅色） */
-  --background: 222 47% 11%;            /* #0f172a */
-  --foreground: 210 40% 96%;            /* #f1f5f9 */
+     使用 bg-card/text-foreground 等 shadcn token 的组件在暗色下保持浅色）。
+     V4：数值与下方 --surface- / --text- 系列一一对应，两套词汇不再各走一路。 */
+  --background: 220 49% 8%;             /* --surface-canvas #0b1220 */
+  --foreground: 213 43% 95%;            /* --text-primary   #eef2f8 */
 
-  --card: 222 44% 13%;
-  --card-foreground: 210 40% 96%;
+  --card: 220 42% 13%;                  /* --surface-panel  #131c2e */
+  --card-foreground: 213 43% 95%;
 
-  --popover: 222 44% 11%;
-  --popover-foreground: 210 40% 96%;
+  --popover: 221 39% 18%;               /* --surface-overlay #1c2740 */
+  --popover-foreground: 213 43% 95%;
 
-  --primary: 142 71% 45%;
-  --primary-foreground: 0 0% 100%;
+  --primary: 142 69% 58%;               /* --accent #4ade80 */
+  --primary-foreground: 140 70% 5%;
 
-  --secondary: 217 33% 20%;
-  --secondary-foreground: 210 40% 96%;
+  --secondary: 220 33% 20%;
+  --secondary-foreground: 213 43% 95%;
 
-  --muted: 217 33% 18%;
-  --muted-foreground: 215 20% 65%;
+  --muted: 220 46% 10%;                 /* --surface-sunken */
+  --muted-foreground: 214 16% 64%;      /* --text-muted #93a1b5 */
 
-  --accent: 142 71% 45%;
+  --accent: 142 69% 58%;
   /* 深底上 accent 为绿色，前景用近黑保证对比（shadcn 约定：fg 为accent上的文字色） */
-  --accent-foreground: 222 47% 11%;
+  --accent-foreground: 140 70% 5%;
 
-  --destructive: 0 72% 51%;
-  --destructive-foreground: 0 0% 98%;
+  --destructive: 351 95% 71%;           /* --critical #fb7185 */
+  --destructive-foreground: 222 47% 8%;
 
-  --border: 217 33% 22%;
-  --input: 217 33% 22%;
-  --ring: 142 71% 45%;
+  --border: 217 25% 24%;
+  --input: 217 25% 24%;
+  --ring: 142 69% 58%;
 
-  /* Standardized Semantic Theme Design Tokens - Dark Theme */
-  --theme-bg: #0f172a;
-  --theme-bg-panel: rgba(15, 23, 42, 0.85);
-  --theme-bg-glass: rgba(9, 9, 11, 0.80);
-  --theme-bg-subtle: rgba(30, 41, 59, 0.80);
-  --theme-bg-muted: rgba(30, 41, 59, 0.60);
-  --theme-bg-input: rgba(15, 23, 42, 0.60);
-  --theme-bg-hover: rgba(148, 163, 184, 0.15);
+  /* ── V4 semantic tokens — dark is a first-class theme, not a filter over
+        light. Every surface is opaque so nothing bleeds the map through a
+        panel, and every text value is re-measured against its own surface. ── */
+  --surface-canvas: #0b1220;
+  --surface-panel: #131c2e;
+  --surface-raised: #1a2437;
+  --surface-overlay: #1c2740;
+  --surface-sunken: #0e1626;
+  --surface-hover: rgba(226, 232, 240, 0.07);
+  --surface-selected: rgba(34, 197, 94, 0.16);
+  --surface-scrim: rgba(2, 6, 16, 0.60);
 
-  --theme-text-primary: #e2e8f0;
-  --theme-text-secondary: #cbd5e1;
-  --theme-text-muted: #94a3b8;
-  --theme-text-subtle: #64748b;
+  --border-subtle: rgba(226, 232, 240, 0.09);
+  --border-default: rgba(226, 232, 240, 0.16);
+  --border-strong: rgba(226, 232, 240, 0.30);
 
-  --theme-border: rgba(255, 255, 255, 0.06);
-  --theme-border-subtle: rgba(148, 163, 184, 0.20);
-  --theme-border-strong: rgba(148, 163, 184, 0.30);
+  /* Contrast on --surface-panel (#131c2e): 14.2 / 9.2 / 6.0 / 3.3 */
+  --text-primary: #eef2f8;
+  --text-secondary: #b9c4d4;
+  --text-muted: #93a1b5;
+  --text-disabled: #6a788d;
+  --text-on-accent: #04140a;
 
-  --theme-shadow: 0 -8px 32px rgba(0, 0, 0, 0.5);
+  --accent: #4ade80;
+  --accent-vivid: #22c55e;
+  --accent-soft: rgba(34, 197, 94, 0.16);
+  --accent-border: rgba(34, 197, 94, 0.38);
 
-  --agent-bg: var(--theme-bg);
-  --agent-panel: var(--theme-bg-panel);
-  --agent-glass: var(--theme-bg-glass);
-  --agent-border: var(--theme-border);
+  --success: #4ade80;
+  --success-soft: rgba(34, 197, 94, 0.16);
+  --success-border: rgba(34, 197, 94, 0.38);
+
+  --info: #7aa5ff;
+  --info-soft: rgba(96, 145, 255, 0.18);
+  --info-border: rgba(96, 145, 255, 0.40);
+
+  --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, 0.16);
+  --warning-border: rgba(251, 191, 36, 0.38);
+
+  --critical: #fb7185;
+  --critical-soft: rgba(248, 113, 133, 0.16);
+  --critical-border: rgba(248, 113, 133, 0.38);
+
+  --neutral: #93a1b5;
+  --neutral-soft: rgba(148, 163, 184, 0.16);
+  --neutral-border: rgba(148, 163, 184, 0.32);
+
+  /* Dark elevation reads as a lift in surface value plus a soft ambient
+     shadow; a hard drop shadow on a dark bed just muddies the edge. */
+  --elevation-flat: none;
+  --elevation-raised: 0 1px 2px rgba(0, 0, 0, 0.40);
+  --elevation-overlay: 0 4px 16px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
+  --elevation-drawer: 0 8px 32px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.40);
+
+  --focus-ring: #4ade80;
+
+  --map-chrome-bg: rgba(19, 28, 46, 0.94);
+  --map-chrome-border: rgba(226, 232, 240, 0.16);
+  --map-chrome-text: #eef2f8;
+  --map-chrome-text-muted: #93a1b5;
+  --map-chrome-shadow: 0 4px 16px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
+
+  /* Standardized Semantic Theme Design Tokens - Dark Theme
+     (aliases only — the values live in the V4 block above) */
+  --theme-bg: var(--surface-canvas);
+  --theme-bg-panel: var(--surface-panel);
+  --theme-bg-glass: var(--surface-overlay);
+  --theme-bg-subtle: var(--surface-raised);
+  --theme-bg-muted: var(--surface-sunken);
+  --theme-bg-input: var(--surface-sunken);
+  --theme-bg-hover: var(--surface-hover);
+
+  --theme-text-primary: var(--text-primary);
+  --theme-text-secondary: var(--text-secondary);
+  --theme-text-muted: var(--text-muted);
+  --theme-text-subtle: var(--text-disabled);
+
+  --theme-border: var(--border-subtle);
+  --theme-border-subtle: var(--border-subtle);
+  --theme-border-strong: var(--border-strong);
+
+  --theme-shadow: var(--elevation-overlay);
+
+  --agent-bg: var(--surface-canvas);
+  --agent-panel: var(--surface-panel);
+  --agent-glass: var(--surface-overlay);
+  --agent-border: var(--border-subtle);
+  --agent-accent-raw: var(--accent-vivid);
+  /* The dark correction. The raw presets are chosen to carry a white label on a
+     light surface, which makes them far too dark to work on a dark one: as a
+     mark against --surface-overlay they measure 2.09:1, and under the near-black
+     --text-on-accent label only 2.66:1. Mixing 65% toward white clears both
+     floors for all five presets — worst case 4.28:1 as a mark and 5.46:1 under
+     the label — so one variable stays correct for fills, marks and text. */
+  --agent-accent: color-mix(in srgb, var(--agent-accent-raw) 65%, #ffffff);
 }
 
 /* ═══ Base Styles ═══ */
@@ -141,128 +360,111 @@
 html {
   scroll-behavior: smooth;
   overflow: hidden;
+  /* Opaque on the root as well as the body: the theme class lands here, so the
+     bed is already correct on the first paint after the no-flash script runs. */
+  background: var(--surface-canvas);
 }
 
 body {
-  background: var(--agent-bg);
-  color: var(--foreground);
+  background: var(--surface-canvas);
+  color: var(--text-primary);
   font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
   min-height: 100vh;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-size: 15px;
+  /* The workbench body step. Was 15px, which made every dense panel inherit a
+     size it then had to override with a raw `text-[13px]`. */
+  font-size: var(--font-body);
+  line-height: var(--leading-normal);
 }
 
-/* ═══ Glassmorphism Utilities ═══ */
+/* ═══ Workbench primitives ═══
+   Two container recipes and one eyebrow, so a panel or a piece of map chrome is
+   described once instead of re-derived from raw utilities in each component.
+   (The pre-V4 `.glass/.ib/.tb/.lc/.sq` block was removed: it had zero call
+   sites and hardcoded light-only colours, i.e. a dark-mode trap in waiting.) */
 
 @layer components {
-  .glass {
-    background: var(--agent-panel);
-    backdrop-filter: blur(24px) saturate(1.4);
-    -webkit-backdrop-filter: blur(24px) saturate(1.4);
-    border: 1px solid rgba(255, 255, 255, 0.9);
-    box-shadow: 0 4px 24px rgba(15, 23, 42, 0.09), 0 1px 4px rgba(15, 23, 42, 0.05);
+  /* Panel-level surface: nav rail, context panel, settings column. */
+  .surface-panel {
+    background: var(--surface-panel);
+    border-color: var(--border-subtle);
+    color: var(--text-primary);
   }
 
-  /* Icon button */
-  .ib {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
-    background: transparent;
-    color: #475569;
-    border: none;
-    cursor: pointer;
-    transition: background 0.12s, color 0.12s;
-  }
-  .ib:hover {
-    background: rgba(15, 23, 42, 0.06);
-    color: #0f172a;
-  }
-  .ib.on {
-    background: rgba(22, 163, 74, 0.08);
-    color: #15803d;
+  /* Floating chrome over the map: legends, readouts, scale bar, popups.
+     Deliberately no backdrop-filter — the map must stay legible underneath and
+     a blur on a continuously repainting canvas is the expensive kind. */
+  .map-chrome {
+    background: var(--map-chrome-bg);
+    border: 1px solid var(--map-chrome-border);
+    border-radius: var(--map-chrome-radius);
+    box-shadow: var(--map-chrome-shadow);
+    color: var(--map-chrome-text);
   }
 
-  /* Tab button */
-  .tb {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    flex: 1;
-    padding: 5px 8px;
-    border-radius: 5px;
-    background: transparent;
-    color: #94a3b8;
-    font-size: 13.5px;
-    font-weight: 500;
-    font-family: inherit;
-    border: none;
-    cursor: pointer;
-    transition: background 0.12s, color 0.12s;
-  }
-  .tb:hover {
-    background: rgba(15, 23, 42, 0.05);
-    color: #475569;
-  }
-  .tb.on {
-    background: rgba(15, 23, 42, 0.06);
-    color: #0f172a;
-  }
-
-  /* Layer card */
-  .lc {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 10px;
-    border-radius: 6px;
-    transition: background 0.1s;
-    cursor: default;
-  }
-  .lc:hover {
-    background: rgba(15, 23, 42, 0.04);
-  }
-  .lc:hover .lca {
-    opacity: 1;
-  }
-  .lca {
-    opacity: 0;
-    transition: opacity 0.1s;
-    display: flex;
-    gap: 2px;
-  }
-
-  /* Suggested prompt */
-  .sq {
-    text-align: left;
-    background: rgba(255, 255, 255, 0.7);
-    border: 1px solid var(--agent-border);
-    border-radius: 6px;
-    padding: 6px 9px;
-    color: #475569;
-    font-size: 13.5px;
-    width: 100%;
-    transition: border-color 0.12s, color 0.12s, background 0.12s;
+  /*
+    Range input. `appearance-none` removes the native thumb, and nothing in the
+    app ever restyled it — the review found the layer-opacity slider rendering
+    as a bare 4px bar with an invisible handle. These rules give every
+    `appearance-none` range a real, grabbable thumb in both themes.
+  */
+  .slider-track {
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--border-strong);
+    border-radius: var(--radius-pill);
     cursor: pointer;
   }
-  .sq:hover {
-    border-color: rgba(22, 163, 74, 0.22);
-    color: #0f172a;
-    background: rgba(255, 255, 255, 0.95);
+  .slider-track::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: var(--radius-pill);
+    background: var(--accent-vivid);
+    border: 2px solid var(--surface-raised);
+    box-shadow: var(--elevation-raised);
+    cursor: grab;
+  }
+  .slider-track::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: var(--radius-pill);
+    background: var(--accent-vivid);
+    border: 2px solid var(--surface-raised);
+    box-shadow: var(--elevation-raised);
+    cursor: grab;
+  }
+  .slider-track:active::-webkit-slider-thumb,
+  .slider-track:active::-moz-range-thumb {
+    cursor: grabbing;
+  }
+  .slider-track:disabled {
+    cursor: not-allowed;
+  }
+  .slider-track:disabled::-webkit-slider-thumb,
+  .slider-track:disabled::-moz-range-thumb {
+    background: var(--text-disabled);
+  }
+
+  /* Uppercase eyebrow label — the one small-caps treatment in the system. */
+  .eyebrow {
+    font-size: var(--font-micro);
+    font-weight: 600;
+    line-height: var(--leading-tight);
+    letter-spacing: var(--tracking-eyebrow);
+    text-transform: uppercase;
+    color: var(--text-muted);
   }
 }
 
 /* ═══ Scrollbar ═══ */
 
 ::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -270,100 +472,128 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(15, 23, 42, 0.15);
-  border-radius: 4px;
+  background: var(--border-strong);
+  border-radius: var(--radius-pill);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(15, 23, 42, 0.25);
+  background: var(--text-disabled);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
 
 /* ═══ Selection ═══ */
 
 ::selection {
-  background: rgba(22, 163, 74, 0.18);
-  color: #0f172a;
+  background: var(--accent-soft);
+  color: var(--text-primary);
 }
 
-/* ═══ MapLibre Overrides (Light Theme) ═══ */
+/* ═══ MapLibre Overrides ═══
+   Themed through --map-chrome-*, so popups and controls follow the same
+   container recipe as the legends and the scale bar in both themes. Before V4
+   these were hardcoded light and turned into white blocks on the dark map. */
 
 .mapboxgl-popup-content,
 .maplibregl-popup-content {
-  background: rgba(252, 253, 254, 0.95) !important;
-  backdrop-filter: blur(20px) !important;
-  border: 1px solid rgba(15, 23, 42, 0.08) !important;
-  border-radius: 10px !important;
-  box-shadow: 0 4px 24px rgba(15, 23, 42, 0.09), 0 1px 4px rgba(15, 23, 42, 0.05) !important;
-  color: #0f172a !important;
+  background: var(--map-chrome-bg) !important;
+  border: 1px solid var(--map-chrome-border) !important;
+  border-radius: var(--map-chrome-radius) !important;
+  box-shadow: var(--map-chrome-shadow) !important;
+  color: var(--map-chrome-text) !important;
   font-family: 'DM Sans', sans-serif !important;
-  padding: 10px 14px !important;
-  font-size: 14px !important;
+  padding: 8px 12px !important;
+  font-size: var(--font-body) !important;
 }
 
 .mapboxgl-popup-tip,
 .maplibregl-popup-tip {
-  border-top-color: rgba(252, 253, 254, 0.95) !important;
+  border-top-color: var(--map-chrome-bg) !important;
 }
 
 .mapboxgl-popup-close-button,
 .maplibregl-popup-close-button {
-  color: #94a3b8 !important;
-  font-size: 18px !important;
+  color: var(--map-chrome-text-muted) !important;
+  font-size: var(--font-heading) !important;
 }
 
 .maplibregl-ctrl-group {
-  background: rgba(255, 255, 255, 0.85) !important;
-  backdrop-filter: blur(20px) !important;
-  border: 1px solid rgba(255, 255, 255, 0.9) !important;
-  border-radius: 9px !important;
-  box-shadow: 0 4px 24px rgba(15, 23, 42, 0.09), 0 1px 4px rgba(15, 23, 42, 0.05) !important;
+  background: var(--map-chrome-bg) !important;
+  border: 1px solid var(--map-chrome-border) !important;
+  border-radius: var(--map-chrome-radius) !important;
+  box-shadow: var(--map-chrome-shadow) !important;
   overflow: hidden;
 }
 
 .maplibregl-ctrl-group button {
   background: transparent !important;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.06) !important;
-  width: 36px !important;
-  height: 36px !important;
+  border-bottom: 1px solid var(--map-chrome-border) !important;
+  width: 30px !important;
+  height: 30px !important;
+  color: var(--map-chrome-text) !important;
 }
 
 .maplibregl-ctrl-group button:hover {
-  background: rgba(15, 23, 42, 0.05) !important;
+  background: var(--surface-hover) !important;
 }
 
 .maplibregl-ctrl-group button:last-child {
   border-bottom: none !important;
 }
 
-.maplibregl-ctrl-icon {
-  filter: none;
+/* MapLibre ships black glyphs; invert them once in dark rather than shipping a
+   second icon set. */
+.dark .maplibregl-ctrl-icon,
+[data-theme='dark'] .maplibregl-ctrl-icon {
+  filter: invert(1) brightness(1.6);
 }
 
-/* ═══ Prose / Markdown ═══ */
+.maplibregl-ctrl-attrib.maplibregl-compact,
+.maplibregl-ctrl-attrib-inner {
+  color: var(--map-chrome-text-muted) !important;
+  font-size: var(--font-micro) !important;
+}
+
+/* ═══ Prose / Markdown ═══
+   Token-driven so assistant answers stay readable in dark, which was the single
+   largest dark-mode hole found in the audit (every reply body used this). */
 
 .prose-agent {
-  --tw-prose-body: #475569;
-  --tw-prose-headings: #0f172a;
-  --tw-prose-links: #16a34a;
-  --tw-prose-code: #15803d;
-  --tw-prose-bold: #0f172a;
+  --tw-prose-body: var(--text-secondary);
+  --tw-prose-headings: var(--text-primary);
+  --tw-prose-links: var(--accent);
+  --tw-prose-code: var(--accent);
+  --tw-prose-bold: var(--text-primary);
+  --tw-prose-quotes: var(--text-muted);
+  --tw-prose-quote-borders: var(--border-default);
+  --tw-prose-hr: var(--border-subtle);
+  --tw-prose-bullets: var(--text-disabled);
+  --tw-prose-counters: var(--text-muted);
+  --tw-prose-th-borders: var(--border-default);
+  --tw-prose-td-borders: var(--border-subtle);
+  --tw-prose-captions: var(--text-muted);
+  --tw-prose-pre-bg: var(--surface-sunken);
+  --tw-prose-pre-code: var(--text-primary);
 }
 
 .prose-agent code {
-  background: rgba(22, 163, 74, 0.08);
-  border: 1px solid rgba(22, 163, 74, 0.12);
-  border-radius: 4px;
-  padding: 1px 6px;
-  font-size: 0.85em;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-xs);
+  padding: 1px 5px;
+  font-size: 0.9em;
 }
 
 .prose-agent a {
-  text-decoration-color: rgba(22, 163, 74, 0.3);
+  text-decoration-color: var(--accent-border);
   text-underline-offset: 3px;
 }
 
 .prose-agent a:hover {
-  text-decoration-color: #16a34a;
+  text-decoration-color: var(--accent);
 }
 
 /* ═══ Textarea ═══ */
@@ -428,14 +658,17 @@ textarea {
 /* ═══ Accessibility: focus-visible + reduced motion (UI V3) ═══ */
 
 /* 统一键盘焦点环 — 之前全仓 0 处 focus-visible。鼠标点击不触发。
-   不覆盖元素自身 border-radius（review P2：圆形控件聚焦时不应变形）。 */
+   不覆盖元素自身 border-radius（review P2：圆形控件聚焦时不应变形）。
+   V4：颜色/宽度改由 --focus-ring* token 驱动，两套主题各自达标；这条规则位于
+   unlayered（非 @layer）作用域，因此仍然压过 Tailwind 的 focus:outline-none。 */
 *:focus-visible {
-  outline: 2px solid var(--agent-accent, #16a34a);
-  outline-offset: 1px;
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 /* prefers-reduced-motion：全站 CSS 动画/过渡降级。
-   JS/rAF 动画由 usePrefersReducedMotion hook 单独门控。 */
+   JS/rAF 动画由 usePrefersReducedMotion hook 单独门控，
+   framer-motion 由 client-providers 的 MotionConfig reducedMotion="user" 门控。 */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

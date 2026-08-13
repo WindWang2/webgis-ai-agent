@@ -17,5 +17,7 @@ export function DivergentLegend({ spec }: Props) {
     palette: spec.palette,
     palette_colors: spec.palette_colors,
   };
-  return <ContinuousLegend spec={asContinuous} />;
+  // Pass the divergent label through: sharing the continuous renderer is fine,
+  // silently inheriting its 「连续密度渲染」 footer was mislabelling the map.
+  return <ContinuousLegend spec={asContinuous} kind="发散渐变渲染" />;
 }
