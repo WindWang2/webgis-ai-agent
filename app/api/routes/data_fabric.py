@@ -138,22 +138,11 @@ def _require_existing_session_owner(
         raise HTTPException(status_code=400, detail="session_id is required")
     from app.models.db_model import Conversation
 
-    conv = db.query(Conversation).filter(Conversation.id == session_id).first()
-    if conv is None:
-        return
-    user_id = _real_user_id(user)
-    if conv.user_id:
-        if user_id and conv.user_id == user_id:
-            return
-        expected = getattr(conv, "owner_token", None)
-        if expected and owner_token:
-            import hmac
+    from app.core.auth import authorize_session_write
 
-            if hmac.compare_digest(str(owner_token), str(expected)):
-                return
+    conv = db.query(Conversation).filter(Conversation.id == session_id).first()
+    if not authorize_session_write(conv, _real_user_id(user), owner_token):
         raise HTTPException(status_code=404, detail="Session not found")
-    # Unowned / anonymous conversation: session_id remains the capability,
-    # matching first-chat-turn semantics. Owned rows are the write-IDOR.
 
 
 class CreateDataSourceRequest(BaseModel):

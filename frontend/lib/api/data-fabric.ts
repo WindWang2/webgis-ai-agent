@@ -271,11 +271,17 @@ export const dataFabricApi = {
     session_id: string;
     catalog_item_id: string;
     query_spec?: QuerySpec;
+    ownerToken?: string | null;
   }): Promise<MaterializeResult> {
     return apiFetch<MaterializeResult>('/api/v1/data-fabric/materialize', {
       method: 'POST',
-      body: req,
+      body: {
+        session_id: req.session_id,
+        catalog_item_id: req.catalog_item_id,
+        query_spec: req.query_spec,
+      },
       credentials: DF_CREDENTIALS,
+      ownerToken: req.ownerToken,
       // Materialize can do a remote describe + insert; allow extra time.
       timeoutMs: 60_000,
       label: DF_LABEL,

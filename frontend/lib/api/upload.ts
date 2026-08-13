@@ -45,7 +45,7 @@ export async function uploadFile(
   file: File,
   sessionId?: string,
   onProgress?: (percent: number) => void,
-  opts?: { signal?: AbortSignal; timeoutMs?: number }
+  opts?: { signal?: AbortSignal; timeoutMs?: number; ownerToken?: string | null }
 ): Promise<UploadResponse> {
   const formData = new FormData();
   formData.append("files", file);
@@ -65,6 +65,9 @@ export async function uploadFile(
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${API_BASE}/api/v1/upload`);
     xhr.setRequestHeader("X-Request-ID", requestId);
+    if (opts?.ownerToken) {
+      xhr.setRequestHeader("X-Session-Token", opts.ownerToken);
+    }
     xhr.timeout = timeoutMs;
 
     // Wire caller abort → xhr.abort (so the body actually stops streaming).

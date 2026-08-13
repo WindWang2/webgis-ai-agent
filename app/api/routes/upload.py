@@ -6,12 +6,12 @@ from pathlib import Path
 from typing import List, Optional
 
 import ijson
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select, func
 
 from app.core.config import settings
-from app.core.auth import get_current_user, verify_session_owner
+from app.core.auth import authorize_session_write, get_current_user, verify_session_owner
 from app.tools._utils import async_db_session
 from app.models.upload import UploadRecord
 from app.services.data_parser import (
@@ -75,6 +75,7 @@ class ErrorResponse(BaseModel):
 async def upload_files(
     files: List[UploadFile] = File(..., description="GIS 数据文件（支持多文件上传）"),
     session_id: Optional[str] = Form(None, description="关联的会话 ID"),
+    owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     _user: dict = Depends(get_current_user),
 ):
     """
@@ -164,20 +165,19 @@ async def upload_files(
     try:
         async with async_db_session() as db:
             if session_id:
-                from sqlalchemy import select as _select
                 from app.models.db_model import Conversation
 
                 conv = (
                     await db.execute(
-                        _select(Conversation).where(Conversation.id == session_id)
+                        select(Conversation).where(Conversation.id == session_id)
                     )
                 ).scalar_one_or_none()
-                # Same rule as data-fabric materialize: only reject when a
-                # Conversation already exists and belongs to someone else.
-                # A client-minted session_id before the first chat turn has
-                # no row yet and must still be attachable.
-                if conv is not None and conv.user_id:
-                    await verify_session_owner(db, session_id, user_id=_user.get("user_id"))
+                # Same rules as get_session / materialize: missing row is a
+                # first-turn write; an existing row needs user_id or SEC-08 token.
+                if not authorize_session_write(
+                    conv, _user.get("user_id"), owner_token
+                ):
+                    raise HTTPException(status_code=404, detail="Session not found")
             record = UploadRecord(
                 filename=meta.get("output_path", str(upload_dir / filename)),
                 original_name=filename,

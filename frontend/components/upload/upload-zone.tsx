@@ -7,6 +7,7 @@ import { useToastStore } from "@/components/ui/toast"
 
 interface UploadZoneProps {
   sessionId?: string
+  ownerToken?: string | null
   onUploadSuccess: (result: UploadResponse) => void
   compact?: boolean
 }
@@ -27,7 +28,7 @@ function getFileTypeInfo(filename: string) {
   return { type: "未知", color: "text-gray-500" }
 }
 
-export function UploadZone({ sessionId, onUploadSuccess, compact }: UploadZoneProps) {
+export function UploadZone({ sessionId, ownerToken, onUploadSuccess, compact }: UploadZoneProps) {
   const addToast = useToastStore((s) => s.addToast)
   const [isDragging, setIsDragging] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
@@ -41,7 +42,9 @@ export function UploadZone({ sessionId, onUploadSuccess, compact }: UploadZonePr
     setError(null)
 
     try {
-      const result = await uploadFile(file, sessionId, setProgress)
+      const result = await uploadFile(file, sessionId, setProgress, {
+        ownerToken: ownerToken ?? undefined,
+      })
       onUploadSuccess(result)
       addToast(`${result.original_name} 上传成功`, "success")
     } catch (e) {
@@ -50,7 +53,7 @@ export function UploadZone({ sessionId, onUploadSuccess, compact }: UploadZonePr
       setIsUploading(false)
       setProgress(0)
     }
-  }, [sessionId, onUploadSuccess, addToast])
+  }, [sessionId, ownerToken, onUploadSuccess, addToast])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()

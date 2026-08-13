@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.core.auth import actor_ids
+from app.core.auth import actor_ids, authorize_session_write
 from app.core.database import Base
 from app.models.db_model import Organization, User
 from app.services.project_service import ProjectService
@@ -78,10 +78,37 @@ def test_require_existing_session_owner_blocks_foreign_conversation(db):
     assert ei.value.status_code == 404
     _require_existing_session_owner(db, "sess-alice", {"user_id": "alice"}, None)
 
-    anon = Conversation(id="sess-anon", title="t", user_id=None)
+    # Grandfather anonymous (no owner_token): session_id is capability.
+    anon = Conversation(id="sess-anon", title="t", user_id=None, owner_token=None)
     db.add(anon)
     db.commit()
     _require_existing_session_owner(db, "sess-anon", {"user_id": "bob"}, None)
+
+    # SEC-08 anonymous: token required. Bob without the header is a write-IDOR.
+    sec08 = Conversation(id="sess-sec08", title="t", user_id=None, owner_token="tok-secret")
+    db.add(sec08)
+    db.commit()
+    with pytest.raises(HTTPException) as ei2:
+        _require_existing_session_owner(db, "sess-sec08", {"user_id": "bob"}, None)
+    assert ei2.value.status_code == 404
+    _require_existing_session_owner(db, "sess-sec08", {"user_id": "bob"}, "tok-secret")
+
+
+def test_authorize_session_write_matches_get_session_contract():
+    class _C:
+        def __init__(self, user_id=None, owner_token=None):
+            self.user_id = user_id
+            self.owner_token = owner_token
+
+    assert authorize_session_write(None, "bob", None) is True
+    assert authorize_session_write(_C("alice"), "alice", None) is True
+    assert authorize_session_write(_C("alice"), "bob", None) is False
+    assert authorize_session_write(_C("alice"), None, None) is False
+    assert authorize_session_write(_C(None, None), "bob", None) is True
+    assert authorize_session_write(_C(None, "tok"), "bob", None) is False
+    assert authorize_session_write(_C(None, "tok"), "bob", "wrong") is False
+    assert authorize_session_write(_C(None, "tok"), "bob", "tok") is True
+    assert authorize_session_write(_C(None, "tok"), None, "tok") is True
 
 
 def test_owner_token_compare_digest_mismatch():

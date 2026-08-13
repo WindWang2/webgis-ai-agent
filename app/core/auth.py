@@ -51,6 +51,34 @@ def actor_ids(user: Optional[dict]) -> tuple[Optional[str], Optional[object]]:
         uid = str(uid)
     return uid, user.get("org_id")
 
+
+def authorize_session_write(
+    conv: Optional[object],
+    user_id: Optional[str],
+    owner_token: Optional[str] = None,
+) -> bool:
+    """Same ownership rules as ``AsyncHistoryService.get_session``.
+
+    * ``conv is None`` — first-turn write; allowed (caller will create keys).
+    * Bound ``user_id`` — only that user.
+    * Anonymous + ``owner_token`` set — caller must present the matching token
+      (SEC-08). Session-id-only writes are the original IDOR.
+    * Anonymous + ``owner_token`` NULL — grandfather; session_id is capability.
+    """
+    if conv is None:
+        return True
+    conv_uid = getattr(conv, "user_id", None)
+    expected = getattr(conv, "owner_token", None)
+    if conv_uid is None:
+        if expected is not None:
+            if not owner_token:
+                return False
+            return hmac.compare_digest(str(owner_token), str(expected))
+        return True
+    if user_id is None or str(user_id) in _ANONYMOUS_USER_IDS:
+        return False
+    return str(conv_uid) == str(user_id)
+
 # JWT 配置
 SECRET_KEY = settings.JWT_SECRET_KEY
 ALGORITHM = "HS256"
