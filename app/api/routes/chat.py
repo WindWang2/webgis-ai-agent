@@ -1030,6 +1030,11 @@ async def _persist_map_action_acks_locked(
 
     if is_cartographic_session_deleted(session_id):
         raise HTTPException(status_code=410, detail="Session was deleted")
+    # Process-local tombstone misses other replicas. The Redis/map_state
+    # flag is the cross-replica contract written on session delete.
+    deleted_state = await ack_store.get_map_state(session_id)
+    if deleted_state.get("_cartographic_deleted") is True:
+        raise HTTPException(status_code=410, detail="Session was deleted")
 
     accepted = 0
     duplicates = 0

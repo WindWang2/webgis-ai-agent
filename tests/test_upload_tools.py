@@ -73,6 +73,7 @@ class TestUploadTools:
         mock_record.upload_time = MagicMock()
         mock_record.upload_time.isoformat.return_value = "2026-01-01T00:00:00"
         mock_record.filename = "uploads/1/test.geojson"
+        mock_record.session_id = "sess-1"
 
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = mock_record
@@ -81,6 +82,19 @@ class TestUploadTools:
             mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
             mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
             register_upload_tools(registry)
-            result = registry._tools["get_upload_info"](upload_id=1)
+            result = registry._tools["get_upload_info"](upload_id=1, session_id="sess-1")
         assert result["success"] is True
         assert result["original_name"] == "test.geojson"
+
+    def test_get_upload_info_cross_session_denied(self, registry):
+        mock_record = MagicMock()
+        mock_record.id = 1
+        mock_record.session_id = "victim-session"
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_record
+        with patch("app.tools.upload_tools.db_session") as mock_ctx:
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            register_upload_tools(registry)
+            with pytest.raises(KeyError):
+                registry._tools["get_upload_info"](upload_id=1, session_id="attacker-session")

@@ -4,6 +4,7 @@ SessionStore Protocol & Result Value Objects (app/services/session_data_protocol
 Defines the deep SessionStore seam interface and immutable SessionRefDataResult value object.
 """
 
+import hmac
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol, Union, runtime_checkable
 
@@ -179,7 +180,10 @@ class BaseSessionStore:
         meta = meta or {}
         map_state = meta.get("map_state", {})
         expected_token = meta.get("owner_token") or map_state.get("owner_token")
-        if expected_token and owner_token != expected_token:
+        if expected_token and (
+            not owner_token
+            or not hmac.compare_digest(str(owner_token), str(expected_token))
+        ):
             return SessionRefDataResult(
                 success=False,
                 error="Security token mismatch",

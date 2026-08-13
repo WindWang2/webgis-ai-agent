@@ -465,10 +465,19 @@ def _encode_points(points: Iterable[Tuple[float, float]], z: int, x: int, y: int
     cursor_x = 0
     cursor_y = 0
     wrote = False
-    for lon, lat in points:
+    for pt in points:
+        try:
+            lon, lat = pt[0], pt[1]
+        except (TypeError, IndexError, ValueError):
+            continue
         if lon is None or lat is None:
             continue
-        px_x, px_y = _project(lon, lat, z)
+        if not (math.isfinite(lon) and math.isfinite(lat)):
+            continue
+        try:
+            px_x, px_y = _project(lon, lat, z)
+        except (ValueError, ZeroDivisionError, OverflowError):
+            continue
         if not (x * 256 <= px_x < (x + 1) * 256 and y * 256 <= px_y < (y + 1) * 256):
             continue
         ex = min(int(round((px_x - x * 256) * scale)), _EXTENT - 1)

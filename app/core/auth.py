@@ -30,6 +30,27 @@ from app.models.db_model import Conversation, User
 
 security = HTTPBearer(auto_error=False)
 
+# Sentinels returned by get_current_user_optional for unauthenticated callers.
+# Never persist these as owner_id / user_id (no matching users row).
+_ANONYMOUS_USER_IDS = frozenset({"anonymous", "anon"})
+
+
+def actor_ids(user: Optional[dict]) -> tuple[Optional[str], Optional[object]]:
+    """Normalize the auth-dependency dict to (user_id, org_id).
+
+    JWT helpers return ``user_id``, never ``id``. Routes that read ``user.get("id")``
+    silently skip every owner check. Accept ``user_id`` / ``id`` / ``sub`` and
+    collapse anonymous sentinels to ``None``.
+    """
+    if not user:
+        return None, None
+    uid = user.get("user_id") or user.get("id") or user.get("sub")
+    if uid is None or str(uid) in _ANONYMOUS_USER_IDS:
+        uid = None
+    else:
+        uid = str(uid)
+    return uid, user.get("org_id")
+
 # JWT 配置
 SECRET_KEY = settings.JWT_SECRET_KEY
 ALGORITHM = "HS256"
@@ -218,7 +239,11 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         )
 
     # role 来自 register/login 时写入的 JWT claim；未带 role 的旧 token 视为 viewer
-    return {"user_id": user_id, "role": payload.get("role") or "viewer"}
+    return {
+        "user_id": user_id,
+        "role": payload.get("role") or "viewer",
+        "org_id": payload.get("org_id"),
+    }
 
 
 async def get_current_user_optional(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
@@ -248,6 +273,7 @@ async def get_current_user_optional(credentials: HTTPAuthorizationCredentials = 
     return {
         "user_id": user_id,
         "role": payload.get("role") or "viewer",
+        "org_id": payload.get("org_id"),
     }
 
 

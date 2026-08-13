@@ -52,7 +52,11 @@ def set_session_local_factory(factory: Optional[Callable]) -> None:
     _session_local_factory = factory
 
 
-def _build_project_context_block(project_id: str) -> Optional[str]:
+def _build_project_context_block(
+    project_id: str,
+    user_id: Optional[str] = None,
+    org_id: Optional[int] = None,
+) -> Optional[str]:
     """Sync DB read of the active project workspace (runs OFF the event loop).
 
     Reads the project fingerprint (1 query) and, on a miss, the full
@@ -79,7 +83,9 @@ def _build_project_context_block(project_id: str) -> Optional[str]:
         # + dataset aggregate + workflow aggregate). The auth check is
         # folded into step 1 — a missing/unauthorised project returns
         # None here, which the cache treats as a deliberate miss.
-        fingerprint = ProjectService.get_project_fingerprint(db, project_id)
+        fingerprint = ProjectService.get_project_fingerprint(
+            db, project_id, user_id=user_id, org_id=org_id,
+        )
         if fingerprint is None:
             return None
 
@@ -91,7 +97,9 @@ def _build_project_context_block(project_id: str) -> Optional[str]:
         # 3. Cache miss: pay the full summary read (5 queries). The
         # summary is then stored under the same key, so the next round
         # pays only the 1-query fingerprint cost.
-        summary = ProjectService.get_project_context_summary(db, project_id)
+        summary = ProjectService.get_project_context_summary(
+            db, project_id, user_id=user_id, org_id=org_id,
+        )
         if summary is None:
             # The fingerprint path saw the project but the summary
             # path did not — race with a delete. Treat as a miss;
@@ -126,6 +134,8 @@ class ChatContextAssembler:
         session_id: str,
         messages: List[dict],
         project_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        org_id: Optional[int] = None,
         tools_payload_chars: int = 0,
         tools_payload: Optional[str] = None,
     ) -> ContextAssemblyResult:
@@ -199,7 +209,10 @@ class ChatContextAssembler:
                 # turns pay 1 per round after the first.
                 try:
                     project_block = await asyncio.to_thread(
-                        _build_project_context_block, effective_project_id
+                        _build_project_context_block,
+                        effective_project_id,
+                        user_id,
+                        org_id,
                     )
                     if project_block:
                         env_summary += project_block

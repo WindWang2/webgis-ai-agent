@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -54,18 +55,31 @@ def _tenant_filter(query, user: Optional[Dict[str, Any]]):
     """
     if user is None or _real_user_id(user) is None:
         # Anonymous callers may only see truly global (un-owned) sources.
-        return query.filter(DataSourceModel.org_id.is_(None))
-    org_id = user.get("org_id")
-    if org_id is not None:
-        return query.filter(DataSourceModel.org_id == org_id)
-    user_id = _real_user_id(user)
-    if user_id is not None:
-        # Authenticated user with no org: see their own + global sources.
-        from sqlalchemy import or_
         return query.filter(
-            or_(DataSourceModel.owner_id == user_id, DataSourceModel.org_id.is_(None))
+            DataSourceModel.org_id.is_(None),
+            DataSourceModel.owner_id.is_(None),
         )
-    return query.filter(DataSourceModel.org_id.is_(None))
+    org_id = user.get("org_id")
+    user_id = _real_user_id(user)
+    if org_id is not None:
+        return query.filter(
+            or_(
+                DataSourceModel.org_id == org_id,
+                DataSourceModel.owner_id == user_id,
+            )
+        )
+    # Authenticated user with no org claim (JWT never carries org_id today):
+    # own sources + truly global ones. org_id IS NULL used to include every
+    # other user's owner_id-scoped source.
+    return query.filter(
+        or_(
+            DataSourceModel.owner_id == user_id,
+            and_(
+                DataSourceModel.org_id.is_(None),
+                DataSourceModel.owner_id.is_(None),
+            ),
+        )
+    )
 
 
 def _require_tenant_owned(s: Optional[DataSourceModel], user: Optional[Dict[str, Any]]):
@@ -75,16 +89,21 @@ def _require_tenant_owned(s: Optional[DataSourceModel], user: Optional[Dict[str,
     """
     if s is None:
         raise HTTPException(status_code=404, detail="Data source not found")
-    if user is None or _real_user_id(user) is None:
-        if s.org_id is not None:
+    user_id = _real_user_id(user)
+    org_id = user.get("org_id") if user else None
+    if user_id is None:
+        if s.org_id is not None or s.owner_id is not None:
             raise HTTPException(status_code=404, detail="Data source not found")
         return s
-    org_id = user.get("org_id")
-    user_id = _real_user_id(user)
-    if org_id is not None and s.org_id != org_id:
-        if s.owner_id is None or (user_id is not None and s.owner_id != user_id):
-            raise HTTPException(status_code=404, detail="Data source not found")
-    return s
+    if org_id is not None:
+        if s.org_id == org_id or s.owner_id == user_id:
+            return s
+        raise HTTPException(status_code=404, detail="Data source not found")
+    # Authenticated, no org: own row or truly global. The previous
+    # `if org_id is not None` gate never ran because JWT has no org_id.
+    if s.owner_id == user_id or (s.org_id is None and s.owner_id is None):
+        return s
+    raise HTTPException(status_code=404, detail="Data source not found")
 
 
 def _authorize_catalog_item(db: Session, item_id: str, user: Optional[Dict[str, Any]]):
@@ -101,6 +120,40 @@ def _authorize_catalog_item(db: Session, item_id: str, user: Optional[Dict[str, 
     src = db.query(DataSourceModel).filter(DataSourceModel.id == item.source_id).first()
     _require_tenant_owned(src, user)
     return item
+
+
+def _require_existing_session_owner(
+    db: Session,
+    session_id: str,
+    user: Optional[Dict[str, Any]],
+    owner_token: Optional[str],
+) -> None:
+    """Block materialize into someone else's existing Conversation.
+
+    A session_id with no Conversation row is allowed (same as the first chat
+    turn creating store keys). If the row exists, the caller must match
+    user_id or X-Session-Token — otherwise this is a write-IDOR.
+    """
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    from app.models.db_model import Conversation
+
+    conv = db.query(Conversation).filter(Conversation.id == session_id).first()
+    if conv is None:
+        return
+    user_id = _real_user_id(user)
+    if conv.user_id:
+        if user_id and conv.user_id == user_id:
+            return
+        expected = getattr(conv, "owner_token", None)
+        if expected and owner_token:
+            import hmac
+
+            if hmac.compare_digest(str(owner_token), str(expected)):
+                return
+        raise HTTPException(status_code=404, detail="Session not found")
+    # Unowned / anonymous conversation: session_id remains the capability,
+    # matching first-chat-turn semantics. Owned rows are the write-IDOR.
 
 
 class CreateDataSourceRequest(BaseModel):
@@ -304,16 +357,12 @@ async def list_spatial_catalog(
     from app.models.data_fabric import DataSourceModel as _DS
     from sqlalchemy.orm import defer
 
-    query = db.query(CatalogItemModel)
-
-    # Tenancy guard: catalog items belong to a source, which is org-scoped
-    # (DATA-P0-SEC). Unauthenticated callers used to enumerate every org's
-    # descriptors; the join through DataSource.org_id now applies the same
-    # tenant filter the sources endpoint already uses.
-    if user and user.get("org_id"):
-        query = query.join(_DS, _DS.id == CatalogItemModel.source_id).filter(
-            _DS.org_id == user["org_id"]
-        )
+    query = db.query(CatalogItemModel).join(
+        _DS, _DS.id == CatalogItemModel.source_id
+    )
+    # Same tenant/owner filter as GET /data-fabric/sources. JWT has no org_id,
+    # so the old `if user.get("org_id")` join never ran and dumped the catalog.
+    query = _tenant_filter(query, user)
 
     if source_id:
         query = query.filter(CatalogItemModel.source_id == source_id)
@@ -373,14 +422,7 @@ async def get_catalog_item(
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """获取指定 Spatial Catalog 项元数据"""
-    item = db.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=404, detail=f"Catalog item '{item_id}' not found")
-    # Tenancy: org-scoped via the parent data source. (DATA-P0-SEC)
-    if user and user.get("org_id"):
-        src = db.query(DataSourceModel).filter(DataSourceModel.id == item.source_id).first()
-        if src and src.org_id and src.org_id != user["org_id"]:
-            raise HTTPException(status_code=404, detail=f"Catalog item '{item_id}' not found")
+    item = _authorize_catalog_item(db, item_id, user)
 
     return {
         "id": item.id,
@@ -405,13 +447,7 @@ async def get_catalog_item_descriptor(
     user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
 ):
     """获取完整的 DatasetDescriptor 契约元数据"""
-    item = db.query(CatalogItemModel).filter(CatalogItemModel.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=404, detail=f"Catalog item '{item_id}' not found")
-    if user and user.get("org_id"):
-        src = db.query(DataSourceModel).filter(DataSourceModel.id == item.source_id).first()
-        if src and src.org_id and src.org_id != user["org_id"]:
-            raise HTTPException(status_code=404, detail=f"Catalog item '{item_id}' not found")
+    item = _authorize_catalog_item(db, item_id, user)
 
     return item.descriptor_json or {
         "id": item.name,
@@ -442,6 +478,8 @@ async def preview_catalog_item(
             "schema_info": q_res.schema_info,
             "metadata": q_res.metadata,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Catalog item preview failed for '{item_id}': {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
@@ -459,6 +497,8 @@ async def query_catalog_item(
         _authorize_catalog_item(db, item_id, user)
         q_res = data_fabric_manager.query_catalog_item(db, item_id, query_spec)
         return q_res.model_dump()
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Catalog item query failed for '{item_id}': {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
@@ -474,6 +514,7 @@ async def materialize_catalog_item(
     """按需实例化（Materialize）数据至会话 SessionStore 并产生 ref_id 游标"""
     try:
         _authorize_catalog_item(db, req.catalog_item_id, user)
+        _require_existing_session_owner(db, req.session_id, user, owner_token)
         res = await data_fabric_manager.materialize_catalog_item(
             db=db,
             session_id=req.session_id,
@@ -487,6 +528,8 @@ async def materialize_catalog_item(
         if not res.get("success"):
             return JSONResponse(status_code=503, content=res)
         return res
+    except HTTPException:
+        raise
     except ResultTooLargeError as e:
         # Oversized remote result — actionable 413 with the shrink hint.
         return JSONResponse(status_code=413, content={"success": False, **e.to_dict()})

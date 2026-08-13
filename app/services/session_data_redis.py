@@ -236,16 +236,9 @@ class RedisSessionStore(BaseSessionStore):
         descriptor_key = self._descriptor_key(session_id, ref_id)
         
         try:
-            current_count = await self._r.zcard(order_key)
-            if current_count >= self.capacity:
-                overflow = current_count - self.capacity + 1
-                oldest = await self._r.zrange(order_key, 0, overflow - 1)
-                async with self._r.pipeline() as evict_pipe:
-                    for old_ref_bytes in oldest:
-                        old_ref = old_ref_bytes.decode() if isinstance(old_ref_bytes, bytes) else old_ref_bytes
-                        await self._evict_ref(evict_pipe, session_id, old_ref)
-                    await evict_pipe.execute()
-
+            # Insert first. Evicting before the write used to delete live refs
+            # and then return an unavailable sentinel if the insert pipeline
+            # hit RedisError — silent data loss at capacity.
             async with self._r.pipeline() as pipe:
                 pipe.hsetnx(
                     self._state_key(session_id),
@@ -273,6 +266,23 @@ class RedisSessionStore(BaseSessionStore):
         # caches list_refs + event_log (2s TTL); drop it so we don't serve the
         # stale bundle. (set_map_state/update_layer/remove_layer already do this.)
         self._l1_invalidate_session(session_id)
+        try:
+            current_count = await self._r.zcard(order_key)
+            if current_count > self.capacity:
+                overflow = current_count - self.capacity
+                oldest = await self._r.zrange(order_key, 0, overflow - 1)
+                async with self._r.pipeline() as evict_pipe:
+                    for old_ref_bytes in oldest:
+                        old_ref = old_ref_bytes.decode() if isinstance(old_ref_bytes, bytes) else old_ref_bytes
+                        if old_ref == ref_id:
+                            continue
+                        await self._evict_ref(evict_pipe, session_id, old_ref)
+                    await evict_pipe.execute()
+        except aioredis.RedisError as e:
+            logger.error(
+                "Redis post-store eviction failed for session %s: %s — new ref kept",
+                session_id, e,
+            )
         return ref_id
 
     async def overwrite(self, session_id: str, ref_id: str, data: Any) -> bool:
@@ -291,6 +301,7 @@ class RedisSessionStore(BaseSessionStore):
         try:
             async with self._r.pipeline() as pipe:
                 pipe.set(data_key, json.dumps(data, ensure_ascii=False), ex=DATA_TTL)
+                pipe.zadd(self._refs_order_key(session_id), {ref_id: time.time()})
                 self._refresh_session_ttl(pipe, session_id)
                 await pipe.execute()
         except aioredis.RedisError as e:

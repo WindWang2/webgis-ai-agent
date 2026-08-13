@@ -37,7 +37,9 @@ async def _verify_session_owner(db, session_id: Optional[str], user_id) -> None:
     session_id 为 None 时（旧匿名上传）允许 —— 与历史匿名会话语义一致。
     """
     if not session_id:
-        return
+        # Session-less records used to skip this check, so GET/DELETE /uploads/{n}
+        # was world-reachable for any sequential integer id.
+        raise HTTPException(status_code=404, detail="上传记录不存在")
     await verify_session_owner(db, session_id, user_id=user_id)
 
 
@@ -161,6 +163,21 @@ async def upload_files(
     # 写入数据库
     try:
         async with async_db_session() as db:
+            if session_id:
+                from sqlalchemy import select as _select
+                from app.models.db_model import Conversation
+
+                conv = (
+                    await db.execute(
+                        _select(Conversation).where(Conversation.id == session_id)
+                    )
+                ).scalar_one_or_none()
+                # Same rule as data-fabric materialize: only reject when a
+                # Conversation already exists and belongs to someone else.
+                # A client-minted session_id before the first chat turn has
+                # no row yet and must still be attachable.
+                if conv is not None and conv.user_id:
+                    await verify_session_owner(db, session_id, user_id=_user.get("user_id"))
             record = UploadRecord(
                 filename=meta.get("output_path", str(upload_dir / filename)),
                 original_name=filename,

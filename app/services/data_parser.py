@@ -120,7 +120,10 @@ def parse_vector(
     if gdf.empty:
         raise ParseError("文件中没有要素数据")
 
-    # 统一转 EPSG:4326，保存原始 CRS
+    # 统一转 EPSG:4326，保存原始 CRS。
+    # GeoJSON without a CRS is lon/lat WGS84 (RFC 7946). A shapefile / GPKG /
+    # KML / other vector missing CRS is NOT — treating metre-scale projected
+    # coordinates as lon/lat silently drops them on the wrong hemisphere.
     original_crs = None
     if gdf.crs is not None:
         original_crs = str(gdf.crs)
@@ -130,8 +133,13 @@ def parse_vector(
             raise ParseError(f"坐标转换失败 (原始 CRS: {gdf.crs}): {e}")
         else:
             crs_str = "EPSG:4326"
-    else:
+    elif ext in {".geojson", ".json"}:
         crs_str = "EPSG:4326"
+    else:
+        raise ParseError(
+            "文件缺少坐标参考系（CRS）。Shapefile 需包含 .prj，"
+            "或请在上传前为数据指定 CRS。"
+        )
 
     # 获取几何类型
     geom_types = gdf.geometry.type.unique()

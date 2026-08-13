@@ -225,3 +225,7 @@ def test_nearest_neighbor_basic_distance_symmetric_property():
     # the 0.01 deg (~1.1 km) target.
     assert d >= 0
     assert d < 200.0
+    lon, lat = feat["geometry"]["coordinates"][:2]
+    assert abs(lon) < 1.0 and abs(lat) < 1.0, (
+        "nearest_neighbor must emit WGS84, not UTM metres"
+    )

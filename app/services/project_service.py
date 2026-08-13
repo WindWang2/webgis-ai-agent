@@ -20,6 +20,31 @@ from app.services.project_context_types import ProjectContextSummary, ProjectFin
 logger = logging.getLogger(__name__)
 
 
+def _caller_may_access_project(project: Project, user_id: Optional[str], org_id: Optional[int]) -> bool:
+    """Tenant / owner gate shared by lookup, fingerprint, and context summary.
+
+    Missing user_id AND org_id used to mean "no restriction" — but JWT helpers
+    never populate ``id`` / ``org_id``, so every HTTP caller hit that branch.
+    Anonymous callers may only see unowned (legacy/public) rows. Authenticated
+    callers are limited to their org or their own owner_id.
+    """
+    if org_id and project.org_id and project.org_id != org_id:
+        logger.warning(
+            "IDOR attempt: user %s (org %s) tried accessing project %s (org %s)",
+            user_id, org_id, project.id, project.org_id,
+        )
+        return False
+    if user_id and project.owner_id and project.owner_id != user_id and not org_id:
+        logger.warning(
+            "IDOR attempt: user %s tried accessing private project %s (owner %s)",
+            user_id, project.id, project.owner_id,
+        )
+        return False
+    if not user_id and not org_id and project.owner_id:
+        return False
+    return True
+
+
 def _invalidate_project_context_cache(project_id: Optional[str]) -> None:
     """Best-effort invalidation of the project-context block cache.
 
@@ -81,15 +106,8 @@ class ProjectService:
         project = db.execute(stmt).scalar_one_or_none()
         if not project:
             return None
-
-        # Tenant / Owner permission check
-        if org_id and project.org_id and project.org_id != org_id:
-            logger.warning(f"IDOR attempt: user {user_id} (org {org_id}) tried accessing project {project_id} (org {project.org_id})")
+        if not _caller_may_access_project(project, user_id, org_id):
             return None
-        if user_id and project.owner_id and project.owner_id != user_id and not org_id:
-            logger.warning(f"IDOR attempt: user {user_id} tried accessing private project {project_id} (owner {project.owner_id})")
-            return None
-
         return project
 
     @staticmethod
@@ -127,10 +145,7 @@ class ProjectService:
         if proj is None:
             return None
 
-        # Tenant / Owner permission check (mirrors get_project_with_auth).
-        if org_id and proj.org_id and proj.org_id != org_id:
-            return None
-        if user_id and proj.owner_id and proj.owner_id != user_id and not org_id:
+        if not _caller_may_access_project(proj, user_id, org_id):
             return None
 
         # 2. Dataset aggregate: the max(COALESCE(detached_at, created_at))
@@ -226,11 +241,7 @@ class ProjectService:
         if proj is None:
             return None
 
-        # Tenant / Owner permission check (in-Python, mirrors
-        # get_project_with_auth).
-        if org_id and proj.org_id and proj.org_id != org_id:
-            return None
-        if user_id and proj.owner_id and proj.owner_id != user_id and not org_id:
+        if not _caller_may_access_project(proj, user_id, org_id):
             return None
 
         ds_row = db.execute(
@@ -281,6 +292,10 @@ class ProjectService:
             base = base.where(Project.org_id == org_id)
         elif user_id:
             base = base.where(or_(Project.owner_id == user_id, Project.owner_id.is_(None)))
+        else:
+            # Anonymous: only unowned/public rows. Unfiltered list was a
+            # universal project IDOR when routes passed user.get("id") (always None).
+            base = base.where(Project.owner_id.is_(None))
 
         count_stmt = select(func.count()).select_from(base.subquery())
         total = int(db.execute(count_stmt).scalar_one() or 0)

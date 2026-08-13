@@ -49,6 +49,37 @@ class DummyPipe:
         return ch
 
 
+def test_start_uses_binary_pipes():
+    """Production reader is bytearray + b'\\n'; text=True TypeError'd on first char."""
+    import inspect
+    from app.services.chat.pi_rpc_client import PiRpcClient
+
+    src = inspect.getsource(PiRpcClient.start)
+    assert "text=True" not in src
+    assert "text=False" in src
+
+
+def test_readline_bounded_accepts_text_pipe():
+    """Defensive: a text-mode pipe must not TypeError the reader."""
+    client = PiRpcClient()
+
+    class TextPipe:
+        def __init__(self):
+            self._data = "ok\n"
+
+        def read(self, n=1):
+            if not self._data:
+                return ""
+            ch, self._data = self._data[0], self._data[1:]
+            return ch
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = TextPipe()
+    client._process = mock_proc
+    line = client._readline_bounded()
+    assert line == b"ok\n"
+
+
 @pytest.mark.asyncio
 async def test_pi_rpc_client_request_response_matching():
     client = PiRpcClient()

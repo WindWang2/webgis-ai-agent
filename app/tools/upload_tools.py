@@ -21,10 +21,16 @@ def register_upload_tools(registry: ToolRegistry):
           description="列出当前会话中用户上传的 GIS 数据文件列表。返回文件名、类型、格式、要素数量等摘要信息。")
     def list_uploaded_data(session_id: Optional[str] = None) -> dict:
         """列出上传数据"""
+        if not session_id:
+            return {
+                "success": True,
+                "uploads": [],
+                "count": 0,
+                "message": "当前没有上传的数据文件。您可以在左侧面板上传 GeoJSON、Shapefile、GeoTIFF、CSV 等格式的 GIS 数据。"
+            }
         with db_session() as db:
             query = db.query(UploadRecord).order_by(UploadRecord.upload_time.desc())
-            if session_id:
-                query = query.filter(UploadRecord.session_id == session_id)
+            query = query.filter(UploadRecord.session_id == session_id)
             records = query.limit(50).all()
 
         if not records:
@@ -67,7 +73,7 @@ def register_upload_tools(registry: ToolRegistry):
         with db_session() as db:
             record = db.query(UploadRecord).filter(UploadRecord.id == upload_id).first()
 
-        if not record:
+        if not record or not session_id or record.session_id != session_id:
             # 抛 KeyError — registry.dispatch 会将其包成
             # {"success": False, "code": "NOT_FOUND", ...} 标准错误格式（V3.x 不变式）
             raise KeyError(f"未找到 ID 为 {upload_id} 的上传记录")
