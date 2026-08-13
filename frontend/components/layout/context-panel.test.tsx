@@ -22,6 +22,7 @@ const store: Record<string, unknown> = {
   setSidebarWidth,
   layers: [],
   exports: [],
+  results: [],
 };
 
 vi.mock('@/lib/store/useHudStore', () => ({
@@ -36,6 +37,7 @@ vi.mock('@/components/sidebar/analysis-tab', () => ({ AnalysisTab: () => <div da
 vi.mock('@/components/sidebar/data-sources-tab', () => ({ DataSourcesTab: () => <div data-testid="tab-data-sources" /> }));
 vi.mock('@/components/sidebar/map-studio-tab', () => ({ MapStudioTab: () => <div data-testid="tab-map-studio" /> }));
 vi.mock('@/components/sidebar/tasks-tab', () => ({ TasksTab: () => <div data-testid="tab-tasks" /> }));
+vi.mock('@/components/sidebar/results-tab', () => ({ ResultsTab: () => <div data-testid="tab-results" /> }));
 
 // Import AFTER the mocks are registered.
 import { ContextPanel } from './context-panel';
