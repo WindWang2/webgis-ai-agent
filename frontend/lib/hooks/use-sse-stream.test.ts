@@ -346,6 +346,9 @@ describe('useSSEStream step_cancelled', () => {
     emitStepCancelled({ task_id: 't1', step_id: 'step-1', tool: 'other_tool', session_id: 'sid-fe4' });
     const calls = hook.result.current.messages[hook.result.current.messages.length - 1].toolCalls!;
     expect(calls[0]).toMatchObject({ id: 'step-1', status: 'running' });
+  });
+});
+
 describe('canonical MapSpec runtime patch', () => {
   beforeEach(() => {
     useHudStore.setState({

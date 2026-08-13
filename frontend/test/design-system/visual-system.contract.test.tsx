@@ -244,6 +244,17 @@ describe('one status colour vocabulary', () => {
     expect(failed.firstElementChild!.className).toContain('status-critical');
   });
 
+  it('renders result warning statuses in the warning tone, not neutral', () => {
+    // Result Workbench audit P0: `partial` / `warning` results fell back to the
+    // neutral slot and were indistinguishable from `unknown` — a result that
+    // carries warnings must read as warning-tone like every other warning state.
+    const { container: partial } = render(<StatusBadge status="partial" />);
+    expect(partial.firstElementChild!.className).toContain('status-warning');
+
+    const { container: warning } = render(<StatusBadge status="warning" />);
+    expect(warning.firstElementChild!.className).toContain('status-warning');
+  });
+
   it('treats a healthy data source as success, not as in-progress', () => {
     const src = read('components/sidebar/data-sources/source-item-card.tsx');
     // Both healthy and active mean "reachable" for a source; neither may borrow

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { normalizeStepResult } from '@/lib/results/normalize';
 import { ResultList } from '@/components/sidebar/results/result-list';
@@ -9,7 +9,7 @@ import type { AnalysisResult } from '@/lib/results/types';
 
 beforeEach(() => {
   useHudStore.getState().clearResults();
-  useHudStore.setState({ layers: [] });
+  useHudStore.setState({ layers: [], focusLayerId: null });
 });
 
 function hotspotResult(summary = '已识别热点。'): AnalysisResult {
@@ -92,5 +92,117 @@ describe('ResultDetail — truthfulness + map linkage', () => {
     );
     expect(screen.getByText('失败')).toBeInTheDocument();
     expect(screen.getByText('请提供 value_field。')).toBeInTheDocument();
+  });
+});
+
+describe('ResultDetail — V4 action grouping + status vocabulary', () => {
+  function renderDetail(r: AnalysisResult, layers: ReturnType<typeof createMockLayer>[] = []) {
+    useHudStore.setState({ results: [r], layers });
+    return render(
+      <ResultDetail result={r} sessionId="sess" ownerToken={null} onBack={() => {}} onSend={() => {}} />,
+    );
+  }
+
+  it('keeps map controls inside 输出与地图 and analytical intents in 后续操作', () => {
+    renderDetail(hotspotResult(), [
+      createMockLayer({ id: 'ref:geojson-x1', name: 'Hotspot', visible: true }),
+    ]);
+
+    const output = screen.getByRole('region', { name: '输出与地图' });
+    const next = screen.getByRole('region', { name: '后续操作' });
+
+    // Map controls (store-driven) live with the layer state they act on.
+    expect(within(output).getByRole('button', { name: '在地图上隐藏' })).toBeInTheDocument();
+    expect(within(output).getByRole('button', { name: '缩放至结果' })).toBeInTheDocument();
+    // Analytical intents are a separate, secondary group — never mixed in.
+    expect(within(output).queryByRole('button', { name: '导出结果' })).not.toBeInTheDocument();
+    expect(within(next).getByRole('button', { name: '导出结果' })).toBeInTheDocument();
+  });
+
+  it('zoom focuses the bound layer through the store', () => {
+    renderDetail(hotspotResult(), [
+      createMockLayer({ id: 'ref:geojson-x1', name: 'Hotspot', visible: true }),
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: '缩放至结果' }));
+    expect(useHudStore.getState().focusLayerId).toBe('ref:geojson-x1');
+  });
+
+  it('labels warning-carrying results 含告警 from the shared status vocabulary', () => {
+    const r = normalizeStepResult({
+      step_id: 's-warn',
+      tool: 'isochrone_network',
+      geojson_ref: 'ref:iso-x',
+      result: { success: true, summary: 'Isochrone built. 3 facility(ies) unreachable (disconnected from the road network).' },
+    });
+    renderDetail(r);
+    expect(screen.getByText('含告警')).toBeInTheDocument();
+  });
+
+  it('drops the output and next-action sections for a failed result', () => {
+    const failed = normalizeStepResult({
+      step_id: 's-fail2',
+      tool: 'hotspot_analysis',
+      result: { success: false, error_type: 'VALIDATION_ERROR', summary: 'Missing value_field.', correction_hint: '请提供 value_field。' },
+    });
+    renderDetail(failed);
+    expect(screen.queryByRole('region', { name: '输出与地图' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: '后续操作' })).not.toBeInTheDocument();
+  });
+
+  it('explains an unbound ref instead of rendering dead map controls', () => {
+    const r = normalizeStepResult({
+      step_id: 's-unbound',
+      tool: 'hotspot_analysis',
+      geojson_ref: 'ref:gone',
+      result: { success: true, summary: 'ok' },
+    });
+    renderDetail(r, []);
+    expect(screen.getByText('引用层未绑定到当前地图会话。')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '缩放至结果' })).not.toBeInTheDocument();
+  });
+
+  it('explains a ref-less result has no map layer', () => {
+    const r = normalizeStepResult({
+      step_id: 's-stat',
+      tool: 'moran_i',
+      result: { success: true, summary: 'ok', data: { moran_i: 0.42 } },
+    });
+    renderDetail(r, []);
+    expect(screen.getByText('该结果未挂载为地图图层。')).toBeInTheDocument();
+  });
+});
+
+describe('ResultList — V4 density contracts', () => {
+  it('marks the selected row with aria-current', () => {
+    const r = hotspotResult();
+    render(<ResultList results={[r]} selectedId="s1" onSelect={() => {}} />);
+    const row = screen.getByRole('button');
+    expect(row).toHaveAttribute('aria-current', 'true');
+  });
+
+  it('shows the layer chip only when an output is mounted as a layer', () => {
+    const withLayer = hotspotResult();
+    const without = normalizeStepResult({
+      step_id: 's-stat',
+      tool: 'moran_i',
+      result: { success: true, summary: '统计完成。', data: { moran_i: 0.42 } },
+    });
+    render(<ResultList results={[withLayer, without]} selectedId={null} onSelect={() => {}} />);
+    const chips = screen.getAllByText('图层');
+    expect(chips).toHaveLength(1);
+  });
+
+  it('shows the warning tally in the warning colour vocabulary, not amber literals', () => {
+    const r = normalizeStepResult({
+      step_id: 's-warn',
+      tool: 'isochrone_network',
+      geojson_ref: 'ref:iso-x',
+      result: { success: true, summary: 'Isochrone built. 3 facility(ies) unreachable (disconnected from the road network).' },
+    });
+    render(<ResultList results={[r]} selectedId={null} onSelect={() => {}} />);
+    expect(screen.getByText('1 条告警')).toBeInTheDocument();
+    expect(screen.getByText('1 条告警').className).toContain('status-warning');
+    // No raw Tailwind palette literals for the warning role.
+    expect(screen.getByText('1 条告警').className).not.toMatch(/amber|yellow-/);
   });
 });

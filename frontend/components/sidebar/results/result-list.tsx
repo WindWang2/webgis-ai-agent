@@ -4,8 +4,13 @@
  * ResultList — bounded, session-scoped list of captured analysis results.
  * Master half of the Results tab master-detail. Keyboard-navigable (native
  * buttons), dense, status-forward.
+ *
+ * UI V4 — dense two-line rows with the layers-tab border-l-2 edge treatment
+ * instead of stacked cards: tool/status/time on the first line, family · map
+ * linkage · warning tally · summary on the second. Selected ≠ hover (accent
+ * edge + surface-selected vs plain hover), per the nav-rail contract.
  */
-import { ClipboardList } from 'lucide-react';
+import { ClipboardList, Layers, TriangleAlert } from 'lucide-react';
 import clsx from 'clsx';
 import { familyLabel } from '@/lib/results/families';
 import type { AnalysisResult } from '@/lib/results/types';
@@ -17,15 +22,6 @@ interface ResultListProps {
   selectedId: string | null;
   onSelect: (id: string) => void;
 }
-
-const STATUS_LABEL: Record<string, string> = {
-  completed: '已完成',
-  failed: '失败',
-  partial: '部分完成',
-  warning: '含告警',
-  running: '运行中',
-  unknown: '未知',
-};
 
 function formatTime(ms?: number): string {
   if (!ms) return '';
@@ -50,7 +46,7 @@ export function ResultList({ results, selectedId, onSelect }: ResultListProps) {
   }
 
   return (
-    <ul aria-label="分析结果列表" className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
+    <ul aria-label="分析结果列表" className="flex min-h-0 flex-1 flex-col overflow-y-auto py-1">
       {results.map((r) => {
         const selected = r.id === selectedId;
         const hasLayer = r.outputs[0]?.hasLayer;
@@ -61,33 +57,39 @@ export function ResultList({ results, selectedId, onSelect }: ResultListProps) {
               aria-current={selected ? 'true' : undefined}
               onClick={() => onSelect(r.id)}
               className={clsx(
-                'flex w-full flex-col gap-1 rounded-md border px-2.5 py-2 text-left transition-colors',
+                'flex w-full flex-col gap-0.5 border-l-2 px-panel py-1 text-left transition-colors',
                 selected
-                  ? 'border-[var(--agent-accent,#16a34a)]/50 bg-[var(--theme-bg-hover)]'
-                  : 'border-transparent hover:bg-[var(--theme-bg-hover)]',
+                  ? 'border-l-status-accent bg-surface-selected'
+                  : 'border-l-transparent hover:bg-surface-hover',
               )}
             >
-              <div className="flex items-center gap-1.5">
-                <span className="truncate text-[13px] font-medium text-[var(--theme-text-primary)]">{r.toolLabel}</span>
-                <StatusBadge status={r.status} label={STATUS_LABEL[r.status] ?? r.status} />
-                <span className="ml-auto shrink-0 text-[10.5px] text-[var(--theme-text-muted)]">{formatTime(r.capturedAt)}</span>
-              </div>
-              <div className="flex items-center gap-1.5 text-[11px] text-[var(--theme-text-muted)]">
-                <span>{familyLabel(r.family)}</span>
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate text-body font-medium text-ink">{r.toolLabel}</span>
+                <StatusBadge status={r.status} />
+                <span className="ml-auto shrink-0 font-mono text-caption tabular-nums text-ink-muted">
+                  {formatTime(r.capturedAt)}
+                </span>
+              </span>
+              <span className="flex min-w-0 items-center gap-2 text-meta text-ink-muted">
+                <span className="shrink-0">{familyLabel(r.family)}</span>
                 {hasLayer ? (
-                  <span className="inline-flex items-center gap-0.5 rounded bg-[var(--theme-bg-subtle)] px-1 py-0.5 text-[10px]">
-                    已挂载图层
+                  <span className="inline-flex shrink-0 items-center gap-0.5 text-status-accent">
+                    <Layers size={10} aria-hidden />
+                    图层
                   </span>
                 ) : null}
                 {r.warnings.length > 0 ? (
-                  <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/10 px-1 py-0.5 text-[10px] text-amber-600 dark:text-amber-300">
+                  <span className="inline-flex shrink-0 items-center gap-0.5 text-status-warning">
+                    <TriangleAlert size={10} aria-hidden />
                     {r.warnings.length} 条告警
                   </span>
                 ) : null}
-              </div>
-              {r.summary ? (
-                <span className="line-clamp-2 text-[12px] text-[var(--theme-text-secondary)]">{r.summary}</span>
-              ) : null}
+                {r.summary ? (
+                  <span className="min-w-0 truncate text-ink-muted" title={r.summary}>
+                    {r.summary}
+                  </span>
+                ) : null}
+              </span>
             </button>
           </li>
         );
