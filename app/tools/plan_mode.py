@@ -57,6 +57,19 @@ def register_plan_mode_tools(registry: ToolRegistry):
         if err:
             return {"success": False, "code": "VALIDATION_ERROR", "message": err}
 
+        # design-v3 §deps：静态引用校验（第二道闸，补充完整 issue 列表）
+        static_issues = plan_svc.validate_static_refs(plan)
+        if static_issues:
+            return {
+                "success": False,
+                "code": "VALIDATION_ERROR",
+                "message": "; ".join(static_issues),
+            }
+
+        # design-v3 §4：新计划提出时，该 session 其他 pending/running 计划
+        # 标记 superseded（绝不静默覆盖）。须在 store_plan 之前执行。
+        await plan_svc.supersede_active_plans(session_id)
+
         plan_id = await plan_svc.store_plan(session_id, plan)
 
         # 标记包含破坏性工具的步骤，便于 UI / LLM 提示用户
@@ -115,7 +128,9 @@ def register_plan_mode_tools(registry: ToolRegistry):
         name="get_plan_status",
         tier=1,
         description=(
-            "查询一个已提交计划的当前状态：pending(待审) / running / completed / failed / cancelled。"
+            "查询一个已提交计划的当前状态。状态词表：pending(待审) / running(执行中) / "
+            "partially_completed(部分完成，可恢复执行) / completed / failed / "
+            "cancelled(已取消，拒绝恢复) / superseded(已被新计划取代)。"
             "用于在长时计划执行后回看哪一步失败 / 检查计划是否已经跑过避免重复执行。"
         ),
         param_descriptions={"plan_id": "propose_plan 返回的 plan_id"},

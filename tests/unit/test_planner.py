@@ -43,17 +43,28 @@ def test_parse_plan_valid():
 
 
 def test_parse_plan_strips_code_fence():
-    raw = '```json\n{"intent":"x","domains":["core"],"steps":[]}\n```'
+    raw = '```json\n{"intent":"x","domains":["core"],"steps":[{"n":1,"goal":"a","tool_family":"core"}]}\n```'
     plan = parse_plan(raw)
     assert plan is not None
     assert plan.intent == "x"
+    assert len(plan.steps) == 1
 
 
 def test_parse_plan_filters_invalid_domains():
-    raw = '{"intent":"x","domains":["chinese","nonsense"],"steps":[]}'
+    raw = '{"intent":"x","domains":["chinese","nonsense"],"steps":[{"n":1,"goal":"a","tool_family":"chinese"}]}'
     plan = parse_plan(raw)
     assert plan is not None
     assert plan.domains == ["chinese"]  # 越界 domain 被丢弃
+
+
+def test_parse_plan_empty_steps_returns_none():
+    """P2-4（adversarial P2-7 zombie plan）：解析出的步骤列表为空
+    （steps:[] 或全部步骤非法被跳过）→ 返回 None，绝不产出"活着的空计划"。"""
+    assert parse_plan('{"intent":"x","domains":["core"],"steps":[]}') is None
+    # 全部步骤非法（非 dict）被跳过 → 同样 None
+    assert parse_plan(
+        '{"intent":"x","domains":["core"],"steps":[42, "bad"]}'
+    ) is None
 
 
 def test_parse_plan_malformed_json_returns_none():

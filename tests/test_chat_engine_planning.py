@@ -133,7 +133,7 @@ async def test_chat_stream_emits_plan_ready_when_plan_created(engine, monkeypatc
         domains=["core", "chinese"],
         steps=[
             planner_mod.PlanStep(n=1, goal="获取边界", tool_family="chinese"),
-            planner_mod.PlanStep(n=2, goal="出热力图", tool_family="core"),
+            planner_mod.PlanStep(n=2, goal="出热力图", tool_family="core", done=True),
         ],
     )
     async def fake_maybe_plan(self, session_id, message, messages):
@@ -166,7 +166,9 @@ async def test_chat_stream_emits_plan_ready_when_plan_created(engine, monkeypatc
     assert data["intent"] == "测试意图"
     assert data["domains"] == ["core", "chinese"]
     assert len(data["steps"]) == 2
+    # P3-2/P2-6：done 取投影真实状态（step2 已完成 → True），不硬编码 False
     assert data["steps"][0] == {"n": 1, "goal": "获取边界", "tool_family": "chinese", "done": False}
+    assert data["steps"][1] == {"n": 2, "goal": "出热力图", "tool_family": "core", "done": True}
     planner_mod.clear_plan("sess-EV1")
 
 
@@ -286,3 +288,167 @@ async def test_chat_stream_no_plan_events_when_plan_skipped(engine, monkeypatch)
     assert "event: plan_ready" not in joined
     assert "event: plan_step_done" not in joined
     assert "event: plan_finalized" not in joined
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_failed_tool_does_not_advance_plan(engine, monkeypatch):
+    """R2（design-v3 §2）：工具失败（status=error）绝不打勾计划步骤，也不发
+    plan_step_done；step_error 附带 failure_class/recovery_action（additive）。"""
+    test_plan = planner_mod.Plan(
+        intent="x", domains=["statistics"],
+        steps=[planner_mod.PlanStep(n=1, goal="热点", tool_family="statistics")],
+    )
+    planner_mod.set_plan("sess-EV5", test_plan)
+    async def fake_maybe_plan(self, *a, **k): return None
+    monkeypatch.setattr(engine, "_maybe_plan",
+                        fake_maybe_plan.__get__(engine, type(engine)))
+    monkeypatch.setattr(engine.registry, "metadata",
+                        lambda name: {"domains": ["statistics"]})
+
+    call_count = {"n": 0}
+    async def fake_llm_stream(*a, **k):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            yield ("done", {"message": {
+                "role": "assistant", "content": None,
+                "tool_calls": [{"id": "tc1", "type": "function",
+                                "function": {"name": "hotspot_analysis",
+                                             "arguments": "{}"}}],
+            }, "finish_reason": "tool_calls"})
+        else:
+            yield ("done", {"message": {"role": "assistant", "content": "done"},
+                            "finish_reason": "stop"})
+    monkeypatch.setattr(engine, "_call_llm_stream", fake_llm_stream)
+
+    from app.services.tool_dispatch_service import ToolDispatchResult
+    async def fake_dispatch(self, *a, **k):
+        return ToolDispatchResult(
+            status="error",
+            llm_payload="boom",
+            slim_event={"error": "boom"},
+            geojson_ref=None,
+            raw_result={"success": False, "code": "TOOL_ERROR", "message": "boom"},
+            error_msg="boom",
+        )
+    monkeypatch.setattr(engine, "_dispatch_tool",
+                        fake_dispatch.__get__(engine, type(engine)))
+
+    captured = []
+    async for ev in engine.chat_stream("热点分析", session_id="sess-EV5"):
+        captured.append(ev)
+
+    joined = "".join(captured)
+    assert "event: plan_step_done" not in joined
+    assert test_plan.steps[0].done is False  # 失败不打勾
+    assert "event: step_error" in joined
+    assert "failure_class" in joined  # additive 分类字段
+    planner_mod.clear_plan("sess-EV5")
+
+
+@pytest.mark.asyncio
+async def test_maybe_plan_new_goal_supersedes_old(engine, monkeypatch):
+    """design-v3 §2/§4：新目标（"换成查路线"）→ 旧 canonical 计划 superseded，
+    新计划接管（修复场景 8 短消息换目标被门控吞掉）。"""
+    from app.services.planning import PlanStatus
+    from app.services.planning.store import plan_store
+
+    old = planner_mod.Plan(
+        intent="旧", domains=["raster"],
+        steps=[planner_mod.PlanStep(n=1, goal="NDVI", tool_family="raster")],
+    )
+    planner_mod.set_plan("sess-S1", old)
+    old_canon = plan_store.peek("sess-S1")
+    old_id = old_canon.plan_id
+
+    async def fake_call_llm(_cfg, _messages, _tools=None):
+        return {"choices": [{"message": {"content":
+            '{"intent":"新","domains":["network"],"steps":[{"n":1,"goal":"路线","tool_family":"network"}]}'}}]}
+
+    monkeypatch.setattr(planner_mod, "call_llm", fake_call_llm)
+
+    plan = await engine._maybe_plan("sess-S1", "换成查路线", [])
+    assert plan is not None and plan.intent == "新"
+    hist = await plan_store.get_by_id("sess-S1", old_id)
+    assert hist is not None and hist.status == PlanStatus.superseded
+    planner_mod.clear_plan("sess-S1")
+    await plan_store.clear("sess-S1")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# P3 延后项 #4：mid-turn tick flush——mark_step_done 打勾后立即 best-effort
+# 落盘，不依赖回合末 flush（崩溃/断连不丢已打勾步骤）
+# ─────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_mid_turn_tick_flush_persists_step(engine, monkeypatch):
+    """工具打勾计划步骤后立即落盘：即使回合末 flush 崩溃（模拟），plan_store
+    里已能看到该步骤 completed——tick 持久化独立于回合末 flush。"""
+    from app.services.planning.models import PlanStatus, StepStatus
+    from app.services.planning.store import plan_store
+
+    # 两步计划：本轮只完成 step1 → 计划仍非终态，回合末 flush 会真正执行
+    # （若单步计划打勾后即 completed，回合末 flush 会被 get_plan 终态过滤
+    # 正确跳过，无法验证"崩溃后 tick 已落盘"）。
+    test_plan = planner_mod.Plan(
+        intent="x", domains=["core"],
+        steps=[
+            planner_mod.PlanStep(n=1, goal="缓冲", tool_family="core"),
+            planner_mod.PlanStep(n=2, goal="更多", tool_family="core"),
+        ],
+    )
+    planner_mod.set_plan("sess-EV6", test_plan)
+    async def fake_maybe_plan(self, *a, **k): return None
+    monkeypatch.setattr(engine, "_maybe_plan",
+                        fake_maybe_plan.__get__(engine, type(engine)))
+    monkeypatch.setattr(engine.registry, "metadata",
+                        lambda name: {"domains": ["core"]})
+
+    call_count = {"n": 0}
+    async def fake_call_llm(*a, **k):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return {"choices": [{"message": {
+                "role": "assistant", "content": None,
+                "tool_calls": [{"id": "tc1", "type": "function",
+                                "function": {"name": "buffer_analysis",
+                                             "arguments": "{}"}}],
+            }}]}
+        return {"choices": [{"message": {"role": "assistant", "content": "done"}}]}
+    monkeypatch.setattr(engine, "_call_llm", fake_call_llm)
+
+    from app.services.tool_dispatch_service import ToolDispatchResult
+    async def fake_dispatch(self, *a, **k):
+        return ToolDispatchResult(
+            status="ok", llm_payload="{}", slim_event={"ok": True},
+            geojson_ref=None, raw_result={"ok": True}, error_msg=None,
+        )
+    monkeypatch.setattr(engine, "_dispatch_tool",
+                        fake_dispatch.__get__(engine, type(engine)))
+
+    # 模拟"回合末 flush 崩溃"：第 2 次 flush（turn-end，finally）抛异常被吞；
+    # 第 1 次（tick flush——工具打勾后立即触发）正常落盘。
+    from app.services.chat.plan_orchestrator import plan_orchestrator
+    real_flush = plan_orchestrator.flush
+    flush_calls = {"n": 0}
+    async def flaky_flush(session_id):
+        flush_calls["n"] += 1
+        if flush_calls["n"] >= 2:
+            raise RuntimeError("simulated crash before turn-end flush")
+        await real_flush(session_id)
+    monkeypatch.setattr(plan_orchestrator, "flush", flaky_flush)
+
+    result = await engine.chat("缓冲分析", session_id="sess-EV6")
+    assert result["content"] == "done"
+    # 回合正常完成（best-effort：turn-end flush 崩溃只记 warning，不破坏回合）
+    assert flush_calls["n"] == 2
+
+    # 模拟重启：清空进程缓存后从 store 读回 → 步骤 completed（来自 tick flush）
+    plan_store.clear_cache()
+    persisted = await plan_store.load_current("sess-EV6")
+    assert persisted is not None
+    assert persisted.steps[0].status == StepStatus.completed
+    assert persisted.steps[1].status == StepStatus.pending
+    assert persisted.status == PlanStatus.proposed  # 仍有 pending → 非终态
+    planner_mod.clear_plan("sess-EV6")
+    await plan_store.clear("sess-EV6")

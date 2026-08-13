@@ -47,6 +47,27 @@ from app.services.chat.tool_pipeline import ToolExecutionPipeline, ToolExecution
 
 logger = logging.getLogger(__name__)
 
+# 计划自身 ref 的判定（P2-6 / recovery P2）：plan-mode 计划以 ref:plan-* 存，
+# canonical 计划经别名 plan-current / plan-id:* 寻址。它们只代表"计划存在"，
+# 不代表会话有可复用的数据 —— session_has_refs 必须把它们排除，否则
+# "仅存了计划"的会话会被 ref_reuse 分类误判。
+_PLAN_REF_PREFIX = "ref:plan-"
+_PLAN_ALIAS_PREFIX = "plan-id:"
+_PLAN_CURRENT_ALIAS = "plan-current"
+
+
+def _has_non_plan_refs(refs: dict) -> bool:
+    """list_refs() 结果里是否存在非计划数据引用（ref:plan-* / plan 别名除外）。"""
+    for rid, alias in (refs or {}).items():
+        rid_s = str(rid)
+        alias_s = str(alias or "")
+        if rid_s.startswith(_PLAN_REF_PREFIX):
+            continue
+        if alias_s == _PLAN_CURRENT_ALIAS or alias_s.startswith(_PLAN_ALIAS_PREFIX):
+            continue
+        return True
+    return False
+
 
 class ChatExecutionEngine:
     """Agent 对话与流式响应执行引擎"""
@@ -55,9 +76,16 @@ class ChatExecutionEngine:
         self,
         tool_registry: ToolRegistry,
         tool_catalog: Optional["ToolCatalog"] = None,
+        *,
+        is_subagent_engine: bool = False,
     ):
         self.registry = tool_registry
         self.catalog = tool_catalog
+        # P2-7（Pi#1/#2）：子代理引擎轮次绝不推进父会话的计划。SubagentDispatcher
+        # 构造子引擎时传 is_subagent_engine=True；_maybe_plan / mark_step_done /
+        # _flush_plan 据此跳过一切计划推进，避免子代理的工具调用把父会话的
+        # 活跃计划打勾/改写。
+        self.is_subagent_engine = is_subagent_engine
         self.base_url = settings.LLM_BASE_URL.rstrip("/")
         self.model = settings.LLM_MODEL
         self.api_key = settings.LLM_API_KEY
@@ -229,9 +257,22 @@ class ChatExecutionEngine:
         session_id: str,
         messages: list[dict],
         project_id: Optional[str] = None,
+        tools: Optional[list] = None,
     ) -> list[dict]:
+        tools_payload = None
+        if tools:
+            try:
+                # P3 #3：把序列化后的工具 schema JSON 交给 assembler 做 CJK-aware
+                # token 估算（_estimate_tokens，与历史压缩同权重）——只传一次字符串，
+                # 不重复序列化。
+                tools_payload = json.dumps(tools, ensure_ascii=False)
+            except (TypeError, ValueError):
+                tools_payload = None
         res = await self.context_assembler.assemble(
-            session_id, messages, project_id=project_id,
+            session_id,
+            messages,
+            project_id=project_id,
+            tools_payload=tools_payload,
         )
         return res.to_messages()
 
@@ -388,10 +429,46 @@ class ChatExecutionEngine:
 
     async def _maybe_plan(self, session_id: str, message: str, messages: list[dict]):
         from app.services.chat.plan_orchestrator import plan_orchestrator
+        from app.services.planning.followup import classify_followup
+        from app.services.planning import FollowUpKind
+        from app.services.tool_catalog import DOMAIN_KEYWORDS
+        # P2-7（Pi#1/#2）：子代理引擎的轮次不参与父会话的规划（独立微会话，
+        # 计划推进只属于主代理）。getattr 兜底：测试用 __new__ 构造的引擎没有
+        # 该属性时按 False（主代理）处理。
+        if getattr(self, "is_subagent_engine", False):
+            return None
         env = await self._get_map_state_summary(session_id)
         try:
+            # R5/R10：进程重启续接——把 store 里的 canonical 计划恢复到本进程 LRU。
+            await plan_orchestrator.restore_plan(session_id)
+        except Exception as e:
+            logger.warning(f"[chat_execution_engine] plan restore 失败: {e}")
+        try:
+            plan = plan_orchestrator.get_plan(session_id)
+            has_plan = plan is not None
+            active_domains = list(plan.domains) if plan else []
+            try:
+                refs = await session_data_manager.list_refs(session_id)
+            except Exception:  # noqa: BLE001
+                refs = {}
+            # P2-6（recovery P2 / Pi#3）：session_has_refs 必须排除计划自身的
+            # ref（ref:plan-* 与 plan-current / plan-id:* 别名）——否则"仅存了
+            # 一个计划、没有任何数据"的会话会被 ref_reuse 误判。
+            has_data_refs = _has_non_plan_refs(refs)
+            # design-v3 §followup：确定性分类喂给 should_plan。
+            kind = classify_followup(
+                message,
+                has_active_plan=has_plan,
+                active_domains=active_domains,
+                session_has_refs=has_data_refs,
+                domain_keywords=DOMAIN_KEYWORDS,
+            )
+            if kind == FollowUpKind.new_goal and self.catalog is not None:
+                # design-v3 §5：明确换目标 → 旧领域 sticky 停止污染本轮工具选择。
+                self.catalog.reset_sticky(session_id)
             return await plan_orchestrator.orchestrate_plan(
-                self._planner_llm_config(), session_id, message, messages, env
+                self._planner_llm_config(), session_id, message, messages, env,
+                followup_kind=kind,
             )
         except Exception as e:
             logger.warning(f"[chat_execution_engine] 规划阶段异常，降级无计划: {e}")
@@ -407,9 +484,12 @@ class ChatExecutionEngine:
         outcome: ToolDispatchResult,
         subset_size: int,
         step_n: int | None = None,
+        failure_class: Optional[str] = None,
+        recovery_action: Optional[str] = None,
     ) -> None:
         from app.services.chat import planner
         from app.services.chat.decision_log import ToolDecisionRecord, log_tool_decision
+        from app.services.planning.store import plan_store
 
         if outcome.status == "error":
             quality = "error"
@@ -419,6 +499,21 @@ class ChatExecutionEngine:
             quality = "ok"
         plan = planner.get_plan(session_id)
         active = self.catalog.active_domains(session_id) if self.catalog else set()
+        # Observability (design-v3 §6)：有活跃计划时附带 plan_id / plan_revision /
+        # step_id（只做 plan_store 进程缓存查，绝不读 session store）。
+        plan_id: Optional[str] = None
+        plan_revision: Optional[int] = None
+        step_id: Optional[str] = None
+        if plan is not None:
+            canon = plan_store.peek(session_id)
+            if canon is not None:
+                plan_id = canon.plan_id
+                plan_revision = canon.revision
+                if step_n is not None:
+                    for cs in canon.steps:
+                        if cs.n == step_n:
+                            step_id = cs.id
+                            break
         try:
             log_tool_decision(ToolDecisionRecord(
                 session_id=session_id,
@@ -432,6 +527,11 @@ class ChatExecutionEngine:
                 tool_args=tool_args if isinstance(tool_args, dict) else {},
                 result_quality=quality,
                 plan_step_matched=step_n,
+                plan_id=plan_id,
+                plan_revision=plan_revision,
+                step_id=step_id,
+                failure_class=failure_class,
+                recovery_action=recovery_action,
             ))
         except Exception as e:
             logger.warning(f"[chat_execution_engine] 决策日志记录失败: {e}")
@@ -495,9 +595,30 @@ class ChatExecutionEngine:
                     message, session_id, messages, skill_name, user_id, project_id,
                 )
             finally:
+                # design-v3：把本进程 canonical 计划（含打勾进度）持久化到 store。
+                await self._flush_plan(session_id)
                 # C-F12: bound the in-memory tail once the turn's appends are
                 # complete (every exit path — return, exception, cancel).
                 self._trim_session_tail(messages)
+
+    async def _flush_plan(self, session_id: str) -> None:
+        """把活跃 canonical 计划持久化（advance_step 的 done 标志写回 store）。
+
+        既作回合末 flush（chat / chat_stream 的 finally），也作 P3 #4 的
+        mid-turn tick flush（mark_step_done 打勾后立即调用）——二者幂等（同一
+        载荷原地 overwrite）。best-effort：任何失败只记 warning，绝不破坏回合。
+        """
+        # P2-7：子代理引擎不 flush 父会话的计划（独立微会话，计划属于主代理）。
+        if getattr(self, "is_subagent_engine", False):
+            return
+        try:
+            from app.services.chat import planner as _planner
+            if _planner.get_plan(session_id) is None:
+                return
+            from app.services.chat.plan_orchestrator import plan_orchestrator
+            await plan_orchestrator.flush(session_id)
+        except Exception as e:
+            logger.warning(f"[chat_execution_engine] plan flush 失败: {e}")
 
     async def _chat_locked(
         self,
@@ -525,9 +646,12 @@ class ChatExecutionEngine:
                 if self.tracker.is_cancelled(task.id):
                     return {"session_id": session_id, "content": "任务已取消", **({"owner_token": owner_token} if owner_token else {})}
 
-                messages_with_context = await self._compose_request_messages(session_id, messages)
-
+                # tools 先选（含 tools payload 软计入估算），再组装上下文
                 tools = self._select_tools(session_id, messages)
+                messages_with_context = await self._compose_request_messages(
+                    session_id, messages, tools=tools,
+                )
+
                 response = await self._call_llm(messages_with_context, tools)
                 choice = response.get("choices", [{}])[0]
                 assistant_msg = choice.get("message", {})
@@ -580,6 +704,22 @@ class ChatExecutionEngine:
                             llm_payload = f"Tool execution failed: {exec_res}"
                         else:
                             llm_payload = exec_res.llm_payload
+                            # R6-nonstreaming / R2：非流式路径同样只在“非可疑成功”
+                            # 时推进计划（失败/空结果绝不打勾）。
+                            if (
+                                not getattr(self, "is_subagent_engine", False)  # P2-7：子代理不打勾父计划
+                                and exec_res.outcome is not None
+                                and exec_res.outcome.status == "ok"
+                                and not _is_suspicious_result_fn(exec_res.outcome.raw_result)
+                            ):
+                                from app.services.chat import planner as _planner
+                                step_n_matched = _planner.mark_step_done(
+                                    session_id, exec_res.tool_name, self.registry
+                                )
+                                if step_n_matched is not None:
+                                    # P3 #4：打勾后立即 best-effort 落盘（回合末
+                                    # flush 仍保留，幂等）。崩溃/断连不丢 tick。
+                                    await self._flush_plan(session_id)
 
                         if standard_calls:
                             messages.append({
@@ -671,6 +811,10 @@ class ChatExecutionEngine:
                 yield sse_event("task_start", task_start_data)
 
                 plan = await self._maybe_plan(session_id, message, messages)
+                plan_existed_this_turn = plan is not None
+                if not plan_existed_this_turn:
+                    from app.services.chat import planner as _planner_ctx
+                    plan_existed_this_turn = _planner_ctx.get_plan(session_id) is not None
                 try:
                     if plan is not None:
                         yield sse_event("plan_ready", {
@@ -679,7 +823,11 @@ class ChatExecutionEngine:
                             "intent": plan.intent,
                             "domains": plan.domains,
                             "steps": [
-                                {"n": s.n, "goal": s.goal, "tool_family": s.tool_family, "done": False}
+                                # P3-2/P2-6：done 取投影的真实打勾状态（恢复出的
+                                # 计划带已完成步骤），不再硬编码 False。
+                                {"n": s.n, "goal": s.goal,
+                                 "tool_family": s.tool_family if s.tool_family is not None else "core",
+                                 "done": s.done}
                                 for s in plan.steps
                             ],
                         })
@@ -687,6 +835,10 @@ class ChatExecutionEngine:
                     logger.warning(f"[chat_execution_engine] plan_ready 发送失败: {e}")
 
                 def _maybe_plan_finalized_event():
+                    # design-v3：只有本轮确实存在/产生过非终态计划才发 plan_finalized，
+                    # 避免无计划轮次或已恢复出终态计划时发出 spurious finalize。
+                    if not plan_existed_this_turn:
+                        return None
                     try:
                         from app.services.chat import planner as _planner
                         plan_obj = _planner.get_plan(session_id)
@@ -705,8 +857,10 @@ class ChatExecutionEngine:
                 executed_tools = set()
 
                 for round_index in range(self.max_rounds):
+                    # tools 先选（含 tools payload 软计入估算），再组装上下文
+                    tools = self._select_tools(session_id, messages)
                     messages_with_context = await self._compose_request_messages(
-                        session_id, messages, project_id=project_id,
+                        session_id, messages, project_id=project_id, tools=tools,
                     )
 
                     if self.tracker.is_cancelled(task.id):
@@ -715,8 +869,6 @@ class ChatExecutionEngine:
                             yield pf
                         yield sse_event("task_cancelled", {"task_id": task.id})
                         return
-
-                    tools = self._select_tools(session_id, messages)
 
                     streamed_content_parts: list[str] = []
                     assistant_msg: dict = {}
@@ -881,22 +1033,49 @@ class ChatExecutionEngine:
                                     except Exception as e:  # noqa: BLE001 防御（execute_tool_call 内部已兜底）
                                         logger.error(f"[chat_execution_engine] tool task raised for {tool_name}: {e}")
                                         self.tracker.fail_step(task.id, step.id, str(e))
-                                        yield sse_event("step_error", {
+                                        fc, ra = self._classify_failure(
+                                            outcome=None, exception=e
+                                        )
+                                        step_error_payload = {
                                             "task_id": task.id,
                                             "step_id": step.id,
                                             "tool": tool_name,
                                             "error": str(e),
-                                        })
+                                        }
+                                        if fc:
+                                            step_error_payload["failure_class"] = fc
+                                            step_error_payload["recovery_action"] = ra
+                                        yield sse_event("step_error", step_error_payload)
                                         continue
 
                                     outcome = exec_res.outcome
 
+                                    # R2 (design-v3 §2)：只有“非可疑成功”才推进计划步骤；
+                                    # 失败 / 重复 / 校验错误 / 空结果绝不打勾。
                                     from app.services.chat import planner as _planner
-                                    step_n_matched = _planner.mark_step_done(session_id, tool_name, self.registry)
+                                    step_n_matched = None
+                                    failure_class: Optional[str] = None
+                                    recovery_action: Optional[str] = None
+                                    if (
+                                        outcome.status == "ok"
+                                        and not _is_suspicious_result_fn(outcome.raw_result)
+                                        and not getattr(self, "is_subagent_engine", False)  # P2-7
+                                    ):
+                                        step_n_matched = _planner.mark_step_done(
+                                            session_id, tool_name, self.registry
+                                        )
+                                        if step_n_matched is not None:
+                                            # P3 #4：打勾后立即 best-effort 落盘
+                                            # （回合末 flush 仍保留，幂等）。
+                                            await self._flush_plan(session_id)
+                                    elif outcome.status == "error":
+                                        failure_class, recovery_action = self._classify_failure(outcome)
                                     self._log_tool_decision(
                                         session_id, round_index, message, tool_name,
                                         tool_args_dict, outcome, len(tools or []),
                                         step_n=step_n_matched,
+                                        failure_class=failure_class,
+                                        recovery_action=recovery_action,
                                     )
                                     try:
                                         if step_n_matched is not None:
@@ -928,12 +1107,16 @@ class ChatExecutionEngine:
                                         })
                                     elif outcome.status == "error":
                                         self.tracker.fail_step(task.id, step.id, outcome.error_msg or "")
-                                        yield sse_event("step_error", {
+                                        step_error_payload = {
                                             "task_id": task.id,
                                             "step_id": step.id,
                                             "tool": tool_name,
                                             "error": outcome.error_msg,
-                                        })
+                                        }
+                                        if failure_class:
+                                            step_error_payload["failure_class"] = failure_class
+                                            step_error_payload["recovery_action"] = recovery_action
+                                        yield sse_event("step_error", step_error_payload)
                                         yield sse_event("tool_result", {"name": tool_name, "result": msg_result_str, "session_id": session_id})
                                     else:
                                         self.tracker.complete_step(task.id, step.id, outcome.raw_result)
@@ -1058,6 +1241,8 @@ class ChatExecutionEngine:
                     self.tracker.fail_task(task.id, "chat_stream exception")
                 raise
             finally:
+                # design-v3：把本进程 canonical 计划（含打勾进度）持久化到 store。
+                await self._flush_plan(session_id)
                 # C-F12: bound the in-memory tail once the turn's appends
                 # are complete (every exit path — done, cancelled, max rounds,
                 # disconnect/exception via generator close).
@@ -1115,6 +1300,11 @@ class ChatExecutionEngine:
             from app.services.chat import planner
             planner.clear_plan(session_id)
             try:
+                from app.services.planning.store import plan_store
+                await plan_store.clear(session_id)
+            except Exception as e:
+                logger.warning(f"[chat_execution_engine] plan_store.clear 失败: {e}")
+            try:
                 from app.services.chat.context.layer_schema import clear_layer_schema_cache
                 clear_layer_schema_cache(session_id)
             except ImportError:
@@ -1125,3 +1315,38 @@ class ChatExecutionEngine:
 
     def _detect_suspicious_result(self, result: Any) -> bool:
         return _is_suspicious_result_fn(result)
+
+    @staticmethod
+    def _classify_failure(
+        outcome: Optional[ToolDispatchResult],
+        exception: Optional[Exception] = None,
+    ) -> tuple[Optional[str], Optional[str]]:
+        """design-v3 §recovery：把一次工具失败分类成 failure_class + recovery_action。
+
+        供 step_error SSE / decision_log 附加字段使用（additive，不改变任何
+        现有行为与自愈路径）。
+        """
+        from app.services.planning.models import FailureClass as _FailureClass
+        from app.services.planning.recovery import (
+            classify_error as _classify_error,
+            recovery_action_for as _recovery_action_for,
+        )
+        try:
+            if exception is not None:
+                fc = _classify_error(exception=exception)
+            else:
+                raw = outcome.raw_result if isinstance(outcome.raw_result, dict) else {}
+                if raw.get("cancelled"):
+                    fc = _FailureClass.cancelled
+                else:
+                    fc = _classify_error(
+                        status=outcome.status,
+                        code=raw.get("code"),
+                        error_type=raw.get("error_type"),
+                        message=outcome.error_msg,
+                    )
+            ra = _recovery_action_for(fc)
+            return fc.value, ra.value
+        except Exception as e:  # noqa: BLE001 分类失败不拖垮主流程
+            logger.warning(f"[chat_execution_engine] failure 分类失败: {e}")
+            return None, None

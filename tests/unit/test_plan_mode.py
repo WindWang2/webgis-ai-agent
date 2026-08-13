@@ -213,7 +213,7 @@ async def test_execute_halts_on_first_failure(registry):
     assert result["failed_step"] == "s2"
     assert result["executed"] == ["s1"]  # s1 跑完，s2 失败，s3（依赖 s2）没跑
     plan_data = await svc.load_plan(sid, plan_id)
-    assert plan_data["__status__"] == "failed"
+    assert plan_data["__status__"] == "partially_completed"  # s1 已成功（P2-1）
     assert plan_data["__failed_step__"] == "s2"
 
 
@@ -285,7 +285,7 @@ async def test_execute_failure_in_wave_keeps_completed_siblings(registry):
     assert "s3" in result["executed"]           # 同波兄弟，先于失败完成
     assert "s2" not in result["executed"]       # 失败步骤不计入
     plan_data = await svc.load_plan(sid, plan_id)
-    assert plan_data["__status__"] == "failed"
+    assert plan_data["__status__"] == "partially_completed"  # s1/s3 已成功（P2-1）
     assert plan_data["__failed_step__"] == "s2"
 
 
@@ -294,6 +294,111 @@ async def test_execute_unknown_plan_id_returns_error(registry):
     result = await svc.execute_plan_async("sess-x", "ref:plan-bogus", registry)
     assert result["success"] is False
     assert "找不到" in result["error"]
+
+
+# ─── design-v3：resume / typed refs / supersede ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_execute_resume_skips_completed_steps_and_reuses_refs(registry):
+    """design-v3 §4：失败后 resume——已完成步骤不重跑、其结果继续供 ${} 引用，
+    只有 pending/failed 步骤执行。"""
+    sid = "sess-plan-resume"
+    calls = {"s2": 0}
+
+    @registry.tool(name="fake_flaky_hotspot", description="第一次失败第二次成功")
+    def fake_flaky_hotspot(points: list) -> dict:
+        calls["s2"] += 1
+        if calls["s2"] == 1:
+            # 瞬时网络失败（transient_network）→ 可恢复重试，不触发 livelock guard
+            return {"success": False, "code": "TOOL_ERROR", "message": "网络超时 连接失败"}
+        return {"success": True, "data": {"hot_count": len(points), "from": points}}
+
+    plan = svc.PlanProposal(
+        title="resume",
+        steps=[
+            svc.PlanStep(id="s1", tool="fake_get_bbox", args={"area": "海淀"}),
+            svc.PlanStep(id="s2", tool="fake_flaky_hotspot",
+                         args={"points": "${s1.data.bbox}"}),
+            svc.PlanStep(id="s3", tool="fake_hotspot",
+                         args={"points": [1, 2, 3]}, depends_on=["s2"]),
+        ],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+
+    r1 = await svc.execute_plan_async(sid, plan_id, registry)
+    assert r1["success"] is False
+    assert r1["failed_step"] == "s2"
+    assert r1["failure_class"] == "transient_network"
+    assert r1["executed"] == ["s1"]
+    # 失败也持久化了已完成结果（resume 的数据基础）
+    data = await svc.load_plan(sid, plan_id)
+    assert "s1" in data["__step_results__"]
+    assert data["__status__"] == "partially_completed"  # s1 已成功（P2-1）
+
+    # resume：s1 跳过（复用结果）、s2 重试成功、s3 执行
+    r2 = await svc.execute_plan_async(sid, plan_id, registry)
+    assert r2["success"] is True
+    assert r2["executed"] == ["s1", "s2", "s3"]
+    assert r2["results"]["s3"]["data"]["hot_count"] == 3
+    assert calls["s2"] == 2  # 只重试了一次
+    data2 = await svc.load_plan(sid, plan_id)
+    assert data2["__status__"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_execute_bad_path_ref_fails_with_missing_ref(registry):
+    """design-v3 §deps：${s1.bad.path} 坏路径 → 立即失败 + failure_class=missing_ref
+    + 修正提示（命名坏路径与可用 keys），不再静默 None/""。"""
+    sid = "sess-plan-badpath"
+    plan = svc.PlanProposal(
+        title="badpath",
+        steps=[
+            svc.PlanStep(id="s1", tool="fake_get_bbox", args={"area": "北京"}),
+            svc.PlanStep(id="s2", tool="fake_query_points",
+                         args={"bbox": "${s1.bad.path}", "count": 3}),
+        ],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+
+    result = await svc.execute_plan_async(sid, plan_id, registry)
+    assert result["success"] is False
+    assert result["failed_step"] == "s2"
+    assert result["failure_class"] == "missing_ref"
+    assert "bad.path" in result["error"]      # 提示里带坏路径
+    assert "s1" in result["error"]            # 及可用 keys
+    assert result["recovery_action"] == "reuse_ref"
+    data = await svc.load_plan(sid, plan_id)
+    assert data["__status__"] == "partially_completed"  # s1 已成功（P2-1）
+    assert data["__failure_class__"] == "missing_ref"
+
+
+@pytest.mark.asyncio
+async def test_propose_supersedes_old_pending_plan(registry):
+    """design-v3 §4：新 propose 把旧 pending 计划标记 superseded；superseded
+    计划不重放（返回已存状态）。"""
+    sid = "sess-plan-super"
+    p1 = await registry.dispatch("propose_plan", {
+        "title": "旧计划",
+        "steps": [{"id": "s1", "tool": "fake_get_bbox", "args": {"area": "A"}}],
+    }, session_id=sid)
+    assert p1["success"] is True
+
+    p2 = await registry.dispatch("propose_plan", {
+        "title": "新计划",
+        "steps": [{"id": "s1", "tool": "fake_get_bbox", "args": {"area": "B"}}],
+    }, session_id=sid)
+    assert p2["success"] is True
+
+    old_data = await svc.load_plan(sid, p1["plan_id"])
+    assert old_data["__status__"] == "superseded"
+    status = await registry.dispatch("get_plan_status", {"plan_id": p1["plan_id"]}, session_id=sid)
+    assert status["status"] == "superseded"
+    # superseded 计划**从未执行过**（无已存结果）→ 明确失败，不假装成功（P2-3）
+    r = await svc.execute_plan_async(sid, p1["plan_id"], registry)
+    assert r["success"] is False
+    assert r["status"] == "superseded"
+    assert "取代" in r["error"]
 
 
 # ─── 工具入口集成 ─────────────────────────────────────────────
@@ -363,3 +468,112 @@ async def test_propose_plan_requires_session(registry):
     result = await registry.dispatch("propose_plan", args, session_id=None)
     assert result["success"] is False
     assert "session_id" in result["message"]
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# P2-1 / P2-3 补充：superseded 但有已存结果 → 返回结果（不重放）；失败无结果 → failed
+# ─────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_superseded_plan_with_stored_results_still_returns_them(registry):
+    """superseded 且已执行过部分步骤（有 __step_results__）→ success=True 返回
+    已存结果，不重放；与"从没跑过"的空 superseded（P2-3）区分。"""
+    sid = "sess-plan-super-results"
+    plan = svc.PlanProposal(
+        title="ran-then-superseded",
+        steps=[svc.PlanStep(id="s1", tool="fake_get_bbox", args={"area": "x"})],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+    await svc.execute_plan_async(sid, plan_id, registry)  # 先跑完 → completed
+    await svc.update_plan_status(sid, plan_id, __status__="superseded")  # 再被取代
+    r = await svc.execute_plan_async(sid, plan_id, registry)
+    assert r["success"] is True
+    assert r["status"] == "superseded"
+    assert r["executed"] == ["s1"]  # 结果复用，不重放
+    assert "s1" in r["results"]
+
+
+@pytest.mark.asyncio
+async def test_failure_with_no_results_writes_failed(registry):
+    """第一个步骤就失败（无任何已存结果）→ 状态写 failed（不是 partially_completed）。"""
+    sid = "sess-plan-fail-first"
+    plan = svc.PlanProposal(
+        title="fail-first",
+        steps=[svc.PlanStep(id="s1", tool="fake_always_fail", args={})],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+    r = await svc.execute_plan_async(sid, plan_id, registry)
+    assert r["success"] is False
+    data = await svc.load_plan(sid, plan_id)
+    assert data["__status__"] == "failed"
+    assert data["__failure_class__"] == "internal"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# P3 延后项 #1：__step_results__ slim 持久化（完整结果存 ref:planresult-*，
+# payload 有界；resume 水合回完整结果，${stepId.path} 解析不受影响）
+# ─────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_step_results_slim_persisted_and_resume_resolves(registry):
+    """大结果不嵌入 plan payload；resume 按 ref 水合后 ${s1.data.bbox} 正确解析。"""
+    import json as _json
+
+    sid = "sess-plan-slim"
+    big_blob = "x" * 200_000  # 大对象（≈200KB，模拟大 GeoJSON）
+    s1_calls = {"n": 0}
+    s2_calls = {"n": 0}
+
+    @registry.tool(name="fake_big_bbox", description="返回带大 blob 的 bbox")
+    def fake_big_bbox(area: str) -> dict:
+        s1_calls["n"] += 1
+        return {
+            "success": True,
+            "data": {"area": area, "bbox": [116, 39, 117, 40], "blob": big_blob},
+        }
+
+    @registry.tool(name="fake_ref_consumer", description="消费 bbox 引用")
+    def fake_ref_consumer(bbox: list) -> dict:
+        s2_calls["n"] += 1
+        if s2_calls["n"] == 1:
+            # 瞬时网络失败（transient_network）→ 可恢复重试，不触发 livelock guard
+            return {"success": False, "code": "TOOL_ERROR", "message": "网络超时 连接失败"}
+        return {"success": True, "data": {"bbox": bbox}}
+
+    plan = svc.PlanProposal(
+        title="slim",
+        steps=[
+            svc.PlanStep(id="s1", tool="fake_big_bbox", args={"area": "海淀"}),
+            svc.PlanStep(id="s2", tool="fake_ref_consumer",
+                         args={"bbox": "${s1.data.bbox}"}),
+        ],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+
+    r1 = await svc.execute_plan_async(sid, plan_id, registry)
+    assert r1["success"] is False
+    assert r1["failed_step"] == "s2"
+
+    data = await svc.load_plan(sid, plan_id)
+    assert data["__status__"] == "partially_completed"
+    # slim 形状：完整结果不在 plan payload 里（大 blob 绝不嵌入）
+    s1_entry = data["__step_results__"]["s1"]
+    assert s1_entry.get("__slim__") is True
+    assert s1_entry["ref"].startswith("ref:planresult-")
+    assert "keys" in s1_entry
+    assert big_blob not in _json.dumps(data)
+
+    # resume：s1 跳过（水合回完整结果），s2 用 ${s1.data.bbox} 重试成功
+    r2 = await svc.execute_plan_async(sid, plan_id, registry)
+    assert r2["success"] is True, f"resume failed: {r2}"
+    assert r2["executed"] == ["s1", "s2"]
+    assert s1_calls["n"] == 1  # s1 绝不被重新 dispatch
+    assert r2["results"]["s2"]["data"]["bbox"] == [116, 39, 117, 40]
+    data2 = await svc.load_plan(sid, plan_id)
+    assert data2["__status__"] == "completed"
+    # 完成态 payload 同样有界
+    assert data2["__step_results__"]["s1"].get("__slim__") is True
+    assert data2["__step_results__"]["s2"].get("__slim__") is True
+    assert big_blob not in _json.dumps(data2)

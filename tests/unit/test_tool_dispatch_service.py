@@ -184,6 +184,29 @@ async def test_suspicious_result_appends_hint(service, fake_registry, clean_sess
     assert "未返回任何空间要素" in result.llm_payload
 
 
+@pytest.mark.asyncio
+async def test_failed_dispatch_does_not_occupy_dedup_slot(service, fake_registry, clean_session):
+    """R-dedup（design-v3 §2）：失败调用不占用 dedup 槽位——同参重试放行，
+    且绝不会收到「已成功执行」的重复提示；成功后的同参重复仍被拦截。"""
+    executed: set = set()
+    tc = _tc("query_osm", {"area": "北京"})
+    fake_registry.dispatch.side_effect = [
+        {"success": False, "code": "VALIDATION_ERROR", "message": "参数校验失败"},
+        {"summary": "ok"},
+    ]
+    r1 = await service.dispatch(tc, clean_session, executed)
+    assert r1.status == "error"
+    # 失败后同参重试 → 正常 dispatch（不是 repeated，不谎报成功）
+    r2 = await service.dispatch(tc, clean_session, executed)
+    assert r2.status == "ok"
+    assert fake_registry.dispatch.call_count == 2
+    # 成功后同参再调 → repeated（成功重复语义不变）
+    r3 = await service.dispatch(tc, clean_session, executed)
+    assert r3.status == "repeated"
+    assert "[重复调用拦截]" in r3.llm_payload
+    assert fake_registry.dispatch.call_count == 2
+
+
 def test_tool_name_normalization_table():
     """断言 legacy 工具名被正确映射为 webgis_* canonical 名称。"""
     assert normalize_tool_name("add_layer") == "webgis_layer_upsert"
@@ -207,3 +230,45 @@ async def test_dispatch_normalizes_legacy_tool_names(service, fake_registry, cle
     called_tool_name = fake_registry.dispatch.call_args[0][0]
     assert called_tool_name == "webgis_layer_upsert"
 
+
+
+# ─── P2-9（adversarial P2-9 / recovery P2）：并发在飞去重不谎报成功 ──
+
+
+@pytest.mark.asyncio
+async def test_concurrent_inflight_duplicate_does_not_claim_success(service, fake_registry, clean_session):
+    """同一波次并发同参调用：原调用仍在执行中时，重复调用被拦截但**绝不声称
+    "已成功执行"**——消息软化说明原调用已发起，让 LLM 以原调用结果为准。
+    原调用完成后，post-success dedup 文案保持不变。"""
+    import asyncio
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_dispatch(name, args, session_id=None):
+        entered.set()
+        await asyncio.wait_for(release.wait(), timeout=5.0)
+        return {"summary": "ok"}
+
+    fake_registry.dispatch.side_effect = slow_dispatch
+    executed: set = set()
+    tc = _tc("geocode_cn", {"q": "北京"})
+
+    first = asyncio.create_task(service.dispatch(tc, clean_session, executed))
+    await asyncio.wait_for(entered.wait(), timeout=5.0)  # 原调用在飞
+
+    dup = await service.dispatch(tc, clean_session, executed)  # 并发第二发
+    assert dup.status == "repeated"
+    assert "[重复调用拦截]" in dup.llm_payload
+    # 关键：不得谎报成功（旧文案含"已成功执行"）
+    assert "已成功执行" not in dup.llm_payload
+    assert "仍在执行中" in dup.llm_payload
+
+    release.set()
+    r1 = await asyncio.wait_for(first, timeout=5.0)
+    assert r1.status == "ok"
+
+    # 原调用完成后，同参再调 → post-success 文案（保持原文案，含"成功执行"）
+    r2 = await service.dispatch(tc, clean_session, executed)
+    assert r2.status == "repeated"
+    assert "以相同参数成功执行" in r2.llm_payload

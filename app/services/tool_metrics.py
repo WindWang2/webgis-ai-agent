@@ -205,6 +205,12 @@ def record_tool_call(
     actual_execution_mode: Optional[str] = None,
     compute_ms: Optional[int] = None,
     queue_wait_ms: Optional[int] = None,
+    # design-v3 §6 observability（additive，无计划时为 None）：
+    plan_id: Optional[str] = None,
+    plan_revision: Optional[int] = None,
+    step_id: Optional[str] = None,
+    failure_class: Optional[str] = None,
+    recovery_action: Optional[str] = None,
 ) -> None:
     """落一行 JSONL（入队，异步落盘）+ 更新聚合器。失败不抛。
 
@@ -212,6 +218,10 @@ def record_tool_call(
     the harness evidence trail, this metrics log, and MapSpec/runtime evidence,
     so a single map's full chain (tool → ref → mapspec revision → checkpoint →
     compile → runtime) is reconstructable from logs (OBSERVABILITY-V2).
+
+    plan_id / plan_revision / step_id / failure_class / recovery_action
+    (design-v3 §6) are additive — registry.dispatch fills them from the
+    process-local plan cache when a plan is active and on classified failures.
     """
     row = {
         "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
@@ -229,6 +239,11 @@ def record_tool_call(
         "actual_execution_mode": actual_execution_mode,
         "compute_ms": compute_ms,
         "queue_wait_ms": queue_wait_ms,
+        "plan_id": plan_id,
+        "plan_revision": plan_revision,
+        "step_id": step_id,
+        "failure_class": failure_class,
+        "recovery_action": recovery_action,
     }
     line = json.dumps(row, separators=(",", ":")) + "\n"
     try:

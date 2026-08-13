@@ -198,7 +198,12 @@ class SubagentDispatcher:
         from app.services.chat_engine import ChatEngine
 
         class _FrozenCatalog:
-            """只返回 tool_subset 的 catalog stub，禁用粘性 / 关键词匹配。"""
+            """只返回 tool_subset 的 catalog stub，禁用粘性 / 关键词匹配。
+
+            P2-7（Pi#1/#2）：引擎在 _maybe_plan / _log_tool_decision 里会调
+            ``reset_sticky`` / ``active_domains`` —— stub 必须提供 no-op 实现，
+            否则子代理轮次直接 AttributeError 崩溃。
+            """
 
             def __init__(self, schemas: list[dict]):
                 self._schemas = schemas
@@ -209,6 +214,16 @@ class SubagentDispatcher:
             def reset_session(self, session_id: str) -> None:
                 return
 
-        engine = ChatEngine(self.registry, tool_catalog=_FrozenCatalog(tool_subset))
+            def reset_sticky(self, session_id: str) -> None:
+                return
+
+            def active_domains(self, session_id: Optional[str]) -> set:
+                return set()
+
+        engine = ChatEngine(
+            self.registry,
+            tool_catalog=_FrozenCatalog(tool_subset),
+            is_subagent_engine=True,
+        )
         engine.max_rounds = max_rounds
         return engine
