@@ -58,6 +58,50 @@ def test_slim_event_result_strips_large_geometries():
     assert "_streaming_note" in event_res
 
 
+def test_cartographic_failure_survives_slimming_without_mapspec_data():
+    res = {
+        "summary": "Layer upserted",
+        "mapspec_fingerprint": "carto-sha256:abc",
+        "mapspec": {
+            "version": "1.0",
+            "sources": {
+                "s": {
+                    "type": "geojson",
+                    "inlineData": {
+                        "type": "FeatureCollection",
+                        "features": [{"secret": "must-not-stream"}] * 100,
+                    },
+                }
+            },
+            "layers": [{"id": "result", "source": "s", "type": "circle"}],
+        },
+        "cartographic_review": {
+            "stage": "desired_state",
+            "status": "failed_unrepairable",
+            "termination_reason": "no_auto_safe_repair",
+            "repair_count": 0,
+            "review": {
+                "checks": [{
+                    "rule": "THEMATIC_LEGEND",
+                    "status": "fail",
+                    "message": "legend missing",
+                    "repairability": "not_repairable",
+                    "evidence": {"legend_present": False},
+                }],
+            },
+        },
+    }
+
+    llm = json.loads(slim_tool_result(res, json.dumps(res), None))
+    event = slim_event_result(res)
+
+    assert llm["cartographic_review"]["status"] == "failed_unrepairable"
+    assert llm["cartographic_review"]["checks"][0]["rule"] == "THEMATIC_LEGEND"
+    assert "mapspec" not in llm
+    assert "inlineData" not in event["mapspec"]
+    assert "must-not-stream" not in json.dumps(event)
+
+
 def test_truncate_helpers():
     long_str = "a" * (VALUE_MAX_CHARS + 50)
     truncated = _truncate_value(long_str)

@@ -21,7 +21,10 @@ from app.services.session_data import session_data_manager
 from app.services.mapspec.store import mapspec_store_instance, _should_remove_layer
 from app.services.mapspec.pipeline import process_layer_ingestion
 from app.services.mapspec.coordinator import validate as validate_mapspec
-from app.lib.cartography.semantic_checks import evaluate_cartography_semantics
+from app.lib.cartography.quality_loop import (
+    cartographic_fingerprint,
+    review_and_repair_cartography,
+)
 from app.services.mapspec.checkpoint import snapshot as create_checkpoint, rollback as rollback_checkpoint
 from app.services.distributed_lock import session_lock_registry
 
@@ -55,6 +58,14 @@ class MapSpecResult:
     # evidence the Harness surfaces so "structurally valid but legend/paint
     # drift" is detectable. Checks needing a source profile are NOT_EVALUATED.
     cartography_findings: List[Dict[str, Any]] = field(default_factory=list)
+    # Desired-state cartographic review is intentionally separate from
+    # ``is_compiled``. A structurally valid mutation may still have a failed or
+    # not-evaluated quality review, and neither implies frontend convergence.
+    cartographic_review: Optional[Dict[str, Any]] = None
+    mapspec_fingerprint: Optional[str] = None
+    # Latest frontend observation already present when this mutation began.
+    # A runtime snapshot must carry a strictly newer sequence to certify it.
+    runtime_observation_seq: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         if self.is_error:
@@ -69,6 +80,9 @@ class MapSpecResult:
             "is_compiled": self.is_compiled,
             "checkpoint_id": self.checkpoint_id,
             "cartography_findings": self.cartography_findings,
+            "cartographic_review": self.cartographic_review,
+            "mapspec_fingerprint": self.mapspec_fingerprint,
+            "runtime_observation_seq": self.runtime_observation_seq,
         }
 
 
@@ -161,6 +175,44 @@ class MapSpecLifecycleEngine:
             if e.get("code") in BLOCKING_VALIDATION_CODES
         }
 
+    @staticmethod
+    def _review_failure(mapspec: Dict[str, Any], exc: Exception) -> Dict[str, Any]:
+        """Represent an evaluator failure as missing evidence, never as PASS."""
+        fingerprint = cartographic_fingerprint(mapspec)
+        check = {
+            "rule": "CARTOGRAPHIC_REVIEW_EXECUTION",
+            "status": "not_evaluated",
+            "severity": "error",
+            "message": "Cartographic review could not be evaluated.",
+            "evidence_class": "deterministic",
+            "evidence": {"error_type": type(exc).__name__},
+            "repairability": "not_repairable",
+            "suggested_fix": None,
+        }
+        return {
+            "stage": "desired_state",
+            "status": "not_evaluated",
+            "review": {
+                "status": "not_evaluated",
+                "passed": False,
+                "evaluated_count": 0,
+                "findings": [],
+                "checks": [check],
+            },
+            "initial_fingerprint": fingerprint,
+            "final_fingerprint": fingerprint,
+            "attempts": [],
+            "repair_count": 0,
+            "termination_reason": "review_error",
+            "counters": {
+                "review_invocations": 1,
+                "rule_invocations": 1,
+                "metadata_sources": len(mapspec.get("sources") or {}),
+                "full_data_loads": 0,
+                "repair_attempts": 0,
+            },
+        }
+
     async def apply_mutation(
         self,
         session_id: str,
@@ -180,6 +232,14 @@ class MapSpecLifecycleEngine:
             # backend, shallow copy is enough since we mutate only top-level keys.
             pre_state = await session_data_manager.get_map_state(session_id)
             old_layers_snapshot = copy.deepcopy(pre_state.get("layers", []) or [])
+            observation = pre_state.get("_cartographic_observation")
+            try:
+                runtime_observation_seq = int(
+                    observation.get("sequence", 0)
+                    if isinstance(observation, dict) else 0
+                )
+            except (TypeError, ValueError):
+                runtime_observation_seq = 0
             try:
                 loaded = await self.store.get_mapspec(session_id)
                 prior_mapspec = loaded
@@ -378,7 +438,40 @@ class MapSpecLifecycleEngine:
                         time_cfg["speed"] = intent.speed
                     mapspec["time"] = time_cfg
 
-                # 3. Pre-compile 校验。Rollback 不走拒绝逻辑（恢复的是历史合法 spec）。
+                # 3. Review the immutable desired state and apply only bounded,
+                # presentation-only AUTO_SAFE repairs. This is deliberately
+                # before structural validation/commit so the persisted MapSpec
+                # and runtime layer projection share one fingerprint. Rollback
+                # restores an exact historical snapshot and is review-only.
+                try:
+                    cartographic_loop = review_and_repair_cartography(
+                        mapspec,
+                        max_iterations=0 if is_rollback else 2,
+                    )
+                    mapspec = cartographic_loop.mapspec
+                    cartographic_review = cartographic_loop.to_dict()
+                except Exception as review_exc:  # noqa: BLE001
+                    logger.warning(
+                        "Cartographic desired-state review unavailable for session %s: %s",
+                        session_id,
+                        type(review_exc).__name__,
+                    )
+                    cartographic_review = self._review_failure(mapspec, review_exc)
+
+                # An upsert's deferred runtime write must use the reviewed and
+                # possibly repaired layer, not the pre-review object.
+                if pending_layer_op is not None and pending_layer_op[0] == "upsert":
+                    layer_id = pending_layer_op[1]
+                    repaired_layer = next(
+                        (
+                            layer for layer in mapspec.get("layers", [])
+                            if isinstance(layer, dict) and layer.get("id") == layer_id
+                        ),
+                        pending_layer_op[2],
+                    )
+                    pending_layer_op = ("upsert", layer_id, repaired_layer)
+
+                # 4. Pre-compile 校验。Rollback 不走拒绝逻辑（恢复的是历史合法 spec）。
                 validation = validate_mapspec(mapspec)
                 warnings = [e["message"] for e in validation.get("errors", [])] + validation.get("warnings", [])
 
@@ -403,7 +496,7 @@ class MapSpecLifecycleEngine:
                             ),
                         )
 
-                # 4. 提交（checkpoint → save_mapspec → redis layers），任一失败回滚。
+                # 5. 提交（checkpoint → save_mapspec → redis layers），任一失败回滚。
                 if auto_checkpoint and not checkpoint_id_created:
                     session_dir = self.store.get_session_dir(session_id)
                     ckpt_res = await create_checkpoint(mapspec, session_dir, session_data_manager)
@@ -426,17 +519,9 @@ class MapSpecLifecycleEngine:
                         session_id, "layers", list(mapspec.get("layers", []))
                     )
 
-                # ADR-0052: attach thematic-consistency evidence (no source
-                # profile available here → profile-dependent checks report
-                # NOT_EVALUATED; profile-free checks like LEGEND_STYLE_EQUIVALENCE
-                # still fire on layers carrying a legend_spec). Wrapped in its own
-                # try/except so a cartography-check failure on an edge-case spec
-                # can NEVER roll back an already-committed valid mutation — these
-                # are evidence for the Harness, not a commit gate.
-                try:
-                    cartography_findings = evaluate_cartography_semantics(mapspec).to_dict().get("findings", [])
-                except Exception:  # noqa: BLE001 — evidence must never block commit
-                    cartography_findings = []
+                cartography_findings = (
+                    cartographic_review.get("review", {}).get("findings", [])
+                )
                 return MapSpecResult(
                     mapspec=mapspec,
                     warnings=warnings,
@@ -445,6 +530,9 @@ class MapSpecLifecycleEngine:
                     ref_count=ckpt_ref_count,
                     is_error=False,
                     cartography_findings=cartography_findings,
+                    cartographic_review=cartographic_review,
+                    mapspec_fingerprint=cartographic_review.get("final_fingerprint"),
+                    runtime_observation_seq=runtime_observation_seq,
                 )
 
             except Exception as e:

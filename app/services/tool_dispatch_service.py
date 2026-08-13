@@ -385,11 +385,13 @@ class ToolDispatchService:
                 if isinstance(cmd, dict):
                     entry = self._mint_one_map_action(cmd)
                     if entry is not None:
+                        entry["mapspec_fingerprint"] = result.get("mapspec_fingerprint")
                         minted.append(entry)
             return minted
         if result.get("command"):
             entry = self._mint_one_map_action(result)
             if entry is not None:
+                entry["mapspec_fingerprint"] = result.get("mapspec_fingerprint")
                 minted.append(entry)
         return minted
 

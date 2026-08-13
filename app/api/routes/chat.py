@@ -1,6 +1,7 @@
 """Chat API Route - SSE 流式对话"""
+import json
 import logging
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -14,6 +15,8 @@ from app.models.db_model import Conversation
 from app.services.chat.event_resume import TurnEventBuffer, TurnResumeRegistry
 from app.services.chat_engine import ChatEngine
 from app.services.history_service_async import AsyncHistoryService
+from app.services.distributed_lock import session_lock_registry
+from app.services.session_data import session_data_manager
 from app.tools._utils import async_db_session
 from app.tools.registry import ToolRegistry
 
@@ -82,6 +85,127 @@ def get_engine() -> ChatEngine:
     if engine is None:
         raise HTTPException(status_code=503, detail="Service starting up, please retry")
     return engine
+
+
+_FRONTEND_OBSERVATION_MAX_LAYERS = 128
+_FRONTEND_OBSERVATION_MAX_FRAGMENT_BYTES = 16_384
+_FRONTEND_OBSERVATION_MAX_TOTAL_BYTES = 262_144
+_FRONTEND_OBSERVATION_MAX_NODES = 32_768
+_FRONTEND_OBSERVATION_MAX_DEPTH = 8
+_FRONTEND_OBSERVATION_MAX_DICT_KEYS = 64
+_FRONTEND_LAYER_KEYS = (
+    "id", "name", "type", "visible", "opacity", "group", "_refId",
+    "_tileUrl", "featureCount", "style", "legend_spec",
+)
+_OBSERVATION_DATA_KEYS = frozenset({
+    "data", "features", "geojson", "inlineData", "source", "source_data",
+})
+
+
+def _bounded_observation_fragment(
+    value: Any,
+    *,
+    _depth: int = 0,
+    _budget: Optional[list[int]] = None,
+) -> Any:
+    """Copy a small metadata fragment while stripping dataset payload keys."""
+    budget = _budget if _budget is not None else [_FRONTEND_OBSERVATION_MAX_NODES]
+    if _depth > _FRONTEND_OBSERVATION_MAX_DEPTH or budget[0] <= 0:
+        return None
+    budget[0] -= 1
+    if isinstance(value, dict):
+        projected = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= _FRONTEND_OBSERVATION_MAX_DICT_KEYS or budget[0] <= 0:
+                break
+            if key not in _OBSERVATION_DATA_KEYS:
+                projected[str(key)] = _bounded_observation_fragment(
+                    item, _depth=_depth + 1, _budget=budget
+                )
+    elif isinstance(value, (list, tuple)):
+        projected = [
+            _bounded_observation_fragment(
+                item, _depth=_depth + 1, _budget=budget
+            )
+            for item in value[:128]
+            if budget[0] > 0
+        ]
+    elif isinstance(value, (str, int, float, bool)) or value is None:
+        projected = value
+    else:
+        return None
+    try:
+        encoded = json.dumps(projected, ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError):
+        return None
+    if len(encoded.encode("utf-8")) > _FRONTEND_OBSERVATION_MAX_FRAGMENT_BYTES:
+        return None
+    return projected
+
+
+async def _record_frontend_cartographic_observation(
+    session_id: Optional[str], map_state: Optional[dict]
+) -> None:
+    """Persist one bounded frontend snapshot for event-driven convergence.
+
+    This runs once at turn start, never for token events or map pans. The
+    monotonic sequence lets a mutation distinguish an old snapshot from a
+    post-mutation observation without polling the browser.
+    """
+    if not session_id or not isinstance(map_state, dict):
+        return
+    layers = []
+    node_budget = [_FRONTEND_OBSERVATION_MAX_NODES]
+    total_bytes = 0
+    for raw in (map_state.get("layers") or [])[:_FRONTEND_OBSERVATION_MAX_LAYERS]:
+        if not isinstance(raw, dict) or not raw.get("id") or node_budget[0] <= 0:
+            continue
+        layer = {
+            key: _bounded_observation_fragment(raw[key], _budget=node_budget)
+            for key in _FRONTEND_LAYER_KEYS
+            if key in raw
+        }
+        try:
+            layer_bytes = len(
+                json.dumps(layer, ensure_ascii=False, allow_nan=False).encode("utf-8")
+            )
+        except (TypeError, ValueError):
+            continue
+        if layer_bytes > _FRONTEND_OBSERVATION_MAX_FRAGMENT_BYTES:
+            continue
+        if total_bytes + layer_bytes > _FRONTEND_OBSERVATION_MAX_TOTAL_BYTES:
+            break
+        total_bytes += layer_bytes
+        layers.append(layer)
+    viewport = _bounded_observation_fragment(
+        map_state.get("viewport") or {}, _budget=node_budget
+    )
+    base_layer = _bounded_observation_fragment(
+        map_state.get("base_layer"), _budget=node_budget
+    )
+
+    async with session_lock_registry.lock(session_id):
+        current = await session_data_manager.get_map_state(session_id)
+        previous = current.get("_cartographic_observation")
+        try:
+            sequence = int(previous.get("sequence", 0)) + 1 if isinstance(previous, dict) else 1
+        except (TypeError, ValueError):
+            sequence = 1
+        await session_data_manager.set_map_state(session_id, "layers", layers)
+        if isinstance(viewport, dict):
+            await session_data_manager.set_map_state(session_id, "viewport", viewport)
+        if base_layer is not None:
+            await session_data_manager.set_map_state(session_id, "base_layer", base_layer)
+        await session_data_manager.set_map_state(
+            session_id,
+            "_cartographic_observation",
+            {
+                "session_id": session_id,
+                "sequence": sequence,
+                "source": "frontend",
+                "layer_count": len(layers),
+            },
+        )
 
 
 def get_registry() -> ToolRegistry:
@@ -419,6 +543,7 @@ async def chat_completions(
     with rt_ctx.bind_runtime_context(request_id=request_id, session_id=req.session_id):
         if _use_pi_bridge():
             try:
+                await _record_frontend_cartographic_observation(req.session_id, req.map_state)
                 result = await pi_bridge.prompt(req.message, session_id=req.session_id)
                 return ChatResponse(session_id=result.get("sessionId", req.session_id or ""), content=result.get("content", ""))
             except PiRpcError as e:
@@ -427,6 +552,7 @@ async def chat_completions(
             except Exception as e:
                 logger.error(f"Pi bridge unexpected error: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail="Internal server error")
+
 
         # Legacy path: 使用 ChatEngine
         try:
@@ -513,6 +639,7 @@ async def chat_stream(
         )
 
     if _use_pi_bridge():
+        await _record_frontend_cartographic_observation(req.session_id, req.map_state)
         async def pi_event_generator():
             buffer = TurnEventBuffer(session_key, req.message)
             _turn_resume_registry.register(session_key, buffer)

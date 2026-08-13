@@ -122,7 +122,7 @@ function ToolCallRow({ call, expanded }: { call: ToolCallEntry; expanded: boolea
       : null;
   const parsedArgs = parseArgs(call.arguments);
 
-  const CARTO_TOOLS = new Set(['create_thematic_map', 'h3_binning', 'kde_contours', 'heatmap_data']);
+  const CARTO_TOOLS = new Set(['create_thematic_map', 'h3_binning', 'kde_contours', 'heatmap_data', 'webgis_layer_upsert']);
   const LISA_TOOLS = new Set(['h3_lisa', 'webgis_h3_lisa']);
   const ISOCHRONE_TOOLS = new Set(['isochrones', 'webgis_isochrones', 'service_area']);
 

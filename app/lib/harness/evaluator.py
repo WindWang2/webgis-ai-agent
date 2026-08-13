@@ -8,7 +8,7 @@ V2 gate policy（HARNESS-V2）：缺失证据不等于成功。
   维度给出 score / target / passed / evaluated（区分"未评估"与"失败"）。
 """
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,7 @@ class HarnessEvaluator:
         *,
         require_evaluated: bool = True,
         require_interaction: bool = False,
+        require_cartography: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Evaluate a structured ``evaluate_with_evidence`` result.
 
@@ -105,6 +106,7 @@ class HarnessEvaluator:
         evidence = evidence_result.get("evidence", [])
 
         had_mutation = any(e.get("mapspec_validity") for e in evidence)
+        cartography_required = had_mutation if require_cartography is None else require_cartography
         had_ref = any(len(e.get("refs", [])) > 0 for e in evidence)
         interaction = evidence_result.get("interaction") or {}
         try:
@@ -162,6 +164,33 @@ class HarnessEvaluator:
                 "evaluated": evaluated,
                 "reason": reason,
             }
+
+        # Cartographic success is a categorical evidence gate, not another
+        # percentage inferred from tool success. MapSpec mutation runs require
+        # it by default; callers can explicitly exempt non-cartographic runs.
+        cartography = evidence_result.get("cartography") or {}
+        cartography_status = str(cartography.get("status") or "not_evaluated")
+        cartography_evaluated = bool(cartography.get("evaluated"))
+        cartography_passed = bool(cartography.get("passed"))
+        if cartography_passed:
+            cartography_reason = "evaluated"
+        elif not cartography_required and not cartography_evaluated:
+            cartography_passed = True
+            cartography_reason = "not_applicable_exempt"
+        elif not cartography_evaluated:
+            cartography_reason = "not_evaluated_policy_fail"
+        else:
+            cartography_reason = "evaluated_failure"
+        if not cartography_passed:
+            all_passed = False
+        checks["CartographicQuality"] = {
+            "score": 100.0 if cartography_passed and cartography_evaluated else 0.0,
+            "target": 100.0,
+            "passed": cartography_passed,
+            "evaluated": cartography_evaluated,
+            "reason": cartography_reason,
+            "status": cartography_status,
+        }
 
         return {
             "overall_passed": all_passed,

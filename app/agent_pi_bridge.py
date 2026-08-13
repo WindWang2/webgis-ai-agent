@@ -356,6 +356,7 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
                         action_id=ma["action_id"],
                         command=ma["command"],
                         requested=ma["requested"],
+                        mapspec_fingerprint=ma.get("mapspec_fingerprint"),
                     )
             is_error = result.status == "error"
             # HARNESS-V2: forward real MapSpec mutation evidence (is_compiled /
@@ -366,7 +367,18 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
             raw = result.raw_result if isinstance(result.raw_result, dict) else {}
             # ADR-0052: also forward cartography_findings so the Harness surfaces
             # thematic drift (paint↔legend equivalence) in semantic_errors.
-            for k in ("success", "is_compiled", "warnings", "checkpoint_id", "message", "correction_hint", "cartography_findings"):
+            for k in (
+                "success",
+                "is_compiled",
+                "warnings",
+                "checkpoint_id",
+                "message",
+                "correction_hint",
+                "cartography_findings",
+                "cartographic_review",
+                "mapspec_fingerprint",
+                "runtime_observation_seq",
+            ):
                 if k in raw:
                     ev[k] = raw[k]
             event = ToolCallEvent(
@@ -432,12 +444,26 @@ if os.getenv("PI_HARNESS_ENABLED", "").lower() in ("true", "1", "yes"):
     try:
         from app.services.session_data import session_data_manager as _sdm
         from app.services.mapspec.coordinator import validate as _validate_mapspec
+        from app.services.mapspec.store import mapspec_store_instance as _mapspec_store
         from app.lib.harness.ref_resolver import make_session_store_resolver
+
+        async def _read_cartographic_state(session_id: str) -> dict[str, Any]:
+            """Read only the requested session; the harness verifies this tag."""
+            mapspec, map_state = await asyncio.gather(
+                _mapspec_store.get_mapspec(session_id),
+                _sdm.get_map_state(session_id),
+            )
+            return {
+                "session_id": session_id,
+                "mapspec": mapspec,
+                "map_state": map_state,
+            }
 
         _harness = PiAgentHarness(
             session_id="production",
             ref_resolver=make_session_store_resolver(_sdm),
             mapspec_validator=_validate_mapspec,
+            cartography_state_reader=_read_cartographic_state,
         )
         logger.info("[PiBridge] Evaluation harness V2 enabled (real SessionStore ref resolver)")
     except Exception as _harness_err:  # noqa: BLE001 - never block startup on telemetry

@@ -50,6 +50,11 @@ def _with_evidence(res, base: Dict[str, Any]) -> Dict[str, Any]:
     # thematic correctness; these findings are what make drift detectable.
     if getattr(res, "cartography_findings", None):
         base["cartography_findings"] = res.cartography_findings
+    if getattr(res, "cartographic_review", None) is not None:
+        base["cartographic_review"] = res.cartographic_review
+    if getattr(res, "mapspec_fingerprint", None) is not None:
+        base["mapspec_fingerprint"] = res.mapspec_fingerprint
+    base["runtime_observation_seq"] = getattr(res, "runtime_observation_seq", 0)
     if res.is_error:
         base["message"] = res.error_msg
         if res.correction_hint:
@@ -179,7 +184,12 @@ class MapSpecStore:
         if not mapspec:
             return {"success": False, "message": "MapSpec not found", "errors": ["MapSpec not initialized"]}
         from app.services.mapspec.coordinator import validate
-        return validate(mapspec)
+        from app.lib.cartography.quality_loop import review_cartography
+        result = validate(mapspec)
+        cartographic_review = review_cartography(mapspec).to_dict()
+        result["mapspec_fingerprint"] = cartographic_review["final_fingerprint"]
+        result["cartographic_review"] = cartographic_review
+        return result
 
     async def layout_set(
         self,

@@ -29,9 +29,46 @@ _PRESERVED_META_KEYS = (
     "command",
     "status",
     "ref_id",
+    "result_ref",
     "resolved_layer_id",
     "message",
+    "mapspec_fingerprint",
+    "runtime_observation_seq",
 )
+
+
+def _slim_cartographic_review(value: Any) -> Optional[dict]:
+    """Keep actionable review evidence bounded for the agent/frontend."""
+    if not isinstance(value, dict):
+        return None
+    review = value.get("review") if isinstance(value.get("review"), dict) else {}
+    checks = []
+    for check in (review.get("checks") or []):
+        if not isinstance(check, dict) or check.get("status") == "pass":
+            continue
+        projected = {
+            key: check.get(key)
+            for key in (
+                "rule", "status", "severity", "message", "layer_id",
+                "source_id", "evidence_class", "evidence", "repairability",
+                "suggested_fix",
+            )
+            if check.get(key) is not None
+        }
+        try:
+            if len(json.dumps(projected, ensure_ascii=False).encode("utf-8")) <= 4096:
+                checks.append(projected)
+        except (TypeError, ValueError):
+            continue
+        if len(checks) >= 12:
+            break
+    return {
+        "stage": value.get("stage"),
+        "status": value.get("status"),
+        "termination_reason": value.get("termination_reason"),
+        "repair_count": value.get("repair_count", 0),
+        "checks": checks,
+    }
 
 
 def _truncate_value(v: Any, limit: int = VALUE_MAX_CHARS) -> Any:
@@ -88,6 +125,9 @@ def slim_tool_result(result: Any, result_str: str, session_geojson_ref: Optional
             slim["error_type"] = result["error_type"]
         if "correction_hint" in result and result["correction_hint"]:
             slim["correction_hint"] = result["correction_hint"]
+        review = _slim_cartographic_review(result.get("cartographic_review"))
+        if review is not None:
+            slim["cartographic_review"] = review
         return json.dumps(slim, ensure_ascii=False)
 
     if len(result_str) <= MSG_MAX_CHARS:
@@ -153,6 +193,15 @@ def slim_event_result(result: Any) -> Any:
 
     exclude = {"geojson", "features", "data_list", "grid"}
     slim = {k: v for k, v in result.items() if k not in exclude}
+
+    if isinstance(result.get("mapspec"), dict):
+        # Preserve only the same metadata projection used for deterministic
+        # review; feature bodies never ride the SSE evidence path.
+        from app.lib.cartography.quality_loop import cartographic_projection
+        slim["mapspec"] = cartographic_projection(result["mapspec"])
+    review = _slim_cartographic_review(result.get("cartographic_review"))
+    if review is not None:
+        slim["cartographic_review"] = review
 
     if bbox:
         slim["bbox"] = bbox

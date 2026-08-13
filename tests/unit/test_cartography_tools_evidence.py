@@ -87,6 +87,51 @@ async def test_layer_upsert_forwards_is_compiled_and_checkpoint_id(registry, cle
 
 
 @pytest.mark.asyncio
+async def test_layer_upsert_preserves_result_ref_provenance(registry, clean_session):
+    source = {
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [120, 30]},
+                "properties": {"v": 1},
+            }
+        ],
+    }
+    result_ref = await session_data_manager.store(
+        clean_session, source, prefix="geojson"
+    )
+
+    res = await registry.dispatch(
+        "webgis_layer_upsert",
+        {
+            "layer": {
+                "id": "result",
+                "source": "analysis-output",
+                "type": "circle",
+                "paint": {"circle-color": "#3366cc"},
+            },
+            "source_data": result_ref,
+        },
+        session_id=clean_session,
+    )
+
+    layer = res["mapspec"]["layers"][0]
+    source_entry = res["mapspec"]["sources"]["analysis-output"]
+    provenance_check = next(
+        check
+        for check in res["cartographic_review"]["review"]["checks"]
+        if check["rule"] == "RESULT_MAP_PROVENANCE"
+    )
+    assert res["result_ref"] == result_ref
+    assert layer["provenance"]["result_ref"] == result_ref
+    assert source_entry["ref"] == result_ref
+    assert provenance_check["status"] == "pass"
+    assert provenance_check["evidence"]["source_ref"] == result_ref
+
+
+@pytest.mark.asyncio
 async def test_rejected_mutation_returns_success_false_with_correction_hint(registry, clean_session):
     """A mutation introducing a blocking error (NON_INCREASING_STOPS) is rejected
     by the engine → the wrapper must report success:False + correction_hint so the

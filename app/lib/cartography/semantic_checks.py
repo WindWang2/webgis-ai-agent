@@ -13,9 +13,10 @@ Contract: where evidence is unavailable (no profile), a check is reported as
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from typing import Any, Dict, List, Optional
 
-from app.lib.cartography.thematic_spec import palette_size, thematic_field
+from app.lib.cartography.thematic_spec import palette_size, spec_to_paint, thematic_field
 
 # Layer "type" expected for a given geometry type. A Point layer painted as
 # "fill" is almost certainly a configuration defect.
@@ -37,11 +38,108 @@ class CartographyFinding:
     layer_id: Optional[str] = None
     source_id: Optional[str] = None
     evaluated: bool = True  # False when evidence was unavailable
+    evidence_class: str = "deterministic"
+    evidence: Dict[str, Any] = field(default_factory=dict)
+    repairability: str = "not_repairable"
+    suggested_fix: Optional[Dict[str, Any]] = None
+
+    @property
+    def status(self) -> str:
+        if not self.evaluated:
+            return "not_evaluated"
+        if self.severity == "error":
+            return "fail"
+        return "warning"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "check": self.check,
+            "rule": self.check,
+            "status": self.status,
+            "severity": self.severity,
+            "message": self.message,
+            "layer_id": self.layer_id,
+            "source_id": self.source_id,
+            "evaluated": self.evaluated,
+            "evidence_class": self.evidence_class,
+            "evidence": self.evidence,
+            "repairability": self.repairability,
+            "suggested_fix": self.suggested_fix,
+        }
+
+
+@dataclass
+class CartographyCheck:
+    """One bounded, machine-readable cartographic assertion.
+
+    ``findings`` remains the legacy non-pass projection. Positive evidence lives
+    here so an empty findings list can never be mistaken for proof of quality.
+    """
+
+    rule: str
+    status: str  # pass | fail | warning | not_evaluated
+    severity: str
+    message: str
+    layer_id: Optional[str] = None
+    source_id: Optional[str] = None
+    evidence_class: str = "deterministic"
+    evidence: Dict[str, Any] = field(default_factory=dict)
+    repairability: str = "not_repairable"
+    suggested_fix: Optional[Dict[str, Any]] = None
+
+    @property
+    def evaluated(self) -> bool:
+        return self.status != "not_evaluated"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "rule": self.rule,
+            "check": self.rule,
+            "status": self.status,
+            "severity": self.severity,
+            "message": self.message,
+            "layer_id": self.layer_id,
+            "source_id": self.source_id,
+            "evaluated": self.evaluated,
+            "evidence_class": self.evidence_class,
+            "evidence": self.evidence,
+            "repairability": self.repairability,
+            "suggested_fix": self.suggested_fix,
+        }
 
 
 @dataclass
 class CartographyReport:
     findings: List[CartographyFinding] = field(default_factory=list)
+    checks: List[CartographyCheck] = field(default_factory=list)
+    profiles: List[str] = field(default_factory=list)
+
+    def add_check(
+        self,
+        rule: str,
+        status: str,
+        message: str,
+        *,
+        severity: str = "info",
+        layer_id: Optional[str] = None,
+        source_id: Optional[str] = None,
+        evidence_class: str = "deterministic",
+        evidence: Optional[Dict[str, Any]] = None,
+        repairability: str = "not_repairable",
+        suggested_fix: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self.checks.append(CartographyCheck(
+            rule=rule,
+            status=status,
+            severity=severity,
+            message=message,
+            layer_id=layer_id,
+            source_id=source_id,
+            evidence_class=evidence_class,
+            evidence=evidence or {},
+            repairability=repairability,
+            suggested_fix=suggested_fix,
+        ))
 
     @property
     def errors(self) -> List[CartographyFinding]:
@@ -56,22 +154,74 @@ class CartographyReport:
         """No error-severity findings. Warnings do not fail (cartographic taste)."""
         return len(self.errors) == 0
 
+    def _all_checks(self) -> List[CartographyCheck]:
+        checks = list(self.checks)
+        represented = {
+            (c.rule, c.layer_id, c.source_id, c.message) for c in checks
+        }
+        for finding in self.findings:
+            key = (
+                finding.check,
+                finding.layer_id,
+                finding.source_id,
+                finding.message,
+            )
+            if key in represented:
+                continue
+            checks.append(CartographyCheck(
+                rule=finding.check,
+                status=finding.status,
+                severity=finding.severity,
+                message=finding.message,
+                layer_id=finding.layer_id,
+                source_id=finding.source_id,
+                evidence_class=finding.evidence_class,
+                evidence=finding.evidence,
+                repairability=finding.repairability,
+                suggested_fix=finding.suggested_fix,
+            ))
+        return checks
+
+    @property
+    def status(self) -> str:
+        deterministic = [
+            c for c in self._all_checks() if c.evidence_class == "deterministic"
+        ]
+        if any(c.status == "fail" for c in deterministic):
+            return "fail"
+        if any(c.status == "warning" for c in deterministic):
+            return "warning"
+        evaluated = [c for c in deterministic if c.evaluated]
+        if not evaluated:
+            return "not_evaluated"
+        if any(c.status == "not_evaluated" for c in deterministic):
+            return "warning"
+        return "pass"
+
+    @property
+    def complete(self) -> bool:
+        """Whether every applicable deterministic check produced evidence."""
+        deterministic = [
+            c for c in self._all_checks() if c.evidence_class == "deterministic"
+        ]
+        return bool(deterministic) and all(c.evaluated for c in deterministic)
+
     def to_dict(self) -> Dict[str, Any]:
+        checks = self._all_checks()
         return {
             "ok": self.ok,
+            "status": self.status,
+            # A warning may be a real evaluated warning or a partial review
+            # containing NOT_EVALUATED checks. Only the former may be called a
+            # pass-with-warnings; missing evidence never becomes success.
+            "complete": self.complete,
+            "passed": self.complete and self.status in ("pass", "warning"),
+            "evaluated_count": sum(1 for c in checks if c.evaluated),
             "error_count": len(self.errors),
             "warning_count": len(self.warnings),
-            "findings": [
-                {
-                    "check": f.check,
-                    "severity": f.severity,
-                    "message": f.message,
-                    "layer_id": f.layer_id,
-                    "source_id": f.source_id,
-                    "evaluated": f.evaluated,
-                }
-                for f in self.findings
-            ],
+            "profiles": self.profiles,
+            "checks": [c.to_dict() for c in checks],
+            "findings": [f.to_dict() for f in self.findings],
         }
 
 
@@ -176,7 +326,106 @@ def _approx_eq_list(a: List[float], b: List[float], tol: float = 1e-6) -> bool:
 
 
 def _is_num(v: Any) -> bool:
-    return isinstance(v, (int, float)) and not isinstance(v, bool)
+    return (
+        isinstance(v, (int, float))
+        and not isinstance(v, bool)
+        and math.isfinite(float(v))
+    )
+
+
+def _valid_bbox(value: Any) -> bool:
+    return (
+        isinstance(value, (list, tuple))
+        and len(value) == 4
+        and all(_is_num(v) for v in value)
+        and float(value[0]) <= float(value[2])
+        and float(value[1]) <= float(value[3])
+    )
+
+
+def _is_geographic_crs(crs: Any) -> bool:
+    if not isinstance(crs, str) or not crs.strip():
+        return False
+    normalized = crs.upper().replace(" ", "")
+    return (
+        normalized in {"EPSG:4326", "CRS:84", "OGC:CRS84"}
+        or normalized.endswith("::4326")
+        or normalized.endswith("/CRS84")
+    )
+
+
+def _constant_opacities(paint: Any):
+    if not isinstance(paint, dict):
+        return
+    for name, value in paint.items():
+        if str(name).lower() == "opacity" or str(name).lower().endswith("-opacity"):
+            if not isinstance(value, dict) and not isinstance(value, (list, tuple)):
+                yield str(name), value
+
+
+def _classification_integrity(legend_spec: Any) -> tuple[str, Dict[str, Any], str]:
+    """Return (status, evidence, message) for the canonical legend contract."""
+    if not isinstance(legend_spec, dict):
+        return "fail", {"legend_type": None}, "Thematic layer has no legend_spec"
+    ltype = legend_spec.get("type")
+    if ltype == "graduated":
+        breaks = legend_spec.get("breaks") or []
+        finite = isinstance(breaks, list) and all(_is_num(v) for v in breaks)
+        increasing = finite and len(breaks) >= 2 and all(
+            float(breaks[i]) < float(breaks[i + 1])
+            for i in range(len(breaks) - 1)
+        )
+        labels = legend_spec.get("labels") or []
+        labels_valid = not labels or all(str(v).strip() for v in labels)
+        evidence = {
+            "legend_type": ltype,
+            "break_count": len(breaks),
+            "strictly_increasing": bool(increasing),
+            "labels_non_empty": bool(labels_valid),
+        }
+        if not increasing or not labels_valid:
+            return "fail", evidence, "Graduated legend has invalid breaks or empty labels"
+        return "pass", evidence, "Graduated classification is structurally coherent"
+    if ltype in ("continuous", "divergent"):
+        mn, mx = legend_spec.get("min"), legend_spec.get("max")
+        valid = _is_num(mn) and _is_num(mx) and float(mn) < float(mx)
+        center = legend_spec.get("center")
+        center_valid = (
+            ltype != "divergent"
+            or (_is_num(center) and float(mn) <= float(center) <= float(mx))
+        )
+        evidence = {
+            "legend_type": ltype,
+            "min": mn,
+            "max": mx,
+            "domain_valid": bool(valid),
+            "center_valid": bool(center_valid),
+        }
+        if not valid or not center_valid:
+            return "fail", evidence, "Continuous legend has an invalid numeric domain"
+        return "pass", evidence, "Continuous classification domain is valid"
+    if ltype == "categorical":
+        categories = legend_spec.get("categories") or []
+        keys = [c.get("key") for c in categories if isinstance(c, dict)]
+        labels_valid = bool(categories) and all(
+            isinstance(c, dict) and str(c.get("label") or "").strip()
+            for c in categories
+        )
+        unique = len(keys) == len(set(map(str, keys)))
+        evidence = {
+            "legend_type": ltype,
+            "category_count": len(categories),
+            "keys_unique": unique,
+            "labels_non_empty": labels_valid,
+        }
+        if not labels_valid or not unique:
+            return "fail", evidence, "Categorical legend has duplicate keys or empty labels"
+        return "pass", evidence, "Categorical classification is structurally coherent"
+    return (
+        "fail",
+        {"legend_type": ltype},
+        f"Unsupported legend type: {ltype!r}",
+    )
 
 
 def _thematic_color_spec(paint: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -191,6 +440,27 @@ def _thematic_color_spec(paint: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     for _prop, spec in _paint_methods(paint):
         return spec
     return None
+
+
+def _review_profile(
+    mapspec: Dict[str, Any], layer: Dict[str, Any], source: Dict[str, Any]
+) -> str:
+    """Select a small typed rule profile without introducing a rule DSL."""
+    allowed = {
+        "general_analysis",
+        "thematic_map",
+        "statistical_map",
+        "raster_result",
+        "network_result",
+    }
+    explicit = layer.get("cartographic_profile") or mapspec.get("cartographic_profile")
+    if explicit in allowed:
+        return str(explicit)
+    if layer.get("type") == "raster" or source.get("type") in ("image", "raster"):
+        return "raster_result"
+    if isinstance(layer.get("legend_spec"), dict) or _thematic_color_spec(layer.get("paint") or {}):
+        return "thematic_map"
+    return "general_analysis"
 
 
 def _check_thematic_consistency(
@@ -431,9 +701,18 @@ def evaluate_cartography_semantics(
     source are reported as ``not_evaluated`` (info), never as a fake pass.
     """
     report = CartographyReport()
-    source_profiles = source_profiles or {}
     sources = mapspec.get("sources", {}) or {}
     layers = mapspec.get("layers", []) or []
+    # Profiles are persisted on MapSpec source descriptors by the ingestion
+    # pipeline. Reading them here is O(source metadata); review never resolves a
+    # ref or materializes feature bodies. Explicit caller profiles override the
+    # embedded snapshot (tests and authoritative runtime collectors use this).
+    embedded_profiles = {
+        sid: source.get("profile")
+        for sid, source in sources.items()
+        if isinstance(source, dict) and isinstance(source.get("profile"), dict)
+    }
+    source_profiles = {**embedded_profiles, **(source_profiles or {})}
 
     source_keys = set(sources.keys())
 
@@ -441,6 +720,10 @@ def evaluate_cartography_semantics(
         lid = layer.get("id")
         sid = layer.get("source")
         profile = source_profiles.get(sid) if sid else None
+        source = sources.get(sid) if isinstance(sources.get(sid), dict) else {}
+        review_profile = _review_profile(mapspec, layer, source)
+        if review_profile not in report.profiles:
+            report.profiles.append(review_profile)
 
         # 1. Source/layer reference consistency (error).
         if sid not in source_keys:
@@ -450,6 +733,202 @@ def evaluate_cartography_semantics(
                 layer_id=lid, source_id=sid,
             ))
             continue  # no point checking further against a missing source
+        report.add_check(
+            "SOURCE_LAYER_REF",
+            "pass",
+            f"Layer '{lid}' is bound to source '{sid}'",
+            layer_id=lid,
+            source_id=sid,
+            evidence={
+                "layer_id": lid,
+                "source_id": sid,
+                "source_exists": True,
+            },
+        )
+
+        # Desired visibility is structural evidence, not pixel evidence. A
+        # hidden/zero-opacity result is detectable, but only malformed opacity
+        # is AUTO_SAFE: valid hidden state may be deliberate unless completion
+        # intent explicitly says otherwise.
+        layout = layer.get("layout") if isinstance(layer.get("layout"), dict) else {}
+        declared_visible = layer.get("visible") is not False and layout.get("visibility") != "none"
+        cartographic_intent = (
+            layer.get("cartographic_intent")
+            if isinstance(layer.get("cartographic_intent"), dict) else {}
+        )
+        expected_visible = cartographic_intent.get("expected_visible")
+        if declared_visible:
+            visibility_status = "pass"
+            visibility_severity = "info"
+            visibility_repairability = "not_repairable"
+            visibility_fix = None
+        elif expected_visible is True:
+            visibility_status = "fail"
+            visibility_severity = "error"
+            visibility_repairability = "auto_safe"
+            visibility_fix = {
+                "operation": "set_layer_visibility",
+                "layer_id": lid,
+                "visible": True,
+            }
+        else:
+            visibility_status = "not_evaluated"
+            visibility_severity = "info"
+            visibility_repairability = "not_repairable"
+            visibility_fix = None
+        report.add_check(
+            "RESULT_VISIBILITY",
+            visibility_status,
+            (
+                f"Layer '{lid}' is intended to be visible"
+                if declared_visible
+                else (
+                    f"Layer '{lid}' is hidden despite explicit result visibility intent"
+                    if expected_visible is True
+                    else f"Layer '{lid}' is hidden but no expected-visible intent is available"
+                )
+            ),
+            severity=visibility_severity,
+            layer_id=lid,
+            source_id=sid,
+            evidence={
+                "layer_id": lid,
+                "visible": declared_visible,
+                "expected_visible": expected_visible,
+                "layout_visibility": layout.get("visibility", "visible"),
+            },
+            repairability=visibility_repairability,
+            suggested_fix=visibility_fix,
+        )
+        for opacity_name, opacity in _constant_opacities(layer.get("paint") or {}):
+            valid_opacity = _is_num(opacity) and 0.0 <= float(opacity) <= 1.0
+            nonzero = valid_opacity and float(opacity) > 0.0
+            if valid_opacity and nonzero:
+                opacity_status = "pass"
+                opacity_severity = "info"
+                repairability = "not_repairable"
+                suggested_fix = None
+                opacity_message = f"Layer '{lid}' {opacity_name} is visible and in range"
+            elif valid_opacity:
+                opacity_status = "fail" if expected_visible is True else "not_evaluated"
+                opacity_severity = "error" if expected_visible is True else "info"
+                repairability = "auto_safe" if expected_visible is True else "not_repairable"
+                suggested_fix = (
+                    {
+                        "operation": "normalize_opacity",
+                        "layer_id": lid,
+                        "property": opacity_name,
+                        "value": 0.85 if layer.get("type") == "raster" else 1.0,
+                    }
+                    if expected_visible is True else None
+                )
+                opacity_message = (
+                    f"Layer '{lid}' {opacity_name} is zero despite explicit visibility intent"
+                    if expected_visible is True else
+                    f"Layer '{lid}' {opacity_name} is zero but visibility intent is unknown"
+                )
+            else:
+                opacity_status = "fail"
+                opacity_severity = "error"
+                repairability = "auto_safe"
+                suggested_fix = {
+                    "operation": "normalize_opacity",
+                    "layer_id": lid,
+                    "property": opacity_name,
+                    "value": 0.85 if layer.get("type") == "raster" else 1.0,
+                }
+                opacity_message = f"Layer '{lid}' {opacity_name} is not a finite value in [0, 1]"
+            report.add_check(
+                "OPACITY_VALIDITY",
+                opacity_status,
+                opacity_message,
+                severity=opacity_severity,
+                layer_id=lid,
+                source_id=sid,
+                evidence={"property": opacity_name, "value": opacity},
+                repairability=repairability,
+                suggested_fix=suggested_fix,
+            )
+
+        # CRS and extent truthfulness. Missing provenance is explicitly
+        # unevaluated; a legacy/default CRS string without `crs_status=explicit`
+        # cannot self-certify spatial truth.
+        if profile is None:
+            report.add_check(
+                "CRS_EVIDENCE",
+                "not_evaluated",
+                f"Source '{sid}' CRS cannot be evaluated without a profile",
+                layer_id=lid,
+                source_id=sid,
+                evidence={"source_id": sid, "crs": None, "crs_status": "unknown"},
+            )
+            report.add_check(
+                "BBOX_VALIDITY",
+                "not_evaluated",
+                f"Source '{sid}' extent cannot be evaluated without a profile",
+                layer_id=lid,
+                source_id=sid,
+                evidence={"source_id": sid, "bbox": None},
+            )
+        else:
+            crs = profile.get("crs")
+            crs_status = profile.get("crs_status") or "unknown"
+            crs_explicit = bool(crs) and crs_status == "explicit"
+            report.add_check(
+                "CRS_EVIDENCE",
+                "pass" if crs_explicit else "not_evaluated",
+                (
+                    f"Source '{sid}' has explicit CRS '{crs}'"
+                    if crs_explicit
+                    else f"Source '{sid}' has no authoritative CRS evidence"
+                ),
+                layer_id=lid,
+                source_id=sid,
+                evidence={
+                    "source_id": sid,
+                    "crs": crs if crs_explicit else None,
+                    "crs_status": crs_status,
+                },
+            )
+            bbox = profile.get("bbox")
+            bbox_valid = _valid_bbox(bbox)
+            report.add_check(
+                "BBOX_VALIDITY",
+                "pass" if bbox_valid else ("not_evaluated" if bbox is None else "fail"),
+                (
+                    f"Source '{sid}' has a finite ordered extent"
+                    if bbox_valid
+                    else (
+                        f"Source '{sid}' has no extent evidence"
+                        if bbox is None
+                        else f"Source '{sid}' has an invalid extent"
+                    )
+                ),
+                severity="error" if bbox is not None and not bbox_valid else "info",
+                layer_id=lid,
+                source_id=sid,
+                evidence={"source_id": sid, "bbox": bbox},
+            )
+            if crs_explicit and bbox_valid and _is_geographic_crs(crs):
+                geographic_extent = (
+                    -180.0 <= float(bbox[0]) <= 180.0
+                    and -180.0 <= float(bbox[2]) <= 180.0
+                    and -90.0 <= float(bbox[1]) <= 90.0
+                    and -90.0 <= float(bbox[3]) <= 90.0
+                )
+                report.add_check(
+                    "CRS_BBOX_COMPATIBILITY",
+                    "pass" if geographic_extent else "fail",
+                    (
+                        f"Source '{sid}' extent is compatible with geographic CRS '{crs}'"
+                        if geographic_extent else
+                        f"Source '{sid}' extent contains coordinates impossible for geographic CRS '{crs}'"
+                    ),
+                    severity="info" if geographic_extent else "error",
+                    layer_id=lid,
+                    source_id=sid,
+                    evidence={"source_id": sid, "crs": crs, "bbox": bbox},
+                )
 
         # 2. Empty-data not success (error): a zero-feature source is no data.
         if profile is not None and profile.get("featureCount", 1) == 0:
@@ -540,7 +1019,122 @@ def evaluate_cartography_semantics(
         # 4b-10. ADR-0052 thematic consistency: paint ↔ legend equivalence,
         # cardinality, domain coverage, no-data, divergent, palette, categorical
         # domain. Each NOT_EVALUATED when its evidence is absent.
+        legend_spec = layer.get("legend_spec")
+        color_spec = _thematic_color_spec(layer.get("paint") or {})
+        raster_classified = (
+            review_profile == "raster_result"
+            and (
+                isinstance(legend_spec, dict)
+                or bool(cartographic_intent.get("requires_legend"))
+                or bool((profile or {}).get("classification"))
+            )
+        )
+        requires_legend = color_spec is not None or raster_classified
+        if requires_legend:
+            has_legend = isinstance(legend_spec, dict)
+            report.add_check(
+                "THEMATIC_LEGEND",
+                "pass" if has_legend else "fail",
+                (
+                    f"Layer '{lid}' has a legend for its thematic encoding"
+                    if has_legend
+                    else f"Layer '{lid}' has a thematic encoding but no legend_spec"
+                ),
+                severity="info" if has_legend else "error",
+                layer_id=lid,
+                source_id=sid,
+                evidence={
+                    "layer_type": layer.get("type"),
+                    "thematic_style": color_spec is not None,
+                    "legend_present": has_legend,
+                },
+            )
+            if has_legend:
+                class_status, class_evidence, class_message = _classification_integrity(legend_spec)
+                report.add_check(
+                    "CLASSIFICATION_INTEGRITY",
+                    class_status,
+                    f"Layer '{lid}': {class_message}",
+                    severity="info" if class_status == "pass" else "error",
+                    layer_id=lid,
+                    source_id=sid,
+                    evidence=class_evidence,
+                    repairability=(
+                        "not_repairable"
+                        if class_status == "pass"
+                        else "auto_with_semantic_risk"
+                    ),
+                )
+
+        findings_before = len(report.findings)
+        equivalence_before = sum(
+            1 for finding in report.findings
+            if finding.check == "LEGEND_STYLE_EQUIVALENCE" and finding.layer_id == lid
+        )
         _check_thematic_consistency(report, lid, sid, layer, profile)
+        equivalence_after = sum(
+            1 for finding in report.findings
+            if finding.check == "LEGEND_STYLE_EQUIVALENCE" and finding.layer_id == lid
+        )
+        if equivalence_after > equivalence_before and isinstance(legend_spec, dict):
+            canonical_paint, paint_warnings = spec_to_paint(legend_spec)
+            paint = layer.get("paint") if isinstance(layer.get("paint"), dict) else {}
+            if canonical_paint is not None and not paint_warnings and isinstance(paint.get("color"), dict):
+                suggested_fix = {
+                    "operation": "refresh_style_from_legend",
+                    "layer_id": lid,
+                    "property": "color",
+                    "value": canonical_paint,
+                }
+                for finding in report.findings[findings_before:]:
+                    if finding.check == "LEGEND_STYLE_EQUIVALENCE":
+                        finding.repairability = "auto_safe"
+                        finding.suggested_fix = suggested_fix
+        if isinstance(legend_spec, dict) and color_spec is not None and equivalence_after == equivalence_before:
+            report.add_check(
+                "LEGEND_STYLE_EQUIVALENCE",
+                "pass",
+                f"Layer '{lid}' legend and style use the same classification",
+                layer_id=lid,
+                source_id=sid,
+                evidence={
+                    "legend_type": legend_spec.get("type"),
+                    "legend_field": thematic_field(legend_spec),
+                    "style_field": color_spec.get("field"),
+                },
+            )
+
+        source_ref = source.get("ref_id") or source.get("ref")
+        provenance = layer.get("provenance") if isinstance(layer.get("provenance"), dict) else {}
+        provenance_ref = provenance.get("result_ref") or provenance.get("source_ref")
+        if source_ref or provenance_ref:
+            provenance_matches = bool(source_ref and provenance_ref and source_ref == provenance_ref)
+            report.add_check(
+                "RESULT_MAP_PROVENANCE",
+                "pass" if provenance_matches else "not_evaluated",
+                (
+                    f"Layer '{lid}' is traceable to result ref '{source_ref}'"
+                    if provenance_matches
+                    else f"Layer '{lid}' result-to-source identity is incomplete"
+                ),
+                layer_id=lid,
+                source_id=sid,
+                evidence={
+                    "source_ref": source_ref,
+                    "provenance_ref": provenance_ref,
+                    "matches": provenance_matches,
+                },
+            )
+
+        report.add_check(
+            "VISUAL_OVERLAP",
+            "not_evaluated",
+            "Rendered label overlap requires visual evidence",
+            layer_id=lid,
+            source_id=sid,
+            evidence_class="visual",
+            evidence={"pixel_evidence_available": False},
+        )
 
     # 7. Legend / style field consistency (warning).
     legend = (mapspec.get("layout") or {}).get("legend") or {}

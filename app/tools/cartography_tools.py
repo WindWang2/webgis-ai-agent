@@ -13,7 +13,17 @@ logger = logging.getLogger(__name__)
 # harness MapSpecValidity 阶梯读 is_compiled；被拒绝的 mutation 需要
 # message + correction_hint 让 LLM 自愈（此前包装层硬编码 success:True，
 # 丢弃全部证据，导致生产证据链断裂）。
-_EVIDENCE_KEYS = ("is_compiled", "warnings", "checkpoint_id", "correction_hint", "message")
+_EVIDENCE_KEYS = (
+  "is_compiled",
+  "warnings",
+  "checkpoint_id",
+  "correction_hint",
+  "message",
+  "cartography_findings",
+  "cartographic_review",
+  "mapspec_fingerprint",
+  "runtime_observation_seq",
+)
 
 
 def _forward_evidence(res: Dict[str, Any], out: Dict[str, Any]) -> Dict[str, Any]:
@@ -219,6 +229,25 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   ) -> dict:
     if not session_id:
       return {"success": False, "message": "Missing session_id"}
+    layer = dict(layer)
+    source_ref: Optional[str] = None
+    if isinstance(source_data, str):
+      source_ref = await session_data_manager.resolve_alias(session_id, source_data)
+      resolved = await session_data_manager.get(session_id, source_ref)
+      if resolved is None:
+        return {
+          "success": False,
+          "code": "REFERENCE_NOT_FOUND",
+          "message": f"Source reference '{source_data}' is unavailable in this session",
+          "correction_hint": "Use a result ref created in the current session.",
+        }
+      source_data = resolved
+      provenance = (
+        dict(layer.get("provenance"))
+        if isinstance(layer.get("provenance"), dict) else {}
+      )
+      provenance["result_ref"] = source_ref
+      layer["provenance"] = provenance
     res = await mapspec_store.layer_upsert(session_id, layer, source_data)
     out: Dict[str, Any] = {
         "layer_id": layer.get("id"),
@@ -226,6 +255,8 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
     }
     if res.get("success"):
       out["summary"] = f"Layer '{layer.get('id')}' upserted into MapSpec"
+      if source_ref:
+        out["result_ref"] = source_ref
     return _forward_evidence(res, out)
 
   @tool(

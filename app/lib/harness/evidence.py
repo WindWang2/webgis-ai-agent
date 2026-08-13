@@ -93,6 +93,7 @@ class MapActionEvidence:
     error: str = ""
     requested: Dict[str, Any] = field(default_factory=dict)
     actual: Dict[str, Any] = field(default_factory=dict)
+    mapspec_fingerprint: Optional[str] = None
 
     @property
     def has_terminal_evidence(self) -> bool:
@@ -136,6 +137,58 @@ class MapSpecValidityEvidence:
     @property
     def evaluated(self) -> bool:
         return self.tier is not MapSpecValidityTier.NOT_EVALUATED
+
+
+@dataclass
+class CartographicReviewEvidence:
+    """Trusted desired-vs-runtime cartographic evidence for one final MapSpec.
+
+    Tool-returned review payloads are transport evidence only. ``trusted`` is
+    true only when the harness re-read session-owned state and recomputed the
+    deterministic desired review itself.
+    """
+    session_id: str
+    status: str = "not_evaluated"
+    desired_status: str = "not_evaluated"
+    runtime_status: str = "not_evaluated"
+    mapspec_fingerprint: Optional[str] = None
+    reported_fingerprint: Optional[str] = None
+    source_tool_call_id: Optional[str] = None
+    trusted: bool = False
+    desired_review: Dict[str, Any] = field(default_factory=dict)
+    checks: List[Dict[str, Any]] = field(default_factory=list)
+    repair_attempts: List[Dict[str, Any]] = field(default_factory=list)
+    visual_evidence: List[Dict[str, Any]] = field(default_factory=list)
+    termination_reason: str = "missing_evidence"
+    counters: Dict[str, int] = field(default_factory=dict)
+
+    @property
+    def evaluated(self) -> bool:
+        return self.status not in ("not_evaluated", "superseded")
+
+    @property
+    def passed(self) -> bool:
+        return self.status in ("passed", "passed_with_warnings")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "stage": "actual_runtime",
+            "status": self.status,
+            "desired_status": self.desired_status,
+            "runtime_status": self.runtime_status,
+            "mapspec_fingerprint": self.mapspec_fingerprint,
+            "reported_fingerprint": self.reported_fingerprint,
+            "source_tool_call_id": self.source_tool_call_id,
+            "trusted": self.trusted,
+            "evaluated": self.evaluated,
+            "passed": self.passed,
+            "desired_review": self.desired_review,
+            "checks": self.checks,
+            "repair_attempts": self.repair_attempts,
+            "visual_evidence": self.visual_evidence,
+            "termination_reason": self.termination_reason,
+            "counters": self.counters,
+        }
 
 
 @dataclass

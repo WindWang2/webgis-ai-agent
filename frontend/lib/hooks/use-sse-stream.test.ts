@@ -228,6 +228,33 @@ describe('useSSEStream mapState snapshot (FE-4 design §7)', () => {
     expect(mapState.selected_feature).toBeNull();
     expect(mapState.focus_layer_id).toBeNull();
   });
+
+  it('includes style and legend metadata for cartographic convergence evidence', async () => {
+    const legendSpec = {
+      type: 'categorical',
+      field: 'kind',
+      categories: [{ key: 'a', label: 'A', color: '#3366cc' }],
+    };
+    useHudStore.setState({
+      layers: [
+        {
+          id: 'result',
+          name: 'Result',
+          type: 'vector',
+          visible: true,
+          opacity: 0.8,
+          style: { color: '#3366cc' },
+          legend_spec: legendSpec,
+        },
+      ] as any,
+    });
+
+    const mapState = await sendAndGetMapState();
+    const layer = (mapState.layers as Array<Record<string, unknown>>)[0];
+    expect(layer.style).toEqual({ color: '#3366cc' });
+    expect(layer.legend_spec).toEqual(legendSpec);
+    expect(layer).not.toHaveProperty('source');
+  });
 });
 
 describe('useSSEStream step_cancelled', () => {

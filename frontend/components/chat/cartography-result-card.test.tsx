@@ -37,4 +37,61 @@ describe('CartographyResultCard', () => {
     const { container } = render(<CartographyResultCard result={{}} layerId="x" />);
     expect(container.firstChild).toBeNull();
   });
+
+  it('shows bounded cartographic quality failures without requiring a legend', () => {
+    render(
+      <CartographyResultCard
+        result={{
+          cartographic_review: {
+            status: 'failed_unrepairable',
+            repair_count: 0,
+            checks: [
+              { rule: 'THEMATIC_LEGEND', status: 'fail', message: '专题样式缺少图例' },
+            ],
+          },
+        }}
+        layerId="layer-1"
+      />,
+    );
+
+    expect(screen.getByText('地图需要处理')).toBeInTheDocument();
+    expect(screen.getByText('专题样式缺少图例')).toBeInTheDocument();
+  });
+
+  it('reports automatic repairs on a passing review', () => {
+    render(
+      <CartographyResultCard
+        result={{
+          cartographic_review: {
+            stage: 'desired_state',
+            status: 'passed',
+            repair_count: 1,
+            checks: [],
+          },
+        }}
+        layerId="layer-1"
+      />,
+    );
+
+    expect(screen.getByText(/已自动修复 1 项/)).toBeInTheDocument();
+    expect(screen.getByText(/等待运行时验证/)).toBeInTheDocument();
+  });
+
+  it('does not present partial deterministic evidence as a quality pass', () => {
+    render(
+      <CartographyResultCard
+        result={{
+          cartographic_review: {
+            stage: 'desired_state',
+            status: 'partial',
+            checks: [{ rule: 'CRS_EVIDENCE', status: 'not_evaluated' }],
+          },
+        }}
+        layerId="result"
+      />,
+    );
+
+    expect(screen.getByRole('status')).toHaveTextContent('制图质量：证据不完整');
+    expect(screen.queryByText(/制图质量：通过/)).not.toBeInTheDocument();
+  });
 });

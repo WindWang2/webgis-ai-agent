@@ -32,8 +32,10 @@ RUNTIME_VALIDATE_SCRIPT = (
 
 def compute_eval_scores(report: Dict[str, Any], mapspec: Dict[str, Any]) -> Dict[str, Any]:
   """
-  Computes the 5-dimension evaluation score (100% max, incorporating the visual judge
-  segment for cartographic quality).
+  Computes the legacy 5-dimension score plus rendered-image heuristic proxies.
+
+  The 20-point segment is retained for backward compatibility, but is not a
+  deterministic cartographic PASS and is explicitly labelled heuristic below.
   """
   # Browser health now reflects the *actual* headless run, not a hardcoded True.
   map_loaded = bool(report.get("mapLoaded"))
@@ -66,7 +68,7 @@ def compute_eval_scores(report: Dict[str, Any], mapspec: Dict[str, Any]) -> Dict
       2,
   )
 
-  # ── Visual-Judge Cartographic Aesthetic Quality Segment (20.0 pts max) ──
+  # ── Rendered-image heuristic proxy segment (20.0 pts max) ──────────────
   canvas_stats = report.get("canvas") or {}
   ctrl_stats = report.get("controls") or {}
 
@@ -107,7 +109,10 @@ def compute_eval_scores(report: Dict[str, Any], mapspec: Dict[str, Any]) -> Dict
       "total_score_80_max": total_score_80,
       "cartographic_quality_score": cartographic_quality_score,
       "total_score_100_max": total_score_100,
-      "cartographic_quality_status": "evaluated_by_visual_judge",
+      # These scores are useful rendered-image/layout proxies, not a proof of
+      # aesthetic or goal satisfaction and not an LLM/vision quality oracle.
+      "cartographic_quality_status": "heuristic_visual_proxies",
+      "cartographic_quality_evidence_class": "heuristic",
       "visual_judge_details": {
           "visual_contrast_score": visual_contrast_score,
           "label_collision_score": label_collision_score,
@@ -123,6 +128,8 @@ class RuntimeValidator:
     mapspec = await mapspec_store.get_mapspec(session_id)
     if not mapspec:
       return {"success": False, "message": "MapSpec not found for session"}
+    from app.lib.cartography.quality_loop import review_cartography
+    cartographic_review = review_cartography(mapspec).to_dict()
 
     # 1. Recompile MapSpec to static output (index.html + style.json).
     comp_res = await mapspec_store.compile_mapspec_cli(session_id)
@@ -171,6 +178,14 @@ class RuntimeValidator:
         "report": report,
         "eval_scores": scores,
         "runtime_dir": str(runtime_dir),
+        "mapspec_fingerprint": cartographic_review["final_fingerprint"],
+        "cartographic_review": cartographic_review,
+        "visual_evidence": {
+            "evidence_class": "heuristic",
+            "status": "evaluated" if report.get("canvas") else "not_evaluated",
+            "source": "headless_canvas_and_layout_proxies",
+            "score": scores["cartographic_quality_score"],
+        },
         "summary": (
             f"Runtime validation {'passed' if valid else 'failed'} "
             f"(score: {scores['total_score_80_max']}/80.0)"

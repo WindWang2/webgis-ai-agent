@@ -624,6 +624,9 @@ export function useSSEStream(
               ? (l.source as any).features?.length ?? 0
               : undefined,
           style: l.style,
+          // Structured legend metadata is bounded and lets the backend compare
+          // desired MapSpec semantics with the actual runtime observation.
+          legend_spec: l.legend_spec,
         })),
         user_location: userLocation
           ? { lng: userLocation.lng, lat: userLocation.lat, accuracy: userLocation.accuracy }

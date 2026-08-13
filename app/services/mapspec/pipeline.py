@@ -65,6 +65,14 @@ def process_layer_ingestion(
     if processed_source_data is not None and not already_has_data:
         store_data(source_entry, processed_source_data)
 
+    provenance = (
+        processed_layer.get("provenance")
+        if isinstance(processed_layer.get("provenance"), dict) else {}
+    )
+    result_ref = provenance.get("result_ref") or provenance.get("source_ref")
+    if isinstance(result_ref, str) and result_ref:
+        source_entry["ref"] = result_ref
+
     suggested_view: Optional[Dict[str, Any]] = None
     if is_raster_entry(source_entry) or is_data_fabric_entry(source_entry):
         data_to_profile = source_entry.get("inlineData")
@@ -76,7 +84,7 @@ def process_layer_ingestion(
             profile = profile_geojson_source(data_to_profile)
             source_entry["profile"] = profile
 
-            if not view_has_center(mapspec) and "suggestedView" in profile:
+            if not view_has_center(mapspec) and profile.get("suggestedView"):
                 suggested_view = {
                     "center": profile["suggestedView"]["center"],
                     "zoom": profile["suggestedView"]["zoom"],

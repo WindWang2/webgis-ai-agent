@@ -21,14 +21,15 @@ def test_profile_geojson_source_basic():
 
   profile = profile_geojson_source(data)
 
-  assert profile["crs"] == "EPSG:4326"
+  assert profile["crs"] is None
+  assert profile["crs_status"] == "unknown"
   assert profile["featureCount"] == 2
   assert profile["geometryTypes"] == ["Point"]
   assert profile["bbox"] == [100.0, 20.0, 110.0, 30.0]
 
-  view = profile["suggestedView"]
-  assert view["center"] == [105.0, 25.0]
-  assert isinstance(view["zoom"], int)
+  # Numeric coordinates without CRS evidence cannot truthfully be interpreted
+  # as longitude/latitude for a map camera.
+  assert profile["suggestedView"] == {}
 
   fields = profile["fields"]
   assert "name" in fields
@@ -40,9 +41,37 @@ def test_profile_geojson_source_basic():
   assert fields["mag"]["min"] == 2.5
   assert fields["mag"]["max"] == 5.0
   assert fields["mag"]["mean"] == 3.75
+  assert fields["mag"]["null_count"] == 0
 
   assert "active" in fields
   assert fields["active"]["type"] == "boolean"
+  assert fields["active"]["null_count"] == 0
+
+
+def test_profile_preserves_explicit_crs_and_only_then_suggests_geographic_view():
+  data = {
+      "type": "FeatureCollection",
+      "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+      "features": [
+          {
+              "type": "Feature",
+              "geometry": {"type": "Point", "coordinates": [100.0, 20.0]},
+              "properties": {"value": 1},
+          },
+          {
+              "type": "Feature",
+              "geometry": {"type": "Point", "coordinates": [110.0, 30.0]},
+              "properties": {"value": None},
+          },
+      ],
+  }
+
+  profile = profile_geojson_source(data)
+
+  assert profile["crs"] == "EPSG:4326"
+  assert profile["crs_status"] == "explicit"
+  assert profile["suggestedView"] == {"center": [105.0, 25.0], "zoom": 5}
+  assert profile["fields"]["value"]["null_count"] == 1
 
 
 def test_profile_geojson_source_empty_or_nulls():

@@ -53,6 +53,8 @@ async def test_mapspec_store_set_view(clean_session):
 async def test_layer_upsert_auto_profiles_and_auto_views(clean_session):
   geojson_data = {
       "type": "FeatureCollection",
+      # Auto-view is only truthful when the coordinate reference is declared.
+      "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
       "features": [
           {
               "type": "Feature",
