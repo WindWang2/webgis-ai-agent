@@ -157,7 +157,8 @@ async def test_user_template_appears_in_list_templates(client):
     assert post_res.status_code == 201
 
     # Check GET endpoint —— 分页形状 {items, total, ...}
-    get_res = await client.get("/api/v1/templates?kind=basemap")
+    # List is scoped to the caller: unauthenticated gallery is builtins only.
+    get_res = await client.get("/api/v1/templates?kind=basemap", headers=user_headers)
     assert get_res.status_code == 200
     templates_list = get_res.json()["items"]
     assert any(t["name"] == "我的夜间大屏底图" for t in templates_list)
@@ -266,3 +267,43 @@ async def test_setup_purge_deletes_non_builtin_templates():
             )
         ).scalar_one_or_none()
         assert probe is None
+
+
+_LAYOUT_PAYLOAD = {
+    "paperSize": "A4",
+    "orientation": "landscape",
+    "showLegend": True,
+    "showNorthArrow": True,
+    "showScaleBar": True,
+    "showGrid": False,
+}
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_list_hides_user_templates(client):
+    """Anonymous gallery must not enumerate another tenant's saved templates."""
+    post_res = await client.post(
+        "/api/v1/templates",
+        json={"name": "他人模板", "kind": "layout", "payload": _LAYOUT_PAYLOAD},
+        headers=user_headers,
+    )
+    assert post_res.status_code == 201
+    tmpl_id = post_res.json()["id"]
+
+    anon = await client.get("/api/v1/templates?source=user&summary=false")
+    assert anon.status_code == 200
+    names = {t["name"] for t in anon.json()["items"]}
+    assert "他人模板" not in names
+
+    other = await client.get("/api/v1/templates?source=user&summary=false", headers=other_user_headers)
+    assert other.status_code == 200
+    assert "他人模板" not in {t["name"] for t in other.json()["items"]}
+
+    owner = await client.get("/api/v1/templates?source=user&summary=false", headers=user_headers)
+    assert any(t["name"] == "他人模板" for t in owner.json()["items"])
+
+    forbidden = await client.get(f"/api/v1/templates/{tmpl_id}", headers=other_user_headers)
+    assert forbidden.status_code == 404
+    allowed = await client.get(f"/api/v1/templates/{tmpl_id}", headers=user_headers)
+    assert allowed.status_code == 200
+    assert allowed.json()["name"] == "他人模板"

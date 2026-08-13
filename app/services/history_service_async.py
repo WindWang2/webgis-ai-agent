@@ -137,6 +137,22 @@ class AsyncHistoryService(HistoryStoreProtocol):
         session_id: str,
         user_id: Optional[str] = None,
     ) -> Conversation:
+        conv, _created = await self.get_or_create_conversation_with_created(
+            session_id, user_id=user_id
+        )
+        return conv
+
+    async def get_or_create_conversation_with_created(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+    ) -> tuple[Conversation, bool]:
+        """Return ``(conversation, created)``.
+
+        ``created`` is True only when this call inserted the row. A concurrent
+        first-message loser re-SELECTs the winner and must treat that as
+        existing (do not emit the winner's ``owner_token``).
+        """
         import anyio
         owner = None if _is_anonymous(user_id) else user_id
         # SEC-08：新建匿名会话时生成 owner_token。认证会话（owner 非空）不需要。
@@ -148,7 +164,7 @@ class AsyncHistoryService(HistoryStoreProtocol):
                 result = await self.db.execute(stmt)
                 conv = result.scalar_one_or_none()
                 if conv:
-                    return conv
+                    return conv, False
 
                 conv = Conversation(
                     id=session_id,
@@ -164,7 +180,7 @@ class AsyncHistoryService(HistoryStoreProtocol):
                 await self.db.commit()
                 # 重新查询以确保加载了关系
                 result = await self.db.execute(stmt)
-                return result.scalar_one()
+                return result.scalar_one(), True
             except Exception as e:
                 # SEC-10 (deep-audit round 3): two concurrent first-messages for
                 # the same session both see "absent", both INSERT, and the loser

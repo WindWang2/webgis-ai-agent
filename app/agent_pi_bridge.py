@@ -335,63 +335,9 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
                 ))
             raise
 
-        duration_ms = int((time.monotonic() - t0) * 1000)
-
-        harness = _get_session_harness(
-            session_id,
-            create=tool_name == "webgis_layer_upsert",
-        )
-        if harness is not None:
-            if result.status == "ok":
-                for ma in result.map_actions:
-                    if rt_ev is not None:
-                        rt_ev.record_map_action_issued(ma["action_id"])
-                    harness.record_map_action_issued(
-                        session_id=session_id,
-                        tool_call_id=request.toolCallId,
-                        turn_id=turn_id or "",
-                        action_id=ma["action_id"],
-                        command=ma["command"],
-                        requested=ma["requested"],
-                        mapspec_fingerprint=ma.get("mapspec_fingerprint"),
-                    )
-            is_error = result.status == "error"
-            ev = {"status": result.status, "llm_payload_len": len(result.llm_payload)}
-            raw = result.raw_result if isinstance(result.raw_result, dict) else {}
-            for k in (
-                "success",
-                "is_compiled",
-                "warnings",
-                "checkpoint_id",
-                "message",
-                "correction_hint",
-                "cartography_findings",
-                "cartographic_review",
-                "mapspec_fingerprint",
-                "runtime_observation_seq",
-                "runtime_projection_fingerprint",
-            ):
-                if k in raw:
-                    ev[k] = raw[k]
-            harness.record_event(ToolCallEvent(
-                tool_call_id=request.toolCallId,
-                tool_name=request.name,
-                arguments=request.arguments or {},
-                duration_ms=duration_ms,
-                is_error=is_error,
-                error_msg=(result.llm_payload[:200] if is_error else ""),
-                result=ev,
-                session_id=session_id,
-            ))
-            if tool_name == "webgis_layer_upsert":
-                try:
-                    await evaluate_cartographic_session(session_id)
-                except Exception as review_error:  # noqa: BLE001 - GIS success is immutable
-                    logger.warning(
-                        "[PiBridge] cartographic evaluation unavailable for %s: %s",
-                        session_id,
-                        review_error,
-                    )
+        if result.status == "ok" and rt_ev is not None:
+            for ma in result.map_actions:
+                rt_ev.record_map_action_issued(ma["action_id"])
 
     duration_ms = int((time.monotonic() - t0) * 1000)
 

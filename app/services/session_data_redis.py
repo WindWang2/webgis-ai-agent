@@ -12,10 +12,12 @@ from app.services.session_data_protocol import BaseSessionStore, UNAVAILABLE_REF
 
 logger = logging.getLogger(__name__)
 
-DATA_TTL = 2 * 60 * 60
-STATE_TTL = 4 * 60 * 60
-EVENTS_TTL = 4 * 60 * 60
 SESSION_TTL = 4 * 60 * 60
+# Payload keys used to expire at 2h while session index keys lived 4h and
+# were renewed by viewport writes. Keep data alive for the session lifetime.
+DATA_TTL = SESSION_TTL
+STATE_TTL = SESSION_TTL
+EVENTS_TTL = SESSION_TTL
 MAX_EVENTS = 20
 # V3 闭环：每 session 地图动作 ACK 上限（与 session_data.MAX_MAP_ACTION_EVENTS 保持一致）
 MAX_MAP_ACTION_EVENTS = 200
@@ -214,6 +216,10 @@ class RedisSessionStore(BaseSessionStore):
     def _active_key() -> str:
         return "sessions:active"
 
+    @staticmethod
+    def _activity_key() -> str:
+        return "sessions:activity"
+
     async def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
         """存数据；Redis 不可达时降级返回伪 ref_id 而非抛错。
 
@@ -319,10 +325,11 @@ class RedisSessionStore(BaseSessionStore):
         """
         await self._ensure_connected()
         try:
+            ref_ids = await self._session_ref_ids(session_id)
             async with self._r.pipeline() as pipe:
                 pipe.hset(self._aliases_key(session_id), alias, ref_id)
                 pipe.hset(self._refs_key(session_id), ref_id, alias)
-                self._refresh_session_ttl(pipe, session_id)
+                self._refresh_session_ttl(pipe, session_id, ref_ids)
                 await pipe.execute()
         except aioredis.RedisError as e:
             logger.warning(
@@ -395,6 +402,7 @@ class RedisSessionStore(BaseSessionStore):
 
             async with self._r.pipeline() as pipe:
                 pipe.expire(data_key, DATA_TTL)
+                pipe.expire(self._descriptor_key(session_id, ref_id), DATA_TTL)
                 pipe.zadd(self._refs_order_key(session_id), {ref_id: time.time()})
                 self._refresh_session_ttl(pipe, session_id)
                 await pipe.execute()
@@ -445,6 +453,7 @@ class RedisSessionStore(BaseSessionStore):
         # update_layer_in_state) — otherwise two in-flight POSTs could both pass
         # the check and the older one land last.
         state_key = self._state_key(session_id)
+        ref_ids = await self._session_ref_ids(session_id)
         for attempt in range(3):
             try:
                 async with self._r.pipeline(transaction=True) as pipe:
@@ -468,7 +477,7 @@ class RedisSessionStore(BaseSessionStore):
                     pipe.hset(state_key, f"_{key}_updated_at", datetime.now(timezone.utc).isoformat())
                     pipe.expire(state_key, STATE_TTL)
                     pipe.sadd(self._active_key(), session_id)
-                    self._refresh_session_ttl(pipe, session_id)
+                    self._refresh_session_ttl(pipe, session_id, ref_ids)
                     await pipe.execute()
                 # Write-through invalidation: drop L1 so next read refetches from Redis.
                 self._l1_invalidate_session(session_id)
@@ -654,6 +663,7 @@ class RedisSessionStore(BaseSessionStore):
             ensure_ascii=False,
         )
         try:
+            ref_ids = await self._session_ref_ids(session_id)
             async with self._r.pipeline() as pipe:
                 key = self._events_key(session_id)
                 # rpush 保持与 memory (deque.append) 相同的"最旧在前"时序。
@@ -663,7 +673,7 @@ class RedisSessionStore(BaseSessionStore):
                 pipe.ltrim(key, -MAX_EVENTS, -1)
                 pipe.expire(key, EVENTS_TTL)
                 pipe.sadd(self._active_key(), session_id)
-                self._refresh_session_ttl(pipe, session_id)
+                self._refresh_session_ttl(pipe, session_id, ref_ids)
                 await pipe.execute()
         except aioredis.RedisError as e:
             logger.warning(
@@ -866,6 +876,7 @@ class RedisSessionStore(BaseSessionStore):
                 self._map_actions_order_key(session_id),
             )
             pipe.srem(self._active_key(), session_id)
+            pipe.zrem(self._activity_key(), session_id)
             await pipe.execute()
         # F13: write-through invalidation, like every other writer — otherwise a
         # session recreated with the same id within L1_TTL_SECONDS reads the
@@ -880,9 +891,11 @@ class RedisSessionStore(BaseSessionStore):
         scored = []
         for sid_bytes in active:
             sid = sid_bytes.decode() if isinstance(sid_bytes, bytes) else sid_bytes
-            earliest = await self._r.zrange(self._refs_order_key(sid), 0, 0, withscores=True)
-            score = earliest[0][1] if earliest else 0
-            scored.append((sid, score))
+            raw_score = await self._r.zscore(self._activity_key(), sid)
+            if raw_score is None:
+                earliest = await self._r.zrange(self._refs_order_key(sid), 0, 0, withscores=True)
+                raw_score = earliest[0][1] if earliest else 0
+            scored.append((sid, float(raw_score)))
         scored.sort(key=lambda x: x[1])
         to_remove = len(scored) - max_sessions + 10
         for sid, _ in scored[:to_remove]:
@@ -951,6 +964,7 @@ class RedisSessionStore(BaseSessionStore):
                 return False
             async with self._r.pipeline() as pipe:
                 pipe.expire(data_key, DATA_TTL)
+                pipe.expire(self._descriptor_key(session_id, ref_id), DATA_TTL)
                 pipe.zadd(self._refs_order_key(session_id), {ref_id: time.time()})
                 self._refresh_session_ttl(pipe, session_id)
                 await pipe.execute()
@@ -959,7 +973,21 @@ class RedisSessionStore(BaseSessionStore):
             logger.warning("Redis ref_exists failed for session %s ref %s: %s", session_id, ref_id, e)
             return False
 
-    def _refresh_session_ttl(self, pipe, session_id: str) -> None:
+    async def _session_ref_ids(self, session_id: str) -> list:
+        try:
+            raw = await self._r.smembers(self._index_key(session_id))
+        except aioredis.RedisError:
+            return []
+        return list(raw or [])
+
+    def _refresh_payload_ttls(self, pipe, session_id: str, ref_ids) -> None:
+        for ref_id in ref_ids:
+            if isinstance(ref_id, bytes):
+                ref_id = ref_id.decode()
+            pipe.expire(self._data_key(session_id, ref_id), DATA_TTL)
+            pipe.expire(self._descriptor_key(session_id, ref_id), DATA_TTL)
+
+    def _refresh_session_ttl(self, pipe, session_id: str, ref_ids=None) -> None:
         for key in [
             self._aliases_key(session_id),
             self._refs_key(session_id),
@@ -967,6 +995,10 @@ class RedisSessionStore(BaseSessionStore):
             self._index_key(session_id),
         ]:
             pipe.expire(key, SESSION_TTL)
+        pipe.zadd(self._activity_key(), {session_id: time.time()})
+        pipe.expire(self._activity_key(), SESSION_TTL)
+        if ref_ids:
+            self._refresh_payload_ttls(pipe, session_id, ref_ids)
 
 
 # Backward-compatible alias

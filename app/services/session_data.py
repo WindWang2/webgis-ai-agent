@@ -40,6 +40,14 @@ class MemorySessionStore(BaseSessionStore):
         # section (see its docstring). Kept separate from `self._lock` so ACK
         # appends don't serialize against layer mutations.
         self._map_action_lock = asyncio.Lock()
+        # Session last-touch order for cleanup_idle_sessions (not first-insert).
+        self._session_order: OrderedDict[str, None] = OrderedDict()
+
+    def _touch_session(self, session_id: str) -> None:
+        if session_id in self._session_order:
+            self._session_order.move_to_end(session_id)
+        else:
+            self._session_order[session_id] = None
 
     async def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
         """存储数据并返回生成的游标 ID"""
@@ -62,6 +70,7 @@ class MemorySessionStore(BaseSessionStore):
             logger.debug(f"Session {session_id}: evicted {oldest_ref} (capacity={self.capacity})")
 
         session_cache[ref_id] = data
+        self._touch_session(session_id)
 
         # V3 Performance: compute descriptor once at store time so every subsequent
         # descriptor read is O(1) instead of O(features).
@@ -92,6 +101,7 @@ class MemorySessionStore(BaseSessionStore):
         # overwrite is the durability path for plans/checkpoints — bump LRU
         # recency so a just-updated plan is not the next eviction victim.
         session_cache.move_to_end(ref_id)
+        self._touch_session(session_id)
         return True
 
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
@@ -99,6 +109,7 @@ class MemorySessionStore(BaseSessionStore):
         if session_id not in self._aliases:
             self._aliases[session_id] = {}
         self._aliases[session_id][alias] = ref_id
+        self._touch_session(session_id)
 
     async def resolve_alias(self, session_id: str, ref_or_alias: str) -> str:
         """Resolve a ref or alias to its canonical ref_id.
@@ -133,6 +144,7 @@ class MemorySessionStore(BaseSessionStore):
         # 移动到末尾 (LRU)
         data = session_cache.pop(ref_id)
         session_cache[ref_id] = data
+        self._touch_session(session_id)
         return data
 
     # P2-1: get_ref_data was a byte-identical override of
@@ -182,6 +194,7 @@ class MemorySessionStore(BaseSessionStore):
             state[f"_{key}_seq"] = seq
         state[key] = value
         state[f"_{key}_updated_at"] = datetime.now(timezone.utc).isoformat()
+        self._touch_session(session_id)
         return True
 
     async def get_started_at(self, session_id: str) -> Optional[str]:
@@ -231,6 +244,7 @@ class MemorySessionStore(BaseSessionStore):
             "data": data,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
+        self._touch_session(session_id)
 
     async def get_event_log(self, session_id: str) -> list[dict]:
         """获取近期用户操作日志"""
@@ -291,6 +305,7 @@ class MemorySessionStore(BaseSessionStore):
         if not session_cache or ref_id not in session_cache:
             return False
         session_cache.move_to_end(ref_id)
+        self._touch_session(session_id)
         return True
 
     async def clear_session(self, session_id: str) -> None:
@@ -301,13 +316,16 @@ class MemorySessionStore(BaseSessionStore):
         self._event_log.pop(session_id, None)
         self._map_action_events.pop(session_id, None)
         self._descriptors.pop(session_id, None)
+        self._session_order.pop(session_id, None)
 
     async def cleanup_idle_sessions(self, max_sessions: int = 100) -> None:
-        """Evict oldest sessions when total exceeds max_sessions."""
-        if len(self._store) <= max_sessions:
+        """Evict least-recently-touched sessions when total exceeds max_sessions."""
+        order = self._session_order
+        if not order:
+            order = OrderedDict((sid, None) for sid in self._store)
+        if len(order) <= max_sessions:
             return
-        # Remove oldest sessions (first inserted in OrderedDict-like fashion)
-        to_remove = list(self._store.keys())[:len(self._store) - max_sessions + 10]
+        to_remove = list(order.keys())[:len(order) - max_sessions + 10]
         for sid in to_remove:
             await self.clear_session(sid)
         logger.info(f"Cleaned up {len(to_remove)} idle sessions")
