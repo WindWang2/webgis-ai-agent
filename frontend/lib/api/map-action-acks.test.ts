@@ -231,11 +231,47 @@ describe('map action ACK delivery (fault matrix)', () => {
     }
   });
 
+  it('4b. HTTP 401 with a rejected json() body is not retried', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: () => Promise.reject(new SyntaxError('<html>unauthorized</html>')),
+    });
+    const sender = makeSender(fetchImpl);
+
+    sender.sink(ack('ma-401-html'));
+    sender.flush();
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(1000);
+    await flushMicrotasks();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    sender.dispose();
+  });
+
   it('5. HTTP 400 validation errors are not retried', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ detail: 'bad ack' }, 400));
     const sender = makeSender(fetchImpl);
 
     sender.sink(ack('ma-400'));
+    sender.flush();
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(1000);
+    await flushMicrotasks();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    sender.dispose();
+  });
+
+  it('5b. HTTP 400 with a rejected json() body is not retried', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: () => Promise.reject(new SyntaxError('<html>bad request</html>')),
+    });
+    const sender = makeSender(fetchImpl);
+
+    sender.sink(ack('ma-400-html'));
     sender.flush();
     await flushMicrotasks();
     await vi.advanceTimersByTimeAsync(1000);
@@ -350,6 +386,35 @@ describe('map action ACK delivery (fault matrix)', () => {
     expect(bodies).toEqual(expect.arrayContaining(['ma-a', 'ma-b']));
     expect(String(aCall?.[0])).not.toMatch(/owner-a|token=/i);
     sender.dispose();
+  });
+
+  it('dispose does not abort an in-flight flush (unmount tail POST)', async () => {
+    let capturedSignal: AbortSignal | undefined;
+    let release: ((value: unknown) => void) | undefined;
+    const fetchImpl = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      capturedSignal = init.signal;
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    });
+    const sender = makeSender(fetchImpl);
+
+    sender.sink(ack('ma-tail'));
+    sender.flush();
+    await flushMicrotasks();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(capturedSignal?.aborted).toBe(false);
+
+    sender.dispose();
+    expect(capturedSignal?.aborted).toBe(false);
+
+    release?.(jsonResponse({ accepted: 1, duplicates: 0 }));
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(1000);
+    await flushMicrotasks();
+
+    expect(capturedSignal?.aborted).toBe(false);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it('10. dispose cancels retry timers so advancing time does not POST again', async () => {

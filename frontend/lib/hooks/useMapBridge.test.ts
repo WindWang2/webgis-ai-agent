@@ -839,6 +839,48 @@ describe('useMapBridge', () => {
     vi.unstubAllGlobals();
   });
 
+  it('unmount flush is not aborted so the tail ACK POST can finish', async () => {
+    let capturedSignal: AbortSignal | undefined;
+    let release: ((value: unknown) => void) | undefined;
+    const fetchMock = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      capturedSignal = init.signal as AbortSignal | undefined;
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const sinkHolder: { current: MapActionAckSink | null } = { current: null };
+    const wrapper = makeAckWrapper(sinkHolder, vi.fn());
+
+    mockStreamChat.mockReturnValue(makeAsyncGen([{ event: 'done', data: {} }]));
+    const { result, unmount } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent),
+      { wrapper }
+    );
+    await act(async () => { await result.current.send('q', {}); });
+
+    act(() => {
+      sinkHolder.current!({ action_id: 'ma-tail', command: 'fly_to', status: 'succeeded' });
+    });
+    act(() => { unmount(); });
+    await act(async () => {});
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(capturedSignal?.aborted).toBe(false);
+
+    await act(async () => {
+      release?.({
+        ok: true,
+        status: 200,
+        json: async () => ({ accepted: 1, duplicates: 0 }),
+      });
+    });
+
+    expect(capturedSignal?.aborted).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
   it('unmount flushes once and does not leak a retry timer (fault 10)', async () => {
     const fetchMock = vi.fn().mockRejectedValue(new TypeError('offline'));
     vi.stubGlobal('fetch', fetchMock);

@@ -12,7 +12,9 @@
  * - auth / validation 4xx / 410 are permanent drops;
  * - queue and attempt counts are bounded; POSTs stay chunked at max 50;
  * - retry never blocks map rendering or chat streaming;
- * - dispose() cancels debounce, retry, and request-timeout timers.
+ * - dispose() cancels debounce and retry timers and bumps generation so
+ *   late notify/retry no-op; in-flight POSTs are not aborted (unmount flush
+ *   must complete). Request-timeout timers stay armed.
  *
  * sendBeacon / fetch keepalive are not used: sendBeacon cannot set
  * X-Session-Token, and keepalive's 64KB cap can silently fail a legal batch.
@@ -94,7 +96,7 @@ export interface MapActionAckSender {
   sink: MapActionAckSink;
   /** POST everything queued right now (session switch / unmount). */
   flush: () => void;
-  /** Drop the queue and cancel pending debounce / retry / request timers. */
+  /** Drop the queue and cancel pending debounce / retry timers. In-flight POSTs are not aborted. */
   dispose: () => void;
 }
 
@@ -197,7 +199,6 @@ export function createMapActionAckSender(options: MapActionAckSenderOptions): Ma
   const deliveredRepairs = new Set<string>();
   const deliveredRepairOrder: string[] = [];
   const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
-  const liveControllers = new Set<AbortController>();
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let generation = 0;
@@ -328,7 +329,6 @@ export function createMapActionAckSender(options: MapActionAckSenderOptions): Ma
     const doFetch = fetchImpl ?? fetch;
     const acks = items.map((item) => item.ack);
     const controller = new AbortController();
-    liveControllers.add(controller);
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     if (requestTimeoutMs > 0) {
       timeoutId = trackTimer(setTimeout(() => {
@@ -338,7 +338,6 @@ export function createMapActionAckSender(options: MapActionAckSenderOptions): Ma
     const finishRequest = (): void => {
       untrackTimer(timeoutId);
       timeoutId = null;
-      liveControllers.delete(controller);
     };
 
     doFetch(
@@ -361,6 +360,15 @@ export function createMapActionAckSender(options: MapActionAckSenderOptions): Ma
           finishRequest();
           if (isTimeoutError(error)) {
             settleBatch(sessionId, items, classifyAckDelivery({ error }), gen);
+            return;
+          }
+          if (!response.ok) {
+            settleBatch(
+              sessionId,
+              items,
+              classifyAckDelivery({ status: response.status }),
+              gen,
+            );
             return;
           }
           settleBatch(sessionId, items, { kind: 'transient', reason: 'invalid_body' }, gen);
@@ -456,16 +464,9 @@ export function createMapActionAckSender(options: MapActionAckSenderOptions): Ma
 
   const dispose = (): void => {
     generation += 1;
-    pendingTimers.forEach((id) => {
-      clearTimeout(id);
-    });
-    pendingTimers.clear();
-    liveControllers.forEach((controller) => {
-      controller.abort();
-    });
-    liveControllers.clear();
-    inFlight.clear();
+    untrackTimer(debounceTimer);
     debounceTimer = null;
+    untrackTimer(retryTimer);
     retryTimer = null;
     queue = [];
   };
