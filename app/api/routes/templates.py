@@ -6,10 +6,10 @@ import logging
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, TypeAdapter
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user, get_current_user_optional
+from app.core.auth import actor_ids, get_current_user, get_current_user_optional
 from app.core.database import get_async_db
 from app.models.db_model import CartographyTemplate
 from app.schemas.template_schema import (
@@ -56,6 +56,32 @@ def _validate_payload(kind: str, payload: Dict[str, Any]):
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Invalid payload for kind '{kind}'"
         )
+
+
+def _template_scope_clause(user_id: Optional[str], org_id, role: Optional[str]):
+    """Built-ins + own creator_id + matching org. Never treat org_id IS NULL
+    user rows as public — JWT historically omitted org_id, so that predicate
+    leaked every tenant's saved templates.
+    """
+    if role == "admin":
+        return None
+    if user_id is None:
+        return CartographyTemplate.is_builtin.is_(True)
+    clauses = [
+        CartographyTemplate.is_builtin.is_(True),
+        CartographyTemplate.creator_id == user_id,
+    ]
+    if org_id is not None:
+        clauses.append(CartographyTemplate.org_id == org_id)
+    return or_(*clauses)
+
+
+def _template_visible(tmpl: CartographyTemplate, user_id: Optional[str], org_id, role: Optional[str]) -> bool:
+    if tmpl.is_builtin or role == "admin":
+        return True
+    if org_id is not None and tmpl.org_id == org_id:
+        return True
+    return user_id is not None and tmpl.creator_id == user_id
 
 
 def _template_to_dict(tmpl: CartographyTemplate) -> dict:
@@ -108,20 +134,18 @@ async def list_templates(
     from app.schemas.pagination import Page, clamp_pagination
 
     limit, offset = clamp_pagination(limit, offset)
-    user_org_id = _user.get("org_id") if isinstance(_user, dict) else None
+    user_id, user_org_id = actor_ids(_user if isinstance(_user, dict) else None)
+    role = _user.get("role") if isinstance(_user, dict) else None
 
-    # DB-stored templates: scope to caller's org (built-ins + their own).
+    # DB-stored templates: builtins + caller's own (and org, when the JWT
+    # actually carries org_id). Do not use org_id IS NULL as "public".
     stmt = select(CartographyTemplate)
     if kind:
         stmt = stmt.where(CartographyTemplate.kind == kind)
 
-    if user_org_id is not None:
-        # Built-ins (org_id IS NULL) are always visible. User templates are
-        # scoped to the caller's org.
-        stmt = stmt.where(
-            (CartographyTemplate.org_id.is_(None)) | (CartographyTemplate.org_id == user_org_id)
-        )
-    # Unauthenticated callers see only built-in seeds (defense in depth).
+    scope = _template_scope_clause(user_id, user_org_id, role)
+    if scope is not None:
+        stmt = stmt.where(scope)
 
     if source == "builtin":
         stmt = stmt.where(CartographyTemplate.is_builtin.is_(True))
@@ -207,10 +231,17 @@ async def get_template(
     Gallery V2 在用户点击模板卡时调用；列表路径不再下发 payload。
     Built-in seed 也走这条 — 找不到时回退到 SEED_TEMPLATES。
     """
+    user_id, user_org_id = actor_ids(_user if isinstance(_user, dict) else None)
+    role = _user.get("role") if isinstance(_user, dict) else None
     stmt = select(CartographyTemplate).where(CartographyTemplate.id == template_id)
     result = await db.execute(stmt)
     tmpl = result.scalar_one_or_none()
     if tmpl is not None:
+        if not _template_visible(tmpl, user_id, user_org_id, role):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Template '{template_id}' not found",
+            )
         return _template_to_dict(tmpl)
 
     # Fall back to built-in seed.
@@ -235,8 +266,7 @@ async def create_template(
     """
     _validate_payload(req.kind, req.payload)
 
-    user_id = _user.get("user_id") if isinstance(_user, dict) else None
-    user_org_id = _user.get("org_id") if isinstance(_user, dict) else None
+    user_id, user_org_id = actor_ids(_user if isinstance(_user, dict) else None)
     template_id = f"tmpl_user_{uuid.uuid4().hex[:8]}"
     tmpl = CartographyTemplate(
         id=template_id,

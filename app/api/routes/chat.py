@@ -9,7 +9,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user_optional, get_owner_token, require_admin, require_owned_session
+from app.core.auth import (
+    authorize_session_write,
+    get_current_user_optional,
+    get_owner_token,
+    require_admin,
+    require_owned_session,
+)
 from app.core.database import get_async_db
 from app.core.rate_limiter import get_rate_limiter
 from app.models.db_model import Conversation
@@ -525,6 +531,27 @@ async def _guard_body_session(
         raise HTTPException(status_code=404, detail="Session not found")
 
 
+def _pi_stream_capability(
+    conversation,
+    created: bool,
+    user_id: Optional[str],
+    owner_token: Optional[str],
+) -> Optional[str]:
+    """SSE ``owner_token`` for a Pi stream, or 404 if the caller must stop.
+
+    A newly created row mints a token the caller does not yet have — emit it
+    once. An existing row is a TOCTOU against ``_guard_body_session`` (absent
+    at guard time, present at get-or-create): require the same ownership
+    rules as ``authorize_session_write`` and never emit a token the caller
+    did not already present.
+    """
+    if created:
+        return getattr(conversation, "owner_token", None)
+    if not authorize_session_write(conversation, user_id, owner_token):
+        raise HTTPException(status_code=404, detail="Session not found")
+    return None
+
+
 @router.post("/completions", response_model=ChatResponse)
 async def chat_completions(
     req: ChatRequest,
@@ -622,10 +649,14 @@ async def chat_stream(
             # Direct route tests use a minimal close-only DB stand-in. Real
             # requests always carry AsyncSession and persist the capability.
             if db is not None and hasattr(db, "execute"):
-                conversation = await AsyncHistoryService(db).get_or_create_conversation(
+                conversation, created = await AsyncHistoryService(
+                    db
+                ).get_or_create_conversation_with_created(
                     pi_session_id, user_id=user_id
                 )
-                pi_owner_token = conversation.owner_token
+                pi_owner_token = _pi_stream_capability(
+                    conversation, created, user_id, owner_token
+                )
     finally:
         # Release the connection NOW, not when the stream ends. The guard is
         # the only consumer; nothing downstream uses ``db``.

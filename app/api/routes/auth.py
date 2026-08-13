@@ -53,10 +53,20 @@ def _allow_public_register() -> bool:
 
 
 def _get_client_ip(request: Request) -> str:
-    """从请求中提取客户端 IP，优先尝试 X-Forwarded-For 头（代理感知）。"""
+    """Client IP for auth rate limits.
+
+    Production nginx sets ``X-Real-IP $remote_addr`` and appends the real peer
+    as the last ``X-Forwarded-For`` hop (``$proxy_add_x_forwarded_for``).
+    The leftmost XFF value is attacker-controlled and must not key the limiter.
+    """
+    real_ip = (request.headers.get("x-real-ip") or "").strip()
+    if real_ip:
+        return real_ip
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        hops = [hop.strip() for hop in forwarded.split(",") if hop.strip()]
+        if hops:
+            return hops[-1]
     return request.client.host if request.client else "unknown"
 
 
@@ -102,6 +112,8 @@ def _user_to_dict(u: User) -> dict:
 def _issue_token_pair(user: User) -> TokenResponse:
     """为给定 user 签发 access + refresh token 对。"""
     token_data = {"sub": user.id, "username": user.username, "role": user.role}
+    if getattr(user, "org_id", None) is not None:
+        token_data["org_id"] = user.org_id
     access = create_access_token(
         data=token_data,
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
