@@ -7,6 +7,7 @@ harness 约定：clean_session fixture、fake_registry（MagicMock + AsyncMock�
 _tc 工具调用辅助。
 """
 import pytest
+import shutil
 from unittest.mock import AsyncMock, MagicMock
 
 from app.services.tool_dispatch_service import (
@@ -15,14 +16,17 @@ from app.services.tool_dispatch_service import (
     normalize_tool_name,
 )
 from app.services.session_data import session_data_manager
+from app.services.mapspec.store import BASE_STORAGE_DIR, mapspec_store_instance
 
 
 @pytest.fixture
 async def clean_session():
     sid = "test-dispatch-service-session"
     await session_data_manager.clear_session(sid)
+    shutil.rmtree(BASE_STORAGE_DIR / sid, ignore_errors=True)
     yield sid
     await session_data_manager.clear_session(sid)
+    shutil.rmtree(BASE_STORAGE_DIR / sid, ignore_errors=True)
 
 
 @pytest.fixture
@@ -118,6 +122,51 @@ async def test_geojson_result_produces_ref(service, fake_registry, clean_session
     assert result.status == "ok"
     assert result.geojson_ref is not None
     assert result.geojson_ref.startswith("ref:geojson-")
+    assert result.raw_result["mapspec_fingerprint"].startswith("carto-sha256:")
+    assert result.raw_result["runtime_patch"]["result_ref"] == result.geojson_ref
+    assert result.raw_result["mutation_revision"] == 1
+    assert result.map_actions[0]["command"] == "add_layer"
+    persisted = await mapspec_store_instance.get_mapspec(clean_session)
+    assert persisted["layers"][0]["provenance"]["result_ref"] == result.geojson_ref
+
+
+@pytest.mark.asyncio
+async def test_mapspec_authoring_failure_keeps_ref_but_drops_feature_body(
+    service, fake_registry, clean_session, monkeypatch,
+):
+    """L1 analysis may survive presentation failure without retaining a
+    duplicate dataset or fabricating a cartographic generation."""
+    feature_collection = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [116.4, 39.9]},
+            "properties": {"private": "not-evidence"},
+        }],
+    }
+    fake_registry.dispatch.return_value = feature_collection
+    from app.services.mapspec_store import mapspec_store
+    monkeypatch.setattr(
+        mapspec_store,
+        "layer_upsert",
+        AsyncMock(side_effect=RuntimeError("authoring unavailable")),
+    )
+
+    result = await service.dispatch(
+        _tc("search_poi", {"q": "school"}, tc_id="call_failed_author"),
+        clean_session,
+        set(),
+    )
+
+    assert result.status == "ok"
+    assert result.geojson_ref and result.geojson_ref.startswith("ref:geojson-")
+    assert result.raw_result["result_ref"] == result.geojson_ref
+    assert result.raw_result["feature_count"] == 1
+    assert "features" not in result.raw_result
+    assert "private" not in result.llm_payload
+    assert result.raw_result["cartographic_review"]["status"] == "not_evaluated"
+    assert "mapspec_fingerprint" not in result.raw_result
+    assert result.map_actions == []
 
 
 @pytest.mark.asyncio
@@ -127,6 +176,126 @@ async def test_no_geojson_means_no_ref(service, fake_registry, clean_session):
     result = await service.dispatch(_tc("spatial_stats", {}), clean_session, set())
     assert result.status == "ok"
     assert result.geojson_ref is None
+
+
+@pytest.mark.asyncio
+async def test_existing_result_ref_reuses_metadata_without_copying_data(
+    service, fake_registry, clean_session,
+):
+    source = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [116.4, 39.9]},
+            "properties": {},
+        }],
+    }
+    existing_ref = await session_data_manager.store(
+        clean_session, source, prefix="geojson"
+    )
+    fake_registry.dispatch.return_value = {
+        "summary": "authored",
+        "result_ref": existing_ref,
+        "command": "add_layer",
+        "params": {"result_ref": existing_ref},
+    }
+
+    result = await service.dispatch(
+        _tc("webgis_layer_upsert", {}), clean_session, set()
+    )
+
+    assert result.geojson_ref == existing_ref
+    assert result.ref_descriptor is not None
+    assert result.ref_descriptor["feature_count"] == 1
+    refs = await session_data_manager.list_refs(clean_session)
+    assert list(refs) == [existing_ref]
+
+
+@pytest.mark.asyncio
+async def test_result_ref_mount_identity_survives_descriptor_cache_miss(
+    service, fake_registry, clean_session, monkeypatch,
+):
+    result_ref = "ref:geojson-transient-result"
+    fake_registry.dispatch.return_value = {
+        "summary": "authored",
+        "result_ref": result_ref,
+    }
+    monkeypatch.setattr(
+        session_data_manager,
+        "get_ref_descriptor",
+        AsyncMock(return_value=None),
+    )
+
+    result = await service.dispatch(
+        _tc("webgis_layer_upsert", {}), clean_session, set()
+    )
+
+    assert result.status == "ok"
+    assert result.geojson_ref == result_ref
+    assert result.ref_descriptor is None
+
+
+@pytest.mark.asyncio
+async def test_raster_result_ref_never_masquerades_as_geojson(
+    service, fake_registry, clean_session, monkeypatch,
+):
+    """Raster identity stays on the image path; no empty vector mount may ACK it."""
+    fake_registry.dispatch.return_value = {
+        "type": "heatmap_raster",
+        "image": "/api/v1/sessions/s/raster/r1.png",
+        "bbox": [116.0, 39.0, 117.0, 40.0],
+        "result_ref": "ref:raster/r1",
+        "command": "add_heatmap_raster",
+    }
+    descriptor = AsyncMock(side_effect=AssertionError("raster is not GeoJSON"))
+    monkeypatch.setattr(session_data_manager, "get_ref_descriptor", descriptor)
+
+    result = await service.dispatch(
+        _tc("webgis_layer_upsert", {}), clean_session, set()
+    )
+
+    assert result.status == "ok"
+    assert result.geojson_ref is None
+    assert result.ref_descriptor is None
+    assert result.raw_result["result_ref"] == "ref:raster/r1"
+    descriptor.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_heatmap_raster_enters_mapspec_review(service, fake_registry, clean_session):
+    """Matt P1: a heatmap_data raster result is authored into MapSpec review
+    without being advertised as a GeoJSON mount."""
+    png = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQ"
+        "AAAABJRU5ErkJggg=="
+    )
+    fake_registry.dispatch.return_value = {
+        "type": "heatmap_raster",
+        "image": f"data:image/png;base64,{png}",
+        "bbox": [116.0, 39.0, 117.0, 40.0],
+        "legend_spec": {"type": "continuous", "field": "density"},
+        "command": "add_heatmap_raster",
+    }
+
+    result = await service.dispatch(
+        _tc("heatmap_data", {"render_type": "raster"}, tc_id="heat_1"),
+        clean_session,
+        set(),
+    )
+
+    assert result.status == "ok"
+    assert result.geojson_ref is None
+    assert result.raw_result["type"] == "heatmap_raster"
+    assert result.raw_result["result_ref"].startswith("ref:raster/")
+    assert result.raw_result["mapspec_fingerprint"].startswith("carto-sha256:")
+    assert result.raw_result["cartographic_review"]["status"] in {
+        "passed", "passed_with_warnings", "failed_repairable",
+        "failed_unrepairable", "repair_exhausted", "not_evaluated",
+    }
+    assert "image" not in result.raw_result
+    persisted = await mapspec_store_instance.get_mapspec(clean_session)
+    assert persisted["layers"][0]["type"] == "raster"
+    assert persisted["layers"][0]["provenance"]["result_ref"] == result.raw_result["result_ref"]
 
 
 @pytest.mark.asyncio

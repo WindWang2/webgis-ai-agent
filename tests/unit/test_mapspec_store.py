@@ -53,6 +53,8 @@ async def test_mapspec_store_set_view(clean_session):
 async def test_layer_upsert_auto_profiles_and_auto_views(clean_session):
   geojson_data = {
       "type": "FeatureCollection",
+      # Auto-view is only truthful when the coordinate reference is declared.
+      "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
       "features": [
           {
               "type": "Feature",
@@ -246,6 +248,65 @@ async def test_checkpoint_materializes_inline_data(clean_session):
 
 
 @pytest.mark.asyncio
+async def test_auto_checkpoint_verifies_live_refs_without_materializing_payload(
+    clean_session, monkeypatch,
+):
+  from unittest.mock import AsyncMock
+  from app.services.mapspec.checkpoint import rollback, snapshot
+
+  geojson = {"type": "FeatureCollection", "features": []}
+  ref_id = await session_data_manager.store(clean_session, geojson, prefix="geojson")
+  mapspec = {
+      "version": "1.0",
+      "sources": {"s": {"type": "geojson", "ref_id": ref_id}},
+      "layers": [{"id": "l", "source": "s", "type": "circle"}],
+  }
+  session_dir = BASE_STORAGE_DIR / clean_session
+  checkpoint = await snapshot(
+      mapspec, session_dir, session_data_manager, checkpoint_id=None
+  )
+  full_load = AsyncMock(side_effect=AssertionError("full ref load is forbidden"))
+  monkeypatch.setattr(session_data_manager, "get", full_load)
+
+  restored = await rollback(
+      session_dir, checkpoint["checkpoint_id"], session_data_manager
+  )
+
+  assert restored["success"] is True
+  assert restored["checkpoint_mode"] == "presentation_only"
+  assert restored["refs_reused"] == 1
+  assert restored["ref_count"] == 0
+  full_load.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_auto_checkpoint_fails_truthfully_when_live_ref_was_evicted(clean_session):
+  from app.services.mapspec.checkpoint import rollback, snapshot
+
+  ref_id = await session_data_manager.store(
+      clean_session, {"type": "FeatureCollection", "features": []}, prefix="geojson"
+  )
+  mapspec = {
+      "version": "1.0",
+      "sources": {"s": {"type": "geojson", "ref_id": ref_id}},
+      "layers": [{"id": "l", "source": "s", "type": "circle"}],
+  }
+  session_dir = BASE_STORAGE_DIR / clean_session
+  checkpoint = await snapshot(
+      mapspec, session_dir, session_data_manager, checkpoint_id=None
+  )
+  await session_data_manager.clear_session(clean_session)
+
+  restored = await rollback(
+      session_dir, checkpoint["checkpoint_id"], session_data_manager
+  )
+
+  assert restored["success"] is False
+  assert restored["checkpoint_mode"] == "presentation_only"
+  assert restored["missing_refs"] == [ref_id]
+
+
+@pytest.mark.asyncio
 async def test_layer_upsert_analysis_result_contract(clean_session):
   geojson = {
       "type": "FeatureCollection",
@@ -290,7 +351,12 @@ async def test_layer_upsert_analysis_result_contract(clean_session):
   assert upserted_layer["paint"]["color"]["method"] == "step"
   assert upserted_layer["paint"]["color"]["field"] == "val"
   assert upserted_layer["provenance"]["algorithm"] == "spatial_hotspot"
-  assert mapspec["sources"]["hotspot_source"]["inlineData"] == geojson
+  result_source = mapspec["sources"]["hotspot_source"]
+  assert result_source["inlineData"] == geojson
+  # source_ref describes the analysis input. It must never replace the output
+  # carrier or make the displayed layer resolve to a different dataset.
+  assert "ref" not in result_source
+  assert "ref_id" not in result_source
 
 
 def test_view_has_center_false_when_absent():
@@ -327,6 +393,7 @@ async def test_layer_upsert_raster_source_contract(clean_session):
   payload = {
       "algorithm": "compute_ndvi",
       "item_id": "S2B_tile_xyz",
+      "source_ref": "ref:raster/input-dem",
       "raster_source": {
           "array": arr,
           "bounds": [100.0, 20.0, 101.0, 21.0],
@@ -354,6 +421,8 @@ async def test_layer_upsert_raster_source_contract(clean_session):
   assert src["imageRef"].startswith("ref:raster/")
   # imageSize is [width, height] = [cols, rows] of the array.
   assert src["imageSize"] == [3, 2]
+  assert upserted["provenance"]["source_ref"] == "ref:raster/input-dem"
+  assert upserted["provenance"]["result_ref"] == src["imageRef"]
 
   # The PNG actually landed on disk and resolves via the imageRef.
   session_dir = BASE_STORAGE_DIR / clean_session

@@ -159,7 +159,9 @@ export function useSSEStream(
   dispatchAction: (act: MapActionPayload) => void,
   getMapSnapshot: () => any,
   userLocation: { lng: number; lat: number; accuracy?: number } | null,
-  sessionTokenRef: React.MutableRefObject<string | null>
+  sessionTokenRef: React.MutableRefObject<string | null>,
+  rememberSessionToken?: (sessionId: string, token: string) => void,
+  getSessionToken?: (sessionId: string) => string | null,
 ) {
   const [messages, setMessages] = useState<
     Array<{
@@ -263,7 +265,12 @@ export function useSSEStream(
       // SEC-08：服务端在新建匿名会话时签发 owner_token（随 task_start / session 事件下发）。
       // 前端持有后在后续请求的 X-Session-Token 头里回传。认证会话不携带该字段。
       if (data?.owner_token && typeof data.owner_token === 'string') {
-        sessionTokenRef.current = data.owner_token;
+        const ownerSessionId = data.session_id ?? sessionIdRef.current;
+        if (typeof ownerSessionId === 'string' && ownerSessionId) {
+          rememberSessionToken?.(ownerSessionId, data.owner_token);
+        } else {
+          sessionTokenRef.current = data.owner_token;
+        }
       }
 
       const thinkingId = thinkingMsgIdRef.current;
@@ -320,6 +327,19 @@ export function useSSEStream(
               : `分析结果: ${data.tool}`;
           const accentColor = useHudStore.getState().accentColor;
           const legendSpec = data.result?.legend_spec ?? undefined;
+          const runtimePatch = data.result?.runtime_patch;
+          const patchVisible = typeof runtimePatch?.visible === 'boolean'
+            ? runtimePatch.visible
+            : !data.geojson_ref;
+          const patchOpacity = typeof runtimePatch?.opacity === 'number'
+            && Number.isFinite(runtimePatch.opacity)
+            ? runtimePatch.opacity
+            : 1;
+          const patchLegend = runtimePatch?.legend_spec ?? legendSpec;
+          const patchStyle = runtimePatch?.style && typeof runtimePatch.style === 'object'
+            ? runtimePatch.style
+            : { color: accentColor };
+          const mapspecGenerationAt = runtimePatch ? Date.now() : undefined;
           const layerMetaTitle: string | null = data.result?.layer_meta?.title ?? null;
           // Detect native heatmap
           const isNativeHeatmap =
@@ -334,8 +354,8 @@ export function useSSEStream(
             id: layerId,
             name: layerName,
             type: data.result?.image ? 'heatmap' : isNativeHeatmap ? 'heatmap' : 'vector',
-            visible: !data.geojson_ref, // image-only layers have no ref_id so display_layer can't show them
-            opacity: 1,
+            visible: patchVisible,
+            opacity: patchOpacity,
             group: 'analysis',
             source: data.geojson_ref
               ? ({
@@ -344,15 +364,46 @@ export function useSSEStream(
                   metadata: { ref_id: data.geojson_ref },
                 } as any)
               : data.result,
-            style: { color: accentColor },
-            _refId: data.geojson_ref,
+            style: patchStyle,
+            _refId: data.geojson_ref ?? runtimePatch?.image_ref,
             // Data Plane: 大要素 ref 图层由 MVT 瓦片端点显示（替代整包 GeoJSON）。
             _tileUrl: data.geojson_ref
               ? `${API_BASE}/api/v1/layers/data/${data.geojson_ref}/tiles/{z}/{x}/{y}.mvt?session_id=${sessionIdRef.current}`
               : undefined,
             _descriptor: descriptor,
-            legend_spec: legendSpec,
+            legend_spec: patchLegend,
+            _mapspecFingerprint: runtimePatch?.mapspec_fingerprint,
+            _mapspecLayerId: runtimePatch?.layer_id,
+            _mapspecGenerationAt: mapspecGenerationAt,
+            _mapspecProjectionFingerprint: runtimePatch?.projection_fingerprint,
+            _cartographicRepairs: Array.isArray(runtimePatch?.repair_attempts)
+              ? runtimePatch.repair_attempts.slice(0, 2)
+              : undefined,
           });
+          // A GIS result is often auto-mounted hidden before the agent authors
+          // its final MapSpec.  In that case addLayer is intentionally a no-op;
+          // update the existing ref layer with the reviewed presentation and
+          // generation instead of creating a duplicate layer.
+          if (runtimePatch && data.geojson_ref) {
+            useHudStore.getState().updateLayer(layerId, {
+              name: runtimePatch.layer_id
+                ? `分析结果: ${runtimePatch.layer_id}`
+                : layerName,
+              visible: patchVisible,
+              opacity: patchOpacity,
+              style: patchStyle,
+              legend_spec: patchLegend,
+              _refId: data.geojson_ref,
+              _descriptor: descriptor,
+              _mapspecFingerprint: runtimePatch.mapspec_fingerprint,
+              _mapspecLayerId: runtimePatch.layer_id,
+              _mapspecGenerationAt: mapspecGenerationAt,
+              _mapspecProjectionFingerprint: runtimePatch.projection_fingerprint,
+              _cartographicRepairs: Array.isArray(runtimePatch.repair_attempts)
+                ? runtimePatch.repair_attempts.slice(0, 2)
+                : undefined,
+            });
+          }
           if (layerMetaTitle) {
             useHudStore.getState().setCartographyTitle(layerMetaTitle);
           }
@@ -386,7 +437,7 @@ export function useSSEStream(
                 if (geojson && (geojson.type === 'FeatureCollection' || geojson.features)) {
                   // Guard: only write if the layer still exists with this ref (not removed and re-added with different data)
                   const current = useHudStore.getState().layers.find((l) => l.id === fetchRef);
-                  if (current) {
+                  if (current && current._refId === fetchRef) {
                     useHudStore.getState().updateLayer(fetchRef, { source: geojson });
                   }
                 }
@@ -557,7 +608,7 @@ export function useSSEStream(
         });
       }
     },
-    [setSessionId, sessionIdRef, sessionTokenRef]
+    [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken]
   );
 
   // DUP-1: bounded auto-reconnect for the chat stream. Opt-in by explicit
@@ -567,7 +618,7 @@ export function useSSEStream(
   const bridge = useMapBridge(sessionId, dispatchAction, onEvent, sessionTokenRef, {
     maxAttempts: 2,
     baseDelayMs: 500,
-  });
+  }, getSessionToken);
   const isLoading = bridge.aiStatus === 'thinking' || bridge.aiStatus === 'acting';
 
   const handlePlanAction = useCallback((planId: string, action: 'approve' | 'revise' | 'reject') => {
@@ -619,11 +670,15 @@ export function useSSEStream(
           group: l.group,
           _refId: l._refId,
           _tileUrl: l._tileUrl,
+          _descriptor: l._descriptor,
           featureCount:
             l.source && typeof l.source === 'object' && 'features' in l.source
               ? (l.source as any).features?.length ?? 0
               : undefined,
           style: l.style,
+          // Structured legend metadata is bounded and lets the backend compare
+          // desired MapSpec semantics with the actual runtime observation.
+          legend_spec: l.legend_spec,
         })),
         user_location: userLocation
           ? { lng: userLocation.lng, lat: userLocation.lat, accuracy: userLocation.accuracy }

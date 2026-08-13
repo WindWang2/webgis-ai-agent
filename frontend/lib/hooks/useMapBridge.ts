@@ -108,6 +108,7 @@ export function useMapBridge(
   onEvent: (event: SSEEvent) => void,
   sessionTokenRef?: React.MutableRefObject<string | null>,
   reconnect?: SseReconnectOptions,
+  getSessionToken?: (sessionId: string) => string | null,
 ): {
   aiStatus: AiStatus;
   send: (content: string, mapSnapshot: Record<string, unknown>) => Promise<void>;
@@ -132,6 +133,12 @@ export function useMapBridge(
   const mapActionCtxRef = useRef<MapActionContextWithAck | undefined>(mapActionCtx);
   mapActionCtxRef.current = mapActionCtx;
   const sessionIdRef = useRef(sessionId);
+  // Update during render, not only in the effect: a late event from session A
+  // may arrive in the render→effect window after the UI selected session B.
+  sessionIdRef.current = sessionId;
+  const getSessionTokenRef = useRef(getSessionToken);
+  getSessionTokenRef.current = getSessionToken;
+  const streamEpochRef = useRef(0);
 
   // V3 ACK sender: created once per hook instance. Session + token are read
   // through refs so a session switch re-routes acks without recreating the
@@ -140,7 +147,20 @@ export function useMapBridge(
   if (ackSenderRef.current === null) {
     ackSenderRef.current = createMapActionAckSender({
       getSessionId: () => sessionIdRef.current,
-      getToken: () => sessionTokenRef?.current ?? null,
+      getToken: (ackSessionId) => (
+        ackSessionId && getSessionTokenRef.current
+          ? getSessionTokenRef.current(ackSessionId)
+          : sessionTokenRef?.current ?? null
+      ),
+      onResponse: (responseSessionId, body) => {
+        const response = body as { repair_action?: MapActionPayload } | null;
+        if (
+          responseSessionId === sessionIdRef.current
+          && response?.repair_action
+        ) {
+          mapActionCtxRef.current?.dispatchAction(response.repair_action);
+        }
+      },
     });
   }
   const ackSender = ackSenderRef.current;
@@ -160,16 +180,17 @@ export function useMapBridge(
   // the old session is not lost.
   useEffect(() => {
     if (prevSessionIdRef.current !== sessionId) {
-      if (prevSessionIdRef.current !== undefined && sessionId !== undefined) {
-        // Abort only on explicit session switch, not on server assignment for a new session
+      if (prevSessionIdRef.current !== undefined) {
+        // Abort A→B and A→new-session. Do not abort undefined→assigned:
+        // that transition is the server assigning the currently live stream.
         abortControllerRef.current?.abort();
+        streamEpochRef.current += 1;
       }
       resetViewportSeq();
       mapActionCtx?.clearActions?.();
       ackSender.flush();
     }
     prevSessionIdRef.current = sessionId;
-    sessionIdRef.current = sessionId;
   }, [sessionId, mapActionCtx, ackSender]);
 
   useEffect(() => {
@@ -198,6 +219,7 @@ export function useMapBridge(
       abortControllerRef.current?.abort();
       const controller = new AbortController();
       abortControllerRef.current = controller;
+      const streamEpoch = ++streamEpochRef.current;
 
       setAiStatus('thinking');
 
@@ -211,6 +233,10 @@ export function useMapBridge(
       // back as `Last-Event-ID` so the backend replays only the missed events
       // (resume is a read — it never re-executes the turn).
       let lastEventId: string | undefined;
+      // A stream may begin without a session id, then bind exactly once to the
+      // server-minted session. Events from any other session are stale/mixed
+      // and must never switch workspace state or mount their result.
+      let streamSessionId = sessionIdRef.current;
       const maxAttempts = reconnect?.maxAttempts ?? 0;
       const baseDelayMs = reconnect?.baseDelayMs ?? 500;
 
@@ -229,14 +255,43 @@ export function useMapBridge(
             // buffered start) so the backend resumes instead of re-executing.
             for await (const event of streamChat(
               content,
-              sessionId,
+              sessionIdRef.current,
               { ...mapSnapshot, viewport_seq: nextViewportSeq(viewportSeqTracker) },
               controller.signal,
               undefined,
               sessionTokenRef?.current ?? null,
               attempt > 0 ? (lastEventId ?? "0") : undefined,
             )) {
-              if (controller.signal.aborted) break;
+              if (controller.signal.aborted || streamEpoch !== streamEpochRef.current) break;
+              const currentSessionId = sessionIdRef.current;
+              if (
+                streamSessionId
+                && currentSessionId
+                && streamSessionId !== currentSessionId
+              ) {
+                // Reject even sessionless late events: their stream itself is
+                // bound to the old workspace and must not mutate the new one.
+                controller.abort();
+                break;
+              }
+
+              const eventSessionId = (
+                typeof event.data !== 'string'
+                && typeof (event.data as Record<string, unknown>)?.session_id === 'string'
+              )
+                ? String((event.data as Record<string, unknown>).session_id)
+                : undefined;
+              if (eventSessionId) {
+                if (streamSessionId && eventSessionId !== streamSessionId) {
+                  devOnly.warn('[useMapBridge] ignored mixed-session SSE event');
+                  continue;
+                }
+                if (currentSessionId && eventSessionId !== currentSessionId) {
+                  devOnly.warn('[useMapBridge] ignored event for inactive session');
+                  continue;
+                }
+                streamSessionId ??= eventSessionId;
+              }
 
               // DUP-1 dedup: a resume replays events after Last-Event-ID, which
               // should never overlap what the client already processed — but if
@@ -328,7 +383,7 @@ export function useMapBridge(
                         command,
                         params: actionParams as MapActionPayload['params'],
                         ...(actionId ? { action_id: actionId } : { action_id: mintFeActionId() }),
-                        correlation: buildMapActionCorrelation(sessionId, stepData, event),
+                        correlation: buildMapActionCorrelation(streamSessionId, stepData, event),
                       } as MapActionPayload,
                     });
                   } else {
@@ -337,7 +392,7 @@ export function useMapBridge(
                       params: actionParams as MapActionPayload['params'],
                       // V3: pass through the backend-minted action_id + correlation (§6)
                       ...(actionId ? { action_id: actionId } : {}),
-                      correlation: buildMapActionCorrelation(sessionId, stepData, event),
+                      correlation: buildMapActionCorrelation(streamSessionId, stepData, event),
                     });
                   }
                 } else if (Array.isArray(batchCommands) && batchCommands.length > 0) {
@@ -354,7 +409,7 @@ export function useMapBridge(
                           command,
                           params: (cmd.params || {}) as MapActionPayload['params'],
                           ...(cmd.action_id ? { action_id: cmd.action_id } : { action_id: mintFeActionId() }),
-                          correlation: buildMapActionCorrelation(sessionId, stepData, event),
+                          correlation: buildMapActionCorrelation(streamSessionId, stepData, event),
                         } as MapActionPayload,
                       });
                     } else {
@@ -362,7 +417,7 @@ export function useMapBridge(
                         command,
                         params: (cmd.params || {}) as MapActionPayload['params'],
                         ...(cmd.action_id ? { action_id: cmd.action_id } : {}),
-                        correlation: buildMapActionCorrelation(sessionId, stepData, event),
+                        correlation: buildMapActionCorrelation(streamSessionId, stepData, event),
                       });
                     }
                   }
@@ -375,7 +430,7 @@ export function useMapBridge(
                         params: bboxToFlyTo(bbox),
                         // V3: no backend-minted id for a client-synthesized fly_to → fe-…
                         action_id: mintFeActionId(),
-                        correlation: buildMapActionCorrelation(sessionId, stepData, event),
+                        correlation: buildMapActionCorrelation(streamSessionId, stepData, event),
                       });
                     } catch {
                       // invalid bbox (e.g. degenerate after isValidBbox — defensive)
@@ -451,7 +506,10 @@ export function useMapBridge(
           await sleep(baseDelayMs * 2 ** attempt); // backoff before the next attempt
         }
       } finally {
-        if (abortControllerRef.current === controller) {
+        if (
+          streamEpoch === streamEpochRef.current
+          && abortControllerRef.current === controller
+        ) {
           // Still the active controller — update aiStatus appropriately
           if (controller.signal.aborted) {
             setAiStatus('idle');
@@ -477,7 +535,7 @@ export function useMapBridge(
         // If not the active controller, a new send() has taken over — leave aiStatus alone
       }
     },
-    [sessionId, dispatchAction, onEvent, setAiStatus, sessionTokenRef, reconnect]
+    [dispatchAction, onEvent, setAiStatus, sessionTokenRef, reconnect]
   );
 
   // [ENG-D3] useCallback([sessionId]) — stable ref so MapPanel's handleMove deps don't churn

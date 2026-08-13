@@ -1,8 +1,44 @@
 import json
+import math
 from pathlib import Path
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from app.utils.geojson import geojson_bbox
+
+
+def _declared_crs(data: Dict[str, Any]) -> Tuple[Optional[str], str]:
+  """Return only CRS evidence explicitly carried by the source descriptor."""
+  raw = data.get("crs")
+  if isinstance(raw, str) and raw.strip():
+    return raw.strip(), "explicit"
+  if isinstance(raw, dict):
+    properties = raw.get("properties")
+    if isinstance(properties, dict):
+      name = properties.get("name")
+      if isinstance(name, str) and name.strip():
+        return name.strip(), "explicit"
+      code = properties.get("code")
+      if code is not None and str(code).strip():
+        authority = str(raw.get("type") or "EPSG").upper()
+        return f"{authority}:{str(code).strip()}", "explicit"
+  return None, "unknown"
+
+
+def _is_explicit_geographic_crs(crs: Optional[str]) -> bool:
+  if not crs:
+    return False
+  normalized = crs.upper().replace(" ", "")
+  return normalized in {
+      "EPSG:4326",
+      "CRS:84",
+      "OGC:CRS84",
+      "URN:OGC:DEF:CRS:EPSG::4326",
+      "HTTP://WWW.OPENGIS.NET/DEF/CRS/EPSG/0/4326",
+      "HTTPS://WWW.OPENGIS.NET/DEF/CRS/EPSG/0/4326",
+      "URN:OGC:DEF:CRS:OGC:1.3:CRS84",
+      "HTTP://WWW.OPENGIS.NET/DEF/CRS/OGC/1.3/CRS84",
+      "HTTPS://WWW.OPENGIS.NET/DEF/CRS/OGC/1.3/CRS84",
+  }
 
 
 def _calculate_suggested_zoom(west: float, south: float, east: float, north: float) -> int:
@@ -69,6 +105,7 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
       features = data["features"]
 
   feature_count = len(features)
+  crs, crs_status = _declared_crs(data) if isinstance(data, dict) else (None, "unknown")
 
   # bbox: route through the canonical geojson_bbox (handles Feature / Geometry /
   # Collection + bbox short-circuit). geom_types is profiler-specific (single
@@ -85,7 +122,7 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
   # Empty source → no bbox → no suggestedView. Previously this returned
   # [0,0,0,0], whose center [0,0] (Null Island) got auto-injected as the
   # map view; now the downstream view_has_center check skips it.
-  if bbox is not None:
+  if bbox is not None and crs_status == "explicit" and _is_explicit_geographic_crs(crs):
     west, south, east, north = bbox
     center_lng = round((west + east) / 2, 6)
     center_lat = round((south + north) / 2, 6)
@@ -96,8 +133,10 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
 
   # Profile fields
   field_values: Dict[str, List[Any]] = {}
+  field_keys: set[str] = set()
   for f in features:
     props = f.get("properties") or {}
+    field_keys.update(str(k) for k in props)
     for k, v in props.items():
       if k not in field_values:
         field_values[k] = []
@@ -105,13 +144,29 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
         field_values[k].append(v)
 
   fields_profile: Dict[str, Dict[str, Any]] = {}
-  for k, vals in field_values.items():
+  for k in sorted(field_keys):
+    vals = field_values.get(k, [])
+    null_count = sum(
+        1
+        for feature in features
+        if not isinstance(feature.get("properties"), dict)
+        or feature.get("properties", {}).get(k) is None
+    )
     if not vals:
-      fields_profile[k] = {"type": "string", "sampleValues": []}
+      fields_profile[k] = {
+          "type": "string",
+          "sampleValues": [],
+          "null_count": null_count,
+      }
       continue
 
     # Determine type
-    numeric_vals = [float(v) for v in vals if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    numeric_vals = [
+        float(v) for v in vals
+        if isinstance(v, (int, float))
+        and not isinstance(v, bool)
+        and math.isfinite(float(v))
+    ]
     bool_vals = [v for v in vals if isinstance(v, bool)]
 
     if len(numeric_vals) == len(vals):
@@ -126,11 +181,13 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
           "max": round(f_max, 4),
           "mean": round(f_mean, 4),
           "sampleValues": sample,
+          "null_count": null_count,
       }
     elif len(bool_vals) == len(vals):
       fields_profile[k] = {
           "type": "boolean",
           "sampleValues": list(dict.fromkeys(vals))[:5],
+          "null_count": null_count,
       }
     else:
       # String / Date
@@ -138,6 +195,7 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
       fields_profile[k] = {
           "type": "string",
           "sampleValues": sample,
+          "null_count": null_count,
       }
 
   # Temporal profiling
@@ -146,11 +204,16 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
 
   return {
       "bbox": bbox,
-      "crs": "EPSG:4326",
+      "crs": crs,
+      "crs_status": crs_status,
       "featureCount": feature_count,
       "geometryTypes": geom_types,
       "fields": fields_profile,
+      # The profiler scanned the complete supplied feature collection, so a
+      # missing key is authoritative absence. Descriptor-only profiles use
+      # ``unknown`` instead; semantic review must not turn unavailable schema
+      # metadata into a false missing-field failure.
+      "fields_status": "explicit",
       "suggestedView": suggested_view,
       "temporalProfile": temporal_profile.model_dump() if temporal_profile.overall_confidence > 0 else None,
   }
-

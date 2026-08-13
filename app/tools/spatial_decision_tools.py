@@ -82,18 +82,16 @@ def register_spatial_decision_tools(registry: ToolRegistry):
 
             # Ingest layer into MapSpec if session_id is active
             mapspec_state = {}
-            validation_passed = True
+            validation_passed = False
             if session_id:
                 mapspec_state = await apply_decision_to_mapspec(session_id, result)
                 try:
                     # The validator's API is the async `validate_runtime`, which
                     # returns a dict keyed by `valid` on the evaluation path (it
                     # drives a headless browser); failure short-circuits return
-                    # `success` instead. The previous call used a non-existent
-                    # `validate_session_state` sync method, whose AttributeError was
-                    # swallowed — so validation_passed was always silently True.
-                    # (Later regression: reading only `success` made a passing
-                    # validation report False — read `valid` first.)
+                    # `success` instead. Absence or exception is not validation
+                    # success — default stays False so L1 analysis cannot imply
+                    # cartographic/runtime PASS.
                     from app.services.runtime_validator import runtime_validator
                     val_res = await runtime_validator.validate_runtime(session_id)
                     validation_passed = bool(val_res.get("valid", val_res.get("success", False)))
@@ -103,8 +101,12 @@ def register_spatial_decision_tools(registry: ToolRegistry):
             report_md = generate_decision_report_markdown(result)
             res_dict = result.model_dump()
             res_dict["report_markdown"] = report_md
-            res_dict["mapspec_applied"] = bool(mapspec_state)
+            res_dict["mapspec_applied"] = bool(mapspec_state.get("success"))
             res_dict["runtime_validated"] = validation_passed
+            if mapspec_state.get("cartographic_review") is not None:
+                res_dict["cartographic_review"] = mapspec_state["cartographic_review"]
+            if mapspec_state.get("mapspec_fingerprint") is not None:
+                res_dict["mapspec_fingerprint"] = mapspec_state["mapspec_fingerprint"]
             
             # Fetch-on-Demand payload trimming for LLM context optimization.
             # Replace the full simulation GeoJSON with a metadata descriptor
@@ -186,7 +188,11 @@ def register_spatial_decision_tools(registry: ToolRegistry):
             report_md = generate_comparison_report_markdown(cmp_res)
             res_dict = cmp_res.model_dump()
             res_dict["report_markdown"] = report_md
-            res_dict["mapspec_applied"] = bool(mapspec_state)
+            res_dict["mapspec_applied"] = bool(mapspec_state.get("success"))
+            if mapspec_state.get("cartographic_review") is not None:
+                res_dict["cartographic_review"] = mapspec_state["cartographic_review"]
+            if mapspec_state.get("mapspec_fingerprint") is not None:
+                res_dict["mapspec_fingerprint"] = mapspec_state["mapspec_fingerprint"]
 
             # Fetch-on-Demand payload trimming for LLM context optimization
             if "comparison_geojson" in res_dict:

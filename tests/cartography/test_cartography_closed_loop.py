@@ -210,7 +210,12 @@ async def test_validity_ladder_semantic_valid_via_real_engine(clean_session):
 @pytest.mark.cartography
 def test_semantic_check_missing_paint_field():
     mapspec = {
-        "sources": {"s1": {}},
+        "sources": {
+            "s1": {
+                "type": "geojson",
+                "inlineData": {"type": "FeatureCollection", "features": []},
+            }
+        },
         "layers": [{
             "id": "L", "source": "s1", "type": "circle",
             "paint": {"circle-color": {"method": "interpolate", "field": "nofield", "stops": [
@@ -218,7 +223,10 @@ def test_semantic_check_missing_paint_field():
         }],
     }
     profiles = {"s1": {"featureCount": 5, "geometryTypes": ["Point"],
-                       "fields": {"v": {"type": "number", "min": 0, "max": 10}}}}
+                       "fields": {"v": {
+                           "type": "number", "min": 0, "max": 10,
+                           "null_count": 0,
+                       }}}}
     report = evaluate_cartography_semantics(mapspec, profiles)
     codes = {f.check for f in report.findings if f.evaluated}
     assert "PAINT_FIELD_EXISTS" in codes
@@ -256,18 +264,31 @@ def test_semantic_check_stops_data_range_and_geom_mismatch():
 @pytest.mark.cartography
 def test_semantic_check_clean_mapspec_passes():
     mapspec = {
-        "sources": {"s1": {}},
+        "sources": {
+            "s1": {
+                "type": "geojson",
+                "inlineData": {"type": "FeatureCollection", "features": []},
+            }
+        },
         "layers": [{
             "id": "L", "source": "s1", "type": "circle",
             "paint": {"circle-color": {"method": "interpolate", "field": "v", "stops": [
                 [0, "#fff"], [10, "#000"]]}},
+            "legend_spec": {
+                "type": "continuous", "field": "v", "min": 0, "max": 10,
+                "palette_colors": ["#fff", "#000"],
+            },
         }],
         "layout": {"legend": {"field": "v"}},
     }
     profiles = {"s1": {"featureCount": 5, "geometryTypes": ["Point"],
                        "fields": {"v": {"type": "number", "min": 0, "max": 10}}}}
     report = evaluate_cartography_semantics(mapspec, profiles)
-    assert report.ok, f"expected clean mapspec, got: {[f.to_dict() if hasattr(f,'to_dict') else f for f in report.findings]}"
+    assert report.no_deterministic_failures, (
+        f"expected no deterministic failures, got: "
+        f"{[f.to_dict() if hasattr(f,'to_dict') else f for f in report.findings]}"
+    )
+    assert not report.errors
 
 
 @pytest.mark.cartography
@@ -349,6 +370,31 @@ async def test_post_save_failure_rolls_back_mutation(clean_session):
     ids = {lyr["id"] for lyr in after["layers"]}
     assert "base" in ids
     assert "extra" not in ids, "post-save failure must roll back, not half-commit"
+
+
+@pytest.mark.cartography
+@pytest.mark.asyncio
+async def test_first_mutation_post_save_failure_discards_residual_mapspec(clean_session):
+    """Matt P2: first mutation has no last-known-good spec. If save succeeds
+    and a later persistence step fails, rollback must discard the candidate
+    rather than leave a residual MapSpec that later reads treat as truth."""
+    engine = MapSpecLifecycleEngine()
+    assert await mapspec_store_instance.get_mapspec(clean_session) is None
+
+    with patch.object(
+        session_data_manager, "update_layer_in_state",
+        new=AsyncMock(side_effect=RuntimeError("redis down")),
+    ):
+        res = await engine.apply_mutation(
+            clean_session,
+            UpsertLayerIntent(
+                layer={"id": "orphan", "source": "so", "type": "circle",
+                       "paint": {"circle-color": "#fff"}},
+                source_data=_geojson(),
+            ),
+        )
+    assert res.is_error is True
+    assert await mapspec_store_instance.get_mapspec(clean_session) is None
 
 
 @pytest.mark.cartography

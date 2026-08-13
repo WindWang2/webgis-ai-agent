@@ -9,6 +9,23 @@
  */
 const WEBGIS_API_BASE = process.env.WEBGIS_API_BASE ?? "http://localhost:8000";
 const BRIDGE_SECRET = process.env.WEBGIS_BRIDGE_SECRET ?? "";
+const TURN_CONTEXT_RE = /WEBGIS_TURN_CONTEXT:([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/g;
+
+export function currentTurnToken(ctx) {
+  const entries = ctx?.sessionManager?.getEntries?.() ?? [];
+  const start = Math.max(0, entries.length - 24);
+  for (let index = entries.length - 1; index >= start; index -= 1) {
+    let serialized = "";
+    try {
+      serialized = JSON.stringify(entries[index]);
+    } catch {
+      continue;
+    }
+    const matches = Array.from(serialized.matchAll(TURN_CONTEXT_RE));
+    if (matches.length) return matches[matches.length - 1][1];
+  }
+  return "";
+}
 
 /**
  * @param {import("@earendil-works/pi-coding-agent").ExtensionAPI} pi
@@ -39,8 +56,17 @@ export default function webgisToolsExtension(pi) {
       },
       required: ["toolName"],
     },
-    async execute(toolCallId, params) {
+    async execute(toolCallId, params, _signal, _onUpdate, ctx) {
       const { toolName, arguments: args } = params;
+      // Capture at execute start. A later turn cannot retag an in-flight fetch.
+      const turnToken = currentTurnToken(ctx);
+      if (!turnToken) {
+        return {
+          content: [{ type: "text", text: "WebGIS tool execution rejected: missing turn context" }],
+          details: { error: "missing_turn_context", toolName },
+          isError: true,
+        };
+      }
 
       try {
         const response = await fetch(`${WEBGIS_API_BASE}/pi-tools/execute`, {
@@ -49,7 +75,7 @@ export default function webgisToolsExtension(pi) {
             "Content-Type": "application/json",
             "X-Pi-Bridge-Secret": BRIDGE_SECRET,
           },
-          body: JSON.stringify({ toolCallId, name: toolName, arguments: args }),
+          body: JSON.stringify({ toolCallId, name: toolName, arguments: args, turnToken }),
         });
 
         if (!response.ok) {

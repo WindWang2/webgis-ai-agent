@@ -898,8 +898,8 @@ async def test_stream_prompt_mints_turn_id_and_threads_into_records(monkeypatch)
     real_get = bridge_mod.get_cached_dispatch_result
     hits = {"tc-fly": dispatch_result}
 
-    def fake_get(tool_call_id):
-        return hits.pop(tool_call_id, None) or real_get(tool_call_id)
+    def fake_get(tool_call_id, session_id=None):
+        return hits.pop(tool_call_id, None) or real_get(tool_call_id, session_id)
 
     monkeypatch.setattr(bridge_mod, "get_cached_dispatch_result", fake_get)
 

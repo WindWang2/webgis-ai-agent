@@ -74,6 +74,7 @@ export const MapActionHandler = React.memo(function MapActionHandler() {
       getHudState: () => useHudStore.getState(),
       setSelectedBaseLayer,
       command: action.command,
+      actionId: action.action_id || '',
       params: action.params || {},
     };
 

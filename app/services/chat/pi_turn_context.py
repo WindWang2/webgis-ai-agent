@@ -1,0 +1,96 @@
+"""Signed, turn-scoped routing context for Pi extension callbacks.
+
+Pi's RPC ``sessionId`` is not exposed to extension tool handlers.  A callback
+must therefore carry an independently verifiable capability that was minted
+for the user turn; reading a mutable "currently active session" creates a
+TOCTOU window where a delayed callback can be attributed to the next turn.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import time
+from typing import Any, Optional
+
+
+TURN_CONTEXT_MARKER = "WEBGIS_TURN_CONTEXT"
+TURN_CONTEXT_MAX_AGE_SECONDS = 15 * 60
+
+
+def _b64encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def _b64decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode((value + padding).encode("ascii"))
+
+
+def issue_turn_token(
+    secret: str,
+    session_id: str,
+    turn_id: str,
+    *,
+    issued_at: Optional[int] = None,
+) -> str:
+    """Mint a compact HMAC capability containing only routing identifiers."""
+    payload = {
+        "sid": session_id,
+        "tid": turn_id,
+        "iat": int(time.time() if issued_at is None else issued_at),
+    }
+    encoded = _b64encode(json.dumps(
+        payload, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8"))
+    signature = hmac.new(
+        secret.encode("utf-8"), encoded.encode("ascii"), hashlib.sha256
+    ).digest()
+    return f"{encoded}.{_b64encode(signature)}"
+
+
+def verify_turn_token(
+    secret: str,
+    token: str,
+    *,
+    now: Optional[int] = None,
+    max_age_seconds: int = TURN_CONTEXT_MAX_AGE_SECONDS,
+) -> Optional[dict[str, Any]]:
+    """Return the verified routing payload, or ``None`` for any invalid token."""
+    try:
+        encoded, supplied_signature = token.split(".", 1)
+        expected_signature = _b64encode(hmac.new(
+            secret.encode("utf-8"), encoded.encode("ascii"), hashlib.sha256
+        ).digest())
+        if not hmac.compare_digest(supplied_signature, expected_signature):
+            return None
+        payload = json.loads(_b64decode(encoded))
+        if not isinstance(payload, dict):
+            return None
+        session_id = payload.get("sid")
+        turn_id = payload.get("tid")
+        issued_at = payload.get("iat")
+        if not isinstance(session_id, str) or not session_id:
+            return None
+        if not isinstance(turn_id, str) or not turn_id:
+            return None
+        if isinstance(issued_at, bool) or not isinstance(issued_at, int):
+            return None
+        current = int(time.time() if now is None else now)
+        age = current - issued_at
+        if age < -30 or age > max_age_seconds:
+            return None
+        return {"session_id": session_id, "turn_id": turn_id, "issued_at": issued_at}
+    except (ValueError, TypeError, json.JSONDecodeError, UnicodeError):
+        return None
+
+
+def attach_turn_context(message: str, token: str) -> str:
+    """Attach the capability to the turn for the extension's local session view."""
+    return (
+        f"{message}\n\n"
+        f"[{TURN_CONTEXT_MARKER}:{token}]\n"
+        "(Internal routing context; do not quote or modify this marker.)"
+    )

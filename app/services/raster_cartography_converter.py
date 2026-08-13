@@ -69,7 +69,9 @@ def _extract_bounds(payload: Dict[str, Any]) -> Optional[List[float]]:
 
 def is_raster_source(source_data: Any) -> bool:
   """True if `source_data` is a raster payload: a dict carrying a numeric array
-  AND bounds [w,s,e,n]. Distinguishes from analysis-result dicts (legend_spec/
+    An ndarray is the decisive signal. Bounds are validated later instead of
+    being used to route malformed raster input through the vector converter.
+    Distinguishes from analysis-result dicts (legend_spec/
   algorithm/success+data) and plain GeoJSON, both of which route through the
   vector converter.
 
@@ -77,13 +79,12 @@ def is_raster_source(source_data: Any) -> bool:
   with georeferencing bounds can only be a raster; it wins over marker keys like
   `algorithm`/`legend_spec`, which raster payloads legitimately also carry):
     1. Not a dict → False
-    2. Has a numeric array AND bounds → True  (raster, regardless of markers)
+    2. Has a numeric array → True  (raster, regardless of markers)
     3. Otherwise → False (analysis-result / GeoJSON / string → vector path)
   """
   if not isinstance(source_data, dict):
     return False
-  # array+bounds is decisive — check it first, before any marker-key logic.
-  return _has_numeric_array(source_data) and _extract_bounds(source_data) is not None
+  return _has_numeric_array(source_data)
 
 
 # ─── array → PNG rendering ─────────────────────────────────────────────────
@@ -239,7 +240,9 @@ def convert_raster_to_mapspec_layer(
   """Convert a raster payload into a MapSpec raster layer + source-ready data."""
   base_layer = dict(layer) if isinstance(layer, dict) else {}
   source_id = base_layer.get("source") or "raster_source"
-  bounds = _extract_bounds(payload) or [0.0, 0.0, 1.0, 1.0]
+  # Never invent Null-Island-like spatial evidence. A missing/malformed extent
+  # remains absent and the deterministic raster bounds rule fails truthfully.
+  bounds = _extract_bounds(payload)
   arr = _extract_array(payload)
   palette = (payload.get("raster_source", {}) or {}).get("suggested_palette") or DEFAULT_RASTER_PALETTE
   provenance = {
@@ -248,7 +251,7 @@ def convert_raster_to_mapspec_layer(
   }
 
   raster_layer, legend, png = build_raster_layer(
-      source_id=source_id, bounds=bounds, array=arr, palette=palette,
+      source_id=source_id, bounds=bounds or [], array=arr, palette=palette,
       provenance=provenance, layer_id=base_layer.get("id"),
   )
   if legend is not None:
@@ -267,9 +270,7 @@ def convert_raster_to_mapspec_layer(
       except Exception as e:
         logger.warning("Internal save_png failed in raster converter: %s", e)
 
-    source_data = {
-        "imageRef": image_ref,
-        "bounds": bounds,
-        "imageSize": [int(w), int(h)],
-    }
+    source_data = {"imageRef": image_ref, "imageSize": [int(w), int(h)]}
+    if bounds is not None:
+      source_data["bounds"] = bounds
   return raster_layer, legend, png, source_data

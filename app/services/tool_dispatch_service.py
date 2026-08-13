@@ -29,10 +29,12 @@ legacy 路径在 03 票据迁移、Pi 路径在 02 票据迁移，最后 04 票�
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import re
 import uuid
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Literal, Optional
 
@@ -177,6 +179,24 @@ _REPEAT_INFLIGHT_LLMPAYLOAD = (
     "请以原调用的结果为准并据此汇报，不要重复调用。"
 )
 
+_DISPLAY_RESULT_METADATA_KEYS = (
+    "type", "summary", "algorithm", "analysis_type", "computed_at",
+    "warnings", "legend_spec",
+)
+
+
+def _decode_data_url_png(image: str) -> Optional[bytes]:
+    """Decode a data-URL PNG. Non-data URLs return None (caller uses the ref)."""
+    if not image.startswith("data:image"):
+        return None
+    _, _, encoded = image.partition(",")
+    if not encoded:
+        return None
+    try:
+        return base64.b64decode(encoded, validate=False)
+    except Exception:
+        return None
+
 
 class ToolDispatchService:
     """工具调度的单一拥有者。两条 agent 路径都应经由本服务。"""
@@ -266,9 +286,6 @@ class ToolDispatchService:
             )
             self._release_key(executed_tools, tool_key)
 
-        # 2b. V3: 为工具结果中的地图命令铸 action_id（写回 command dict，SSE 携带）。
-        map_actions = self._mint_map_action_ids(result)
-
         # 3. registry 返回 std_error_response dict 的统一错误路径
         if is_error_dict(result):
             # 失败调用不占用 dedup 槽位：同参重试放行，且不会谎报“已成功执行”。
@@ -291,11 +308,12 @@ class ToolDispatchService:
                 geojson_ref=None,
                 raw_result=result,
                 error_msg=error_msg,
-                map_actions=map_actions,
+                map_actions=self._mint_map_action_ids(result),
             )
 
         # 4. 正常路径：大型 GeoJSON 存为 ref；热力图等元数据落地
         geojson_ref: Optional[str] = None
+        ref_descriptor: Optional[dict] = None
         target_data = None
         if isinstance(result, dict):
             if isinstance(result.get("geojson"), (dict, list)):
@@ -305,7 +323,92 @@ class ToolDispatchService:
             if target_data is not None:
                 geojson_ref = await session_data_manager.store(session_id, target_data, prefix="geojson")
             if result.get("type") == "heatmap_raster":
-                await session_data_manager.store(session_id, result, prefix="heatmap")
+                heatmap_ref = await session_data_manager.store(
+                    session_id, result, prefix="heatmap"
+                )
+                result = dict(result)
+                result.setdefault("result_ref", heatmap_ref)
+            # Canonical MapSpec layer authoring points at an existing
+            # session-owned analysis ref instead of returning the dataset
+            # again.  Preserve that stable identity through the existing SSE
+            # mount channel without materializing/copying its feature body.
+            result_ref = result.get("result_ref")
+            is_raster_result = (
+                result.get("type") == "heatmap_raster"
+                or (
+                    isinstance(result_ref, str)
+                    and result_ref.startswith("ref:raster/")
+                )
+            )
+            if (
+                isinstance(result_ref, str)
+                and result_ref.startswith("ref:")
+                and not is_raster_result
+            ):
+                # The opaque result identity is authoritative even if its
+                # optional descriptor cache is temporarily unavailable. The
+                # frontend can still mount the owned ref; descriptor absence
+                # must not silently drop a successfully authored MapSpec layer.
+                # Raster refs are deliberately excluded: their image URL/bbox
+                # stay in ``raw_result`` and the frontend raster mount path.
+                # Advertising one as ``geojson_ref`` would mount an empty
+                # FeatureCollection and falsely ACK the raster as displayed.
+                geojson_ref = result_ref
+                try:
+                    ref_descriptor = await session_data_manager.get_ref_descriptor(
+                        session_id, result_ref
+                    )
+                except Exception:
+                    ref_descriptor = None
+
+        # A display-producing GIS result must enter the existing MapSpec
+        # lifecycle before the frontend mounts it. This is presentation
+        # authoring only: the source analysis is never re-run and the dataset
+        # remains behind its session-owned ref.
+        if (
+            target_data is not None
+            and geojson_ref
+            and tool_name != "webgis_layer_upsert"
+            and isinstance(result, dict)
+        ):
+            if ref_descriptor is None:
+                ref_descriptor = await session_data_manager.get_ref_descriptor(
+                    session_id, geojson_ref
+                )
+            result = await self._author_display_result(
+                session_id=session_id,
+                tool_call_id=str(tc.get("id") or "result"),
+                tool_name=tool_name,
+                result=result,
+                target_data=target_data,
+                result_ref=geojson_ref,
+                descriptor=ref_descriptor,
+            )
+        elif (
+            tool_name != "webgis_layer_upsert"
+            and isinstance(result, dict)
+            and (
+                result.get("type") == "heatmap_raster"
+                or (
+                    isinstance(result.get("result_ref"), str)
+                    and result["result_ref"].startswith("ref:raster/")
+                    and (result.get("bbox") or result.get("bounds"))
+                )
+            )
+        ):
+            # Raster/heatmap display results stay off the GeoJSON mount path
+            # (an empty FeatureCollection must never ACK them). They still
+            # enter the same MapSpec desired-state review as vector results.
+            result = await self._author_raster_display_result(
+                session_id=session_id,
+                tool_call_id=str(tc.get("id") or "result"),
+                tool_name=tool_name,
+                result=result,
+            )
+
+        # Map actions are minted only after automatic MapSpec authoring has
+        # attached its canonical runtime commands.
+        map_actions = self._mint_map_action_ids(result)
 
         # 5. 给 LLM 的载荷（压缩 + 可选自愈提示）
         result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
@@ -325,8 +428,7 @@ class ToolDispatchService:
         # without a redundant async round trip. Fetching it here means
         # pi_event_mapper never needs asyncio.run() (which would raise inside
         # the already-running FastAPI event loop and get silently swallowed).
-        ref_descriptor = None
-        if geojson_ref:
+        if geojson_ref and ref_descriptor is None:
             try:
                 ref_descriptor = await session_data_manager.get_ref_descriptor(session_id, geojson_ref)
             except Exception:
@@ -345,6 +447,311 @@ class ToolDispatchService:
             map_actions=map_actions,
             ref_descriptor=ref_descriptor,
         )
+
+    async def _author_display_result(
+        self,
+        *,
+        session_id: str,
+        tool_call_id: str,
+        tool_name: str,
+        result: Dict[str, Any],
+        target_data: Any,
+        result_ref: str,
+        descriptor: Optional[dict],
+    ) -> Dict[str, Any]:
+        """Project one already-computed vector result into canonical MapSpec.
+
+        Failure is additive evidence: L1 GIS execution remains successful, but
+        the result is explicitly not cartographically evaluated and receives no
+        fabricated runtime attestation.
+        """
+        from app.lib.cartography.quality_loop import cartographic_fingerprint
+        from app.services.analysis_cartography_converter import (
+            convert_analysis_to_mapspec_layer,
+        )
+        from app.services.mapspec_store import mapspec_store
+        from app.services.spatial_meta_profiler import profile_geojson_source
+        from app.tools.cartography_tools import _fingerprint_metadata, _runtime_patch
+
+        safe_call_id = re.sub(r"[^A-Za-z0-9_-]+", "-", tool_call_id).strip("-")[:48]
+        layer_id = f"result-{safe_call_id or hashlib.sha256(tool_call_id.encode()).hexdigest()[:12]}"
+        source_id = f"{layer_id}-source"
+        analysis_payload = {
+            "geojson": target_data,
+            "legend_spec": result.get("legend_spec"),
+            "algorithm": tool_name,
+            "result_ref": result_ref,
+        }
+        try:
+            converted_layer, _, conversion_warnings = await asyncio.to_thread(
+                convert_analysis_to_mapspec_layer,
+                analysis_payload,
+                {
+                    "id": layer_id,
+                    "source": source_id,
+                    "provenance": {
+                        "tool_call_id": tool_call_id,
+                        "result_ref": result_ref,
+                    },
+                },
+            )
+            profile = await asyncio.to_thread(profile_geojson_source, target_data)
+            source_data = {
+                "type": "geojson",
+                "ref_id": result_ref,
+                "profile": profile,
+                "profile_fingerprint": _fingerprint_metadata(profile, "profile"),
+                "data_fingerprint": _fingerprint_metadata(
+                    {"ref_id": result_ref, "descriptor": descriptor or {}}, "data"
+                ),
+            }
+            lifecycle = await mapspec_store.layer_upsert(
+                session_id, converted_layer, source_data
+            )
+            if not lifecycle.get("success"):
+                raise RuntimeError(
+                    str(lifecycle.get("message") or "MapSpec authoring rejected")
+                )
+            mapspec = lifecycle.get("mapspec") if isinstance(lifecycle.get("mapspec"), dict) else {}
+            reviewed_layer = next(
+                (
+                    layer for layer in mapspec.get("layers", [])
+                    if isinstance(layer, dict) and layer.get("id") == layer_id
+                ),
+                converted_layer,
+            )
+            attempts = (
+                (lifecycle.get("cartographic_review") or {}).get("attempts", [])
+                if isinstance(lifecycle.get("cartographic_review"), dict) else []
+            )
+            patch = _runtime_patch(
+                reviewed_layer,
+                result_ref,
+                lifecycle.get("mapspec_fingerprint"),
+                attempts if isinstance(attempts, list) else [],
+            )
+            # The ref is now the sole carrier. Keeping the raw body in the tool
+            # outcome would serialize and retain a second large copy.
+            if result.get("geojson") is target_data:
+                result = {k: v for k, v in result.items() if k != "geojson"}
+            elif result is target_data:
+                result = {
+                    key: result[key]
+                    for key in _DISPLAY_RESULT_METADATA_KEYS
+                    if key in result
+                }
+                result["type"] = "FeatureCollection"
+                result["feature_count"] = profile.get("featureCount")
+            result.update({
+                "success": True,
+                "result_ref": result_ref,
+                "layer_id": layer_id,
+                "runtime_patch": patch,
+                "runtime_projection_fingerprint": patch["projection_fingerprint"],
+                "commands": [{
+                    "command": "add_layer",
+                    "params": {
+                        "layerId": layer_id,
+                        "result_ref": result_ref,
+                        "mapspec_fingerprint": lifecycle.get("mapspec_fingerprint"),
+                    },
+                }],
+                "conversion_warnings": conversion_warnings,
+            })
+            for key in (
+                "is_compiled", "warnings", "checkpoint_id", "cartography_findings",
+                "cartographic_review", "mapspec_fingerprint",
+                "runtime_observation_seq", "mutation_revision",
+            ):
+                if lifecycle.get(key) is not None:
+                    result[key] = lifecycle[key]
+            # Defensive consistency check: never attach a runtime generation
+            # whose fingerprint is not the just-persisted desired state.
+            if result.get("mapspec_fingerprint") != cartographic_fingerprint(mapspec):
+                raise RuntimeError("persisted MapSpec fingerprint mismatch")
+            return result
+        except Exception as exc:  # noqa: BLE001 - preserve completed analysis
+            logger.warning(
+                "Cartographic authoring unavailable for %s/%s: %s",
+                session_id,
+                tool_call_id,
+                type(exc).__name__,
+            )
+            # L1 execution remains available, but never keep/serialize a
+            # second full feature body merely because presentation authoring
+            # failed.  The already-stored owned ref remains the carrier.
+            if result.get("geojson") is target_data:
+                result = {k: v for k, v in result.items() if k != "geojson"}
+            elif result is target_data:
+                feature_count = (
+                    len(target_data.get("features", []))
+                    if isinstance(target_data.get("features"), list)
+                    else None
+                )
+                result = {
+                    key: result[key]
+                    for key in _DISPLAY_RESULT_METADATA_KEYS
+                    if key in result
+                }
+                result.update({
+                    "type": "FeatureCollection",
+                    "feature_count": feature_count,
+                    "result_ref": result_ref,
+                })
+            else:
+                result = dict(result)
+            result["cartographic_review"] = self._authoring_unavailable_review(exc)
+            return result
+
+    async def _author_raster_display_result(
+        self,
+        *,
+        session_id: str,
+        tool_call_id: str,
+        tool_name: str,
+        result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Project a rendered raster/heatmap into canonical MapSpec review.
+
+        The GIS image/bbox is already computed. This never re-runs density
+        analysis and never advertises the raster as a GeoJSON mount.
+        """
+        from app.lib.cartography.quality_loop import cartographic_fingerprint
+        from app.services.mapspec.store import mapspec_store_instance
+        from app.services.mapspec_store import mapspec_store
+        from app.services.raster_store import save_png
+        from app.tools.cartography_tools import _runtime_patch
+
+        safe_call_id = re.sub(r"[^A-Za-z0-9_-]+", "-", tool_call_id).strip("-")[:48]
+        layer_id = f"raster-{safe_call_id or hashlib.sha256(tool_call_id.encode()).hexdigest()[:12]}"
+        source_id = f"{layer_id}-source"
+        bounds = result.get("bbox") or result.get("bounds")
+        image = result.get("image") or result.get("imageRef")
+        result_ref = result.get("result_ref")
+        try:
+            if not isinstance(bounds, (list, tuple)) or len(bounds) != 4:
+                raise RuntimeError("raster display result has no truthful bounds")
+            png = _decode_data_url_png(image) if isinstance(image, str) else None
+            if png is not None:
+                session_dir = mapspec_store_instance.get_session_dir(session_id)
+                image_ref = save_png(session_dir, source_id, png)
+            elif isinstance(image, str) and image.startswith("ref:"):
+                image_ref = image
+            elif isinstance(result_ref, str) and result_ref.startswith("ref:"):
+                image_ref = result_ref
+            else:
+                raise RuntimeError("raster display result has no addressable image")
+            layer = {
+                "id": layer_id,
+                "source": source_id,
+                "type": "raster",
+                "paint": {"raster-opacity": 0.85},
+                "provenance": {
+                    "tool_call_id": tool_call_id,
+                    "tool": tool_name,
+                    "result_ref": image_ref,
+                },
+            }
+            if isinstance(result.get("legend_spec"), dict):
+                layer["legend_spec"] = result["legend_spec"]
+            source_data = {
+                "imageRef": image_ref,
+                "bounds": [float(v) for v in bounds],
+            }
+            lifecycle = await mapspec_store.layer_upsert(
+                session_id, layer, source_data
+            )
+            if not lifecycle.get("success"):
+                raise RuntimeError(
+                    str(lifecycle.get("message") or "MapSpec raster authoring rejected")
+                )
+            mapspec = lifecycle.get("mapspec") if isinstance(lifecycle.get("mapspec"), dict) else {}
+            reviewed_layer = next(
+                (
+                    candidate for candidate in mapspec.get("layers", [])
+                    if isinstance(candidate, dict) and candidate.get("id") == layer_id
+                ),
+                layer,
+            )
+            attempts = (
+                (lifecycle.get("cartographic_review") or {}).get("attempts", [])
+                if isinstance(lifecycle.get("cartographic_review"), dict) else []
+            )
+            patch = _runtime_patch(
+                reviewed_layer,
+                image_ref,
+                lifecycle.get("mapspec_fingerprint"),
+                attempts if isinstance(attempts, list) else [],
+            )
+            authored = {
+                key: result[key]
+                for key in (*_DISPLAY_RESULT_METADATA_KEYS, "bbox", "bounds", "total_points")
+                if key in result
+            }
+            authored.update({
+                "type": result.get("type") or "heatmap_raster",
+                "success": True,
+                "result_ref": image_ref,
+                "layer_id": layer_id,
+                "runtime_patch": patch,
+                "runtime_projection_fingerprint": patch["projection_fingerprint"],
+                "command": result.get("command") or "add_heatmap_raster",
+                "commands": [{
+                    "command": "add_heatmap_raster",
+                    "params": {
+                        "layerId": layer_id,
+                        "result_ref": image_ref,
+                        "mapspec_fingerprint": lifecycle.get("mapspec_fingerprint"),
+                        "bbox": authored.get("bbox") or authored.get("bounds"),
+                    },
+                }],
+            })
+            for key in (
+                "is_compiled", "warnings", "checkpoint_id", "cartography_findings",
+                "cartographic_review", "mapspec_fingerprint",
+                "runtime_observation_seq", "mutation_revision",
+            ):
+                if lifecycle.get(key) is not None:
+                    authored[key] = lifecycle[key]
+            if authored.get("mapspec_fingerprint") != cartographic_fingerprint(mapspec):
+                raise RuntimeError("persisted MapSpec fingerprint mismatch")
+            return authored
+        except Exception as exc:  # noqa: BLE001 - preserve completed raster analysis
+            logger.warning(
+                "Cartographic raster authoring unavailable for %s/%s: %s",
+                session_id,
+                tool_call_id,
+                type(exc).__name__,
+            )
+            authored = {
+                key: result[key]
+                for key in (*_DISPLAY_RESULT_METADATA_KEYS, "bbox", "bounds", "result_ref", "command")
+                if key in result
+            }
+            authored["type"] = result.get("type") or "heatmap_raster"
+            authored["cartographic_review"] = self._authoring_unavailable_review(exc)
+            return authored
+
+    @staticmethod
+    def _authoring_unavailable_review(exc: Exception) -> Dict[str, Any]:
+        return {
+            "stage": "desired_state",
+            "status": "not_evaluated",
+            "review": {
+                "status": "not_evaluated",
+                "passed": False,
+                "complete": False,
+                "checks": [{
+                    "rule": "MAPSPEC_AUTHORING",
+                    "status": "not_evaluated",
+                    "severity": "error",
+                    "evidence_class": "deterministic",
+                    "evidence": {"error_type": type(exc).__name__},
+                    "repairability": "not_repairable",
+                }],
+            },
+            "termination_reason": "mapspec_authoring_unavailable",
+        }
 
     # ── P2-9: dedup 槽位生命周期 ─────────────────────────────────────
 
@@ -385,11 +792,13 @@ class ToolDispatchService:
                 if isinstance(cmd, dict):
                     entry = self._mint_one_map_action(cmd)
                     if entry is not None:
+                        entry["mapspec_fingerprint"] = result.get("mapspec_fingerprint")
                         minted.append(entry)
             return minted
         if result.get("command"):
             entry = self._mint_one_map_action(result)
             if entry is not None:
+                entry["mapspec_fingerprint"] = result.get("mapspec_fingerprint")
                 minted.append(entry)
         return minted
 

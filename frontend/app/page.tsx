@@ -79,6 +79,8 @@ export default function Home() {
     setSessionId,
     sessionIdRef,
     sessionTokenRef,
+    rememberSessionToken,
+    getSessionTokenFor,
     sessions,
     selectSession,
     startNewSession,
@@ -99,7 +101,9 @@ export default function Home() {
     dispatchAction,
     getMapSnapshot,
     userLocation,
-    sessionTokenRef
+    sessionTokenRef,
+    rememberSessionToken,
+    getSessionTokenFor
   );
 
   const handleSelectSession = useCallback(
@@ -194,6 +198,8 @@ export default function Home() {
               onRemoveLayer={removeLayer}
               onToggleLayer={toggleLayer}
               onViewportChange={bridge.onViewportChange}
+              sessionId={sessionId}
+              ownerToken={sessionTokenRef.current}
             />
             <ExportMask />
             <MemoSpatialCrosshair />

@@ -1,4 +1,6 @@
 """webgis_* Canonical Cartography Tools for MapSpec Harness."""
+import hashlib
+import json
 import logging
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
@@ -13,7 +15,19 @@ logger = logging.getLogger(__name__)
 # harness MapSpecValidity 阶梯读 is_compiled；被拒绝的 mutation 需要
 # message + correction_hint 让 LLM 自愈（此前包装层硬编码 success:True，
 # 丢弃全部证据，导致生产证据链断裂）。
-_EVIDENCE_KEYS = ("is_compiled", "warnings", "checkpoint_id", "correction_hint", "message")
+_EVIDENCE_KEYS = (
+  "is_compiled",
+  "warnings",
+  "checkpoint_id",
+  "correction_hint",
+  "message",
+  "cartography_findings",
+  "cartographic_review",
+  "mapspec_fingerprint",
+  "runtime_observation_seq",
+  "runtime_projection_fingerprint",
+  "mutation_revision",
+)
 
 
 def _forward_evidence(res: Dict[str, Any], out: Dict[str, Any]) -> Dict[str, Any]:
@@ -23,6 +37,86 @@ def _forward_evidence(res: Dict[str, Any], out: Dict[str, Any]) -> Dict[str, Any
     if key in res and res[key] is not None:
       out[key] = res[key]
   return out
+
+
+def _descriptor_profile(descriptor: Dict[str, Any]) -> Dict[str, Any]:
+  """Project an O(1) ref descriptor into truthful spatial review metadata."""
+  return {
+      "featureCount": descriptor.get("feature_count"),
+      "geometryTypes": list(descriptor.get("geometry_types") or []),
+      "bbox": descriptor.get("bbox"),
+      "fields": {},
+      "fields_status": "unknown",
+      # RFC 7946 convention is not proof of the stored dataset's CRS. Unknown
+      # remains unknown until the producing tool supplies explicit metadata.
+      "crs": None,
+      "crs_status": "unknown",
+  }
+
+
+def _fingerprint_metadata(value: Any, prefix: str) -> str:
+  payload = json.dumps(
+      value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+  ).encode("utf-8")
+  return f"{prefix}-sha256:{hashlib.sha256(payload).hexdigest()}"
+
+
+def _runtime_patch(
+    reviewed_layer: Dict[str, Any],
+    result_ref: Optional[str],
+    mapspec_fingerprint: Optional[str],
+    repair_attempts: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+  paint = reviewed_layer.get("paint") if isinstance(reviewed_layer.get("paint"), dict) else {}
+  opacity = next(
+    (
+      float(paint[key]) for key in (
+        "opacity", "fill-opacity", "line-opacity", "circle-opacity", "raster-opacity"
+      )
+      if isinstance(paint.get(key), (int, float)) and not isinstance(paint.get(key), bool)
+    ),
+    1.0,
+  )
+  patch: Dict[str, Any] = {
+    "layer_id": reviewed_layer.get("id"),
+    "result_ref": result_ref,
+    "visible": (
+      reviewed_layer.get("visible") is not False
+      and (reviewed_layer.get("layout") or {}).get("visibility") != "none"
+    ),
+    "opacity": opacity,
+    "legend_spec": reviewed_layer.get("legend_spec"),
+    "mapspec_fingerprint": mapspec_fingerprint,
+    "repair_attempts": repair_attempts[:2],
+  }
+  runtime_style: Dict[str, Any] = {}
+  color = next(
+    (
+      paint[key] for key in ("color", "fill-color", "line-color", "circle-color")
+      if isinstance(paint.get(key), str)
+    ),
+    None,
+  )
+  if color:
+    runtime_style["color"] = color
+  for source_key, target_key in (
+    ("fill-outline-color", "strokeColor"),
+    ("line-width", "strokeWidth"),
+    ("circle-radius", "pointSize"),
+  ):
+    value = paint.get(source_key)
+    if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+      runtime_style[target_key] = value
+  if runtime_style:
+    patch["style"] = runtime_style
+  patch["projection_fingerprint"] = _fingerprint_metadata(
+      {
+        key: patch.get(key)
+        for key in ("layer_id", "result_ref", "visible", "opacity", "legend_spec", "style")
+      },
+      "runtime",
+  )
+  return patch
 
 
 class WebgisProjectInitArgs(BaseModel):
@@ -186,8 +280,8 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   ) -> dict:
     if not session_id:
       return {"success": False, "message": "Missing session_id"}
-    # source_profile adapter 不经引擎（无锁/校验），失败路径是 profiling 抛错；
-    # 捕获后返回 success:False + correction_hint，让 LLM 自愈而非拿到异常。
+    # The adapter profiles once, stores the body behind a session ref, then
+    # commits metadata through the serialized MapSpec lifecycle.
     try:
       profile = await mapspec_store.source_profile(session_id, source_id, geojson_data)
     except Exception as e:
@@ -219,6 +313,57 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
   ) -> dict:
     if not session_id:
       return {"success": False, "message": "Missing session_id"}
+    layer = dict(layer)
+    source_ref: Optional[str] = None
+    source_descriptor: Optional[Dict[str, Any]] = None
+    if isinstance(source_data, str):
+      resolved_alias = await session_data_manager.resolve_alias(session_id, source_data)
+      # URL/path sources are valid MapSpec inputs.  Only an explicit ref or a
+      # session-known alias is dereferenced; arbitrary strings must not become
+      # fabricated session cursors.
+      if source_data.startswith("ref:") or resolved_alias != source_data:
+        source_ref = resolved_alias
+        source_descriptor = await session_data_manager.get_ref_descriptor(
+            session_id, source_ref
+        )
+        if source_descriptor is None:
+          return {
+            "success": False,
+            "code": "REFERENCE_NOT_FOUND",
+            "message": f"Source reference '{source_data}' is unavailable in this session",
+            "correction_hint": "Use a result ref created in the current session.",
+          }
+        profile = _descriptor_profile(source_descriptor)
+        source_data = {
+            "type": "geojson",
+            "ref_id": source_ref,
+            "profile": profile,
+            "profile_fingerprint": _fingerprint_metadata(profile, "profile"),
+            "data_fingerprint": _fingerprint_metadata(
+                {"ref_id": source_ref, "descriptor": source_descriptor}, "data"
+            ),
+        }
+        provenance = (
+          dict(layer.get("provenance"))
+          if isinstance(layer.get("provenance"), dict) else {}
+        )
+        provenance["result_ref"] = source_ref
+        layer["provenance"] = provenance
+    elif (
+      isinstance(source_data, dict)
+      and source_data.get("type") in ("Feature", "FeatureCollection")
+    ):
+      # Inline inputs are already in memory; persist them once and let MapSpec
+      # retain only the resulting opaque identity plus its derived profile.
+      source_ref = await session_data_manager.store(
+          session_id, source_data, prefix="geojson"
+      )
+      provenance = (
+          dict(layer.get("provenance"))
+          if isinstance(layer.get("provenance"), dict) else {}
+      )
+      provenance["result_ref"] = source_ref
+      layer["provenance"] = provenance
     res = await mapspec_store.layer_upsert(session_id, layer, source_data)
     out: Dict[str, Any] = {
         "layer_id": layer.get("id"),
@@ -226,6 +371,89 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
     }
     if res.get("success"):
       out["summary"] = f"Layer '{layer.get('id')}' upserted into MapSpec"
+      mapspec = res.get("mapspec") if isinstance(res.get("mapspec"), dict) else {}
+      reviewed_layer = next(
+          (
+            item for item in mapspec.get("layers", [])
+            if isinstance(item, dict) and item.get("id") == layer.get("id")
+          ),
+          layer,
+      )
+      source_id = reviewed_layer.get("source")
+      source_entry = (
+          mapspec.get("sources", {}).get(source_id, {})
+          if isinstance(mapspec.get("sources"), dict) else {}
+      )
+      authoritative_ref = (
+          source_ref
+          or source_entry.get("ref")
+          or source_entry.get("ref_id")
+          or source_entry.get("imageRef")
+      )
+      runtime_attempts = (
+          (res.get("cartographic_review") or {}).get("attempts", [])
+          if isinstance(res.get("cartographic_review"), dict) else []
+      )
+      runtime_patch = _runtime_patch(
+          reviewed_layer,
+          authoritative_ref if isinstance(authoritative_ref, str) else None,
+          res.get("mapspec_fingerprint"),
+          runtime_attempts if isinstance(runtime_attempts, list) else [],
+      )
+      commands: List[Dict[str, Any]] = []
+      if source_entry.get("type") == "raster":
+        image_ref = source_entry.get("imageRef")
+        bounds = source_entry.get("bounds")
+        if isinstance(image_ref, str) and image_ref.startswith("ref:raster/"):
+          raster_id = image_ref[len("ref:raster/"):]
+          image_url = f"/api/v1/sessions/{session_id}/raster/{raster_id}.png"
+          out.update({
+              "type": "heatmap_raster",
+              "image": image_url,
+              "bbox": bounds,
+              "result_ref": image_ref,
+          })
+          runtime_patch["image_ref"] = image_ref
+          commands.append({
+              "command": "add_heatmap_raster",
+              "params": {
+                  "id": reviewed_layer.get("id"),
+                  "image": image_url,
+                  "bbox": bounds,
+                  "mapspec_fingerprint": res.get("mapspec_fingerprint"),
+              },
+          })
+      elif isinstance(authoritative_ref, str) and authoritative_ref.startswith("ref:"):
+        out["result_ref"] = authoritative_ref
+        # Existing runtime seam: the step result mounts/updates a ref-backed
+        # HUD layer, then MapSpecRuntime reconciles it into MapLibre.  The ACK
+        # proves only store mounting; a later live observation proves quality.
+        commands.append({
+          "command": "add_layer",
+          "params": {
+            "layerId": reviewed_layer.get("id"),
+            "result_ref": authoritative_ref,
+            "mapspec_fingerprint": res.get("mapspec_fingerprint"),
+          },
+        })
+      desired_view = mapspec.get("view") if isinstance(mapspec.get("view"), dict) else {}
+      if commands and (
+          isinstance(desired_view.get("center"), (list, tuple))
+          and len(desired_view["center"]) >= 2
+          and isinstance(desired_view.get("zoom"), (int, float))
+      ):
+        commands.append({
+            "command": "set_map_view",
+            "params": {
+              key: desired_view[key]
+              for key in ("center", "zoom", "bearing", "pitch")
+              if key in desired_view
+            },
+        })
+      if commands:
+        out["commands"] = commands
+        out["runtime_patch"] = runtime_patch
+        out["runtime_projection_fingerprint"] = runtime_patch["projection_fingerprint"]
     return _forward_evidence(res, out)
 
   @tool(

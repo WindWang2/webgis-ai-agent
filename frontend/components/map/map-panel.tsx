@@ -10,7 +10,12 @@ import { MapDecorations } from "./map-decorations"
 import { useHudStore, type HudState } from "@/lib/store/useHudStore"
 import * as renderer from "@/lib/map-kit/renderer"
 import { fitBounds as navFitBounds, calculateBBox, calculateBBoxAsync } from "@/lib/map-kit/navigation"
-import { MapSpecRuntime, hudStateToMapSpec } from "@/lib/mapspec-runtime"
+import {
+  MapSpecRuntime,
+  collectCartographicRuntimeObservation,
+  hudStateToMapSpec,
+} from "@/lib/mapspec-runtime"
+import { apiFetch } from "@/lib/api/transport"
 import { computeInteractiveIds, resolveParentLayerId } from "@/lib/map-kit/interactive-ids"
 import {
   setSelectionHighlight,
@@ -25,6 +30,8 @@ interface MapPanelProps {
   onRemoveLayer: (id: string) => void
   onToggleLayer: (id: string) => void
   onViewportChange?: (center: [number, number], zoom: number, bearing: number, pitch: number) => void
+  sessionId?: string | null
+  ownerToken?: string | null
 }
 
 import { useMapAction } from "@/lib/contexts/map-action-context"
@@ -63,13 +70,21 @@ const DEFAULT_VIEW_STATE = {
   zoom: 4,
 }
 
-export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer: _onToggleLayer, onViewportChange }: MapPanelProps) {
+export function MapPanel({
+  layers,
+  onRemoveLayer: _onRemoveLayer,
+  onToggleLayer: _onToggleLayer,
+  onViewportChange,
+  sessionId,
+  ownerToken,
+}: MapPanelProps) {
   void _onRemoveLayer;
   void _onToggleLayer;
 
-  const { selectedBaseLayer, registerSnapshotFn } = useMapAction()
+  const { selectedBaseLayer, registerSnapshotFn, dispatchAction } = useMapAction()
   const [viewState, setViewState] = useState(DEFAULT_VIEW_STATE)
   const [mapReady, setMapReady] = useState(false)
+  const [runtimeRecoveryGeneration, setRuntimeRecoveryGeneration] = useState(0)
   // is3D 来自 store，与设置面板 setIs3D 联动。原先 useState 死锁在 false。
   const is3D = useHudStore((s: HudState) => s.is3D)
   const [activeFilters, setActiveFilters] = useState<Record<string, number[][]>>({})
@@ -160,6 +175,10 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   // (renderTimeoutRef/isUpdatingRef/renderLayersRef) + the styledata re-listen
   // machinery. The runtime owns the style-loaded retry internally.
   const runtimeRef = useRef<MapSpecRuntime | null>(null)
+  const lastCartographicObservationKeyRef = useRef<string>('')
+  const cartographicObservationGenerationRef = useRef(Date.now() * 1000)
+  const cartographicSessionIdRef = useRef(sessionId)
+  cartographicSessionIdRef.current = sessionId
 
   // FE-3 (design §7): derive interactiveLayerIds from the runtime's APPLIED
   // spec — the authoritative registry of what the map currently reflects
@@ -170,6 +189,9 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
   // completes — the styledata listener is gone (findings E3).
   const [interactiveIds, setInteractiveIds] = useState<string[]>([])
   const interactiveIdsRef = useRef<string[]>([])
+  const handleRuntimeStyleRecovery = useCallback(() => {
+    setRuntimeRecoveryGeneration((generation) => generation + 1)
+  }, [])
   // 审计 F32：缓存上次计算的 IDs joined 字符串，相同则跳过 setInteractiveIds
   // -> 防止频繁 recompute 时产生 re-render 风暴。
   const lastInteractiveIdsKeyRef = useRef<string>('')
@@ -198,14 +220,16 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
     if (!runtimeRef.current) {
-      runtimeRef.current = new MapSpecRuntime(map)
+      runtimeRef.current = new MapSpecRuntime(map, {
+        onStyleRecovery: handleRuntimeStyleRecovery,
+      })
       syncInteractiveIds()
     }
     return () => {
       runtimeRef.current?.dispose()
       runtimeRef.current = null
     }
-  }, [mapReady, syncInteractiveIds])
+  }, [mapReady, syncInteractiveIds, handleRuntimeStyleRecovery])
 
   // FE-AUDIT-01: Invalidate runtime style cache when basemap style changes so custom layers re-apply
   useEffect(() => {
@@ -257,9 +281,55 @@ export function MapPanel({ layers, onRemoveLayer: _onRemoveLayer, onToggleLayer:
         // FIX-3-2: syncLayerZOrder buried the selection highlight under the
         // spec sublayers — put it back on top now that the reconcile settled.
         raiseSelectionHighlight()
+        const map = mapRef.current?.getMap()
+        const generation = layers.reduce<Layer | null>((latest, layer) => {
+          if (!layer._mapspecFingerprint) return latest
+          if (!latest) return layer
+          return (layer._mapspecGenerationAt ?? 0) > (latest._mapspecGenerationAt ?? 0)
+            ? layer
+            : latest
+        }, null)
+        if (!map || !sessionId || !generation?._mapspecFingerprint) return
+        const observation = collectCartographicRuntimeObservation(
+          map,
+          spec,
+          layers,
+          generation._mapspecFingerprint,
+          runtimeRef.current?.getLastError() ?? '',
+          runtimeRef.current?.getAppliedSpec() ?? null,
+        )
+        const observationKey = `${sessionId}:${JSON.stringify(observation)}`
+        if (observationKey === lastCartographicObservationKeyRef.current) return
+        lastCartographicObservationKeyRef.current = observationKey
+        const clientGeneration = Math.max(
+          cartographicObservationGenerationRef.current + 1,
+          Date.now() * 1000,
+        )
+        cartographicObservationGenerationRef.current = clientGeneration
+        void apiFetch<{ repair_action?: import('@/lib/types').MapActionPayload }>(
+          `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/cartographic-observation`,
+          {
+            method: 'POST',
+            body: { ...observation, client_generation: clientGeneration },
+            ownerToken,
+            label: 'Cartographic observation error',
+          },
+        ).then((response) => {
+          if (
+            cartographicSessionIdRef.current === sessionId
+            && response.repair_action
+          ) {
+            dispatchAction(response.repair_action)
+          }
+        }).catch((error) => {
+          // Allow the next meaningful reconcile to retry; token/pan events do
+          // not enter this effect and therefore cannot create a retry storm.
+          lastCartographicObservationKeyRef.current = ''
+          devOnly.warn('[map] cartographic observation failed:', error)
+        })
       })
       .catch((e) => console.error("[map] reconcile failed", e))
-  }, [layers, processLayers, activeFilters, is3D, mapReady, currentMapStyle, syncInteractiveIds, raiseSelectionHighlight])
+  }, [layers, processLayers, activeFilters, is3D, mapReady, currentMapStyle, runtimeRecoveryGeneration, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, dispatchAction])
 
 
   const setViewport = useHudStore((s: HudState) => s.setViewport)

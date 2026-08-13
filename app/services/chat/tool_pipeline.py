@@ -14,7 +14,11 @@ from app.services.jobs.cancellation import OperationCancelled, use_token
 from app.services.jobs.context import JobOrigin, use_origin
 from app.lib.runtime.context import current_runtime_context
 from app.services.task_tracker import TaskTracker, TaskStep
-from app.services.tool_dispatch_service import ToolDispatchService, ToolDispatchResult
+from app.services.tool_dispatch_service import (
+    ToolDispatchResult,
+    ToolDispatchService,
+    normalize_tool_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +216,31 @@ class ToolExecutionPipeline:
                     step.background_job_ids = list(origin.created_job_ids)
 
         elapsed_ms = (time.time() - start_time) * 1000
+        if (
+            outcome.status == "ok"
+            and isinstance(outcome.raw_result, dict)
+            and outcome.raw_result.get("mapspec_fingerprint")
+        ):
+            # Both the legacy and Pi agents converge into the same existing
+            # harness. Dynamic import avoids coupling the generic pipeline at
+            # module import time to the optional Pi transport.
+            from app.agent_pi_bridge import record_cartographic_dispatch_evidence
+
+            try:
+                await record_cartographic_dispatch_evidence(
+                    session_id,
+                    tool_call_id,
+                    normalize_tool_name(tool_name),
+                    args_dict,
+                    outcome,
+                    int(elapsed_ms),
+                )
+            except Exception as review_error:  # noqa: BLE001 - GIS result already succeeded
+                logger.warning(
+                    "[ToolPipeline] cartographic evaluation unavailable for %s: %s",
+                    session_id,
+                    review_error,
+                )
         return ToolExecutionResult(
             tool_name=tool_name,
             tool_call_id=tool_call_id,
@@ -223,4 +252,3 @@ class ToolExecutionPipeline:
             background_job_ids=list(origin.created_job_ids),
             cancelled=cancelled,
         )
-

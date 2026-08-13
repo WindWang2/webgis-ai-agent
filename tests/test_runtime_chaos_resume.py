@@ -47,9 +47,11 @@ from typing import AsyncIterator, Optional
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import HTTPException
 from starlette.requests import Request
 
 import app.services.session_data as session_data_mod
+import app.agent_pi_bridge as agent_pi_bridge
 from app.api.routes import chat as chat_route
 from app.services.chat.event_resume import TurnEventBuffer, TurnResumeRegistry
 from app.services.session_data import MemorySessionStore
@@ -269,9 +271,10 @@ async def test_concurrent_anonymous_same_message_turns_never_cross_replay(_pi_pa
 
 
 @pytest.mark.asyncio
-async def test_single_anonymous_turn_resume_still_works(_pi_path):
-    """F2 companion: with only ONE anonymous turn buffered, the same-message
-    resume is unambiguous and replays normally (the ''-key contract is kept)."""
+async def test_anonymous_resume_without_server_session_id_is_refused(_pi_path):
+    """A reconnect without the server-issued session UUID cannot address the
+    original turn and must fail closed instead of treating Last-Event-ID as an
+    ownership capability."""
     bridge = _GatedBridge(turns=1)
     _pi_path(bridge)
 
@@ -283,8 +286,9 @@ async def test_single_anonymous_turn_resume_still_works(_pi_path):
 
     resumed, rtask = await _open_resume("solo", last_event_id=2)
     await rtask
-    assert [_event_id(b) for b in resumed] == [3, 4, 5]
-    assert _event_type(resumed[-1]) == "done"
+    assert [_event_id(b) for b in resumed] == [None]
+    assert _event_type(resumed[-1]) == "error"
+    assert '"resumed": false' in resumed[-1]
     assert bridge.prompt_calls == 1
 
 
@@ -447,15 +451,8 @@ async def test_resume_never_started_turn_replays_real_events_not_fake_done(_pi_p
 
 @pytest.mark.asyncio
 async def test_anonymous_resume_of_live_turn_does_not_tail(_pi_path):
-    """P1 (review): anonymous (''-key) sessions NEVER live-hold a matched turn.
-
-    The '' key is shared by ALL anonymous clients and skips ownership checks,
-    so holding would let anyone who knows the victim's message + Last-Event-ID
-    tail a stranger's live turn in real time (shadow-stream). An anonymous
-    resume of a LIVE buffer replays the already-buffered tail, then ends with
-    the truthful pending terminal — events recorded after the resume connects
-    must NOT be forwarded, and no done is fabricated.
-    """
+    """An anonymous reconnect without the original server-issued UUID neither
+    replays the existing tail nor live-holds the original turn."""
     bridge = _GatedBridge(turns=1)
     _pi_path(bridge)
 
@@ -463,18 +460,14 @@ async def test_anonymous_resume_of_live_turn_does_not_tail(_pi_path):
     await bridge.parked[0].wait()
 
     resumed, rtask = await _open_resume("secret", last_event_id=1)
-    await _until(lambda: len(resumed) >= 2)  # replayed tail 2..3, never holds
+    await rtask
 
     bridge.gates[0].set()  # live turn keeps producing — must NOT be tailed
-    await rtask
     await task_a
-    assert [_event_id(b) for b in resumed] == [2, 3, None], resumed
+    assert [_event_id(b) for b in resumed] == [None], resumed
     assert _event_type(resumed[-1]) == "error"
-    assert '"resumed": true' in resumed[-1]
-    assert '"pending": true' in resumed[-1], (
-        "anonymous live-hold must end with the truthful pending terminal, "
-        "not a fabricated done"
-    )
+    assert '"resumed": false' in resumed[-1]
+    assert '"pending"' not in resumed[-1]
     assert bridge.prompt_calls == 1, "the resume never starts a new turn"
 
 
@@ -624,13 +617,16 @@ async def test_clear_session_route_purges_resume_buffers(_pi_path, monkeypatch, 
     _pi_path(bridge)
 
     # Turn runs and completes; its buffer is registered under the session key.
-    out_a, task_a = await _start_stream("victim msg", session_id="victim-session")
+    session_id = f"victim-session-{id(bridge)}"
+    out_a, task_a = await _start_stream("victim msg", session_id=session_id)
     bridge.gates[0].set()
     await task_a
     assert [_event_id(b) for b in out_a] == [1, 2, 3, 4, 5]
 
     # Resume works BEFORE the delete.
-    resumed, rtask = await _open_resume("victim msg", last_event_id=1, session_id="victim-session")
+    resumed, rtask = await _open_resume(
+        "victim msg", last_event_id=1, session_id=session_id
+    )
     await rtask
     assert [_event_id(b) for b in resumed] == [2, 3, 4, 5], resumed
 
@@ -639,20 +635,18 @@ async def test_clear_session_route_purges_resume_buffers(_pi_path, monkeypatch, 
     monkeypatch.setattr(chat_route, "pi_bridge", None)
     monkeypatch.setattr(chat_route, "engine", _ClearableEngine())
     result = await chat_route.clear_session(
-        session_id="victim-session",
+        session_id=session_id,
         _user={"user_id": None},
         owner_token=None,
         _conv=MagicMock(),
     )
     assert result == {"status": "ok"}
 
-    # Resume now fails safe: no replay of the deleted session's events.
-    resumed2, rtask2 = await _open_resume("victim msg", last_event_id=1, session_id="victim-session")
-    await rtask2
-    assert [_event_type(b) for b in resumed2] == ["error"], [
-        _event_type(b) for b in resumed2
-    ]
-    assert '"resumed": false' in resumed2[0]
+    # The durable deletion tombstone rejects the request before any replay
+    # generator can expose buffered content.
+    with pytest.raises(HTTPException) as deleted:
+        await _open_resume("victim msg", last_event_id=1, session_id=session_id)
+    assert deleted.value.status_code == 404
     assert bridge.prompt_calls == 1, "a refused resume never starts a new turn"
 
 
@@ -786,6 +780,40 @@ async def test_ack_endpoint_true_duplicate_not_reported_as_dropped(monkeypatch):
         MagicMock(),
     )
     assert dup == {"accepted": 0, "duplicates": 1}, dup
+
+
+@pytest.mark.asyncio
+async def test_ack_endpoint_evaluates_on_fresh_replica_without_local_harness(
+    monkeypatch,
+):
+    """An accepted ACK must reach durable-context rehydration on every pod."""
+    store = MemorySessionStore()
+    monkeypatch.setattr(session_data_mod, "session_data_manager", store)
+    evaluated: list[str] = []
+
+    async def _evaluate(session_id: str, *, session_lock_held: bool = False):
+        evaluated.append(session_id)
+        assert session_lock_held is True
+        return {
+            "session_id": session_id,
+            "cartography": {
+                "status": "not_evaluated",
+                "termination_reason": "no_session_harness",
+            },
+            "overall_passed": False,
+        }
+
+    monkeypatch.setattr(agent_pi_bridge, "evaluate_cartographic_session", _evaluate)
+
+    response = await chat_route.push_map_action_acks(
+        "fresh-replica",
+        chat_route.MapActionAckRequest(acks=[_ack_payload("ma-fresh")]),
+        _fake_request(),
+        MagicMock(),
+    )
+
+    assert response == {"accepted": 1, "duplicates": 0}
+    assert evaluated == ["fresh-replica"]
 
 
 class _ReadCountingStore:

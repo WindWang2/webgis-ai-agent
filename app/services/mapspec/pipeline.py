@@ -4,6 +4,8 @@
 GeoJSON 自动 Profiling, DataFabric 源代理与 View 计算)。
 """
 from pathlib import Path
+import hashlib
+import json
 import logging
 from typing import Any, Dict, Optional, Tuple
 
@@ -12,6 +14,17 @@ from app.services.mapspec_source import store_data, profile_data, is_raster_entr
 from app.services.mapspec.store import view_has_center
 
 logger = logging.getLogger(__name__)
+
+
+def _content_fingerprint(value: Any) -> str:
+    """Hash JSON incrementally so identity does not require a second full copy."""
+    digest = hashlib.sha256()
+    encoder = json.JSONEncoder(
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
+    for chunk in encoder.iterencode(value):
+        digest.update(chunk.encode("utf-8"))
+    return "data-sha256:" + digest.hexdigest()
 
 
 def process_layer_ingestion(
@@ -55,15 +68,52 @@ def process_layer_ingestion(
     existing_entry = sources.get(source_id, {"type": "geojson"})
     source_entry = dict(existing_entry)
 
-    already_has_data = (
-        "inlineData" in source_entry
-        or "url" in source_entry
-        or is_raster_entry(source_entry)
-        or is_data_fabric_entry(source_entry)
-    )
-
-    if processed_source_data is not None and not already_has_data:
+    if processed_source_data is not None:
+        # An explicit upsert replaces the prior source generation.  Keeping an
+        # old inlineData/profile beside a new URL/ref made semantic review use
+        # stale geometry/field evidence.  Presentation metadata survives; data
+        # carrier and its derived profile do not.
+        for key in (
+            "inlineData", "url", "dataPath", "imageRef", "bounds",
+            "imageSize", "profile", "profile_fingerprint", "ref", "ref_id",
+            "data_fingerprint",
+        ):
+            source_entry.pop(key, None)
         store_data(source_entry, processed_source_data)
+        if isinstance(processed_source_data, dict):
+            source_entry.setdefault(
+                "data_fingerprint", _content_fingerprint(processed_source_data)
+            )
+        elif isinstance(processed_source_data, str):
+            source_entry.setdefault(
+                "data_fingerprint",
+                "url-sha256:" + hashlib.sha256(processed_source_data.encode()).hexdigest(),
+            )
+
+    if is_raster and isinstance(source_entry.get("imageRef"), str):
+        # The rendered PNG is the display result; source_ref retained by the
+        # converter is the input raster. Preserve both roles explicitly.
+        raster_provenance = (
+            dict(processed_layer.get("provenance"))
+            if isinstance(processed_layer.get("provenance"), dict) else {}
+        )
+        raster_provenance["result_ref"] = source_entry["imageRef"]
+        processed_layer["provenance"] = raster_provenance
+
+    provenance = (
+        processed_layer.get("provenance")
+        if isinstance(processed_layer.get("provenance"), dict) else {}
+    )
+    # ``source_ref`` names an analysis input, not the displayable output. Only
+    # an explicit ``result_ref`` may replace the source carrier; conflating the
+    # two can make a layer point at its input while discarding its actual result.
+    result_ref = provenance.get("result_ref")
+    if isinstance(result_ref, str) and result_ref:
+        source_entry["ref"] = result_ref
+        source_entry["ref_id"] = result_ref
+        source_entry["data_fingerprint"] = (
+            "ref-sha256:" + hashlib.sha256(result_ref.encode()).hexdigest()
+        )
 
     suggested_view: Optional[Dict[str, Any]] = None
     if is_raster_entry(source_entry) or is_data_fabric_entry(source_entry):
@@ -71,17 +121,36 @@ def process_layer_ingestion(
     else:
         data_to_profile = processed_source_data or profile_data(source_entry)
 
-    if data_to_profile and isinstance(data_to_profile, dict) and "profile" not in source_entry:
+    if data_to_profile and isinstance(data_to_profile, dict) and (
+        processed_source_data is not None or "profile" not in source_entry
+    ):
         try:
             profile = profile_geojson_source(data_to_profile)
             source_entry["profile"] = profile
+            profile_payload = json.dumps(
+                profile,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+            source_entry["profile_fingerprint"] = (
+                "profile-sha256:" + hashlib.sha256(profile_payload).hexdigest()
+            )
 
-            if not view_has_center(mapspec) and "suggestedView" in profile:
+            if not view_has_center(mapspec) and profile.get("suggestedView"):
                 suggested_view = {
                     "center": profile["suggestedView"]["center"],
                     "zoom": profile["suggestedView"]["zoom"],
                 }
         except Exception as e:
             logger.warning(f"Auto-profiling failed for layer {processed_layer.get('id')}: {e}")
+
+    # A session ref is the authoritative carrier. Profiling above may inspect
+    # caller-owned inline data once during ingestion, but the persisted MapSpec
+    # must not duplicate a 100k-feature payload merely to describe the map.
+    if isinstance(result_ref, str) and result_ref:
+        source_entry.pop("inlineData", None)
+        source_entry.pop("url", None)
 
     return processed_layer, source_entry, suggested_view

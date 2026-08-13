@@ -48,7 +48,8 @@ def test_scores_full_marks_for_a_clean_run():
   assert scores["traceability_score"] == 10.0
   assert scores["efficiency_score"] == 10.0
   assert scores["total_score_80_max"] == 80.0
-  assert scores["cartographic_quality_status"] in ("deferred_pending_visual_judge", "evaluated_by_visual_judge")
+  assert scores["cartographic_quality_status"] == "heuristic_visual_proxies"
+  assert scores["cartographic_quality_evidence_class"] == "heuristic"
 
 
 def test_scores_visual_judge_full_marks():
@@ -72,7 +73,8 @@ def test_scores_visual_judge_full_marks():
   scores = compute_eval_scores(report, mapspec)
   assert scores["cartographic_quality_score"] == 20.0
   assert scores["total_score_100_max"] == 100.0
-  assert scores["cartographic_quality_status"] == "evaluated_by_visual_judge"
+  assert scores["cartographic_quality_status"] == "heuristic_visual_proxies"
+  assert scores["cartographic_quality_evidence_class"] == "heuristic"
   assert scores["visual_judge_details"]["visual_contrast_score"] == 8.0
   assert scores["visual_judge_details"]["label_collision_score"] == 6.0
   assert scores["visual_judge_details"]["layout_balance_score"] == 6.0

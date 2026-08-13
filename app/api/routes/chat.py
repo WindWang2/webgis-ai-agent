@@ -1,6 +1,8 @@
 """Chat API Route - SSE 流式对话"""
+import json
 import logging
-from typing import Annotated, Literal, Optional
+import uuid
+from typing import Annotated, Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -14,6 +16,8 @@ from app.models.db_model import Conversation
 from app.services.chat.event_resume import TurnEventBuffer, TurnResumeRegistry
 from app.services.chat_engine import ChatEngine
 from app.services.history_service_async import AsyncHistoryService
+from app.services.distributed_lock import session_lock_registry
+from app.services.session_data import session_data_manager
 from app.tools._utils import async_db_session
 from app.tools.registry import ToolRegistry
 
@@ -82,6 +86,152 @@ def get_engine() -> ChatEngine:
     if engine is None:
         raise HTTPException(status_code=503, detail="Service starting up, please retry")
     return engine
+
+
+_FRONTEND_OBSERVATION_MAX_LAYERS = 128
+_FRONTEND_OBSERVATION_MAX_FRAGMENT_BYTES = 16_384
+_FRONTEND_OBSERVATION_MAX_TOTAL_BYTES = 262_144
+_FRONTEND_OBSERVATION_MAX_NODES = 32_768
+_FRONTEND_OBSERVATION_MAX_DEPTH = 8
+_FRONTEND_OBSERVATION_MAX_DICT_KEYS = 64
+_FRONTEND_LAYER_KEYS = (
+    "id", "name", "type", "visible", "opacity", "group", "_refId",
+    "_descriptor", "featureCount", "style", "legend_spec",
+    "style_converged", "source_converged", "runtime_layer_count",
+    "runtime_layer_ids", "runtime_store_id", "projection_fingerprint",
+    "repair_action_id", "intent_generation",
+    "raster_image", "raster_bbox",
+)
+_OBSERVATION_DATA_KEYS = frozenset({
+    "data", "features", "geojson", "inlineData", "source", "source_data",
+})
+_OBSERVATION_SECRET_KEYS = frozenset({
+    "authorization", "api_key", "apikey", "access_token", "refresh_token",
+    "owner_token", "password", "secret", "cookie",
+})
+
+
+def _bounded_observation_fragment(
+    value: Any,
+    *,
+    _depth: int = 0,
+    _budget: Optional[list[int]] = None,
+) -> Any:
+    """Copy a small metadata fragment while stripping dataset payload keys."""
+    budget = _budget if _budget is not None else [_FRONTEND_OBSERVATION_MAX_NODES]
+    if _depth > _FRONTEND_OBSERVATION_MAX_DEPTH or budget[0] <= 0:
+        return None
+    budget[0] -= 1
+    if isinstance(value, dict):
+        projected = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= _FRONTEND_OBSERVATION_MAX_DICT_KEYS or budget[0] <= 0:
+                break
+            normalized_key = str(key).lower()
+            if normalized_key in _OBSERVATION_SECRET_KEYS:
+                projected[str(key)] = "[redacted]"
+            elif key not in _OBSERVATION_DATA_KEYS:
+                projected[str(key)] = _bounded_observation_fragment(
+                    item, _depth=_depth + 1, _budget=budget
+                )
+    elif isinstance(value, (list, tuple)):
+        projected = [
+            _bounded_observation_fragment(
+                item, _depth=_depth + 1, _budget=budget
+            )
+            for item in value[:128]
+            if budget[0] > 0
+        ]
+    elif isinstance(value, str):
+        projected = (
+            value.split("?", 1)[0] + "?[redacted]"
+            if "://" in value and "?" in value
+            else value
+        )
+    elif isinstance(value, (int, float, bool)) or value is None:
+        projected = value
+    else:
+        return None
+    try:
+        encoded = json.dumps(projected, ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError):
+        return None
+    if len(encoded.encode("utf-8")) > _FRONTEND_OBSERVATION_MAX_FRAGMENT_BYTES:
+        return None
+    return projected
+
+
+def _project_frontend_layers(raw_layers: Any) -> list[dict[str, Any]]:
+    """Return bounded metadata-only runtime layers (never feature payloads)."""
+    layers: list[dict[str, Any]] = []
+    node_budget = [_FRONTEND_OBSERVATION_MAX_NODES]
+    total_bytes = 0
+    candidates = raw_layers if isinstance(raw_layers, list) else []
+    for raw in candidates[:_FRONTEND_OBSERVATION_MAX_LAYERS]:
+        if not isinstance(raw, dict) or not raw.get("id") or node_budget[0] <= 0:
+            continue
+        layer = {
+            key: _bounded_observation_fragment(raw[key], _budget=node_budget)
+            for key in _FRONTEND_LAYER_KEYS
+            if key in raw
+        }
+        try:
+            layer_bytes = len(
+                json.dumps(layer, ensure_ascii=False, allow_nan=False).encode("utf-8")
+            )
+        except (TypeError, ValueError):
+            continue
+        if layer_bytes > _FRONTEND_OBSERVATION_MAX_FRAGMENT_BYTES:
+            continue
+        if total_bytes + layer_bytes > _FRONTEND_OBSERVATION_MAX_TOTAL_BYTES:
+            break
+        total_bytes += layer_bytes
+        layers.append(layer)
+    return layers
+
+
+async def _record_frontend_cartographic_observation(
+    session_id: Optional[str], map_state: Optional[dict]
+) -> None:
+    """Persist bounded pre-turn context without claiming runtime convergence.
+
+    This user-supplied snapshot runs once at turn start.  It is useful context,
+    but it predates the next mutation and must neither overwrite canonical map
+    state nor certify the post-reconcile runtime.  The authoritative runtime
+    endpoint writes ``_cartographic_observation`` separately.
+    """
+    if not session_id or not isinstance(map_state, dict):
+        return
+    layers = _project_frontend_layers(map_state.get("layers"))
+    node_budget = [_FRONTEND_OBSERVATION_MAX_NODES]
+    viewport = _bounded_observation_fragment(
+        map_state.get("viewport") or {}, _budget=node_budget
+    )
+    base_layer = _bounded_observation_fragment(
+        map_state.get("base_layer"), _budget=node_budget
+    )
+
+    async with session_lock_registry.lock(session_id):
+        session_data_manager.invalidate_local_cache(session_id)
+        current = await session_data_manager.get_map_state(session_id)
+        previous = current.get("_cartographic_context_observation")
+        try:
+            sequence = int(previous.get("sequence", 0)) + 1 if isinstance(previous, dict) else 1
+        except (TypeError, ValueError):
+            sequence = 1
+        await session_data_manager.set_map_state(
+            session_id,
+            "_cartographic_context_observation",
+            {
+                "session_id": session_id,
+                "sequence": sequence,
+                "source": "frontend_pre_turn",
+                "layer_count": len(layers),
+                "layers": layers,
+                "viewport": viewport if isinstance(viewport, dict) else {},
+                "base_layer": base_layer,
+            },
+        )
 
 
 def get_registry() -> ToolRegistry:
@@ -221,8 +371,7 @@ async def _resume_generator_impl(
         Last-Event-ID tail a stranger's live turn — an anonymous resume of a
         live turn replays the already-buffered tail and immediately ends with
         that truthful pending error instead.
-      * ambiguous hit (multiple concurrent turns on this session key match —
-        e.g. two anonymous ``""``-key turns with the same message, F2) →
+      * ambiguous hit (multiple concurrent turns on this session key match) →
         terminal ``error {resumed: false}``: fail safe, never replay the WRONG
         turn's events into this client's stream (cross-turn leak).
       * buffer miss (server restart / LRU eviction / message mismatch) → a
@@ -234,29 +383,17 @@ async def _resume_generator_impl(
     original turn's id sequence); the client consumes them for status and
     stops, so ids are not needed for dedup there.
 
-    P2 (round-2 review): anonymous (``""``-key) resumes additionally require
-    ``last_event_id > 0``. The ``""`` key is shared by ALL anonymous clients
-    and skips ownership checks, so a resume from id 0 would replay a
-    stranger's whole buffered turn to anyone who knows the message + session
-    id. A nonzero Last-Event-ID is (weak) proof of prior contact with THAT
-    turn — the requester must have received events from it. An anonymous
-    resume with ``last_event_id <= 0`` is refused with a terminal
-    ``error {resumed: false}``: no replay, no fabricated done. Named-session
-    resumes are unchanged (``last_event_id == 0`` remains legal there).
-    Residual (documented): anonymous + no-auth still share the ``""``
-    namespace by design, so a nonzero id is not strong ownership — it only
-    removes the whole-turn replay.
+    Anonymous ``""``-key resumes are always refused. Last-Event-ID is an
+    ordering cursor, not an ownership capability; treating it as one permits
+    cross-user replay. Pi turns receive a canonical UUID before execution and
+    can resume by that id. Legacy anonymous turns are deliberately
+    non-resumable until the client has a canonical session identity.
     """
-    if session_key == "" and last_event_id <= 0:
-        # P2 (round-2 review): anonymous resume without proof of prior contact
-        # is refused outright (no replay of a shared-key stranger's turn from
-        # the start; no fabricated done). Terminal — the client stops
-        # auto-retrying and surfaces the error.
+    if session_key == "":
         yield sse_event("error", {
             "session_id": session_key,
             "error": (
-                "匿名会话续传需要携带已接收事件编号（Last-Event-ID > 0）；"
-                "从 0 重放存在跨用户泄漏风险，请重新发送消息。"
+                "匿名会话不能安全续传；请使用服务端签发的会话编号重新连接。"
             ),
             "resumed": False,
         })
@@ -295,24 +432,6 @@ async def _resume_generator_impl(
             cursor = buffered.last_id
         if buffered.ended:
             break
-        if session_key == "":
-            # P1 (review): anonymous (''-key) sessions NEVER live-hold. The ''
-            # key is shared by ALL anonymous clients and skips ownership checks,
-            # so holding would let anyone who knows the victim's message +
-            # Last-Event-ID tail a stranger's live turn in real time
-            # (shadow-stream). Replay the already-buffered tail, then end with
-            # the truthful pending terminal — never fabricate done, never
-            # forward events recorded after this resume connected.
-            yield sse_event("error", {
-                "session_id": session_key,
-                "error": (
-                    "本轮仍在执行中；匿名会话不支持实时续传，请稍后携带 "
-                    "Last-Event-ID 重新连接接收剩余内容。"
-                ),
-                "resumed": True,
-                "pending": True,
-            })
-            return
         if not await buffered.wait_for_update(timeout=_RESUME_LIVE_HOLD_S):
             # Stalled live turn: end truthfully — the turn is still in
             # progress and can be picked up by another resume. Never a fake done.
@@ -390,6 +509,11 @@ async def _guard_body_session(
     if not session_id:
         return
 
+    session_data_manager.invalidate_local_cache(session_id)
+    deleted_state = await session_data_manager.get_map_state(session_id)
+    if deleted_state.get("_cartographic_deleted") is True:
+        raise HTTPException(status_code=404, detail="Session not found")
+
     owned = await AsyncHistoryService(db).get_session(
         session_id, user_id=user_id, owner_token=owner_token
     )
@@ -419,6 +543,7 @@ async def chat_completions(
     with rt_ctx.bind_runtime_context(request_id=request_id, session_id=req.session_id):
         if _use_pi_bridge():
             try:
+                await _record_frontend_cartographic_observation(req.session_id, req.map_state)
                 result = await pi_bridge.prompt(req.message, session_id=req.session_id)
                 return ChatResponse(session_id=result.get("sessionId", req.session_id or ""), content=result.get("content", ""))
             except PiRpcError as e:
@@ -427,6 +552,7 @@ async def chat_completions(
             except Exception as e:
                 logger.error(f"Pi bridge unexpected error: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail="Internal server error")
+
 
         # Legacy path: 使用 ChatEngine
         try:
@@ -481,20 +607,32 @@ async def chat_stream(
     stream; the early close takes it to 0 during streaming).
     """
     user_id = _user.get("user_id")
+    use_pi = _use_pi_bridge()
+    last_event_id = (
+        last_event_id_header
+        if last_event_id_header is not None
+        else last_event_id_query
+    )
+    pi_session_id = req.session_id
+    pi_owner_token: Optional[str] = None
     try:
         await _guard_body_session(db, req.session_id, user_id, owner_token)
+        if use_pi and last_event_id is None:
+            pi_session_id = req.session_id or str(uuid.uuid4())
+            # Direct route tests use a minimal close-only DB stand-in. Real
+            # requests always carry AsyncSession and persist the capability.
+            if db is not None and hasattr(db, "execute"):
+                conversation = await AsyncHistoryService(db).get_or_create_conversation(
+                    pi_session_id, user_id=user_id
+                )
+                pi_owner_token = conversation.owner_token
     finally:
         # Release the connection NOW, not when the stream ends. The guard is
         # the only consumer; nothing downstream uses ``db``.
         if db is not None:
             await db.close()
 
-    session_key = req.session_id or ""
-    last_event_id = (
-        last_event_id_header
-        if last_event_id_header is not None
-        else last_event_id_query
-    )
+    session_key = (pi_session_id if use_pi else req.session_id) or ""
 
     # Runtime observability (W1): request-scoped correlation, bound INSIDE the
     # streaming generators (a `with` in the route body would exit before the
@@ -512,7 +650,9 @@ async def chat_stream(
             headers=SSE_HEADERS,
         )
 
-    if _use_pi_bridge():
+    if use_pi:
+        assert pi_session_id
+        await _record_frontend_cartographic_observation(pi_session_id, req.map_state)
         async def pi_event_generator():
             buffer = TurnEventBuffer(session_key, req.message)
             _turn_resume_registry.register(session_key, buffer)
@@ -522,9 +662,18 @@ async def chat_stream(
                 request_id=request_id, session_id=req.session_id
             ):
                 try:
+                    if pi_owner_token:
+                        session_event = sse_event("session", {
+                            "session_id": pi_session_id,
+                            "owner_token": pi_owner_token,
+                        })
+                        buffer.record(session_event)
+                        yield session_event
                     async for chunk in _sse_batched(
                         _recorded(
-                            pi_bridge.stream_prompt(req.message, session_id=req.session_id),
+                            pi_bridge.stream_prompt(
+                                req.message, session_id=pi_session_id
+                            ),
                             buffer,
                         )
                     ):
@@ -646,7 +795,19 @@ async def get_session_map_state(
     """
     from app.services.session_data import session_data_manager
     state = await session_data_manager.get_map_state(session_id)
-    return {"session_id": session_id, "map_state": state}
+    # Restoration may use a prior runtime observation only when it belongs to
+    # the current authoritative desired state. Expose the bounded cartographic
+    # fingerprint alongside the state so the browser never revives an older
+    # MapSpec generation after a reload race.
+    response_state = dict(state)
+    mapspec = state.get("mapspec")
+    if isinstance(mapspec, dict):
+        from app.lib.cartography.quality_loop import cartographic_fingerprint
+
+        response_state["_current_cartographic_fingerprint"] = (
+            cartographic_fingerprint(mapspec)
+        )
+    return {"session_id": session_id, "map_state": response_state}
 
 
 class MapStatePushRequest(BaseModel):
@@ -678,6 +839,152 @@ async def push_session_map_state(
         await session_data_manager.set_map_state(session_id, "base_layer", req.base_layer)
 
 
+class CartographicRuntimeObservationRequest(BaseModel):
+    """Bounded actual MapLibre evidence for one MapSpec generation."""
+
+    # Client-minted wall-clock/monotonic hybrid. Arrival order is not state
+    # order: a slow stale POST must not overwrite a newer live observation.
+    client_generation: int = Field(ge=1, le=9_007_199_254_740_991)
+    mapspec_fingerprint: str = Field(min_length=16, max_length=96)
+    layers: list[dict[str, Any]] = Field(default_factory=list, max_length=128)
+    viewport: dict[str, Any] = Field(default_factory=dict)
+    style_loaded: bool
+    reconcile_error: str = Field(default="", max_length=500)
+
+    @model_validator(mode="after")
+    def _cap_serialized_size(self):
+        if len(self.model_dump_json().encode("utf-8")) > 256 * 1024:
+            raise ValueError("serialized cartographic observation exceeds 256KB")
+        return self
+
+
+@router.post("/sessions/{session_id}/cartographic-observation")
+async def push_cartographic_runtime_observation(
+    session_id: str,
+    req: CartographicRuntimeObservationRequest,
+    _conv: Conversation = Depends(require_owned_session),
+):
+    """Persist live post-reconcile evidence and re-run the trusted gate.
+
+    This endpoint is event-driven by MapSpec reconciliation. It is not called
+    for token streaming or ordinary pans, and it never replaces canonical
+    desired MapSpec/session layers.
+    """
+    layers = _project_frontend_layers(req.layers)
+    viewport = _bounded_observation_fragment(req.viewport) or {}
+    async with session_lock_registry.lock(session_id):
+        session_data_manager.invalidate_local_cache(session_id)
+        state = await session_data_manager.get_map_state(session_id)
+        previous = state.get("_cartographic_observation")
+        from app.lib.cartography.quality_loop import cartographic_fingerprint
+        from app.services.mapspec.store import mapspec_store_instance
+
+        current_mapspec = await mapspec_store_instance.get_mapspec(session_id)
+        current_fingerprint = (
+            cartographic_fingerprint(current_mapspec)
+            if isinstance(current_mapspec, dict)
+            else ""
+        )
+        previous_generation = (
+            previous.get("client_generation")
+            if isinstance(previous, dict) else None
+        )
+        rejection_reason = (
+            "stale_mapspec_fingerprint"
+            if not current_fingerprint
+            or req.mapspec_fingerprint != current_fingerprint
+            else "stale_client_generation"
+            if (
+            isinstance(previous_generation, int)
+            and req.client_generation <= previous_generation
+            )
+            else ""
+        )
+        if rejection_reason:
+            # Never echo an old repair action: callers dispatch a returned
+            # action immediately, so a stale response must be an inert view of
+            # the newest trusted result.
+            stored_review = state.get("_cartographic_review")
+            if isinstance(stored_review, dict):
+                review = dict(stored_review)
+                review.pop("repair_action", None)
+            else:
+                review = {
+                    "session_id": session_id,
+                    "cartography": {
+                        "status": "not_evaluated",
+                        "trusted": False,
+                        "evaluated": False,
+                        "passed": False,
+                        "termination_reason": "stale_runtime_observation",
+                    },
+                    "overall_passed": False,
+                }
+            return {
+                "observation_sequence": int(
+                    previous.get("sequence") or 0
+                ) if isinstance(previous, dict) else 0,
+                "observation_accepted": False,
+                "observation_rejection_reason": rejection_reason,
+                **review,
+            }
+        try:
+            sequence = (
+                int(previous.get("sequence", 0)) + 1
+                if isinstance(previous, dict) else 1
+            )
+        except (TypeError, ValueError):
+            sequence = 1
+        observation = {
+            "session_id": session_id,
+            "sequence": sequence,
+            "client_generation": req.client_generation,
+            "source": "frontend_runtime",
+            "mapspec_fingerprint": req.mapspec_fingerprint,
+            "layer_count": len(layers),
+            "layers": layers,
+            "viewport": viewport if isinstance(viewport, dict) else {},
+            "style_loaded": req.style_loaded,
+            "reconcile_error": req.reconcile_error,
+        }
+        persisted = await session_data_manager.set_map_state(
+            session_id, "_cartographic_observation", observation
+        )
+        if persisted is False:
+            raise HTTPException(
+                status_code=503,
+                detail="Cartographic observation could not be persisted",
+            )
+        from app.agent_pi_bridge import evaluate_cartographic_session
+
+        try:
+            review = await evaluate_cartographic_session(
+                session_id, session_lock_held=True
+            )
+        except Exception as review_error:  # noqa: BLE001 - observation remains accepted
+            logger.warning(
+                "Cartographic observation evaluation unavailable for %s: %s",
+                session_id,
+                review_error,
+            )
+            review = {
+                "session_id": session_id,
+                "cartography": {
+                    "status": "not_evaluated",
+                    "trusted": False,
+                    "evaluated": False,
+                    "passed": False,
+                    "termination_reason": "evaluation_unavailable",
+                },
+                "overall_passed": False,
+            }
+    return {
+        "observation_sequence": sequence,
+        "observation_accepted": True,
+        **review,
+    }
+
+
 class MapActionAck(BaseModel):
     """单条地图动作终态 ACK（V3 闭环：前端上报命令执行终态）。"""
 
@@ -707,6 +1014,72 @@ class MapActionAckRequest(BaseModel):
     """地图动作 ACK 批量上报体（V3 闭环），单批 ≤50 条。"""
 
     acks: list[MapActionAck] = Field(max_length=50)
+
+
+async def _persist_map_action_acks_locked(
+    session_id: str, req: MapActionAckRequest
+) -> dict[str, Any]:
+    """Persist and evaluate ACKs while the session delete lock is held."""
+    from app.agent_pi_bridge import (
+        evaluate_cartographic_session,
+        is_cartographic_session_deleted,
+    )
+    # Resolve at call time so deployments/tests that swap the configured
+    # session-store adapter use the same source of truth as the route.
+    from app.services.session_data import session_data_manager as ack_store
+
+    if is_cartographic_session_deleted(session_id):
+        raise HTTPException(status_code=410, detail="Session was deleted")
+
+    accepted = 0
+    duplicates = 0
+    dropped = 0
+    stored = await ack_store.get_map_action_events(session_id)
+    snapshot_stale = False
+    for ack in req.acks:
+        if await ack_store.append_map_action_event(
+            session_id, ack.model_dump(exclude_none=True)
+        ):
+            accepted += 1
+            snapshot_stale = True
+            _ack_turn_id = (ack.correlation or {}).get("turn_id")
+            if _ack_turn_id:
+                record_map_action_acked_by_turn(_ack_turn_id, ack.action_id, ack.status)
+            continue
+        if snapshot_stale:
+            stored = await ack_store.get_map_action_events(session_id)
+            snapshot_stale = False
+        if any(event.get("action_id") == ack.action_id for event in stored):
+            duplicates += 1
+        else:
+            dropped += 1
+
+    result: dict[str, Any] = {"accepted": accepted, "duplicates": duplicates}
+    if dropped:
+        result["dropped"] = dropped
+    if accepted:
+        try:
+            evaluation = await evaluate_cartographic_session(
+                session_id, session_lock_held=True
+            )
+        except Exception as review_error:  # noqa: BLE001 - ACK is already durable
+            logger.warning(
+                "Cartographic ACK evaluation unavailable for %s: %s",
+                session_id,
+                review_error,
+            )
+            evaluation = None
+        # Preserve the established telemetry-only ACK response when this ACK
+        # is unrelated to a cartographic loop. The evaluator still always ran,
+        # so a fresh replica can rehydrate a real pending repair.
+        if evaluation is not None and (
+            (evaluation.get("cartography") or {}).get("termination_reason")
+            != "no_session_harness"
+        ):
+            result["cartography"] = evaluation
+            if evaluation.get("repair_action"):
+                result["repair_action"] = evaluation["repair_action"]
+    return result
 
 
 @router.post("/sessions/{session_id}/map-action-ack")
@@ -742,44 +1115,11 @@ async def push_map_action_acks(
         f"map_action_ack:{client_ip}", _ACK_RATE_LIMIT_MAX, _ACK_RATE_LIMIT_WINDOW
     ):
         raise HTTPException(status_code=429, detail="Too many map action acks")
-    from app.services.session_data import session_data_manager
-    accepted = 0
-    duplicates = 0
-    dropped = 0
-    # P2 (round-2 review): hoist ONE readback before the loop instead of
-    # re-reading the store per rejected ack (up to 50 full reads = O(n^2) —
-    # e.g. a retrying client spamming 50 duplicates). The snapshot is
-    # refreshed ONLY after an accepted append (only then can it be stale for
-    # an in-batch duplicate of a just-appended id); rejects never read.
-    stored = await session_data_manager.get_map_action_events(session_id)
-    snapshot_stale = False
-    for ack in req.acks:
-        if await session_data_manager.append_map_action_event(
-            session_id, ack.model_dump(exclude_none=True)
-        ):
-            accepted += 1
-            snapshot_stale = True
-            # Runtime observability: join the ACK into the live turn's evidence
-            # (cross-request: this endpoint runs in a different task than the
-            # stream). turn_id comes from the frontend's correlation echo; if the
-            # turn already ended / wrong worker, this is a graceful no-op.
-            _ack_turn_id = (ack.correlation or {}).get("turn_id")
-            if _ack_turn_id:
-                record_map_action_acked_by_turn(_ack_turn_id, ack.action_id, ack.status)
-            continue
-        if snapshot_stale:
-            # An append landed since the snapshot — an in-batch duplicate of
-            # it would be misread as "dropped". Refresh once, then classify.
-            stored = await session_data_manager.get_map_action_events(session_id)
-            snapshot_stale = False
-        if any(e.get("action_id") == ack.action_id for e in stored):
-            duplicates += 1
-        else:
-            dropped += 1
-    result = {"accepted": accepted, "duplicates": duplicates}
-    if dropped:
-        result["dropped"] = dropped
-    return result
+    # Serialize with deletion and observation. An ACK that arrives after the
+    # delete tombstone cannot recreate bounded event/review state.
+    async with session_lock_registry.lock(session_id):
+        session_data_manager.invalidate_local_cache(session_id)
+        return await _persist_map_action_acks_locked(session_id, req)
 
 
 @router.get("/skills")
@@ -811,17 +1151,50 @@ async def clear_session(
         except Exception as e:  # noqa: BLE001 — abort 失败不能阻塞删除流程
             logger.warning("Pi bridge abort failed for session %s: %s", session_id, e)
 
-    ok = await get_engine().clear_session(
-        session_id, user_id=user_id, owner_token=owner_token
+    from app.agent_pi_bridge import (
+        clear_cartographic_session_state,
+        restore_cartographic_session_state,
     )
+
+    async with session_lock_registry.lock(session_id):
+        session_data_manager.invalidate_local_cache(session_id)
+        # Tombstone first: an evaluation already in flight must not recreate
+        # review/repair state after the authoritative session is removed.
+        clear_cartographic_session_state(session_id)
+        ok = await get_engine().clear_session(
+            session_id, user_id=user_id, owner_token=owner_token
+        )
+        if not ok:
+            restore_cartographic_session_state(session_id)
+        else:
+            from app.services.mapspec.store import mapspec_store_instance
+            try:
+                await mapspec_store_instance.clear_session_files(session_id)
+            except FileNotFoundError:
+                pass
+            except Exception as purge_error:  # noqa: BLE001
+                logger.error(
+                    "Unable to purge durable MapSpec state for %s: %s",
+                    session_id,
+                    purge_error,
+                )
+            # Cross-replica tombstone. The Redis session-state adapter applies
+            # its normal bounded TTL; late work from another replica therefore
+            # cannot recreate a deleted session's cartographic evidence.
+            persisted = await session_data_manager.set_map_state(
+                session_id, "_cartographic_deleted", True
+            )
+            if persisted is False:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Session deleted but deletion tombstone persistence failed",
+                )
     if not ok:
         raise HTTPException(status_code=404, detail="Session not found")
     # P2 (round-2 review): purge the deleted session's resume buffers. Without
     # this, anyone holding session_id + the message could keep replaying the
     # deleted session's buffered SSE events from the process-local resume
-    # registry until LRU eviction. The '' key (shared by ALL anonymous
-    # sessions) is deliberately never purged here — clear_session only ever
-    # targets a real (named) session id.
+    # registry until LRU eviction.
     _turn_resume_registry.clear_session(session_id)
     return {"status": "ok"}
 

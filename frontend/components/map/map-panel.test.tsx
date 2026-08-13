@@ -250,6 +250,52 @@ describe('MapPanel — FE-3 interaction UX', () => {
     await settleInteractive(['poi__point', 'poi_schools__point']);
   });
 
+  it('posts one generation-bound live observation after runtime reconcile', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ cartography: { status: 'passed' } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const layer = {
+      ...pointLayer('ref:geojson-runtime', 'Runtime'),
+      _refId: 'ref:geojson-runtime',
+      _mapspecLayerId: 'analysis-result',
+      _mapspecFingerprint: 'carto-sha256:1234567890abcdef',
+      _mapspecGenerationAt: 1,
+    };
+
+    render(
+      <MapPanel
+        layers={[layer]}
+        onRemoveLayer={noop}
+        onToggleLayer={noop}
+        sessionId="session-runtime"
+        ownerToken="owner-token"
+      />,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1), { timeout: 3000 });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(String(init.body));
+    expect(String(url)).toContain(
+      '/api/v1/chat/sessions/session-runtime/cartographic-observation',
+    );
+    expect(init.headers['X-Session-Token']).toBe('owner-token');
+    expect(body.mapspec_fingerprint).toBe('carto-sha256:1234567890abcdef');
+    expect(body.client_generation).toEqual(expect.any(Number));
+    expect(body.layers).toEqual([expect.objectContaining({
+      id: 'analysis-result',
+      _refId: 'ref:geojson-runtime',
+      source_converged: true,
+      style_converged: true,
+      runtime_layer_count: 1,
+    })]);
+    expect(JSON.stringify(body)).not.toContain('features');
+    vi.unstubAllGlobals();
+  });
+
   it('click stores the PARENT layer id (longest-prefix — poi vs poi_schools)', async () => {
     renderPanel([pointLayer('poi', 'POI'), pointLayer('poi_schools', 'Schools')]);
     await settleInteractive(['poi__point', 'poi_schools__point']);

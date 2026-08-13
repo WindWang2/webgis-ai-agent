@@ -77,6 +77,10 @@ class SessionStoreProtocol(Protocol):
     async def get_map_state(self, session_id: str) -> Dict[str, Any]:
         ...
 
+    def invalidate_local_cache(self, session_id: str) -> None:
+        """Discard process-local state before a distributed critical read."""
+        ...
+
     async def set_map_state(self, session_id: str, key: str, value: Any, seq: Optional[int] = None) -> bool:
         """Persist one map-state key; ``seq`` (F4) is a monotonic per-key
         sequence number — a write is applied only when its seq is strictly
@@ -84,10 +88,10 @@ class SessionStoreProtocol(Protocol):
         return False). Returns True when the write was applied."""
         ...
 
-    async def update_layer_in_state(self, session_id: str, layer_id: str, updates: dict) -> None:
+    async def update_layer_in_state(self, session_id: str, layer_id: str, updates: dict) -> bool:
         ...
 
-    async def remove_layer_from_state(self, session_id: str, layer_id: str) -> None:
+    async def remove_layer_from_state(self, session_id: str, layer_id: str) -> bool:
         ...
 
     async def clear_session(self, session_id: str) -> None:

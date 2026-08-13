@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+import json
 from typing import AsyncIterator
+import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -356,6 +358,24 @@ async def _collect_route_chunks(monkeypatch, bridge) -> list[str]:
         db=None,
     )
     return [chunk async for chunk in resp.body_iterator]
+
+
+@pytest.mark.asyncio
+async def test_pi_stream_assigns_nonempty_session_before_first_turn(monkeypatch):
+    chunks = await _collect_route_chunks(monkeypatch, _BurstPiBridge(bursts=(1,)))
+    payloads = []
+    for chunk in chunks:
+        for line in chunk.splitlines():
+            if line.startswith("data: "):
+                payloads.append(json.loads(line[6:]))
+
+    session_ids = {
+        payload.get("session_id")
+        for payload in payloads
+        if isinstance(payload, dict) and payload.get("session_id")
+    }
+    assert len(session_ids) == 1
+    uuid.UUID(next(iter(session_ids)))
 
 
 @pytest.mark.asyncio

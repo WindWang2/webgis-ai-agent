@@ -27,6 +27,11 @@ import { recordDebounceFrame } from "@/lib/utils/perf-counters";
  */
 
 const STYLE_RETRY_MS = 100;
+export const MAX_STYLE_RETRY_ATTEMPTS = 50;
+
+interface MapSpecRuntimeOptions {
+  onStyleRecovery?: () => void;
+}
 
 export class MapSpecRuntime {
   private map: any;
@@ -41,9 +46,14 @@ export class MapSpecRuntime {
   private reconcileTail: Promise<void> = Promise.resolve();
   private applySeq = 0;
   private currentApplyResolve: (() => void) | null = null;
+  private lastError: string | null = null;
+  private styleRecoveryHandler: (() => void) | null = null;
+  private pendingRecoverySpec: MapSpec | null = null;
+  private readonly onStyleRecovery?: () => void;
 
-  constructor(map: any) {
+  constructor(map: any, options: MapSpecRuntimeOptions = {}) {
     this.map = map;
+    this.onStyleRecovery = options.onStyleRecovery;
     // FE-3: wire the debouncer's FrameStats instrument to the dev/test counter
     // sink (was constructed with no options — findings E5).
     this.debouncer = new RenderDebouncer(map, {
@@ -64,20 +74,27 @@ export class MapSpecRuntime {
    * If the map style isn't loaded yet, schedules a retry (owning the loop that
    * was previously 3 React refs in map-panel.tsx).
    */
-  reconcile(nextSpec: MapSpec): void {
+  reconcile(nextSpec: MapSpec, retryAttempt = 0): void {
     if (this.disposed || !this.map) return;
 
     // Defer until the base style is loaded. This mirrors map-panel.tsx:167-170
     // but the retry state lives here, not in React refs.
     if (!this.map.isStyleLoaded()) {
+      if (retryAttempt >= MAX_STYLE_RETRY_ATTEMPTS) {
+        this.lastError = "style_load_timeout";
+        this.armStyleRecovery(nextSpec);
+        return;
+      }
       if (this.pendingTimer) clearTimeout(this.pendingTimer);
       this.pendingTimer = setTimeout(() => {
         this.pendingTimer = null;
-        this.reconcile(nextSpec);
+        this.reconcile(nextSpec, retryAttempt + 1);
       }, STYLE_RETRY_MS);
       return;
     }
 
+    this.clearStyleRecovery();
+    this.lastError = null;
     const patch = diffSpecs(this.appliedSpec, nextSpec);
     this.applyPatchDirect(patch, nextSpec);
   }
@@ -103,23 +120,30 @@ export class MapSpecRuntime {
   reconcileAsync(nextSpec: MapSpec): Promise<void> {
     if (this.disposed || !this.map) return Promise.resolve();
     this.reconcileTail = this.reconcileTail
-      .then(() => this.processOne(nextSpec))
+      .then(() => this.processOne(nextSpec, 0))
       .catch((err) => {
         console.warn("[MapSpecRuntime] reconcileAsync error:", err);
       });
     return this.reconcileTail;
   }
 
-  private async processOne(nextSpec: MapSpec): Promise<void> {
+  private async processOne(nextSpec: MapSpec, retryAttempt: number): Promise<void> {
     if (this.disposed || !this.map) return;
 
     // Defer until the base style is loaded (mirrors the sync retry loop).
     if (!this.map.isStyleLoaded()) {
+      if (retryAttempt >= MAX_STYLE_RETRY_ATTEMPTS) {
+        this.lastError = "style_load_timeout";
+        this.armStyleRecovery(nextSpec);
+        return;
+      }
       await new Promise((resolve) => setTimeout(resolve, STYLE_RETRY_MS));
       if (this.disposed || !this.map) return;
-      return this.processOne(nextSpec);
+      return this.processOne(nextSpec, retryAttempt + 1);
     }
 
+    this.clearStyleRecovery();
+    this.lastError = null;
     const patch = await diffSpecsAsync(this.appliedSpec, nextSpec);
     if (this.disposed || !this.map) return;
     // Resolves when the patch's ops have actually run (last op = z-order).
@@ -160,7 +184,7 @@ export class MapSpecRuntime {
         // add/update both route through the idempotent renderer helpers (they
         // carry the F28/F31 cache logic). Tile-URL sources carry no cache state
         // and addRasterTileSource is itself idempotent.
-        this.applySource(change.id, change.next);
+        this.applySource(change.id, change.next, change.kind === "update");
       }
     }
 
@@ -176,7 +200,7 @@ export class MapSpecRuntime {
     const orderedIds = nextSpec.layers.map((l) => l.id);
     renderer.syncLayerZOrder(this.map, "", orderedIds);
 
-    this.appliedSpec = nextSpec;
+    if (!this.lastError) this.appliedSpec = nextSpec;
   }
 
   /**
@@ -239,7 +263,7 @@ export class MapSpecRuntime {
           id: `source:apply:${change.id}`,
           type: "UPDATE_GEOJSON",
           priority: "high",
-          execute: () => this.applySource(change.id, next),
+          execute: () => this.applySource(change.id, next, change.kind === "update"),
         });
       }
     }
@@ -266,7 +290,7 @@ export class MapSpecRuntime {
         renderer.syncLayerZOrder(this.map, "", orderedIds);
         // All ops of this patch have now run (z-order is enqueued last in the
         // high-priority FIFO). appliedSpec may now legitimately equal the map.
-        this.appliedSpec = nextSpec;
+        if (!this.lastError) this.appliedSpec = nextSpec;
         const resolve = this.currentApplyResolve;
         this.currentApplyResolve = null;
         if (resolve) resolve();
@@ -290,6 +314,11 @@ export class MapSpecRuntime {
     return this.appliedSpec;
   }
 
+  /** Last bounded reconciliation failure, for structured runtime evidence. */
+  getLastError(): string | null {
+    return this.lastError;
+  }
+
   /**
    * True while a debounced patch's ops are enqueued but not all executed yet.
    * During that window the map may be in a partially-patched state that
@@ -307,6 +336,7 @@ export class MapSpecRuntime {
       clearTimeout(this.pendingTimer);
       this.pendingTimer = null;
     }
+    this.clearStyleRecovery();
     this.debouncer?.dispose();
     this.debouncer = null;
     // FE-01: the worker-bridge keeps its module worker warm for
@@ -325,6 +355,32 @@ export class MapSpecRuntime {
 
   // ---- source/layer application helpers ----
 
+  private armStyleRecovery(nextSpec: MapSpec): void {
+    this.pendingRecoverySpec = nextSpec;
+    if (
+      this.styleRecoveryHandler
+      || typeof this.map?.on !== "function"
+      || typeof this.map?.off !== "function"
+    ) return;
+    this.styleRecoveryHandler = () => {
+      if (this.disposed || !this.map?.isStyleLoaded?.()) return;
+      const pending = this.pendingRecoverySpec;
+      this.clearStyleRecovery();
+      if (!pending) return;
+      this.reconcile(pending);
+      this.onStyleRecovery?.();
+    };
+    this.map.on("styledata", this.styleRecoveryHandler);
+  }
+
+  private clearStyleRecovery(): void {
+    if (this.styleRecoveryHandler && typeof this.map?.off === "function") {
+      this.map.off("styledata", this.styleRecoveryHandler);
+    }
+    this.styleRecoveryHandler = null;
+    this.pendingRecoverySpec = null;
+  }
+
   /**
    * Current map viewport as [west, south, east, north], or undefined when the
    * map has no bounds yet (style not loaded / stub map without getBounds).
@@ -340,7 +396,18 @@ export class MapSpecRuntime {
    * renderer helpers so F28 (image cache-buster) and F31 (geojson ref-cache)
    * optimizations are preserved exactly.
    */
-  private applySource(id: string, source: MapSpecSource): void {
+  private applySource(id: string, source: MapSpecSource, replaceExisting = false): void {
+    if (replaceExisting && this.map.getSource(id)) {
+      // The reconciler has already scheduled every dependent layer for
+      // recompile. Replace the definition instead of relying on renderer
+      // helpers whose same-type fast paths deliberately no-op tile/image URL
+      // changes.
+      this.removeSourceSafe(id);
+      if (this.map.getSource(id)) {
+        this.lastError = `replace_source_failed:${id}`;
+        return;
+      }
+    }
     if (source.type === "raster") {
       // Raster image source (HeatmapRasterSource path).
       renderer.addImageSource(
@@ -396,6 +463,7 @@ export class MapSpecRuntime {
       // throwing the whole reconcile.
        
       console.warn(`[MapSpecRuntime] addLayer failed for ${layer.id}:`, err);
+      this.lastError = `add_layer_failed:${layer.id}`;
     }
   }
 

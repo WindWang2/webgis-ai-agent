@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.api.routes import chat as _chat_mod
 from app.api.routes.chat import router
+from app.lib.cartography.quality_loop import cartographic_fingerprint
 
 
 @pytest.fixture
@@ -44,6 +45,36 @@ class TestSessionMapStateAPI:
             resp = client.get("/api/v1/chat/sessions/sess-404/map-state")
         assert resp.status_code == 200
         assert resp.json()["map_state"] == {}
+
+    @patch("app.services.session_data.session_data_manager")
+    def test_get_map_state_stamps_current_cartographic_generation(self, mock_sdm, client):
+        mapspec = {
+            "version": 1,
+            "sources": {},
+            "layers": [],
+            "view": {},
+            "layout": {},
+        }
+        mock_sdm.get_map_state = AsyncMock(return_value={
+            "mapspec": mapspec,
+            "_cartographic_observation": {
+                "mapspec_fingerprint": "carto-sha256:stale",
+                "layers": [],
+            },
+        })
+        mock_conv = MagicMock()
+        with patch.object(
+            _chat_mod.AsyncHistoryService,
+            "get_session",
+            AsyncMock(return_value=mock_conv),
+        ):
+            resp = client.get("/api/v1/chat/sessions/sess-current/map-state")
+
+        assert resp.status_code == 200
+        state = resp.json()["map_state"]
+        assert state["_current_cartographic_fingerprint"] == (
+            cartographic_fingerprint(mapspec)
+        )
 
     @patch("app.services.session_data.session_data_manager")
     def test_push_map_state_forwards_viewport_seq(self, mock_sdm, client):

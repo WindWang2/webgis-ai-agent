@@ -12,13 +12,16 @@ V2 闭环契约（HARNESS-V2）：
 """
 from __future__ import annotations
 
+import copy
 import logging
+import math
 import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from app.lib.harness.evidence import (
+    CartographicReviewEvidence,
     EvaluationRun,
     MapActionEvidence,
     MapActionStatus,
@@ -29,6 +32,8 @@ from app.lib.harness.evidence import (
     ToolCallEvidence,
 )
 from app.lib.harness.tool_call_event import ToolCallEvent
+from app.lib.cartography.quality_loop import cartographic_fingerprint
+from app.lib.cartography.semantic_checks import evaluate_cartography_semantics
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +61,10 @@ MapSpecValidator = Callable[[Dict[str, Any]], Dict[str, Any]]
 # 镜像 ref_resolver 的注入 seam。ack dict 的形态见 app/services/session_data.py
 # append_map_action_event（action_id/status/actual/error/correlation...）。
 MapActionReader = Callable[[str], Awaitable[List[Dict[str, Any]]]]
+# Session-owned desired MapSpec + frontend observation reader. The returned
+# mapping must carry its session_id so a miswired/cross-tenant adapter fails
+# closed rather than letting one session certify another session's map.
+CartographyStateReader = Callable[[str], Awaitable[Dict[str, Any]]]
 
 # ── V3 交互收敛判定（design §5，后端权威重算，绝不信 hint 单独）────────────
 # 相机收敛容差：center ≤0.001°，zoom ≤0.05。浮点边界（如 116.001-116.0）会有
@@ -63,6 +72,89 @@ MapActionReader = Callable[[str], Awaitable[List[Dict[str, Any]]]]
 CAMERA_CENTER_TOL_DEG = 0.001
 CAMERA_ZOOM_TOL = 0.05
 _FLOAT_EPSILON = 1e-9
+
+
+def _expected_runtime_refs(
+    layer: Dict[str, Any], sources: Dict[str, Any]
+) -> List[str]:
+    """Stable identities that may represent one desired layer in the HUD.
+
+    The primary map mounts analysis outputs under their session-owned result
+    ref, while MapSpec keeps the semantic layer id.  Provenance provides the
+    only truthful bridge between those identities; names and list position are
+    deliberately never used as substitutes.
+    """
+    candidates: List[Any] = [layer.get("id")]
+    provenance = layer.get("provenance")
+    result_ref = provenance.get("result_ref") if isinstance(provenance, dict) else None
+    if result_ref:
+        # source_ref is the analysis input and cannot identify the displayed
+        # output. Accepting it here lets the wrong dataset satisfy presence.
+        candidates.append(result_ref)
+    else:
+        # Direct/manual layers may have no analysis provenance. Their owned
+        # source carrier is then the only runtime identity available.
+        source = sources.get(layer.get("source"))
+        if isinstance(source, dict):
+            candidates.extend((
+                source.get("ref"), source.get("ref_id"), source.get("imageRef")
+            ))
+    return list(dict.fromkeys(str(value) for value in candidates if value))
+
+
+def _actual_runtime_refs(layer: Dict[str, Any]) -> List[str]:
+    return list(dict.fromkeys(
+        str(value) for value in (layer.get("id"), layer.get("_refId")) if value
+    ))
+
+
+def _runtime_identity_match(
+    desired: Dict[str, Any], sources: Dict[str, Any], actual: Dict[str, Any]
+) -> Optional[str]:
+    """Match exact result provenance when the HUD exposes a result ref.
+
+    A coincidentally equal semantic id must not let a HUD layer backed by a
+    different analysis result certify this MapSpec.
+    """
+    expected_refs = _expected_runtime_refs(desired, sources)
+    semantic_id = str(desired.get("id"))
+    provenance_refs = [ref for ref in expected_refs if ref != semantic_id]
+    actual_ref = actual.get("_refId")
+    if provenance_refs:
+        # Once desired state names an authoritative result, semantic ids are
+        # presentation labels only.  Missing or different runtime provenance
+        # cannot certify that the displayed layer is the analysis result.
+        if not actual_ref:
+            return None
+        return str(actual_ref) if str(actual_ref) in provenance_refs else None
+    actual_refs = _actual_runtime_refs(actual)
+    return next((ref for ref in expected_refs if ref in actual_refs), None)
+
+
+def _constant_layer_opacity(layer: Dict[str, Any]) -> Optional[float]:
+    """Return an explicitly desired constant opacity, never an expression."""
+    paint = layer.get("paint")
+    if not isinstance(paint, dict):
+        return None
+    layer_type = str(layer.get("type") or "")
+    keys = {
+        "circle": ("circle-opacity", "opacity"),
+        "line": ("line-opacity", "opacity"),
+        "fill": ("fill-opacity", "opacity"),
+        "raster": ("raster-opacity", "opacity"),
+        "symbol": ("icon-opacity", "text-opacity", "opacity"),
+    }.get(layer_type, ("opacity",))
+    values: List[float] = []
+    for key in keys:
+        value = paint.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        numeric = float(value)
+        if math.isfinite(numeric):
+            values.append(numeric)
+    if not values or any(abs(value - values[0]) > _FLOAT_EPSILON for value in values[1:]):
+        return None
+    return values[0]
 
 
 def _has_camera_state(d: Any) -> bool:
@@ -164,10 +256,14 @@ class PiAgentHarness:
         *,
         ref_resolver: Optional[RefResolver] = None,
         mapspec_validator: Optional[MapSpecValidator] = None,
+        cartography_state_reader: Optional[CartographyStateReader] = None,
+        map_action_reader: Optional[MapActionReader] = None,
     ):
         self.session_id = session_id
         self.ref_resolver = ref_resolver
         self.mapspec_validator = mapspec_validator
+        self.cartography_state_reader = cartography_state_reader
+        self.map_action_reader = map_action_reader
 
         # Raw event buffers (legacy-compatible shape), FIFO-capped.
         self.tool_calls: List[Dict[str, Any]] = []
@@ -198,6 +294,9 @@ class PiAgentHarness:
         # 字符串在两个会话的解析结果不得互相污染。
         self._resolved_refs: Dict[Tuple[str, str], RefResolution] = {}
         self._validity_cache: Dict[str, MapSpecValidityEvidence] = {}
+        # Desired reviews are pure and keyed by content fingerprint. Runtime
+        # observations/ACKs are intentionally not cached; they remain live.
+        self._cartography_review_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
     # ── FIFO cap + correlation stamping ──────────────────────────────────
 
@@ -227,6 +326,7 @@ class PiAgentHarness:
         self._map_action_evidence.clear()
         self._resolved_refs.clear()
         self._validity_cache.clear()
+        self._cartography_review_cache.clear()
         self._recovered_exceptions_count.clear()
         self._in_error_state.clear()
 
@@ -400,6 +500,7 @@ class PiAgentHarness:
         action_id: str = "",
         command: str = "",
         requested: Optional[Dict[str, Any]] = None,
+        mapspec_fingerprint: Optional[str] = None,
     ) -> Dict[str, Any]:
         """记录一次已发出的地图动作（V3 issued 侧证据），FIFO 受 MAX_EVENTS 约束。
 
@@ -429,6 +530,7 @@ class PiAgentHarness:
             "issued_at_monotonic": time.monotonic(),
             "issued_at_ts": datetime.now(timezone.utc).isoformat(),
             "requested": dict(requested) if isinstance(requested, dict) else {},
+            "mapspec_fingerprint": mapspec_fingerprint,
         }
         self._append_capped(self.map_actions_issued, entry)
         return entry
@@ -509,7 +611,7 @@ class PiAgentHarness:
 
         # 1b. V3: 读取 session store ACK，构建地图动作证据（issued ∪ ack）。
         self._map_action_evidence = await self._build_map_action_evidence(
-            map_action_reader
+            map_action_reader or self.map_action_reader
         )
 
         # 2. Build per-tool-call evidence with correlation + validity ladder.
@@ -564,10 +666,20 @@ class PiAgentHarness:
                     a for a in self._map_action_evidence
                     if a.tool_call_id == tcid
                 ],
+                runtime_evidence_path=(
+                    res.get("result", {}).get("runtime_dir")
+                    if isinstance(res.get("result"), dict) else None
+                ),
             )
             run.add(ev)
 
-        # 3. Structured + float metrics (both honest).
+        # 3. Re-read session-owned state and recompute the final cartographic
+        # review. The review transported in a tool result is never an oracle;
+        # it contributes repair history/correlation only after its fingerprint
+        # matches the current desired MapSpec.
+        cartography = await self._collect_cartographic_evidence(results_by_id)
+
+        # 4. Structured + float metrics (both honest).
         float_metrics = self.evaluate_all(expected_tools, ideal_step_count)
         return {
             "run_id": run.run_id,
@@ -581,6 +693,8 @@ class PiAgentHarness:
             },
             # V3: 交互段（issued 侧 vs 终态 acked 侧）。
             "interaction": self._interaction_section(),
+            "cartography": cartography.to_dict(),
+            "success_levels": self._success_levels(run, cartography),
         }
 
     # ── V3: 地图动作证据构建 ─────────────────────────────────────────────
@@ -681,6 +795,7 @@ class PiAgentHarness:
             error=error,
             requested=requested,
             actual=actual,
+            mapspec_fingerprint=rec.get("mapspec_fingerprint"),
         )
 
     def _interaction_section(self) -> Dict[str, Any]:
@@ -692,6 +807,793 @@ class PiAgentHarness:
             "actions": [
                 self._map_action_evidence_to_dict(a) for a in actions
             ],
+        }
+
+    @staticmethod
+    def _cartography_check(
+        rule: str,
+        status: str,
+        evidence: Dict[str, Any],
+        *,
+        message: str,
+        severity: str = "error",
+        repairability: str = "not_repairable",
+        suggested_fix: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        return {
+            "rule": rule,
+            "status": status,
+            "severity": severity,
+            "message": message,
+            "evidence_class": "deterministic",
+            "evidence": evidence,
+            "repairability": repairability,
+            "suggested_fix": suggested_fix,
+        }
+
+    async def _collect_cartographic_evidence(
+        self, results_by_id: Dict[str, Dict[str, Any]]
+    ) -> CartographicReviewEvidence:
+        """Build the trusted final cartographic stage from owned state.
+
+        The frontend observation is event-driven: it arrives with the next
+        chat request and carries a monotonic per-session sequence. A snapshot
+        observed at or before the mutation cannot certify the mutation, even
+        if its layer ids happen to look identical.
+        """
+        evidence = CartographicReviewEvidence(session_id=self.session_id)
+        mutation_calls = [
+            call for call in self.mapspec_mutations
+            if call.get("session_id") == self.session_id
+        ]
+        if not mutation_calls:
+            evidence.termination_reason = "no_mapspec_mutation"
+            return evidence
+
+        latest = mutation_calls[-1]
+        tool_call_id = str(latest.get("tool_call_id") or "")
+        latest_arguments = latest.get("arguments") if isinstance(latest.get("arguments"), dict) else {}
+        latest_layer_arg = (
+            latest_arguments.get("layer")
+            if isinstance(latest_arguments.get("layer"), dict) else {}
+        )
+        latest_layer_id = str(latest_layer_arg.get("id") or "")
+        evidence.source_tool_call_id = tool_call_id
+        result_entry = results_by_id.get(tool_call_id) or {}
+        transported = (
+            result_entry.get("result")
+            if isinstance(result_entry.get("result"), dict)
+            else {}
+        )
+        evidence.reported_fingerprint = transported.get("mapspec_fingerprint")
+        transported_review = transported.get("cartographic_review")
+        if isinstance(transported_review, dict):
+            attempts = transported_review.get("attempts")
+            if isinstance(attempts, list):
+                # Lifecycle repair is hard-bounded; retain only that bounded
+                # evidence and never copy MapSpec/source payloads here.
+                evidence.repair_attempts = attempts[:2]
+
+        if self.cartography_state_reader is None:
+            evidence.termination_reason = "state_reader_unavailable"
+            return evidence
+
+        evidence.counters = {
+            "state_reads": 1,
+            "review_invocations": 0,
+            "review_cache_hits": 0,
+            "metadata_sources": 0,
+            "full_data_loads": 0,
+        }
+        try:
+            state = await self.cartography_state_reader(self.session_id)
+        except Exception as exc:  # noqa: BLE001 - missing evidence must be visible
+            evidence.checks.append(self._cartography_check(
+                "CARTOGRAPHY_STATE_READ",
+                "not_evaluated",
+                {"error_type": type(exc).__name__},
+                message="Session-owned cartographic state could not be read.",
+            ))
+            evidence.termination_reason = "state_reader_error"
+            return evidence
+
+        if not isinstance(state, dict) or state.get("session_id") != self.session_id:
+            evidence.status = "failed_unrepairable"
+            evidence.runtime_status = "fail"
+            evidence.checks.append(self._cartography_check(
+                "SESSION_OWNERSHIP",
+                "fail",
+                {
+                    "expected_session_id": self.session_id,
+                    "observed_session_id": state.get("session_id") if isinstance(state, dict) else None,
+                },
+                message="Cartographic state does not belong to the evaluated session.",
+            ))
+            evidence.termination_reason = "session_mismatch"
+            return evidence
+
+        mapspec = state.get("mapspec")
+        if not isinstance(mapspec, dict):
+            evidence.status = "failed_unrepairable"
+            evidence.runtime_status = "fail"
+            evidence.checks.append(self._cartography_check(
+                "RESULT_MAPSPEC_PRESENCE",
+                "fail",
+                {"mapspec_present": False},
+                message="The session has no current MapSpec to review.",
+            ))
+            evidence.termination_reason = "mapspec_missing"
+            return evidence
+
+        map_state = state.get("map_state") if isinstance(state.get("map_state"), dict) else {}
+        runtime_repair_state = map_state.get("_cartographic_repair_state")
+        if isinstance(runtime_repair_state, dict):
+            runtime_attempts = runtime_repair_state.get("attempts")
+            if isinstance(runtime_attempts, list):
+                evidence.repair_attempts.extend(
+                    copy.deepcopy(runtime_attempts[:2])
+                )
+
+        current_fingerprint = cartographic_fingerprint(mapspec)
+        evidence.mapspec_fingerprint = current_fingerprint
+        evidence.counters["metadata_sources"] = len(mapspec.get("sources") or {})
+        headless_runtime_failed = False
+        # A matching headless runtime result is additional heuristic evidence;
+        # it never replaces the deterministic desired/runtime checks below.
+        for call in reversed(self.tool_calls):
+            if (
+                call.get("session_id") != self.session_id
+                or call.get("name") != "webgis_runtime_validate"
+            ):
+                continue
+            runtime_entry = results_by_id.get(str(call.get("tool_call_id") or "")) or {}
+            runtime_result = runtime_entry.get("result")
+            if (
+                isinstance(runtime_result, dict)
+                and runtime_result.get("mapspec_fingerprint") == current_fingerprint
+            ):
+                if isinstance(runtime_result.get("visual_evidence"), dict):
+                    evidence.visual_evidence.append(copy.deepcopy(runtime_result["visual_evidence"]))
+                runtime_report = runtime_result.get("report")
+                if isinstance(runtime_report, dict):
+                    fatal_error = runtime_report.get("fatalError")
+                    page_errors = runtime_report.get("pageErrors") or []
+                    headless_runtime_failed = bool(fatal_error or page_errors)
+                    evidence.checks.append(self._cartography_check(
+                        "HEADLESS_RUNTIME_EXECUTION",
+                        "fail" if headless_runtime_failed else "pass",
+                        {
+                            "fatal_error": str(fatal_error)[:500] if fatal_error else None,
+                            "page_error_count": len(page_errors) if isinstance(page_errors, list) else 1,
+                            "map_loaded": runtime_report.get("mapLoaded"),
+                        },
+                        message=(
+                            "Headless runtime reported a deterministic execution failure."
+                            if headless_runtime_failed else
+                            "Headless runtime reported no fatal or page execution error."
+                        ),
+                        severity="error" if headless_runtime_failed else "info",
+                    ))
+            break
+        cache_key = (self.session_id, current_fingerprint)
+        cached_review = self._cartography_review_cache.get(cache_key)
+        if cached_review is not None:
+            desired = copy.deepcopy(cached_review)
+            evidence.counters["review_cache_hits"] = 1
+        else:
+            try:
+                desired = evaluate_cartography_semantics(mapspec).to_dict()
+                evidence.counters["review_invocations"] = 1
+            except Exception as exc:  # noqa: BLE001
+                evidence.checks.append(self._cartography_check(
+                    "CARTOGRAPHIC_REVIEW_EXECUTION",
+                    "not_evaluated",
+                    {"error_type": type(exc).__name__},
+                    message="The deterministic cartographic review could not run.",
+                ))
+                evidence.termination_reason = "review_error"
+                return evidence
+            self._cartography_review_cache[cache_key] = copy.deepcopy(desired)
+            if len(self._cartography_review_cache) > 128:
+                oldest = next(iter(self._cartography_review_cache))
+                del self._cartography_review_cache[oldest]
+
+        evidence.trusted = True
+        evidence.desired_review = desired
+        evidence.desired_status = str(desired.get("status") or "not_evaluated")
+
+        if not evidence.reported_fingerprint:
+            evidence.status = "not_evaluated"
+            evidence.checks.append(self._cartography_check(
+                "MAPSPEC_FINGERPRINT_CONVERGENCE",
+                "not_evaluated",
+                {"reported": None, "current": current_fingerprint},
+                message="The mutation did not report a MapSpec fingerprint.",
+            ))
+            evidence.termination_reason = "mapspec_fingerprint_missing"
+            return evidence
+        if evidence.reported_fingerprint != current_fingerprint:
+            evidence.status = "superseded"
+            evidence.checks.append(self._cartography_check(
+                "MAPSPEC_FINGERPRINT_CONVERGENCE",
+                "fail",
+                {
+                    "reported": evidence.reported_fingerprint,
+                    "current": current_fingerprint,
+                },
+                message="The mutation review belongs to a different MapSpec generation.",
+            ))
+            evidence.termination_reason = "stale_mapspec_fingerprint"
+            return evidence
+
+        evidence.checks.append(self._cartography_check(
+            "MAPSPEC_FINGERPRINT_CONVERGENCE",
+            "pass",
+            {"reported": evidence.reported_fingerprint, "current": current_fingerprint},
+            message="The mutation review matches the current MapSpec generation.",
+            severity="info",
+        ))
+
+        if evidence.desired_status == "fail":
+            repairable = any(
+                check.get("status") == "fail"
+                and check.get("repairability") in ("auto_safe", "auto_with_semantic_risk")
+                for check in desired.get("checks", [])
+            )
+            evidence.status = "failed_repairable" if repairable else "failed_unrepairable"
+            evidence.termination_reason = "desired_quality_failed"
+            return evidence
+        if evidence.desired_status == "not_evaluated":
+            evidence.status = "not_evaluated"
+            evidence.termination_reason = "desired_quality_not_evaluated"
+            return evidence
+        if desired.get("passed") is not True:
+            evidence.status = "partial"
+            evidence.termination_reason = "desired_quality_evidence_incomplete"
+            return evidence
+
+        related_actions = [
+            action for action in self._map_action_evidence
+            if action.tool_call_id == tool_call_id
+        ]
+        repair_actions = [
+            action for action in related_actions
+            if action.command == "cartographic_runtime_repair"
+        ]
+        active_actions = repair_actions[-1:] if repair_actions else related_actions
+        active_repair = repair_actions[-1] if repair_actions else None
+        for action in active_actions:
+            if not action.mapspec_fingerprint:
+                evidence.status = "not_evaluated"
+                evidence.checks.append(self._cartography_check(
+                    "MAP_ACTION_GENERATION",
+                    "not_evaluated",
+                    {
+                        "action_id": action.action_id,
+                        "action_fingerprint": None,
+                        "current_fingerprint": current_fingerprint,
+                    },
+                    message="The runtime action has no MapSpec generation tag.",
+                ))
+                evidence.termination_reason = "action_fingerprint_missing"
+                return evidence
+            if action.mapspec_fingerprint != current_fingerprint:
+                evidence.status = "superseded"
+                evidence.checks.append(self._cartography_check(
+                    "MAP_ACTION_GENERATION",
+                    "fail",
+                    {
+                        "action_id": action.action_id,
+                        "action_fingerprint": action.mapspec_fingerprint,
+                        "current_fingerprint": current_fingerprint,
+                    },
+                    message="The runtime action belongs to a stale MapSpec generation.",
+                ))
+                evidence.termination_reason = "stale_action_fingerprint"
+                return evidence
+            if action.status in (MapActionStatus.SUPERSEDED, MapActionStatus.CANCELLED):
+                evidence.status = "superseded"
+                evidence.checks.append(self._cartography_check(
+                    "MAP_ACTION_ACK",
+                    "fail",
+                    {"action_id": action.action_id, "status": action.status.value},
+                    message="The runtime action was superseded or cancelled by newer intent.",
+                ))
+                evidence.termination_reason = "user_or_newer_intent"
+                return evidence
+            if action.status is MapActionStatus.FAILED:
+                evidence.checks.append(self._cartography_check(
+                    "MAP_ACTION_ACK",
+                    "fail",
+                    {
+                        "action_id": action.action_id,
+                        "status": action.status.value,
+                        "error": action.error,
+                    },
+                    message="The frontend rejected the current MapSpec action.",
+                    repairability=(
+                        "not_repairable"
+                        if action.command == "cartographic_runtime_repair"
+                        else "auto_safe"
+                    ),
+                ))
+                if action.command == "cartographic_runtime_repair":
+                    evidence.status = "repair_exhausted"
+                    evidence.runtime_status = "fail"
+                    evidence.termination_reason = "runtime_repair_action_failed"
+                    return evidence
+                # An initial mount ACK failure does not outrank a later live
+                # observation: the runtime may have converged asynchronously.
+                continue
+            if action.status is not MapActionStatus.SUCCEEDED:
+                evidence.status = "not_evaluated"
+                evidence.checks.append(self._cartography_check(
+                    "MAP_ACTION_ACK",
+                    "not_evaluated",
+                    {"action_id": action.action_id, "status": action.status.value},
+                    message="The current MapSpec action has no terminal frontend ACK.",
+                ))
+                evidence.termination_reason = "runtime_action_ack_pending"
+                return evidence
+            verifiable = _is_verifiable_ack(action)
+            converged = _ack_converged(action) if verifiable else None
+            evidence.checks.append(self._cartography_check(
+                "MAP_ACTION_ACK",
+                "pass" if verifiable and converged else "not_evaluated",
+                {
+                    "action_id": action.action_id,
+                    "status": action.status.value,
+                    "verifiable": verifiable,
+                    "converged": converged,
+                },
+                message=(
+                    "The frontend ACK proves the current action converged."
+                    if verifiable and converged else
+                    "The frontend ACK does not by itself prove state convergence."
+                ),
+                severity="info" if verifiable and converged else "warning",
+            ))
+
+        observation = map_state.get("_cartographic_observation")
+        baseline = transported.get("runtime_observation_seq")
+        try:
+            observed_seq = int(observation.get("sequence")) if isinstance(observation, dict) else -1
+            baseline_seq = int(baseline) if baseline is not None else -1
+            if active_repair is not None:
+                baseline_seq = max(
+                    baseline_seq,
+                    int(active_repair.requested.get("observation_sequence", -1)),
+                )
+        except (TypeError, ValueError):
+            observed_seq, baseline_seq = -1, -1
+        observation_owned = (
+            isinstance(observation, dict)
+            and observation.get("source") == "frontend_runtime"
+            and observation.get("session_id") == self.session_id
+        )
+        if not observation_owned or observed_seq <= baseline_seq:
+            evidence.checks.append(self._cartography_check(
+                "RUNTIME_OBSERVATION_FRESHNESS",
+                "not_evaluated",
+                {
+                    "source": observation.get("source") if isinstance(observation, dict) else None,
+                    "session_id": observation.get("session_id") if isinstance(observation, dict) else None,
+                    "observed_sequence": observed_seq,
+                    "mutation_baseline_sequence": baseline_seq,
+                },
+                message="No newer session-owned frontend observation exists for this mutation.",
+            ))
+            evidence.status = "not_evaluated"
+            evidence.termination_reason = "stale_runtime_observation"
+            return evidence
+
+        evidence.checks.append(self._cartography_check(
+            "RUNTIME_OBSERVATION_FRESHNESS",
+            "pass",
+            {
+                "observed_sequence": observed_seq,
+                "mutation_baseline_sequence": baseline_seq,
+            },
+            message="Frontend state was observed after the MapSpec mutation.",
+            severity="info",
+        ))
+
+        observed_fingerprint = (
+            observation.get("mapspec_fingerprint")
+            if isinstance(observation, dict) else None
+        )
+        if not observed_fingerprint:
+            evidence.checks.append(self._cartography_check(
+                "RUNTIME_MAPSPEC_GENERATION",
+                "not_evaluated",
+                {"observed": None, "current": current_fingerprint},
+                message="The live runtime observation has no MapSpec generation tag.",
+            ))
+            evidence.status = "not_evaluated"
+            evidence.termination_reason = "runtime_fingerprint_missing"
+            return evidence
+        if observed_fingerprint != current_fingerprint:
+            evidence.checks.append(self._cartography_check(
+                "RUNTIME_MAPSPEC_GENERATION",
+                "fail",
+                {"observed": observed_fingerprint, "current": current_fingerprint},
+                message="The live runtime observation belongs to a stale MapSpec generation.",
+            ))
+            evidence.status = "superseded"
+            evidence.termination_reason = "stale_runtime_fingerprint"
+            return evidence
+        evidence.checks.append(self._cartography_check(
+            "RUNTIME_MAPSPEC_GENERATION",
+            "pass",
+            {"observed": observed_fingerprint, "current": current_fingerprint},
+            message="The live runtime observation matches the current MapSpec generation.",
+            severity="info",
+        ))
+
+        style_loaded = observation.get("style_loaded") is True
+        reconcile_error = str(observation.get("reconcile_error") or "")
+        evidence.checks.append(self._cartography_check(
+            "RUNTIME_STYLE_LOADED",
+            "pass" if style_loaded else "fail",
+            {"style_loaded": observation.get("style_loaded")},
+            message=(
+                "MapLibre reported a loaded style for this observation."
+                if style_loaded else
+                "MapLibre had not loaded its style when evidence was collected."
+            ),
+            severity="info" if style_loaded else "error",
+        ))
+        evidence.checks.append(self._cartography_check(
+            "RUNTIME_RECONCILE_EXECUTION",
+            "pass" if not reconcile_error else "fail",
+            {"reconcile_error": reconcile_error[:500]},
+            message=(
+                "Runtime reconciliation completed without an error."
+                if not reconcile_error else
+                "Runtime reconciliation reported an execution error."
+            ),
+            severity="info" if not reconcile_error else "error",
+        ))
+
+        runtime_failed = headless_runtime_failed or not style_loaded or bool(reconcile_error)
+        runtime_incomplete = False
+        actual_layers = [
+            layer for layer in (observation.get("layers") or [])
+            if isinstance(layer, dict) and layer.get("id")
+        ]
+        sources = mapspec.get("sources") if isinstance(mapspec.get("sources"), dict) else {}
+        claimed_runtime_layer_ids: set[str] = set()
+        expected_layers = [
+            layer for layer in (mapspec.get("layers") or [])
+            if isinstance(layer, dict) and layer.get("id")
+        ]
+        for layer in expected_layers:
+            layer_id = str(layer["id"])
+            expected_refs = _expected_runtime_refs(layer, sources)
+            actual = next(
+                (
+                    candidate for candidate in actual_layers
+                    if str(candidate.get("id")) not in claimed_runtime_layer_ids
+                    and _runtime_identity_match(layer, sources, candidate) is not None
+                ),
+                None,
+            )
+            present = actual is not None
+            matched_ref = (
+                _runtime_identity_match(layer, sources, actual)
+                if actual is not None else None
+            )
+            evidence.checks.append(self._cartography_check(
+                "RUNTIME_RESULT_PRESENCE",
+                "pass" if present else "fail",
+                {
+                    "layer_id": layer_id,
+                    "expected_identities": expected_refs,
+                    "runtime_layer_present": present,
+                    "runtime_layer_id": (
+                        actual.get("runtime_store_id") or actual.get("id")
+                        if actual is not None else None
+                    ),
+                    "matched_identity": matched_ref,
+                },
+                message=(
+                    "The expected result identity is present in the frontend observation."
+                    if present else
+                    "No frontend layer carries the expected result identity."
+                ),
+                severity="info" if present else "error",
+            ))
+            if not present:
+                runtime_failed = True
+                continue
+            claimed_runtime_layer_ids.add(str(actual["id"]))
+
+            if layer_id == latest_layer_id:
+                expected_projection = transported.get("runtime_projection_fingerprint")
+                observed_projection = actual.get("projection_fingerprint")
+                projection_evaluated = bool(expected_projection and observed_projection)
+                projection_matches = (
+                    projection_evaluated and expected_projection == observed_projection
+                )
+                evidence.checks.append(self._cartography_check(
+                    "RUNTIME_PRESENTATION_PROJECTION",
+                    (
+                        "pass" if projection_matches
+                        else "fail" if projection_evaluated
+                        else "not_evaluated"
+                    ),
+                    {
+                        "layer_id": layer_id,
+                        "expected_projection": expected_projection,
+                        "observed_projection": observed_projection,
+                    },
+                    message=(
+                        "The runtime layer carries the server-authored presentation projection."
+                        if projection_matches else
+                        "The runtime presentation projection is stale or missing."
+                    ),
+                    severity="info" if projection_matches else "error" if projection_evaluated else "warning",
+                ))
+                runtime_failed = runtime_failed or (projection_evaluated and not projection_matches)
+                runtime_incomplete = runtime_incomplete or not projection_evaluated
+
+            expected_visible = (
+                layer.get("visible") is not False
+                and (layer.get("layout") or {}).get("visibility") != "none"
+            )
+            actual_visible = actual.get("visible")
+            visibility_evaluated = isinstance(actual_visible, bool)
+            visible_match = visibility_evaluated and actual_visible == expected_visible
+            evidence.checks.append(self._cartography_check(
+                "RUNTIME_RESULT_VISIBILITY",
+                (
+                    "pass" if visible_match
+                    else "fail" if visibility_evaluated
+                    else "not_evaluated"
+                ),
+                {
+                    "layer_id": layer_id,
+                    "runtime_layer_id": actual.get("runtime_store_id") or actual.get("id"),
+                    "expected_visible": expected_visible,
+                    "actual_visible": actual_visible,
+                },
+                message=(
+                    "Runtime layer visibility matches the desired MapSpec."
+                    if visible_match else
+                    (
+                        "Runtime layer visibility differs from the desired MapSpec."
+                        if visibility_evaluated
+                        else "Runtime layer visibility evidence is missing."
+                    )
+                ),
+                severity="info" if visible_match else "error" if visibility_evaluated else "warning",
+                repairability="auto_safe" if visibility_evaluated and not visible_match else "not_repairable",
+                suggested_fix=(
+                    {"operation": "set_runtime_visibility", "layer_id": layer_id, "visible": expected_visible}
+                    if visibility_evaluated and not visible_match else None
+                ),
+            ))
+            runtime_failed = runtime_failed or (visibility_evaluated and not visible_match)
+            runtime_incomplete = runtime_incomplete or not visibility_evaluated
+
+            expected_opacity = _constant_layer_opacity(layer)
+            if expected_opacity is not None:
+                actual_opacity = actual.get("opacity")
+                opacity_evaluated = (
+                    not isinstance(actual_opacity, bool)
+                    and isinstance(actual_opacity, (int, float))
+                    and math.isfinite(float(actual_opacity))
+                )
+                opacity_matches = bool(
+                    opacity_evaluated
+                    and abs(float(actual_opacity) - expected_opacity) <= _FLOAT_EPSILON
+                )
+                evidence.checks.append(self._cartography_check(
+                    "RUNTIME_OPACITY_CONVERGENCE",
+                    (
+                        "pass" if opacity_matches
+                        else "fail" if opacity_evaluated
+                        else "not_evaluated"
+                    ),
+                    {
+                        "layer_id": layer_id,
+                        "runtime_layer_id": actual.get("runtime_store_id") or actual.get("id"),
+                        "expected_opacity": expected_opacity,
+                        "actual_opacity": actual_opacity,
+                    },
+                    message=(
+                        "Runtime opacity matches the desired MapSpec."
+                        if opacity_matches else
+                        (
+                            "Runtime opacity differs from the desired MapSpec."
+                            if opacity_evaluated
+                            else "Runtime opacity evidence is missing."
+                        )
+                    ),
+                    severity="info" if opacity_matches else "error" if opacity_evaluated else "warning",
+                    repairability="auto_safe" if opacity_evaluated and not opacity_matches else "not_repairable",
+                    suggested_fix=(
+                        {"operation": "set_runtime_opacity", "layer_id": layer_id, "opacity": expected_opacity}
+                        if opacity_evaluated and not opacity_matches else None
+                    ),
+                ))
+                runtime_failed = runtime_failed or (opacity_evaluated and not opacity_matches)
+                runtime_incomplete = runtime_incomplete or not opacity_evaluated
+
+            expected_legend = layer.get("legend_spec")
+            if expected_legend is not None:
+                legend_match = actual.get("legend_spec") == expected_legend
+                evidence.checks.append(self._cartography_check(
+                    "RUNTIME_LEGEND_CONVERGENCE",
+                    "pass" if legend_match else "fail",
+                    {
+                        "layer_id": layer_id,
+                        "runtime_layer_id": actual.get("runtime_store_id") or actual.get("id"),
+                        "expected_legend_present": True,
+                        "actual_legend_present": actual.get("legend_spec") is not None,
+                        "legend_matches": legend_match,
+                    },
+                    message=(
+                        "Runtime legend matches the authoritative MapSpec legend."
+                        if legend_match else
+                        "Runtime legend is missing or stale relative to MapSpec."
+                    ),
+                    severity="info" if legend_match else "error",
+                    repairability="auto_safe" if not legend_match else "not_repairable",
+                    suggested_fix=(
+                        {"operation": "refresh_runtime_legend", "layer_id": layer_id}
+                        if not legend_match else None
+                    ),
+                ))
+                runtime_failed = runtime_failed or not legend_match
+
+            style_converged = actual.get("style_converged")
+            style_evaluated = isinstance(style_converged, bool)
+            evidence.checks.append(self._cartography_check(
+                "RUNTIME_STYLE_CONVERGENCE",
+                (
+                    "pass" if style_converged is True
+                    else "fail" if style_evaluated
+                    else "not_evaluated"
+                ),
+                {
+                    "layer_id": layer_id,
+                    "runtime_layer_id": actual.get("runtime_store_id") or actual.get("id"),
+                    "style_converged": style_converged,
+                    "runtime_layer_count": actual.get("runtime_layer_count"),
+                },
+                message=(
+                    "Live MapLibre style matches the reconciled desired layer."
+                    if style_converged is True
+                    else (
+                        "Live MapLibre style differs from the reconciled desired layer."
+                        if style_evaluated
+                        else "Live MapLibre style convergence was not observed."
+                    )
+                ),
+                severity="info" if style_converged is True else "error" if style_evaluated else "warning",
+                repairability="auto_safe" if style_converged is False else "not_repairable",
+                suggested_fix=(
+                    {"operation": "reapply_runtime_style", "layer_id": layer_id}
+                    if style_converged is False else None
+                ),
+            ))
+            runtime_failed = runtime_failed or style_converged is False
+            runtime_incomplete = runtime_incomplete or not style_evaluated
+
+        desired_view = mapspec.get("view") if isinstance(mapspec.get("view"), dict) else {}
+        if _has_camera_state(desired_view):
+            # A camera command can settle just after the layer reconcile
+            # observation. Its terminal ACK carries a live MapLibre snapshot,
+            # so prefer that newer exact-action evidence over the earlier
+            # observation while still requiring the latter for layer/style
+            # convergence.
+            acknowledged_view = next(
+                (
+                    action.actual for action in reversed(related_actions)
+                    if action.status is MapActionStatus.SUCCEEDED
+                    and _has_camera_state(action.actual)
+                ),
+                None,
+            )
+            actual_view = (
+                acknowledged_view
+                if acknowledged_view is not None
+                else observation.get("viewport")
+                if isinstance(observation.get("viewport"), dict)
+                else {}
+            )
+            camera_evaluated = _has_camera_state(actual_view)
+            camera_matches = bool(
+                camera_evaluated and _camera_match(desired_view, actual_view)
+            )
+            evidence.checks.append(self._cartography_check(
+                "RUNTIME_VIEW_CONVERGENCE",
+                (
+                    "pass" if camera_matches
+                    else "fail" if camera_evaluated
+                    else "not_evaluated"
+                ),
+                {"requested": desired_view, "actual": actual_view},
+                message=(
+                    "Runtime camera converged to the desired MapSpec view."
+                    if camera_matches else
+                    (
+                        "Runtime camera has not converged to the desired MapSpec view."
+                        if camera_evaluated else
+                        "Runtime camera evidence is missing."
+                    )
+                ),
+                severity="info" if camera_matches else "error" if camera_evaluated else "warning",
+            ))
+            runtime_failed = runtime_failed or (camera_evaluated and not camera_matches)
+            runtime_incomplete = runtime_incomplete or not camera_evaluated
+
+        if active_repair is not None:
+            repaired_layers = [
+                layer for layer in actual_layers
+                if layer.get("repair_action_id") == active_repair.action_id
+            ]
+            repair_bound = bool(repaired_layers)
+            evidence.checks.append(self._cartography_check(
+                "RUNTIME_REPAIR_GENERATION",
+                "pass" if repair_bound else "not_evaluated",
+                {
+                    "repair_action_id": active_repair.action_id,
+                    "observed_layer_count": len(repaired_layers),
+                },
+                message=(
+                    "The new observation is bound to the acknowledged repair action."
+                    if repair_bound else
+                    "No observed layer is bound to the latest repair action."
+                ),
+                severity="info" if repair_bound else "warning",
+            ))
+            runtime_incomplete = runtime_incomplete or not repair_bound
+
+        if runtime_failed:
+            has_safe_failure = any(
+                check.get("status") == "fail"
+                and check.get("repairability") == "auto_safe"
+                for check in evidence.checks
+            )
+            evidence.status = "failed_repairable" if has_safe_failure else "failed_unrepairable"
+            evidence.runtime_status = "fail"
+            evidence.termination_reason = "runtime_state_mismatch"
+        elif runtime_incomplete:
+            evidence.status = "partial"
+            evidence.runtime_status = "not_evaluated"
+            evidence.termination_reason = "runtime_evidence_incomplete"
+        else:
+            evidence.status = (
+                "passed_with_warnings" if evidence.desired_status == "warning" else "passed"
+            )
+            evidence.runtime_status = "pass"
+            evidence.termination_reason = "quality_converged"
+        return evidence
+
+    @staticmethod
+    def _success_levels(
+        run: EvaluationRun, cartography: CartographicReviewEvidence
+    ) -> Dict[str, Dict[str, Any]]:
+        execution_failed = any(item.is_error for item in run.evidence)
+        execution_status = "fail" if execution_failed else ("pass" if run.evidence else "not_evaluated")
+        structural_status = (
+            "pass" if cartography.desired_review.get("passed") is True
+            else "fail" if cartography.desired_status == "fail"
+            else "not_evaluated"
+        )
+        return {
+            "execution_validity": {"level": 1, "status": execution_status},
+            "map_state_validity": {"level": 2, "status": cartography.runtime_status},
+            "cartographic_structural_validity": {"level": 3, "status": structural_status},
+            "cartographic_quality": {
+                "level": 4,
+                "status": "pass" if cartography.passed else cartography.status,
+            },
+            # No structured visual/goal oracle is installed. Missing evidence
+            # stays explicit rather than inheriting L4 success.
+            "goal_satisfaction": {"level": 5, "status": "not_evaluated"},
         }
 
     @staticmethod
@@ -713,6 +1615,7 @@ class PiAgentHarness:
             "error": a.error,
             "requested": a.requested,
             "actual": a.actual,
+            "mapspec_fingerprint": a.mapspec_fingerprint,
             "verifiable": verifiable,
             "converged": _ack_converged(a) if verifiable else None,
         }

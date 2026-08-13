@@ -43,6 +43,20 @@ export interface Layer {
   _tileUrl?: string;
   /** V3 Performance: Pre-computed descriptor; allows MVT decision without downloading full FC. */
   _descriptor?: RefDescriptor;
+  /** Backend MapSpec generation whose presentation this HUD layer reconciles. */
+  _mapspecFingerprint?: string;
+  /** Semantic MapSpec layer id (the HUD id remains the stable result ref). */
+  _mapspecLayerId?: string;
+  /** Local ordering only; never used as evidence or sent to the backend. */
+  _mapspecGenerationAt?: number;
+  /** Fingerprint of the bounded server-authored HUD presentation projection. */
+  _mapspecProjectionFingerprint?: string;
+  /** Last AUTO_SAFE repair action applied to this generation. */
+  _mapspecRepairActionId?: string;
+  /** Monotonic HUD mutation generation used to supersede stale repairs. */
+  _intentGeneration?: number;
+  /** Bounded desired-state AUTO_SAFE repairs applied before runtime reconcile. */
+  _cartographicRepairs?: Array<Record<string, unknown>>;
   created_at?: string;
   updated_at?: string;
   legend_spec?: LegendSpec;

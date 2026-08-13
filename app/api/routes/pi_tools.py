@@ -17,6 +17,8 @@ import hmac
 import logging
 import os
 import secrets
+import tempfile
+import fcntl
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 
@@ -38,21 +40,38 @@ def get_bridge_secret() -> str:
     if secret:
         return secret
     secret_file = Path(settings.DATA_DIR) / ".pi_bridge_secret"
-    if secret_file.exists():
-        try:
-            val = secret_file.read_text(encoding="utf-8").strip()
-            if val:
-                return val
-        except Exception:
-            pass
-    new_secret = secrets.token_urlsafe(32)
+    lock_file = secret_file.with_suffix(".lock")
     try:
         secret_file.parent.mkdir(parents=True, exist_ok=True)
-        secret_file.write_text(new_secret, encoding="utf-8")
+        with lock_file.open("a+") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                val = secret_file.read_text(encoding="utf-8").strip()
+            except FileNotFoundError:
+                val = ""
+            if not val:
+                val = secrets.token_urlsafe(32)
+                fd, tmp_name = tempfile.mkstemp(
+                    prefix=".pi_bridge_secret.", dir=str(secret_file.parent)
+                )
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as temp:
+                        temp.write(val)
+                        temp.flush()
+                        os.fsync(temp.fileno())
+                    os.chmod(tmp_name, 0o600)
+                    os.replace(tmp_name, secret_file)
+                except BaseException:
+                    try:
+                        os.unlink(tmp_name)
+                    except OSError:
+                        pass
+                    raise
     except Exception as e:
         logger.warning(f"Failed to write bridge secret file: {e}")
-    os.environ["WEBGIS_BRIDGE_SECRET"] = new_secret
-    return new_secret
+        val = secrets.token_urlsafe(32)
+    os.environ["WEBGIS_BRIDGE_SECRET"] = val
+    return val
 
 
 async def verify_bridge_secret(
@@ -80,4 +99,25 @@ async def execute_tool(
     Delegates to the PiBridge which owns the ToolRegistry and dispatch logic.
     审计 SEC-01：要求 X-Pi-Bridge-Secret header。
     """
+    from app.services.chat.pi_turn_context import verify_turn_token
+
+    verified = verify_turn_token(get_bridge_secret(), request.turnToken or "")
+    if verified is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid, missing, or expired Pi turn context",
+        )
+    # Ignore all caller-supplied routing fields. A signature proves who minted
+    # the capability; the live-turn check also proves it has not completed or
+    # been superseded while still inside its clock validity window.
+    session_id = str(verified["session_id"])
+    turn_id = str(verified["turn_id"])
+    from app.agent_pi_bridge import is_active_pi_turn
+    if not is_active_pi_turn(session_id, turn_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Pi turn context is no longer active",
+        )
+    request.sessionId = session_id
+    request.verifiedTurnId = turn_id
     return await dispatch_tool(request)

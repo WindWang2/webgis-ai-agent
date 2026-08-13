@@ -2,4 +2,5 @@
 // against a live MapLibre map instance via minimal diff/patch.
 export { MapSpecRuntime } from "./runtime";
 export { hudStateToMapSpec, SUBLAYER_SEP } from "./adapter";
+export { collectCartographicRuntimeObservation } from "./runtime-evidence";
 export type { HudToSpecInput } from "./adapter";

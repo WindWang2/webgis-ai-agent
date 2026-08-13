@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { apiFetch, isApiError } from '@/lib/api/transport';
+import { API_BASE } from '@/lib/api/config';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 import type { ChatSession } from '@/lib/types/chat';
 import type { MapActionPayload } from '@/lib/types';
@@ -14,12 +15,19 @@ import {
   resetViewportSeq,
   viewportSeqTracker,
 } from "@/lib/utils/viewport-seq";
+
+const MAX_SESSION_OWNER_TOKENS = 128;
+
 export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) => void) {
   const [sessionId, setSessionId] = useState<string>();
   const sessionIdRef = useRef<string | undefined>(undefined);
   // SEC-08：匿名会话的 owner_token。服务端在新建匿名会话时签发，前端持有并在
   // 后续请求的 X-Session-Token 头里回传。认证会话 / 旧匿名会话该 ref 为 null。
   const sessionTokenRef = useRef<string | null>(null);
+  // Anonymous owner tokens are session capabilities, not workspace-global
+  // credentials. Retain them by session so switching A → B cannot send A's
+  // token with B's cartographic observation or map-action ACK.
+  const sessionTokensRef = useRef<Map<string, string>>(new Map());
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const sessionLoadAbortRef = useRef<AbortController | null>(null);
 
@@ -98,7 +106,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       sessionIdRef.current = sid;
       // SEC-08：切回某个会话时，前端通常仍持有该会话的 token（同一浏览器会话内）。
       // 旧会话 / 认证会话 token 为 null，头不发送，后端按 grandfather/认证放行。
-      const token = sessionTokenRef.current;
+      const token = sessionTokensRef.current.get(sid) ?? null;
+      sessionTokenRef.current = token;
       try {
         // F-09：会话恢复必须校验 HTTP 状态。旧实现 res.json() 不检查 res.ok，
         // 404/500 的错误体被当作成功消费（JSON detail → 静默无消息；HTML 错误
@@ -159,8 +168,76 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
             }
           }
           if (state.base_layer) store.setBaseLayer(state.base_layer);
-          for (const layer of state.layers || []) {
-            if (layer._refId && layer._refId.startsWith('ref:')) {
+          const observation = state._cartographic_observation;
+          const observationIsCurrent = (
+            typeof state._current_cartographic_fingerprint === 'string'
+            && typeof observation?.mapspec_fingerprint === 'string'
+            && observation.mapspec_fingerprint
+              === state._current_cartographic_fingerprint
+          );
+          const observedLayers = observationIsCurrent && Array.isArray(observation?.layers)
+            ? observation.layers
+            : [];
+          const runtimeLayers = observedLayers.map((observed: any) => {
+            const refId = observed._refId;
+            const runtimeId = observed.runtime_store_id ?? refId ?? observed.id;
+            const rasterSource = (
+              typeof observed.raster_image === 'string'
+              && Array.isArray(observed.raster_bbox)
+              && observed.raster_bbox.length === 4
+            ) ? {
+                image: observed.raster_image,
+                bbox: observed.raster_bbox,
+              } : null;
+            return {
+              id: runtimeId,
+              name: observed.name ?? `分析结果: ${observed.id}`,
+              type: rasterSource
+                ? 'heatmap'
+                : ['vector', 'raster', 'tile', 'heatmap'].includes(observed.type)
+                  ? observed.type
+                  : 'vector',
+              visible: observed.visible !== false,
+              opacity: typeof observed.opacity === 'number' ? observed.opacity : 1,
+              group: observed.group ?? 'analysis',
+              source: rasterSource ?? ({
+                type: 'FeatureCollection',
+                features: [],
+                metadata: { ref_id: refId },
+              } as GeoJSONFeatureCollection),
+              style: observed.style,
+              legend_spec: observed.legend_spec,
+              _refId: refId,
+              _descriptor: observed._descriptor,
+              _tileUrl: refId
+                ? `${API_BASE}/api/v1/layers/data/${refId}/tiles/{z}/{x}/{y}.mvt?session_id=${sid}`
+                : undefined,
+              _mapspecFingerprint: observation.mapspec_fingerprint,
+              _mapspecLayerId: observed.id,
+              _mapspecProjectionFingerprint: observed.projection_fingerprint,
+              _mapspecRepairActionId: observed.repair_action_id,
+              _intentGeneration: typeof observed.intent_generation === 'number'
+                ? observed.intent_generation
+                : undefined,
+            };
+          });
+          // The live post-reconcile observation is the final-map snapshot. It
+          // outranks the turn-start `layers` state, which may predate the GIS
+          // result. Legacy sessions without runtime evidence keep the old path.
+          const layersToRestore = runtimeLayers.length > 0
+            ? runtimeLayers
+            : (state.layers || []);
+          for (const layer of layersToRestore) {
+            store.addLayer(layer);
+            if (
+              layer._refId
+              && layer._refId.startsWith('ref:')
+              && !(
+                layer._descriptor?.mvt_capable
+                && layer._descriptor?.feature_count > 5000
+              )
+              && !(layer.source && typeof layer.source === 'object' && 'image' in layer.source)
+            ) {
               // SEC-08：匿名会话的图层引用数据同样受 owner_token 保护。
               apiFetch<GeoJSONFeatureCollection>(
                 `/api/v1/layers/data/${encodeURIComponent(layer._refId)}?session_id=${encodeURIComponent(sid)}`,
@@ -169,7 +246,12 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
                 .then((geojson) => {
                   if (signal.aborted) return;
                   if (geojson && (geojson.type === 'FeatureCollection' || geojson.features)) {
-                    store.addLayer({ ...layer, source: geojson });
+                    const current = useHudStore.getState().layers.find(
+                      (candidate) => candidate.id === layer.id
+                    );
+                    if (current?._refId === layer._refId) {
+                      useHudStore.getState().updateLayer(layer.id, { source: geojson });
+                    }
                   }
                 })
                 .catch((err) => {
@@ -221,6 +303,29 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
     [clearLayers, clearAnnotations, clearOpsLog, clearCausalChain, setSelectedFeature, setAiStatus, clearTask]
   );
 
+  const rememberSessionToken = useCallback((sid: string, token: string) => {
+    if (!sid || !token) return;
+    // Cap capability retention: long-lived tabs may visit many anonymous
+    // sessions, but ACK routing only needs a bounded recent working set.
+    if (!sessionTokensRef.current.has(sid)) {
+      while (sessionTokensRef.current.size >= MAX_SESSION_OWNER_TOKENS) {
+        const oldest = sessionTokensRef.current.keys().next().value;
+        if (!oldest) break;
+        sessionTokensRef.current.delete(oldest);
+      }
+    }
+    sessionTokensRef.current.set(sid, token);
+    if (!sessionIdRef.current || sessionIdRef.current === sid) {
+      sessionTokenRef.current = token;
+    }
+  }, []);
+
+  const getSessionTokenFor = useCallback((sid: string): string | null => {
+    return sessionTokensRef.current.get(sid) ?? (
+      sessionIdRef.current === sid ? sessionTokenRef.current : null
+    );
+  }, []);
+
   return {
     sessionId,
     setSessionId,
@@ -228,6 +333,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
     // SEC-08：暴露 token ref + 设置器。useSSEStream 在收到新会话的 owner_token
     // 时写入；其它调用方只读（getSessionToken）。
     sessionTokenRef,
+    rememberSessionToken,
+    getSessionTokenFor,
     getSessionToken: () => sessionTokenRef.current,
     sessions,
     setSessions,

@@ -146,6 +146,7 @@ export interface SessionSummary {
 export interface HudState {
   /* ─── Layers ─── */
   layers: Layer[];
+  layerIntentGeneration: number;
   addLayer: (layer: Layer) => void;
   removeLayer: (id: string) => void;
   toggleLayer: (id: string) => void;

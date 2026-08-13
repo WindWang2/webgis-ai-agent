@@ -12,7 +12,9 @@ and emit a ``fly_to`` command (the live camera actually moves).
 """
 import shutil
 import uuid
+from unittest.mock import AsyncMock, patch
 
+import numpy as np
 import pytest
 
 from app.services.mapspec.store import BASE_STORAGE_DIR
@@ -84,6 +86,169 @@ async def test_layer_upsert_forwards_is_compiled_and_checkpoint_id(registry, cle
     assert res["is_compiled"] is True, "a valid upsert must compile-validate"
     assert res["checkpoint_id"], "auto-checkpoint id must be forwarded"
     assert res["layer_id"] == "eq"
+
+
+@pytest.mark.asyncio
+async def test_layer_upsert_preserves_result_ref_provenance(registry, clean_session):
+    source = {
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [120, 30]},
+                "properties": {"v": 1},
+            }
+        ],
+    }
+    result_ref = await session_data_manager.store(
+        clean_session, source, prefix="geojson"
+    )
+
+    res = await registry.dispatch(
+        "webgis_layer_upsert",
+        {
+            "layer": {
+                "id": "result",
+                "source": "analysis-output",
+                "type": "circle",
+                "paint": {"circle-color": "#3366cc"},
+            },
+            "source_data": result_ref,
+        },
+        session_id=clean_session,
+    )
+
+    layer = res["mapspec"]["layers"][0]
+    source_entry = res["mapspec"]["sources"]["analysis-output"]
+    provenance_check = next(
+        check
+        for check in res["cartographic_review"]["review"]["checks"]
+        if check["rule"] == "RESULT_MAP_PROVENANCE"
+    )
+    assert res["result_ref"] == result_ref
+    assert layer["provenance"]["result_ref"] == result_ref
+    assert source_entry["ref"] == result_ref
+    assert provenance_check["status"] == "pass"
+    assert provenance_check["evidence"]["source_ref"] == result_ref
+    assert res["runtime_patch"]["result_ref"] == result_ref
+    assert res["runtime_patch"]["mapspec_fingerprint"] == res["mapspec_fingerprint"]
+    assert res["commands"][0]["command"] == "add_layer"
+
+
+@pytest.mark.asyncio
+async def test_inline_upsert_persists_one_ref_and_keeps_mapspec_metadata_only(
+    registry, clean_session,
+):
+    source = _geojson([
+        {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [120, 30]},
+            "properties": {"value": 1},
+        }
+    ])
+
+    res = await registry.dispatch(
+        "webgis_layer_upsert",
+        {
+            "layer": {"id": "inline", "source": "inline-source", "type": "circle"},
+            "source_data": source,
+        },
+        session_id=clean_session,
+    )
+
+    source_entry = res["mapspec"]["sources"]["inline-source"]
+    assert res["result_ref"].startswith("ref:geojson-")
+    assert source_entry["ref_id"] == res["result_ref"]
+    assert "inlineData" not in source_entry
+    assert source_entry["profile"]["fields_status"] == "explicit"
+    assert await session_data_manager.get_ref_descriptor(
+        clean_session, res["result_ref"]
+    ) is not None
+
+
+@pytest.mark.asyncio
+async def test_ref_upsert_uses_descriptor_without_full_feature_materialization(
+    registry, clean_session,
+):
+    result_ref = await session_data_manager.store(
+        clean_session,
+        _geojson([{
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [120, 30]},
+            "properties": {"value": 1},
+        }]),
+        prefix="geojson",
+    )
+
+    with patch.object(
+        session_data_manager,
+        "get",
+        new=AsyncMock(side_effect=AssertionError("full ref load is forbidden")),
+    ):
+        res = await registry.dispatch(
+            "webgis_layer_upsert",
+            {
+                "layer": {"id": "ref", "source": "ref-source", "type": "circle"},
+                "source_data": result_ref,
+            },
+            session_id=clean_session,
+        )
+
+    profile = res["mapspec"]["sources"]["ref-source"]["profile"]
+    assert res["success"] is True
+    assert profile["featureCount"] == 1
+    assert profile["fields_status"] == "unknown"
+    assert res["cartographic_review"]["counters"]["full_data_loads"] == 0
+
+
+@pytest.mark.asyncio
+async def test_raster_upsert_reaches_runtime_with_image_identity(
+    registry, clean_session,
+):
+    res = await registry.dispatch(
+        "webgis_layer_upsert",
+        {
+            "layer": {"id": "ndvi", "source": "ndvi-source", "type": "raster"},
+            "source_data": {
+                "array": np.array([[0.1, 0.5], [0.8, 0.2]], dtype=float),
+                "bounds": [120.0, 30.0, 121.0, 31.0],
+            },
+        },
+        session_id=clean_session,
+    )
+
+    assert res["success"] is True
+    assert res["result_ref"].startswith("ref:raster/")
+    assert res["image"].endswith(".png")
+    assert res["bbox"] == [120.0, 30.0, 121.0, 31.0]
+    assert res["commands"][0]["command"] == "add_heatmap_raster"
+    assert res["runtime_patch"]["result_ref"] == res["result_ref"]
+    assert res["runtime_patch"]["image_ref"] == res["result_ref"]
+
+
+@pytest.mark.asyncio
+async def test_layer_upsert_preserves_url_source_instead_of_treating_it_as_ref(
+    registry, clean_session,
+):
+    url = "https://tiles.example.test/result/{z}/{x}/{y}.png"
+    res = await registry.dispatch(
+        "webgis_layer_upsert",
+        {
+            "layer": {
+                "id": "remote",
+                "source": "remote-source",
+                "type": "raster",
+                "paint": {"raster-opacity": 0.85},
+            },
+            "source_data": url,
+        },
+        session_id=clean_session,
+    )
+
+    assert res["success"] is True
+    assert res["mapspec"]["sources"]["remote-source"]["url"] == url
+    assert res.get("code") != "REFERENCE_NOT_FOUND"
 
 
 @pytest.mark.asyncio
@@ -242,9 +407,7 @@ async def test_source_profile_success(registry, clean_session):
 
 @pytest.mark.asyncio
 async def test_source_profile_failure_returns_correction_hint(registry, monkeypatch, clean_session):
-    """The source_profile adapter bypasses the engine (no lock/validation), so
-    its failure path is a raised exception — the wrapper must convert it into
-    success:False + correction_hint (self-healing) instead of letting it throw."""
+    """Profiling/lifecycle errors become self-healing structured failures."""
 
     async def _boom(session_id, source_id, geojson_data):
         raise ValueError("malformed geojson")

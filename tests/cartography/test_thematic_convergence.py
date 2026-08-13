@@ -17,7 +17,12 @@ from app.services.analysis_cartography_converter import convert_analysis_to_maps
 def _mapspec(layers, sources=None, layout=None):
     return {
         "version": "1.0",
-        "sources": sources or {"src1": {"type": "geojson"}},
+        "sources": sources or {
+            "src1": {
+                "type": "geojson",
+                "inlineData": {"type": "FeatureCollection", "features": []},
+            }
+        },
         "layers": layers,
         **({"layout": layout} if layout else {}),
     }
@@ -157,7 +162,9 @@ def test_legend_field_drift_is_detected():
 
 def test_legend_color_drift_is_detected():
     # Map paints A/B/C, legend shows A/X/C.
-    layer = _graduated_layer([0, 10, 20, 30], ["#a", "#b", "#c"])
+    layer = _graduated_layer(
+        [0, 10, 20, 30], ["#aaaaaa", "#bbbbbb", "#cccccc"]
+    )
     # Tamper: legend palette_colors diverge from paint output colors.
     layer["legend_spec"]["palette_colors"] = ["#a", "#X", "#c"]
     report = evaluate_cartography_semantics(_mapspec([layer]))
@@ -165,12 +172,17 @@ def test_legend_color_drift_is_detected():
 
 
 def test_drift_free_graduated_passes_clean():
-    layer = _graduated_layer([0, 10, 20, 30], ["#a", "#b", "#c"])
-    report = evaluate_cartography_semantics(_mapspec([layer]), _profile(fmin=0, fmax=30))
+    layer = _graduated_layer(
+        [0, 10, 20, 30], ["#aaaaaa", "#bbbbbb", "#cccccc"]
+    )
+    report = evaluate_cartography_semantics(
+        _mapspec([layer]), _profile(fmin=0, fmax=30, null_count=0)
+    )
     names = _check_names(report)
     assert "LEGEND_STYLE_EQUIVALENCE" not in names
     assert "CLASSIFICATION_CARDINALITY" not in names
-    assert report.ok  # no errors
+    assert report.no_deterministic_failures
+    assert not report.errors
 
 
 # ─── semantic checks: numeric bad field ─────────────────────────────────────
@@ -252,7 +264,7 @@ def test_no_data_rule_present_not_flagged():
 
 
 def test_no_data_not_evaluated_without_null_count():
-    layer = _graduated_layer([0, 10, 20], ["#a", "#b"])
+    layer = _graduated_layer([0, 10, 20], ["#aaaaaa", "#bbbbbb"])
     report = evaluate_cartography_semantics(_mapspec([layer]), _profile(field="population", fmin=0, fmax=20))
     nodata_findings = [f for f in report.findings if f.check == "NO_DATA_SEMANTICS"]
     # A profile EXISTS but lacks null_count → an explicit NOT_EVALUATED info
@@ -321,13 +333,15 @@ def test_cardinality_colors_breaks_mismatch():
 
 def test_missing_evidence_is_not_evaluated_not_success():
     # No profile → checks must be NOT_EVALUATED, never a fake pass.
-    layer = _graduated_layer([0, 10, 20], ["#a", "#b"])
+    layer = _graduated_layer([0, 10, 20], ["#aaaaaa", "#bbbbbb"])
     report = evaluate_cartography_semantics(_mapspec([layer]))  # no source_profiles
     # No-data / domain checks that need a profile are NOT_EVALUATED (info).
     evaluated = [f for f in report.findings if f.check in ("NO_DATA_SEMANTICS", "CLASSIFICATION_DOMAIN_COVERAGE") and f.evaluated]
     assert evaluated == []
-    # And the report is still .ok (no error-severity fakes).
-    assert report.ok
+    # No fabricated failure is distinct from success: incomplete evidence is
+    # not OK, while the compatibility diagnostic remains available.
+    assert not report.ok
+    assert report.no_deterministic_failures
 
 
 # ─── legacy compatibility ───────────────────────────────────────────────────
@@ -406,9 +420,13 @@ def test_closed_loop_graduated_paint_equals_legend():
     assert paint_colors == spec["palette_colors"]
     # And the semantic check confirms no drift.
     layer = {"id": "L1", "source": "src1", "type": "fill", "paint": {"color": paint}, "legend_spec": spec}
-    report = evaluate_cartography_semantics(_mapspec([layer]), _profile(field="pop", fmin=5, fmax=95))
+    report = evaluate_cartography_semantics(
+        _mapspec([layer]),
+        _profile(field="pop", fmin=5, fmax=95, null_count=0),
+    )
     assert "LEGEND_STYLE_EQUIVALENCE" not in _check_names(report)
-    assert report.ok
+    assert report.no_deterministic_failures
+    assert not report.errors
 
 
 def test_cartography_findings_flow_to_mapspec_result_and_harness_evidence():
@@ -478,4 +496,3 @@ def test_cartography_not_evaluated_when_no_profile_no_legend():
     # No thematic checks fire (no legend_spec, no method-paint); any findings are
     # info/NOT_EVALUATED, never an error faking thematic correctness.
     assert not any(f.get("severity") == "error" and f.get("evaluated") for f in findings)
-

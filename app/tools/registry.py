@@ -437,10 +437,19 @@ class ToolRegistry:
         # 这些字段本身就是为了接收引用 ID，绝不应被自动解引用为 GeoJSON 数据。
         if session_id and isinstance(arguments, dict):
             try:
+                skip_keys = {"ref_id", "layer_ref", "layer_id", "plan_id", "before_ref"}
+                # MapSpec ingestion preserves the source ref as provenance and
+                # resolves it inside the session-aware tool. Generic transparent
+                # resolution would erase that identity before the tool sees it.
+                if (
+                    name == "webgis_layer_upsert"
+                    and isinstance(arguments.get("source_data"), str)
+                ):
+                    skip_keys.add("source_data")
                 arguments = await self._resolve_references(
                     session_id,
                     arguments,
-                    skip_keys={"ref_id", "layer_ref", "layer_id", "plan_id", "before_ref"},
+                    skip_keys=skip_keys,
                 )
             except ValueError as e:
                 error_msg = str(e)
@@ -676,4 +685,3 @@ def tool(registry: ToolRegistry, name: str, description: str,
         )
         return func
     return decorator
-

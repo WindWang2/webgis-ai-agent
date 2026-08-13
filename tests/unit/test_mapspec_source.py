@@ -51,6 +51,17 @@ def test_store_data_ref_cursor_string_lands_in_url():
   assert entry["url"] == "ref:geojson-abc123"
 
 
+def test_store_data_string_replacement_clears_stale_raster_type():
+  entry: Dict[str, Any] = {
+      "type": "raster", "imageRef": "ref:raster-old", "bounds": [0, 0, 1, 1]
+  }
+
+  store_data(entry, "ref:geojson-new")
+
+  assert entry["type"] == "geojson"
+  assert entry["url"] == "ref:geojson-new"
+
+
 def test_store_data_none_is_a_noop():
   """None is 'no data supplied' — the entry is left untouched.
 

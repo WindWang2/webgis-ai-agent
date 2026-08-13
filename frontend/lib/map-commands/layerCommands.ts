@@ -56,6 +56,87 @@ function nonConfirmableAck(storeMatched: string[]): MapCommandResult {
 }
 
 export const layerCommands: Record<string, CommandEntry> = {
+  cartographic_runtime_repair: {
+    requiredParams: (p) => (
+      typeof p.mapspec_fingerprint === 'string'
+      && typeof p.observation_sequence === 'number'
+      && Array.isArray(p.repair_patches)
+      && p.repair_patches.length > 0
+      && p.repair_patches.length <= 32
+    ),
+    run(ctx) {
+      const { params, getHudState, actionId } = ctx;
+      const fingerprint = params?.mapspec_fingerprint;
+      const patches = params?.repair_patches;
+      if (!fingerprint || !Array.isArray(patches)) {
+        return { status: 'failed', error: 'invalid_params' };
+      }
+      if (!actionId) return { status: 'failed', error: 'missing_action_id' };
+
+      const same = (left: unknown, right: unknown): boolean => {
+        if (typeof left === 'number' && typeof right === 'number') {
+          return Number.isFinite(left) && Number.isFinite(right)
+            && Math.abs(left - right) <= 1e-9;
+        }
+        if (left === right) return true;
+        try {
+          return JSON.stringify(left) === JSON.stringify(right);
+        } catch {
+          return false;
+        }
+      };
+
+      // Validate the entire patch before changing any layer. A user edit made
+      // after the triggering observation supersedes the stale autonomous plan.
+      for (const patch of patches) {
+        const current = getHudState().layers.find((layer: any) => layer.id === patch.layer_id);
+        if (!current || current._mapspecFingerprint !== fingerprint) {
+          return { status: 'failed', error: 'superseded_by_user' };
+        }
+        for (const [key, observed] of Object.entries(patch.before ?? {})) {
+          if (!same(current[key], observed)) {
+            return { status: 'failed', error: 'superseded_by_user' };
+          }
+        }
+      }
+
+      for (const patch of patches) {
+        const desired = patch.desired ?? {};
+        const matched = matchMapLayers(ctx.map, patch.layer_id);
+        if (matched.length === 0) {
+          return { status: 'failed', error: 'target_not_found' };
+        }
+        for (const id of matched) {
+          renderer.updateLayerStyle(ctx.map, id, {
+            visibility: typeof desired.visible === 'boolean'
+              ? (desired.visible ? 'visible' : 'none')
+              : undefined,
+            opacity: typeof desired.opacity === 'number' ? desired.opacity : undefined,
+            ...(
+              desired.style && typeof desired.style === 'object'
+                ? desired.style as Record<string, unknown>
+                : {}
+            ),
+          });
+        }
+        getHudState().updateLayer(patch.layer_id, {
+          ...desired,
+          _mapspecFingerprint: fingerprint,
+          _mapspecRepairActionId: actionId,
+          _mapspecGenerationAt: Date.now(),
+        });
+      }
+      return {
+        status: 'succeeded',
+        result: {
+          confirmed: true,
+          repair_action_id: actionId,
+          observation_sequence: params.observation_sequence,
+        },
+      };
+    },
+  },
+
   add_layer: {
     // run body reads `layerId` (tests + AI emissions); `id` tolerated for legacy emissions
     requiredParams: (p) => typeof p.layerId === 'string' || typeof p.id === 'string',
