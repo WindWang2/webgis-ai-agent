@@ -42,6 +42,7 @@ from app.utils.security import sanitize_error_msg
 from app.utils.geojson import geojson_bbox
 
 from app.services.jobs.cancellation import OperationCancelled
+from app.lib.runtime.evidence import current_turn_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -230,6 +231,12 @@ class ToolDispatchService:
                     note = _REPEAT_LLMPAYLOAD.format(tool=tool_name)
                 else:
                     note = _REPEAT_INFLIGHT_LLMPAYLOAD.format(tool=tool_name)
+                # OBSERVABILITY (F5): deduped/repeated calls bypass registry.dispatch
+                # and emit no tool_metrics row, so wasted-work from repeats was
+                # invisible. Count them on the live turn's evidence accumulator.
+                _ev = current_turn_evidence()
+                if _ev is not None:
+                    _ev.add_deduped_tool_call()
                 return ToolDispatchResult(
                     status="repeated",
                     llm_payload=note,

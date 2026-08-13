@@ -458,3 +458,49 @@ async def test_stream_cancelled_mid_turn_fails_tracker_task(engine):
             assert task.status == TaskStatus.cancelled, (
                 f"取消后任务应为 cancelled（F8），实际 {task.status}"
             )
+
+
+@pytest.mark.asyncio
+async def test_chat_cooperative_cancel_settles_cancelled_not_success(engine, monkeypatch):
+    """P1-2 integration: legacy non-stream chat() cooperative cancel must settle
+    the turn outcome CANCELLED, NOT SUCCEEDED. This is the exact "error counted
+    as success" failure the observability PR prevents — the round loop returns a
+    normal "任务已取消" dict on cancel, so without _settle_cancel the outer turn
+    would record SUCCEEDED."""
+    import app.services.chat.execution_engine as ee
+    captured = {}
+
+    def fake_emit(ev):
+        captured["outcome"] = ev.outcome.outcome.value if ev.outcome.outcome else None
+
+    monkeypatch.setattr(ee, "emit_turn_summary", fake_emit)
+    monkeypatch.setattr(engine.tracker, "is_cancelled", lambda task_id: True)
+    monkeypatch.setattr(engine, "_save_msg_async", AsyncMock())
+    result = await engine.chat("cancel me", session_id="s-coop-cancel")
+    assert "取消" in result["content"]
+    assert captured.get("outcome") == "cancelled", (
+        f"cooperative cancel must settle CANCELLED, got {captured.get('outcome')!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_cooperative_cancel_settles_cancelled(engine, monkeypatch):
+    """P2-1 integration: legacy stream chat_stream cooperative cancel (round-top
+    is_cancelled) must settle CANCELLED, not leave outcome None/SUCCEEDED."""
+    import app.services.chat.execution_engine as ee
+    captured = {}
+
+    def fake_emit(ev):
+        captured["outcome"] = ev.outcome.outcome.value if ev.outcome.outcome else None
+
+    monkeypatch.setattr(ee, "emit_turn_summary", fake_emit)
+    monkeypatch.setattr(engine.tracker, "is_cancelled", lambda task_id: True)
+    monkeypatch.setattr(engine, "_save_msg_async", AsyncMock())
+    events = []
+    async for ev in engine.chat_stream("cancel me", session_id="s-coop-cancel-stream"):
+        events.append(ev)
+    assert any("task_cancelled" in e for e in events)
+    assert captured.get("outcome") == "cancelled", (
+        f"stream cooperative cancel must settle CANCELLED, got {captured.get('outcome')!r}"
+    )
+

@@ -44,9 +44,11 @@ from app.services.jobs.cancellation import (
     OperationCancelled,
     use_token,
 )
+from app.services.jobs.context import JobOrigin, use_origin
 from app.services.jobs.lifecycle import JobStatus, coerce_status, is_terminal
 from app.services.jobs.progress import JobProgress, ProgressReporter, ProgressThrottle
 from app.services.jobs.store import DurableJobStore
+from app.lib.runtime import context as rt_ctx
 
 logger = logging.getLogger(__name__)
 
@@ -343,6 +345,16 @@ def durable_job(
             raise AlreadyFinished(f"job {job_id} cancelled before execution")
         claimed = DurableJobStore.mark_running_sync(db, job_id, worker_id=worker_id)
         db.commit()
+        # Runtime observability (W6): capture the job's correlation fields while
+        # the session is still open (the record expires once it closes). These
+        # re-establish the turn's context in the worker process — the Celery
+        # boundary drops ContextVars, so without this the worker's logs/metrics
+        # lose all linkage to the originating turn.
+        _job_session_id = record.session_id
+        _job_run_id = record.run_id
+        _job_turn_id = record.turn_id
+        _job_agent_task_id = record.agent_task_id
+        _job_tool_call_id = record.tool_call_id
     if not claimed:
         # 认领失败：别人已经在跑（running），或取消刚好插进来。绝不重复执行。
         with factory() as db:
@@ -383,7 +395,21 @@ def durable_job(
     logger.info("[jobs] started job_id=%s worker=%s", job_id, worker_id or "-")
     watchdog.start()
     try:
-        with use_token(token):
+        # Runtime observability (W6): re-bind the turn's correlation (dropped at
+        # the Celery process boundary) so the worker's tool_metrics / JobOrigin /
+        # logs join back to the originating turn. Falls back gracefully if the
+        # job row pre-dates these columns (NULL → context still binds, just
+        # without turn/run).
+        _origin = JobOrigin(
+            session_id=_job_session_id,
+            agent_task_id=_job_agent_task_id,
+            tool_call_id=_job_tool_call_id,
+            run_id=_job_run_id,
+            turn_id=_job_turn_id,
+        )
+        with use_token(token), rt_ctx.bind_runtime_context(
+            session_id=_job_session_id, run_id=_job_run_id, turn_id=_job_turn_id
+        ), use_origin(_origin):
             yield handle
     except OperationCancelled:
         handle.cleanup_temps()

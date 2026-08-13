@@ -21,6 +21,7 @@ zero knowledge of the cache.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -37,6 +38,14 @@ from app.services.jobs.cancellation import CancellationToken, use_token
 from app.services.tool_dispatch_service import ToolDispatchService
 from app.lib.harness.pi_agent_harness import PiAgentHarness
 from app.lib.harness.tool_call_event import ToolCallEvent
+from app.lib.runtime import context as rt_ctx
+from app.lib.runtime.evidence import (
+    Outcome,
+    TurnEvidence,
+    TURN_EVIDENCE,
+    bind_turn_evidence,
+    emit_turn_summary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -261,78 +270,117 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     if len(_session_executed_sets) > 128:
         _session_executed_sets.pop(next(iter(_session_executed_sets)))
 
-    # P1 fix: time the dispatch, record telemetry on BOTH the success and the
-    # exception path (previously an exception skipped recording entirely),
-    # and truncate error_msg so a multi-KB llm_payload doesn't flood telemetry.
-    t0 = time.monotonic()
-    try:
-        # F24: bind the active turn's CancellationToken so checkpoint()-
-        # cooperative tools observe abort/disconnect and stop early instead of
-        # running to completion against an abandoned turn. asyncio.to_thread
-        # (registry's sync-tool path) copies the context, so the token reaches
-        # worker threads without changing tool signatures (ADR-0052).
-        # use_token(None) is a no-op, so dispatch outside a turn is unchanged.
-        with use_token(_active_turn_token):
-            result = await service.dispatch(tc, request.sessionId or "", executed)
-    except Exception as exc:
+    # Runtime observability (W3): recover the active turn's correlation.
+    # dispatch_tool is a separate HTTP-callback task with no turn context of its
+    # own; the singleton bridge processes turns strictly serially, so the active
+    # turn's (turn_id, run_id, session_id) is well-defined — the SAME invariant
+    # the cancel token already relies on. Tolerate None in the abort race (the
+    # turn's finally clears these before a late callback can arrive).
+    #
+    # Session guard (Matt #2 P2-3): a stale/late callback, or one load-balanced
+    # to a non-owner worker that has its OWN in-flight turn, would otherwise be
+    # misattributed to the wrong turn. If the callback carries a session_id that
+    # does NOT match the active turn's session, drop the correlation (still
+    # execute the tool — only the evidence attribution is skipped). When the
+    # callback carries no session_id (current Pi extension behavior) we cannot
+    # guard by session; the single-worker serial-turn invariant then keeps the
+    # window ~empty (the proper cross-worker fix is passing turn_id in the Pi
+    # callback payload — see PR "Deferred").
+    turn_id, run_id, active_session = active_turn_correlation()
+    if (
+        request.sessionId
+        and active_session
+        and request.sessionId != active_session
+    ):
+        # Stale / cross-session callback: don't attribute to the active turn.
+        turn_id, run_id = None, None
+    rt_ev = TURN_EVIDENCE.get(turn_id)  # None if turn ended / non-owner worker
+
+    # Bind the recovered correlation so tool_metrics / JobOrigin (W4/W5) — read
+    # deeper inside service.dispatch → registry — propagate turn_id/run_id, AND
+    # bind the live TurnEvidence so the registry chokepoint (current_turn_evidence)
+    # records tool_calls/tool_ms into THIS turn's summary. Without bind_turn_evidence
+    # the Pi path (a separate HTTP-callback task) would leave tool_calls=0.
+    with contextlib.ExitStack() as _rt_stack:
+        _rt_stack.enter_context(rt_ctx.bind_runtime_context(
+            turn_id=turn_id, run_id=run_id, session_id=request.sessionId
+        ))
+        if rt_ev is not None:
+            _rt_stack.enter_context(bind_turn_evidence(rt_ev))
+        # P1 fix: time the dispatch, record telemetry on BOTH the success and the
+        # exception path (previously an exception skipped recording entirely),
+        # and truncate error_msg so a multi-KB llm_payload doesn't flood telemetry.
+        t0 = time.monotonic()
+        try:
+            # F24: bind the active turn's CancellationToken so checkpoint()-
+            # cooperative tools observe abort/disconnect and stop early instead of
+            # running to completion against an abandoned turn. asyncio.to_thread
+            # (registry's sync-tool path) copies the context, so the token reaches
+            # worker threads without changing tool signatures (ADR-0052).
+            # use_token(None) is a no-op, so dispatch outside a turn is unchanged.
+            with use_token(_active_turn_token):
+                result = await service.dispatch(tc, request.sessionId or "", executed)
+        except Exception as exc:
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            if _harness is not None:
+                err_msg = str(exc)[:200]
+                _harness.record_event(ToolCallEvent(
+                    tool_call_id=request.toolCallId,
+                    tool_name=request.name,
+                    arguments=request.arguments or {},
+                    duration_ms=duration_ms,
+                    is_error=True,
+                    error_msg=err_msg,
+                    result={},
+                    session_id=request.sessionId,
+                ))
+            raise
+
         duration_ms = int((time.monotonic() - t0) * 1000)
+
+        # 缓存供 SSE 适配器读取（keyed by tool_call_id only — see cache docstring）
+        cache_dispatch_result(request.toolCallId, result)
+
         if _harness is not None:
-            err_msg = str(exc)[:200]
-            _harness.record_event(ToolCallEvent(
+            # V3: 记录本次 dispatch 发出的地图动作（issued 侧证据）。仅 status=="ok" ——
+            # error/repeated 不产生可执行的地图命令。turn_id 现由 active_turn_correlation()
+            # 恢复（不再是 ""），issued 侧证据与本 turn 直接关联。
+            if result.status == "ok":
+                for ma in result.map_actions:
+                    if rt_ev is not None:
+                        rt_ev.record_map_action_issued(ma["action_id"])
+                    _harness.record_map_action_issued(
+                        session_id=request.sessionId or "",
+                        tool_call_id=request.toolCallId,
+                        turn_id=turn_id or "",
+                        action_id=ma["action_id"],
+                        command=ma["command"],
+                        requested=ma["requested"],
+                    )
+            is_error = result.status == "error"
+            # HARNESS-V2: forward real MapSpec mutation evidence (is_compiled /
+            # success / warnings / checkpoint_id) from raw_result so the validity
+            # ladder isn't starved in production. Slim to evidence fields only — the
+            # full mapspec is fetched via fetch-on-demand, never logged wholesale.
+            ev = {"status": result.status, "llm_payload_len": len(result.llm_payload)}
+            raw = result.raw_result if isinstance(result.raw_result, dict) else {}
+            # ADR-0052: also forward cartography_findings so the Harness surfaces
+            # thematic drift (paint↔legend equivalence) in semantic_errors.
+            for k in ("success", "is_compiled", "warnings", "checkpoint_id", "message", "correction_hint", "cartography_findings"):
+                if k in raw:
+                    ev[k] = raw[k]
+            event = ToolCallEvent(
                 tool_call_id=request.toolCallId,
                 tool_name=request.name,
                 arguments=request.arguments or {},
                 duration_ms=duration_ms,
-                is_error=True,
-                error_msg=err_msg,
-                result={},
+                is_error=is_error,
+                # P1 fix: truncate to a short message rather than the full payload.
+                error_msg=(result.llm_payload[:200] if is_error else ""),
+                result=ev,
                 session_id=request.sessionId,
-            ))
-        raise
-
-    duration_ms = int((time.monotonic() - t0) * 1000)
-
-    # 缓存供 SSE 适配器读取（keyed by tool_call_id only — see cache docstring）
-    cache_dispatch_result(request.toolCallId, result)
-
-    if _harness is not None:
-        # V3: 记录本次 dispatch 发出的地图动作（issued 侧证据）。仅 status=="ok" ——
-        # error/repeated 不产生可执行的地图命令。turn_id 在此不可得（HTTP 回调无
-        # turn 上下文）；turn 级 correlation 由前端 ack 的 correlation 侧补齐。
-        if result.status == "ok":
-            for ma in result.map_actions:
-                _harness.record_map_action_issued(
-                    session_id=request.sessionId or "",
-                    tool_call_id=request.toolCallId,
-                    turn_id="",
-                    action_id=ma["action_id"],
-                    command=ma["command"],
-                    requested=ma["requested"],
-                )
-        is_error = result.status == "error"
-        # HARNESS-V2: forward real MapSpec mutation evidence (is_compiled /
-        # success / warnings / checkpoint_id) from raw_result so the validity
-        # ladder isn't starved in production. Slim to evidence fields only — the
-        # full mapspec is fetched via fetch-on-demand, never logged wholesale.
-        ev = {"status": result.status, "llm_payload_len": len(result.llm_payload)}
-        raw = result.raw_result if isinstance(result.raw_result, dict) else {}
-        # ADR-0052: also forward cartography_findings so the Harness surfaces
-        # thematic drift (paint↔legend equivalence) in semantic_errors.
-        for k in ("success", "is_compiled", "warnings", "checkpoint_id", "message", "correction_hint", "cartography_findings"):
-            if k in raw:
-                ev[k] = raw[k]
-        event = ToolCallEvent(
-            tool_call_id=request.toolCallId,
-            tool_name=request.name,
-            arguments=request.arguments or {},
-            duration_ms=duration_ms,
-            is_error=is_error,
-            # P1 fix: truncate to a short message rather than the full payload.
-            error_msg=(result.llm_payload[:200] if is_error else ""),
-            result=ev,
-            session_id=request.sessionId,
-        )
-        _harness.record_event(event)
+            )
+            _harness.record_event(event)
 
     return PiToolResponse(
         toolCallId=request.toolCallId,
@@ -351,6 +399,29 @@ _session_executed_sets: dict[str, set[tuple[str, str]]] = {}
 # 模块级而非实例级：dispatch_tool 是模块函数（ADR-0022 rendezvous），拿不到
 # bridge 实例；turn 在单例 bridge 上严格串行，全局唯一在飞 turn 语义安全。
 _active_turn_token: Optional[CancellationToken] = None
+
+# Runtime observability: 当前在飞 turn 的关联身份（turn_id / run_id / session_id）。
+# 与 ``_active_turn_token`` 同源——dispatch_tool 是独立的 HTTP 回调 task，看不到流
+# 任务的 ContextVar；故按「单例 bridge 严格串行 turn」这一既有不变量（cancel
+# token 已依赖它）暴露在飞 turn 的关联身份，让 dispatch_tool 能把工具证据按
+# turn_id 写进 TurnEvidence 注册表、并把 run_id/turn_id 透传给 tool_metrics /
+# JobOrigin。abort/超时的 finally 会先清 token 再清这里——迟到的回调读到 None
+# 时回退为空（graceful，不伪造关联）。session_id 用于 dispatch_tool 的归属守卫：
+# 回调携带的 session 与在飞 turn 的 session 不一致时，认定是迟到/跨 worker 的串号
+# 回调，不把它的工具证据误归属到当前 turn（仍执行工具，只放弃关联）。
+_active_turn_turn_id: Optional[str] = None
+_active_turn_run_id: Optional[str] = None
+_active_turn_session_id: Optional[str] = None
+
+
+def active_turn_correlation() -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """返回在飞 turn 的 (turn_id, run_id, session_id)。
+
+    无在飞 turn 或已被清理时返回 (None, None, None)。供 dispatch_tool（独立 HTTP
+    回调 task）恢复 turn 级关联使用，并据 session_id 守卫串号回调。单例 bridge 严格
+    串行 turn，故全局唯一在飞 turn 语义安全（同 ``_active_turn_token``）。
+    """
+    return _active_turn_turn_id, _active_turn_run_id, _active_turn_session_id
 
 
 # ── Optional evaluation harness (opt-in via PI_HARNESS_ENABLED=true) ──
@@ -597,7 +668,7 @@ class PiBridge:
         Raises:
             PiRpcError: If the Pi agent returns an error or the request fails.
         """
-        global _active_turn_token
+        global _active_turn_token, _active_turn_turn_id, _active_turn_run_id, _active_turn_session_id
         # Turn-scoped session id: attribution uses this local, never the
         # mutable self._session_id field (which a concurrent/preceding turn
         # could overwrite). Pi events carry no session of their own.
@@ -605,6 +676,19 @@ class PiBridge:
         data: dict[str, Any] = {"message": message}
         if turn_sid:
             data["sessionId"] = turn_sid
+
+        # Runtime observability: prompt() now mints a real turn_id (previously
+        # its cancellation token carried the *session* id as job_id, so the
+        # non-stream path had no turn identity). run_id is a first-class turn
+        # handle (the prior "run_id == session_id" reuse is retired here).
+        turn_id = _mint_turn_id()
+        run_id = rt_ctx.new_run_id()
+        rt_ev = TurnEvidence(
+            request_id=rt_ctx.current_runtime_context().request_id if rt_ctx.current_runtime_context() else None,
+            session_id=turn_sid or None,
+            turn_id=turn_id,
+            run_id=run_id,
+        )
 
         # 新 turn 开始：清空重复调用拦截集合与 dispatch 结果缓存。
         # 重复拦截语义是「同一 turn 内」-- 跨 turn 用户重发同一问题是合法的。
@@ -616,41 +700,64 @@ class PiBridge:
         # the real execution model and prevents two turns' events interleaving
         # in the shared queue. Abort bypasses the lock (see abort()).
         await self._lock.acquire()
-        try:
-            # F5/F24: publish the active turn's identity + cancellation token
-            # while the lock is held — abort() reads the sid for session
-            # scoping, dispatch_tool binds the token via use_token. Same as
-            # stream_prompt; cleared in the finally. P1: prompt() previously
-            # never set these, so abort(session_id=other) saw active=None and
-            # the GLOBAL abort killed this turn, and HTTP-callback tool
-            # dispatches ran unbounded (F24 no-op) on this path.
-            self._active_turn_sid = turn_sid
-            _active_turn_token = CancellationToken(job_id=turn_sid or None)
-            # Drop any residual events from a prior turn before sending, so they
-            # cannot be attributed to this turn.
-            await self._drain_stale_events()
-            await self._rpc.request("prompt", data)
+        with rt_ctx.bind_runtime_context(turn_id=turn_id, run_id=run_id), bind_turn_evidence(rt_ev):
+            TURN_EVIDENCE.register(rt_ev)
+            try:
+                # F5/F24: publish the active turn's identity + cancellation token
+                # while the lock is held — abort() reads the sid for session
+                # scoping, dispatch_tool binds the token via use_token. Same as
+                # stream_prompt; cleared in the finally. P1: prompt() previously
+                # never set these, so abort(session_id=other) saw active=None and
+                # the GLOBAL abort killed this turn, and HTTP-callback tool
+                # dispatches ran unbounded (F24 no-op) on this path.
+                self._active_turn_sid = turn_sid
+                _active_turn_token = CancellationToken(job_id=turn_id)
+                _active_turn_turn_id = turn_id
+                _active_turn_run_id = run_id
+                _active_turn_session_id = turn_sid or None
+                # Drop any residual events from a prior turn before sending, so they
+                # cannot be attributed to this turn.
+                await self._drain_stale_events()
+                await self._rpc.request("prompt", data)
 
-            # Drain events from the queue (non-streaming mode)
-            content_parts: list[str] = []
-            while True:
-                try:
-                    event = await asyncio.wait_for(self._rpc.events.get(), timeout=PI_EVENT_DRAIN_TIMEOUT)
-                    if event.get("type") == "agent_end":
+                # Drain events from the queue (non-streaming mode)
+                content_parts: list[str] = []
+                _drained_complete = False
+                while True:
+                    try:
+                        event = await asyncio.wait_for(self._rpc.events.get(), timeout=PI_EVENT_DRAIN_TIMEOUT)
+                        if event.get("type") == "agent_end":
+                            _drained_complete = True
+                            break
+                        text = _extract_text_from_event(event)
+                        if text:
+                            content_parts.append(text)
+                    except asyncio.TimeoutError:
                         break
-                    text = _extract_text_from_event(event)
-                    if text:
-                        content_parts.append(text)
-                except asyncio.TimeoutError:
-                    break
-            # Best-effort: drain any leftover events so the next turn starts clean.
-            await self._drain_remaining_turn_events()
-        finally:
-            _cleanup_turn_state(turn_sid)
-            # Clear the active-turn markers before releasing the lock.
-            self._active_turn_sid = None
-            _active_turn_token = None
-            self._lock.release()
+                # Best-effort: drain any leftover events so the next turn starts clean.
+                await self._drain_remaining_turn_events()
+                # A drain that timed out without agent_end is a PARTIAL turn, not a
+                # clean success (the agent may not have finished).
+                rt_ev.settle(Outcome.SUCCEEDED if _drained_complete else Outcome.PARTIAL,
+                             failure_class=None if _drained_complete else "drain_timeout")
+            except asyncio.CancelledError:
+                rt_ev.settle(Outcome.CANCELLED)
+                raise
+            except Exception as exc:  # noqa: BLE001
+                rt_ev.settle(Outcome.FAILED, failure_class=type(exc).__name__, detail=str(exc)[:200])
+                raise
+            finally:
+                _cleanup_turn_state(turn_sid)
+                # Clear the active-turn markers before releasing the lock.
+                self._active_turn_sid = None
+                _active_turn_token = None
+                _active_turn_turn_id = None
+                _active_turn_run_id = None
+                _active_turn_session_id = None
+                self._lock.release()
+                rt_ev.mark_ended()
+                emit_turn_summary(rt_ev)
+                TURN_EVIDENCE.remove(turn_id)
 
         return {
             "sessionId": turn_sid,
@@ -669,7 +776,7 @@ class PiBridge:
         Yields:
             SSE-formatted event strings
         """
-        global _active_turn_token
+        global _active_turn_token, _active_turn_turn_id, _active_turn_run_id, _active_turn_session_id
         # Turn-scoped session id: every SSE payload is stamped with this local
         # value, not the mutable self._session_id field. Pi events carry no
         # session of their own, so attribution must come from the request that
@@ -688,6 +795,15 @@ class PiBridge:
         # V3: 每个 Pi turn 铸一个 turn_id，显式透传给 harness 记录与 SSE 负载
         # （绝不用全局 set_correlation —— 单例 harness 跨 session 累积会互相污染）。
         turn_id = _mint_turn_id()
+        # Runtime observability: first-class run_id (retires "run_id == session_id").
+        run_id = rt_ctx.new_run_id()
+        _parent_ctx = rt_ctx.current_runtime_context()
+        rt_ev = TurnEvidence(
+            request_id=_parent_ctx.request_id if _parent_ctx else None,
+            session_id=turn_sid or None,
+            turn_id=turn_id,
+            run_id=run_id,
+        )
 
         # Hold the lock across send + drain + cleanup so turns are strictly
         # serial on the singleton bridge (Pi processes one prompt at a time).
@@ -696,181 +812,208 @@ class PiBridge:
         # (transport goal B-P0-1) sends an abort RPC so Pi stops generating
         # tokens and executing tools against an abandoned session.
         # Abort deliberately bypasses this lock (see abort()).
-        await self._lock.acquire()
-        cancelled = False
-        timed_out = False
-        # G: set True when the pump observes the Pi subprocess dying mid-stream
-        # (see the process_died_event watcher below). Initialized here so the
-        # finally can read it even on the early-return send-failure path.
-        process_died = False
-        # F5/F24: publish the active turn's identity + cancellation token while
-        # the lock is held — abort() reads the sid for session scoping,
-        # dispatch_tool binds the token via use_token. Cleared in the finally.
-        self._active_turn_sid = turn_sid
-        _active_turn_token = CancellationToken(job_id=turn_id)
-        try:
-            # Drop residual events from a prior turn so they can't be dequeued
-            # and attributed to this session.
-            await self._drain_stale_events()
-
-            # Send prompt command
+        with rt_ctx.bind_runtime_context(turn_id=turn_id, run_id=run_id), bind_turn_evidence(rt_ev):
+            TURN_EVIDENCE.register(rt_ev)
+            await self._lock.acquire()
+            cancelled = False
+            timed_out = False
+            send_failed = False
+            # G: set True when the pump observes the Pi subprocess dying mid-stream
+            # (see the process_died_event watcher below). Initialized here so the
+            # finally can read it even on the early-return send-failure path.
+            process_died = False
+            # F5/F24: publish the active turn's identity + cancellation token while
+            # the lock is held — abort() reads the sid for session scoping,
+            # dispatch_tool binds the token via use_token. Cleared in the finally.
+            self._active_turn_sid = turn_sid
+            _active_turn_token = CancellationToken(job_id=turn_id)
+            _active_turn_turn_id = turn_id
+            _active_turn_run_id = run_id
+            _active_turn_session_id = turn_sid or None
             try:
-                await self._rpc.request("prompt", data)
-            except PiRpcError as e:
-                logger.error(f"[PiBridge] stream_prompt send failed: {e}")
-                yield sse_event("task_error", {
-                    "task_id": turn_sid,
-                    "session_id": turn_sid,
-                    "turn_id": turn_id,
-                    "error": str(e),
-                })
-                yield sse_event("done", {"session_id": turn_sid})
-                return
+                # Drop residual events from a prior turn so they can't be dequeued
+                # and attributed to this session.
+                await self._drain_stale_events()
 
-            # Stream events from Pi
-            yield sse_event("task_start", {"task_id": turn_sid, "session_id": turn_sid, "turn_id": turn_id})
-
-            # G: watch the subprocess death signal alongside the event queue so
-            # a mid-stream Pi crash ends the turn promptly (error + done +
-            # no abort) instead of parking on heartbeat silence for the whole
-            # PI_EVENT_STREAM_TIMEOUT=180s stall budget and then retrying with
-            # duplicate side effects. Bare MagicMock rpc fakes (used by other
-            # test suites) auto-create a MagicMock for ``process_died_event``,
-            # which is not awaitable — fall back to a never-set event so those
-            # fakes degrade to the old heartbeat-only behavior.
-            process_died_event = getattr(self._rpc, "process_died_event", None)
-            if not isinstance(process_died_event, asyncio.Event):
-                process_died_event = asyncio.Event()
-
-            silence_seconds = 0.0
-            get_task = asyncio.ensure_future(self._rpc.events.get())
-            died_task = asyncio.ensure_future(process_died_event.wait())
-            pending = {get_task, died_task}
-            try:
-                while True:
-                    done, pending = await asyncio.wait(
-                        pending, timeout=PI_HEARTBEAT_INTERVAL,
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    if died_task in done:
-                        # Pi subprocess died mid-stream: the reader's finally
-                        # already failed every pending future; end the turn now
-                        # (error + done below), no abort RPC needed.
-                        process_died = True
-                        break
-                    if get_task in done:
-                        event = get_task.result()
-                        silence_seconds = 0.0
-                        sse = map_event_to_sse(event, turn_sid, cache_lookup=get_cached_dispatch_result)
-                        if _harness is not None:
-                            # V3: 给原始 SSE 事件记录补 turn/run correlation（显式透传）。
-                            _harness.record_sse_event({
-                                **event, "run_id": turn_sid, "turn_id": turn_id,
-                            })
-                        if sse:
-                            # V3: step_result 负载加 additive turn_id 字段（前端 ack 时
-                            # 通过 correlation 回传，闭环才完整）。
-                            yield _inject_turn_id(sse, turn_id)
-                        if event.get("type") == "agent_end":
-                            break
-                        # Re-arm the queue waiter for the next event; the
-                        # completed waiter task is dropped from `pending` by
-                        # the next asyncio.wait round.
-                        get_task = asyncio.ensure_future(self._rpc.events.get())
-                        pending.add(get_task)
-                    else:
-                        # Neither an event nor a death within one heartbeat
-                        # interval -> accumulate silence, keepalive.
-                        silence_seconds += PI_HEARTBEAT_INTERVAL
-                        if silence_seconds >= PI_EVENT_STREAM_TIMEOUT:
-                            # True stall: no Pi event for the whole stall budget.
-                            timed_out = True
-                            break
-                        # Keepalive: an SSE comment line (``: ...``) is ignored by
-                        # the client parser and never enters chat history or the
-                        # LLM context, but it produces bytes on the wire so proxies
-                        # and browsers see activity and don't drop the connection.
-                        yield ": keepalive\n\n"
-            finally:
-                # G: cancel the parked wait tasks so no queue-get / death-wait
-                # task outlives the turn; await their completion so nothing
-                # lingers past loop teardown. Also covers generator
-                # cancellation (client disconnect) mid-await.
-                for task in pending:
-                    task.cancel()
-                if pending:
-                    await asyncio.gather(*pending, return_exceptions=True)
-
-            if timed_out:
-                yield sse_event("error", {
-                    "session_id": turn_sid,
-                    "error": f"Pi agent stalled — no events for {int(PI_EVENT_STREAM_TIMEOUT)}s. The agent may be stuck; please retry.",
-                })
-            if process_died:
-                yield sse_event("error", {
-                    "session_id": turn_sid,
-                    "error": "Pi agent process exited unexpectedly mid-stream. The agent's tools may have run partially; please retry.",
-                })
-
-            yield sse_event("done", {"session_id": turn_sid})
-        except (asyncio.CancelledError, GeneratorExit):
-            # Client disconnected (page close / new send / session switch /
-            # network drop). Re-raise after flagging so the finally sends the
-            # abort RPC — otherwise Pi keeps running against an abandoned turn.
-            cancelled = True
-            raise
-        finally:
-            if process_died:
-                # G: the Pi subprocess is dead — the reader's finally already
-                # failed every pending future, so an abort RPC would only
-                # raise 'Pi process not started' (duplicate of the fast-fail).
-                # Still ignite the turn's cancellation token so in-flight
-                # HTTP-callback tool dispatches (bound via use_token) stop at
-                # their next checkpoint() instead of running to completion
-                # against a dead turn.
-                logger.error(
-                    "[PiBridge] Pi subprocess exited mid-stream (turn=%s); "
-                    "skipping abort RPC (reader already failed pending futures)",
-                    turn_sid,
-                )
-                if _active_turn_token is not None:
-                    _active_turn_token.cancel("pi process exited unexpectedly")
-            elif cancelled or timed_out:
-                # Tell Pi to stop generating tokens / executing tools. F10:
-                # this now covers the stall-timeout path too — previously a
-                # stalled turn yielded error+done and returned WITHOUT the
-                # abort RPC, so Pi kept executing tools (up to the 300s RPC
-                # timeout) and a user retry duplicated side effects.
-                # Awaiting inline (shielded + bounded) rather than fire-and-
-                # forget so no detached task retains the bridge (transport
-                # goal leak test). On GeneratorExit (aclose) the driving task
-                # is not cancelled, so this completes normally; on
-                # CancelledError the shield keeps the abort running while
-                # wait_for returns promptly. A failure or timeout here must
-                # never raise into generator cleanup.
+                # Send prompt command
                 try:
-                    await asyncio.wait_for(
-                        asyncio.shield(self._abort_on_disconnect(turn_sid)),
-                        timeout=5.0,
+                    await self._rpc.request("prompt", data)
+                except PiRpcError as e:
+                    logger.error(f"[PiBridge] stream_prompt send failed: {e}")
+                    send_failed = True
+                    yield sse_event("task_error", {
+                        "task_id": turn_sid,
+                        "session_id": turn_sid,
+                        "turn_id": turn_id,
+                        "error": str(e),
+                    })
+                    yield sse_event("done", {"session_id": turn_sid})
+                    return
+
+                # Stream events from Pi. task_start is a bridge-emitted structural
+                # event (not a Pi event), so first_event is NOT marked here — it is
+                # marked on the first REAL Pi event below, so first_event/TTFT-proxy
+                # measures prompt→first-Pi-event, not lock+drain+RPC-send.
+                yield sse_event("task_start", {"task_id": turn_sid, "session_id": turn_sid, "turn_id": turn_id})
+
+                # G: watch the subprocess death signal alongside the event queue so
+                # a mid-stream Pi crash ends the turn promptly (error + done +
+                # no abort) instead of parking on heartbeat silence for the whole
+                # PI_EVENT_STREAM_TIMEOUT=180s stall budget and then retrying with
+                # duplicate side effects. Bare MagicMock rpc fakes (used by other
+                # test suites) auto-create a MagicMock for ``process_died_event``,
+                # which is not awaitable — fall back to a never-set event so those
+                # fakes degrade to the old heartbeat-only behavior.
+                process_died_event = getattr(self._rpc, "process_died_event", None)
+                if not isinstance(process_died_event, asyncio.Event):
+                    process_died_event = asyncio.Event()
+
+                silence_seconds = 0.0
+                get_task = asyncio.ensure_future(self._rpc.events.get())
+                died_task = asyncio.ensure_future(process_died_event.wait())
+                pending = {get_task, died_task}
+                try:
+                    while True:
+                        done, pending = await asyncio.wait(
+                            pending, timeout=PI_HEARTBEAT_INTERVAL,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if died_task in done:
+                            # Pi subprocess died mid-stream: the reader's finally
+                            # already failed every pending future; end the turn now
+                            # (error + done below), no abort RPC needed.
+                            process_died = True
+                            break
+                        if get_task in done:
+                            event = get_task.result()
+                            silence_seconds = 0.0
+                            rt_ev.mark_first_event()
+                            sse = map_event_to_sse(event, turn_sid, cache_lookup=get_cached_dispatch_result)
+                            if _harness is not None:
+                                # V3: 给原始 SSE 事件记录补 turn/run correlation（显式透传）。
+                                _harness.record_sse_event({
+                                    **event, "run_id": run_id, "turn_id": turn_id,
+                                })
+                            if sse:
+                                rt_ev.inc_sse_event()
+                                # V3: step_result 负载加 additive turn_id 字段（前端 ack 时
+                                # 通过 correlation 回传，闭环才完整）。
+                                yield _inject_turn_id(sse, turn_id)
+                            if event.get("type") == "agent_end":
+                                break
+                            # Re-arm the queue waiter for the next event; the
+                            # completed waiter task is dropped from `pending` by
+                            # the next asyncio.wait round.
+                            get_task = asyncio.ensure_future(self._rpc.events.get())
+                            pending.add(get_task)
+                        else:
+                            # Neither an event nor a death within one heartbeat
+                            # interval -> accumulate silence, keepalive.
+                            silence_seconds += PI_HEARTBEAT_INTERVAL
+                            if silence_seconds >= PI_EVENT_STREAM_TIMEOUT:
+                                # True stall: no Pi event for the whole stall budget.
+                                timed_out = True
+                                break
+                            # Keepalive: an SSE comment line (``: ...``) is ignored by
+                            # the client parser and never enters chat history or the
+                            # LLM context, but it produces bytes on the wire so proxies
+                            # and browsers see activity and don't drop the connection.
+                            yield ": keepalive\n\n"
+                finally:
+                    # G: cancel the parked wait tasks so no queue-get / death-wait
+                    # task outlives the turn; await their completion so nothing
+                    # lingers past loop teardown. Also covers generator
+                    # cancellation (client disconnect) mid-await.
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        await asyncio.gather(*pending, return_exceptions=True)
+
+                if timed_out:
+                    yield sse_event("error", {
+                        "session_id": turn_sid,
+                        "error": f"Pi agent stalled — no events for {int(PI_EVENT_STREAM_TIMEOUT)}s. The agent may be stuck; please retry.",
+                    })
+                if process_died:
+                    yield sse_event("error", {
+                        "session_id": turn_sid,
+                        "error": "Pi agent process exited unexpectedly mid-stream. The agent's tools may have run partially; please retry.",
+                    })
+
+                yield sse_event("done", {"session_id": turn_sid})
+            except (asyncio.CancelledError, GeneratorExit):
+                # Client disconnected (page close / new send / session switch /
+                # network drop). Re-raise after flagging so the finally sends the
+                # abort RPC — otherwise Pi keeps running against an abandoned turn.
+                cancelled = True
+                raise
+            finally:
+                if process_died:
+                    # G: the Pi subprocess is dead — the reader's finally already
+                    # failed every pending future, so an abort RPC would only
+                    # raise 'Pi process not started' (duplicate of the fast-fail).
+                    # Still ignite the turn's cancellation token so in-flight
+                    # HTTP-callback tool dispatches (bound via use_token) stop at
+                    # their next checkpoint() instead of running to completion
+                    # against a dead turn.
+                    logger.error(
+                        "[PiBridge] Pi subprocess exited mid-stream (turn=%s); "
+                        "skipping abort RPC (reader already failed pending futures)",
+                        turn_sid,
                     )
-                except (asyncio.TimeoutError, asyncio.CancelledError):
-                    pass
-                except Exception as e:  # noqa: BLE001
-                    logger.warning("[PiBridge] abort-on-disconnect failed (turn=%s): %s", turn_sid, e)
-            # Drain any leftover events so a timeout/disconnect doesn't poison
-            # the next turn. (On a normal agent_end the queue is already empty;
-            # this is a no-op there.)
-            await self._drain_remaining_turn_events()
-            # Turn-end cleanup: drop this turn's dedup sets (incl. the "" bucket
-            # where sessionId-less Pi dispatches land) and orphaned dispatch
-            # results (written by the HTTP callback, never consumed after a
-            # disconnect). Without this they accumulate across sessions.
-            _cleanup_turn_state(turn_sid)
-            # Clear the active-turn markers AFTER the abort above (abort reads
-            # them to cancel the token) and before releasing the lock.
-            self._active_turn_sid = None
-            _active_turn_token = None
-            self._lock.release()
+                    if _active_turn_token is not None:
+                        _active_turn_token.cancel("pi process exited unexpectedly")
+                elif cancelled or timed_out:
+                    # Tell Pi to stop generating tokens / executing tools. F10:
+                    # this now covers the stall-timeout path too — previously a
+                    # stalled turn yielded error+done and returned WITHOUT the
+                    # abort RPC, so Pi kept executing tools (up to the 300s RPC
+                    # timeout) and a user retry duplicated side effects.
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(self._abort_on_disconnect(turn_sid)),
+                            timeout=5.0,
+                        )
+                    except (asyncio.TimeoutError, asyncio.CancelledError):
+                        pass
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("[PiBridge] abort-on-disconnect failed (turn=%s): %s", turn_sid, e)
+                # Drain any leftover events so a timeout/disconnect doesn't poison
+                # the next turn. (On a normal agent_end the queue is already empty;
+                # this is a no-op there.)
+                await self._drain_remaining_turn_events()
+                # Turn-end cleanup: drop this turn's dedup sets (incl. the "" bucket
+                # where sessionId-less Pi dispatches land) and orphaned dispatch
+                # results (written by the HTTP callback, never consumed after a
+                # disconnect). Without this they accumulate across sessions.
+                _cleanup_turn_state(turn_sid)
+                # Clear the active-turn markers AFTER the abort above (abort reads
+                # them to cancel the token) and before releasing the lock.
+                self._active_turn_sid = None
+                _active_turn_token = None
+                _active_turn_turn_id = None
+                _active_turn_run_id = None
+                _active_turn_session_id = None
+                self._lock.release()
+                # Runtime observability: settle turn outcome (cancelled ≠ failed),
+                # emit the diagnostic summary, and unregister the evidence. Order:
+                # outcome settled from flags captured above.
+                if cancelled:
+                    rt_ev.settle(Outcome.CANCELLED)
+                elif timed_out or send_failed or process_died:
+                    if timed_out:
+                        failure_class = "pi_stall"
+                    elif process_died:
+                        failure_class = "pi_process_died"
+                    else:
+                        failure_class = "pi_send_error"
+                    rt_ev.settle(Outcome.FAILED, failure_class=failure_class)
+                else:
+                    rt_ev.settle(Outcome.SUCCEEDED)
+                rt_ev.mark_ended()
+                emit_turn_summary(rt_ev)
+                TURN_EVIDENCE.remove(turn_id)
+
 
 
 # Global bridge instance
