@@ -274,6 +274,22 @@ class MemorySessionStore(BaseSessionStore):
         """V3 Performance: return pre-computed descriptor (O(1)); None if not found."""
         return self._descriptors.get(session_id, {}).get(ref_id)
 
+    async def ref_exists(self, session_id: str, ref_id: str) -> bool:
+        """O(1) existence check; mirrors ``get()``'s LRU recency side-effect.
+
+        On a hit, moves the ref to the MRU end of the session's LRU order
+        (``move_to_end``, O(1)) so a metadata-only descriptor poll keeps the
+        payload alive under capacity eviction — same recency semantics as a
+        payload ``get()``. Unlike ``get()`` it does NOT read or re-store the
+        payload data itself (no pop/re-insert), so nothing is copied or
+        deserialized. Returns False on a miss (no reordering).
+        """
+        session_cache = self._store.get(session_id)
+        if not session_cache or ref_id not in session_cache:
+            return False
+        session_cache.move_to_end(ref_id)
+        return True
+
     async def clear_session(self, session_id: str) -> None:
         """清理会话数据"""
         self._store.pop(session_id, None)
