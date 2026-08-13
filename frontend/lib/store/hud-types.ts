@@ -1,6 +1,7 @@
 import type { Layer } from '@/lib/types/layer';
 import type { GeoJSONFeatureCollection } from '@/lib/types';
 import type { ExplorerTask } from '@/lib/types/explorer';
+import type { AnalysisResult, LayerDescriptor, StepResultEvent } from '@/lib/results/types';
 
 export interface SelectedFeatureInfo {
   layerId: string;          // 渲染层 id (含 custom- 前缀)
@@ -70,7 +71,7 @@ export interface CausalEntry {
   mapState?: Record<string, unknown>;
 }
 
-export type LeftTab = 'chat' | 'project' | 'layers' | 'analysis' | 'exports' | 'export_layout' | 'data_sources' | 'tasks';
+export type LeftTab = 'chat' | 'project' | 'layers' | 'analysis' | 'exports' | 'export_layout' | 'data_sources' | 'tasks' | 'results';
 export type SettingsTab = 'llm' | 'skills' | 'rag' | 'layers' | 'map' | 'system';
 
 export interface SkillEntry {
@@ -308,6 +309,19 @@ export interface HudState {
   addExplorerTask: (task: ExplorerTask) => void;
   updateExplorerTask: (taskId: string, updates: Partial<ExplorerTask>) => void;
   removeExplorerTask: (taskId: string) => void;
+
+  /* ─── Analysis Results Workbench (session-scoped, bounded, non-persisted) ─── */
+  results: AnalysisResult[];
+  selectedResultId: string | null;
+  /** Stash preceding tool_call args (best-effort input evidence). */
+  captureToolCallArgs: (tool: string, argsStr: string) => void;
+  /** Normalize + record a step_result event; returns the result id (or undefined if ignored). */
+  captureStepResult: (step: StepResultEvent) => string | undefined;
+  /** Merge lazy /layers/descriptor metadata into a result's output (no CRS fabrication). */
+  enrichResultOutput: (resultId: string, ref: string, descriptor: LayerDescriptor) => void;
+  selectResult: (id: string | null) => void;
+  removeResult: (id: string) => void;
+  clearResults: () => void;
 
   /* ─── Export Layout ─── */
   exportSettings: ExportSettings;
