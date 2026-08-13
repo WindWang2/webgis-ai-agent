@@ -13,6 +13,7 @@ def test_is_raster_source_detection():
     }
     assert is_raster_source(payload) is True
     assert is_raster_source({"type": "FeatureCollection"}) is False
+    assert is_raster_source({"array": np.zeros((2, 2))}) is True
 
 
 def test_convert_raster_without_session_dir():
@@ -49,3 +50,16 @@ def test_convert_raster_with_session_dir_persists_png(tmp_path):
     saved_png_path = tmp_path / "raster" / "src-dem.png"
     assert saved_png_path.exists()
     assert saved_png_path.stat().st_size > 0
+
+
+def test_missing_bounds_are_not_fabricated(tmp_path):
+    payload = {"array": np.array([[0.2, 0.4], [0.6, 0.8]])}
+
+    _layer, _legend, _png, source_data = convert_raster_to_mapspec_layer(
+        payload,
+        {"id": "truthful", "source": "truthful-source"},
+        session_dir=tmp_path,
+    )
+
+    assert source_data is not None
+    assert "bounds" not in source_data

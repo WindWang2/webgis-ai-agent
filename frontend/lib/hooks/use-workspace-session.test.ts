@@ -170,4 +170,30 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
 
     expect(vi.mocked(devOnly.error)).not.toHaveBeenCalled();
   });
+
+  it('retains anonymous owner tokens per session during A/B switching', async () => {
+    fetchMock.mockResolvedValue(jsonOk({ sessions: [], messages: [], map_state: null }));
+    const { result } = renderHook(() => useWorkspaceSession(vi.fn()));
+    act(() => {
+      result.current.rememberSessionToken('session-a', 'token-a');
+      result.current.rememberSessionToken('session-b', 'token-b');
+    });
+
+    await act(async () => {
+      await result.current.selectSession('session-a', vi.fn());
+    });
+    const aRestore = fetchMock.mock.calls.find(
+      ([url]) => String(url).endsWith('/sessions/session-a'),
+    );
+    expect(aRestore?.[1]?.headers?.['X-Session-Token']).toBe('token-a');
+
+    await act(async () => {
+      await result.current.selectSession('session-b', vi.fn());
+    });
+    const bRestore = fetchMock.mock.calls.find(
+      ([url]) => String(url).endsWith('/sessions/session-b'),
+    );
+    expect(bRestore?.[1]?.headers?.['X-Session-Token']).toBe('token-b');
+    expect(result.current.sessionTokenRef.current).toBe('token-b');
+  });
 });

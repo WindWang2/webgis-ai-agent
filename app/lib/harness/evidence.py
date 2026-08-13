@@ -22,7 +22,8 @@ from typing import Any, Dict, List, Optional
 
 _MAX_CARTOGRAPHIC_CHECKS = 64
 _MAX_CARTOGRAPHIC_FINDINGS = 32
-_MAX_REPAIR_ATTEMPTS = 2
+# Two desired-state attempts plus two runtime convergence attempts.
+_MAX_REPAIR_ATTEMPTS = 4
 _MAX_VISUAL_EVIDENCE = 4
 
 

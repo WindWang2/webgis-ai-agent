@@ -3,11 +3,24 @@ import type { MapSpec, MapSpecLayer } from "@/lib/mapspec-compiler/types";
 import { SUBLAYER_SEP } from "./adapter";
 
 function equalStructured(left: unknown, right: unknown): boolean {
-  try {
-    return JSON.stringify(left) === JSON.stringify(right);
-  } catch {
-    return false;
+  if (typeof left === "number" && typeof right === "number") {
+    return Number.isFinite(left) && Number.isFinite(right) && Math.abs(left - right) <= 1e-9;
   }
+  if (left === right) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right)
+      && left.length === right.length
+      && left.every((value, index) => equalStructured(value, right[index]));
+  }
+  if (left && right && typeof left === "object" && typeof right === "object") {
+    const leftRecord = left as Record<string, unknown>;
+    const rightRecord = right as Record<string, unknown>;
+    const leftKeys = Object.keys(leftRecord).sort();
+    const rightKeys = Object.keys(rightRecord).sort();
+    return equalStructured(leftKeys, rightKeys)
+      && leftKeys.every((key) => equalStructured(leftRecord[key], rightRecord[key]));
+  }
+  return false;
 }
 
 function liveProperty(
@@ -98,11 +111,15 @@ export function collectCartographicRuntimeObservation(
     );
     return {
       id: hud._mapspecLayerId ?? hud.id,
+      runtime_store_id: hud.id,
       _refId: hud._refId,
       _descriptor: hud._descriptor,
       visible: visibility.length > 0 && visibility.every(Boolean),
       opacity: hud.opacity,
+      style: hud.style,
       legend_spec: hud.legend_spec,
+      projection_fingerprint: hud._mapspecProjectionFingerprint,
+      repair_action_id: hud._mapspecRepairActionId,
       source_converged: sourceConverged,
       style_converged: styleConverged,
       runtime_layer_count: live.length,

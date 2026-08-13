@@ -12,7 +12,9 @@ and emit a ``fly_to`` command (the live camera actually moves).
 """
 import shutil
 import uuid
+from unittest.mock import AsyncMock, patch
 
+import numpy as np
 import pytest
 
 from app.services.mapspec.store import BASE_STORAGE_DIR
@@ -132,6 +134,97 @@ async def test_layer_upsert_preserves_result_ref_provenance(registry, clean_sess
     assert res["runtime_patch"]["result_ref"] == result_ref
     assert res["runtime_patch"]["mapspec_fingerprint"] == res["mapspec_fingerprint"]
     assert res["commands"][0]["command"] == "add_layer"
+
+
+@pytest.mark.asyncio
+async def test_inline_upsert_persists_one_ref_and_keeps_mapspec_metadata_only(
+    registry, clean_session,
+):
+    source = _geojson([
+        {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [120, 30]},
+            "properties": {"value": 1},
+        }
+    ])
+
+    res = await registry.dispatch(
+        "webgis_layer_upsert",
+        {
+            "layer": {"id": "inline", "source": "inline-source", "type": "circle"},
+            "source_data": source,
+        },
+        session_id=clean_session,
+    )
+
+    source_entry = res["mapspec"]["sources"]["inline-source"]
+    assert res["result_ref"].startswith("ref:geojson-")
+    assert source_entry["ref_id"] == res["result_ref"]
+    assert "inlineData" not in source_entry
+    assert source_entry["profile"]["fields_status"] == "explicit"
+    assert await session_data_manager.get_ref_descriptor(
+        clean_session, res["result_ref"]
+    ) is not None
+
+
+@pytest.mark.asyncio
+async def test_ref_upsert_uses_descriptor_without_full_feature_materialization(
+    registry, clean_session,
+):
+    result_ref = await session_data_manager.store(
+        clean_session,
+        _geojson([{
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [120, 30]},
+            "properties": {"value": 1},
+        }]),
+        prefix="geojson",
+    )
+
+    with patch.object(
+        session_data_manager,
+        "get",
+        new=AsyncMock(side_effect=AssertionError("full ref load is forbidden")),
+    ):
+        res = await registry.dispatch(
+            "webgis_layer_upsert",
+            {
+                "layer": {"id": "ref", "source": "ref-source", "type": "circle"},
+                "source_data": result_ref,
+            },
+            session_id=clean_session,
+        )
+
+    profile = res["mapspec"]["sources"]["ref-source"]["profile"]
+    assert res["success"] is True
+    assert profile["featureCount"] == 1
+    assert profile["fields_status"] == "unknown"
+    assert res["cartographic_review"]["counters"]["full_data_loads"] == 0
+
+
+@pytest.mark.asyncio
+async def test_raster_upsert_reaches_runtime_with_image_identity(
+    registry, clean_session,
+):
+    res = await registry.dispatch(
+        "webgis_layer_upsert",
+        {
+            "layer": {"id": "ndvi", "source": "ndvi-source", "type": "raster"},
+            "source_data": {
+                "array": np.array([[0.1, 0.5], [0.8, 0.2]], dtype=float),
+                "bounds": [120.0, 30.0, 121.0, 31.0],
+            },
+        },
+        session_id=clean_session,
+    )
+
+    assert res["success"] is True
+    assert res["result_ref"].startswith("ref:raster/")
+    assert res["image"].endswith(".png")
+    assert res["bbox"] == [120.0, 30.0, 121.0, 31.0]
+    assert res["commands"][0]["command"] == "add_heatmap_raster"
+    assert res["runtime_patch"]["result_ref"] == res["result_ref"]
+    assert res["runtime_patch"]["image_ref"] == res["result_ref"]
 
 
 @pytest.mark.asyncio

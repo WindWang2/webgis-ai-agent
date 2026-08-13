@@ -203,6 +203,11 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
       "featureCount": feature_count,
       "geometryTypes": geom_types,
       "fields": fields_profile,
+      # The profiler scanned the complete supplied feature collection, so a
+      # missing key is authoritative absence. Descriptor-only profiles use
+      # ``unknown`` instead; semantic review must not turn unavailable schema
+      # metadata into a false missing-field failure.
+      "fields_status": "explicit",
       "suggestedView": suggested_view,
       "temporalProfile": temporal_profile.model_dump() if temporal_profile.overall_confidence > 0 else None,
   }

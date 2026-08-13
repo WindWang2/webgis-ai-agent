@@ -4,6 +4,7 @@ These tests exercise public seams only: semantic review, the bounded repair
 composer, lifecycle results, and the harness quality gate.
 """
 
+import copy
 import shutil
 import uuid
 
@@ -58,7 +59,12 @@ def _point_profile(*, crs="EPSG:4326", crs_status="explicit"):
 def _plain_mapspec():
     return {
         "version": "1.0",
-        "sources": {"points": {"type": "geojson"}},
+        "sources": {
+            "points": {
+                "type": "geojson",
+                "inlineData": {"type": "FeatureCollection", "features": []},
+            }
+        },
         "layers": [
             {
                 "id": "result",
@@ -194,6 +200,128 @@ def test_visual_overlap_is_explicitly_not_evaluated_and_not_a_quality_oracle():
     assert report["status"] == "pass"
 
 
+def test_profile_only_source_cannot_pass_without_runtime_carrier():
+    mapspec = _plain_mapspec()
+    mapspec["sources"]["points"].pop("inlineData")
+    mapspec["sources"]["points"]["profile"] = _point_profile()
+
+    report = evaluate_cartography_semantics(mapspec).to_dict()
+
+    address = next(c for c in report["checks"] if c["rule"] == "SOURCE_ADDRESSABILITY")
+    assert address["status"] == "fail"
+    assert report["passed"] is False
+
+
+def test_default_visibility_is_explicitly_attributed_to_runtime_default():
+    report = evaluate_cartography_semantics(
+        _plain_mapspec(), {"points": _point_profile()}
+    ).to_dict()
+
+    visibility = next(c for c in report["checks"] if c["rule"] == "RESULT_VISIBILITY")
+    assert visibility["status"] == "pass"
+    assert visibility["evidence"]["visibility_source"] == "maplibre_default_visible"
+
+
+def test_unknown_geometry_and_native_expression_are_not_evaluated_as_passes():
+    mapspec = _plain_mapspec()
+    mapspec["layers"][0]["paint"]["circle-color"] = ["get", "value"]
+    profile = _point_profile()
+    profile["geometryTypes"] = ["GeometryCollection"]
+
+    report = evaluate_cartography_semantics(mapspec, {"points": profile}).to_dict()
+
+    geometry = next(c for c in report["checks"] if c["rule"] == "GEOMETRY_LAYER_TYPE")
+    expression = next(c for c in report["checks"] if c["rule"] == "STYLE_EXPRESSION_SUPPORT")
+    assert geometry["status"] == "not_evaluated"
+    assert expression["status"] == "not_evaluated"
+    assert report["passed"] is False
+
+
+def test_descriptor_unknown_fields_do_not_become_false_missing_field_failure():
+    mapspec = _plain_mapspec()
+    mapspec["layers"][0]["paint"]["circle-color"] = {
+        "method": "interpolate", "field": "server_only",
+        "stops": [[1, "#111111"], [2, "#eeeeee"]],
+    }
+    mapspec["layers"][0]["legend_spec"] = {
+        "type": "continuous", "field": "server_only", "min": 1, "max": 2,
+        "palette_colors": ["#111111", "#eeeeee"],
+    }
+    profile = _point_profile()
+    profile["fields"] = {}
+    profile["fields_status"] = "unknown"
+
+    report = evaluate_cartography_semantics(mapspec, {"points": profile}).to_dict()
+
+    field = next(c for c in report["checks"] if c["rule"] == "PAINT_FIELD_EXISTS")
+    assert field["status"] == "not_evaluated"
+    assert report["status"] == "warning"
+
+
+def test_maplibre_rgba_color_is_valid_deterministic_style_evidence():
+    mapspec = _plain_mapspec()
+    rgba = "rgba(0,242,255,0.3)"
+    mapspec["layers"][0]["paint"] = {
+        "color": {"method": "match", "field": "kind", "cases": [["a", rgba]], "default": rgba}
+    }
+    mapspec["layers"][0]["legend_spec"] = {
+        "type": "categorical",
+        "field": "kind",
+        "categories": [{"key": "a", "label": "A", "color": rgba}],
+    }
+    profile = _point_profile()
+    profile["fields"]["kind"] = {
+        "type": "string", "sampleValues": ["a"], "null_count": 0,
+    }
+
+    report = evaluate_cartography_semantics(mapspec, {"points": profile}).to_dict()
+
+    colors = [
+        check for check in report["checks"]
+        if check["rule"] == "CLASSIFICATION_INTEGRITY"
+    ]
+    assert colors and all(check["status"] == "pass" for check in colors)
+
+
+def test_raster_requires_truthful_bounds_independent_of_profile_bbox():
+    mapspec = {
+        "version": "1.0",
+        "sources": {
+            "r": {
+                "type": "raster",
+                "imageRef": "ref:raster/result",
+                "profile": {
+                    "bbox": [100, 20, 101, 21],
+                    "crs": "EPSG:4326",
+                    "crs_status": "explicit",
+                },
+            }
+        },
+        "layers": [{"id": "raster", "source": "r", "type": "raster"}],
+    }
+
+    report = evaluate_cartography_semantics(mapspec).to_dict()
+
+    bounds = next(c for c in report["checks"] if c["rule"] == "RASTER_BOUNDS_VALIDITY")
+    assert bounds["status"] == "fail"
+    assert report["passed"] is False
+
+
+def test_cartographic_generation_fingerprint_covers_filter_time_and_source_identity():
+    base = _plain_mapspec()
+    fingerprints = {cartographic_fingerprint(base)}
+    for mutation in ("filter", "time", "data"):
+        candidate = copy.deepcopy(base)
+        if mutation == "filter":
+            candidate["layers"][0]["filter"] = ["==", "kind", "a"]
+        elif mutation == "time":
+            candidate["time"] = {"field": "observed_at", "start": "2026-01-01"}
+        else:
+            candidate["sources"]["points"]["data_fingerprint"] = "data-sha256:new"
+        fingerprints.add(cartographic_fingerprint(candidate))
+    assert len(fingerprints) == 4
+
+
 def test_safe_opacity_repair_is_bounded_and_does_not_mutate_input_or_data():
     mapspec = _plain_mapspec()
     mapspec["sources"]["points"]["inlineData"] = {
@@ -268,8 +396,9 @@ def test_unclassified_imagery_raster_does_not_require_thematic_legend():
         "version": "1.0",
         "sources": {
             "image": {
-                "type": "image",
-                "imageRef": "ref:raster-image",
+                    "type": "raster",
+                    "imageRef": "ref:raster-image",
+                    "bounds": [100, 20, 101, 21],
                 "profile": {
                     "bbox": [100, 20, 101, 21],
                     "crs": "EPSG:4326",
@@ -476,19 +605,21 @@ def _record_mapspec_mutation(
     reported_fingerprint: str | None = None,
     reported_status: str = "passed",
     observation_seq: int = 0,
+    tool_call_id: str = "call-1",
 ):
     fingerprint = reported_fingerprint or cartographic_fingerprint(mapspec)
     harness.record_tool_call(
-        "call-1", "webgis_layer_upsert", {"layer": {"id": "result"}}
+        tool_call_id, "webgis_layer_upsert", {"layer": {"id": "result"}}
     )
     harness.record_tool_result(
-        "call-1",
+        tool_call_id,
         "webgis_layer_upsert",
         {
             "success": True,
             "is_compiled": True,
             "mapspec_fingerprint": fingerprint,
             "runtime_observation_seq": observation_seq,
+            "runtime_projection_fingerprint": "runtime-test-projection",
             # Transported evidence is deliberately forgeable in these tests;
             # the harness must never use it as its quality oracle.
             "cartographic_review": {
@@ -580,6 +711,7 @@ async def test_harness_pass_requires_new_session_owned_runtime_observation():
                     "sequence": 4,
                     "source": "frontend_runtime",
                     "mapspec_fingerprint": cartographic_fingerprint(mapspec),
+                    "style_loaded": True,
                     "layers": [
                         {
                             "id": "result",
@@ -587,6 +719,7 @@ async def test_harness_pass_requires_new_session_owned_runtime_observation():
                             "opacity": 0.8,
                             "legend_spec": None,
                             "style_converged": True,
+                            "projection_fingerprint": "runtime-test-projection",
                         }
                     ],
                 },
@@ -605,6 +738,58 @@ async def test_harness_pass_requires_new_session_owned_runtime_observation():
         result, require_evaluated=False, require_cartography=True
     )
     assert gate["checks"]["CartographicQuality"]["passed"] is True
+
+
+@pytest.mark.asyncio
+async def test_matching_headless_fatal_error_is_deterministic_failure_not_visual_warning():
+    mapspec = _plain_mapspec()
+    mapspec["sources"]["points"]["profile"] = _point_profile()
+    fingerprint = cartographic_fingerprint(mapspec)
+
+    async def reader(session_id: str):
+        return {
+            "session_id": session_id,
+            "mapspec": mapspec,
+            "map_state": {
+                "_cartographic_observation": _runtime_observation(
+                    session_id, fingerprint, sequence=2, visible=True
+                )
+            },
+        }
+
+    harness = PiAgentHarness(session_id="headless-fatal", cartography_state_reader=reader)
+    _record_mapspec_mutation(harness, mapspec, observation_seq=1)
+    harness.record_tool_call("runtime-1", "webgis_runtime_validate", {})
+    harness.record_tool_result(
+        "runtime-1",
+        "webgis_runtime_validate",
+        {
+            "valid": False,
+            "mapspec_fingerprint": fingerprint,
+            "report": {
+                "mapLoaded": False,
+                "fatalError": "MapLibre initialization failed",
+                "pageErrors": [],
+            },
+            "visual_evidence": {
+                "evidence_class": "heuristic", "status": "evaluated",
+            },
+        },
+    )
+
+    result = await harness.evaluate_with_evidence()
+
+    fatal = next(
+        check for check in result["cartography"]["checks"]
+        if check["rule"] == "HEADLESS_RUNTIME_EXECUTION"
+    )
+    assert fatal["status"] == "fail"
+    assert fatal["evidence_class"] == "deterministic"
+    assert result["cartography"]["status"] == "failed_unrepairable"
+    gate = HarnessEvaluator().evaluate_evidence(
+        result, require_evaluated=False, require_cartography=True
+    )
+    assert gate["checks"]["CartographicQuality"]["passed"] is False
 
 
 @pytest.mark.asyncio
@@ -628,6 +813,7 @@ async def test_harness_matches_runtime_layer_only_through_exact_result_provenanc
                     "sequence": 2,
                     "source": "frontend_runtime",
                     "mapspec_fingerprint": cartographic_fingerprint(mapspec),
+                    "style_loaded": True,
                     # The main HUD mounts analysis outputs under the ref identity,
                     # not the semantic MapSpec layer id.
                     "layers": [{
@@ -636,6 +822,7 @@ async def test_harness_matches_runtime_layer_only_through_exact_result_provenanc
                         "visible": True,
                         "opacity": 0.8,
                         "style_converged": True,
+                        "projection_fingerprint": "runtime-test-projection",
                     }],
                 },
             },
@@ -673,6 +860,7 @@ async def test_harness_rejects_same_named_layer_with_wrong_result_identity():
                     "sequence": 2,
                     "source": "frontend_runtime",
                     "mapspec_fingerprint": cartographic_fingerprint(mapspec),
+                    "style_loaded": True,
                     "layers": [{
                         # Even an equal semantic id cannot bypass conflicting ref
                         # provenance from another result.
@@ -692,7 +880,7 @@ async def test_harness_rejects_same_named_layer_with_wrong_result_identity():
 
     result = await harness.evaluate_with_evidence()
 
-    assert result["cartography"]["status"] == "failed_repairable"
+    assert result["cartography"]["status"] == "failed_unrepairable"
     presence = next(
         check for check in result["cartography"]["checks"]
         if check["rule"] == "RUNTIME_RESULT_PRESENCE"
@@ -716,6 +904,7 @@ async def test_harness_stale_observation_and_stale_fingerprint_cannot_pass():
                     "sequence": 7,
                     "source": "frontend_runtime",
                     "mapspec_fingerprint": cartographic_fingerprint(mapspec),
+                    "style_loaded": True,
                     "layers": [{
                         "id": "result", "visible": True,
                         "opacity": 0.8, "style_converged": True,
@@ -945,9 +1134,11 @@ async def test_unchanged_mapspec_reuses_deterministic_review():
                     "sequence": 2,
                     "source": "frontend_runtime",
                     "mapspec_fingerprint": cartographic_fingerprint(mapspec),
+                    "style_loaded": True,
                     "layers": [{
                         "id": "result", "visible": True, "opacity": 0.8,
                         "style_converged": True,
+                        "projection_fingerprint": "runtime-test-projection",
                     }],
                 },
             },
@@ -998,6 +1189,7 @@ async def test_production_session_harness_re_evaluates_after_runtime_and_ack(
             "style_converged": True,
             "source_converged": True,
             "runtime_layer_count": 1,
+            "projection_fingerprint": "runtime-test-projection",
         }],
         viewport={},
         style_loaded=True,
@@ -1026,6 +1218,178 @@ async def test_production_session_harness_re_evaluates_after_runtime_and_ack(
     assert stored["_cartographic_review"]["cartography"]["status"] == "passed"
     assert stored["_cartographic_observation"]["mapspec_fingerprint"] == fingerprint
 
+    bridge._harnesses.pop(quality_session, None)
+
+
+def _runtime_observation(
+    session_id: str,
+    fingerprint: str,
+    *,
+    sequence: int,
+    visible: bool,
+    repair_action_id: str | None = None,
+) -> dict:
+    layer = {
+        "id": "result",
+        "runtime_store_id": "result",
+        "visible": visible,
+        "opacity": 0.8,
+        "style_converged": True,
+        "source_converged": True,
+        "runtime_layer_count": 1,
+        "projection_fingerprint": "runtime-test-projection",
+    }
+    if repair_action_id:
+        layer["repair_action_id"] = repair_action_id
+    return {
+        "session_id": session_id,
+        "sequence": sequence,
+        "source": "frontend_runtime",
+        "mapspec_fingerprint": fingerprint,
+        "style_loaded": True,
+        "reconcile_error": "",
+        "layers": [layer],
+    }
+
+
+@pytest.mark.asyncio
+async def test_runtime_hidden_layer_auto_repairs_then_ack_and_new_observation_pass(
+    quality_session,
+):
+    import app.agent_pi_bridge as bridge
+    from app.services.mapspec.store import mapspec_store_instance
+
+    mapspec = _plain_mapspec()
+    mapspec["sources"]["points"]["profile"] = _point_profile()
+    fingerprint = cartographic_fingerprint(mapspec)
+    await mapspec_store_instance.save_mapspec(quality_session, mapspec)
+    harness = bridge._get_session_harness(quality_session, create=True)
+    assert harness is not None
+    _record_mapspec_mutation(harness, mapspec, observation_seq=0)
+    await session_data_manager.set_map_state(
+        quality_session,
+        "_cartographic_observation",
+        _runtime_observation(quality_session, fingerprint, sequence=1, visible=False),
+    )
+
+    repairing = await bridge.evaluate_cartographic_session(quality_session)
+
+    action = repairing["repair_action"]
+    assert action["command"] == "cartographic_runtime_repair"
+    assert action["params"]["repair_patches"][0]["desired"]["visible"] is True
+    assert len(harness.tool_calls) == 1
+
+    await session_data_manager.append_map_action_event(
+        quality_session,
+        {
+            "action_id": action["action_id"],
+            "command": action["command"],
+            "status": "succeeded",
+            "actual": {"confirmed": True},
+        },
+    )
+    await session_data_manager.set_map_state(
+        quality_session,
+        "_cartographic_observation",
+        _runtime_observation(
+            quality_session,
+            fingerprint,
+            sequence=2,
+            visible=True,
+            repair_action_id=action["action_id"],
+        ),
+    )
+
+    converged = await bridge.evaluate_cartographic_session(quality_session)
+
+    assert converged["cartography"]["status"] == "passed"
+    assert converged["cartography"]["termination_reason"] == "quality_converged"
+    assert len(harness.tool_calls) == 1, "presentation repair must not rerun GIS analysis"
+    state = await session_data_manager.get_map_state(quality_session)
+    assert state["_cartographic_repair_state"]["attempts"][0]["status"] == "succeeded"
+    bridge._harnesses.pop(quality_session, None)
+
+
+@pytest.mark.asyncio
+async def test_identical_runtime_repair_terminates_and_user_cancel_supersedes(
+    quality_session,
+):
+    import app.agent_pi_bridge as bridge
+    from app.services.mapspec.store import mapspec_store_instance
+
+    mapspec = _plain_mapspec()
+    mapspec["sources"]["points"]["profile"] = _point_profile()
+    fingerprint = cartographic_fingerprint(mapspec)
+    await mapspec_store_instance.save_mapspec(quality_session, mapspec)
+    harness = bridge._get_session_harness(quality_session, create=True)
+    assert harness is not None
+    _record_mapspec_mutation(harness, mapspec, observation_seq=0)
+    await session_data_manager.set_map_state(
+        quality_session,
+        "_cartographic_observation",
+        _runtime_observation(quality_session, fingerprint, sequence=1, visible=False),
+    )
+    first = await bridge.evaluate_cartographic_session(quality_session)
+    action = first["repair_action"]
+    await session_data_manager.append_map_action_event(
+        quality_session,
+        {
+            "action_id": action["action_id"],
+            "command": action["command"],
+            "status": "succeeded",
+            "actual": {"confirmed": True},
+        },
+    )
+    await session_data_manager.set_map_state(
+        quality_session,
+        "_cartographic_observation",
+        _runtime_observation(
+            quality_session,
+            fingerprint,
+            sequence=2,
+            visible=False,
+            repair_action_id=action["action_id"],
+        ),
+    )
+
+    exhausted = await bridge.evaluate_cartographic_session(quality_session)
+    assert exhausted["cartography"]["status"] == "repair_exhausted"
+    assert exhausted["cartography"]["termination_reason"] == "repeated_runtime_repair"
+    assert "repair_action" not in exhausted
+
+    # A fresh generation gets one repair, but explicit frontend cancellation
+    # (the user changed state) terminates as superseded instead of fighting it.
+    mapspec["time"] = {"generation": 2}
+    fingerprint2 = cartographic_fingerprint(mapspec)
+    await mapspec_store_instance.save_mapspec(quality_session, mapspec)
+    _record_mapspec_mutation(
+        harness,
+        mapspec,
+        reported_fingerprint=fingerprint2,
+        observation_seq=2,
+        tool_call_id="call-2",
+    )
+    await session_data_manager.set_map_state(
+        quality_session,
+        "_cartographic_observation",
+        _runtime_observation(quality_session, fingerprint2, sequence=3, visible=False),
+    )
+    second = await bridge.evaluate_cartographic_session(quality_session)
+    cancelled_action = second["repair_action"]
+    await session_data_manager.append_map_action_event(
+        quality_session,
+        {
+            "action_id": cancelled_action["action_id"],
+            "command": cancelled_action["command"],
+            "status": "cancelled",
+            "error": "superseded_by_user",
+            "actual": {"reason": "superseded_by_user"},
+        },
+    )
+
+    superseded = await bridge.evaluate_cartographic_session(quality_session)
+    assert superseded["cartography"]["status"] == "superseded"
+    assert superseded["cartography"]["termination_reason"] == "user_or_newer_intent"
     bridge._harnesses.pop(quality_session, None)
 
 
@@ -1070,7 +1434,7 @@ def test_persisted_cartographic_evidence_is_bounded_without_losing_verdict():
     assert serialized["desired_review"]["checks_omitted"] == 16
     assert len(serialized["checks"]) == 64
     assert serialized["checks_omitted"] == 16
-    assert len(serialized["repair_attempts"]) == 2
-    assert serialized["repair_attempts_omitted"] == 3
+    assert len(serialized["repair_attempts"]) == 4
+    assert serialized["repair_attempts_omitted"] == 1
     assert len(serialized["visual_evidence"]) == 4
     assert serialized["visual_evidence_omitted"] == 4

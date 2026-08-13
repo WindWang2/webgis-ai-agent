@@ -39,6 +39,9 @@ export interface MapCommandContext {
   setSelectedBaseLayer: (idx: number) => void;
   // The action being dispatched (normalized lowercase command name).
   command: string;
+  // Backend-minted identity used to bind repair application to its ACK and
+  // the next live observation.
+  actionId?: string;
   // The action params. Typed as MapActionPayload['params'] to mirror the old
   // `action.params` destructuring exactly; passed at runtime as `action.params || {}`.
   params: MapActionPayload['params'];

@@ -161,9 +161,14 @@ async def snapshot(
     _validate_checkpoint_id(ckpt_id)
 
     session_id_for_refs = session_dir.name
-    # 1. 物化所有 ref（async）。这是数据读取，去重省的是写入，不是读取。
-    materialized_refs = await _materialize_refs(
-        mapspec, session_id_for_refs, session_data_manager
+    # Automatic mutation checkpoints protect presentation state. Session refs
+    # are immutable identities and cartographic repairs never mutate their
+    # datasets, so downloading a large ref on every style update is needless
+    # write amplification. Explicit named checkpoints remain self-contained.
+    materialized_refs = (
+        await _materialize_refs(mapspec, session_id_for_refs, session_data_manager)
+        if checkpoint_id is not None
+        else {}
     )
 
     # 2. ref blob 去重写入 + 内容哈希（整体卸载到线程）。

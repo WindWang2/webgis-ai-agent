@@ -26,8 +26,9 @@ def test_process_layer_ingestion_plain_geojson():
     assert source_entry["inlineData"] == geojson
     assert "profile" in source_entry
     assert source_entry["profile"]["featureCount"] == 1
-    assert suggested_view is not None
-    assert suggested_view["center"] == [120.0, 30.0]
+    # Coordinates alone are not authoritative CRS evidence. Unknown CRS must
+    # not silently produce a WGS84 camera target.
+    assert suggested_view is None
 
 
 def test_process_layer_ingestion_analysis_result():

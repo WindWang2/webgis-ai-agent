@@ -49,6 +49,8 @@ export interface MapActionAckSenderOptions {
   maxAcksPerPost?: number;
   /** Test seam; defaults to global fetch. */
   fetchImpl?: typeof fetch;
+  /** Receives a typed backend follow-up such as an AUTO_SAFE repair action. */
+  onResponse?: (sessionId: string, body: unknown) => void;
 }
 
 export interface MapActionAckSender {
@@ -70,16 +72,20 @@ export function createMapActionAckSender(options: MapActionAckSenderOptions): Ma
     debounceMs = DEFAULT_DEBOUNCE_MS,
     maxAcksPerPost = MAX_ACKS_PER_POST,
     fetchImpl,
+    onResponse,
   } = options;
 
   // Session id is captured per ack at enqueue time: acks produced just before a
   // session switch still POST to the session that issued the action.
-  let queue: Array<{ sessionId: string | undefined; ack: MapActionAck }> = [];
+  let queue: Array<{
+    sessionId: string | undefined;
+    token: string | null;
+    ack: MapActionAck;
+  }> = [];
   let timer: ReturnType<typeof setTimeout> | null = null;
 
-  const postBatch = (sessionId: string, acks: MapActionAck[]): void => {
+  const postBatch = (sessionId: string, token: string | null, acks: MapActionAck[]): void => {
     const doFetch = fetchImpl ?? fetch;
-    const token = getToken();
     doFetch(`${API_BASE}/api/v1/chat/sessions/${sessionId}/map-action-ack`, {
       method: 'POST',
       headers: {
@@ -87,6 +93,14 @@ export function createMapActionAckSender(options: MapActionAckSenderOptions): Ma
         ...(token ? { 'X-Session-Token': token } : {}),
       },
       body: JSON.stringify({ acks }),
+    }).then(async (response) => {
+      if (!response.ok || typeof response.json !== 'function') return;
+      try {
+        onResponse?.(sessionId, await response.json());
+      } catch {
+        // ACK storage already succeeded; an absent/malformed optional response
+        // body must not affect map interaction.
+      }
     }).catch((e) => {
       // Fire-and-forget: a failed ACK POST must never degrade the map or stream.
       devOnly.warn('[map-action-acks] ACK POST failed, dropping batch:', e);
@@ -104,25 +118,35 @@ export function createMapActionAckSender(options: MapActionAckSenderOptions): Ma
     // Group by session, preserving insertion order. A plain array of pairs is
     // used instead of Map iteration: the repo tsconfig has no ES2015+ target,
     // so `for...of` over a Map would fail tsc (TS2802).
-    const groups: Array<{ sessionId: string | undefined; acks: MapActionAck[] }> = [];
+    const groups: Array<{
+      sessionId: string | undefined;
+      token: string | null;
+      acks: MapActionAck[];
+    }> = [];
     for (const item of pending) {
-      const group = groups.find((g) => g.sessionId === item.sessionId);
+      const group = groups.find(
+        (g) => g.sessionId === item.sessionId && g.token === item.token,
+      );
       if (group) group.acks.push(item.ack);
-      else groups.push({ sessionId: item.sessionId, acks: [item.ack] });
+      else groups.push({ sessionId: item.sessionId, token: item.token, acks: [item.ack] });
     }
-    for (const { sessionId, acks } of groups) {
+    for (const { sessionId, token, acks } of groups) {
       if (!sessionId) {
         devOnly.warn('[map-action-acks] dropping acks with no session:', acks.length);
         continue;
       }
       for (let i = 0; i < acks.length; i += maxAcksPerPost) {
-        postBatch(sessionId, acks.slice(i, i + maxAcksPerPost));
+        postBatch(sessionId, token, acks.slice(i, i + maxAcksPerPost));
       }
     }
   };
 
   const sink: MapActionAckSink = (ack) => {
-    queue.push({ sessionId: ack.correlation?.session_id ?? getSessionId(), ack });
+    queue.push({
+      sessionId: ack.correlation?.session_id ?? getSessionId(),
+      token: getToken(),
+      ack,
+    });
     if (timer) clearTimeout(timer);
     timer = setTimeout(flush, debounceMs);
   };

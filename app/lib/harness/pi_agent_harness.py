@@ -87,7 +87,7 @@ def _expected_runtime_refs(
     candidates: List[Any] = [layer.get("id")]
     source = sources.get(layer.get("source"))
     if isinstance(source, dict):
-        candidates.extend((source.get("ref"), source.get("ref_id")))
+        candidates.extend((source.get("ref"), source.get("ref_id"), source.get("imageRef")))
     provenance = layer.get("provenance")
     if isinstance(provenance, dict):
         candidates.extend((provenance.get("result_ref"), provenance.get("source_ref")))
@@ -809,6 +809,8 @@ class PiAgentHarness:
         *,
         message: str,
         severity: str = "error",
+        repairability: str = "not_repairable",
+        suggested_fix: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         return {
             "rule": rule,
@@ -817,8 +819,8 @@ class PiAgentHarness:
             "message": message,
             "evidence_class": "deterministic",
             "evidence": evidence,
-            "repairability": "not_repairable",
-            "suggested_fix": None,
+            "repairability": repairability,
+            "suggested_fix": suggested_fix,
         }
 
     async def _collect_cartographic_evidence(
@@ -842,6 +844,12 @@ class PiAgentHarness:
 
         latest = mutation_calls[-1]
         tool_call_id = str(latest.get("tool_call_id") or "")
+        latest_arguments = latest.get("arguments") if isinstance(latest.get("arguments"), dict) else {}
+        latest_layer_arg = (
+            latest_arguments.get("layer")
+            if isinstance(latest_arguments.get("layer"), dict) else {}
+        )
+        latest_layer_id = str(latest_layer_arg.get("id") or "")
         evidence.source_tool_call_id = tool_call_id
         result_entry = results_by_id.get(tool_call_id) or {}
         transported = (
@@ -909,9 +917,19 @@ class PiAgentHarness:
             evidence.termination_reason = "mapspec_missing"
             return evidence
 
+        map_state = state.get("map_state") if isinstance(state.get("map_state"), dict) else {}
+        runtime_repair_state = map_state.get("_cartographic_repair_state")
+        if isinstance(runtime_repair_state, dict):
+            runtime_attempts = runtime_repair_state.get("attempts")
+            if isinstance(runtime_attempts, list):
+                evidence.repair_attempts.extend(
+                    copy.deepcopy(runtime_attempts[:2])
+                )
+
         current_fingerprint = cartographic_fingerprint(mapspec)
         evidence.mapspec_fingerprint = current_fingerprint
         evidence.counters["metadata_sources"] = len(mapspec.get("sources") or {})
+        headless_runtime_failed = False
         # A matching headless runtime result is additional heuristic evidence;
         # it never replaces the deterministic desired/runtime checks below.
         for call in reversed(self.tool_calls):
@@ -925,9 +943,29 @@ class PiAgentHarness:
             if (
                 isinstance(runtime_result, dict)
                 and runtime_result.get("mapspec_fingerprint") == current_fingerprint
-                and isinstance(runtime_result.get("visual_evidence"), dict)
             ):
-                evidence.visual_evidence.append(copy.deepcopy(runtime_result["visual_evidence"]))
+                if isinstance(runtime_result.get("visual_evidence"), dict):
+                    evidence.visual_evidence.append(copy.deepcopy(runtime_result["visual_evidence"]))
+                runtime_report = runtime_result.get("report")
+                if isinstance(runtime_report, dict):
+                    fatal_error = runtime_report.get("fatalError")
+                    page_errors = runtime_report.get("pageErrors") or []
+                    headless_runtime_failed = bool(fatal_error or page_errors)
+                    evidence.checks.append(self._cartography_check(
+                        "HEADLESS_RUNTIME_EXECUTION",
+                        "fail" if headless_runtime_failed else "pass",
+                        {
+                            "fatal_error": str(fatal_error)[:500] if fatal_error else None,
+                            "page_error_count": len(page_errors) if isinstance(page_errors, list) else 1,
+                            "map_loaded": runtime_report.get("mapLoaded"),
+                        },
+                        message=(
+                            "Headless runtime reported a deterministic execution failure."
+                            if headless_runtime_failed else
+                            "Headless runtime reported no fatal or page execution error."
+                        ),
+                        severity="error" if headless_runtime_failed else "info",
+                    ))
             break
         cache_key = (self.session_id, current_fingerprint)
         cached_review = self._cartography_review_cache.get(cache_key)
@@ -1010,7 +1048,13 @@ class PiAgentHarness:
             action for action in self._map_action_evidence
             if action.tool_call_id == tool_call_id
         ]
-        for action in related_actions:
+        repair_actions = [
+            action for action in related_actions
+            if action.command == "cartographic_runtime_repair"
+        ]
+        active_actions = repair_actions[-1:] if repair_actions else related_actions
+        active_repair = repair_actions[-1] if repair_actions else None
+        for action in active_actions:
             if not action.mapspec_fingerprint:
                 evidence.status = "not_evaluated"
                 evidence.checks.append(self._cartography_check(
@@ -1050,8 +1094,6 @@ class PiAgentHarness:
                 evidence.termination_reason = "user_or_newer_intent"
                 return evidence
             if action.status is MapActionStatus.FAILED:
-                evidence.status = "failed_repairable"
-                evidence.runtime_status = "fail"
                 evidence.checks.append(self._cartography_check(
                     "MAP_ACTION_ACK",
                     "fail",
@@ -1061,9 +1103,20 @@ class PiAgentHarness:
                         "error": action.error,
                     },
                     message="The frontend rejected the current MapSpec action.",
+                    repairability=(
+                        "not_repairable"
+                        if action.command == "cartographic_runtime_repair"
+                        else "auto_safe"
+                    ),
                 ))
-                evidence.termination_reason = "runtime_action_failed"
-                return evidence
+                if action.command == "cartographic_runtime_repair":
+                    evidence.status = "repair_exhausted"
+                    evidence.runtime_status = "fail"
+                    evidence.termination_reason = "runtime_repair_action_failed"
+                    return evidence
+                # An initial mount ACK failure does not outrank a later live
+                # observation: the runtime may have converged asynchronously.
+                continue
             if action.status is not MapActionStatus.SUCCEEDED:
                 evidence.status = "not_evaluated"
                 evidence.checks.append(self._cartography_check(
@@ -1093,12 +1146,16 @@ class PiAgentHarness:
                 severity="info" if verifiable and converged else "warning",
             ))
 
-        map_state = state.get("map_state") if isinstance(state.get("map_state"), dict) else {}
         observation = map_state.get("_cartographic_observation")
         baseline = transported.get("runtime_observation_seq")
         try:
             observed_seq = int(observation.get("sequence")) if isinstance(observation, dict) else -1
             baseline_seq = int(baseline) if baseline is not None else -1
+            if active_repair is not None:
+                baseline_seq = max(
+                    baseline_seq,
+                    int(active_repair.requested.get("observation_sequence", -1)),
+                )
         except (TypeError, ValueError):
             observed_seq, baseline_seq = -1, -1
         observation_owned = (
@@ -1165,7 +1222,32 @@ class PiAgentHarness:
             severity="info",
         ))
 
-        runtime_failed = False
+        style_loaded = observation.get("style_loaded") is True
+        reconcile_error = str(observation.get("reconcile_error") or "")
+        evidence.checks.append(self._cartography_check(
+            "RUNTIME_STYLE_LOADED",
+            "pass" if style_loaded else "fail",
+            {"style_loaded": observation.get("style_loaded")},
+            message=(
+                "MapLibre reported a loaded style for this observation."
+                if style_loaded else
+                "MapLibre had not loaded its style when evidence was collected."
+            ),
+            severity="info" if style_loaded else "error",
+        ))
+        evidence.checks.append(self._cartography_check(
+            "RUNTIME_RECONCILE_EXECUTION",
+            "pass" if not reconcile_error else "fail",
+            {"reconcile_error": reconcile_error[:500]},
+            message=(
+                "Runtime reconciliation completed without an error."
+                if not reconcile_error else
+                "Runtime reconciliation reported an execution error."
+            ),
+            severity="info" if not reconcile_error else "error",
+        ))
+
+        runtime_failed = headless_runtime_failed or not style_loaded or bool(reconcile_error)
         runtime_incomplete = False
         actual_layers = [
             layer for layer in (observation.get("layers") or [])
@@ -1200,7 +1282,10 @@ class PiAgentHarness:
                     "layer_id": layer_id,
                     "expected_identities": expected_refs,
                     "runtime_layer_present": present,
-                    "runtime_layer_id": actual.get("id") if actual is not None else None,
+                    "runtime_layer_id": (
+                        actual.get("runtime_store_id") or actual.get("id")
+                        if actual is not None else None
+                    ),
                     "matched_identity": matched_ref,
                 },
                 message=(
@@ -1214,6 +1299,35 @@ class PiAgentHarness:
                 runtime_failed = True
                 continue
             claimed_runtime_layer_ids.add(str(actual["id"]))
+
+            if layer_id == latest_layer_id:
+                expected_projection = transported.get("runtime_projection_fingerprint")
+                observed_projection = actual.get("projection_fingerprint")
+                projection_evaluated = bool(expected_projection and observed_projection)
+                projection_matches = (
+                    projection_evaluated and expected_projection == observed_projection
+                )
+                evidence.checks.append(self._cartography_check(
+                    "RUNTIME_PRESENTATION_PROJECTION",
+                    (
+                        "pass" if projection_matches
+                        else "fail" if projection_evaluated
+                        else "not_evaluated"
+                    ),
+                    {
+                        "layer_id": layer_id,
+                        "expected_projection": expected_projection,
+                        "observed_projection": observed_projection,
+                    },
+                    message=(
+                        "The runtime layer carries the server-authored presentation projection."
+                        if projection_matches else
+                        "The runtime presentation projection is stale or missing."
+                    ),
+                    severity="info" if projection_matches else "error" if projection_evaluated else "warning",
+                ))
+                runtime_failed = runtime_failed or (projection_evaluated and not projection_matches)
+                runtime_incomplete = runtime_incomplete or not projection_evaluated
 
             expected_visible = (
                 layer.get("visible") is not False
@@ -1231,6 +1345,7 @@ class PiAgentHarness:
                 ),
                 {
                     "layer_id": layer_id,
+                    "runtime_layer_id": actual.get("runtime_store_id") or actual.get("id"),
                     "expected_visible": expected_visible,
                     "actual_visible": actual_visible,
                 },
@@ -1244,6 +1359,11 @@ class PiAgentHarness:
                     )
                 ),
                 severity="info" if visible_match else "error" if visibility_evaluated else "warning",
+                repairability="auto_safe" if visibility_evaluated and not visible_match else "not_repairable",
+                suggested_fix=(
+                    {"operation": "set_runtime_visibility", "layer_id": layer_id, "visible": expected_visible}
+                    if visibility_evaluated and not visible_match else None
+                ),
             ))
             runtime_failed = runtime_failed or (visibility_evaluated and not visible_match)
             runtime_incomplete = runtime_incomplete or not visibility_evaluated
@@ -1269,7 +1389,7 @@ class PiAgentHarness:
                     ),
                     {
                         "layer_id": layer_id,
-                        "runtime_layer_id": actual.get("id"),
+                        "runtime_layer_id": actual.get("runtime_store_id") or actual.get("id"),
                         "expected_opacity": expected_opacity,
                         "actual_opacity": actual_opacity,
                     },
@@ -1283,6 +1403,11 @@ class PiAgentHarness:
                         )
                     ),
                     severity="info" if opacity_matches else "error" if opacity_evaluated else "warning",
+                    repairability="auto_safe" if opacity_evaluated and not opacity_matches else "not_repairable",
+                    suggested_fix=(
+                        {"operation": "set_runtime_opacity", "layer_id": layer_id, "opacity": expected_opacity}
+                        if opacity_evaluated and not opacity_matches else None
+                    ),
                 ))
                 runtime_failed = runtime_failed or (opacity_evaluated and not opacity_matches)
                 runtime_incomplete = runtime_incomplete or not opacity_evaluated
@@ -1295,6 +1420,7 @@ class PiAgentHarness:
                     "pass" if legend_match else "fail",
                     {
                         "layer_id": layer_id,
+                        "runtime_layer_id": actual.get("runtime_store_id") or actual.get("id"),
                         "expected_legend_present": True,
                         "actual_legend_present": actual.get("legend_spec") is not None,
                         "legend_matches": legend_match,
@@ -1305,6 +1431,11 @@ class PiAgentHarness:
                         "Runtime legend is missing or stale relative to MapSpec."
                     ),
                     severity="info" if legend_match else "error",
+                    repairability="auto_safe" if not legend_match else "not_repairable",
+                    suggested_fix=(
+                        {"operation": "refresh_runtime_legend", "layer_id": layer_id}
+                        if not legend_match else None
+                    ),
                 ))
                 runtime_failed = runtime_failed or not legend_match
 
@@ -1319,7 +1450,7 @@ class PiAgentHarness:
                 ),
                 {
                     "layer_id": layer_id,
-                    "runtime_layer_id": actual.get("id"),
+                    "runtime_layer_id": actual.get("runtime_store_id") or actual.get("id"),
                     "style_converged": style_converged,
                     "runtime_layer_count": actual.get("runtime_layer_count"),
                 },
@@ -1333,6 +1464,11 @@ class PiAgentHarness:
                     )
                 ),
                 severity="info" if style_converged is True else "error" if style_evaluated else "warning",
+                repairability="auto_safe" if style_converged is False else "not_repairable",
+                suggested_fix=(
+                    {"operation": "reapply_runtime_style", "layer_id": layer_id}
+                    if style_converged is False else None
+                ),
             ))
             runtime_failed = runtime_failed or style_converged is False
             runtime_incomplete = runtime_incomplete or not style_evaluated
@@ -1373,8 +1509,35 @@ class PiAgentHarness:
             ))
             runtime_failed = runtime_failed or not camera_matches
 
+        if active_repair is not None:
+            repaired_layers = [
+                layer for layer in actual_layers
+                if layer.get("repair_action_id") == active_repair.action_id
+            ]
+            repair_bound = bool(repaired_layers)
+            evidence.checks.append(self._cartography_check(
+                "RUNTIME_REPAIR_GENERATION",
+                "pass" if repair_bound else "not_evaluated",
+                {
+                    "repair_action_id": active_repair.action_id,
+                    "observed_layer_count": len(repaired_layers),
+                },
+                message=(
+                    "The new observation is bound to the acknowledged repair action."
+                    if repair_bound else
+                    "No observed layer is bound to the latest repair action."
+                ),
+                severity="info" if repair_bound else "warning",
+            ))
+            runtime_incomplete = runtime_incomplete or not repair_bound
+
         if runtime_failed:
-            evidence.status = "failed_repairable"
+            has_safe_failure = any(
+                check.get("status") == "fail"
+                and check.get("repairability") == "auto_safe"
+                for check in evidence.checks
+            )
+            evidence.status = "failed_repairable" if has_safe_failure else "failed_unrepairable"
             evidence.runtime_status = "fail"
             evidence.termination_reason = "runtime_state_mismatch"
         elif runtime_incomplete:
@@ -1396,8 +1559,9 @@ class PiAgentHarness:
         execution_failed = any(item.is_error for item in run.evidence)
         execution_status = "fail" if execution_failed else ("pass" if run.evidence else "not_evaluated")
         structural_status = (
-            "pass" if cartography.desired_status in ("pass", "warning")
-            else cartography.desired_status
+            "pass" if cartography.desired_review.get("passed") is True
+            else "fail" if cartography.desired_status == "fail"
+            else "not_evaluated"
         )
         return {
             "execution_validity": {"level": 1, "status": execution_status},

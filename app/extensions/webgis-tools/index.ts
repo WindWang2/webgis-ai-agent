@@ -8,6 +8,19 @@ import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-age
 import { TSchema, Type } from "typebox";
 
 const WEBGIS_API_BASE = process.env.WEBGIS_API_BASE ?? "http://localhost:8000";
+const BRIDGE_SECRET = process.env.WEBGIS_BRIDGE_SECRET ?? "";
+const TURN_CONTEXT_RE = /WEBGIS_TURN_CONTEXT:([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/;
+
+function currentTurnToken(ctx: any): string {
+	const entries = ctx?.sessionManager?.getEntries?.() ?? [];
+	for (let index = entries.length - 1; index >= Math.max(0, entries.length - 24); index -= 1) {
+		try {
+			const match = TURN_CONTEXT_RE.exec(JSON.stringify(entries[index]));
+			if (match) return match[1];
+		} catch { /* ignore unserializable extension entries */ }
+	}
+	return "";
+}
 
 export default function webgisToolsExtension(pi: ExtensionAPI): void {
 	pi.registerTool(defineWebgisExecuteTool());
@@ -28,17 +41,29 @@ function defineWebgisExecuteTool(): ToolDefinition<TSchema> {
 			toolName: Type.String({ description: "Name of the GIS tool to execute (e.g., spatial_analyze, raster_ndvi)" }),
 			arguments: Type.Record(Type.String(), Type.Any(), { description: "Tool-specific arguments as a JSON object" }),
 		}),
-		async execute(toolCallId, params) {
+		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			const { toolName, arguments: args } = params as {
 				toolName: string;
 				arguments: Record<string, unknown>;
 			};
 
+			const turnToken = currentTurnToken(ctx);
+			if (!turnToken) {
+				return {
+					content: [{ type: "text", text: "WebGIS tool execution rejected: missing turn context" }],
+					details: { error: "missing_turn_context", toolName },
+					isError: true,
+				};
+			}
+
 			try {
 				const response = await fetch(`${WEBGIS_API_BASE}/pi-tools/execute`, {
 					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ toolCallId, name: toolName, arguments: args }),
+					headers: {
+						"Content-Type": "application/json",
+						"X-Pi-Bridge-Secret": BRIDGE_SECRET,
+					},
+					body: JSON.stringify({ toolCallId, name: toolName, arguments: args, turnToken }),
 				});
 
 				if (!response.ok) {

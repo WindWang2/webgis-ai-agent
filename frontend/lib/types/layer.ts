@@ -49,6 +49,10 @@ export interface Layer {
   _mapspecLayerId?: string;
   /** Local ordering only; never used as evidence or sent to the backend. */
   _mapspecGenerationAt?: number;
+  /** Fingerprint of the bounded server-authored HUD presentation projection. */
+  _mapspecProjectionFingerprint?: string;
+  /** Last AUTO_SAFE repair action applied to this generation. */
+  _mapspecRepairActionId?: string;
   /** Bounded desired-state AUTO_SAFE repairs applied before runtime reconcile. */
   _cartographicRepairs?: Array<Record<string, unknown>>;
   created_at?: string;

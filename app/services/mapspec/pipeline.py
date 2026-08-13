@@ -64,7 +64,8 @@ def process_layer_ingestion(
         # carrier and its derived profile do not.
         for key in (
             "inlineData", "url", "dataPath", "imageRef", "bounds",
-            "imageSize", "profile", "profile_fingerprint",
+            "imageSize", "profile", "profile_fingerprint", "ref", "ref_id",
+            "data_fingerprint",
         ):
             source_entry.pop(key, None)
         store_data(source_entry, processed_source_data)
@@ -73,9 +74,13 @@ def process_layer_ingestion(
         processed_layer.get("provenance")
         if isinstance(processed_layer.get("provenance"), dict) else {}
     )
-    result_ref = provenance.get("result_ref") or provenance.get("source_ref")
+    # ``source_ref`` names an analysis input, not the displayable output. Only
+    # an explicit ``result_ref`` may replace the source carrier; conflating the
+    # two can make a layer point at its input while discarding its actual result.
+    result_ref = provenance.get("result_ref")
     if isinstance(result_ref, str) and result_ref:
         source_entry["ref"] = result_ref
+        source_entry["ref_id"] = result_ref
 
     suggested_view: Optional[Dict[str, Any]] = None
     if is_raster_entry(source_entry) or is_data_fabric_entry(source_entry):
@@ -107,5 +112,12 @@ def process_layer_ingestion(
                 }
         except Exception as e:
             logger.warning(f"Auto-profiling failed for layer {processed_layer.get('id')}: {e}")
+
+    # A session ref is the authoritative carrier. Profiling above may inspect
+    # caller-owned inline data once during ingestion, but the persisted MapSpec
+    # must not duplicate a 100k-feature payload merely to describe the map.
+    if isinstance(result_ref, str) and result_ref:
+        source_entry.pop("inlineData", None)
+        source_entry.pop("url", None)
 
     return processed_layer, source_entry, suggested_view

@@ -141,6 +141,15 @@ export function useMapBridge(
     ackSenderRef.current = createMapActionAckSender({
       getSessionId: () => sessionIdRef.current,
       getToken: () => sessionTokenRef?.current ?? null,
+      onResponse: (responseSessionId, body) => {
+        const response = body as { repair_action?: MapActionPayload } | null;
+        if (
+          responseSessionId === sessionIdRef.current
+          && response?.repair_action
+        ) {
+          mapActionCtxRef.current?.dispatchAction(response.repair_action);
+        }
+      },
     });
   }
   const ackSender = ackSenderRef.current;

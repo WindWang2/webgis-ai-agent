@@ -27,6 +27,7 @@ _SOURCE_METADATA_KEYS = (
     "imageSize",
     "profile",
     "profile_fingerprint",
+    "data_fingerprint",
 )
 _LAYER_METADATA_KEYS = (
     "id",
@@ -37,6 +38,7 @@ _LAYER_METADATA_KEYS = (
     "maxzoom",
     "layout",
     "paint",
+    "filter",
     "legend_spec",
     "provenance",
     "cartographic_intent",
@@ -91,6 +93,7 @@ def _profile_metadata(value: Any, budget: List[int]) -> Any:
         key: _bounded_metadata(value.get(key), budget=budget)
         for key in (
             "featureCount", "geometryTypes", "bbox", "crs", "crs_status",
+            "fields_status",
         )
         if key in value
     }
@@ -149,6 +152,7 @@ def cartographic_projection(mapspec: Dict[str, Any]) -> Dict[str, Any]:
         ),
         "view": _bounded_metadata(mapspec.get("view") or {}, budget=budget),
         "layout": _bounded_metadata(mapspec.get("layout") or {}, budget=budget),
+        "time": _bounded_metadata(mapspec.get("time") or {}, budget=budget),
         "sources": projected_sources,
         "layers": projected_layers,
     }

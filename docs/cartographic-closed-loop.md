@@ -73,10 +73,10 @@ layer/source shape. It is typed composition, not a rule DSL.
 
 Rules use metadata already stored on MapSpec sources and layers:
 
-- source/layer binding and result-ref provenance;
+- source/layer binding, source addressability, and exact result-ref provenance;
 - explicit expected-result visibility and finite opacity;
-- explicit CRS provenance, finite ordered bounding boxes, and geographic
-  coordinate plausibility;
+- explicit CRS provenance, independently validated vector/raster bounds, and
+  geographic coordinate plausibility;
 - empty-result and geometry/layer-type checks;
 - paint field/type/range checks;
 - thematic legend presence where classification requires it;
@@ -85,6 +85,13 @@ Rules use metadata already stored on MapSpec sources and layers:
 - runtime result presence, visibility, authoritative legend, and camera
   convergence in a newer frontend observation;
 - desired-vs-live MapLibre source, layer, paint, and layout convergence.
+
+Native MapLibre expression arrays and geometry collections are surfaced as
+`not_evaluated` when the structured checker cannot prove their semantics.
+Descriptor-backed sources whose fields are unknown likewise remain
+`not_evaluated`; they do not fail by pretending an absent field list is
+complete. A fatal/page execution error from the existing headless runtime is a
+deterministic runtime failure, while canvas appearance remains heuristic.
 
 Ordinary unclassified imagery does not require a thematic legend. An unknown
 CRS is never replaced with EPSG:4326. Coordinates without explicit CRS do not
@@ -113,6 +120,17 @@ Repeated failure fingerprints,
 repeated patch fingerprints, stale generations, or no safe repair terminate as
 `repair_exhausted`, `superseded`, `failed_repairable`, or
 `failed_unrepairable`; exhaustion never becomes success.
+
+After live-state review, a second bounded planner can issue the existing map
+action command `cartographic_runtime_repair`. It can only restore explicit
+visibility, reapply a finite desired opacity/style projection, or refresh the
+runtime legend from the authoritative MapSpec. The action carries the session,
+MapSpec fingerprint, preceding observation sequence, and patch fingerprint.
+It is applied by the existing frontend command arbiter, ACKed through the
+existing action channel, and must be followed by a newer observation bound to
+that exact repair action before re-review can pass. Runtime repair also has a
+hard maximum of two attempts; an identical patch, rejected ACK, user
+cancel/supersession, or stale generation terminates explicitly.
 
 ## Runtime convergence and user supersession
 
@@ -144,14 +162,29 @@ real session id and LRU bounded. Both the Pi dispatch path and the legacy chat
 tool pipeline feed the same harness seam; no fixed `"production"` evaluator or
 cross-session mutable accumulator is used.
 
+Pi callbacks are routed by a short-lived HMAC turn capability embedded in the
+agent turn and verified by the backend. Caller-supplied session IDs are ignored,
+and dispatch-result caches are keyed by the verified session plus tool-call ID.
+The frontend similarly retains anonymous owner tokens per session, and an ACK
+captures its session token when queued so a later workspace switch cannot
+retag the request.
+
 ## Performance and retention
 
 Review fingerprints use a strict field allowlist and bounded profile summary.
 Inline GeoJSON, features, source URLs, arbitrary nested metadata, and other
 dataset bodies are excluded. Review never resolves a large ref or downloads
 full data. Pure desired reviews are cached by
-`(session_id, content_fingerprint)` with a bounded 128-entry cache; live
-runtime comparison and ACK evidence are never cached.
+`(session_id, content_fingerprint)` with a bounded 128-entry cache. Completed
+runtime evaluations are cached only by session, runtime fingerprint,
+observation sequence, and a hash of terminal action/tool evidence; a new ACK,
+observation, tool result, or MapSpec generation invalidates the key.
+
+Automatic mutation checkpoints snapshot presentation state without
+materializing immutable session refs. Explicit named archival checkpoints
+remain self-contained and materialize their refs through the existing bounded
+checkpoint path. This prevents a style-only repair from downloading or copying
+a large dataset.
 
 Repair history is capped by the hard iteration limit. Slim tool/SSE payloads
 retain at most twelve non-pass checks and strip MapSpec source bodies. Evidence

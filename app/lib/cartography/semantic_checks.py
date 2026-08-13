@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
+import re
 from typing import Any, Dict, List, Optional
 
 from app.lib.cartography.thematic_spec import palette_size, spec_to_paint, thematic_field
@@ -348,13 +349,47 @@ def _is_num(v: Any) -> bool:
 
 
 def _is_supported_color(value: Any) -> bool:
-    """Validate CSS colors with the installed raster/color parser."""
+    """Validate colors accepted by MapLibre's CSS color grammar.
+
+    Pillow intentionally rejects CSS4 alpha floats in ``rgba()`` even though
+    MapLibre accepts them, so handle the bounded rgb/rgba forms explicitly and
+    retain Pillow for named/hex/hsl colors.
+    """
     if not isinstance(value, str) or not value.strip():
         return False
+    color = value.strip()
+    functional = re.fullmatch(r"rgba?\(([^)]*)\)", color, flags=re.IGNORECASE)
+    if functional:
+        parts = [part.strip() for part in functional.group(1).split(",")]
+        expected = 4 if color.lower().startswith("rgba") else 3
+        if len(parts) != expected:
+            return False
+
+        def _channel(part: str) -> bool:
+            try:
+                if part.endswith("%"):
+                    return 0.0 <= float(part[:-1]) <= 100.0
+                return 0.0 <= float(part) <= 255.0
+            except ValueError:
+                return False
+
+        if not all(_channel(part) for part in parts[:3]):
+            return False
+        if expected == 4:
+            try:
+                alpha = parts[3]
+                return (
+                    0.0 <= float(alpha[:-1]) <= 100.0
+                    if alpha.endswith("%")
+                    else 0.0 <= float(alpha) <= 1.0
+                )
+            except ValueError:
+                return False
+        return True
     try:
         from PIL import ImageColor
 
-        ImageColor.getcolor(value.strip(), "RGBA")
+        ImageColor.getcolor(color, "RGBA")
         return True
     except (ImportError, TypeError, ValueError):
         return False
@@ -367,6 +402,28 @@ def _valid_bbox(value: Any) -> bool:
         and all(_is_num(v) for v in value)
         and float(value[0]) <= float(value[2])
         and float(value[1]) <= float(value[3])
+    )
+
+
+def _source_is_addressable(source: Dict[str, Any]) -> bool:
+    """Whether the current runtime has an actual carrier for this source."""
+    source_type = source.get("type")
+    if source_type == "raster":
+        return bool(source.get("imageRef") or source.get("url") or source.get("ref"))
+    if source_type in {"data_fabric", "wms", "wmts", "pmtiles"}:
+        return bool(
+            source.get("catalog_item_id")
+            or source.get("ref_id")
+            or source.get("ref")
+            or source.get("url")
+            or source.get("dataPath")
+        )
+    return bool(
+        source.get("inlineData") is not None
+        or source.get("ref_id")
+        or source.get("ref")
+        or source.get("url")
+        or source.get("dataPath")
     )
 
 
@@ -784,6 +841,30 @@ def evaluate_cartography_semantics(
                 "source_exists": True,
             },
         )
+        source_addressable = _source_is_addressable(source)
+        report.add_check(
+            "SOURCE_ADDRESSABILITY",
+            "pass" if source_addressable else "fail",
+            (
+                f"Source '{sid}' has a runtime-addressable data carrier"
+                if source_addressable
+                else f"Source '{sid}' has metadata but no runtime-addressable data carrier"
+            ),
+            severity="info" if source_addressable else "error",
+            layer_id=lid,
+            source_id=sid,
+            evidence={
+                "source_type": source.get("type"),
+                "carrier_kinds": [
+                    key for key in (
+                        "inlineData", "ref", "ref_id", "url", "dataPath",
+                        "imageRef", "catalog_item_id",
+                    )
+                    if source.get(key) is not None
+                ],
+            },
+            repairability="not_repairable",
+        )
 
         layer_provenance = (
             layer.get("provenance")
@@ -823,12 +904,33 @@ def evaluate_cartography_semantics(
                 },
                 repairability="not_repairable",
             )
+            raster_bounds = source.get("bounds")
+            raster_bounds_valid = _valid_bbox(raster_bounds)
+            report.add_check(
+                "RASTER_BOUNDS_VALIDITY",
+                "pass" if raster_bounds_valid else "fail",
+                (
+                    f"Layer '{lid}' raster has finite ordered bounds"
+                    if raster_bounds_valid
+                    else f"Layer '{lid}' raster bounds are missing or invalid"
+                ),
+                severity="info" if raster_bounds_valid else "error",
+                layer_id=lid,
+                source_id=sid,
+                evidence={"bounds": raster_bounds},
+                repairability="not_repairable",
+            )
 
         # Desired visibility is structural evidence, not pixel evidence. A
         # hidden/zero-opacity result is detectable, but only malformed opacity
         # is AUTO_SAFE: valid hidden state may be deliberate unless completion
         # intent explicitly says otherwise.
         layout = layer.get("layout") if isinstance(layer.get("layout"), dict) else {}
+        visibility_source = (
+            "layer.visible" if "visible" in layer
+            else "layout.visibility" if "visibility" in layout
+            else "maplibre_default_visible"
+        )
         declared_visible = layer.get("visible") is not False and layout.get("visibility") != "none"
         cartographic_intent = (
             layer.get("cartographic_intent")
@@ -874,6 +976,7 @@ def evaluate_cartography_semantics(
                 "visible": declared_visible,
                 "expected_visible": expected_visible,
                 "layout_visibility": layout.get("visibility", "visible"),
+                "visibility_source": visibility_source,
             },
             repairability=visibility_repairability,
             suggested_fix=visibility_fix,
@@ -1046,31 +1149,43 @@ def evaluate_cartography_semantics(
             pass
         elif profile is not None:
             geom_types = profile.get("geometryTypes") or []
+            supported_geom_types = [g for g in geom_types if g in _GEOM_LAYER_TYPE]
+            unsupported_geom_types = [g for g in geom_types if g not in _GEOM_LAYER_TYPE]
             mismatched = [
-                g for g in geom_types
-                if g in _GEOM_LAYER_TYPE and ltype not in _GEOM_LAYER_TYPE[g]
+                g for g in supported_geom_types
+                if ltype not in _GEOM_LAYER_TYPE[g]
             ]
-            geometry_evaluated = bool(geom_types and ltype)
+            geometry_evaluated = bool(supported_geom_types and ltype)
+            geometry_complete = geometry_evaluated and not unsupported_geom_types
             report.add_check(
                 "GEOMETRY_LAYER_TYPE",
                 (
                     "fail" if mismatched
-                    else "pass" if geometry_evaluated
+                    else "pass" if geometry_complete
                     else "not_evaluated"
                 ),
                 (
                     f"Layer '{lid}' type '{ltype}' matches source geometry"
-                    if geometry_evaluated and not mismatched
+                    if geometry_complete and not mismatched
                     else (
                         f"Layer '{lid}' type '{ltype}' mismatches geometry {mismatched}"
                         if mismatched
-                        else f"Layer '{lid}' geometry/layer type evidence is incomplete"
+                        else (
+                            f"Layer '{lid}' includes unsupported geometry types {unsupported_geom_types}"
+                            if unsupported_geom_types
+                            else f"Layer '{lid}' geometry/layer type evidence is incomplete"
+                        )
                     )
                 ),
                 severity="error" if mismatched else "info",
                 layer_id=lid,
                 source_id=sid,
-                evidence={"layer_type": ltype, "geometry_types": geom_types},
+                evidence={
+                    "layer_type": ltype,
+                    "geometry_types": geom_types,
+                    "supported_geometry_types": supported_geom_types,
+                    "unsupported_geometry_types": unsupported_geom_types,
+                },
             )
             if mismatched:
                 report.findings.append(CartographyFinding(
@@ -1095,6 +1210,20 @@ def evaluate_cartography_semantics(
 
         # 4-6. Paint field existence / numeric / stops-range checks.
         fields_profile = (profile or {}).get("fields") or {}
+        fields_status = (profile or {}).get("fields_status") or "explicit"
+        for prop, raw_spec in (layer.get("paint") or {}).items():
+            if isinstance(raw_spec, list):
+                report.add_check(
+                    "STYLE_EXPRESSION_SUPPORT",
+                    "not_evaluated",
+                    f"Layer '{lid}' paint '{prop}' uses a native expression not inspected by this rule set",
+                    layer_id=lid,
+                    source_id=sid,
+                    evidence={
+                        "property": prop,
+                        "expression_operator": raw_spec[0] if raw_spec else None,
+                    },
+                )
         for prop, spec in _paint_methods(layer.get("paint") or {}):
             fname = spec.get("field")
             method = spec.get("method")
@@ -1109,6 +1238,17 @@ def evaluate_cartography_semantics(
                 continue
             field_info = fields_profile.get(fname)
             if field_info is None:
+                if fields_status == "unknown":
+                    report.findings.append(CartographyFinding(
+                        check="PAINT_FIELD_EXISTS", severity="info",
+                        message=(
+                            f"Layer '{lid}' paint '{prop}' field '{fname}' cannot be "
+                            "verified from descriptor-only schema metadata"
+                        ),
+                        layer_id=lid, source_id=sid, evaluated=False,
+                        evidence={"field": fname, "fields_status": fields_status},
+                    ))
+                    continue
                 report.findings.append(CartographyFinding(
                     check="PAINT_FIELD_EXISTS", severity="error",
                     message=(
@@ -1286,7 +1426,6 @@ def evaluate_cartography_semantics(
                     "matches": provenance_matches,
                 },
             )
-
         report.add_check(
             "VISUAL_OVERLAP",
             "not_evaluated",

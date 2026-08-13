@@ -20,6 +20,10 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
   // SEC-08：匿名会话的 owner_token。服务端在新建匿名会话时签发，前端持有并在
   // 后续请求的 X-Session-Token 头里回传。认证会话 / 旧匿名会话该 ref 为 null。
   const sessionTokenRef = useRef<string | null>(null);
+  // Anonymous owner tokens are session capabilities, not workspace-global
+  // credentials. Retain them by session so switching A → B cannot send A's
+  // token with B's cartographic observation or map-action ACK.
+  const sessionTokensRef = useRef<Map<string, string>>(new Map());
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const sessionLoadAbortRef = useRef<AbortController | null>(null);
 
@@ -98,7 +102,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       sessionIdRef.current = sid;
       // SEC-08：切回某个会话时，前端通常仍持有该会话的 token（同一浏览器会话内）。
       // 旧会话 / 认证会话 token 为 null，头不发送，后端按 grandfather/认证放行。
-      const token = sessionTokenRef.current;
+      const token = sessionTokensRef.current.get(sid) ?? null;
+      sessionTokenRef.current = token;
       try {
         // F-09：会话恢复必须校验 HTTP 状态。旧实现 res.json() 不检查 res.ok，
         // 404/500 的错误体被当作成功消费（JSON detail → 静默无消息；HTML 错误
@@ -221,6 +226,14 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
     [clearLayers, clearAnnotations, clearOpsLog, clearCausalChain, setSelectedFeature, setAiStatus, clearTask]
   );
 
+  const rememberSessionToken = useCallback((sid: string, token: string) => {
+    if (!sid || !token) return;
+    sessionTokensRef.current.set(sid, token);
+    if (!sessionIdRef.current || sessionIdRef.current === sid) {
+      sessionTokenRef.current = token;
+    }
+  }, []);
+
   return {
     sessionId,
     setSessionId,
@@ -228,6 +241,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
     // SEC-08：暴露 token ref + 设置器。useSSEStream 在收到新会话的 owner_token
     // 时写入；其它调用方只读（getSessionToken）。
     sessionTokenRef,
+    rememberSessionToken,
     getSessionToken: () => sessionTokenRef.current,
     sessions,
     setSessions,

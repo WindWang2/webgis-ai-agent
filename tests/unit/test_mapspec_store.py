@@ -292,7 +292,12 @@ async def test_layer_upsert_analysis_result_contract(clean_session):
   assert upserted_layer["paint"]["color"]["method"] == "step"
   assert upserted_layer["paint"]["color"]["field"] == "val"
   assert upserted_layer["provenance"]["algorithm"] == "spatial_hotspot"
-  assert mapspec["sources"]["hotspot_source"]["inlineData"] == geojson
+  result_source = mapspec["sources"]["hotspot_source"]
+  assert result_source["inlineData"] == geojson
+  # source_ref describes the analysis input. It must never replace the output
+  # carrier or make the displayed layer resolve to a different dataset.
+  assert "ref" not in result_source
+  assert "ref_id" not in result_source
 
 
 def test_view_has_center_false_when_absent():

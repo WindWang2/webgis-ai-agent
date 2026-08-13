@@ -159,7 +159,8 @@ export function useSSEStream(
   dispatchAction: (act: MapActionPayload) => void,
   getMapSnapshot: () => any,
   userLocation: { lng: number; lat: number; accuracy?: number } | null,
-  sessionTokenRef: React.MutableRefObject<string | null>
+  sessionTokenRef: React.MutableRefObject<string | null>,
+  rememberSessionToken?: (sessionId: string, token: string) => void,
 ) {
   const [messages, setMessages] = useState<
     Array<{
@@ -263,7 +264,12 @@ export function useSSEStream(
       // SEC-08：服务端在新建匿名会话时签发 owner_token（随 task_start / session 事件下发）。
       // 前端持有后在后续请求的 X-Session-Token 头里回传。认证会话不携带该字段。
       if (data?.owner_token && typeof data.owner_token === 'string') {
-        sessionTokenRef.current = data.owner_token;
+        const ownerSessionId = data.session_id ?? sessionIdRef.current;
+        if (typeof ownerSessionId === 'string' && ownerSessionId) {
+          rememberSessionToken?.(ownerSessionId, data.owner_token);
+        } else {
+          sessionTokenRef.current = data.owner_token;
+        }
       }
 
       const thinkingId = thinkingMsgIdRef.current;
@@ -358,7 +364,7 @@ export function useSSEStream(
                 } as any)
               : data.result,
             style: patchStyle,
-            _refId: data.geojson_ref,
+            _refId: data.geojson_ref ?? runtimePatch?.image_ref,
             // Data Plane: 大要素 ref 图层由 MVT 瓦片端点显示（替代整包 GeoJSON）。
             _tileUrl: data.geojson_ref
               ? `${API_BASE}/api/v1/layers/data/${data.geojson_ref}/tiles/{z}/{x}/{y}.mvt?session_id=${sessionIdRef.current}`
@@ -368,6 +374,7 @@ export function useSSEStream(
             _mapspecFingerprint: runtimePatch?.mapspec_fingerprint,
             _mapspecLayerId: runtimePatch?.layer_id,
             _mapspecGenerationAt: mapspecGenerationAt,
+            _mapspecProjectionFingerprint: runtimePatch?.projection_fingerprint,
             _cartographicRepairs: Array.isArray(runtimePatch?.repair_attempts)
               ? runtimePatch.repair_attempts.slice(0, 2)
               : undefined,
@@ -390,6 +397,7 @@ export function useSSEStream(
               _mapspecFingerprint: runtimePatch.mapspec_fingerprint,
               _mapspecLayerId: runtimePatch.layer_id,
               _mapspecGenerationAt: mapspecGenerationAt,
+              _mapspecProjectionFingerprint: runtimePatch.projection_fingerprint,
               _cartographicRepairs: Array.isArray(runtimePatch.repair_attempts)
                 ? runtimePatch.repair_attempts.slice(0, 2)
                 : undefined,
@@ -599,7 +607,7 @@ export function useSSEStream(
         });
       }
     },
-    [setSessionId, sessionIdRef, sessionTokenRef]
+    [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken]
   );
 
   // DUP-1: bounded auto-reconnect for the chat stream. Opt-in by explicit

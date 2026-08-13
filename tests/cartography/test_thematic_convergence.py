@@ -17,7 +17,12 @@ from app.services.analysis_cartography_converter import convert_analysis_to_maps
 def _mapspec(layers, sources=None, layout=None):
     return {
         "version": "1.0",
-        "sources": sources or {"src1": {"type": "geojson"}},
+        "sources": sources or {
+            "src1": {
+                "type": "geojson",
+                "inlineData": {"type": "FeatureCollection", "features": []},
+            }
+        },
         "layers": layers,
         **({"layout": layout} if layout else {}),
     }
@@ -478,4 +483,3 @@ def test_cartography_not_evaluated_when_no_profile_no_legend():
     # No thematic checks fire (no legend_spec, no method-paint); any findings are
     # info/NOT_EVALUATED, never an error faking thematic correctness.
     assert not any(f.get("severity") == "error" and f.get("evaluated") for f in findings)
-

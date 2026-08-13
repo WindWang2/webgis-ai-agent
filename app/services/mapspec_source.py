@@ -31,6 +31,20 @@ def store_data(entry: Dict[str, Any], data: Any) -> None:
                 entry[_BOUNDS] = data[_BOUNDS]
             if _IMAGE_SIZE in data:
                 entry[_IMAGE_SIZE] = data[_IMAGE_SIZE]
+        elif isinstance(data.get("ref_id"), str) and data["ref_id"].startswith("ref:"):
+            # Session-owned metadata carrier. It deliberately contains no
+            # feature body: cartographic review can use the descriptor-derived
+            # profile while the runtime resolves the opaque ref through the
+            # existing data plane.
+            entry["type"] = "geojson"
+            entry["ref"] = data["ref_id"]
+            entry["ref_id"] = data["ref_id"]
+            if isinstance(data.get("profile"), dict):
+                entry["profile"] = data["profile"]
+            if isinstance(data.get("profile_fingerprint"), str):
+                entry["profile_fingerprint"] = data["profile_fingerprint"]
+            if isinstance(data.get("data_fingerprint"), str):
+                entry["data_fingerprint"] = data["data_fingerprint"]
         elif "catalog_item_id" in data or data.get("type") in DATAFABRIC_SOURCE_TYPES:
             entry["type"] = data.get("type", "data_fabric")
             for k, v in data.items():
@@ -58,7 +72,7 @@ def ref(entry: Dict[str, Any]) -> Optional[str]:
         return entry.get(_IMAGE_REF)
     if is_data_fabric_entry(entry):
         return entry.get("ref_id") or entry.get(_URL) or entry.get(_DATA_PATH)
-    return entry.get(_URL) or entry.get(_DATA_PATH)
+    return entry.get("ref_id") or entry.get("ref") or entry.get(_URL) or entry.get(_DATA_PATH)
 
 
 def is_raster_entry(entry: Dict[str, Any]) -> bool:

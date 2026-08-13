@@ -42,6 +42,8 @@ function fixture() {
     _refId: "ref:geojson-1",
     _mapspecLayerId: "result",
     _mapspecFingerprint: "carto-sha256:abc",
+    _mapspecProjectionFingerprint: "runtime-sha256:projection",
+    _mapspecRepairActionId: "ma-carto-1",
   };
   return { map, spec, hud };
 }
@@ -62,6 +64,9 @@ describe("cartographic runtime evidence", () => {
       source_converged: true,
       style_converged: true,
       runtime_layer_count: 1,
+      runtime_store_id: "ref:geojson-1",
+      projection_fingerprint: "runtime-sha256:projection",
+      repair_action_id: "ma-carto-1",
     })]);
     expect(JSON.stringify(observation)).not.toContain("features");
   });

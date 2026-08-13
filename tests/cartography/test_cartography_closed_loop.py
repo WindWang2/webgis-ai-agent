@@ -210,7 +210,12 @@ async def test_validity_ladder_semantic_valid_via_real_engine(clean_session):
 @pytest.mark.cartography
 def test_semantic_check_missing_paint_field():
     mapspec = {
-        "sources": {"s1": {}},
+        "sources": {
+            "s1": {
+                "type": "geojson",
+                "inlineData": {"type": "FeatureCollection", "features": []},
+            }
+        },
         "layers": [{
             "id": "L", "source": "s1", "type": "circle",
             "paint": {"circle-color": {"method": "interpolate", "field": "nofield", "stops": [
@@ -256,7 +261,12 @@ def test_semantic_check_stops_data_range_and_geom_mismatch():
 @pytest.mark.cartography
 def test_semantic_check_clean_mapspec_passes():
     mapspec = {
-        "sources": {"s1": {}},
+        "sources": {
+            "s1": {
+                "type": "geojson",
+                "inlineData": {"type": "FeatureCollection", "features": []},
+            }
+        },
         "layers": [{
             "id": "L", "source": "s1", "type": "circle",
             "paint": {"circle-color": {"method": "interpolate", "field": "v", "stops": [

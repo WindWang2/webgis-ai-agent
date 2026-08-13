@@ -80,4 +80,15 @@ async def execute_tool(
     Delegates to the PiBridge which owns the ToolRegistry and dispatch logic.
     审计 SEC-01：要求 X-Pi-Bridge-Secret header。
     """
+    from app.services.chat.pi_turn_context import verify_turn_token
+
+    verified = verify_turn_token(get_bridge_secret(), request.turnToken or "")
+    if verified is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid, missing, or expired Pi turn context",
+        )
+    # Ignore any caller-supplied sessionId. The signed turn capability is the
+    # only production routing authority.
+    request.sessionId = str(verified["session_id"])
     return await dispatch_tool(request)

@@ -81,7 +81,7 @@ export function MapPanel({
   void _onRemoveLayer;
   void _onToggleLayer;
 
-  const { selectedBaseLayer, registerSnapshotFn } = useMapAction()
+  const { selectedBaseLayer, registerSnapshotFn, dispatchAction } = useMapAction()
   const [viewState, setViewState] = useState(DEFAULT_VIEW_STATE)
   const [mapReady, setMapReady] = useState(false)
   // is3D 来自 store，与设置面板 setIs3D 联动。原先 useState 死锁在 false。
@@ -175,6 +175,8 @@ export function MapPanel({
   // machinery. The runtime owns the style-loaded retry internally.
   const runtimeRef = useRef<MapSpecRuntime | null>(null)
   const lastCartographicObservationKeyRef = useRef<string>('')
+  const cartographicSessionIdRef = useRef(sessionId)
+  cartographicSessionIdRef.current = sessionId
 
   // FE-3 (design §7): derive interactiveLayerIds from the runtime's APPLIED
   // spec — the authoritative registry of what the map currently reflects
@@ -291,7 +293,7 @@ export function MapPanel({
         const observationKey = `${sessionId}:${JSON.stringify(observation)}`
         if (observationKey === lastCartographicObservationKeyRef.current) return
         lastCartographicObservationKeyRef.current = observationKey
-        void apiFetch(
+        void apiFetch<{ repair_action?: import('@/lib/types').MapActionPayload }>(
           `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/cartographic-observation`,
           {
             method: 'POST',
@@ -299,7 +301,14 @@ export function MapPanel({
             ownerToken,
             label: 'Cartographic observation error',
           },
-        ).catch((error) => {
+        ).then((response) => {
+          if (
+            cartographicSessionIdRef.current === sessionId
+            && response.repair_action
+          ) {
+            dispatchAction(response.repair_action)
+          }
+        }).catch((error) => {
           // Allow the next meaningful reconcile to retry; token/pan events do
           // not enter this effect and therefore cannot create a retry storm.
           lastCartographicObservationKeyRef.current = ''
@@ -307,7 +316,7 @@ export function MapPanel({
         })
       })
       .catch((e) => console.error("[map] reconcile failed", e))
-  }, [layers, processLayers, activeFilters, is3D, mapReady, currentMapStyle, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken])
+  }, [layers, processLayers, activeFilters, is3D, mapReady, currentMapStyle, syncInteractiveIds, raiseSelectionHighlight, sessionId, ownerToken, dispatchAction])
 
 
   const setViewport = useHudStore((s: HudState) => s.setViewport)

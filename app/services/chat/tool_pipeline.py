@@ -225,14 +225,21 @@ class ToolExecutionPipeline:
             # module import time to the optional Pi transport.
             from app.agent_pi_bridge import record_cartographic_dispatch_evidence
 
-            await record_cartographic_dispatch_evidence(
-                session_id,
-                tool_call_id,
-                "webgis_layer_upsert",
-                args_dict,
-                outcome,
-                int(elapsed_ms),
-            )
+            try:
+                await record_cartographic_dispatch_evidence(
+                    session_id,
+                    tool_call_id,
+                    "webgis_layer_upsert",
+                    args_dict,
+                    outcome,
+                    int(elapsed_ms),
+                )
+            except Exception as review_error:  # noqa: BLE001 - GIS result already succeeded
+                logger.warning(
+                    "[ToolPipeline] cartographic evaluation unavailable for %s: %s",
+                    session_id,
+                    review_error,
+                )
         return ToolExecutionResult(
             tool_name=tool_name,
             tool_call_id=tool_call_id,

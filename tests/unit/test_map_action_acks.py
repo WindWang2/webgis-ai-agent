@@ -523,3 +523,22 @@ async def test_ack_endpoint_optional_fields(client):
     events = await store.get_map_action_events("sess-a")
     assert "correlation" not in events[0]  # None 字段不落库（exclude_none）
     assert events[1]["duration_ms"] == 0
+
+
+@pytest.mark.asyncio
+async def test_late_ack_cannot_resurrect_deleted_session(client):
+    from app.agent_pi_bridge import (
+        clear_cartographic_session_state,
+        restore_cartographic_session_state,
+    )
+
+    store = MemorySessionStore()
+    sid = "sess-deleted-carto"
+    clear_cartographic_session_state(sid)
+    try:
+        with patch("app.services.session_data.session_data_manager", new=store), _pass_ownership():
+            resp = await client.post(_url(sid), json={"acks": [_ack("ma-late")]})
+        assert resp.status_code == 410
+        assert await store.get_map_action_events(sid) == []
+    finally:
+        restore_cartographic_session_state(sid)
