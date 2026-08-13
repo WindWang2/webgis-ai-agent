@@ -70,6 +70,10 @@ const DEFAULT_VIEW_STATE = {
   zoom: 4,
 }
 
+// Cap on remembered applied repair action_ids (bounded memory; older ids are
+// stale generations that the generation gate already drops, so eviction is safe).
+const MAX_APPLIED_REPAIR_IDS = 16;
+
 export function MapPanel({
   layers,
   onRemoveLayer: _onRemoveLayer,
@@ -179,6 +183,30 @@ export function MapPanel({
   const cartographicObservationGenerationRef = useRef(Date.now() * 1000)
   const cartographicSessionIdRef = useRef(sessionId)
   cartographicSessionIdRef.current = sessionId
+  // Cartographic observation→repair generation safety (latest-generation-wins).
+  // The backend already rejects stale observations server-side and strips
+  // repair_action from stale responses, but HTTP responses within ONE session
+  // can still arrive out of order. These refs make the client self-protecting:
+  // only the newest issued generation/fingerprint may dispatch a repair.
+  const latestIssuedCartographicFingerprintRef = useRef<string>('')
+  // Bounded ring of recently-applied repair action_ids so a re-echoed (duplicate)
+  // response is applied at most once. Keyed on action_id ONLY — patch_fingerprint
+  // can legitimately recur for a different mapspec fingerprint and would wrongly
+  // block a valid re-issue, so it is intentionally not used as a dedup key.
+  const appliedRepairIdsRef = useRef<Set<string>>(new Set())
+  const mountedRef = useRef(true)
+  const observationAbortRef = useRef<AbortController | null>(null)
+
+  // Cancel any in-flight observation on unmount so a late response can never
+  // setState / dispatch a map action after the panel is gone (INV-6).
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      observationAbortRef.current?.abort()
+      observationAbortRef.current = null
+    }
+  }, [])
 
   // FE-3 (design §7): derive interactiveLayerIds from the runtime's APPLIED
   // spec — the authoritative registry of what the map currently reflects
@@ -306,24 +334,66 @@ export function MapPanel({
           Date.now() * 1000,
         )
         cartographicObservationGenerationRef.current = clientGeneration
+        // Capture THIS request's correlation in the closure so a late response
+        // compares against the newest issued values, not its own stale view.
+        const requestGeneration = clientGeneration
+        latestIssuedCartographicFingerprintRef.current = generation._mapspecFingerprint
+        // A newer observation supersedes any still in flight: abort it so its
+        // late response cannot dispatch a stale repair. The generation gate in
+        // the handler below is the authoritative guard; the abort just reclaims
+        // the round-trip and makes unmount deterministic.
+        observationAbortRef.current?.abort()
+        const controller = new AbortController()
+        observationAbortRef.current = controller
         void apiFetch<{ repair_action?: import('@/lib/types').MapActionPayload }>(
           `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/cartographic-observation`,
           {
             method: 'POST',
             body: { ...observation, client_generation: clientGeneration },
             ownerToken,
+            signal: controller.signal,
             label: 'Cartographic observation error',
           },
         ).then((response) => {
+          const repair = response.repair_action
+          if (!repair) return
+          // Generation-safe dispatch — latest generation/fingerprint wins.
+          if (!mountedRef.current) return // unmounted: no side effects (INV-6)
+          if (cartographicSessionIdRef.current !== sessionId) return // session switch (INV-2)
+          if (cartographicObservationGenerationRef.current !== requestGeneration) {
+            return // a newer observation was issued → this response is stale (INV-1/INV-7)
+          }
+          const repairParams = repair.params as
+            | { mapspec_fingerprint?: string }
+            | undefined
+          // A repair targeting an older mapspec fingerprint must not mutate a
+          // map that has since advanced (INV-4). Only enforced when the backend
+          // echoes a fingerprint, so a future field change can't block a valid
+          // repair (INV-7).
           if (
-            cartographicSessionIdRef.current === sessionId
-            && response.repair_action
-          ) {
-            dispatchAction(response.repair_action)
+            repairParams?.mapspec_fingerprint
+            && latestIssuedCartographicFingerprintRef.current !== repairParams.mapspec_fingerprint
+          ) return
+          // Duplicate response / retry must not re-apply the same repair (INV-3).
+          const repairId = repair.action_id
+          if (repairId && appliedRepairIdsRef.current.has(repairId)) return
+          dispatchAction(repair)
+          // Record AFTER dispatch so a dispatch throw leaves the repair re-issuable.
+          if (repairId) {
+            const seen = appliedRepairIdsRef.current
+            seen.add(repairId)
+            if (seen.size > MAX_APPLIED_REPAIR_IDS) {
+              seen.delete(seen.keys().next().value as string)
+            }
           }
         }).catch((error) => {
-          // Allow the next meaningful reconcile to retry; token/pan events do
-          // not enter this effect and therefore cannot create a retry storm.
+          // A supersede/unmount abort is expected: the newer request (or the
+          // unmount) owns the state, so stay quiet and leave the key alone.
+          if (!mountedRef.current || error?.name === "AbortError") return
+          // Only the LATEST request may reset the observation key for retry — a
+          // superseded request failing must not force a redundant re-POST of the
+          // newer observation (INV-5: retry without a storm).
+          if (cartographicObservationGenerationRef.current !== requestGeneration) return
           lastCartographicObservationKeyRef.current = ''
           devOnly.warn('[map] cartographic observation failed:', error)
         })
