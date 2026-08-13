@@ -42,11 +42,12 @@ function makeAsyncGen(events: SSEEvent[]): AsyncGenerator<SSEEvent> {
 function makeAckWrapper(
   sinkHolder: { current: MapActionAckSink | null },
   clearActions: () => void,
+  ctxDispatch: (action: MapActionPayload) => void = vi.fn(),
 ) {
   return function AckWrapper({ children }: { children: React.ReactNode }) {
     const value = {
       actions: [],
-      dispatchAction: vi.fn(),
+      dispatchAction: ctxDispatch,
       popAction: vi.fn(),
       selectedBaseLayer: 0,
       setSelectedBaseLayer: vi.fn(),
@@ -763,8 +764,10 @@ describe('useMapBridge', () => {
     vi.unstubAllGlobals();
   });
 
-  it('ACK POST failure is fire-and-forget: devOnly log, batch dropped, stream unaffected (V3)', async () => {
-    const fetchMock = vi.fn().mockRejectedValue(new Error('network down'));
+  it('ACK POST transient failure retries without blocking the stream or map (V3)', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('network down'))
+      .mockResolvedValue({ ok: true, status: 200, json: async () => ({ accepted: 1, duplicates: 0 }) });
     vi.stubGlobal('fetch', fetchMock);
     const warnSpy = vi.spyOn(devOnly, 'warn');
     const sinkHolder: { current: MapActionAckSink | null } = { current: null };
@@ -785,7 +788,8 @@ describe('useMapBridge', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalled();
 
-    // The map/stream loop is unaffected: a fresh turn still dispatches actions.
+    // The map/stream loop is unaffected: a fresh turn still dispatches actions
+    // while the ACK retry timer is still pending.
     mockStreamChat.mockReturnValue(makeAsyncGen([{
       event: 'step_result',
       data: { result: { command: 'fly_to', params: { center: [1, 2], zoom: 10 } }, step_id: 's9', turn_id: 't9' },
@@ -794,7 +798,107 @@ describe('useMapBridge', () => {
     await act(async () => { await result.current.send('q2', {}); });
     expect(dispatchAction).toHaveBeenCalledTimes(1);
 
+    await act(async () => { vi.advanceTimersByTime(400); });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const retryBody = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+    expect(retryBody.acks[0].action_id).toBe('ma-1');
+
     warnSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it('ACK sink still POSTs after React Strict Mode remount', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ accepted: 1, duplicates: 0 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const sinkHolder: { current: MapActionAckSink | null } = { current: null };
+    const Inner = makeAckWrapper(sinkHolder, vi.fn());
+    function StrictWrap({ children }: { children: React.ReactNode }) {
+      return React.createElement(React.StrictMode, null, React.createElement(Inner, null, children));
+    }
+
+    mockStreamChat.mockReturnValue(makeAsyncGen([{ event: 'done', data: {} }]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent),
+      { wrapper: StrictWrap }
+    );
+    await act(async () => { await result.current.send('q', {}); });
+
+    expect(sinkHolder.current).toBeTruthy();
+    act(() => {
+      sinkHolder.current!({ action_id: 'ma-strict', command: 'fly_to', status: 'succeeded' });
+    });
+    await act(async () => { vi.advanceTimersByTime(500); });
+
+    expect(fetchMock).toHaveBeenCalled();
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.acks[0].action_id).toBe('ma-strict');
+    vi.unstubAllGlobals();
+  });
+
+  it('unmount flushes once and does not leak a retry timer (fault 10)', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+    const sinkHolder: { current: MapActionAckSink | null } = { current: null };
+    const wrapper = makeAckWrapper(sinkHolder, vi.fn());
+
+    mockStreamChat.mockReturnValue(makeAsyncGen([{ event: 'done', data: {} }]));
+    const { result, unmount } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent),
+      { wrapper }
+    );
+    await act(async () => { await result.current.send('q', {}); });
+
+    act(() => {
+      sinkHolder.current!({ action_id: 'ma-unmount', command: 'fly_to', status: 'succeeded' });
+    });
+    act(() => { unmount(); });
+    await act(async () => {});
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await act(async () => { vi.advanceTimersByTime(10_000); });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it('duplicate ACK repair_action responses do not dispatch twice (fault 11)', async () => {
+    const repair = {
+      action_id: 'ma-carto-1',
+      command: 'cartographic_runtime_repair' as const,
+      params: { id: 'layer-1' },
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ accepted: 1, duplicates: 0, repair_action: repair }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const ctxDispatch = vi.fn();
+    const sinkHolder: { current: MapActionAckSink | null } = { current: null };
+    const wrapper = makeAckWrapper(sinkHolder, vi.fn(), ctxDispatch);
+
+    mockStreamChat.mockReturnValue(makeAsyncGen([{ event: 'done', data: {} }]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent),
+      { wrapper }
+    );
+    await act(async () => { await result.current.send('q', {}); });
+
+    act(() => {
+      sinkHolder.current!({ action_id: 'ma-orig-1', command: 'add_layer', status: 'succeeded' });
+    });
+    await act(async () => { vi.advanceTimersByTime(500); });
+    act(() => {
+      sinkHolder.current!({ action_id: 'ma-orig-2', command: 'add_layer', status: 'succeeded' });
+    });
+    await act(async () => { vi.advanceTimersByTime(500); });
+
+    expect(ctxDispatch).toHaveBeenCalledTimes(1);
+    expect(ctxDispatch).toHaveBeenCalledWith(repair);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     vi.unstubAllGlobals();
   });
 
