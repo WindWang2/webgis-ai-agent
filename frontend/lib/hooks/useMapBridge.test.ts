@@ -12,10 +12,15 @@ import type { MapActionTerminalDetails } from '@/lib/contexts/map-action-context
 import type { MapActionAckSink } from '@/lib/api/map-action-acks';
 import { devOnly } from '@/lib/utils/logger';
 
+const hudState = vi.hoisted(() => ({
+  layers: [] as Array<{ _mapspecFingerprint?: string }>,
+}));
+
 vi.mock('@/lib/store/useHudStore', () => ({
   useHudStore: {
     getState: () => ({
       setAiStatus: vi.fn(),
+      layers: hudState.layers,
     }),
   },
 }));
@@ -93,6 +98,7 @@ describe('useMapBridge', () => {
     vi.clearAllMocks();
     vi.useFakeTimers();
     resetViewportSeq();
+    hudState.layers = [];
   });
 
   afterEach(() => {
@@ -903,6 +909,39 @@ describe('useMapBridge', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await act(async () => { vi.advanceTimersByTime(10_000); });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it('does not apply an ACK repair whose mapspec fingerprint is no longer live', async () => {
+    hudState.layers = [{ _mapspecFingerprint: 'carto-sha256:new' }];
+    const staleRepair = {
+      action_id: 'ma-carto-stale',
+      command: 'cartographic_runtime_repair' as const,
+      params: { id: 'layer-1', mapspec_fingerprint: 'carto-sha256:old' },
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ accepted: 1, duplicates: 0, repair_action: staleRepair }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const ctxDispatch = vi.fn();
+    const sinkHolder: { current: MapActionAckSink | null } = { current: null };
+    const wrapper = makeAckWrapper(sinkHolder, vi.fn(), ctxDispatch);
+
+    mockStreamChat.mockReturnValue(makeAsyncGen([{ event: 'done', data: {} }]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent),
+      { wrapper }
+    );
+    await act(async () => { await result.current.send('q', {}); });
+
+    act(() => {
+      sinkHolder.current!({ action_id: 'ma-orig', command: 'add_layer', status: 'succeeded' });
+    });
+    await act(async () => { vi.advanceTimersByTime(500); });
+
+    expect(ctxDispatch).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
 
