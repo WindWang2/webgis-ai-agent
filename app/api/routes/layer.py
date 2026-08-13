@@ -198,16 +198,12 @@ async def get_layer_descriptor(
     if not ref_id or len(ref_id) > 128 or any(c.isspace() for c in ref_id):
         raise HTTPException(status_code=400, detail="非法 ref_id")
 
-    # V3: Try pre-computed descriptor first
-    descriptor = await session_data_manager.get_ref_descriptor(session_id, ref_id)
-    if descriptor:
-        # Auth check: verify ownership via the existing get_ref_data path
-        # (descriptor itself doesn't contain sensitive data, but access control must match)
-        res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
-        if not res.success:
-            status_code = 403 if res.error_type == "PermissionDenied" else 404
-            raise HTTPException(status_code=status_code, detail=res.error or "数据不可用")
-        # Descriptor found and access granted
+    # V3: metadata-only auth + descriptor read — never hydrates the full payload.
+    res = await session_data_manager.get_ref_descriptor_authorized(
+        session_id, ref_id, owner_token=owner_token
+    )
+    if res.success:
+        descriptor = res.data
         return {
             "ref_id": descriptor["ref_id"],
             "session_id": session_id,
@@ -219,7 +215,12 @@ async def get_layer_descriptor(
             "raster_capable": False,  # descriptor doesn't store raster flag yet
             "estimated_bytes": descriptor["estimated_bytes"],
         }
-    
+    if res.error_type == "PermissionDenied":
+        raise HTTPException(status_code=403, detail=res.error or "数据不可用")
+    # NotFound: pre-V3 ref without descriptor, or payload evicted — 走现有 fallback
+    # （fallback 里 get_ref_data 会对 pre-V3 ref 现算 descriptor、对已 evicted ref
+    #   返回 404，语义与现状一致）
+
     # Fallback: compute on-the-fly for refs without stored descriptor (pre-V3 refs)
     res = await session_data_manager.get_ref_data(session_id, ref_id, owner_token=owner_token)
     if not res.success or not res.data:

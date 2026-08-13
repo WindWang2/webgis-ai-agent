@@ -920,6 +920,34 @@ class RedisSessionStore(BaseSessionStore):
             logger.error("Redis get_ref_descriptor failed for %s/%s: %s", session_id, ref_id, e)
             return None
 
+    async def ref_exists(self, session_id: str, ref_id: str) -> bool:
+        """EXISTS on the data key with ``get()``'s recency side-effects.
+
+        Checks the data key without reading/deserializing the payload. On a hit,
+        renews the same three recency markers as ``get()``'s hit branch —
+        ``expire(data_key, DATA_TTL)``, ``zadd(refs_order, {ref_id: now})`` and
+        ``_refresh_session_ttl`` — so a metadata-only descriptor poll keeps the
+        payload alive under TTL/LRU eviction, preserving master's "descriptor
+        read keeps payload alive" semantics (master went through
+        get_ref_data → get()). A miss performs no writes.
+        Redis 不可达时返回 False（与 get() 的 cache-miss 语义一致：上层走
+        fallback 后得到 NotFound，和现状 Redis 抖动时的行为相同）。
+        """
+        await self._ensure_connected()
+        data_key = self._data_key(session_id, ref_id)
+        try:
+            if not await self._r.exists(data_key):
+                return False
+            async with self._r.pipeline() as pipe:
+                pipe.expire(data_key, DATA_TTL)
+                pipe.zadd(self._refs_order_key(session_id), {ref_id: time.time()})
+                self._refresh_session_ttl(pipe, session_id)
+                await pipe.execute()
+            return True
+        except aioredis.RedisError as e:
+            logger.warning("Redis ref_exists failed for session %s ref %s: %s", session_id, ref_id, e)
+            return False
+
     def _refresh_session_ttl(self, pipe, session_id: str) -> None:
         for key in [
             self._aliases_key(session_id),

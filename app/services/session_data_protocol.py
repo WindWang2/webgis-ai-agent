@@ -127,6 +127,37 @@ class SessionStoreProtocol(Protocol):
         reading or scanning the full data payload. None if ref not found."""
         ...
 
+    async def get_ref_descriptor_authorized(
+        self,
+        session_id: str,
+        ref_id: str,
+        owner_token: Optional[str] = None,
+    ) -> SessionRefDataResult:
+        """Metadata-only variant of get_ref_data for the descriptor fast path.
+
+        Validates the owner token and ref existence and returns the pre-computed
+        descriptor WITHOUT reading or deserializing the full data payload
+        (no get() call). error_type semantics match get_ref_data:
+        PermissionDenied on token mismatch, NotFound when there is no descriptor
+        or the underlying ref payload is gone.
+
+        Descriptors are keyed by canonical ref_id — this method does NOT resolve
+        aliases; an alias input is treated as a plain ref_id and NotFound (the
+        caller's fallback then handles it, matching master's behaviour).
+
+        Caveat: the "never hydrates" promise assumes the descriptor key exists.
+        RedisSessionStore.get_ref_descriptor has a pre-existing on-the-fly
+        fallback — when the descriptor/meta key is missing (pre-V3 ref, or the
+        meta key's TTL expired before the data key's) it reads the full payload,
+        recomputes and caches the descriptor, so this method hydrates in that
+        case. This is pre-existing behaviour affecting only legacy refs.
+        """
+        ...
+
+    async def ref_exists(self, session_id: str, ref_id: str) -> bool:
+        """O(1) existence check for a ref payload — does not read or deserialize it."""
+        ...
+
     async def cleanup_idle_sessions(self, max_sessions: int = 100) -> None:
         ...
 
@@ -142,6 +173,20 @@ class BaseSessionStore:
         """Default fallback alias resolution. Overridden by subclasses if alias map is separate."""
         return ref_or_alias
 
+    def _validate_owner_token(self, meta: Optional[Dict[str, Any]], owner_token: Optional[str]) -> Optional[SessionRefDataResult]:
+        """Shared owner-token check for get_ref_data / get_ref_descriptor_authorized.
+        Returns a PermissionDenied result if the token mismatches, else None."""
+        meta = meta or {}
+        map_state = meta.get("map_state", {})
+        expected_token = meta.get("owner_token") or map_state.get("owner_token")
+        if expected_token and owner_token != expected_token:
+            return SessionRefDataResult(
+                success=False,
+                error="Security token mismatch",
+                error_type="PermissionDenied",
+            )
+        return None
+
     async def get_ref_data(
         self,
         session_id: str,
@@ -150,14 +195,9 @@ class BaseSessionStore:
     ) -> SessionRefDataResult:
         """Deep interface method: resolves alias, validates owner token if present, and returns deserialized data."""
         meta = await self.get_session_metadata(session_id)
-        map_state = meta.get("map_state", {}) if meta else {}
-        expected_token = (meta.get("owner_token") if meta else None) or map_state.get("owner_token")
-        if expected_token and owner_token != expected_token:
-            return SessionRefDataResult(
-                success=False,
-                error="Security token mismatch",
-                error_type="PermissionDenied",
-            )
+        denied = self._validate_owner_token(meta, owner_token)
+        if denied is not None:
+            return denied
 
         raw_data = await self.get(session_id, ref_or_alias)
         if raw_data is None:
@@ -176,6 +216,54 @@ class BaseSessionStore:
                 return SessionRefDataResult(success=True, data=raw_data)
 
         return SessionRefDataResult(success=True, data=raw_data)
+
+    async def get_ref_descriptor_authorized(
+        self,
+        session_id: str,
+        ref_id: str,
+        owner_token: Optional[str] = None,
+    ) -> SessionRefDataResult:
+        """Metadata-only variant of get_ref_data for the descriptor fast path.
+
+        Validates the owner token and ref existence and returns the pre-computed
+        descriptor WITHOUT reading or deserializing the full data payload
+        (no get() call). error_type semantics match get_ref_data:
+        PermissionDenied on token mismatch, NotFound when there is no descriptor
+        or the underlying ref payload is gone.
+
+        Descriptors are keyed by canonical ref_id — this method does NOT resolve
+        aliases; an alias input is treated as a plain ref_id and NotFound (the
+        caller's fallback then handles it, matching master's behaviour).
+
+        Caveat: the "never hydrates" promise assumes the descriptor key exists.
+        RedisSessionStore.get_ref_descriptor has a pre-existing on-the-fly
+        fallback — when the descriptor/meta key is missing (pre-V3 ref, or the
+        meta key's TTL expired before the data key's) it reads the full payload,
+        recomputes and caches the descriptor, so this method hydrates in that
+        case. This is pre-existing behaviour affecting only legacy refs.
+        """
+        meta = await self.get_session_metadata(session_id)
+        denied = self._validate_owner_token(meta, owner_token)
+        if denied is not None:
+            return denied
+
+        descriptor = await self.get_ref_descriptor(session_id, ref_id)
+        if not descriptor:
+            return SessionRefDataResult(
+                success=False,
+                error="Referenced data expired or not found",
+                error_type="NotFound",
+            )
+
+        exists = await self.ref_exists(session_id, ref_id)
+        if not exists:
+            return SessionRefDataResult(
+                success=False,
+                error="Referenced data expired or not found",
+                error_type="NotFound",
+            )
+
+        return SessionRefDataResult(success=True, data=descriptor)
 
 
 # Backward compatibility aliases
