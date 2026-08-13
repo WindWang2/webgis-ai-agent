@@ -534,32 +534,87 @@ def _shapely_parts(geom):
             yield from _shapely_parts(g)
 
 
-def _encode_line_polygon_shapely(gtype: str, coords, z: int, x: int, y: int) -> Optional[bytes]:
-    """Line/Polygon encode with shapely: simplify + is_valid gate + exact clip."""
-    geom = _shapely_geom_from_coords(gtype, coords)
-    if geom is None or geom.is_empty:
-        return None
+def _simplify_and_project(gtype: str, geom_lonlat, geom_z0, z: int):
+    """Return the z0 world-px geometry to clip, reusing cached projections.
+
+    The geometry construction and (for high zoom) the z0 projection are the
+    expensive parts of the encode hot path; this function lets an index that
+    already built both reuse them instead of redoing the work per tile.
+
+    ``geom_lonlat`` is the lon/lat shapely geometry (always required: the
+    simplify tolerance is zoom-dependent and applied in lon/lat space, and the
+    is_valid gate runs against it). ``geom_z0`` is the cached z0 projection of
+    the *unsimplified* lon/lat geometry, or None when the caller has no index
+    (then it is rebuilt on demand at z >= _SIMPLIFY_MAX_ZOOM).
+
+    Output is identical regardless of whether geom_z0 is cached or rebuilt:
+    projection is homogeneous in z, so transform(geom_lonlat) is exactly what
+    the z >= threshold path emits. Returns None when the feature must be dropped
+    (empty / invalid polygon / degenerate simplification).
+    """
     is_poly = gtype in _IS_POLY
-    if is_poly and not geom.is_valid:
+    if geom_lonlat is None or geom_lonlat.is_empty:
+        return None
+    if is_poly and not geom_lonlat.is_valid:
         # never emit self-intersecting polygons
         logger.debug("mvt: skipping invalid %s feature", gtype)
         return None
-    if z < _SIMPLIFY_MAX_ZOOM:
-        # half a pixel at zoom z; in degree terms: 360 / (256 * 2^z) / 2,
-        # converted to z0 world px (world = 256): 2 ** -(z + 1)
-        simplified = geom.simplify(2.0 ** -(z + 1), preserve_topology=True)
-        if simplified.is_empty:
-            return None
-        if not is_poly or simplified.is_valid:
-            geom = simplified
-        # else: simplification produced self-intersection → keep the original
-        # (which passed the is_valid gate above)
-    geom = shapely.transform(geom, _transform_z0)
+    if z >= _SIMPLIFY_MAX_ZOOM:
+        # no simplification: reuse the cached z0 geometry (or rebuild it once).
+        # An exception here propagates to ``_encode_geometry``'s guard, which
+        # falls back to the pure-python encoder — matching the pre-refactor
+        # behavior exactly. (Index callers never reach this line: they pass a
+        # cached geom_z0 and return above.)
+        if geom_z0 is not None:
+            return geom_z0
+        return shapely.transform(geom_lonlat, _transform_z0)
+    # z < threshold: simplify in lon/lat space, then project the result.
+    # half a pixel at zoom z; in degree terms: 360 / (256 * 2^z) / 2,
+    # converted to z0 world px (world = 256): 2 ** -(z + 1)
+    simplified = geom_lonlat.simplify(2.0 ** -(z + 1), preserve_topology=True)
+    if simplified.is_empty:
+        return None
+    if not is_poly or simplified.is_valid:
+        geom_lonlat = simplified
+    # else: simplification produced self-intersection → keep the original
+    # (which passed the is_valid gate above)
+    return shapely.transform(geom_lonlat, _transform_z0)
+
+
+def _clip_and_encode(geom, is_poly: bool, z: int, x: int, y: int) -> Optional[bytes]:
+    """Clip a z0 geometry to the tile rect and encode it; None if nothing inside."""
+    if geom is None:
+        return None
     clipped = geom.intersection(shapely.geometry.box(*_tile_rect_z0(z, x, y)))
     if clipped.is_empty:
         return None
-    parts = _shapely_parts(clipped)
-    return _encode_parts(parts, is_poly, z, x, y)
+    return _encode_parts(_shapely_parts(clipped), is_poly, z, x, y)
+
+
+def _encode_line_polygon_shapely(gtype: str, coords, z: int, x: int, y: int) -> Optional[bytes]:
+    """Line/Polygon encode from raw GeoJSON coords (no index to reuse from).
+
+    Constructs the lon/lat shapely geometry and lets ``_simplify_and_project``
+    rebuild the z0 projection on demand. This is the path used by the public
+    ``encode_tile``; the index-aware path uses ``_encode_line_polygon_from_geoms``.
+    """
+    geom_lonlat = _shapely_geom_from_coords(gtype, coords)
+    geom = _simplify_and_project(gtype, geom_lonlat, None, z)
+    return _clip_and_encode(geom, gtype in _IS_POLY, z, x, y)
+
+
+def _encode_line_polygon_from_geoms(
+    gtype: str, geom_lonlat, geom_z0, z: int, x: int, y: int
+) -> Optional[bytes]:
+    """Line/Polygon encode reusing a feature's pre-built shapely geometries.
+
+    ``geom_lonlat`` / ``geom_z0`` come from the spatial index (built once per
+    ref), so no GeoJSON→Shapely construction happens per tile and the z0
+    projection is reused at z >= _SIMPLIFY_MAX_ZOOM. Output is byte-identical to
+    ``_encode_line_polygon_shapely`` for the same input coordinates.
+    """
+    geom = _simplify_and_project(gtype, geom_lonlat, geom_z0, z)
+    return _clip_and_encode(geom, gtype in _IS_POLY, z, x, y)
 
 
 def _encode_line_polygon_pure(gtype: str, coords, z: int, x: int, y: int) -> Optional[bytes]:
@@ -667,15 +722,24 @@ def _to_feature_dicts(features_data) -> List[dict]:
     return []
 
 
-def encode_tile(features_data, z: int, x: int, y: int) -> bytes:
-    """Encode features into a raw (uncompressed) MVT tile for (z, x, y).
+def _type_id_for(gtype: str) -> Optional[int]:
+    if gtype in _IS_POINT:
+        return _GT_POINT
+    if gtype in _IS_LINE:
+        return _GT_LINESTRING
+    if gtype in _IS_POLY:
+        return _GT_POLYGON
+    return None
 
-    ``features_data`` may be a list of GeoJSON feature dicts, a bare
-    FeatureCollection, a wrapped ref-data shape ({"geojson": ...}) or the
-    legacy point list [((lon, lat), props), ...]. Returns a valid (possibly
-    empty) tile: b"" when nothing falls inside the tile.
+
+def _assemble_mvt(records: List[Tuple[int, bytes, Dict[str, Any]]]) -> bytes:
+    """Assemble the final MVT tile bytes from encoded feature records.
+
+    Each record is ``(type_id, geometry_bytes, properties)``. Property keys and
+    values are deduplicated in first-seen order, exactly as the wire format
+    requires. Returns b"" when no feature produced geometry (a valid empty tile
+    message with no layer).
     """
-    features = _to_feature_dicts(features_data)
     keys: List[str] = []
     key_idx: Dict[str, int] = {}
     values: List[bytes] = []
@@ -694,29 +758,9 @@ def encode_tile(features_data, z: int, x: int, y: int) -> bytes:
         return value_idx[encoded]
 
     feature_msgs: List[bytes] = []
-    for f in features:
-        geometry = f.get("geometry")
-        if not isinstance(geometry, dict):
-            continue
-        gtype = geometry.get("type")
-        coords = geometry.get("coordinates")
-        if gtype == "GeometryCollection":
-            logger.warning("mvt: GeometryCollection features are not encoded, skipping")
-            continue
-        if gtype not in _SUPPORTED_TYPES:
-            continue
-        geom_bytes = _encode_geometry(gtype, coords, z, x, y)
-        if geom_bytes is None:
-            continue
-        if gtype in _IS_POINT:
-            type_id = _GT_POINT
-        elif gtype in _IS_LINE:
-            type_id = _GT_LINESTRING
-        else:
-            type_id = _GT_POLYGON
+    for type_id, geom_bytes, props in records:
         tags: List[int] = []
-        props = f.get("properties") or {}
-        for k, v in props.items():
+        for k, v in (props or {}).items():
             encoded = _encode_value(v)
             if encoded is None:
                 continue
@@ -742,6 +786,42 @@ def encode_tile(features_data, z: int, x: int, y: int) -> bytes:
     return bytes(tile)
 
 
+def encode_tile(features_data, z: int, x: int, y: int) -> bytes:
+    """Encode features into a raw (uncompressed) MVT tile for (z, x, y).
+
+    ``features_data`` may be a list of GeoJSON feature dicts, a bare
+    FeatureCollection, a wrapped ref-data shape ({"geojson": ...}) or the
+    legacy point list [((lon, lat), props), ...]. Returns a valid (possibly
+    empty) tile: b"" when nothing falls inside the tile.
+
+    This is the coordinate-based path: it parses GeoJSON coordinates into
+    shapely geometries on each call. The index-aware path
+    (``encode_tile_from_index``) reuses geometries already built by the spatial
+    index and produces byte-identical output.
+    """
+    features = _to_feature_dicts(features_data)
+    records: List[Tuple[int, bytes, Dict[str, Any]]] = []
+    for f in features:
+        geometry = f.get("geometry")
+        if not isinstance(geometry, dict):
+            continue
+        gtype = geometry.get("type")
+        coords = geometry.get("coordinates")
+        if gtype == "GeometryCollection":
+            logger.warning("mvt: GeometryCollection features are not encoded, skipping")
+            continue
+        if gtype not in _SUPPORTED_TYPES:
+            continue
+        geom_bytes = _encode_geometry(gtype, coords, z, x, y)
+        if geom_bytes is None:
+            continue
+        type_id = _type_id_for(gtype)
+        if type_id is None:
+            continue
+        records.append((type_id, geom_bytes, f.get("properties") or {}))
+    return _assemble_mvt(records)
+
+
 def encode_point_tile(
     features: List[Tuple[Tuple[float, float], Dict[str, Any]]],
     z: int,
@@ -756,6 +836,54 @@ def encode_point_tile(
     return encode_tile(features, z, x, y)
 
 
+def encode_tile_from_index(entry: "SpatialIndexEntry", z: int, x: int, y: int) -> bytes:
+    """Encode a tile reusing a spatial index's pre-built geometries.
+
+    This is the Data Plane hot path: STRtree candidates come with their already
+    projected shapely geometries, so the per-tile GeoJSON→Shapely construction
+    and (at z >= _SIMPLIFY_MAX_ZOOM) the z0 projection are eliminated — that
+    work happens once at index-build time. Output is byte-identical to
+    ``encode_tile(entry.query_tile(z, x, y), z, x, y)``.
+
+    Points still read their coordinates from the feature dict (their projection
+    is cheap scalar math, no shapely construction). Falls back to the raw
+    ``encode_tile`` path when the index has no prepared shapely geometries
+    (shapely unavailable).
+    """
+    if not _SHAPELY or entry.geoms is None:
+        return encode_tile(entry.query_tile(z, x, y), z, x, y)
+    records: List[Tuple[int, bytes, Dict[str, Any]]] = []
+    for feature, geom_lonlat, geom_z0 in entry.query_candidates(z, x, y):
+        geometry = feature.get("geometry")
+        gtype = geometry.get("type") if isinstance(geometry, dict) else None
+        # GeometryCollections and unsupported types are excluded at index-build
+        # time, so this guard is defensive only (no warning, unlike encode_tile
+        # which receives arbitrary user input).
+        if gtype == "GeometryCollection" or gtype not in _SUPPORTED_TYPES:
+            continue
+        if gtype in _IS_POINT:
+            coords = geometry.get("coordinates")
+            pts = coords if gtype == "MultiPoint" else [coords]
+            geom_bytes = _encode_points(pts, z, x, y)
+        else:
+            try:
+                geom_bytes = _encode_line_polygon_from_geoms(gtype, geom_lonlat, geom_z0, z, x, y)
+            except Exception:
+                # Mirror _encode_geometry's resilience: a pathological geometry
+                # that survives index build but fails shapely simplify/intersect
+                # falls back to the coordinate path (which itself degrades to the
+                # pure-python encoder) rather than failing the whole tile.
+                logger.warning("mvt: shapely encode failed, using pure-python fallback", exc_info=True)
+                geom_bytes = _encode_geometry(gtype, geometry.get("coordinates"), z, x, y)
+        if geom_bytes is None:
+            continue
+        type_id = _type_id_for(gtype)
+        if type_id is None:
+            continue
+        records.append((type_id, geom_bytes, feature.get("properties") or {}))
+    return _assemble_mvt(records)
+
+
 # ─── spatial index ──────────────────────────────────────────────────────────
 
 
@@ -764,18 +892,37 @@ class SpatialIndexEntry:
 
     ``geoms`` are shapely geometries in z0 world pixels (world = 256); the
     query box is the tile rect in the same space, so one index serves every
-    zoom (projection is homogeneous in z). ``bounds`` are plain z0-px bboxes
-    used by the no-shapely full-scan fallback.
+    zoom (projection is homogeneous in z). ``geoms_lonlat`` are the matching
+    lon/lat shapely geometries (retained so tile encoding can apply the
+    zoom-dependent simplification in lon/lat space without re-parsing the
+    GeoJSON coordinates). Retaining both arrays roughly doubles the index's
+    per-ref geometry memory vs. the z0-only design; this is the deliberate
+    trade-off for eliminating per-tile reconstruction, and stays bounded by the
+    per-(session, ref) LRU. ``bounds`` are plain z0-px bboxes used by the
+    no-shapely full-scan fallback. ``geoms`` / ``geoms_lonlat`` are None when
+    shapely is unavailable.
     """
 
-    __slots__ = ("key", "features", "geoms", "tree", "bounds")
+    __slots__ = ("key", "features", "geoms", "geoms_lonlat", "tree", "bounds")
 
-    def __init__(self, key, features, geoms, tree, bounds):
+    def __init__(self, key, features, geoms, geoms_lonlat, tree, bounds):
         self.key = key
         self.features = features
         self.geoms = geoms
+        self.geoms_lonlat = geoms_lonlat
         self.tree = tree
         self.bounds = bounds
+
+    def _candidate_indices(self, z: int, x: int, y: int) -> List[int]:
+        """Insertion-ordered feature indices whose bbox intersects the tile."""
+        x0, y0, x1, y1 = _tile_rect_z0(z, x, y)
+        if self.tree is not None:
+            return [int(i) for i in np.sort(np.atleast_1d(
+                self.tree.query(shapely.geometry.box(x0, y0, x1, y1))))]
+        return [
+            i for i, b in enumerate(self.bounds)
+            if b[0] <= x1 and b[2] >= x0 and b[1] <= y1 and b[3] >= y0
+        ]
 
     def query_tile(self, z: int, x: int, y: int) -> List[dict]:
         """Features whose bbox intersects the tile (exact filter at encode).
@@ -783,15 +930,18 @@ class SpatialIndexEntry:
         Results keep the original feature order (STRtree returns spatially
         sorted indices; re-sorting restores insertion order).
         """
-        x0, y0, x1, y1 = _tile_rect_z0(z, x, y)
-        if self.tree is not None:
-            idx = np.sort(np.atleast_1d(self.tree.query(shapely.geometry.box(x0, y0, x1, y1))))
-            return [self.features[int(i)] for i in idx]
-        hits = []
-        for i, b in enumerate(self.bounds):
-            if b[0] <= x1 and b[2] >= x0 and b[1] <= y1 and b[3] >= y0:
-                hits.append(self.features[i])
-        return hits
+        return [self.features[i] for i in self._candidate_indices(z, x, y)]
+
+    def query_candidates(self, z: int, x: int, y: int):
+        """Prepared ``(feature, geom_lonlat, geom_z0)`` for each bbox-hit candidate.
+
+        Insertion-ordered (parallel to ``query_tile``). Only valid when
+        ``geoms`` is set (shapely available); callers gate on that.
+        """
+        return [
+            (self.features[i], self.geoms_lonlat[i], self.geoms[i])
+            for i in self._candidate_indices(z, x, y)
+        ]
 
 
 def _pure_bounds(gtype: str, coords) -> Optional[Tuple[float, float, float, float]]:
@@ -820,11 +970,17 @@ def _pure_bounds(gtype: str, coords) -> Optional[Tuple[float, float, float, floa
 
 
 def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
-    """Build a spatial index entry for (session_id, ref_id) from raw ref data."""
+    """Build a spatial index entry for (session_id, ref_id) from raw ref data.
+
+    Each kept feature's lon/lat shapely geometry and its z0 projection are
+    retained (parallel to ``features``) so that tile encoding can reuse them
+    instead of re-parsing coordinates and re-projecting per tile request.
+    """
     if data is None:
         raise RefDataUnavailableError(f"ref data unavailable for index build: {key}")
     features = extract_features(data)
     geoms: List[Any] = []
+    geoms_lonlat: List[Any] = []
     bounds: List[Tuple[float, float, float, float]] = []
     kept: List[dict] = []
     for f in features:
@@ -844,6 +1000,7 @@ def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
                     continue
             except Exception:
                 continue
+            geoms_lonlat.append(geom)
             geoms.append(geom_z0)
             bounds.append(tuple(b))
         else:  # pragma: no cover - no-shapely environments
@@ -858,7 +1015,14 @@ def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
             tree = shapely.STRtree(geoms)
         except Exception:  # pragma: no cover - defensive
             tree = None
-    return SpatialIndexEntry(key, kept, geoms if _SHAPELY else None, tree, bounds)
+    return SpatialIndexEntry(
+        key,
+        kept,
+        geoms if _SHAPELY else None,
+        geoms_lonlat if _SHAPELY else None,
+        tree,
+        bounds,
+    )
 
 
 class SpatialIndexCache:

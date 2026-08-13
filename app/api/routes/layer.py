@@ -22,7 +22,7 @@ from app.models.db_model import Conversation
 from app.services.mvt import (
     RefDataUnavailableError,
     build_spatial_index_entry,
-    encode_tile,
+    encode_tile_from_index,
     single_flight,
     spatial_index_cache,
     tile_lru_cache,
@@ -102,12 +102,12 @@ def _encode_tile_cached(session_id: str, ref_id: str, z: int, x: int, y: int, da
 
     Runs inside asyncio.to_thread. Raises RefDataUnavailableError when the
     index was evicted between the route's presence check and this build (the
-    route then refetches the ref data once and retries).
+    route then refetches the ref data once and retries). Encoding reuses the
+    index's pre-built geometries (no per-tile GeoJSON→Shapely reconstruction).
     """
     key = (session_id, ref_id)
     entry = spatial_index_cache.get_or_build(key, lambda: build_spatial_index_entry(key, data))
-    features = entry.query_tile(z, x, y)
-    raw = encode_tile(features, z, x, y)
+    raw = encode_tile_from_index(entry, z, x, y)
     body = gzip.compress(raw)
     tile_lru_cache.put((session_id, ref_id, z, x, y), body)
     return body
