@@ -406,8 +406,14 @@ class PiRpcClient:
             result = await asyncio.wait_for(future, timeout=PI_RPC_TIMEOUT)
             return result
         except asyncio.TimeoutError:
-            self._pending_requests.pop(request_id, None)
             raise PiRpcError(f"Pi request timeout: {command}")
         except (BrokenPipeError, OSError) as e:
-            self._pending_requests.pop(request_id, None)
             raise PiRpcError(f"Pi pipe error: {e}")
+        finally:
+            # F19: pop unconditionally, not just on TimeoutError/pipe errors.
+            # A caller cancellation (CancelledError) previously leaked the
+            # registry entry — one dead future per cancelled request, and a
+            # late response for that id would resolve a future nobody awaits.
+            # Idempotent: the normal response path already popped the entry
+            # in _handle_response, so this is a no-op there.
+            self._pending_requests.pop(request_id, None)

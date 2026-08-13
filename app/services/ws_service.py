@@ -1,8 +1,13 @@
+import asyncio
 import logging
 from typing import Dict, List, Any
 from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
+
+# F16: 单个 socket 的 send 有界等待上限（秒）。卡死（不报错但也不 flush）的连接
+# 不能无限期拖住同 session 的其它连接；超时后按死连接处理并驱逐。
+WS_SEND_TIMEOUT = 2.0
 
 class ConnectionManager:
     """Handles active WebSocket connections for real-time GIS data broadcasting"""
@@ -26,12 +31,39 @@ class ConnectionManager:
         logger.info(f"WebSocket disconnected for session: {session_id}")
 
     async def broadcast(self, session_id: str, message: dict):
-        if session_id in self.active_connections:
-            for connection in self.active_connections[session_id]:
-                try:
-                    await connection.send_json(message)
-                except Exception as e:
-                    logger.error(f"Error sending WebSocket message: {e}")
+        connections = self.active_connections.get(session_id)
+        if not connections:
+            return
+        # 快照迭代 + 并发发送（P2 round-2）：所有连接同一轮内并行 send，每路
+        # send 各自被 WS_SEND_TIMEOUT 封顶 —— N 个卡死连接的总耗时约等于一个
+        # 超时（顺序发送时是 N×WS_SEND_TIMEOUT）。发送失败/超时的连接记入
+        # dead，本轮结束后统一驱逐（快照迭代语义不变：在循环里 remove 会跳过
+        # 元素）。
+        dead: List[WebSocket] = []
+
+        async def _send(connection: WebSocket) -> None:
+            try:
+                await asyncio.wait_for(
+                    connection.send_json(message), timeout=WS_SEND_TIMEOUT
+                )
+            except Exception as e:  # noqa: BLE001 — 含 TimeoutError；坏连接不能影响其余连接
+                logger.error(f"Error sending WebSocket message: {e}")
+                dead.append(connection)
+
+        await asyncio.gather(*(_send(c) for c in list(connections)))
+        for connection in dead:
+            self.disconnect(connection, session_id)
+            # P2 (round-2 review): 驱逐后尽力关闭底层 socket。路由可能正阻塞在
+            # receive_json() 上等下一条消息 —— 只从 active_connections 移除而
+            # 不 close，那条路由会一直挂在那里（僵尸连接，接收循环永不退出）。
+            # close 本身也可能卡在坏连接上，所以同样加超时；失败仅记日志
+            # （best-effort，关闭失败不阻塞广播）。
+            try:
+                await asyncio.wait_for(
+                    connection.close(), timeout=WS_SEND_TIMEOUT
+                )
+            except Exception as e:  # noqa: BLE001 — close 是 best-effort
+                logger.warning(f"Error closing evicted WebSocket: {e}")
 
 # Global instance for the entire application
 manager = ConnectionManager()

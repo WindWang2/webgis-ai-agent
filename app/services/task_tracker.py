@@ -8,6 +8,7 @@ agent turn」的热态视图，durable 事实在 analysis_tasks 表（见 app/se
 ``await token.wait()`` 从而**抢占式**打断在飞的工具，而不是等当前工具自然跑完；
 token 还通过 contextvar 传进同步 GIS 代码，让长循环能在 checkpoint 处协作退出。
 """
+import asyncio
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -23,6 +24,9 @@ class StepStatus(str, Enum):
     running = "running"
     completed = "completed"
     failed = "failed"
+    #: F7/F8：被用户取消（或被抢占式打断）的步骤 —— 与 failed 区分开，
+    #: 取消绝不等于工具故障。
+    cancelled = "cancelled"
 
 
 class TaskStatus(str, Enum):
@@ -110,6 +114,13 @@ class _TrackStepContext:
             return False
 
         if exc_type is not None:
+            if issubclass(exc_type, asyncio.CancelledError):
+                # F7/F8：asyncio 抢占式取消不是步骤失败。
+                try:
+                    self.tracker.cancel_step(self.task_id, self.step.id)
+                except Exception:
+                    pass
+                return False  # Re-raise CancelledError
             err_msg = str(exc_val) if exc_val else f"Exception: {exc_type.__name__}"
             try:
                 self.tracker.fail_step(self.task_id, self.step.id, err_msg)
@@ -172,9 +183,9 @@ class TaskTracker:
         # Per-session task limit
         session_task_ids = self._session_tasks[session_id]
         while len(session_task_ids) > self.MAX_TASKS_PER_SESSION:
-            old_id = session_task_ids.pop(0)
-            self._tasks.pop(old_id, None)
-            self._step_counters.pop(old_id, None)
+            # F18: 走 _drop_task —— running 任务先点燃 cancel token 再逐出，
+            # 不能静默丢弃一个在飞的执行体。
+            self._drop_task(session_task_ids[0])
 
         # 初始化步骤计数器
         self._step_counters[task_id] = 0
@@ -191,9 +202,10 @@ class TaskTracker:
         Finished tasks are evicted first (existing behavior); if the cap is
         still exceeded — e.g. many running tasks abandoned by streams whose
         client disconnected mid-turn — the oldest remaining tasks are evicted
-        regardless of status, so the tracker stays bounded. Evicting a running
-        task is safe: _TrackStepContext and start_step/complete_step guard on
-        task existence and no-op for unknown ids.
+        regardless of status, so the tracker stays bounded. A running task is
+        NEVER silently dropped (F18): _drop_task lights its cancel token
+        first, so the in-flight execution actually stops instead of becoming
+        an invisible, uncancellable orphan.
         """
         if len(self._tasks) <= self.MAX_TOTAL_TASKS:
             return
@@ -205,13 +217,20 @@ class TaskTracker:
             self._drop_task(tid)
 
         # Still over the cap: evict the oldest tasks (dict insertion order)
-        # regardless of status.
+        # regardless of status — _drop_task cancels running ones first.
         for tid in list(self._tasks)[:max(0, len(self._tasks) - self.MAX_TOTAL_TASKS)]:
             self._drop_task(tid)
 
     def _drop_task(self, tid: str) -> None:
         """Remove a task and its bookkeeping; drop now-empty session keys."""
-        self._tasks.pop(tid, None)
+        task = self._tasks.pop(tid, None)
+        if task is not None and task.status == TaskStatus.running:
+            # F18: running 任务绝不能被静默逐出 —— 那会让在飞执行体既不可见也
+            # 不可取消。逐出前先点燃它的 cancel token：asyncio 侧（引擎的
+            # cancel_watch）与线程侧（GIS 循环的 checkpoint）都能立刻停下。
+            token = task.cancel_token or cancellation_registry.get(tid)
+            if token is not None:
+                token.cancel("task evicted from tracker")
         self._step_counters.pop(tid, None)
         # ADR-0052: token 随 task 一起回收，避免 registry 随进程寿命单调增长
         cancellation_registry.discard(tid)
@@ -251,6 +270,8 @@ class TaskTracker:
         if not step:
             raise ValueError(f"Step {step_id} not found in task {task_id}")
 
+        if step.status != StepStatus.running:
+            return  # 终态不可变（first terminal wins）
         step.status = StepStatus.completed
         step.result = result
         step.finished_at = datetime.now(timezone.utc)
@@ -265,9 +286,46 @@ class TaskTracker:
         if not step:
             raise ValueError(f"Step {step_id} not found in task {task_id}")
 
+        if step.status != StepStatus.running:
+            return  # 终态不可变
         step.status = StepStatus.failed
         step.error = error
         step.finished_at = datetime.now(timezone.utc)
+
+    def cancel_step(self, task_id: str, step_id: str) -> None:
+        """标记步骤已取消（F7/F8：取消 ≠ 失败，与 OperationCancelled 对应）。"""
+        task = self._tasks.get(task_id)
+        if not task:
+            raise ValueError(f"Task {task_id} not found")
+
+        step = next((s for s in task.steps if s.id == step_id), None)
+        if not step:
+            raise ValueError(f"Step {step_id} not found in task {task_id}")
+
+        if step.status != StepStatus.running:
+            return  # 终态不可变
+        step.status = StepStatus.cancelled
+        step.finished_at = datetime.now(timezone.utc)
+
+    def terminalize_running_steps(
+        self,
+        task_id: str,
+        status: StepStatus = StepStatus.cancelled,
+        error: str | None = None,
+    ) -> None:
+        """F7: 把 task 下仍 running 的 step 一并收尾。
+
+        任务终态化（cancel/fail/complete）与断连路径都必须调用它 ——
+        GET /tasks/{id} 绝不允许在终态任务上显示 running 步骤。
+        """
+        task = self._tasks.get(task_id)
+        if not task:
+            return
+        for step in task.steps:
+            if step.status == StepStatus.running:
+                step.status = status
+                step.error = error
+                step.finished_at = datetime.now(timezone.utc)
 
     def complete_task(self, task_id: str) -> None:
         """完成任务"""
@@ -275,6 +333,13 @@ class TaskTracker:
         if not task:
             raise ValueError(f"Task {task_id} not found")
 
+        if task.status != TaskStatus.running:
+            # F3: 终态不可变（first terminal wins，与 durable-jobs 层不变量一致）
+            # —— cancel 后迟到的 complete 不得把 cancelled 改写回 completed。
+            return
+        self.terminalize_running_steps(
+            task_id, StepStatus.failed, "task completed while step still running"
+        )
         task.status = TaskStatus.completed
         task.finished_at = datetime.now(timezone.utc)
 
@@ -284,6 +349,9 @@ class TaskTracker:
         if not task:
             raise ValueError(f"Task {task_id} not found")
 
+        if task.status != TaskStatus.running:
+            return  # F3: 终态不可变
+        self.terminalize_running_steps(task_id, StepStatus.failed, error)
         task.status = TaskStatus.failed
         task.finished_at = datetime.now(timezone.utc)
         # 可选：记录失败原因到任务中
@@ -312,6 +380,13 @@ class TaskTracker:
         if not task:
             return False
 
+        if task.status == TaskStatus.cancelled:
+            return True  # 幂等：重复取消返回 True 但不重复点燃 token（规范 §5）
+        if task.status != TaskStatus.running:
+            # F3: 终态不可变 —— completed/failed 的任务不能被 cancel 覆盖。
+            return False
+        # F7: 仍 running 的 step 随任务一起取消，GET /tasks/{id} 不再显示 running。
+        self.terminalize_running_steps(task_id, StepStatus.cancelled)
         task.status = TaskStatus.cancelled
         task._cancelled = True
         task.finished_at = datetime.now(timezone.utc)

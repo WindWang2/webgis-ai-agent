@@ -28,11 +28,21 @@ router = APIRouter(prefix="/chat", tags=["对话"])
 registry: ToolRegistry = None  # type: ignore[assignment]
 engine: ChatEngine = None  # type: ignore[assignment]
 
-# DUP-1: process-local SSE turn-resume buffer. One ring buffer per session key
-# (most recent turn only; LRU-capped), filled by the route as events are
+# DUP-1: process-local SSE turn-resume buffer. A small bounded list of recent
+# turn buffers per session key (LRU-capped), filled by the route as events are
 # emitted. A POST with Last-Event-ID / last_event_id replays from it without
 # starting a new turn. Cross-restart persistence is a non-goal.
 _turn_resume_registry = TurnResumeRegistry()
+
+# F20: a resume that races a still-live (or queued, never-started) turn holds
+# for the real terminal instead of fabricating ``done`` — capped so a stalled
+# turn can't pin the reconnect forever; on expiry the client gets a truthful
+# terminal error and may reconnect again with a newer Last-Event-ID.
+# Hold is DISABLED for anonymous (''-key) sessions (P1): the shared anonymous
+# key skips ownership checks, so holding would let anyone who knows the
+# victim's message + Last-Event-ID tail a stranger's live turn — anonymous
+# resumes of live turns get the truthful pending error immediately instead.
+_RESUME_LIVE_HOLD_S = 30.0
 
 # SSE 流式响应头（Pi 和 legacy 路径共用）
 SSE_HEADERS = {
@@ -176,14 +186,31 @@ async def _resume_generator(
     A POST /chat/stream carrying ``Last-Event-ID`` / ``last_event_id`` is a
     RESUME — a read, never a new execution. The route sends no prompt RPC and
     dispatches no tool; it replays what the dropped connection missed from the
-    per-session ring buffer and then ends:
+    per-session ring buffers and then ends:
 
-      * buffer hit + message match → replay every buffered event with
-        ``id > last_event_id`` in order; then terminate with the buffered
-        terminal event if it was replayed, a synthesized ``done {resumed:
-        true}`` if the client already consumed the terminal (``last_event_id >=
-        terminal id`` — the stream must never hang), or a synthesized ``error``
-        if the turn was interrupted (aborted on disconnect; no terminal exists).
+      * unique buffer hit (message match + Last-Event-ID valid for that turn)
+        → replay every buffered event with ``id > last_event_id`` in order;
+        then terminate with the buffered terminal event if it was replayed, a
+        synthesized ``done {resumed: true}`` if the client already consumed
+        the terminal (``last_event_id >= terminal id`` — the stream must never
+        hang), or a synthesized ``error`` if the turn was interrupted (aborted
+        on disconnect; no terminal exists).
+      * the matched turn is still LIVE (or queued, never started) → after the
+        replay the stream HOLDS (F20): new events are forwarded as the turn
+        records them, until the real terminal arrives or the turn ends. A live
+        turn NEVER yields a fabricated ``done {resumed: true}``. If the turn
+        outlives ``_RESUME_LIVE_HOLD_S`` (stalled), the resume ends with a
+        truthful terminal ``error {resumed: true, pending: true}`` — the
+        client may reconnect again with a newer Last-Event-ID. Anonymous
+        (``""``-key) sessions never hold (P1): the shared anonymous key skips
+        ownership checks, so holding would let anyone who knows the message +
+        Last-Event-ID tail a stranger's live turn — an anonymous resume of a
+        live turn replays the already-buffered tail and immediately ends with
+        that truthful pending error instead.
+      * ambiguous hit (multiple concurrent turns on this session key match —
+        e.g. two anonymous ``""``-key turns with the same message, F2) →
+        terminal ``error {resumed: false}``: fail safe, never replay the WRONG
+        turn's events into this client's stream (cross-turn leak).
       * buffer miss (server restart / LRU eviction / message mismatch) → a
         terminal ``error {resumed: false}``; no new turn starts, so a stale
         reconnect can never double-execute the message. The client stops
@@ -192,20 +219,99 @@ async def _resume_generator(
     Synthesized terminal events carry no ``id:`` (they are not part of the
     original turn's id sequence); the client consumes them for status and
     stops, so ids are not needed for dedup there.
+
+    P2 (round-2 review): anonymous (``""``-key) resumes additionally require
+    ``last_event_id > 0``. The ``""`` key is shared by ALL anonymous clients
+    and skips ownership checks, so a resume from id 0 would replay a
+    stranger's whole buffered turn to anyone who knows the message + session
+    id. A nonzero Last-Event-ID is (weak) proof of prior contact with THAT
+    turn — the requester must have received events from it. An anonymous
+    resume with ``last_event_id <= 0`` is refused with a terminal
+    ``error {resumed: false}``: no replay, no fabricated done. Named-session
+    resumes are unchanged (``last_event_id == 0`` remains legal there).
+    Residual (documented): anonymous + no-auth still share the ``""``
+    namespace by design, so a nonzero id is not strong ownership — it only
+    removes the whole-turn replay.
     """
-    buffered = _turn_resume_registry.get(session_key)
-    if buffered is None or buffered.message != message:
+    if session_key == "" and last_event_id <= 0:
+        # P2 (round-2 review): anonymous resume without proof of prior contact
+        # is refused outright (no replay of a shared-key stranger's turn from
+        # the start; no fabricated done). Terminal — the client stops
+        # auto-retrying and surfaces the error.
+        yield sse_event("error", {
+            "session_id": session_key,
+            "error": (
+                "匿名会话续传需要携带已接收事件编号（Last-Event-ID > 0）；"
+                "从 0 重放存在跨用户泄漏风险，请重新发送消息。"
+            ),
+            "resumed": False,
+        })
+        return
+    buffered, ambiguous = _turn_resume_registry.find(session_key, message, last_event_id)
+    if buffered is None:
+        if ambiguous:
+            logger.warning(
+                "ambiguous resume for session key %r: multiple concurrent turns "
+                "match — refusing to replay (possible cross-turn leak)",
+                session_key,
+            )
         yield sse_event("error", {
             "error": (
                 "Resume unavailable: the turn buffer is gone (server restarted "
-                "or the session expired). Please resend your message."
+                "or the session expired)."
+                if not ambiguous else
+                "Resume ambiguous: multiple concurrent turns on this session "
+                "match this request — refusing to replay the wrong one. Wait "
+                "for the in-flight turn to finish and reconnect, or start a "
+                "new message."
             ),
             "resumed": False,
         })
         return
 
-    for event in buffered.replay_after(last_event_id):
-        yield event
+    # Replay (catching up to the live tail), then — while the turn is still
+    # live — hold for newly recorded events instead of terminating (F20).
+    # Single-threaded asyncio: replay + ended check are await-free, so no
+    # recorded event can be missed between iterations.
+    cursor = last_event_id
+    while True:
+        for event in buffered.replay_after(cursor):
+            yield event
+        if buffered.last_id is not None and buffered.last_id > cursor:
+            cursor = buffered.last_id
+        if buffered.ended:
+            break
+        if session_key == "":
+            # P1 (review): anonymous (''-key) sessions NEVER live-hold. The ''
+            # key is shared by ALL anonymous clients and skips ownership checks,
+            # so holding would let anyone who knows the victim's message +
+            # Last-Event-ID tail a stranger's live turn in real time
+            # (shadow-stream). Replay the already-buffered tail, then end with
+            # the truthful pending terminal — never fabricate done, never
+            # forward events recorded after this resume connected.
+            yield sse_event("error", {
+                "session_id": session_key,
+                "error": (
+                    "本轮仍在执行中；匿名会话不支持实时续传，请稍后携带 "
+                    "Last-Event-ID 重新连接接收剩余内容。"
+                ),
+                "resumed": True,
+                "pending": True,
+            })
+            return
+        if not await buffered.wait_for_update(timeout=_RESUME_LIVE_HOLD_S):
+            # Stalled live turn: end truthfully — the turn is still in
+            # progress and can be picked up by another resume. Never a fake done.
+            yield sse_event("error", {
+                "session_id": session_key,
+                "error": (
+                    "本轮仍在执行中（续传等待超时）；请携带 Last-Event-ID "
+                    "重新连接继续接收。"
+                ),
+                "resumed": True,
+                "pending": True,
+            })
+            return
 
     if buffered.terminal_event is not None:
         terminal_id = sse_event_id(buffered.terminal_event)
@@ -213,18 +319,16 @@ async def _resume_generator(
             # Client already consumed the terminal; reconnect for nothing but
             # a clean close — synthesize one so the stream terminates.
             yield sse_event("done", {"session_id": session_key, "resumed": True})
-    elif buffered.aborted:
-        # Turn was cut by a client disconnect (server aborted the prompt):
-        # replaying the partial content must NOT look like a complete answer.
+        # Otherwise the terminal was replayed above — nothing more to add.
+    else:
+        # Ended without a terminal: the turn was interrupted (client
+        # disconnect → server aborted the prompt). Replayed partial content
+        # must NOT look like a complete answer.
         yield sse_event("error", {
             "session_id": session_key,
             "error": "连接已中断，本轮未完成且不会自动续跑；请重新发送消息。",
             "resumed": True,
         })
-    else:
-        # Buffered turn still streaming (a resume racing the live turn):
-        # nothing more to add — terminate cleanly.
-        yield sse_event("done", {"session_id": session_key, "resumed": True})
 
 
 class ChatRequest(BaseModel):
@@ -591,6 +695,15 @@ async def push_map_action_acks(
     不可达仅丢事件），端点成败不影响地图交互。harness 评估时直接从 session
     存储读取 ACK（单一事实源），此处不再另写 harness。
 
+    F26: 存储层 append 返回 False 有两种含义 —— 真重复（首达终态获胜，事件
+    已在库里）与降级丢弃（Redis 不可达，事件根本没入库）。之前两者都计入
+    duplicates，客户端无法区分"丢了"与"重了"、也就不会重试真正的丢失。现在
+    对 False 的 ACK 回读一次：action_id 在库 → duplicate；不在 → 计入 additive
+    的 ``dropped`` 字段（仅在有丢弃时出现，响应形状向后兼容）。客户端可对
+    dropped 重试。回读竞态（判重后被并发淘汰/并发首达）只影响计数归类，不
+    影响存储正确性。P2 (round-2 review): 回读只做一次前置快照 + 仅在刚有
+    append 成功（快照可能过期）时刷新，不再逐条被拒 ACK 全量回读（O(n^2)）。
+
     限速 per client IP（同 ws.py/auth.py）：Redis 不可达时 is_allowed fail-open
     放行，不阻断正常交互。
     """
@@ -602,12 +715,35 @@ async def push_map_action_acks(
         raise HTTPException(status_code=429, detail="Too many map action acks")
     from app.services.session_data import session_data_manager
     accepted = 0
+    duplicates = 0
+    dropped = 0
+    # P2 (round-2 review): hoist ONE readback before the loop instead of
+    # re-reading the store per rejected ack (up to 50 full reads = O(n^2) —
+    # e.g. a retrying client spamming 50 duplicates). The snapshot is
+    # refreshed ONLY after an accepted append (only then can it be stale for
+    # an in-batch duplicate of a just-appended id); rejects never read.
+    stored = await session_data_manager.get_map_action_events(session_id)
+    snapshot_stale = False
     for ack in req.acks:
         if await session_data_manager.append_map_action_event(
             session_id, ack.model_dump(exclude_none=True)
         ):
             accepted += 1
-    return {"accepted": accepted, "duplicates": len(req.acks) - accepted}
+            snapshot_stale = True
+            continue
+        if snapshot_stale:
+            # An append landed since the snapshot — an in-batch duplicate of
+            # it would be misread as "dropped". Refresh once, then classify.
+            stored = await session_data_manager.get_map_action_events(session_id)
+            snapshot_stale = False
+        if any(e.get("action_id") == ack.action_id for e in stored):
+            duplicates += 1
+        else:
+            dropped += 1
+    result = {"accepted": accepted, "duplicates": duplicates}
+    if dropped:
+        result["dropped"] = dropped
+    return result
 
 
 @router.get("/skills")
@@ -631,9 +767,11 @@ async def clear_session(
     # 但 Pi agent 子进程里该 session 的在途 prompt 不会被中断，会继续消耗
     # token / 写文件。现在先对 Pi bridge 发 abort（fire-and-forget RPC，
     # 失败仅记日志，不影响后续 DB 清理），再走 legacy 清理。
+    # F5: abort 携带被删会话的 id —— session-blind 的 abort 会把*别的*会话的
+    # 在途 turn 一起杀掉；bridge 据此在其它会话的 turn 在途时跳过并记日志。
     if _use_pi_bridge():
         try:
-            await pi_bridge.abort()
+            await pi_bridge.abort(session_id=session_id)
         except Exception as e:  # noqa: BLE001 — abort 失败不能阻塞删除流程
             logger.warning("Pi bridge abort failed for session %s: %s", session_id, e)
 
@@ -642,6 +780,13 @@ async def clear_session(
     )
     if not ok:
         raise HTTPException(status_code=404, detail="Session not found")
+    # P2 (round-2 review): purge the deleted session's resume buffers. Without
+    # this, anyone holding session_id + the message could keep replaying the
+    # deleted session's buffered SSE events from the process-local resume
+    # registry until LRU eviction. The '' key (shared by ALL anonymous
+    # sessions) is deliberately never purged here — clear_session only ever
+    # targets a real (named) session id.
+    _turn_resume_registry.clear_session(session_id)
     return {"status": "ok"}
 
 

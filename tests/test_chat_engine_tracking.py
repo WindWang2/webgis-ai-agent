@@ -402,8 +402,8 @@ async def test_stream_disconnect_fails_tracker_task(engine):
 
     fix 前 chat_stream 没有 GeneratorExit/CancelledError 处理：客户端断连
     （Starlette 对 StreamingResponse 调用 aclose）会让任务一直 running，
-    直到 MAX_TOTAL_TASKS 上限才被逐出。fix 后任务应转为 failed（原因
-    cancelled）。
+    直到 MAX_TOTAL_TASKS 上限才被逐出。fix 后任务会终止；F8 之后终态从
+    failed 改为 cancelled —— 断连/取消必须与真正的失败区分开。
     """
     with patch.object(engine, "_save_msg_async", new_callable=AsyncMock):
         gen = engine.chat_stream("断连测试", session_id="test-disc")
@@ -416,17 +416,18 @@ async def test_stream_disconnect_fails_tracker_task(engine):
 
         task = engine.tracker.get(task_id)
         assert task is not None, "任务应仍存在于 tracker"
-        assert task.status == TaskStatus.failed, (
-            f"断连后任务应为 failed，实际 {task.status}"
+        assert task.status == TaskStatus.cancelled, (
+            f"断连后任务应为 cancelled（F8），实际 {task.status}"
         )
 
 
 @pytest.mark.asyncio
 async def test_stream_cancelled_mid_turn_fails_tracker_task(engine):
-    """B-P2-17 (CancelledError 分支)：流式对话中途被取消时任务也必须转为 failed。
+    """B-P2-17 (CancelledError 分支)：流式对话中途被取消时任务也必须终止。
 
     StreamingResponse 在客户端断连时对生成器投递的正是 CancelledError（不是
     GeneratorExit），因此两个分支都要终止任务。fix 前任务停留在 running（泄漏）。
+    F8 之后终态从 failed 改为 cancelled —— 取消必须与失败可区分。
     """
     token_consumed = asyncio.Event()
     parked = asyncio.Event()
@@ -454,6 +455,6 @@ async def test_stream_cancelled_mid_turn_fails_tracker_task(engine):
 
             task = engine.tracker.get(task_id)
             assert task is not None, "任务应仍存在于 tracker"
-            assert task.status == TaskStatus.failed, (
-                f"取消后任务应为 failed，实际 {task.status}"
+            assert task.status == TaskStatus.cancelled, (
+                f"取消后任务应为 cancelled（F8），实际 {task.status}"
             )

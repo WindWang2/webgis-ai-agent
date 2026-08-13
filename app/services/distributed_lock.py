@@ -28,6 +28,16 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+#: F12: 旧 loop 上 client 的异步关闭任务是 fire-and-forget —— 丢弃引用会让它
+#: 在运行前被 GC，且对任何 background-task drain 不可见。保持强引用直到任务
+#: 完成（与 execution_engine 的 _background_tasks 同一模式）。
+_client_close_tasks: set = set()
+
+
+def _track_client_close(task) -> None:
+    _client_close_tasks.add(task)
+    task.add_done_callback(_client_close_tasks.discard)
+
 _DEFAULT_TTL_MS = 30_000          # 30s base TTL
 _RENEW_INTERVAL_S = 8.0           # renew well before TTL expiry
 _FALLBACK_CAP = 4096              # bound the in-process fallback registry
@@ -148,11 +158,40 @@ class SessionLockRegistry:
 
     def __init__(self):
         self._client = None
+        # The cached client's connection pool is bound to the event loop that
+        # was running when it was created (F12); tracked here so a loop change
+        # (event-loop restart, pytest per-test loops) triggers a rebuild.
+        self._bound_loop: Optional[asyncio.AbstractEventLoop] = None
         self._last_check_s: float = 0.0
         self._fallback_locks: Dict[str, _InProcessLock] = {}
 
+    @staticmethod
+    async def _close_client(client) -> None:
+        """Best-effort close of a client bound to a dead loop; failures expected."""
+        try:
+            await client.aclose()
+        except Exception:
+            pass
+
     def _get_client(self):
         import time as _time
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        # F12: if the running loop changed, the cached client's pool is bound to
+        # the old (likely closed) loop — every op raises "Event loop is closed"
+        # and locking silently degrades to in-process. Rebuild on the current
+        # loop (same pattern as RedisRateLimiter._ensure_client /
+        # RedisSessionStore._ensure_connected).
+        if self._client is not None and self._bound_loop is not loop:
+            old, self._client = self._client, None
+            self._bound_loop = None
+            self._last_check_s = 0.0  # don't let the 60s re-verify gate delay the rebuild
+            if loop is not None:
+                # F12: 保持强引用直到关闭任务完成 —— create_task 的返回值被丢弃
+                # 时任务可能在运行前就被 GC，且对 background-task drain 不可见。
+                _track_client_close(loop.create_task(self._close_client(old)))
         now = _time.monotonic()
         # Re-verify at most every 60s so a transient Redis outage is recovered.
         if self._client is not None or (now - self._last_check_s) < 60.0:
@@ -165,6 +204,7 @@ class SessionLockRegistry:
         try:
             import redis.asyncio as aioredis  # local import: don't pay cost if unused
             self._client = aioredis.from_url(redis_url, decode_responses=False)
+            self._bound_loop = loop
             logger.info("SessionLockRegistry: Redis-backed distributed locks enabled")
         except Exception as e:  # noqa: BLE001
             logger.warning("SessionLockRegistry: Redis unavailable, using in-process locks: %s", e)

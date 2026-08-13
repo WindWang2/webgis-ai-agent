@@ -36,6 +36,10 @@ class MemorySessionStore(BaseSessionStore):
         # A single instance lock is sufficient for the in-memory backend (it is
         # only a fallback when Redis is unavailable).
         self._lock = asyncio.Lock()
+        # F27: dedicated lock for the append_map_action_event dedupe critical
+        # section (see its docstring). Kept separate from `self._lock` so ACK
+        # appends don't serialize against layer mutations.
+        self._map_action_lock = asyncio.Lock()
 
     async def store(self, session_id: str, data: Any, prefix: str = "data") -> str:
         """存储数据并返回生成的游标 ID"""
@@ -228,17 +232,23 @@ class MemorySessionStore(BaseSessionStore):
         首达终态获胜：同一 action_id 已存在时拒绝并返回 False（前端重连/重试
         会重复上报，首个到达的终态即真相）。每 session 上限
         MAX_MAP_ACTION_EVENTS，超出时按插入序淘汰最旧条目。
+
+        F27 不变量：action_id 判重 + 插入是 check-then-insert 临界区，全程持有
+        ``_map_action_lock``。此前临界区碰巧没有 await（原子性是"偶然"成立的）；
+        任何未来在临界区内引入的 await 都必须保持在锁内，否则并发重复写会
+        同时通过判重，破坏首达终态获胜语义。
         """
         action_id = str(event.get("action_id") or "")
         if not action_id:
             return False
-        events = self._map_action_events.setdefault(session_id, OrderedDict())
-        if action_id in events:
-            return False
-        while len(events) >= MAX_MAP_ACTION_EVENTS:
-            events.popitem(last=False)
-        events[action_id] = dict(event)
-        return True
+        async with self._map_action_lock:
+            events = self._map_action_events.setdefault(session_id, OrderedDict())
+            if action_id in events:
+                return False
+            while len(events) >= MAX_MAP_ACTION_EVENTS:
+                events.popitem(last=False)
+            events[action_id] = dict(event)
+            return True
 
     async def get_map_action_events(self, session_id: str) -> list[dict]:
         """返回该 session 当前全部地图动作 ACK（按到达顺序）。"""

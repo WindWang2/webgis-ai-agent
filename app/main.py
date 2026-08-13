@@ -22,6 +22,14 @@ from app.tools import init_tools
 from app.services.chat_engine import ChatEngine
 from app.services.tool_catalog import ToolCatalog
 
+# F15-wiring：teardown 前排空 chat 侧 fire-and-forget 背景任务（标题生成 / ws 广播），
+# 避免它们在资源关闭后继续写。drain_background_tasks 由 chat 执行引擎模块提供；
+# 未提供时降级为 None，不阻塞启动。
+try:
+    from app.services.chat.execution_engine import drain_background_tasks
+except ImportError:  # pragma: no cover - 旧版 execution_engine 没有该函数
+    drain_background_tasks = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 
@@ -86,6 +94,14 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
 
+    # F15-wiring：teardown 前排空 chat fire-and-forget 背景任务（标题生成、
+    # ws 广播等），避免它们在 engine/http client 关闭后继续写已失效资源。
+    if drain_background_tasks is not None:
+        try:
+            await drain_background_tasks()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[lifespan] drain_background_tasks failed: {e}")
+
     # 输出工具调用 digest（top 累计 / top p99 / 错误），便于运维定位最慢工具
     try:
         from app.services.tool_metrics import emit_digest
@@ -115,6 +131,16 @@ async def lifespan(app: FastAPI):
             await shutdown_pi_bridge()
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[lifespan] Pi bridge shutdown failed: {e}")
+
+    # F11：之前只 dispose 同步 Engine，async 池仍绑定在已关闭的 event loop 上，
+    # 跨 lifespan 周期复用时第一次 async DB 调用直接 'Event loop is closed'。
+    # best-effort，与周围邻居一致；inline import 与上方 init_db 同款，便于测试 patch。
+    from app.core.database import AsyncEngine
+    if AsyncEngine is not None:
+        try:
+            await AsyncEngine.dispose()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[lifespan] async engine dispose failed: {e}")
 
     Engine.dispose()
 

@@ -298,16 +298,35 @@ class RedisSessionStore(BaseSessionStore):
         return True
 
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
+        """写路径 best-effort：Redis 不可达时 log warning 并丢弃，不抛。
+
+        F22：alias 写入失败不应杀死整个 chat turn（审计 C3 同款隔离）。
+        """
         await self._ensure_connected()
-        async with self._r.pipeline() as pipe:
-            pipe.hset(self._aliases_key(session_id), alias, ref_id)
-            pipe.hset(self._refs_key(session_id), ref_id, alias)
-            self._refresh_session_ttl(pipe, session_id)
-            await pipe.execute()
+        try:
+            async with self._r.pipeline() as pipe:
+                pipe.hset(self._aliases_key(session_id), alias, ref_id)
+                pipe.hset(self._refs_key(session_id), ref_id, alias)
+                self._refresh_session_ttl(pipe, session_id)
+                await pipe.execute()
+        except aioredis.RedisError as e:
+            logger.warning(
+                "Redis set_alias failed for session %s ref %s: %s — alias dropped",
+                session_id, ref_id, e,
+            )
 
     async def resolve_alias(self, session_id: str, ref_or_alias: str) -> str:
+        """读路径 cache-miss 语义：Redis 不可达时原样返回输入（与 memory 后端
+        未命中别名一致），不抛（F22）。"""
         await self._ensure_connected()
-        ref_id = await self._r.hget(self._aliases_key(session_id), ref_or_alias)
+        try:
+            ref_id = await self._r.hget(self._aliases_key(session_id), ref_or_alias)
+        except aioredis.RedisError as e:
+            logger.warning(
+                "Redis resolve_alias failed for session %s: %s — returning input unchanged",
+                session_id, e,
+            )
+            return ref_or_alias
         if ref_id is None:
             return ref_or_alias
         return ref_id.decode() if isinstance(ref_id, bytes) else ref_id
@@ -318,11 +337,21 @@ class RedisSessionStore(BaseSessionStore):
         The registry resolves every string argument of a tool call; doing it
         one resolve_alias (HGET) at a time cost N serialized round-trips per
         dispatch. One HMGET collapses that to a single round-trip.
+
+        F22：本方法在每次 tool dispatch 上运行（chat/registry.py），Redis 抖动
+        不能让所有工具调用失败 —— 不可达时返回 identity map（cache-miss 语义）。
         """
         if not strings:
             return {}
         await self._ensure_connected()
-        ref_ids = await self._r.hmget(self._aliases_key(session_id), strings)
+        try:
+            ref_ids = await self._r.hmget(self._aliases_key(session_id), strings)
+        except aioredis.RedisError as e:
+            logger.warning(
+                "Redis resolve_aliases failed for session %s: %s — returning identity map",
+                session_id, e,
+            )
+            return {s: s for s in strings}
         out = {}
         for s, ref in zip(strings, ref_ids):
             if ref is None:
@@ -373,17 +402,26 @@ class RedisSessionStore(BaseSessionStore):
     # (both overridden below), which carry the backend-specific logic.
 
     async def list_refs(self, session_id: str) -> dict[str, str]:
+        """读路径 cache-miss 语义：Redis 不可达时返回空表，不抛（F22）。
+        本方法在每次 tool dispatch 上运行（chat/registry.py）。"""
         await self._ensure_connected()
-        ref_ids_bytes = await self._r.zrange(self._refs_order_key(session_id), 0, -1)
-        if not ref_ids_bytes:
+        try:
+            ref_ids_bytes = await self._r.zrange(self._refs_order_key(session_id), 0, -1)
+            if not ref_ids_bytes:
+                return {}
+            ref_ids = [r.decode() if isinstance(r, bytes) else r for r in ref_ids_bytes]
+            raw_refs = await self._r.hgetall(self._refs_key(session_id))
+            ref_to_alias = {
+                (k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v)
+                for k, v in raw_refs.items()
+            }
+            return {rid: ref_to_alias.get(rid, "") for rid in ref_ids}
+        except aioredis.RedisError as e:
+            logger.warning(
+                "Redis list_refs failed for session %s: %s — returning empty",
+                session_id, e,
+            )
             return {}
-        ref_ids = [r.decode() if isinstance(r, bytes) else r for r in ref_ids_bytes]
-        raw_refs = await self._r.hgetall(self._refs_key(session_id))
-        ref_to_alias = {
-            (k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v)
-            for k, v in raw_refs.items()
-        }
-        return {rid: ref_to_alias.get(rid, "") for rid in ref_ids}
 
     async def set_map_state(self, session_id: str, key: str, value: Any, seq: Optional[int] = None) -> bool:
         await self._ensure_connected()
@@ -439,8 +477,16 @@ class RedisSessionStore(BaseSessionStore):
         return False
 
     async def get_started_at(self, session_id: str) -> Optional[str]:
+        """读路径 cache-miss 语义：Redis 不可达时返回 None，不抛（F22）。"""
         await self._ensure_connected()
-        raw = await self._r.hget(self._state_key(session_id), "_started_at")
+        try:
+            raw = await self._r.hget(self._state_key(session_id), "_started_at")
+        except aioredis.RedisError as e:
+            logger.warning(
+                "Redis get_started_at failed for session %s: %s — returning None",
+                session_id, e,
+            )
+            return None
         return self._decode_started_at(raw)
 
     @staticmethod
@@ -615,8 +661,16 @@ class RedisSessionStore(BaseSessionStore):
         self._l1_invalidate_session(session_id)
 
     async def get_event_log(self, session_id: str) -> list[dict]:
+        """读路径 cache-miss 语义：Redis 不可达时返回空列表，不抛（F22）。"""
         await self._ensure_connected()
-        raw_list = await self._r.lrange(self._events_key(session_id), 0, -1)
+        try:
+            raw_list = await self._r.lrange(self._events_key(session_id), 0, -1)
+        except aioredis.RedisError as e:
+            logger.warning(
+                "Redis get_event_log failed for session %s: %s — returning empty",
+                session_id, e,
+            )
+            return []
         return [
             json.loads(item.decode() if isinstance(item, bytes) else item)
             for item in raw_list
@@ -795,6 +849,10 @@ class RedisSessionStore(BaseSessionStore):
             )
             pipe.srem(self._active_key(), session_id)
             await pipe.execute()
+        # F13: write-through invalidation, like every other writer — otherwise a
+        # session recreated with the same id within L1_TTL_SECONDS reads the
+        # DELETED session's map_state/refs/event_log from L1.
+        self._l1_invalidate_session(session_id)
 
     async def cleanup_idle_sessions(self, max_sessions: int = 100) -> None:
         await self._ensure_connected()

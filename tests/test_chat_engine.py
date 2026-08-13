@@ -95,10 +95,16 @@ async def test_session_persistence(registry):
     engine = ChatEngine(registry)
     mock_response = {"choices": [{"message": {"content": "OK", "tool_calls": None}}]}
 
-    with patch.object(engine, "_call_llm", new_callable=AsyncMock, return_value=mock_response):
-        with patch.object(engine, "_save_msg_async", new_callable=AsyncMock):
-            r1 = await engine.chat("hello", session_id="s1")
-            r2 = await engine.chat("world", session_id="s1")
-            assert r1["session_id"] == "s1"
-            assert r2["session_id"] == "s1"
-            assert len(engine._sessions["s1"]) >= 4
+    # F23 之后 DB 加载失败不再缓存空 stub —— 这里显式 stub 加载成功，
+    # 才能断言「同一 session 两轮共享缓存的消息列表」。
+    async def fake_load(session_id, user_id=None):
+        return [{"role": "system", "content": "sys"}]
+
+    with patch.object(engine, "_load_session_from_db", side_effect=fake_load):
+        with patch.object(engine, "_call_llm", new_callable=AsyncMock, return_value=mock_response):
+            with patch.object(engine, "_save_msg_async", new_callable=AsyncMock):
+                r1 = await engine.chat("hello", session_id="s1")
+                r2 = await engine.chat("world", session_id="s1")
+                assert r1["session_id"] == "s1"
+                assert r2["session_id"] == "s1"
+                assert len(engine._sessions["s1"]) >= 4
