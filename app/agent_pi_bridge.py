@@ -273,10 +273,27 @@ async def dispatch_tool(request: PiToolRequest) -> PiToolResponse:
     # Runtime observability (W3): recover the active turn's correlation.
     # dispatch_tool is a separate HTTP-callback task with no turn context of its
     # own; the singleton bridge processes turns strictly serially, so the active
-    # turn's (turn_id, run_id) is well-defined — the SAME invariant the cancel
-    # token already relies on. Tolerate None in the abort race (the turn's
-    # finally clears these before a late callback can arrive).
-    turn_id, run_id = active_turn_correlation()
+    # turn's (turn_id, run_id, session_id) is well-defined — the SAME invariant
+    # the cancel token already relies on. Tolerate None in the abort race (the
+    # turn's finally clears these before a late callback can arrive).
+    #
+    # Session guard (Matt #2 P2-3): a stale/late callback, or one load-balanced
+    # to a non-owner worker that has its OWN in-flight turn, would otherwise be
+    # misattributed to the wrong turn. If the callback carries a session_id that
+    # does NOT match the active turn's session, drop the correlation (still
+    # execute the tool — only the evidence attribution is skipped). When the
+    # callback carries no session_id (current Pi extension behavior) we cannot
+    # guard by session; the single-worker serial-turn invariant then keeps the
+    # window ~empty (the proper cross-worker fix is passing turn_id in the Pi
+    # callback payload — see PR "Deferred").
+    turn_id, run_id, active_session = active_turn_correlation()
+    if (
+        request.sessionId
+        and active_session
+        and request.sessionId != active_session
+    ):
+        # Stale / cross-session callback: don't attribute to the active turn.
+        turn_id, run_id = None, None
     rt_ev = TURN_EVIDENCE.get(turn_id)  # None if turn ended / non-owner worker
 
     # Bind the recovered correlation so tool_metrics / JobOrigin (W4/W5) — read
@@ -383,24 +400,28 @@ _session_executed_sets: dict[str, set[tuple[str, str]]] = {}
 # bridge 实例；turn 在单例 bridge 上严格串行，全局唯一在飞 turn 语义安全。
 _active_turn_token: Optional[CancellationToken] = None
 
-# Runtime observability: 当前在飞 turn 的关联身份（turn_id / run_id）。与
-# ``_active_turn_token`` 同源——dispatch_tool 是独立的 HTTP 回调 task，看不到流
+# Runtime observability: 当前在飞 turn 的关联身份（turn_id / run_id / session_id）。
+# 与 ``_active_turn_token`` 同源——dispatch_tool 是独立的 HTTP 回调 task，看不到流
 # 任务的 ContextVar；故按「单例 bridge 严格串行 turn」这一既有不变量（cancel
 # token 已依赖它）暴露在飞 turn 的关联身份，让 dispatch_tool 能把工具证据按
 # turn_id 写进 TurnEvidence 注册表、并把 run_id/turn_id 透传给 tool_metrics /
 # JobOrigin。abort/超时的 finally 会先清 token 再清这里——迟到的回调读到 None
-# 时回退为空（graceful，不伪造关联）。
+# 时回退为空（graceful，不伪造关联）。session_id 用于 dispatch_tool 的归属守卫：
+# 回调携带的 session 与在飞 turn 的 session 不一致时，认定是迟到/跨 worker 的串号
+# 回调，不把它的工具证据误归属到当前 turn（仍执行工具，只放弃关联）。
 _active_turn_turn_id: Optional[str] = None
 _active_turn_run_id: Optional[str] = None
+_active_turn_session_id: Optional[str] = None
 
 
-def active_turn_correlation() -> tuple[Optional[str], Optional[str]]:
-    """返回在飞 turn 的 (turn_id, run_id)。无在飞 turn 或已被清理时返回 (None, None)。
+def active_turn_correlation() -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """返回在飞 turn 的 (turn_id, run_id, session_id)。
 
-    供 dispatch_tool（独立 HTTP 回调 task）恢复 turn 级关联使用。单例 bridge 严格
+    无在飞 turn 或已被清理时返回 (None, None, None)。供 dispatch_tool（独立 HTTP
+    回调 task）恢复 turn 级关联使用，并据 session_id 守卫串号回调。单例 bridge 严格
     串行 turn，故全局唯一在飞 turn 语义安全（同 ``_active_turn_token``）。
     """
-    return _active_turn_turn_id, _active_turn_run_id
+    return _active_turn_turn_id, _active_turn_run_id, _active_turn_session_id
 
 
 # ── Optional evaluation harness (opt-in via PI_HARNESS_ENABLED=true) ──
@@ -647,7 +668,7 @@ class PiBridge:
         Raises:
             PiRpcError: If the Pi agent returns an error or the request fails.
         """
-        global _active_turn_token, _active_turn_turn_id, _active_turn_run_id
+        global _active_turn_token, _active_turn_turn_id, _active_turn_run_id, _active_turn_session_id
         # Turn-scoped session id: attribution uses this local, never the
         # mutable self._session_id field (which a concurrent/preceding turn
         # could overwrite). Pi events carry no session of their own.
@@ -693,6 +714,7 @@ class PiBridge:
                 _active_turn_token = CancellationToken(job_id=turn_id)
                 _active_turn_turn_id = turn_id
                 _active_turn_run_id = run_id
+                _active_turn_session_id = turn_sid or None
                 # Drop any residual events from a prior turn before sending, so they
                 # cannot be attributed to this turn.
                 await self._drain_stale_events()
@@ -731,6 +753,7 @@ class PiBridge:
                 _active_turn_token = None
                 _active_turn_turn_id = None
                 _active_turn_run_id = None
+                _active_turn_session_id = None
                 self._lock.release()
                 rt_ev.mark_ended()
                 emit_turn_summary(rt_ev)
@@ -753,7 +776,7 @@ class PiBridge:
         Yields:
             SSE-formatted event strings
         """
-        global _active_turn_token, _active_turn_turn_id, _active_turn_run_id
+        global _active_turn_token, _active_turn_turn_id, _active_turn_run_id, _active_turn_session_id
         # Turn-scoped session id: every SSE payload is stamped with this local
         # value, not the mutable self._session_id field. Pi events carry no
         # session of their own, so attribution must come from the request that
@@ -806,6 +829,7 @@ class PiBridge:
             _active_turn_token = CancellationToken(job_id=turn_id)
             _active_turn_turn_id = turn_id
             _active_turn_run_id = run_id
+            _active_turn_session_id = turn_sid or None
             try:
                 # Drop residual events from a prior turn so they can't be dequeued
                 # and attributed to this session.
@@ -969,6 +993,7 @@ class PiBridge:
                 _active_turn_token = None
                 _active_turn_turn_id = None
                 _active_turn_run_id = None
+                _active_turn_session_id = None
                 self._lock.release()
                 # Runtime observability: settle turn outcome (cancelled ≠ failed),
                 # emit the diagnostic summary, and unregister the evidence. Order:

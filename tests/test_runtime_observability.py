@@ -443,6 +443,7 @@ async def test_dispatch_tool_records_tool_call_into_turn_evidence():
     # simulate the active-turn globals the bridge sets under its serial lock
     bridge_mod._active_turn_turn_id = turn_id
     bridge_mod._active_turn_run_id = "ru-integ"
+    bridge_mod._active_turn_session_id = "s-integ"
     try:
         req = PiToolRequest(toolCallId="tc-integ", name="noop",
                             arguments={}, sessionId="s-integ")
@@ -454,6 +455,53 @@ async def test_dispatch_tool_records_tool_call_into_turn_evidence():
     finally:
         bridge_mod._active_turn_turn_id = None
         bridge_mod._active_turn_run_id = None
+        bridge_mod._active_turn_session_id = None
         bridge_mod._session_executed_sets.pop("s-integ", None)
         TURN_EVIDENCE.remove(turn_id)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_tool_stale_cross_session_callback_not_misattributed():
+    """P2-3 guard: a stale/late callback whose session_id does NOT match the
+    active turn's session must NOT be attributed to the active turn (would
+    otherwise misattribute under workers>1 / late callbacks). The tool still
+    executes; only the evidence attribution is dropped."""
+    import app.agent_pi_bridge as bridge_mod
+    from app.agent_pi_bridge import dispatch_tool, set_tool_registry, PiToolRequest
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+
+    def noop():
+        return {"success": True, "summary": {"ok": True}}
+
+    reg.register("noop", "noop", noop,
+                 parameters={"type": "object", "properties": {}, "required": []})
+    set_tool_registry(reg)
+
+    # active turn is on session-A
+    active_turn = "turn-active-A"
+    active_ev = TurnEvidence(request_id="r", session_id="s-A",
+                             turn_id=active_turn, run_id="ru-A")
+    TURN_EVIDENCE.register(active_ev)
+    bridge_mod._active_turn_turn_id = active_turn
+    bridge_mod._active_turn_run_id = "ru-A"
+    bridge_mod._active_turn_session_id = "s-A"
+    try:
+        # a stale callback arrives claiming session-B (different session)
+        req = PiToolRequest(toolCallId="tc-stale", name="noop",
+                            arguments={}, sessionId="s-B")
+        resp = await dispatch_tool(req)
+        assert not resp.isError  # tool still executes
+        # the active turn's evidence must NOT be polluted by the stale callback
+        assert active_ev.tool_calls == 0, (
+            "stale cross-session callback misattributed to the active turn"
+        )
+    finally:
+        bridge_mod._active_turn_turn_id = None
+        bridge_mod._active_turn_run_id = None
+        bridge_mod._active_turn_session_id = None
+        bridge_mod._session_executed_sets.pop("s-B", None)
+        TURN_EVIDENCE.remove(active_turn)
+
 
