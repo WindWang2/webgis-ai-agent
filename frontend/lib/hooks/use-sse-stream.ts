@@ -443,7 +443,12 @@ export function useSSEStream(
                 }
               })
               .catch((err) => {
-                if (!isApiError(err)) {
+                // transport 约定：调用方主动 abort 以原生 AbortError 直通（会话切换/
+                // 组件卸载会 abort 本 fetch）。这是预期控制流，不是错误，不进 console。
+                const isAbort =
+                  (err instanceof DOMException && err.name === 'AbortError') ||
+                  (err instanceof Error && err.name === 'AbortError');
+                if (!isAbort && !isApiError(err)) {
                   devOnly.error('[LiveLayerFetch] Failed to fetch geojson_ref:', err);
                 }
               });

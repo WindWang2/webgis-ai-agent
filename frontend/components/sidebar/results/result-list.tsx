@@ -10,6 +10,7 @@
  * linkage · warning tally · summary on the second. Selected ≠ hover (accent
  * edge + surface-selected vs plain hover), per the nav-rail contract.
  */
+import { useEffect, useRef } from 'react';
 import { ClipboardList, Layers, TriangleAlert } from 'lucide-react';
 import clsx from 'clsx';
 import { familyLabel } from '@/lib/results/families';
@@ -21,6 +22,10 @@ interface ResultListProps {
   results: AnalysisResult[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** Row id whose focus Back should restore (drill-in focus contract). */
+  restoreFocusId?: string | null;
+  /** Called after `restoreFocusId` was consumed (whether the row was found). */
+  onRestoredFocus?: () => void;
 }
 
 function formatTime(ms?: number): string {
@@ -32,7 +37,20 @@ function formatTime(ms?: number): string {
   }
 }
 
-export function ResultList({ results, selectedId, onSelect }: ResultListProps) {
+export function ResultList({ results, selectedId, onSelect, restoreFocusId, onRestoredFocus }: ResultListProps) {
+  const listRef = useRef<HTMLUListElement>(null);
+
+  // Focus contract: after Back, focus returns to the row that was opened
+  // (consumed exactly once — unrelated re-renders never steal focus).
+  useEffect(() => {
+    if (!restoreFocusId) return;
+    const btn = listRef.current?.querySelector(
+      `button[data-result-id="${CSS.escape(restoreFocusId)}"]`,
+    );
+    if (btn instanceof HTMLButtonElement) btn.focus();
+    onRestoredFocus?.();
+  }, [restoreFocusId, results, onRestoredFocus]);
+
   if (results.length === 0) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center p-4">
@@ -46,7 +64,7 @@ export function ResultList({ results, selectedId, onSelect }: ResultListProps) {
   }
 
   return (
-    <ul aria-label="分析结果列表" className="flex min-h-0 flex-1 flex-col overflow-y-auto py-1">
+    <ul ref={listRef} aria-label="分析结果列表" className="flex min-h-0 flex-1 flex-col overflow-y-auto py-1">
       {results.map((r) => {
         const selected = r.id === selectedId;
         const hasLayer = r.outputs[0]?.hasLayer;
@@ -54,6 +72,7 @@ export function ResultList({ results, selectedId, onSelect }: ResultListProps) {
           <li key={r.id}>
             <button
               type="button"
+              data-result-id={r.id}
               aria-current={selected ? 'true' : undefined}
               onClick={() => onSelect(r.id)}
               className={clsx(

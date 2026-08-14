@@ -18,7 +18,7 @@
  * text intents, never mixed with map controls. A failed result drops the
  * output/actions sections — its content is the correction hint.
  */
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   ArrowLeft,
   Eye,
@@ -205,12 +205,20 @@ export function ResultDetail({ result, sessionId, ownerToken, onBack, onSend }: 
   const zoomAction = mapActions.find((a) => a.kind === 'zoom');
   const analyticalActions = actions.filter((a) => !MAP_ACTION_KINDS.includes(a.kind));
 
+  // Focus contract (drill-in): landing in the detail puts keyboard users on
+  // the first control — Back. The ring only paints for keyboard-origin focus
+  // (`:focus-visible`), so mouse users see no change.
+  const backRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    backRef.current?.focus();
+  }, []);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Header — persistent compact bar (outside the scroll area, so the
           result identity + status survive any scroll depth). */}
       <header className="flex shrink-0 items-center gap-1.5 border-b border-edge-subtle px-panel py-1">
-        <IconButton label="返回结果列表" icon={ArrowLeft} size="sm" onClick={onBack} />
+        <IconButton ref={backRef} label="返回结果列表" icon={ArrowLeft} size="sm" onClick={onBack} />
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-title font-medium leading-tight text-ink">{result.toolLabel}</span>
           <span className="truncate text-caption leading-tight text-ink-muted">

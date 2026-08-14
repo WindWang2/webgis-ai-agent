@@ -4,6 +4,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { normalizeStepResult } from '@/lib/results/normalize';
 import { ResultList } from '@/components/sidebar/results/result-list';
 import { ResultDetail } from '@/components/sidebar/results/result-detail';
+import { ResultsTab } from '@/components/sidebar/results-tab';
 import { createMockLayer } from '../test-utils';
 import type { AnalysisResult } from '@/lib/results/types';
 
@@ -193,6 +194,20 @@ describe('ResultList — V4 density contracts', () => {
     render(<ResultList results={[r]} selectedId="s1" onSelect={() => {}} />);
     const row = screen.getByRole('button');
     expect(row).toHaveAttribute('aria-current', 'true');
+  });
+
+  it('restores focus to the opened row after Back (drill-in focus contract)', () => {
+    const r = hotspotResult();
+    useHudStore.setState({ results: [r] });
+    render(<ResultsTab sessionId="sess" ownerToken={null} onSend={() => {}} />);
+
+    // Drill in: focus lands on the detail's back button.
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByRole('button', { name: '返回结果列表' })).toHaveFocus();
+
+    // Go back: focus returns to the row that was opened.
+    fireEvent.click(screen.getByRole('button', { name: '返回结果列表' }));
+    expect(screen.getByRole('button')).toHaveFocus();
   });
 
   it('shows the layer chip only when an output is mounted as a layer', () => {

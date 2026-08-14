@@ -507,7 +507,10 @@ async function installStubs(page) {
   await page.route('**/*', async (route) => {
     const url = route.request().url();
 
-    if (/^https?:\/\/(localhost|127\.0\.0\.1):8000\//.test(url)) {
+    // Cover BOTH dev API ports: `next dev` without env vars defaults to
+    // :8001 (lib/api/config.ts), while docs/docker setups pass
+    // NEXT_PUBLIC_API_URL=http://localhost:8000. Plain `npm run dev` works.
+    if (/^https?:\/\/(localhost|127\.0\.0\.1):800[01]\//.test(url)) {
       // The seeded chat turn replays as an SSE stream through the production
       // parser/normalizer (fills the Result Workbench registry).
       if (/\/api\/v1\/chat\/stream/.test(url)) {
