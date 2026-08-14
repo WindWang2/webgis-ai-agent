@@ -47,6 +47,13 @@ const THEMES = ['light', 'dark'];
  */
 const SURFACES = [
   { name: 'chat', tab: '对话' },
+  /*
+    ContextPanel shell at the 280px resize floor on the most common tab
+    (short description + composer) — companion to results-detail-narrow,
+    which covers the longest header description + badge. Same real keyboard
+    resize path on the drag separator.
+  */
+  { name: 'chat-narrow', tab: '对话', panelArrows: -6 },
   { name: 'project', tab: '项目' },
   { name: 'data', tab: '数据' },
   { name: 'layers', tab: '图层' },

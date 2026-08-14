@@ -145,6 +145,25 @@ describe('PanelHeader', () => {
     const { container } = render(<PanelHeader title="图层" badge={0} />);
     expect(container.textContent).not.toContain('0');
   });
+
+  it('keeps a stable id on the h2 title for aria wiring', () => {
+    render(<PanelHeader title="图层" id="workspace-panel-title" />);
+    const heading = screen.getByRole('heading', { level: 2, name: '图层' });
+    expect(heading).toHaveAttribute('id', 'workspace-panel-title');
+  });
+
+  it('renders contextual actions before the close control in reading order', () => {
+    render(
+      <PanelHeader
+        title="图层"
+        actions={<button type="button">图例设置</button>}
+        onClose={() => {}}
+      />
+    );
+    const [actionBtn, closeBtn] = screen.getAllByRole('button');
+    expect(actionBtn).toHaveTextContent('图例设置');
+    expect(closeBtn).toHaveAccessibleName('收起面板');
+  });
 });
 
 describe('EmptyState', () => {
