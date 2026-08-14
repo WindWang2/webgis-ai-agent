@@ -152,6 +152,13 @@ export function buildSelectedFeatureSnapshot(
   };
 }
 
+function extractEventSessionId(data: unknown): string | undefined {
+  if (typeof data === 'object' && data !== null && typeof (data as Record<string, unknown>).session_id === 'string') {
+    return (data as Record<string, unknown>).session_id as string;
+  }
+  return undefined;
+}
+
 export function useSSEStream(
   sessionId: string | undefined,
   setSessionId: (sid: string) => void,
@@ -256,10 +263,17 @@ export function useSSEStream(
     (event: SSEEvent) => {
       const data = event.data as any;
 
-      // Session ID assignment (first response carries the server-assigned session)
-      if (data?.session_id && data.session_id !== sessionIdRef.current) {
-        setSessionId(data.session_id);
-        sessionIdRef.current = data.session_id;
+      // INV-2: An event from another session must never mutate the active session or flip session state.
+      const eventSid = extractEventSessionId(data);
+      if (eventSid && sessionIdRef.current && eventSid !== sessionIdRef.current) {
+        devOnly.warn('[useSSEStream] ignored cross-session SSE event:', eventSid);
+        return;
+      }
+
+      // Session ID assignment (first response binds the initially undefined session)
+      if (eventSid && !sessionIdRef.current) {
+        setSessionId(eventSid);
+        sessionIdRef.current = eventSid;
       }
 
       // SEC-08：服务端在新建匿名会话时签发 owner_token（随 task_start / session 事件下发）。
@@ -572,6 +586,18 @@ export function useSSEStream(
             return next;
           });
         }
+      } else if (event.event === 'task_cancelled') {
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== thinkingId) return m;
+            const existing = m.content && !m.isThinking ? m.content : "";
+            return {
+              ...m,
+              content: existing ? `${existing}\n\n⏹️ [已取消]` : "⏹️ [已取消]",
+              isThinking: false,
+            };
+          }),
+        );
       } else if (
         event.event === 'error' ||
         event.event === 'step_error' ||

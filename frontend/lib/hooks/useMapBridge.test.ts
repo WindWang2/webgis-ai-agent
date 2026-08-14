@@ -1172,4 +1172,92 @@ describe('useMapBridge', () => {
       status: 'succeeded',
     }));
   });
+
+  // ─── Invariants Hardening Tests (INV-1, INV-3, INV-9, INV-10) ────────────
+
+  it('INV-3: terminal state cannot be rolled back by subsequent out-of-order running events', async () => {
+    // Stream delivers a terminal done, followed by an out-of-order acting event
+    mockStreamChat.mockReturnValue(makeAsyncGen([
+      { event: 'thinking', data: {} },
+      { event: 'done', data: {} },
+      { event: 'acting', data: {} }, // out-of-order late event
+    ]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent)
+    );
+    await act(async () => { await result.current.send('q', {}); });
+
+    expect(result.current.aiStatus).toBe('done'); // Must NOT roll back to 'acting'
+  });
+
+  it('INV-3: error terminal cannot be rolled back by subsequent out-of-order step_start', async () => {
+    mockStreamChat.mockReturnValue(makeAsyncGen([
+      { event: 'thinking', data: {} },
+      { event: 'error', data: { error: 'something broke' } },
+      { event: 'step_start', data: {} }, // out-of-order late event
+    ]));
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent)
+    );
+    await act(async () => { await result.current.send('q', {}); });
+
+    expect(result.current.aiStatus).toBe('error'); // Must NOT roll back to 'acting'
+  });
+
+  it('INV-10: non-retryable 4xx HTTP errors (e.g. 400/401/403/404) stop reconnect immediately', async () => {
+    const apiError = new Error('Not found');
+    (apiError as any).status = 404;
+    mockStreamChat.mockImplementation(() => {
+      throw apiError;
+    });
+
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent, undefined, { maxAttempts: 3, baseDelayMs: 500 })
+    );
+
+    await act(async () => {
+      await result.current.send('q', {});
+    });
+
+    // Must NOT retry 3 times when error is a 404 client error!
+    expect(mockStreamChat).toHaveBeenCalledTimes(1);
+    expect(result.current.aiStatus).toBe('error');
+  });
+
+  it('INV-9: aborting stream during reconnect backoff sleep stops immediately without sending next request', async () => {
+    async function* failingTurn(): AsyncGenerator<SSEEvent> {
+      throw new TypeError('network dropped');
+    }
+    async function* resumedTurn(): AsyncGenerator<SSEEvent> {
+      yield { event: 'done', data: {} };
+    }
+    mockStreamChat
+      .mockImplementationOnce(() => failingTurn())
+      .mockImplementationOnce(() => resumedTurn());
+
+    const { result } = renderHook(() =>
+      useMapBridge('s1', dispatchAction, onEvent, undefined, { maxAttempts: 2, baseDelayMs: 1000 })
+    );
+
+    act(() => {
+      void result.current.send('first', {});
+    });
+    await act(async () => {}); // Attempt 1 fails, enters 1000ms backoff sleep
+
+    // New send() is initiated while attempt 1 is sleeping
+    act(() => {
+      void result.current.send('second', {});
+    });
+
+    // Advance timers past the first backoff
+    await act(async () => {
+      vi.advanceTimersByTime(2000);
+    });
+
+    // The sleeping first stream must have been aborted and never made its 2nd attempt
+    // Total mockStreamChat calls should be: 1 (first attempt 1) + 1 (second stream attempt 1) = 2
+    expect(mockStreamChat).toHaveBeenCalledTimes(2);
+    expect(mockStreamChat.mock.calls[1][0]).toBe('second');
+  });
 });
+

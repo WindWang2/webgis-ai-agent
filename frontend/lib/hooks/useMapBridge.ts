@@ -22,8 +22,32 @@ import {
   viewportSeqTracker,
 } from "@/lib/utils/viewport-seq";
 const MAP_STATE_THROTTLE_MS = 2000;
+const MAX_SEEN_EVENT_IDS = 512;
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+function cancellableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
+function isNonRetryableError(err: unknown): boolean {
+  if (!err) return false;
+  const status = (err as any).status;
+  // 4xx client errors (400, 401, 403, 404, 422) except 429 (rate-limit backoff is allowed)
+  if (typeof status === 'number' && status >= 400 && status < 500 && status !== 429) {
+    return true;
+  }
+  return false;
+}
 
 // V3 (design §6): client-minted fallback action ids. Locally synthesized
 // actions (bbox-fallback fly_to) have no backend `ma-…` id, so mint a
@@ -205,13 +229,14 @@ export function useMapBridge(
         // that transition is the server assigning the currently live stream.
         abortControllerRef.current?.abort();
         streamEpochRef.current += 1;
+        setAiStatus('idle');
       }
       resetViewportSeq();
       mapActionCtx?.clearActions?.();
       ackSender.flush();
     }
     prevSessionIdRef.current = sessionId;
-  }, [sessionId, mapActionCtx, ackSender]);
+  }, [sessionId, mapActionCtx, ackSender, setAiStatus]);
 
   useEffect(() => {
     return () => {
@@ -233,6 +258,22 @@ export function useMapBridge(
     // eslint-disable-next-line react-hooks/exhaustive-deps -- ackSender is stable; mapActionCtx is intentionally omitted (register is idempotent and re-running on provider-value churn would flush mid-session)
   }, [ackSender]);
 
+  const emitSyntheticError = useCallback(
+    (err: unknown) => {
+      const errorMsg =
+        typeof err === 'string'
+          ? err
+          : err instanceof Error
+            ? err.message
+            : String(err ?? 'Unknown error');
+      onEvent({
+        event: 'error',
+        data: { error: errorMsg } as unknown as Record<string, unknown>,
+      });
+    },
+    [onEvent],
+  );
+
   const send = useCallback(
     async (content: string, mapSnapshot: Record<string, unknown>): Promise<void> => {
       // [ENG-P4] abort any in-flight stream before starting a new one
@@ -253,6 +294,8 @@ export function useMapBridge(
       // back as `Last-Event-ID` so the backend replays only the missed events
       // (resume is a read — it never re-executes the turn).
       let lastEventId: string | undefined;
+      // Bounded intra-turn event dedup set (INV-1 / INV-7)
+      const seenEventIds = new Set<string>();
       // A stream may begin without a session id, then bind exactly once to the
       // server-minted session. Events from any other session are stale/mixed
       // and must never switch workspace state or mount their result.
@@ -262,6 +305,7 @@ export function useMapBridge(
 
       try {
         for (let attempt = 0; ; attempt++) {
+          if (controller.signal.aborted || streamEpoch !== streamEpochRef.current) break;
           const isLastAttempt = attempt >= maxAttempts;
           let attemptError: unknown = null;
 
@@ -317,17 +361,24 @@ export function useMapBridge(
               // should never overlap what the client already processed — but if
               // the server replays an id we have seen (stale Last-Event-ID, ring
               // eviction, races), skip it so token appends / layer adds / map
-              // commands are NOT applied twice.
+              // commands are NOT applied twice (INV-1 / INV-7).
               if (event.id) {
+                const idStr = String(event.id);
                 const idNum = Number(event.id);
                 if (
-                  lastEventId !== undefined &&
-                  !Number.isNaN(idNum) &&
-                  idNum <= Number(lastEventId)
+                  seenEventIds.has(idStr) ||
+                  (lastEventId !== undefined &&
+                    !Number.isNaN(idNum) &&
+                    idNum <= Number(lastEventId))
                 ) {
                   continue;
                 }
-                lastEventId = event.id;
+                seenEventIds.add(idStr);
+                if (seenEventIds.size > MAX_SEEN_EVENT_IDS) {
+                  const firstKey = seenEventIds.keys().next().value;
+                  if (firstKey !== undefined) seenEventIds.delete(firstKey);
+                }
+                lastEventId = idStr;
               }
 
               // Skip unparseable data — streamChat yields raw string on JSON.parse failure
@@ -339,10 +390,8 @@ export function useMapBridge(
 
               const data = event.data as Record<string, unknown>;
 
-              // aiStatus transitions
-              if (event.event === 'thinking') setAiStatus('thinking');
-              else if (event.event === 'acting' || event.event === 'step_start') setAiStatus('acting');
-              else if (event.event === 'done' || event.event === 'task_complete') {
+              // aiStatus transitions — monotonic: terminal state cannot be rolled back by running events (INV-3)
+              if (event.event === 'done' || event.event === 'task_complete') {
                 gotTerminal = true;
                 setAiStatus('done');
               } else if (event.event === 'error' || event.event === 'step_error' || event.event === 'task_error') {
@@ -355,6 +404,9 @@ export function useMapBridge(
               else if (event.event === 'task_cancelled') {
                 gotTerminal = true;
                 setAiStatus('idle');
+              } else if (!gotTerminal) {
+                if (event.event === 'thinking') setAiStatus('thinking');
+                else if (event.event === 'acting' || event.event === 'step_start') setAiStatus('acting');
               }
 
               // ROUND-2: store-mounted commands are executed by use-sse-stream's
@@ -495,6 +547,14 @@ export function useMapBridge(
 
           if (gotTerminal || controller.signal.aborted) break;
 
+          // INV-10: Non-retryable 4xx client errors (400, 401, 403, 404, 422) must fail immediately without reconnect storm
+          if (attemptError && isNonRetryableError(attemptError)) {
+            setAiStatus('error');
+            devOnly.error('[useMapBridge] SSE stream non-retryable error:', attemptError);
+            emitSyntheticError(attemptError);
+            break;
+          }
+
           // DUP-1 reconnect decision. Two reasons to retry, both meaning "the
           // stream was cut before a terminal event":
           //   1. the read threw a network-level error (TypeError / ApiError), or
@@ -513,17 +573,15 @@ export function useMapBridge(
             if (attemptError) {
               setAiStatus('error');
               devOnly.error('[useMapBridge] SSE stream error:', attemptError);
-              onEvent({
-                event: 'error',
-                data: { error: attemptError instanceof Error ? attemptError.message : String(attemptError) } as unknown as Record<string, unknown>,
-              });
+              emitSyntheticError(attemptError);
             }
             break;
           }
 
           if (!attemptError && !abruptClose) break; // clean end, nothing to resume
 
-          await sleep(baseDelayMs * 2 ** attempt); // backoff before the next attempt
+          await cancellableSleep(baseDelayMs * 2 ** attempt, controller.signal); // backoff before the next attempt (cancellable, INV-9)
+          if (controller.signal.aborted || streamEpoch !== streamEpochRef.current) break;
         }
       } finally {
         if (
@@ -544,10 +602,7 @@ export function useMapBridge(
               setAiStatus('done');
             } else {
               setAiStatus('error');
-              onEvent({
-                event: 'error',
-                data: { error: '连接已断开（未收到完成信号）。' } as unknown as Record<string, unknown>,
-              });
+              emitSyntheticError('连接已断开（未收到完成信号）。');
             }
           }
           abortControllerRef.current = null;
@@ -555,7 +610,7 @@ export function useMapBridge(
         // If not the active controller, a new send() has taken over — leave aiStatus alone
       }
     },
-    [dispatchAction, onEvent, setAiStatus, sessionTokenRef, reconnect]
+    [dispatchAction, onEvent, setAiStatus, sessionTokenRef, reconnect, emitSyntheticError]
   );
 
   // [ENG-D3] useCallback([sessionId]) — stable ref so MapPanel's handleMove deps don't churn

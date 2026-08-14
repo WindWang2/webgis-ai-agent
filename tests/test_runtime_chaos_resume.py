@@ -914,3 +914,124 @@ async def test_ack_persist_redis_tombstone_is_410(monkeypatch):
             chat_route.MapActionAckRequest(acks=[_ack_payload("ma-late")]),
         )
     assert ei.value.status_code == 410
+
+
+# ─── F18: terminal type preservation (cancelled != failed != succeeded) ────
+
+
+@pytest.mark.asyncio
+async def test_resume_after_cancelled_turn_replays_cancelled_terminal(_pi_path, _pass_ownership):
+    """INV-4 / F18: a turn that ended in `task_cancelled` must NOT produce a
+    synthesized `done` on reconnect — reconnecting for a clean close when the
+    client already saw the terminal must synthesize `task_cancelled`, preserving
+    cancellation status (cancelled != succeeded)."""
+
+    class _CancelledBridge:
+        def __init__(self) -> None:
+            self.prompt_calls = 0
+
+        async def stream_prompt(self, message: str, session_id: Optional[str] = None):
+            self.prompt_calls += 1
+            sid = session_id or "s"
+            yield sse_event("task_start", {"task_id": "t", "session_id": sid})
+            yield sse_event("token", {"content": "partial ", "session_id": sid})
+            yield sse_event("task_cancelled", {"task_id": "t", "session_id": sid})
+
+    bridge = _CancelledBridge()
+    _pi_path(bridge)
+
+    out_a, task_a = await _start_stream("cancel me", session_id="s-cancel")
+    await task_a
+    ids = [_event_id(b) for b in out_a]
+    assert _event_type(out_a[-1]) == "task_cancelled"
+    terminal_id = ids[-1]
+    assert terminal_id is not None
+
+    # Reconnect after consuming the terminal event (last_event_id == terminal_id)
+    resumed, rtask = await _open_resume(
+        "cancel me", last_event_id=terminal_id, session_id="s-cancel"
+    )
+    await rtask
+    assert bridge.prompt_calls == 1
+    assert len(resumed) == 1
+    # MUST NOT be synthesized "done" — must preserve cancellation!
+    assert _event_type(resumed[0]) == "task_cancelled", (
+        f"reconnecting after task_cancelled must synthesize task_cancelled, got {_event_type(resumed[0])}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_resume_after_task_error_replays_error_terminal_not_done(_pi_path, _pass_ownership):
+    """INV-4 / F18: a turn that ended in `task_error` must NOT produce a
+    synthesized `done` on reconnect (failed != succeeded)."""
+
+    class _TaskErrorBridge:
+        def __init__(self) -> None:
+            self.prompt_calls = 0
+
+        async def stream_prompt(self, message: str, session_id: Optional[str] = None):
+            self.prompt_calls += 1
+            sid = session_id or "s"
+            yield sse_event("task_start", {"task_id": "t", "session_id": sid})
+            yield sse_event("task_error", {"task_id": "t", "error": "failed", "session_id": sid})
+
+    bridge = _TaskErrorBridge()
+    _pi_path(bridge)
+
+    out_a, task_a = await _start_stream("err turn", session_id="s-err")
+    await task_a
+    ids = [_event_id(b) for b in out_a]
+    assert _event_type(out_a[-1]) == "task_error"
+    terminal_id = ids[-1]
+    assert terminal_id is not None
+
+    resumed, rtask = await _open_resume(
+        "err turn", last_event_id=terminal_id, session_id="s-err"
+    )
+    await rtask
+    assert bridge.prompt_calls == 1
+    assert len(resumed) == 1
+    assert _event_type(resumed[0]) == "task_error", (
+        f"reconnecting after task_error must synthesize task_error, got {_event_type(resumed[0])}"
+    )
+
+
+# ─── F8: two browser tabs resume same session concurrently ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_two_tabs_concurrent_resume_same_session(_pi_path, _pass_ownership):
+    """F8: two tabs reconnecting for the same completed turn with Last-Event-ID
+    both receive the exact same replay without corrupting the buffer or
+    triggering duplicate prompt dispatches."""
+
+    class _MultiTokenBridge:
+        def __init__(self) -> None:
+            self.prompt_calls = 0
+
+        async def stream_prompt(self, message: str, session_id: Optional[str] = None):
+            self.prompt_calls += 1
+            sid = session_id or "s"
+            yield sse_event("task_start", {"task_id": "t", "session_id": sid})
+            yield sse_event("token", {"content": "1 ", "session_id": sid})
+            yield sse_event("token", {"content": "2 ", "session_id": sid})
+            yield sse_event("done", {"session_id": sid})
+
+    bridge = _MultiTokenBridge()
+    _pi_path(bridge)
+
+    out_a, task_a = await _start_stream("two tabs", session_id="s-tabs")
+    await task_a
+    assert bridge.prompt_calls == 1
+
+    # Tab 1 resumes after id 1; Tab 2 resumes after id 2 concurrently
+    resumed1, rtask1 = await _open_resume("two tabs", last_event_id=1, session_id="s-tabs")
+    resumed2, rtask2 = await _open_resume("two tabs", last_event_id=2, session_id="s-tabs")
+    await asyncio.gather(rtask1, rtask2)
+
+    assert bridge.prompt_calls == 1, "concurrent resumes must never dispatch new turns"
+    assert [_event_id(b) for b in resumed1] == [2, 3, 4]
+    assert [_event_id(b) for b in resumed2] == [3, 4]
+    assert _event_type(resumed1[-1]) == "done"
+    assert _event_type(resumed2[-1]) == "done"
+
