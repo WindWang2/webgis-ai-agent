@@ -79,6 +79,7 @@ export default function Home() {
     setSessionId,
     sessionIdRef,
     sessionTokenRef,
+    activeSessionToken,
     rememberSessionToken,
     getSessionTokenFor,
     sessions,
@@ -199,7 +200,7 @@ export default function Home() {
               onToggleLayer={toggleLayer}
               onViewportChange={bridge.onViewportChange}
               sessionId={sessionId}
-              ownerToken={sessionTokenRef.current}
+              ownerToken={activeSessionToken}
             />
             <ExportMask />
             <MemoSpatialCrosshair />
@@ -225,7 +226,7 @@ export default function Home() {
           aiStatus={aiStatus}
           onSend={handleSend}
           sessionId={sessionId}
-          ownerToken={sessionTokenRef.current}
+          ownerToken={activeSessionToken}
           onPlanAction={handlePlanAction}
         />
 

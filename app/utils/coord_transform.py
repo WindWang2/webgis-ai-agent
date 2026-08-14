@@ -27,7 +27,7 @@ def _out_of_china(lng: float, lat: float) -> bool:
     return not (72.004 <= lng <= 137.8347 and 0.8293 <= lat <= 55.8271)
 
 
-def _out_of_china_array(lng: np.ndarray, lat: np.ndarray) -> np.ndarray:
+def _in_china_array(lng: np.ndarray, lat: np.ndarray) -> np.ndarray:
     """Vectorized in-China mask (True where inside China)."""
     return (lng >= 72.004) & (lng <= 137.8347) & (lat >= 0.8293) & (lat <= 55.8271)
 
@@ -106,7 +106,7 @@ def wgs84_to_gcj02_array(lng: np.ndarray, lat: np.ndarray) -> Tuple[np.ndarray, 
     """
     lng = np.asarray(lng, dtype=np.float64)
     lat = np.asarray(lat, dtype=np.float64)
-    in_china = _out_of_china_array(lng, lat)
+    in_china = _in_china_array(lng, lat)
     # Compute deltas only where needed; default to identity outside China.
     dlng = np.zeros_like(lng)
     dlat = np.zeros_like(lat)
@@ -138,7 +138,7 @@ def gcj02_to_wgs84_array(lng: np.ndarray, lat: np.ndarray) -> Tuple[np.ndarray, 
     """Vectorized GCJ-02 -> WGS-84 via 3 fixed-point iterations (matches scalar)."""
     lng = np.asarray(lng, dtype=np.float64)
     lat = np.asarray(lat, dtype=np.float64)
-    in_china = _out_of_china_array(lng, lat)
+    in_china = _in_china_array(lng, lat)
     if not in_china.any():
         return lng.copy(), lat.copy()
     wgs_lng = lng.copy()
@@ -162,7 +162,7 @@ def gcj02_to_bd09_array(lng: np.ndarray, lat: np.ndarray) -> Tuple[np.ndarray, n
     """Vectorized GCJ-02 -> BD-09."""
     lng = np.asarray(lng, dtype=np.float64)
     lat = np.asarray(lat, dtype=np.float64)
-    in_china = _out_of_china_array(lng, lat)
+    in_china = _in_china_array(lng, lat)
     out_lng = lng.copy()
     out_lat = lat.copy()
     if in_china.any():
@@ -188,7 +188,7 @@ def bd09_to_gcj02_array(lng: np.ndarray, lat: np.ndarray) -> Tuple[np.ndarray, n
     """Vectorized BD-09 -> GCJ-02."""
     lng = np.asarray(lng, dtype=np.float64)
     lat = np.asarray(lat, dtype=np.float64)
-    in_china = _out_of_china_array(lng, lat)
+    in_china = _in_china_array(lng, lat)
     out_lng = lng.copy()
     out_lat = lat.copy()
     if in_china.any():

@@ -42,7 +42,9 @@ logger = logging.getLogger(__name__)
 
 # Paths warned about lacking a CRS (bounded by the distinct-file working set;
 # not a leak — rasters are a small, short-lived set per process).
-_CRS_LESS_WARNED: set[str] = set()
+# PERF-F6: bounded (was unbounded per-path growth over process lifetime).
+_CRS_LESS_WARNED: "set[str]" = set()
+_CRS_LESS_WARNED_MAX = 4096
 
 
 def _normalize_channel(arr: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
@@ -109,6 +111,8 @@ def render_raster_tile(
                 # Warn at most once per file: a pan/zoom touches many tiles and
                 # would otherwise emit thousands of identical warnings.
                 if raster_path not in _CRS_LESS_WARNED:
+                    if len(_CRS_LESS_WARNED) >= _CRS_LESS_WARNED_MAX:
+                        _CRS_LESS_WARNED.clear()  # warn-once is best-effort
                     _CRS_LESS_WARNED.add(raster_path)
                     logger.warning(
                         "raster_tile_service: %s has no CRS tag; assuming source "
@@ -154,12 +158,20 @@ def render_raster_tile(
             # Format to RGBA image
             if count >= 3:
                 rgb = np.zeros((tile_size, tile_size, 3), dtype=np.uint8)
+                nodata_val = src.nodata if src.nodata is not None else 0
+                # GIS-P3-5: exclude non-finite pixels like the 1-band path —
+                # NaN-declared nodata made NaN != NaN True, so every pixel was
+                # "valid" and _normalize_channel got NaN min/max (garbage RGBA).
+                finite_any = np.isfinite(dst_data) if np.issubdtype(dst_data.dtype, np.floating) else None
                 for c in range(3):
                     arr = dst_data[c]
-                    valid_mask = arr != (src.nodata or 0)
+                    valid_mask = np.isfinite(arr) & (arr != nodata_val) if np.issubdtype(arr.dtype, np.floating) else (arr != nodata_val)
                     rgb[:, :, c] = np.where(valid_mask, _normalize_channel(arr, valid_mask), 0)
 
-                alpha = np.where((dst_data != (src.nodata or 0)).any(axis=0), 255, 0).astype(np.uint8)
+                band_valid = (dst_data != nodata_val)
+                if finite_any is not None:
+                    band_valid = band_valid & finite_any
+                alpha = np.where(band_valid.any(axis=0), 255, 0).astype(np.uint8)
                 rgba = np.dstack([rgb, alpha])
                 img = Image.fromarray(rgba, "RGBA")
             else:

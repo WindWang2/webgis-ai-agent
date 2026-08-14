@@ -58,9 +58,22 @@ async def test_private_file_rejected_anonymously(client):
 
 
 @pytest.mark.asyncio
-async def test_private_file_accessible_with_jwt(client):
+async def test_private_file_rejected_for_non_admin_jwt(client):
+    """SEC-F3: a regular user's Bearer token must NOT unlock arbitrary private
+    files (cross-tenant reads bypassing upload/export/report ownership)."""
     from app.core.auth import create_access_token
-    token = create_access_token({"sub": "user-alice"})
+    token = create_access_token({"sub": "user-alice", "role": "viewer"})
+    resp = await client.get(
+        "/api/v1/static/private/secret.txt",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_private_file_accessible_with_admin_jwt(client):
+    from app.core.auth import create_access_token
+    token = create_access_token({"sub": "ops-admin", "role": "admin"})
     resp = await client.get(
         "/api/v1/static/private/secret.txt",
         headers={"Authorization": f"Bearer {token}"},

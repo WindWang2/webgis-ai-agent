@@ -38,12 +38,24 @@ _MEDIA_TYPES = {
 # key = filename, value = user_id。
 # ⚠️ SEC-10: 这是进程内 dict，进程重启后丢失。生产环境应替换为数据库表
 # （exports 表含 user_id 外键），届时 owner 为 None 的分支可移除。
-_EXPORT_OWNERS: dict[str, str] = {}
+# PERF-F6: bounded LRU (was an unbounded process-lifetime dict — one entry
+# per export forever). Rereads fall back to the .owner sidecar file.
+from collections import OrderedDict as _OD
+
+_EXPORT_OWNERS: "dict[str, str]" = _OD()
+_EXPORT_OWNERS_MAX = 2048
+
+
+def _export_owners_remember(filename: str, owner: str) -> None:
+    _EXPORT_OWNERS[filename] = owner
+    _EXPORT_OWNERS.move_to_end(filename)
+    while len(_EXPORT_OWNERS) > _EXPORT_OWNERS_MAX:
+        _EXPORT_OWNERS.popitem(last=False)
 
 
 def _set_export_owner(filename: str, user_id: str) -> None:
     """记录文件所有权，并在 EXPORT_DIR 下持久化 .owner 侧车文件以支持多 worker 进程环境。"""
-    _EXPORT_OWNERS[filename] = user_id
+    _export_owners_remember(filename, user_id)
     meta_path = os.path.join(EXPORT_DIR, f"{filename}.owner")
     try:
         with open(meta_path, "w", encoding="utf-8") as f:
@@ -61,7 +73,7 @@ def _get_export_owner(filename: str) -> Optional[str]:
         try:
             with open(meta_path, "r", encoding="utf-8") as f:
                 owner = f.read().strip()
-                _EXPORT_OWNERS[filename] = owner
+                _export_owners_remember(filename, owner)
                 return owner
         except Exception:
             pass

@@ -74,10 +74,14 @@ async def _cancel_wave_tasks(wave_tasks: set[asyncio.Task]) -> None:
 #      （distributed_lock 契约：永不抛未处理异常）。plan_id 全局唯一，无需
 #      session 前缀。
 _PLAN_EXEC_LOCKS: dict[str, asyncio.Lock] = {}
+_PLAN_LOCK_TOUCH: dict[str, float] = {}
 _PLAN_LOCKS_MAX = 1024
 
 # running 状态超过该秒数视为 crashed（worker 崩溃/被杀），允许 resume。
 _RUNNING_STALE_SECONDS = 300
+
+# CONC-F4：失败波次的兄弟步骤收尾上限 —— 到点后 cancel 掉滞留者，绝不无限等。
+_SIBLING_DRAIN_TIMEOUT_S = 120.0
 
 
 def _get_plan_lock(session_id: str, plan_id: str) -> asyncio.Lock:
@@ -87,11 +91,45 @@ def _get_plan_lock(session_id: str, plan_id: str) -> asyncio.Lock:
     if lock is None:
         lock = asyncio.Lock()
         _PLAN_EXEC_LOCKS[key] = lock
-        if len(_PLAN_EXEC_LOCKS) > _PLAN_LOCKS_MAX:
-            # 淘汰空闲锁（无持有者无等待者），防止长跑进程无限增长。
-            idle = [k for k, lock in _PLAN_EXEC_LOCKS.items() if not lock.locked()][: _PLAN_LOCKS_MAX // 4]
-            for k in idle:
-                _PLAN_EXEC_LOCKS.pop(k, None)
+    _PLAN_LOCK_TOUCH[key] = time.monotonic()
+    if len(_PLAN_EXEC_LOCKS) > _PLAN_LOCKS_MAX:
+        # 淘汰空闲锁（无持有者无等待者），防止长跑进程无限增长。
+        # CONC-F8: 瞬时"空闲"不够 —— release() 到等待者重新拿锁之间存在
+        # 交接窗口，必须再要求距上次触碰超过宽限期。
+        now = time.monotonic()
+        idle = [
+            k
+            for k, lk in _PLAN_EXEC_LOCKS.items()
+            if not lk.locked()
+            and not getattr(lk, "_waiters", None)
+            and (now - _PLAN_LOCK_TOUCH.get(k, 0.0)) > _PLAN_LOCK_GRACE_S
+        ][:_PLAN_LOCKS_MAX // 4]
+        for k in idle:
+            _PLAN_EXEC_LOCKS.pop(k, None)
+            _PLAN_LOCK_TOUCH.pop(k, None)
+    return lock
+
+
+# CONC-F3: update_plan_status 的读-检-写曾是 check-then-act —— 执行器的
+# 终态写入与用户 cancel/supersede 并发时双双读到 running，后写者覆盖先写者
+# （丢更新）。所有状态写者都经过本函数，给它一把独立的每计划写锁即可串行化；
+# 与执行锁（_get_plan_lock）无交叉获取顺序，不会死锁。
+_PLAN_STATUS_LOCKS: dict[str, asyncio.Lock] = {}
+_PLAN_STATUS_LOCKS_MAX = 1024
+_PLAN_LOCK_GRACE_S = 30.0
+
+
+def _get_status_write_lock(session_id: str, plan_id: str) -> asyncio.Lock:
+    key = f"{session_id}\0{plan_id}"
+    lock = _PLAN_STATUS_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _PLAN_STATUS_LOCKS[key] = lock
+        if len(_PLAN_STATUS_LOCKS) > _PLAN_STATUS_LOCKS_MAX:
+            for k in [
+                k for k, lk in _PLAN_STATUS_LOCKS.items() if not lk.locked()
+            ][: _PLAN_STATUS_LOCKS_MAX // 4]:
+                _PLAN_STATUS_LOCKS.pop(k, None)
     return lock
 
 
@@ -348,6 +386,14 @@ async def update_plan_status(session_id: str, plan_id: str, **updates: Any) -> N
     首达终态获胜 (P2)：一旦 completed/failed/cancelled，后到的状态写入（包括
     running「复活」）全部忽略。
     """
+    # CONC-F3: serialize the read-check-write against concurrent writers
+    # (executor terminal write vs user cancel/supersede). Must NOT take the
+    # plan EXEC lock here — _write_terminal runs under it (deadlock).
+    async with _get_status_write_lock(session_id, plan_id):
+        await _update_plan_status_locked(session_id, plan_id, updates)
+
+
+async def _update_plan_status_locked(session_id: str, plan_id: str, updates: dict) -> None:
     plan_data = await load_plan(session_id, plan_id)
     if plan_data is None:
         logger.warning(f"update_plan_status: plan {plan_id} 不存在")
@@ -772,14 +818,25 @@ async def _execute_plan_locked(
             # 并发 dispatch 整个波次。注意：Python 3.12 的 asyncio.as_completed
             # yield 的是内部 _wait_for_one 协程而非原始 Task，无法映射回 sid；
             # 因此改用 asyncio.wait(FIRST_COMPLETED)，它返回原始 Task 对象。
-            tasks = {
-                sid: asyncio.create_task(
-                    registry.dispatch(
-                        step_by_id[sid].tool, resolved_args[sid], session_id=session_id
+            #
+            # SEC-F1 (plan contract): execute_plan IS the user-approved channel
+            # for destructive (tier-3) steps — propose_plan marks them and the
+            # UI requires explicit plan approval before the LLM may call this.
+            # The registry chokepoint refuses tier-3 without a confirmation
+            # grant, so mint one for the wave's tasks (create_task copies the
+            # current context; the grant travels with each task). Ad-hoc chat
+            # dispatch, subagents and workflows stay locked down.
+            from app.tools.registry import confirm_tier3
+
+            with confirm_tier3():
+                tasks = {
+                    sid: asyncio.create_task(
+                        registry.dispatch(
+                            step_by_id[sid].tool, resolved_args[sid], session_id=session_id
+                        )
                     )
-                )
-                for sid in wave
-            }
+                    for sid in wave
+                }
             wave_tasks = set(tasks.values())
             task_to_sid = {t: sid for sid, t in tasks.items()}
 
@@ -842,7 +899,19 @@ async def _execute_plan_locked(
             # 此前这里 cancel 了 pending 兄弟，在较慢的 runner 上 s2 快速失败会 race 掉
             # 即将完成的 s1，导致 flaky executed=[]（master CI 间歇性失败）。
             if failure is not None and pending:
-                done_siblings, _ = await asyncio.wait(pending)  # 不 cancel，让兄弟完成
+                # CONC-F4: bounded sibling drain. Sync tools run via to_thread
+                # with no deadline; an unbounded wait held the per-plan locks
+                # forever on a sibling stuck on IO, wedging the plan (and, in
+                # Redis-down mode, blocking resume on the in-process lock).
+                # Give siblings a generous drain window, then cancel stragglers
+                # — their results are simply not counted (failure already won).
+                done_siblings, still_pending = await asyncio.wait(
+                    pending, timeout=_SIBLING_DRAIN_TIMEOUT_S
+                )
+                for t in still_pending:
+                    t.cancel()
+                if still_pending:
+                    await asyncio.wait(still_pending)
                 for t in done_siblings:
                     sid_sib = task_to_sid.get(t)
                     if sid_sib is None:

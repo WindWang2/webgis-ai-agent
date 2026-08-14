@@ -53,21 +53,10 @@ def _allow_public_register() -> bool:
 
 
 def _get_client_ip(request: Request) -> str:
-    """Client IP for auth rate limits.
+    """Client IP for auth rate limits — shared extraction (SEC-F4)."""
+    from app.core.client_ip import client_ip_from
 
-    Production nginx sets ``X-Real-IP $remote_addr`` and appends the real peer
-    as the last ``X-Forwarded-For`` hop (``$proxy_add_x_forwarded_for``).
-    The leftmost XFF value is attacker-controlled and must not key the limiter.
-    """
-    real_ip = (request.headers.get("x-real-ip") or "").strip()
-    if real_ip:
-        return real_ip
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        hops = [hop.strip() for hop in forwarded.split(",") if hop.strip()]
-        if hops:
-            return hops[-1]
-    return request.client.host if request.client else "unknown"
+    return client_ip_from(request)
 
 
 class RegisterRequest(BaseModel):

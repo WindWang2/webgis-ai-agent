@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.api.routes import chat as chat_route
-from app.services.chat.event_resume import RESUME_MAX_EVENTS, TurnEventBuffer, TurnResumeRegistry
+from app.services.chat.event_resume import RESUME_MAX_EVENTS, TurnResumeRegistry
 from app.utils.sse import sse_event, sse_event_id, sse_event_type
 
 

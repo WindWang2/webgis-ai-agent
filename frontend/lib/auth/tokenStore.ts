@@ -40,6 +40,25 @@ let loaded = false;
 
 const listeners = new Set<() => void>();
 
+// FE-P3-8: cross-tab sync. Without this, a login in tab B left tab A sending
+// anonymous requests, and a refresh in tab A could clobber tab B's rotated
+// refresh token.
+if (isBrowser()) {
+  window.addEventListener('storage', (event) => {
+    if (event.key === STORAGE_KEY) {
+      loaded = false; // force a re-read on next access
+      cached = null;
+      listeners.forEach((fn) => {
+        try {
+          fn();
+        } catch {
+          /* listener errors must not break auth state */
+        }
+      });
+    }
+  });
+}
+
 function isBrowser(): boolean {
   return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
 }

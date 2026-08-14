@@ -94,8 +94,11 @@ async def test_m1_session_locks_bounded_under_many_sessions(monkeypatch):
     from app.tools.registry import ToolRegistry
 
     engine = ChatEngine(ToolRegistry())
-    # 用一个小的上限加速测试（生产默认 200）
+    # 用一个小的上限加速测试（生产默认 200）；同时把 CONC-F2 的逐出宽限期
+    # 归零 —— 测试里 40 次顺序获取发生在毫秒级，30s 宽限期内合法地不逐出。
+    # （归零等价于模拟"距上次触碰已超过宽限窗口"。）
     monkeypatch.setattr(engine, "_MAX_LOCKS", 8, raising=False)
+    monkeypatch.setattr(engine, "_LOCK_EVICTION_GRACE_S", 0.0, raising=False)
     # _get_or_create_session 慢路径会 _load_session_from_db；mock 成空消息列表
     from unittest.mock import AsyncMock
     monkeypatch.setattr(engine, "_load_session_from_db", AsyncMock(return_value=[]))

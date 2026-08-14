@@ -164,6 +164,12 @@ class SessionLockRegistry:
         self._bound_loop: Optional[asyncio.AbstractEventLoop] = None
         self._last_check_s: float = 0.0
         self._fallback_locks: Dict[str, _InProcessLock] = {}
+        # asyncio primitives bind to the loop they were first used on. When
+        # the running loop changes (pytest per-test loops; loop restarts), a
+        # cached in-process lock from the OLD loop deadlocks cross-test
+        # acquirers — reproduced by test_delete_session → resume chaos. The
+        # client rebuild above (F12) has the same rationale.
+        self._fallback_bound_loop: Optional[asyncio.AbstractEventLoop] = None
 
     @staticmethod
     async def _close_client(client) -> None:
@@ -212,6 +218,16 @@ class SessionLockRegistry:
         return self._client
 
     def _fallback_lock(self, session_id: str) -> _InProcessLock:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if self._fallback_bound_loop is not loop:
+            # Loop changed: drop every old-loop lock (they can only deadlock
+            # on this loop). Single-loop processes never hit this branch
+            # after the first call.
+            self._fallback_locks.clear()
+            self._fallback_bound_loop = loop
         lock = self._fallback_locks.get(session_id)
         if lock is None:
             self._evict_idle_fallbacks()

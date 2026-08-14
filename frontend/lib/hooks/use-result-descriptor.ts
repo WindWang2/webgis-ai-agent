@@ -38,7 +38,6 @@ async function fetchDescriptor(
   ref: string,
   sessionId: string | null | undefined,
   ownerToken: string | null | undefined,
-  outerSignal: AbortSignal,
 ): Promise<LayerDescriptor | null> {
   const key = cacheKey(ref, sessionId);
   const cached = cache.get(key);
@@ -55,9 +54,11 @@ async function fetchDescriptor(
     }
   }
 
+  // FE-P2-2: the shared request must NOT die with its first consumer. The
+  // old wiring aborted the SHARED controller on the originator's unmount and
+  // then negative-cached the AbortError — reopening the same result within
+  // the TTL showed "未报告" for data that was never actually missing.
   const controller = new AbortController();
-  const onOuterAbort = () => controller.abort();
-  outerSignal.addEventListener('abort', onOuterAbort, { once: true });
 
   const params = new URLSearchParams();
   if (sessionId) params.set('session_id', sessionId);
@@ -74,6 +75,12 @@ async function fetchDescriptor(
       return data ?? null;
     })
     .catch((err) => {
+      const aborted = err instanceof Error && err.name === 'AbortError';
+      if (aborted) {
+        // Transport aborts are expected control flow (unmount/session
+        // switch): no warn noise, NO negative cache.
+        return null;
+      }
       if (!isApiError(err)) devOnly.warn('[ResultDescriptor] fetch failed', err);
       // Negative-cache briefly to avoid hammering on 404 (session expired).
       cache.set(key, null);
@@ -82,7 +89,6 @@ async function fetchDescriptor(
     })
     .finally(() => {
       inFlight.delete(key);
-      outerSignal.removeEventListener('abort', onOuterAbort);
     });
 
   inFlight.set(key, { promise, controller });
@@ -116,7 +122,7 @@ export function useResultDescriptor(
     const controller = new AbortController();
     abortRef.current = controller;
 
-    fetchDescriptor(ref, sessionId, ownerToken, controller.signal).then((descriptor) => {
+    fetchDescriptor(ref, sessionId, ownerToken).then((descriptor) => {
       // Generation guard: drop responses that no longer match the current result.
       if (gen !== generationRef.current || controller.signal.aborted) return;
       if (descriptor) enrichResultOutput(resultId, ref, descriptor);

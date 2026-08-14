@@ -129,13 +129,17 @@ async def test_abort_proceeds_for_matching_session_and_when_idle():
     bridge = PiBridge(rpc=rpc)
 
     # Idle bridge: session_id given, no turn in flight -> abort fires.
+    # CONC-F1: pending futures are failed from the pre-RPC SNAPSHOT only
+    # (fail_pending_ids), never the unscoped fail_all_pending.
     result = await bridge.abort(session_id="sess-idle")
     assert result == {"ok": True}
     assert "abort" in _rpc_commands(rpc)
-    rpc.fail_all_pending.assert_called_once_with("abort requested")
+    rpc.fail_all_pending.assert_not_called()
+    rpc.fail_pending_ids.assert_called_once()
 
     rpc.request.reset_mock()
     rpc.fail_all_pending.reset_mock()
+    rpc.fail_pending_ids.reset_mock()
 
     # Matching session: abort fires while the turn is parked mid-stream.
     gen = bridge.stream_prompt("hi", session_id="sess-A")
@@ -144,7 +148,8 @@ async def test_abort_proceeds_for_matching_session_and_when_idle():
     result = await bridge.abort(session_id="sess-A")
     assert result == {"ok": True}
     assert "abort" in _rpc_commands(rpc)
-    rpc.fail_all_pending.assert_called_once_with("abort requested")
+    rpc.fail_all_pending.assert_not_called()
+    rpc.fail_pending_ids.assert_called_once()
 
     await gen.aclose()
 
@@ -458,7 +463,9 @@ async def test_prompt_publishes_active_turn_markers(monkeypatch, caplog):
     result = await bridge.abort(session_id="sess-P")
     assert result == {"ok": True}
     assert "abort" in _rpc_commands(rpc)
-    rpc.fail_all_pending.assert_called_once_with("abort requested")
+    # CONC-F1: scoped snapshot failure, not the unscoped global form.
+    rpc.fail_all_pending.assert_not_called()
+    rpc.fail_pending_ids.assert_called_once()
 
     # F24: dispatch during prompt() is bound to the turn's token
     dispatch = asyncio.create_task(dispatch_tool(PiToolRequest(

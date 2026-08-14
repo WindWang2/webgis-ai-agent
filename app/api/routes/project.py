@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.auth import actor_ids, get_current_user_optional
+from app.core.auth import actor_ids, get_current_user, get_current_user_optional
 from app.services.project_service import ProjectService
 from app.services.workflow_engine import WorkflowEngine
 from app.services.lineage_service import LineageService
@@ -228,7 +228,9 @@ async def run_workflow(
     workflow_id: str,
     req: WorkflowRunRequest,
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    # SEC-F1: workflow execution dispatches registered tools synchronously —
+    # not an anonymous surface (resource exhaustion + tool-echo).
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
     user_id, org_id = actor_ids(user)
     project = ProjectService.get_project_with_auth(db=db, project_id=project_id, user_id=user_id, org_id=org_id)
@@ -380,7 +382,7 @@ async def replay_run(
     run_id: str,
     req: RunReplayRequest,
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Re-execute a prior run. ``exact`` (default) reuses the frozen graph +
     inputs; ``latest`` runs the current revision with the prior inputs.
@@ -407,7 +409,7 @@ async def resume_run(
     run_id: str,
     req: RunResumeRequest,
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
     """Continue a failed/partial prior run from where it stopped.
 

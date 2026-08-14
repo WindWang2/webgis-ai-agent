@@ -1,4 +1,5 @@
 """Chat API Route - SSE 流式对话"""
+import asyncio
 import json
 import logging
 import uuid
@@ -672,6 +673,24 @@ async def chat_stream(
                 pi_owner_token = _pi_stream_capability(
                     conversation, created, user_id, owner_token
                 )
+                # SEC-08 store-layer guard wiring: persist a ONE-WAY digest of
+                # the conversation's owner token so
+                # session_data_protocol._validate_owner_token can engage for
+                # data-plane ref reads. A digest (never the raw token) because
+                # map_state is echoed back to clients by the state endpoint.
+                # Best-effort: route-level ownership checks remain primary.
+                _conv_token = getattr(conversation, "owner_token", None)
+                if _conv_token:
+                    try:
+                        import hashlib as _hashlib
+
+                        await session_data_manager.set_map_state(
+                            pi_session_id,
+                            "owner_token_digest",
+                            _hashlib.sha256(str(_conv_token).encode()).hexdigest(),
+                        )
+                    except Exception:  # noqa: BLE001 — guard wiring is additive
+                        pass
     finally:
         # Release the connection NOW, not when the stream ends. The guard is
         # the only consumer; nothing downstream uses ``db``.
@@ -1160,7 +1179,9 @@ async def push_map_action_acks(
     限速 per client IP（同 ws.py/auth.py）：Redis 不可达时 is_allowed fail-open
     放行，不阻断正常交互。
     """
-    client_ip = request.client.host if request.client else "unknown"
+    from app.core.client_ip import client_ip_from
+
+    client_ip = client_ip_from(request)
     limiter = await get_rate_limiter()
     if not await limiter.is_allowed(
         f"map_action_ack:{client_ip}", _ACK_RATE_LIMIT_MAX, _ACK_RATE_LIMIT_WINDOW
@@ -1205,7 +1226,18 @@ async def clear_session(
     # 在途 turn 一起杀掉；bridge 据此在其它会话的 turn 在途时跳过并记日志。
     if _use_pi_bridge():
         try:
-            await pi_bridge.abort(session_id=session_id)
+            # CONC-F7: the abort RPC can block up to the 300s client budget
+            # when Pi is stuck in a long tool — a session DELETE would hold
+            # the request (and the user's UI) hostage. Same bound the
+            # disconnect path already uses.
+            await asyncio.wait_for(
+                pi_bridge.abort(session_id=session_id), timeout=5.0
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Pi bridge abort timed out for session %s — proceeding with delete",
+                session_id,
+            )
         except Exception as e:  # noqa: BLE001 — abort 失败不能阻塞删除流程
             logger.warning("Pi bridge abort failed for session %s: %s", session_id, e)
 
@@ -1295,7 +1327,15 @@ async def execute_tool_direct(req: ToolExecuteRequest, _user: dict = Depends(req
         )
 
     try:
-        result = await registry.dispatch(tool_name, args, session_id=req.session_id)
+        # SEC-F1: grant the chokepoint tier-3 rights only for the confirmed
+        # admin path — the registry itself refuses tier-3 without this.
+        from app.tools.registry import confirm_tier3
+
+        if tier >= 3 and req.confirm_destructive:
+            with confirm_tier3():
+                result = await registry.dispatch(tool_name, args, session_id=req.session_id)
+        else:
+            result = await registry.dispatch(tool_name, args, session_id=req.session_id)
         return result
     except Exception as e:
         logger.error(f"Tool execute error: {e}", exc_info=True)
