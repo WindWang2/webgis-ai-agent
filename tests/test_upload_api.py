@@ -41,7 +41,9 @@ async def test_upload_raster_too_large(client):
          patch.object(_mod, "get_upload_dir", return_value="/tmp/test"):
         resp = await client.post("/api/v1/upload",
                                 files={"files": ("big.tif", big_content, "image/tiff")})
-        assert resp.status_code == 400
+        # SEC-F6: oversized bodies are now 413 — and the read is capped at
+        # MAX+1 bytes BEFORE buffering the whole body.
+        assert resp.status_code == 413
         assert "超过限制" in resp.json()["detail"]
 
 

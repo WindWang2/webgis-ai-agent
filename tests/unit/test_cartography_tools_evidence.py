@@ -458,16 +458,20 @@ async def _run_spatial_tool(spatial_registry, sid: str) -> dict:
     Dispatching here proves the ASYNC path actually awaits and yields a plain
     dict result.
     """
-    res = await spatial_registry.dispatch(
-        "spatial_decision_v2",
-        {
-            "scenario": "新建地铁站",
-            "target_area": "test-area",
-            "parameters": {},
-            "baseline_data_ref": "",
-        },
-        session_id=sid,
-    )
+    from app.tools.registry import confirm_tier3
+
+    # tier-3 tool: the registry chokepoint requires a confirmed context (SEC-F1).
+    with confirm_tier3():
+        res = await spatial_registry.dispatch(
+            "spatial_decision_v2",
+            {
+                "scenario": "新建地铁站",
+                "target_area": "test-area",
+                "parameters": {},
+                "baseline_data_ref": "",
+            },
+            session_id=sid,
+        )
     assert not hasattr(res, "send"), (
         "dispatch returned an un-awaited coroutine — execution policy mismatch "
         "(async def tool must use ToolExecutionPolicy.ASYNC)"

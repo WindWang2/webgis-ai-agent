@@ -108,20 +108,24 @@ async def upload_files(
                    f"栅格格式: {', '.join(sorted(RASTER_FORMATS))}",
         )
 
-    # 读取文件内容
-    content = await file.read()
+    # 读取文件内容 — SEC-F6: read at most cap+1 bytes so an oversized body is
+    # rejected BEFORE being fully buffered into memory (the old unconditional
+    # read() let a direct-exposure attacker OOM the process; nginx's 100M
+    # body cap only covers the proxied path).
+    _max_for_ext = MAX_RASTER_SIZE if ext in RASTER_FORMATS else MAX_VECTOR_SIZE
+    content = await file.read(_max_for_ext + 1)
     file_size = len(content)
 
     # 检查大小
     if ext in RASTER_FORMATS and file_size > MAX_RASTER_SIZE:
         raise HTTPException(
-            status_code=400,
-            detail=f"栅格文件大小 {file_size / 1024 / 1024:.1f}MB 超过限制 200MB",
+            status_code=413,
+            detail="栅格文件大小超过限制 200MB",
         )
     if ext in VECTOR_FORMATS and file_size > MAX_VECTOR_SIZE:
         raise HTTPException(
-            status_code=400,
-            detail=f"矢量文件大小 {file_size / 1024 / 1024:.1f}MB 超过限制 50MB",
+            status_code=413,
+            detail="矢量文件大小超过限制 50MB",
         )
 
     # 创建上传目录

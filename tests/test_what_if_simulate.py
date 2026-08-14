@@ -148,14 +148,20 @@ async def test_what_if_simulate_tool_output(offline_rag):
     registry = ToolRegistry()
     register_what_if_simulate(registry)
 
-    result = await registry.dispatch(
-        "what_if_simulate",
-        {
-            "scenario": "新建地铁站",
-            "target_area": "北京市朝阳区",
-            "parameters": {},
-        },
-    )
+    from app.tools.registry import confirm_tier3
+
+    # what_if_simulate is tier-3: the registry chokepoint refuses it unless the
+    # caller carries an explicit confirmation (SEC-F1) — tests of the tool
+    # itself represent a confirmed execution context.
+    with confirm_tier3():
+        result = await registry.dispatch(
+            "what_if_simulate",
+            {
+                "scenario": "新建地铁站",
+                "target_area": "北京市朝阳区",
+                "parameters": {},
+            },
+        )
 
     assert isinstance(result, dict)
     assert result["type"] == "what_if_simulation"

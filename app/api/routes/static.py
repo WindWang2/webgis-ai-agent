@@ -7,7 +7,7 @@
     * resolve 后必须仍在 settings.DATA_DIR 之下
     * 拒绝以 `.` 开头的文件名
 - 访问控制三选一（任一通过即放行）：
-    * 持有合法 Bearer JWT
+    * 持有合法 admin Bearer JWT（SEC-F3：普通用户 JWT 不再解锁私有树）
     * 提供合法 `?sig=...&exp=...` 签名 URL
     * 文件位于显式公共子目录 `public/` 下
 - 全部访问记日志（含 user_id / anonymous）便于事后审计。
@@ -67,10 +67,20 @@ async def serve_static(
     target = _resolve_under_data_dir(file_path)
 
     is_public = file_path.startswith(_PUBLIC_PREFIXES)
-    is_authed = user and user.get("user_id") not in (None, "", "anonymous")
+    # SEC-F3: a Bearer token alone must NOT grant reads of arbitrary private
+    # files under DATA_DIR (other tenants' uploads/exports/reports and
+    # .webgis-agent session data) — that made every per-resource ownership
+    # check on the parallel routes (upload/export/report) bypassable by path.
+    # The JWT channel is admin-only now; regular users use the public tree
+    # and signed URLs (the only channels any real flow uses).
+    is_admin = (
+        bool(user)
+        and user.get("user_id") not in (None, "", "anonymous")
+        and user.get("role") == "admin"
+    )
     is_signed = bool(sig and exp) and verify_signature(file_path, exp, sig)
 
-    if not (is_public or is_authed or is_signed):
+    if not (is_public or is_admin or is_signed):
         # 公网枚举的最后一道阻挡：404 不暴露存在性
         raise HTTPException(status_code=404, detail="Not found")
 
@@ -78,8 +88,8 @@ async def serve_static(
         raise HTTPException(status_code=404, detail="Not found")
 
     mime, _ = mimetypes.guess_type(str(target))
-    actor = "anon" if not is_authed else user.get("user_id")
-    via = "auth" if is_authed else ("sig" if is_signed else "public")
+    actor = "anon" if not is_admin else user.get("user_id")
+    via = "admin" if is_admin else ("sig" if is_signed else "public")
     logger.info(
         "[static] %s %s via=%s actor=%s ip=%s",
         request.method, file_path, via, actor,

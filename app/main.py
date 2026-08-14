@@ -252,7 +252,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if request.url.path.startswith(("/docs", "/redoc", "/openapi.json")):
             return await call_next(request)
 
-        client_ip = request.client.host if request.client else "unknown"
+        # SEC-F4: behind nginx, request.client.host is the proxy IP — one
+        # shared bucket for the whole platform. Use the forwarded real IP.
+        from app.core.client_ip import client_ip_from
+
+        client_ip = client_ip_from(request)
         limiter = await get_rate_limiter()
         allowed = await limiter.is_allowed(
             f"rate_limit:{client_ip}",

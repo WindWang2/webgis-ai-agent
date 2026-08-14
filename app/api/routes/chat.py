@@ -1160,7 +1160,9 @@ async def push_map_action_acks(
     限速 per client IP（同 ws.py/auth.py）：Redis 不可达时 is_allowed fail-open
     放行，不阻断正常交互。
     """
-    client_ip = request.client.host if request.client else "unknown"
+    from app.core.client_ip import client_ip_from
+
+    client_ip = client_ip_from(request)
     limiter = await get_rate_limiter()
     if not await limiter.is_allowed(
         f"map_action_ack:{client_ip}", _ACK_RATE_LIMIT_MAX, _ACK_RATE_LIMIT_WINDOW
@@ -1295,7 +1297,15 @@ async def execute_tool_direct(req: ToolExecuteRequest, _user: dict = Depends(req
         )
 
     try:
-        result = await registry.dispatch(tool_name, args, session_id=req.session_id)
+        # SEC-F1: grant the chokepoint tier-3 rights only for the confirmed
+        # admin path — the registry itself refuses tier-3 without this.
+        from app.tools.registry import confirm_tier3
+
+        if tier >= 3 and req.confirm_destructive:
+            with confirm_tier3():
+                result = await registry.dispatch(tool_name, args, session_id=req.session_id)
+        else:
+            result = await registry.dispatch(tool_name, args, session_id=req.session_id)
         return result
     except Exception as e:
         logger.error(f"Tool execute error: {e}", exc_info=True)

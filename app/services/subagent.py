@@ -88,6 +88,12 @@ def select_tools_for_subagent(
             continue
         tier = int(meta.get("tier", 1))
         if name in extra_set:
+            # SEC-F2: an explicit extra_tools request must not override the
+            # tier-3 exclusion — the parent turn holds no confirmed tier-3
+            # grant it could delegate, and the subagent LLM must not even see
+            # the schema.
+            if tier >= 3 and exclude_tier3:
+                continue
             selected.add(name)
             continue
         if tier == 1:
