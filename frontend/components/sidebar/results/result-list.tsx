@@ -38,30 +38,40 @@ function formatTime(ms?: number): string {
 }
 
 export function ResultList({ results, selectedId, onSelect, restoreFocusId, onRestoredFocus }: ResultListProps) {
+  // The focus contract needs a focusable container whichever branch renders
+  // (list <ul> / empty-state wrapper <div>) — resolve at effect time.
   const listRef = useRef<HTMLUListElement>(null);
+  const emptyRef = useRef<HTMLDivElement>(null);
 
   // Focus contract: after Back, focus returns to the row that was opened
   // (consumed exactly once — unrelated re-renders never steal focus).
   useEffect(() => {
     if (!restoreFocusId) return;
-    const list = listRef.current;
-    const btn = list?.querySelector(
-      `button[data-result-id="${CSS.escape(restoreFocusId)}"]`,
-    );
-    if (btn instanceof HTMLButtonElement) {
-      btn.focus();
-    } else {
-      // The row is gone (removed from the detail view, or evicted by the
-      // 50-result cap while open) — land on the list container instead of
-      // dropping keyboard focus to <body>.
-      list?.focus();
+    const container = listRef.current ?? emptyRef.current;
+    if (container) {
+      const btn = container.querySelector(
+        `button[data-result-id="${CSS.escape(restoreFocusId)}"]`,
+      );
+      if (btn instanceof HTMLButtonElement) {
+        btn.focus();
+      } else {
+        // The row is gone (removed from the detail view, or evicted by the
+        // 50-result cap while open) — land on the list container instead of
+        // dropping keyboard focus to <body>. Covers the empty-list state
+        // too (removing the last result goes Back to an empty list).
+        container.focus();
+      }
     }
     onRestoredFocus?.();
   }, [restoreFocusId, results, onRestoredFocus]);
 
   if (results.length === 0) {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center p-4">
+      <div
+        ref={emptyRef}
+        tabIndex={-1}
+        className="flex min-h-0 flex-1 items-center justify-center p-4 outline-none focus:outline-none"
+      >
         <EmptyState
           icon={ClipboardList}
           title="暂无分析结果"

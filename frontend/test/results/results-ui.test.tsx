@@ -239,6 +239,19 @@ describe('ResultList — V4 density contracts', () => {
     expect(screen.getAllByRole('button').length).toBeGreaterThan(0);
   });
 
+  it('keeps focus off <body> when removing the LAST result (empty list)', () => {
+    const r = hotspotResult();
+    useHudStore.setState({ results: [r] });
+    render(<ResultsTab sessionId="sess" ownerToken={null} onSend={() => {}} />);
+
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByRole('button', { name: '返回结果列表' })).toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: '从列表移除' }));
+
+    // List is now empty: focus lands on the empty-state container, not body.
+    expect(screen.getByText('暂无分析结果').closest('[tabindex="-1"]')).toHaveFocus();
+  });
+
   it('shows the layer chip only when an output is mounted as a layer', () => {
     const withLayer = hotspotResult();
     const without = normalizeStepResult({
