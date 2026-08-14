@@ -286,15 +286,20 @@ async def test_pi_bridge_abort_calls_rpc_and_fails_pending():
     bridge._rpc = rpc
 
     # Seed a pending future as if a `prompt` call was awaiting a response.
+    # CONC-F1: abort fails the pre-RPC SNAPSHOT of pending ids (scoped form),
+    # never the unscoped fail_all_pending.
     pending = asyncio.get_running_loop().create_future()
-    rpc.fail_all_pending.side_effect = lambda reason: pending.set_exception(
-        PiRpcError(reason)
+    rpc.pending_request_ids = MagicMock(return_value={"req-1"})
+    rpc.fail_pending_ids = MagicMock(
+        side_effect=lambda ids, reason: pending.set_exception(PiRpcError(reason))
     )
+    rpc.fail_all_pending = MagicMock()
 
     result = await bridge.abort()
 
     rpc.request.assert_awaited_once_with("abort")
-    rpc.fail_all_pending.assert_called_once_with("abort requested")
+    rpc.fail_all_pending.assert_not_called()
+    rpc.fail_pending_ids.assert_called_once_with({"req-1"}, "abort requested")
     assert result == {"ok": True}
     assert pending.done()
     assert isinstance(pending.exception(), PiRpcError)

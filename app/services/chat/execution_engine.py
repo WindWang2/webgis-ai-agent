@@ -254,7 +254,6 @@ class ChatExecutionEngine:
         # instantaneous "idle" checks evict a lock a waiter was about to
         # re-acquire — two concurrent turns on one session.
         self._session_lock_last_used: dict[str, float] = {}
-        self._deferred_lock_drops: dict[str, list[asyncio.Lock]] = {}
         self._MAX_LOCKS = 200
         self._session_owner_tokens: LRUCache = LRUCache(capacity=_SESSION_CACHE_SIZE)
 
@@ -433,7 +432,8 @@ class ChatExecutionEngine:
         窗口，必须再要求"距上次触碰 > 宽限期"（CONC-F2）。"""
         import time as _time
 
-        self._reap_deferred_lock_drops()
+        if not hasattr(self, "_session_lock_last_used"):
+            self._session_lock_last_used = {}
         if len(self._session_locks) > self._MAX_LOCKS:
             evict_count = self._MAX_LOCKS // 4
             now = _time.monotonic()
@@ -447,32 +447,6 @@ class ChatExecutionEngine:
                 ):
                     self._session_locks.pop(sid, None)
                     self._session_lock_last_used.pop(sid, None)
-
-    def _reap_deferred_lock_drops(self) -> None:
-        """Drop clear-session-deferred lock entries once past the grace window.
-
-        clear_session wants to drop the session's lock entry, but an
-        instantaneous "not in use" check has the same handoff race as
-        eviction (CONC-F2) — defer the drop and reap it here."""
-        import time as _time
-
-        if not self._deferred_lock_drops:
-            return
-        now = _time.monotonic()
-        for sid in list(self._deferred_lock_drops.keys()):
-            current = self._session_locks.get(sid)
-            if current is None:
-                self._deferred_lock_drops.pop(sid, None)
-                continue
-            idle_beyond_grace = (
-                not _lock_in_use(current)
-                and (now - self._session_lock_last_used.get(sid, 0.0))
-                > self._LOCK_EVICTION_GRACE_S
-            )
-            if idle_beyond_grace:
-                self._session_locks.pop(sid, None)
-                self._session_lock_last_used.pop(sid, None)
-                self._deferred_lock_drops.pop(sid, None)
 
     async def _get_or_create_session(
         self,
@@ -1146,6 +1120,10 @@ class ChatExecutionEngine:
         import time as _time
 
         self._evict_idle_locks()
+        # Lazy init: some tests construct the engine via __new__ and call
+        # this directly; production __init__ always sets both dicts.
+        if not hasattr(self, "_session_lock_last_used"):
+            self._session_lock_last_used = {}
         self._session_lock_last_used[session_id] = _time.monotonic()
         return self._session_locks.setdefault(session_id, asyncio.Lock())
 
@@ -1884,11 +1862,18 @@ class ChatExecutionEngine:
                 self._sessions.pop(session_id, None)
                 # F1: 锁被在途 turn 持有（或有等待者）时不能丢弃 —— 丢弃后下一个
                 # 并发请求拿到的是新锁，会与旧锁并行，破坏按会话串行化。
-                # CONC-F2: same handoff race as eviction — defer the drop;
-                # _reap_deferred_lock_drops reclaims it after the grace window.
+                # CONC-F2: drop the registry entry when the lock is idle
+                # (memory contract — clear_session must not leak entries). A
+                # lock still HELD by an in-flight turn is left in place:
+                # evicting under a live holder would let a fresh caller build a
+                # second lock and run concurrently. The sub-millisecond
+                # release→waiter handoff window remains an accepted edge here
+                # (pre-audit behavior); the eviction path keeps the full grace
+                # rule.
                 lock = self._session_locks.get(session_id)
-                if lock is not None and not _lock_in_use(lock):
-                    self._deferred_lock_drops.setdefault(session_id, []).append(lock)
+                if lock is not None and not lock.locked():
+                    self._session_locks.pop(session_id, None)
+                    self._session_lock_last_used.pop(session_id, None)
                 self._session_owner_tokens.pop(session_id, None)
                 # F21: 每一项进程内清理都可能独立失败（Redis 抖动 / 可选模块缺失），
                 # 隔离失败，保证其余清理总能执行；路由语义不变（仍按 DB 删除结果返回）。
