@@ -30,6 +30,7 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
 
   const [tempName, setTempName] = useState('');
   const [isRenaming, setIsRenaming] = useState(false);
+  const [draftOpacity, setDraftOpacity] = useState<number | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -55,6 +56,13 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
   const brightness = style.brightness ?? 1;
   const contrast = style.contrast ?? 1;
   const saturation = style.saturation ?? 1;
+
+  const effectiveOpacity = draftOpacity ?? layer.opacity;
+
+  const commitOpacity = (val: number) => {
+    setDraftOpacity(null);
+    updateLayer(layer.id, { opacity: val });
+  };
 
   return (
     <motion.div
@@ -317,11 +325,20 @@ export const LayerStylePanel = memo(function LayerStylePanel() {
         {/* === OPACITY (ALL TYPES) === */}
         <div>
           <label className="text-[15px] text-white/25 uppercase tracking-wider mb-1.5 block">
-            透明度 <span className="text-white/15 font-mono">{Math.round(layer.opacity * 100)}%</span>
+            透明度 <span className="text-white/15 font-mono">{Math.round(effectiveOpacity * 100)}%</span>
           </label>
-          <input type="range" min={0} max={1} step={0.05} value={layer.opacity}
-            onChange={(e) => updateLayer(layer.id, { opacity: parseFloat(e.target.value) })}
-            className="w-full accent-hud-cyan" />
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={effectiveOpacity}
+            onChange={(e) => setDraftOpacity(parseFloat(e.target.value))}
+            onPointerUp={() => commitOpacity(effectiveOpacity)}
+            onKeyUp={() => commitOpacity(effectiveOpacity)}
+            onBlur={() => commitOpacity(effectiveOpacity)}
+            className="w-full accent-hud-cyan"
+          />
         </div>
 
         {/* Reset */}

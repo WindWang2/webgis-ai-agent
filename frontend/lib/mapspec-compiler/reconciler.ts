@@ -98,6 +98,10 @@ function diffView(prev: MapSpecView | undefined, next: MapSpecView | undefined):
  *   changed, which is what the runtime needs to re-apply z-ordering.
  */
 export function diffSpecs(prev: MapSpec | null, next: MapSpec): SpecPatch {
+  if (prev === next) {
+    return { sources: [], layers: [] };
+  }
+
   if (prev === null) {
     return {
       sources: Object.entries(next.sources || {}).map(([id, source]) => ({

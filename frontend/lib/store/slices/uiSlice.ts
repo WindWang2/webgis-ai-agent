@@ -25,15 +25,38 @@ export const createUiSlice: StateCreator<HudState, [], [], Partial<HudState>> = 
   // （不传 bounds）时，bounds 会被设为 undefined，依赖 bounds 的代码（如 chat
   // map_state payload）会读到 undefined。改为 merge，保留未传字段的旧值。
   setViewport: (center, zoom, bearing, pitch, bounds) =>
-    set((s) => ({
-      viewport: {
-        center,
-        zoom,
-        bearing: bearing ?? s.viewport.bearing ?? 0,
-        pitch: pitch ?? s.viewport.pitch ?? 0,
-        bounds: bounds ?? s.viewport.bounds,
-      },
-    })),
+    set((s) => {
+      const cur = s.viewport;
+      const nextBearing = bearing ?? cur.bearing ?? 0;
+      const nextPitch = pitch ?? cur.pitch ?? 0;
+      const nextBounds = bounds ?? cur.bounds;
+      if (
+        cur &&
+        cur.center[0] === center[0] &&
+        cur.center[1] === center[1] &&
+        cur.zoom === zoom &&
+        cur.bearing === nextBearing &&
+        cur.pitch === nextPitch &&
+        (cur.bounds === nextBounds ||
+          (Array.isArray(cur.bounds) &&
+            Array.isArray(nextBounds) &&
+            cur.bounds[0] === nextBounds[0] &&
+            cur.bounds[1] === nextBounds[1] &&
+            cur.bounds[2] === nextBounds[2] &&
+            cur.bounds[3] === nextBounds[3]))
+      ) {
+        return s;
+      }
+      return {
+        viewport: {
+          center,
+          zoom,
+          bearing: nextBearing,
+          pitch: nextPitch,
+          bounds: nextBounds,
+        },
+      };
+    }),
   baseLayer: 'Carto 深色',
   setBaseLayer: (name) => set({ baseLayer: name }),
   is3D: false,

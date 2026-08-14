@@ -47,10 +47,45 @@ export function computeInteractiveIds(
  */
 export function resolveParentLayerId(
   sublayerId: string,
-  layerIds: ReadonlyArray<string>,
+  layerIds: ReadonlyArray<string> | ReadonlySet<string>,
 ): string | undefined {
+  const isSet = typeof (layerIds as any).has === 'function';
+  const sepIdx = sublayerId.lastIndexOf(SUBLAYER_SEP);
+
+  if (isSet) {
+    const set = layerIds as ReadonlySet<string>;
+    if (sepIdx > 0) {
+      const candidate = sublayerId.slice(0, sepIdx);
+      if (set.has(candidate)) return candidate;
+    }
+    let best: string | undefined;
+    set.forEach((id) => {
+      if (sublayerId.startsWith(id + SUBLAYER_SEP)) {
+        if (best === undefined || id.length > best.length) best = id;
+      }
+    });
+    return best;
+  }
+
+  const arr = layerIds as ReadonlyArray<string>;
+  if (sepIdx > 0) {
+    const candidate = sublayerId.slice(0, sepIdx);
+    if (arr.indexOf(candidate) !== -1) {
+      let hasLonger = false;
+      for (let i = 0; i < arr.length; i++) {
+        const id = arr[i];
+        if (id.length > candidate.length && sublayerId.startsWith(id + SUBLAYER_SEP)) {
+          hasLonger = true;
+          break;
+        }
+      }
+      if (!hasLonger) return candidate;
+    }
+  }
+
   let best: string | undefined;
-  for (const id of layerIds) {
+  for (let i = 0; i < arr.length; i++) {
+    const id = arr[i];
     if (sublayerId.startsWith(id + SUBLAYER_SEP)) {
       if (best === undefined || id.length > best.length) best = id;
     }

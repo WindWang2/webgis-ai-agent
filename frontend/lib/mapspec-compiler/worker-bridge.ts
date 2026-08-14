@@ -409,6 +409,11 @@ export function disposeWorker(): void {
  * receive the real source definitions.
  */
 export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<SpecPatch> {
+  if (prev === next) {
+    lastDiffFailed = false;
+    return Promise.resolve({ sources: [], layers: [] });
+  }
+
   const worker = createWorker();
   if (!worker) {
     // Sync fallback computes a REAL diff — no failure-mode empty patch here.
