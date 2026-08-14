@@ -9,6 +9,11 @@
  * UI V4：全部改用语义 token（text-title / text-meta / surface-*），并与
  * EmptyState 共用同一个 accent icon tile 配方 —— 审计发现两处 tile 的 accent
  * 透明度分别是 12% 与 10%，肉眼可辨的不一致。
+ *
+ * 窄宽（280px 下限）降级约定：标题行 min-w-0 + truncate 先于徽标收缩
+ * （badge shrink-0），description 允许换到第二行（line-clamp-2）而不是被
+ * 单行 truncate 硬切 —— ContextPanel 的元数据（如“结果工作台 · 输入 ·
+ * 指标 · 输出”）在 280px 下放不进一行。
  */
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
@@ -42,17 +47,17 @@ export function PanelHeader({ icon: Icon, title, description, badge, actions, on
         </span>
       )}
       <div className="min-w-0 flex-1 leading-tight">
-        <div className="flex items-center gap-1.5">
-          <h2 id={id} className="truncate text-title font-semibold text-ink">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <h2 id={id} className="min-w-0 truncate text-title font-semibold text-ink">
             {title}
           </h2>
           {showBadge && (
-            <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-pill bg-surface-sunken px-1 text-micro font-semibold tabular-nums text-ink-secondary">
+            <span className="inline-flex h-4 min-w-[16px] shrink-0 items-center justify-center rounded-pill bg-surface-sunken px-1 text-micro font-semibold tabular-nums text-ink-secondary">
               {badge}
             </span>
           )}
         </div>
-        {description && <p className="mt-0.5 truncate text-meta text-ink-muted">{description}</p>}
+        {description && <p className="mt-0.5 line-clamp-2 text-meta text-ink-muted">{description}</p>}
       </div>
       {actions && <div className="flex shrink-0 items-center gap-0.5">{actions}</div>}
       {onClose && <IconButton label="收起面板" icon={X} onClick={onClose} />}

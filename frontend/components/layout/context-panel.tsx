@@ -8,8 +8,16 @@
  * - 右缘拖拽调整宽度（280–420px，键盘 ArrowLeft/Right ±16，双击复位 320）；
  * - 折叠时整体 translateX 隐藏且不可聚焦（地图优先）；
  * - tab 内容保持切换即卸载（保留 map-studio isExportMode 与 tasks 轮询语义）。
+ *
+ * 拖拽调宽的数据通路（perf 收敛）：
+ *   pointerdown → 记录起点 + 命令式 CSS 变量 --panel-draft-w（不进 React 状态）
+ *   pointermove → 只更新 ref 里的草稿宽度，RAF 逐帧写到 <aside>（无全局 store 写）
+ *   终止（pointerup/cancel/lostpointercapture/blur/折叠/卸载）
+ *            → 取消 RAF + 摘除监听 + 恰好一次 setSidebarWidth 提交
+ * 旧实现在每个原始 pointermove 上写全局 store，导致本面板（含重型活动 tab）
+ * 与订阅 sidebarWidth 的 page.tsx 全部逐事件重渲染。
  */
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   MessageCircle,
   Folder,
@@ -54,8 +62,23 @@ export interface ContextPanelProps {
 const PANEL_MIN = 280;
 const PANEL_MAX = 420;
 const PANEL_DEFAULT = 320;
+const PANEL_STEP = 16;
 
 const clampWidth = (w: number) => Math.min(PANEL_MAX, Math.max(PANEL_MIN, Math.round(w)));
+
+/** 一次拖拽的全部可变状态：只在 ref 里演进，pointermove 不触碰 React/store。 */
+interface DragState {
+  pointerId: number;
+  startX: number;
+  startWidth: number;
+  /** 最新（尚未必已 paints）的钳制草稿宽度。 */
+  width: number;
+  rafId: number | null;
+  /** 一帧内已排队未画（含 rAF 被同步执行的测试桩的场景）。 */
+  rafPending: boolean;
+  /** 拖拽期间挂上的 window 监听（blur + capture 兜底）的摘除函数。 */
+  detachListeners: Array<() => void>;
+}
 
 interface PanelMeta {
   icon: LucideIcon;
@@ -102,65 +125,197 @@ export function ContextPanel({
     : metaKey === 'results' ? resultCount
     : undefined;
 
-  /* ─── 右缘拖拽调宽 ─── */
+  /* ─── 右缘拖拽调宽：草稿走命令式 CSS 变量，终止时一次性提交 store ─── */
   const [dragging, setDragging] = useState(false);
-  const dragStart = useRef<{ x: number; width: number } | null>(null);
+  const dragRef = useRef<DragState | null>(null);
+  const panelRef = useRef<HTMLElement | null>(null);
+  const separatorRef = useRef<HTMLDivElement | null>(null);
+  // 关闭面板后待归还焦点的 rail tab（见 handleClose / leftPanelOpen effect）。
+  const pendingFocusTab = useRef<string | null>(null);
 
-  // Review P1 修复：pointer capture + cancel/blur 兜底。
-  // 之前用 window pointermove/up 监听，指针在窗口外释放（或 pointercancel）
-  // 时 onUp 不触发，会留下永久 dragging 状态 + 泄漏的监听器。
-  const endDrag = useCallback(() => {
-    dragStart.current = null;
-    setDragging(false);
+  // 把草稿宽度写到 <aside> 的 CSS 变量与 separator 的 aria-valuenow。
+  // 拖拽期间 render 用 width: var(--panel-draft-w)，因此这些命令式写入
+  // 不会被无关重渲染覆盖，也不需要触发任何重渲染。
+  const applyDraft = useCallback((w: number) => {
+    panelRef.current?.style.setProperty('--panel-draft-w', `${w}px`);
+    separatorRef.current?.setAttribute('aria-valuenow', String(w));
   }, []);
+
+  // RAF 合帧：pointermove 事件频率可能高于刷新率，同一帧内多次 style 写入
+  // 只保留最后一次；rafPending 与 dragRef 判同保证过期帧回调（终止后、或
+  // rAF 被同步执行的测试桩）不会把旧宽度落到 DOM 或卡住后续帧。
+  const scheduleApply = useCallback(() => {
+    const d = dragRef.current;
+    if (!d || d.rafPending) return;
+    d.rafPending = true;
+    const id = requestAnimationFrame(() => {
+      d.rafPending = false;
+      if (dragRef.current !== d) return; // 过期帧：拖拽已终止
+      applyDraft(d.width);
+    });
+    d.rafId = id;
+  }, [applyDraft]);
+
+  // 唯一的终止函数，所有路径幂等（dragRef 判空即返回）：
+  // 取消 RAF → 摘除 window 监听 → 若宽度实际变化恰好提交一次 →
+  // dragging=false 让 render 切回 store 宽度。
+  const terminateDrag = useCallback(() => {
+    const d = dragRef.current;
+    if (!d) return;
+    dragRef.current = null;
+    if (d.rafId !== null) cancelAnimationFrame(d.rafId);
+    d.detachListeners.forEach((detach) => detach());
+    applyDraft(d.width); // 先让可见宽度 == 即将提交的宽度
+    if (d.width !== d.startWidth) setSidebarWidth(d.width);
+    setDragging(false);
+  }, [applyDraft, setSidebarWidth]);
+
+  // window blur（Alt-Tab / 系统打断）时捕获语义不再可靠 —— 按当前草稿收尾。
+  const handleWindowBlur = useCallback(() => terminateDrag(), [terminateDrag]);
+
+  // pointer capture 不可用（老浏览器/jsdom）时的有界兜底：window 级
+  // pointermove/up/cancel，保证指针离开 8px 手柄后拖拽仍可终止。
+  const onFallbackMove = useCallback(
+    (e: PointerEvent) => {
+      const d = dragRef.current;
+      if (!d || e.pointerId !== d.pointerId) return;
+      d.width = clampWidth(d.startWidth + (e.clientX - d.startX));
+      scheduleApply();
+    },
+    [scheduleApply]
+  );
+  const onFallbackEnd = useCallback(
+    (e: PointerEvent) => {
+      if (dragRef.current?.pointerId === e.pointerId) terminateDrag();
+    },
+    [terminateDrag]
+  );
 
   const onHandlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return; // 仅主键/触摸
+      // 拖拽已在进行（第二根手指/画笔落在手柄上）：忽略新指针，而不是
+      // 覆盖在途 DragState —— 否则前一个指针的草稿被无声丢弃（视觉回跳）。
+      if (dragRef.current) return;
       e.preventDefault();
-      dragStart.current = { x: e.clientX, width: sidebarWidth };
+      const d: DragState = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startWidth: sidebarWidth,
+        width: sidebarWidth,
+        rafId: null,
+        rafPending: false,
+        detachListeners: [],
+      };
+      dragRef.current = d;
+      applyDraft(d.width); // 先初始化变量，render 切到 var() 时无回跳
       setDragging(true);
-      // 指针捕获后 move/up/cancel 全部重定向到本元素，无需 window 监听。
+      window.addEventListener('blur', handleWindowBlur);
+      d.detachListeners.push(() => window.removeEventListener('blur', handleWindowBlur));
+      let captured = false;
       try {
         e.currentTarget.setPointerCapture(e.pointerId);
+        captured = e.currentTarget.hasPointerCapture(e.pointerId);
       } catch {
-        /* jsdom / 老浏览器无 pointer capture，退化为仅键盘调宽可用 */
+        captured = false;
+      }
+      if (!captured) {
+        window.addEventListener('pointermove', onFallbackMove);
+        window.addEventListener('pointerup', onFallbackEnd);
+        window.addEventListener('pointercancel', onFallbackEnd);
+        d.detachListeners.push(() => {
+          window.removeEventListener('pointermove', onFallbackMove);
+          window.removeEventListener('pointerup', onFallbackEnd);
+          window.removeEventListener('pointercancel', onFallbackEnd);
+        });
       }
     },
-    [sidebarWidth]
+    [sidebarWidth, applyDraft, handleWindowBlur, onFallbackMove, onFallbackEnd]
   );
 
+  // 捕获路径：capture 把 move/up/cancel 全部重定向到本元素。
   const onHandlePointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!dragStart.current) return;
-      setSidebarWidth(clampWidth(dragStart.current.width + (e.clientX - dragStart.current.x)));
+      const d = dragRef.current;
+      if (!d || e.pointerId !== d.pointerId) return;
+      d.width = clampWidth(d.startWidth + (e.clientX - d.startX));
+      scheduleApply();
     },
-    [setSidebarWidth]
+    [scheduleApply]
+  );
+
+  const endIfPointer = useCallback(
+    (pointerId: number) => {
+      if (dragRef.current?.pointerId === pointerId) terminateDrag();
+    },
+    [terminateDrag]
   );
 
   const onHandleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault();
-        setSidebarWidth(clampWidth(sidebarWidth + (e.key === 'ArrowRight' ? 16 : -16)));
+        const delta = e.key === 'ArrowRight' ? PANEL_STEP : -PANEL_STEP;
+        const d = dragRef.current;
+        if (d) {
+          // 拖拽进行中按方向键（双手操作）：增量并入草稿而不是直写 store，
+          // 否则 store 与可见宽度中途分叉、且释放时的提交会覆盖键盘值。
+          d.width = clampWidth(d.width + delta);
+          scheduleApply();
+        } else {
+          setSidebarWidth(clampWidth(sidebarWidth + delta));
+        }
       }
     },
-    [sidebarWidth, setSidebarWidth]
+    [sidebarWidth, setSidebarWidth, scheduleApply]
   );
 
-  // Review P2 修复：PanelHeader close 收起面板后，焦点从不可见按钮归还到
-  // rail 对应 tab。
+  // 卸载兜底：取消在途 RAF / 摘监听。不做 store 提交、不 setState
+  // （组件已卸载；store 里保留拖拽前宽度即可）。
+  useEffect(
+    () => () => {
+      const d = dragRef.current;
+      if (!d) return;
+      dragRef.current = null;
+      if (d.rafId !== null) cancelAnimationFrame(d.rafId);
+      d.detachListeners.forEach((detach) => detach());
+    },
+    []
+  );
+
+  // 拖拽中面板被折叠（rail 再次点击 active tab / close 按钮）：立即收尾，
+  // 否则面板已 visibility:hidden 而捕获仍在把事件重定向给手柄。
+  useEffect(() => {
+    if (!leftPanelOpen) terminateDrag();
+  }, [leftPanelOpen, terminateDrag]);
+
+  // Review P2 修复（V2）：close 收起面板后，焦点从不可见的 close 按钮归还到
+  // rail 对应 tab。用 leftPanelOpen 提交后的 effect 替代旧 setTimeout(0) 竞态：
+  // effect 在面板隐藏落地后运行，focus 不会被浏览器随后踢回 body；
+  // 若用户此刻已把焦点移到别处（快速切换 tab），则不打扰。
   const handleClose = useCallback(() => {
+    terminateDrag(); // 拖拽中点 close 的防御路径
+    pendingFocusTab.current = metaKey;
     toggleLeftPanel();
-    setTimeout(() => {
-      document.getElementById(`rail-tab-${metaKey}`)?.focus();
-    }, 0);
-  }, [toggleLeftPanel, metaKey]);
+  }, [terminateDrag, toggleLeftPanel, metaKey]);
+
+  useEffect(() => {
+    if (leftPanelOpen || pendingFocusTab.current === null) return;
+    const key = pendingFocusTab.current;
+    pendingFocusTab.current = null;
+    const target = document.getElementById(`rail-tab-${key}`);
+    const active = document.activeElement;
+    const focusNeedsRestore =
+      !active || active === document.body || panelRef.current?.contains(active);
+    if (target && focusNeedsRestore) target.focus();
+  }, [leftPanelOpen]);
 
   return (
     // V4：壳层度量改用 token（left-rail / top-topbar），背景改为不透明
     // surface-panel 并移除 backdrop-blur —— 面板压在持续重绘的地图画布上，
     // blur 是最贵的那一类滤镜，且半透明会让地图细节透进密集文本。
     <aside
+      ref={panelRef}
       role="tabpanel"
       id="workspace-panel"
       aria-labelledby={`rail-tab-${metaKey}`}
@@ -168,7 +323,8 @@ export function ContextPanel({
       className="fixed left-rail top-topbar z-40 flex flex-col border-r border-edge-subtle bg-surface-panel shadow-overlay"
       style={{
         bottom: hudOpen ? 234 : 24,
-        width: sidebarWidth,
+        // 拖拽中读命令式草稿变量（pointermove 不产生重渲染）；平时读 store。
+        width: dragging ? 'var(--panel-draft-w)' : sidebarWidth,
         maxWidth: 'calc(100vw - var(--railW))',
         transform: leftPanelOpen ? 'translateX(0)' : 'translateX(-110%)',
         visibility: leftPanelOpen ? 'visible' : 'hidden',
@@ -212,8 +368,13 @@ export function ContextPanel({
         )}
       </div>
 
-      {/* 右缘调宽手柄 */}
+      {/* 右缘调宽手柄：8px 命中区跨在面板边框上（-right-1 + w-2），
+          可见部分只是 hover/focus/drag 时的 accent 着色，无布局位移。
+          注意 hover/focus 着色必须用可编译的 token 类：Tailwind 3 对
+          var() 颜色加 /NN 透明度修饰符会静默丢弃整个规则（旧实现的
+          hover:bg-[var(--agent-accent,#16a34a)]/30 从未生效过）。 */}
       <div
+        ref={separatorRef}
         role="separator"
         aria-orientation="vertical"
         aria-label="调整面板宽度"
@@ -224,13 +385,13 @@ export function ContextPanel({
         tabIndex={0}
         onPointerDown={onHandlePointerDown}
         onPointerMove={onHandlePointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        onLostPointerCapture={endDrag}
+        onPointerUp={(e) => endIfPointer(e.pointerId)}
+        onPointerCancel={(e) => endIfPointer(e.pointerId)}
+        onLostPointerCapture={(e) => endIfPointer(e.pointerId)}
         onKeyDown={onHandleKeyDown}
         onDoubleClick={() => setSidebarWidth(PANEL_DEFAULT)}
-        className="absolute -right-[3px] bottom-0 top-0 w-1.5 cursor-col-resize hover:bg-[var(--agent-accent,#16a34a)]/30"
-        style={dragging ? { background: 'var(--agent-accent, #16a34a)', opacity: 0.4 } : undefined}
+        className="absolute -right-1 bottom-0 top-0 w-2 cursor-col-resize touch-none hover:bg-status-accent-soft focus-visible:bg-status-accent-soft"
+        style={dragging ? { background: 'var(--agent-accent)', opacity: 0.4 } : undefined}
       />
     </aside>
   );
