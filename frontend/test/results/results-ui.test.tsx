@@ -4,6 +4,7 @@ import { useHudStore } from '@/lib/store/useHudStore';
 import { normalizeStepResult } from '@/lib/results/normalize';
 import { ResultList } from '@/components/sidebar/results/result-list';
 import { ResultDetail } from '@/components/sidebar/results/result-detail';
+import { ResultsTab } from '@/components/sidebar/results-tab';
 import { createMockLayer } from '../test-utils';
 import type { AnalysisResult } from '@/lib/results/types';
 
@@ -193,6 +194,62 @@ describe('ResultList — V4 density contracts', () => {
     render(<ResultList results={[r]} selectedId="s1" onSelect={() => {}} />);
     const row = screen.getByRole('button');
     expect(row).toHaveAttribute('aria-current', 'true');
+  });
+
+  it('restores focus to the opened row after Back (drill-in focus contract)', () => {
+    const r = hotspotResult();
+    useHudStore.setState({ results: [r] });
+    render(<ResultsTab sessionId="sess" ownerToken={null} onSend={() => {}} />);
+
+    // Drill in: focus lands on the detail's back button.
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByRole('button', { name: '返回结果列表' })).toHaveFocus();
+
+    // Go back: focus returns to the row that was opened.
+    fireEvent.click(screen.getByRole('button', { name: '返回结果列表' }));
+    expect(screen.getByRole('button')).toHaveFocus();
+  });
+
+  it('falls back to the list container when Back targets a removed row', () => {
+    // Removing a result from its own detail view goes Back to a row that no
+    // longer exists — keyboard focus must not fall to <body>.
+    const r1 = hotspotResult();
+    const r2 = normalizeStepResult({
+      step_id: 's2',
+      tool: 'hotspot_analysis',
+      geojson_ref: 'ref:geojson-x2',
+      result: {
+        success: true,
+        summary: '第二个结果',
+        bbox: [116, 39, 117, 40],
+        data: { type: 'FeatureCollection', features: [] },
+      },
+    });
+    useHudStore.setState({ results: [r1, r2] });
+    render(<ResultsTab sessionId="sess" ownerToken={null} onSend={() => {}} />);
+
+    // Drill into the first row, then remove it from the detail (remove+back).
+    fireEvent.click(screen.getAllByRole('button')[0]);
+    expect(screen.getByRole('button', { name: '返回结果列表' })).toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: '从列表移除' }));
+
+    // The opened row is gone: focus lands on the list container itself.
+    expect(screen.getByLabelText('分析结果列表')).toHaveFocus();
+    // And the remaining row is still offered.
+    expect(screen.getAllByRole('button').length).toBeGreaterThan(0);
+  });
+
+  it('keeps focus off <body> when removing the LAST result (empty list)', () => {
+    const r = hotspotResult();
+    useHudStore.setState({ results: [r] });
+    render(<ResultsTab sessionId="sess" ownerToken={null} onSend={() => {}} />);
+
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByRole('button', { name: '返回结果列表' })).toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: '从列表移除' }));
+
+    // List is now empty: focus lands on the empty-state container, not body.
+    expect(screen.getByText('暂无分析结果').closest('[tabindex="-1"]')).toHaveFocus();
   });
 
   it('shows the layer chip only when an output is mounted as a layer', () => {

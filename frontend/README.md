@@ -203,8 +203,17 @@ npm run dev                                    # 另开一个终端
 node test/visual/capture.mjs --out .visual/after
 ```
 
-4 视口 × 明暗 × 14 个界面 = 112 张图，落到 `.visual/`（已 gitignore）。
-后端全部走内置 fixture，不需要真的起后端。
+结果工作台的场景通过真实 SSE 通路播种（stub 掉的 `/chat/stream` 重放
+`step_result` 事件）。离线/无外网环境下加一个字体 mock，否则 dev server
+首次编译会卡在 Google Fonts 拉取上：
+
+```bash
+NEXT_FONT_GOOGLE_MOCKED_RESPONSES='{"DM Sans":{"subsets":["latin"],"weight":["300","400","500","600"],"style":"normal","src":"https://fonts.gstatic.com/s/dmsans.woff2"},"JetBrains Mono":{"subsets":["latin"],"weight":["400","500"],"style":"normal","src":"https://fonts.gstatic.com/s/jetbrainsmono.woff2"}}' npm run dev
+```
+
+4 视口 × 明暗 × 全部界面（含 8 个结果工作台场景）落到 `.visual/`
+（已 gitignore）；捕获失败时进程以非零码退出。后端全部走内置 fixture，
+不需要真的起后端（dev 默认 :8001 与显式 :8000 都会被 stub 覆盖）。
 
 ## 📚 相关文档
 
