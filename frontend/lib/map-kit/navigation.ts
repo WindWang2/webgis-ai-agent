@@ -139,13 +139,6 @@ export function calculateBBox(geojson: any): [number, number, number, number] | 
   if (count === 0) return null;
   const result: [number, number, number, number] = [minLng, minLat, maxLng, maxLat];
   _bboxCache.set(geojson, result);
-  try {
-    if (Object.isExtensible(geojson)) {
-      geojson.bbox = result;
-    }
-  } catch {
-    // Ignore frozen object write errors
-  }
   return result;
 }
 

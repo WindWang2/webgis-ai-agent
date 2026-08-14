@@ -150,6 +150,10 @@ export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox
   });
 }
 
+export function unregisterGeoJsonSource(id: string) {
+  _registeredGeoJsonSourceIds.delete(id);
+}
+
 export interface VectorLayerOptions {
   id: string;
   source: string;

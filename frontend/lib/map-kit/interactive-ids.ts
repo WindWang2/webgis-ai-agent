@@ -49,46 +49,29 @@ export function resolveParentLayerId(
   sublayerId: string,
   layerIds: ReadonlyArray<string> | ReadonlySet<string>,
 ): string | undefined {
-  const isSet = typeof (layerIds as any).has === 'function';
   const sepIdx = sublayerId.lastIndexOf(SUBLAYER_SEP);
+  const isSet = typeof (layerIds as any).has === 'function';
+  const hasId = isSet
+    ? (id: string) => (layerIds as ReadonlySet<string>).has(id)
+    : (id: string) => (layerIds as ReadonlyArray<string>).indexOf(id) !== -1;
 
-  if (isSet) {
-    const set = layerIds as ReadonlySet<string>;
-    if (sepIdx > 0) {
-      const candidate = sublayerId.slice(0, sepIdx);
-      if (set.has(candidate)) return candidate;
-    }
-    let best: string | undefined;
-    set.forEach((id) => {
-      if (sublayerId.startsWith(id + SUBLAYER_SEP)) {
-        if (best === undefined || id.length > best.length) best = id;
-      }
-    });
-    return best;
-  }
-
-  const arr = layerIds as ReadonlyArray<string>;
   if (sepIdx > 0) {
     const candidate = sublayerId.slice(0, sepIdx);
-    if (arr.indexOf(candidate) !== -1) {
-      let hasLonger = false;
-      for (let i = 0; i < arr.length; i++) {
-        const id = arr[i];
-        if (id.length > candidate.length && sublayerId.startsWith(id + SUBLAYER_SEP)) {
-          hasLonger = true;
-          break;
-        }
-      }
-      if (!hasLonger) return candidate;
-    }
+    if (hasId(candidate)) return candidate;
   }
 
   let best: string | undefined;
-  for (let i = 0; i < arr.length; i++) {
-    const id = arr[i];
+  const check = (id: string) => {
     if (sublayerId.startsWith(id + SUBLAYER_SEP)) {
       if (best === undefined || id.length > best.length) best = id;
     }
+  };
+
+  if (isSet) {
+    (layerIds as ReadonlySet<string>).forEach(check);
+  } else {
+    const arr = layerIds as ReadonlyArray<string>;
+    for (let i = 0; i < arr.length; i++) check(arr[i]);
   }
   return best;
 }

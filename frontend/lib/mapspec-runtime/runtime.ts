@@ -490,6 +490,7 @@ export class MapSpecRuntime {
     }
     if (this.map.getSource(id)) {
       try { this.map.removeSource(id); } catch { /* silent */ }
+      renderer.unregisterGeoJsonSource(id);
     }
   }
 }

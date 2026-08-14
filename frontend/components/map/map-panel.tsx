@@ -429,14 +429,14 @@ export function MapPanel({
   const selectedFeature = useHudStore((s: HudState) => s.selectedFeature)
   const layersRef = useRef(layers)
   const layersMapRef = useRef<Record<string, Layer>>({})
-  const layerIdsSetRef = useRef<Set<string>>(new globalThis.Set())
+  const layerIdsSetRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     layersRef.current = layers
     const mapRecord: Record<string, Layer> = {}
     for (const l of layers) mapRecord[l.id] = l
     layersMapRef.current = mapRecord
-    layerIdsSetRef.current = new globalThis.Set(layers.map((l) => l.id))
+    layerIdsSetRef.current = new Set(layers.map((l) => l.id))
   }, [layers])
 
   /**
