@@ -467,12 +467,14 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                         col_srid = int(g_row[1]) if g_row[1] else 4326
                     else:
                         geom_col, col_srid = None, 4326
+                    if col_srid == 0:
+                        col_srid = -1  # unknown (review P2-1): no transform
 
                     if geom_col:
                         # GeoJSON is always WGS84 (RFC 7946) — GIS-P2-2.
                         geojson_expr = (
                             f'ST_AsGeoJSON(ST_Transform("{geom_col}", 4326))'
-                            if col_srid != 4326
+                            if col_srid not in (-1, 4326)
                             else f'ST_AsGeoJSON("{geom_col}")'
                         )
                         preview_sql = f"""
@@ -547,15 +549,23 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                         geom_col, col_srid = g_row[0], (int(g_row[1]) if g_row[1] else 4326)
                     else:
                         geom_col, col_srid = "geom", 4326
+                    # Review P2-1: srid 0 = "no constraint" — ST_Transform from
+                    # 0 raises. Treat it as unknown: native coordinates pass
+                    # through (pre-fix behavior for such tables) and the bbox
+                    # pushdown (which would need a source SRID) is skipped.
+                    if col_srid == 0:
+                        col_srid = -1  # sentinel: unknown
 
                     # GIS-P2-2: bbox pushdown must be expressed in the COLUMN's
                     # SRID. The old hardcoded 4326 envelope silently returned
                     # empty results for any projected table (3857/UTM/state
                     # plane — the tables this adapter exists for): [-180..180]
                     # in meters is a sliver at the origin.
-                    if query_spec.bbox and len(query_spec.bbox) == 4:
+                    if col_srid not in (-1, 4326) and query_spec.bbox and len(query_spec.bbox) == 4:
                         minx, miny, maxx, maxy = query_spec.bbox
-                        if col_srid == 4326:
+                        if col_srid == -1:
+                            where_clauses.append("TRUE")  # unknown SRID: no pushdown
+                        elif col_srid == 4326:
                             envelope_sql = "ST_MakeEnvelope(%s, %s, %s, %s, 4326)"
                             env_params = [minx, miny, maxx, maxy]
                         else:
@@ -593,7 +603,7 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                     # easting/northing values as fake lon/lat downstream.
                     geojson_expr = (
                         f'ST_AsGeoJSON(ST_Transform("{geom_col}", 4326))'
-                        if col_srid != 4326
+                        if col_srid not in (-1, 4326)
                         else f'ST_AsGeoJSON("{geom_col}")'
                     )
                     query_sql = f"""

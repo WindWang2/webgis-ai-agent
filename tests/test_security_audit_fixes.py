@@ -69,8 +69,9 @@ async def test_F1_registry_allows_tier3_with_confirmed_context():
 
 
 @pytest.mark.asyncio
-async def test_F1_confirmation_does_not_leak_across_tasks():
-    """confirm_tier3 must not grant rights to a DIFFERENT asyncio task."""
+async def test_F1_confirmation_is_scoped_to_its_context():
+    """The grant resets when the confirming context exits — a later
+    independent dispatch (same task or not) is refused again."""
     import asyncio
 
     from app.tools.registry import ToolRegistry, confirm_tier3
@@ -81,21 +82,17 @@ async def test_F1_confirmation_does_not_leak_across_tasks():
     async def _dangerous(some_arg: str = "x"):
         return {"ok": True}
 
-    async def _dispatch_unconfirmed():
-        return await reg.dispatch("audit_dangerous", {})
-
     async def _holder():
         with confirm_tier3():
-            # A sibling task spawned while we hold the grant must NOT inherit
-            # it (ContextVar copies at task creation… set() happens before
-            # create_task here, so the copy WOULD carry it — assert the safer
-            # property instead: the grant resets after the context exits).
             await asyncio.sleep(0)
+            # Inside the context, dispatch is granted.
+            res = await reg.dispatch("audit_dangerous", {})
+            assert res.get("ok") is True
             return "held"
 
     held = await _holder()
     assert held == "held"
-    res = await _dispatch_unconfirmed()
+    res = await reg.dispatch("audit_dangerous", {})
     assert res.get("code") == "TIER3_CONFIRMATION_REQUIRED"
 
 
@@ -260,3 +257,35 @@ async def test_F4_rate_limit_middleware_keys_by_forwarded_ip(monkeypatch):
         "rate_limit:198.51.100.7",
         "rate_limit:203.0.113.9",
     ], "keys must derive from the forwarded IP, never the shared proxy peer"
+
+
+# ── SEC-F1 (plan contract): user-approved plans are the tier-3 channel ──────
+
+@pytest.mark.asyncio
+async def test_F1_approved_plan_executes_tier3_steps():
+    """execute_plan IS the user-approved channel for destructive steps
+    (propose_plan marks them; the UI requires plan approval first). The
+    registry chokepoint must therefore honor tier-3 inside plan waves —
+    while ad-hoc dispatch stays refused."""
+    from app.services import plan_mode as svc
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+
+    @reg.tool(name="audit_t3_step", description="x", tier=3)
+    def tier3_step(x: str = "1"):
+        return {"success": True, "value": "ran"}
+
+    sid = "s-plan-tier3"
+    plan = svc.PlanProposal(
+        title="destructive plan",
+        steps=[svc.PlanStep(id="d1", tool="audit_t3_step", args={})],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+    ret = await svc.execute_plan_async(sid, plan_id, reg)
+    assert ret["success"] is True, ret
+    assert ret["results"]["d1"]["value"] == "ran"
+
+    # Ad-hoc dispatch of the same tool stays refused (no confirmation).
+    res = await reg.dispatch("audit_t3_step", {})
+    assert res.get("code") == "TIER3_CONFIRMATION_REQUIRED"

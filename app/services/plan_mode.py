@@ -818,14 +818,25 @@ async def _execute_plan_locked(
             # 并发 dispatch 整个波次。注意：Python 3.12 的 asyncio.as_completed
             # yield 的是内部 _wait_for_one 协程而非原始 Task，无法映射回 sid；
             # 因此改用 asyncio.wait(FIRST_COMPLETED)，它返回原始 Task 对象。
-            tasks = {
-                sid: asyncio.create_task(
-                    registry.dispatch(
-                        step_by_id[sid].tool, resolved_args[sid], session_id=session_id
+            #
+            # SEC-F1 (plan contract): execute_plan IS the user-approved channel
+            # for destructive (tier-3) steps — propose_plan marks them and the
+            # UI requires explicit plan approval before the LLM may call this.
+            # The registry chokepoint refuses tier-3 without a confirmation
+            # grant, so mint one for the wave's tasks (create_task copies the
+            # current context; the grant travels with each task). Ad-hoc chat
+            # dispatch, subagents and workflows stay locked down.
+            from app.tools.registry import confirm_tier3
+
+            with confirm_tier3():
+                tasks = {
+                    sid: asyncio.create_task(
+                        registry.dispatch(
+                            step_by_id[sid].tool, resolved_args[sid], session_id=session_id
+                        )
                     )
-                )
-                for sid in wave
-            }
+                    for sid in wave
+                }
             wave_tasks = set(tasks.values())
             task_to_sid = {t: sid for sid, t in tasks.items()}
 

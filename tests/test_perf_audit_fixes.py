@@ -114,3 +114,60 @@ def test_F9_prefix_sampler_without_full_parse():
         assert got == [{"id": 0}, {"id": 1}, {"id": 2}]
     finally:
         os.unlink(path)
+
+
+def test_F9_sampler_terminates_on_string_braces_in_header():
+    """Review P1-1: a '{' inside a string VALUE in the collection header
+    used to send the scanner into an infinite alternation (attacker-
+    controlled upload content → worker-thread DoS)."""
+    import json
+    import tempfile
+    import time
+
+    from app.utils.geojson_prefix_sampler import sample_feature_properties
+
+    content = json.dumps({
+        "type": "FeatureCollection",
+        "name": "foo {bar {baz",  # braces inside a string value
+        "features": [
+            {"type": "Feature", "properties": {"id": 0},
+             "geometry": {"type": "Point", "coordinates": [1, 2]}},
+            {"type": "Feature", "properties": {"id": 1},
+             "geometry": {"type": "Point", "coordinates": [3, 4]}},
+        ],
+    })
+    with tempfile.NamedTemporaryFile("w", suffix=".geojson", delete=False) as f:
+        f.write(content)
+        path = f.name
+    try:
+        t0 = time.time()
+        got = sample_feature_properties(path, count=3)
+        dt = time.time() - t0
+        assert dt < 2.0, f"sampler did not terminate promptly ({dt:.2f}s)"
+        assert got == [{"id": 0}, {"id": 1}]
+    finally:
+        os.unlink(path)
+
+
+def test_F9_sampler_handles_ndjson_and_truncated_input():
+    import tempfile
+
+    from app.utils.geojson_prefix_sampler import sample_feature_properties
+
+    ndjson = "\n".join(
+        json.dumps({"type": "Feature", "properties": {"id": i},
+                    "geometry": {"type": "Point", "coordinates": [0, 0]}})
+        for i in range(5)
+    )
+    with tempfile.NamedTemporaryFile("w", suffix=".geojson", delete=False) as f:
+        f.write(ndjson)
+        p1 = f.name
+    with tempfile.NamedTemporaryFile("w", suffix=".geojson", delete=False) as f:
+        f.write('{"type": "FeatureColl')
+        p2 = f.name
+    try:
+        assert sample_feature_properties(p1, count=2) == [{"id": 0}, {"id": 1}]
+        assert sample_feature_properties(p2, count=2) is None  # no hang, no crash
+    finally:
+        os.unlink(p1)
+        os.unlink(p2)

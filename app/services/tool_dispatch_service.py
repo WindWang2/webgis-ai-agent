@@ -474,9 +474,12 @@ class ToolDispatchService:
                 # slim_tool_result's summary branch never reads result_str.
                 result_str = ""
             else:
-                # Oversized without a summary: slim_tool_result needs SOME
-                # string to exceed the budget and take its truncate path.
-                result_str = " " * 4097
+                # Oversized without a summary: serialize OFF the event loop
+                # (review P3 — the space-marker fallback fed the LLM blanks
+                # for oversized non-dict results like bare lists).
+                result_str = await asyncio.to_thread(
+                    json.dumps, result, ensure_ascii=False
+                )
         llm_payload = slim_tool_result(result, result_str, geojson_ref) or result_str
         if is_suspicious_result(result):
             llm_payload += (

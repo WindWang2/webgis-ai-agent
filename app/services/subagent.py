@@ -75,7 +75,8 @@ def select_tools_for_subagent(
     - 始终包含 tier=1（基础工具，子任务也需要 buffer/list_layers 等）。
     - tier=2 仅当其 domains 与传入 domains 集合有交集时纳入。
     - tier=3 默认排除（破坏性工具不允许子代理自动调用，除非 exclude_tier3=False）。
-    - extra_tools 强制按名字白名单纳入，无视 tier — 用于强制带上某个具体工具。
+    - extra_tools 按名字白名单纳入 — 用于强制带上某个具体工具（SEC-F2：
+      tier-3 工具仍受 exclude_tier3 约束，父 turn 无可委托的确认）。
     - 子代理永远看不到 spawn_subagent / propose_plan，防止递归与计划嵌套。
     """
     domain_set = set(domains or [])
