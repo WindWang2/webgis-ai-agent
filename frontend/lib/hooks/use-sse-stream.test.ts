@@ -456,4 +456,75 @@ describe('canonical MapSpec runtime patch', () => {
       type: 'FeatureCollection',
     }));
   });
+
+  it('INV-2: stale event from old session A does not flip active session B or mutate state', () => {
+    const setSid = vi.fn();
+    const sidRef = { current: 'session-B' };
+    renderHook(() =>
+      useSSEStream(
+        'session-B',
+        setSid,
+        sidRef,
+        dispatchAction,
+        getMapSnapshot,
+        null,
+        { current: null },
+      )
+    );
+
+    act(() => {
+      // Event arriving with session_id: 'session-A'
+      bridgeMock.onEventCallback?.({
+        event: 'step_result',
+        data: {
+          session_id: 'session-A',
+          tool: 'search_poi',
+          name: 'Stale POI',
+        },
+      });
+    });
+
+    // setSessionId must NOT have been called with 'session-A'!
+    expect(setSid).not.toHaveBeenCalledWith('session-A');
+    expect(sidRef.current).toBe('session-B');
+  });
+
+  it('INV-4: task_cancelled event marks thinking message as cancelled without fabricating fake completion', async () => {
+    const { result } = renderHook(() =>
+      useSSEStream(
+        'session-1',
+        vi.fn(),
+        { current: 'session-1' },
+        dispatchAction,
+        getMapSnapshot,
+        null,
+        { current: null },
+      )
+    );
+
+    let sendPromise: Promise<void> | undefined;
+    act(() => {
+      sendPromise = result.current.handleSend('cancel me');
+    });
+
+    // Simulate task_cancelled event from server
+    act(() => {
+      bridgeMock.onEventCallback?.({
+        event: 'task_cancelled',
+        data: { session_id: 'session-1', task_id: 't-cancel' },
+      });
+    });
+
+    await act(async () => {
+      await sendPromise;
+    });
+
+    const msgs = result.current.messages;
+    const lastMsg = msgs[msgs.length - 1];
+    expect(lastMsg.content).toContain('已取消');
+    expect(lastMsg.content).not.toBe('完成。');
+    expect(lastMsg.isThinking).toBe(false);
+  });
 });
+
+

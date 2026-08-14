@@ -334,6 +334,20 @@ async def _recorded(stream, buffer: TurnEventBuffer):
         yield chunk
 
 
+def _synthesize_terminal_event(session_key: str, terminal_event: str) -> str:
+    """Synthesize truthful terminal event matching the original terminal type (INV-4)."""
+    term_type = sse_event_type(terminal_event)
+    if term_type == "task_cancelled":
+        return sse_event("task_cancelled", {"session_id": session_key, "resumed": True})
+    if term_type in ("task_error", "error", "step_error"):
+        return sse_event(term_type, {
+            "session_id": session_key,
+            "error": "本轮执行失败；请重试。",
+            "resumed": True,
+        })
+    return sse_event("done", {"session_id": session_key, "resumed": True})
+
+
 async def _resume_generator(
     session_key: str,
     last_event_id: int,
@@ -456,8 +470,8 @@ async def _resume_generator_impl(
         terminal_id = sse_event_id(buffered.terminal_event)
         if terminal_id is None or terminal_id <= last_event_id:
             # Client already consumed the terminal; reconnect for nothing but
-            # a clean close — synthesize one so the stream terminates.
-            yield sse_event("done", {"session_id": session_key, "resumed": True})
+            # a clean close — synthesize matching terminal type so the stream terminates truthfully.
+            yield _synthesize_terminal_event(session_key, buffered.terminal_event)
         # Otherwise the terminal was replayed above — nothing more to add.
     else:
         # Ended without a terminal: the turn was interrupted (client
