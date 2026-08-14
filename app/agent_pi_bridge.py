@@ -1729,9 +1729,14 @@ class PiBridge:
                                     tool_call_id, _sid
                                 ),
                             )
-                            if _harness is not None:
-                                # V3: 给原始 SSE 事件记录补 turn/run correlation（显式透传）。
-                                _harness.record_sse_event({
+                            # V3: 给原始 SSE 事件记录补 turn/run correlation（显式透传）。
+                            # B-8: record against THIS turn's session harness, not the
+                            # module-global "most recently created" harness — otherwise
+                            # two interleaved sessions misattribute one session's events
+                            # to the other (record_sse_event stamps self.session_id).
+                            turn_harness = _get_session_harness(turn_sid)
+                            if turn_harness is not None:
+                                turn_harness.record_sse_event({
                                     **event, "run_id": run_id, "turn_id": turn_id,
                                 })
                             if sse:
@@ -1803,12 +1808,16 @@ class PiBridge:
                     )
                     if _active_turn_token is not None:
                         _active_turn_token.cancel("pi process exited unexpectedly")
-                elif cancelled or timed_out:
+                elif cancelled or timed_out or send_failed:
                     # Tell Pi to stop generating tokens / executing tools. F10:
                     # this now covers the stall-timeout path too — previously a
                     # stalled turn yielded error+done and returned WITHOUT the
                     # abort RPC, so Pi kept executing tools (up to the 300s RPC
                     # timeout) and a user retry duplicated side effects.
+                    # B-6: ``send_failed`` (the prompt RPC raised) must also
+                    # abort — Pi may already have started executing the prompt
+                    # and its tools, so without the abort a retry duplicates the
+                    # side effects (same class of bug F10 fixed for the stall).
                     try:
                         await asyncio.wait_for(
                             asyncio.shield(self._abort_on_disconnect(turn_sid)),

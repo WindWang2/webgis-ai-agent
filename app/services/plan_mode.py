@@ -32,7 +32,12 @@ from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "partially_completed"})
+# Terminal statuses for the first-terminal-wins guard. ``partially_completed``
+# is intentionally NOT terminal: it is a resumable intermediate (the resume
+# path re-executes and must converge to completed/failed/cancelled). Treating
+# it as terminal silently dropped the partial->completed transition, so a
+# resumed-and-finished plan stayed partially_completed in storage forever.
+_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
 
 async def _cancel_wave_tasks(wave_tasks: set[asyncio.Task]) -> None:
@@ -339,10 +344,16 @@ async def update_plan_status(session_id: str, plan_id: str, **updates: Any) -> N
         return
     current_status = plan_data.get("__status__")
     new_status = updates.get("__status__")
+    # First-terminal-wins: a true terminal (completed/failed/cancelled) must not
+    # be revived to running. Two legitimate overrides are exempt:
+    #   * ``superseded`` — an external lifecycle signal that a newer plan won;
+    #     it must be recordable on a finished plan so later reads see it.
+    #   * (``partially_completed`` is no longer terminal, so it converges freely.)
     if (
         new_status is not None
         and current_status in _TERMINAL_STATUSES
         and new_status != current_status
+        and new_status != "superseded"
     ):
         logger.warning(
             f"update_plan_status: plan {plan_id} 已处于终态 {current_status}，"
