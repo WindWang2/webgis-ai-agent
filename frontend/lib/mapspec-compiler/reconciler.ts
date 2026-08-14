@@ -97,9 +97,17 @@ function diffView(prev: MapSpecView | undefined, next: MapSpecView | undefined):
  *   layer set is reported as `recompile` for every layer whose position
  *   changed, which is what the runtime needs to re-apply z-ordering.
  */
+function isMapSpecShallowEqual(prev: MapSpec | null, next: MapSpec): boolean {
+  if (prev === next) return true;
+  if (!prev || !next) return false;
+  if (prev.version !== next.version) return false;
+  if (prev.sources === next.sources && prev.layers === next.layers) return true;
+  return false;
+}
+
 export function diffSpecs(prev: MapSpec | null, next: MapSpec): SpecPatch {
-  if (prev === next) {
-    return { sources: [], layers: [] };
+  if (isMapSpecShallowEqual(prev, next)) {
+    return { sources: [], layers: [], view: diffView(prev?.view, next.view) };
   }
 
   if (prev === null) {

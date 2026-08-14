@@ -408,10 +408,18 @@ export function disposeWorker(): void {
  * stripInlineForTransfer); the returned patch is rehydrated so callers still
  * receive the real source definitions.
  */
+function isMapSpecShallowEqual(prev: MapSpec | null, next: MapSpec): boolean {
+  if (prev === next) return true;
+  if (!prev || !next) return false;
+  if (prev.version !== next.version) return false;
+  if (prev.sources === next.sources && prev.layers === next.layers) return true;
+  return false;
+}
+
 export function diffSpecsAsync(prev: MapSpec | null, next: MapSpec): Promise<SpecPatch> {
-  if (prev === next) {
+  if (isMapSpecShallowEqual(prev, next)) {
     lastDiffFailed = false;
-    return Promise.resolve({ sources: [], layers: [] });
+    return Promise.resolve(diffSpecs(prev, next));
   }
 
   const worker = createWorker();
