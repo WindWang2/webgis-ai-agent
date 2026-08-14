@@ -907,20 +907,21 @@ class SpatialIndexEntry:
     GeoJSON coordinates). Retaining both arrays roughly doubles the index's
     per-ref geometry memory vs. the z0-only design; this is the deliberate
     trade-off for eliminating per-tile reconstruction, and stays bounded by the
-    per-(session, ref) LRU. ``bounds`` are plain z0-px bboxes used by the
-    no-shapely full-scan fallback. ``geoms`` / ``geoms_lonlat`` are None when
-    shapely is unavailable.
+    per-(session, ref) byte and entry count LRU. ``bounds`` are plain z0-px bboxes
+    used by the no-shapely full-scan fallback. ``geoms`` / ``geoms_lonlat`` are None
+    when shapely is unavailable.
     """
 
-    __slots__ = ("key", "features", "geoms", "geoms_lonlat", "tree", "bounds")
+    __slots__ = ("key", "features", "geoms", "geoms_lonlat", "tree", "bounds", "estimated_bytes")
 
-    def __init__(self, key, features, geoms, geoms_lonlat, tree, bounds):
+    def __init__(self, key, features, geoms, geoms_lonlat, tree, bounds, estimated_bytes: int = 0):
         self.key = key
         self.features = features
         self.geoms = geoms
         self.geoms_lonlat = geoms_lonlat
         self.tree = tree
         self.bounds = bounds
+        self.estimated_bytes = estimated_bytes
 
     def _candidate_indices(self, z: int, x: int, y: int) -> List[int]:
         """Insertion-ordered feature indices whose bbox intersects the tile."""
@@ -1024,6 +1025,15 @@ def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
             tree = shapely.STRtree(geoms)
         except Exception:  # pragma: no cover - defensive
             tree = None
+
+    # Calculate estimated memory footprint for size-aware cache budgeting
+    est_bytes = (
+        len(kept) * 350
+        + len(geoms) * 200
+        + sum(200 for g in geoms_lonlat if g is not None)
+        + len(bounds) * 80
+        + 1024
+    )
     return SpatialIndexEntry(
         key,
         kept,
@@ -1031,21 +1041,30 @@ def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
         geoms_lonlat if _SHAPELY else None,
         tree,
         bounds,
+        estimated_bytes=est_bytes,
     )
 
 
 class SpatialIndexCache:
-    """Per-(session_id, ref_id) STRtree cache with bounded LRU eviction.
+    """Per-(session_id, ref_id) STRtree cache with bounded count & byte LRU eviction.
 
-    Thread-safe (threading.Lock). The heavy build runs outside the lock
-    (double-checked), so concurrent misses may build twice — acceptable and
-    harmless — while the index itself is only ever queried through the lock.
+    Thread-safe (threading.Lock). Bounded by both maximum entry count (max_refs)
+    and maximum total estimated bytes (max_bytes). The heavy build runs outside
+    the lock (double-checked), so concurrent misses may build twice — acceptable
+    and harmless — while the index itself is only ever queried through the lock.
     """
 
-    def __init__(self, max_refs: int = 256):
+    def __init__(self, max_refs: int = 256, max_bytes: int = 256 * 1024 * 1024):
         self._max_refs = max_refs
+        self._max_bytes = max_bytes
         self._entries: "OrderedDict[tuple, SpatialIndexEntry]" = OrderedDict()
+        self._total_bytes = 0
         self._lock = threading.Lock()
+
+    @property
+    def total_bytes(self) -> int:
+        with self._lock:
+            return self._total_bytes
 
     def get(self, key) -> Optional[SpatialIndexEntry]:
         with self._lock:
@@ -1062,19 +1081,51 @@ class SpatialIndexCache:
                 self._entries.move_to_end(key)
                 return entry
         entry = build_fn()  # heavy work outside the lock
+        entry_bytes = getattr(entry, "estimated_bytes", 0)
         with self._lock:
             existing = self._entries.get(key)
             if existing is not None:
                 return existing
             self._entries[key] = entry
             self._entries.move_to_end(key)
-            while len(self._entries) > self._max_refs:
-                self._entries.popitem(last=False)
+            self._total_bytes += entry_bytes
+            while (
+                self._entries
+                and (
+                    len(self._entries) > self._max_refs
+                    or self._total_bytes > self._max_bytes
+                )
+            ):
+                _k, evicted = self._entries.popitem(last=False)
+                self._total_bytes -= getattr(evicted, "estimated_bytes", 0)
             return entry
+
+    def invalidate_ref(self, session_id: str, ref_id: str) -> bool:
+        """Invalidate the spatial index entry for (session_id, ref_id)."""
+        key = (session_id, ref_id)
+        with self._lock:
+            entry = self._entries.pop(key, None)
+            if entry is not None:
+                self._total_bytes -= getattr(entry, "estimated_bytes", 0)
+                return True
+            return False
+
+    def invalidate_session(self, session_id: str) -> int:
+        """Invalidate all spatial index entries for session_id."""
+        with self._lock:
+            to_remove = [k for k in self._entries if k[0] == session_id]
+            removed = 0
+            for k in to_remove:
+                entry = self._entries.pop(k, None)
+                if entry is not None:
+                    self._total_bytes -= getattr(entry, "estimated_bytes", 0)
+                    removed += 1
+            return removed
 
     def clear(self) -> None:
         with self._lock:
             self._entries.clear()
+            self._total_bytes = 0
 
 
 # ─── tile LRU cache ─────────────────────────────────────────────────────────
@@ -1083,16 +1134,27 @@ class SpatialIndexCache:
 class TileLRUCache:
     """Per-(session_id, ref_id, z, x, y) LRU cache of final gzip bytes.
 
-    Bounded by entry count and total bytes; thread-safe. Session-isolated
-    because session_id is part of the key.
+    Bounded by entry count, max entry bytes, and total bytes; thread-safe.
+    Session-isolated because session_id is part of the key.
     """
 
-    def __init__(self, max_tiles: int = 4096, max_bytes: int = 256 * 1024 * 1024):
+    def __init__(
+        self,
+        max_tiles: int = 4096,
+        max_bytes: int = 256 * 1024 * 1024,
+        max_entry_bytes: int = 4 * 1024 * 1024,
+    ):
         self._max_tiles = max_tiles
         self._max_bytes = max_bytes
+        self._max_entry_bytes = max_entry_bytes
         self._cache: "OrderedDict[tuple, bytes]" = OrderedDict()
         self._total_bytes = 0
         self._lock = threading.Lock()
+
+    @property
+    def total_bytes(self) -> int:
+        with self._lock:
+            return self._total_bytes
 
     def get(self, key) -> Optional[bytes]:
         with self._lock:
@@ -1103,7 +1165,7 @@ class TileLRUCache:
             return value
 
     def put(self, key, value: bytes) -> None:
-        if value is None or len(value) > self._max_bytes:
+        if value is None or len(value) > self._max_entry_bytes or len(value) > self._max_bytes:
             return  # oversized single entry: don't cache
         with self._lock:
             old = self._cache.get(key)
@@ -1112,9 +1174,39 @@ class TileLRUCache:
             self._cache[key] = value
             self._cache.move_to_end(key)
             self._total_bytes += len(value)
-            while len(self._cache) > self._max_tiles or self._total_bytes > self._max_bytes:
+            while (
+                self._cache
+                and (
+                    len(self._cache) > self._max_tiles
+                    or self._total_bytes > self._max_bytes
+                )
+            ):
                 _key, evicted = self._cache.popitem(last=False)
                 self._total_bytes -= len(evicted)
+
+    def invalidate_ref(self, session_id: str, ref_id: str) -> int:
+        """Invalidate all cached tiles for (session_id, ref_id)."""
+        with self._lock:
+            to_remove = [k for k in self._cache if k[0] == session_id and k[1] == ref_id]
+            removed = 0
+            for k in to_remove:
+                evicted = self._cache.pop(k, None)
+                if evicted is not None:
+                    self._total_bytes -= len(evicted)
+                    removed += 1
+            return removed
+
+    def invalidate_session(self, session_id: str) -> int:
+        """Invalidate all cached tiles for session_id."""
+        with self._lock:
+            to_remove = [k for k in self._cache if k[0] == session_id]
+            removed = 0
+            for k in to_remove:
+                evicted = self._cache.pop(k, None)
+                if evicted is not None:
+                    self._total_bytes -= len(evicted)
+                    removed += 1
+            return removed
 
     def clear(self) -> None:
         with self._lock:
@@ -1136,6 +1228,7 @@ class SingleFlightManager:
     def __init__(self, max_inflight: int = 512):
         self._max_inflight = max_inflight
         self._inflight: Dict[Any, "asyncio.Future"] = {}
+        self._waiter_counts: Dict[Any, int] = {}
         self._lock = threading.Lock()
 
     async def run(self, key, coro_factory) -> Any:
@@ -1144,11 +1237,11 @@ class SingleFlightManager:
         ``coro_factory`` is a zero-arg callable returning a coroutine (or a
         coroutine itself).
         """
-        coro = None  # created lazily: only the caller that actually computes
         with self._lock:
             fut = self._inflight.get(key)
             if fut is not None:
                 # another request is computing this key: share its result
+                self._waiter_counts[key] = self._waiter_counts.get(key, 0) + 1
                 return_fut = fut
                 direct = False
             elif len(self._inflight) >= self._max_inflight:
@@ -1160,10 +1253,18 @@ class SingleFlightManager:
                 direct = False
                 fut = asyncio.get_running_loop().create_future()
                 self._inflight[key] = fut
+                self._waiter_counts[key] = 0
+
         # NB: never await while holding the lock above — a suspended waiter
         # would block the leader's finally-pop and deadlock.
         if return_fut is not None:
-            return await asyncio.shield(return_fut)
+            try:
+                return await asyncio.shield(return_fut)
+            finally:
+                with self._lock:
+                    if key in self._waiter_counts:
+                        self._waiter_counts[key] = max(0, self._waiter_counts[key] - 1)
+
         coro = coro_factory() if callable(coro_factory) else coro_factory
         if direct:
             return await coro
@@ -1171,7 +1272,15 @@ class SingleFlightManager:
             result = await coro
         except BaseException as exc:
             if not fut.done():
-                fut.set_exception(exc)
+                with self._lock:
+                    waiters = self._waiter_counts.get(key, 0)
+                if waiters > 0:
+                    fut.set_exception(exc)
+                else:
+                    # No waiters attached: set exception and consume it to prevent
+                    # asyncio "Future exception was never retrieved" warning
+                    fut.set_exception(exc)
+                    _ = fut.exception()
             raise
         else:
             if not fut.done():
@@ -1180,6 +1289,7 @@ class SingleFlightManager:
         finally:
             with self._lock:
                 self._inflight.pop(key, None)
+                self._waiter_counts.pop(key, None)
 
 
 # module-level singletons (bounded caches, one per process)

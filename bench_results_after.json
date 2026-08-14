@@ -1,0 +1,80 @@
+{
+  "scenario1_100k_Point": {
+    "features": 100000,
+    "geoms_z0": 100000,
+    "geoms_lonlat": 100000,
+    "total_geometry_objects": 200000,
+    "bounds_count": 100000,
+    "estimated_entry_bytes": 83000000,
+    "estimated_entry_mb": 79.15,
+    "build_time_sec": 12.497
+  },
+  "scenario1_100k_LineString": {
+    "features": 100000,
+    "geoms_z0": 100000,
+    "geoms_lonlat": 100000,
+    "total_geometry_objects": 200000,
+    "bounds_count": 100000,
+    "estimated_entry_bytes": 83000000,
+    "estimated_entry_mb": 79.15,
+    "build_time_sec": 15.8009
+  },
+  "scenario1_100k_Polygon": {
+    "features": 100000,
+    "geoms_z0": 100000,
+    "geoms_lonlat": 100000,
+    "total_geometry_objects": 200000,
+    "bounds_count": 100000,
+    "estimated_entry_bytes": 83000000,
+    "estimated_entry_mb": 79.15,
+    "build_time_sec": 25.5176
+  },
+  "scenario2_10x10k": {
+    "entries": 10,
+    "total_geometry_objects": 200000,
+    "estimated_total_mb": 79.15,
+    "build_time_sec": 22.9264
+  },
+  "scenario3_100_small": {
+    "entries": 100,
+    "total_features": 5000
+  },
+  "scenario4_5sess_10layers": {
+    "entries": 50,
+    "distinct_sessions": 5
+  },
+  "scenario5_50_concurrent": {
+    "requests": 50,
+    "actual_encodes": 1,
+    "single_flight_dedup_ratio": "50:1",
+    "duration_sec": 0.0111
+  },
+  "scenario6_500_tiles": {
+    "entries": 500,
+    "total_tile_bytes": 10000,
+    "duration_sec": 0.0958
+  },
+  "scenario7_overwrite_lifecycle": {
+    "has_ref_invalidation": true,
+    "has_tile_ref_invalidation": true
+  },
+  "scenario8_session_clear_lifecycle": {
+    "has_session_invalidation": true,
+    "has_tile_session_invalidation": true
+  },
+  "scenario9_index_lru_eviction": {
+    "max_refs": 5,
+    "retained_entries": 5,
+    "keys_present": [
+      "r_5",
+      "r_6",
+      "r_7",
+      "r_8",
+      "r_9"
+    ]
+  },
+  "scenario10_cancellation": {
+    "cancelled_properly": true,
+    "inflight_cleared": true
+  }
+}
