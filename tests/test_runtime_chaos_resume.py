@@ -337,14 +337,14 @@ async def test_resume_never_reexecutes_completed_tool_calls(monkeypatch, _pass_o
     monkeypatch.setattr(chat_route, "pi_bridge", None)
     monkeypatch.setattr(chat_route, "engine", engine)
 
-    out_a, task_a = await _start_stream("run tool", session_id="s1")
+    out_a, task_a = await _start_stream("run tool", session_id="s-resume-28d95a9e")
     await task_a
     assert [_event_id(b) for b in out_a] == [1, 2, 3, 4, 5]
     assert engine.stream_calls == 1
     assert engine.tool_dispatches == 1
 
     # Turn B queued (buffer registered, no events yet) — must not clobber A.
-    out_b, task_b = await _start_stream("queued work", session_id="s1")
+    out_b, task_b = await _start_stream("queued work", session_id="s-resume-28d95a9e")
     try:
         await asyncio.wait_for(engine.second_entered.wait(), timeout=15)
     except asyncio.TimeoutError:  # pragma: no cover - diagnostic fast-fail
@@ -356,7 +356,7 @@ async def test_resume_never_reexecutes_completed_tool_calls(monkeypatch, _pass_o
         )
     assert engine.stream_calls == 2
 
-    resumed, rtask = await _open_resume("run tool", last_event_id=2, session_id="s1")
+    resumed, rtask = await _open_resume("run tool", last_event_id=2, session_id="s-resume-28d95a9e")
     await rtask
     assert [_event_id(b) for b in resumed] == [3, 4, 5], resumed
     assert _event_type(resumed[-1]) == "done"
