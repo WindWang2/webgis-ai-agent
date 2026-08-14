@@ -1379,6 +1379,13 @@ class PiBridge:
                 session_id, active,
             )
             return {}
+        # CONC-F1: snapshot the turn identity + pending futures BEFORE the
+        # (potentially slow) abort RPC. The same-session successor case —
+        # page close → immediate resend is the most common disconnect pattern —
+        # leaves _active_turn_sid UNCHANGED while the token and pending
+        # futures belong to the NEW turn; sid equality alone would kill it.
+        abort_token = _active_turn_token
+        abort_pending_ids = self._rpc.pending_request_ids()
         result = await self._rpc.request("abort")
         # P1 (TOCTOU) / R2-5: the active sid above was read lock-free BEFORE
         # the abort RPC was awaited. In that gap the matching turn can end and
@@ -1400,16 +1407,24 @@ class PiBridge:
                 session_id, active, active_after,
             )
             return result or {}
-        # F24: ignite the active turn's cancellation token so checkpoint()-
+        # F24: ignite the SNAPSHOT turn's cancellation token so checkpoint()-
         # cooperative tool dispatches (HTTP callback path) stop promptly too,
-        # not just the Pi subprocess.
-        if _active_turn_token is not None:
-            _active_turn_token.cancel("abort requested")
-        # Cancel any pending request future the client hasn't resolved yet.
-        # Without this, an in-flight `prompt` would keep waiting for its
-        # response up to the stream timeout (30s) and then emit a generic
-        # timeout error to the user instead of a clean cancellation.
-        self._rpc.fail_all_pending("abort requested")
+        # not just the Pi subprocess. CONC-F1: cancel only the token the abort
+        # was AIMED at — if a same-session successor turn replaced it, the
+        # current token belongs to the new turn and must not be ignited
+        # (cancelling the stale snapshot token is correct and harmless: its
+        # turn is already gone).
+        if abort_token is not None:
+            abort_token.cancel("abort requested")
+        if _active_turn_token is not abort_token and _active_turn_token is not None:
+            logger.warning(
+                "[PiBridge] abort TOCTOU: active turn token was replaced while "
+                "the abort RPC was in flight; cancelled only the stale snapshot "
+                "token and failed only the snapshot futures"
+            )
+        # Cancel pending futures from the SNAPSHOT only (CONC-F1): failing
+        # everything would kill a successor turn's freshly registered prompt.
+        self._rpc.fail_pending_ids(abort_pending_ids, "abort requested")
         return result or {}
 
     async def _drain_stale_events(self) -> int:

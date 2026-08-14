@@ -1,4 +1,5 @@
 """Chat API Route - SSE 流式对话"""
+import asyncio
 import json
 import logging
 import uuid
@@ -1225,7 +1226,18 @@ async def clear_session(
     # 在途 turn 一起杀掉；bridge 据此在其它会话的 turn 在途时跳过并记日志。
     if _use_pi_bridge():
         try:
-            await pi_bridge.abort(session_id=session_id)
+            # CONC-F7: the abort RPC can block up to the 300s client budget
+            # when Pi is stuck in a long tool — a session DELETE would hold
+            # the request (and the user's UI) hostage. Same bound the
+            # disconnect path already uses.
+            await asyncio.wait_for(
+                pi_bridge.abort(session_id=session_id), timeout=5.0
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Pi bridge abort timed out for session %s — proceeding with delete",
+                session_id,
+            )
         except Exception as e:  # noqa: BLE001 — abort 失败不能阻塞删除流程
             logger.warning("Pi bridge abort failed for session %s: %s", session_id, e)
 

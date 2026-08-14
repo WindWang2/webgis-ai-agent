@@ -247,6 +247,14 @@ class ChatExecutionEngine:
         # needs the recent tail (see _trim_session_tail).
         self._session_message_cap = max(1, int(_os.getenv("SESSION_MESSAGE_CAP", "200")))
         self._session_locks: dict[str, asyncio.Lock] = {}
+        # CONC-F2: last-touch (monotonic) per session lock — acquire-attempt AND
+        # release paths both stamp it. Eviction additionally requires a grace
+        # period: asyncio's handoff window (release() pops the waiter via
+        # call_soon; locked() is already False, _waiters already empty) made
+        # instantaneous "idle" checks evict a lock a waiter was about to
+        # re-acquire — two concurrent turns on one session.
+        self._session_lock_last_used: dict[str, float] = {}
+        self._deferred_lock_drops: dict[str, list[asyncio.Lock]] = {}
         self._MAX_LOCKS = 200
         self._session_owner_tokens: LRUCache = LRUCache(capacity=_SESSION_CACHE_SIZE)
 
@@ -415,14 +423,56 @@ class ChatExecutionEngine:
     def _build_last_analysis_context(self, messages: list[dict]) -> str:
         return _build_last_analysis_context(messages)
 
+    _LOCK_EVICTION_GRACE_S = 30.0
+
     def _evict_idle_locks(self) -> None:
-        """逐出空闲 session 锁。被持有或有等待者的锁绝不可逐出（F1）。"""
+        """逐出空闲 session 锁（F1 + CONC-F2 宽限期）。
+
+        被持有或有等待者的锁绝不可逐出（F1）；瞬时"空闲"也不够 —— release()
+        到等待者重新拿锁之间有一个 locked()==False 且 _waiters 为空的交接
+        窗口，必须再要求"距上次触碰 > 宽限期"（CONC-F2）。"""
+        import time as _time
+
+        self._reap_deferred_lock_drops()
         if len(self._session_locks) > self._MAX_LOCKS:
             evict_count = self._MAX_LOCKS // 4
+            now = _time.monotonic()
             for sid in list(self._session_locks.keys())[:evict_count]:
                 lock_to_evict = self._session_locks[sid]
-                if not _lock_in_use(lock_to_evict):
+                last_used = self._session_lock_last_used.get(sid)
+                if (
+                    not _lock_in_use(lock_to_evict)
+                    and last_used is not None
+                    and (now - last_used) > self._LOCK_EVICTION_GRACE_S
+                ):
                     self._session_locks.pop(sid, None)
+                    self._session_lock_last_used.pop(sid, None)
+
+    def _reap_deferred_lock_drops(self) -> None:
+        """Drop clear-session-deferred lock entries once past the grace window.
+
+        clear_session wants to drop the session's lock entry, but an
+        instantaneous "not in use" check has the same handoff race as
+        eviction (CONC-F2) — defer the drop and reap it here."""
+        import time as _time
+
+        if not self._deferred_lock_drops:
+            return
+        now = _time.monotonic()
+        for sid in list(self._deferred_lock_drops.keys()):
+            current = self._session_locks.get(sid)
+            if current is None:
+                self._deferred_lock_drops.pop(sid, None)
+                continue
+            idle_beyond_grace = (
+                not _lock_in_use(current)
+                and (now - self._session_lock_last_used.get(sid, 0.0))
+                > self._LOCK_EVICTION_GRACE_S
+            )
+            if idle_beyond_grace:
+                self._session_locks.pop(sid, None)
+                self._session_lock_last_used.pop(sid, None)
+                self._deferred_lock_drops.pop(sid, None)
 
     async def _get_or_create_session(
         self,
@@ -434,6 +484,9 @@ class ChatExecutionEngine:
 
         self._evict_idle_locks()
         lock = self._session_locks.setdefault(session_id, asyncio.Lock())
+        import time as _time
+
+        self._session_lock_last_used[session_id] = _time.monotonic()
         async with lock:
             if session_id in self._sessions:
                 return self._sessions[session_id]
@@ -1090,7 +1143,10 @@ class ChatExecutionEngine:
             raise
 
     def _get_session_lock(self, session_id: str) -> asyncio.Lock:
+        import time as _time
+
         self._evict_idle_locks()
+        self._session_lock_last_used[session_id] = _time.monotonic()
         return self._session_locks.setdefault(session_id, asyncio.Lock())
 
     def _reject_if_clearing(self, session_id: str) -> None:
@@ -1828,9 +1884,11 @@ class ChatExecutionEngine:
                 self._sessions.pop(session_id, None)
                 # F1: 锁被在途 turn 持有（或有等待者）时不能丢弃 —— 丢弃后下一个
                 # 并发请求拿到的是新锁，会与旧锁并行，破坏按会话串行化。
+                # CONC-F2: same handoff race as eviction — defer the drop;
+                # _reap_deferred_lock_drops reclaims it after the grace window.
                 lock = self._session_locks.get(session_id)
                 if lock is not None and not _lock_in_use(lock):
-                    self._session_locks.pop(session_id, None)
+                    self._deferred_lock_drops.setdefault(session_id, []).append(lock)
                 self._session_owner_tokens.pop(session_id, None)
                 # F21: 每一项进程内清理都可能独立失败（Redis 抖动 / 可选模块缺失），
                 # 隔离失败，保证其余清理总能执行；路由语义不变（仍按 DB 删除结果返回）。
