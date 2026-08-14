@@ -44,10 +44,18 @@ export function ResultList({ results, selectedId, onSelect, restoreFocusId, onRe
   // (consumed exactly once — unrelated re-renders never steal focus).
   useEffect(() => {
     if (!restoreFocusId) return;
-    const btn = listRef.current?.querySelector(
+    const list = listRef.current;
+    const btn = list?.querySelector(
       `button[data-result-id="${CSS.escape(restoreFocusId)}"]`,
     );
-    if (btn instanceof HTMLButtonElement) btn.focus();
+    if (btn instanceof HTMLButtonElement) {
+      btn.focus();
+    } else {
+      // The row is gone (removed from the detail view, or evicted by the
+      // 50-result cap while open) — land on the list container instead of
+      // dropping keyboard focus to <body>.
+      list?.focus();
+    }
     onRestoredFocus?.();
   }, [restoreFocusId, results, onRestoredFocus]);
 
@@ -64,7 +72,12 @@ export function ResultList({ results, selectedId, onSelect, restoreFocusId, onRe
   }
 
   return (
-    <ul ref={listRef} aria-label="分析结果列表" className="flex min-h-0 flex-1 flex-col overflow-y-auto py-1">
+    <ul
+      ref={listRef}
+      tabIndex={-1}
+      aria-label="分析结果列表"
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto py-1 outline-none focus:outline-none"
+    >
       {results.map((r) => {
         const selected = r.id === selectedId;
         const hasLayer = r.outputs[0]?.hasLayer;
