@@ -414,12 +414,25 @@ class RedisSessionStore(BaseSessionStore):
             # and returned None on a refresh hiccup — live data looked deleted
             # during Redis jitter).
             try:
-                async with self._r.pipeline() as pipe:
+                async with self._r.pipeline(transaction=True) as pipe:
+                    # CONC-F6: gate the recency bump on the data key still
+                    # existing. An unguarded zadd raced store()-side eviction
+                    # (which zrems the ref after deleting its data key) and
+                    # re-created the refs_order member — a permanently dangling
+                    # entry with no payload. WATCH + immediate exists() + MULTI
+                    # makes the check-and-bump atomic.
+                    await pipe.watch(data_key)
+                    if not await pipe.exists(data_key):
+                        pipe.reset()
+                        return
+                    pipe.multi()
                     pipe.expire(data_key, DATA_TTL)
                     pipe.expire(self._descriptor_key(session_id, ref_id), DATA_TTL)
                     pipe.zadd(self._refs_order_key(session_id), {ref_id: time.time()})
                     self._refresh_session_ttl(pipe, session_id)
                     await pipe.execute()
+            except aioredis.WatchError:
+                pass  # key changed under us — skip the refresh, data returned below
             except aioredis.RedisError as e:
                 logger.warning(
                     "Redis TTL refresh failed for session %s ref %s: %s — returning cached data",
@@ -932,7 +945,9 @@ class RedisSessionStore(BaseSessionStore):
                 raw_score = earliest[0][1] if earliest else 0
             scored.append((sid, float(raw_score)))
         scored.sort(key=lambda x: x[1])
-        to_remove = len(scored) - max_sessions + 10
+        # Evict only the OVERFLOW (the old `+10` kept max-10 sessions and, for
+        # max_sessions < 10, the negative slice removed EVERYTHING).
+        to_remove = max(0, len(scored) - max_sessions)
         for sid, _ in scored[:to_remove]:
             await self.clear_session(sid)
         logger.info("Cleaned up %d idle sessions", min(to_remove, len(scored)))

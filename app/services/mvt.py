@@ -178,10 +178,13 @@ def _encode_value(v: Any) -> Optional[bytes]:
     if isinstance(v, bool):
         return _field(_VAL_BOOL, _VARINT) + _varint(1 if v else 0)
     if isinstance(v, int) and not isinstance(v, bool):
-        n = v & 0xFFFFFFFF
-        if n > 0x7FFFFFFF:
-            n -= 0x100000000
-        return _field(_VAL_INT, _VARINT) + _varint(n & 0xFFFFFFFF)
+        # GIS-P3-1: int_value is sint64 — emit the FULL 64-bit value. The old
+        # 32-bit wrap silently corrupted real-world IDs > 2^31 (OSM ids,
+        # int64 keys): 2**31 → -2**31, 2**32+5 → 5. Negatives go through the
+        # unsigned 64-bit two's complement (_varint loops forever on < 0).
+        return _field(_VAL_INT, _VARINT) + _varint(
+            v if v >= 0 else v + (1 << 64)
+        )
     if isinstance(v, float):
         return _field(_VAL_DOUBLE, 1) + _double_bytes(v)
     if isinstance(v, str):

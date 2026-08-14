@@ -89,7 +89,14 @@ def summarize_feature_properties(
     if ignored_keys is None:
         ignored_keys = {"fill_color", "opacity", "stroke_width", "__style__"}
 
+    # PERF-F7: the type map converges after a few thousand features — stop
+    # scanning the whole 100k-feature list once both the samples are
+    # collected and the schema-scan budget is exhausted.
+    _SCHEMA_SCAN_BUDGET = 5000
+
     for idx, f in enumerate(features):
+        if idx >= _SCHEMA_SCAN_BUDGET and idx >= sample_size:
+            break
         if not isinstance(f, dict):
             continue
         props = f.get("properties") or {}

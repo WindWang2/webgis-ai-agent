@@ -2,7 +2,7 @@ import logging
 import networkx as nx
 import geopandas as gpd
 import numpy as np
-from shapely.geometry import Point, LineString, mapping
+from shapely.geometry import Point, LineString, MultiLineString, mapping
 from shapely.ops import unary_union
 from app.lib.geo_processor.core import GeoAnalysisResult
 from app.lib.geo_processor.core import to_utm_gdf
@@ -54,21 +54,29 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
         
         for idx, row in gdf_network.iterrows():
             geom = row.geometry
-            if isinstance(geom, LineString):
-                coords = list(geom.coords)
+            # GIS-P3-4: MultiLineString roads must contribute every part —
+            # skipping them silently understated isochrone coverage.
+            if isinstance(geom, MultiLineString):
+                line_parts = list(geom.geoms)
+            elif isinstance(geom, LineString):
+                line_parts = [geom]
+            else:
+                continue
+            for part in line_parts:
+                coords = list(part.coords)
                 start_node = coords[0]
                 end_node = coords[-1]
 
                 # Weight by edge length in METERS. The GeoDataFrame has already
                 # been reprojected to a metric UTM CRS (to_utm_gdf above), so
-                # ``geom.length`` is always in meters. The previous code trusted
+                # the geometry length is always in meters. The previous code trusted
                 # a source ``length`` attribute verbatim — but the attribute is
                 # NOT reprojected, so a geographic (EPSG:4326) source carried
                 # degree-valued lengths (~0.01). With max_dist in meters that
                 # made every connected edge "reachable" and the isochrone
                 # swallowed the whole network. Derive from geometry instead.
-                weight = float(geom.length) if geom.length else 0.0
-                G.add_edge(start_node, end_node, weight=weight, geometry=geom)
+                weight = float(part.length) if part.length else 0.0
+                G.add_edge(start_node, end_node, weight=weight, geometry=part)
         
         isochrone_features = []
         max_dist = float(travel_time_min) * _speed_m_per_min(mode)
@@ -92,7 +100,16 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
         _buffer_m = 30.0 if mode == "walking" else 20.0
 
         for idx, facility in cancellable(gdf_facilities.iterrows()):
-            start_point = np.array([facility.geometry.x, facility.geometry.y])
+            fac_geom = facility.geometry
+            # GIS-P3-3: a Polygon/LineString facility has no .x/.y — that
+            # AttributeError used to fail the WHOLE analysis for one bad
+            # feature. Degrade to its representative point instead (mirrors
+            # the nearest-neighbor path's Point filter).
+            if fac_geom is None or fac_geom.is_empty:
+                continue
+            if fac_geom.geom_type != "Point":
+                fac_geom = fac_geom.representative_point()
+            start_point = np.array([fac_geom.x, fac_geom.y])
 
             # Find nearest node via cKDTree
             _, nearest_node_idx = node_tree.query(start_point, k=1)

@@ -38,7 +38,9 @@ async def websocket_endpoint(
     - rate limit per client IP（不是 per session_id）
     """
     # Rate limit per client IP
-    client_ip = websocket.client.host if websocket.client else "unknown"
+    from app.core.client_ip import client_ip_from
+
+    client_ip = client_ip_from(websocket)
     limiter = await get_rate_limiter()
     if not await limiter.is_allowed(
         f"ws_connect:{client_ip}", _WS_RATE_LIMIT_MAX, _WS_RATE_LIMIT_WINDOW

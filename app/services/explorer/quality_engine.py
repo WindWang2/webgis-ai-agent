@@ -73,10 +73,13 @@ class QualityEngine:
                 return 0.0
 
             # 计算交集面积
-            inter_s = max(ds[0], ts[0])
-            inter_w = max(ds[1], ts[1])
-            inter_n = min(ds[2], ts[2])
-            inter_e = min(ds[3], ts[3])
+            # bboxes are [w, s, e, n] (GIS-P3-9: the old w/s/e/n labels were
+            # sourced from swapped indices — numerically harmless because the
+            # products are symmetric, but a trap for any future edit).
+            inter_w = max(ds[0], ts[0])
+            inter_s = max(ds[1], ts[1])
+            inter_e = min(ds[2], ts[2])
+            inter_n = min(ds[3], ts[3])
 
             if inter_s >= inter_n or inter_w >= inter_e:
                 return 0.0

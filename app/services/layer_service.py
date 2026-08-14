@@ -37,7 +37,11 @@ class LayerService:
         if layer_type:
             query = query.filter(Layer.layer_type == layer_type)
         if is_public is not None:
-            query = query.filter(Layer.is_public == is_public)
+            # The model has no `is_public` column — the old filter raised
+            # AttributeError on any call. Map the boolean onto `visibility`.
+            query = query.filter(
+                Layer.visibility == ("public" if is_public else "private")
+            )
         total = query.count()
         layers = query.order_by(Layer.created_at.desc()).limit(limit).offset(offset).all()
         return layers, total

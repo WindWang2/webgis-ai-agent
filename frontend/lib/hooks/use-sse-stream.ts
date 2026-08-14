@@ -49,6 +49,51 @@ function truncateFeatureId(v: string): string {
 }
 
 /**
+ * FE-P3-2: chat messages were unbounded (every send appends two entries
+ * forever, and every non-token event maps the whole array). Keep the most
+ * recent 200 — matching the results registry's bounded philosophy.
+ */
+const MAX_CHAT_MESSAGES = 200;
+
+type ToolCallStatus = 'completed' | 'failed';
+
+/**
+ * FE-P3-3: terminal transition for a ToolCallChain row, matched by tool name
+ * (the SSE tool_call payload carries no call id). Mutates messages via the
+ * hook's setMessages; must be created inside the hook (closure over it).
+ */
+function makeToolCallStatusMarker(
+  thinkingMsgIdRef: { current: string },
+  setMessages: (updater: (prev: any[]) => any[]) => void,
+) {
+  return (tool: string, status: ToolCallStatus, error?: string): void => {
+    if (!tool) return;
+    setMessages((prev) => {
+      const tid = thinkingMsgIdRef.current;
+      const idx = tid ? prev.findIndex((m) => m.id === tid) : -1;
+      if (idx === -1) return prev;
+      const calls = prev[idx].toolCalls;
+      if (!calls || calls.length === 0) return prev;
+      let changed = false;
+      const next = calls.map((c: ToolCallEntry) => {
+        if (c.tool !== tool || c.status !== 'running') return c;
+        changed = true;
+        return { ...c, status, ...(status === 'failed' && error ? { error } : {}) };
+      });
+      if (!changed) return prev;
+      const copy = [...prev];
+      copy[idx] = { ...prev[idx], toolCalls: next };
+      return copy;
+    });
+  };
+}
+
+function capMessages<T>(messages: T[]): T[] {
+  if (messages.length <= MAX_CHAT_MESSAGES) return messages;
+  return messages.slice(messages.length - MAX_CHAT_MESSAGES);
+}
+
+/**
  * Resolve the parent project-layer id from a possibly-sublayer id via
  * longest-prefix match against the project's layer ids (`__`-boundary aware,
  * so `poi_schools__fill` attributes to `poi_schools`, never `poi`). Falls back
@@ -197,6 +242,11 @@ export function useSSEStream(
   ]);
 
   const thinkingMsgIdRef = useRef<string>('');
+  // FE-P3-3: ToolCallChain terminal transitions (completed on step_result,
+  // failed on step_error/step_cancelled).
+  const markToolCallStatus = useRef(
+    makeToolCallStatusMarker(thinkingMsgIdRef, setMessages),
+  ).current; // stable identity: created once per hook instance
   const msgIdGen = useRef(createMessageIdGenerator());
   const layerFetchAbortRef = useRef<AbortController | null>(null);
 
@@ -309,6 +359,30 @@ export function useSSEStream(
         if (data.name && typeof data.arguments === 'string') {
           useHudStore.getState().captureToolCallArgs(data.name, data.arguments);
         }
+        // FE-P3-3: populate the thinking message's ToolCallChain — the UI
+        // (chat-tab) and the step_cancelled marking existed, but no
+        // production event ever wrote msg.toolCalls, so the chain never
+        // rendered. The SSE tool_call payload carries no id; use an ordinal
+        // id and match terminal transitions by tool name.
+        const toolName = typeof data.name === 'string' ? data.name : '';
+        if (toolName) {
+          setMessages((prev) => {
+            const tid = thinkingMsgIdRef.current;
+            const idx = tid ? prev.findIndex((m) => m.id === tid) : -1;
+            if (idx === -1) return prev;
+            const existing = prev[idx].toolCalls ?? [];
+            const next = [...existing, {
+              id: `tc-${existing.length + 1}`,
+              tool: toolName,
+              arguments: typeof data.arguments === 'string' ? data.arguments : undefined,
+              status: 'running' as const,
+              startedAt: Date.now(),
+            }];
+            const copy = [...prev];
+            copy[idx] = { ...prev[idx], toolCalls: next };
+            return copy;
+          });
+        }
       } else if (event.event === "step_result") {
         // Result Workbench: normalize + record this result into the bounded,
         // session-scoped registry. Runs before the layer/chart handling so the
@@ -316,6 +390,9 @@ export function useSSEStream(
         // other non-analysis events are ignored inside the slice. The returned
         // id lets the chat layer-added chip deep-link to the same result.
         const workbenchResultId = useHudStore.getState().captureStepResult(data);
+        // FE-P3-3: terminal transition for the ToolCallChain row (matched by
+        // tool name — the SSE payload carries no call id).
+        markToolCallStatus(String(data.tool ?? ''), 'completed');
         // Plan Mode：propose_plan 返回的 plan 摘要挂到当前消息，由 PlanProposalCard 渲染
         if (data.tool === 'propose_plan' && data.result?.success && data.result?.plan_id) {
           const plan: PlanProposalPayload = {
@@ -477,7 +554,11 @@ export function useSSEStream(
           setMessages((prev) =>
             prev.map((m) =>
               m.id === thinkingId
-                ? { ...m, charts: [...((m.charts as any[]) ?? []), data.result.chart] }
+                ? {
+                    ...m,
+                    // FE-P3-2: bounded per-message chart history.
+                    charts: [...((m.charts as any[]) ?? []).slice(-19), data.result.chart],
+                  }
                 : m
             )
           );
@@ -611,6 +692,7 @@ export function useSSEStream(
         // args so the retry's step_result pairs with the retry's args.
         if (event.event === 'step_error' && typeof data?.tool === 'string' && data.tool) {
           useHudStore.getState().discardPendingToolArgs(data.tool);
+          markToolCallStatus(data.tool, 'failed', typeof data?.error === 'string' ? data.error : undefined);
         }
         const raw = data?.error;
         const detail =
@@ -649,7 +731,7 @@ export function useSSEStream(
         });
       }
     },
-    [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken]
+    [setSessionId, sessionIdRef, sessionTokenRef, rememberSessionToken, markToolCallStatus]
   );
 
   // DUP-1: bounded auto-reconnect for the chat stream. Opt-in by explicit
@@ -740,25 +822,29 @@ export function useSSEStream(
         focus_layer_id: focusLayerId ?? null,
       };
 
-      setMessages((prev) => [
-        ...prev,
-        { id: msgIdGen.current.next(), role: 'user' as const, content: userMsg, timestamp: new Date() },
-      ]);
+      setMessages((prev) =>
+        capMessages([
+          ...prev,
+          { id: msgIdGen.current.next(), role: 'user' as const, content: userMsg, timestamp: new Date() },
+        ]),
+      );
 
       const thinkingMsgId = msgIdGen.current.next();
       thinkingMsgIdRef.current = thinkingMsgId;
       tokenBatcherRef.current?.reset();
       thinkParserRef.current?.reset();
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: thinkingMsgId,
-          role: 'assistant' as const,
-          content: '',
-          timestamp: new Date(),
-          isThinking: true,
-        },
-      ]);
+      setMessages((prev) =>
+        capMessages([
+          ...prev,
+          {
+            id: thinkingMsgId,
+            role: 'assistant' as const,
+            content: '',
+            timestamp: new Date(),
+            isThinking: true,
+          },
+        ]),
+      );
 
       try {
         // F-5: set inside the try so a synchronous throw in the setup above

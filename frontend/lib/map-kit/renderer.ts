@@ -154,6 +154,15 @@ export function unregisterGeoJsonSource(id: string) {
   _registeredGeoJsonSourceIds.delete(id);
 }
 
+/**
+ * FE-P3-5: drop ALL registry entries (base-style reload wipes every source
+ * without passing through removeSourceSafe). Reconcile re-registers the
+ * sources it re-adds.
+ */
+export function unregisterAllGeoJsonSources() {
+  _registeredGeoJsonSourceIds.clear();
+}
+
 export interface VectorLayerOptions {
   id: string;
   source: string;

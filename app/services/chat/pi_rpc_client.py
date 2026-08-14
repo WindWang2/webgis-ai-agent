@@ -225,16 +225,22 @@ class PiRpcClient:
 
     async def stop(self) -> None:
         """Stop the Pi subprocess."""
-        if self._process is None:
+        proc = self._process
+        if proc is None:
             return
 
+        # CONC-F5: the reader task's finally can clear self._process the
+        # moment the terminated process exits (EOF → poll() is not None) —
+        # dereferencing the field again below raised AttributeError and
+        # skipped reader/stderr task reclamation. Work on a local handle.
         try:
-            self._process.terminate()
+            proc.terminate()
             await asyncio.sleep(0.5)
-            if self._process.poll() is None:
-                self._process.kill()
+            if proc.poll() is None:
+                proc.kill()
         finally:
-            self._process = None
+            if self._process is proc:
+                self._process = None
 
         if self._reader_task:
             self._reader_task.cancel()
@@ -371,6 +377,22 @@ class PiRpcClient:
         in-flight `prompt` futures resolve with PiRpcError instead of timing
         out 30s later. Same semantics as _fail_all_pending."""
         self._fail_all_pending(reason)
+
+    def fail_pending_ids(self, request_ids, reason: str) -> int:
+        """Fail ONLY the given pending request ids (see PiBridge.abort F1:
+        a late abort must not fail a successor turn's freshly registered
+        futures). Returns how many were failed."""
+        failed = 0
+        for rid in request_ids:
+            future = self._pending_requests.pop(rid, None)
+            if future is not None and not future.done():
+                future.set_exception(PiRpcError(reason))
+                failed += 1
+        return failed
+
+    def pending_request_ids(self) -> set:
+        """Snapshot of currently pending request ids (abort-scoping)."""
+        return set(self._pending_requests.keys())
 
     def _readline_bounded(self) -> Optional[bytes]:
         """Read one line from Pi stdout, capped at MAX_STDOUT_LINE_BYTES.

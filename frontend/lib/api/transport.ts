@@ -339,8 +339,29 @@ export async function openStream(
   const method = (options.method ?? 'GET').toUpperCase();
   const requestId = options.requestId ?? newRequestId();
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const { url, init } = buildRequest(path, options, method, requestId);
-  const response = await timedFetch(url, init, timeoutMs, requestId);
-  if (!response.ok) throw await toApiError(response, options.label, requestId);
-  return response;
+
+  const attempt = async (): Promise<Response> => {
+    const { url, init } = buildRequest(path, options, method, requestId);
+    const response = await timedFetch(url, init, timeoutMs, requestId);
+    if (!response.ok) throw await toApiError(response, options.label, requestId);
+    return response;
+  };
+
+  try {
+    return await attempt();
+  } catch (err) {
+    // FE-P3-4: apiFetch recovers ONCE from a 401 via the refresh token; the
+    // stream path (chat/explorer SSE) rethrew instead — an expired access
+    // token killed the turn with a synthetic error instead of refreshing.
+    if (
+      !options.skipAuth &&
+      err instanceof ApiError &&
+      err.status === 401 &&
+      getRefreshToken() !== null
+    ) {
+      const refreshed = await refreshAuthToken();
+      if (refreshed) return attempt();
+    }
+    throw err;
+  }
 }

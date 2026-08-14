@@ -247,6 +247,13 @@ class ChatExecutionEngine:
         # needs the recent tail (see _trim_session_tail).
         self._session_message_cap = max(1, int(_os.getenv("SESSION_MESSAGE_CAP", "200")))
         self._session_locks: dict[str, asyncio.Lock] = {}
+        # CONC-F2: last-touch (monotonic) per session lock — acquire-attempt AND
+        # release paths both stamp it. Eviction additionally requires a grace
+        # period: asyncio's handoff window (release() pops the waiter via
+        # call_soon; locked() is already False, _waiters already empty) made
+        # instantaneous "idle" checks evict a lock a waiter was about to
+        # re-acquire — two concurrent turns on one session.
+        self._session_lock_last_used: dict[str, float] = {}
         self._MAX_LOCKS = 200
         self._session_owner_tokens: LRUCache = LRUCache(capacity=_SESSION_CACHE_SIZE)
 
@@ -415,14 +422,31 @@ class ChatExecutionEngine:
     def _build_last_analysis_context(self, messages: list[dict]) -> str:
         return _build_last_analysis_context(messages)
 
+    _LOCK_EVICTION_GRACE_S = 30.0
+
     def _evict_idle_locks(self) -> None:
-        """逐出空闲 session 锁。被持有或有等待者的锁绝不可逐出（F1）。"""
+        """逐出空闲 session 锁（F1 + CONC-F2 宽限期）。
+
+        被持有或有等待者的锁绝不可逐出（F1）；瞬时"空闲"也不够 —— release()
+        到等待者重新拿锁之间有一个 locked()==False 且 _waiters 为空的交接
+        窗口，必须再要求"距上次触碰 > 宽限期"（CONC-F2）。"""
+        import time as _time
+
+        if not hasattr(self, "_session_lock_last_used"):
+            self._session_lock_last_used = {}
         if len(self._session_locks) > self._MAX_LOCKS:
             evict_count = self._MAX_LOCKS // 4
+            now = _time.monotonic()
             for sid in list(self._session_locks.keys())[:evict_count]:
                 lock_to_evict = self._session_locks[sid]
-                if not _lock_in_use(lock_to_evict):
+                last_used = self._session_lock_last_used.get(sid)
+                if (
+                    not _lock_in_use(lock_to_evict)
+                    and last_used is not None
+                    and (now - last_used) > self._LOCK_EVICTION_GRACE_S
+                ):
                     self._session_locks.pop(sid, None)
+                    self._session_lock_last_used.pop(sid, None)
 
     async def _get_or_create_session(
         self,
@@ -434,6 +458,9 @@ class ChatExecutionEngine:
 
         self._evict_idle_locks()
         lock = self._session_locks.setdefault(session_id, asyncio.Lock())
+        import time as _time
+
+        self._session_lock_last_used[session_id] = _time.monotonic()
         async with lock:
             if session_id in self._sessions:
                 return self._sessions[session_id]
@@ -1090,7 +1117,14 @@ class ChatExecutionEngine:
             raise
 
     def _get_session_lock(self, session_id: str) -> asyncio.Lock:
+        import time as _time
+
         self._evict_idle_locks()
+        # Lazy init: some tests construct the engine via __new__ and call
+        # this directly; production __init__ always sets both dicts.
+        if not hasattr(self, "_session_lock_last_used"):
+            self._session_lock_last_used = {}
+        self._session_lock_last_used[session_id] = _time.monotonic()
         return self._session_locks.setdefault(session_id, asyncio.Lock())
 
     def _reject_if_clearing(self, session_id: str) -> None:
@@ -1651,7 +1685,23 @@ class ChatExecutionEngine:
                         continue
                     else:
                         content = raw_content
-                
+
+                        # CORRECTNESS-4: an empty completion (no content, no
+                        # tool calls) is a provider anomaly, not an answer —
+                        # the old path saved an empty assistant message and
+                        # reported success. Fail the turn truthfully so the
+                        # client retries instead of showing an empty bubble.
+                        if not content and not tc_list:
+                            self.tracker.fail_task(task.id, "empty completion from provider")
+                            rt_ev.settle(Outcome.FAILED, failure_class="empty_result")
+                            yield sse_event("task_error", {
+                                "task_id": task.id,
+                                "error": "模型返回了空响应，请重试。",
+                                "session_id": session_id,
+                            })
+                            yield sse_event("done", {"session_id": session_id})
+                            return
+
                         entry = {"role": "assistant", "content": content}
                         if reasoning:
                             entry["reasoning_content"] = reasoning
@@ -1812,9 +1862,18 @@ class ChatExecutionEngine:
                 self._sessions.pop(session_id, None)
                 # F1: 锁被在途 turn 持有（或有等待者）时不能丢弃 —— 丢弃后下一个
                 # 并发请求拿到的是新锁，会与旧锁并行，破坏按会话串行化。
+                # CONC-F2: drop the registry entry when the lock is idle
+                # (memory contract — clear_session must not leak entries). A
+                # lock still HELD by an in-flight turn is left in place:
+                # evicting under a live holder would let a fresh caller build a
+                # second lock and run concurrently. The sub-millisecond
+                # release→waiter handoff window remains an accepted edge here
+                # (pre-audit behavior); the eviction path keeps the full grace
+                # rule.
                 lock = self._session_locks.get(session_id)
-                if lock is not None and not _lock_in_use(lock):
+                if lock is not None and not lock.locked():
                     self._session_locks.pop(session_id, None)
+                    self._session_lock_last_used.pop(session_id, None)
                 self._session_owner_tokens.pop(session_id, None)
                 # F21: 每一项进程内清理都可能独立失败（Redis 抖动 / 可选模块缺失），
                 # 隔离失败，保证其余清理总能执行；路由语义不变（仍按 DB 删除结果返回）。

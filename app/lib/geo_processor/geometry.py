@@ -39,7 +39,19 @@ def buffer_smart(
             
         gdf, utm_crs = res
         original_crs = source_crs or getattr(gdf, "_original_crs", None) or (gdf.crs if gdf is not None and gdf.crs is not None else "EPSG:4326")
-        
+
+        # GIS-P3-8: to_utm_gdf returns an already-projected input UNCHANGED —
+        # if that CRS is not metre-based (state-plane feet etc.), the
+        # "meters" distance must be converted to the CRS's linear unit.
+        if gdf.crs is not None and gdf.crs.is_projected:
+            try:
+                axis = gdf.crs.axis_info[0]
+                factor = float(getattr(axis, "unit_conversion_factor", 1.0) or 1.0)
+                if axis.unit_name and "metre" not in axis.unit_name and "meter" not in axis.unit_name and factor != 1.0:
+                    dist = dist * factor
+            except Exception:
+                pass
+
         buffered_gdf = gdf.copy()
         buffered_gdf['geometry'] = buffered_gdf.geometry.make_valid()
         buffered_gdf['geometry'] = buffered_gdf.buffer(dist)

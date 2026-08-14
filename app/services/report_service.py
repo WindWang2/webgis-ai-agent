@@ -3,6 +3,7 @@
 使用 Jinja2 模板渲染 HTML，WeasyPrint 转换为 PDF
 """
 import html as html_mod
+import json
 import os
 import re
 from datetime import datetime, timezone
@@ -435,6 +436,24 @@ class ReportService:
             if isinstance(fn, dict):
                 return fn.get("name", "Tool")
         return "Tool"
+
+    @staticmethod
+    def _format_tool_result(raw: Any) -> str:
+        """Serialize a tool result for the report body.
+
+        Dropped by the saga refactor while its call site survived — every
+        tool-using session's report failed with AttributeError (caught by the
+        saga and marked `failed`). Restored verbatim from 466858f.
+        """
+        if isinstance(raw, str):
+            return raw
+        if isinstance(raw, (dict, list)):
+            text = json.dumps(raw, indent=2, ensure_ascii=False)
+            # Truncate very large results to keep report size reasonable
+            if len(text) > 8000:
+                text = text[:8000] + "\n... (truncated)"
+            return text
+        return str(raw)
 
 
 class SpatialReportEngine(ReportService):

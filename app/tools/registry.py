@@ -1,9 +1,11 @@
 """FC 工具注册中心"""
 import asyncio
+import contextvars
 import inspect
 import json
 import logging
 import os
+from contextlib import contextmanager
 from typing import Any, Callable, Optional, Type, List
 from pydantic import BaseModel, create_model, ValidationError
 
@@ -15,6 +17,34 @@ from app.lib.geo_processor.core import GeoAnalysisResult
 from app.services.jobs.cancellation import OperationCancelled
 
 logger = logging.getLogger(__name__)
+
+# SEC-F1: tier-3 (destructive / RCE-class) tools may only be dispatched through
+# an execution context that explicitly confirmed them. Route-level checks
+# (chat /tools/execute confirm_destructive, Pi-bridge rejection) are NOT a
+# chokepoint: workflow execution, subagents and plan-mode steps all reach
+# registry.dispatch directly. Default False → those paths are refused here.
+_allow_tier3_var: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "allow_tier3_tools", default=False
+)
+
+
+def tier3_confirmed() -> bool:
+    """Whether the current execution context carries an explicit tier-3 confirmation."""
+    return _allow_tier3_var.get()
+
+
+@contextmanager
+def confirm_tier3():
+    """Grant tier-3 dispatch rights for the enclosed (synchronous) scope.
+
+    Must wrap the await of dispatch() in the same asyncio task — ContextVar
+    tokens propagate into coroutines but not across create_task boundaries.
+    """
+    token = _allow_tier3_var.set(True)
+    try:
+        yield
+    finally:
+        _allow_tier3_var.reset(token)
 
 
 class ToolExecutionPolicy(str, Enum):
@@ -423,6 +453,18 @@ class ToolRegistry:
         meta = self._metadata.get(name, {})
         model = self._models.get(name)
 
+        # SEC-F1: the dispatch chokepoint refuses tier-3 tools unless the
+        # calling context carried an explicit confirmation (see confirm_tier3).
+        # Workflow steps, subagent catalogs and plan-mode execution reach this
+        # method directly — without this gate they bypass every route-level
+        # confirm_destructive / tier check.
+        if int(meta.get("tier", 1)) >= 3 and not tier3_confirmed():
+            return std_error_response(
+                f"工具 {name} 为 tier-3（危险/破坏性）操作，需要显式确认后经由管理员通道执行",
+                code="TIER3_CONFIRMATION_REQUIRED",
+                error_type="Tier3ConfirmationRequired",
+            )
+
         if isinstance(arguments, str):
             try:
                 arguments = json.loads(arguments)
@@ -482,8 +524,13 @@ class ToolRegistry:
                 )
 
         # GeoJSON 几何结构校验 (BE-AUDIT-08)
+        # PERF-F2: the recursive walk cost ~0.7s on the event loop for a
+        # 100k-feature payload — structural sanity for large payloads is
+        # already covered by the session store's descriptor computation, so
+        # only small/medium argument trees pay the walk.
         try:
-            validate_geojson_structure(arguments)
+            if _estimate_json_bytes(arguments) <= 262_144:  # 256 KB
+                validate_geojson_structure(arguments)
         except ValueError as e:
             return std_error_response(
                 str(e),
@@ -621,6 +668,12 @@ class ToolRegistry:
                 if node.startswith("ref:") or _resolved != node:
                     data = await session_data_manager.get(session_id, node)
                     if data is not None:
+                        # PERF-F2: the dereferenced payload is OPAQUE — refs
+                        # live in the ARGUMENTS, not inside stored data. The
+                        # old code recursed into the whole payload (rebuilding
+                        # a 100k-feature tree node-by-node on the event loop,
+                        # ~1s) re-resolving strings that merely HAPPENED to
+                        # match aliases. Return by reference.
                         return data
 
                     # 解引用失败：构造详细错误信息引导 AI 自愈

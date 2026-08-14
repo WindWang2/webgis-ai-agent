@@ -334,7 +334,9 @@ class MemorySessionStore(BaseSessionStore):
             order = OrderedDict((sid, None) for sid in self._store)
         if len(order) <= max_sessions:
             return
-        to_remove = list(order.keys())[:len(order) - max_sessions + 10]
+        # Evict only the OVERFLOW (the old `+10` kept max-10 sessions and, for
+        # max_sessions < 10, the negative slice removed EVERYTHING).
+        to_remove = list(order.keys())[:max(0, len(order) - max_sessions)]
         for sid in to_remove:
             await self.clear_session(sid)
         logger.info(f"Cleaned up {len(to_remove)} idle sessions")

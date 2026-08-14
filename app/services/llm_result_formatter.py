@@ -188,7 +188,10 @@ def slim_event_result(result: Any) -> Any:
     if isinstance(bbox, str) and bbox:
         parts = [float(x) for x in bbox.split(",") if x.strip()]
         if len(parts) == 4:
-            south, west, north, east = parts
+            # GIS-P3-6: every producer in the repo emits [w,s,e,n] — parse in
+            # that canonical order (the old s,w,n,e unpacking transposed a
+            # canonical string into [s,w,n,e]).
+            west, south, east, north = parts
             bbox = [west, south, east, north]
 
     exclude = {"geojson", "features", "data_list", "grid"}

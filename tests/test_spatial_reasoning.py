@@ -88,18 +88,23 @@ async def test_spatial_reasoning_tool_output_format():
         "recommendations": ["建议1"],
     }
 
+    from app.tools.registry import confirm_tier3
+
     with patch(
         "app.tools.spatial_reasoning._call_llm",
         return_value=mock_result,
     ):
-        result = await registry.dispatch(
-            "spatial_reasoning",
-            {
-                "query": "测试查询",
-                "context": {"key": "value"},
-                "reasoning_depth": "standard",
-            },
-        )
+        # tier-3 tool: the chokepoint requires a confirmed context (SEC-F1);
+        # a direct-dispatch test represents one.
+        with confirm_tier3():
+            result = await registry.dispatch(
+                "spatial_reasoning",
+                {
+                    "query": "测试查询",
+                    "context": {"key": "value"},
+                    "reasoning_depth": "standard",
+                },
+            )
 
     assert isinstance(result, dict)
     assert result["type"] == "spatial_reasoning"

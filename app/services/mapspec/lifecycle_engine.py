@@ -250,7 +250,17 @@ class MapSpecLifecycleEngine:
                     is_error=True,
                     error_msg="Session was deleted; stale MapSpec mutation rejected.",
                 )
-            old_layers_snapshot = copy.deepcopy(pre_state.get("layers", []) or [])
+            # PERF-F8: defer the layers deepcopy — view/layout/time intents
+            # never touch layers, and the COW work already avoids copying the
+            # mapspec for them; this unconditional copy was left behind.
+            _layers_touching = isinstance(
+                intent, (UpsertLayerIntent, RemoveLayerIntent, InitProjectIntent, RollbackIntent)
+            )
+            old_layers_snapshot = (
+                copy.deepcopy(pre_state.get("layers", []) or [])
+                if _layers_touching
+                else list(pre_state.get("layers", []) or [])
+            )
             observation = pre_state.get("_cartographic_observation")
             try:
                 runtime_observation_seq = int(
@@ -268,6 +278,11 @@ class MapSpecLifecycleEngine:
             try:
                 loaded = await self.store.get_mapspec(session_id)
                 prior_mapspec = loaded
+                # CORR-2 companion: whether the session had a persisted spec
+                # BEFORE the auto-init skeleton below. Rollback of a first
+                # mutation must DISCARD the candidate, not "restore" the
+                # in-memory skeleton as a residual spec.
+                session_was_fresh = loaded is None
                 
                 # V3: Defer the deep snapshot until AFTER we know the intent type.
                 # SetView/SetLayout/CheckpointIntent only touch top-level keys, so
@@ -279,8 +294,12 @@ class MapSpecLifecycleEngine:
 
                 # 1. 针对未初始化会话自动构建根框架（仅内存；commit 阶段才落盘 —
                 #    Review P2-3: 此前在 reject 前就 save_mapspec，reject 会残留骨架）
+                #    审计修正：骨架必须写入 `loaded`。此前写入 `mapspec`，而下方
+                #    每个意图分支都用 `mapspec = {**loaded} if loaded else {}` 重建
+                #    candidate —— 骨架被静默丢弃，新会话落盘的 spec 丢失
+                #    version/layout/thresholds（空 dict 起步）。
                 if not loaded and not isinstance(intent, (InitProjectIntent, RollbackIntent)):
-                    mapspec = {
+                    loaded = {
                         "version": "1.0",
                         "view": {},
                         "sources": {},
@@ -589,7 +608,13 @@ class MapSpecLifecycleEngine:
                 logger.error(f"MapSpec mutation failed for session {session_id}: {e}", exc_info=True)
                 # 事务 rollback：恢复 mapspec + redis layers 到 mutation 前。
                 await self._rollback_to_snapshot(
-                    session_id, old_mapspec_snapshot, old_layers_snapshot
+                    session_id,
+                    # Fresh-session semantics: the intent branches snapshot
+                    # `loaded`, which the auto-init skeleton replaced — a
+                    # failed FIRST mutation must DISCARD the candidate, not
+                    # "restore" the skeleton as a residual spec.
+                    None if session_was_fresh else old_mapspec_snapshot,
+                    old_layers_snapshot,
                 )
                 return MapSpecResult(
                     is_error=True,

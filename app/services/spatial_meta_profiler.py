@@ -124,7 +124,15 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
   # map view; now the downstream view_has_center check skips it.
   if bbox is not None and crs_status == "explicit" and _is_explicit_geographic_crs(crs):
     west, south, east, north = bbox
-    center_lng = round((west + east) / 2, 6)
+    # GIS-P3-7: RFC 7946 wrap-around bboxes (west > east) must center across
+    # the antimeridian. Correct derivation: the midpoint of the arc
+    # [west, east+360) is (west+east)/2 + 180, then wrapped to [-180, 180].
+    # (The naive mean lands on Null Island; a modulo-first variant also
+    # collapses to 0° for symmetric bboxes like 170/-170.)
+    if west > east:
+        center_lng = round((((west + east) / 2 + 180 + 180) % 360) - 180, 6)
+    else:
+        center_lng = round((west + east) / 2, 6)
     center_lat = round((south + north) / 2, 6)
     zoom = _calculate_suggested_zoom(west, south, east, north)
     suggested_view = {"center": [center_lng, center_lat], "zoom": zoom}
@@ -146,12 +154,10 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
   fields_profile: Dict[str, Dict[str, Any]] = {}
   for k in sorted(field_keys):
     vals = field_values.get(k, [])
-    null_count = sum(
-        1
-        for feature in features
-        if not isinstance(feature.get("properties"), dict)
-        or feature.get("properties", {}).get(k) is None
-    )
+    # PERF-F4: the old null_count re-scanned ALL features PER FIELD (O(F·K)
+    # full walks per upsert). field_values[k] already collected exactly the
+    # non-None values, so the null count is arithmetic.
+    null_count = max(0, feature_count - len(vals))
     if not vals:
       fields_profile[k] = {
           "type": "string",

@@ -44,6 +44,14 @@ def _unique(prefix):
     return f"{prefix}_{uuid.uuid4().hex[:16]}"
 
 
+def _auth_headers():
+    """run/replay/resume require authentication (SEC-F1: executing registered
+    tools synchronously is not an anonymous surface)."""
+    from app.core.auth import create_access_token
+    return {"Authorization": "Bearer " + create_access_token(
+        {"sub": "wf-runner", "username": "wf-runner", "role": "viewer"})}
+
+
 def _make_project(name):
     res = client.post("/api/v1/projects", json={"name": name})
     assert res.status_code == 201, res.text
@@ -82,7 +90,8 @@ def test_run_detail_replay_compare(fake_registry):
         {"step_id": "s1", "tool_name": "t_a", "dependencies": []}])
 
     run_res = client.post(f"/api/v1/projects/{proj_id}/workflows/{wf_id}/run",
-                          json={"input_bindings": {"aoi": "Haidian"}, "start_from_step": None})
+                          json={"input_bindings": {"aoi": "Haidian"}, "start_from_step": None},
+                          headers=_auth_headers())
     assert run_res.status_code == 200, run_res.text
     run = run_res.json()
     run_id = run["id"]
@@ -97,7 +106,7 @@ def test_run_detail_replay_compare(fake_registry):
 
     # Replay (exact) via API.
     replay = client.post(f"/api/v1/projects/{proj_id}/runs/{run_id}/replay",
-                         json={"mode": "exact"})
+                         json={"mode": "exact"}, headers=_auth_headers())
     assert replay.status_code == 200, replay.text
     replay_run = replay.json()
     assert replay_run["run_fingerprint"] == run["run_fingerprint"]
@@ -138,7 +147,8 @@ def test_resume_endpoint(fake_registry):
             {"step_id": "s2", "tool_name": "t_b", "dependencies": ["s1"]},
         ])
         run1 = client.post(f"/api/v1/projects/{proj_id}/workflows/{wf_id}/run",
-                           json={"input_bindings": {}, "start_from_step": None}).json()
+                           json={"input_bindings": {}, "start_from_step": None},
+                           headers=_auth_headers()).json()
         assert run1["status"] == "failed"
         assert run1["completed_steps"] == ["s1"]
 
@@ -146,7 +156,7 @@ def test_resume_endpoint(fake_registry):
         ok_reg = _FakeRegistry()
         route_mod.get_tool_registry = lambda: ok_reg
         resumed = client.post(f"/api/v1/projects/{proj_id}/runs/{run1['id']}/resume",
-                              json={"allow_rerun": False})
+                              json={"allow_rerun": False}, headers=_auth_headers())
         assert resumed.status_code == 200, resumed.text
         assert resumed.json()["status"] == "completed"
         assert resumed.json()["completed_steps"] == ["s1", "s2"]
@@ -169,11 +179,12 @@ def test_resume_rejects_with_409_when_unresumable(fake_registry):
         wf_id = _make_workflow(proj_id, _unique("wf"), [
             {"step_id": "s1", "tool_name": "t_a", "dependencies": []}])
         run1 = client.post(f"/api/v1/projects/{proj_id}/workflows/{wf_id}/run",
-                           json={"input_bindings": {}, "start_from_step": None}).json()
+                           json={"input_bindings": {}, "start_from_step": None},
+                           headers=_auth_headers()).json()
         assert run1["status"] == "failed"
         # No completed steps → resume is unresumable → 409.
         resumed = client.post(f"/api/v1/projects/{proj_id}/runs/{run1['id']}/resume",
-                              json={"allow_rerun": False})
+                              json={"allow_rerun": False}, headers=_auth_headers())
         assert resumed.status_code == 409
     finally:
         route_mod.get_tool_registry = orig

@@ -458,7 +458,28 @@ class ToolDispatchService:
         map_actions = self._mint_map_action_ids(result)
 
         # 5. 给 LLM 的载荷（压缩 + 可选自愈提示）
-        result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
+        # PERF-F1: the full json.dumps ran unconditionally on the event loop —
+        # 0.6-4s for 100k-feature results, and slim_tool_result discards it
+        # whenever the payload exceeds MSG_MAX_CHARS anyway. Gate on the cheap
+        # structural size estimate; only small payloads pay the real dumps.
+        if isinstance(result, str):
+            result_str = result
+        else:
+            from app.tools.registry import _estimate_json_bytes
+
+            _est = _estimate_json_bytes(result)
+            if _est <= 4096:  # comfortably under MSG_MAX_CHARS even with slack
+                result_str = json.dumps(result, ensure_ascii=False)
+            elif isinstance(result, dict) and "summary" in result:
+                # slim_tool_result's summary branch never reads result_str.
+                result_str = ""
+            else:
+                # Oversized without a summary: serialize OFF the event loop
+                # (review P3 — the space-marker fallback fed the LLM blanks
+                # for oversized non-dict results like bare lists).
+                result_str = await asyncio.to_thread(
+                    json.dumps, result, ensure_ascii=False
+                )
         llm_payload = slim_tool_result(result, result_str, geojson_ref) or result_str
         if is_suspicious_result(result):
             llm_payload += (

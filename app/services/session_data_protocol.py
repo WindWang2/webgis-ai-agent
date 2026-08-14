@@ -176,9 +176,32 @@ class BaseSessionStore:
 
     def _validate_owner_token(self, meta: Optional[Dict[str, Any]], owner_token: Optional[str]) -> Optional[SessionRefDataResult]:
         """Shared owner-token check for get_ref_data / get_ref_descriptor_authorized.
-        Returns a PermissionDenied result if the token mismatches, else None."""
+        Returns a PermissionDenied result if the token mismatches, else None.
+
+        The expected credential is stored as a SHA-256 DIGEST
+        (``owner_token_digest`` in map_state — map_state is echoed to clients,
+        so only a one-way form is persisted). A raw-token form is still
+        honored for back-compat if a legacy writer ever supplied one."""
+        import hashlib
+
         meta = meta or {}
         map_state = meta.get("map_state", {})
+        expected_digest = meta.get("owner_token_digest") or map_state.get("owner_token_digest")
+        if expected_digest:
+            presented_digest = (
+                hashlib.sha256(str(owner_token).encode()).hexdigest()
+                if owner_token else None
+            )
+            if not presented_digest or not hmac.compare_digest(
+                presented_digest, str(expected_digest)
+            ):
+                return SessionRefDataResult(
+                    success=False,
+                    error="Security token mismatch",
+                    error_type="PermissionDenied",
+                )
+            return None
+        # Legacy raw-token form (defensive; no current writer).
         expected_token = meta.get("owner_token") or map_state.get("owner_token")
         if expected_token and (
             not owner_token
