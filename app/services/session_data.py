@@ -67,6 +67,9 @@ class MemorySessionStore(BaseSessionStore):
             self._remove_alias_by_ref(session_id, oldest_ref)
             if session_id in self._descriptors:
                 self._descriptors[session_id].pop(oldest_ref, None)
+            from app.services.mvt import spatial_index_cache, tile_lru_cache
+            spatial_index_cache.invalidate_ref(session_id, oldest_ref)
+            tile_lru_cache.invalidate_ref(session_id, oldest_ref)
             logger.debug(f"Session {session_id}: evicted {oldest_ref} (capacity={self.capacity})")
 
         session_cache[ref_id] = data
@@ -98,6 +101,9 @@ class MemorySessionStore(BaseSessionStore):
         if not session_cache or ref_id not in session_cache:
             return False
         session_cache[ref_id] = data
+        from app.services.mvt import spatial_index_cache, tile_lru_cache
+        spatial_index_cache.invalidate_ref(session_id, ref_id)
+        tile_lru_cache.invalidate_ref(session_id, ref_id)
         # overwrite is the durability path for plans/checkpoints — bump LRU
         # recency so a just-updated plan is not the next eviction victim.
         session_cache.move_to_end(ref_id)
@@ -317,6 +323,9 @@ class MemorySessionStore(BaseSessionStore):
         self._map_action_events.pop(session_id, None)
         self._descriptors.pop(session_id, None)
         self._session_order.pop(session_id, None)
+        from app.services.mvt import spatial_index_cache, tile_lru_cache
+        spatial_index_cache.invalidate_session(session_id)
+        tile_lru_cache.invalidate_session(session_id)
 
     async def cleanup_idle_sessions(self, max_sessions: int = 100) -> None:
         """Evict least-recently-touched sessions when total exceeds max_sessions."""

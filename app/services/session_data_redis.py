@@ -321,6 +321,9 @@ class RedisSessionStore(BaseSessionStore):
                 session_id, ref_id, e,
             )
             return False
+        from app.services.mvt import spatial_index_cache, tile_lru_cache
+        spatial_index_cache.invalidate_ref(session_id, ref_id)
+        tile_lru_cache.invalidate_ref(session_id, ref_id)
         return True
 
     async def set_alias(self, session_id: str, ref_id: str, alias: str) -> None:
@@ -911,6 +914,9 @@ class RedisSessionStore(BaseSessionStore):
         # session recreated with the same id within L1_TTL_SECONDS reads the
         # DELETED session's map_state/refs/event_log from L1.
         self._l1_invalidate_session(session_id)
+        from app.services.mvt import spatial_index_cache, tile_lru_cache
+        spatial_index_cache.invalidate_session(session_id)
+        tile_lru_cache.invalidate_session(session_id)
 
     async def cleanup_idle_sessions(self, max_sessions: int = 100) -> None:
         await self._ensure_connected()
