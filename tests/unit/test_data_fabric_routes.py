@@ -16,6 +16,25 @@ from app.services.mapspec_source import is_data_fabric_entry
 def setup_db():
     Base.metadata.drop_all(bind=Engine)
     init_db()
+    # The create route persists owner_id = JWT sub into data_sources.owner_id,
+    # which FK-references users(id). Postgres (CI) enforces the FK; sqlite
+    # (local) does not — seed the caller's row so both environments agree.
+    from app.models.db_model import User
+    from datetime import datetime, timezone
+
+    with SessionLocal() as db:
+        if db.get(User, "df-user") is None:
+            db.add(User(
+                id="df-user",
+                username="df",
+                email="df-user@example.com",
+                password_hash="scrypt$16384$8$1$00$00",
+                role="editor",
+                is_active=True,
+                token_version=0,
+                created_at=datetime.now(timezone.utc),
+            ))
+            db.commit()
 
 
 def test_data_fabric_rest_routes():
