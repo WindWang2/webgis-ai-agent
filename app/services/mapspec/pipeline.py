@@ -119,7 +119,12 @@ def process_layer_ingestion(
     if is_raster_entry(source_entry) or is_data_fabric_entry(source_entry):
         data_to_profile = source_entry.get("inlineData")
     else:
-        data_to_profile = processed_source_data or profile_data(source_entry)
+        # Profile only what the ENTRY actually carries (inline/url/path —
+        # store_data already normalized the carrier). Never re-profile the
+        # raw source_data dict: for ref-carried sources it is a metadata
+        # carrier (no features), and profiling it overwrote the
+        # descriptor-derived profile with an empty one.
+        data_to_profile = profile_data(source_entry)
 
     if data_to_profile and isinstance(data_to_profile, dict) and (
         processed_source_data is not None or "profile" not in source_entry
