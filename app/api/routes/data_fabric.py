@@ -10,7 +10,7 @@ from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.auth import get_current_user_optional
+from app.core.auth import get_current_user, get_current_user_optional
 from app.models.data_fabric import DataSourceModel, CatalogItemModel
 from app.schemas.data_fabric_schema import (
     ConnectionProfile,
@@ -162,9 +162,15 @@ class MaterializeRequest(BaseModel):
 async def create_data_source(
     req: CreateDataSourceRequest,
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """注册新的地理空间数据源连接配置"""
+    """注册新的地理空间数据源连接配置
+
+    Requires authentication: an anonymous caller previously created a tenant-
+    GLOBAL source (org_id NULL, owner_id NULL) that then appeared in every
+    anonymous user's list and was probe/sync-able by anyone. State-changing +
+    outbound-request-triggering endpoints must not be unauthenticated.
+    """
     try:
         # SSRF is always enforced at registration (ADR-0050 §5 P0). A previous
         # `allow_private` request field let any caller disable all private/loopback/
@@ -276,9 +282,14 @@ async def delete_data_source(
 async def probe_data_source(
     source_id: str,
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """探查数据源健康状况与连通性"""
+    """探查数据源健康状况与连通性
+
+    Requires authentication: probe triggers a server-side outbound HTTP request
+    to the source endpoint — anonymous callers must not be able to initiate
+    arbitrary outbound requests.
+    """
     s = db.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
     _require_tenant_owned(s, user)
 
@@ -302,9 +313,13 @@ async def probe_data_source(
 async def sync_data_source_catalog(
     source_id: str,
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """主动刷新/同步数据源图层元数据至 Spatial Catalog"""
+    """主动刷新/同步数据源图层元数据至 Spatial Catalog
+
+    Requires authentication: sync triggers outbound requests against the source
+    endpoint; anonymous callers must not initiate them.
+    """
     s = db.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
     _require_tenant_owned(s, user)
     try:

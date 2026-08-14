@@ -29,7 +29,14 @@ async def client(app):
 @pytest.mark.asyncio
 async def test_list_tools(client):
     with patch.object(_chat_mod, "registry", MagicMock(get_schemas=lambda: [])):
+        # A-7: the tool catalog (incl. tier-3 schemas) requires authentication.
         resp = await client.get("/api/chat/tools")
+        assert resp.status_code == 401
+        from app.core.auth import create_access_token
+        token = create_access_token({"sub": "tools-user", "username": "t", "role": "viewer"})
+        resp = await client.get(
+            "/api/chat/tools", headers={"Authorization": f"Bearer {token}"}
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert "tools" in data

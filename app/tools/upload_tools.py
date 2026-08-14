@@ -9,8 +9,30 @@ from app.core.config import settings
 from app.tools._utils import db_session
 from app.models.upload import UploadRecord
 from app.utils.path import validate_data_path
+from app.lib.runtime.context import current_runtime_context
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_session_id(provided: Optional[str]) -> Optional[str]:
+    """Return the session id the caller is actually authorized for.
+
+    The ``session_id`` argument an LLM passes to a tool is untrusted — a
+    prompt-injection payload (e.g. inside an uploaded file the agent reads) can
+    coax the model into naming another user's session id, and these tools used
+    to query ``UploadRecord`` by that id with no ownership proof (the HTTP
+    upload routes do verify ownership). The runtime context carries the
+    verified session id this turn is bound to (propagated through
+    ``asyncio.to_thread`` into sync tools). If a verified id exists and the
+    LLM-supplied id disagrees, deny (return None -> empty / NOT_FOUND) rather
+    than exfiltrate another session's uploads.
+    """
+    ctx = current_runtime_context()
+    verified = getattr(ctx, "session_id", None)
+    if verified:
+        return verified if provided in (None, verified) else None
+    # No runtime context (direct execution / tests): trust the provided id.
+    return provided
 
 
 def register_upload_tools(registry: ToolRegistry):
@@ -21,6 +43,7 @@ def register_upload_tools(registry: ToolRegistry):
           description="列出当前会话中用户上传的 GIS 数据文件列表。返回文件名、类型、格式、要素数量等摘要信息。")
     def list_uploaded_data(session_id: Optional[str] = None) -> dict:
         """列出上传数据"""
+        session_id = _resolve_session_id(session_id)
         if not session_id:
             return {
                 "success": True,
@@ -70,6 +93,7 @@ def register_upload_tools(registry: ToolRegistry):
           })
     def get_upload_info(upload_id: int, session_id: Optional[str] = None) -> dict:
         """获取上传数据详情"""
+        session_id = _resolve_session_id(session_id)
         with db_session() as db:
             record = db.query(UploadRecord).filter(UploadRecord.id == upload_id).first()
 

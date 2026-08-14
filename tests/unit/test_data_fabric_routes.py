@@ -21,7 +21,13 @@ def setup_db():
 def test_data_fabric_rest_routes():
     client = TestClient(app)
 
-    # 1. List sources
+    # create/probe/sync now require authentication (anonymous callers used to
+    # create GLOBAL sources and trigger outbound probe/sync requests).
+    from app.core.auth import create_access_token
+    auth_token = create_access_token({"sub": "df-user", "username": "df", "role": "editor"})
+    auth_headers = {"Authorization": f"Bearer {auth_token}"}
+
+    # 1. List sources (read path stays anonymous-optional)
     res = client.get("/api/v1/data-fabric/sources")
     assert res.status_code == 200
     data = res.json()
@@ -40,29 +46,29 @@ def test_data_fabric_rest_routes():
         mock_probe.return_value = DataFabricHealth(status="healthy", message="OK", latency_ms=12.5)
         mock_sync.return_value = []
 
-        create_res = client.post("/api/v1/data-fabric/sources", json=create_payload)
+        create_res = client.post("/api/v1/data-fabric/sources", json=create_payload, headers=auth_headers)
         assert create_res.status_code == 200
         create_data = create_res.json()
         assert create_data["success"] is True
         source_id = create_data["data_source"]["id"]
         assert source_id.startswith("ds_")
 
-    # 3. Get single data source
-    get_res = client.get(f"/api/v1/data-fabric/sources/{source_id}")
+    # 3. Get single data source (owned by df-user -> authenticate)
+    get_res = client.get(f"/api/v1/data-fabric/sources/{source_id}", headers=auth_headers)
     assert get_res.status_code == 200
     assert get_res.json()["name"] == "Test OGC API Source"
 
     # 4. Probe data source health
     with patch("app.services.data_fabric.manager.DataFabricManager.probe_profile") as mock_probe:
         mock_probe.return_value = DataFabricHealth(status="healthy", message="OK", latency_ms=10.0)
-        probe_res = client.post(f"/api/v1/data-fabric/sources/{source_id}/probe")
+        probe_res = client.post(f"/api/v1/data-fabric/sources/{source_id}/probe", headers=auth_headers)
         assert probe_res.status_code == 200
         assert probe_res.json()["status"] == "healthy"
 
     # 5. Sync catalog
     with patch("app.services.data_fabric.manager.DataFabricManager.sync_catalog") as mock_sync:
         mock_sync.return_value = []
-        sync_res = client.post(f"/api/v1/data-fabric/sources/{source_id}/sync")
+        sync_res = client.post(f"/api/v1/data-fabric/sources/{source_id}/sync", headers=auth_headers)
         assert sync_res.status_code == 200
         assert "synced_count" in sync_res.json()
 
@@ -107,7 +113,7 @@ def test_data_fabric_rest_routes():
             "catalog_item_id": f"cat_{source_id}_default",
             "query_spec": {"limit": 5},
         }
-        mat_res = client.post("/api/v1/data-fabric/materialize", json=mat_payload)
+        mat_res = client.post("/api/v1/data-fabric/materialize", json=mat_payload, headers=auth_headers)
         assert mat_res.status_code == 200
         mat_data = mat_res.json()
         assert mat_data["success"] is True
@@ -115,7 +121,7 @@ def test_data_fabric_rest_routes():
         assert mat_data["feature_count"] == 1
 
     # 8. Delete source
-    del_res = client.delete(f"/api/v1/data-fabric/sources/{source_id}")
+    del_res = client.delete(f"/api/v1/data-fabric/sources/{source_id}", headers=auth_headers)
     assert del_res.status_code == 200
     assert del_res.json()["success"] is True
 
