@@ -32,14 +32,22 @@ from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-# Terminal statuses for the first-terminal-wins guard. Only completed/cancelled
-# are truly immutable: ``partially_completed`` is a resumable intermediate, and
-# ``failed`` is resumable too (a transient failure is meant to be retried — the
-# livelock guard separately blocks re-running DETERMINISTIC failures). Treating
-# either as terminal silently dropped the resume convergence write, so a
-# resumed-and-finished plan kept its old status in storage forever while the
-# caller received the new terminal.
+# First-terminal-wins status transition rules.
+#   * ``completed`` / ``cancelled`` are immutable (except a ``superseded``
+#     annotation, which merges into a fresh payload read).
+#   * ``failed`` is RESUMABLE but not freely overwritable: the executor may
+#     legitimately converge it (failed -> running -> completed/partial), yet a
+#     concurrent ``cancelled`` write must NOT flip it (chaos P2) — a cancel
+#     that races the failure write loses, same as before.
+#   * ``partially_completed`` / running / pending have no restriction.
+# Previously ``partially_completed`` and ``failed`` were both fully terminal,
+# which silently dropped the resume convergence write: a resumed-and-finished
+# plan kept its old status in storage forever while the caller received the
+# new terminal.
 _TERMINAL_STATUSES = frozenset({"completed", "cancelled"})
+_FAILED_RESUME_TARGETS = frozenset(
+    {"failed", "running", "completed", "partially_completed", "superseded"}
+)
 
 
 async def _cancel_wave_tasks(wave_tasks: set[asyncio.Task]) -> None:
@@ -346,19 +354,17 @@ async def update_plan_status(session_id: str, plan_id: str, **updates: Any) -> N
         return
     current_status = plan_data.get("__status__")
     new_status = updates.get("__status__")
-    # First-terminal-wins: a true terminal (completed/cancelled) must not
-    # be revived to running. One legitimate override is exempt:
-    #   * ``superseded`` — an external lifecycle signal that a newer plan
-    #     won. It merges into a FRESH payload read (update_plan_status
-    #     reloads before writing), so it cannot clobber __step_results__;
-    #     it only records the supersede on an already-finished plan.
-    #   * (``partially_completed`` and ``failed`` are no longer terminal, so
-    #     they converge freely.)
+    # First-terminal-wins / resume convergence (see _TERMINAL_STATUSES above):
+    # completed/cancelled are immutable (a ``superseded`` annotation is the one
+    # exemption — it merges into a fresh payload read, so it cannot clobber
+    # __step_results__); ``failed`` only accepts executor-resume targets.
     if (
         new_status is not None
-        and current_status in _TERMINAL_STATUSES
         and new_status != current_status
-        and new_status != "superseded"
+        and (
+            (current_status in _TERMINAL_STATUSES and new_status != "superseded")
+            or (current_status == "failed" and new_status not in _FAILED_RESUME_TARGETS)
+        )
     ):
         logger.warning(
             f"update_plan_status: plan {plan_id} 已处于终态 {current_status}，"
