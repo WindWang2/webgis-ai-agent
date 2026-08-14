@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from app.tools.registry import ToolRegistry, tool
 from app.services.mapspec_store import mapspec_store
 from app.services.session_data import session_data_manager
+from app.services.session_data_protocol import is_unavailable_ref
 
 logger = logging.getLogger(__name__)
 
@@ -350,14 +351,25 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
         provenance["result_ref"] = source_ref
         layer["provenance"] = provenance
     elif (
-      isinstance(source_data, dict)
-      and source_data.get("type") in ("Feature", "FeatureCollection")
+        isinstance(source_data, dict)
+        and source_data.get("type") in ("Feature", "FeatureCollection")
     ):
       # Inline inputs are already in memory; persist them once and let MapSpec
       # retain only the resulting opaque identity plus its derived profile.
       source_ref = await session_data_manager.store(
           session_id, source_data, prefix="geojson"
       )
+      # R2-2 (tool-level): a Redis outage makes store() return the
+      # unavailable-ref sentinel. Bailing out HERE keeps the phantom ref out
+      # of MapSpec desired state — the dispatch-level check fires after
+      # layer_upsert has already persisted a layer pointing at a ref with no
+      # payload anywhere.
+      if is_unavailable_ref(source_ref):
+        return {
+            "success": False,
+            "code": "SESSION_STORE_UNAVAILABLE",
+            "message": "会话存储暂时不可用，无法保存图层数据；请稍后重试，无需改变参数。",
+        }
       provenance = (
           dict(layer.get("provenance"))
           if isinstance(layer.get("provenance"), dict) else {}

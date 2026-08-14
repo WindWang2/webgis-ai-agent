@@ -72,7 +72,7 @@ export interface CausalEntry {
 }
 
 export type LeftTab = 'chat' | 'project' | 'layers' | 'analysis' | 'exports' | 'export_layout' | 'data_sources' | 'tasks' | 'results';
-export type SettingsTab = 'llm' | 'skills' | 'rag' | 'layers' | 'map' | 'system';
+export type SettingsTab = 'llm' | 'skills' | 'rag' | 'layers' | 'map' | 'system' | 'account';
 
 export interface SkillEntry {
   id: string;

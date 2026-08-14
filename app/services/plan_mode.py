@@ -905,6 +905,15 @@ async def _execute_plan_locked(
         await _cancel_wave_tasks(wave_tasks)
         logger.exception(f"[PlanMode] execute_plan_async aborted: {e}")
         try:
+            # R2-4: classify the exception instead of hard-coding "internal" —
+            # transient infra errors (e.g. a redis blip raising through the
+            # executor) must stay transient_network or the livelock guard will
+            # permanently refuse resume for a recoverable plan.
+            fc_int, _ra_int = _classify_failure(exception=e)
+            first_unfinished = next(
+                (s.id for s in plan.steps if s.id not in step_results),
+                None,
+            )
             await _write_terminal(
                 __status__=_failure_status(),
                 __error__=f"执行异常: {e}",
@@ -912,11 +921,11 @@ async def _execute_plan_locked(
                 # livelock guard can engage — without these, every resume of an
                 # internally-failed plan re-executed its tools from scratch
                 # (guard needs both fields and a non-transient class).
-                __failure_class__="internal",
-                __failed_step__=next(
-                    (s["id"] for s in plan.get("steps", []) if s["id"] not in step_results),
-                    None,
-                ),
+                # NOTE: plan is a PlanProposal model — attribute access only
+                # (dict access here raised AttributeError that the inner
+                # except swallowed, silently skipping the terminal write).
+                __failure_class__=fc_int or "internal",
+                __failed_step__=first_unfinished,
                 __step_results__=await _persist_step_results(session_id, plan_id, step_results),
             )
         except Exception as e2:  # noqa: BLE001 —— 收敛写失败不能替换原始异常

@@ -372,3 +372,171 @@ async def test_R2_2_dispatch_detects_tool_supplied_result_ref_sentinel(monkeypat
     result = await svc.dispatch(tc, session_id="s-r22", executed_tools=set())
     assert result.status == "error"
     assert result.geojson_ref is None
+
+
+# ── R3-1: unexpected executor exceptions must converge the plan AND record
+# the livelock-guard fields (pre-fix: dict access on the PlanProposal model
+# raised AttributeError that the inner except swallowed → _write_terminal
+# never ran → plan stuck `running` until the 300s stale rescue).
+
+@pytest.mark.asyncio
+async def test_R3_1_crash_convergence_records_guard_fields(monkeypatch):
+    from app.services import plan_mode as svc
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+
+    @reg.tool(name="fake_get_bbox", description="x")
+    def fake_get_bbox(area: str) -> dict:  # noqa: ARG001
+        return {"success": True, "bbox": [0, 0, 1, 1]}
+
+    @reg.tool(name="fake_always_fails", description="x")
+    def fake_always_fails(area: str) -> dict:  # noqa: ARG001
+        return {"success": False, "message": "tool failed"}
+
+    sid = "test-r3-crash-converge"
+    plan = svc.PlanProposal(
+        title="g",
+        steps=[
+            svc.PlanStep(id="s1", tool="fake_get_bbox", args={"area": "x"}),
+            svc.PlanStep(id="s2", tool="fake_always_fails", args={"area": "x"}),
+        ],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+
+    # Fail the FIRST _persist_step_results call — with s2 failing, that call
+    # happens in the failure-terminal write, i.e. the executor machinery
+    # itself blows up mid-run with s2 still unfinished. The crash handler
+    # must converge the plan (real persist works on its second call).
+    real_persist = svc._persist_step_results
+    calls = {"n": 0}
+
+    async def _flaky_persist(session_id, plan_id_, step_results):
+        if calls["n"] == 0:
+            calls["n"] += 1
+            raise RuntimeError("machinery blew up")
+        return await real_persist(session_id, plan_id_, step_results)
+
+    monkeypatch.setattr(svc, "_persist_step_results", _flaky_persist)
+
+    with pytest.raises(RuntimeError, match="machinery blew up"):
+        await svc.execute_plan_async(sid, plan_id, reg)
+
+    data = await svc.load_plan(sid, plan_id)
+    assert data is not None
+    # Pre-fix: stayed "running" (terminal write skipped by the swallowed
+    # AttributeError from plan.get on the PlanProposal model).
+    assert data["__status__"] in ("failed", "partially_completed")
+    assert data["__failed_step__"] == "s2"
+    # RuntimeError classifies as internal — livelock guard can engage.
+    assert data["__failure_class__"] == "internal"
+
+
+# ── R3-2: a transient infra exception (ConnectionError) in the machinery must
+# stay transient_network — the crash handler used to hard-code "internal",
+# which made the livelock guard permanently refuse resume after a redis blip.
+
+@pytest.mark.asyncio
+async def test_R3_2_transient_crash_stays_resumable(monkeypatch):
+    from app.services import plan_mode as svc
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+
+    @reg.tool(name="fake_get_bbox", description="x")
+    def fake_get_bbox(area: str) -> dict:  # noqa: ARG001
+        return {"success": True, "bbox": [0, 0, 1, 1]}
+
+    # Fails on the first execution, succeeds on resume — lets the test assert
+    # both the transient classification AND actual resume convergence.
+    flaky = {"failed_once": False}
+
+    @reg.tool(name="fake_flaky_step", description="x")
+    def fake_flaky_step(area: str) -> dict:  # noqa: ARG001
+        if not flaky["failed_once"]:
+            flaky["failed_once"] = True
+            return {"success": False, "message": "transient step failure"}
+        return {"success": True, "bbox": [2, 2, 3, 3]}
+
+    sid = "test-r3-transient"
+    plan = svc.PlanProposal(
+        title="g",
+        steps=[
+            svc.PlanStep(id="s1", tool="fake_get_bbox", args={"area": "x"}),
+            svc.PlanStep(
+                id="s2", tool="fake_flaky_step", args={"area": "x"}, depends_on=["s1"]
+            ),
+        ],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+
+    real_persist = svc._persist_step_results
+    calls = {"n": 0}
+
+    async def _flaky_persist(session_id, plan_id_, step_results):
+        if calls["n"] == 0:
+            calls["n"] += 1
+            raise ConnectionError("redis blip")
+        return await real_persist(session_id, plan_id_, step_results)
+
+    monkeypatch.setattr(svc, "_persist_step_results", _flaky_persist)
+
+    with pytest.raises(ConnectionError, match="redis blip"):
+        await svc.execute_plan_async(sid, plan_id, reg)
+
+    data = await svc.load_plan(sid, plan_id)
+    assert data is not None
+    assert data["__status__"] in ("failed", "partially_completed")
+    assert data["__failed_step__"] == "s2"
+    # Pre-fix this was hard-coded "internal"; transient stays resumable.
+    assert data["__failure_class__"] == "transient_network"
+
+    # And the resume actually re-executes (livelock guard must NOT engage for
+    # a transient class).
+    ret = await svc.execute_plan_async(sid, plan_id, reg)
+    assert ret["success"] is True
+    assert ret["status"] == "completed"
+    data2 = await svc.load_plan(sid, plan_id)
+    assert data2["__status__"] == "completed"
+
+
+# ── R3-3: webgis_layer_upsert's inline branch must not persist a MapSpec
+# layer pointing at the unavailable-ref sentinel (dispatch-level R2-2 fires
+# only AFTER layer_upsert has already latched the phantom layer).
+
+@pytest.mark.asyncio
+async def test_R3_3_layer_upsert_inline_refuses_store_sentinel(monkeypatch):
+    from app.services.session_data_protocol import UNAVAILABLE_REF_PREFIX
+    from app.tools.registry import ToolRegistry
+    from app.tools.cartography_tools import register_mapspec_cartography_tools
+
+    sentinel = f"{UNAVAILABLE_REF_PREFIX}deadbeef"
+
+    async def _unavailable_store(session_id, data, prefix="geojson"):
+        return sentinel
+
+    upserted = {"calls": 0}
+
+    class _FakeMapspecStore:
+        async def layer_upsert(self, *a, **k):
+            upserted["calls"] += 1
+            return {"success": True, "mapspec": {}}
+
+    monkeypatch.setattr(
+        "app.tools.cartography_tools.session_data_manager.store", _unavailable_store
+    )
+    monkeypatch.setattr(
+        "app.tools.cartography_tools.mapspec_store", _FakeMapspecStore()
+    )
+
+    reg = ToolRegistry()
+    register_mapspec_cartography_tools(reg)
+    fn = reg._tools["webgis_layer_upsert"]
+
+    result = await fn(
+        layer={"id": "l1", "type": "fill"},
+        source_data={"type": "FeatureCollection", "features": []},
+        session_id="s-r3-inline",
+    )
+    assert result["success"] is False
+    assert upserted["calls"] == 0, "layer_upsert must not run on a phantom ref"

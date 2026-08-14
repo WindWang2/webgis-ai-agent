@@ -23,6 +23,7 @@
  */
 
 import { API_BASE } from './config';
+import { getAccessToken, getRefreshToken, refreshAuthToken } from '../auth/tokenStore';
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -63,6 +64,11 @@ export interface ApiFetchOptions {
   label?: string;
   /** False → do not read the response body (204 deletes); resolves undefined. */
   parseJson?: boolean;
+  /**
+   * Skip Bearer attachment AND the 401 refresh-retry (auth endpoints
+   * themselves). Defaults to false.
+   */
+  skipAuth?: boolean;
   /**
    * Request credentials mode. Defaults to "same-origin" (browser default);
    * cross-origin cookie-bearing endpoints (data-fabric, layer types) pass
@@ -152,6 +158,10 @@ function buildRequest(
     'X-Request-ID': requestId,
   };
   if (options.ownerToken) headers['X-Session-Token'] = options.ownerToken;
+  // Bearer auth when the user is signed in (data-fabric writes, /chat/tools,
+  // admin surfaces). Rebuilt per attempt so a refreshed token is picked up.
+  const accessToken = options.skipAuth ? null : getAccessToken();
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
   const init: RequestInit = { method, headers };
   if (options.signal) init.signal = options.signal;
   if (options.credentials) init.credentials = options.credentials;
@@ -263,8 +273,32 @@ function isRetryable(err: unknown, method: string): boolean {
  *
  * The retry loop is the ONLY place requests are re-sent, and it is closed to
  * non-idempotent methods by construction — see isRetryable.
+ *
+ * Auth recovery wraps the loop: ONE refresh-and-retry after a 401 when a
+ * refresh token is held. Safe even for POST because a 401 response means the
+ * server rejected the request without processing it.
  */
 export async function apiFetch<T = unknown>(
+  path: string,
+  options: ApiFetchOptions = {},
+): Promise<T> {
+  try {
+    return await apiFetchAttempt<T>(path, options);
+  } catch (err) {
+    if (
+      !options.skipAuth &&
+      err instanceof ApiError &&
+      err.status === 401 &&
+      getRefreshToken() !== null
+    ) {
+      const refreshed = await refreshAuthToken();
+      if (refreshed) return apiFetchAttempt<T>(path, options);
+    }
+    throw err;
+  }
+}
+
+async function apiFetchAttempt<T = unknown>(
   path: string,
   options: ApiFetchOptions = {},
 ): Promise<T> {

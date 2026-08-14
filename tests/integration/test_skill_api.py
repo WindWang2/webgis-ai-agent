@@ -25,17 +25,32 @@ def client():
 
 @pytest.fixture
 def auth_headers():
-    """The skill list is internal metadata and requires authentication."""
+    """Authenticated callers use the same metadata endpoint."""
     from app.core.auth import create_access_token
     token = create_access_token({"sub": "skill-user", "username": "s", "role": "viewer"})
     return {"Authorization": f"Bearer {token}"}
 
 
 class TestSkillListAPI:
-    def test_list_skills_requires_authentication(self, client):
-        """A-7 regression: anonymous callers must get 401, not the skill list."""
+    def test_list_skills_anonymous_gets_metadata_only(self, client):
+        """The catalog read is anonymous-accessible (the shipped SkillsHub UI is
+        anonymous-first with no Bearer capability), but MUST expose metadata
+        only — never skill bodies or filenames."""
+        _md_skills["urban_planning_x"] = {
+            "description": "城市规划设计",
+            "body": "SECRET BODY 分析城市布局...",
+            "filename": "urban_planning.md",
+        }
         resp = client.get("/api/v1/chat/skills")
-        assert resp.status_code == 401
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["skills"] == [
+            {"name": "urban_planning_x", "description": "城市规划设计"}
+        ]
+        raw = resp.text
+        assert "SECRET BODY" not in raw
+        assert "urban_planning.md" not in raw
+        _md_skills.pop("urban_planning_x", None)
 
     def test_list_skills_empty(self, client, auth_headers):
         resp = client.get("/api/v1/chat/skills", headers=auth_headers)
