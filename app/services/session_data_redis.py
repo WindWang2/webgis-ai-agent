@@ -932,7 +932,9 @@ class RedisSessionStore(BaseSessionStore):
                 raw_score = earliest[0][1] if earliest else 0
             scored.append((sid, float(raw_score)))
         scored.sort(key=lambda x: x[1])
-        to_remove = len(scored) - max_sessions + 10
+        # Evict only the OVERFLOW (the old `+10` kept max-10 sessions and, for
+        # max_sessions < 10, the negative slice removed EVERYTHING).
+        to_remove = max(0, len(scored) - max_sessions)
         for sid, _ in scored[:to_remove]:
             await self.clear_session(sid)
         logger.info("Cleaned up %d idle sessions", min(to_remove, len(scored)))

@@ -1651,7 +1651,23 @@ class ChatExecutionEngine:
                         continue
                     else:
                         content = raw_content
-                
+
+                        # CORRECTNESS-4: an empty completion (no content, no
+                        # tool calls) is a provider anomaly, not an answer —
+                        # the old path saved an empty assistant message and
+                        # reported success. Fail the turn truthfully so the
+                        # client retries instead of showing an empty bubble.
+                        if not content and not tc_list:
+                            self.tracker.fail_task(task.id, "empty completion from provider")
+                            rt_ev.settle(Outcome.FAILED, failure_class="empty_result")
+                            yield sse_event("task_error", {
+                                "task_id": task.id,
+                                "error": "模型返回了空响应，请重试。",
+                                "session_id": session_id,
+                            })
+                            yield sse_event("done", {"session_id": session_id})
+                            return
+
                         entry = {"role": "assistant", "content": content}
                         if reasoning:
                             entry["reasoning_content"] = reasoning

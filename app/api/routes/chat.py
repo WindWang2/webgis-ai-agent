@@ -672,6 +672,24 @@ async def chat_stream(
                 pi_owner_token = _pi_stream_capability(
                     conversation, created, user_id, owner_token
                 )
+                # SEC-08 store-layer guard wiring: persist a ONE-WAY digest of
+                # the conversation's owner token so
+                # session_data_protocol._validate_owner_token can engage for
+                # data-plane ref reads. A digest (never the raw token) because
+                # map_state is echoed back to clients by the state endpoint.
+                # Best-effort: route-level ownership checks remain primary.
+                _conv_token = getattr(conversation, "owner_token", None)
+                if _conv_token:
+                    try:
+                        import hashlib as _hashlib
+
+                        await session_data_manager.set_map_state(
+                            pi_session_id,
+                            "owner_token_digest",
+                            _hashlib.sha256(str(_conv_token).encode()).hexdigest(),
+                        )
+                    except Exception:  # noqa: BLE001 — guard wiring is additive
+                        pass
     finally:
         # Release the connection NOW, not when the stream ends. The guard is
         # the only consumer; nothing downstream uses ``db``.
