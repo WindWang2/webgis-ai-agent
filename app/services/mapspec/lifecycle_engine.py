@@ -250,7 +250,17 @@ class MapSpecLifecycleEngine:
                     is_error=True,
                     error_msg="Session was deleted; stale MapSpec mutation rejected.",
                 )
-            old_layers_snapshot = copy.deepcopy(pre_state.get("layers", []) or [])
+            # PERF-F8: defer the layers deepcopy — view/layout/time intents
+            # never touch layers, and the COW work already avoids copying the
+            # mapspec for them; this unconditional copy was left behind.
+            _layers_touching = isinstance(
+                intent, (UpsertLayerIntent, RemoveLayerIntent, InitProjectIntent, RollbackIntent)
+            )
+            old_layers_snapshot = (
+                copy.deepcopy(pre_state.get("layers", []) or [])
+                if _layers_touching
+                else list(pre_state.get("layers", []) or [])
+            )
             observation = pre_state.get("_cartographic_observation")
             try:
                 runtime_observation_seq = int(

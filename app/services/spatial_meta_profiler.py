@@ -154,12 +154,10 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
   fields_profile: Dict[str, Dict[str, Any]] = {}
   for k in sorted(field_keys):
     vals = field_values.get(k, [])
-    null_count = sum(
-        1
-        for feature in features
-        if not isinstance(feature.get("properties"), dict)
-        or feature.get("properties", {}).get(k) is None
-    )
+    # PERF-F4: the old null_count re-scanned ALL features PER FIELD (O(F·K)
+    # full walks per upsert). field_values[k] already collected exactly the
+    # non-None values, so the null count is arithmetic.
+    null_count = max(0, feature_count - len(vals))
     if not vals:
       fields_profile[k] = {
           "type": "string",

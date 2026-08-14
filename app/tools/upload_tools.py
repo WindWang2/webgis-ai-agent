@@ -130,16 +130,19 @@ def register_upload_tools(registry: ToolRegistry):
                 info["attributes"] = meta.get("attributes", [])
 
             # 读取 GeoJSON 前几条特征的属性作为示例
+            # PERF-F9: never full-parse the file just to sample 3 features —
+            # a 50 MB upload cost 1-3s + a full memory spike per call. A
+            # bounded prefix read finds the first few "properties" objects
+            # via a streaming decoder; if that fails, degrade to meta.json
+            # attributes only.
             if geojson_path.exists():
                 try:
-                    with open(geojson_path, "r", encoding="utf-8") as f:
-                        geojson = json.load(f)
-                    features = geojson.get("features", [])
-                    if features:
-                        info["sample_properties"] = [
-                            f.get("properties", {}) for f in features[:3]
-                        ]
-                except (json.JSONDecodeError, OSError) as e:
+                    from app.utils.geojson_prefix_sampler import sample_feature_properties
+
+                    sampled = sample_feature_properties(geojson_path, count=3, max_bytes=262_144)
+                    if sampled:
+                        info["sample_properties"] = sampled
+                except Exception as e:  # noqa: BLE001 — sampling is best-effort
                     logger.warning(f"读取 GeoJSON 示例失败: {e}")
 
         # 栅格数据：读取 meta.json

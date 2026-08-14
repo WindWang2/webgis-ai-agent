@@ -310,6 +310,13 @@ def profile_temporal_dataset(
     total_records = len(records)
     valid_instants: List[TimeInstant] = []
 
+    # PERF-F5: extent/granularity/gap estimation is heuristic — capping the
+    # parsed sample avoids an O(F) python parse + O(F log F) sort per layer
+    # upsert on 100k-feature layers.
+    _MAX_TEMPORAL_SAMPLE = 5000
+    if len(p_vals) > _MAX_TEMPORAL_SAMPLE:
+        p_vals = p_vals[:_MAX_TEMPORAL_SAMPLE]
+
     for v in p_vals:
         res = parse_value_to_instant(v, field_name_hint=selected_primary.field_name)
         if res is not None:

@@ -41,6 +41,13 @@ def make_cache_key(tool_name: str, args: dict) -> Optional[str]:
     """
     if _contains_ref(args):
         return None
+    # PERF-F3: content-addressing a resolved 100k-feature payload cost ~0.8s
+    # of sha256+dumps per cached-tool call, and per-session data virtually
+    # never hits. Size-gate: oversized args bypass the cache entirely.
+    from app.tools.registry import _estimate_json_bytes
+
+    if _estimate_json_bytes(args) > 262_144:  # 256 KB
+        return None
     canonical = json.dumps(args, sort_keys=True, separators=(",", ":"), default=str)
     digest = hashlib.sha256(f"{tool_name}::{canonical}".encode()).hexdigest()[:16]
     return f"tool_cache:v1:{digest}"

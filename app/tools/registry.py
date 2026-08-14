@@ -524,8 +524,13 @@ class ToolRegistry:
                 )
 
         # GeoJSON 几何结构校验 (BE-AUDIT-08)
+        # PERF-F2: the recursive walk cost ~0.7s on the event loop for a
+        # 100k-feature payload — structural sanity for large payloads is
+        # already covered by the session store's descriptor computation, so
+        # only small/medium argument trees pay the walk.
         try:
-            validate_geojson_structure(arguments)
+            if _estimate_json_bytes(arguments) <= 262_144:  # 256 KB
+                validate_geojson_structure(arguments)
         except ValueError as e:
             return std_error_response(
                 str(e),
@@ -663,6 +668,12 @@ class ToolRegistry:
                 if node.startswith("ref:") or _resolved != node:
                     data = await session_data_manager.get(session_id, node)
                     if data is not None:
+                        # PERF-F2: the dereferenced payload is OPAQUE — refs
+                        # live in the ARGUMENTS, not inside stored data. The
+                        # old code recursed into the whole payload (rebuilding
+                        # a 100k-feature tree node-by-node on the event loop,
+                        # ~1s) re-resolving strings that merely HAPPENED to
+                        # match aliases. Return by reference.
                         return data
 
                     # 解引用失败：构造详细错误信息引导 AI 自愈

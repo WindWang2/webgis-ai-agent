@@ -42,7 +42,9 @@ logger = logging.getLogger(__name__)
 
 # Paths warned about lacking a CRS (bounded by the distinct-file working set;
 # not a leak — rasters are a small, short-lived set per process).
-_CRS_LESS_WARNED: set[str] = set()
+# PERF-F6: bounded (was unbounded per-path growth over process lifetime).
+_CRS_LESS_WARNED: "set[str]" = set()
+_CRS_LESS_WARNED_MAX = 4096
 
 
 def _normalize_channel(arr: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
@@ -109,6 +111,8 @@ def render_raster_tile(
                 # Warn at most once per file: a pan/zoom touches many tiles and
                 # would otherwise emit thousands of identical warnings.
                 if raster_path not in _CRS_LESS_WARNED:
+                    if len(_CRS_LESS_WARNED) >= _CRS_LESS_WARNED_MAX:
+                        _CRS_LESS_WARNED.clear()  # warn-once is best-effort
                     _CRS_LESS_WARNED.add(raster_path)
                     logger.warning(
                         "raster_tile_service: %s has no CRS tag; assuming source "
