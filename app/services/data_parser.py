@@ -203,8 +203,12 @@ def _parse_csv(
         crs="EPSG:4326",
     )
 
-    # 去掉无效几何 (NaN/Inf coordinates included)
-    finite = np.isfinite(lng.to_numpy()) & np.isfinite(lat.to_numpy())
+    # 去掉无效几何 (NaN/Inf coordinates included). Build the mask as a Series
+    # aligned to df's index so it stays correct even if read_csv gains an
+    # index_col or the frame is reindexed before masking.
+    finite = pd.Series(
+        np.isfinite(lng.to_numpy()) & np.isfinite(lat.to_numpy()), index=df.index
+    )
     gdf = gdf[finite & ~gdf.geometry.is_empty & gdf.geometry.notna()]
     if gdf.empty:
         raise ParseError("CSV 中没有有效的坐标数据")

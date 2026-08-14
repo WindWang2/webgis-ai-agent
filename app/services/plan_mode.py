@@ -32,12 +32,14 @@ from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-# Terminal statuses for the first-terminal-wins guard. ``partially_completed``
-# is intentionally NOT terminal: it is a resumable intermediate (the resume
-# path re-executes and must converge to completed/failed/cancelled). Treating
-# it as terminal silently dropped the partial->completed transition, so a
-# resumed-and-finished plan stayed partially_completed in storage forever.
-_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
+# Terminal statuses for the first-terminal-wins guard. Only completed/cancelled
+# are truly immutable: ``partially_completed`` is a resumable intermediate, and
+# ``failed`` is resumable too (a transient failure is meant to be retried — the
+# livelock guard separately blocks re-running DETERMINISTIC failures). Treating
+# either as terminal silently dropped the resume convergence write, so a
+# resumed-and-finished plan kept its old status in storage forever while the
+# caller received the new terminal.
+_TERMINAL_STATUSES = frozenset({"completed", "cancelled"})
 
 
 async def _cancel_wave_tasks(wave_tasks: set[asyncio.Task]) -> None:

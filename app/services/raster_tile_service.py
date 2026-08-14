@@ -40,6 +40,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Paths warned about lacking a CRS (bounded by the distinct-file working set;
+# not a leak — rasters are a small, short-lived set per process).
+_CRS_LESS_WARNED: set[str] = set()
+
 
 def _normalize_channel(arr: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
     """Normalize numeric array to 0-255 uint8 channel."""
@@ -102,12 +106,16 @@ def render_raster_tile(
             # (EPSG:3857 -> identity transform) and warn loudly so it is not
             # silently misprojected.
             if src.crs is None:
-                logger.warning(
-                    "raster_tile_service: %s has no CRS tag; assuming source "
-                    "is already in EPSG:3857 (no reprojection). Assign a CRS "
-                    "for correct tiling.",
-                    raster_path,
-                )
+                # Warn at most once per file: a pan/zoom touches many tiles and
+                # would otherwise emit thousands of identical warnings.
+                if raster_path not in _CRS_LESS_WARNED:
+                    _CRS_LESS_WARNED.add(raster_path)
+                    logger.warning(
+                        "raster_tile_service: %s has no CRS tag; assuming source "
+                        "is already in EPSG:3857 (no reprojection). Assign a CRS "
+                        "for correct tiling.",
+                        raster_path,
+                    )
                 src_crs = "EPSG:3857"
             else:
                 src_crs = src.crs

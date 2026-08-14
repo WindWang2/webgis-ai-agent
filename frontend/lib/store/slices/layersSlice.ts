@@ -149,6 +149,9 @@ export const createLayersSlice: StateCreator<HudState, [], [], Partial<HudState>
       );
       set({ analysisAssets: assets });
     } catch (e) {
+      // F-2: if the NEWEST fetch fails, clear the stale assets rather than
+      // leave the previous session's list visible on the fresh session.
+      if (seq === _analysisAssetsSeq) set({ analysisAssets: [] });
       if (!isApiError(e)) devOnly.error('Failed to fetch assets:', e);
     }
     void get;

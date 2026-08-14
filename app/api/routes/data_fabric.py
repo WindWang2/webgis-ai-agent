@@ -468,9 +468,13 @@ async def preview_catalog_item(
     item_id: str,
     limit: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """获取 Spatial Catalog 项的有界样例数据预览"""
+    """获取 Spatial Catalog 项的有界样例数据预览
+
+    Requires authentication: preview triggers a server-side remote fetch against
+    the source endpoint, so anonymous callers must not be able to initiate it.
+    """
     try:
         _authorize_catalog_item(db, item_id, user)
         q_spec = QuerySpec(limit=limit)
@@ -494,9 +498,13 @@ async def query_catalog_item(
     item_id: str,
     query_spec: QuerySpec,
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """执行下推（Pushdown）选择性查询"""
+    """执行下推（Pushdown）选择性查询
+
+    Requires authentication: query runs a remote fetch against the source
+    endpoint, so anonymous callers must not be able to initiate it.
+    """
     try:
         _authorize_catalog_item(db, item_id, user)
         q_res = data_fabric_manager.query_catalog_item(db, item_id, query_spec)
@@ -513,9 +521,13 @@ async def materialize_catalog_item(
     req: MaterializeRequest,
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """按需实例化（Materialize）数据至会话 SessionStore 并产生 ref_id 游标"""
+    """按需实例化（Materialize）数据至会话 SessionStore 并产生 ref_id 游标
+
+    Requires authentication: materialize runs a remote fetch and writes session
+    store refs, so anonymous callers must not be able to initiate it.
+    """
     try:
         _authorize_catalog_item(db, req.catalog_item_id, user)
         _require_existing_session_owner(db, req.session_id, user, owner_token)

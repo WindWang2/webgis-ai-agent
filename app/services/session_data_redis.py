@@ -606,9 +606,11 @@ class RedisSessionStore(BaseSessionStore):
                     pipe.expire(state_key, STATE_TTL)
                     pipe.sadd(self._active_key(), session_id)
                     # D-2: a layer edit is session activity — refresh the whole
-                    # key family + bump the activity zset so a long editing
-                    # session does not lose its ref registry/payloads at the 4h
-                    # mark, and is not evicted as idle.
+                    # session KEY FAMILY (aliases/refs/refs_order/index/state/
+                    # events/ACKs) and bump the activity zset so a long editing
+                    # session is not evicted as idle and keeps its metadata.
+                    # (Per-ref payloads are TTL-refreshed on get()/ref_exists()
+                    # reads; this call refreshes the shared family keys.)
                     self._refresh_session_ttl(pipe, session_id)
                     await pipe.execute()
                     self._l1_invalidate_session(session_id)
@@ -775,9 +777,9 @@ class RedisSessionStore(BaseSessionStore):
                     pipe.expire(actions_key, STATE_TTL)
                     pipe.expire(order_key, STATE_TTL)
                     pipe.sadd(self._active_key(), session_id)
-                    # D-2: an ACK is session activity — refresh the whole key
-                    # family + bump activity so a long ACK-only session keeps its
-                    # payloads/registry and is not evicted as idle.
+                    # D-2: an ACK is session activity — refresh the session key
+                    # family + bump the activity zset so a long ACK-only session
+                    # keeps its metadata and is not evicted as idle.
                     self._refresh_session_ttl(pipe, session_id)
                     await pipe.execute()
                 return True

@@ -82,7 +82,8 @@ def _finite_pair(lon, lat) -> bool:
     """True iff both coordinates are present and finite (drops NaN/Inf inputs)."""
     try:
         return math.isfinite(float(lon)) and math.isfinite(float(lat))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: float(huge_int) overflows (e.g. a pathological coord).
         return False
 
 _SUPPORTED_TYPES = frozenset(

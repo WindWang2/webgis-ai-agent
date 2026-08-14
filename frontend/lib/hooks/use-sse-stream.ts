@@ -653,7 +653,6 @@ export function useSSEStream(
   const handleSend = useCallback(
     async (userMsg: string) => {
       if (!userMsg || isLoadingRef.current || sendingRef.current) return;
-      sendingRef.current = true;
 
       const { viewport, baseLayer, is3D, layers: hudLayers, selectedFeature, focusLayerId } = useHudStore.getState();
       const liveSnapshot = getMapSnapshot();
@@ -721,6 +720,11 @@ export function useSSEStream(
       ]);
 
       try {
+        // F-5: set inside the try so a synchronous throw in the setup above
+        // (which runs before this point, no awaits) cannot leave the guard
+        // stuck. It is still set before the first await, so a same-tick second
+        // send (which can only run once we yield at bridge.send) sees it.
+        sendingRef.current = true;
         await bridge.send(userMsg, mapState);
 
         // Flush any tokens still pending in the current frame so the final

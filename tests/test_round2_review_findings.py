@@ -98,6 +98,14 @@ def test_A4_data_fabric_mutations_require_auth():
     # probe / sync on any id without token -> 401 (auth runs before lookup)
     assert client.post("/api/v1/data-fabric/sources/ds_x/probe").status_code == 401
     assert client.post("/api/v1/data-fabric/sources/ds_x/sync").status_code == 401
+    # preview / query / materialize also trigger outbound remote fetches on
+    # global sources — anonymous callers must not initiate them (R1S-A4).
+    assert client.get("/api/v1/data-fabric/catalog/cat_x/preview").status_code == 401
+    assert client.post("/api/v1/data-fabric/catalog/cat_x/query", json={"limit": 1}).status_code == 401
+    assert client.post(
+        "/api/v1/data-fabric/materialize",
+        json={"session_id": "s", "catalog_item_id": "cat_x"},
+    ).status_code == 401
 
 
 # ── A-2: upload tools must not read another session's uploads ────────────────
@@ -167,7 +175,7 @@ def test_E4_isochrone_weight_is_metric_not_degree_attribute():
     attribute — otherwise the meter cutoff reaches the whole network."""
     from app.lib.geo_analysis.network import calculate_isochrones
 
-    # Two short road edges near the equator, each ~0.01 deg (~1.1 km).
+    # One short road edge near the equator: 0.01 deg lon ≈ 1.11 km.
     def _line(fid, x1, y1, x2, y2):
         return {"type": "Feature", "properties": {"id": fid, "length": 0.001},
                 "geometry": {"type": "LineString", "coordinates": [[x1, y1], [x2, y2]]}}
@@ -176,11 +184,27 @@ def test_E4_isochrone_weight_is_metric_not_degree_attribute():
         {"type": "Feature", "properties": {"id": "f1"},
          "geometry": {"type": "Point", "coordinates": [0.0, 0.0]}}]}
     res = calculate_isochrones(net, fac, travel_time_min=1, mode="walking")
-    # 1 min walking ~ 80 m; the ~1.1 km edge is NOT fully reachable. With the
-    # old degree-weight bug (0.001 "m"), the whole edge (and any connected
-    # network) was reachable. Assert we got a result, not a network-swallowing
-    # polygon; the key correctness check is that no exception + bounded result.
-    assert res.success in (True, False)
+    assert res.success is True, getattr(res, "error", None)
+    # 1 min walking ≈ 80 m, so only ~80 m of the ~1.11 km edge is reachable.
+    # Extract the isochrone polygon's longitude extent.
+    feats = res.data["features"] if isinstance(res.data, dict) else res.data
+    assert feats, "expected an isochrone polygon feature"
+    lons: list[float] = []
+
+    def _collect(node):
+        if isinstance(node, (list, tuple)) and node and isinstance(node[0], (int, float)):
+            lons.append(float(node[0]))
+        elif isinstance(node, (list, tuple)):
+            for child in node:
+                _collect(child)
+
+    _collect(feats[0]["geometry"]["coordinates"])
+    span = max(lons) - min(lons)
+    # Post-fix (metric weight): polygon spans ~0.001-0.002 deg (reachable
+    # ~80 m + ~30 m road buffer). Pre-fix (degree-valued attribute used as
+    # meters): the 0.001 "m" weight makes the WHOLE 1.11 km edge reachable,
+    # so the polygon spans ≈ 0.01 deg. 0.005 deg cleanly separates the two.
+    assert span < 0.005, f"isochrone swallowed the network: lon span {span:.5f} deg"
 
 
 # ── D-1: session activity must refresh state/events/ACK key TTLs ─────────────
@@ -284,3 +308,27 @@ async def test_H1_dispatch_detects_unavailable_ref_sentinel(monkeypatch):
     assert result.status == "error"
     assert result.geojson_ref is None
     assert "unavailable" in (result.error_msg or "")
+
+
+# ── B-1 (R1C-3): a transient 'failed' plan must be resumable and converge ────
+
+@pytest.mark.asyncio
+async def test_B1_failed_plan_can_converge_on_resume():
+    """A plan that failed (no stored step results) and is legitimately resumed
+    must be able to advance to completed. ``failed`` is resumable (transient
+    failures are retried); only completed/cancelled are truly terminal."""
+    from app.services import plan_mode as svc
+
+    sid = "test-b1-failed-resume"
+    plan = svc.PlanProposal(
+        title="g",
+        steps=[svc.PlanStep(id="s1", tool="fake_get_bbox", args={"area": "x"})],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+    await svc.update_plan_status(sid, plan_id, __status__="failed")
+    # Resume: failed -> running -> completed must all be writable.
+    await svc.update_plan_status(sid, plan_id, __status__="running")
+    await svc.update_plan_status(sid, plan_id, __status__="completed")
+    data = await svc.load_plan(sid, plan_id)
+    assert data is not None
+    assert data["__status__"] == "completed"
