@@ -307,6 +307,11 @@ class RedisSessionStore(BaseSessionStore):
         try:
             async with self._r.pipeline() as pipe:
                 pipe.set(data_key, json.dumps(data, ensure_ascii=False), ex=DATA_TTL)
+                # D-4: the payload changed, so the cached descriptor (bbox /
+                # feature_count / geometry_types from the OLD payload) is stale.
+                # Drop it so the next get_ref_descriptor recomputes from the new
+                # payload instead of returning store-time metadata forever.
+                pipe.delete(self._descriptor_key(session_id, ref_id))
                 pipe.zadd(self._refs_order_key(session_id), {ref_id: time.time()})
                 self._refresh_session_ttl(pipe, session_id)
                 await pipe.execute()
@@ -400,12 +405,23 @@ class RedisSessionStore(BaseSessionStore):
             if raw is None:
                 return None
 
-            async with self._r.pipeline() as pipe:
-                pipe.expire(data_key, DATA_TTL)
-                pipe.expire(self._descriptor_key(session_id, ref_id), DATA_TTL)
-                pipe.zadd(self._refs_order_key(session_id), {ref_id: time.time()})
-                self._refresh_session_ttl(pipe, session_id)
-                await pipe.execute()
+            # Best-effort TTL/recency refresh: a transient Redis error on the
+            # expire/zadd pipeline must NOT turn a successful read into a
+            # cache-miss (the previous code shared one try/except with the read
+            # and returned None on a refresh hiccup — live data looked deleted
+            # during Redis jitter).
+            try:
+                async with self._r.pipeline() as pipe:
+                    pipe.expire(data_key, DATA_TTL)
+                    pipe.expire(self._descriptor_key(session_id, ref_id), DATA_TTL)
+                    pipe.zadd(self._refs_order_key(session_id), {ref_id: time.time()})
+                    self._refresh_session_ttl(pipe, session_id)
+                    await pipe.execute()
+            except aioredis.RedisError as e:
+                logger.warning(
+                    "Redis TTL refresh failed for session %s ref %s: %s — returning cached data",
+                    session_id, ref_id_or_alias, e,
+                )
 
             raw_str = raw.decode() if isinstance(raw, bytes) else raw
             try:
@@ -589,6 +605,13 @@ class RedisSessionStore(BaseSessionStore):
                     pipe.hset(state_key, "layers", json.dumps(layers, ensure_ascii=False))
                     pipe.expire(state_key, STATE_TTL)
                     pipe.sadd(self._active_key(), session_id)
+                    # D-2: a layer edit is session activity — refresh the whole
+                    # session KEY FAMILY (aliases/refs/refs_order/index/state/
+                    # events/ACKs) and bump the activity zset so a long editing
+                    # session is not evicted as idle and keeps its metadata.
+                    # (Per-ref payloads are TTL-refreshed on get()/ref_exists()
+                    # reads; this call refreshes the shared family keys.)
+                    self._refresh_session_ttl(pipe, session_id)
                     await pipe.execute()
                     self._l1_invalidate_session(session_id)
                     return True
@@ -634,6 +657,8 @@ class RedisSessionStore(BaseSessionStore):
                     pipe.hset(state_key, "layers", json.dumps(new_layers, ensure_ascii=False))
                     pipe.expire(state_key, STATE_TTL)
                     pipe.sadd(self._active_key(), session_id)
+                    # D-2: same rationale as update_layer_in_state.
+                    self._refresh_session_ttl(pipe, session_id)
                     await pipe.execute()
                     self._l1_invalidate_session(session_id)
                     return True
@@ -752,6 +777,10 @@ class RedisSessionStore(BaseSessionStore):
                     pipe.expire(actions_key, STATE_TTL)
                     pipe.expire(order_key, STATE_TTL)
                     pipe.sadd(self._active_key(), session_id)
+                    # D-2: an ACK is session activity — refresh the session key
+                    # family + bump the activity zset so a long ACK-only session
+                    # keeps its metadata and is not evicted as idle.
+                    self._refresh_session_ttl(pipe, session_id)
                     await pipe.execute()
                 return True
             except aioredis.WatchError:
@@ -988,11 +1017,21 @@ class RedisSessionStore(BaseSessionStore):
             pipe.expire(self._descriptor_key(session_id, ref_id), DATA_TTL)
 
     def _refresh_session_ttl(self, pipe, session_id: str, ref_ids=None) -> None:
+        # Refresh the WHOLE per-session key family, not just the ref registry.
+        # Session activity (a read, a layer edit, an ACK) must keep every live
+        # key alive for as long as the session is active; otherwise the
+        # state/events/ACK keys expired at the 4h mark after their last WRITE
+        # while payloads (refreshed by get()) stayed alive — an active session
+        # silently lost its viewport, event log and ACK history.
         for key in [
             self._aliases_key(session_id),
             self._refs_key(session_id),
             self._refs_order_key(session_id),
             self._index_key(session_id),
+            self._state_key(session_id),
+            self._events_key(session_id),
+            self._map_actions_key(session_id),
+            self._map_actions_order_key(session_id),
         ]:
             pipe.expire(key, SESSION_TTL)
         pipe.zadd(self._activity_key(), {session_id: time.time()})

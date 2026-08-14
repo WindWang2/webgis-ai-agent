@@ -1380,18 +1380,13 @@ class PiBridge:
             )
             return {}
         result = await self._rpc.request("abort")
-        # F24: ignite the active turn's cancellation token so checkpoint()-
-        # cooperative tool dispatches (HTTP callback path) stop promptly too,
-        # not just the Pi subprocess.
-        if _active_turn_token is not None:
-            _active_turn_token.cancel("abort requested")
-        # P1 (TOCTOU): the active sid above was read lock-free BEFORE the abort
-        # RPC was awaited. In that gap the matching turn can end and a
-        # DIFFERENT session's turn start — the global abort RPC then hits the
-        # wrong turn. The damage is done by the time we can observe it, but
-        # re-reading the sid and logging the flip explicitly documents the
-        # known limit (futures already failed by fail_all_pending cannot be
-        # un-failed) instead of silently killing the wrong turn.
+        # P1 (TOCTOU) / R2-5: the active sid above was read lock-free BEFORE
+        # the abort RPC was awaited. In that gap the matching turn can end and
+        # a DIFFERENT session's turn start (notably when a shielded
+        # abort-on-disconnect outlives its turn's finally). In that case the
+        # abort RPC itself has already flown — nothing can un-send it — but we
+        # must NOT also ignite the NEW turn's token or fail its pending
+        # futures, so skip both global effects and log the flip.
         active_after = self._active_turn_sid
         if (
             session_id is not None
@@ -1400,11 +1395,16 @@ class PiBridge:
         ):
             logger.warning(
                 "[PiBridge] abort(session_id=%s) TOCTOU: the active turn "
-                "flipped %s -> %s while the abort RPC was in flight; the "
-                "global abort may have hit session %s's turn (known limit — "
-                "cannot un-fail futures)",
-                session_id, active, active_after, active_after,
+                "flipped %s -> %s while the abort RPC was in flight; skipping "
+                "token-cancel/fail_all_pending so the new turn is not killed",
+                session_id, active, active_after,
             )
+            return result or {}
+        # F24: ignite the active turn's cancellation token so checkpoint()-
+        # cooperative tool dispatches (HTTP callback path) stop promptly too,
+        # not just the Pi subprocess.
+        if _active_turn_token is not None:
+            _active_turn_token.cancel("abort requested")
         # Cancel any pending request future the client hasn't resolved yet.
         # Without this, an in-flight `prompt` would keep waiting for its
         # response up to the stream timeout (30s) and then emit a generic
@@ -1470,7 +1470,11 @@ class PiBridge:
         must never raise into the generator-cleanup path.
         """
         try:
-            await self.abort()
+            # Scope the abort to THIS turn's session: the F5 guard inside
+            # abort() then skips the global RPC/fail_all_pending when another
+            # session's turn is already active (the shielded caller may resume
+            # long after this turn ended and the lock was released).
+            await self.abort(session_id=turn_sid)
             logger.info("[PiBridge] abort sent on client disconnect (turn=%s)", turn_sid)
         except Exception as e:  # noqa: BLE001 — abort failure must not break cleanup
             logger.warning("[PiBridge] abort-on-disconnect failed (turn=%s): %s", turn_sid, e)
@@ -1729,9 +1733,14 @@ class PiBridge:
                                     tool_call_id, _sid
                                 ),
                             )
-                            if _harness is not None:
-                                # V3: 给原始 SSE 事件记录补 turn/run correlation（显式透传）。
-                                _harness.record_sse_event({
+                            # V3: 给原始 SSE 事件记录补 turn/run correlation（显式透传）。
+                            # B-8: record against THIS turn's session harness, not the
+                            # module-global "most recently created" harness — otherwise
+                            # two interleaved sessions misattribute one session's events
+                            # to the other (record_sse_event stamps self.session_id).
+                            turn_harness = _get_session_harness(turn_sid)
+                            if turn_harness is not None:
+                                turn_harness.record_sse_event({
                                     **event, "run_id": run_id, "turn_id": turn_id,
                                 })
                             if sse:
@@ -1803,12 +1812,16 @@ class PiBridge:
                     )
                     if _active_turn_token is not None:
                         _active_turn_token.cancel("pi process exited unexpectedly")
-                elif cancelled or timed_out:
+                elif cancelled or timed_out or send_failed:
                     # Tell Pi to stop generating tokens / executing tools. F10:
                     # this now covers the stall-timeout path too — previously a
                     # stalled turn yielded error+done and returned WITHOUT the
                     # abort RPC, so Pi kept executing tools (up to the 300s RPC
                     # timeout) and a user retry duplicated side effects.
+                    # B-6: ``send_failed`` (the prompt RPC raised) must also
+                    # abort — Pi may already have started executing the prompt
+                    # and its tools, so without the abort a retry duplicates the
+                    # side effects (same class of bug F10 fixed for the stall).
                     try:
                         await asyncio.wait_for(
                             asyncio.shield(self._abort_on_disconnect(turn_sid)),

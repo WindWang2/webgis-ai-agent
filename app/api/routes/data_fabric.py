@@ -10,7 +10,7 @@ from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.auth import get_current_user_optional
+from app.core.auth import get_current_user, get_current_user_optional
 from app.models.data_fabric import DataSourceModel, CatalogItemModel
 from app.schemas.data_fabric_schema import (
     ConnectionProfile,
@@ -162,9 +162,15 @@ class MaterializeRequest(BaseModel):
 async def create_data_source(
     req: CreateDataSourceRequest,
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """注册新的地理空间数据源连接配置"""
+    """注册新的地理空间数据源连接配置
+
+    Requires authentication: an anonymous caller previously created a tenant-
+    GLOBAL source (org_id NULL, owner_id NULL) that then appeared in every
+    anonymous user's list and was probe/sync-able by anyone. State-changing +
+    outbound-request-triggering endpoints must not be unauthenticated.
+    """
     try:
         # SSRF is always enforced at registration (ADR-0050 §5 P0). A previous
         # `allow_private` request field let any caller disable all private/loopback/
@@ -261,9 +267,15 @@ async def get_data_source(
 async def delete_data_source(
     source_id: str,
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """删除指定数据源及其关联目录项"""
+    """删除指定数据源及其关联目录项
+
+    Requires authentication: DELETE is destructive and cascade-removes catalog
+    items. The anonymous branch of _require_tenant_owned still matched legacy
+    GLOBAL sources (org_id/owner_id both NULL), making them deletable by any
+    unauthenticated caller.
+    """
     s = db.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
     _require_tenant_owned(s, user)
 
@@ -276,9 +288,14 @@ async def delete_data_source(
 async def probe_data_source(
     source_id: str,
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """探查数据源健康状况与连通性"""
+    """探查数据源健康状况与连通性
+
+    Requires authentication: probe triggers a server-side outbound HTTP request
+    to the source endpoint — anonymous callers must not be able to initiate
+    arbitrary outbound requests.
+    """
     s = db.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
     _require_tenant_owned(s, user)
 
@@ -302,9 +319,13 @@ async def probe_data_source(
 async def sync_data_source_catalog(
     source_id: str,
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """主动刷新/同步数据源图层元数据至 Spatial Catalog"""
+    """主动刷新/同步数据源图层元数据至 Spatial Catalog
+
+    Requires authentication: sync triggers outbound requests against the source
+    endpoint; anonymous callers must not initiate them.
+    """
     s = db.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
     _require_tenant_owned(s, user)
     try:
@@ -453,9 +474,13 @@ async def preview_catalog_item(
     item_id: str,
     limit: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """获取 Spatial Catalog 项的有界样例数据预览"""
+    """获取 Spatial Catalog 项的有界样例数据预览
+
+    Requires authentication: preview triggers a server-side remote fetch against
+    the source endpoint, so anonymous callers must not be able to initiate it.
+    """
     try:
         _authorize_catalog_item(db, item_id, user)
         q_spec = QuerySpec(limit=limit)
@@ -479,9 +504,13 @@ async def query_catalog_item(
     item_id: str,
     query_spec: QuerySpec,
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """执行下推（Pushdown）选择性查询"""
+    """执行下推（Pushdown）选择性查询
+
+    Requires authentication: query runs a remote fetch against the source
+    endpoint, so anonymous callers must not be able to initiate it.
+    """
     try:
         _authorize_catalog_item(db, item_id, user)
         q_res = data_fabric_manager.query_catalog_item(db, item_id, query_spec)
@@ -498,9 +527,13 @@ async def materialize_catalog_item(
     req: MaterializeRequest,
     owner_token: Optional[str] = Header(None, alias="X-Session-Token"),
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """按需实例化（Materialize）数据至会话 SessionStore 并产生 ref_id 游标"""
+    """按需实例化（Materialize）数据至会话 SessionStore 并产生 ref_id 游标
+
+    Requires authentication: materialize runs a remote fetch and writes session
+    store refs, so anonymous callers must not be able to initiate it.
+    """
     try:
         _authorize_catalog_item(db, req.catalog_item_id, user)
         _require_existing_session_owner(db, req.session_id, user, owner_token)

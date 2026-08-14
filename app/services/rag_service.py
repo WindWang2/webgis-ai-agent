@@ -131,11 +131,17 @@ async def delete_document(
 
     try:
         async with async_db_session() as db:
+            # Delete is creator-only (docstring: "仅删除属于自己的文档"). The
+            # previous org-scoped check let any member of an org delete another
+            # member's document — inconsistent with templates/projects, which
+            # are creator-or-admin. org_id stays on the TenantContext below for
+            # the vector-store cleanup, but it must NOT broaden the SQL guard.
             owner_check = select(Document).where(Document.id == document_id)
-            if org_id is not None:
-                owner_check = owner_check.where(Document.org_id == org_id)
-            elif user_id is not None:
+            if user_id is not None:
                 owner_check = owner_check.where(Document.creator_id == user_id)
+            else:
+                # No authenticated creator identity -> cannot authorize delete.
+                return False
             existing = (await db.execute(owner_check)).scalar_one_or_none()
             if existing is None:
                 logger.warning(

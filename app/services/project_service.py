@@ -23,24 +23,42 @@ logger = logging.getLogger(__name__)
 def _caller_may_access_project(project: Project, user_id: Optional[str], org_id: Optional[int]) -> bool:
     """Tenant / owner gate shared by lookup, fingerprint, and context summary.
 
-    Missing user_id AND org_id used to mean "no restriction" — but JWT helpers
-    never populate ``id`` / ``org_id``, so every HTTP caller hit that branch.
-    Anonymous callers may only see unowned (legacy/public) rows. Authenticated
-    callers are limited to their org or their own owner_id.
+    Mirrors ``list_projects`` scoping:
+      * an OWNED project is visible only to its owner or members of the
+        project's org — never to another user and never to anonymous callers;
+      * an OWNERLESS row (public, or org-owned with no personal owner) follows
+        the list query's ``owner_id IS NULL`` branches: visible to callers with
+        no org claim (incl. anonymous) and to same-org callers; a different-org
+        caller is denied.
+
+    The previous guard ``owner_id != user_id and not org_id`` skipped the owner
+    check whenever the caller carried *any* org_id — so a different user in an
+    org could read/mutate a NULL-org private project (org_id IS NULL) owned by
+    someone else. The list query hides those rows; detail/update did not.
     """
-    if org_id and project.org_id and project.org_id != org_id:
+    same_org = (
+        project.org_id is not None
+        and org_id is not None
+        and project.org_id == org_id
+    )
+    if project.owner_id:
+        # Owned row: owner or same-org member only.
+        if user_id is not None and str(project.owner_id) == str(user_id):
+            return True
+        if same_org:
+            return True
         logger.warning(
-            "IDOR attempt: user %s (org %s) tried accessing project %s (org %s)",
+            "IDOR attempt: user %s (org %s) tried accessing project %s (owner %s, org %s)",
+            user_id, org_id, project.id, project.owner_id, project.org_id,
+        )
+        return False
+    # Ownerless row (public or org-owned): a different-org caller is denied;
+    # no-org-claim callers (incl. anonymous) may see it, matching the list.
+    if project.org_id is not None and org_id is not None and project.org_id != org_id:
+        logger.warning(
+            "IDOR attempt: user %s (org %s) tried accessing org project %s (org %s)",
             user_id, org_id, project.id, project.org_id,
         )
-        return False
-    if user_id and project.owner_id and project.owner_id != user_id and not org_id:
-        logger.warning(
-            "IDOR attempt: user %s tried accessing private project %s (owner %s)",
-            user_id, project.id, project.owner_id,
-        )
-        return False
-    if not user_id and not org_id and project.owner_id:
         return False
     return True
 

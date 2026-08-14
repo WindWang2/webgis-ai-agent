@@ -359,6 +359,14 @@ def _make_manager_with_failing_redis(monkeypatch, fail_method: str):
                 raise aioredis.RedisError("get timeout")
             return None
 
+        async def smembers(self, *a, **kw):
+            # append_event refreshes the session key family via the ref
+            # index before writing; missing here it crashed the fake (the
+            # real client always has it).
+            if fail_method == "smembers":
+                raise aioredis.RedisError("smembers timeout")
+            return set()
+
     manager._r = _FakeRedis()
     return manager
 

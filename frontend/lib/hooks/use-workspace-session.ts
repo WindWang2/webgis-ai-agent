@@ -283,6 +283,12 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
 
   const startNewSession = useCallback(
     (onClearMessages: () => void) => {
+      // F-1: abort any in-flight session restore. selectSession aborts its own
+      // controller on re-entry, but startNewSession did not — so a slow restore
+      // for session A could resolve AFTER the user started a new session and
+      // mutate the fresh session (onRestoreMessages / addLayer / fetchAnalysisAssets).
+      sessionLoadAbortRef.current?.abort();
+      sessionLoadAbortRef.current = null;
       setSessionId(undefined);
       // SEC-08：新会话清掉旧 token；新匿名会话创建后由 SSE 响应重新填充。
       sessionTokenRef.current = null;
@@ -294,13 +300,18 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       setSelectedFeature(null);
       setAiStatus('idle');
       clearTask();
+      // F-4: the result registry references session-scoped ``ref:`` cursors that
+      // are dead in the new session — clear it (selectSession does; this path
+      // did not), so a stale Result Workbench does not persist into the new
+      // session. Also resets pendingArgs (F-3 leak surface).
+      clearResults();
       // F4: per-session viewport seq tracker — fresh session, fresh counter.
       resetViewportSeq();
       // FE-15：移除死代码 localStorage.removeItem('webgis_session_id')
       // (session ID 从未写入 localStorage，此 removeItem 是 no-op)
       onClearMessages();
     },
-    [clearLayers, clearAnnotations, clearOpsLog, clearCausalChain, setSelectedFeature, setAiStatus, clearTask]
+    [clearLayers, clearAnnotations, clearOpsLog, clearCausalChain, setSelectedFeature, setAiStatus, clearTask, clearResults]
   );
 
   const rememberSessionToken = useCallback((sid: string, token: string) => {

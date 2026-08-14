@@ -58,17 +58,16 @@ def calculate_isochrones(network_geojson: dict | str, facility_points: dict | st
                 coords = list(geom.coords)
                 start_node = coords[0]
                 end_node = coords[-1]
-                
-                # Weight by length (meters in UTM)
-                if "length" in row and row["length"] is not None:
-                    weight = float(row["length"])
-                else:
-                    weight = geom.length
-                    logger.warning(
-                        "Edge at index %d has no 'length' property; using geometry.length (%fm). "
-                        "Accuracy depends on input CRS being projected (meters).",
-                        idx, weight,
-                    )
+
+                # Weight by edge length in METERS. The GeoDataFrame has already
+                # been reprojected to a metric UTM CRS (to_utm_gdf above), so
+                # ``geom.length`` is always in meters. The previous code trusted
+                # a source ``length`` attribute verbatim — but the attribute is
+                # NOT reprojected, so a geographic (EPSG:4326) source carried
+                # degree-valued lengths (~0.01). With max_dist in meters that
+                # made every connected edge "reachable" and the isochrone
+                # swallowed the whole network. Derive from geometry instead.
+                weight = float(geom.length) if geom.length else 0.0
                 G.add_edge(start_node, end_node, weight=weight, geometry=geom)
         
         isochrone_features = []

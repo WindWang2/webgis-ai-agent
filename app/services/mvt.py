@@ -70,6 +70,22 @@ _BUFFER_PX = _BUFFER_UNITS / (_EXTENT / 256.0)
 # minimum ring area (extent units^2) after quantization; smaller is invisible
 _AREA_EPS = 1.0
 
+# Web-Mercator is only defined for |lat| <= ~85.051129°. A vertex at the poles
+# (lat = ±90) makes tan(±π/2)/1/cos(±π/2) blow up: the pure path raises
+# ValueError (math domain), the shapely path emits +inf/NaN. Clamp latitude
+# before projecting so pole-spanning geometries (e.g. Antarctica) render at the
+# world edge instead of crashing or distorting.
+_MAX_WEBMERCATOR_LAT = 85.05112878
+
+
+def _finite_pair(lon, lat) -> bool:
+    """True iff both coordinates are present and finite (drops NaN/Inf inputs)."""
+    try:
+        return math.isfinite(float(lon)) and math.isfinite(float(lat))
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: float(huge_int) overflows (e.g. a pathological coord).
+        return False
+
 _SUPPORTED_TYPES = frozenset(
     {"Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon"}
 )
@@ -128,8 +144,15 @@ def _project(lon: float, lat: float, z: int) -> Tuple[float, float]:
     Projection is homogeneous in z: _project(lon, lat, z) ==
     _project(lon, lat, 0) * 2^z, so geometries indexed in z0 world pixels
     (world = 256) can be re-used at any zoom by a simple scale.
+
+    Latitude is clamped to the Web-Mercator valid range (|lat| <= 85.0511°);
+    without this, a pole vertex (lat = ±90) makes the projection diverge.
     """
     world = 256.0 * (1 << z)
+    if lat > _MAX_WEBMERCATOR_LAT:
+        lat = _MAX_WEBMERCATOR_LAT
+    elif lat < -_MAX_WEBMERCATOR_LAT:
+        lat = -_MAX_WEBMERCATOR_LAT
     x = (lon + 180.0) / 360.0 * world
     lat_rad = math.radians(lat)
     y = (1.0 - math.log(math.tan(lat_rad) + 1.0 / math.cos(lat_rad)) / math.pi) / 2.0 * world
@@ -137,9 +160,13 @@ def _project(lon: float, lat: float, z: int) -> Tuple[float, float]:
 
 
 def _transform_z0(coords):
-    """Vectorized _project(..., z=0) for shapely.transform (y-down world px)."""
+    """Vectorized _project(..., z=0) for shapely.transform (y-down world px).
+
+    Latitude is clamped to the Web-Mercator valid range (see ``_project``); a
+    pole vertex otherwise produces inf/NaN and corrupts the indexed geometry.
+    """
     x = coords[:, 0]
-    y = coords[:, 1]
+    y = np.clip(coords[:, 1], -_MAX_WEBMERCATOR_LAT, _MAX_WEBMERCATOR_LAT)
     xs = (x + 180.0) / 360.0 * 256.0
     lat_rad = np.radians(y)
     ys = (1.0 - np.log(np.tan(lat_rad) + 1.0 / np.cos(lat_rad)) / np.pi) / 2.0 * 256.0
@@ -640,7 +667,7 @@ def _encode_line_polygon_pure(gtype: str, coords, z: int, x: int, y: int) -> Opt
         if kind == "ring":
             if not is_poly:
                 continue
-            projected = [_project(lon, lat, 0) for lon, lat in part]
+            projected = [_project(lon, lat, 0) for lon, lat in part if _finite_pair(lon, lat)]
             clipped = _clip_polygon_rect(projected, *rect)
             ring = _normalize_ring(clipped)
             if ring is None:
@@ -654,7 +681,7 @@ def _encode_line_polygon_pure(gtype: str, coords, z: int, x: int, y: int) -> Opt
         elif kind == "line":
             if is_poly:
                 continue
-            projected = [_project(lon, lat, 0) for lon, lat in part]
+            projected = [_project(lon, lat, 0) for lon, lat in part if _finite_pair(lon, lat)]
             for run in _clip_polyline_lb(projected, *rect):
                 q = _quantize_line(run, factor, x, y)
                 if len(q) < 2:
@@ -961,8 +988,11 @@ def _pure_bounds(gtype: str, coords) -> Optional[Tuple[float, float, float, floa
     count = 0
     for _kind, _role, part in parts:
         for lon, lat in part:
-            if lon is None or lat is None:
-                return None
+            # R2F-1: skip non-finite vertices (same guard as the pure encoder)
+            # — a NaN y silently "passes" the clamp comparisons, and its finite
+            # x would still enter the bbox, producing an oversized envelope.
+            if not _finite_pair(lon, lat):
+                continue
             px, py = _project(lon, lat, 0)
             if px < minx:
                 minx = px

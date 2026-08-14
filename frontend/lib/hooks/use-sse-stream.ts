@@ -543,6 +543,11 @@ export function useSSEStream(
         // 保持 message 对象身份不变。
         const stepId = data.step_id;
         const tool = data.tool;
+        // R2F-2: the cancelled call will never emit its step_result — drop its
+        // queued args so the retry's step_result pairs with the retry's args.
+        if (typeof tool === 'string' && tool) {
+          useHudStore.getState().discardPendingToolArgs(tool);
+        }
         if (typeof stepId === 'string' && stepId) {
           setMessages((prev) => {
             const msgIdx = prev.findIndex(
@@ -576,6 +581,11 @@ export function useSSEStream(
         // ENTIRE message with a generic string, discarding whatever had
         // already streamed and the server's real error detail. Preserve the
         // partial answer and append the actual error (or a fallback note).
+        // R2F-2: a failed call never emits its step_result — drop its queued
+        // args so the retry's step_result pairs with the retry's args.
+        if (event.event === 'step_error' && typeof data?.tool === 'string' && data.tool) {
+          useHudStore.getState().discardPendingToolArgs(data.tool);
+        }
         const raw = data?.error;
         const detail =
           typeof raw === "string" && raw.trim()
@@ -649,10 +659,15 @@ export function useSSEStream(
   const handleSendRef = useRef<((text: string) => void) | null>(null);
   const isLoadingRef = useRef(isLoading);
   isLoadingRef.current = isLoading;
+  // F-5: synchronous in-flight guard. ``isLoadingRef`` is only refreshed during
+  // render, so two sends in the same tick (before re-render) both passed the
+  // guard and produced duplicate user/thinking messages plus a phantom "完成。"
+  // bubble. This ref is set synchronously at entry and cleared in finally.
+  const sendingRef = useRef(false);
 
   const handleSend = useCallback(
     async (userMsg: string) => {
-      if (!userMsg || isLoadingRef.current) return;
+      if (!userMsg || isLoadingRef.current || sendingRef.current) return;
 
       const { viewport, baseLayer, is3D, layers: hudLayers, selectedFeature, focusLayerId } = useHudStore.getState();
       const liveSnapshot = getMapSnapshot();
@@ -719,19 +734,30 @@ export function useSSEStream(
         },
       ]);
 
-      await bridge.send(userMsg, mapState);
+      try {
+        // F-5: set inside the try so a synchronous throw in the setup above
+        // (which runs before this point, no awaits) cannot leave the guard
+        // stuck. It is still set before the first await, so a same-tick second
+        // send (which can only run once we yield at bridge.send) sees it.
+        sendingRef.current = true;
+        await bridge.send(userMsg, mapState);
 
-      // Flush any tokens still pending in the current frame so the final
-      // streamed text is applied before the thinking→done transition.
-      tokenBatcherRef.current?.flush();
+        // Flush any tokens still pending in the current frame so the final
+        // streamed text is applied before the thinking→done transition.
+        tokenBatcherRef.current?.flush();
 
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === thinkingMsgId && (m as any).isThinking
-            ? { ...m, isThinking: false, content: (m as any).content || '完成。' }
-            : m
-        )
-      );
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === thinkingMsgId && (m as any).isThinking
+              ? { ...m, isThinking: false, content: (m as any).content || '完成。' }
+              : m
+          )
+        );
+      } finally {
+        // F-5: release the synchronous in-flight guard only after the send has
+        // committed (success or error); by then isLoading governs re-entry.
+        sendingRef.current = false;
+      }
     },
     [bridge, getMapSnapshot, userLocation]
   );

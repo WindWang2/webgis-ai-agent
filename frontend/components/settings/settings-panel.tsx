@@ -7,6 +7,7 @@ import {
   Brain,
   Crosshair,
   Settings,
+  UserRound,
   X,
   ShieldCheck,
 } from 'lucide-react';
@@ -17,13 +18,14 @@ import { SkillsHub } from './skills-hub';
 import { RagConfig } from './rag-config';
 import { MapConfig } from './map-config';
 import { SystemSettings } from './system-settings';
+import { AccountSection } from './account-section';
 
 /* ------------------------------------------------------------------ */
 /*  Nav item definition                                                */
 /* ------------------------------------------------------------------ */
 
 interface NavItem {
-  key: 'llm' | 'skills' | 'rag' | 'map' | 'system';
+  key: 'llm' | 'skills' | 'rag' | 'map' | 'system' | 'account';
   label: string;
   icon: React.ElementType;
   count?: number;
@@ -35,6 +37,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'rag', label: '知识库', icon: Brain },
   { key: 'map', label: '地图配置', icon: Crosshair },
   { key: 'system', label: '系统', icon: Settings },
+  { key: 'account', label: '账户', icon: UserRound },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -53,6 +56,8 @@ function TabContent({ tab }: { tab: string }) {
       return <MapConfig />;
     case 'system':
       return <SystemSettings />;
+    case 'account':
+      return <AccountSection />;
     default:
       return null;
   }

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import (
     authorize_session_write,
+    get_current_user,
     get_current_user_optional,
     get_owner_token,
     require_admin,
@@ -1160,7 +1161,14 @@ async def push_map_action_acks(
 
 @router.get("/skills")
 async def list_skills_api(_user: dict = Depends(get_current_user_optional)):
-    """列出可用的 .md 技能 — 需要认证（技能列表属于内部元数据）。"""
+    """列出可用的 .md 技能。
+
+    Metadata only ({name, description}); skill bodies stay server-side. The
+    shipped UI (SkillsHub) is anonymous-first with no Bearer capability, and
+    the anonymous chat agent surfaces these same skills in conversation —
+    so the catalog read stays optionally-authenticated. /tools below DOES
+    require auth: it returns full schemas including tier-3 parameters.
+    """
     from app.tools.skills import list_md_skills
     return {"skills": list_md_skills()}
 
@@ -1236,7 +1244,7 @@ async def clear_session(
 
 
 @router.get("/tools")
-async def list_tools(_user: dict = Depends(get_current_user_optional)):
+async def list_tools(_user: dict = Depends(get_current_user)):
     """列出可用工具 — 需要认证（工具 schema 含 tier-3 危险工具）。"""
     return {"tools": get_registry().get_schemas()}
 

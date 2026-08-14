@@ -176,6 +176,7 @@ def _parse_csv(
     upload_id: str,
 ) -> Dict[str, Any]:
     """解析 CSV 文件，自动检测经纬度列"""
+    import numpy as np
     import pandas as pd
 
     df = pd.read_csv(file_path)
@@ -190,15 +191,25 @@ def _parse_csv(
             f"支持的列名: 经度({', '.join(LNG_COLUMNS)}), 纬度({', '.join(LAT_COLUMNS)})"
         )
 
-    # 转为 GeoDataFrame
+    # 转为 GeoDataFrame. Coerce non-numeric / blank cells to NaN (instead of a
+    # raw ValueError -> HTTP 500), then drop every row whose coordinates are not
+    # finite. A ``POINT (nan nan)`` is neither empty nor NA, so the old filter
+    # kept it and downstream consumers (mvt/utm/stats) silently propagated NaN.
+    lng = pd.to_numeric(df[lng_col], errors="coerce")
+    lat = pd.to_numeric(df[lat_col], errors="coerce")
     gdf = gpd.GeoDataFrame(
         df,
-        geometry=gpd.points_from_xy(df[lng_col].astype(float), df[lat_col].astype(float)),
+        geometry=gpd.points_from_xy(lng, lat),
         crs="EPSG:4326",
     )
 
-    # 去掉无效几何
-    gdf = gdf[~gdf.geometry.is_empty & gdf.geometry.notna()]
+    # 去掉无效几何 (NaN/Inf coordinates included). Build the mask as a Series
+    # aligned to df's index so it stays correct even if read_csv gains an
+    # index_col or the frame is reindexed before masking.
+    finite = pd.Series(
+        np.isfinite(lng.to_numpy()) & np.isfinite(lat.to_numpy()), index=df.index
+    )
+    gdf = gdf[finite & ~gdf.geometry.is_empty & gdf.geometry.notna()]
     if gdf.empty:
         raise ParseError("CSV 中没有有效的坐标数据")
 

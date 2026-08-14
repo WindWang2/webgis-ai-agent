@@ -40,6 +40,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Paths warned about lacking a CRS (bounded by the distinct-file working set;
+# not a leak — rasters are a small, short-lived set per process).
+_CRS_LESS_WARNED: set[str] = set()
+
 
 def _normalize_channel(arr: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
     """Normalize numeric array to 0-255 uint8 channel."""
@@ -95,7 +99,26 @@ def render_raster_tile(
 
     try:
         with rasterio.open(raster_path) as src:
-            src_crs = src.crs or "EPSG:4326"
+            # A GeoTIFF does NOT guarantee a CRS (unlike GeoJSON RFC 7946).
+            # Previously a missing CRS was silently treated as EPSG:4326, which
+            # produced wildly wrong tile windows for projected (UTM/3857)
+            # rasters. Treat a CRS-less raster as already in the rendering CRS
+            # (EPSG:3857 -> identity transform) and warn loudly so it is not
+            # silently misprojected.
+            if src.crs is None:
+                # Warn at most once per file: a pan/zoom touches many tiles and
+                # would otherwise emit thousands of identical warnings.
+                if raster_path not in _CRS_LESS_WARNED:
+                    _CRS_LESS_WARNED.add(raster_path)
+                    logger.warning(
+                        "raster_tile_service: %s has no CRS tag; assuming source "
+                        "is already in EPSG:3857 (no reprojection). Assign a CRS "
+                        "for correct tiling.",
+                        raster_path,
+                    )
+                src_crs = "EPSG:3857"
+            else:
+                src_crs = src.crs
             src_bounds = transform_bounds("EPSG:3857", src_crs, *bounds_3857)
 
             # Read windowed slice from source

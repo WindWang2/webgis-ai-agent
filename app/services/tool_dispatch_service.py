@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Literal, Optional
 
 from app.services.session_data import session_data_manager
+from app.services.session_data_protocol import is_unavailable_ref
 from app.tools.registry import ToolRegistry
 from app.utils.security import sanitize_error_msg
 from app.utils.geojson import geojson_bbox
@@ -313,6 +314,7 @@ class ToolDispatchService:
 
         # 4. 正常路径：大型 GeoJSON 存为 ref；热力图等元数据落地
         geojson_ref: Optional[str] = None
+        heatmap_ref: Optional[str] = None
         ref_descriptor: Optional[dict] = None
         target_data = None
         if isinstance(result, dict):
@@ -328,6 +330,28 @@ class ToolDispatchService:
                 )
                 result = dict(result)
                 result.setdefault("result_ref", heatmap_ref)
+            # H-1: a Redis outage makes store() return the unavailable-ref
+            # sentinel (``ref:redis-unavailable-…``) per the session-data
+            # protocol. Treating that sentinel as a real ref authored a MapSpec
+            # layer pointing at a ref with NO payload, marked the call
+            # completed, and made the failure unrecoverable by the LLM. Detect
+            # it and fail the dispatch truthfully instead.
+            if is_unavailable_ref(geojson_ref) or is_unavailable_ref(heatmap_ref):
+                self._release_key(executed_tools, tool_key)
+                return ToolDispatchResult(
+                    status="error",
+                    llm_payload=(
+                        "会话存储暂时不可用，无法保存分析结果；请稍后重试，无需改变参数。"
+                    ),
+                    slim_event={
+                        "type": "tool_error",
+                        "name": tool_name,
+                        "error": "session store unavailable",
+                    },
+                    geojson_ref=None,
+                    raw_result=result,
+                    error_msg="session store unavailable",
+                )
             # Canonical MapSpec layer authoring points at an existing
             # session-owned analysis ref instead of returning the dataset
             # again.  Preserve that stable identity through the existing SSE
@@ -340,6 +364,29 @@ class ToolDispatchService:
                     and result_ref.startswith("ref:raster/")
                 )
             )
+            # H-1 (R2-2): tools that store data themselves (e.g.
+            # webgis_layer_upsert's inline branch) can hand back the
+            # unavailable-ref sentinel as ``result_ref`` — the dispatch-level
+            # store() check above cannot see it. Fail truthfully before the
+            # sentinel is promoted to geojson_ref and a MapSpec layer /
+            # event-log entry / dedup-completed marking latch onto a phantom
+            # ref with no payload anywhere.
+            if is_unavailable_ref(result_ref):
+                self._release_key(executed_tools, tool_key)
+                return ToolDispatchResult(
+                    status="error",
+                    llm_payload=(
+                        "会话存储暂时不可用，无法保存分析结果；请稍后重试，无需改变参数。"
+                    ),
+                    slim_event={
+                        "type": "tool_error",
+                        "name": tool_name,
+                        "error": "session store unavailable",
+                    },
+                    geojson_ref=None,
+                    raw_result=result,
+                    error_msg="session store unavailable",
+                )
             if (
                 isinstance(result_ref, str)
                 and result_ref.startswith("ref:")

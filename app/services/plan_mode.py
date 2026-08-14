@@ -32,7 +32,22 @@ from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "partially_completed"})
+# First-terminal-wins status transition rules.
+#   * ``completed`` / ``cancelled`` are immutable (except a ``superseded``
+#     annotation, which merges into a fresh payload read).
+#   * ``failed`` is RESUMABLE but not freely overwritable: the executor may
+#     legitimately converge it (failed -> running -> completed/partial), yet a
+#     concurrent ``cancelled`` write must NOT flip it (chaos P2) — a cancel
+#     that races the failure write loses, same as before.
+#   * ``partially_completed`` / running / pending have no restriction.
+# Previously ``partially_completed`` and ``failed`` were both fully terminal,
+# which silently dropped the resume convergence write: a resumed-and-finished
+# plan kept its old status in storage forever while the caller received the
+# new terminal.
+_TERMINAL_STATUSES = frozenset({"completed", "cancelled"})
+_FAILED_RESUME_TARGETS = frozenset(
+    {"failed", "running", "completed", "partially_completed", "superseded"}
+)
 
 
 async def _cancel_wave_tasks(wave_tasks: set[asyncio.Task]) -> None:
@@ -339,10 +354,17 @@ async def update_plan_status(session_id: str, plan_id: str, **updates: Any) -> N
         return
     current_status = plan_data.get("__status__")
     new_status = updates.get("__status__")
+    # First-terminal-wins / resume convergence (see _TERMINAL_STATUSES above):
+    # completed/cancelled are immutable (a ``superseded`` annotation is the one
+    # exemption — it merges into a fresh payload read, so it cannot clobber
+    # __step_results__); ``failed`` only accepts executor-resume targets.
     if (
         new_status is not None
-        and current_status in _TERMINAL_STATUSES
         and new_status != current_status
+        and (
+            (current_status in _TERMINAL_STATUSES and new_status != "superseded")
+            or (current_status == "failed" and new_status not in _FAILED_RESUME_TARGETS)
+        )
     ):
         logger.warning(
             f"update_plan_status: plan {plan_id} 已处于终态 {current_status}，"
@@ -797,14 +819,20 @@ async def _execute_plan_locked(
                     except Exception as e:
                         logger.exception(f"[PlanMode] step {sid} raised")
                         fc, ra = _classify_failure(exception=e)
-                        failure = (sid, str(e), None, fc, ra)
-                        break
+                        if failure is None:
+                            failure = (sid, str(e), None, fc, ra)
+                        # R3-5: keep scanning the SAME wait batch — breaking
+                        # here dropped already-done siblings' successes from
+                        # step_results whenever the failing task iterated
+                        # first (non-deterministic set order).
+                        continue
                     # 工具返回 success=False（V3.x Exception As Thought 包装）也视为失败
                     if isinstance(result, dict) and result.get("success") is False:
                         err = result.get("message") or result.get("error", "tool failed")
                         fc, ra = _classify_failure(result=result)
-                        failure = (sid, err, result, fc, ra)
-                        break
+                        if failure is None:
+                            failure = (sid, err, result, fc, ra)
+                        continue
                     wave_successes[sid] = result
                 if failure is not None:
                     break
@@ -883,9 +911,27 @@ async def _execute_plan_locked(
         await _cancel_wave_tasks(wave_tasks)
         logger.exception(f"[PlanMode] execute_plan_async aborted: {e}")
         try:
+            # R2-4: classify the exception instead of hard-coding "internal" —
+            # transient infra errors (e.g. a redis blip raising through the
+            # executor) must stay transient_network or the livelock guard will
+            # permanently refuse resume for a recoverable plan.
+            fc_int, _ra_int = _classify_failure(exception=e)
+            first_unfinished = next(
+                (s.id for s in plan.steps if s.id not in step_results),
+                None,
+            )
             await _write_terminal(
                 __status__=_failure_status(),
                 __error__=f"执行异常: {e}",
+                # R2-4: record the failure class + failed step so the resume
+                # livelock guard can engage — without these, every resume of an
+                # internally-failed plan re-executed its tools from scratch
+                # (guard needs both fields and a non-transient class).
+                # NOTE: plan is a PlanProposal model — attribute access only
+                # (dict access here raised AttributeError that the inner
+                # except swallowed, silently skipping the terminal write).
+                __failure_class__=fc_int or "internal",
+                __failed_step__=first_unfinished,
                 __step_results__=await _persist_step_results(session_id, plan_id, step_results),
             )
         except Exception as e2:  # noqa: BLE001 —— 收敛写失败不能替换原始异常

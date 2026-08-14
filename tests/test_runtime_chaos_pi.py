@@ -607,7 +607,7 @@ async def test_process_death_mid_stream_fast_fails_turn(monkeypatch):
     # token (F24); it captures the token object for the cancellation assert.
     dispatch = asyncio.create_task(dispatch_tool(PiToolRequest(
         name="query_map_features", toolCallId="tc-death", arguments={},
-        sessionId=None,
+        sessionId="sess-death",  # required by the hardened callback contract
     )))
     await dispatch
 

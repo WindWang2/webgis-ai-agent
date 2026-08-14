@@ -1,8 +1,9 @@
 """Regression: Pi-bridge per-turn state must not leak across long-lived sessions.
 
-Simulates 50 long chat sessions, each with tool dispatches (the Pi extension
-posts sessionId=None, so every dispatch lands in the "" bucket of
-_session_executed_sets) and a client that disconnects mid-stream. Asserts the
+Simulates 50 long chat sessions, each with tool dispatches (the hardened
+callback contract requires the verified turn sessionId — SEC fix — so every
+dispatch lands in that session's bucket of _session_executed_sets) and a
+client that disconnects mid-stream. Asserts the
 module-level dedup sets and dispatch-result cache return to baseline after
 every turn, and that gc/tracemalloc don't accumulate retained tool results.
 
@@ -75,7 +76,10 @@ async def _run_one_session(i, monkeypatch):
             name="query_map_features",
             toolCallId=f"tc-{i}-{j}",
             arguments={"bbox": [116.0, 39.0, 116.1, 39.1]},
-            sessionId=None,  # Pi extension posts no sessionId
+            # The signed-token HTTP route always stamps the verified turn
+            # session; the bridge rejects sessionId-less callbacks since the
+            # cross-session mutation fix.
+            sessionId=f"session-{i}",
         ))
     rpc = _make_event_rpc([make_token_event("hello")])
     bridge = PiBridge(rpc=rpc)

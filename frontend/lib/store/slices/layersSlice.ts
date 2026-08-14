@@ -11,6 +11,12 @@ import type { HudState } from '../hud-types';
 
 import { devOnly } from "@/lib/utils/logger";
 
+// F-2: last-writer-wins guard for fetchAnalysisAssets. A slow response for a
+// previous session must not overwrite the current session's asset list after a
+// session switch (the action takes no AbortSignal, so this is the correctness
+// guard). Only the most recent call's resolved value is applied.
+let _analysisAssetsSeq = 0;
+
 /**
  * FE-3: 注释（annotation）队列上限。AI 长会话中反复标注会无限增长
  * （findings E4 无界数组），超限丢弃最旧条目。
@@ -129,16 +135,23 @@ export const createLayersSlice: StateCreator<HudState, [], [], Partial<HudState>
   /* ─── Analysis Assets (后端遥感产物) ─── */
   analysisAssets: [],
   fetchAnalysisAssets: async (sessionId: string | undefined) => {
+    // F-2: capture a per-call sequence so a stale response (e.g. for a previous
+    // session after a switch) cannot overwrite the current session's assets.
+    const seq = ++_analysisAssetsSeq;
     try {
       // listUploads goes through the Fast Path — parallel mount callers and
       // session-switch follow-up fetch share one roundtrip. errors flow as
       // typed ApiError so we can distinguish abort/timeout/HTTP.
       const data = await listUploads(sessionId);
+      if (seq !== _analysisAssetsSeq) return; // superseded by a newer fetch
       const assets = (data.uploads || []).filter(
         (u) => u.geometry_type === 'raster_analysis'
       );
       set({ analysisAssets: assets });
     } catch (e) {
+      // F-2: if the NEWEST fetch fails, clear the stale assets rather than
+      // leave the previous session's list visible on the fresh session.
+      if (seq === _analysisAssetsSeq) set({ analysisAssets: [] });
       if (!isApiError(e)) devOnly.error('Failed to fetch assets:', e);
     }
     void get;
