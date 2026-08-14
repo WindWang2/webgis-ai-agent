@@ -62,8 +62,12 @@ function sanitizeRaw(raw: unknown): unknown {
 }
 
 export const createResultsSlice: StateCreator<HudState, [], [], Partial<HudState>> = (set) => {
-  /** Pending tool_call args, keyed by tool name (best-effort, last-writer per turn). */
-  let pendingArgs: Record<string, Record<string, any>> = {};
+  // F-3: pending tool_call args, keyed by tool name as a FIFO queue. The
+  // previous last-writer-per-tool slot meant two same-tool calls in one turn
+  // collided: the first step_result was attached the SECOND call's args, and
+  // the second got none. A queue pairs each step_result with its own preceding
+  // tool_call args in order.
+  let pendingArgs: Record<string, Record<string, any>[]> = {};
 
   return {
     /* ─── Analysis Results Workbench ─── */
@@ -72,7 +76,9 @@ export const createResultsSlice: StateCreator<HudState, [], [], Partial<HudState
 
     captureToolCallArgs: (tool, argsStr) => {
       const parsed = parseArgs(argsStr);
-      if (parsed) pendingArgs = { ...pendingArgs, [tool]: parsed };
+      if (!parsed) return;
+      const queue = pendingArgs[tool] ? [...pendingArgs[tool], parsed] : [parsed];
+      pendingArgs = { ...pendingArgs, [tool]: queue };
     },
 
     captureStepResult: (stepInput: StepResultEvent) => {
@@ -80,16 +86,24 @@ export const createResultsSlice: StateCreator<HudState, [], [], Partial<HudState
       const step = stepInput as StepResultEvent;
       if (!step || !step.tool || IGNORED_TOOLS.has(step.tool)) return undefined;
 
-      const args = pendingArgs[step.tool];
+      // FIFO-consume the oldest captured args for this tool.
+      const queue = pendingArgs[step.tool];
+      const args = queue && queue.length ? queue[0] : undefined;
       const base = normalizeStepResult(step, { captured: !!args, args });
       const normalized: AnalysisResult = {
         ...base,
         capturedAt: Date.now(),
         raw: sanitizeRaw(base.raw),
       };
-      // Drop stale args for this tool so a later same-name call doesn't reuse them.
-      const { [step.tool]: _used, ...rest } = pendingArgs;
-      pendingArgs = rest;
+      // Shift the consumed entry; drop the tool key once its queue is empty so a
+      // later same-name call does not reuse stale args.
+      if (queue && queue.length) {
+        const nextQueue = queue.slice(1);
+        const rest = { ...pendingArgs };
+        if (nextQueue.length) rest[step.tool] = nextQueue;
+        else delete rest[step.tool];
+        pendingArgs = rest;
+      }
 
       set((s) => {
         // Dedup by id (re-emitted step_result for the same step updates in place).

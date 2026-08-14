@@ -292,4 +292,33 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
     expect(result.current.getSessionTokenFor('session-1')).toBe('token-1');
     expect(result.current.getSessionTokenFor('session-128')).toBe('token-128');
   });
+
+  it('F-1: startNewSession aborts an in-flight selectSession restore', async () => {
+    // A slow restore for session A resolving AFTER the user started a new
+    // session must not mutate the fresh session (no onRestoreMessages).
+    let resolveRestore: (v: unknown) => void = () => {};
+    fetchMock.mockImplementation(() => new Promise((r) => { resolveRestore = r; }));
+    const onRestore = vi.fn();
+    const { result } = renderHook(() => useWorkspaceSession(vi.fn()));
+
+    let restorePromise!: Promise<unknown>;
+    act(() => {
+      restorePromise = result.current.selectSession('session-a', onRestore);
+    });
+    // New session while the restore fetch is still pending -> aborts it.
+    act(() => {
+      result.current.startNewSession(vi.fn());
+    });
+    await act(async () => {
+      resolveRestore(jsonOk({
+        messages: [{ id: 'm1', role: 'assistant', content: 'A', timestamp: '2026-01-01T00:00:00Z' }],
+        map_state: null,
+      }));
+      await restorePromise.catch(() => undefined);
+    });
+
+    expect(onRestore).not.toHaveBeenCalled();
+    // F-4: the result registry must also be cleared for the fresh session.
+    expect(vi.mocked(hudState.clearResults)).toHaveBeenCalled();
+  });
 });

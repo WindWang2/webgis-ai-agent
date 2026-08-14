@@ -644,10 +644,16 @@ export function useSSEStream(
   const handleSendRef = useRef<((text: string) => void) | null>(null);
   const isLoadingRef = useRef(isLoading);
   isLoadingRef.current = isLoading;
+  // F-5: synchronous in-flight guard. ``isLoadingRef`` is only refreshed during
+  // render, so two sends in the same tick (before re-render) both passed the
+  // guard and produced duplicate user/thinking messages plus a phantom "完成。"
+  // bubble. This ref is set synchronously at entry and cleared in finally.
+  const sendingRef = useRef(false);
 
   const handleSend = useCallback(
     async (userMsg: string) => {
-      if (!userMsg || isLoadingRef.current) return;
+      if (!userMsg || isLoadingRef.current || sendingRef.current) return;
+      sendingRef.current = true;
 
       const { viewport, baseLayer, is3D, layers: hudLayers, selectedFeature, focusLayerId } = useHudStore.getState();
       const liveSnapshot = getMapSnapshot();
@@ -714,19 +720,25 @@ export function useSSEStream(
         },
       ]);
 
-      await bridge.send(userMsg, mapState);
+      try {
+        await bridge.send(userMsg, mapState);
 
-      // Flush any tokens still pending in the current frame so the final
-      // streamed text is applied before the thinking→done transition.
-      tokenBatcherRef.current?.flush();
+        // Flush any tokens still pending in the current frame so the final
+        // streamed text is applied before the thinking→done transition.
+        tokenBatcherRef.current?.flush();
 
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === thinkingMsgId && (m as any).isThinking
-            ? { ...m, isThinking: false, content: (m as any).content || '完成。' }
-            : m
-        )
-      );
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === thinkingMsgId && (m as any).isThinking
+              ? { ...m, isThinking: false, content: (m as any).content || '完成。' }
+              : m
+          )
+        );
+      } finally {
+        // F-5: release the synchronous in-flight guard only after the send has
+        // committed (success or error); by then isLoading governs re-entry.
+        sendingRef.current = false;
+      }
     },
     [bridge, getMapSnapshot, userLocation]
   );
