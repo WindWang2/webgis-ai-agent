@@ -32,6 +32,7 @@ import { ProjectTab } from '@/components/sidebar/project-tab';
 import { DataSourcesTab } from '@/components/sidebar/data-sources-tab';
 import { TasksTab } from '@/components/sidebar/tasks-tab';
 import { ResultsTab } from '@/components/sidebar/results-tab';
+import { PanelErrorBoundary } from '@/components/layout/panel-error-boundary';
 
 export interface ContextPanelProps {
   messages: Array<{
@@ -195,15 +196,19 @@ export function ContextPanel({
           />
         )}
         {activeTab === 'project' && <ProjectTab />}
-        {activeTab === 'layers' && <LayersTab />}
+        {activeTab === 'layers' && <PanelErrorBoundary label="图层"><LayersTab /></PanelErrorBoundary>}
         {activeTab === 'analysis' && <AnalysisTab onSend={onSend} />}
         {activeTab === 'data_sources' && <DataSourcesTab />}
         {(activeTab === 'export_layout' || activeTab === 'exports') && <MapStudioTab />}
         {activeTab === 'tasks' && (
-          <TasksTab sessionId={sessionId} ownerToken={ownerToken} />
+          <PanelErrorBoundary label="任务">
+            <TasksTab sessionId={sessionId} ownerToken={ownerToken} />
+          </PanelErrorBoundary>
         )}
         {activeTab === 'results' && (
-          <ResultsTab sessionId={sessionId} ownerToken={ownerToken} onSend={onSend} />
+          <PanelErrorBoundary label="结果">
+            <ResultsTab sessionId={sessionId} ownerToken={ownerToken} onSend={onSend} />
+          </PanelErrorBoundary>
         )}
       </div>
 

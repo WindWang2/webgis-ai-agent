@@ -24,6 +24,10 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
   // SEC-08：匿名会话的 owner_token。服务端在新建匿名会话时签发，前端持有并在
   // 后续请求的 X-Session-Token 头里回传。认证会话 / 旧匿名会话该 ref 为 null。
   const sessionTokenRef = useRef<string | null>(null);
+  // FE-P3-7: reactive mirror — page.tsx passed sessionTokenRef.current as a
+  // prop, which lags one render whenever the token is (re)issued without a
+  // sessionId change. Components needing the token re-render when it flips.
+  const [activeToken, setActiveToken] = useState<string | null>(null);
   // Anonymous owner tokens are session capabilities, not workspace-global
   // credentials. Retain them by session so switching A → B cannot send A's
   // token with B's cartographic observation or map-action ACK.
@@ -62,19 +66,34 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
   }, [sessions, setStoreSessions]);
 
   // Fetch session list on mount (Fast Path: deduped + cached)
+  const sessionsFetchAbortRef = useRef<AbortController | null>(null);
+
   const refreshSessions = useCallback(async () => {
+    sessionsFetchAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    sessionsFetchAbortRef.current = ctrl;
     try {
       const data = await apiFetch<{ sessions?: ChatSession[] }>('/api/v1/chat/sessions', {
         label: 'Session list error',
+        signal: ctrl.signal,
       });
+      if (ctrl.signal.aborted) return; // a newer fetch superseded this one
       if (data.sessions) setSessions(data.sessions);
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return;
       if (!isApiError(err)) devOnly.error('Fetch sessions failed:', err);
     }
   }, []);
 
   useEffect(() => {
     refreshSessions();
+    // FE-P2-1: unmount abort — restore work previously kept mutating the
+    // GLOBAL store (layers/results/messages) after the page was left; the
+    // only abort sites were re-entry and startNewSession, never unmount.
+    return () => {
+      sessionsFetchAbortRef.current?.abort();
+      sessionLoadAbortRef.current?.abort();
+    };
   }, [refreshSessions]);
 
   const selectSession = useCallback(
@@ -108,6 +127,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       // 旧会话 / 认证会话 token 为 null，头不发送，后端按 grandfather/认证放行。
       const token = sessionTokensRef.current.get(sid) ?? null;
       sessionTokenRef.current = token;
+      setActiveToken(token);
       try {
         // F-09：会话恢复必须校验 HTTP 状态。旧实现 res.json() 不检查 res.ok，
         // 404/500 的错误体被当作成功消费（JSON detail → 静默无消息；HTML 错误
@@ -290,8 +310,14 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       sessionLoadAbortRef.current?.abort();
       sessionLoadAbortRef.current = null;
       setSessionId(undefined);
+      // FE-P3-1: selectSession syncs the ref synchronously (F38); this path
+      // relied on the post-render effect — a programmatic send in the same
+      // tick (plan approve/reject defers handleSend by one macrotask) read
+      // the OLD session id and posted the message + map snapshot there.
+      sessionIdRef.current = undefined;
       // SEC-08：新会话清掉旧 token；新匿名会话创建后由 SSE 响应重新填充。
       sessionTokenRef.current = null;
+      setActiveToken(null);
       // 审计 F20：同 selectSession，新会话必须重置跨会话状态。
       clearLayers();
       clearAnnotations();
@@ -328,6 +354,7 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
     sessionTokensRef.current.set(sid, token);
     if (!sessionIdRef.current || sessionIdRef.current === sid) {
       sessionTokenRef.current = token;
+      setActiveToken(token);
     }
   }, []);
 
@@ -344,6 +371,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
     // SEC-08：暴露 token ref + 设置器。useSSEStream 在收到新会话的 owner_token
     // 时写入；其它调用方只读（getSessionToken）。
     sessionTokenRef,
+    /** FE-P3-7: render-fresh mirror of the active session's owner token. */
+    activeSessionToken: activeToken,
     rememberSessionToken,
     getSessionTokenFor,
     getSessionToken: () => sessionTokenRef.current,

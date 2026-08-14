@@ -67,6 +67,10 @@ export class MapSpecRuntime {
    */
   invalidateStyle(): void {
     this.appliedSpec = null;
+    // FE-P3-5: a base-style change wipes every source WITHOUT going through
+    // removeSourceSafe — prune the inline-GeoJSON registry so the viewport
+    // refresher stops probing ids that no longer exist (never converged).
+    renderer.unregisterAllGeoJsonSources();
   }
 
   /**
