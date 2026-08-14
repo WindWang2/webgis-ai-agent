@@ -31,6 +31,15 @@ def store_data(entry: Dict[str, Any], data: Any) -> None:
                 entry[_BOUNDS] = data[_BOUNDS]
             if _IMAGE_SIZE in data:
                 entry[_IMAGE_SIZE] = data[_IMAGE_SIZE]
+        elif "catalog_item_id" in data or data.get("type") in DATAFABRIC_SOURCE_TYPES:
+            # DataFabric protocol source (ADR-0050). MUST be checked before
+            # the plain-ref branch: a lazy/materialized fabric payload can
+            # carry BOTH catalog_item_id and a ref:df-* ref_id, and the old
+            # ordering demoted it to a geojson ref source, silently dropping
+            # the lazy fabric semantics.
+            entry["type"] = data.get("type", "data_fabric")
+            for k, v in data.items():
+                entry[k] = v
         elif isinstance(data.get("ref_id"), str) and data["ref_id"].startswith("ref:"):
             # Session-owned metadata carrier. It deliberately contains no
             # feature body: cartographic review can use the descriptor-derived
@@ -45,10 +54,6 @@ def store_data(entry: Dict[str, Any], data: Any) -> None:
                 entry["profile_fingerprint"] = data["profile_fingerprint"]
             if isinstance(data.get("data_fingerprint"), str):
                 entry["data_fingerprint"] = data["data_fingerprint"]
-        elif "catalog_item_id" in data or data.get("type") in DATAFABRIC_SOURCE_TYPES:
-            entry["type"] = data.get("type", "data_fabric")
-            for k, v in data.items():
-                entry[k] = v
         else:
             # An ordinary object is a GeoJSON/inline carrier. Explicit source
             # replacement must not retain a prior raster/vector discriminator.
@@ -87,11 +92,18 @@ def is_raster_entry(entry: Dict[str, Any]) -> bool:
 
 
 def is_data_fabric_entry(entry: Dict[str, Any]) -> bool:
-    """True if the entry is a DataFabric lazy or materialized protocol source entry (ADR-0050)."""
+    """True if the entry is a DataFabric lazy or materialized protocol source entry (ADR-0050).
+
+    Deliberately does NOT treat a bare ``ref_id`` as a fabric marker: the
+    geojson ref branch of :func:`store_data` also writes ``ref_id``, so that
+    heuristic misclassified every session geojson-ref source as fabric (and
+    pipeline.py's profiler then skipped them). Fabric entries carry an
+    explicit ``type``, a ``catalog_item_id``, the ``lazy`` flag, or a fabric
+    ``ref:`` URL."""
     st = entry.get("type")
     if st in DATAFABRIC_SOURCE_TYPES:
         return True
-    if "catalog_item_id" in entry or "ref_id" in entry or entry.get("lazy") is True:
+    if "catalog_item_id" in entry or entry.get("lazy") is True:
         return True
     url_val = entry.get(_URL)
     if isinstance(url_val, str) and url_val.startswith("ref:"):

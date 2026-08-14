@@ -105,6 +105,9 @@ class _FaultyRedis:
     async def lrange(self, *a, **kw):
         raise aioredis.RedisError("lrange timed out")
 
+    async def smembers(self, *a, **kw):
+        raise aioredis.RedisError("smembers timed out")
+
 
 def _faulty_store():
     return RedisSessionStore(redis_url="redis://unused", redis=_FaultyRedis())

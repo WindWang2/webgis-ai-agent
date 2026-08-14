@@ -433,7 +433,7 @@ class TestPiToolsEndpoint:
         )
         set_tool_registry(registry)
 
-        req = PiToolRequest(toolCallId="tc-1", name="pi_test_echo", arguments={"msg": "hello"})
+        req = PiToolRequest(toolCallId="tc-1", name="pi_test_echo", arguments={"msg": "hello"}, sessionId="sess-pi-tools")
         resp = await dispatch_tool(req)
         assert resp.toolCallId == "tc-1"
         assert not resp.isError
@@ -445,7 +445,7 @@ class TestPiToolsEndpoint:
         registry = ToolRegistry()
         set_tool_registry(registry)
 
-        req = PiToolRequest(toolCallId="tc-2", name="does_not_exist", arguments={})
+        req = PiToolRequest(toolCallId="tc-2", name="does_not_exist", arguments={}, sessionId="sess-pi-tools")
         resp = await dispatch_tool(req)
         assert resp.isError
         assert "not found" in resp.content[0]["text"].lower()
@@ -462,7 +462,7 @@ class TestPiToolsEndpoint:
         )
         set_tool_registry(registry)
 
-        req = PiToolRequest(toolCallId="tc-3", name="pi_test_fail", arguments={})
+        req = PiToolRequest(toolCallId="tc-3", name="pi_test_fail", arguments={}, sessionId="sess-pi-tools")
         resp = await dispatch_tool(req)
         # The registry catches exceptions and returns a structured error dict.
         # pi_tools wraps it as content with isError=False so the LLM can read
@@ -490,7 +490,7 @@ class TestPiToolsEndpoint:
         )
         set_tool_registry(registry)
 
-        req = PiToolRequest(toolCallId="tc-4", name="pi_test_async", arguments={"x": "42"})
+        req = PiToolRequest(toolCallId="tc-4", name="pi_test_async", arguments={"x": "42"}, sessionId="sess-pi-tools")
         resp = await dispatch_tool(req)
         assert not resp.isError
         assert "async:42" in resp.content[0]["text"]
