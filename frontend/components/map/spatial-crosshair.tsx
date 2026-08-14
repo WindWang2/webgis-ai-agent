@@ -4,13 +4,9 @@ import { useState, useEffect, useRef } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 
 export function SpatialCrosshair() {
-  const viewport = useHudStore((s) => s.viewport);
   const aiStatus = useHudStore((s) => s.aiStatus);
   const [copied, setCopied] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const lng = viewport.center[0];
-  const lat = viewport.center[1];
 
   const isThinking = aiStatus === 'thinking' || aiStatus === 'acting';
 
@@ -24,8 +20,10 @@ export function SpatialCrosshair() {
   }, []);
 
   const handleCopy = () => {
+    const vp = useHudStore.getState().viewport;
+    const [cLng, cLat] = vp?.center ?? [0, 0];
     if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(`${lng.toFixed(6)}, ${lat.toFixed(6)}`);
+      navigator.clipboard.writeText(`${cLng.toFixed(6)}, ${cLat.toFixed(6)}`);
     }
     setCopied(true);
     if (copyTimerRef.current) {

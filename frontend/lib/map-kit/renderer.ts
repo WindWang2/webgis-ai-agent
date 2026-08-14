@@ -95,6 +95,8 @@ export function addImageSource(map: Map, id: string, url: string, coordinates: [
  * the visible area before setData (see module comment). The ORIGINAL data is
  * retained in _rawDataBySource for later re-filtering.
  */
+const _registeredGeoJsonSourceIds = new Set<string>();
+
 export function addGeoJsonSource(map: Map, id: string, data: any, options?: { viewport?: ViewportBBox }) {
   const source = map.getSource(id) as GeoJSONSource;
   const effective = options?.viewport ? _filterForViewport(source, data, options.viewport) : data;
@@ -104,6 +106,7 @@ export function addGeoJsonSource(map: Map, id: string, data: any, options?: { vi
     _lastGeoJsonData.set(source, effective);
     source.setData(effective as any);
     _rawDataBySource.set(source, data);
+    _registeredGeoJsonSourceIds.add(id);
   } else {
     map.addSource(id, {
       type: 'geojson',
@@ -114,6 +117,10 @@ export function addGeoJsonSource(map: Map, id: string, data: any, options?: { vi
     if (newSource) {
       _lastGeoJsonData.set(newSource, effective);
       _rawDataBySource.set(newSource, data);
+      _registeredGeoJsonSourceIds.add(id);
+      if (options?.viewport) {
+        _filteredBySource.set(newSource, { data: effective, viewport: [...options.viewport] });
+      }
     }
   }
 }
@@ -125,25 +132,26 @@ export function addGeoJsonSource(map: Map, id: string, data: any, options?: { vi
  * ORIGINAL data; small sources and tile/url sources are skipped (no raw data
  * registered — and small collections pass through unchanged anyway).
  *
- * Call from the map's move handler (debounced, e.g. 100ms) so panning/zooming
- * keeps the parsed feature count proportional to what's on screen.
+ * Direct Set lookup avoids cloning the entire MapLibre stylesheet on every
+ * camera move frame.
  */
 export function refreshGeoJsonSourcesByViewport(map: Map, viewport: ViewportBBox) {
-  const style = map.getStyle();
-  const sources = (style as any)?.sources;
-  if (!sources) return;
-  for (const [id, src] of Object.entries(sources) as Array<[string, any]>) {
-    if (src?.type !== 'geojson') continue;
-    const source = map.getSource(id) as GeoJSONSource;
-    if (!source) continue;
+  if (!map) return;
+  _registeredGeoJsonSourceIds.forEach((id) => {
+    const source = map.getSource?.(id) as GeoJSONSource;
+    if (!source) return;
     const raw = _rawDataBySource.get(source);
-    if (raw === undefined) continue; // tile/url source — nothing to trim
+    if (raw === undefined) return; // tile/url source — nothing to trim
     const effective = _filterForViewport(source, raw, viewport);
     if (_lastGeoJsonData.get(source) !== effective) {
       _lastGeoJsonData.set(source, effective);
       source.setData(effective as any);
     }
-  }
+  });
+}
+
+export function unregisterGeoJsonSource(id: string) {
+  _registeredGeoJsonSourceIds.delete(id);
 }
 
 export interface VectorLayerOptions {
@@ -376,6 +384,7 @@ export function removeLayerStack(map: Map, id: string, prefix: boolean = false):
 
   // 2. Remove target sources and cleanup any registered image textures
   targetSourceIds.forEach((sid) => {
+    _registeredGeoJsonSourceIds.delete(sid);
     if (!map.getSource?.(sid) && !styleSourceIds.has(sid)) return;
     try { map.removeSource(sid); } catch { ok = false; }
     if (typeof map.hasImage === 'function' && map.hasImage(sid)) {
@@ -689,7 +698,11 @@ export function syncLayerZOrder(map: Map, prefix: string, orderedBaseIds: string
   if (!style?.layers) return;
   // 反向：希望数组首的图层最终在最上面
   for (const baseId of [...orderedBaseIds].reverse()) {
-    const sub = style.layers.filter((sl: any) => sl.id.startsWith(`${prefix}${baseId}`));
+    const fullPrefix = prefix ? `${prefix}${baseId}` : baseId;
+    const sub = style.layers.filter((sl: any) => {
+      const id = sl.id as string;
+      return id === fullPrefix || id.startsWith(`${fullPrefix}__`) || id.startsWith(`${fullPrefix}-`);
+    });
     for (const sl of sub) {
       try {
         if (map.getLayer(sl.id)) map.moveLayer(sl.id);

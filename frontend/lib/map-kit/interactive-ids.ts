@@ -47,13 +47,31 @@ export function computeInteractiveIds(
  */
 export function resolveParentLayerId(
   sublayerId: string,
-  layerIds: ReadonlyArray<string>,
+  layerIds: ReadonlyArray<string> | ReadonlySet<string>,
 ): string | undefined {
+  const sepIdx = sublayerId.lastIndexOf(SUBLAYER_SEP);
+  const isSet = typeof (layerIds as any).has === 'function';
+  const hasId = isSet
+    ? (id: string) => (layerIds as ReadonlySet<string>).has(id)
+    : (id: string) => (layerIds as ReadonlyArray<string>).indexOf(id) !== -1;
+
+  if (sepIdx > 0) {
+    const candidate = sublayerId.slice(0, sepIdx);
+    if (hasId(candidate)) return candidate;
+  }
+
   let best: string | undefined;
-  for (const id of layerIds) {
+  const check = (id: string) => {
     if (sublayerId.startsWith(id + SUBLAYER_SEP)) {
       if (best === undefined || id.length > best.length) best = id;
     }
+  };
+
+  if (isSet) {
+    (layerIds as ReadonlySet<string>).forEach(check);
+  } else {
+    const arr = layerIds as ReadonlyArray<string>;
+    for (let i = 0; i < arr.length; i++) check(arr[i]);
   }
   return best;
 }

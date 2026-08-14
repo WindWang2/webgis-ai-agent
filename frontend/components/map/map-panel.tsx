@@ -87,6 +87,12 @@ export function MapPanel({
 
   const { selectedBaseLayer, registerSnapshotFn, dispatchAction } = useMapAction()
   const [viewState, setViewState] = useState(DEFAULT_VIEW_STATE)
+  const viewStateRef = useRef(DEFAULT_VIEW_STATE)
+  const [decorState, setDecorState] = useState({
+    zoom: DEFAULT_VIEW_STATE.zoom,
+    centerLat: DEFAULT_VIEW_STATE.latitude,
+    bearing: 0,
+  })
   const [mapReady, setMapReady] = useState(false)
   const [runtimeRecoveryGeneration, setRuntimeRecoveryGeneration] = useState(0)
   // is3D 来自 store，与设置面板 setIs3D 联动。原先 useState 死锁在 false。
@@ -95,7 +101,6 @@ export function MapPanel({
   const mapRef = useRef<MapRef>(null)
   const processLayers = useHudStore((s: HudState) => s.processLayers)
   const cartographyTitle = useHudStore((s: HudState) => s.cartographyTitle)
-  const viewport = useHudStore((s: HudState) => s.viewport)
   const focusLayerId = useHudStore((s: HudState) => s.focusLayerId)
   const focusLayerSetter = useHudStore((s: HudState) => s.focusLayer)
 
@@ -274,6 +279,7 @@ export function MapPanel({
   // no-op when the highlight isn't mounted, and moveLayer is wrapped so a layer
   // that vanished mid-reconcile is skipped silently.
   const raiseSelectionHighlight = useCallback(() => {
+    if (!useHudStore.getState().selectedFeature || !pendingSelectionGeometryRef.current) return
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
     const highlightIds = [
@@ -422,7 +428,16 @@ export function MapPanel({
   const setSelectedFeature = useHudStore((s: HudState) => s.setSelectedFeature)
   const selectedFeature = useHudStore((s: HudState) => s.selectedFeature)
   const layersRef = useRef(layers)
-  useEffect(() => { layersRef.current = layers }, [layers])
+  const layersMapRef = useRef<Record<string, Layer>>({})
+  const layerIdsSetRef = useRef<Set<string>>(new Set())
+
+  useEffect(() => {
+    layersRef.current = layers
+    const mapRecord: Record<string, Layer> = {}
+    for (const l of layers) mapRecord[l.id] = l
+    layersMapRef.current = mapRecord
+    layerIdsSetRef.current = new Set(layers.map((l) => l.id))
+  }, [layers])
 
   /**
    * FE-3: commit a clicked/picked feature as the selection.
@@ -435,8 +450,8 @@ export function MapPanel({
    */
   const selectFeature = useCallback((map: any, feature: any, point: [number, number]) => {
     const sublayerId = feature.layer?.id as string | undefined
-    const parentId = sublayerId ? resolveParentLayerId(sublayerId, layersRef.current.map((l) => l.id)) : undefined
-    const layerInfo = parentId ? layersRef.current.find((l) => l.id === parentId) : undefined
+    const parentId = sublayerId ? resolveParentLayerId(sublayerId, layerIdsSetRef.current) : undefined
+    const layerInfo = parentId ? layersMapRef.current[parentId] : undefined
     pendingSelectionGeometryRef.current = feature.geometry ?? null
     setOverlapFeatures(null)
     setSelectedFeature({
@@ -537,8 +552,8 @@ export function MapPanel({
     }
     const top = features[0]
     const sublayerId = top.layer?.id as string | undefined
-    const parentId = sublayerId ? resolveParentLayerId(sublayerId, layersRef.current.map((l) => l.id)) : undefined
-    const layerInfo = parentId ? layersRef.current.find((l) => l.id === parentId) : undefined
+    const parentId = sublayerId ? resolveParentLayerId(sublayerId, layerIdsSetRef.current) : undefined
+    const layerInfo = parentId ? layersMapRef.current[parentId] : undefined
     const props = (top.properties || {}) as Record<string, unknown>
     setHoverInfo({
       point: [evt.lngLat.lng, evt.lngLat.lat],
@@ -652,15 +667,21 @@ export function MapPanel({
 
   const handleMove = useCallback((evt: ViewStateChangeEvent) => {
     setViewState(evt.viewState)
+    viewStateRef.current = evt.viewState
     const map = mapRef.current?.getMap()
     const b = map?.getBounds()
     const bounds: [number, number, number, number] | undefined = b
       ? [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]
       : undefined
-    // FE-10：本地 viewState 仍每帧更新（廉价）；store 写入 debounce 100ms，
-    // 避免订阅 viewport 的组件（如 SpatialCrosshair）每帧重渲染。
+    // FE-10：平移/缩放期间本地使用 viewStateRef 跟踪（0 React re-render 成本）；
+    // store 与 decorState 写入 debounce 100ms，在手势停止后只触发一次结算更新。
     if (viewportWriteTimerRef.current) clearTimeout(viewportWriteTimerRef.current)
     viewportWriteTimerRef.current = setTimeout(() => {
+      setDecorState({
+        zoom: evt.viewState.zoom,
+        centerLat: evt.viewState.latitude,
+        bearing: evt.viewState.bearing ?? 0,
+      })
       setViewport(
         [evt.viewState.longitude, evt.viewState.latitude],
         evt.viewState.zoom,
@@ -688,11 +709,12 @@ export function MapPanel({
     registerSnapshotFn(() => {
       const map = mapRef.current?.getMap()
       if (!map) {
+        const cur = viewStateRef.current
         return {
-          center: [viewState.longitude, viewState.latitude],
-          zoom: viewState.zoom,
-          bearing: (viewState as any).bearing ?? 0,
-          pitch: (viewState as any).pitch ?? 0,
+          center: [cur.longitude, cur.latitude],
+          zoom: cur.zoom,
+          bearing: (cur as any).bearing ?? 0,
+          pitch: (cur as any).pitch ?? 0,
           bounds: undefined,
         }
       }
@@ -712,31 +734,32 @@ export function MapPanel({
         bounds,
       }
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [registerSnapshotFn])
 
   // FE-3 (design §7): memoize the thematic legend derivation + MapDecorations
-  // derived props. viewport 走 store（100ms debounce），move 风暴期间稳定 ——
+  // derived props. decorState 在 move 期间稳定（100ms debounce），结算时更新一次 ——
   // memoized MapDecorations / ThematicLegend 不会每帧重渲染（findings E1）。
   const thematicLayers = useMemo(
     () => layers.filter((l) => l.visible && l.legend_spec),
     [layers],
   )
-  // ThematicLegend 是 React.memo —— 内联箭头函数每帧都是新引用会击穿 memo，
-  // 这里为每个图层固定一个 handler 引用，move 风暴期间 props 稳定。
-  // （注意：本文件顶层 import 了 react-map-gl 的 `Map`，不能用全局 Map 构造器。）
+  const legendFilterHandlersRef = useRef<Record<string, (ranges: number[][]) => void>>({})
   const legendFilterHandlers = useMemo(() => {
     const handlers: Record<string, (ranges: number[][]) => void> = {}
     for (const l of layers) {
-      handlers[l.id] = (ranges) => handleFilterChange(l.id, ranges)
+      if (!legendFilterHandlersRef.current[l.id]) {
+        legendFilterHandlersRef.current[l.id] = (ranges) => handleFilterChange(l.id, ranges)
+      }
+      handlers[l.id] = legendFilterHandlersRef.current[l.id]
     }
     return handlers
   }, [layers, handleFilterChange])
+
   const decorProps = useMemo(() => ({
-    zoom: (viewport as any)?.zoom ?? viewState.zoom ?? 10,
-    centerLat: (viewport as any)?.center?.[1] ?? viewState.latitude ?? 30,
-    bearing: (viewport as any)?.bearing ?? 0,
-  }), [viewport, viewState])
+    zoom: decorState.zoom,
+    centerLat: decorState.centerLat,
+    bearing: decorState.bearing,
+  }), [decorState])
 
   const showPerceptionRings = aiStatus === 'thinking' || aiStatus === 'acting'
 
@@ -771,8 +794,8 @@ export function MapPanel({
               <div className="mb-1 border-b border-map-chrome-border pb-1 font-semibold text-map-chrome-ink">选择要素</div>
               {overlapFeatures.features.map((f, i) => {
                 const sublayerId = (f.layer?.id as string | undefined)
-                const parentId = sublayerId ? resolveParentLayerId(sublayerId, layersRef.current.map((l) => l.id)) : undefined
-                const layerInfo = parentId ? layersRef.current.find((l) => l.id === parentId) : undefined
+                const parentId = sublayerId ? resolveParentLayerId(sublayerId, layerIdsSetRef.current) : undefined
+                const layerInfo = parentId ? layersMapRef.current[parentId] : undefined
                 const name = layerInfo?.name ?? parentId ?? sublayerId ?? `要素 ${i + 1}`
                 const firstProp = Object.entries((f.properties || {}) as Record<string, unknown>)[0]
                 return (

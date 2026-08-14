@@ -69,20 +69,28 @@ export function jumpTo(map: Map, params: ViewportParams): void {
   });
 }
 
+const _bboxCache = new WeakMap<object, [number, number, number, number]>();
+
 /**
  * Calculates the bounding box of a GeoJSON object.
  * Returns [minLng, minLat, maxLng, maxLat] or null.
  *
- * Optimized single-pass traversal without allocating intermediate coordinate arrays.
+ * Optimized single-pass traversal with WeakMap memoization and writeback.
  */
 export function calculateBBox(geojson: any): [number, number, number, number] | null {
   if (!geojson || typeof geojson !== 'object') return null;
 
-  // 1. Fast path: check precomputed bbox if valid
+  // 1. Check WeakMap cache (fast O(1) for repeated calls on the same object)
+  const cached = _bboxCache.get(geojson);
+  if (cached) return cached;
+
+  // 2. Fast path: check precomputed bbox if valid
   if (Array.isArray(geojson.bbox) && geojson.bbox.length === 4) {
     const [w, s, e, n] = geojson.bbox;
     if (Number.isFinite(w) && Number.isFinite(s) && Number.isFinite(e) && Number.isFinite(n)) {
-      return [w, s, e, n] as [number, number, number, number];
+      const validBBox: [number, number, number, number] = [w, s, e, n];
+      _bboxCache.set(geojson, validBBox);
+      return validBBox;
     }
   }
 
@@ -129,7 +137,9 @@ export function calculateBBox(geojson: any): [number, number, number, number] | 
   extract(geojson);
 
   if (count === 0) return null;
-  return [minLng, minLat, maxLng, maxLat];
+  const result: [number, number, number, number] = [minLng, minLat, maxLng, maxLat];
+  _bboxCache.set(geojson, result);
+  return result;
 }
 
 /**

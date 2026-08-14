@@ -76,6 +76,7 @@ export class MapSpecRuntime {
    */
   reconcile(nextSpec: MapSpec, retryAttempt = 0): void {
     if (this.disposed || !this.map) return;
+    if (this.appliedSpec === nextSpec) return;
 
     // Defer until the base style is loaded. This mirrors map-panel.tsx:167-170
     // but the retry state lives here, not in React refs.
@@ -195,10 +196,11 @@ export class MapSpecRuntime {
       }
     }
 
-    // --- z-order: re-sync unconditionally (cheap, and handles reordering that
-    // the layer diff treats as unchanged). Q3.
-    const orderedIds = nextSpec.layers.map((l) => l.id);
-    renderer.syncLayerZOrder(this.map, "", orderedIds);
+    // --- z-order: re-sync only when layers were modified ---
+    if (patch.layers.length > 0) {
+      const orderedIds = nextSpec.layers.map((l) => l.id);
+      renderer.syncLayerZOrder(this.map, "", orderedIds);
+    }
 
     if (!this.lastError) this.appliedSpec = nextSpec;
   }
@@ -287,7 +289,9 @@ export class MapSpecRuntime {
       type: "SET_STYLE",
       priority: "high",
       execute: () => {
-        renderer.syncLayerZOrder(this.map, "", orderedIds);
+        if (patch.layers.length > 0) {
+          renderer.syncLayerZOrder(this.map, "", orderedIds);
+        }
         // All ops of this patch have now run (z-order is enqueued last in the
         // high-priority FIFO). appliedSpec may now legitimately equal the map.
         if (!this.lastError) this.appliedSpec = nextSpec;
@@ -486,6 +490,7 @@ export class MapSpecRuntime {
     }
     if (this.map.getSource(id)) {
       try { this.map.removeSource(id); } catch { /* silent */ }
+      renderer.unregisterGeoJsonSource(id);
     }
   }
 }

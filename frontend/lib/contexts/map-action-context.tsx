@@ -46,35 +46,33 @@ export interface CompletedMapAction {
   terminal_at: string;
 }
 
-export interface MapActionContextType {
-  actions: MapActionPayload[];
+export interface MapActionControlContextType {
   dispatchAction: (action: MapActionPayload) => void;
-  /** Pop the queue head. Optional ``actionId`` guards the pop: it only applies
-   * when the current head carries that id (per-action settle guard). */
-  popAction: (actionId?: string) => void;
   selectedBaseLayer: number;
   setSelectedBaseLayer: (index: number) => void;
   registerSnapshotFn: (fn: () => MapSnapshot) => void;
   getMapSnapshot: () => MapSnapshot | null;
-  // ── V3 (Harness–Map Interaction Closed Loop, design §6) ──
-  /** Register a sink for terminal acks (useMapBridge registers the POST sender). Returns an unsubscribe fn. */
   registerAckSink: (fn: MapActionAckSink) => () => void;
-  /** Report a terminal state for an action — context wraps it into an ack, rings it, and fans out to sinks. */
   reportTerminal: (
     action: MapActionPayload,
     status: MapActionTerminalStatus,
     details?: MapActionTerminalDetails,
   ) => void;
-  /** Mark every pending action cancelled('session_switch') + acked, then empty the queue (session switch). */
   clearActions: () => void;
-  /** Actions dropped by the MAX_PENDING_ACTIONS overflow (dropped-oldest-queued), per session. */
   droppedCount: number;
-  /** Bounded terminal ring (MAX_COMPLETED_ACTIONS) for tests/dev. */
+}
+
+export interface MapActionQueueContextType {
+  actions: MapActionPayload[];
+  popAction: (actionId?: string) => void;
   completedActions: CompletedMapAction[];
-  /** action_id of the queue head — the action the handler is currently running (or null when idle). */
   runningActionId: string | null;
 }
 
+export interface MapActionContextType extends MapActionControlContextType, MapActionQueueContextType {}
+
+export const MapActionControlContext = createContext<MapActionControlContextType | undefined>(undefined);
+export const MapActionQueueContext = createContext<MapActionQueueContextType | undefined>(undefined);
 export const MapActionContext = createContext<MapActionContextType | undefined>(undefined);
 
 // V3 queue bounds (design §6): overflow drops the oldest QUEUED action (never the
@@ -359,32 +357,63 @@ export function MapActionProvider({ children }: { children: React.ReactNode }) {
 
   // 审计 FE-05：useMemo 包裹 value 避免每次 render 创建新对象引用
   // -> 消费 useMapAction() 的组件不会因 provider re-render 而无谓重渲染。
-  const value = useMemo(() => ({
-      actions,
-      dispatchAction,
-      popAction,
-      selectedBaseLayer,
-      setSelectedBaseLayer,
-      registerSnapshotFn,
-      getMapSnapshot,
-      registerAckSink,
-      reportTerminal,
-      clearActions,
-      droppedCount,
-      completedActions,
-      runningActionId,
-    }), [actions, dispatchAction, popAction, selectedBaseLayer, setSelectedBaseLayer,
-        registerSnapshotFn, getMapSnapshot, registerAckSink, reportTerminal,
-        clearActions, droppedCount, completedActions, runningActionId]);
+  const controlValue = useMemo(() => ({
+    dispatchAction,
+    selectedBaseLayer,
+    setSelectedBaseLayer,
+    registerSnapshotFn,
+    getMapSnapshot,
+    registerAckSink,
+    reportTerminal,
+    clearActions,
+    droppedCount,
+  }), [dispatchAction, selectedBaseLayer, setSelectedBaseLayer, registerSnapshotFn,
+      getMapSnapshot, registerAckSink, reportTerminal, clearActions, droppedCount]);
+
+  const queueValue = useMemo(() => ({
+    actions,
+    popAction,
+    completedActions,
+    runningActionId,
+  }), [actions, popAction, completedActions, runningActionId]);
+
+  const combinedValue = useMemo(() => ({
+    ...controlValue,
+    ...queueValue,
+  }), [controlValue, queueValue]);
 
   return (
-    <MapActionContext.Provider value={value}>
-      {children}
-    </MapActionContext.Provider>
+    <MapActionControlContext.Provider value={controlValue}>
+      <MapActionQueueContext.Provider value={queueValue}>
+        <MapActionContext.Provider value={combinedValue}>
+          {children}
+        </MapActionContext.Provider>
+      </MapActionQueueContext.Provider>
+    </MapActionControlContext.Provider>
   );
 }
 
 export default MapActionProvider;
+
+export function useMapActionControl() {
+  const control = useContext(MapActionControlContext);
+  const legacy = useContext(MapActionContext);
+  const context = control ?? legacy;
+  if (context === undefined) {
+    throw new Error('useMapActionControl must be used within a MapActionProvider');
+  }
+  return context;
+}
+
+export function useMapActionQueue() {
+  const queue = useContext(MapActionQueueContext);
+  const legacy = useContext(MapActionContext);
+  const context = queue ?? legacy;
+  if (context === undefined) {
+    throw new Error('useMapActionQueue must be used within a MapActionProvider');
+  }
+  return context;
+}
 
 export function useMapAction() {
   const context = useContext(MapActionContext);
