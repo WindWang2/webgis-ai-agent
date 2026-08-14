@@ -346,11 +346,14 @@ async def update_plan_status(session_id: str, plan_id: str, **updates: Any) -> N
         return
     current_status = plan_data.get("__status__")
     new_status = updates.get("__status__")
-    # First-terminal-wins: a true terminal (completed/failed/cancelled) must not
-    # be revived to running. Two legitimate overrides are exempt:
-    #   * ``superseded`` — an external lifecycle signal that a newer plan won;
-    #     it must be recordable on a finished plan so later reads see it.
-    #   * (``partially_completed`` is no longer terminal, so it converges freely.)
+    # First-terminal-wins: a true terminal (completed/cancelled) must not
+    # be revived to running. One legitimate override is exempt:
+    #   * ``superseded`` — an external lifecycle signal that a newer plan
+    #     won. It merges into a FRESH payload read (update_plan_status
+    #     reloads before writing), so it cannot clobber __step_results__;
+    #     it only records the supersede on an already-finished plan.
+    #   * (``partially_completed`` and ``failed`` are no longer terminal, so
+    #     they converge freely.)
     if (
         new_status is not None
         and current_status in _TERMINAL_STATUSES
@@ -899,6 +902,15 @@ async def _execute_plan_locked(
             await _write_terminal(
                 __status__=_failure_status(),
                 __error__=f"执行异常: {e}",
+                # R2-4: record the failure class + failed step so the resume
+                # livelock guard can engage — without these, every resume of an
+                # internally-failed plan re-executed its tools from scratch
+                # (guard needs both fields and a non-transient class).
+                __failure_class__="internal",
+                __failed_step__=next(
+                    (s["id"] for s in plan.get("steps", []) if s["id"] not in step_results),
+                    None,
+                ),
                 __step_results__=await _persist_step_results(session_id, plan_id, step_results),
             )
         except Exception as e2:  # noqa: BLE001 —— 收敛写失败不能替换原始异常

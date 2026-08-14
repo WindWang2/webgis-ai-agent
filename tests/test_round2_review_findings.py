@@ -332,3 +332,43 @@ async def test_B1_failed_plan_can_converge_on_resume():
     data = await svc.load_plan(sid, plan_id)
     assert data is not None
     assert data["__status__"] == "completed"
+
+
+# ── R2-1: data-fabric DELETE must require authentication ─────────────────────
+
+def test_R2_1_data_fabric_delete_requires_auth():
+    """The destructive DELETE route must not accept anonymous callers (the
+    anonymous branch of _require_tenant_owned matched legacy GLOBAL sources)."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    client = TestClient(app)
+    assert client.delete("/api/v1/data-fabric/sources/ds_x").status_code == 401
+
+
+# ── R2-2: tool-supplied result_ref sentinel must fail dispatch ───────────────
+
+@pytest.mark.asyncio
+async def test_R2_2_dispatch_detects_tool_supplied_result_ref_sentinel(monkeypatch):
+    """A tool that stores data itself can hand back the unavailable-ref sentinel
+    as result_ref (e.g. webgis_layer_upsert's inline branch). The sentinel must
+    not be promoted to geojson_ref with status=ok."""
+    from app.tools.registry import ToolRegistry
+    from app.services.tool_dispatch_service import ToolDispatchService
+    from app.services.session_data_protocol import UNAVAILABLE_REF_PREFIX
+
+    reg = ToolRegistry()
+
+    @reg.tool(name="self_storing_tool", description="returns its own result_ref")
+    def self_storing_tool() -> dict:
+        return {
+            "success": True,
+            "result_ref": f"{UNAVAILABLE_REF_PREFIX}cafebabe",
+            "bbox": [0, 0, 1, 1],
+        }
+
+    svc = ToolDispatchService(registry=reg)
+    tc = {"id": "call_r22", "function": {"name": "self_storing_tool", "arguments": "{}"}}
+    result = await svc.dispatch(tc, session_id="s-r22", executed_tools=set())
+    assert result.status == "error"
+    assert result.geojson_ref is None

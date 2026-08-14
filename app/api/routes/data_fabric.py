@@ -267,9 +267,15 @@ async def get_data_source(
 async def delete_data_source(
     source_id: str,
     db: Session = Depends(get_db),
-    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+    user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """删除指定数据源及其关联目录项"""
+    """删除指定数据源及其关联目录项
+
+    Requires authentication: DELETE is destructive and cascade-removes catalog
+    items. The anonymous branch of _require_tenant_owned still matched legacy
+    GLOBAL sources (org_id/owner_id both NULL), making them deletable by any
+    unauthenticated caller.
+    """
     s = db.query(DataSourceModel).filter(DataSourceModel.id == source_id).first()
     _require_tenant_owned(s, user)
 

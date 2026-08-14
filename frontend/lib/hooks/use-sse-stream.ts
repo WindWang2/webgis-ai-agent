@@ -538,6 +538,11 @@ export function useSSEStream(
         // 保持 message 对象身份不变。
         const stepId = data.step_id;
         const tool = data.tool;
+        // R2F-2: the cancelled call will never emit its step_result — drop its
+        // queued args so the retry's step_result pairs with the retry's args.
+        if (typeof tool === 'string' && tool) {
+          useHudStore.getState().discardPendingToolArgs(tool);
+        }
         if (typeof stepId === 'string' && stepId) {
           setMessages((prev) => {
             const msgIdx = prev.findIndex(
@@ -571,6 +576,11 @@ export function useSSEStream(
         // ENTIRE message with a generic string, discarding whatever had
         // already streamed and the server's real error detail. Preserve the
         // partial answer and append the actual error (or a fallback note).
+        // R2F-2: a failed call never emits its step_result — drop its queued
+        // args so the retry's step_result pairs with the retry's args.
+        if (event.event === 'step_error' && typeof data?.tool === 'string' && data.tool) {
+          useHudStore.getState().discardPendingToolArgs(data.tool);
+        }
         const raw = data?.error;
         const detail =
           typeof raw === "string" && raw.trim()

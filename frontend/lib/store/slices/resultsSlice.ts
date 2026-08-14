@@ -81,6 +81,20 @@ export const createResultsSlice: StateCreator<HudState, [], [], Partial<HudState
       pendingArgs = { ...pendingArgs, [tool]: queue };
     },
 
+    discardPendingToolArgs: (tool) => {
+      // R2F-2: a failed/cancelled call never emits its step_result, so its
+      // queued args would otherwise be FIFO-consumed by the RETRY's
+      // step_result (mispairing the workbench input evidence with the wrong
+      // attempt). Drop the oldest queued entry for this tool.
+      const queue = pendingArgs[tool];
+      if (!queue || !queue.length) return;
+      const nextQueue = queue.slice(1);
+      const rest = { ...pendingArgs };
+      if (nextQueue.length) rest[tool] = nextQueue;
+      else delete rest[tool];
+      pendingArgs = rest;
+    },
+
     captureStepResult: (stepInput: StepResultEvent) => {
       // Ignore pure orchestration/map-action events that carry no inspectable result.
       const step = stepInput as StepResultEvent;

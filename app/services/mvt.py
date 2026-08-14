@@ -988,8 +988,11 @@ def _pure_bounds(gtype: str, coords) -> Optional[Tuple[float, float, float, floa
     count = 0
     for _kind, _role, part in parts:
         for lon, lat in part:
-            if lon is None or lat is None:
-                return None
+            # R2F-1: skip non-finite vertices (same guard as the pure encoder)
+            # — a NaN y silently "passes" the clamp comparisons, and its finite
+            # x would still enter the bbox, producing an oversized envelope.
+            if not _finite_pair(lon, lat):
+                continue
             px, py = _project(lon, lat, 0)
             if px < minx:
                 minx = px

@@ -364,6 +364,29 @@ class ToolDispatchService:
                     and result_ref.startswith("ref:raster/")
                 )
             )
+            # H-1 (R2-2): tools that store data themselves (e.g.
+            # webgis_layer_upsert's inline branch) can hand back the
+            # unavailable-ref sentinel as ``result_ref`` — the dispatch-level
+            # store() check above cannot see it. Fail truthfully before the
+            # sentinel is promoted to geojson_ref and a MapSpec layer /
+            # event-log entry / dedup-completed marking latch onto a phantom
+            # ref with no payload anywhere.
+            if is_unavailable_ref(result_ref):
+                self._release_key(executed_tools, tool_key)
+                return ToolDispatchResult(
+                    status="error",
+                    llm_payload=(
+                        "会话存储暂时不可用，无法保存分析结果；请稍后重试，无需改变参数。"
+                    ),
+                    slim_event={
+                        "type": "tool_error",
+                        "name": tool_name,
+                        "error": "session store unavailable",
+                    },
+                    geojson_ref=None,
+                    raw_result=result,
+                    error_msg="session store unavailable",
+                )
             if (
                 isinstance(result_ref, str)
                 and result_ref.startswith("ref:")
