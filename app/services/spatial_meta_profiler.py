@@ -124,7 +124,15 @@ def profile_geojson_source(geojson_data: Union[Dict[str, Any], str, bytes, Path]
   # map view; now the downstream view_has_center check skips it.
   if bbox is not None and crs_status == "explicit" and _is_explicit_geographic_crs(crs):
     west, south, east, north = bbox
-    center_lng = round((west + east) / 2, 6)
+    # GIS-P3-7: RFC 7946 wrap-around bboxes (west > east) must center across
+    # the antimeridian. Correct derivation: the midpoint of the arc
+    # [west, east+360) is (west+east)/2 + 180, then wrapped to [-180, 180].
+    # (The naive mean lands on Null Island; a modulo-first variant also
+    # collapses to 0° for symmetric bboxes like 170/-170.)
+    if west > east:
+        center_lng = round((((west + east) / 2 + 180 + 180) % 360) - 180, 6)
+    else:
+        center_lng = round((west + east) / 2, 6)
     center_lat = round((south + north) / 2, 6)
     zoom = _calculate_suggested_zoom(west, south, east, north)
     suggested_view = {"center": [center_lng, center_lat], "zoom": zoom}

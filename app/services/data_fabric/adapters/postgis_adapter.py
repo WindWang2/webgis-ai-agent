@@ -456,17 +456,27 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         try:
             with self._connection_context() as conn:
                 with conn.cursor() as cur:
-                    # Discover geometry column name
+                    # Discover geometry column name + SRID (GIS-P2-2)
                     cur.execute(
-                        "SELECT f_geometry_column FROM geometry_columns WHERE f_table_schema = %s AND f_table_name = %s LIMIT 1;",
+                        "SELECT f_geometry_column, srid FROM geometry_columns WHERE f_table_schema = %s AND f_table_name = %s LIMIT 1;",
                         (schema_name, table_name)
                     )
                     g_row = cur.fetchone()
-                    geom_col = g_row[0] if g_row else None
+                    if g_row:
+                        geom_col = g_row[0]
+                        col_srid = int(g_row[1]) if g_row[1] else 4326
+                    else:
+                        geom_col, col_srid = None, 4326
 
                     if geom_col:
+                        # GeoJSON is always WGS84 (RFC 7946) — GIS-P2-2.
+                        geojson_expr = (
+                            f'ST_AsGeoJSON(ST_Transform("{geom_col}", 4326))'
+                            if col_srid != 4326
+                            else f'ST_AsGeoJSON("{geom_col}")'
+                        )
                         preview_sql = f"""
-                        SELECT ST_AsGeoJSON("{geom_col}") AS _geojson, *
+                        SELECT {geojson_expr} AS _geojson, *
                         FROM "{schema_name}"."{table_name}"
                         LIMIT %s;
                         """
@@ -527,21 +537,36 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
         try:
             with self._connection_context() as conn:
                 with conn.cursor() as cur:
-                    # Find geometry column
+                    # Find geometry column + its SRID
                     cur.execute(
-                        "SELECT f_geometry_column FROM geometry_columns WHERE f_table_schema = %s AND f_table_name = %s LIMIT 1;",
+                        "SELECT f_geometry_column, srid FROM geometry_columns WHERE f_table_schema = %s AND f_table_name = %s LIMIT 1;",
                         (schema_name, table_name)
                     )
                     g_row = cur.fetchone()
-                    geom_col = g_row[0] if g_row else "geom"
+                    if g_row:
+                        geom_col, col_srid = g_row[0], (int(g_row[1]) if g_row[1] else 4326)
+                    else:
+                        geom_col, col_srid = "geom", 4326
 
-                    # BBOX spatial filter pushdown
+                    # GIS-P2-2: bbox pushdown must be expressed in the COLUMN's
+                    # SRID. The old hardcoded 4326 envelope silently returned
+                    # empty results for any projected table (3857/UTM/state
+                    # plane — the tables this adapter exists for): [-180..180]
+                    # in meters is a sliver at the origin.
                     if query_spec.bbox and len(query_spec.bbox) == 4:
                         minx, miny, maxx, maxy = query_spec.bbox
+                        if col_srid == 4326:
+                            envelope_sql = "ST_MakeEnvelope(%s, %s, %s, %s, 4326)"
+                            env_params = [minx, miny, maxx, maxy]
+                        else:
+                            envelope_sql = (
+                                "ST_Transform(ST_MakeEnvelope(%s, %s, %s, %s, 4326), %s)"
+                            )
+                            env_params = [minx, miny, maxx, maxy, col_srid]
                         where_clauses.append(
-                            f'ST_Intersects("{geom_col}", ST_MakeEnvelope(%s, %s, %s, %s, 4326))'
+                            f'ST_Intersects("{geom_col}", {envelope_sql})'
                         )
-                        params.extend([minx, miny, maxx, maxy])
+                        params.extend(env_params)
 
                     where_text = getattr(query_spec, "where", None) or getattr(query_spec, "filter_expr", None) or getattr(query_spec, "filter", None)
                     if where_text and isinstance(where_text, str):
@@ -563,8 +588,16 @@ class PostGISAdapter(GeospatialDataSourceAdapter):
                     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
                     # Query features using parameterized SQL
+                    # GIS-P2-2: GeoJSON is always WGS84 (RFC 7946) — emit
+                    # ST_Transform(geom, 4326) so projected tables don't leak
+                    # easting/northing values as fake lon/lat downstream.
+                    geojson_expr = (
+                        f'ST_AsGeoJSON(ST_Transform("{geom_col}", 4326))'
+                        if col_srid != 4326
+                        else f'ST_AsGeoJSON("{geom_col}")'
+                    )
                     query_sql = f"""
-                    SELECT ST_AsGeoJSON("{geom_col}") AS _geojson, *
+                    SELECT {geojson_expr} AS _geojson, *
                     FROM "{schema_name}"."{table_name}"
                     {where_sql}
                     LIMIT %s OFFSET %s;

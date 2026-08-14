@@ -105,15 +105,39 @@ class NatureResourceAnalyzer:
                         "error": f"无法确定波段索引。影像包含 {src.count} 个波段，请手动指定红光和近红外波段。"
                     }
 
+                # GIS-P3-2: pre-flight the full-band reads through the raster
+                # resource guard (two full-resolution bands of a 50k×50k int16
+                # image ≈ 10 GB — the guard exists exactly for this class of
+                # request; raster_math uses it, this path didn't).
+                from app.lib.geo_analysis.raster_guard import RasterResourceGuard
+
+                RasterResourceGuard.check_grid(
+                    width=src.width,
+                    height=src.height,
+                    bytes_per_pixel=8,  # both bands as float64 after astype
+                    num_bands=2,
+                )
+
                 # 读取数据
                 logger.info(f"Calculating NDVI using Red(B{r_idx}) and NIR(B{n_idx})")
                 red = src.read(r_idx).astype(float)
                 nir = src.read(n_idx).astype(float)
 
+                # GIS-P3-2: mask nodata + non-finite pixels BEFORE stats —
+                # nodata sentinels (-9999/0) used to flow into min/max/mean and
+                # the agent narrated garbage NDVI statistics.
+                invalid = ~np.isfinite(red) | ~np.isfinite(nir)
+                if src.nodata is not None:
+                    invalid |= red == src.nodata
+                    invalid |= nir == src.nodata
+                red = np.where(invalid, np.nan, red)
+                nir = np.where(invalid, np.nan, nir)
+
                 # 计算 NDVI (处理除零)
                 denom = nir + red
                 # 避免除以零且处理无效数据
                 ndvi = np.divide((nir - red), denom, out=np.zeros_like(nir), where=denom != 0)
+                ndvi = np.where(invalid, np.nan, ndvi)
                 
                 # 获取元数据以便保存
                 meta = src.meta.copy()
@@ -135,15 +159,21 @@ class NatureResourceAnalyzer:
                     with rasterio.open(tmp_path, 'w', **meta) as dst:
                         dst.write(ndvi.astype(np.float32), 1)
 
+                finite_ndvi = ndvi[np.isfinite(ndvi)]
+                stats = (
+                    {
+                        "min": float(finite_ndvi.min()),
+                        "max": float(finite_ndvi.max()),
+                        "mean": float(finite_ndvi.mean()),
+                    }
+                    if finite_ndvi.size
+                    else {"min": None, "max": None, "mean": None}
+                )
                 return {
                     "success": True,
                     "result_path": result_path,
                     "filename": filename,
-                    "stats": {
-                        "min": float(np.min(ndvi)),
-                        "max": float(np.max(ndvi)),
-                        "mean": float(np.mean(ndvi)),
-                    },
+                    "stats": stats,
                     "detected_bands": detected,
                     "bbox": [src.bounds.left, src.bounds.bottom, src.bounds.right, src.bounds.top],
                     "crs": str(src.crs)

@@ -84,7 +84,12 @@ def generate_fishnet(bounds: tuple[float, float, float, float], cell_size: float
         rows = np.arange(mymin - dy, mymax + dy, dy)
         nrows = len(rows)
 
-        angles = np.radians([0, 60, 120, 180, 240, 300, 0])
+        # GIS-P2-1: the lattice above is pointy-top (dx=√3·R flat-to-flat,
+        # dy=1.5·R interleaved rows) — vertices must sit at 30°+k·60° so each
+        # hexagon's width is √3·R and height 2R. The old 0°+k·60° (flat-top)
+        # vertices made every cell overlap its neighbors on BOTH axes
+        # (0.134·cell vertical, 0.155·cell horizontal) — not a tessellation.
+        angles = np.radians([30, 90, 150, 210, 270, 330, 30])
         cos_a = np.cos(angles)
         sin_a = np.sin(angles)
 
