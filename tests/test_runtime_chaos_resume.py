@@ -345,7 +345,15 @@ async def test_resume_never_reexecutes_completed_tool_calls(monkeypatch, _pass_o
 
     # Turn B queued (buffer registered, no events yet) — must not clobber A.
     out_b, task_b = await _start_stream("queued work", session_id="s1")
-    await engine.second_entered.wait()
+    try:
+        await asyncio.wait_for(engine.second_entered.wait(), timeout=15)
+    except asyncio.TimeoutError:  # pragma: no cover - diagnostic fast-fail
+        engine.second_gate.set()
+        await asyncio.gather(task_b, return_exceptions=True)
+        raise AssertionError(
+            "turn B never entered the engine — per-session lock stalled by "
+            "earlier state on this session id (full-suite order pollution)"
+        )
     assert engine.stream_calls == 2
 
     resumed, rtask = await _open_resume("run tool", last_event_id=2, session_id="s1")
