@@ -108,7 +108,7 @@ describe('refreshAuthToken', () => {
     expect(getAuthUser()).toEqual({ id: 'u1', username: 'ops' });
   });
 
-  it('drops local auth when the refresh token is definitively rejected', async () => {
+  it('drops local auth when the refresh token is definitively rejected (401)', async () => {
     setAuth({ accessToken: 'stale', refreshToken: 'ref-1' }, null);
     vi.stubGlobal(
       'fetch',
@@ -117,6 +117,42 @@ describe('refreshAuthToken', () => {
     await expect(refreshAuthToken()).resolves.toBe(false);
     expect(getAccessToken()).toBeNull();
     expect(getRefreshToken()).toBeNull();
+  });
+
+  it('keeps tokens on transient refresh failures (429 / 5xx)', async () => {
+    setAuth({ accessToken: 'stale', refreshToken: 'ref-1' }, null);
+    for (const status of [429, 500, 503]) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(new Response('{"detail":"slow down"}', { status })),
+      );
+      await expect(refreshAuthToken()).resolves.toBe(false);
+      expect(getAccessToken()).toBe('stale');
+      expect(getRefreshToken()).toBe('ref-1');
+    }
+  });
+
+  it('does not clobber credentials changed while a refresh was in flight', async () => {
+    setAuth({ accessToken: 'stale', refreshToken: 'ref-1' }, null);
+    let resolveFetch!: (r: Response) => void;
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() => new Promise<Response>((res) => (resolveFetch = res)));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const p = refreshAuthToken();
+    // User switches account mid-flight (login as someone else).
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    setAuth({ accessToken: 'account-b', refreshToken: 'ref-b' }, { id: 'b', username: 'b' });
+    resolveFetch(
+      new Response(JSON.stringify({ access_token: 'account-a-fresh', refresh_token: 'ref-a-2' }), {
+        status: 200,
+      }),
+    );
+    await expect(p).resolves.toBe(false);
+    // Account B's state survives; A's refreshed pair was discarded.
+    expect(getAccessToken()).toBe('account-b');
+    expect(getRefreshToken()).toBe('ref-b');
   });
 
   it('keeps tokens on a network failure (transient) and resolves false', async () => {

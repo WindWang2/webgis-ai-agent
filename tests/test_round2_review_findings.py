@@ -540,3 +540,109 @@ async def test_R3_3_layer_upsert_inline_refuses_store_sentinel(monkeypatch):
     )
     assert result["success"] is False
     assert upserted["calls"] == 0, "layer_upsert must not run on a phantom ref"
+
+
+# ── R3-4: mapspec_store.source_profile must refuse the unavailable-ref sentinel
+# before UpsertSourceIntent (sibling of R3-3; no result_ref for dispatch to see).
+
+@pytest.mark.asyncio
+async def test_R3_4_source_profile_refuses_store_sentinel(monkeypatch):
+    from app.services.session_data_protocol import UNAVAILABLE_REF_PREFIX
+
+    sentinel = f"{UNAVAILABLE_REF_PREFIX}deadbeef"
+
+    async def _unavailable_store(session_id, data, prefix="geojson"):
+        return sentinel
+
+    applied = {"calls": 0}
+
+    class _FakeEngine:
+        async def apply_mutation(self, session_id, intent):
+            applied["calls"] += 1
+            class _Res:
+                is_error = False
+                error_msg = ""
+                mapspec = {}
+            return _Res()
+
+    monkeypatch.setattr(
+        "app.services.mapspec_store.session_data_manager.store", _unavailable_store
+    )
+    from app.services import mapspec_store as ms
+
+    fake_store = ms.MapSpecStore.__new__(ms.MapSpecStore)
+    fake_store.engine = _FakeEngine()
+
+    with pytest.raises(RuntimeError, match="session store unavailable"):
+        await fake_store.source_profile(
+            "s-r34", "src_1", {"type": "FeatureCollection", "features": []}
+        )
+    assert applied["calls"] == 0, "UpsertSourceIntent must not run on a phantom ref"
+
+
+# ── R3-5: same-wait-batch siblings must not lose their successes when another
+# step in the batch fails (non-deterministic `for t in done` set-iteration
+# order used to drop them via `break`).
+
+@pytest.mark.asyncio
+async def test_R3_5_same_batch_sibling_success_counted_on_failure():
+    from app.services import plan_mode as svc
+    from app.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+
+    @reg.tool(name="fake_sync_ok", description="x")
+    def fake_sync_ok(area: str) -> dict:  # noqa: ARG001
+        return {"success": True, "bbox": [0, 0, 1, 1]}
+
+    @reg.tool(name="fake_sync_fail", description="x")
+    def fake_sync_fail(area: str) -> dict:  # noqa: ARG001
+        return {"success": False, "message": "nope"}
+
+    sid = "test-r3-same-batch"
+    # Both steps are instant sync tools: they complete in the SAME
+    # asyncio.wait batch, so the batch-scan order decides whether the
+    # sibling's success is collected when the failure is seen first.
+    plan = svc.PlanProposal(
+        title="g",
+        steps=[
+            svc.PlanStep(id="ok_a", tool="fake_sync_ok", args={"area": "x"}),
+            svc.PlanStep(id="ok_b", tool="fake_sync_ok", args={"area": "x"}),
+            svc.PlanStep(id="bad", tool="fake_sync_fail", args={"area": "x"}),
+        ],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+
+    # Force the failing task to iterate FIRST in the done batch (native set
+    # order is hash-dependent; this makes the dropped-sibling path
+    # deterministic).
+    import asyncio as _aio
+
+    real_wait = _aio.wait
+
+    async def _ordered_wait(fs, **kw):
+        done, pending = await real_wait(fs, **kw)
+
+        def _rank(t):
+            try:
+                r = t.result()
+            except Exception:
+                return 0
+            return 1 if (isinstance(r, dict) and r.get("success") is False) else 2
+
+        return (sorted(done, key=_rank), pending)
+
+    monkeypatch_fixture = pytest.MonkeyPatch()
+    monkeypatch_fixture.setattr(_aio, "wait", _ordered_wait)
+    try:
+        ret = await svc.execute_plan_async(sid, plan_id, reg)
+    finally:
+        monkeypatch_fixture.undo()
+
+    assert ret["success"] is False
+    assert ret["failed_step"] == "bad"
+    # Both successful siblings must count regardless of batch iteration order.
+    assert set(ret["executed"]) == {"ok_a", "ok_b"}
+    data = await svc.load_plan(sid, plan_id)
+    assert data["__status__"] == "partially_completed"
+    assert data["__failed_step__"] == "bad"

@@ -819,14 +819,20 @@ async def _execute_plan_locked(
                     except Exception as e:
                         logger.exception(f"[PlanMode] step {sid} raised")
                         fc, ra = _classify_failure(exception=e)
-                        failure = (sid, str(e), None, fc, ra)
-                        break
+                        if failure is None:
+                            failure = (sid, str(e), None, fc, ra)
+                        # R3-5: keep scanning the SAME wait batch — breaking
+                        # here dropped already-done siblings' successes from
+                        # step_results whenever the failing task iterated
+                        # first (non-deterministic set order).
+                        continue
                     # 工具返回 success=False（V3.x Exception As Thought 包装）也视为失败
                     if isinstance(result, dict) and result.get("success") is False:
                         err = result.get("message") or result.get("error", "tool failed")
                         fc, ra = _classify_failure(result=result)
-                        failure = (sid, err, result, fc, ra)
-                        break
+                        if failure is None:
+                            failure = (sid, err, result, fc, ra)
+                        continue
                     wave_successes[sid] = result
                 if failure is not None:
                     break

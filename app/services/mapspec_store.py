@@ -29,6 +29,7 @@ from app.services.mapspec.store import (
     view_has_center,
 )
 from app.services.session_data import session_data_manager
+from app.services.session_data_protocol import is_unavailable_ref
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,16 @@ class MapSpecStore:
                 if isinstance(geojson_data, dict)
                 else None
             )
+            # R3-3 (sibling path): a Redis outage makes store() return the
+            # unavailable-ref sentinel. UpsertSourceIntent would persist a
+            # source pointing at a ref with no payload anywhere — and unlike
+            # the tool path there is no result_ref for the dispatch-level
+            # check to catch. Refuse before the MapSpec write.
+            if is_unavailable_ref(ref_id):
+                raise RuntimeError(
+                    "session store unavailable: refusing to persist source "
+                    "with an unreadable ref; retry shortly"
+                )
 
         profile_payload = json.dumps(
             profile, ensure_ascii=False, sort_keys=True, separators=(",", ":"),

@@ -41,16 +41,18 @@ class TestSkillListAPI:
             "body": "SECRET BODY 分析城市布局...",
             "filename": "urban_planning.md",
         }
-        resp = client.get("/api/v1/chat/skills")
-        assert resp.status_code == 200
-        payload = resp.json()
-        assert payload["skills"] == [
-            {"name": "urban_planning_x", "description": "城市规划设计"}
-        ]
-        raw = resp.text
-        assert "SECRET BODY" not in raw
-        assert "urban_planning.md" not in raw
-        _md_skills.pop("urban_planning_x", None)
+        try:
+            resp = client.get("/api/v1/chat/skills")
+            assert resp.status_code == 200
+            payload = resp.json()
+            assert payload["skills"] == [
+                {"name": "urban_planning_x", "description": "城市规划设计"}
+            ]
+            raw = resp.text
+            assert "SECRET BODY" not in raw
+            assert "urban_planning.md" not in raw
+        finally:
+            _md_skills.pop("urban_planning_x", None)
 
     def test_list_skills_empty(self, client, auth_headers):
         resp = client.get("/api/v1/chat/skills", headers=auth_headers)

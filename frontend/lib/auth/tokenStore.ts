@@ -135,8 +135,8 @@ let refreshInFlight: Promise<boolean> | null = null;
 
 export function refreshAuthToken(): Promise<boolean> {
   if (refreshInFlight) return refreshInFlight;
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) return Promise.resolve(false);
+  const startedWith = getRefreshToken();
+  if (!startedWith) return Promise.resolve(false);
   refreshInFlight = (async () => {
     try {
       // Late import to avoid a config/init cycle at module load.
@@ -144,12 +144,14 @@ export function refreshAuthToken(): Promise<boolean> {
       const res = await fetch(`${API_BASE}/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: refreshToken }),
+        body: JSON.stringify({ refresh_token: startedWith }),
       });
       if (!res.ok) {
-        // Revoked/expired refresh token — drop the session so the UI falls
-        // back to anonymous instead of retrying a dead credential forever.
-        clearAuth();
+        // 401/403 = the token is definitively revoked/expired — drop the
+        // session so the UI falls back to anonymous instead of retrying a
+        // dead credential forever. 429 (rate limit) and 5xx are transient:
+        // keep the tokens and surface the original 401 to the caller.
+        if (res.status === 401 || res.status === 403) clearAuth();
         return false;
       }
       const body = (await res.json()) as {
@@ -157,11 +159,14 @@ export function refreshAuthToken(): Promise<boolean> {
         refresh_token?: string | null;
         user?: AuthUser;
       };
+      // Epoch guard: if the user signed in/out (or into another account)
+      // while this refresh was in flight, do not clobber the newer state.
+      if (getRefreshToken() !== startedWith) return false;
       const existingUser = getAuthUser();
       setAuth(
         {
           accessToken: body.access_token,
-          refreshToken: body.refresh_token ?? refreshToken,
+          refreshToken: body.refresh_token ?? startedWith,
         },
         body.user ?? existingUser,
       );
