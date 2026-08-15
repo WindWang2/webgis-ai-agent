@@ -109,7 +109,22 @@ export default function Home() {
 
   const handleSelectSession = useCallback(
     (sid: string) => {
-      selectSession(sid, (restored) => setMessages(restored));
+      // #392: 失败/空会话时 hook 以 (messages, notice) 回传 —— notice 非空
+      // 说明恢复失败，渲染成单条错误提示（旧 transcript 已被重置，不再残留）。
+      selectSession(sid, (restored, notice) => {
+        setMessages(
+          notice
+            ? [
+                {
+                  id: `session-error-${Date.now()}`,
+                  role: 'assistant' as const,
+                  content: notice,
+                  timestamp: new Date(),
+                },
+              ]
+            : restored
+        );
+      });
       setHistoryOpen(false);
     },
     [selectSession, setMessages, setHistoryOpen]
