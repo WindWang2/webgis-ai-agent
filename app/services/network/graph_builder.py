@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from collections import OrderedDict
 
 import networkx as nx
+from shapely import STRtree
 from shapely.geometry import shape, LineString, MultiLineString, Point, MultiPoint, mapping
 from shapely.ops import unary_union, split
 
@@ -68,15 +69,42 @@ class NetworkGraphBuilder:
         # cached graph (review N-F05-regression).
         self._cache: OrderedDict[str, Tuple[nx.DiGraph, NetworkDataset, Any]] = OrderedDict()
         self._cache_lock = threading.Lock()
+        # Fingerprint memo: id(data) -> (serialized data string, strong ref).
+        # Rebuilding a graph from the same GeoJSON dict used to re-run
+        # json.dumps over the whole network on EVERY build_graph call (cache
+        # hit included). The strong ref prevents CPython from reusing the id()
+        # of a freed object for a different dataset (same pinning argument as
+        # the graph cache entries). Bounded by max_cache_size (LRU).
+        self._fp_memo: OrderedDict[int, Tuple[str, Any]] = OrderedDict()
 
     def clear_cache(self) -> None:
         """Clears the LRU graph cache."""
         with self._cache_lock:
             self._cache.clear()
+            self._fp_memo.clear()
 
     def get_cache_info(self) -> Dict[str, int]:
         """Returns cache capacity and current entry count."""
         return {"size": len(self._cache), "max_size": self.max_cache_size}
+
+    def _memoized_data_str(self, data: Dict[str, Any]) -> str:
+        """Serializes a GeoJSON dict once per object identity.
+
+        ``json.dumps(sort_keys=True)`` of a 100k-line city network is the
+        dominant cost of every ``build_graph`` call (cache hit or not); the
+        memo makes repeated builds of the SAME dict object a dict lookup.
+        """
+        key = id(data)
+        with self._cache_lock:
+            entry = self._fp_memo.get(key)
+            if entry is not None and entry[1] is data:
+                self._fp_memo.move_to_end(key)
+                return entry[0]
+            data_str = json.dumps(data, sort_keys=True)
+            self._fp_memo[key] = (data_str, data)
+            while len(self._fp_memo) > self.max_cache_size:
+                self._fp_memo.popitem(last=False)
+            return data_str
 
     def compute_fingerprint(
         self,
@@ -88,7 +116,7 @@ class NetworkGraphBuilder:
         """Computes deterministic SHA-256 fingerprint hash for LRU caching."""
         try:
             if isinstance(data, dict):
-                data_str = json.dumps(data, sort_keys=True)
+                data_str = self._memoized_data_str(data)
             elif isinstance(data, NetworkDataset):
                 # Object-identity fingerprint for NetworkDataset: dataset_id
                 # alone collides (it historically hashed only the edge count,
@@ -369,11 +397,22 @@ class NetworkGraphBuilder:
 
         lines = [item[0] for item in line_items]
 
-        # Find all pairwise intersection points between lines
+        # Find all intersection points between lines. The naive O(n²) pairwise
+        # loop performed ~5×10⁹ shapely intersection tests for a 100k-line
+        # city network (split_intersections=True is the default on every cache
+        # miss). A STRtree candidate query restricts the precise intersects
+        # test to bounding-box-overlapping pairs (typically a handful per
+        # line), giving the exact same point set with a fraction of the work.
         intersection_points: List[Point] = []
-        for i in range(len(lines)):
-            for j in range(i + 1, len(lines)):
-                inter = lines[i].intersection(lines[j])
+        tree = STRtree(lines)
+        for i, line in enumerate(lines):
+            for j in tree.query(line, predicate="intersects"):
+                j = int(j)
+                if j <= i:
+                    # Skip self (j == i) and pairs already handled when the
+                    # earlier line was queried (j < i).
+                    continue
+                inter = line.intersection(lines[j])
                 if not inter.is_empty:
                     if isinstance(inter, Point):
                         intersection_points.append(inter)

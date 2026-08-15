@@ -85,8 +85,12 @@ class NetworkRouteOptimizationService:
                 impedance=impedance,
             )
 
-        # Compute N x N cost matrix
-        od_pairs = self.od_service.network_od_matrix(
+        # Compute N x N cost matrix + shortest-path trees in one multi-source
+        # Dijkstra pass per unique stop. The predecessor trees are then reused
+        # to stitch the tour legs — previously every leg re-ran a full
+        # network_shortest_path (including a per-call graph copy) even though
+        # the OD pass had already computed every cost.
+        od = self.od_service.network_od_paths(
             origins=all_points,
             destinations=all_points,
             graph=graph,
@@ -94,14 +98,15 @@ class NetworkRouteOptimizationService:
             profile=profile,
             impedance=impedance,
         )
+        labels = od["origin_labels"]
 
         n = len(all_points)
         cost_mat: List[List[float]] = [[0.0] * n for _ in range(n)]
         for i in range(n):
             for j in range(n):
-                idx = i * n + j
-                if idx < len(od_pairs) and od_pairs[idx].reachable:
-                    cost_mat[i][j] = od_pairs[idx].travel_time_s
+                info = od["pairs"].get((labels[i], labels[j]))
+                if info and info["reachable"]:
+                    cost_mat[i][j] = info["time_s"]
                 else:
                     cost_mat[i][j] = 1e9
 
@@ -132,17 +137,28 @@ class NetworkRouteOptimizationService:
         total_cost = 0.0
 
         for idx in range(len(tour) - 1):
-            src_pt = all_points[tour[idx]]
-            dst_pt = all_points[tour[idx + 1]]
+            src_idx, dst_idx = tour[idx], tour[idx + 1]
+            info = od["pairs"].get((labels[src_idx], labels[dst_idx]))
 
-            sub_route = self.router.network_shortest_path(
-                graph=graph,
-                network_dataset=network_dataset,
-                origin=src_pt,
-                destination=dst_pt,
-                profile=profile,
-                impedance=impedance,
-            )
+            if info and info["reachable"]:
+                sub_route = self.router.build_route_from_path(
+                    od["graph_view"], info["path"],
+                    origin_label=labels[src_idx], destination_label=labels[dst_idx],
+                    profile_name=profile.name if profile else "driving",
+                    route_id=f"leg_{src_idx}_{dst_idx}",
+                    weight_func=od["weight_func"],
+                )
+            else:
+                sub_route = Route(
+                    route_id=f"leg_{src_idx}_{dst_idx}",
+                    origin_id=labels[src_idx],
+                    destination_id=labels[dst_idx],
+                    profile_name=profile.name if profile else "driving",
+                    total_distance_m=0.0,
+                    total_time_s=0.0,
+                    total_cost=float("inf"),
+                    geometry={"type": "LineString", "coordinates": []},
+                )
 
             total_dist_m += sub_route.total_distance_m
             total_time_s += sub_route.total_time_s
