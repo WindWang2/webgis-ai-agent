@@ -505,6 +505,51 @@ describe('MapPanel — FE-3 interaction UX', () => {
     expect(hlMoves[hlMoves.length - 1].beforeId).toBeNull();
   });
 
+  // FIX-3-9 (#401): the imperative annotation stack (markers/measurements/
+  // labels) is mounted once outside MapSpecRuntime. Any layer-changing
+  // reconcile buries it under the spec sublayers via syncLayerZOrder; the panel
+  // must re-raise it alongside the selection highlight.
+  it('re-raises the annotation stack above spec layers after a reconcile', async () => {
+    // Pre-mount the annotation stack the way MapActionHandler does.
+    rmg.map.addSource('claude-annotations', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    });
+    for (const [suffix, type] of [
+      ['fill', 'fill'],
+      ['line', 'line'],
+      ['circle', 'circle'],
+      ['label', 'symbol'],
+    ] as const) {
+      rmg.map.addLayer({
+        id: `claude-annotations-${suffix}`,
+        source: 'claude-annotations',
+        type,
+      });
+    }
+
+    const view = await renderPanel([pointLayer('poi', 'POI')]);
+    await settleInteractive(['poi__point']);
+    rmg.map._calls.moveLayer.length = 0;
+
+    // Visibility-toggle reconcile (layout.visibility → recompile → z-order
+    // sync): the annotation stack must be moved back to the top afterwards.
+    rerenderPanel(view, [{ ...pointLayer('poi', 'POI'), visible: false }]);
+    await drainRuntime();
+
+    const annotationMoves = rmg.map._calls.moveLayer.filter((c: { id: string }) =>
+      c.id.startsWith('claude-annotations-'),
+    );
+    expect(annotationMoves.length).toBeGreaterThan(0);
+    // Every stack member re-raised; the last move (label) is at the very top.
+    for (const suffix of ['fill', 'line', 'circle', 'label']) {
+      expect(
+        annotationMoves.some((c: { id: string }) => c.id === `claude-annotations-${suffix}`),
+      ).toBe(true);
+    }
+    expect(annotationMoves[annotationMoves.length - 1].beforeId).toBeNull();
+  });
+
   it('clears selection + highlight when the selected layer is removed', async () => {
     const view = await renderPanel([pointLayer('poi', 'POI')]);
     await settleInteractive(['poi__point']);

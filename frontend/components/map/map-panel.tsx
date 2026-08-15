@@ -22,6 +22,7 @@ import {
   clearSelectionHighlight,
   SELECTION_HIGHLIGHT_SOURCE_ID,
 } from "@/lib/map-kit/selection-highlight"
+import { raiseAnnotationLayers } from "@/lib/map-commands/annotationHelpers"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
 import { devOnly } from "@/lib/utils/logger"
 
@@ -316,6 +317,12 @@ export function MapPanel({
         // spec sublayers — put it back on top now that the reconcile settled.
         raiseSelectionHighlight()
         const map = mapRef.current?.getMap()
+        // FIX-3-9 (#401): the imperative annotation stack (markers /
+        // measurements / labels) suffers the same burying — syncLayerZOrder
+        // stacks every spec sublayer above it on any layer-changing patch.
+        // Re-raise it alongside the selection highlight (no-op when the
+        // stack isn't mounted, so reconcile-only patches stay cheap).
+        if (map) raiseAnnotationLayers(map)
         const generation = layers.reduce<Layer | null>((latest, layer) => {
           if (!layer._mapspecFingerprint) return latest
           if (!latest) return layer
