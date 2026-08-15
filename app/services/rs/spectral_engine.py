@@ -98,7 +98,10 @@ class SpectralRasterEngine:
             return RasterAnalysisResult(
                 index_type=idx,
                 array=arr,
-                bounds=list(bbox),
+                # #381: stac_client 返回实际读取窗口的 WGS84 范围 (bbox ∩
+                # 影像足迹)，而不是用户请求的整个 bbox —— 统计与栅格叠加
+                # 必须配准到真实数据 footprint。
+                bounds=fetch_res.get("bounds") or list(bbox),
                 stats=stats,
                 is_error=False,
             )
@@ -176,7 +179,9 @@ class SpectralRasterEngine:
             return RasterAnalysisResult(
                 index_type=label,
                 array=target_arr,
-                bounds=list(bbox),
+                # #381: 实际读取窗口 (bbox ∩ DEM 足迹) 的 WGS84 范围，
+                # 而非整个请求 bbox。
+                bounds=fetch_res.get("bounds") or list(bbox),
                 stats=stats,
                 is_error=False,
             )

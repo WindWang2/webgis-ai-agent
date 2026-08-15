@@ -155,8 +155,9 @@ def _write_dem(path, west, north, size_deg, height, width, crs="EPSG:4326"):
 @pytest.mark.asyncio
 async def test_stac_cell_size_applies_cos_lat_to_east_west(monkeypatch, tmp_path):
     """#379: at the STAC read site, a geographic DEM's x cell size must be
-    corrected by cos(lat) (AOI center latitude) — otherwise east-west slopes
-    are underestimated ~cos(lat). The y (meridian) cell size is unchanged."""
+    corrected by cos(lat) (read-window center latitude) — otherwise
+    east-west slopes are underestimated ~cos(lat). The y (meridian) cell
+    size is unchanged."""
     from app.services.rs.stac_client import StacClientPrimitive, stac_primitive
 
     dem_path = tmp_path / "dem.tif"
@@ -171,8 +172,10 @@ async def test_stac_cell_size_applies_cos_lat_to_east_west(monkeypatch, tmp_path
         bands_needed={"dem": "data"},
         ds_factor=1,
     )
-    assert "error" not in res
-    assert res["bands"]["dem"].shape == (20, 20)
+    assert "error" not in res, res.get("error")
+    # #381: 只读 bbox ∩ 影像足迹的窗口 (col 13..17, row 9..13 of the 20x20 tile)。
+    assert res["bands"]["dem"].shape == (4, 4)
+    assert res["bounds"] == pytest.approx([10.003, 59.997, 10.007, 60.001], abs=1e-9)
     assert res["cell_size_m"] == pytest.approx(0.001 * 111320.0, rel=1e-9)
     lat = (59.997 + 60.001) / 2.0
     assert res["cell_size_x_m"] == pytest.approx(
@@ -183,6 +186,8 @@ async def test_stac_cell_size_applies_cos_lat_to_east_west(monkeypatch, tmp_path
 async def test_stac_projected_dem_has_no_cos_lat_correction(monkeypatch, tmp_path):
     """Projected (UTM) DEMs are already in metres on both axes — no x
     correction and no cell_size_x_m key."""
+    from rasterio.crs import CRS
+    from rasterio.warp import transform_bounds
     from app.services.rs.stac_client import StacClientPrimitive, stac_primitive
 
     dem_path = tmp_path / "dem_utm.tif"
@@ -192,12 +197,16 @@ async def test_stac_projected_dem_has_no_cos_lat_correction(monkeypatch, tmp_pat
     monkeypatch.setattr(StacClientPrimitive, "_get_catalog",
                         lambda self: _FakeCatalog([item]))
 
+    # WGS84 bbox covering the UTM scene footprint.
+    wgs_bbox = list(transform_bounds(
+        CRS.from_epsg(32633), CRS.from_epsg(4326),
+        500000.0, 6639700.0, 500300.0, 6640000.0))
     res = await stac_primitive.fetch_stac_items_and_bands(
         collection="cop-dem-glo-30",
-        bbox=[10.0, 59.9, 10.1, 60.0],
+        bbox=wgs_bbox,
         bands_needed={"dem": "data"},
         ds_factor=1,
     )
-    assert "error" not in res
+    assert "error" not in res, res.get("error")
     assert res["cell_size_m"] == pytest.approx(30.0)
     assert "cell_size_x_m" not in res
