@@ -369,14 +369,30 @@ class NetworkRoutingService:
         # Run Pathfinding
         try:
             if algorithm.lower() == "astar":
+                # Issue #447: the heuristic previously divided the
+                # straight-line distance by the PROFILE default speed
+                # (driving 40 km/h / walking 4.8 km/h). The builder assigns
+                # per-edge speeds of 60-100+ km/h with no clamp, so on any
+                # network with edges faster than the default the heuristic
+                # OVERESTIMATED the remaining cost — inadmissible, and A*
+                # could settle the goal via a suboptimal path (measured +2.0%
+                # travel time; ~8-20x overestimate for walking profiles).
+                #
+                # The bound is now derived from the graph itself: the minimum
+                # edge cost per meter of length under the active weight
+                # function. Any u→v path has network length ≥ haversine(u, v)
+                # and every meter costs at least that ratio, so
+                # h = haversine * ratio ≤ true remaining cost for ANY cost
+                # field (time, length, custom), staying conservative.
+                min_cost_per_m = self._min_cost_per_meter(graph_view, weight_func)
+
                 def heuristic(u: Any, v: Any) -> float:
+                    if min_cost_per_m is None:
+                        return 0.0
                     u_data = graph_view.nodes[u]
                     v_data = graph_view.nodes[v]
                     dist_m = haversine_distance((u_data["x"], u_data["y"]), (v_data["x"], v_data["y"]))
-                    if cost_field == "travel_time_s":
-                        speed = profile.speed_kmh if profile else 40.0
-                        return dist_m / ((speed * 1000.0) / 3600.0)
-                    return dist_m
+                    return dist_m * min_cost_per_m
 
                 path_nodes = nx.astar_path(graph_view, start_node_id, end_node_id, heuristic=heuristic, weight=weight_func)
             else:
@@ -405,6 +421,27 @@ class NetworkRoutingService:
             origin_label=origin_id_str, destination_label=dest_id_str,
             profile_name=profile_name, route_id=route_id, weight_func=weight_func,
         )
+
+    @staticmethod
+    def _min_cost_per_meter(graph: nx.DiGraph, weight_func) -> Optional[float]:
+        """Smallest per-meter edge cost under ``weight_func`` (issue #447).
+
+        Used as the A* heuristic scale: h(u, v) = haversine(u, v) * ratio is a
+        guaranteed lower bound of the remaining path cost because network path
+        length ≥ straight-line distance and each meter of any edge costs at
+        least the minimum ratio. Returns None when the graph has no usable
+        positive lengths (callers fall back to h = 0, i.e. Dijkstra behavior —
+        always admissible).
+        """
+        min_ratio: Optional[float] = None
+        for u, v, data in graph.edges(data=True):
+            length_m = data.get("length_m")
+            if not isinstance(length_m, (int, float)) or length_m <= 0:
+                continue
+            ratio = weight_func(u, v, data) / float(length_m)
+            if min_ratio is None or ratio < min_ratio:
+                min_ratio = ratio
+        return min_ratio
 
     def build_route_from_path(
         self,
