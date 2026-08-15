@@ -419,6 +419,15 @@ def register_mapspec_cartography_tools(registry: ToolRegistry) -> None:
         if isinstance(image_ref, str) and image_ref.startswith("ref:raster/"):
           raster_id = image_ref[len("ref:raster/"):]
           image_url = f"/api/v1/sessions/{session_id}/raster/{raster_id}.png"
+          # SEC-08/#408：路由要求所有权校验；MapLibre 图片请求带不了请求头，
+          # 匿名会话的 owner_token 以查询参数附加在 URL 上。
+          try:
+            from app.api.routes.raster import lookup_session_owner_token
+            session_token = await lookup_session_owner_token(session_id)
+          except Exception:
+            session_token = None
+          if session_token:
+            image_url = f"{image_url}?token={session_token}"
           out.update({
               "type": "heatmap_raster",
               "image": image_url,
