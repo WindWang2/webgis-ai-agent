@@ -366,6 +366,39 @@ async def call_llm(
     return response.json()
 
 
+async def test_llm_connection(
+    cfg: LLMConfig,
+    timeout: httpx.Timeout = httpx.Timeout(connect=10.0, read=15.0, write=10.0, pool=5.0),
+) -> dict:
+    """连通性探针：向 provider 发一次最小补全请求并校验 HTTP 状态。
+
+    供 ``POST /api/v1/config/llm/test`` 使用（#390）：设置面板的
+    "Connectivity Test" 之前是前端 setTimeout 假成功，从不触达后端。
+    这里复用与生产调用相同的 payload/header 构造与连接池，但用短超时
+    让失败快速返回，而不是等生产路径的 120s。
+
+    失败（HTTP 非 2xx / 传输层错误）向上抛异常，由调用方转成带错误
+    详情的响应，绝不返回"假成功"。
+    """
+    headers = _build_headers(cfg)
+    payload = _build_payload(
+        cfg,
+        [{"role": "user", "content": "ping"}],
+        tools=None,
+        stream=False,
+    )
+    _key, prefix = _normalize_base_url(cfg.base_url)
+    client = await get_llm_http_client(cfg.base_url)
+    response = await client.post(
+        f"{prefix}/chat/completions",
+        headers=headers,
+        json=payload,
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 async def call_llm_stream(
     cfg: LLMConfig,
     messages: list[dict],

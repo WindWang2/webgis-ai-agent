@@ -21,6 +21,7 @@ const hudState = vi.hoisted(() => ({
   addLayer: vi.fn(),
   fetchAnalysisAssets: vi.fn().mockResolvedValue(undefined),
   clearResults: vi.fn(),
+  historyOpen: false,
 }));
 
 vi.mock('@/lib/store/useHudStore', () => ({
@@ -64,13 +65,14 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
     fetchMock.mockReset();
     vi.stubGlobal('fetch', fetchMock);
     resetViewportSeq();
+    hudState.historyOpen = false;
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it('non-OK restore surfaces a typed ApiError and does not clobber state', async () => {
+  it('non-OK restore surfaces a typed ApiError and resets messages to empty', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonOk({ sessions: [] })) // mount: refreshSessions
       .mockResolvedValueOnce(jsonErr(404, 'Not Found', { detail: 'session not found' })); // restore
@@ -88,9 +90,12 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
     expect(err.status).toBe(404);
     expect(err.body).toEqual({ detail: 'session not found' });
 
-    // no phantom history message, and no further restore work (map-state /
-    // layers / analysis assets) — a failed restore must not write state
-    expect(onRestore).not.toHaveBeenCalled();
+    // #392: 失败路径也无条件重置 transcript —— messages 清空 + 附错误提示，
+    // 上一会话的聊天不会残留到新会话身份下（was: onRestore 完全不调用）。
+    expect(onRestore).toHaveBeenCalledTimes(1);
+    expect(onRestore).toHaveBeenCalledWith([], expect.stringContaining('session not found'));
+    // 没有 phantom history message，且没有后续恢复工作（map-state /
+    // layers / analysis assets）—— 失败的恢复不得再写状态
     expect(fetchMock).toHaveBeenCalledTimes(2); // sessions list + restore only
     expect(fetchMock.mock.calls[1][0]).toContain('/api/v1/chat/sessions/bad-id');
     expect(hudState.fetchAnalysisAssets).not.toHaveBeenCalled();
@@ -112,7 +117,9 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
     const err = errorSpy.mock.calls[0][1] as ApiError;
     expect(err.status).toBe(502);
     expect(err.body).toBe('<html>proxy error</html>');
-    expect(onRestore).not.toHaveBeenCalled();
+    // #392: 非 JSON 错误体 -> messages 同样被重置（detail 不可用时回退 HTTP 状态）
+    expect(onRestore).toHaveBeenCalledTimes(1);
+    expect(onRestore).toHaveBeenCalledWith([], expect.stringContaining('HTTP 502'));
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -320,5 +327,65 @@ describe('useWorkspaceSession selectSession (F-09)', () => {
     expect(onRestore).not.toHaveBeenCalled();
     // F-4: the result registry must also be cleared for the fresh session.
     expect(vi.mocked(hudState.clearResults)).toHaveBeenCalled();
+  });
+
+  it('#392: History 抽屉打开信号触发 refreshSessions（不再只 mount 拉一次）', async () => {
+    fetchMock.mockResolvedValue(jsonOk({ sessions: [{ id: 's1', title: '会话一' }] }));
+    const { rerender } = renderHook(() => useWorkspaceSession(vi.fn()));
+    // mount 拉取 settle
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // 模拟 store 的 historyOpen 翻转为 true（History 抽屉打开）
+    act(() => {
+      hudState.historyOpen = true;
+      rerender();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const lastCall = fetchMock.mock.calls[1];
+    expect(String(lastCall[0])).toContain('/api/v1/chat/sessions');
+  });
+
+  it('#392: 空会话恢复时无条件把 transcript 重置为空', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonOk({ sessions: [] }))
+      .mockResolvedValueOnce(jsonOk({ title: '空会话', messages: [] }))
+      .mockResolvedValueOnce(jsonOk({ map_state: null }));
+
+    const onRestore = vi.fn();
+    const { result } = renderHook(() => useWorkspaceSession(vi.fn()));
+    await act(async () => {
+      await result.current.selectSession('empty-session', onRestore);
+    });
+
+    // was: messages 为空时 onRestoreMessages 不被调用，上一会话的聊天
+    // 残留屏幕（sessionIdRef 已指向新会话）
+    expect(onRestore).toHaveBeenCalledTimes(1);
+    expect(onRestore).toHaveBeenCalledWith([]);
+  });
+
+  it('#392: 恢复失败时 messages 被重置为空并附错误提示（不静默）', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonOk({ sessions: [] }))
+      .mockResolvedValueOnce(jsonErr(500, 'Internal Server Error', { detail: 'db down' }));
+
+    const onRestore = vi.fn();
+    const { result } = renderHook(() => useWorkspaceSession(vi.fn()));
+    await act(async () => {
+      await result.current.selectSession('broken', onRestore);
+    });
+
+    expect(onRestore).toHaveBeenCalledTimes(1);
+    expect(onRestore).toHaveBeenCalledWith([], expect.stringContaining('db down'));
+    // 错误提示里明确说明恢复失败，而不是静默
+    const notice = onRestore.mock.calls[0][1] as string;
+    expect(notice).toContain('加载会话失败');
+    expect(notice).toContain('历史记录未恢复');
   });
 });
