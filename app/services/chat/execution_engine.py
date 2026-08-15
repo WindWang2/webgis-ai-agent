@@ -967,7 +967,14 @@ class ChatExecutionEngine:
                     if standard_calls:
                         entry["tool_calls"] = standard_calls
                     messages.append(entry)
-                    await self._save_msg_async(session_id, "assistant", content_text, tc_list, reasoning_content=reasoning)
+                    # #376: 持久化行只带 standard_calls（XML 路径为空 → None）。
+                    # MiniMax XML 路径的工具响应从不落库（只作为内存中的合成
+                    # user 消息存在），若把解析出的 xml_calls 一并持久化，进程
+                    # 重启 / LRU 逐出后重放历史会得到没有配对 tool 响应的
+                    # assistant.tool_calls —— OpenAI 兼容 provider 拒绝后续
+                    # turn 的首次 LLM 调用，会话永久损坏。降级为普通文本
+                    # assistant 行，重放序列合法。
+                    await self._save_msg_async(session_id, "assistant", content_text, standard_calls or None, reasoning_content=reasoning)
 
                     tool_result_msgs: list[str] = []
                     # F28: 与流式路径（chat_stream 并行 wave）同款抢占式取消 ——
@@ -1359,7 +1366,10 @@ class ChatExecutionEngine:
                         if standard_calls:
                             entry["tool_calls"] = standard_calls
                         messages.append(entry)
-                        await self._save_msg_async(session_id, "assistant", content_text, tc_list, reasoning_content=reasoning)
+                        # #376: 同非流式路径 —— XML 工具响应不落库，assistant 行
+                        # 只带 standard_calls（XML 路径为 None），避免重放历史
+                        # 出现孤儿 assistant.tool_calls 损坏会话。
+                        await self._save_msg_async(session_id, "assistant", content_text, standard_calls or None, reasoning_content=reasoning)
 
                         tool_result_msgs: list[str] = []
 

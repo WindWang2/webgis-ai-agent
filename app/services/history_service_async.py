@@ -16,6 +16,7 @@ SEC-08：新建的匿名会话会生成 server-issued `owner_token`（secrets.to
 前端必须在后续请求的 `X-Session-Token` 头里回传该 token 才能访问该会话。
 认证会话与历史匿名会话（token 为 NULL）不受影响。
 """
+import json
 import logging
 import secrets
 from datetime import datetime, timezone
@@ -53,6 +54,15 @@ def _msg_to_llm_dict(m: Message) -> dict:
                 tc_copy = dict(tc)
                 tc_copy["function"] = dict(tc["function"])
                 tc_copy["function"]["name"] = normalize_tool_name(tc["function"]["name"])
+                args = tc_copy["function"].get("arguments")
+                if isinstance(args, dict):
+                    # #376: MiniMax XML 路径解析出的 arguments 以 dict 形式
+                    # 落库，而 OpenAI 兼容 API 的 tool_calls 契约要求 JSON
+                    # 字符串 —— 重放时统一规范化（标准 FC 路径本就是字符串，
+                    # 此处为 no-op）。
+                    tc_copy["function"]["arguments"] = json.dumps(
+                        args, ensure_ascii=False
+                    )
                 tool_calls.append(tc_copy)
             else:
                 tool_calls.append(tc)
@@ -62,6 +72,44 @@ def _msg_to_llm_dict(m: Message) -> dict:
     if m.reasoning_content:
         item["reasoning_content"] = m.reasoning_content
     return item
+
+
+def _strip_orphaned_tool_calls(llm_messages: list[dict]) -> list[dict]:
+    """#376 兜底防线：加载时剥除没有配对 tool 响应的 assistant tool_calls。
+
+    修复前的 MiniMax XML 工具调用路径把解析出的 tool_calls 随 assistant 消息
+    持久化，但工具响应只以内存中的合成 user 消息存在、从不落库 —— 进程重启
+    或 LRU 逐出后重放历史会得到孤儿 assistant.tool_calls，OpenAI 兼容 provider
+    拒绝后续 turn 的首次 LLM 调用，会话永久损坏。此函数在重放路径上把每条
+    「tool_calls 没有后随匹配 tool 响应」的 assistant 消息降级为普通文本
+    （content 保留，tool_calls 剥除）；无 id 的 tool_call 无法与响应配对，
+    同样剥除。幂等：已配对（存在对应 tool 响应）的 tool_call 原样保留。
+    只影响本次重放，不修改 DB 行。
+    """
+    answered = {
+        m.get("tool_call_id")
+        for m in llm_messages
+        if m.get("role") == "tool" and m.get("tool_call_id")
+    }
+    for m in llm_messages:
+        if m.get("role") != "assistant" or not m.get("tool_calls"):
+            continue
+        kept = []
+        for tc in m["tool_calls"]:
+            tc_id = tc.get("id") if isinstance(tc, dict) else None
+            if tc_id is None or tc_id not in answered:
+                continue  # 孤儿 / 无 id：API 层无法配对，剥除
+            kept.append(tc)
+        if kept:
+            m["tool_calls"] = kept
+        else:
+            m.pop("tool_calls", None)
+            logger.info(
+                "[history] stripped orphaned tool_calls from an assistant "
+                "message on replay (session history would otherwise be "
+                "rejected by the LLM API)"
+            )
+    return llm_messages
 
 
 class AsyncHistoryService(HistoryStoreProtocol):
@@ -94,7 +142,11 @@ class AsyncHistoryService(HistoryStoreProtocol):
             llm_messages.append({"role": "system", "content": system_prompt})
         if conv and conv.messages:
             sorted_msgs = sorted(conv.messages, key=lambda m: m.id)
-            llm_messages.extend([_msg_to_llm_dict(m) for m in sorted_msgs])
+            # #376: 重放前剥除孤儿 assistant tool_calls（修复历史损坏的会话；
+            # 新写入路径已在源头不持久化 XML tool_calls）。
+            llm_messages.extend(
+                _strip_orphaned_tool_calls([_msg_to_llm_dict(m) for m in sorted_msgs])
+            )
 
         return HistoryContext(
             session_id=session_id,
