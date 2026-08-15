@@ -248,12 +248,26 @@ class ToolRegistry:
 
         # 校验并确定执行策略
         if execution_policy is None:
-            if asyncio.iscoroutinefunction(func):
+            if inspect.iscoroutinefunction(func):
                 policy = ToolExecutionPolicy.ASYNC
             else:
                 policy = ToolExecutionPolicy.THREAD
         else:
             policy = ToolExecutionPolicy(execution_policy)
+            if inspect.iscoroutinefunction(func) and policy in (
+                ToolExecutionPolicy.THREAD,
+                ToolExecutionPolicy.CELERY,
+            ):
+                # 审计修复 #374:async def 工具配 THREAD/CELERY 时,策略分支会
+                # 在线程里「同步」调用它——返回未 await 的 coroutine,下游
+                # json.dumps 抛 TypeError。按函数类型自动路由到 ASYNC:
+                # async 工具自己 await 其内部 I/O/线程卸载,无需外层线程池。
+                # (iscoroutinefunction 会解包 functools.partial/__wrapped__。)
+                logger.warning(
+                    "工具 %s 以 async def 注册却声明 %s 策略,自动改用 ASYNC",
+                    name, policy.value,
+                )
+                policy = ToolExecutionPolicy.ASYNC
 
         # 记录分层元数据与执行策略
         # version / contract_version: 工具实现指纹（INV-TOOL，规范 §12）。
@@ -344,7 +358,9 @@ class ToolRegistry:
             actual_mode = "UNKNOWN"
         elif requested_policy == ToolExecutionPolicy.INLINE:
             actual_mode = "INLINE"
-        elif requested_policy == ToolExecutionPolicy.ASYNC and asyncio.iscoroutinefunction(tool_func):
+        elif inspect.iscoroutinefunction(tool_func):
+            # async def 工具一律直接 await——即使声明了 THREAD/CELERY 策略
+            # （#374，注册期已自动路由，此处兜底）。如实上报实际执行模式。
             actual_mode = "ASYNC"
         else:
             actual_mode = "THREAD"
@@ -547,24 +563,7 @@ class ToolRegistry:
 
         try:
             policy = meta.get("execution_policy", ToolExecutionPolicy.THREAD)
-
-            if policy == ToolExecutionPolicy.INLINE:
-                # 超轻量工具 (<5ms)：直接在当前 Task 执行，不占用线程池信号量
-                if asyncio.iscoroutinefunction(tool_func):
-                    result = await tool_func(**arguments)
-                else:
-                    result = tool_func(**arguments)
-            elif policy == ToolExecutionPolicy.ASYNC and asyncio.iscoroutinefunction(tool_func):
-                # 纯非阻塞 async I/O：直接 await
-                result = await tool_func(**arguments)
-            elif policy == ToolExecutionPolicy.CELERY:
-                # 重型 GDAL / 栅格 / 空间分析工具：若配置了 Celery Worker，优先投递异步 Task；
-                # 在单机无 Worker 环境下，优雅降级到本地线程池隔离运行。
-                logger.debug(f"[registry] Executing heavy tool '{name}' via CELERY policy boundary")
-                result = await self._execute_sync_in_thread(tool_func, arguments)
-            else:
-                # THREAD 策略或非 async 回退：在线程池隔离中运行
-                result = await self._execute_sync_in_thread(tool_func, arguments)
+            result = await self._execute_tool(name, policy, tool_func, arguments)
 
             if isinstance(result, GeoAnalysisResult):
                 return result.to_llm_response()
@@ -608,6 +607,33 @@ class ToolRegistry:
             )
 
         return result
+
+    async def _execute_tool(self, name: str, policy: ToolExecutionPolicy,
+                            tool_func: Callable, arguments: dict) -> Any:
+        """按执行策略运行工具函数（不含校验/解引用等前置步骤）。
+
+        #374:async def 工具在 THREAD/CELERY 策略下也必须 await。to_thread 只能
+        同步执行——把 coroutine 当普通对象调用会原样返回未 await 的
+        coroutine，dispatch 结果无法 JSON 序列化。注册期已把 async+THREAD/
+        CELERY 自动路由到 ASYNC；此处再按函数类型兜底，策略元数据与函数
+        实现不符（旧数据/直接改 _metadata）时仍正确执行。
+        """
+        if policy == ToolExecutionPolicy.INLINE:
+            # 超轻量工具 (<5ms)：直接在当前 Task 执行，不占用线程池信号量
+            if inspect.iscoroutinefunction(tool_func):
+                return await tool_func(**arguments)
+            return tool_func(**arguments)
+        if policy == ToolExecutionPolicy.ASYNC and inspect.iscoroutinefunction(tool_func):
+            # 纯非阻塞 async I/O：直接 await
+            return await tool_func(**arguments)
+        if inspect.iscoroutinefunction(tool_func):
+            # THREAD/CELERY × async def：绕过线程路径直接 await（见注释头）
+            return await tool_func(**arguments)
+        if policy == ToolExecutionPolicy.CELERY:
+            # 重型 GDAL / 栅格 / 空间分析工具：若配置了 Celery Worker，优先投递
+            # 异步 Task；在单机无 Worker 环境下，优雅降级到本地线程池隔离运行。
+            logger.debug("[registry] Executing heavy tool '%s' via CELERY policy boundary", name)
+        return await self._execute_sync_in_thread(tool_func, arguments)
 
     async def _execute_sync_in_thread(self, tool_func: Callable, arguments: dict) -> Any:
         """在隔离线程池中安全运行同步工具，并完整传递 cache_hit_var ContextVar。"""
