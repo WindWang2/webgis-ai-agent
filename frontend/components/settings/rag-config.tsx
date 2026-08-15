@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { STitle, SField, SButton } from '@/components/shared/section-title';
 import ToggleSwitch from '@/components/shared/toggle-switch';
+import { apiFetch, isApiError, describeApiError } from '@/lib/api/transport';
 
 export function RagConfig() {
   const ragConfig = useHudStore((s) => s.ragConfig);
@@ -17,6 +18,7 @@ export function RagConfig() {
   const [testResult, setTestResult] = useState<
     'idle' | 'success' | 'error'
   >('idle');
+  const [testDetail, setTestDetail] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
   const timersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
@@ -44,14 +46,35 @@ export function RagConfig() {
     addTimer(() => setSaved(false), 2000);
   };
 
-  const handleTestConnection = () => {
+  const handleTestConnection = async () => {
     setTesting(true);
     setTestResult('idle');
-    addTimer(() => {
-      setTesting(false);
+    setTestDetail(null);
+    try {
+      // #390：真实连通性测试。后端校验其实际使用的知识库存储
+      // （内置本地 FAISS 向量库）；address/collection 一并发送，
+      // 供后端在接入外部向量库时使用。之前这里是 setTimeout 1.2s
+      // 后无条件置 success 的假测试。
+      const data = await apiFetch<{ status: string; store?: string; detail?: string }>(
+        '/api/v1/config/rag/test',
+        {
+          method: 'POST',
+          body: { address: vectorDb, collection },
+          label: 'RAG connectivity test error',
+        }
+      );
       setTestResult('success');
-      addTimer(() => setTestResult('idle'), 3000);
-    }, 1200);
+      setTestDetail(data.detail ?? null);
+    } catch (err) {
+      setTestResult('error');
+      setTestDetail(
+        isApiError(err) && err.status === 403
+          ? '需要管理员权限才能测试连接'
+          : describeApiError(err, '连接失败')
+      );
+    } finally {
+      setTesting(false);
+    }
   };
 
   return (
@@ -231,12 +254,14 @@ export function RagConfig() {
             value={vectorDb}
             onChange={setVectorDb}
             placeholder="http://localhost:19530"
+            hint="仅供展示：当前后端使用内置本地向量库（FAISS），不依赖外部向量数据库。"
           />
           <SField
             label="Collection"
             value={collection}
             onChange={setCollection}
             placeholder="geoagent"
+            hint="仅供展示：保存不会改变后端检索行为。"
           />
           <div className="flex items-center gap-3">
             <button
@@ -257,6 +282,14 @@ export function RagConfig() {
               </span>
             )}
           </div>
+          {testResult === 'success' && testDetail && (
+            <div className="text-body text-ink-muted">{testDetail}</div>
+          )}
+          {testResult === 'error' && (
+            <div className="text-body font-medium text-status-critical">
+              {testDetail ? `连接失败：${testDetail}` : '连接失败'}
+            </div>
+          )}
         </div>
       </div>
 

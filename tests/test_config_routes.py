@@ -7,6 +7,7 @@ config.py 之前没有任何路由级测试（只有 Settings 模块测试）。
 import os
 import pytest
 import pytest_asyncio
+import httpx
 from httpx import ASGITransport, AsyncClient
 from fastapi import FastAPI
 
@@ -108,3 +109,220 @@ async def test_config_skills_refresh_requires_admin(app_and_client):
     _, client = app_and_client
     resp = await client.post("/api/v1/config/skills/refresh")
     assert resp.status_code == 401
+
+
+def _admin_headers():
+    from app.core.auth import create_access_token
+    admin_token = create_access_token({"sub": "a1", "username": "a", "role": "admin"})
+    return {"Authorization": f"Bearer {admin_token}"}
+
+
+# ─── #390: /config/llm/test 与 /config/rag/test 连通性测试 ──────────────
+
+
+@pytest.mark.asyncio
+async def test_config_llm_test_requires_admin(app_and_client):
+    """#390: /config/llm/test 必须 admin token，无 token -> 401。"""
+    _, client = app_and_client
+    resp = await client.post("/api/v1/config/llm/test", json={})
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_config_llm_test_rejects_viewer(app_and_client):
+    """#390: viewer token -> 403。"""
+    from app.core.auth import create_access_token
+    viewer_token = create_access_token({"sub": "v1", "username": "v", "role": "viewer"})
+    _, client = app_and_client
+    resp = await client.post(
+        "/api/v1/config/llm/test",
+        json={},
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_config_llm_test_success_with_engine_config(app_and_client, monkeypatch):
+    """#390: admin 空请求体 -> 用引擎当前生效配置做真实探针，成功返回 ok。
+
+    探针被替换为假实现，验证路由正确回退到引擎的 base_url/model/api_key
+    （前端测试按钮不携带 apiKey，真实 key 由服务端持有）。
+    """
+    from app.api.routes import chat as chat_routes
+
+    captured = {}
+
+    async def fake_test_llm_connection(cfg, timeout=httpx.Timeout(1)):
+        captured["cfg"] = cfg
+        return {"id": "probe"}
+
+    monkeypatch.setattr(
+        "app.services.chat.llm_client.test_llm_connection",
+        fake_test_llm_connection,
+    )
+    _, client = app_and_client
+    resp = await client.post(
+        "/api/v1/config/llm/test", json={}, headers=_admin_headers()
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert "连接成功" in body["detail"]
+    cfg = captured["cfg"]
+    assert cfg.base_url == chat_routes.engine.base_url
+    assert cfg.model == chat_routes.engine.model
+    assert cfg.api_key == chat_routes.engine.api_key
+
+
+@pytest.mark.asyncio
+async def test_config_llm_test_honors_request_overrides(app_and_client, monkeypatch):
+    """#390: 显式传 base_url/model/api_key 时探针使用请求值而非引擎配置。"""
+    captured = {}
+
+    async def fake_test_llm_connection(cfg, timeout=httpx.Timeout(1)):
+        captured["cfg"] = cfg
+        return {}
+
+    monkeypatch.setattr(
+        "app.services.chat.llm_client.test_llm_connection",
+        fake_test_llm_connection,
+    )
+    _, client = app_and_client
+    resp = await client.post(
+        "/api/v1/config/llm/test",
+        json={"base_url": "https://example.com/v1", "model": "probe-model", "api_key": "k"},
+        headers=_admin_headers(),
+    )
+    assert resp.status_code == 200, resp.text
+    cfg = captured["cfg"]
+    assert cfg.base_url == "https://example.com/v1"
+    assert cfg.model == "probe-model"
+    assert cfg.api_key == "k"
+
+
+@pytest.mark.asyncio
+async def test_config_llm_test_connect_failure_returns_502(app_and_client, monkeypatch):
+    """#390: 传输层失败 -> 502 + 错误详情（不再是假成功）。"""
+    async def failing_probe(cfg, timeout=httpx.Timeout(1)):
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(
+        "app.services.chat.llm_client.test_llm_connection",
+        failing_probe,
+    )
+    _, client = app_and_client
+    resp = await client.post(
+        "/api/v1/config/llm/test", json={}, headers=_admin_headers()
+    )
+    assert resp.status_code == 502
+    body = resp.json()
+    assert "连接失败" in body["detail"]
+    assert "connection refused" in body["detail"]
+
+
+@pytest.mark.asyncio
+async def test_config_llm_test_provider_error_detail(app_and_client, monkeypatch):
+    """#390: 上游 4xx 时返回 provider 的 error.message 作为详情。"""
+    request = httpx.Request("POST", "https://example.com/v1/chat/completions")
+
+    async def failing_probe(cfg, timeout=httpx.Timeout(1)):
+        raise httpx.HTTPStatusError(
+            "401 Unauthorized",
+            request=request,
+            response=httpx.Response(401, json={"error": {"message": "invalid api key"}}),
+        )
+
+    monkeypatch.setattr(
+        "app.services.chat.llm_client.test_llm_connection",
+        failing_probe,
+    )
+    _, client = app_and_client
+    resp = await client.post(
+        "/api/v1/config/llm/test", json={}, headers=_admin_headers()
+    )
+    assert resp.status_code == 502
+    assert "invalid api key" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_config_llm_test_ssrf_rejected(app_and_client, monkeypatch):
+    """#390: base_url 指向云元数据端点 -> 400（与 POST /llm 同一校验）。"""
+    called = {"probe": False}
+
+    async def fake_test_llm_connection(cfg, timeout=httpx.Timeout(1)):
+        called["probe"] = True
+        return {}
+
+    monkeypatch.setattr(
+        "app.services.chat.llm_client.test_llm_connection",
+        fake_test_llm_connection,
+    )
+    _, client = app_and_client
+    resp = await client.post(
+        "/api/v1/config/llm/test",
+        json={"base_url": "http://169.254.169.254/latest/meta-data", "model": "m"},
+        headers=_admin_headers(),
+    )
+    assert resp.status_code == 400
+    assert not called["probe"]  # SSRF 校验在探针之前，探针不得被调用
+
+
+@pytest.mark.asyncio
+async def test_config_llm_test_missing_api_key_rejected(app_and_client):
+    """#390: 引擎无 api_key 且请求未提供 -> 400，不向 provider 发请求。"""
+    from app.api.routes import chat as chat_routes
+    original = chat_routes.engine.api_key
+    chat_routes.engine.api_key = ""
+    try:
+        _, client = app_and_client
+        resp = await client.post(
+            "/api/v1/config/llm/test", json={}, headers=_admin_headers()
+        )
+        assert resp.status_code == 400
+        assert "API Key" in resp.json()["detail"]
+    finally:
+        chat_routes.engine.api_key = original
+
+
+@pytest.mark.asyncio
+async def test_config_rag_test_requires_admin(app_and_client):
+    """#390: /config/rag/test 必须 admin token，无 token -> 401。"""
+    _, client = app_and_client
+    resp = await client.post("/api/v1/config/rag/test", json={})
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_config_rag_test_success(app_and_client, monkeypatch):
+    """#390: admin -> 校验内置本地向量库健康，返回 store 类型。"""
+    async def fake_check():
+        return "内置本地向量库（FAISS）就绪，已索引 3 个分块"
+
+    monkeypatch.setattr("app.api.routes.config._check_rag_store", fake_check)
+    _, client = app_and_client
+    resp = await client.post(
+        "/api/v1/config/rag/test",
+        json={"address": "http://localhost:19530", "collection": "geoagent"},
+        headers=_admin_headers(),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["store"] == "local-faiss"
+    assert "FAISS" in body["detail"]
+
+
+@pytest.mark.asyncio
+async def test_config_rag_test_failure_returns_502(app_and_client, monkeypatch):
+    """#390: 本地向量库不可用 -> 502 + 错误详情。"""
+    async def failing_check():
+        raise RuntimeError("index.faiss 损坏")
+
+    monkeypatch.setattr("app.api.routes.config._check_rag_store", failing_check)
+    _, client = app_and_client
+    resp = await client.post(
+        "/api/v1/config/rag/test", json={}, headers=_admin_headers()
+    )
+    assert resp.status_code == 502
+    assert "index.faiss" in resp.json()["detail"]

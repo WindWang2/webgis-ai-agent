@@ -134,6 +134,24 @@ export function isApiError(err: unknown): err is ApiError {
   return err instanceof ApiError;
 }
 
+/**
+ * 把请求错误转成对用户可读的描述（#390）：优先取 FastAPI `detail`，
+ * 网络层 TypeError 给固定文案，其余退回 fallback。供设置面板等
+ * 直接渲染错误状态的 UI 使用。
+ */
+export function describeApiError(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) {
+    const body = err.body as { detail?: unknown } | null;
+    if (body && typeof body === 'object' && typeof body.detail === 'string' && body.detail) {
+      return body.detail;
+    }
+    return `${fallback}（HTTP ${err.status}）`;
+  }
+  if (err instanceof TypeError) return '网络错误，无法连接服务器';
+  if (err instanceof Error && err.message) return err.message;
+  return fallback;
+}
+
 /** Type guard for ApiTimeoutError. */
 export function isApiTimeoutError(err: unknown): err is ApiTimeoutError {
   return err instanceof ApiTimeoutError;
