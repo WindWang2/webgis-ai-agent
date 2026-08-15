@@ -192,7 +192,10 @@ class NetworkODMatrixService:
         if profile and profile.turn_penalty_s:
             turn_penalty = max(turn_penalty, profile.turn_penalty_s)
 
-        weight_func = build_weight_func(cost_field, turn_penalty)
+        # #455: OD trees carry pure edge costs — a turn penalty depends on the
+        # full path context that a shortest-path tree does not have. See
+        # build_weight_func's docstring for the cross-tool semantics.
+        weight_func = build_weight_func(cost_field)
 
         # GIS-19: one Dijkstra per unique origin with the impedance weight, then
         # recover distance and time by walking the shortest-path predecessor
