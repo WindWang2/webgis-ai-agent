@@ -79,6 +79,14 @@ class NetworkRoutingService:
         Mutates ``graph`` in place (callers pass a working copy). Handles both
         directions when the edge is bidirectional. Returns the virtual node id.
 
+        ``fraction`` is defined along the (edge_u→edge_v) ORIENTATION. Issue
+        #446: the reverse graph edge (edge_v→edge_u) has reversed geometry, so
+        the same physical split point sits at ``1 - fraction`` along it —
+        applying ``fraction`` to both orientations swapped the sub-edge
+        lengths/times and produced reverse sub-geometries that missed the
+        virtual node (a mid-edge route to the near endpoint reported (1−f)·L
+        instead of f·L).
+
         Handles the case where the target edge was ALREADY split by an earlier
         virtual-node insertion (origin and destination snapping to the same
         edge): the walk follows the sub-edge chain from u to v, accumulates
@@ -90,17 +98,23 @@ class NetworkRoutingService:
 
         fraction = max(0.0, min(1.0, fraction))
 
-        for u, v in ((edge_u, edge_v), (edge_v, edge_u)):
+        # Each graph edge's own geometry runs from its u to its v (the builder
+        # stores a reversed LineString for the v→u edge), so the fraction must
+        # be re-expressed in each orientation's own frame: 1−f for the reverse.
+        for u, v, frac in (
+            (edge_u, edge_v, fraction),
+            (edge_v, edge_u, 1.0 - fraction),
+        ):
             if not graph.has_edge(u, v):
                 continue
             data = graph[u][v]
             length_m = float(data.get("length_m", 0.0))
             time_s = float(data.get("travel_time_s", 0.0))
 
-            sub_len_1 = length_m * fraction
-            sub_len_2 = length_m * (1.0 - fraction)
-            sub_time_1 = time_s * fraction
-            sub_time_2 = time_s * (1.0 - fraction)
+            sub_len_1 = length_m * frac
+            sub_len_2 = length_m * (1.0 - frac)
+            sub_time_1 = time_s * frac
+            sub_time_2 = time_s * (1.0 - frac)
 
             # Subdivide the geometry (if present) at the split point.
             geom_dict = data.get("geometry")
@@ -111,7 +125,7 @@ class NetworkRoutingService:
                     geom = shape(geom_dict)
                     if isinstance(geom, LineString):
                         coords = list(geom.coords)
-                        split_pt = geom.interpolate(fraction, normalized=True)
+                        split_pt = geom.interpolate(frac, normalized=True)
                         # Split the coordinate sequence at the projected split
                         # point: vertices before it go to sub1, the split point
                         # joins them, and the remainder goes to sub2.
@@ -188,16 +202,23 @@ class NetworkRoutingService:
                 break
 
         fraction = max(0.0, min(1.0, fraction))
-        target_dist = orig_length * fraction
 
-        for start_u, start_v in ((orig_u, orig_v), (orig_v, orig_u)):
+        # The fraction is measured along the dataset edge's (orig_u→orig_v)
+        # orientation. Walking from orig_v (issue #446) the same physical
+        # position sits at 1−f, so each direction gets its own target distance
+        # and its own fraction when the original edge is still unsplit.
+        for start_u, start_v, dir_frac in (
+            (orig_u, orig_v, fraction),
+            (orig_v, orig_u, 1.0 - fraction),
+        ):
+            target_dist = orig_length * dir_frac
             if not graph.has_edge(start_u, start_v) and start_u not in graph:
                 continue
             # If the original edge still exists directly, split it — the common
             # first-snap case.
             if graph.has_edge(start_u, start_v):
                 return self._split_edge_at_fraction(
-                    graph, start_u, start_v, fraction, snapped_coord
+                    graph, start_u, start_v, dir_frac, snapped_coord
                 )
             # Otherwise walk the sub-edge chain created by a previous split.
             # REVIEWER BLOCKING FIX: the previous walk used nx.has_path on
