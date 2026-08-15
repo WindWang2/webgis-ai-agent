@@ -4,6 +4,8 @@ import { useCallback, useRef, useState } from 'react';
 import { Database, Inbox, Layers, SearchX } from 'lucide-react';
 import { useHudStore } from '@/lib/store/useHudStore';
 import { useToastStore } from '@/components/ui/toast';
+import { isApiError } from '@/lib/api/transport';
+import type { GeoJSONFeatureCollection } from '@/lib/types';
 import { dataFabricApi, type CatalogItem, type DatasetDescriptor, type QueryResult } from '@/lib/api/data-fabric';
 import { LoadingState } from '@/components/shared/loading-state';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -24,7 +26,20 @@ export { CATALOG_SEARCH_DEBOUNCE_MS } from './data-sources/use-spatial-catalog';
 /** 子页签顺序即渲染顺序（V4 tablist 键盘导航用）。 */
 const SUBTABS: Array<'catalog' | 'sources'> = ['catalog', 'sources'];
 
-export function DataSourcesTab() {
+export interface DataSourcesTabProps {
+  /**
+   * #463: the REAL conversation session id (threaded from ContextPanel).
+   * Materialization writes session-store refs scoped to this id — the old
+   * `window.__WEBGIS_SESSION_ID__` global had zero writers repo-wide, so every
+   * request silently targeted a phantom 'default_session' (401 anonymous,
+   * invisible layer + cross-session ref pollution when authed).
+   */
+  sessionId?: string | null;
+  /** Anonymous-session ownership token riding X-Session-Token (SEC-08). */
+  ownerToken?: string | null;
+}
+
+export function DataSourcesTab({ sessionId, ownerToken }: DataSourcesTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<'catalog' | 'sources'>('catalog');
   const [showAddForm, setShowAddForm] = useState(false);
 
@@ -56,6 +71,7 @@ export function DataSourcesTab() {
 
   const addToast = useToastStore((s) => s.addToast);
   const addLayer = useHudStore((s) => s.addLayer);
+  const updateLayer = useHudStore((s) => s.updateLayer);
 
   const { sources, loadingSources, refreshSources } = useDataSources();
   const {
@@ -129,29 +145,70 @@ export function DataSourcesTab() {
   };
 
   const handleMaterializeAndLoad = async (item: CatalogItem) => {
+    // #463: materialize writes into the CURRENT conversation's session store.
+    // Without a live session there is nothing to write into (and no way to
+    // fetch the ref back) — fail with actionable guidance instead of posting
+    // to a phantom 'default_session'.
+    if (!sessionId) {
+      addToast('暂无活动会话：请先在对话中发送一条消息创建会话，再实例化至图层', 'error');
+      return;
+    }
     setMaterializingId(item.id);
     try {
-      const activeSessionId = (window as unknown as { __WEBGIS_SESSION_ID__?: string }).__WEBGIS_SESSION_ID__ || 'default_session';
       const res = await dataFabricApi.materializeCatalogItem({
-        session_id: activeSessionId,
+        session_id: sessionId,
         catalog_item_id: item.id,
+        ownerToken,
       });
 
-      // Add to frontend HUD layers
+      // Add to frontend HUD layers as a REF-BACKED layer (same shape as the
+      // workspace-session restore path): the mapspec adapter skips sourceless
+      // layers outright, so carry a placeholder FeatureCollection holding the
+      // ref cursor in metadata, then hydrate on demand below. The materialized
+      // payload is always a GeoJSON FeatureCollection (see the backend
+      // materialize route), hence type 'vector' regardless of feature_type.
+      const layerId = `df-${item.id}`;
+      const placeholder: GeoJSONFeatureCollection = {
+        type: 'FeatureCollection',
+        features: [],
+        metadata: { ref_id: res.ref_id },
+      };
       addLayer({
-        id: `df-${item.id}`,
+        id: layerId,
         name: item.title || item.name,
-        type: item.feature_type === 'raster' ? 'raster' : 'vector',
+        type: 'vector',
         visible: true,
         opacity: 1,
         group: 'reference',
+        source: placeholder,
         _refId: res.ref_id,
         style: { color: '#16a34a' },
       });
 
       addToast(`成功按需实例化 ${res.feature_count} 个要素至图层`, 'success');
+
+      // Fetch-on-demand (#463): hydrate the layer with the stored payload so
+      // it actually renders. The ref lives in the real session, so the fetch
+      // carries the same session id / owner token as the materialize call.
+      try {
+        const geojson = await dataFabricApi.fetchRefGeoJSON(res.ref_id, sessionId, { ownerToken });
+        if (geojson && (geojson.type === 'FeatureCollection' || Array.isArray(geojson.features))) {
+          updateLayer(layerId, { source: geojson });
+        }
+      } catch {
+        // The layer exists and the ref was stored — only the immediate
+        // hydration failed (transient or ownership issue). Say so instead of
+        // faking success or silently leaving an invisible layer.
+        addToast('图层已创建，但引用数据加载失败，请稍后重试或刷新会话', 'warning');
+      }
     } catch (err) {
-      addToast(err instanceof Error ? err.message : '实例化失败', 'error');
+      if (isApiError(err) && err.status === 401) {
+        // The materialize route requires authentication — surface a clear
+        // login-required message instead of a raw 401 toast.
+        addToast('实例化需要登录：请先在 设置 → 账户 中登录后再试', 'error');
+      } else {
+        addToast(err instanceof Error ? err.message : '实例化失败', 'error');
+      }
     } finally {
       setMaterializingId(null);
     }
