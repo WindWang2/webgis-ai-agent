@@ -306,23 +306,34 @@ def hotspot_narrated(geojson: dict, value_field: str, distance_band: float = 0) 
     else:
         bw = distance_band
     
-    # Build binary weights matrix using cKDTree sparse distance matrix
+    # Build binary weights matrix using cKDTree sparse distance matrix.
+    # #385: keep the weights sparse end-to-end. The old code densified the
+    # COO into an n×n float64 array (~8·n² bytes: 800MB at 10k features,
+    # 7.2GB at 30k — worker OOM). Getis-Ord only needs w @ values, row sums,
+    # and squared row sums, all natively supported by CSR.
     from scipy.spatial import cKDTree
     tree = cKDTree(coords)
     binary_weights_coo = tree.sparse_distance_matrix(tree, max_distance=bw, output_type="coo_matrix")
-    w = np.zeros((n, n))
-    w[binary_weights_coo.row, binary_weights_coo.col] = 1.0
-    np.fill_diagonal(w, 0)
+    # sparse_distance_matrix includes (i, i) self pairs at distance 0; drop
+    # them to match the old dense code's np.fill_diagonal(w, 0).
+    non_self = binary_weights_coo.row != binary_weights_coo.col
+    w = sparse.csr_matrix(
+        (np.ones(int(non_self.sum())), (binary_weights_coo.row[non_self], binary_weights_coo.col[non_self])),
+        shape=(n, n),
+    )
     
     x_bar = values.mean()
     s = values.std(ddof=0)
     if s == 0:
         return GeoAnalysisResult(False, None, "All values are identical, cannot perform hotspot analysis")
     
-    # Vectorized Gi* computation (audit S40: O(n) instead of O(n) Python loop)
-    sum_wi = w.sum(axis=1)
-    sum_wi2 = (w ** 2).sum(axis=1)
-    numerators = w @ values - x_bar * sum_wi
+    # Vectorized Gi* computation (audit S40: O(n) instead of O(n) Python loop).
+    # All reductions stay in sparse form (#385): CSR row sums, elementwise
+    # square (binary weights, so w² == w — kept general for clarity), and the
+    # sparse matvec w @ values. Each yields an (n,) array.
+    sum_wi = np.asarray(w.sum(axis=1)).ravel()
+    sum_wi2 = np.asarray(w.multiply(w).sum(axis=1)).ravel()
+    numerators = np.asarray(w @ values).ravel() - x_bar * sum_wi
     denom_inners = (n * sum_wi2 - sum_wi**2) / (n - 1)
     denominators = np.where(denom_inners > 0, s * np.sqrt(denom_inners), 0)
     with np.errstate(invalid="ignore", divide="ignore"):
