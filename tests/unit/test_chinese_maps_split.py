@@ -9,6 +9,8 @@
 M2 时代的"amap.py 只能含 _*_amap 自由函数"结构断言已随架构评审 F1
 （Amap 深化为 AmapProvider 类）退役 —— 此文件不再断言旧的自由函数布局。
 """
+import asyncio
+
 import pytest
 
 from app.tools.chinese_maps import (
@@ -168,3 +170,57 @@ async def test_with_fallback_all_fail_reports_first_detail(monkeypatch):
 
     out = await with_fallback("amap", _call, no_key_msg="地图服务不可用")
     assert out["error"].startswith("地图服务不可用（amap down")
+
+
+# ── Issue #432: provider 总超时必须触发回退 ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("timeout_exc", [asyncio.TimeoutError, TimeoutError])
+async def test_with_fallback_timeout_error_triggers_next_provider(monkeypatch, timeout_exc):
+    """provider 总超时（非 ClientError 家族）必须回退到下一家（issue #432）。
+
+    tracked_provider_get 的 total timeout 让 aiohttp 抛 asyncio.TimeoutError
+    （py3.11+ 即内建 TimeoutError，OSError 子类），旧 _FALLBACK_ERRORS 只认
+    ClientError 家族 → 异常直接穿透 with_fallback，备选 provider 从未被尝试。
+    """
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "AMAP_API_KEY", "fake")
+    monkeypatch.setattr(settings, "BAIDU_MAP_AK", "fake")
+    monkeypatch.setattr(settings, "TIANDITU_TOKEN", "")
+
+    calls = []
+
+    async def _call(p):
+        calls.append(p)
+        if p == "amap":
+            raise timeout_exc()
+        return {"provider": p}
+
+    out = await with_fallback("amap", _call, no_key_msg="全部失败")
+    assert out == {"provider": "baidu"}
+    assert calls == ["amap", "baidu"]
+
+
+@pytest.mark.asyncio
+async def test_geocode_cn_amap_timeout_falls_back_to_baidu(monkeypatch):
+    """整工具链路：首选 provider 黑洞超时 → 自动降级到百度并返回其结果。"""
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "AMAP_API_KEY", "fake")
+    monkeypatch.setattr(settings, "BAIDU_MAP_AK", "fake")
+    monkeypatch.setattr(settings, "TIANDITU_TOKEN", "")
+
+    async def amap_get(endpoint, params):
+        raise TimeoutError("total timeout")
+
+    async def baidu_get(endpoint, params):
+        return {"status": 0, "result": {"location": {"lng": 116.40, "lat": 39.90},
+                                        "level": "ROAD"}}
+
+    monkeypatch.setattr(_AMAP, "_get", amap_get)
+    from app.tools.chinese_maps import _BAIDU
+    monkeypatch.setattr(_BAIDU, "_get", baidu_get)
+
+    result = await geocode_cn("北京市海淀区", "", provider="amap")
+    assert result["provider"] == "baidu"
+    assert result["count"] == 1

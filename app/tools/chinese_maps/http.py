@@ -2,6 +2,7 @@
 
 M2: 从单体 chinese_maps.py 抽出。register_chinese_map_tools 仍在 __init__.py。
 """
+import asyncio
 import json
 import logging
 
@@ -54,8 +55,11 @@ def _speed_mps(mode: str) -> float:
 # The set of transport/parse errors that should trigger fallback to the next
 # provider rather than propagating to the LLM. Matches the per-tool except
 # clauses the 9 LLM tools previously inlined (architecture-review F1).
+# asyncio.TimeoutError: tracked_provider_get 的 total timeout（py3.11+ 即内建
+# TimeoutError，OSError 子类）不属于 ClientError 家族，必须单列（issue #432）。
 _FALLBACK_ERRORS = (
     aiohttp.ClientError,
+    asyncio.TimeoutError,
     json.JSONDecodeError,
     KeyError,
     ValueError,
