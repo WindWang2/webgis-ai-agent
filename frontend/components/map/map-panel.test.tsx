@@ -505,6 +505,94 @@ describe('MapPanel — FE-3 interaction UX', () => {
     expect(hlMoves[hlMoves.length - 1].beforeId).toBeNull();
   });
 
+  // FIX-3-9 (#401): the imperative annotation stack (markers/measurements/
+  // labels) is mounted once outside MapSpecRuntime. Any layer-changing
+  // reconcile buries it under the spec sublayers via syncLayerZOrder; the panel
+  // must re-raise it alongside the selection highlight.
+  it('re-raises the annotation stack above spec layers after a reconcile', async () => {
+    // Pre-mount the annotation stack the way MapActionHandler does.
+    rmg.map.addSource('claude-annotations', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    });
+    for (const [suffix, type] of [
+      ['fill', 'fill'],
+      ['line', 'line'],
+      ['circle', 'circle'],
+      ['label', 'symbol'],
+    ] as const) {
+      rmg.map.addLayer({
+        id: `claude-annotations-${suffix}`,
+        source: 'claude-annotations',
+        type,
+      });
+    }
+
+    const view = await renderPanel([pointLayer('poi', 'POI')]);
+    await settleInteractive(['poi__point']);
+    rmg.map._calls.moveLayer.length = 0;
+
+    // Visibility-toggle reconcile (layout.visibility → recompile → z-order
+    // sync): the annotation stack must be moved back to the top afterwards.
+    rerenderPanel(view, [{ ...pointLayer('poi', 'POI'), visible: false }]);
+    await drainRuntime();
+
+    const annotationMoves = rmg.map._calls.moveLayer.filter((c: { id: string }) =>
+      c.id.startsWith('claude-annotations-'),
+    );
+    expect(annotationMoves.length).toBeGreaterThan(0);
+    // Every stack member re-raised; the last move (label) is at the very top.
+    for (const suffix of ['fill', 'line', 'circle', 'label']) {
+      expect(
+        annotationMoves.some((c: { id: string }) => c.id === `claude-annotations-${suffix}`),
+      ).toBe(true);
+    }
+    expect(annotationMoves[annotationMoves.length - 1].beforeId).toBeNull();
+  });
+
+  // FIX-3-9 (#402): a basemap switch (setStyle diff) wipes the imperative
+  // highlight layers while the selection effect (deps [selectedFeature,
+  // mapReady]) never re-runs. The post-reconcile raise must RE-MOUNT the
+  // highlight instead of early-returning when its layers are missing.
+  it('re-mounts the selection highlight after a basemap-style wipe', async () => {
+    const view = await renderPanel([pointLayer('poi', 'POI')]);
+    await settleInteractive(['poi__point']);
+
+    const geometry = { type: 'Point', coordinates: [116.4, 39.9] };
+    rmg.queryResults = [featureOn('poi__point', { name: 'X' }, geometry)];
+    act(() => rmg.lastOnClick?.(clickPoint));
+    await waitFor(() => expect(hud.state.selectedFeature).toBeTruthy());
+    await waitFor(() =>
+      expect(rmg.map.getLayer('claude-selection-highlight-fill')).toBeTruthy(),
+    );
+
+    // Simulate the setStyle diff of a basemap switch: MapLibre drops every
+    // source + layer (spec and imperative alike).
+    for (const l of [...rmg.map._layers]) rmg.map.removeLayer(l.id);
+    for (const id of Object.keys(rmg.map._sources)) rmg.map.removeSource(id);
+    expect(rmg.map.getLayer('claude-selection-highlight-fill')).toBeNull();
+
+    // A reconcile settles after the style swap (same layer list, new object):
+    // the highlight must come back with the pending geometry.
+    rerenderPanel(view, [pointLayer('poi', 'POI')]);
+    await drainRuntime();
+
+    await waitFor(() => {
+      expect(rmg.map.getLayer('claude-selection-highlight-fill')).toBeTruthy();
+      expect(rmg.map.getLayer('claude-selection-highlight-circle')).toBeTruthy();
+    });
+    const hlDataCalls = rmg.map._calls.setData.filter(
+      (c: { id: string }) => c.id === 'claude-selection-highlight',
+    );
+    const last = hlDataCalls[hlDataCalls.length - 1];
+    expect(last.data.features[0].geometry).toEqual(geometry);
+    // And it is re-raised above the freshly re-applied spec layers.
+    const hlMoves = rmg.map._calls.moveLayer.filter((c: { id: string }) =>
+      c.id.startsWith('claude-selection-highlight-'),
+    );
+    expect(hlMoves.length).toBeGreaterThan(0);
+  });
+
   it('clears selection + highlight when the selected layer is removed', async () => {
     const view = await renderPanel([pointLayer('poi', 'POI')]);
     await settleInteractive(['poi__point']);

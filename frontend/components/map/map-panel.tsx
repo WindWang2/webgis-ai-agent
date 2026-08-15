@@ -22,6 +22,7 @@ import {
   clearSelectionHighlight,
   SELECTION_HIGHLIGHT_SOURCE_ID,
 } from "@/lib/map-kit/selection-highlight"
+import { raiseAnnotationLayers } from "@/lib/map-commands/annotationHelpers"
 import { notifyUserGestureStart, notifyUserGestureEnd } from "@/lib/map-commands/camera-arbitration"
 import { devOnly } from "@/lib/utils/logger"
 
@@ -278,8 +279,16 @@ export function MapPanel({
   // highlight above the top spec layer whenever a reconcile completes. Guarded:
   // no-op when the highlight isn't mounted, and moveLayer is wrapped so a layer
   // that vanished mid-reconcile is skipped silently.
+  //
+  // FIX-3-9 (#402): a basemap switch (setStyle diff) wipes every imperative
+  // layer — including the highlight — while the selection effect (deps
+  // [selectedFeature, mapReady]) never re-runs. When the highlight layers are
+  // gone but a selection is live, RE-MOUNT them (source + layers + data) via
+  // setSelectionHighlight instead of early-returning, so the yellow overlay
+  // comes back once the new style has settled; then re-raise as usual.
   const raiseSelectionHighlight = useCallback(() => {
-    if (!useHudStore.getState().selectedFeature || !pendingSelectionGeometryRef.current) return
+    const selectedFeature = useHudStore.getState().selectedFeature
+    if (!selectedFeature || !pendingSelectionGeometryRef.current) return
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
     const highlightIds = [
@@ -287,7 +296,12 @@ export function MapPanel({
       `${SELECTION_HIGHLIGHT_SOURCE_ID}-line`,
       `${SELECTION_HIGHLIGHT_SOURCE_ID}-circle`,
     ]
-    if (!highlightIds.some((id) => map.getLayer(id))) return
+    if (!highlightIds.some((id) => map.getLayer(id))) {
+      setSelectionHighlight(map, {
+        geometry: pendingSelectionGeometryRef.current,
+        properties: selectedFeature.properties,
+      })
+    }
     for (const id of highlightIds) {
       if (!map.getLayer(id)) continue
       try {
@@ -316,6 +330,12 @@ export function MapPanel({
         // spec sublayers — put it back on top now that the reconcile settled.
         raiseSelectionHighlight()
         const map = mapRef.current?.getMap()
+        // FIX-3-9 (#401): the imperative annotation stack (markers /
+        // measurements / labels) suffers the same burying — syncLayerZOrder
+        // stacks every spec sublayer above it on any layer-changing patch.
+        // Re-raise it alongside the selection highlight (no-op when the
+        // stack isn't mounted, so reconcile-only patches stay cheap).
+        if (map) raiseAnnotationLayers(map)
         const generation = layers.reduce<Layer | null>((latest, layer) => {
           if (!layer._mapspecFingerprint) return latest
           if (!latest) return layer

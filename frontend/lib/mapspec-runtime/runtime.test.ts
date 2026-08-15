@@ -255,6 +255,80 @@ describe("MapSpecRuntime (ADR-0036)", () => {
       // (Exact count depends on helper internals; we assert it was called.)
       expect(map._calls.moveLayer.length).toBeGreaterThan(0);
     });
+
+    // ── FIX-3-9 (#375): pure reorder produces an EMPTY layer patch ──────────
+    // diffSpecs compares layers by id and never notices a position change, so
+    // the old `patch.layers.length > 0` gate skipped the z-order sync and the
+    // Layers-tab drag-reorder was a visual no-op. The runtime's order-key
+    // tracker must still call syncLayerZOrder (observable as moveLayer calls).
+
+    function twoLayerSpec(): MapSpec {
+      return {
+        version: "1.0",
+        sources: {
+          A: { type: "geojson", inlineData: { type: "FeatureCollection", features: [] } },
+          B: { type: "geojson", inlineData: { type: "FeatureCollection", features: [] } },
+        },
+        layers: [
+          { id: "A__point", source: "A", type: "circle", paint: { "circle-radius": 6 } },
+          { id: "B__point", source: "B", type: "circle", paint: { "circle-radius": 6 } },
+        ],
+      };
+    }
+
+    it("re-syncs z-order on a pure reorder (empty layer patch, direct path)", () => {
+      const rt = new MapSpecRuntime(map);
+      rt.reconcile(twoLayerSpec());
+      map._calls.addLayer.length = 0;
+      map._calls.removeLayer.length = 0;
+      map._calls.moveLayer.length = 0;
+
+      // Same layers, swapped positions — the HUD drag-reorder shape.
+      const reordered = twoLayerSpec();
+      reordered.layers = [reordered.layers[1], reordered.layers[0]];
+      rt.reconcile(reordered);
+
+      // The diff is silent about the reorder: no layer add/remove...
+      expect(map._calls.addLayer).toEqual([]);
+      expect(map._calls.removeLayer).toEqual([]);
+      // ...but the z-order sync must still run so the map stacks follow the
+      // store (moveLayer is invoked by syncLayerZOrder).
+      expect(map._calls.moveLayer.length).toBeGreaterThan(0);
+    });
+
+    it("re-syncs z-order on a pure reorder through the debounced path", async () => {
+      const rt = new MapSpecRuntime(map);
+      const p1 = rt.reconcileAsync(twoLayerSpec());
+      rt.flush();
+      await p1;
+      map._calls.addLayer.length = 0;
+      map._calls.removeLayer.length = 0;
+      map._calls.moveLayer.length = 0;
+
+      const reordered = twoLayerSpec();
+      reordered.layers = [reordered.layers[1], reordered.layers[0]];
+      const p2 = rt.reconcileAsync(reordered);
+      rt.flush();
+      await p2;
+
+      expect(map._calls.addLayer).toEqual([]);
+      expect(map._calls.removeLayer).toEqual([]);
+      expect(map._calls.moveLayer.length).toBeGreaterThan(0);
+      expect(rt.getAppliedSpec()).toEqual(reordered);
+    });
+
+    it("does not re-sync z-order when the order is unchanged (no-op perf contract)", () => {
+      const rt = new MapSpecRuntime(map);
+      rt.reconcile(twoLayerSpec());
+      map._calls.moveLayer.length = 0;
+
+      // Structurally-equal-but-distinct spec with the SAME order: no layer
+      // changes and no order change → syncLayerZOrder must stay silent
+      // (fa108d3 work-count contract: no extra MapLibre work on no-ops).
+      rt.reconcile(twoLayerSpec());
+
+      expect(map._calls.moveLayer).toEqual([]);
+    });
   });
 
   describe("dispose", () => {

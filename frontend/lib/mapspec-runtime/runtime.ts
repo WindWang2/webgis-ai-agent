@@ -47,6 +47,16 @@ export class MapSpecRuntime {
   private applySeq = 0;
   private currentApplyResolve: (() => void) | null = null;
   private lastError: string | null = null;
+  /**
+   * FIX-3-9 (#375): the last layer ORDER (ids joined) that syncLayerZOrder was
+   * invoked for. diffSpecs compares layers by id and never notices a pure
+   * reordering (empty layer patch), so `patch.layers.length > 0` alone cannot
+   * gate the z-order re-sync — a reorder must too. Comparing this cheap joined
+   * key against the next spec's order costs one string build per apply and
+   * stays silent for the common no-op/unchanged-order reconciles (fa108d3's
+   * work-count contract: no extra MapLibre work when nothing reordered).
+   */
+  private lastLayerOrderKey: string | null = null;
   private styleRecoveryHandler: (() => void) | null = null;
   private pendingRecoverySpec: MapSpec | null = null;
   private readonly onStyleRecovery?: () => void;
@@ -200,10 +210,16 @@ export class MapSpecRuntime {
       }
     }
 
-    // --- z-order: re-sync only when layers were modified ---
-    if (patch.layers.length > 0) {
-      const orderedIds = nextSpec.layers.map((l) => l.id);
+    // --- z-order: re-sync when layers were modified OR the order changed ---
+    // The order half is #375: diffSpecs never reports a pure reordering (empty
+    // layer patch), so without this gate the drag-reorder in the Layers tab was
+    // a silent visual no-op. The joined-key comparison is cheap and skips
+    // unchanged orders, preserving fa108d3's no-op work-count contract.
+    const orderedIds = nextSpec.layers.map((l) => l.id);
+    const orderKey = orderedIds.join("\u0000");
+    if (patch.layers.length > 0 || orderKey !== this.lastLayerOrderKey) {
       renderer.syncLayerZOrder(this.map, "", orderedIds);
+      this.lastLayerOrderKey = orderKey;
     }
 
     if (!this.lastError) this.appliedSpec = nextSpec;
@@ -287,14 +303,19 @@ export class MapSpecRuntime {
     }
 
     const orderedIds = nextSpec.layers.map((l) => l.id);
+    // #375: same order-key gate as applyPatchDirect — computed at enqueue time,
+    // compared against the last EXECUTED order at op-run time (queued patches
+    // run sequentially, so each comparison sees the previous patch's outcome).
+    const orderKey = orderedIds.join("\u0000");
     const zorderId = `zorder:sync:${++this.applySeq}`; // unique per patch — never coalesced
     ops.push({
       id: zorderId,
       type: "SET_STYLE",
       priority: "high",
       execute: () => {
-        if (patch.layers.length > 0) {
+        if (patch.layers.length > 0 || orderKey !== this.lastLayerOrderKey) {
           renderer.syncLayerZOrder(this.map, "", orderedIds);
+          this.lastLayerOrderKey = orderKey;
         }
         // All ops of this patch have now run (z-order is enqueued last in the
         // high-priority FIFO). appliedSpec may now legitimately equal the map.
