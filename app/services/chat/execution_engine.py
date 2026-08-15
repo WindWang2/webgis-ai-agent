@@ -188,6 +188,13 @@ def _lock_in_use(lock: asyncio.Lock) -> bool:
 class ChatExecutionEngine:
     """Agent 对话与流式响应执行引擎"""
 
+    #: #407: P1「clearing」标记提升为注册表级（class 级共享）—— per-instance
+    #: 时父引擎的 clear_session 只抑制本实例的 _save_msg_async，与 in-flight
+    #: 子代理引擎（独立实例、共享父 session_id）竞争时子引擎仍会写库，产生
+    #: 行复活窗口。共享集合保证任一引擎实例发起 clear 后，所有实例对该会话
+    #: 的 DB 写都被抑制（_save_msg_async / _reject_if_clearing 读取同一集合）。
+    _clearing_sessions: set[str] = set()
+
     def __init__(
         self,
         tool_registry: ToolRegistry,
@@ -263,7 +270,9 @@ class ChatExecutionEngine:
         # for a marked session are refused cleanly. The task registry lets
         # clear_session quiesce the cancelled turn (bounded) before clearing
         # the marker.
-        self._clearing_sessions: set[str] = set()
+        # NOTE: the marker set itself is CLASS-level (registry-wide) since #407
+        # — see the class attribute above; nothing per-instance is assigned
+        # here.
         self._active_turn_tasks: dict[str, asyncio.Task] = {}
         self._clear_quiesce_timeout = float(_os.getenv("CLEAR_QUIESCE_TIMEOUT", "5.0"))
         # P1: bounded cancel-and-await budget for the cancel/finally cleanup
@@ -595,6 +604,20 @@ class ChatExecutionEngine:
 
     async def _save_msg_async(self, session_id: str, role: str, content: str, tool_calls=None, tool_result=None, tool_call_id=None, reasoning_content=None):
         """异步保存消息到数据库"""
+        if getattr(self, "is_subagent_engine", False):
+            # #407: 子代理是隔离的微会话 —— 它复用父 session_id（refs /
+            # map_state 父子原生互通，见 subagent.py 设计注释），但它的内部
+            # transcript（任务 prompt、每条 assistant 消息、tool_call/tool
+            # 响应）只属于子引擎自己的内存 LRU。一旦写进父会话 DB，重载 /
+            # LRU 逐出后父上下文会重新载入完整子代理轨迹，污染主对话且白耗
+            # token。父侧只通过 spawn_subagent 工具的 tool-result 消息拿到
+            # 最终摘要，因此子引擎的一切持久化在此抑制。
+            logger.debug(
+                "save_message suppressed for session %s: subagent engine "
+                "transcripts are never persisted to the parent conversation",
+                session_id,
+            )
+            return
         if session_id in self._clearing_sessions:
             # P1: clear_session 刚删了该会话的 conversation 行 —— 现在写入会
             # 复活历史（SQLite: FK off → 孤儿 Message 行；Postgres: FK →
