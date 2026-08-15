@@ -286,6 +286,9 @@ export function ChatTab({ messages, aiStatus, onSend, onPlanAction }: ChatTabPro
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      // IME 组合中的 Enter 只用于选字（Safari 用 keyCode 229，其余浏览器
+      // 依赖 isComposing），直接发送会把未上屏的拼音串当作消息发出。
+      if (e.nativeEvent.isComposing || e.keyCode === 229) return;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         handleSend();
