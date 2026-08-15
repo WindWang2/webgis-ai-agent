@@ -232,8 +232,9 @@ async def test_isochrone_concurrency_path_runs_without_nameerror():
     assert feat["geometry"]["type"] in ("Polygon", "Point")
     assert feat["properties"]["provider"] == "amap"
     assert feat["properties"]["radius_m"] > 0
-    # the isochrone fanned out multiple radial probes (12 directions)
-    assert len(fake.calls) == 12
+    # the isochrone fanned out multiple radial probes (12 directions × 2 probes:
+    # one far speed probe + one bounded correction probe per radial)
+    assert len(fake.calls) >= 12
 
 
 async def test_isochrone_except_branch_runs_without_nameerror():

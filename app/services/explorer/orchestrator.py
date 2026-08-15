@@ -63,15 +63,18 @@ class ExplorerOrchestrator:
             explorer_validate_task.s(),
         )
 
-        # 提交任务
-        result = task_chain.apply_async()
+        # 提交任务 — 计算隔离不变式 1：apply_async 是 broker socket I/O，
+        # offload 到 worker 线程（#386），避免阻塞事件循环上的 SSE 流。
+        def _submit_chain() -> str:
+            result = task_chain.apply_async()
+            # F-06 fix: traverse parent chain to find the root (first) task ID
+            # so stream_progress can poll from the beginning of the pipeline
+            root_result = result
+            while getattr(root_result, "parent", None) is not None:
+                root_result = root_result.parent
+            return root_result.id
 
-        # F-06 fix: traverse parent chain to find the root (first) task ID
-        # so stream_progress can poll from the beginning of the pipeline
-        root_result = result
-        while getattr(root_result, "parent", None) is not None:
-            root_result = root_result.parent
-        celery_task_id = root_result.id
+        celery_task_id = await asyncio.to_thread(_submit_chain)
 
         # 审计 S42：记录任务所有权
         if user_id:
@@ -82,12 +85,13 @@ class ExplorerOrchestrator:
         return celery_task_id
 
     async def get_task_status(self, task_id: str) -> dict:
-        """查询任务状态"""
-        return self.task_queue.get_task_status(task_id)
+        """查询任务状态 — AsyncResult 读 result backend 是 socket I/O，
+        SSE stream_progress 每秒轮询，必须 offload（#386）。"""
+        return await asyncio.to_thread(self.task_queue.get_task_status, task_id)
 
     async def abort_task(self, task_id: str) -> bool:
-        """中止任务"""
-        return self.task_queue.revoke_task(task_id)
+        """中止任务 — control.revoke 是 broker socket I/O，offload（#386）。"""
+        return await asyncio.to_thread(self.task_queue.revoke_task, task_id)
 
     async def stream_progress(
         self,

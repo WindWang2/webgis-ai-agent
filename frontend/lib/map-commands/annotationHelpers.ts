@@ -98,3 +98,44 @@ export function refreshAnnotations(map: Map): boolean {
   }
   return false;
 }
+
+/**
+ * Annotation stack layer ids, bottom-to-top (matches ensureAnnotationLayers
+ * mount order: fill → line → circle → label). Moving each to the top in this
+ * order ends with label on top.
+ */
+const ANNOTATION_LAYER_IDS = [
+  `${ANNOTATION_SOURCE_ID}-fill`,
+  `${ANNOTATION_SOURCE_ID}-line`,
+  `${ANNOTATION_SOURCE_ID}-circle`,
+  `${ANNOTATION_SOURCE_ID}-label`,
+];
+
+/**
+ * FIX-3-9 (#401): re-raise the imperative annotation stack above the spec
+ * layers after a reconcile.
+ *
+ * MapSpecRuntime.syncLayerZOrder moves every spec sublayer to the TOP of the
+ * style after any patch with layer changes (visibility toggles, opacity edits,
+ * layer adds, 3D switches), burying the annotations — they are added once
+ * imperatively and nothing else ever lifts them. Markers/measurements end up
+ * under 0.3-opacity data fills; labels become fully invisible.
+ *
+ * Guarded the same way as raiseSelectionHighlight (map-panel.tsx FIX-3-2):
+ * no-op when the stack isn't mounted, and moveLayer is wrapped so a layer
+ * that vanished mid-reconcile is skipped silently. Callers run it after a
+ * reconcile settles, alongside the selection-highlight re-raise.
+ */
+export function raiseAnnotationLayers(map: Map): void {
+  if (!ANNOTATION_LAYER_IDS.some((id) => map.getLayer(id))) return;
+  for (const id of ANNOTATION_LAYER_IDS) {
+    if (!map.getLayer(id)) continue;
+    try {
+      // moveLayer without beforeId → end of the layer order (top), i.e.
+      // directly above every spec layer syncLayerZOrder just stacked.
+      map.moveLayer(id);
+    } catch {
+      // Layer vanished mid-reconcile — nothing to re-raise.
+    }
+  }
+}

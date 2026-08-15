@@ -48,7 +48,12 @@ Semantics (documented contract, see ``app.api.routes.chat._resume_generator``):
     this guard removes the whole-turn replay, not the namespace sharing.
 
 Bounds: ``RESUME_MAX_EVENTS`` per turn (ring buffer — only the tail survives,
-which is exactly what a dropped connection missed),
+which is exactly what a dropped connection missed). Entries are the route's
+COALESCED wire chunks (each holding up to ~32 token events — the route
+records merged batches whole and re-splits only at replay time, #398), so the
+256-slot ring comfortably covers multi-thousand-token turns; when the ring
+still evicts events a client has not seen, a replay STARTS with an explicit
+``resume_gap`` marker event instead of a silently truncated turn (#398).
 ``RESUME_MAX_BUFFERS_PER_SESSION`` recent turn buffers per session key (F4: a
 queued second POST registers its buffer WITHOUT clobbering the live turn's),
 and ``RESUME_MAX_SESSIONS`` process-wide (oldest buffered session evicted
@@ -64,14 +69,16 @@ import asyncio
 from collections import deque
 from typing import Optional
 
-from app.utils.sse import _is_terminal_event, sse_event_id
+from app.utils.sse import _is_terminal_event, sse_event, sse_event_id
 
-# Ring-buffer depth per turn: the tail a dropped client missed. 256 events is
-# comfortably larger than any single turn can plausibly emit (token bursts +
-# structural events + a tool loop of map commands), so a dropped client never
-# misses un-replayed step_results / commands merely because the ring was too
-# small — while staying bounded per turn (Round-2 P3: was 64, which could
-# silently evict un-replayed step_results under a long multi-command turn).
+# Ring-buffer depth per turn: the tail a dropped client missed. Entries are
+# COALESCED wire chunks (the route records merged batches whole and re-splits
+# only at replay time — #398), so 256 slots hold up to ~256×32 token events
+# plus structural events: a multi-thousand-token turn fits without evicting
+# its own head (Round-2 P3: was 64 SINGLE events, which could silently evict
+# un-replayed step_results under a long multi-command turn). If the ring is
+# STILL too small for a pathological turn, :meth:`TurnEventBuffer.replay_after`
+# emits an explicit ``resume_gap`` marker instead of silently truncating.
 RESUME_MAX_EVENTS = 256
 # Process-wide cap on buffered sessions; oldest evicted first.
 RESUME_MAX_SESSIONS = 32
@@ -80,6 +87,30 @@ RESUME_MAX_SESSIONS = 32
 # of the live turn still finds it (matched by message + Last-Event-ID). Small
 # bound: a client only ever resumes the live turn or the most recent ones.
 RESUME_MAX_BUFFERS_PER_SESSION = 4
+
+# #398: event type of the synthesized gap marker a replay emits FIRST when the
+# ring evicted events the client has not seen (the turn's head was truncated).
+# The marker carries no ``id:`` — it is produced at replay time, not part of
+# the original turn's id sequence. The client may ignore it, but it can now
+# TELL a truncated replay from a complete turn (seenEventIds dedup can't).
+RESUME_GAP_EVENT_TYPE = "resume_gap"
+
+
+def _event_blocks(event_str: str) -> list[str]:
+    """Split a (possibly coalesced) SSE chunk into individual event blocks,
+    terminator stripped, empty parts dropped."""
+    return [p for p in event_str.split("\n\n") if p]
+
+
+def _highest_event_id(event_str: str) -> int | None:
+    """Highest ``id:`` across all event blocks inside a (possibly coalesced)
+    SSE chunk; ``None`` when the chunk carries no id at all."""
+    highest: int | None = None
+    for block in _event_blocks(event_str):
+        eid = sse_event_id(block)
+        if eid is not None and (highest is None or eid > highest):
+            highest = eid
+    return highest
 
 
 class TurnEventBuffer:
@@ -128,19 +159,35 @@ class TurnEventBuffer:
     def record(self, event_str: str, *, force_terminal: bool = False) -> None:
         """Record one emitted event (call before yielding it to the wire).
 
+        ``event_str`` may be a COALESCED chunk holding several ``id:``-stamped
+        events (the engine/route batchers merge token bursts; #398: the merged
+        chunk is recorded WHOLE so a token-heavy turn cannot evict its own
+        head from the ring — replay re-splits per event). ``last_id`` tracks
+        the HIGHEST id across the chunk. A terminal event may sit at the END
+        of a coalesced chunk (the batchers flush the batch that contains the
+        terminal); it is detected per block and stored as the turn's terminal.
         ``force_terminal=True`` marks a non-`_TERMINAL_EVENTS` event (e.g. the
         route's synthesized ``error``) as the turn's terminal anyway, so a
-        resume replays it as the ending instead of treating the turn as aborted.
+        resume replays it as the ending instead of treating the turn as
+        aborted.
         """
-        event_id = sse_event_id(event_str)
+        event_id = _highest_event_id(event_str)
         if event_id is not None:
             self.last_id = event_id
         self._events.append(event_str)
         if len(self._events) > self.max_events:
             self._events.popleft()
-        if force_terminal or _is_terminal_event(event_str):
+        if force_terminal:
             self.ended = True
             self.terminal_event = event_str
+        else:
+            terminal_block: Optional[str] = None
+            for block in _event_blocks(event_str):
+                if _is_terminal_event(block):
+                    terminal_block = block
+            if terminal_block is not None:
+                self.ended = True
+                self.terminal_event = terminal_block + "\n\n"
         self._version += 1
         self._notify()
 
@@ -191,13 +238,41 @@ class TurnEventBuffer:
     def replay_after(self, last_event_id: int) -> list[str]:
         """Buffered events with ``id > last_event_id``, in original order.
 
-        Events without an ``id:`` line (keepalive comments) are never replayed
-        — they carry no resume value and would be un-ordered in the sequence.
+        Buffered entries are (possibly coalesced) wire chunks — see
+        :meth:`record`; #398 records merged batches whole so a token-heavy
+        turn cannot evict its own head. Each entry is re-split here and
+        filtered PER EVENT, so resumption granularity is unchanged: a resume
+        still starts at exactly the missed id, ids intact, blocks re-framed
+        with their ``\\n\\n`` terminator. Events without an ``id:`` line
+        (keepalive comments) are never replayed — they carry no resume value.
+
+        When the ring evicted events the client has not seen (the first
+        retained event id exceeds ``last_event_id + 1``), the returned list
+        STARTS with a synthesized ``resume_gap`` marker event (no ``id:`` — it
+        is not part of the turn) describing the missing id range, so a resumed
+        client can tell a truncated replay from a complete turn instead of
+        silently missing the head (#398).
         """
-        return [
-            e for e in self._events
-            if (eid := sse_event_id(e)) is not None and eid > last_event_id
-        ]
+        out: list[str] = []
+        first_id: int | None = None
+        for entry in self._events:
+            for block in _event_blocks(entry):
+                eid = sse_event_id(block)
+                if eid is None:
+                    continue
+                if first_id is None:
+                    first_id = eid
+                if eid > last_event_id:
+                    out.append(block + "\n\n")
+        if first_id is not None and first_id > last_event_id + 1:
+            out.insert(0, sse_event(RESUME_GAP_EVENT_TYPE, {
+                "session_id": self.session_id,
+                "resumed": True,
+                "gap": True,
+                "missing_from": last_event_id + 1,
+                "missing_to": first_id - 1,
+            }))
+        return out
 
     def __len__(self) -> int:
         return len(self._events)
@@ -272,10 +347,17 @@ class TurnResumeRegistry:
 
         A buffer matches when the message is identical (same turn — the client
         re-POSTs the same message) and the Last-Event-ID is meaningful for it:
-        ``0`` means "from the beginning of this turn" (also matches a
-        never-started buffer holding no events yet), otherwise the id must not
-        lie beyond the buffer's highest recorded id (per-turn id scopes make
-        ids from a LATER turn meaningless for an earlier one).
+
+          * ``0`` means "from the beginning of this turn" — it matches ONLY
+            turns that are still ACTIVE (live, or queued and never started;
+            #398). An ended buffer matched by 0 would replay a PREVIOUS turn's
+            complete stream as if it were the current answer (the reconnect
+            may target a newer turn whose buffer never registered, or be
+            simply stale) — refuse instead of replaying the wrong turn's
+            events;
+          * otherwise the id must not lie beyond the buffer's highest recorded
+            id (per-turn id scopes make ids from a LATER turn meaningless for
+            an earlier one).
 
         Returns ``(buffer, False)`` on a unique match, ``(None, True)`` when
         MULTIPLE buffers match (ambiguous — e.g. two concurrent anonymous
@@ -283,12 +365,17 @@ class TurnResumeRegistry:
         safe rather than replay the wrong turn's events (cross-turn leak).
         ``(None, False)`` = plain miss.
         """
-        matches = [
-            b
-            for b in self._buffers.get(session_id, ())
-            if b.message == message
-            and (last_event_id == 0 or (b.last_id is not None and last_event_id <= b.last_id))
-        ]
+        matches: list[TurnEventBuffer] = []
+        for b in self._buffers.get(session_id, ()):
+            if b.message != message:
+                continue
+            if last_event_id == 0:
+                # #398: id 0 only addresses an ACTIVE turn (live or queued);
+                # an ended buffer must never be replayed from its start.
+                if not b.ended:
+                    matches.append(b)
+            elif b.last_id is not None and last_event_id <= b.last_id:
+                matches.append(b)
         if len(matches) == 1:
             return matches[0], False
         return None, len(matches) > 1

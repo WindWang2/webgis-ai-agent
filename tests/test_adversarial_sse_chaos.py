@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.api.routes import chat as chat_route
-from app.services.chat.event_resume import RESUME_MAX_EVENTS, TurnResumeRegistry
+from app.services.chat.event_resume import TurnResumeRegistry
 from app.utils.sse import sse_event, sse_event_id, sse_event_type
 
 
@@ -210,7 +210,11 @@ async def test_chaos_multi_session_interleaved_resumes(_pi_path):
 async def test_chaos_ring_buffer_overflow_with_interleaved_resumes(_pi_path):
     """Adversary: Turn generates 300 events (> RESUME_MAX_EVENTS=256).
     Multiple clients resume at different offsets (recent vs evicted).
-    Verifies ring buffer truncation is clean, monotonic, and bounded."""
+    Verifies merged-batch recording keeps the WHOLE turn replayable (#398:
+    the ring stores coalesced chunks — ~10 entries for 300 tokens — so the
+    head is never silently evicted; a stale resume gets the FULL missed tail
+    instead of a truncated answer)."""
+    from app.services.chat.event_resume import RESUME_GAP_EVENT_TYPE
 
     class _MassiveBridge:
         def __init__(self) -> None:
@@ -231,12 +235,18 @@ async def test_chaos_ring_buffer_overflow_with_interleaved_resumes(_pi_path):
     await t
     assert bridge.prompt_calls == 1
 
-    # Client A resumes with very old ID (e.g. 5) -> gets ring tail
+    # Client A resumes with very old ID (e.g. 5) -> FULL replay 6..302
+    # (merged-batch recording keeps the whole 300-token turn in the ring).
     rA, rtA = await _open_resume("massive", last_event_id=5, session_id="sess-massive")
     await rtA
-    assert len(rA) == RESUME_MAX_EVENTS
+    assert not any(_event_type(b) == RESUME_GAP_EVENT_TYPE for b in rA), (
+        "nothing was evicted — a full replay must carry no gap marker"
+    )
     idsA = [_event_id(b) for b in rA]
-    assert idsA == list(range(302 - RESUME_MAX_EVENTS + 1, 303))
+    assert idsA == list(range(6, 303)), (
+        f"#398: full replay 6..302 expected, got {idsA[:3]}..{idsA[-3:]} (len={len(idsA)})"
+    )
+    assert _event_type(rA[-1]) == "done"
 
     # Client B resumes with recent ID (e.g. 290) -> gets events 291..302
     rB, rtB = await _open_resume("massive", last_event_id=290, session_id="sess-massive")

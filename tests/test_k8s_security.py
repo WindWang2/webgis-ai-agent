@@ -93,3 +93,51 @@ class TestK8sUploadsVolumeParity:
                 assert "ReadWriteMany" in modes, (
                     f"{path}: webgis-uploads-pvc accessModes={modes} 缺 ReadWriteMany"
                 )
+
+
+class TestK8sResumeStickyRouting:
+    """#377: SSE turn-resume buffers are process-local (event_resume.py), so
+    k8s must route a client's reconnect back to the pod that served the turn.
+    Without sticky routing, ~50% of resumes (replicas: 2, plain ClusterIP)
+    land on a replica that never saw the turn and fail with
+    ``error {resumed: false}`` — the client stops auto-retrying per contract.
+    """
+
+    def test_api_service_has_session_affinity(self):
+        """The api Service must pin clients to one pod (sessionAffinity:
+        ClientIP). This is the WEAK fix (probability reduction); the STRONG
+        fix — an externalized resume store — is tracked separately."""
+        services = [
+            doc for doc in _load_k8s("deploy/k8s/02-api-deployment.yaml")
+            if doc and doc.get("kind") == "Service"
+        ]
+        assert services, "no Service found in 02-api-deployment.yaml"
+        for doc in services:
+            if doc["metadata"]["name"] == "webgis-api-service":
+                assert doc["spec"].get("sessionAffinity") == "ClientIP", (
+                    "webgis-api-service must set sessionAffinity: ClientIP — "
+                    "SSE turn-resume buffers are process-local and a reconnect "
+                    "must land on the pod that served the turn"
+                )
+                return
+        raise AssertionError(
+            "webgis-api-service not found in deploy/k8s/02-api-deployment.yaml"
+        )
+
+    def test_ingress_has_sticky_affinity_annotation(self):
+        """The nginx ingress must pin each client to one backend with a cookie
+        so SSE reconnects (Last-Event-ID resumes) reach the serving pod."""
+        ingresses = [
+            doc for doc in _load_k8s("deploy/k8s/04-ingress.yaml")
+            if doc and doc.get("kind") == "Ingress"
+        ]
+        assert ingresses, "no Ingress found in 04-ingress.yaml"
+        for doc in ingresses:
+            ann = doc["metadata"].get("annotations", {})
+            assert ann.get("nginx.ingress.kubernetes.io/affinity") == "cookie", (
+                "webgis-ingress must set nginx.ingress.kubernetes.io/affinity: "
+                "cookie — SSE turn-resume buffers are process-local"
+            )
+            assert "nginx.ingress.kubernetes.io/session-cookie-name" in ann, (
+                "webgis-ingress must name its session affinity cookie"
+            )

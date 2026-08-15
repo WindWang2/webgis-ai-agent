@@ -24,6 +24,25 @@ from app.services.network.snapping import PointSnappingService
 from app.services.network.graph_builder import haversine_distance
 
 
+def build_weight_func(cost_field: str, turn_penalty: float = 0.0):
+    """Edge weight function factory shared by routing and OD-matrix analyses.
+
+    Keeps the cost semantics (barrier factors, turn penalties) identical
+    between direct ``network_shortest_path`` and batch multi-source Dijkstra
+    (closest facility / VRP reuse the OD service's shortest-path trees).
+    """
+    def weight_func(u: Any, v: Any, edge_data: Dict[str, Any]) -> float:
+        base_w = edge_data.get(cost_field, edge_data.get("length_m", 1.0))
+        if base_w is None or base_w <= 0:
+            base_w = 0.001
+        barrier_factor = edge_data.get("_barrier_factor", 1.0)
+        w = base_w * barrier_factor
+        if turn_penalty > 0 and cost_field == "travel_time_s":
+            w += turn_penalty
+        return max(0.0001, float(w))
+    return weight_func
+
+
 class NetworkRoutingService:
     """
     Service for calculating shortest path routes over spatial network graphs.
@@ -324,15 +343,7 @@ class NetworkRoutingService:
         if profile and profile.turn_penalty_s:
             turn_penalty = max(turn_penalty, profile.turn_penalty_s)
 
-        def weight_func(u: Any, v: Any, edge_data: Dict[str, Any]) -> float:
-            base_w = edge_data.get(cost_field, edge_data.get("length_m", 1.0))
-            if base_w is None or base_w <= 0:
-                base_w = 0.001
-            barrier_factor = edge_data.get("_barrier_factor", 1.0)
-            w = base_w * barrier_factor
-            if turn_penalty > 0 and cost_field == "travel_time_s":
-                w += turn_penalty
-            return max(0.0001, float(w))
+        weight_func = build_weight_func(cost_field, turn_penalty)
 
         # Run Pathfinding
         try:
@@ -366,6 +377,31 @@ class NetworkRoutingService:
             )
 
         # Build route details
+        profile_name = profile.name if profile else "driving"
+        route_id = f"route_{origin_id_str}_{dest_id_str}"
+        return self.build_route_from_path(
+            graph_view, path_nodes,
+            origin_label=origin_id_str, destination_label=dest_id_str,
+            profile_name=profile_name, route_id=route_id, weight_func=weight_func,
+        )
+
+    def build_route_from_path(
+        self,
+        graph: nx.DiGraph,
+        path_nodes: List[Any],
+        origin_label: str,
+        destination_label: str,
+        profile_name: str,
+        route_id: str,
+        weight_func,
+    ) -> Route:
+        """Build a Route (geometry, totals, directions) from a node path.
+
+        Shared by ``network_shortest_path`` and the batch OD-matrix based
+        analyses (closest facility / VRP), so path → route shaping stays
+        identical everywhere and routes can be reconstructed from
+        multi-source Dijkstra predecessor trees without per-call graph copies.
+        """
         path_edges: List[str] = []
         route_coords: List[Tuple[float, float]] = []
         total_dist_m = 0.0
@@ -375,7 +411,7 @@ class NetworkRoutingService:
         for i in range(len(path_nodes) - 1):
             u = path_nodes[i]
             v = path_nodes[i + 1]
-            edge_data = graph_view[u][v]
+            edge_data = graph[u][v]
             edge_id = edge_data.get("id", f"e_{u}_{v}")
             path_edges.append(edge_id)
 
@@ -396,26 +432,24 @@ class NetworkRoutingService:
                     coords = coords[1:] if coords and route_coords[-1] == coords[0] else coords
                 route_coords.extend(coords)
             else:
-                u_data = graph_view.nodes[u]
-                v_data = graph_view.nodes[v]
+                u_data = graph.nodes[u]
+                v_data = graph.nodes[v]
                 if not route_coords:
                     route_coords.append((u_data["x"], u_data["y"]))
                 route_coords.append((v_data["x"], v_data["y"]))
 
-        directions = self._generate_directions(graph_view, path_nodes)
-        profile_name = profile.name if profile else "driving"
-        route_id = f"route_{origin_id_str}_{dest_id_str}"
+        directions = self._generate_directions(graph, path_nodes)
 
         return Route(
             route_id=route_id,
-            origin_id=origin_id_str,
-            destination_id=dest_id_str,
+            origin_id=origin_label,
+            destination_id=destination_label,
             profile_name=profile_name,
             total_distance_m=total_dist_m,
             total_time_s=total_time_s,
             total_cost=total_cost,
             geometry={"type": "LineString", "coordinates": route_coords},
-            path_node_ids=path_nodes,
+            path_node_ids=list(path_nodes),
             path_edge_ids=path_edges,
             directions=directions,
         )

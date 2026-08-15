@@ -100,12 +100,20 @@ def compute_index_array(index_type: str, **bands: np.ndarray) -> np.ndarray:
     return formula(*args)
 
 
-def compute_slope(dem: np.ndarray, cell_size: float) -> np.ndarray:
-    """使用 Horn 方法 (3x3 窗口) 计算坡度 (单位: 度)"""
+def compute_slope(dem: np.ndarray, cell_size: float,
+                  cell_size_x: Optional[float] = None) -> np.ndarray:
+    """使用 Horn 方法 (3x3 窗口) 计算坡度 (单位: 度)
+
+    cell_size_x: 可选 —— 东西 (x) 方向的像元地面尺寸 (米)。地理坐标
+    DEM (如 Copernicus GLO-30, EPSG:4326) 的经度向地面距离随纬度收缩
+    ~cos(lat)，若 x/y 用同一赤道比例会低估东西向坡度；由调用方 (stac_client)
+    传入经纬度向校正后的值，默认 None 时回退 cell_size (行为不变)。
+    """
     pad = np.pad(dem, 1, mode="edge")
-    dzdx = ((pad[1:-1, 2:] - pad[1:-1, :-2]) / (2 * cell_size) +
-             (pad[:-2, 2:] - pad[:-2, :-2]) / (4 * cell_size) +
-             (pad[2:, 2:] - pad[2:, :-2]) / (4 * cell_size)) / 2
+    dx = cell_size_x if cell_size_x is not None else cell_size
+    dzdx = ((pad[1:-1, 2:] - pad[1:-1, :-2]) / (2 * dx) +
+             (pad[:-2, 2:] - pad[:-2, :-2]) / (4 * dx) +
+             (pad[2:, 2:] - pad[2:, :-2]) / (4 * dx)) / 2
     dzdy = ((pad[2:, 1:-1] - pad[:-2, 1:-1]) / (2 * cell_size) +
              (pad[2:, :-2] - pad[:-2, :-2]) / (4 * cell_size) +
              (pad[2:, 2:] - pad[:-2, 2:]) / (4 * cell_size)) / 2
@@ -113,27 +121,46 @@ def compute_slope(dem: np.ndarray, cell_size: float) -> np.ndarray:
     return np.degrees(slope_rad)
 
 
-def compute_aspect(dem: np.ndarray, cell_size: float) -> np.ndarray:
-    """计算坡向 (0-360 度，顺时针自正北)"""
+def compute_aspect(dem: np.ndarray, cell_size: float,
+                   cell_size_x: Optional[float] = None) -> np.ndarray:
+    """计算坡向 (0-360 度，顺时针自正北) —— 下坡方位 (aspect = 水流方向)。
+
+    #379: 旧实现 arctan2(-dzdy, dzdx) 返回的是数学角 (自东逆时针)，
+    与文档承诺的罗盘角 (顺时针自正北) 相反：东抬升得 0° (真 270°)、
+    北抬升得 90° (真 180°)。ESRI 等价式 aspect = degrees(atan2(-dzdx, dzdy))
+    % 360：东抬升 -> 270° (下坡西)，北抬升 -> 180° (下坡南)，南抬升 -> 0°，
+    西抬升 -> 90°。cell_size_x 语义同 compute_slope。
+    """
     pad = np.pad(dem, 1, mode="edge")
-    dzdx = (pad[1:-1, 2:] - pad[1:-1, :-2]) / (2 * cell_size)
+    dx = cell_size_x if cell_size_x is not None else cell_size
+    dzdx = (pad[1:-1, 2:] - pad[1:-1, :-2]) / (2 * dx)
     dzdy = (pad[2:, 1:-1] - pad[:-2, 1:-1]) / (2 * cell_size)
-    aspect = np.degrees(np.arctan2(-dzdy, dzdx))
-    aspect = np.where(aspect < 0, aspect + 360, aspect)
+    aspect = np.mod(np.degrees(np.arctan2(-dzdx, dzdy)), 360.0)
     flat = (dzdx == 0) & (dzdy == 0)
     aspect[flat] = np.nan
     return aspect
 
 
 def compute_hillshade(dem: np.ndarray, cell_size: float,
-                      azimuth: float = 315, altitude: float = 45) -> np.ndarray:
-    """计算山体阴影照度 (0-255)"""
+                      azimuth: float = 315, altitude: float = 45,
+                      cell_size_x: Optional[float] = None) -> np.ndarray:
+    """计算山体阴影照度 (0-255)
+
+    #379: 旧实现把数学角 aspect 喂给 cos(az_rad - aspect_rad) 并镜像
+    radians(360 - azimuth)，导致光照相对配置的太阳方位旋转 ~90°
+    (如太阳 315° 时北向坡被算成暗面)。修正后 aspect 为罗盘角，
+    太阳方位直接使用罗盘 azimuth、不再镜像：两角同为顺时针自正北，
+    同坐标系相减。推导 (南北半球一致，仅依赖局部梯度符号)：
+    照度 = sin(alt)·cos(θ) + cos(alt)·sin(θ)·cos(az - aspect)。
+    cell_size_x 语义同 compute_slope。
+    """
     pad = np.pad(dem, 1, mode="edge")
-    dzdx = (pad[1:-1, 2:] - pad[1:-1, :-2]) / (2 * cell_size)
+    dx = cell_size_x if cell_size_x is not None else cell_size
+    dzdx = (pad[1:-1, 2:] - pad[1:-1, :-2]) / (2 * dx)
     dzdy = (pad[2:, 1:-1] - pad[:-2, 1:-1]) / (2 * cell_size)
     slope_rad = np.arctan(np.sqrt(dzdx ** 2 + dzdy ** 2))
-    aspect_rad = np.arctan2(-dzdy, dzdx)
-    az_rad = np.radians(360 - azimuth)
+    aspect_rad = np.arctan2(-dzdx, dzdy)  # 罗盘坡向 (顺时针自正北) 弧度
+    az_rad = np.radians(azimuth)          # 罗盘太阳方位，与 aspect 同基准，不镜像
     alt_rad = np.radians(altitude)
     hs = (np.sin(alt_rad) * np.cos(slope_rad) +
           np.cos(alt_rad) * np.sin(slope_rad) * np.cos(az_rad - aspect_rad))

@@ -176,10 +176,11 @@ describe("MapSpec Reconciler (ADR-0036)", () => {
         ],
       });
       // Layers are structurally equal but reordered. Signature compares the
-      // layer object itself (unchanged), so neither is recompiled — but the
-      // caller is expected to re-sync z-order from next.layers order on every
-      // reconcile. The runtime always calls syncLayerZOrder unconditionally,
-      // so reordering is handled there, not via recompile noise.
+      // layer object itself (unchanged), so neither is recompiled — the diff
+      // deliberately stays silent about positions (FIX-3-9/#375). The runtime
+      // detects the order change with its own cheap order-key tracker and
+      // re-syncs z-order, so reordering is handled there, not via recompile
+      // noise.
       const patch = diffSpecs(a, b);
       expect(patch.layers).toEqual([]);
     });

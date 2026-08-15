@@ -18,6 +18,28 @@ import {
 
 const MAX_SESSION_OWNER_TOKENS = 128;
 
+/**
+ * #392: 把会话恢复失败转成对用户可见的提示文案。优先 FastAPI detail，
+ * 网络层 TypeError 给固定文案；"不静默"——失败必须在 UI 上有交代。
+ */
+function sessionLoadErrorNotice(err: unknown): string {
+  let detail: string;
+  if (isApiError(err)) {
+    const body = err.body as { detail?: unknown } | null;
+    detail =
+      body && typeof body === 'object' && typeof body.detail === 'string' && body.detail
+        ? body.detail
+        : `HTTP ${err.status}`;
+  } else if (err instanceof TypeError) {
+    detail = '网络错误，无法连接服务器';
+  } else if (err instanceof Error && err.message) {
+    detail = err.message;
+  } else {
+    detail = '未知错误';
+  }
+  return `加载会话失败：${detail}。历史记录未恢复，可开始新对话。`;
+}
+
 export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) => void) {
   const [sessionId, setSessionId] = useState<string>();
   const sessionIdRef = useRef<string | undefined>(undefined);
@@ -46,6 +68,8 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
   const setAiStatus = useHudStore((s) => s.setAiStatus);
   const clearTask = useHudStore((s) => s.clearTask);
   const clearResults = useHudStore((s) => s.clearResults);
+  // #392: History 抽屉开关信号 —— 打开时触发会话列表刷新（见下方 effect）。
+  const historyOpen = useHudStore((s) => s.historyOpen);
 
   // Sync sessionId state to ref
   useEffect(() => {
@@ -96,8 +120,15 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
     };
   }, [refreshSessions]);
 
+  // #392: 历史列表之前只在 mount 拉一次 —— 页面存活期内新建的会话
+  // 永远不出现在 History 抽屉、顶栏一直显示"新会话"直到整页刷新。
+  // History 抽屉打开（store 的 historyOpen 翻转为 true）时重新拉取。
+  useEffect(() => {
+    if (historyOpen) refreshSessions();
+  }, [historyOpen, refreshSessions]);
+
   const selectSession = useCallback(
-    async (sid: string, onRestoreMessages: (messages: any[]) => void) => {
+    async (sid: string, onRestoreMessages: (messages: any[], notice?: string) => void) => {
       // Cancel previous session restoration requests to avoid stale layer insertions
       sessionLoadAbortRef.current?.abort();
       const ctrl = new AbortController();
@@ -128,6 +159,10 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
       const token = sessionTokensRef.current.get(sid) ?? null;
       sessionTokenRef.current = token;
       setActiveToken(token);
+      // #392: 消息恢复是否已成功写入。仅当"消息 GET 本身"失败时才用
+      // 错误提示重置 transcript —— 若消息已恢复、只是后续 map-state /
+      // 图层恢复失败，不能把刚恢复的 transcript 再清掉。
+      let messagesRestored = false;
       try {
         // F-09：会话恢复必须校验 HTTP 状态。旧实现 res.json() 不检查 res.ok，
         // 404/500 的错误体被当作成功消费（JSON detail → 静默无消息；HTML 错误
@@ -140,21 +175,25 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         );
         if (signal.aborted) return;
 
-        if (data.messages && data.messages.length > 0) {
-          const restored = data.messages.map((m: any) => ({
-            id: m.id,
-            role: m.role,
-            content: m.content,
-            timestamp: new Date(m.timestamp),
-          }));
+        // #392: 无条件恢复 —— 之前只在 messages 非空时调 onRestoreMessages，
+        // 空会话 / GET 失败时上一会话的完整聊天留在屏幕上而 sessionIdRef 已
+        // 指向新会话，下一条消息会在新会话身份下延续旧 transcript。
+        const restored = (data.messages ?? []).map((m: any) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          timestamp: new Date(m.timestamp),
+        }));
+        if (restored.length > 0) {
           restored.push({
             id: `session-switch-${Date.now()}`,
             role: 'assistant' as const,
-            content: `已恢复历史会话「${data.title || '未命名'}」——共 ${data.messages.length} 条记录。可继续提问。`,
+            content: `已恢复历史会话「${data.title || '未命名'}」——共 ${data.messages?.length ?? 0} 条记录。可继续提问。`,
             timestamp: new Date(),
           });
-          onRestoreMessages(restored);
         }
+        onRestoreMessages(restored);
+        messagesRestored = true;
 
         // setSessionId 已在函数开头同步调用（审计 F38），这里不再重复
 
@@ -293,8 +332,13 @@ export function useWorkspaceSession(dispatchAction: (action: MapActionPayload) =
         // Log the failure (typed or not) so debugging surface is uniform;
         // AbortError stays silent because it's the expected outcome of
         // session-switch cancellation.
-        if (err?.name !== 'AbortError') {
-          devOnly.error('Load session failed:', err);
+        if (err?.name === 'AbortError') return;
+        devOnly.error('Load session failed:', err);
+        // #392: 消息 GET 失败 -> 无条件重置 transcript（否则上一会话的
+        // 聊天残留屏幕、下一条消息延续旧 transcript），并附错误提示，
+        // 不再静默吞掉失败。
+        if (!messagesRestored) {
+          onRestoreMessages([], sessionLoadErrorNotice(err));
         }
       }
     },

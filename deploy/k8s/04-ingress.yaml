@@ -10,6 +10,14 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
     nginx.ingress.kubernetes.io/use-regex: "true"
+    # #377: sticky routing for SSE resume — the turn-resume buffers are
+    # process-local (event_resume.py), so a reconnect must reach the SAME pod
+    # that served the turn. nginx pins each client to one backend with a
+    # cookie (paired with the api Service's sessionAffinity: ClientIP). WEAK
+    # fix (probability reduction); the STRONG fix is an externalized resume
+    # store, tracked separately (not in this PR).
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "webgis_sse_resume"
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
   tls:

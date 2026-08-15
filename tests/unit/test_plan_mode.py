@@ -577,3 +577,136 @@ async def test_step_results_slim_persisted_and_resume_resolves(registry):
     assert data2["__step_results__"]["s1"].get("__slim__") is True
     assert data2["__step_results__"]["s2"].get("__slim__") is True
     assert big_blob not in _json.dumps(data2)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# issue #387：execute_plan 返回载荷瘦身（嵌套 results 不再无界穿透进 LLM
+# 上下文 —— 大结果 → ref + 摘要，整体 ≤ MSG_MAX_CHARS；持久化语义不变）
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _fc_with_features(n: int) -> dict:
+    """构造 n 要素的 FeatureCollection（几何为点，体积随 n 线性增长）。"""
+    return {
+        "success": True,
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"id": i, "name": f"p{i}"},
+                "geometry": {"type": "Point", "coordinates": [116.0 + i / 1000.0, 39.0]},
+            }
+            for i in range(n)
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_return_results_slimmed_under_msg_max_chars(registry):
+    """#387 验收：两个步骤各返回 10k 要素 FeatureCollection 的 plan → 返回
+    payload 只含 ref/摘要（无嵌套几何），且整体序列化后 ≤ MSG_MAX_CHARS。"""
+    import json as _json
+
+    from app.services.llm_result_formatter import MSG_MAX_CHARS
+    from app.services.session_data import session_data_manager
+
+    @registry.tool(name="fake_big_buffer", description="返回大 FeatureCollection")
+    def fake_big_buffer(count: int = 10000) -> dict:
+        return _fc_with_features(count)
+
+    sid = "sess-plan-387"
+    plan = svc.PlanProposal(
+        title="slim-387",
+        steps=[
+            svc.PlanStep(id="s1", tool="fake_big_buffer", args={"count": 10000}),
+            svc.PlanStep(id="s2", tool="fake_big_buffer", args={"count": 10000}),
+        ],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+
+    result = await svc.execute_plan_async(sid, plan_id, registry)
+    assert result["success"] is True
+    assert result["executed"] == ["s1", "s2"]
+
+    for step_id in ("s1", "s2"):
+        slim = result["results"][step_id]
+        assert slim.get("__slim__") is True, f"{step_id} 应被瘦身"
+        assert str(slim.get("ref", "")).startswith("ref:"), f"{step_id} 应有 ref"
+        assert slim.get("feature_count") == 10000, f"{step_id} 应带要素计数摘要"
+        # 无嵌套几何穿透
+        assert "geojson" not in slim and "features" not in slim
+        assert "geometry" not in _json.dumps(result["results"])
+
+    # 整个返回 dict（LLM payload 来源）≤ MSG_MAX_CHARS
+    payload = _json.dumps(result, ensure_ascii=False)
+    assert len(payload) <= MSG_MAX_CHARS, f"payload {len(payload)} > {MSG_MAX_CHARS}"
+
+    # 数据本身不丢：ref 可水合回完整结果（引用仍在）
+    for step_id in ("s1", "s2"):
+        full = await session_data_manager.get(sid, result["results"][step_id]["ref"])
+        assert full is not None
+        assert len(full["features"]) == 10000
+
+    # 持久化路径语义不变：__step_results__ 仍是 slim 摘要 + 可水合
+    data = await svc.load_plan(sid, plan_id)
+    assert data["__status__"] == "completed"
+    assert data["__step_results__"]["s1"].get("__slim__") is True
+    assert data["__step_results__"]["s2"].get("__slim__") is True
+
+    # completed 早退路径（不重放）同样返回瘦身结果
+    result2 = await svc.execute_plan_async(sid, plan_id, registry)
+    assert result2["status"] == "completed"
+    assert result2["results"]["s1"].get("__slim__") is True
+    assert len(_json.dumps(result2, ensure_ascii=False)) <= MSG_MAX_CHARS
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_failure_last_result_slimmed(registry):
+    """#387：失败步骤的 last_result 含大 FeatureCollection 时同样瘦身。"""
+    import json as _json
+
+    from app.services.llm_result_formatter import MSG_MAX_CHARS
+
+    @registry.tool(name="fake_big_fail", description="返回带大 FC 的失败结果")
+    def fake_big_fail(count: int = 10000) -> dict:
+        return {**_fc_with_features(count), "success": False, "message": "boom"}
+
+    sid = "sess-plan-387-fail"
+    plan = svc.PlanProposal(
+        title="slim-387-fail",
+        steps=[svc.PlanStep(id="s1", tool="fake_big_fail", args={"count": 10000})],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+
+    result = await svc.execute_plan_async(sid, plan_id, registry)
+    assert result["success"] is False
+    last = result["last_result"]
+    assert last.get("__slim__") is True
+    assert str(last.get("ref", "")).startswith("ref:")
+    assert "features" not in last and "geojson" not in last
+    assert "geometry" not in _json.dumps(result)
+    assert len(_json.dumps(result, ensure_ascii=False)) <= MSG_MAX_CHARS
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_small_results_kept_intact(registry):
+    """#387：小结果（≤ 阈值）在返回 payload 中保持完整，不无故瘦身。"""
+    @registry.tool(name="fake_small_geo", description="返回小 FC")
+    def fake_small_geo(tag: str) -> dict:
+        return {"success": True, "type": "FeatureCollection", "features": [
+            {"type": "Feature", "properties": {"tag": tag}, "geometry": {"type": "Point", "coordinates": [1, 2]}},
+        ]}
+
+    sid = "sess-plan-387-small"
+    plan = svc.PlanProposal(
+        title="small",
+        steps=[
+            svc.PlanStep(id="s1", tool="fake_small_geo", args={"tag": "a"}),
+            svc.PlanStep(id="s2", tool="fake_small_geo", args={"tag": "b"}),
+        ],
+    )
+    plan_id = await svc.store_plan(sid, plan)
+    result = await svc.execute_plan_async(sid, plan_id, registry)
+    assert result["success"] is True
+    assert result["results"]["s1"]["features"][0]["properties"]["tag"] == "a"
+    assert result["results"]["s2"]["features"][0]["properties"]["tag"] == "b"

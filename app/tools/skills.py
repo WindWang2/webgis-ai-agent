@@ -15,6 +15,14 @@ _BLOCKED_IMPORTS = {
     "pathlib", "signal", "importlib", "builtins", "sys", "types",
     "code", "io", "pickle", "marshal", "shelve", "tempfile",
     "webbrowser", "antigravity", "asyncio",
+    # Issue #399 (P3 defense-in-depth): module aliases that expose the same
+    # OS-level capabilities as the entries above. `platform.os` is a verified
+    # file-read escape; `_posixsubprocess.fork_exec` a verified process-exec
+    # escape; `posix`/`nt` are the raw C modules `os` wraps; `runpy` executes
+    # code from files/modules (same family as importlib); `zipimport` loads
+    # and executes modules from a zip; `pty.fork` spawns child processes.
+    "platform", "_posixsubprocess", "posix", "nt", "runpy", "zipimport",
+    "pty",
 }
 _BLOCKED_BUILTINS = {
     "eval", "exec", "compile", "__import__", "open", "input",
@@ -25,11 +33,48 @@ _BLOCKED_ATTRS = {
     "system", "popen", "call", "run", "Popen", "exec_module",
     "execl", "execle", "execlp", "execv", "execve", "execvp",
     "spawn", "fork", "startfile",
+    # Issue #399: complete the exec*/fork*/spawn* family and dynamic-import
+    # primitives (importlib.import_module / reload, runpy.run_path ...).
+    "execlpe", "execvpe", "forkpty", "fork_exec",
+    "spawnv", "spawnve", "spawnlp", "spawnlpe", "spawnvp", "spawnvpe",
+    "posix_spawn", "posix_spawnp",
+    "getoutput", "getstatusoutput", "check_output", "check_call",
+    "import_module", "reload", "run_module", "run_path", "load_module",
     # Dunder attributes that enable MRO chain / sandbox escape
     "__subclasses__", "__globals__", "__init__", "__bases__",
     "__mro__", "__class__", "__import__", "__builtins__",
     "__loader__", "__spec__", "__getattribute__",
 }
+# Issue #399: attribute-access chains (e.g. `platform.os.open`) bypass the
+# bare-name attribute check above. Any segment of a resolved chain that hits
+# this set is rejected. The set covers:
+#  - module names that alias OS/process/import capabilities (mirror of
+#    _BLOCKED_IMPORTS, minus "io"/"types" which legitimately appear as
+#    scientific-library submodules, e.g. scipy.io, pandas.api.types);
+#  - process-exec / OS-level file-I/O attribute names (system, popen,
+#    exec*/fork*/spawn* family, open, ...). Note: attribute `open` is blocked
+#    aggressively on purpose (codecs.open / tokenize.open are file-read
+#    escapes) — skills that need library-level file open (rasterio.open,
+#    xarray.open_dataset) must be individually reviewed by an admin.
+_BLOCKED_CHAIN_SEGMENTS = (
+    {
+        "os", "platform", "posix", "nt", "sys", "ctypes", "subprocess",
+        "multiprocessing", "importlib", "builtins", "shutil", "pathlib",
+        "tempfile", "pickle", "marshal", "shelve", "code", "signal",
+        "socket", "http", "urllib", "webbrowser", "xmlrpc", "ftplib",
+        "smtplib", "telnetlib", "runpy", "zipimport", "pty",
+        "_posixsubprocess", "asyncio", "antigravity",
+    }
+    | {
+        "system", "popen", "Popen", "call", "run", "startfile", "open",
+        "exec_module", "exec", "execv", "execve", "execvp", "execvpe",
+        "execl", "execle", "execlp", "execlpe", "fork", "forkpty",
+        "fork_exec", "spawn", "spawnv", "spawnve", "spawnlp", "spawnlpe",
+        "spawnvp", "spawnvpe", "posix_spawn", "posix_spawnp",
+        "getoutput", "getstatusoutput", "check_output", "check_call",
+        "load_module", "run_module", "run_path", "import_module", "reload",
+    }
+)
 
 # In-memory store for .md skill files: {name: {description, body, filename}}
 _md_skills: dict[str, dict] = {}
@@ -85,8 +130,34 @@ def _load_md_skill(file_path: str, filename: str):
         logger.error(f"Failed to load .md skill {filename}: {e}")
 
 
+def _attr_chain(node: ast.Attribute) -> str:
+    """Resolve an Attribute chain to its dotted form, e.g. `platform.os.open`.
+
+    Non-attribute bases (calls, subscripts, ...) are rendered as a literal
+    placeholder so the remaining segments still get checked.
+    """
+    parts = [node.attr]
+    cur = node.value
+    while isinstance(cur, ast.Attribute):
+        parts.append(cur.attr)
+        cur = cur.value
+    if isinstance(cur, ast.Name):
+        parts.append(cur.id)
+    elif isinstance(cur, ast.Call):
+        parts.append("<call>")
+    else:
+        parts.append("<expr>")
+    return ".".join(reversed(parts))
+
+
 def _validate_skill_code(code: str) -> list[str]:
-    """Validate skill code for dangerous patterns. Returns list of errors."""
+    """Validate skill code for dangerous patterns. Returns list of errors.
+
+    Defense-in-depth (issue #399): beyond bare-name checks, attribute-access
+    chains are resolved to their full dotted name (`platform.os.open`,
+    `_posixsubprocess.fork_exec`) and rejected if any segment hits the
+    dangerous set. This is still a deny-list — NOT a security boundary.
+    """
     errors = []
     try:
         tree = ast.parse(code)
@@ -109,6 +180,19 @@ def _validate_skill_code(code: str) -> list[str]:
         # Block dunder attribute access on any node (MRO chain / sandbox escape)
         if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
             errors.append(f"Blocked dunder attribute: {node.attr}")
+
+        # Issue #399: resolve attribute chains (platform.os.open) and reject
+        # any chain whose segment hits the dangerous set. Catches aliased
+        # os/module access and exec/fork/spawn/open attribute chains that the
+        # bare-name checks below cannot see.
+        if isinstance(node, ast.Attribute):
+            chain = _attr_chain(node)
+            for seg in chain.split("."):
+                if seg in _BLOCKED_CHAIN_SEGMENTS:
+                    errors.append(
+                        f"Blocked attribute chain: {chain} (segment: {seg})"
+                    )
+                    break
 
         if isinstance(node, ast.Call):
             func = node.func

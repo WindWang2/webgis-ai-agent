@@ -98,7 +98,10 @@ class SpectralRasterEngine:
             return RasterAnalysisResult(
                 index_type=idx,
                 array=arr,
-                bounds=list(bbox),
+                # #381: stac_client 返回实际读取窗口的 WGS84 范围 (bbox ∩
+                # 影像足迹)，而不是用户请求的整个 bbox —— 统计与栅格叠加
+                # 必须配准到真实数据 footprint。
+                bounds=fetch_res.get("bounds") or list(bbox),
                 stats=stats,
                 is_error=False,
             )
@@ -145,6 +148,7 @@ class SpectralRasterEngine:
                 nodata = dem <= -9999
                 dem[nodata] = np.nan
                 cell_size = fetch_res.get("cell_size_m", 30.0)
+                cell_size_x = fetch_res.get("cell_size_x_m")
 
                 # GIS-06: the default products = ["slope", "aspect", "hillshade"]
                 # but the previous if/elif chain (in a fixed branch order) only
@@ -153,9 +157,9 @@ class SpectralRasterEngine:
                 # Derivatives map to a single label deterministically: iterate
                 # the requested products in order and pick the first supported.
                 derivators = {
-                    "slope": lambda d: compute_slope(d, cell_size),
-                    "aspect": lambda d: compute_aspect(d, cell_size),
-                    "hillshade": lambda d: compute_hillshade(d, cell_size),
+                    "slope": lambda d: compute_slope(d, cell_size, cell_size_x=cell_size_x),
+                    "aspect": lambda d: compute_aspect(d, cell_size, cell_size_x=cell_size_x),
+                    "hillshade": lambda d: compute_hillshade(d, cell_size, cell_size_x=cell_size_x),
                 }
                 chosen = next((p for p in products if p in derivators), None)
                 if chosen is None:
@@ -175,7 +179,9 @@ class SpectralRasterEngine:
             return RasterAnalysisResult(
                 index_type=label,
                 array=target_arr,
-                bounds=list(bbox),
+                # #381: 实际读取窗口 (bbox ∩ DEM 足迹) 的 WGS84 范围，
+                # 而非整个请求 bbox。
+                bounds=fetch_res.get("bounds") or list(bbox),
                 stats=stats,
                 is_error=False,
             )

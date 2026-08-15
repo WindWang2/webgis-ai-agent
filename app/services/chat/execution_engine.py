@@ -57,6 +57,69 @@ from app.lib.runtime.evidence import (
 
 logger = logging.getLogger(__name__)
 
+# ── #409: legacy engine token-stream heartbeat ───────────────────────────────
+# The provider read timeout (llm_client.call_llm_stream) is 180s — far longer
+# than the ~60s idle timeout of the SSE proxies in front of the API. A
+# silently stalled provider therefore used to hang the turn with no output
+# until the proxy killed the connection, discarding the partial answer.
+# `_stream_with_token_keepalive` wraps the provider iteration so a keep_alive
+# event is emitted after `_LLM_TOKEN_KEEPALIVE_S` of silence WITHOUT
+# cancelling the provider stream: ``asyncio.wait_for`` on ``__anext__`` would
+# cancel the httpx read and destroy the stream, so the provider generator runs
+# in its own pump task and only the queue wait is timed.
+_LLM_TOKEN_KEEPALIVE_S = 15.0
+_KEEPALIVE_EVENT: tuple[str, dict] = ("keep_alive", {"message": "ping"})
+_QUEUE_END = object()  # pump-completed sentinel
+
+
+async def _stream_with_token_keepalive(
+    stream: AsyncGenerator[tuple[str, dict], None],
+    timeout_s: float = _LLM_TOKEN_KEEPALIVE_S,
+) -> AsyncGenerator[tuple[str, dict], None]:
+    """Adapt an LLM provider event stream: when no item arrives within
+    ``timeout_s`` seconds, a keep_alive tuple is yielded instead (the caller
+    forwards it as an SSE ``keep_alive`` event) and the wait resumes. Provider
+    items are delivered in order, unchanged; provider exceptions are re-raised
+    in the consumer. The pump task owns the provider generator, so a timeout
+    never cancels the underlying HTTP read; the pump is cancelled in the
+    ``finally`` when the consumer exits early (disconnect).
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def _pump() -> None:
+        try:
+            async for item in stream:
+                queue.put_nowait(item)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001 — re-raised in the consumer
+            queue.put_nowait(exc)
+        else:
+            queue.put_nowait(_QUEUE_END)
+
+    pump = asyncio.create_task(_pump())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout_s)
+            except asyncio.TimeoutError:
+                if pump.done() and queue.empty():
+                    return
+                yield _KEEPALIVE_EVENT
+                continue
+            if item is _QUEUE_END:
+                return
+            if isinstance(item, BaseException):
+                raise item  # type: ignore[misc]  # noqa: B904
+            yield item
+    finally:
+        if not pump.done():
+            pump.cancel()
+        try:
+            await pump
+        except BaseException:  # noqa: BLE001 — the pump's outcome is already surfaced
+            pass
+
 
 def _settle_cancel() -> None:
     """Mark the live turn's outcome CANCELLED on a cooperative cancel.
@@ -188,6 +251,13 @@ def _lock_in_use(lock: asyncio.Lock) -> bool:
 class ChatExecutionEngine:
     """Agent 对话与流式响应执行引擎"""
 
+    #: #407: P1「clearing」标记提升为注册表级（class 级共享）—— per-instance
+    #: 时父引擎的 clear_session 只抑制本实例的 _save_msg_async，与 in-flight
+    #: 子代理引擎（独立实例、共享父 session_id）竞争时子引擎仍会写库，产生
+    #: 行复活窗口。共享集合保证任一引擎实例发起 clear 后，所有实例对该会话
+    #: 的 DB 写都被抑制（_save_msg_async / _reject_if_clearing 读取同一集合）。
+    _clearing_sessions: set[str] = set()
+
     def __init__(
         self,
         tool_registry: ToolRegistry,
@@ -263,7 +333,9 @@ class ChatExecutionEngine:
         # for a marked session are refused cleanly. The task registry lets
         # clear_session quiesce the cancelled turn (bounded) before clearing
         # the marker.
-        self._clearing_sessions: set[str] = set()
+        # NOTE: the marker set itself is CLASS-level (registry-wide) since #407
+        # — see the class attribute above; nothing per-instance is assigned
+        # here.
         self._active_turn_tasks: dict[str, asyncio.Task] = {}
         self._clear_quiesce_timeout = float(_os.getenv("CLEAR_QUIESCE_TIMEOUT", "5.0"))
         # P1: bounded cancel-and-await budget for the cancel/finally cleanup
@@ -595,6 +667,20 @@ class ChatExecutionEngine:
 
     async def _save_msg_async(self, session_id: str, role: str, content: str, tool_calls=None, tool_result=None, tool_call_id=None, reasoning_content=None):
         """异步保存消息到数据库"""
+        if getattr(self, "is_subagent_engine", False):
+            # #407: 子代理是隔离的微会话 —— 它复用父 session_id（refs /
+            # map_state 父子原生互通，见 subagent.py 设计注释），但它的内部
+            # transcript（任务 prompt、每条 assistant 消息、tool_call/tool
+            # 响应）只属于子引擎自己的内存 LRU。一旦写进父会话 DB，重载 /
+            # LRU 逐出后父上下文会重新载入完整子代理轨迹，污染主对话且白耗
+            # token。父侧只通过 spawn_subagent 工具的 tool-result 消息拿到
+            # 最终摘要，因此子引擎的一切持久化在此抑制。
+            logger.debug(
+                "save_message suppressed for session %s: subagent engine "
+                "transcripts are never persisted to the parent conversation",
+                session_id,
+            )
+            return
         if session_id in self._clearing_sessions:
             # P1: clear_session 刚删了该会话的 conversation 行 —— 现在写入会
             # 复活历史（SQLite: FK off → 孤儿 Message 行；Postgres: FK →
@@ -967,7 +1053,14 @@ class ChatExecutionEngine:
                     if standard_calls:
                         entry["tool_calls"] = standard_calls
                     messages.append(entry)
-                    await self._save_msg_async(session_id, "assistant", content_text, tc_list, reasoning_content=reasoning)
+                    # #376: 持久化行只带 standard_calls（XML 路径为空 → None）。
+                    # MiniMax XML 路径的工具响应从不落库（只作为内存中的合成
+                    # user 消息存在），若把解析出的 xml_calls 一并持久化，进程
+                    # 重启 / LRU 逐出后重放历史会得到没有配对 tool 响应的
+                    # assistant.tool_calls —— OpenAI 兼容 provider 拒绝后续
+                    # turn 的首次 LLM 调用，会话永久损坏。降级为普通文本
+                    # assistant 行，重放序列合法。
+                    await self._save_msg_async(session_id, "assistant", content_text, standard_calls or None, reasoning_content=reasoning)
 
                     tool_result_msgs: list[str] = []
                     # F28: 与流式路径（chat_stream 并行 wave）同款抢占式取消 ——
@@ -1307,25 +1400,56 @@ class ChatExecutionEngine:
                     token_batcher = SSEBatcher(max_events=32, max_delay_s=0.08)
                     _t_llm = time.perf_counter()
                     _ttft_ms: Optional[float] = None
-                    async for event_type, event_data in self._call_llm_stream(messages_with_context, tools):
-                        if event_type == "token":
-                            if _ttft_ms is None:
-                                _ttft_ms = (time.perf_counter() - _t_llm) * 1000.0
-                                if _ev is not None:
-                                    _ev.mark_first_event()
-                            streamed_content_parts.append(event_data["content"])
-                            token_batcher.push(sse_event("token", {
-                                "content": event_data["content"],
-                                "is_reasoning": event_data.get("is_reasoning", False),
-                                "session_id": session_id,
-                            }))
-                            async for chunk in token_batcher.drain():
-                                yield chunk
-                        elif event_type == "done":
-                            # 收尾：冲刷尾部 token，保证流式内容完整到达前端
-                            for chunk in token_batcher.flush():
-                                yield chunk
-                            assistant_msg = event_data["message"]
+                    # #409: heartbeat + lossless error path for the token
+                    # stream.
+                    #   - _stream_with_token_keepalive yields a keep_alive
+                    #     event after _LLM_TOKEN_KEEPALIVE_S of provider
+                    #     silence, so SSE proxies with a ~60s idle timeout
+                    #     don't kill a stalled-but-alive turn;
+                    #   - an exception mid-stream flushes the batched tokens
+                    #     BEFORE propagating, so the route's error event
+                    #     follows the partial content instead of replacing it
+                    #     (the tokens were already produced by the provider;
+                    #     dropping them silently lost client-visible content).
+                    try:
+                        async for event_type, event_data in _stream_with_token_keepalive(
+                            self._call_llm_stream(messages_with_context, tools),
+                            timeout_s=_LLM_TOKEN_KEEPALIVE_S,
+                        ):
+                            if event_type == "token":
+                                if _ttft_ms is None:
+                                    _ttft_ms = (time.perf_counter() - _t_llm) * 1000.0
+                                    if _ev is not None:
+                                        _ev.mark_first_event()
+                                streamed_content_parts.append(event_data["content"])
+                                token_batcher.push(sse_event("token", {
+                                    "content": event_data["content"],
+                                    "is_reasoning": event_data.get("is_reasoning", False),
+                                    "session_id": session_id,
+                                }))
+                                async for chunk in token_batcher.drain():
+                                    yield chunk
+                            elif event_type == "done":
+                                # 收尾：冲刷尾部 token，保证流式内容完整到达前端
+                                for chunk in token_batcher.flush():
+                                    yield chunk
+                                assistant_msg = event_data["message"]
+                            elif event_type == "keep_alive":
+                                # #409: provider silent for _LLM_TOKEN_KEEPALIVE_S
+                                # — heartbeat the wire so idle proxies don't kill
+                                # the stream (same event the tool-wave wait uses).
+                                yield sse_event("keep_alive", event_data)
+                    except Exception:
+                        # #409: mid-stream failure — flush the batched tokens
+                        # BEFORE the exception reaches the route (which yields
+                        # its error event after our stream), so the client sees
+                        # the partial answer, not just the error. A client
+                        # disconnect (CancelledError — BaseException) skips
+                        # this: the connection is gone, so the buffered tokens
+                        # are dropped with the generator frame.
+                        for chunk in token_batcher.flush():
+                            yield chunk
+                        raise
 
                     if _ev is not None:
                         _ev.add_llm_round(
@@ -1359,7 +1483,10 @@ class ChatExecutionEngine:
                         if standard_calls:
                             entry["tool_calls"] = standard_calls
                         messages.append(entry)
-                        await self._save_msg_async(session_id, "assistant", content_text, tc_list, reasoning_content=reasoning)
+                        # #376: 同非流式路径 —— XML 工具响应不落库，assistant 行
+                        # 只带 standard_calls（XML 路径为 None），避免重放历史
+                        # 出现孤儿 assistant.tool_calls 损坏会话。
+                        await self._save_msg_async(session_id, "assistant", content_text, standard_calls or None, reasoning_content=reasoning)
 
                         tool_result_msgs: list[str] = []
 
