@@ -215,7 +215,14 @@ class SubagentDispatcher:
             def __init__(self, schemas: list[dict]):
                 self._schemas = schemas
 
-            def select_schemas(self, _user_message: str, session_id: Optional[str] = None):
+            def select_schemas(
+                self,
+                _user_message: str,
+                session_id: Optional[str] = None,
+                declared_domains: Optional[set] = None,
+            ):
+                # declared_domains 是 ToolCatalog 现行接口（_select_tools 始终
+                # 传此 kwarg）；stub 固定返回白名单，忽略即可。
                 return self._schemas
 
             def reset_session(self, session_id: str) -> None:
