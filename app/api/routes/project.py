@@ -1,12 +1,13 @@
 """
 Project Workspace, Persistent Workflow, Spatial Data Quality & Lineage API Endpoints
 """
+import asyncio
 import logging
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.database import get_db
+from app.core.database import get_db, SessionLocal
 from app.core.auth import actor_ids, get_current_user, get_current_user_optional
 from app.services.project_service import ProjectService
 from app.services.workflow_engine import WorkflowEngine
@@ -30,6 +31,24 @@ from app.schemas.pagination import Page, clamp_pagination
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects", tags=["Project Workspace"])
+
+
+async def _run_workflow_engine(engine_method, **kwargs) -> Any:
+    """把 WorkflowEngine 协程整体 offload 到 worker 线程执行（#386）。
+
+    引擎每步都做同步 SQLAlchemy I/O（db.execute / flush / commit），直接 await
+    在 async 路由上会阻塞整个事件循环 —— 卡住所有并发 SSE 流。WorkflowEngine
+    方法是 async def（内部 await 工具 dispatch），因此在 worker 线程里用
+    asyncio.run 起独立事件循环执行。
+
+    并发安全：sync Session 非线程安全，绝不跨线程共享 —— 在 worker 线程内
+    新建 Session、同一线程内使用并关闭。
+    """
+    def _worker() -> Any:
+        with SessionLocal() as thread_db:
+            return asyncio.run(engine_method(thread_db, **kwargs))
+
+    return await asyncio.to_thread(_worker)
 
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
@@ -242,8 +261,8 @@ async def run_workflow(
     tool_registry = get_tool_registry()
 
     try:
-        run = await WorkflowEngine.execute_workflow_run(
-            db=db,
+        run = await _run_workflow_engine(
+            WorkflowEngine.execute_workflow_run,
             workflow_id=workflow_id,
             tool_registry=tool_registry,
             input_bindings=req.input_bindings,
@@ -395,9 +414,14 @@ async def replay_run(
         raise HTTPException(status_code=404, detail="Project not found")
     tool_registry = get_tool_registry()
     try:
-        return await WorkflowEngine.replay_run(
-            db=db, prior_run_id=run_id, tool_registry=tool_registry, mode=req.mode,
-            user_id=user_id, org_id=org_id, expected_project_id=project_id,
+        return await _run_workflow_engine(
+            WorkflowEngine.replay_run,
+            prior_run_id=run_id,
+            tool_registry=tool_registry,
+            mode=req.mode,
+            user_id=user_id,
+            org_id=org_id,
+            expected_project_id=project_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=404 if "not found" in str(e) else 409, detail=str(e))
@@ -422,9 +446,13 @@ async def resume_run(
         raise HTTPException(status_code=404, detail="Project not found")
     tool_registry = get_tool_registry()
     try:
-        return await WorkflowEngine.resume_run(
-            db=db, prior_run_id=run_id, tool_registry=tool_registry,
-            user_id=user_id, org_id=org_id, expected_project_id=project_id,
+        return await _run_workflow_engine(
+            WorkflowEngine.resume_run,
+            prior_run_id=run_id,
+            tool_registry=tool_registry,
+            user_id=user_id,
+            org_id=org_id,
+            expected_project_id=project_id,
             allow_rerun=req.allow_rerun,
         )
     except ValueError as e:

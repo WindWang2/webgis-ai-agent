@@ -1,4 +1,5 @@
 """Task API Route - 任务状态查询与取消"""
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
@@ -194,7 +195,9 @@ async def get_celery_task_status(
     backend 不可用（无 Redis）时进度仍然可读，因为事实源已经在数据库里。
     """
     await _verify_celery_owner(db, task_id, _user.get("user_id", ""), owner_token)
-    payload = TaskQueueService.get_task_status(task_id)
+    # 计算隔离不变式 1：AsyncResult.info/.ready() 是 Celery result backend 的
+    # socket I/O，前端每 3s 轮询 —— 直接在循环上执行会卡住所有 SSE 流（#386）。
+    payload = await asyncio.to_thread(TaskQueueService.get_task_status, task_id)
 
     job = await DurableJobStore.get_by_celery_id(db, task_id)
     if job is not None:
@@ -229,5 +232,6 @@ async def revoke_celery_task(
         await db.commit()
         cancellation_registry.cancel(str(job.id), "cancelled by user")
 
-    revoked = TaskQueueService.revoke_task(task_id)
+    # 计算隔离不变式 1：control.revoke 是 broker socket I/O，offload 到线程（#386）。
+    revoked = await asyncio.to_thread(TaskQueueService.revoke_task, task_id)
     return {"revoked": revoked, "task_id": task_id}

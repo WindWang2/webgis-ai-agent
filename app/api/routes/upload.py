@@ -30,6 +30,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _load_geojson_features(path: Path) -> list:
+    """流式解析 GeoJSON 的 features —— 同步 CPU+IO 密集（50MB 上限），
+    必须在 worker 线程执行（计算隔离不变式 1）。"""
+    with open(path, "rb") as f:
+        return list(ijson.items(f, "features.item"))
+
+
 async def _verify_session_owner(db, session_id: Optional[str], user_id) -> None:
     """跨租户守卫：若 upload 关联了 session_id，会话必须属于调用方（审计 S42）。
 
@@ -320,8 +327,11 @@ async def get_upload_geojson(upload_id: int, _user: dict = Depends(get_current_u
             detail=f"GeoJSON 文件过大（{file_size / 1024 / 1024:.1f}MB > {MAX_VECTOR_SIZE / 1024 / 1024:.0f}MB 限制），请通过 /layers/data/{{ref_id}} 分片读取",
         )
 
-    with open(geojson_path, "rb") as f:
-        features = list(ijson.items(f, "features.item"))
+    # 计算隔离不变式 1：ijson 解析 50MB GeoJSON 是同步 CPU 工作，直接在
+    # async def 里执行会阻塞整个事件循环（#386）。照抄本文件上传路径的
+    # run_in_executor 模式，把解析扔到默认 threadpool。
+    loop = asyncio.get_running_loop()
+    features = await loop.run_in_executor(None, _load_geojson_features, geojson_path)
     return {"type": "FeatureCollection", "features": features}
 
 
