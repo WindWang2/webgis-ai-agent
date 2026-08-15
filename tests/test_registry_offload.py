@@ -5,6 +5,7 @@ sleeps must NOT block the event loop — other coroutines must keep running
 concurrently while the tool executes in the thread pool.
 """
 import asyncio
+import threading
 import time
 
 
@@ -144,3 +145,174 @@ def test_sync_tool_concurrency_is_bounded():
     finally:
         reg_mod._tool_thread_semaphore = orig_semaphore
         reg_mod._TOOL_THREAD_LIMIT = orig_limit
+
+
+# ---------------------------------------------------------------------------
+# GH-406: per-tool wall-time budget + semaphore accounting across cancellation.
+# ---------------------------------------------------------------------------
+
+
+def test_hung_sync_tool_returns_timeout_result_within_budget():
+    """A hung sync tool must return a timeout error result within the budget.
+
+    Before: dispatch had no timeout at all — a dead tool occupied the turn
+    forever. After: each tool runs under a wall-time budget
+    (_TOOL_TIMEOUT_S, env TOOL_TIMEOUT_S, or per-tool metadata 'timeout').
+    """
+    import app.tools.registry as reg_mod
+
+    reg = ToolRegistry()
+    release = threading.Event()
+
+    def forever_tool():
+        release.wait(timeout=30)  # hangs until the test lets it go
+        return {"never": True}
+
+    reg.register("forever", "hangs", forever_tool)
+
+    orig_timeout = reg_mod._TOOL_TIMEOUT_S
+    reg_mod._TOOL_TIMEOUT_S = 0.3
+    try:
+        async def main():
+            start = time.monotonic()
+            out = await reg.dispatch("forever", {})
+            elapsed = time.monotonic() - start
+            # 放行后台泄漏线程：asyncio.run 收尾时 shutdown_default_executor
+            # 会 join 所有 worker，不放行测试会挂 30s。
+            release.set()
+            return out, elapsed
+
+        out, elapsed = asyncio.run(main())
+    finally:
+        reg_mod._TOOL_TIMEOUT_S = orig_timeout
+        release.set()
+
+    assert elapsed < 5.0, f"timeout 未生效，dispatch 耗时 {elapsed:.1f}s"
+    assert out["success"] is False
+    assert out["code"] == "TOOL_TIMEOUT"
+    assert "超时" in out["message"]
+
+
+def test_timeout_metadata_overrides_global_budget():
+    """Per-tool metadata 'timeout' must take precedence over the global budget."""
+    import app.tools.registry as reg_mod
+
+    reg = ToolRegistry()
+    release = threading.Event()
+
+    def forever_tool():
+        release.wait(timeout=30)
+        return {"never": True}
+
+    # 全局预算故意给得很长；工具级 timeout 很短 → 必须按工具级超时返回
+    reg.register("forever", "hangs", forever_tool, timeout=0.3)
+
+    orig_timeout = reg_mod._TOOL_TIMEOUT_S
+    reg_mod._TOOL_TIMEOUT_S = 60.0
+    try:
+        async def main():
+            start = time.monotonic()
+            out = await reg.dispatch("forever", {})
+            elapsed = time.monotonic() - start
+            release.set()
+            return out, elapsed
+
+        out, elapsed = asyncio.run(main())
+    finally:
+        reg_mod._TOOL_TIMEOUT_S = orig_timeout
+        release.set()
+
+    assert elapsed < 5.0, f"工具级 timeout 未生效，dispatch 耗时 {elapsed:.1f}s"
+    assert out["success"] is False
+    assert out["code"] == "TOOL_TIMEOUT"
+
+
+def test_cancellation_keeps_semaphore_until_thread_actually_finishes():
+    """Cancellation must not release the semaphore before the thread ends.
+
+    Before: cancelling `await to_thread(...)` ran the `async with` __aexit__
+    immediately, returning the slot while the worker thread kept running —
+    the semaphore stopped reflecting real thread occupancy, so a wave of
+    hung tools would pile up threads beyond _TOOL_THREAD_LIMIT. After: the
+    slot is returned by a done callback when the thread truly finishes;
+    the abandoned call is counted in _tool_thread_leaked_count.
+    """
+    import asyncio as _asyncio
+
+    import app.tools.registry as reg_mod
+
+    limit = 1
+    orig_semaphore = reg_mod._tool_thread_semaphore
+    orig_leaked = reg_mod._tool_thread_leaked_count
+    reg_mod._tool_thread_semaphore = _asyncio.Semaphore(limit)
+    started = threading.Event()
+    release = threading.Event()
+    try:
+        reg = ToolRegistry()
+
+        def blocker():
+            started.set()
+            release.wait(timeout=30)
+            return {"done": True}
+
+        reg.register("blocker", "blocks", blocker)
+
+        async def main():
+            task = _asyncio.create_task(reg.dispatch("blocker", {}))
+            # 等 worker 线程真正开始运行后再取消
+            for _ in range(500):
+                if started.is_set():
+                    break
+                await _asyncio.sleep(0.01)
+            assert started.is_set(), "worker 线程未启动"
+            task.cancel()
+            try:
+                await task
+            except _asyncio.CancelledError:
+                pass
+            # 取消已送达，但线程仍在跑 → 信号量必须仍然被占用
+            assert reg_mod._tool_thread_semaphore.locked(), (
+                "取消后信号量被提前释放——槽位不再反映真实线程占用"
+            )
+            # 放行线程；线程结束后槽位由 done 回调归还
+            release.set()
+            for _ in range(500):
+                if not reg_mod._tool_thread_semaphore.locked():
+                    break
+                await _asyncio.sleep(0.01)
+            assert not reg_mod._tool_thread_semaphore.locked(), (
+                "线程结束后信号量槽位未归还"
+            )
+            assert reg_mod._tool_thread_leaked_count == orig_leaked + 1, (
+                "被取消的线程未计入泄漏计数"
+            )
+
+        _asyncio.run(main())
+    finally:
+        reg_mod._tool_thread_semaphore = orig_semaphore
+        release.set()
+
+
+def test_async_tool_under_thread_policy_dispatches():
+    """GH-374/406 cross-check: async def + THREAD policy must dispatch fine.
+
+    The thread-path fixes must not break async tools that were (incorrectly)
+    declared with THREAD policy — they are awaited directly, never handed to
+    to_thread, so no semaphore slot is consumed and no coroutine leaks out.
+    """
+    reg = ToolRegistry()
+
+    @reg.tool(
+        name="async_under_thread",
+        description="async def declared as THREAD",
+        execution_policy="thread",
+    )
+    async def async_under_thread(x: int = 1):
+        await asyncio.sleep(0)
+        return {"value": x + 1}
+
+    async def main():
+        return await reg.dispatch("async_under_thread", {"x": 1})
+
+    out = asyncio.run(main())
+    assert out == {"value": 2}
