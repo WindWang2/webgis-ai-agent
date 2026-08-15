@@ -76,7 +76,7 @@ spec:
           mountPath: /tmp
         - name: app-data
           mountPath: /app/data
-        - name: app-uploads
+        - name: uploads-volume
           mountPath: /app/uploads
         - name: app-pi
           mountPath: /app/.pi
@@ -86,8 +86,12 @@ spec:
         emptyDir: {}
       - name: app-data
         emptyDir: {}
-      - name: app-uploads
-        emptyDir: {}
+      # #394: worker 必须看到 API 写入的上传文件（shapefile/raster 任务）。
+      # 与 02-api-deployment.yaml 挂同一个 PVC —— emptyDir 会让每个 worker
+      # 只看到自己的空目录，上传文件在 worker 侧"不存在"。
+      - name: uploads-volume
+        persistentVolumeClaim:
+          claimName: webgis-uploads-pvc
       - name: app-pi
         emptyDir: {}
 ---
@@ -98,8 +102,10 @@ metadata:
   name: webgis-uploads-pvc
   namespace: webgis-prod
 spec:
+  # #394: api 与 celery 共享上传目录，需要 ReadWriteMany（存储类必须支持
+  # RWX，如 NFS / CephFS / 云端共享盘；仅 RWO 时 api+celery 必须同节点调度）。
   accessModes:
-    - ReadWriteOnce
+    - ReadWriteMany
   resources:
     requests:
       storage: 50Gi

@@ -83,10 +83,15 @@ spec:
           timeoutSeconds: 10
           failureThreshold: 3
         readinessProbe:
-          httpGet:
-            # /api/v1/ready 在依赖不可达时返回 503，触发 pod 摘出流量
-            path: /api/v1/ready
-            port: 8000
+          # #400: 容器同时承载 uvicorn:8000 与 node:3000。只探测 API 会让
+          # "node 挂了 + nginx 502 前端" 的 pod 保持 Ready —— exec 探测把
+          # /api/v1/ready（依赖不可达返回 503 → 摘出流量）与前端进程
+          # 一起纳入就绪判定。
+          exec:
+            command:
+              - python3
+              - -c
+              - import urllib.request as u; u.urlopen('http://localhost:8000/api/v1/ready', timeout=3); u.urlopen('http://localhost:3000/', timeout=3)
           initialDelaySeconds: 15
           periodSeconds: 10
           timeoutSeconds: 5

@@ -41,3 +41,55 @@ class TestK8sSecurityContext:
                 assert "securityContext" in spec, "Pod-level securityContext missing"
                 sc = spec["securityContext"]
                 assert sc.get("runAsNonRoot") is True, "runAsNonRoot must be true"
+
+
+def _deployment_volume_sources(path, mount_path):
+    """Map each Deployment's container volumeMount at mount_path to its
+    underlying volume source (pvc claimName / emptyDir marker)."""
+    out = {}
+    for doc in _load_k8s(path):
+        if not doc or doc.get("kind") != "Deployment":
+            continue
+        spec = doc["spec"]["template"]["spec"]
+        volumes = {v["name"]: v for v in spec.get("volumes", [])}
+        for c in spec.get("containers", []):
+            for m in c.get("volumeMounts", []):
+                if m.get("mountPath") == mount_path:
+                    v = volumes.get(m["name"], {})
+                    out[c["name"]] = (
+                        v.get("persistentVolumeClaim", {}).get("claimName")
+                        or ("emptyDir" if "emptyDir" in v else None)
+                    )
+    return out
+
+
+class TestK8sUploadsVolumeParity:
+    def test_api_and_celery_share_the_uploads_pvc(self):
+        """#394: api 与 celery 的 /app/uploads 必须来自同一个 PVC。
+
+        celery 挂 emptyDir 会让 worker 看到每 pod 各自的空目录 ——
+        API 写入的上传文件（shapefile/raster 任务）在 worker 侧不存在，
+        "compose 下正常、k8s 下失败"。
+        """
+        api = _deployment_volume_sources("deploy/k8s/02-api-deployment.yaml", "/app/uploads")
+        celery = _deployment_volume_sources("deploy/k8s/03-celery-deployment.yaml", "/app/uploads")
+        assert api, "api deployment mounts no /app/uploads volume"
+        assert celery, "celery deployment mounts no /app/uploads volume"
+        claim = set(api.values()) | set(celery.values())
+        assert claim == {"webgis-uploads-pvc"}, (
+            f"/app/uploads must be the shared webgis-uploads-pvc on both "
+            f"deployments (got api={api}, celery={celery})"
+        )
+
+    def test_uploads_pvc_allows_multi_pod_access(self):
+        """上传 PVC 需 ReadWriteMany（或至少声明多 pod 共享意图）。"""
+        for path in ("deploy/k8s/02-api-deployment.yaml", "deploy/k8s/03-celery-deployment.yaml"):
+            for doc in _load_k8s(path):
+                if not doc or doc.get("kind") != "PersistentVolumeClaim":
+                    continue
+                if doc["metadata"]["name"] != "webgis-uploads-pvc":
+                    continue
+                modes = doc["spec"]["accessModes"]
+                assert "ReadWriteMany" in modes, (
+                    f"{path}: webgis-uploads-pvc accessModes={modes} 缺 ReadWriteMany"
+                )
