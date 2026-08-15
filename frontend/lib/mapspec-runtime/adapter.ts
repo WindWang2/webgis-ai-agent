@@ -212,11 +212,17 @@ export function hudStateToMapSpec(input: HudToSpecInput): MapSpec {
     const filterRanges = activeFilters[layer.id];
     const buildLayerFilter = (baseType: string): unknown[] => {
       const base: unknown[] = ["==", "$type", baseType];
+      const parts: unknown[] = [base];
+      // Issue #393: imperative filters (APPLY_LAYER_FILTER) are persisted on the
+      // store layer — without this merge the reconcile would emit only the $type
+      // base and silently roll the filter back. The imperative expression ANDs
+      // with the geometry-type base so each sublayer keeps its own $type guard.
+      if (layer.filter) parts.push(layer.filter);
       if (filterField && filterRanges) {
         const rangeFilters = filterRanges.map((range: number[]) => ["all", [">=", ["get", filterField], range[0]], ["<", ["get", filterField], range[1]]]);
-        return ["all", base, ["any", ...rangeFilters]];
+        parts.push(["any", ...rangeFilters]);
       }
-      return base;
+      return parts.length === 1 ? base : ["all", ...parts];
     };
 
     const color = layer.style?.color || "#16a34a";

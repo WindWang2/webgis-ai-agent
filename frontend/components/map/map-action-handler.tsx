@@ -129,9 +129,15 @@ export const MapActionHandler = React.memo(function MapActionHandler() {
         return;
       }
 
+      // Issue #393: every catalogue command now returns an explicit
+      // MapCommandResult (post-state verification is the FIX-B contract), so a
+      // void return is no longer evidence of success — it means the command
+      // forgot to report, or an unverifiable code path slipped through. Fail
+      // honestly instead of acking `succeeded` for a mutation that may never
+      // have landed (the old default silently converted the broken
+      // apply_layer_filter / heatmap commands into fake successes).
       if (result === undefined || result === null) {
-        // void run → succeeded (legacy fire-and-forget commands untouched).
-        finish('succeeded');
+        finish('failed', { error: 'no_result' });
         return;
       }
       if (result.status === 'failed') {

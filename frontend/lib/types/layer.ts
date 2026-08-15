@@ -38,6 +38,10 @@ export interface Layer {
   group?: 'analysis' | 'base' | 'reference';
   source?: string | GeoJSONFeatureCollection | HeatmapRasterSource;
   style?: LayerStyle;
+  /** Imperative MapLibre filter expression (APPLY_LAYER_FILTER). Persisted on the
+   *  store layer so the MapSpecRuntime reconcile re-emits it (issue #393: a bare
+   *  map.setFilter is rolled back by the next reconcile). null/absent = no filter. */
+  filter?: unknown[] | null;
   _refId?: string;
   /** Data Plane: MVT tile URL template ({z}/{x}/{y}) for large ref layers. */
   _tileUrl?: string;

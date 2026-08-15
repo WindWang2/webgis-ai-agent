@@ -319,6 +319,52 @@ describe("MapSpec Runtime Adapter — hudStateToMapSpec (ADR-0036)", () => {
     });
   });
 
+  describe("layer.filter (issue #393: imperative APPLY_LAYER_FILTER survives reconcile)", () => {
+    it("ANDs the imperative filter with the $type base on every sublayer", () => {
+      const layer = baseLayer({
+        source: fc(polygonFeature(), lineFeature(), pointFeature()),
+        filter: [">", ["get", "pop"], 1000],
+      });
+      const spec = hudStateToMapSpec({ layers: [layer], processLayers: {}, activeFilters: {}, is3D: false });
+
+      const fill = spec.layers.find((l) => l.id === `L1${SUBLAYER_SEP}fill`)!;
+      const line = spec.layers.find((l) => l.id === `L1${SUBLAYER_SEP}line`)!;
+      const point = spec.layers.find((l) => l.id === `L1${SUBLAYER_SEP}point`)!;
+      expect(fill.filter).toEqual(["all", ["==", "$type", "Polygon"], [">", ["get", "pop"], 1000]]);
+      expect(line.filter).toEqual(["all", ["==", "$type", "LineString"], [">", ["get", "pop"], 1000]]);
+      expect(point.filter).toEqual(["all", ["==", "$type", "Point"], [">", ["get", "pop"], 1000]]);
+    });
+
+    it("combines the imperative filter with activeFilters range filters", () => {
+      const src = fc(polygonFeature({ score: 10 })) as any;
+      src.metadata = { field: "score" };
+      const layer = baseLayer({
+        source: src,
+        filter: ["==", ["get", "name"], "mall"],
+      });
+      const spec = hudStateToMapSpec({
+        layers: [layer],
+        processLayers: {},
+        activeFilters: { L1: [[0, 25]] },
+        is3D: false,
+      });
+      const fill = spec.layers.find((l) => l.type === "fill")!;
+      expect(fill.filter).toEqual([
+        "all",
+        ["==", "$type", "Polygon"],
+        ["==", ["get", "name"], "mall"],
+        ["any", ["all", [">=", ["get", "score"], 0], ["<", ["get", "score"], 25]]],
+      ]);
+    });
+
+    it("emits no filter clause when layer.filter is null (cleared)", () => {
+      const layer = baseLayer({ source: fc(polygonFeature()), filter: null });
+      const spec = hudStateToMapSpec({ layers: [layer], processLayers: {}, activeFilters: {}, is3D: false });
+      const fill = spec.layers.find((l) => l.type === "fill")!;
+      expect(fill.filter).toEqual(["==", "$type", "Polygon"]);
+    });
+  });
+
   describe("visibility", () => {
     it("marks all sublayers visibility:none when layer.visible=false", () => {
       const layer = baseLayer({ visible: false, source: fc(polygonFeature(), lineFeature(), pointFeature()) });

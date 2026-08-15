@@ -470,84 +470,189 @@ export const layerCommands: Record<string, CommandEntry> = {
     // the old validator (layers/order arrays) matched no actual run contract
     requiredParams: (p) => typeof p.layer_id === 'string' && typeof p.position === 'string',
     run(ctx) {
-      const { map, params } = ctx;
+      const { map, params, getHudState } = ctx;
       const { layer_id, position, before_id } = params || {};
       // V3: silent no-ops become explicit failed results (design §6).
       if (!layer_id || typeof layer_id !== 'string' || !layer_id.trim() || layer_id === 'ref:' || layer_id === 'custom-') {
         return { status: 'failed', error: 'target_not_found' };
       }
       if (!position) return { status: 'failed', error: 'invalid_params' };
-      const style = map.getStyle();
-      const allLayers = style.layers || [];
-      const subIds = allLayers
-        .map((l: any) => l.id as string)
-        .filter((id: string) => id === `custom-${layer_id}` || id.startsWith(`custom-${layer_id}-`));
-      if (subIds.length === 0) return { status: 'failed', error: 'target_not_found' };
+      // Issue #393: tighten position validation up-front so neither scheme path
+      // mutates the map/store before discovering the request is malformed.
+      if (!['top', 'bottom', 'up', 'down', 'before'].includes(position)) {
+        return { status: 'failed', error: 'invalid_params' };
+      }
+      if (position === 'before' && !before_id) return { status: 'failed', error: 'invalid_params' };
 
-      // Snapshot custom layer IDs only (we ignore base style layers)
-      const customIds = allLayers
-        .map((l: any) => l.id as string)
-        .filter((id: string) => id.startsWith('custom-'));
+      // V3 round-2 FIX-B: resolve the target across BOTH id schemes (custom-…
+      // stack and store `…__…` sublayers). The old custom-only matcher never saw
+      // a MapSpec layer (`${id}__${sub}`) and failed target_not_found for every
+      // current layer.
+      const matched = matchMapLayers(map, layer_id);
+      const storeHasLayer = getHudState().layers?.some?.((l: any) => l.id === layer_id) ?? false;
+      if (matched.length === 0 && !storeHasLayer) return { status: 'failed', error: 'target_not_found' };
 
-      const firstSubIdx = customIds.indexOf(subIds[0]);
-      let beforeAnchor: string | undefined;
+      const customMatched = matched.filter((id) => isCustomSchemeMatch(layer_id, id));
+      const storeMatched = matched.filter((id) => isStoreSchemeMatch(layer_id, id));
 
-      if (position === 'top') {
-        beforeAnchor = undefined; // moveLayer with no anchor -> top
-      } else if (position === 'bottom') {
-        const bottomCandidate = customIds.find((id: string) => !subIds.includes(id));
-        beforeAnchor = bottomCandidate;
-      } else if (position === 'up') {
-        // Find next custom group above
-        for (let i = firstSubIdx - 1; i >= 0; i--) {
-          if (!subIds.includes(customIds[i])) {
-            // Place subIds before the layer that sits above customIds[i]
-            beforeAnchor = customIds[i];
-            break;
+      // 1. custom stack → legacy algorithm: move the group on the map within the
+      //    custom stack (the runtime does not own these layers).
+      let customMoved = false;
+      if (customMatched.length > 0) {
+        const style = map.getStyle();
+        const allLayers = style.layers || [];
+
+        // Snapshot custom layer IDs only (we ignore base style layers)
+        const customIds = allLayers
+          .map((l: any) => l.id as string)
+          .filter((id: string) => id.startsWith('custom-'));
+
+        const firstSubIdx = customIds.indexOf(customMatched[0]);
+        let beforeAnchor: string | undefined;
+
+        if (position === 'top') {
+          beforeAnchor = undefined; // moveLayer with no anchor -> top
+        } else if (position === 'bottom') {
+          const bottomCandidate = customIds.find((id: string) => !customMatched.includes(id));
+          beforeAnchor = bottomCandidate;
+        } else if (position === 'up') {
+          // Find next custom group above
+          for (let i = firstSubIdx - 1; i >= 0; i--) {
+            if (!customMatched.includes(customIds[i])) {
+              // Place customMatched before the layer that sits above customIds[i]
+              beforeAnchor = customIds[i];
+              break;
+            }
           }
-        }
-      } else if (position === 'down') {
-        for (let i = firstSubIdx + subIds.length; i < customIds.length; i++) {
-          if (!subIds.includes(customIds[i])) {
-            beforeAnchor = customIds[i + 1];
-            break;
+        } else if (position === 'down') {
+          for (let i = firstSubIdx + customMatched.length; i < customIds.length; i++) {
+            if (!customMatched.includes(customIds[i])) {
+              beforeAnchor = customIds[i + 1];
+              break;
+            }
           }
+        } else if (position === 'before' && before_id) {
+          const targetGroup = customIds.find((id: string) => id === `custom-${before_id}` || id.startsWith(`custom-${before_id}-`));
+          beforeAnchor = targetGroup;
         }
-      } else if (position === 'before' && before_id) {
-        const targetGroup = customIds.find((id: string) => id === `custom-${before_id}` || id.startsWith(`custom-${before_id}-`));
-        beforeAnchor = targetGroup;
+
+        try {
+          for (const id of customMatched) {
+            map.moveLayer(id, beforeAnchor);
+          }
+          customMoved = true;
+        } catch (e) {
+          devOnly.warn('[MapActionHandler] REORDER_LAYER failed:', e);
+          return { status: 'failed', error: 'reorder_failed' };
+        }
       }
 
-      try {
-        for (const id of subIds) {
-          map.moveLayer(id, beforeAnchor);
+      // 2. store-scheme → durable reorder of the HUD store's layers array (index
+      //    0 = topmost). The MapSpecRuntime derives the map z-order from that
+      //    array (adapter → spec → reconcile → renderer.syncLayerZOrder), so a
+      //    direct moveLayer on the sublayers would be reverted by the next
+      //    reconcile — reordering the store is the change that sticks.
+      let storeReordered = false;
+      if (storeHasLayer) {
+        const storeOrder = [...(getHudState().layers as any[])];
+        const fromIdx = storeOrder.findIndex((l: any) => l.id === layer_id);
+        if (fromIdx !== -1) {
+          const [moved] = storeOrder.splice(fromIdx, 1);
+          let toIdx: number;
+          if (position === 'top') {
+            toIdx = 0;
+          } else if (position === 'bottom') {
+            toIdx = storeOrder.length;
+          } else if (position === 'up') {
+            toIdx = Math.max(0, fromIdx - 1);
+          } else if (position === 'down') {
+            toIdx = Math.min(storeOrder.length, fromIdx + 1);
+          } else {
+            // position === 'before' (validated above): directly below before_id.
+            const beforeIdx = storeOrder.findIndex((l: any) => l.id === before_id);
+            if (beforeIdx === -1) return { status: 'failed', error: 'target_not_found' };
+            toIdx = beforeIdx + 1;
+          }
+          storeOrder.splice(toIdx, 0, moved);
+          getHudState().reorderLayers(storeOrder);
+          storeReordered = true;
         }
-      } catch (e) {
-        devOnly.warn('[MapActionHandler] REORDER_LAYER failed:', e);
-        return { status: 'failed', error: 'reorder_failed' };
       }
+
       // V3 round-2 FIX-B: post-mutation verification — the target sublayers
       // must still exist on the map (moveLayer on a stale style index is a
       // silent no-op otherwise).
       const layersAfter = ((map.getStyle?.()?.layers ?? []) as any[]).map((l: any) => l.id as string);
-      const targetGone = subIds.some(
+      const targetGone = matched.some(
         (id: string) => !map.getLayer?.(id) && !layersAfter.includes(id),
       );
-      if (targetGone) return { status: 'failed', error: 'mutation_failed' };
-      // V3: verifiable marker (layer reorder — harness convergence).
-      return { status: 'succeeded', result: { confirmed: true } };
+      if (targetGone) return nonConfirmableAck(storeMatched);
+
+      // V3: verifiable markers (layer reorder — harness convergence). Custom
+      // layers are verified synchronously (confirmed); store layers are owned by
+      // the runtime reconcile (store_updated — the backend treats it as
+      // non-converging until the next observation confirms the map z-order).
+      const result: Record<string, unknown> = {};
+      if (customMoved) result.confirmed = true;
+      if (storeReordered) result.store_updated = true;
+      return { status: 'succeeded', result };
     },
   },
 
   apply_layer_filter: {
     requiredParams: (p) => typeof p.layer_id === 'string' || typeof p.id === 'string',
     run(ctx) {
-      const { map, params } = ctx;
+      const { map, params, getHudState } = ctx;
       const { layer_id, filter } = params || {};
       // V3: missing target → explicit failed result (was a silent return).
       if (!layer_id) return { status: 'failed', error: 'target_not_found' };
-      // Apply MapLibre filter with fallback parser for simple string filters
-      map.setFilter(layer_id, parseFilter(filter) as any);
+
+      // V3 round-2 FIX-B: resolve the target across BOTH id schemes (custom-…
+      // stack and store `…__…` sublayers) before declaring a miss. The old code
+      // called setFilter on the bare id, which does not exist on a MapSpec map
+      // (`${id}__fill/__line/__point` are the real layer ids); MapLibre emits an
+      // ErrorEvent instead of throwing, so run() returned void and the dispatcher
+      // acked `succeeded` for a filter that never landed.
+      const matched = matchMapLayers(map, layer_id);
+      const storeHasLayer = getHudState().layers?.some?.((l: any) => l.id === layer_id) ?? false;
+      if (matched.length === 0 && !storeHasLayer) return { status: 'failed', error: 'target_not_found' };
+
+      const parsed = parseFilter(filter);
+      const storeMatched = matched.filter((id) => isStoreSchemeMatch(layer_id, id));
+
+      // Apply to every matched sublayer BEFORE touching the store — a failed map
+      // mutation must not leave a store-only filter that the next reconcile
+      // would force onto the map anyway.
+      if (matched.length > 0) {
+        for (const id of matched) {
+          if (!map.getLayer?.(id)) return nonConfirmableAck(storeMatched);
+          try {
+            map.setFilter(id, parsed as any);
+          } catch (e) {
+            // Raster layers reject filters — surface it instead of fake-acking.
+            devOnly.warn('[MapActionHandler] APPLY_LAYER_FILTER failed on layer:', id, e);
+            return nonConfirmableAck(storeMatched);
+          }
+        }
+        // FIX-B: the filter must actually be recorded on the layer — setFilter
+        // on an unsupported (raster) or stale id silently no-ops otherwise.
+        for (const id of matched) {
+          const live = map.getFilter?.(id);
+          if (parsed && !live) return nonConfirmableAck(storeMatched);
+        }
+      }
+
+      // Persist the filter on the store layer so the MapSpecRuntime reconcile
+      // keeps it (the adapter re-emits `layer.filter`; a bare setFilter would be
+      // rolled back). null/'' clears it — the backend documents that contract.
+      getHudState().updateLayer(layer_id, { filter: parsed ?? null });
+
+      if (matched.length === 0) {
+        // Store-only: the reconcile owns the map sublayers → honest store_updated.
+        return { status: 'succeeded', result: { store_updated: true } };
+      }
+      // V3: verifiable marker (layer filter — harness convergence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 };
