@@ -93,7 +93,6 @@ async def test_subagent_repair_orphaned_tool_calls_does_not_persist(registry):
 
     内存 repair 照常（消息配对补齐，子引擎自己的上下文保持合法），但绝不写库。
     """
-    import asyncio
 
     from app.services.subagent import SubagentDispatcher, select_tools_for_subagent
 
