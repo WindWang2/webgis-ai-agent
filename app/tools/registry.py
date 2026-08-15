@@ -58,6 +58,17 @@ class ToolExecutionPolicy(str, Enum):
 _TOOL_THREAD_LIMIT = max(4, min(16, (os.cpu_count() or 4) + 4))
 _tool_thread_semaphore = asyncio.Semaphore(_TOOL_THREAD_LIMIT)
 
+# 单次工具执行的墙钟预算（秒）。默认 300s，TOOL_TIMEOUT_S 环境变量可覆盖；
+# 注册时工具声明了 timeout 元数据则优先于此处（见 _dispatch_impl）。注意
+# INLINE 同步工具直接在事件循环上执行，真挂死时预算也无法抢占（循环被
+# 阻塞）——该限制是既有约束，INLINE 只允许 <5ms 的超轻量工具。
+_TOOL_TIMEOUT_S = float(os.environ.get("TOOL_TIMEOUT_S", "300"))
+
+# to_thread 的 worker 线程无法被终止：调用方被取消/超时后线程仍会跑完。
+# 这类「比调用方活得更久」的线程计数（诊断 + 测试断言用）。信号量槽位由
+# done 回调在线程真实结束时归还（见 _execute_sync_in_thread），不在此计数。
+_tool_thread_leaked_count = 0
+
 VALID_GEOMETRY_TYPES = {
     "Point", "MultiPoint",
     "LineString", "MultiLineString",
@@ -177,6 +188,7 @@ class ToolRegistry:
              tier: int = 1,
              domains: Optional[List[str]] = None,
              execution_policy: Optional[ToolExecutionPolicy | str] = None,
+             timeout: Optional[float] = None,
              version: str = "1.0",
              contract_version: int = 1,
              **kwargs: Any) -> Callable:
@@ -189,6 +201,7 @@ class ToolRegistry:
                 tier=tier,
                 domains=domains,
                 execution_policy=execution_policy,
+                timeout=timeout,
                 version=version,
                 contract_version=contract_version,
                 **kwargs,
@@ -203,6 +216,7 @@ class ToolRegistry:
                  tier: int = 1,
                  domains: Optional[List[str]] = None,
                  execution_policy: Optional[ToolExecutionPolicy | str] = None,
+                 timeout: Optional[float] = None,
                  version: str = "1.0",
                  contract_version: int = 1,
                  **kwargs: Any):
@@ -274,10 +288,12 @@ class ToolRegistry:
         # declared version 是作者声明的人类可读版本；contract_version 是结果契约
         # （result shape）版本——二者拼接形成稳定指纹，供 lineage/run manifest 记录
         # 「当时执行的工具是哪一个版本」。绝不把 git SHA 塞进每个 tool schema。
+        # timeout: 单次执行墙钟预算（秒），覆盖模块级 _TOOL_TIMEOUT_S。
         self._metadata[name] = {
             "tier": tier,
             "domains": list(domains or []),
             "execution_policy": policy,
+            "timeout": timeout,
             "version": str(version or "1.0"),
             "contract_version": int(contract_version or 1),
         }
@@ -563,13 +579,29 @@ class ToolRegistry:
 
         try:
             policy = meta.get("execution_policy", ToolExecutionPolicy.THREAD)
-            result = await self._execute_tool(name, policy, tool_func, arguments)
+            # 每工具墙钟预算：注册元数据 timeout 优先，否则模块级默认
+            # （TOOL_TIMEOUT_S 环境变量可覆盖）。预算覆盖线程卸载路径——
+            # 同步工具挂死时 to_thread worker 无法被终止，预算先放弃等待并
+            # 返回超时错误结果，线程槽位由 done 回调在真实结束时归还。
+            timeout = meta.get("timeout") or _TOOL_TIMEOUT_S
+            async with asyncio.timeout(timeout):
+                result = await self._execute_tool(name, policy, tool_func, arguments)
 
             if isinstance(result, GeoAnalysisResult):
                 return result.to_llm_response()
 
             return result
 
+        except TimeoutError:
+            # #406:超时不是工具逻辑错误——单独归类，LLM 可据此收缩数据范围
+            # 重试，而不是被当作 TOOL_ERROR 反复重试同一份输入。
+            logger.warning("[registry] Tool '%s' timed out after %.0fs", name, timeout)
+            return std_error_response(
+                f"工具 {name} 执行超时（>{timeout:.0f}s），已放弃等待并回收执行槽位",
+                code="TOOL_TIMEOUT",
+                error_type="TimeoutError",
+                correction_hint="工具耗时超过预算，请缩小数据范围或参数规模后重试。",
+            )
         except ValueError as e:
             return std_error_response(
                 str(e),
@@ -636,15 +668,36 @@ class ToolRegistry:
         return await self._execute_sync_in_thread(tool_func, arguments)
 
     async def _execute_sync_in_thread(self, tool_func: Callable, arguments: dict) -> Any:
-        """在隔离线程池中安全运行同步工具，并完整传递 cache_hit_var ContextVar。"""
+        """在隔离线程池中安全运行同步工具，并完整传递 cache_hit_var ContextVar。
+
+        取消/超时语义（#406）：asyncio.to_thread 的 worker 线程无法被终止——
+        调用方被取消或超时后线程仍会跑完。若在 await 处归还信号量，槽位就
+        不再反映真实线程占用：一批挂死的工具会在 _TOOL_THREAD_LIMIT 之外
+        继续累积线程，默认 executor 同时服务 Pi reader 与 context assembly，
+        跨子系统互相拖累。因此槽位绑定到线程真实结束（done 回调归还），
+        shield 防止取消把 CancelledError 注入 to_thread 任务本身；放弃等待
+        的调用计入 _tool_thread_leaked_count（诊断/测试断言用）。
+        """
         from app.lib.tool_cache import cache_hit_var
 
         def _run_sync_with_cache_var():
             res = tool_func(**arguments)
             return res, cache_hit_var.get()
 
-        async with _tool_thread_semaphore:
-            result, thread_cache_hit = await asyncio.to_thread(_run_sync_with_cache_var)
+        await _tool_thread_semaphore.acquire()
+        try:
+            thread_task = asyncio.create_task(asyncio.to_thread(_run_sync_with_cache_var))
+        except BaseException:
+            _tool_thread_semaphore.release()
+            raise
+        # 槽位在线程真实结束时归还（回调在事件循环中执行）
+        thread_task.add_done_callback(lambda _t: _tool_thread_semaphore.release())
+        try:
+            result, thread_cache_hit = await asyncio.shield(thread_task)
+        except asyncio.CancelledError:
+            global _tool_thread_leaked_count
+            _tool_thread_leaked_count += 1
+            raise
         cache_hit_var.set(thread_cache_hit)
         return result
 
@@ -742,6 +795,7 @@ def tool(registry: ToolRegistry, name: str, description: str,
          tier: int = 1,
          domains: Optional[List[str]] = None,
          execution_policy: Optional[ToolExecutionPolicy | str] = None,
+         timeout: Optional[float] = None,
          version: str = "1.0",
          contract_version: int = 1,
          **kwargs: Any):
@@ -758,6 +812,7 @@ def tool(registry: ToolRegistry, name: str, description: str,
             tier=tier,
             domains=domains,
             execution_policy=execution_policy,
+            timeout=timeout,
             version=version,
             contract_version=contract_version,
             **kwargs,
