@@ -11,6 +11,14 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: webgis-api
+  # #377: minReplicas >= 2 (HA) means a reconnect can land on a different pod.
+  # The api Service (sessionAffinity: ClientIP) + ingress (nginx cookie)
+  # carry sticky routing so SSE turn-resume stays on the pod that served the
+  # turn. This is the WEAK fix — resume buffers are process-local, so affinity
+  # expiry or pod replacement can still fail a resume with
+  # error {resumed: false}; the STRONG fix is an externalized resume store
+  # (e.g. Redis), tracked separately (not in this PR). Scaling up/down stays
+  # safe for new turns.
   minReplicas: 2
   maxReplicas: 10
   # K8S-06：加 scaleDown.stabilizationWindowSeconds=300。否则负载一回落

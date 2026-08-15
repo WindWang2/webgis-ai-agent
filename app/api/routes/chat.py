@@ -310,29 +310,18 @@ async def _sse_batched(stream, max_events=_PI_BATCH_MAX_EVENTS, max_delay_s=_PI_
         raise
 
 
-def _split_sse_events(chunk: str) -> list[str]:
-    """Split a (possibly coalesced) SSE chunk into individual event blocks.
-
-    Every block built by :func:`sse_event` ends with ``\\n\\n`` and its JSON
-    ``data:`` payload never contains a literal blank line (json.dumps escapes
-    newlines), so splitting on ``\\n\\n`` is lossless — for both the legacy
-    engine's internal SSEBatcher coalescing and the route-boundary batcher.
-    """
-    return [part for part in chunk.split("\n\n") if part]
-
-
 async def _recorded(stream, buffer: TurnEventBuffer):
     """Wrap an SSE event stream, recording each event into the resume buffer
-    before it is yielded (DUP-1). Handles coalesced chunks transparently so the
-    buffer holds individual events (WITH their ``\\n\\n`` block terminator — the
-    buffer stores exact wire blocks, and a resume replays them verbatim) in
-    emission order, ids and all.
+    before it is yielded (DUP-1). Buffered entries are the EXACT wire chunks
+    the stream yields — including coalesced batches — and a replay re-splits
+    them per event (see ``TurnEventBuffer.replay_after``), so the buffer holds
+    individual event blocks in emission order, ids and all, WITHOUT this route
+    re-splitting first. #398: re-splitting at record time made a 1000-token
+    answer occupy 1000 of the 256 ring slots and silently evict its own head
+    within a single turn; recording the merged chunk keeps the ring small.
     """
     async for chunk in stream:
-        for event in _split_sse_events(chunk):
-            # _split_sse_events strips the terminator; restore it so a replay
-            # yields spec-correct, independently-framed SSE events.
-            buffer.record(event + "\n\n")
+        buffer.record(chunk)
         yield chunk
 
 
@@ -734,13 +723,18 @@ async def chat_stream(
                         })
                         buffer.record(session_event)
                         yield session_event
-                    async for chunk in _sse_batched(
-                        _recorded(
+                    # #398: record OUTSIDE the route batcher so the buffer
+                    # holds the COALESCED chunks (up to 32 token events each)
+                    # instead of every single token event — a token-heavy turn
+                    # otherwise overflows the ring within one turn and
+                    # silently loses its own head. Replay re-splits per event.
+                    async for chunk in _recorded(
+                        _sse_batched(
                             pi_bridge.stream_prompt(
                                 req.message, session_id=pi_session_id
                             ),
-                            buffer,
-                        )
+                        ),
+                        buffer,
                     ):
                         yield chunk
                 except Exception as e:

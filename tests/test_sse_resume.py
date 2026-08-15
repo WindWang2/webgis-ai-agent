@@ -218,12 +218,13 @@ async def test_resume_replays_exactly_missed_events_in_order(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_resume_replay_bounded_to_ring_tail(monkeypatch):
-    """The resume buffer is a bounded ring (RESUME_MAX_EVENTS=256): a client
-    that fell far behind gets only the buffered tail, replayed in order — the
-    documented bound, never a duplicate or reordered event."""
-    from app.services.chat.event_resume import RESUME_MAX_EVENTS
-
+async def test_resume_replays_full_missed_tail_when_turn_exceeds_ring_size(monkeypatch):
+    """#398: the ring holds MERGED batch entries (the route records coalesced
+    chunks whole and re-splits only at replay time), so a 400-event turn
+    occupies ~14 of the 256 slots. Resuming from id 100 now delivers the
+    ENTIRE missed tail 101..404 — the old behavior re-split every token at
+    record time, overflowed the ring within one turn, and silently replayed a
+    truncated (but superficially complete) answer."""
     bridge = _BurstBridge(bursts=(196, 204))  # 400 events total
     await _collect_route(monkeypatch, bridge)
 
@@ -232,11 +233,135 @@ async def test_resume_replay_bounded_to_ring_tail(monkeypatch):
     )
     assert bridge_after.prompt_calls == 1
     resumed_ids = [_event_id(b) for b in resumed]
-    # Ring tail = the last 256 events (149..404); ids 101..148 were evicted.
-    assert len(resumed_ids) == RESUME_MAX_EVENTS, len(resumed_ids)
-    assert resumed_ids == list(range(149, 405)), (
-        f"replay must deliver the ring tail 149..404, got {resumed_ids[:3]}..{resumed_ids[-3:]}"
+    assert resumed_ids == list(range(101, 405)), (
+        f"merged-batch recording must allow FULL replay 101..404, got "
+        f"{resumed_ids[:3]}..{resumed_ids[-3:]} (len={len(resumed_ids)})"
     )
+    assert _event_type(resumed[0]) != "resume_gap", "nothing was evicted — no gap"
+    assert _event_type(resumed[-1]) == "done"
+
+
+# ─── 2b. #398: gap marker + merged-batch recording ───────────────────────────
+
+
+def test_replay_after_emits_gap_marker_when_head_evicted():
+    """#398: when the ring evicted events the client has not seen, the replay
+    STARTS with an explicit `resume_gap` marker (no id — synthesized at replay
+    time) describing the missing id range, instead of a silently truncated
+    turn the client would mistake for complete."""
+    from app.services.chat.event_resume import RESUME_GAP_EVENT_TYPE, TurnEventBuffer
+
+    buffer = TurnEventBuffer("s", "msg", max_events=8)
+    for i in range(1, 13):  # 12 events → ids 1..4 evicted
+        buffer.record(sse_event("token", {"content": f"t{i} "}, event_id=i))
+
+    blocks = buffer.replay_after(0)
+    assert _event_type(blocks[0]) == RESUME_GAP_EVENT_TYPE, _event_type(blocks[0])
+    assert _event_id(blocks[0]) is None, "the marker is not part of the turn's id sequence"
+    assert '"missing_from": 1' in blocks[0] and '"missing_to": 4' in blocks[0]
+    # The retained tail follows, ids intact and in order.
+    assert [_event_id(b) for b in blocks[1:]] == list(range(5, 13))
+
+
+def test_replay_after_no_marker_without_eviction():
+    """A replay with no evicted head carries no marker — the common case."""
+    from app.services.chat.event_resume import TurnEventBuffer
+
+    buffer = TurnEventBuffer("s", "msg", max_events=8)
+    for i in range(1, 6):
+        buffer.record(sse_event("token", {"content": "x"}, event_id=i))
+    blocks = buffer.replay_after(2)
+    assert [_event_id(b) for b in blocks] == [3, 4, 5]
+    assert not any(_event_type(b) == "resume_gap" for b in blocks)
+
+
+def test_replay_after_filters_per_event_inside_coalesced_chunk():
+    """#398: buffered entries may be coalesced chunks (route batchers merge up
+    to 32 token events); replay re-splits and filters per event so a resume
+    still starts at exactly the missed id."""
+    from app.services.chat.event_resume import TurnEventBuffer
+
+    chunk = "".join(
+        sse_event("token", {"content": f"t{i} "}, event_id=i) for i in range(1, 33)
+    )
+    buffer = TurnEventBuffer("s", "msg", max_events=64)
+    buffer.record(chunk)
+    buffer.record(sse_event("done", {"session_id": "s"}, event_id=33))
+    assert buffer.last_id == 33, "last_id must track the HIGHEST id in the chunk"
+    assert buffer.ended is True
+    assert _event_type(buffer.terminal_event) == "done"
+
+    blocks = buffer.replay_after(30)
+    assert [_event_id(b) for b in blocks] == [31, 32, 33], [
+        _event_id(b) for b in blocks
+    ]
+
+
+def test_record_detects_terminal_inside_coalesced_chunk():
+    """A terminal event may sit at the END of a coalesced batch (the batchers
+    flush the batch containing the terminal) — the buffer must still mark the
+    turn ended with that terminal, not treat the chunk as non-terminal."""
+    from app.services.chat.event_resume import TurnEventBuffer
+
+    chunk = "".join(
+        sse_event("token", {"content": "x"}, event_id=i) for i in range(1, 33)
+    ) + sse_event("done", {"session_id": "s"}, event_id=33)
+    buffer = TurnEventBuffer("s", "msg", max_events=64)
+    buffer.record(chunk)
+    assert buffer.ended is True
+    assert buffer.last_id == 33
+    assert _event_type(buffer.terminal_event) == "done"
+    assert sse_event_id(buffer.terminal_event) == 33
+
+
+@pytest.mark.asyncio
+async def test_resume_emits_gap_marker_when_ring_evicted_head(monkeypatch):
+    """#398 end-to-end: a turn that overflowed the ring resumes with an
+    explicit `resume_gap` marker FIRST (its head was evicted), then the
+    retained tail — the client can perceive the truncation instead of seeing
+    a superficially complete turn."""
+    from app.services.chat.event_resume import RESUME_GAP_EVENT_TYPE, TurnEventBuffer
+
+    class _SmallRingBuffer(TurnEventBuffer):
+        def __init__(self, session_id, message, max_events=256):
+            super().__init__(session_id, message, max_events=8)
+
+    monkeypatch.setattr(chat_route, "TurnEventBuffer", _SmallRingBuffer)
+
+    class _ManyStructuralBridge:
+        def __init__(self) -> None:
+            self.prompt_calls = 0
+
+        async def stream_prompt(self, message, session_id=None):
+            self.prompt_calls += 1
+            sid = session_id or "s"
+            yield sse_event("task_start", {"task_id": "t", "session_id": sid})
+            for i in range(10):
+                yield sse_event("token", {"content": f"t{i} ", "session_id": sid})
+                yield sse_event(
+                    "step_result",
+                    {"tool": "search_poi", "result": {"ok": True}, "session_id": sid},
+                )
+            yield sse_event("done", {"session_id": sid})
+
+    bridge = _ManyStructuralBridge()
+    blocks, _ = await _collect_route(monkeypatch, bridge)
+    assert len(blocks) == 22  # 1 task_start + 10×(token+step_result) + done
+
+    resumed, bridge_after = await _collect_route(
+        monkeypatch, bridge, last_event_id=1
+    )
+    assert bridge_after.prompt_calls == 1, "resume must not re-execute"
+    assert _event_type(resumed[0]) == RESUME_GAP_EVENT_TYPE, [
+        _event_type(b) for b in resumed
+    ]
+    assert _event_id(resumed[0]) is None
+    assert '"missing_from": 2' in resumed[0] and '"missing_to": 14' in resumed[0]
+    # Ring tail: the last 8 buffer entries (ids 15..22), replayed in order.
+    assert [_event_id(b) for b in resumed[1:]] == list(range(15, 23)), [
+        _event_id(b) for b in resumed
+    ]
+    assert _event_type(resumed[-1]) == "done"
 
 
 @pytest.mark.asyncio
