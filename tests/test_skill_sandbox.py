@@ -1,5 +1,12 @@
 """Security: skill code AST validator must block all known bypass patterns."""
+import re
+from pathlib import Path
+
 from app.tools.skills import _validate_skill_code
+
+
+def _extract_python_blocks(text: str) -> list[str]:
+    return re.findall(r"```python\s*\n(.*?)```", text, re.DOTALL)
 
 
 class TestSkillCodeValidation:
@@ -70,6 +77,72 @@ class TestSkillCodeValidation:
     def test_blocks_popen(self):
         assert _validate_skill_code("os.popen('id')")
 
+    # --- Issue #399: module-alias escapes (P3 defense-in-depth) ---
+
+    def test_blocks_platform_import(self):
+        assert _validate_skill_code("import platform"), "platform.os exposes full os module"
+
+    def test_blocks_posixsubprocess_import(self):
+        assert _validate_skill_code("import _posixsubprocess"), "fork_exec executes processes"
+
+    def test_blocks_posix_import(self):
+        assert _validate_skill_code("import posix"), "posix is the raw module os wraps"
+
+    def test_blocks_nt_import(self):
+        assert _validate_skill_code("import nt"), "nt is the Windows raw os module"
+
+    def test_blocks_runpy_import(self):
+        assert _validate_skill_code("import runpy"), "runpy.run_path executes arbitrary files"
+
+    def test_blocks_zipimport_import(self):
+        assert _validate_skill_code("import zipimport"), "zipimport executes modules from zips"
+
+    def test_blocks_pty_import(self):
+        assert _validate_skill_code("import pty"), "pty.fork spawns child processes"
+
+    def test_blocks_platform_alias_import(self):
+        # Aliased import still names the blocked module.
+        assert _validate_skill_code("import platform as p")
+
+    def test_blocks_platform_os_read_vector(self):
+        # Verified issue #399 escape: file read through platform.os.
+        code = (
+            'import platform\n'
+            'fd = platform.os.open("/app/.env", 0)\n'
+            'print(platform.os.read(fd, 4096))\n'
+        )
+        errors = _validate_skill_code(code)
+        assert errors, "platform.os.* chain must be rejected"
+
+    def test_blocks_platform_os_system_vector(self):
+        code = "import platform\nplatform.os.system('id')\n"
+        errors = _validate_skill_code(code)
+        assert errors, "platform.os.system chain must be rejected"
+
+    def test_blocks_posixsubprocess_fork_exec_vector(self):
+        # Verified issue #399 escape: in-process process execution.
+        code = (
+            "import _posixsubprocess\n"
+            "_posixsubprocess.fork_exec([b'/bin/sh'], [], -1, -1, -1, -1, "
+            "0, None, None, 0, True, True)\n"
+        )
+        errors = _validate_skill_code(code)
+        assert errors, "fork_exec chain must be rejected"
+
+    def test_blocks_deep_attribute_chain_segment(self):
+        # Chain-level check catches a dangerous segment far from the call.
+        code = "import numpy as np\nnp.ctypeslib.ctypes.CDLL(None).system('id')\n"
+        errors = _validate_skill_code(code)
+        assert errors, "deep ctypes/system chain segment must be rejected"
+
+    def test_blocks_open_attribute_chain(self):
+        # codecs.open / tokenize.open are file-read escapes without the
+        # open() builtin; attribute `open` is blocked aggressively.
+        assert _validate_skill_code("import codecs\ncodecs.open('/app/.env')\n")
+
+    def test_blocks_importlib_import_module(self):
+        assert _validate_skill_code("import importlib\nimportlib.import_module('os')\n")
+
     # --- Must allow ---
 
     def test_allows_math(self):
@@ -94,3 +167,77 @@ class TestSkillCodeValidation:
         assert not _validate_skill_code(
             "def register_skills(registry):\n    pass"
         )
+
+    def test_allows_scientific_attribute_chains(self):
+        # "io"/"types" are legitimate scientific submodules (scipy.io,
+        # pandas.api.types) and must not trip the chain check.
+        assert not _validate_skill_code("import scipy.io\nscipy.io.loadmat('a.mat')")
+        assert not _validate_skill_code(
+            "import pandas as pd\npd.api.types.is_numeric_dtype(1)"
+        )
+        assert not _validate_skill_code(
+            "import geopandas as gpd\ngpd.read_file('data.geojson').plot()"
+        )
+        assert not _validate_skill_code(
+            "import numpy as np\nnp.gradient(np.array([1, 2]))"
+        )
+
+    def test_allows_realistic_geo_analysis_skill(self):
+        # A representative legitimate skill modeled on the app/skills
+        # workflows (terrain_analysis / buffer_analysis). Guards against
+        # over-blocking real usage.
+        code = '''\
+import numpy as np
+import geopandas as gpd
+from shapely.geometry import Point
+
+def compute_slope(dem):
+    dx, dy = np.gradient(dem)
+    return np.arctan(np.sqrt(dx ** 2 + dy ** 2)) * (180 / np.pi)
+
+def register_skills(registry):
+    def terrain_analysis(region, dem_data=None):
+        if dem_data is None:
+            return {"status": "no dem"}
+        slope = compute_slope(dem_data)
+        high = int(np.where(slope > 25)[0].size)
+        return {"region": region, "high_risk_count": high}
+
+    def buffer_analysis(center, radius_km):
+        pt = Point(center["lon"], center["lat"])
+        gdf = gpd.GeoDataFrame({"geometry": [pt.buffer(radius_km / 111.0)]})
+        return gdf.to_json()
+
+    registry.register(name="terrain_analysis", description="坡度分析",
+                      func=terrain_analysis, tier=2, domains=["terrain"],
+                      param_descriptions={})
+    registry.register(name="buffer_analysis", description="缓冲区分析",
+                      func=buffer_analysis, tier=2, domains=["analysis"],
+                      param_descriptions={})
+'''
+        assert not _validate_skill_code(code)
+
+
+class TestExistingSkillsRegression:
+    """Issue #399: deny-list hardening must not reject existing skills
+    (防自我破坏). Every skill currently shipped in app/skills/ must still
+    validate with zero errors."""
+
+    def test_all_shipped_skills_still_pass(self):
+        skills_dir = Path(__file__).resolve().parents[1] / "app" / "skills"
+        assert skills_dir.is_dir(), f"missing skills dir: {skills_dir}"
+        # Shipped skills are .md workflow files; if they ever carry python
+        # blocks (or grow .py files), each block must still pass validation.
+        # test_allows_realistic_geo_analysis_skill guards the representative
+        # legitimate-skill shape against over-blocking.
+        for path in sorted(skills_dir.iterdir()):
+            text = path.read_text(encoding="utf-8")
+            if path.suffix == ".md":
+                for i, block in enumerate(_extract_python_blocks(text)):
+                    errors = _validate_skill_code(block)
+                    assert errors == [], (
+                        f"{path.name} python block {i} rejected: {errors}"
+                    )
+            elif path.suffix == ".py":
+                errors = _validate_skill_code(text)
+                assert errors == [], f"{path.name} rejected: {errors}"

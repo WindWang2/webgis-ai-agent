@@ -280,7 +280,22 @@ async def upload_skill(
 
     # 重新加载
     load_skills(get_registry(), skills_dir)
-    return {"status": "ok", "filename": os.path.basename(file_path)}
+    # Issue #399: 显式 RCE 警示 —— 该文件将在主进程内被 importlib.exec_module
+    # 执行（等同 RCE）。AST deny-list 只是防御纵深，不是安全边界；记录上传者
+    # 便于审计追溯。
+    logger.warning(
+        "Skill uploaded by %s: %s — executes in-process via exec_module "
+        "(RCE-equivalent if malicious; deny-list is defense-in-depth only)",
+        _user.get("username") or _user.get("sub", "unknown"),
+        os.path.basename(file_path),
+    )
+    return {
+        "status": "ok",
+        "filename": os.path.basename(file_path),
+        "security": "warning: skill code executes in-process via importlib.exec_module "
+        "(RCE-equivalent if malicious); AST deny-list is defense-in-depth, "
+        "not a sandbox",
+    }
 
 @router.post("/skills/refresh")
 async def refresh_skills(_user: dict = Depends(require_admin)):
