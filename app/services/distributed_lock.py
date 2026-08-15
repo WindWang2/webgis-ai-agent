@@ -47,6 +47,15 @@ _RELEASE_SCRIPT = (
     b"return redis.call('del', KEYS[1]) else return 0 end"
 )
 
+# #397: token-checked renewal. A plain pexpire would blindly extend whatever
+# value the key holds — including the NEW owner's token after ours expired and
+# was re-acquired — silently breaking mutual exclusion. Renew only if the key
+# still holds OUR token; a 0 return means ownership was lost and the loop stops.
+_RENEW_SCRIPT = (
+    b"if redis.call('get', KEYS[1]) == ARGV[1] then "
+    b"return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end"
+)
+
 
 class _InProcessLock:
     """Thin wrapper so the fallback path has the same context-manager API."""
@@ -141,9 +150,19 @@ class _ResilientSessionLock:
             while True:
                 await asyncio.sleep(_RENEW_INTERVAL_S)
                 try:
-                    await self._client.pexpire(self._key, self._ttl_ms)
+                    renewed = await self._client.eval(
+                        _RENEW_SCRIPT, 1, self._key, self._token, self._ttl_ms
+                    )
                 except Exception:
-                    pass  # best-effort; the initial TTL still bounds stale locks
+                    continue  # best-effort; the initial TTL still bounds stale locks
+                if not renewed:
+                    # Key expired and someone else owns it (or it vanished) —
+                    # stop extending a lock we no longer hold.
+                    logger.warning(
+                        "session lock renew lost ownership of %s — stopping renewal",
+                        self._key,
+                    )
+                    break
         except asyncio.CancelledError:
             pass
 
