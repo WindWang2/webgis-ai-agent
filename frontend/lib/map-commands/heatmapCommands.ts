@@ -40,6 +40,15 @@ export const heatmapCommands: Record<string, CommandEntry> = {
       });
 
       navigation.fitBounds(map, bbox, 50);
+      // V3 round-2 FIX-B (issue #393): post-mutation verification — the image
+      // source and the raster layer must actually exist on the map before we
+      // claim success. The old body returned void unconditionally, so the
+      // dispatcher acked succeeded even when the mount silently failed.
+      if (!map.getSource?.(id) || !map.getLayer?.(id)) {
+        return { status: 'failed', error: 'mutation_failed' };
+      }
+      // V3: verifiable marker (heatmap raster add — harness convergence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 
@@ -61,6 +70,14 @@ export const heatmapCommands: Record<string, CommandEntry> = {
         radius,
         opacity: 0.8
       });
+      // V3 round-2 FIX-B (issue #393): post-mutation verification — both the
+      // source and the heatmap layer must exist before claiming success (was:
+      // unconditional void → fake succeeded ack).
+      if (!map.getSource?.(id) || !map.getLayer?.(id)) {
+        return { status: 'failed', error: 'mutation_failed' };
+      }
+      // V3: verifiable marker (native heatmap add — harness convergence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 
@@ -81,6 +98,14 @@ export const heatmapCommands: Record<string, CommandEntry> = {
       const id = `custom-${layerId || 'thematic-' + (field || Date.now())}`;
       renderer.addGeoJsonSource(map, id, geojson);
       renderer.addThematicLayer(map, id, geojson, style);
+      // V3 round-2 FIX-B (issue #393): post-mutation verification — the source
+      // and the thematic layer must exist before claiming success (was:
+      // unconditional void → fake succeeded ack).
+      if (!map.getSource?.(id) || !map.getLayer?.(id)) {
+        return { status: 'failed', error: 'mutation_failed' };
+      }
+      // V3: verifiable marker (thematic map mount — harness convergence).
+      return { status: 'succeeded', result: { confirmed: true } };
     },
   },
 };

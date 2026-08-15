@@ -25,6 +25,11 @@ export const MAX_ANNOTATIONS = 500;
 
 const PRESENTATION_FIELDS = new Set([
   'visible', 'opacity', 'style', 'legend_spec', 'type', '_refId', '_mapspecLayerId',
+  // Issue #393: an imperative filter (APPLY_LAYER_FILTER) changes what the map
+  // shows without the backend's MapSpec knowing — the certified presentation is
+  // stale, so the attestation tags must be invalidated like any other
+  // presentation change (visible/style/opacity precedent).
+  'filter',
 ]);
 
 /**

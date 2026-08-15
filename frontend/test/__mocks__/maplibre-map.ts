@@ -64,6 +64,7 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
 
   const sources: Record<string, any> = {};
   const layers: Array<Record<string, any>> = [];
+  const filters: Record<string, unknown> = {};
   const onceListeners = new Map<string, Set<(...args: any[]) => void>>();
   const onListeners = new Map<string, Set<(...args: any[]) => void>>();
   // ROUND-2: track whether a camera animation is in flight so stop() can model
@@ -139,9 +140,14 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
     moveLayer: vi.fn((id: string, beforeId?: string | null) => {
       calls.moveLayer.push({ id, beforeId: beforeId ?? null });
     }),
+    // Issue #393: setFilter/getFilter bookkeeping — the mock stores the applied
+    // filter per layer so commands can run their post-mutation verification
+    // (a real MapLibre map records the expression; getFilter returns it).
     setFilter: vi.fn((layerId: string, filter: any) => {
+      filters[layerId] = filter ?? null;
       calls.setFilter.push({ layerId, filter });
     }),
+    getFilter: vi.fn((layerId: string) => filters[layerId] ?? null),
     setLayoutProperty: vi.fn(),
     setPaintProperty: vi.fn(),
 

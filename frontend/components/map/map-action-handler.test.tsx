@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, act } from '@testing-library/react';
 import { MapActionHandler } from './map-action-handler';
 import { makeMockMaplibreMap } from '@/test/__mocks__/maplibre-map';
+import { COMMAND_CATALOGUE } from '@/lib/map-commands/catalogue';
 import {
   notifyUserGestureStart,
   _resetCameraArbitrationForTests,
@@ -76,6 +77,7 @@ const mockSetBaseLayer = vi.fn();
 const mockSetPendingSystemMessage = vi.fn();
 const mockRemoveLayer = vi.fn();
 const mockUpdateLayer = vi.fn();
+const mockReorderLayers = vi.fn();
 const mockExport = vi.fn(async (): Promise<{ ok: boolean; error?: string }> => ({ ok: true }));
 const mockAddAnnotation = vi.fn((feature) => {
   mockAnnotationsStore.push(feature);
@@ -117,6 +119,7 @@ vi.mock('@/lib/store/useHudStore', async () => {
     setPendingSystemMessage: mockSetPendingSystemMessage,
     removeLayer: mockRemoveLayer,
     updateLayer: mockUpdateLayer,
+    reorderLayers: mockReorderLayers,
     get annotations() { return mockAnnotationsStore; },
     addAnnotation: mockAddAnnotation,
     clearAnnotations: mockClearAnnotations,
@@ -717,19 +720,55 @@ describe('MapActionHandler', () => {
     );
   });
 
-  it('handles APPLY_LAYER_FILTER correctly with parsed filter array', async () => {
+  it('handles APPLY_LAYER_FILTER correctly with parsed filter array (issue #393)', async () => {
     actions = [{
       command: 'APPLY_LAYER_FILTER',
       params: { layer_id: 'custom-layer', filter: '["==", "density", 10]' },
     }];
-
-    const map = mockGetMap();
+    // The map has MapSpec sublayers (`${id}__*`), not the bare id — the old code
+    // setFilter'd the bare id (a silent no-op) and acked succeeded anyway.
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'custom-layer__fill', type: 'fill' });
+    map.addLayer({ id: 'custom-layer__point', type: 'circle' });
+    mockGetMap.mockImplementation(() => map);
+    mockLayersStore = [{ id: 'custom-layer', name: 'Custom' }];
 
     await act(async () => {
       render(<MapActionHandler />);
     });
 
-    expect(map.setFilter).toHaveBeenCalledWith('custom-layer', ['==', 'density', 10]);
+    expect(map.setFilter).toHaveBeenCalledWith('custom-layer__fill', ['==', 'density', 10]);
+    expect(map.setFilter).toHaveBeenCalledWith('custom-layer__point', ['==', 'density', 10]);
+    // store sync: the reconcile re-emits layer.filter, so the filter survives
+    expect(mockUpdateLayer).toHaveBeenCalledWith('custom-layer', { filter: ['==', 'density', 10] });
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'APPLY_LAYER_FILTER' }),
+      'succeeded',
+      expect.objectContaining({ actual: { confirmed: true } }),
+    );
+    expect(popAction).toHaveBeenCalled();
+  });
+
+  it('APPLY_LAYER_FILTER with no matching target → failed ack target_not_found (no fake success)', async () => {
+    actions = [{
+      command: 'APPLY_LAYER_FILTER',
+      params: { layer_id: 'ghost', filter: ['==', 'density', 10] },
+    }];
+    const map = makeMockMaplibreMap(); // no layers on the map, none in the store
+    mockGetMap.mockImplementation(() => map);
+    mockLayersStore = [];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'APPLY_LAYER_FILTER' }),
+      'failed',
+      expect.objectContaining({ error: 'target_not_found' }),
+    );
+    expect(map.setFilter).not.toHaveBeenCalled();
+    expect(popAction).toHaveBeenCalled();
   });
 
   // ─── V3 terminal states (Harness–Map Interaction Closed Loop, design §6) ──
@@ -769,7 +808,7 @@ describe('MapActionHandler', () => {
     expect(popAction).toHaveBeenCalled();
   });
 
-  it('V3: void run → succeeded ack', async () => {
+  it('V3: explicit succeeded result → succeeded ack', async () => {
     actions = [{ command: 'clear_annotations', params: {} }];
 
     await act(async () => {
@@ -782,6 +821,31 @@ describe('MapActionHandler', () => {
       expect.any(Object),
     );
     expect(popAction).toHaveBeenCalled();
+  });
+
+  it('V3 (issue #393): void run → failed ack no_result, never a fake succeeded', async () => {
+    // Every catalogue command now returns an explicit MapCommandResult; a void
+    // return means the command forgot to report (or an unverifiable path
+    // slipped through) and must fail honestly — the old default converted the
+    // broken apply_layer_filter/heatmap commands into fake successes.
+    const original = (COMMAND_CATALOGUE as any).clear_annotations;
+    (COMMAND_CATALOGUE as any).clear_annotations = { requiredParams: () => true, run: () => undefined };
+    try {
+      actions = [{ command: 'clear_annotations', params: {} }];
+
+      await act(async () => {
+        render(<MapActionHandler />);
+      });
+
+      expect(reportTerminalFn).toHaveBeenCalledWith(
+        expect.objectContaining({ command: 'clear_annotations' }),
+        'failed',
+        expect.objectContaining({ error: 'no_result' }),
+      );
+      expect(popAction).toHaveBeenCalled();
+    } finally {
+      (COMMAND_CATALOGUE as any).clear_annotations = original;
+    }
   });
 
   it('V3: ack metadata carries started_at/finished_at/duration_ms', async () => {
@@ -1051,6 +1115,33 @@ describe('MapActionHandler', () => {
       expect.objectContaining({ error: 'target_not_found' }),
     );
     expect(map.moveLayer).not.toHaveBeenCalled();
+    expect(popAction).toHaveBeenCalled();
+  });
+
+  it('V3 (issue #393): REORDER_LAYER on a MapSpec `${id}__*` layer reorders the store durably', async () => {
+    actions = [{ command: 'REORDER_LAYER', params: { layer_id: 'analysis-result', position: 'top' } }];
+    const map = makeMockMaplibreMap();
+    map.addLayer({ id: 'analysis-result__fill', type: 'fill' });
+    map.addLayer({ id: 'analysis-result__point', type: 'circle' });
+    map.addLayer({ id: 'other__fill', type: 'fill' });
+    mockGetMap.mockImplementation(() => map);
+    mockLayersStore = [{ id: 'other' }, { id: 'analysis-result' }];
+
+    await act(async () => {
+      render(<MapActionHandler />);
+    });
+
+    // index 0 = topmost; the MapSpecRuntime reconcile applies the map z-order
+    // from this array — the legacy custom-only matcher failed target_not_found
+    expect(mockReorderLayers).toHaveBeenCalledWith([
+      { id: 'analysis-result' },
+      { id: 'other' },
+    ]);
+    expect(reportTerminalFn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'REORDER_LAYER' }),
+      'succeeded',
+      expect.objectContaining({ actual: { store_updated: true } }),
+    );
     expect(popAction).toHaveBeenCalled();
   });
 
