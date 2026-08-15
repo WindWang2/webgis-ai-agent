@@ -4,6 +4,7 @@ Performs windowed raster time series analysis (selecting time slices, zonal stat
 raster difference, and raster trend analysis) without loading full rasters into memory.
 """
 
+import math
 import os
 import logging
 from datetime import datetime, timezone
@@ -136,6 +137,13 @@ class TemporalRasterEngine:
     ) -> Dict[str, Any]:
         """
         Performs pixel/zonal raster difference (T2 - T1).
+
+        The comparison window is derived from the AOI (or, without an AOI, the
+        overlapping bounds of the two rasters) instead of a fixed top-left
+        1024×1024 crop, and the two rasters must be CRS/transform aligned —
+        otherwise the subtraction would silently compare misregistered pixels
+        (previously it read the top-left megapixel of src1 only, ignoring both
+        the AOI and src2's grid).
         """
         p1 = raster_t1 if isinstance(raster_t1, str) else raster_t1.get("path", "")
         p2 = raster_t2 if isinstance(raster_t2, str) else raster_t2.get("path", "")
@@ -158,10 +166,12 @@ class TemporalRasterEngine:
         if p1 and p2 and os.path.exists(p1) and os.path.exists(p2):
             try:
                 import rasterio
-                from rasterio.windows import Window
                 with rasterio.open(p1) as src1, rasterio.open(p2) as src2:
-                    # Windowed read
-                    window = Window(0, 0, min(src1.width, 1024), min(src1.height, 1024))
+                    self._validate_alignment(src1, src2)
+                    window = self._difference_window(src1, src2, aoi_geometry)
+                    if window is None or window.width <= 0 or window.height <= 0:
+                        # AOI / overlap does not intersect either raster.
+                        return self._empty_difference()
                     b1 = src1.read(1, window=window).astype(float)
                     b2 = src2.read(1, window=window).astype(float)
                     diff = b2 - b1
@@ -172,9 +182,15 @@ class TemporalRasterEngine:
                         "std_difference": float(np.nanstd(diff)),
                         "pixel_count": int(diff.size),
                     }
+            except ValueError:
+                raise
             except Exception as e:
                 logger.warning(f"Error computing raster difference: {e}")
 
+        return self._empty_difference()
+
+    @staticmethod
+    def _empty_difference() -> Dict[str, Any]:
         return {
             "mean_difference": 0.0,
             "min_difference": 0.0,
@@ -183,21 +199,129 @@ class TemporalRasterEngine:
             "pixel_count": 0,
         }
 
+    # Max window dimension (per side) used to bound memory for a single
+    # difference read. The window is still anchored at the AOI/overlap origin
+    # (unlike the old fixed top-left crop).
+    _DIFF_MAX_WINDOW = 1024
+
+    @staticmethod
+    def _validate_alignment(src1, src2) -> None:
+        """Rejects CRS/transform-mismatched raster pairs with a clear error."""
+        if (src1.crs is None) != (src2.crs is None) or (
+            src1.crs is not None and str(src1.crs) != str(src2.crs)
+        ):
+            raise ValueError(
+                f"Raster CRS mismatch in difference: {src1.crs} vs {src2.crs}. "
+                "Refusing to subtract misaligned rasters."
+            )
+        t1, t2 = src1.transform, src2.transform
+        if not np.allclose([t1.a, t1.b, t1.c, t1.d, t1.e, t1.f],
+                           [t2.a, t2.b, t2.c, t2.d, t2.e, t2.f],
+                           rtol=1e-6, atol=1e-9):
+            raise ValueError(
+                f"Raster transform mismatch in difference: {tuple(t1)} vs {tuple(t2)}. "
+                "Refusing to subtract rasters with different pixel grids."
+            )
+
+    @staticmethod
+    def _aoi_bounds_in_crs(src, aoi_geometry: Optional[Dict[str, Any]]) -> Optional[tuple]:
+        """Returns AOI bounds in the raster's CRS (or None when not usable)."""
+        if not aoi_geometry:
+            return None
+        try:
+            from rasterio.features import bounds as geom_bounds
+            geom = aoi_geometry.get("geometry") if aoi_geometry.get("type") == "Feature" else aoi_geometry
+            if geom.get("type") == "FeatureCollection":
+                boxes = [geom_bounds(f) for f in geom.get("features", []) if f.get("geometry")]
+                if not boxes:
+                    return None
+                aoi_bounds = (
+                    min(b[0] for b in boxes), min(b[1] for b in boxes),
+                    max(b[2] for b in boxes), max(b[3] for b in boxes),
+                )
+            else:
+                aoi_bounds = geom_bounds(geom)
+        except Exception:
+            return None
+        if src.crs is not None:
+            aoi_crs = (
+                aoi_geometry.get("crs", {}).get("properties", {}).get("name", "EPSG:4326")
+                if isinstance(aoi_geometry, dict) else "EPSG:4326"
+            )
+            if str(src.crs) != aoi_crs:
+                try:
+                    from rasterio.warp import transform_bounds
+                    aoi_bounds = transform_bounds(aoi_crs, str(src.crs), *aoi_bounds, densify_pts=21)
+                except Exception:
+                    return None
+        return aoi_bounds
+
+    def _difference_window(self, src1, src2, aoi_geometry) -> Any:
+        """Pixel window covering AOI ∩ raster bounds (both rasters, aligned).
+
+        Without an AOI, falls back to the overlap of the two rasters' bounds.
+        Both rasters share one window because alignment is validated first.
+        """
+        from rasterio.windows import Window
+
+        if aoi_geometry:
+            bounds = self._aoi_bounds_in_crs(src1, aoi_geometry)
+        else:
+            b1, b2 = src1.bounds, src2.bounds
+            bounds = (
+                max(b1[0], b2[0]), max(b1[1], b2[1]),
+                min(b1[2], b2[2]), min(b1[3], b2[3]),
+            )
+        if bounds is None:
+            return None
+        minx, miny, maxx, maxy = bounds
+        if maxx <= minx or maxy <= miny:
+            return None
+
+        inv = ~src1.transform
+        corners = [
+            inv * (minx, miny), inv * (minx, maxy),
+            inv * (maxx, miny), inv * (maxx, maxy),
+        ]
+        col_min = min(c[0] for c in corners)
+        row_min = min(c[1] for c in corners)
+        col_max = max(c[0] for c in corners)
+        row_max = max(c[1] for c in corners)
+
+        # Clip to the raster extent.
+        col_min = max(0.0, col_min)
+        row_min = max(0.0, row_min)
+        col_max = min(float(src1.width), col_max)
+        row_max = min(float(src1.height), row_max)
+        if col_max <= col_min or row_max <= row_min:
+            return None
+
+        width = min(int(math.ceil(col_max - col_min)), self._DIFF_MAX_WINDOW)
+        height = min(int(math.ceil(row_max - row_min)), self._DIFF_MAX_WINDOW)
+        return Window(int(math.floor(col_min)), int(math.floor(row_min)), width, height)
+
     def raster_trend_over_aoi(
         self,
         raster_series: List[Dict[str, Any]],
         aoi_geometry: Optional[Dict[str, Any]] = None,
         raster_path_field: str = "path",
+        stats_info: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Computes trend line (slope, intercept, direction) of AOI zonal mean across raster time series.
+
+        ``stats_info`` may carry a precomputed ``temporal_raster_statistics``
+        result (as produced by ``execute_raster_analysis``) so the zonal
+        statistics pass is not re-run for the trend step — previously every
+        raster was opened and statistically summarized twice per request.
         """
-        stats_info = self.temporal_raster_statistics(
-            raster_series=raster_series,
-            metrics=["mean"],
-            aoi_geometry=aoi_geometry,
-            raster_path_field=raster_path_field,
-        )
+        if stats_info is None:
+            stats_info = self.temporal_raster_statistics(
+                raster_series=raster_series,
+                metrics=["mean"],
+                aoi_geometry=aoi_geometry,
+                raster_path_field=raster_path_field,
+            )
 
         timestamps = []
         means = []
@@ -232,8 +356,12 @@ class TemporalRasterEngine:
         High-level raster analysis pipeline.
         """
         selected_slices = self.select_time_slice(raster_series, start_time, end_time)
+        # Single statistics pass; the trend step reuses these results instead of
+        # re-opening every raster and recomputing the zonal statistics.
         stats = self.temporal_raster_statistics(selected_slices, aoi_geometry=aoi_geometry)
-        trend = self.raster_trend_over_aoi(selected_slices, aoi_geometry=aoi_geometry)
+        trend = self.raster_trend_over_aoi(
+            selected_slices, aoi_geometry=aoi_geometry, stats_info=stats
+        )
 
         diff = None
         if len(selected_slices) >= 2:
