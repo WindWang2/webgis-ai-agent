@@ -57,6 +57,69 @@ from app.lib.runtime.evidence import (
 
 logger = logging.getLogger(__name__)
 
+# ── #409: legacy engine token-stream heartbeat ───────────────────────────────
+# The provider read timeout (llm_client.call_llm_stream) is 180s — far longer
+# than the ~60s idle timeout of the SSE proxies in front of the API. A
+# silently stalled provider therefore used to hang the turn with no output
+# until the proxy killed the connection, discarding the partial answer.
+# `_stream_with_token_keepalive` wraps the provider iteration so a keep_alive
+# event is emitted after `_LLM_TOKEN_KEEPALIVE_S` of silence WITHOUT
+# cancelling the provider stream: ``asyncio.wait_for`` on ``__anext__`` would
+# cancel the httpx read and destroy the stream, so the provider generator runs
+# in its own pump task and only the queue wait is timed.
+_LLM_TOKEN_KEEPALIVE_S = 15.0
+_KEEPALIVE_EVENT: tuple[str, dict] = ("keep_alive", {"message": "ping"})
+_QUEUE_END = object()  # pump-completed sentinel
+
+
+async def _stream_with_token_keepalive(
+    stream: AsyncGenerator[tuple[str, dict], None],
+    timeout_s: float = _LLM_TOKEN_KEEPALIVE_S,
+) -> AsyncGenerator[tuple[str, dict], None]:
+    """Adapt an LLM provider event stream: when no item arrives within
+    ``timeout_s`` seconds, a keep_alive tuple is yielded instead (the caller
+    forwards it as an SSE ``keep_alive`` event) and the wait resumes. Provider
+    items are delivered in order, unchanged; provider exceptions are re-raised
+    in the consumer. The pump task owns the provider generator, so a timeout
+    never cancels the underlying HTTP read; the pump is cancelled in the
+    ``finally`` when the consumer exits early (disconnect).
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def _pump() -> None:
+        try:
+            async for item in stream:
+                queue.put_nowait(item)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001 — re-raised in the consumer
+            queue.put_nowait(exc)
+        else:
+            queue.put_nowait(_QUEUE_END)
+
+    pump = asyncio.create_task(_pump())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout_s)
+            except asyncio.TimeoutError:
+                if pump.done() and queue.empty():
+                    return
+                yield _KEEPALIVE_EVENT
+                continue
+            if item is _QUEUE_END:
+                return
+            if isinstance(item, BaseException):
+                raise item  # type: ignore[misc]  # noqa: B904
+            yield item
+    finally:
+        if not pump.done():
+            pump.cancel()
+        try:
+            await pump
+        except BaseException:  # noqa: BLE001 — the pump's outcome is already surfaced
+            pass
+
 
 def _settle_cancel() -> None:
     """Mark the live turn's outcome CANCELLED on a cooperative cancel.
@@ -1307,25 +1370,56 @@ class ChatExecutionEngine:
                     token_batcher = SSEBatcher(max_events=32, max_delay_s=0.08)
                     _t_llm = time.perf_counter()
                     _ttft_ms: Optional[float] = None
-                    async for event_type, event_data in self._call_llm_stream(messages_with_context, tools):
-                        if event_type == "token":
-                            if _ttft_ms is None:
-                                _ttft_ms = (time.perf_counter() - _t_llm) * 1000.0
-                                if _ev is not None:
-                                    _ev.mark_first_event()
-                            streamed_content_parts.append(event_data["content"])
-                            token_batcher.push(sse_event("token", {
-                                "content": event_data["content"],
-                                "is_reasoning": event_data.get("is_reasoning", False),
-                                "session_id": session_id,
-                            }))
-                            async for chunk in token_batcher.drain():
-                                yield chunk
-                        elif event_type == "done":
-                            # 收尾：冲刷尾部 token，保证流式内容完整到达前端
-                            for chunk in token_batcher.flush():
-                                yield chunk
-                            assistant_msg = event_data["message"]
+                    # #409: heartbeat + lossless error path for the token
+                    # stream.
+                    #   - _stream_with_token_keepalive yields a keep_alive
+                    #     event after _LLM_TOKEN_KEEPALIVE_S of provider
+                    #     silence, so SSE proxies with a ~60s idle timeout
+                    #     don't kill a stalled-but-alive turn;
+                    #   - an exception mid-stream flushes the batched tokens
+                    #     BEFORE propagating, so the route's error event
+                    #     follows the partial content instead of replacing it
+                    #     (the tokens were already produced by the provider;
+                    #     dropping them silently lost client-visible content).
+                    try:
+                        async for event_type, event_data in _stream_with_token_keepalive(
+                            self._call_llm_stream(messages_with_context, tools),
+                            timeout_s=_LLM_TOKEN_KEEPALIVE_S,
+                        ):
+                            if event_type == "token":
+                                if _ttft_ms is None:
+                                    _ttft_ms = (time.perf_counter() - _t_llm) * 1000.0
+                                    if _ev is not None:
+                                        _ev.mark_first_event()
+                                streamed_content_parts.append(event_data["content"])
+                                token_batcher.push(sse_event("token", {
+                                    "content": event_data["content"],
+                                    "is_reasoning": event_data.get("is_reasoning", False),
+                                    "session_id": session_id,
+                                }))
+                                async for chunk in token_batcher.drain():
+                                    yield chunk
+                            elif event_type == "done":
+                                # 收尾：冲刷尾部 token，保证流式内容完整到达前端
+                                for chunk in token_batcher.flush():
+                                    yield chunk
+                                assistant_msg = event_data["message"]
+                            elif event_type == "keep_alive":
+                                # #409: provider silent for _LLM_TOKEN_KEEPALIVE_S
+                                # — heartbeat the wire so idle proxies don't kill
+                                # the stream (same event the tool-wave wait uses).
+                                yield sse_event("keep_alive", event_data)
+                    except Exception:
+                        # #409: mid-stream failure — flush the batched tokens
+                        # BEFORE the exception reaches the route (which yields
+                        # its error event after our stream), so the client sees
+                        # the partial answer, not just the error. A client
+                        # disconnect (CancelledError — BaseException) skips
+                        # this: the connection is gone, so the buffered tokens
+                        # are dropped with the generator frame.
+                        for chunk in token_batcher.flush():
+                            yield chunk
+                        raise
 
                     if _ev is not None:
                         _ev.add_llm_round(
