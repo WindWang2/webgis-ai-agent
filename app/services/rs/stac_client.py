@@ -76,6 +76,7 @@ class StacClientPrimitive:
 
                     bands_dict: Dict[str, np.ndarray] = {}
                     cell_size_m = None
+                    cell_size_x_m = None
                     with rasterio_env():
                         for name, asset_key in band_mapping.items():
                             if asset_key not in item.assets:
@@ -104,14 +105,26 @@ class StacClientPrimitive:
                                 if cell_size_m is None and ds.transform.a:
                                     px = abs(ds.transform.a) * ds_factor
                                     if ds.crs is not None and ds.crs.is_geographic:
+                                        # #379: 地理 CRS 下经度向的地面尺寸随
+                                        # cos(lat) 收缩 —— 赤道比例 (~111320
+                                        # m/deg) 会把东西向坡度低估 ~cos(lat)。
+                                        # 用 AOI 中心纬度校正 x 方向；y (经线)
+                                        # 方向不受影响。投影 CRS 两方向同为米，
+                                        # 不设置 cell_size_x_m (派生函数回退
+                                        # cell_size，行为不变)。
+                                        lat = (bbox[1] + bbox[3]) / 2.0
                                         px *= 111320.0
+                                        cell_size_x_m = float(
+                                            px * abs(np.cos(np.radians(lat))))
                                     cell_size_m = float(px)
-                    return bands_dict, cell_size_m
+                    return bands_dict, cell_size_m, cell_size_x_m
 
-            bands_dict, cell_size_m = await asyncio.to_thread(_read_bands)
+            bands_dict, cell_size_m, cell_size_x_m = await asyncio.to_thread(_read_bands)
             result["bands"] = bands_dict
             if cell_size_m is not None:
                 result["cell_size_m"] = cell_size_m
+            if cell_size_x_m is not None:
+                result["cell_size_x_m"] = cell_size_x_m
 
             return result
         except Exception as e:

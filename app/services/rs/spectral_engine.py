@@ -145,6 +145,7 @@ class SpectralRasterEngine:
                 nodata = dem <= -9999
                 dem[nodata] = np.nan
                 cell_size = fetch_res.get("cell_size_m", 30.0)
+                cell_size_x = fetch_res.get("cell_size_x_m")
 
                 # GIS-06: the default products = ["slope", "aspect", "hillshade"]
                 # but the previous if/elif chain (in a fixed branch order) only
@@ -153,9 +154,9 @@ class SpectralRasterEngine:
                 # Derivatives map to a single label deterministically: iterate
                 # the requested products in order and pick the first supported.
                 derivators = {
-                    "slope": lambda d: compute_slope(d, cell_size),
-                    "aspect": lambda d: compute_aspect(d, cell_size),
-                    "hillshade": lambda d: compute_hillshade(d, cell_size),
+                    "slope": lambda d: compute_slope(d, cell_size, cell_size_x=cell_size_x),
+                    "aspect": lambda d: compute_aspect(d, cell_size, cell_size_x=cell_size_x),
+                    "hillshade": lambda d: compute_hillshade(d, cell_size, cell_size_x=cell_size_x),
                 }
                 chosen = next((p for p in products if p in derivators), None)
                 if chosen is None:
