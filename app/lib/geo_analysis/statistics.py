@@ -470,9 +470,11 @@ def calculate_central_feature(geojson: dict, method: str = "mean_center") -> Geo
         for start in range(0, n, batch_size):
             end = min(start + batch_size, n)
             dists, _ = tree.query(coords[start:end], k=n)
-            # Zero self-distances (first column per row)
-            dists[np.arange(end - start), np.arange(start, end)] = 0.0
-            dist_sums[start:end] = dists.sum(axis=1)
+            # #383: rank 0 is the self-match (the query point is itself in the
+            # tree); columns are neighbor ranks, NOT point indices. Sum ranks
+            # 1..k. The old code zeroed dists[row, global_point_index] — a
+            # real neighbor's distance — corrupting every row for n ≥ 2.
+            dist_sums[start:end] = dists[:, 1:].sum(axis=1)
         idx = int(np.argmin(dist_sums))
         center_pt = gdf.geometry.iloc[idx]
         summary = f"Central Feature: The feature at index {idx} is identified as the central feature (minimum total distance to others)."
