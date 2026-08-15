@@ -135,8 +135,6 @@ def test_windowed_ndvi_matches_manual_window_read(monkeypatch, scene, tmp_path):
 def test_windowed_read_downsampled_shape_and_bounds(monkeypatch, scene, tmp_path):
     """out_shape thinning must apply within the window; bounds stay the
     window's outer footprint."""
-    import rasterio
-    from rasterio.windows import Window
     red, nir, red_path, nir_path = scene
     item = _FakeItem("s2-item", _SCENE_BOUNDS, {"red": str(red_path), "nir": str(nir_path)})
 
