@@ -148,18 +148,13 @@ vi.mock('@/lib/map-kit/exporter', () => ({
 }));
 
 /**
- * Shared MapLibre mock + per-layer layout bookkeeping so the round-2 FIX-B
- * visibility verification (getLayoutProperty reflecting setLayoutProperty) can
- * be exercised end to end.
+ * The shared mock now owns the FIX-B layout bookkeeping itself:
+ * setLayoutProperty/setPaintProperty write into the target layer def and
+ * getLayoutProperty/getPaintProperty read it back (#404), so the round-2 FIX-B
+ * visibility verification can be exercised end to end without extra wrapping.
  */
 function mapWithLayoutBookkeeping() {
-  const map = makeMockMaplibreMap();
-  const layouts: Record<string, Record<string, unknown>> = {};
-  map.setLayoutProperty = vi.fn((id: string, prop: string, value: unknown) => {
-    layouts[id] = { ...(layouts[id] || {}), [prop]: value };
-  });
-  map.getLayoutProperty = vi.fn((id: string, prop: string) => layouts[id]?.[prop] ?? null);
-  return map;
+  return makeMockMaplibreMap();
 }
 
 describe('MapActionHandler', () => {
@@ -1306,12 +1301,18 @@ describe('MapActionHandler', () => {
     );
   });
 
-  it('V3 FIX-B: visibility update that cannot be verified on a store layer → store_updated', async () => {
+  it('V3 FIX-B: visibility update whose value does not stick on the map → store_updated', async () => {
     actions = [{ command: 'LAYER_VISIBILITY_UPDATE', params: { layer_id: 'poi', visible: false } }];
     mockLayersStore = [{ id: 'poi', name: 'POI Layer' }];
-    const map = makeMockMaplibreMap(); // no getLayoutProperty bookkeeping → verification fails
+    // The shared mock is stateful now (setLayoutProperty writes into the layer
+    // def), so "unverifiable" must simulate the real-world race the FIX-B
+    // guard exists for: the set did not take effect on the map (e.g. style
+    // still loading in real MapLibre). Keep getLayoutProperty stale — it must
+    // NOT reflect the 'none' that was just set.
+    const map = makeMockMaplibreMap();
     mockGetMap.mockImplementation(() => map);
     map._layers.push({ id: 'poi__main', type: 'circle', source: 'poi' });
+    map.getLayoutProperty = vi.fn(() => 'visible');
 
     await act(async () => {
       render(<MapActionHandler />);

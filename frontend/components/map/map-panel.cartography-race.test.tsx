@@ -246,13 +246,10 @@ function repairAction(
 const noop = () => {};
 
 function freshMockMap() {
-  const map = makeMockMaplibreMap();
-  map.isStyleLoaded = vi.fn(() => true);
-  map.setTerrain = vi.fn();
-  map.getBounds = vi.fn(() => ({
-    getWest: () => 116.3, getSouth: () => 39.8, getEast: () => 116.5, getNorth: () => 40.0,
-  }));
-  return map;
+  // The shared mock ships isStyleLoaded (true), setTerrain and getBounds
+  // (default center [116.4, 39.9] ± 0.1° = the exact constants this helper
+  // used to hard-code); no per-test scaffolding needed anymore (#404).
+  return makeMockMaplibreMap();
 }
 
 /** A layer that triggers exactly one cartographic observation per fingerprint. */
