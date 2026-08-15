@@ -609,6 +609,57 @@ def test_registry_clear_session_purges_one_key():
     assert len(reg) == 1
 
 
+# ─── #398: Last-Event-ID 0 only addresses ACTIVE turns ──────────────────────
+
+
+def test_find_id_zero_matches_only_active_buffers():
+    """#398: ``Last-Event-ID: 0`` ("from the beginning") must match ONLY turns
+    that are still ACTIVE (live, or queued and never started). An ENDED buffer
+    with the same message must not be replayed from its start — a stale
+    reconnect (e.g. for a newer turn that never registered) would otherwise
+    get the PREVIOUS turn's complete stream replayed as if it were the current
+    answer."""
+    reg = TurnResumeRegistry()
+    live = TurnEventBuffer("s", "same msg")
+    ended = TurnEventBuffer("s", "same msg")
+    ended.record(sse_event("done", {"session_id": "s"}, event_id=7))  # terminal
+    reg.register("s", live)
+    reg.register("s", ended)
+
+    match, ambiguous = reg.find("s", "same msg", 0)
+    assert ambiguous is False
+    assert match is live, "id 0 must match the ACTIVE buffer, never the ended one"
+
+
+def test_find_id_zero_refuses_when_only_ended_buffer_matches():
+    """#398: when every same-message buffer is ENDED, ``last_event_id == 0``
+    is a plain miss (``error {resumed: false}`` at the route) — the stale
+    reconnect is refused instead of replaying the finished turn from scratch.
+    A NONZERO id still matches the same buffer normally."""
+    reg = TurnResumeRegistry()
+    ended = TurnEventBuffer("s", "same msg")
+    ended.record(sse_event("done", {"session_id": "s"}, event_id=7))
+    reg.register("s", ended)
+
+    assert reg.find("s", "same msg", 0) == (None, False), (
+        "id 0 must not match an ended buffer"
+    )
+    match, ambiguous = reg.find("s", "same msg", 3)
+    assert ambiguous is False
+    assert match is ended, "a nonzero id resumes an ended turn as before"
+
+
+def test_find_id_zero_still_matches_queued_never_started_buffer():
+    """A queued/never-started buffer (registered, zero events, NOT ended) keeps
+    matching ``last_event_id == 0`` — the F20 live-hold path is unchanged."""
+    reg = TurnResumeRegistry()
+    queued = TurnEventBuffer("s", "queued msg")
+    reg.register("s", queued)
+    match, ambiguous = reg.find("s", "queued msg", 0)
+    assert ambiguous is False
+    assert match is queued
+
+
 @pytest.mark.asyncio
 async def test_clear_session_route_purges_resume_buffers(_pi_path, monkeypatch, _pass_ownership):
     """P2 (round-2 review): DELETE /chat/sessions/{X} must purge X's resume
