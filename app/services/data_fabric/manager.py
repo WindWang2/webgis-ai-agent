@@ -295,7 +295,13 @@ class DataFabricManager:
         )
 
         adapter = cls.get_adapter(conn_profile)
-        return adapter.query(item.name, query_spec)
+        result = adapter.query(item.name, query_spec)
+        # Resource guard (Section 22 / #425): only materialize enforced bounds
+        # before — the preview/query REST paths returned unbounded payloads
+        # (up to 10k features of arbitrary geometry, no byte cap). The guard
+        # does not trust the remote `limit` parameter (servers may ignore it).
+        enforce_result_bounds(result.features)
+        return result
 
     @classmethod
     async def query_catalog_item_async(
@@ -348,6 +354,11 @@ class DataFabricManager:
         result = await asyncio.to_thread(adapter.query, item.name, query_spec)
         if cancel_token is not None:
             cancel_token.raise_if_cancelled()
+        # Same resource guard as the sync path (#425): the preview/query REST
+        # routes ride this method after the offload fix, so their responses
+        # must respect the hard feature/byte bounds too. materialize() keeps
+        # its own (idempotent) enforcement before storing the ref.
+        enforce_result_bounds(result.features)
         return result
 
     @classmethod
