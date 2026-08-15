@@ -118,7 +118,7 @@ class TestEnvTimestampStable:
 class TestLockRenewTokenChecked:
     @pytest.mark.asyncio
     async def test_renew_loop_stops_when_ownership_lost(self):
-        from app.services.distributed_lock import _InProcessLock, _ResilientSessionLock, _RENEW_INTERVAL_S
+        from app.services.distributed_lock import _InProcessLock, _ResilientSessionLock
         import app.services.distributed_lock as dl
 
         class FakeClient:
