@@ -151,17 +151,11 @@ const noop = () => {};
 
 /** Shared mock map + the extra surface MapPanel/runtime/renderer needs. */
 function freshMockMap() {
-  const map = makeMockMaplibreMap();
-  map.isStyleLoaded = vi.fn(() => true);
-  map.setTerrain = vi.fn();
-  map.getBounds = vi.fn(() => ({
-    getWest: () => 116.3,
-    getSouth: () => 39.8,
-    getEast: () => 116.5,
-    getNorth: () => 40.0,
-  }));
-  map.queryRenderedFeatures = vi.fn((_point: unknown, _opts: unknown) => rmg.queryResults);
-  return map;
+  // The shared mock now ships isStyleLoaded (true), setTerrain, getBounds
+  // (derived from the default center) and queryRenderedFeatures; only the
+  // rendered-feature results stay test-driven, read lazily so each test's
+  // rmg.queryResults assignment is picked up per call.
+  return makeMockMaplibreMap({ renderedFeatures: () => rmg.queryResults });
 }
 
 function pointLayer(id: string, name: string, opts: { legend?: boolean } = {}): Layer {

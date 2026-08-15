@@ -20,10 +20,27 @@ import { vi } from 'vitest';
  *   vi.fn, so both `expect(map._calls.addSource)` and
  *   `expect(map.addSource).toHaveBeenCalledWith(...)` styles work.
  *
+ * Completeness contract (issue #404): every MapLibre method the application
+ * code touches (frontend/lib + frontend/components) must exist on this mock —
+ * enforced by test/maplibre-mock-surface.test.ts, which statically scans the
+ * sources for `map.<method>` accesses. Before that contract, a missing method
+ * made any test walking such a path TypeError instead of asserting, so those
+ * paths (style-loaded gating, rendered-feature queries, bounds/viewport
+ * reading, canvas export, image bookkeeping, DPI management, controls and
+ * terrain) were silently untested.
+ *
+ * Style mutations are stateful, not just logged:
+ * - moveLayer actually reorders `_layers` (no beforeId → end of the array,
+ *   which is the top of the z-order);
+ * - setLayoutProperty/setPaintProperty write into the target layer def's
+ *   layout/paint, and getLayoutProperty/getPaintProperty read them back — so
+ *   render assertions can be written against the mock's style state.
+ *
  * Underscore-prefixed helpers are test-only and not part of the MapLibre API:
  * - `_fire(event, payload?)` — dispatch to registered once/on listeners;
  * - `_setViewport(partial)` — mutate the camera state;
- * - `_calls` / `_sources` / `_layers` / `_viewport` — introspection.
+ * - `_calls` / `_sources` / `_layers` / `_images` / `_terrain` / `_controls` /
+ *   `_viewport` — introspection.
  */
 
 export interface MockMapViewport {
@@ -45,6 +62,11 @@ export interface MockMapCallLog {
   moveLayer: Array<{ id: string; beforeId?: string | null }>;
   setFilter: Array<{ layerId: string; filter: unknown }>;
   setData: Array<{ id: string; data: unknown }>;
+  addControl: Array<{ control: unknown; position?: string | null }>;
+  setTerrain: Array<{ options: unknown }>;
+  queryRenderedFeatures: Array<{ geometry: unknown; params?: unknown }>;
+  setLayoutProperty: Array<{ layerId: string; name: string; value: unknown }>;
+  setPaintProperty: Array<{ layerId: string; name: string; value: unknown }>;
 }
 
 export interface MakeMockMaplibreMapOptions {
@@ -52,6 +74,60 @@ export interface MakeMockMaplibreMapOptions {
   zoom?: number;
   bearing?: number;
   pitch?: number;
+  /** `isStyleLoaded()` result — default true: tests assume the base style is
+   *  loaded synchronously unless they explicitly exercise the deferral path. */
+  styleLoaded?: boolean;
+  /** `queryRenderedFeatures()` results. Pass an array (fixed) or a zero-arg
+   *  function (lazy — re-read on every call, e.g. a mutable test registry). */
+  renderedFeatures?: unknown[] | (() => unknown[]);
+  /** `getBounds()` corners as [west, south, east, north]. Default derives from
+   *  center ± 0.1°, so the default viewport yields [116.3, 39.8, 116.5, 40.0]. */
+  bounds?: [number, number, number, number];
+}
+
+/** Minimal 2D-context stub (mirrors test/setup.ts) so drawing-heavy paths
+ *  (exporter composition) can run without a real GL/2D context. */
+const canvas2dContext: Record<string, unknown> = {
+  drawImage: () => {},
+  fillText: () => {},
+  fillRect: () => {},
+  createLinearGradient: () => ({ addColorStop: () => {} }),
+  beginPath: () => {},
+  moveTo: () => {},
+  lineTo: () => {},
+  closePath: () => {},
+  fill: () => {},
+  stroke: () => {},
+  strokeRect: () => {},
+  arc: () => {},
+  arcTo: () => {},
+  save: () => {},
+  restore: () => {},
+  translate: () => {},
+  rotate: () => {},
+  setLineDash: () => {},
+  measureText: () => ({ width: 50 }),
+  fillStyle: '',
+  strokeStyle: '',
+  lineWidth: 1,
+  font: '',
+  textAlign: 'left',
+};
+
+/** Canvas-like object returned by `getCanvas()`: real jsdom canvases cannot
+ *  `toBlob`, so the mock hands back a self-contained fake with the surface the
+ *  exporter actually uses (width/height, toBlob, toDataURL, getContext). */
+function makeCanvasLike() {
+  return {
+    width: 800,
+    height: 600,
+    toBlob: (cb: (blob: Blob | null) => void) => {
+      cb(new Blob(['mock-canvas'], { type: 'image/png' }));
+    },
+    toDataURL: () =>
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    getContext: () => canvas2dContext,
+  };
 }
 
 export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
@@ -72,6 +148,21 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
   // easeTo start an animation; jumpTo/moveend end it.
   let animating = false;
 
+  // Issue #404 additions: style/rendering state that the previously-closed mock
+  // surface never modeled (every one of these used to TypeError when reached).
+  const bounds: [number, number, number, number] = options.bounds ?? [
+    viewport.center[0] - 0.1,
+    viewport.center[1] - 0.1,
+    viewport.center[0] + 0.1,
+    viewport.center[1] + 0.1,
+  ];
+  const styleLoaded = options.styleLoaded ?? true;
+  const renderedFeatures = options.renderedFeatures ?? [];
+  let terrain: { source: string; exaggeration?: number } | null = null;
+  let pixelRatio = 1;
+  const images = new Set<string>();
+  const controls: Array<{ control: unknown; position?: string }> = [];
+
   const calls: MockMapCallLog = {
     flyTo: [],
     fitBounds: [],
@@ -84,6 +175,11 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
     moveLayer: [],
     setFilter: [],
     setData: [],
+    addControl: [],
+    setTerrain: [],
+    queryRenderedFeatures: [],
+    setLayoutProperty: [],
+    setPaintProperty: [],
   };
 
   const emit = (event: string, payload?: unknown) => {
@@ -137,13 +233,88 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
       calls.removeLayer.push(id);
     }),
     moveLayer: vi.fn((id: string, beforeId?: string | null) => {
+      // Stateful: actually reorder `_layers` (before my previous no-op, z-order
+      // assertions silently observed the stale order). No beforeId → end of the
+      // array = top of the z-order; beforeId → immediately before that layer.
+      const i = layers.findIndex((l) => l.id === id);
+      if (i >= 0) {
+        const [moved] = layers.splice(i, 1);
+        if (beforeId !== undefined && beforeId !== null) {
+          const j = layers.findIndex((l) => l.id === beforeId);
+          layers.splice(j >= 0 ? j : layers.length, 0, moved);
+        } else {
+          layers.push(moved);
+        }
+      }
       calls.moveLayer.push({ id, beforeId: beforeId ?? null });
     }),
     setFilter: vi.fn((layerId: string, filter: any) => {
       calls.setFilter.push({ layerId, filter });
     }),
-    setLayoutProperty: vi.fn(),
-    setPaintProperty: vi.fn(),
+    setLayoutProperty: vi.fn((layerId: string, name: string, value: unknown) => {
+      // Stateful: write into the target layer def so render assertions can read
+      // the value back through getLayoutProperty/getStyle (MapLibre semantics).
+      const layer = layers.find((l) => l.id === layerId);
+      if (layer) {
+        layer.layout = layer.layout ?? {};
+        layer.layout[name] = value;
+      }
+      calls.setLayoutProperty.push({ layerId, name, value });
+    }),
+    setPaintProperty: vi.fn((layerId: string, name: string, value: unknown) => {
+      const layer = layers.find((l) => l.id === layerId);
+      if (layer) {
+        layer.paint = layer.paint ?? {};
+        layer.paint[name] = value;
+      }
+      calls.setPaintProperty.push({ layerId, name, value });
+    }),
+    getLayoutProperty: vi.fn((layerId: string, name: string) => {
+      const layer = layers.find((l) => l.id === layerId);
+      // null when unset (real MapLibre resolves style defaults; the mock keeps
+      // the explicit-value contract only — enough for verification logic).
+      return layer?.layout?.[name] ?? null;
+    }),
+    getPaintProperty: vi.fn((layerId: string, name: string) => {
+      const layer = layers.find((l) => l.id === layerId);
+      return layer?.paint?.[name] ?? null;
+    }),
+
+    // ─── Rendering / style-state surface (issue #404) ──────────────────────
+    isStyleLoaded: vi.fn(() => styleLoaded),
+    getBounds: vi.fn(() => ({
+      getWest: () => bounds[0],
+      getSouth: () => bounds[1],
+      getEast: () => bounds[2],
+      getNorth: () => bounds[3],
+    })),
+    queryRenderedFeatures: vi.fn((geometry: unknown, params?: unknown) => {
+      calls.queryRenderedFeatures.push({ geometry, params });
+      // Configured features only — no spatial filtering (that is real MapLibre
+      // territory; tests drive the result set explicitly).
+      const features =
+        typeof renderedFeatures === 'function' ? renderedFeatures() : renderedFeatures;
+      return Array.isArray(features) ? features : [];
+    }),
+    getCanvas: vi.fn(() => makeCanvasLike()),
+    hasImage: vi.fn((id: string) => images.has(id)),
+    removeImage: vi.fn((id: string) => {
+      images.delete(id);
+    }),
+    getPixelRatio: vi.fn(() => pixelRatio),
+    setPixelRatio: vi.fn((ratio: number) => {
+      pixelRatio = ratio;
+    }),
+    addControl: vi.fn((control: unknown, position?: string) => {
+      controls.push({ control, position });
+      calls.addControl.push({ control, position: position ?? null });
+      return map;
+    }),
+    setTerrain: vi.fn((opts: { source: string; exaggeration?: number } | null) => {
+      terrain = opts ? { source: opts.source, exaggeration: opts.exaggeration } : null;
+      calls.setTerrain.push({ options: opts });
+      return map;
+    }),
 
     // ─── Camera ────────────────────────────────────────────────────────────
     flyTo: vi.fn((opts: any) => {
@@ -207,6 +378,9 @@ export function makeMockMaplibreMap(options: MakeMockMaplibreMapOptions = {}) {
     _calls: calls,
     _sources: sources,
     _layers: layers,
+    _images: images,
+    _terrain: terrain,
+    _controls: controls,
     _viewport: viewport,
     _setViewport(partial: Partial<MockMapViewport>) {
       if (partial.center) viewport.center = partial.center;

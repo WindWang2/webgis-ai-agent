@@ -146,15 +146,10 @@ vi.mock('@/components/map/map-decorations', () => ({
 }));
 
 function freshInstrumentedMap() {
+  // The shared mock ships isStyleLoaded (true), setTerrain and getBounds
+  // (default center [116.4, 39.9] ± 0.1° = the constants this helper used to
+  // hard-code); only the call counters remain per-test instrumentation.
   const map = makeMockMaplibreMap();
-  map.isStyleLoaded = vi.fn(() => true);
-  map.setTerrain = vi.fn();
-  map.getBounds = vi.fn(() => ({
-    getWest: () => 116.3,
-    getSouth: () => 39.8,
-    getEast: () => 116.5,
-    getNorth: () => 40.0,
-  }));
   const origGetStyle = map.getStyle;
   map.getStyle = vi.fn(() => {
     metrics.mapLibreGetStyleCalls += 1;
