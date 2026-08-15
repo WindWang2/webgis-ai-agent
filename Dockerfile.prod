@@ -71,6 +71,10 @@ COPY main.py ./
 COPY app/ ./app/
 COPY alembic.ini ./
 COPY migrations/ ./migrations/
+# #400: pi RPC 入口是仓库相对路径 vendor/pi/packages/coding-agent/dist/rpc-entry.js
+# （pi_rpc_client.PI_RPC_ENTRY）。CI 以 submodules:recursive 检出，但产物从未
+# 进入镜像 —— USE_NEW_AGENT=true 时 bridge 初始化失败并静默回退旧引擎。
+COPY vendor/ ./vendor/
 
 # Create non root user
 RUN groupadd --system --gid 1001 appgroup && \
@@ -81,8 +85,10 @@ USER appuser
 
 EXPOSE 3000 8000
 
+# #400: 容器同时跑 uvicorn:8000 与 node:3000 —— 两个进程都要探测，否则
+# node 挂掉时容器仍"健康"，nginx 对前端 502 而编排层毫无感知。
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/live', timeout=5)" || exit 1
+    CMD python3 -c "import urllib.request as u; u.urlopen('http://localhost:8000/api/v1/health/live', timeout=5); u.urlopen('http://localhost:3000/', timeout=5)" || exit 1
 
 ENTRYPOINT ["tini", "--"]
 # 审计 I9：trap-kill-wait 模式让 SIGTERM 正确传播给两个子进程。
