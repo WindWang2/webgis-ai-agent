@@ -9,6 +9,15 @@ metadata:
     component: api
     environment: production
 spec:
+  # #377: SSE turn-resume buffers are process-local (app/services/chat/
+  # event_resume.py — no cross-replica store). A reconnect must land on the
+  # SAME pod that served the turn; the Service below pins clients with
+  # sessionAffinity: ClientIP and the ingress pins with an nginx cookie, so
+  # multi-replica HA does not break resume for existing turns. This is the
+  # WEAK fix (probability reduction — new pods / affinity expiry can still
+  # strand a resume with error {resumed: false}); the STRONG fix is an
+  # externalized resume store (e.g. Redis), tracked separately (not in this
+  # PR). Scaling remains safe for NEW turns.
   replicas: 2
   strategy:
     rollingUpdate:
@@ -136,6 +145,15 @@ metadata:
     component: api
 spec:
   type: ClusterIP
+  # #377: SSE turn-resume buffers are process-local (event_resume.py) — a
+  # reconnect MUST reach the same pod that ran the turn. ClientIP affinity
+  # pins one client to one pod for the session; without it a plain ClusterIP
+  # Service round-robins and ~50% of reconnects hit a replica that never saw
+  # the turn, failing the resume with error {resumed: false} (the client then
+  # stops auto-retrying per contract). WEAK fix: sticky routing only lowers
+  # the probability. STRONG fix (not in this PR): externalize the resume
+  # store (e.g. Redis) so any replica can serve any resume.
+  sessionAffinity: ClientIP
   ports:
   - port: 80
     targetPort: 3000
