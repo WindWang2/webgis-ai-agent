@@ -7,6 +7,7 @@ S41: token refresh + logout (backend-only)。
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -160,11 +161,14 @@ async def register(
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail="username 或 email 已被占用")
 
+    # 计算隔离不变式 1：scrypt (N=2^14, ~50-150ms) 是 CPU 密集 KDF ——
+    # 在 async 路由上直接算会阻塞事件循环（#386）。注册/登录各只此一处。
+    password_hash = await asyncio.to_thread(hash_password, req.password)
     user = User(
         id=str(uuid.uuid4()),
         username=req.username,
         email=req.email,
-        password_hash=hash_password(req.password),
+        password_hash=password_hash,
         full_name=req.full_name,
         role="viewer",
         is_active=True,
@@ -202,7 +206,9 @@ async def login(
     user = result.scalar_one_or_none()
     # 即使用户不存在也跑一遍假 verify 以防止时序侧信道泄漏用户存在性
     # 审计 P1：使用模块级随机 dummy hash，避免固定 dummy 导致的时序差异。
-    valid = verify_password(req.password, user.password_hash if user else _DUMMY_STORED)
+    # 计算隔离不变式 1：scrypt verify 是 CPU 密集 KDF，offload 到线程（#386）。
+    stored_hash = user.password_hash if user else _DUMMY_STORED
+    valid = await asyncio.to_thread(verify_password, req.password, stored_hash)
     if not user or not valid:
         raise HTTPException(status_code=401, detail="用户名或密码错误")
     if not user.is_active:

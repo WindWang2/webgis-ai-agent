@@ -8,6 +8,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import Optional, Any
+import asyncio
 import json
 import logging
 import os
@@ -194,6 +195,27 @@ async def upload_map_export(
     }
 
 
+def _render_pdf_to_file(
+    filename: str, content: bytes,
+    title: Optional[str], subtitle: Optional[str],
+    author: Optional[str], scale_text: Optional[str],
+) -> None:
+    """reportlab 渲染 + 同步文件写 —— 纯同步 CPU/socket 无关 IO，必须在
+    worker 线程执行（计算隔离不变式 1）。ValueError 原样上抛给路由做 400。"""
+    from app.lib.cartography.pdf_renderer import generate_map_pdf
+
+    pdf_bytes = generate_map_pdf(
+        img_bytes=content,
+        title=title,
+        subtitle=subtitle,
+        author=author,
+        scale_text=scale_text,
+    )
+    pdf_path = os.path.join(EXPORT_DIR, filename)
+    with open(pdf_path, "wb") as f:
+        f.write(pdf_bytes)
+
+
 @router.post("/export/pdf", tags=["地图制图"])
 async def export_map_as_pdf(
     file: UploadFile = File(...),
@@ -216,23 +238,17 @@ async def export_map_as_pdf(
         if len(content) > MAX_EXPORT_SIZE:
             raise HTTPException(status_code=413, detail="文件过大，上限 50MB")
 
-        from app.lib.cartography.pdf_renderer import generate_map_pdf
-
+        pdf_filename = f"map_export_{int(time.time())}_{uuid.uuid4().hex[:12]}.pdf"
+        # 计算隔离不变式 1：reportlab 渲染（含 ≤50MB 图嵌入）+ 同步文件写在
+        # worker 线程执行，避免阻塞事件循环上所有并发 SSE 流（#386）。
+        loop = asyncio.get_running_loop()
         try:
-            pdf_bytes = generate_map_pdf(
-                img_bytes=content,
-                title=title,
-                subtitle=subtitle,
-                author=author,
-                scale_text=scale_text,
+            await loop.run_in_executor(
+                None, _render_pdf_to_file,
+                pdf_filename, content, title, subtitle, author, scale_text,
             )
         except ValueError as val_err:
             raise HTTPException(status_code=400, detail=str(val_err))
-
-        pdf_filename = f"map_export_{int(time.time())}_{uuid.uuid4().hex[:12]}.pdf"
-        pdf_path = os.path.join(EXPORT_DIR, pdf_filename)
-        with open(pdf_path, "wb") as f:
-            f.write(pdf_bytes)
 
     except HTTPException:
         raise

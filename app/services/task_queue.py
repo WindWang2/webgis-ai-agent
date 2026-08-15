@@ -30,6 +30,21 @@ celery_app.conf.update(
     enable_utc=True,
     task_track_started=True,
     task_time_limit=3600,  # 1小时超时
+    # #386：broker/backend 的 socket 超时压到 1-2s —— 前端每 3s 轮询任务状态，
+    # Redis 不可达/慢响应时若长时间挂起，轮询请求会堆满事件循环线程池并卡住
+    # 所有并发 SSE 流。2s 超时让 /tasks/status 在 backend 不可用时快速降级
+    # 为 UNKNOWN（get_task_status 已捕获所有异常），而不是阻塞 120s。
+    broker_connection_timeout=2,
+    broker_transport_options={
+        "socket_connect_timeout": 2,
+        "socket_timeout": 2,
+    },
+    redis_socket_timeout=2,
+    redis_socket_connect_timeout=2,
+    result_backend_transport_options={
+        "socket_connect_timeout": 2,
+        "socket_timeout": 2,
+    },
     # ADR-0052: worker 崩溃语义。
     #   acks_late=True             → 执行完成后才 ack
     #   reject_on_worker_lost=False→ 不主动 requeue：重投会重复执行不可逆的 GIS

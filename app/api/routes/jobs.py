@@ -18,6 +18,7 @@ main.py 中先 include，比依赖同文件内的定义顺序更难写错。
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -240,7 +241,10 @@ async def retry_job(
         # 状态已是 queued —— 现在必须真的把任务重新交给 worker。
         # 只改状态而不入队会留下一个永远不推进的 job（比不提供 retry 更糟）。
         try:
-            async_result = celery_app.send_task(
+            # 计算隔离不变式 1：send_task publish 是 broker socket I/O，
+            # offload 到线程（#386）。
+            async_result = await asyncio.to_thread(
+                celery_app.send_task,
                 spec["task"],
                 args=list(spec.get("args") or []),
                 kwargs={**(spec.get("kwargs") or {}), "job_id": int(record.id)},
