@@ -128,3 +128,43 @@ async def test_batch_geocode_rejects_oversized():
 async def test_batch_geocode_rejects_unknown_provider():
     out = await batch_geocode_cn(["x"], provider="bing")
     assert "error" in out
+
+
+@pytest.mark.asyncio
+async def test_with_fallback_error_dict_triggers_next_provider(monkeypatch):
+    """provider 级失败（WAF 418/配额/业务错误）返回 error dict，也必须回退。
+
+    tracked_provider_get 对非 200/JSON 失败不抛异常而是返回 {"error": ...}——
+    天地图被 WAF 频控时若不回退，整项能力直接不可用。
+    """
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "AMAP_API_KEY", "fake")
+    monkeypatch.setattr(settings, "BAIDU_MAP_AK", "")
+    monkeypatch.setattr(settings, "TIANDITU_TOKEN", "fake")
+
+    calls = []
+
+    async def _call(p):
+        calls.append(p)
+        if p == "amap":
+            return {"error": "Amap API HTTP 418"}
+        return {"provider": p}
+
+    out = await with_fallback("amap", _call, no_key_msg="全部失败")
+    assert out == {"provider": "tianditu"}
+    assert calls == ["amap", "tianditu"]
+
+
+@pytest.mark.asyncio
+async def test_with_fallback_all_fail_reports_first_detail(monkeypatch):
+    """全部失败时返回 no_key_msg 并带上第一个 provider 的失败详情。"""
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "AMAP_API_KEY", "fake")
+    monkeypatch.setattr(settings, "BAIDU_MAP_AK", "")
+    monkeypatch.setattr(settings, "TIANDITU_TOKEN", "fake")
+
+    async def _call(p):
+        return {"error": f"{p} down"}
+
+    out = await with_fallback("amap", _call, no_key_msg="地图服务不可用")
+    assert out["error"].startswith("地图服务不可用（amap down")

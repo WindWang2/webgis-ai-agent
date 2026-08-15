@@ -76,9 +76,11 @@ async def with_fallback(
     Collapses the 9× ``_dispatch + _fallback_order + try/except`` scaffold that
     was duplicated across ``register_chinese_map_tools``. For each provider in
     fallback order, skips it when its API key is absent, otherwise invokes
-    ``await call(provider)``; on a transport/parse error, logs and tries the
-    next provider. Returns the first successful result, or ``{"error": ...}``
-    when no configured provider succeeded.
+    ``await call(provider)``; on a transport/parse error OR a provider-level
+    ``{"error": ...}`` result (tracked GET 对 HTTP 418 WAF 拦截 / 配额超限 /
+    业务失败返回 error dict 而非异常), logs and tries the next provider.
+    Returns the first successful result, or ``{"error": ...}`` when no
+    configured provider succeeded.
 
     Args:
         preferred: the provider the caller asked for (tried first).
@@ -94,13 +96,32 @@ async def with_fallback(
         tool_name: used only for the warning log, to aid debugging.
     """
     label = f"{tool_name} " if tool_name else ""
+    first_error: str | None = None
+
+    def _note_failure(detail: str) -> None:
+        nonlocal first_error
+        if first_error is None:
+            first_error = detail
+
     for p in _fallback_order(preferred, exclude):
         if not _has_provider(p):
             continue
         try:
-            return await call(p)
+            result = await call(p)
         except _FALLBACK_ERRORS as e:
             logger.warning(f"{label}{p} failed: {e}")
+            _note_failure(str(e))
+            continue
+        if isinstance(result, dict) and "error" in result:
+            # 天地图 WAF 频控返回 HTTP 418、配额/业务失败走 business_checker —
+            # 这些在 tracked_provider_get 里是正常返回的 error dict，不抛异常。
+            # 不在此触发回退的话，首选 provider 被频控时整项能力直接不可用。
+            logger.warning(f"{label}{p} failed: {result.get('error')}")
+            _note_failure(str(result.get("error")))
+            continue
+        return result
+    if first_error is not None:
+        return {"error": f"{no_key_msg}（{first_error}）"}
     return {"error": no_key_msg}
 
 
