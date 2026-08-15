@@ -107,6 +107,9 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
   const [compareError, setCompareError] = useState<string | null>(null);
   const [compareBusy, setCompareBusy] = useState(false);
   const [comparePeerId, setComparePeerId] = useState('');
+  // 轮询自续期：status 不变时 effect 不会重跑，必须靠 tick 变化排下一次
+  // （同 use-job-center 的模式），否则只轮询一次就停在 "running"。
+  const [pollTick, setPollTick] = useState(0);
   const [lineageByArtifact, setLineageByArtifact] = useState<
     Record<string, LineageGraph | 'loading' | 'empty' | 'error'>
   >({});
@@ -306,16 +309,20 @@ export function useWorkflowWorkspace(): UseWorkflowWorkspaceResult {
       const ac = new AbortController();
       runAbort.current = ac;
       const gen = runGen.current;
-      void loadRunDetail(selectedProjectId, selectedRunId, ac.signal, gen).catch((err: unknown) => {
-        if (ac.signal.aborted || isAbortError(err) || gen !== runGen.current) return;
-        setError(parseApiErrorDetail(err, '刷新运行状态失败'));
-      });
+      void loadRunDetail(selectedProjectId, selectedRunId, ac.signal, gen)
+        .catch((err: unknown) => {
+          if (ac.signal.aborted || isAbortError(err) || gen !== runGen.current) return;
+          setError(parseApiErrorDetail(err, '刷新运行状态失败'));
+        })
+        .finally(() => {
+          setPollTick((tick) => tick + 1);
+        });
     }, RUN_POLL_INTERVAL_MS);
 
     return () => {
       if (pollTimer.current) clearTimeout(pollTimer.current);
     };
-  }, [selectedProjectId, selectedRunId, runDetail?.status, loadRunDetail]);
+  }, [selectedProjectId, selectedRunId, runDetail?.status, pollTick, loadRunDetail]);
 
   const back = useCallback(() => {
     setActionError(null);

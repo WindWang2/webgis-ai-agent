@@ -287,6 +287,38 @@ describe('useWorkflowWorkspace — bounded poll', () => {
     });
     expect(api.fetchWorkflowRun).toHaveBeenCalledTimes(2);
   });
+
+  it('#389: keeps polling while status stays running (self-rescheduling tick)', async () => {
+    vi.useFakeTimers();
+    // The bug: the poll effect keyed on runDetail?.status never re-ran while
+    // the status stayed 'running' — exactly one poll, then stuck forever.
+    api.fetchWorkflowRun.mockResolvedValue(detail({ status: 'running' }));
+
+    const { result } = renderHook(() => useWorkflowWorkspace());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      result.current.openWorkflow('wf1');
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      result.current.openRun('r1');
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(api.fetchWorkflowRun).toHaveBeenCalledTimes(1);
+
+    for (let i = 2; i <= 4; i++) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(RUN_POLL_INTERVAL_MS);
+      });
+      expect(api.fetchWorkflowRun).toHaveBeenCalledTimes(i);
+    }
+  });
 });
 
 describe('useWorkflowWorkspace — compare binding', () => {
