@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -25,6 +26,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 from app.services.session_data import session_data_manager
+from app.services.llm_result_formatter import MSG_MAX_CHARS
 from app.services.planning.deps import MissingRefError, resolve_arg_refs
 from app.services.jobs.cancellation import OperationCancelled
 from app.services.distributed_lock import session_lock_registry
@@ -510,6 +512,135 @@ async def _hydrate_step_results(
     return hydrated
 
 
+# ─────────────────── 返回载荷瘦身（issue #387） ───────────────────
+# execute_plan 的返回 dict 会原样进入 LLM 上下文（slim_tool_result →
+# llm_payload / 消息历史）：嵌套 results 里整段 GeoJSON FeatureCollection
+# 此前无界穿透，buffer→clip→aggregate 链可达多 MB，HISTORY_MIN_TURNS=2 强制
+# 最新 turn 进上下文 → provider 400 / 巨额 token 成本。__step_results__ 持久化
+# 路径已 slim（完整结果存 ref:planresult-*），这里把**返回副本**也按同一语义
+# 瘦身：大结果 → 存 ref + 有界摘要，整体施加 MSG_MAX_CHARS 上限。内存中的
+# step_results（供 ${} 解析）与持久化语义均不受影响（数据本身不丢——引用仍在）。
+_RETURN_SLIM_STEP_CHARS = 800  # 单步结果序列化超过该字符数 → 存 ref + 摘要
+_RETURN_SUMMARY_CHARS_MAX = 200
+_RETURN_KEYS_MAX = 40
+
+
+def _estimate_json_chars(value: Any) -> int:
+    """序列化字符数估算（与 MSG_MAX_CHARS 同为字符口径）；不可序列化视为超限。"""
+    try:
+        return len(json.dumps(value, ensure_ascii=False))
+    except (TypeError, ValueError):
+        return 1 << 30
+
+
+def _slim_step_metadata(value: Any) -> dict:
+    """从大结果里提取有界摘要字段（绝不触碰几何本体）。"""
+    if not isinstance(value, dict):
+        return {}
+    meta: dict[str, Any] = {}
+    for k in (
+        "summary", "feature_count", "bbox", "type", "result_ref",
+        "message", "status", "algorithm", "analysis_type", "legend_spec",
+    ):
+        v = value.get(k)
+        if isinstance(v, str):
+            v = v[:_RETURN_SUMMARY_CHARS_MAX]
+        if v is not None:
+            meta[k] = v
+    fc = value.get("geojson")
+    if value.get("type") == "FeatureCollection" and "features" in value:
+        fc = value
+    if "feature_count" not in meta and isinstance(fc, dict) and isinstance(fc.get("features"), list):
+        meta["feature_count"] = len(fc["features"])
+    return meta
+
+
+async def _slim_one_result_for_llm(
+    session_id: str, plan_id: str, sid: str, value: Any
+) -> dict:
+    """把单个大结果存为 session ref（复用 planresult 确定性别名），返回摘要。
+
+    与 _persist_step_results 同一别名/覆盖语义：已存在的 ref 原地 overwrite，
+    缺失则 store + set_alias——数据不重复落两份。存储故障时降级为以确定性别名
+    作为引用标识（返回本身绝不因瘦身失败而抛异常）。
+    """
+    alias = _step_result_alias(plan_id, sid)
+    ref_id: Optional[str] = None
+    try:
+        existing = await session_data_manager.resolve_alias(session_id, alias)
+        if existing != alias and await session_data_manager.overwrite(session_id, existing, value):
+            ref_id = existing
+        else:
+            new_ref = await session_data_manager.store(session_id, value, prefix="planresult")
+            await session_data_manager.set_alias(session_id, new_ref, alias)
+            ref_id = new_ref
+    except Exception as e:  # noqa: BLE001 存储故障不拖垮返回
+        logger.warning(f"[PlanMode] 返回载荷瘦身存储失败 sid={sid}: {e}")
+        ref_id = alias
+    slim: dict[str, Any] = {"__slim__": True, "ref": ref_id}
+    slim.update(_slim_step_metadata(value))
+    if isinstance(value, dict):
+        keys = sorted(value)
+        if keys:
+            slim["keys"] = keys[:_RETURN_KEYS_MAX]
+    return slim
+
+
+async def _slim_returned_results(
+    session_id: str, plan_id: str, step_results: dict[str, Any]
+) -> dict[str, Any]:
+    """返回给 LLM 的 results 副本：大结果 → ref + 有界摘要，整体有界。
+
+    仅作用于返回副本：内存 step_results（${} 解析）与 __step_results__ 持久化
+    语义不变。已 slim 条目原样保留；小结果原样保留（既有调用方依赖完整小结果）。
+    预算按 MSG_MAX_CHARS 减去其余字段（plan_id/status/executed/error 等）的
+    留白，保证整个返回 dict 序列化后 ≤ MSG_MAX_CHARS。
+    """
+    budget = MSG_MAX_CHARS - 1024
+    out: dict[str, Any] = {}
+    for sid, value in step_results.items():
+        if _is_slim_result(value):
+            out[sid] = value
+            continue
+        if _estimate_json_chars(value) <= _RETURN_SLIM_STEP_CHARS:
+            out[sid] = value
+            continue
+        out[sid] = await _slim_one_result_for_llm(session_id, plan_id, sid, value)
+
+    # 整体超预算 → 按体积从大到小把保留结果换成 ref 摘要。
+    for sid in sorted(
+        (s for s in out if not _is_slim_result(out[s])),
+        key=lambda s: _estimate_json_chars(out[s]),
+        reverse=True,
+    ):
+        if _estimate_json_chars(out) <= budget:
+            break
+        out[sid] = await _slim_one_result_for_llm(session_id, plan_id, sid, out[sid])
+
+    # 兜底：ref 摘要自身的 meta（summary/keys 等）仍超预算 → 剥到只剩 ref。
+    if _estimate_json_chars(out) > budget:
+        for sid, v in out.items():
+            if _is_slim_result(v) and set(v) - {"__slim__", "ref"}:
+                out[sid] = {"__slim__": True, "ref": v["ref"]}
+            if _estimate_json_chars(out) <= budget:
+                break
+    return out
+
+
+async def _slim_last_result_for_llm(session_id: str, value: Any) -> Any:
+    """失败步骤的 last_result 同样瘦身（一次性存储，无别名复用）。"""
+    if _estimate_json_chars(value) <= _RETURN_SLIM_STEP_CHARS:
+        return value
+    slim: dict[str, Any] = {"__slim__": True, "ref": None}
+    try:
+        ref_id = await session_data_manager.store(session_id, value, prefix="planresult")
+        slim["ref"] = ref_id
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[PlanMode] last_result 瘦身存储失败: {e}")
+    slim.update(_slim_step_metadata(value))
+    return slim
+
+
 # ─────────────────────────────── 执行引擎 ───────────────────────────────
 
 
@@ -562,6 +693,12 @@ async def execute_plan_async(
     - ``__step_results__`` 持久化采用 slim 形状（完整结果存入独立的
       ref:planresult-* 引用，payload 只留 {__slim__, ref, keys} 摘要）；
       resume 时按 ref 水合回完整结果供 ``${stepId[.path]}`` 解析，语义不变。
+
+    issue #387（LLM payload 有界）：
+    - 返回的 ``results`` / ``last_result`` 是返回副本——大结果（含整段 GeoJSON
+      FeatureCollection）先存入 session ref，再以 {__slim__, ref, 摘要} 呈现，
+      整个返回 dict 序列化后 ≤ MSG_MAX_CHARS，避免多 MB payload 无界进入
+      llm_payload 与消息历史。内存 step_results（${} 解析）与持久化语义不变。
 
     返回汇总 {plan_id, status, executed, results, failed_step, error}。
     """
@@ -661,7 +798,7 @@ async def _execute_plan_locked(
             "plan_id": plan_id,
             "status": "superseded",
             "executed": _ordered_executed(),
-            "results": step_results,
+            "results": await _slim_returned_results(session_id, plan_id, step_results),
         }
     # completed 或全部步骤已有结果 → 直接返回已存结果，不重放。
     if status == "completed" or all(s.id in step_results for s in plan.steps):
@@ -670,7 +807,7 @@ async def _execute_plan_locked(
             "plan_id": plan_id,
             "status": "completed",
             "executed": _ordered_executed(),
-            "results": step_results,
+            "results": await _slim_returned_results(session_id, plan_id, step_results),
         }
 
     # P2-2 livelock guard：确定性失败（首个未完成步骤 == 上次失败步骤，
@@ -701,7 +838,7 @@ async def _execute_plan_locked(
                 "error": err,
                 "failure_class": fc,
                 "executed": _ordered_executed(),
-                "results": step_results,
+                "results": await _slim_returned_results(session_id, plan_id, step_results),
             }
             if ra is not None:
                 ret["recovery_action"] = ra
@@ -711,7 +848,7 @@ async def _execute_plan_locked(
         """P2-1：有已存结果 → partially_completed（可读/可恢复）；否则 failed。"""
         return "partially_completed" if step_results else "failed"
 
-    def _fail(
+    async def _fail(
         sid: str,
         error: str,
         last_result: Optional[Any] = None,
@@ -720,6 +857,7 @@ async def _execute_plan_locked(
         correction_hint: Optional[str] = None,
     ) -> dict:
         # 失败中止：不再启动新波次；已完成的兄弟步骤保留在 executed 中。
+        # issue #387：返回副本瘦身（大结果 → ref + 摘要），保证 LLM payload 有界。
         ret: dict = {
             "success": False,
             "plan_id": plan_id,
@@ -727,7 +865,7 @@ async def _execute_plan_locked(
             "tool": step_by_id[sid].tool,
             "error": error,
             "executed": _ordered_executed(),
-            "results": step_results,
+            "results": await _slim_returned_results(session_id, plan_id, step_results),
         }
         if failure_class is not None:
             ret["failure_class"] = failure_class
@@ -736,7 +874,7 @@ async def _execute_plan_locked(
         if correction_hint is not None:
             ret["correction_hint"] = correction_hint
         if last_result is not None:
-            ret["last_result"] = last_result
+            ret["last_result"] = await _slim_last_result_for_llm(session_id, last_result)
         return ret
 
     await update_plan_status(session_id, plan_id, __status__="running")
@@ -779,7 +917,7 @@ async def _execute_plan_locked(
                         __failure_class__="missing_ref",
                         __step_results__=await _persist_step_results(session_id, plan_id, step_results),
                     )
-                    return _fail(
+                    return await _fail(
                         sid,
                         f"步骤 {sid!r} 引用解析失败: {hint}",
                         failure_class="missing_ref",
@@ -793,7 +931,7 @@ async def _execute_plan_locked(
                         __error__=f"args 解析异常: {e}",
                         __step_results__=await _persist_step_results(session_id, plan_id, step_results),
                     )
-                    return _fail(
+                    return await _fail(
                         sid,
                         f"步骤 {sid!r} args 解析异常: {e}",
                         failure_class="internal",
@@ -806,7 +944,7 @@ async def _execute_plan_locked(
                         __error__=f"args 解析后不是 dict: {type(r).__name__}",
                         __step_results__=await _persist_step_results(session_id, plan_id, step_results),
                     )
-                    return _fail(
+                    return await _fail(
                         sid,
                         f"步骤 {sid!r} args 解析后不是 dict",
                         failure_class="validation",
@@ -870,7 +1008,7 @@ async def _execute_plan_locked(
                             "status": "cancelled",
                             "error": f"plan {plan_id} 已取消",
                             "executed": _ordered_executed(),
-                            "results": step_results,
+                            "results": await _slim_returned_results(session_id, plan_id, step_results),
                             "failure_class": "cancelled",
                         }
                     except Exception as e:
@@ -941,7 +1079,7 @@ async def _execute_plan_locked(
                 if fc is not None:
                     updates["__failure_class__"] = fc
                 await _write_terminal(**updates)
-                return _fail(sid, err, last_result, failure_class=fc, recovery_action=ra)
+                return await _fail(sid, err, last_result, failure_class=fc, recovery_action=ra)
 
             # 波次完成 → 推进依赖图，解锁下一波次
             for sid in wave:
@@ -959,7 +1097,7 @@ async def _execute_plan_locked(
             "plan_id": plan_id,
             "status": "completed",
             "executed": _ordered_executed(),
-            "results": step_results,
+            "results": await _slim_returned_results(session_id, plan_id, step_results),
         }
     except asyncio.CancelledError:
         # 外层被取消（客户端断连等）：取消并回收本波次 pending 任务，
