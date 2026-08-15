@@ -116,8 +116,13 @@ class NetworkGraphEngine:
         profile: Optional[TravelProfile] = None,
         impedance: Optional[Impedance] = None,
         barriers: Optional[List[Barrier]] = None,
+        cutoff_s: Optional[float] = None,
     ) -> List[ODPair]:
-        """Calculates batch N x M origin-destination cost matrix."""
+        """Calculates batch N x M origin-destination cost matrix.
+
+        ``cutoff_s`` bounds the per-origin Dijkstra in the active impedance's
+        cost units (#449); pairs beyond it are returned unreachable.
+        """
         if graph is None:
             graph, _ = self.builder.build_graph(network_dataset, profile=profile)
         return self.od_service.network_od_matrix(
@@ -128,6 +133,7 @@ class NetworkGraphEngine:
             profile=profile,
             impedance=impedance,
             barriers=barriers,
+            cutoff_s=cutoff_s,
         )
 
     def closest_facility(
@@ -404,6 +410,7 @@ class NetworkGraphEngine:
                 network_dataset=net_ds,
                 graph=graph,
                 profile=prof,
+                cutoff_s=cutoff_s,
             )
 
             return NetworkAnalysisResult(

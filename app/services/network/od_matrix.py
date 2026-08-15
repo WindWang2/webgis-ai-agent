@@ -3,6 +3,8 @@ Network Origin-Destination (OD) Matrix Service Component.
 Implements fast batch N x M cost matrix calculation using multi-source Dijkstra.
 """
 from __future__ import annotations
+import heapq
+import itertools
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import networkx as nx
@@ -17,6 +19,54 @@ from app.services.network.models import (
 )
 from app.services.network.snapping import PointSnappingService
 from app.services.network.routing import NetworkRoutingService, build_weight_func
+
+
+def _single_source_costs(
+    graph: nx.DiGraph,
+    source: Any,
+    weight_func,
+    cutoff: Optional[float] = None,
+) -> Tuple[Dict[Any, float], Dict[Any, float], Dict[Any, float]]:
+    """Single-source Dijkstra accumulating cost, length and time per node (#449).
+
+    Unlike ``nx.single_source_dijkstra`` this never materializes path lists —
+    networkx builds the FULL path ([origin, ..., node]) for every reachable
+    node, O(sum|path|) ≈ O(V²) worst case (measured 48.9 s for one origin on
+    an 8k-node path graph) — and the previous code then re-walked those paths
+    in Python to re-sum distance/time. Here each settled node carries its
+    accumulated cost / length_m / travel_time_s directly (GIS-19 semantics:
+    secondary metrics accumulate along the chosen shortest-path tree).
+
+    ``cutoff`` (in cost units of the active impedance) prunes both the frontier
+    pushes and the settling loop; nodes beyond it are simply absent from the
+    returned maps.
+    """
+    dist: Dict[Any, float] = {}
+    acc_len: Dict[Any, float] = {}
+    acc_time: Dict[Any, float] = {}
+    counter = itertools.count()
+    # (cost, tiebreak, length, time, node) — the int tiebreak keeps heap
+    # comparisons total even when node ids have mixed types.
+    heap = [(0.0, next(counter), 0.0, 0.0, source)]
+    while heap:
+        cost, _, alen, atime, node = heapq.heappop(heap)
+        if node in dist:
+            continue  # stale entry
+        if cutoff is not None and cost > cutoff:
+            break  # everything left on the heap is beyond the cutoff
+        dist[node] = cost
+        acc_len[node] = alen
+        acc_time[node] = atime
+        for nbr, edata in graph[node].items():
+            if nbr in dist:
+                continue
+            nc = cost + weight_func(node, nbr, edata)
+            if cutoff is not None and nc > cutoff:
+                continue
+            nl = alen + float(edata.get("length_m") or 0.0)
+            nt = atime + float(edata.get("travel_time_s") or 0.0)
+            heapq.heappush(heap, (nc, next(counter), nl, nt, nbr))
+    return dist, acc_len, acc_time
 
 
 class NetworkODMatrixService:
@@ -37,6 +87,7 @@ class NetworkODMatrixService:
         profile: Optional[TravelProfile] = None,
         impedance: Optional[Impedance] = None,
         barriers: Optional[List[Barrier]] = None,
+        cutoff_s: Optional[float] = None,
     ) -> List[ODPair]:
         """
         Computes batch origin-destination travel costs and distances.
@@ -49,6 +100,9 @@ class NetworkODMatrixService:
             profile: TravelProfile.
             impedance: Impedance model.
             barriers: Optional list of barriers to avoid.
+            cutoff_s: Optional cost cutoff in the ACTIVE impedance's units
+                (seconds for travel_time_s, meters for length_m). Pairs whose
+                cost exceeds it are returned unreachable (#449).
 
         Returns:
             List of ODPair objects.
@@ -59,6 +113,7 @@ class NetworkODMatrixService:
         res = self._compute_od(
             origins, destinations, graph, network_dataset,
             profile=profile, impedance=impedance, barriers=barriers,
+            cutoff_s=cutoff_s, need_paths=False,
         )
 
         od_matrix: List[ODPair] = []
@@ -102,6 +157,7 @@ class NetworkODMatrixService:
         profile: Optional[TravelProfile] = None,
         impedance: Optional[Impedance] = None,
         barriers: Optional[List[Barrier]] = None,
+        cutoff_s: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Batch OD with full shortest-path trees, one Dijkstra per unique origin.
 
@@ -126,6 +182,7 @@ class NetworkODMatrixService:
         res = self._compute_od(
             origins, destinations, graph, network_dataset,
             profile=profile, impedance=impedance, barriers=barriers,
+            cutoff_s=cutoff_s, need_paths=True,
         )
 
         pairs: Dict[Tuple[str, str], Dict[str, Any]] = {}
@@ -170,8 +227,20 @@ class NetworkODMatrixService:
         profile: Optional[TravelProfile] = None,
         impedance: Optional[Impedance] = None,
         barriers: Optional[List[Barrier]] = None,
+        cutoff_s: Optional[float] = None,
+        need_paths: bool = False,
     ) -> Dict[str, Any]:
-        """Shared multi-source Dijkstra core used by matrix and path variants."""
+        """Shared multi-source Dijkstra core used by matrix and path variants.
+
+        #449: ``need_paths=False`` (cost-only matrix) runs
+        ``_single_source_costs`` — an accumulating Dijkstra with genuine
+        ``cutoff_s`` pruning and NO path materialization (networkx's
+        ``single_source_dijkstra`` builds full path lists for every reachable
+        node, O(V²) worst case, which the old code then re-walked in Python
+        to re-sum distance/time). ``need_paths=True`` keeps networkx's
+        path-returning variant (closest-facility / VRP reconstruct routes
+        from the trees) and forwards the cutoff to it.
+        """
         # Resolve all origin nodes and labels
         orig_nodes: List[Tuple[str, str]] = [
             self.router._resolve_node(o, network_dataset) for o in origins
@@ -188,20 +257,14 @@ class NetworkODMatrixService:
         elif profile and profile.impedance_field:
             cost_field = profile.impedance_field
 
-        turn_penalty = impedance.turn_penalty_s if impedance else 0.0
-        if profile and profile.turn_penalty_s:
-            turn_penalty = max(turn_penalty, profile.turn_penalty_s)
-
         # #455: OD trees carry pure edge costs — a turn penalty depends on the
         # full path context that a shortest-path tree does not have. See
         # build_weight_func's docstring for the cross-tool semantics.
         weight_func = build_weight_func(cost_field)
 
-        # GIS-19: one Dijkstra per unique origin with the impedance weight, then
-        # recover distance and time by walking the shortest-path predecessor
-        # tree summing length_m / travel_time_s along each edge. The previous
-        # code ran THREE full Dijkstra passes per origin (cost, distance, time)
-        # even though distance and time accumulate along the same shortest path.
+        # GIS-19: one Dijkstra per unique origin with the impedance weight;
+        # distance and time accumulate along the same shortest-path tree.
+        # #449: the cost-only variant accumulates them during the search.
         unique_orig_nodes = set(n_id for n_id, _ in orig_nodes)
         dijkstra_results: Dict[str, Dict[str, float]] = {}
         dijkstra_dist: Dict[str, Dict[str, float]] = {}
@@ -209,12 +272,26 @@ class NetworkODMatrixService:
         dijkstra_paths: Dict[str, Dict[str, list]] = {}
 
         for o_node in unique_orig_nodes:
-            if o_node in graph_view:
-                # nx.single_source_dijkstra returns (dist_dict, path_dict);
-                # path_dict maps each reachable node to its FULL path list
-                # ([origin, ..., node]). Sum length_m / travel_time_s along each
-                # path in one O(path-length) pass per node — no extra Dijkstra.
-                dists, paths = nx.single_source_dijkstra(graph_view, o_node, weight=weight_func)
+            if o_node not in graph_view:
+                dijkstra_results[o_node] = {}
+                dijkstra_paths[o_node] = {}
+                dijkstra_dist[o_node] = {}
+                dijkstra_time[o_node] = {}
+                continue
+            if not need_paths:
+                dists, distances, times = _single_source_costs(
+                    graph_view, o_node, weight_func, cutoff=cutoff_s
+                )
+                dijkstra_results[o_node] = dists
+                dijkstra_dist[o_node] = distances
+                dijkstra_time[o_node] = times
+                dijkstra_paths[o_node] = {}
+            else:
+                # Path variant: networkx returns (dist_dict, path_dict); the
+                # cutoff keeps nodes beyond it out of both maps.
+                dists, paths = nx.single_source_dijkstra(
+                    graph_view, o_node, weight=weight_func, cutoff=cutoff_s
+                )
                 dijkstra_results[o_node] = dists
                 dijkstra_paths[o_node] = paths
 
@@ -235,11 +312,6 @@ class NetworkODMatrixService:
                     times[node] = time_acc
                 dijkstra_dist[o_node] = distances
                 dijkstra_time[o_node] = times
-            else:
-                dijkstra_results[o_node] = {}
-                dijkstra_paths[o_node] = {}
-                dijkstra_dist[o_node] = {}
-                dijkstra_time[o_node] = {}
 
         return {
             "origin_nodes": orig_nodes,
