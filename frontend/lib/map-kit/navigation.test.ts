@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { flyTo, fitBounds, jumpTo, validateCoordinate, calculateBBox, calculateBBoxAsync, polygonAreaKm2 } from './navigation';
+import { flyTo, fitBounds, jumpTo, validateCoordinate, calculateBBox, calculateBBoxAsync, polygonAreaKm2, formatArea } from './navigation';
 import type { ViewportParams } from './types';
 import type { Map } from 'maplibre-gl';
 
@@ -157,5 +157,18 @@ describe('navigation', () => {
       expect(areaUnclosed).toBeGreaterThan(0);
       expect(areaUnclosed).toBeCloseTo(areaClosed, 5);
     });
+  });
+});
+
+describe('formatArea (#405)', () => {
+  it('renders sub-km² areas in m² without the 1000× distance-formatter error', () => {
+    // 0.5 km² is 500,000 m² — the distance formatter used to render "500m²".
+    expect(formatArea(0.5)).toBe('500,000m²');
+    expect(formatArea(0.0000005)).toBe('1m²');
+  });
+
+  it('renders >=1 km² areas in km²', () => {
+    expect(formatArea(2.35)).toBe('2.35km²');
+    expect(formatArea(1)).toBe('1.00km²');
   });
 });

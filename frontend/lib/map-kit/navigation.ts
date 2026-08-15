@@ -219,7 +219,7 @@ export function measure(
   return {
     success: true,
     data: area,
-    summary: `Area: ${formatDistance(area)}²`
+    summary: `Area: ${formatArea(area)}`
   };
 }
 
@@ -254,4 +254,17 @@ export function formatDistance(km: number): string {
     return `${(km * 1000).toFixed(0)}m`;
   }
   return `${km.toFixed(2)}km`;
+}
+
+/**
+ * Formats an area value (in km²) into a human-readable string.
+ * Values < 1 km² are shown in m²; >= 1 km² in km². Distance and area
+ * formatters are NOT interchangeable — formatDistance on a km² value
+ * renders 0.5 km² as "500m²" (1000× too small).
+ */
+export function formatArea(km2: number): string {
+  if (km2 < 1) {
+    return `${Math.round(km2 * 1_000_000).toLocaleString('en-US')}m²`;
+  }
+  return `${km2.toFixed(2)}km²`;
 }
