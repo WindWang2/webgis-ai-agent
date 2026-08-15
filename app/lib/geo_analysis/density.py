@@ -40,11 +40,106 @@ def _extract_numeric_values(gdf, value_field):
     out = _filter_numeric_gdf(gdf, value_field)
     return None if out is None else out[1]
 
+
 # OOM guard: cap the KDE grid to prevent unbounded memory allocation.
 _MAX_GRID_CELLS = 100_000
 # Weighted-point repeat cap: prevents large dynamic-range weights from
 # exploding the kde_data array.
 _MAX_REPEAT_FACTOR = 100
+# #384: cap the KDE *input point count*. gaussian_kde evaluation costs
+# O(n_points × n_cells), so an uncapped 1M-point input on the 100k-cell grid
+# means ~1e11 kernel evaluations and the tool never returns. Above the cap we
+# deterministically subsample (evenly spaced indices, weights aligned) and
+# report the sampling on the result envelope.
+_MAX_KDE_POINTS = 200_000
+# Evaluation chunk: bounds peak per-call memory when both the (capped) point
+# count and the grid are large.
+_KDE_EVAL_CHUNK = 25_000
+
+
+def _cap_kde_points(kde_data, kde_weights=None):
+    """Cap the number of KDE input points at :data:`_MAX_KDE_POINTS`.
+
+    Args:
+        kde_data: ``(2, n)`` array of UTM coordinates.
+        kde_weights: optional ``(n,)`` point weights (kept row-aligned).
+
+    Returns:
+        ``(kde_data, kde_weights, n_total, n_used)``. When ``n_total`` exceeds
+        the cap the points are subsampled deterministically with evenly spaced
+        indices (spatial distribution preserved, results reproducible) and a
+        warning is logged; the caller surfaces the sampling on the result.
+    """
+    n_total = kde_data.shape[1]
+    n_used = n_total
+    if n_total > _MAX_KDE_POINTS:
+        n_used = _MAX_KDE_POINTS
+        idx = np.linspace(0, n_total - 1, n_used).astype(int)
+        kde_data = kde_data[:, idx]
+        if kde_weights is not None:
+            kde_weights = kde_weights[idx]
+        logger.warning(
+            f"KDE input capped: {n_total} points subsampled to {n_used} "
+            f"(max {_MAX_KDE_POINTS}); density approximates the full dataset."
+        )
+    return kde_data, kde_weights, n_total, n_used
+
+
+def _fit_kde(kde_data, bandwidth, weights=None):
+    """Fit a gaussian_kde whose kernel is strictly isotropic, std = bw meters.
+
+    Shared by :func:`kde_surface` and :func:`kde_contours` so both tools use
+    the same bandwidth/std logic (#384). Previously each tool scaled the data
+    covariance by a scalar factor, so a requested isotropic meter bandwidth
+    turned into an elliptical kernel shaped like the point cloud (a 1000 m
+    request on a 10 km × 1 km corridor became ~1819 m × 184 m), and the two
+    tools used different std statistics (per-axis mean vs pooled).
+
+    gaussian_kde evaluates through ``cho_cov`` (documented attribute: the
+    Cholesky decomposition of the kernel covariance); overriding it with
+    ``bw * I`` makes the kernel exactly isotropic in meters, independent of
+    the cloud's covariance. Density normalization is unaffected (gaussian_kde
+    already normalizes the weights).
+
+    Args:
+        kde_data: ``(2, n)`` array of UTM coordinates.
+        bandwidth: requested kernel std in meters; ``<= 0`` = Scott auto
+            (``factor × data_std`` with ``data_std`` the mean per-axis std).
+        weights: optional ``(n,)`` point weights.
+
+    Returns:
+        ``(kde, bw)`` with ``bw`` the kernel std in meters.
+    """
+    from scipy.stats import gaussian_kde
+
+    # Fit once (also surfaces degenerate/coincident input as LinAlgError,
+    # which the callers map to a structured NumericalError).
+    kde = gaussian_kde(kde_data, bw_method="scott", weights=weights)
+    if bandwidth <= 0:
+        data_std = float(np.mean(np.std(kde_data, axis=1)))
+        if data_std == 0:
+            data_std = 1.0
+        bw = float(kde.factor * data_std)
+    else:
+        bw = float(bandwidth)
+    kde.cho_cov = np.eye(kde_data.shape[0], dtype=float) * bw
+    return kde, bw
+
+
+def _evaluate_kde(kde, points):
+    """Evaluate a fitted gaussian_kde over ``(2, m)`` points in chunks.
+
+    Chunking bounds peak per-call memory when both the (capped) point count
+    and the evaluation grid are large (#384).
+    """
+    n_pts = points.shape[1]
+    if n_pts <= _KDE_EVAL_CHUNK:
+        return kde(points)
+    out = np.empty(n_pts, dtype=float)
+    for start in range(0, n_pts, _KDE_EVAL_CHUNK):
+        stop = min(start + _KDE_EVAL_CHUNK, n_pts)
+        out[start:stop] = kde(points[:, start:stop])
+    return out
 
 
 def kde_surface(
@@ -113,13 +208,7 @@ def kde_surface(
         kde_weights = np.abs(weights.astype(float))
 
     kde_data = coords.T
-
-    # Bandwidth - always compute in CRS units (meters)
-    from scipy.stats import gaussian_kde
-
-    data_std = float(np.mean(np.std(kde_data, axis=1)))
-    if data_std == 0:
-        data_std = 1.0
+    kde_data, kde_weights, n_points_total, n_points_used = _cap_kde_points(kde_data, kde_weights)
 
     # All-zero weights make gaussian_kde's weighted covariance singular (sum
     # of weights = 0 -> division by zero). Fall back to unweighted rather
@@ -129,14 +218,8 @@ def kde_surface(
         kde_weights = None
 
     try:
-        if bandwidth <= 0:
-            kde = gaussian_kde(kde_data, bw_method="scott", weights=kde_weights)
-            bw = float(kde.factor * data_std)
-        else:
-            kde = gaussian_kde(
-                kde_data, bw_method=float(bandwidth / data_std), weights=kde_weights
-            )
-            bw = bandwidth
+        # #384: shared isotropic-meter-bandwidth logic with kde_contours.
+        kde, bw = _fit_kde(kde_data, bandwidth, kde_weights)
     except np.linalg.LinAlgError as e:
         # Degenerate input (all-coincident / collinear points) yields a
         # singular covariance matrix (C-5). Surface it as a structured error
@@ -177,7 +260,7 @@ def kde_surface(
     grid_y = np.linspace(ymin, ymax, ny)
     gx, gy = np.meshgrid(grid_x, grid_y)
     grid_coords = np.vstack([gx.ravel(), gy.ravel()])
-    density = kde(grid_coords).reshape(ny, nx)
+    density = _evaluate_kde(kde, grid_coords).reshape(ny, nx)
 
     max_d = density.max()
     threshold = max_d * 0.1
@@ -220,6 +303,9 @@ def kde_surface(
         },
         "bandwidth_m": round(bw, 1),
     }
+    if n_points_used < n_points_total:
+        # #384: input was subsampled to the point cap; say so on the envelope.
+        fc["sampled_points"] = {"used": n_points_used, "total": n_points_total}
     return GeoAnalysisResult(True, fc, f"KDE surface: {len(out_features)} cells, grid {nx}x{ny}, bw={bw:.0f}m")
 
 
@@ -246,7 +332,6 @@ def kde_contours(
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        from scipy.stats import gaussian_kde
     except ImportError:
         return GeoAnalysisResult(
             False, None, "需要 matplotlib 和 scipy",
@@ -269,15 +354,11 @@ def kde_contours(
 
     coords = extract_centroids(gdf)
     kde_data = coords.T
+    kde_data, _kde_weights, n_points_total, n_points_used = _cap_kde_points(kde_data)
 
-    data_std = float(np.std(kde_data))
-    if data_std == 0:
-        data_std = 1.0
     try:
-        kde = gaussian_kde(
-            kde_data,
-            bw_method="scott" if bandwidth <= 0 else float(bandwidth / data_std),
-        )
+        # #384: shared isotropic-meter-bandwidth logic with kde_surface.
+        kde, _bw = _fit_kde(kde_data, bandwidth)
     except np.linalg.LinAlgError as e:
         # Degenerate input (coincident/collinear points) -> singular
         # covariance (C-5). Surface a structured error.
@@ -292,7 +373,7 @@ def kde_contours(
     buf_x, buf_y = (xmax - xmin) * 0.2, (ymax - ymin) * 0.2
     X, Y = np.mgrid[xmin - buf_x:xmax + buf_x:100j, ymin - buf_y:ymax + buf_y:100j]
     positions = np.vstack([X.ravel(), Y.ravel()])
-    Z = np.reshape(kde(positions).T, X.shape)
+    Z = np.reshape(_evaluate_kde(kde, positions).T, X.shape)
 
     fig, ax = plt.subplots()
     cs = ax.contourf(X, Y, Z, levels=levels)
@@ -353,6 +434,9 @@ def kde_contours(
         "count": len(out_features),
         "levels_count": len(cs.levels),
     }
+    if n_points_used < n_points_total:
+        # #384: input was subsampled to the point cap; say so on the envelope.
+        fc["sampled_points"] = {"used": n_points_used, "total": n_points_total}
     if legend_spec is not None:
         fc["legend_spec"] = legend_spec
 
