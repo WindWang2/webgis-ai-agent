@@ -70,6 +70,24 @@ INDEX_FORMULAS: Dict[str, Tuple[List[str], Callable[..., np.ndarray]]] = {
 }
 
 
+# Sentinel-2 L2A reflectance spans [0, 1]; DN assets span [0, 10000].
+# Anything reliably above the reflectance range is DN-scaled.
+_DN_SCALE_THRESHOLD = 1.5
+
+
+def _maybe_dn_to_reflectance(arr: np.ndarray) -> np.ndarray:
+    """#382: EVI 的 +1 与 -7.5·b 项只在反射率单位下物理成立。
+
+    Sentinel-2 L2A 常以 DN (0-10000) 下发。比值型指数 (NDVI/NDWI/NBR)
+    对线性缩放不变，EVI 不是 —— DN 输入会让 EVI ~3.5× 虚高、超出物理
+    [-1,1] 区间。对 DN 状输入除以 10000 归一化。
+    """
+    finite = arr[np.isfinite(arr)]
+    if finite.size and float(finite.max()) > _DN_SCALE_THRESHOLD:
+        return arr / 10000.0
+    return arr
+
+
 def compute_index_array(index_type: str, **bands: np.ndarray) -> np.ndarray:
     """按预设公式计算光谱指数数组"""
     idx = index_type.lower()
@@ -77,6 +95,8 @@ def compute_index_array(index_type: str, **bands: np.ndarray) -> np.ndarray:
         raise ValueError(f"Unsupported index type '{index_type}'")
     bands_needed, formula = INDEX_FORMULAS[idx]
     args = [bands[b] for b in bands_needed]
+    if idx == "evi":
+        args = [_maybe_dn_to_reflectance(a) for a in args]
     return formula(*args)
 
 
