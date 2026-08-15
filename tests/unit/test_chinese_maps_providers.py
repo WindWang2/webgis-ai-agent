@@ -360,7 +360,7 @@ from app.tools.chinese_maps.tianditu import TiandituProvider
 async def test_search_poi_tianditu_no_crs_shift():
     """Tianditu (CGCS2000 ≈ WGS84): coords pass through unchanged."""
     fake = FakeGet({
-        "/search": {
+        "/v2/search": {
             "pois": [
                 {"name": "学校", "lonlat": "116.40 39.90", "address": "某路"},
             ],

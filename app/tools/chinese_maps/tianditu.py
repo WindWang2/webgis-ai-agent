@@ -68,7 +68,9 @@ class TiandituProvider:
         if city and city.isdigit():
             payload["specifyAdminCode"] = city
         post_str = json.dumps(payload, ensure_ascii=False)
-        data = await self._get("/search", {"postStr": post_str, "type": "query"})
+        # 2026-08 实测：官方搜索服务已从 /search 迁移到 /v2/search（旧路径
+        # 返回品牌化 404 HTML 页），geocoder 仍在 /geocoder 不变。
+        data = await self._get("/v2/search", {"postStr": post_str, "type": "query"})
         if "error" in data:
             return data
         pois = data.get("pois", [])
@@ -99,7 +101,7 @@ class TiandituProvider:
             "count": str(min(limit, 50)),
         }
         post_str = json.dumps(payload, ensure_ascii=False)
-        data = await self._get("/search", {"postStr": post_str, "type": "query"})
+        data = await self._get("/v2/search", {"postStr": post_str, "type": "query"})
         if "error" in data:
             return data
         pois = data.get("pois", [])
