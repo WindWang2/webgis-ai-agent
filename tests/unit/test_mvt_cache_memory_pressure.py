@@ -1,7 +1,10 @@
 """Unit tests for MVT cache memory pressure bounds, lifecycle invalidation, and concurrency contracts."""
 
 import asyncio
+import math
+
 import pytest
+import shapely
 
 from app.services.mvt import (
     SingleFlightManager,
@@ -55,6 +58,76 @@ def test_spatial_index_cache_byte_budget_eviction():
     assert cache.total_bytes <= cache._max_bytes
     assert cache.get(("s1", "r3")) is not None
     assert cache.get(("s1", "r1")) is None  # r1 was evicted to enforce byte budget
+
+
+def _complex_polygon_fc(n_vertices: int) -> dict:
+    """Single-feature FC whose polygon ring has n_vertices distinct points.
+
+    A closed ring (first == last point per GeoJSON) holds n_vertices + 1
+    coordinates inside shapely; the ring is a regular polygon (no
+    self-intersections) around (116.0, 39.0).
+    """
+    ring = [
+        [
+            116.0 + 0.01 * math.cos(2 * math.pi * i / n_vertices),
+            39.0 + 0.01 * math.sin(2 * math.pi * i / n_vertices),
+        ]
+        for i in range(n_vertices)
+    ]
+    ring.append(ring[0])
+    return {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+            "properties": {"id": 0, "name": "complex"},
+        }],
+    }
+
+
+def test_spatial_index_entry_estimate_scales_with_geometry_vertices():
+    """Issue #395: estimated_bytes reflects the real coordinate count, not a flat ~350 B/feature."""
+    n_vertices = 50_000
+    entry = build_spatial_index_entry(("s1", "r1"), _complex_polygon_fc(n_vertices))
+    assert len(entry.features) == 1
+
+    # Both retained shapely copies (lon/lat and z0) count the closed ring with
+    # its duplicated closing point: 2 x (n_vertices + 1) coordinates.
+    coords = int(shapely.get_num_coordinates(entry.geoms[0])) + int(
+        shapely.get_num_coordinates(entry.geoms_lonlat[0])
+    )
+    assert coords >= 2 * n_vertices
+
+    # The old heuristic charged this entry 1*350 + 2*200 + 80 + 1024 ≈ 1.8 KB
+    # (never evicted, yet real Python objects are ~6-10 MB per 100k vertices).
+    # The new estimate is coordinate-count-driven: at least ~50 B per real
+    # vertex, and within the same order of magnitude as the measured footprint.
+    assert entry.estimated_bytes >= coords * 50
+    assert entry.estimated_bytes >= 2 * 1024 * 1024  # MBs, not KBs
+    assert entry.estimated_bytes <= coords * 400  # sanity: not a 100x overcount
+    assert entry.estimated_bytes > 100_000
+
+
+def test_spatial_index_cache_byte_budget_evicts_complex_geometry():
+    """Issue #395: complex polygons are charged their true footprint, so the
+    byte budget actually evicts them (the 350 B/feature heuristic let a single
+    complex ref exceed the whole 256 MB cap 100x+)."""
+    fc = _complex_polygon_fc(50_000)
+
+    # One 50k-vertex entry alone costs ~8 MB; a 1 MB budget must not retain it.
+    cache = SpatialIndexCache(max_refs=100, max_bytes=1024 * 1024)
+    entry = cache.get_or_build(("s1", "r1"), lambda: build_spatial_index_entry(("s1", "r1"), fc))
+    assert entry.estimated_bytes > cache._max_bytes
+    assert cache.get(("s1", "r1")) is None  # evicted immediately
+    assert cache.total_bytes == 0
+
+    # Two entries under a 12 MB budget: second insert evicts the oldest LRU.
+    cache2 = SpatialIndexCache(max_refs=100, max_bytes=12 * 1024 * 1024)
+    cache2.get_or_build(("s1", "r1"), lambda: build_spatial_index_entry(("s1", "r1"), fc))
+    cache2.get_or_build(("s1", "r2"), lambda: build_spatial_index_entry(("s1", "r2"), fc))
+    assert cache2.total_bytes <= cache2._max_bytes
+    assert cache2.get(("s1", "r2")) is not None
+    assert cache2.get(("s1", "r1")) is None  # oldest evicted to stay in budget
 
 
 def test_spatial_index_cache_invalidate_ref_and_session():
