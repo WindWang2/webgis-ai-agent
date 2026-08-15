@@ -40,9 +40,12 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./data/webgis.db"
 
     # LLM 配置 (OpenAI 兼容接口)
-    LLM_BASE_URL: str = "https://api.deepseek.com"
+    # 项目默认：阶跃 Step Plan 的 step-3.7-flash（推理模型，响应含
+    # reasoning_content，正文在 content）。API key 只经环境变量注入，
+    # 代码默认值保持占位符（生产模式启动校验会拒绝占位符）。
+    LLM_BASE_URL: str = "https://api.stepfun.com/step_plan/v1"
     LLM_API_KEY: str = "your-api-key-here"
-    LLM_MODEL: str = "deepseek-chat"
+    LLM_MODEL: str = "step-3.7-flash"
     # 规划阶段专用模型；留空时回退 LLM_MODEL（便于以后单独配更便宜的模型）
     LLM_PLANNER_MODEL: str = ""
     LLM_PROMPT_CACHING_ENABLED: bool = True
