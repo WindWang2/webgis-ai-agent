@@ -346,42 +346,73 @@ class AmapProvider:
 
     # ── Amap-only capabilities (NOT in the Protocol; no fallback) ──
 
+    # Fixed ~1.1 km (driving) / ~390 m (riding) / ~66 m (walking) probe lines
+    # made every isochrone saturate at the probe distance regardless of
+    # ``minutes``: ``ratio = budget / probe_dist`` was always > 1 and got
+    # capped at 1.0, so the returned polygon was a function of the mode only
+    # while ``radius_m`` (speed × time) contradicted the geometry (GIS-…).
+    # Instead we now probe FAR past the nominal budget once to measure the
+    # actual route speed, scale proportionally, then run one bounded
+    # correction probe — so the polygon genuinely grows with ``minutes`` and
+    # tracks real road speeds. Quota stays bounded: 2 probes × 12 radials max.
+    _ISOCHRONE_PROBE_MARGIN = 1.25   # first probe beyond the nominal budget
+    _ISOCHRONE_CORRECTION_MARGIN = 1.05
+
     async def isochrone(self, center: list, minutes: int, mode: str) -> dict:
-        """沿 N 个方向调用路径规划 API，收集各方向在 `minutes` 时间内的最远到达点，用 Convex Hull 近似等时圈。"""
+        """沿 N 个方向调用路径规划 API，收集各方向在 `minutes` 时间内的最远到达点，用 Convex Hull 近似等时圈。
+
+        每个方向先做一次超出名义预算 ~25% 的远探测来实测路线速度，再按
+        ``速度 × 时间`` 推算可达距离，并做一次有界的校正探测；探测失败时
+        直接用 ``speed × time`` 推出半径（兜底圆已按 cos(lat) 修正两轴）。
+        """
         import math
 
         num_radials = 12  # 每30°一条射线
-        km_scale = {"driving": 1.0, "walking": 0.06, "riding": 0.35}[mode]
+        budget_s = minutes * 60.0
+        nominal_speed = _speed_mps(mode)
+        target_m = budget_s * nominal_speed
+        # 经度每度米数随纬度收缩：cos(lat) 修正，两极附近下限保护。
+        cos_lat = max(math.cos(math.radians(center[1])), 0.02)
         angle_step = 2 * math.pi / num_radials
 
-        # 生成候选径向目的地（在中心点周围大致方向）
-        async def _radial_point(angle: float) -> tuple[float, float]:
-            # 用单位向量 × 固定半径来确定方向，再做线性缩放
-            probe_lng = center[0] + 0.01 * math.cos(angle) * km_scale
-            probe_lat = center[1] + 0.01 * math.sin(angle) * km_scale
+        def _offset(angle: float, dist_m: float) -> tuple[float, float]:
+            """中心点向 ``angle`` 方向移动 ``dist_m`` 米（WGS84 近似，含 cos(lat)）。"""
+            dlat = dist_m * math.sin(angle) / 111320.0
+            dlng = dist_m * math.cos(angle) / (111320.0 * cos_lat)
+            return center[0] + dlng, center[1] + dlat
 
-            try:
-                dist_m = await self._get_route_distance(center, [probe_lng, probe_lat], mode)
-                ratio = (minutes * 60 * _speed_mps(mode)) / max(dist_m, 1)
-                capped_ratio = min(ratio, 1.0)  # 不超过探测器本身的位置
-                return (
-                    center[0] + (probe_lng - center[0]) * capped_ratio,
-                    center[1] + (probe_lat - center[1]) * capped_ratio,
-                )
-            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError):
-                # 回退：用均匀半径圆上的点
-                fallback_radius_m = minutes * 60 * _speed_mps(mode)
-                return (
-                    center[0] + fallback_radius_m * math.cos(angle) / 111000,
-                    center[1] + fallback_radius_m * math.sin(angle) / 111000,
-                )
+        async def _radial_point(angle: float) -> tuple[float, float]:
+            # 1) 一次“远探测”：超出名义预算，路线时长才会跨住预算，从而能实测速度。
+            probe_m = target_m * self._ISOCHRONE_PROBE_MARGIN
+            probe_pt = _offset(angle, probe_m)
+            dist_m, dur_s = await self._probe_route(center, probe_pt, mode)
+            if dist_m <= 0:
+                # 探测失败（API 错误/无路线）：直接用 speed × time 推半径。
+                return _offset(angle, target_m)
+
+            speed_mps = (dist_m / dur_s) if dur_s and dur_s > 0 else nominal_speed
+            reachable_m = speed_mps * budget_s
+
+            # 2) 一次有界校正探测：在推算的可达距离处再量一次，收窄误差。
+            if reachable_m > 0:
+                corr_pt = _offset(angle, reachable_m * self._ISOCHRONE_CORRECTION_MARGIN)
+                dist2, dur2 = await self._probe_route(center, corr_pt, mode)
+                if dist2 > 0:
+                    speed2 = (dist2 / dur2) if dur2 and dur2 > 0 else speed_mps
+                    reachable_m = speed2 * budget_s
+
+            return _offset(angle, max(reachable_m, 0.0))
 
         semaphore = asyncio.Semaphore(6)
         angles = [angle_step * i for i in range(num_radials)]
 
         async def _guarded_radial(angle: float) -> tuple[float, float]:
-            async with semaphore:
-                return await _radial_point(angle)
+            try:
+                async with semaphore:
+                    return await _radial_point(angle)
+            except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError):
+                # 兜底：均匀半径圆上的点（speed × time，cos(lat) 修正）。
+                return _offset(angle, target_m)
 
         pts = await asyncio.gather(*[_guarded_radial(a) for a in angles])
 
@@ -394,6 +425,14 @@ class AmapProvider:
         else:
             geometry = {"type": "Point", "coordinates": center}
 
+        # radius_m 与几何一致：取各方向最终点的平均径向距离，而非名义值。
+        def _radial_dist_m(pt: tuple[float, float]) -> float:
+            dx = (pt[0] - center[0]) * 111320.0 * cos_lat
+            dy = (pt[1] - center[1]) * 111320.0
+            return math.hypot(dx, dy)
+
+        radius_m = int(round(sum(_radial_dist_m(p) for p in pts) / len(pts))) if pts else 0
+
         return {
             "type": "Feature",
             "geometry": geometry,
@@ -402,7 +441,7 @@ class AmapProvider:
                 "minutes": minutes,
                 "mode": mode,
                 "provider": "amap",
-                "radius_m": minutes * 60 * _speed_mps(mode),
+                "radius_m": radius_m,
             },
         }
 
@@ -520,10 +559,13 @@ class AmapProvider:
             "provider": "amap",
         }
 
-    async def _get_route_distance(
+    async def _probe_route(
         self, origin: list, destination: list, mode: str,
-    ) -> float:
-        """调用 Amap 路径规划 API，返回两点间单程距离（米）。用于等时圈半径探测。"""
+    ) -> tuple[float, float]:
+        """调用 Amap 路径规划 API，返回 (距离米, 时长秒)，失败返回 (0.0, 0.0)。
+
+        用于等时圈探测：时长用来实测路线平均速度，避免用名义速度外推。
+        """
         try:
             og_lng, og_lat = origin
             dg_lng, dg_lat = destination
@@ -543,14 +585,22 @@ class AmapProvider:
                 data = await self._get("/direction/driving", params)
 
             if "error" in data:
-                return 0.0
+                return 0.0, 0.0
             route = data.get("route", {})
             paths = route.get("paths", [])
             if not paths:
-                return 0.0
-            return float(paths[0].get("distance", 0))
+                return 0.0, 0.0
+            path = paths[0]
+            return float(path.get("distance", 0)), float(path.get("duration", 0))
         except (aiohttp.ClientError, json.JSONDecodeError, KeyError, ValueError, TypeError):
-            return 0.0
+            return 0.0, 0.0
+
+    async def _get_route_distance(
+        self, origin: list, destination: list, mode: str,
+    ) -> float:
+        """调用 Amap 路径规划 API，返回两点间单程距离（米）。用于等时圈半径探测。"""
+        dist_m, _ = await self._probe_route(origin, destination, mode)
+        return dist_m
 
     # ── output shaping (non-POI; one transform_geojson pass) ──────
 
