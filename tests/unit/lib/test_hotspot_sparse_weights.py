@@ -6,7 +6,6 @@ workers. Getis-Ord only needs ``w @ values``, row sums, and squared row
 sums; all three are natively supported by CSR.
 """
 import numpy as np
-import pytest
 from scipy.stats import norm
 
 from app.lib.geo_analysis.statistics import hotspot_narrated
