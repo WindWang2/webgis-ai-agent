@@ -208,7 +208,6 @@ async def test_register_kdf_off_loop(monkeypatch):
 @pytest.mark.asyncio
 async def test_login_kdf_off_loop(monkeypatch):
     """verify_password (scrypt, dummy-hash path doubled) must run in a worker thread."""
-    from datetime import datetime, timezone
 
     from app.api.routes import auth as auth_mod
     from app.models.db_model import User
