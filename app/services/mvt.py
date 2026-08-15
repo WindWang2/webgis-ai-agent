@@ -93,6 +93,19 @@ _IS_POINT = frozenset({"Point", "MultiPoint"})
 _IS_LINE = frozenset({"LineString", "MultiLineString"})
 _IS_POLY = frozenset({"Polygon", "MultiPolygon"})
 
+# ─── spatial index memory accounting (Issue #395) ────────────────────────────
+# Byte allowances used by build_spatial_index_entry's estimated_bytes. The old
+# flat heuristic (~350 B/feature) was only valid for points and simple
+# geometries; entries retain the raw feature dicts plus TWO shapely copies
+# (lon/lat and z0) of every geometry, and for complex polygons the Python
+# coordinate objects dominate (a 100k-vertex polygon is ~6-10 MB of Python
+# objects). Estimates are computed once at insert time — the cache LRU only
+# ever reads the resulting scalar, never re-estimates on get.
+_COORD_OBJ_BYTES = 64  # per counted vertex: ~2 Python floats (48 B) in the raw
+# dict + packed float64 storage (2 x 16 B) across the two shapely copies
+_FEATURE_OBJ_BYTES = 400  # feature/geometry/properties dict container overhead
+_GEOM_OBJ_BYTES = 256  # per shapely wrapper object (GEOS struct + Python), per copy
+
 # ─── optional shapely / numpy ───────────────────────────────────────────────
 try:  # pragma: no cover - exercised only in environments without shapely
     import numpy as np
@@ -1059,11 +1072,30 @@ def build_spatial_index_entry(key, data) -> SpatialIndexEntry:
         except Exception:  # pragma: no cover - defensive
             tree = None
 
-    # Calculate estimated memory footprint for size-aware cache budgeting
+    # Calculate estimated memory footprint for size-aware cache budgeting.
+    # Issue #395: the old per-feature constant (~350 B) under-counted complex
+    # polygons by 100x+ (a 100k-vertex polygon retains ~6-10 MB of Python
+    # coordinate objects + two shapely copies), so the byte LRU never actually
+    # capped memory. Estimate from the real payload instead: JSON structural
+    # bytes of the kept features (reusing the registry's walker) plus a
+    # per-vertex term counting BOTH retained shapely copies. Done once at
+    # insert time; the cache only stores the resulting scalar.
+    from app.tools.registry import _estimate_json_bytes  # local import: keep mvt's import graph light
+
+    vertex_count = 0
+    if _SHAPELY and geoms:
+        try:
+            vertex_count = int(shapely.get_num_coordinates(geoms).sum()) + int(
+                shapely.get_num_coordinates(geoms_lonlat).sum()
+            )
+        except Exception:  # pragma: no cover - defensive
+            vertex_count = 0
     est_bytes = (
-        len(kept) * 350
-        + len(geoms) * 200
-        + sum(200 for g in geoms_lonlat if g is not None)
+        _estimate_json_bytes(kept)
+        + vertex_count * _COORD_OBJ_BYTES
+        + len(kept) * _FEATURE_OBJ_BYTES
+        + len(geoms) * _GEOM_OBJ_BYTES
+        + len(geoms_lonlat) * _GEOM_OBJ_BYTES
         + len(bounds) * 80
         + 1024
     )

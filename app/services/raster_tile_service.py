@@ -47,16 +47,90 @@ _CRS_LESS_WARNED: "set[str]" = set()
 _CRS_LESS_WARNED_MAX = 4096
 
 
-def _normalize_channel(arr: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
-    """Normalize numeric array to 0-255 uint8 channel."""
+def _normalize_channel(
+    arr: np.ndarray,
+    valid_mask: np.ndarray,
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+) -> np.ndarray:
+    """Normalize numeric array to 0-255 uint8 channel.
+
+    ``vmin``/``vmax`` are the dataset-global stretch bounds (see
+    ``_get_band_stats``); every tile of a raster shares them so adjacent
+    tiles render with one consistent stretch (no color seams). When omitted
+    (fallback), the per-tile min/max are used.
+    """
     if not valid_mask.any():
         return np.zeros_like(arr, dtype=np.uint8)
-    vmin, vmax = float(arr[valid_mask].min()), float(arr[valid_mask].max())
+    if vmin is None or vmax is None:
+        vmin = float(arr[valid_mask].min())
+        vmax = float(arr[valid_mask].max())
+    norm = np.zeros_like(arr, dtype=float)
     if vmax > vmin:
-        norm = np.clip((arr - vmin) / (vmax - vmin), 0.0, 1.0)
-    else:
-        norm = np.zeros_like(arr, dtype=float)
+        # Compute only over valid pixels: NaN/Inf in invalid positions must
+        # not propagate into the cast (callers replace invalid positions with
+        # 0 via np.where anyway).
+        norm[valid_mask] = np.clip((arr[valid_mask] - vmin) / (vmax - vmin), 0.0, 1.0)
     return (norm * 255).astype(np.uint8)
+
+
+# ─── per-raster global normalization stats (Issue #410) ─────────────────────
+# Per-tile min/max stretching gave adjacent tiles of the same raster
+# different stretches -> visible color seams at tile boundaries. Compute the
+# dataset-global (vmin, vmax) per band once per raster and reuse it for every
+# tile. Bounded LRU-ish dict; double-checked under a lock (worst case two
+# threads compute the same raster's stats concurrently, one wins — harmless).
+_STATS_CACHE: "Dict[str, Tuple[Tuple[float, float], ...]]" = {}
+_STATS_CACHE_LOCK = threading.Lock()
+_STATS_MAX_ENTRIES = 512
+# Longest-side cap for the decimated stats read: bounds the one-time cost even
+# for huge rasters. The approximation is fine — tiles need one CONSISTENT
+# stretch, not pixel-exact global extremes.
+_STATS_MAX_SIDE = 2048
+
+
+def _compute_band_stats(src, count: int) -> Tuple[Tuple[float, float], ...]:
+    """Dataset-wide (vmin, vmax) per band, skipping nodata/NaN pixels.
+
+    Reads the whole raster decimated to at most ``_STATS_MAX_SIDE`` pixels on
+    the longest side (masked=True so nodata never enters the min/max; NaN and
+    Inf values are additionally filtered — the NaN-nodata fix from #372 stays
+    intact because declared-nodata NaN is masked AND stray NaNs are skipped).
+    """
+    scale = min(1.0, _STATS_MAX_SIDE / float(max(src.width, src.height)))
+    out_shape = (
+        count,
+        max(1, int(round(src.height * scale))),
+        max(1, int(round(src.width * scale))),
+    )
+    data = src.read(indexes=tuple(range(1, count + 1)), out_shape=out_shape, masked=True)
+    arr = np.ma.getdata(data)
+    mask = np.ma.getmaskarray(data)
+    stats: "list[Tuple[float, float]]" = []
+    for b in range(count):
+        valid = np.isfinite(arr[b]) & ~mask[b]
+        if not valid.any():
+            stats.append((0.0, 0.0))
+            continue
+        stats.append((float(arr[b][valid].min()), float(arr[b][valid].max())))
+    return tuple(stats)
+
+
+def _get_band_stats(raster_path: str, src, count: int) -> Tuple[Tuple[float, float], ...]:
+    """Cached per-raster (vmin, vmax) per band (double-checked, lock-protected)."""
+    with _STATS_CACHE_LOCK:
+        stats = _STATS_CACHE.get(raster_path)
+    if stats is not None:
+        return stats
+    stats = _compute_band_stats(src, count)
+    with _STATS_CACHE_LOCK:
+        existing = _STATS_CACHE.get(raster_path)
+        if existing is not None:
+            return existing
+        if len(_STATS_CACHE) >= _STATS_MAX_ENTRIES:
+            _STATS_CACHE.clear()  # bounded working set; staleness is best-effort
+        _STATS_CACHE[raster_path] = stats
+    return stats
 
 
 _RASTER_TILE_CACHE: Dict[Tuple[str, int, int, int, int, str], bytes] = collections.OrderedDict()
@@ -135,10 +209,26 @@ def render_raster_tile(
                 _set_cached_tile(key, res)
                 return res
 
-            # Perform windowed read from source file (O(win_size) memory)
+            # Perform windowed read from source file (O(win_size) memory).
+            # Issue #410: read ONLY the bands we render (max 3) — the previous
+            # full-band read decoded every band of a >3-band raster (~2x waste).
             count = min(src.count, 3)
+            indexes = tuple(range(1, count + 1))
             win_transform = rasterio.windows.transform(win, src.transform)
-            win_data = src.read(window=win)
+            win_data = src.read(indexes=indexes, window=win)
+
+            # Dataset-global stretch bounds (per band) so adjacent tiles share
+            # one normalization instead of per-tile min/max (seam fix, #410).
+            try:
+                stats = _get_band_stats(raster_path, src, count)
+            except Exception:
+                logger.debug(
+                    "[raster_tile_service] global stats unavailable for %s, "
+                    "falling back to per-tile normalization",
+                    raster_path,
+                    exc_info=True,
+                )
+                stats = None
 
             # Destination array for reproject
             dst_data = np.zeros((count, tile_size, tile_size), dtype=src.dtypes[0])
@@ -166,7 +256,8 @@ def render_raster_tile(
                 for c in range(3):
                     arr = dst_data[c]
                     valid_mask = np.isfinite(arr) & (arr != nodata_val) if np.issubdtype(arr.dtype, np.floating) else (arr != nodata_val)
-                    rgb[:, :, c] = np.where(valid_mask, _normalize_channel(arr, valid_mask), 0)
+                    stretch = stats[c] if stats is not None else ()
+                    rgb[:, :, c] = np.where(valid_mask, _normalize_channel(arr, valid_mask, *stretch), 0)
 
                 band_valid = (dst_data != nodata_val)
                 if finite_any is not None:
@@ -184,7 +275,8 @@ def render_raster_tile(
                     _set_cached_tile(key, res)
                     return res
 
-                gray = _normalize_channel(arr, valid_mask)
+                stretch = stats[0] if stats is not None else ()
+                gray = _normalize_channel(arr, valid_mask, *stretch)
                 alpha = np.where(valid_mask, 255, 0).astype(np.uint8)
                 rgba = np.dstack([gray, gray, gray, alpha])
                 img = Image.fromarray(rgba, "RGBA")
