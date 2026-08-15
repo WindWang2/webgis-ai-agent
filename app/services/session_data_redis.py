@@ -575,8 +575,19 @@ class RedisSessionStore(BaseSessionStore):
         cached = self._l1_get(session_id, "map_state")
         if cached is not None:
             return cached
-        await self._ensure_connected()
-        raw = await self._r.hgetall(self._state_key(session_id))
+        # #378: get_map_state sits on the request-admission path
+        # (_guard_body_session), so a Redis blip must degrade to empty
+        # map_state (cache-miss semantics) — never a 500 on every chat
+        # request. Same RedisError isolation as every sibling read.
+        try:
+            await self._ensure_connected()
+            raw = await self._r.hgetall(self._state_key(session_id))
+        except aioredis.RedisError as e:
+            logger.warning(
+                "Redis get_map_state failed for session %s: %s — returning empty state",
+                session_id, e,
+            )
+            return {}
         if not raw:
             return {}
         out: dict[str, Any] = {}
