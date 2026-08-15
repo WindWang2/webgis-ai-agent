@@ -71,7 +71,23 @@ class NetworkServiceAreaService:
         normalized_facilities = self._normalize_facilities(facilities)
         sorted_breaks = sorted(breaks)
 
-        graph_view = self.router._apply_barriers(graph, barriers)
+        # #453: resolve facility coordinates on a working-copy graph with the
+        # same virtual-node mid-edge splitting routing uses — the isochrone
+        # must be rooted at the facility's snapped position, not at the
+        # nearest edge endpoint (up to a full edge-length away).
+        graph_work = graph.copy() if graph is not None else graph
+        resolved_starts: List[Tuple[str, Tuple[float, float]]] = []
+        for fac in normalized_facilities:
+            fac_coords = (fac.geometry["coordinates"][0], fac.geometry["coordinates"][1])
+            if graph_work is not None:
+                node_id, _ = self.router._resolve_with_snap(
+                    fac_coords, network_dataset, graph=graph_work
+                )[:2]
+            else:
+                node_id, _ = self.router._resolve_node(fac_coords, network_dataset)
+            resolved_starts.append((node_id, fac_coords))
+
+        graph_view = self.router._apply_barriers(graph_work, barriers)
 
         cost_field = "travel_time_s" if break_unit == "minutes" else "length_m"
         if impedance and impedance.name:
@@ -102,10 +118,7 @@ class NetworkServiceAreaService:
 
         service_areas: List[ServiceArea] = []
 
-        for fac in normalized_facilities:
-            fac_coords = (fac.geometry["coordinates"][0], fac.geometry["coordinates"][1])
-            start_node_id, _ = self.router._resolve_node(fac_coords, network_dataset)
-
+        for fac, (start_node_id, fac_coords) in zip(normalized_facilities, resolved_starts):
             if start_node_id not in graph_view:
                 continue
 

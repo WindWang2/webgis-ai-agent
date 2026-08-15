@@ -241,15 +241,28 @@ class NetworkODMatrixService:
         path-returning variant (closest-facility / VRP reconstruct routes
         from the trees) and forwards the cutoff to it.
         """
+        # #453: coordinate / PointSnappingResult inputs are resolved on a
+        # single working-copy graph with the SAME virtual-node mid-edge
+        # splitting that network_shortest_path uses (GIS-01). The previous
+        # endpoint-only resolution made the OD family report up to ~2 edge
+        # lengths more than routing for the same physical OD pair. Node-id
+        # inputs keep using the caller's graph untouched (no copy).
+        needs_split = any(not isinstance(t, str) for t in origins) or any(
+            not isinstance(t, str) for t in destinations
+        )
+        graph_work = graph.copy() if needs_split else graph
+
         # Resolve all origin nodes and labels
         orig_nodes: List[Tuple[str, str]] = [
-            self.router._resolve_node(o, network_dataset) for o in origins
+            self.router._resolve_with_snap(o, network_dataset, graph=graph_work)[:2]
+            for o in origins
         ]
         dest_nodes: List[Tuple[str, str]] = [
-            self.router._resolve_node(d, network_dataset) for d in destinations
+            self.router._resolve_with_snap(d, network_dataset, graph=graph_work)[:2]
+            for d in destinations
         ]
 
-        graph_view = self.router._apply_barriers(graph, barriers)
+        graph_view = self.router._apply_barriers(graph_work, barriers)
 
         cost_field = "travel_time_s"
         if impedance and impedance.name:
