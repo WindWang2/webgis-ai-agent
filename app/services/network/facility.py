@@ -73,53 +73,79 @@ class NetworkClosestFacilityService:
                 summary={"demand_count": len(normalized_demands), "facility_count": len(normalized_facilities)},
             )
 
+        if travel_direction == "facility_to_incident":
+            origins, destinations = normalized_facilities, normalized_demands
+        else:
+            origins, destinations = normalized_demands, normalized_facilities
+
+        # PERF: one multi-source Dijkstra over all origins (instead of D×F
+        # independent shortest-path calls), reusing the predecessor trees to
+        # rebuild only the selected routes. The old per-pair
+        # ``network_shortest_path`` also ran a full ``graph.copy()`` for every
+        # coordinate pair — with D demands × F facilities that dominated the
+        # analysis.
+        od = self.od_service.network_od_paths(
+            origins=[o.geometry["coordinates"] for o in origins],
+            destinations=[d.geometry["coordinates"] for d in destinations],
+            graph=graph,
+            network_dataset=network_dataset,
+            profile=profile,
+            impedance=impedance,
+            barriers=barriers,
+        )
+        origin_labels = od["origin_labels"]
+        dest_labels = od["dest_labels"]
+        profile_name = profile.name if profile else "driving"
+
         routes: List[Route] = []
         matched_pairs_count = 0
 
-        for dem in normalized_demands:
-            dem_coords = (dem.geometry["coordinates"][0], dem.geometry["coordinates"][1])
-
-            # Calculate route to all facilities
-            candidate_routes: List[Tuple[Route, Facility]] = []
-
-            for fac in normalized_facilities:
-                fac_coords = (fac.geometry["coordinates"][0], fac.geometry["coordinates"][1])
-
+        for dem_idx, dem in enumerate(normalized_demands):
+            for fac_idx, fac in enumerate(normalized_facilities):
                 if travel_direction == "facility_to_incident":
-                    origin_loc, dest_loc = fac_coords, dem_coords
+                    o_label, d_label = origin_labels[fac_idx], dest_labels[dem_idx]
                     o_id, d_id = fac.facility_id, dem.demand_id
                 else:
-                    origin_loc, dest_loc = dem_coords, fac_coords
+                    o_label, d_label = origin_labels[dem_idx], dest_labels[fac_idx]
                     o_id, d_id = dem.demand_id, fac.facility_id
 
-                route = self.router.network_shortest_path(
-                    graph=graph,
-                    network_dataset=network_dataset,
-                    origin=origin_loc,
-                    destination=dest_loc,
-                    profile=profile,
-                    impedance=impedance,
-                    barriers=barriers,
+                info = od["pairs"].get((o_label, d_label))
+                if (
+                    info is None or not info["reachable"]
+                    or info["cost"] >= float("inf") or info["distance_m"] <= 0
+                ):
+                    continue
+                if cutoff_cost is not None and info["cost"] > cutoff_cost:
+                    continue
+
+                route = self.router.build_route_from_path(
+                    od["graph_view"], info["path"],
+                    origin_label=o_label, destination_label=d_label,
+                    profile_name=profile_name,
+                    route_id=f"route_{o_label}_{d_label}",
+                    weight_func=od["weight_func"],
                 )
+                route.origin_id = o_id
+                route.destination_id = d_id
+                routes.append((route, fac))
 
-                if route.total_cost < float("inf") and route.total_distance_m > 0:
-                    route.origin_id = o_id
-                    route.destination_id = d_id
-                    if cutoff_cost is None or route.total_cost <= cutoff_cost:
-                        candidate_routes.append((route, fac))
+        # Group by demand: closest facility selection happens per demand point.
+        per_demand: Dict[str, List[Tuple[Route, Facility]]] = {}
+        for route, fac in routes:
+            key = route.origin_id if travel_direction == "incident_to_facility" else route.destination_id
+            per_demand.setdefault(key, []).append((route, fac))
 
-            # Sort by total_cost ascending
-            candidate_routes.sort(key=lambda x: x[0].total_cost)
-            selected = candidate_routes[:target_facility_count]
-
-            for r, _ in selected:
-                routes.append(r)
+        selected_routes: List[Route] = []
+        for key in sorted(per_demand):
+            candidates = sorted(per_demand[key], key=lambda x: x[0].total_cost)
+            for r, _ in candidates[:target_facility_count]:
+                selected_routes.append(r)
                 matched_pairs_count += 1
 
         summary = {
             "demand_count": len(normalized_demands),
             "facility_count": len(normalized_facilities),
-            "routes_found": len(routes),
+            "routes_found": len(selected_routes),
             "target_facility_count": target_facility_count,
             "cutoff_cost": cutoff_cost,
         }
@@ -128,7 +154,7 @@ class NetworkClosestFacilityService:
             analysis_type="closest_facility",
             status="success",
             summary=summary,
-            routes=routes,
+            routes=selected_routes,
         )
 
     def _normalize_demands(

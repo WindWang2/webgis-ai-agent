@@ -45,29 +45,51 @@ class TemporalTrendEngine:
 
         return result
 
+    # Sen's slope is O(n²) in the number of pairwise slopes (n(n-1)/2). With
+    # 50k records that is ~1.25e9 Python slopes and multi-GB of intermediate
+    # lists — unbounded. Above this point the series is deterministically
+    # subsampled (evenly spaced) before the vectorized pair computation.
+    _SENS_SLOPE_MAX_N = 1024
+
     @staticmethod
     def compute_sens_slope(values: List[float]) -> float:
         """
         Computes Sen's Slope (median of slopes between all pair of points (i, j) with i < j).
+
+        Vectorized over all pairs for n ≤ ``_SENS_SLOPE_MAX_N``; larger series
+        are evenly subsampled to that cap (with a warning) so the computation
+        stays bounded instead of materializing ~n²/2 Python floats.
         """
         n = len(values)
         if n < 2:
             return 0.0
 
-        slopes = []
-        for i in range(n - 1):
-            for j in range(i + 1, n):
-                slopes.append((values[j] - values[i]) / (j - i))
+        import numpy as np
+        arr = np.asarray(values, dtype=float)
 
-        if not slopes:
+        if n > TemporalTrendEngine._SENS_SLOPE_MAX_N:
+            logger.warning(
+                "Sen's slope input truncated: %d points > max %d; "
+                "subsampling to evenly spaced points (approximation).",
+                n, TemporalTrendEngine._SENS_SLOPE_MAX_N,
+            )
+            idx = np.unique(np.linspace(0, n - 1, TemporalTrendEngine._SENS_SLOPE_MAX_N).astype(int))
+            arr = arr[idx]
+            # x coordinates stay the ORIGINAL time indices — slopes are per
+            # index step, not per subsampled position.
+            x = idx
+            n = arr.size
+        else:
+            x = np.arange(n)
+
+        if n < 2:
             return 0.0
 
-        slopes.sort()
-        m = len(slopes)
-        if m % 2 == 1:
-            return slopes[m // 2]
-        else:
-            return (slopes[m // 2 - 1] + slopes[m // 2]) / 2.0
+        i, j = np.triu_indices(n, k=1)
+        if i.size == 0:
+            return 0.0
+        slopes = (arr[j] - arr[i]) / (x[j] - x[i])
+        return float(np.median(slopes))
 
     @staticmethod
     def compute_linear_regression(values: List[float]) -> Tuple[float, float, float]:
