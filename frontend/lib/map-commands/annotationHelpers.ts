@@ -104,7 +104,7 @@ export function refreshAnnotations(map: Map): boolean {
  * mount order: fill → line → circle → label). Moving each to the top in this
  * order ends with label on top.
  */
-const ANNOTATION_LAYER_IDS = [
+export const ANNOTATION_LAYER_IDS = [
   `${ANNOTATION_SOURCE_ID}-fill`,
   `${ANNOTATION_SOURCE_ID}-line`,
   `${ANNOTATION_SOURCE_ID}-circle`,
@@ -125,9 +125,23 @@ const ANNOTATION_LAYER_IDS = [
  * no-op when the stack isn't mounted, and moveLayer is wrapped so a layer
  * that vanished mid-reconcile is skipped silently. Callers run it after a
  * reconcile settles, alongside the selection-highlight re-raise.
+ *
+ * #460: a basemap setStyle wipes the whole imperative stack while nothing
+ * re-creates it — the MapActionHandler refresh effect deps ([mapInstance,
+ * annotations]) don't change on a style swap because the map instance is
+ * stable across setStyle. Mirror #402's selection-highlight remount: when
+ * every annotation layer is gone but annotations exist in the store, RE-MOUNT
+ * the source + layers and push the data instead of early-returning.
  */
 export function raiseAnnotationLayers(map: Map): void {
-  if (!ANNOTATION_LAYER_IDS.some((id) => map.getLayer(id))) return;
+  const stackMounted = ANNOTATION_LAYER_IDS.some((id) => map.getLayer(id));
+  if (!stackMounted) {
+    // Post-wipe state: only remount when there is annotation data to show —
+    // maps that never used annotations stay free of the (empty) stack.
+    if (useHudStore.getState().annotations.length === 0) return;
+    ensureAnnotationLayers(map);
+    refreshAnnotations(map);
+  }
   for (const id of ANNOTATION_LAYER_IDS) {
     if (!map.getLayer(id)) continue;
     try {
